@@ -25,36 +25,30 @@ sub undo {
   for my $tag (@{$data->{tags}}) {
     if ($tag->{name} =~ m/^h\.(.*)/) {
       my $h = $1;
-      my @old = $msg->header_raw($h);
+      my $old;
       my @new;
       my @program = split /,/, $tag->{value};
       for my $cmd (@program) {
-        if ($cmd =~ m/d:(.*)/) {
-          my $rem = $1;
-	  if ($rem eq '*') {
-	    @old = ();
-	  } else {
-	    splice(@old, $rem-1, 1);
-	  }
-        } elsif ($cmd =~ m/t:(.*)/) {
-          push @new, $1;
-        } elsif ($cmd =~ m/b:(.*)/) {
+        if ($cmd =~ m/b:(.*)/) {
           push @new, decode_base64($1);
+        } elsif ($cmd =~ m/c:(\d+)-(\d+)/) {
+          my ($from, $to) = ($1-1, $2-1);
+	  # numbers count indexed 1 from the bottom
+          $old ||= [ reverse $msg->header_raw($h) ];
+	  push @new, @$old[$from..$to];
         }
       }
-      $msg->header_raw_set($h, @old, @new);
+      $msg->header_raw_set($h, @new);
     } elsif ($tag->{name} eq 'b') {
-      my @l1 = split /\r?\n/, $msg->body_raw;
-      my @program = split /,/, $tag->{value};
+      my @lines = split /\r?\n/, $msg->body_raw;
       my @outlist;
+      my @program = split /,/, $tag->{value};
       for my $cmd (@program) {
-          if ($cmd =~ m/c:(\d+)-(\d+)/) {
-	  my ($from, $to) = ($1-1, $2-1);
-	  push @outlist, @l1[$from..$to];
-        } elsif ($cmd =~ m/t:(.*)/) {
-	  push @outlist, $1;
-        } elsif ($cmd =~ m/b:(.*)/) {
+        if ($cmd =~ m/b:(.*)/) {
 	  push @outlist, decode_base64($1);
+        } elsif ($cmd =~ m/c:(\d+)-(\d+)/) {
+	  my ($from, $to) = ($1-1, $2-1);
+	  push @outlist, @lines[$from..$to];
         }
       }
       $msg->body_set(join("\r\n", @outlist));
@@ -83,11 +77,26 @@ sub diff {
   my @hdiff;
   for my $h (sort keys %all) {
     next if should_skip($h);
-    my @h1 = $msg1->header_raw($h);
-    my @h2 = $msg2->header_raw($h);
+    my @h1 = reverse $msg1->header_raw($h);
+    my @h2 = reverse $msg2->header_raw($h);
     next if join("\n", @h1) eq join("\n", @h2);
+    # headers are indexed from 1 from the bottom up
+    my %known = map { $h1[$_] => $_+1 } 0..$#h1;
     # we want the values from h2
-    push @hdiff, hdiff($h, @h2);
+    my @res = map { $known{$_} ? ['c', $known{$_}, $known{$_}] : ['b', encode_base64($_, '')] } @h2;
+    # combine multiples
+    for (1..$#res) {
+      # both copies
+      next unless ($res[$_][0] eq 'c' and $res[$_-1] eq 'c');
+      # ranges are adjacent
+      next unless ($res[$_][1] == $res[$_-1][2] + 1);
+      # extend back
+      $res[$_][1] = $res[$_-1][1]; 
+      # and nuke the old one
+      $res[$_-1] = undef;
+    }
+    my @vals = map { $_->[2] ? "$_->[0]:$_->[1]-$_->[2]" : "$_->[0]:$_->[1]" } grep { defined } @res;
+    push @hdiff, @vals ? "h.$h=" . join(',', @vals) : "h.$h";
   }
 
   # calculate the body differences
@@ -96,6 +105,7 @@ sub diff {
   my @l2 = split /\r?\n/, $msg2->body_raw;
 
   my $diff = Algorithm::Diff->new( \@l1, \@l2 );
+  # lines are indexed from 1 from the top down
   $diff->Base(1);
 
   my @bdiff;
@@ -107,7 +117,7 @@ sub diff {
     } else {
       # contains things to copy back
       $dirty = 1;
-      push @list, map { m/[^A-Za-z0-9_\@\.\-\ ]/ ? 'b:' . encode_base64($_, '') : "t:$_" } $diff->Items(2);
+      push @list, map { 'b:' . encode_base64($_, '') } $diff->Items(2);
     }
   }
 
@@ -117,7 +127,7 @@ sub diff {
   }
 
   return unless (@hdiff or @bdiff);
-  return ($num, join(";\n\t", "v=$num", @hdiff, @bdiff));
+  return ($num, join("; ", "v=$num", @hdiff, @bdiff));
 }
 
 # returns ($num, $header_text)
@@ -259,16 +269,6 @@ sub extract_addrs {
     }
   }
   return sort keys %res;
-}
-
-sub hdiff {
-  my $name = shift;
-  my @items = @_;
-  my @res = ('d:*');
-  for (@items) {
-    push @res, m/[^A-Za-z0-9_\@\.\-\ ]/ ? 'b:' . encode_base64($_, '') : "t:$_";
-  }
-  return "h.$name=" . join(',', @res);
 }
 
 sub bval {
