@@ -15,6 +15,18 @@ use Digest::SHA;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 
+# monkeypatch clone - it doesn't do the right thing
+# if a prefix is set right now
+BEGIN {
+    *Mail::DKIM::Signature::clone = sub {
+       my $self = shift;
+       my $clone = ref($self)->new();
+       $clone->prefix($self->prefix());
+       return $clone->parse($self->as_string());
+    };
+}
+
+
 sub undo {
   my ($msg, %args) = @_;
   my @mv = $msg->header_raw('Mail-Version');
@@ -283,6 +295,32 @@ sub sign {
   $signer->extended_headers(\%interesting);
   my $eml = $msg->as_string();
   $signer->PRINT($eml);
+  # Add the mailversion and dkim headers in order
+  {
+    my $mv = 1;
+    my $i = 1;
+    while ($i < $num) {
+      my $dk2 = $map{$i};
+      warn "ADDING DKIM2-Signature: $dk2";
+      my $to = getv($dk2);
+      while ($mv <= $to) {
+        my $val = $vmap{$mv};
+        die "NO DATA FOR mv=$mv" unless $val;
+        warn "ADDING Mail-Version: $val";
+        $signer->add_header("Mail-Version: $val");
+        $mv++;
+      }
+      $signer->add_header("DKIM2-Signature: $dk2");
+      $i++;
+    }
+    while ($mv <= $version) {
+      my $val = $vmap{$mv};
+      die "NO DATA FOR mv=$mv" unless $val;
+      warn "ADDING Mail-Version: $val";
+      $signer->add_header("Mail-Version: $val");
+      $mv++;
+    }
+  }
   $signer->CLOSE();
   return ($num, $signature->as_string());
 } 
@@ -294,7 +332,7 @@ sub verify {
   my $num = %map ? max(keys %map) : 0;
   die "NO NUM" unless $num;
   my $signature = Mail::DKIM::Signature->new();
-  $signature->prefix("DKIM2-Signature: i=$num;");
+  $signature->prefix("DKIM2-Signature: i=$num; ");
   my $val = $map{$num};
   $val =~ s/^i=\d+; //;
   $signature = $signature->parse($val);

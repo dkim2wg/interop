@@ -13,6 +13,8 @@ while (1) {
   my $check = DKIM2::validate($msg1);
   die "ERROR: $check->{error}\n" unless $check->{valid};
   say "mv=$check->{mv} OK";
+  my %map = map { DKIM2::geti($_) => $_ } $msg->header('DKIM2-Signature');
+  my $num = %map ? max(keys %map) : 0;
   last if $check->{mv} < 2;
   last unless DKIM2::undo($msg1);
   # Email::MIME keeps internal caches which get broken by replacing the body
