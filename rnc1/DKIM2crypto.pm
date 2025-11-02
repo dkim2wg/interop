@@ -42,7 +42,7 @@ sub DKIM2sign
 
    while ($message)
    {
-      my $line = ($message =~ /^(.*?)\r\n(.*)$/) ? $1 : $message;
+      my $line = ($message =~ /^(.*?)\r\n(.*)$/s) ? $1 : $message;
 
       $message = $2;
 
