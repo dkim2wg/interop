@@ -1,10 +1,10 @@
 Mail-Version: mv=2; a=sha256;
 	h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
-	 hh=3OODvU+ITE/109CfNvgNMJRo6c8ewWbLSjlN9qWm6vo;
-	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k;
-	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q;
-	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU;
-	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM;
+	 hh=3OODvU+ITE/109CfNvgNMJRo6c8ewWbLSjlN9qWm6vo=;
+	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
+	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
+	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
+	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
 	h.Archived-At=; h.Authentication-Results=;
 	h.Content-Type=b:bXVsdGlwYXJ0L2FsdGVybmF0aXZlOyBib3VuZGFyeT0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==;
 	 h.Date=b:VGh1LCAyMSBNYXIgMjAyNCAxMjowOTozNyArMTAwMA==;
@@ -89,12 +89,22 @@ Received: from fhigh4-smtp.messagingengine.com
  (No client certificate requested)
  by ietfa.amsl.com (Postfix) with ESMTPS id 59805C180B46
  for <jmap@ietf.org>; Wed,  7 Aug 2024 18:23:11 -0700 (PDT)
+DKIM2-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=
+        test1.dkim2.com; s=sel1; mv=1; mf=brong@fastmailteam.com; rt=
+        jmap@ietf.org; h=mime-version:message-id:date:from:to:subject
+        :content-type; bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw=; b=
+        HE85cxG4WuCP+lo2I4LEAK8rDjgKWyDmaquoBvAkJMEvDAHCP0DI3MkA6AygrtQi
+        I1DFeUfdH5cRhBKrPwnEmCDduS9iTYaLZCSDeFAAEXA1szsoPx8XHbG8psVyONxn
+        P9XsId86zOVA8XafBEDWObZXRNSOFPi53WOP+U2eeVPeggjKdpT5i+HXCWsm3dLn
+        mYBcp6hQyBfHhluoxXsj38wxHEDcTpXnU37/WEXiU+6mCN0Mm6UHwr6zFlqnJjKl
+        MLf2408tNZjGJz+u/y5a77e/ZM1sxiTweb85Pj43Cktce3JB0FhkTZnqZTUib7AM
+        4/CMRWwKHm5HF6BgWDdz+w==
 Mail-Version: mv=1; a=sha256;
         h=mime-version:message-id:date:from:to:subject:content-type;
-        hh=U3l2NbFqfeFEKHSJfuElpPIf4UfEH5VU/OFjgODED0M;
-        bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw;
-        ph.1=/tB6vGLb4bPaWWfxtA5OlqS4JZ65PQzca1IE/9BMNlY;
-        ph.2=q8q5JLRWa4i1isubOAXVMkI8iPQpYdBnaQFRCTnm3Oc
+        hh=U3l2NbFqfeFEKHSJfuElpPIf4UfEH5VU/OFjgODED0M=;
+        bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw=;
+        ph.1=/tB6vGLb4bPaWWfxtA5OlqS4JZ65PQzca1IE/9BMNlY=;
+        ph.2=q8q5JLRWa4i1isubOAXVMkI8iPQpYdBnaQFRCTnm3Oc=
 Received: from compute3.internal (compute3.nyi.internal [10.202.2.43])
  by mailfhigh.nyi.internal (Postfix) with ESMTP id 7F8CD1151BFC
  for <jmap@ietf.org>; Wed,  7 Aug 2024 21:23:10 -0400 (EDT)
