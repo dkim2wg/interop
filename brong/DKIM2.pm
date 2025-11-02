@@ -375,6 +375,7 @@ sub should_skip {
   return 1 if $hname eq 'return-path';
   return 1 if $hname eq 'mail-version';
   return 1 if $hname eq 'dkim-signature';
+  return 1 if $hname eq 'dkim2-signature';
   # X headers
   return 1 if $hname =~ m/^x-/;
   # stuff we don't sign
