@@ -305,18 +305,15 @@ sub sign {
       while ($mv <= $to) {
         my $val = $vmap{$mv};
         die "NO DATA FOR mv=$mv" unless $val;
-        warn "ADDING Mail-Version: $val";
         $signer->add_header("Mail-Version: $val");
         $mv++;
       }
-      warn "ADDING DKIM2-Signature: $dk2";
       $signer->add_header("DKIM2-Signature: $dk2");
       $i++;
     }
     while ($mv <= $version) {
       my $val = $vmap{$mv};
       die "NO DATA FOR mv=$mv" unless $val;
-      warn "ADDING Mail-Version: $val";
       $signer->add_header("Mail-Version: $val");
       $mv++;
     }
@@ -344,15 +341,11 @@ sub verify {
   }
   # set a synthetic signature
   my $dkim = Mail::DKIM::Verifier->new();
-  warn "ADDING " . $signature->as_string();
   $dkim->add_signature($signature);
   $dkim->PRINT($msg->as_string());
   $dkim->CLOSE();
   my %res;
   $res{result} = $dkim->{result};
-  use Data::Dumper;
-  warn Dumper($dkim);
-
   return \%res;
 }
 
