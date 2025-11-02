@@ -44,7 +44,7 @@ while (1) {
   die "NO SUCH DKIM2-Header i=$num" unless $h;
   my $res = DKIM2::verify($msg1, sub { find_key(@_) } );
   if ($res->{result} eq 'pass') {
-    say "i=$num OK";
+    say "i=$num OK (mv=$version)";
   } else {
     use Data::Dumper;
     die Dumper($res);

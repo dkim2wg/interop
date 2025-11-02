@@ -1,3 +1,27 @@
+DKIM2-Signature: i=4; a=rsa-sha256; c=relaxed/relaxed; d=
+	test1.dkim2.com; s=sel1; mv=5; mf=
+	brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
+	authentication-results:authentication-results
+	:authentication-results:authentication-results
+	:authentication-results:received-spf:extra-header:feedback-id
+	:mime-version:date:to:message-id:message-id-hash:precedence
+	:subject:list-id:archived-at:list-archive:list-help:list-owner
+	:list-post:list-subscribe:list-unsubscribe:content-type:from;
+	 bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=fcMNW0C/xvei
+	jiaVPEkiCmIHlSBIsev7ZFJNt3Ieb3SN6Z0infS2taClkG/U9/+HwDwJ8FZt1R7z
+	6B/wA5MiPBk3vNQlP388tyXkHgY0Vj3DCzoUfmOIbOgotSJGDqHU4U3hMWngfmlB
+	fvytd5ZoQz8Ij2lPTYDv8yyo1BmwIc2yzD3aS2vWyQvGVga1fN6GtaepejSQ1gjy
+	aqdEjrjfchpvsy9Jntev43jVeuB1IQnrN3uAbs3ft7LeUtdXpbuar+LopIgTfgsk
+	KOVpF+QaSWcE6AzWFKkYYmz2s0AMiS/34m23MJpGqvp/lLbXJGzjG0eqq5UHIeZx
+	L1rmtEeHnw==
+Mail-Version: mv=5; a=sha256;
+	h=authentication-results:authentication-results:authentication-results:authentication-results:authentication-results:received-spf:extra-header:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+	 hh=0pRgflA2Tm7j4OWbgdCepVA8rH4uXww/NxeD1g+kyMk=;
+	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
+	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
+	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
+	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
+	h.Authentication-Results=c:1-1; h.Received-SPF=
 Return-Path: <forwardingalgorithm@ietf.org>
 Received: from compute3.internal (compute3.nyi.internal [10.202.2.43])
 	 by sloti43n03 (Cyrus 3.11.0-alpha0-679-g88f70abd1-fm-20240802.001-g88f70abd) with LMTPA;
@@ -139,6 +163,23 @@ Received: from mail.ietf.org (mail.ietf.org [50.223.129.194])
 	(No client certificate requested)
 	by mx6.messagingengine.com (Postfix) with ESMTPS id 63B05116009E
 	for <brong@fastmailteam.com>; Wed,  7 Aug 2024 21:23:34 -0400 (EDT)
+Mail-Version: mv=4; a=sha256;
+        h=extra-header:authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+         hh=NEw6Zlcid4yspSBC5GdTF06NJTS3XN+THj+e5DFwXho=;
+        bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
+        ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
+        ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
+        ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=; b=c:1-15,
+        b:SGVyZSdzIHNvbWUgZXh0cmEgdGV4dC4=,b:,c:16-63
+Mail-Version: mv=3; a=sha256;
+        h=extra-header:authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+         hh=NEw6Zlcid4yspSBC5GdTF06NJTS3XN+THj+e5DFwXho=;
+        bh=nYt9lVZofGRkBBqZ5ZfpELGdHwWfZAdxLrQIsUlUihM=;
+        ph.1.1=Fvtzu6vdcUoh6weOk9QXjZAZw4kkv8AkUiF08t9T/d4=;
+        ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
+        ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
+        h.Extra-Header=; b=c:1-15,c:18-65
+Extra-Header: yes
 DKIM2-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=
         test1.dkim2.com; s=sel1; mv=2; mf=
         brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
