@@ -301,7 +301,6 @@ sub sign {
     my $i = 1;
     while ($i < $num) {
       my $dk2 = $map{$i};
-      warn "ADDING DKIM2-Signature: $dk2";
       my $to = getv($dk2);
       while ($mv <= $to) {
         my $val = $vmap{$mv};
@@ -310,6 +309,7 @@ sub sign {
         $signer->add_header("Mail-Version: $val");
         $mv++;
       }
+      warn "ADDING DKIM2-Signature: $dk2";
       $signer->add_header("DKIM2-Signature: $dk2");
       $i++;
     }
