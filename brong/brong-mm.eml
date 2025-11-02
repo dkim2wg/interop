@@ -1,3 +1,16 @@
+DKIM2-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=
+	test1.dkim2.com; s=sel1; mv=2; mf=
+	brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
+	authentication-results:feedback-id:mime-version:date:to
+	:message-id:message-id-hash:precedence:subject:list-id
+	:archived-at:list-archive:list-help:list-owner:list-post
+	:list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
+	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=Pr6Z2UiEBOBwqWXcvDrfJqJQU
+	m+SuIylglh29F2ZNKSxIM+UGO8+qGLAQhqSZijmx5p4ZpwcKzYNT9gH4Gr0iftdk
+	HAIPXQ/98rM7MQNJpvsyl+rT2ipRhVoU4RXENotlSsX1nKGdYq/XSGNlRycNPziy
+	Hfnk6QTqm84DFwx3fYAihLO4ERrQZcqhVeTPAKlDyFGTcSkN4siptnyNITvA3Drb
+	YL5lBto68qjPb47bCsYL+E3tkl1tLSvsR2WHKOMniu6vf0UlLIOdCpd+9sR2l91i
+	eyGTW8hqMXtcrgx12tAf6yVQl5yHUzScB44mHHeUmXGk4tOY+D0sPpHwKP3CQ==
 Mail-Version: mv=2; a=sha256;
 	h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
 	 hh=3OODvU+ITE/109CfNvgNMJRo6c8ewWbLSjlN9qWm6vo=;
