@@ -1,22 +1,81 @@
-MailVersion: v=1;
-	h.Archived-At=d:*;
-	h.Authentication-Results=d:*;
-	h.Content-Type=d:*,b:bXVsdGlwYXJ0L2FsdGVybmF0aXZlOyBib3VuZGFyeT0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==;
-	h.Date=d:*,b:VGh1LCAyMSBNYXIgMjAyNCAxMjowOTozNyArMTAwMA==;
-	h.Feedback-ID=d:*;
-	h.From=d:*,b:IkJyb24gR29uZHdhbmEiIDxicm9uZ0BmYXN0bWFpbHRlYW0uY29tPg==;
-	h.List-Archive=d:*;
-	h.List-Help=d:*;
-	h.List-Id=d:*;
-	h.List-Owner=d:*;
-	h.List-Post=d:*;
-	h.List-Subscribe=d:*;
-	h.List-Unsubscribe=d:*;
-	h.Message-ID-Hash=d:*;
-	h.Message-Id=d:*,b:PGZiMWIxMGFlLWVhMzYtNGVlNC1iODRmLWI2MmYwMzZjZmFmNUBhcHAuZmFzdG1haWwuY29tPg==;
-	h.Precedence=d:*;
-	h.Subject=d:*,t:Working group last call draft-ietf-jmap-webpush-vapid;
-	b=t:--12b53dc829d24511bfa04f7d5e3675f8,c:5-5,c:7-9,b:VGhpcyBlbWFpbCBzdGFydHMgYSB3b3JraW5nIGdyb3VwIGxhc3QgY2FsbCBmb3IgaHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIGFzIGRpc2N1c3NlZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLg==,c:11-11,b:UGxlYXNlIHBvc3QgYW55IGNvbW1lbnRzIG9yIHJlc3BvbnNlcyBieSAqVGh1cnNkYXksIEFwcmlsIDR0aCwgMjAyNCou,c:13-13,c:16-25,t:--12b53dc829d24511bfa04f7d5e3675f8,c:27-31,b:YW1pbHk6QXJpYWw7Ij5IaSBBbGwsPGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48ZGl2PjxiPQ==,b:cj48L2Rpdj48ZGl2PlRoaXMgZW1haWwgc3RhcnRzIGEgd29ya2luZyBncm91cCBsYXN0IGNhbGwgZm9yIDxhIGhyZWY9M0QiPQ==,b:aHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIj5odHRwczovPQ==,b:L2RhdGF0cmFja2VyLmlldGYub3JnL2RvYy9kcmFmdC1pZXRmLWptYXAtd2VicHVzaC12YXBpZC88L2E+IGFzIGRpc2N1c3NlPQ==,b:ZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLjxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPQ==,b:PjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5QbGVhc2UgcG9zdCBhbnkgY29tbWVudHMgb3IgcmVzPQ==,b:cG9uc2VzIGJ5IDxiPlRodXJzZGF5LCBBcHJpbCA0dGgsIDIwMjQ8L2I+Ljxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtPQ==,b:ZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5UaGFua3MsPGJyPjwvPQ==,b:ZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48YnI+PC9kaXY+PGRpdiBzdHlsZT0zRCJmb250LWZhbWlsPQ==,b:eTpBcmlhbDsiPkJyb24uPGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjwvZGl2PjxkaXYgaWQ9M0QiPQ==,b:c2lnNTY2Mjk0MTciPjxkaXYgY2xhc3M9M0Qic2lnbmF0dXJlIj4tLTxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpZ25hdHVyPQ==,b:ZSI+Jm5ic3A7IEJyb24gR29uZHdhbmEsIENFTywgRmFzdG1haWwgUHR5IEx0ZDxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpPQ==,b:Z25hdHVyZSI+Jm5ic3A7IGJyb25nQGZhc3RtYWlsdGVhbS5jb208YnI+PC9kaXY+PGRpdiBjbGFzcz0zRCJzaWduYXR1cmUiPQ==,b:Pjxicj48L2Rpdj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjwvYm9keT48L2h0PQ==,b:bWw+,t:--12b53dc829d24511bfa04f7d5e3675f8--
+MailVersion: v=2; a=sha256;
+	h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+	 hh=3OODvU+ITE/109CfNvgNMJRo6c8ewWbLSjlN9qWm6vo;
+	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k;
+	ph.1=47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU;
+	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM;
+	h.Archived-At=; h.Authentication-Results=;
+	h.Content-Type=b:bXVsdGlwYXJ0L2FsdGVybmF0aXZlOyBib3VuZGFyeT0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==;
+	 h.Date=b:VGh1LCAyMSBNYXIgMjAyNCAxMjowOTozNyArMTAwMA==;
+	h.Feedback-ID=;
+	h.From=b:IkJyb24gR29uZHdhbmEiIDxicm9uZ0BmYXN0bWFpbHRlYW0uY29tPg==;
+	 h.List-Archive=; h.List-Help=; h.List-Id=; h.List-Owner=;
+	h.List-Post=; h.List-Subscribe=; h.List-Unsubscribe=;
+	h.Message-ID-Hash=;
+	h.Message-Id=b:PGZiMWIxMGFlLWVhMzYtNGVlNC1iODRmLWI2MmYwMzZjZmFmNUBhcHAuZmFzdG1haWwuY29tPg==;
+	 h.Precedence=;
+	h.Subject=b:V29ya2luZyBncm91cCBsYXN0IGNhbGwgZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQ=;
+	 b=b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:5-5,
+	c:7-9,
+	b:VGhpcyBlbWFpbCBzdGFydHMgYSB3b3JraW5nIGdyb3VwIGxhc3QgY2FsbCBmb3IgaHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIGFzIGRpc2N1c3NlZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLg==,
+	c:11-11,
+	b:UGxlYXNlIHBvc3QgYW55IGNvbW1lbnRzIG9yIHJlc3BvbnNlcyBieSAqVGh1cnNkYXksIEFwcmlsIDR0aCwgMjAyNCou,
+	c:13-13,c:16-25,
+	b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:27-31,
+	b:YW1pbHk6QXJpYWw7Ij5IaSBBbGwsPGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48ZGl2PjxiPQ==,
+	b:cj48L2Rpdj48ZGl2PlRoaXMgZW1haWwgc3RhcnRzIGEgd29ya2luZyBncm91cCBsYXN0IGNhbGwgZm9yIDxhIGhyZWY9M0QiPQ==,
+	b:aHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIj5odHRwczovPQ==,
+	b:L2RhdGF0cmFja2VyLmlldGYub3JnL2RvYy9kcmFmdC1pZXRmLWptYXAtd2VicHVzaC12YXBpZC88L2E+IGFzIGRpc2N1c3NlPQ==,
+	b:ZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLjxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPQ==,
+	b:PjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5QbGVhc2UgcG9zdCBhbnkgY29tbWVudHMgb3IgcmVzPQ==,
+	b:cG9uc2VzIGJ5IDxiPlRodXJzZGF5LCBBcHJpbCA0dGgsIDIwMjQ8L2I+Ljxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtPQ==,
+	b:ZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5UaGFua3MsPGJyPjwvPQ==,
+	b:ZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48YnI+PC9kaXY+PGRpdiBzdHlsZT0zRCJmb250LWZhbWlsPQ==,
+	b:eTpBcmlhbDsiPkJyb24uPGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjwvZGl2PjxkaXYgaWQ9M0QiPQ==,
+	b:c2lnNTY2Mjk0MTciPjxkaXYgY2xhc3M9M0Qic2lnbmF0dXJlIj4tLTxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpZ25hdHVyPQ==,
+	b:ZSI+Jm5ic3A7IEJyb24gR29uZHdhbmEsIENFTywgRmFzdG1haWwgUHR5IEx0ZDxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpPQ==,
+	b:Z25hdHVyZSI+Jm5ic3A7IGJyb25nQGZhc3RtYWlsdGVhbS5jb208YnI+PC9kaXY+PGRpdiBjbGFzcz0zRCJzaWduYXR1cmUiPQ==,
+	b:Pjxicj48L2Rpdj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjwvYm9keT48L2h0PQ==,
+	b:bWw+,b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOC0t
+MailVersion: v=1; a=sha256;
+	h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+	 hh=3OODvU+ITE/109CfNvgNMJRo6c8ewWbLSjlN9qWm6vo;
+	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k;
+	ph.1=47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU;
+	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM;
+	h.Archived-At=; h.Authentication-Results=;
+	h.Content-Type=b:bXVsdGlwYXJ0L2FsdGVybmF0aXZlOyBib3VuZGFyeT0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==;
+	 h.Date=b:VGh1LCAyMSBNYXIgMjAyNCAxMjowOTozNyArMTAwMA==;
+	h.Feedback-ID=;
+	h.From=b:IkJyb24gR29uZHdhbmEiIDxicm9uZ0BmYXN0bWFpbHRlYW0uY29tPg==;
+	 h.List-Archive=; h.List-Help=; h.List-Id=; h.List-Owner=;
+	h.List-Post=; h.List-Subscribe=; h.List-Unsubscribe=;
+	h.Message-ID-Hash=;
+	h.Message-Id=b:PGZiMWIxMGFlLWVhMzYtNGVlNC1iODRmLWI2MmYwMzZjZmFmNUBhcHAuZmFzdG1haWwuY29tPg==;
+	 h.Precedence=;
+	h.Subject=b:V29ya2luZyBncm91cCBsYXN0IGNhbGwgZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQ=;
+	 b=b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:5-5,
+	c:7-9,
+	b:VGhpcyBlbWFpbCBzdGFydHMgYSB3b3JraW5nIGdyb3VwIGxhc3QgY2FsbCBmb3IgaHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIGFzIGRpc2N1c3NlZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLg==,
+	c:11-11,
+	b:UGxlYXNlIHBvc3QgYW55IGNvbW1lbnRzIG9yIHJlc3BvbnNlcyBieSAqVGh1cnNkYXksIEFwcmlsIDR0aCwgMjAyNCou,
+	c:13-13,c:16-25,
+	b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:27-31,
+	b:YW1pbHk6QXJpYWw7Ij5IaSBBbGwsPGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48ZGl2PjxiPQ==,
+	b:cj48L2Rpdj48ZGl2PlRoaXMgZW1haWwgc3RhcnRzIGEgd29ya2luZyBncm91cCBsYXN0IGNhbGwgZm9yIDxhIGhyZWY9M0QiPQ==,
+	b:aHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIj5odHRwczovPQ==,
+	b:L2RhdGF0cmFja2VyLmlldGYub3JnL2RvYy9kcmFmdC1pZXRmLWptYXAtd2VicHVzaC12YXBpZC88L2E+IGFzIGRpc2N1c3NlPQ==,
+	b:ZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLjxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPQ==,
+	b:PjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5QbGVhc2UgcG9zdCBhbnkgY29tbWVudHMgb3IgcmVzPQ==,
+	b:cG9uc2VzIGJ5IDxiPlRodXJzZGF5LCBBcHJpbCA0dGgsIDIwMjQ8L2I+Ljxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtPQ==,
+	b:ZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5UaGFua3MsPGJyPjwvPQ==,
+	b:ZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48YnI+PC9kaXY+PGRpdiBzdHlsZT0zRCJmb250LWZhbWlsPQ==,
+	b:eTpBcmlhbDsiPkJyb24uPGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjwvZGl2PjxkaXYgaWQ9M0QiPQ==,
+	b:c2lnNTY2Mjk0MTciPjxkaXYgY2xhc3M9M0Qic2lnbmF0dXJlIj4tLTxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpZ25hdHVyPQ==,
+	b:ZSI+Jm5ic3A7IEJyb24gR29uZHdhbmEsIENFTywgRmFzdG1haWwgUHR5IEx0ZDxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpPQ==,
+	b:Z25hdHVyZSI+Jm5ic3A7IGJyb25nQGZhc3RtYWlsdGVhbS5jb208YnI+PC9kaXY+PGRpdiBjbGFzcz0zRCJzaWduYXR1cmUiPQ==,
+	b:Pjxicj48L2Rpdj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjwvYm9keT48L2h0PQ==,
+	b:bWw+,b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOC0t
 Received: from ietfa.amsl.com (localhost [IPv6:::1])
 	by ietfa.amsl.com (Postfix) with ESMTP id B5BE4C1CAE68
 	for <brong@fastmailteam.com>; Wed,  7 Aug 2024 18:23:32 -0700 (PDT)

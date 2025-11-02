@@ -1,3 +1,9 @@
+MailVersion: v=1; a=sha256;
+	h=mime-version:message-id:date:from:to:subject:content-type;
+	hh=U3l2NbFqfeFEKHSJfuElpPIf4UfEH5VU/OFjgODED0M;
+	bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw;
+	ph.1=/tB6vGLb4bPaWWfxtA5OlqS4JZ65PQzca1IE/9BMNlY;
+	ph.2=q8q5JLRWa4i1isubOAXVMkI8iPQpYdBnaQFRCTnm3Oc
 MIME-Version: 1.0
 Message-Id: <fb1b10ae-ea36-4ee4-b84f-b62f036cfaf5@app.fastmail.com>
 Date: Thu, 21 Mar 2024 12:09:37 +1000
