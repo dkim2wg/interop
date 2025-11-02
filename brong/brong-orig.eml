@@ -1,13 +1,3 @@
-DKIM2-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=
-	test1.dkim2.com; s=sel1; mv=1; mf=brong@fastmailteam.com; rt=
-	jmap@ietf.org; h=mime-version:message-id:date:from:to:subject
-	:content-type; bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw=; b=
-	ZOyvCAlxaDGe7C51tzKco8n3UQyg3g15M/zxFAJEwnklZVtIemabqCTzXP+5Kamz
-	pp9HiZkpcaW2xIGioJFLn+LOxsFl8/zWjzOLAIdgKWQbVINm2FcH3ks6y/xS8D7P
-	WYBv8ShsmpBuT6NMoc9gOPrB1XjRWdJg9wlpRul+XCXKmUwGnNbI/FVXlh2zBi21
-	Kf6dwTxdbQgL5OrZWaVSP99x5HcRxqkzDtD1p7AUcVzcZJ2s6dKI7uSGYr6xIpZf
-	cuhiARJEqTFpPEJF7ciqZzF/DZITh+iUANeeWKKJGN6npmmcq8mBnbyj0VYW5wvD
-	VUbDWj9vlSqYyDebt9e1uA==
 Mail-Version: mv=1; a=sha256;
 	h=mime-version:message-id:date:from:to:subject:content-type;
 	hh=U3l2NbFqfeFEKHSJfuElpPIf4UfEH5VU/OFjgODED0M=;

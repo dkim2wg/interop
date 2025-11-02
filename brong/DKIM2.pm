@@ -293,22 +293,11 @@ sub verify {
   my %map = map { geti($_) => $_ } $msg->header('DKIM2-Signature');
   my $num = %map ? max(keys %map) : 0;
   die "NO NUM" unless $num;
-  my $signature = Mail::DKIM::Signature->parse($map{$num});
-  my %res;
-  $signature->set_tag('i');
-  for my $key (qw(mv mf rt)) {
-    $res{$key} = $signature->get_tag($key);
-    $signature->set_tag($key);
-  }
-  my @h;
-  for my $header ($msg->header_names) {
-    next if should_skip($header);
-    next if lc $header eq 'dkim2-signature';
-    my @vals = $msg->header($header);
-    warn "Setting $header " . scalar(@vals);
-    push @h, (lc $header) x (1 + scalar @vals);
-  }
-  $signature->set_tag('h', join(':', sort @h)); # synthetic header field that will work
+  my $signature = Mail::DKIM::Signature->new();
+  $signature->prefix("DKIM2-Signature: i=$num;");
+  my $val = $map{$num};
+  $val =~ s/^i=\d+; //;
+  $signature = $signature->parse($val);
   # suppress lookup
   my $key = $pubkey->($signature);
   if ($key) {
@@ -319,10 +308,9 @@ sub verify {
   my $dkim = Mail::DKIM::Verifier->new();
   warn "ADDING " . $signature->as_string();
   $dkim->add_signature($signature);
-  # strip all DKIM signatures, we aren't verifying those
-  $msg->header_raw_set('DKIM-Signature');
   $dkim->PRINT($msg->as_string());
   $dkim->CLOSE();
+  my %res;
   $res{result} = $dkim->{result};
   use Data::Dumper;
   warn Dumper($dkim);
