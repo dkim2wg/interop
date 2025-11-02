@@ -1,26 +1,3 @@
-DKIM2-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=
-	test1.dkim2.com; s=sel1; mv=3; mf=
-	brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
-	authentication-results:authentication-results
-	:authentication-results:authentication-results
-	:authentication-results:received-spf:feedback-id:mime-version
-	:date:to:message-id:message-id-hash:precedence:subject:list-id
-	:archived-at:list-archive:list-help:list-owner:list-post
-	:list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
-	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=n2SayTCW0rZR08yaZErsgr93w
-	YqG5y+Cow1xxVHPiT0EEagVyNbHixFiTKvJ3UjbuwXvUhkBncQZ+2NPfvbNd+dSV
-	MenHi50zVulm07rmHLrwxVe3NRFQfWp9yYFxeQBZCRuxzuwuya0mWaKxHr13ya74
-	AHwG0o39Br7AczM7Y+pPXs+HvsQ+9rB9YpRnZGN7ybH6JN6TodU1rCoSm0yPNATQ
-	a8s0Faeo/EvWiLPUZXwEcrruasChr/gPCqhey8QnUOIzKLDB3n/GTPVfQY9L+a5e
-	GjIKeIgWddfr7X0j8hp0AuPI7fcKai+1nUDBsjAXlsqNaAWzNV+4Llaz8mpXA==
-Mail-Version: mv=3; a=sha256;
-	h=authentication-results:authentication-results:authentication-results:authentication-results:authentication-results:received-spf:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
-	 hh=qZRwa5M++o9RtE6Tbw5QfmSgu1xH8dxZBbRC0j5yfC4=;
-	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
-	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
-	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
-	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
-	h.Authentication-Results=c:1-1; h.Received-SPF=
 Return-Path: <forwardingalgorithm@ietf.org>
 Received: from compute3.internal (compute3.nyi.internal [10.202.2.43])
 	 by sloti43n03 (Cyrus 3.11.0-alpha0-679-g88f70abd1-fm-20240802.001-g88f70abd) with LMTPA;
@@ -162,6 +139,19 @@ Received: from mail.ietf.org (mail.ietf.org [50.223.129.194])
 	(No client certificate requested)
 	by mx6.messagingengine.com (Postfix) with ESMTPS id 63B05116009E
 	for <brong@fastmailteam.com>; Wed,  7 Aug 2024 21:23:34 -0400 (EDT)
+DKIM2-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=
+        test1.dkim2.com; s=sel1; mv=2; mf=
+        brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
+        authentication-results:feedback-id:mime-version:date:to
+        :message-id:message-id-hash:precedence:subject:list-id
+        :archived-at:list-archive:list-help:list-owner:list-post
+        :list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
+        QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=hVzjCxAI4qW37Sx4BAmg7EjCg
+        na6oxr64xoqf1C69aLosqRaqVdxAlFfkFjZF0JLXvauc9bnOcC9e/YNX2I6vMLNR
+        R9UZkBzHo+OkoGWDOPAvW8WmoIK7yHlSgSlQsDkOjXHhYlBddn6eqan4/cw5MWFD
+        cKfFfb9qppuj+M16rqJyj+lsU16/w0ykJB6aaASWNdwEtFV+PwEzCPcsrNuyvVEE
+        Gluf0sJJCeaRpxk9MuusSNcgLbaz2Eud4VgIsPbE0k2Em6o9I7SjpOsmV2mnsrAI
+        A8TzpjUihhJkZuvcpk8AFEt7xVXpCUExRaGrC/1hKThtV1gaiYPVR+Wnx/G1A==
 DKIM2-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=
         test1.dkim2.com; s=sel1; mv=2; mf=
         brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
