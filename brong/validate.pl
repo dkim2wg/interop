@@ -11,7 +11,7 @@ my $msg1 = Email::MIME->new(path($f1)->slurp);
 
 while (1) {
   my $check = DKIM2::validate($msg1);
-  die "Failed $check->{error}" unless $check->{valid};
+  die "ERROR: $check->{error}\n" unless $check->{valid};
   say "mv=$check->{mv} OK";
   last if $check->{mv} < 2;
   last unless DKIM2::undo($msg1);
