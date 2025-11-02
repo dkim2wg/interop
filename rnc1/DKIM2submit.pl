@@ -590,7 +590,7 @@ sub processBULK
 
       my $signer = Mail::DKIM::Signer->new(
                                             Algorithm => 'rsa-sha256',
-                                            Method => 'relaxed',
+                                            Method => 'relaxed/relaxed',
                                             Domain => 'dkim2.org',
                                             Selector => 'rnc1',
                                             KeyFile => 'dkim2.org.private.key',

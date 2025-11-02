@@ -1,0 +1,60 @@
+Received: from 10.197.36.75
+ by atlas202.free.mail.bf1.yahoo.com pod-id NONE with HTTPS; Sun, 2 Nov 2025 19:30:56 +0000
+Return-Path: <richard@highwayman.com>
+X-Originating-Ip: [217.155.43.13]
+Received-SPF: fail (domain of highwayman.com does not designate 217.155.43.13 as permitted sender)
+Authentication-Results: atlas202.free.mail.bf1.yahoo.com;
+ dkim=pass header.i=@dkim2.org header.s=rnc1 arc_overridden_status=NOT_OVERRIDDEN;
+ spf=fail smtp.mailfrom=highwayman.com arc_overridden_status=NOT_OVERRIDDEN;
+ dmarc=pass(p=NONE) header.from=dkim2.org arc_overridden_status=NOT_OVERRIDDEN;
+X-Apparently-To: r65536@yahoo.com; Sun, 2 Nov 2025 19:30:57 +0000
+X-YMailISG: l2To4EIWLDugj9ZIUHPgvT5dDuNbJ8l7FMMve3j8Cv8D7EhS
+ ht1GmdfxBBt1CcCsFk6dubM5LA4O47iZVy0krUMvOOHz0owBpvfHXYdq4c8u
+ pJidN4xvHLfVgyC0rGaQOIm3epy1ETfojyDSScVX8BkUwnhOuhAi_J6uph8z
+ 65QRcJdtmsHaJoSmPcZ6caXY2dmVKr50akl00RsveBqhgVrMQV.Y1FkXUCpp
+ Vn6wPISmeojm1KB7TC0Zo3eK0QVUMUS3TPAklbmVZpxKh5N30JH35cM95HRS
+ QXYV9TA6e.jMjX3cimc0JOyFgaA.LMZah6QtCMC216P7GYKj3FVritGRITE8
+ 7i_Z0gT4jC78bUAMub80UdjzEQ_8A5PEAn_P.WOumkYKwApOsMSmrMQbwy1X
+ znJhOcJP0xxVFR05vyQ3UIrH9l_5z2CrpEiSfgfY1M2PTQwOOb2Dty_hcdY8
+ jo.fW46yjJY7_r.1i9MTgoJraSFyCXmNUIi6Nw68PQKNVLmci45EXc1yoKV7
+ YdOCygOgSPRrNesV.Gi3g6fuGqmyUDEbIo7cl2BThZn.TIlE3aERaRob9Vf0
+ N81V4EoQwR1Ex7CMtXXpnTmoyTxEqNm0oBrTKmwUQRR1Uom9YHZCCugHkk0a
+ tj2zCnrDUoenZAseIf4qYE7SmWQxrsHkwpFYeadJ79lQ8v.CbzCAZeeqH.OV
+ nP1aXgUe1gbO8xJb80Nt2uRdQmwKhHVtJLqEE4JBRVc54GEaCp0MbS8pIdjW
+ cNebbXASrihoI4_V7TOw_lNT9Q2JbahrVcte9zcFhPw6ArWUpliS2547iw8U
+ P0Zpb0N6okY0kOqO0CxxsTlFVUiTlN7r3a_BvybejQg2ay5GoqquffJwDiB1
+ nReEuBpv9q57SdYZz41nwzHy2GNaT9AjZOsM9tR3MPZhJAggQFPiIv9ROGO.
+ PHg.HMgT.O1wxBKTbfqi2nKf4qTIgZ4l7JjKpsUIgJbd2JuIAXFS.yp3KzRB
+ KId6glNzBkVRMkKhnujmHp3MegMyu4kdj3u.VY9nlcFPu2FqYPTMLslk2qZ6
+ .s6yNrddIhmEW..TD9XI.maq_90ZcruTvpm92RrzGPI45ULVAi0dNY_03Yk-
+Received: from 217.155.43.13 (EHLO me.highwayman.com)
+ by 10.197.36.75 with SMTP;
+ Sun, 02 Nov 2025 19:30:56 +0000
+Received: from richard@highwayman.com (127.0.0.1); by me.highwayman.com;
+	with ESMTP; id 2025-11-02_19_30_33_0000000; for r65536@yahoo.com;
+	Sun, 2 Nov 2025 19:30:51 +0000
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=dkim2.org; h=message-id:subject:content-transfer-encoding:to:sender:from:date:mime-version:content-type; s=rnc1; bh=f9z/WgiDCUGqWOpS6TUsYA4jlor3ARHaiuPzT+8WgdU=; b=S3EKXhUgvJF7h85AAO4p3Ekco043HMIXNSiPvg1+Nj6Rk50bPgmPJxPKvMSOzlS00nSY102OY6qGDlbzQwoM4U6z6G/GHSfSlTmQpimG090r7ns/FMQp2mdbNXWt6PAYa6aX8UQTk3sCWwkAIWXpnM1PwvZXKQ2Oh3qTklth51lhSJltgJqSZUBCmlUPrkVzzEEtuLKpWguG94SF/KXPwUcntNU2MQpxbFL9Egl3qAVjinIMWjyIoBWijIh9P0AS9X4idepyJqqAugWbNHH1/BHyGsEZJorjdasJZgpVCCo2Cpu0EuX2M8XehsW2ks2MtJ8oubR01NuWz3W1+JGwDw==
+DKIM2-Signature: i=1; mv=0; t=2025-11-02T19:30:51; n=10;
+	mf=richard@highwayman.com; rt=r65536@yahoo.com; d=dkim2.org; a1=rsa-sha256;
+	s1=rnc1; bh1=f9z/WgiDCUGqWOpS6TUsYA4jlor3ARHaiuPzT+8WgdU;
+	b1=D+Cwf16CXgao6ja9n50Nc/e/DSF1M1V+aknZ8CB4NRAopRlomZvvfi5KxtGrQvgjVjeJtjUUx
+	MSx8kL6Ny9oxk3IAIPx3jLh/G2XJvRU0DsV6njqP5jVYfjm8xybJk8g3QDg2IIQlG0U6KncMjkAv
+	vJhf2rkqvBfShOWSIis1SPtAUBhJ+SpCuyvn273TZuc85OsflsLEj19nHj7TJ1qS0KpyAe8VsDL+
+	BAsoTINWe94rXuNl+rzGjo3SzkGWeazvPMB95SGSnc6QlePmLsm8dRcs7s47QI3vIQ4hcLo+d8VO
+	kYI6ImZPsyu3RqipAALALldp88XN8TSa8E10w6WDQ==;
+Message-Id: <1762111833.1.richard@highwayman.com>
+Subject: Hello Wrold!
+Content-Transfer-Encoding: 8bit
+To: r65536@yahoo.com
+Sender: richard@highwayman.com
+From: Richard Clayton <richard@dkim2.org>
+Date: Sun, 2 Nov 2025 19:30:33 +0000
+Mime-Version: 1.0
+Content-Type: text/plain; charset="iso-8859-1"
+Content-Length: 68
+
+hello there! what do you make of my DKIM2 signature ?
+
+-- 
+richard
+
