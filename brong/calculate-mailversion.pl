@@ -28,7 +28,7 @@ my $output = '';
 my $tw = Mail::DKIM::TextWrap->new(
 	     Margin => 72,
 	     Break => qr/[,;\s]/,
-	     Separator => "\n\t",
+	     Separator => "\r\n\t",
 	     Swallow => qr/\s+/,
              Output => \$output,
           );

@@ -74,8 +74,8 @@ sub diff {
   $num++;
   if ($dmap{$num}) {
     warn "clearing high Mail-Versions from destination message";
-    my @mv = $msg1->header_raw('Mail-Version');
-    $msg1->header_raw_set('Mail-Version', grep { getv($_) < $num } @mv);
+    my @mv = grep { getv($_) && getv($_) < $num } $msg1->header_raw('Mail-Version');
+    $msg1->header_raw_set('Mail-Version', @mv);
   }
 
   # calculate the header difference
