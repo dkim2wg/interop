@@ -9,6 +9,7 @@ use Mail::DKIM::KeyValueList;
 use Mail::DKIM::Verifier;
 use Mail::DKIM::PublicKey;
 use MIME::Base64 qw(encode_base64 decode_base64);
+use Carp;
 
 sub undo {
   my ($msg, %args) = @_;
@@ -20,14 +21,14 @@ sub undo {
 
   $msg->header_raw_set('MailVersion', grep { getv($_) < $version } @mv);
 
-  my $data = Mail::DKIM::KeyValueList->parse($vmap{$version});
+  my $data = Mail::DKIM::KeyValueList->parse($header);
 
   for my $tag (@{$data->{tags}}) {
     if ($tag->{name} =~ m/^h\.(.*)/) {
       my $h = $1;
       my $old;
       my @new;
-      my @program = split /,/, $tag->{value};
+      my @program = split /\s*,\s*/, $tag->{value};
       for my $cmd (@program) {
         if ($cmd =~ m/b:(.*)/) {
           push @new, decode_base64($1);
@@ -42,7 +43,7 @@ sub undo {
     } elsif ($tag->{name} eq 'b') {
       my @lines = split /\r?\n/, $msg->body_raw;
       my @outlist;
-      my @program = split /,/, $tag->{value};
+      my @program = split /\s*,\s*/, $tag->{value};
       for my $cmd (@program) {
         if ($cmd =~ m/b:(.*)/) {
 	  push @outlist, decode_base64($1);
@@ -51,7 +52,9 @@ sub undo {
 	  push @outlist, @lines[$from..$to];
         }
       }
-      $msg->body_set(join("\r\n", @outlist));
+      my $body = join("\r\n", @outlist,'');
+      warn $body;
+      $msg->body_set($body);
     }
   }
 
@@ -96,7 +99,7 @@ sub diff {
       $res[$_-1] = undef;
     }
     my @vals = map { $_->[2] ? "$_->[0]:$_->[1]-$_->[2]" : "$_->[0]:$_->[1]" } grep { defined } @res;
-    push @hdiff, @vals ? "h.$h=" . join(',', @vals) : "h.$h";
+    push @hdiff, "h.$h=" . join(',', @vals);
   }
 
   # calculate the body differences

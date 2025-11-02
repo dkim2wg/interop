@@ -11,4 +11,4 @@ my $msg1 = Email::MIME->new(path($f1)->slurp);
 
 my $num = DKIM2::undo($msg1);
 
-say $msg1->as_string();
+print $msg1->as_string();
