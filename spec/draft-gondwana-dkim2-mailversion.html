@@ -1,0 +1,1818 @@
+<!DOCTYPE html>
+<html lang="en" class="Internet-Draft">
+<head>
+<meta charset="utf-8">
+<meta content="Common,Latin" name="scripts">
+<meta content="initial-scale=1.0" name="viewport">
+<title>A method for describing changes made to an email</title>
+<meta content="Bron Gondwana" name="author">
+<meta content="
+       This memo describes a method for describing the changes made to an email
+during common email modifications, for example those caused by mailing lists
+and forwarders. 
+       While this is general enough to be used for any changes, it is anticipated that
+this method will normally be used for removing added data rather than large
+complex changes. 
+    " name="description">
+<meta content="xml2rfc 3.20.0" name="generator">
+<meta content="Internet-Draft" name="keyword">
+<meta content="draft-gondwana-dkim2-modification-alegbra-04" name="ietf.draft">
+<!-- Generator version information:
+  xml2rfc 3.20.0
+    Python 3.12.3
+    ConfigArgParse 1.7
+    google-i18n-address 2.4.0
+    intervaltree 3.0.2
+    Jinja2 3.1.2
+    lxml 5.2.1
+    platformdirs 4.2.0
+    pycountry 23.12.11
+    PyYAML 6.0.1
+    requests 2.31.0
+    setuptools 68.1.2
+    six 1.16.0
+    wcwidth 0.2.5
+    weasyprint 61.1
+-->
+<link href="draft-gondwana-dkim2-mailversion.xml" rel="alternate" type="application/rfc+xml">
+<link href="#copyright" rel="license">
+<style type="text/css">/*
+
+  NOTE: Changes at the bottom of this file overrides some earlier settings.
+
+  Once the style has stabilized and has been adopted as an official RFC style,
+  this can be consolidated so that style settings occur only in one place, but
+  for now the contents of this file consists first of the initial CSS work as
+  provided to the RFC Formatter (xml2rfc) work, followed by itemized and
+  commented changes found necessary during the development of the v3
+  formatters.
+
+*/
+
+/* fonts */
+@import url('https://fonts.googleapis.com/css?family=Noto+Sans'); /* Sans-serif */
+@import url('https://fonts.googleapis.com/css?family=Noto+Serif'); /* Serif (print) */
+@import url('https://fonts.googleapis.com/css?family=Roboto+Mono'); /* Monospace */
+
+:root {
+  --font-sans: 'Noto Sans', Arial, Helvetica, sans-serif;
+  --font-serif: 'Noto Serif', 'Times', 'Times New Roman', serif;
+  --font-mono: 'Roboto Mono', Courier, 'Courier New', monospace;
+}
+
+@viewport {
+  zoom: 1.0;
+}
+@-ms-viewport {
+  width: extend-to-zoom;
+  zoom: 1.0;
+}
+/* general and mobile first */
+html {
+}
+body {
+  max-width: 90%;
+  margin: 1.5em auto;
+  color: #222;
+  background-color: #fff;
+  font-size: 14px;
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  scroll-behavior: smooth;
+  overflow-wrap: break-word;
+}
+.ears {
+  display: none;
+}
+
+/* headings */
+#title, h1, h2, h3, h4, h5, h6 {
+  margin: 1em 0 0.5em;
+  font-weight: bold;
+  line-height: 1.3;
+}
+#title {
+  clear: both;
+  border-bottom: 1px solid #ddd;
+  margin: 0 0 0.5em 0;
+  padding: 1em 0 0.5em;
+}
+.author {
+  padding-bottom: 4px;
+}
+h1 {
+  font-size: 26px;
+  margin: 1em 0;
+}
+h2 {
+  font-size: 22px;
+  margin-top: -20px;  /* provide offset for in-page anchors */
+  padding-top: 33px;
+}
+h3 {
+  font-size: 18px;
+  margin-top: -36px;  /* provide offset for in-page anchors */
+  padding-top: 42px;
+}
+h4 {
+  font-size: 16px;
+  margin-top: -36px;  /* provide offset for in-page anchors */
+  padding-top: 42px;
+}
+h5, h6 {
+  font-size: 14px;
+}
+#n-copyright-notice {
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 1em;
+  margin-bottom: 1em;
+}
+/* general structure */
+p {
+  padding: 0;
+  margin: 0 0 1em 0;
+  text-align: left;
+}
+div, span {
+  position: relative;
+}
+div {
+  margin: 0;
+}
+.alignRight.art-text {
+  background-color: #f9f9f9;
+  border: 1px solid #eee;
+  border-radius: 3px;
+  padding: 1em 1em 0;
+  margin-bottom: 1.5em;
+}
+.alignRight.art-text pre {
+  padding: 0;
+}
+.alignRight {
+  margin: 1em 0;
+}
+.alignRight > *:first-child {
+  border: none;
+  margin: 0;
+  float: right;
+  clear: both;
+}
+.alignRight > *:nth-child(2) {
+  clear: both;
+  display: block;
+  border: none;
+}
+svg {
+  display: block;
+}
+svg[font-family~="serif" i], svg [font-family~="serif" i] {
+  font-family: var(--font-serif);
+}
+svg[font-family~="sans-serif" i], svg [font-family~="sans-serif" i] {
+  font-family: var(--font-sans);
+}
+svg[font-family~="monospace" i], svg [font-family~="monospace" i] {
+  font-family: var(--font-mono);
+}
+.alignCenter.art-text {
+  background-color: #f9f9f9;
+  border: 1px solid #eee;
+  border-radius: 3px;
+  padding: 1em 1em 0;
+  margin-bottom: 1.5em;
+}
+.alignCenter.art-text pre {
+  padding: 0;
+}
+.alignCenter {
+  margin: 1em 0;
+}
+.alignCenter > *:first-child {
+  display: table;
+  border: none;
+  margin: 0 auto;
+}
+
+/* lists */
+ol, ul {
+  padding: 0;
+  margin: 0 0 1em 2em;
+}
+ol ol, ul ul, ol ul, ul ol {
+  margin-left: 1em;
+}
+li {
+  margin: 0 0 0.25em 0;
+}
+.ulCompact li {
+  margin: 0;
+}
+ul.empty, .ulEmpty {
+  list-style-type: none;
+}
+ul.empty li, .ulEmpty li {
+  margin-top: 0.5em;
+}
+ul.ulBare, li.ulBare {
+  margin-left: 0em !important;
+}
+ul.compact, .ulCompact,
+ol.compact, .olCompact {
+  line-height: 100%;
+  margin: 0 0 0 2em;
+}
+
+/* definition lists */
+dl {
+}
+dl > dt {
+  float: left;
+  margin-right: 1em;
+}
+/* 
+dl.nohang > dt {
+  float: none;
+}
+*/
+dl > dd {
+  margin-bottom: .8em;
+  min-height: 1.3em;
+}
+dl.compact > dd, .dlCompact > dd {
+  margin-bottom: 0em;
+}
+dl > dd > dl {
+  margin-top: 0.5em;
+  margin-bottom: 0em;
+}
+
+/* links */
+a {
+  text-decoration: none;
+}
+a[href] {
+  color: #22e; /* Arlen: WCAG 2019 */
+}
+a[href]:hover {
+  background-color: #f2f2f2;
+}
+figcaption a[href],
+a[href].selfRef {
+  color: #222;
+}
+/* XXX probably not this:
+a.selfRef:hover {
+  background-color: transparent;
+  cursor: default;
+} */
+
+/* Figures */
+tt, code, pre {
+  background-color: #f9f9f9;
+  font-family: var(--font-mono);
+}
+pre {
+  border: 1px solid #eee;
+  margin: 0;
+  padding: 1em;
+}
+img {
+  max-width: 100%;
+}
+figure {
+  margin: 0;
+}
+figure blockquote {
+  margin: 0.8em 0.4em 0.4em;
+}
+figcaption {
+  font-style: italic;
+  margin: 0 0 1em 0;
+}
+@media screen {
+  pre {
+    overflow-x: auto;
+    max-width: 100%;
+    max-width: calc(100% - 22px);
+  }
+}
+
+/* aside, blockquote */
+aside, blockquote {
+  margin-left: 0;
+  padding: 1.2em 2em;
+}
+blockquote {
+  background-color: #f9f9f9;
+  color: #111; /* Arlen: WCAG 2019 */
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  margin: 1em 0;
+}
+blockquote > *:last-child {
+  margin-bottom: 0;
+}
+cite {
+  display: block;
+  text-align: right;
+  font-style: italic;
+}
+
+/* tables */
+table {
+  width: 100%;
+  margin: 0 0 1em;
+  border-collapse: collapse;
+  border: 1px solid #eee;
+}
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.5em 0.75em;
+}
+th {
+  text-align: left;
+  background-color: #e9e9e9;
+}
+tr:nth-child(2n+1) > td {
+  background-color: #f5f5f5;
+}
+table caption {
+  font-style: italic;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}
+table p {
+  /* XXX to avoid bottom margin on table row signifiers. If paragraphs should
+     be allowed within tables more generally, it would be far better to select on a class. */
+  margin: 0;
+}
+
+/* pilcrow */
+a.pilcrow {
+  color: #666; /* Arlen: AHDJ 2019 */
+  text-decoration: none;
+  visibility: hidden;
+  user-select: none;
+  -ms-user-select: none;
+  -o-user-select:none;
+  -moz-user-select: none;
+  -khtml-user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+@media screen {
+  aside:hover > a.pilcrow,
+  p:hover > a.pilcrow,
+  blockquote:hover > a.pilcrow,
+  div:hover > a.pilcrow,
+  li:hover > a.pilcrow,
+  pre:hover > a.pilcrow {
+    visibility: visible;
+  }
+  a.pilcrow:hover {
+    background-color: transparent;
+  }
+}
+
+/* misc */
+hr {
+  border: 0;
+  border-top: 1px solid #eee;
+}
+.bcp14 {
+  font-variant: small-caps;
+}
+
+.role {
+  font-variant: all-small-caps;
+}
+
+/* info block */
+#identifiers {
+  margin: 0;
+  font-size: 0.9em;
+}
+#identifiers dt {
+  width: 3em;
+  clear: left;
+}
+#identifiers dd {
+  float: left;
+  margin-bottom: 0;
+}
+/* Fix PDF info block run off issue */
+@media print {
+  #identifiers dd {
+    float: none;
+  }
+}
+#identifiers .authors .author {
+  display: inline-block;
+  margin-right: 1.5em;
+}
+#identifiers .authors .org {
+  font-style: italic;
+}
+
+/* The prepared/rendered info at the very bottom of the page */
+.docInfo {
+  color: #666; /* Arlen: WCAG 2019 */
+  font-size: 0.9em;
+  font-style: italic;
+  margin-top: 2em;
+}
+.docInfo .prepared {
+  float: left;
+}
+.docInfo .prepared {
+  float: right;
+}
+
+/* table of contents */
+#toc  {
+  padding: 0.75em 0 2em 0;
+  margin-bottom: 1em;
+}
+nav.toc ul {
+  margin: 0 0.5em 0 0;
+  padding: 0;
+  list-style: none;
+}
+nav.toc li {
+  line-height: 1.3em;
+  margin: 0.75em 0;
+  padding-left: 1.2em;
+  text-indent: -1.2em;
+}
+/* references */
+.references dt {
+  text-align: right;
+  font-weight: bold;
+  min-width: 7em;
+}
+.references dd {
+  margin-left: 8em;
+  overflow: auto;
+}
+
+.refInstance {
+  margin-bottom: 1.25em;
+}
+
+.refSubseries {
+  margin-bottom: 1.25em;
+}
+
+.references .ascii {
+  margin-bottom: 0.25em;
+}
+
+/* index */
+.index ul {
+  margin: 0 0 0 1em;
+  padding: 0;
+  list-style: none;
+}
+.index ul ul {
+  margin: 0;
+}
+.index li {
+  margin: 0;
+  text-indent: -2em;
+  padding-left: 2em;
+  padding-bottom: 5px;
+}
+.indexIndex {
+  margin: 0.5em 0 1em;
+}
+.index a {
+  font-weight: 700;
+}
+/* make the index two-column on all but the smallest screens */
+@media (min-width: 600px) {
+  .index ul {
+    -moz-column-count: 2;
+    -moz-column-gap: 20px;
+  }
+  .index ul ul {
+    -moz-column-count: 1;
+    -moz-column-gap: 0;
+  }
+}
+
+/* authors */
+address.vcard {
+  font-style: normal;
+  margin: 1em 0;
+}
+
+address.vcard .nameRole {
+  font-weight: 700;
+  margin-left: 0;
+}
+address.vcard .label {
+  font-family: var(--font-sans);
+  margin: 0.5em 0;
+}
+address.vcard .type {
+  display: none;
+}
+.alternative-contact {
+  margin: 1.5em 0 1em;
+}
+hr.addr {
+  border-top: 1px dashed;
+  margin: 0;
+  color: #ddd;
+  max-width: calc(100% - 16px);
+}
+
+/* temporary notes */
+.rfcEditorRemove::before {
+  position: absolute;
+  top: 0.2em;
+  right: 0.2em;
+  padding: 0.2em;
+  content: "The RFC Editor will remove this note";
+  color: #9e2a00; /* Arlen: WCAG 2019 */
+  background-color: #ffd; /* Arlen: WCAG 2019 */
+}
+.rfcEditorRemove {
+  position: relative;
+  padding-top: 1.8em;
+  background-color: #ffd; /* Arlen: WCAG 2019 */
+  border-radius: 3px;
+}
+.cref {
+  background-color: #ffd; /* Arlen: WCAG 2019 */
+  padding: 2px 4px;
+}
+.crefSource {
+  font-style: italic;
+}
+/* alternative layout for smaller screens */
+@media screen and (max-width: 1023px) {
+  body {
+    padding-top: 2em;
+  }
+  #title {
+    padding: 1em 0;
+  }
+  h1 {
+    font-size: 24px;
+  }
+  h2 {
+    font-size: 20px;
+    margin-top: -18px;  /* provide offset for in-page anchors */
+    padding-top: 38px;
+  }
+  #identifiers dd {
+    max-width: 60%;
+  }
+  #toc {
+    position: fixed;
+    z-index: 2;
+    top: 0;
+    right: 0;
+    padding: 0;
+    margin: 0;
+    background-color: inherit;
+    border-bottom: 1px solid #ccc;
+  }
+  #toc h2 {
+    margin: -1px 0 0 0;
+    padding: 4px 0 4px 6px;
+    padding-right: 1em;
+    min-width: 190px;
+    font-size: 1.1em;
+    text-align: right;
+    background-color: #444;
+    color: white;
+    cursor: pointer;
+  }
+  #toc h2::before { /* css hamburger */
+    float: right;
+    position: relative;
+    width: 1em;
+    height: 1px;
+    left: -164px;
+    margin: 6px 0 0 0;
+    background: white none repeat scroll 0 0;
+    box-shadow: 0 4px 0 0 white, 0 8px 0 0 white;
+    content: "";
+  }
+  #toc nav {
+    display: none;
+    padding: 0.5em 1em 1em;
+    overflow: auto;
+    height: calc(100vh - 48px);
+    border-left: 1px solid #ddd;
+  }
+}
+
+/* alternative layout for wide screens */
+@media screen and (min-width: 1024px) {
+  body {
+    max-width: 724px;
+    margin: 42px auto;
+    padding-left: 1.5em;
+    padding-right: 29em;
+  }
+  #toc {
+    position: fixed;
+    top: 42px;
+    right: 42px;
+    width: 25%;
+    margin: 0;
+    padding: 0 1em;
+    z-index: 1;
+  }
+  #toc h2 {
+    border-top: none;
+    border-bottom: 1px solid #ddd;
+    font-size: 1em;
+    font-weight: normal;
+    margin: 0;
+    padding: 0.25em 1em 1em 0;
+  }
+  #toc nav {
+    display: block;
+    height: calc(90vh - 84px);
+    bottom: 0;
+    padding: 0.5em 0 0;
+    overflow: auto;
+  }
+  img { /* future proofing */
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* pagination */
+@media print {
+  body {
+    width: 100%;
+  }
+  p {
+    orphans: 3;
+    widows: 3;
+  }
+  #n-copyright-notice {
+    border-bottom: none;
+  }
+  #toc, #n-introduction {
+    page-break-before: always;
+  }
+  #toc {
+    border-top: none;
+    padding-top: 0;
+  }
+  figure, pre {
+    page-break-inside: avoid;
+  }
+  figure {
+    overflow: scroll;
+  }
+  .breakable pre {
+    break-inside: auto;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    page-break-after: avoid;
+  }
+  h2+*, h3+*, h4+*, h5+*, h6+* {
+    page-break-before: avoid;
+  }
+  pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 10pt;
+  }
+  table {
+    border: 1px solid #ddd;
+  }
+  td {
+    border-top: 1px solid #ddd;
+  }
+}
+
+/* This is commented out here, as the string-set: doesn't
+   pass W3C validation currently */
+/*
+.ears thead .left {
+  string-set: ears-top-left content();
+}
+
+.ears thead .center {
+  string-set: ears-top-center content();
+}
+
+.ears thead .right {
+  string-set: ears-top-right content();
+}
+
+.ears tfoot .left {
+  string-set: ears-bottom-left content();
+}
+
+.ears tfoot .center {
+  string-set: ears-bottom-center content();
+}
+
+.ears tfoot .right {
+  string-set: ears-bottom-right content();
+}
+*/
+
+@page :first {
+  padding-top: 0;
+  @top-left {
+    content: normal;
+    border: none;
+  }
+  @top-center {
+    content: normal;
+    border: none;
+  }
+  @top-right {
+    content: normal;
+    border: none;
+  }
+}
+
+@page {
+  size: A4;
+  margin-bottom: 45mm;
+  padding-top: 20px;
+  /* The following is commented out here, but set appropriately by in code, as
+     the content depends on the document */
+  /*
+  @top-left {
+    content: 'Internet-Draft';
+    vertical-align: bottom;
+    border-bottom: solid 1px #ccc;
+  }
+  @top-left {
+    content: string(ears-top-left);
+    vertical-align: bottom;
+    border-bottom: solid 1px #ccc;
+  }
+  @top-center {
+    content: string(ears-top-center);
+    vertical-align: bottom;
+    border-bottom: solid 1px #ccc;
+  }
+  @top-right {
+    content: string(ears-top-right);
+    vertical-align: bottom;
+    border-bottom: solid 1px #ccc;
+  }
+  @bottom-left {
+    content: string(ears-bottom-left);
+    vertical-align: top;
+    border-top: solid 1px #ccc;
+  }
+  @bottom-center {
+    content: string(ears-bottom-center);
+    vertical-align: top;
+    border-top: solid 1px #ccc;
+  }
+  @bottom-right {
+      content: '[Page ' counter(page) ']';
+      vertical-align: top;
+      border-top: solid 1px #ccc;
+  }
+  */
+
+}
+
+/* Changes introduced to fix issues found during implementation */
+/* Make sure links are clickable even if overlapped by following H* */
+a {
+  z-index: 2;
+}
+/* Separate body from document info even without intervening H1 */
+section {
+  clear: both;
+}
+
+
+/* Top align author divs, to avoid names without organization dropping level with org names */
+.author {
+  vertical-align: top;
+}
+
+/* Leave room in document info to show Internet-Draft on one line */
+#identifiers dt {
+  width: 8em;
+}
+
+/* Don't waste quite as much whitespace between label and value in doc info */
+#identifiers dd {
+  margin-left: 1em;
+}
+
+/* Give floating toc a background color (needed when it's a div inside section */
+#toc {
+  background-color: white;
+}
+
+/* Make the collapsed ToC header render white on gray also when it's a link */
+@media screen and (max-width: 1023px) {
+  #toc h2 a,
+  #toc h2 a:link,
+  #toc h2 a:focus,
+  #toc h2 a:hover,
+  #toc a.toplink,
+  #toc a.toplink:hover {
+    color: white;
+    background-color: #444;
+    text-decoration: none;
+  }
+}
+
+/* Give the bottom of the ToC some whitespace */
+@media screen and (min-width: 1024px) {
+  #toc {
+    padding: 0 0 1em 1em;
+  }
+}
+
+/* Style section numbers with more space between number and title */
+.section-number {
+  padding-right: 0.5em;
+}
+
+/* prevent monospace from becoming overly large */
+tt, code, pre {
+  font-size: 95%;
+}
+
+/* Fix the height/width aspect for ascii art*/
+.sourcecode pre,
+.art-text pre {
+  line-height: 1.12;
+}
+
+
+/* Add styling for a link in the ToC that points to the top of the document */
+a.toplink {
+  float: right;
+  margin-right: 0.5em;
+}
+
+/* Fix the dl styling to match the RFC 7992 attributes */
+dl > dt,
+dl.dlParallel > dt {
+  float: left;
+  margin-right: 1em;
+}
+dl.dlNewline > dt {
+  float: none;
+}
+
+/* Provide styling for table cell text alignment */
+table td.text-left,
+table th.text-left {
+  text-align: left;
+}
+table td.text-center,
+table th.text-center {
+  text-align: center;
+}
+table td.text-right,
+table th.text-right {
+  text-align: right;
+}
+
+/* Make the alternative author contact information look less like just another
+   author, and group it closer with the primary author contact information */
+.alternative-contact {
+  margin: 0.5em 0 0.25em 0;
+}
+address .non-ascii {
+  margin: 0 0 0 2em;
+}
+
+/* With it being possible to set tables with alignment
+  left, center, and right, { width: 100%; } does not make sense */
+table {
+  width: auto;
+}
+
+/* Avoid reference text that sits in a block with very wide left margin,
+   because of a long floating dt label.*/
+.references dd {
+  overflow: visible;
+}
+
+/* Control caption placement */
+caption {
+  caption-side: bottom;
+}
+
+/* Limit the width of the author address vcard, so names in right-to-left
+   script don't end up on the other side of the page. */
+
+address.vcard {
+  max-width: 30em;
+  margin-right: auto;
+}
+
+/* For address alignment dependent on LTR or RTL scripts */
+address div.left {
+  text-align: left;
+}
+address div.right {
+  text-align: right;
+}
+
+/* Provide table alignment support.  We can't use the alignX classes above
+   since they do unwanted things with caption and other styling. */
+table.right {
+ margin-left: auto;
+ margin-right: 0;
+}
+table.center {
+ margin-left: auto;
+ margin-right: auto;
+}
+table.left {
+ margin-left: 0;
+ margin-right: auto;
+}
+
+/* Give the table caption label the same styling as the figcaption */
+caption a[href] {
+  color: #222;
+}
+
+@media print {
+  .toplink {
+    display: none;
+  }
+
+  /* avoid overwriting the top border line with the ToC header */
+  #toc {
+    padding-top: 1px;
+  }
+
+  /* Avoid page breaks inside dl and author address entries */
+  .vcard {
+    page-break-inside: avoid;
+  }
+
+}
+/* Tweak the bcp14 keyword presentation */
+.bcp14 {
+  font-variant: small-caps;
+  font-weight: bold;
+  font-size: 0.9em;
+}
+/* Tweak the invisible space above H* in order not to overlay links in text above */
+ h2 {
+  margin-top: -18px;  /* provide offset for in-page anchors */
+  padding-top: 31px;
+ }
+ h3 {
+  margin-top: -18px;  /* provide offset for in-page anchors */
+  padding-top: 24px;
+ }
+ h4 {
+  margin-top: -18px;  /* provide offset for in-page anchors */
+  padding-top: 24px;
+ }
+/* Float artwork pilcrow to the right */
+@media screen {
+  .artwork a.pilcrow {
+    display: block;
+    line-height: 0.7;
+    margin-top: 0.15em;
+  }
+}
+/* Make pilcrows on dd visible */
+@media screen {
+  dd:hover > a.pilcrow {
+    visibility: visible;
+  }
+}
+/* Make the placement of figcaption match that of a table's caption
+   by removing the figure's added bottom margin */
+.alignLeft.art-text,
+.alignCenter.art-text,
+.alignRight.art-text {
+   margin-bottom: 0;
+}
+.alignLeft,
+.alignCenter,
+.alignRight {
+  margin: 1em 0 0 0;
+}
+/* In print, the pilcrow won't show on hover, so prevent it from taking up space,
+   possibly even requiring a new line */
+@media print {
+  a.pilcrow {
+    display: none;
+  }
+}
+/* Styling for the external metadata */
+div#external-metadata {
+  background-color: #eee;
+  padding: 0.5em;
+  margin-bottom: 0.5em;
+  display: none;
+}
+div#internal-metadata {
+  padding: 0.5em;                       /* to match the external-metadata padding */
+}
+/* Styling for title RFC Number */
+h1#rfcnum {
+  clear: both;
+  margin: 0 0 -1em;
+  padding: 1em 0 0 0;
+}
+/* Make .olPercent look the same as <ol><li> */
+dl.olPercent > dd {
+  margin-bottom: 0.25em;
+  min-height: initial;
+}
+/* Give aside some styling to set it apart */
+aside {
+  border-left: 1px solid #ddd;
+  margin: 1em 0 1em 2em;
+  padding: 0.2em 2em;
+}
+aside > dl,
+aside > ol,
+aside > ul,
+aside > table,
+aside > p {
+  margin-bottom: 0.5em;
+}
+/* Additional page break settings */
+@media print {
+  figcaption, table caption {
+    page-break-before: avoid;
+  }
+}
+/* Font size adjustments for print */
+@media print {
+  body  { font-size: 10pt;      line-height: normal; max-width: 96%; }
+  h1    { font-size: 1.72em;    padding-top: 1.5em; } /* 1*1.2*1.2*1.2 */
+  h2    { font-size: 1.44em;    padding-top: 1.5em; } /* 1*1.2*1.2 */
+  h3    { font-size: 1.2em;     padding-top: 1.5em; } /* 1*1.2 */
+  h4    { font-size: 1em;       padding-top: 1.5em; }
+  h5, h6 { font-size: 1em;      margin: initial; padding: 0.5em 0 0.3em; }
+}
+/* Sourcecode margin in print, when there's no pilcrow */
+@media print {
+  .artwork,
+  .artwork > pre,
+  .sourcecode {
+    margin-bottom: 1em;
+  }
+}
+/* Avoid narrow tables forcing too narrow table captions, which may render badly */
+table {
+  min-width: 20em;
+}
+/* ol type a */
+ol.type-a { list-style-type: lower-alpha; }
+ol.type-A { list-style-type: upper-alpha; }
+ol.type-i { list-style-type: lower-roman; }
+ol.type-I { list-style-type: lower-roman; }
+/* Apply the print table and row borders in general, on request from the RPC,
+and increase the contrast between border and odd row background slightly */
+table {
+  border: 1px solid #ddd;
+}
+td {
+  border-top: 1px solid #ddd;
+}
+tr {
+  break-inside: avoid;
+}
+tr:nth-child(2n+1) > td {
+  background-color: #f8f8f8;
+}
+/* Use style rules to govern display of the TOC. */
+@media screen and (max-width: 1023px) {
+  #toc nav { display: none; }
+  #toc.active nav { display: block; }
+}
+/* Add support for keepWithNext */
+.keepWithNext {
+  break-after: avoid-page;
+  break-after: avoid-page;
+}
+/* Add support for keepWithPrevious */
+.keepWithPrevious {
+  break-before: avoid-page;
+}
+/* Change the approach to avoiding breaks inside artwork etc. */
+figure, pre, table, .artwork, .sourcecode  {
+  break-before: auto;
+  break-after: auto;
+}
+/* Avoid breaks between <dt> and <dd> */
+dl {
+  break-before: auto;
+  break-inside: auto;
+}
+dt {
+  break-before: auto;
+  break-after: avoid-page;
+}
+dd {
+  break-before: avoid-page;
+  break-after: auto;
+  orphans: 3;
+  widows: 3
+}
+span.break, dd.break {
+  margin-bottom: 0;
+  min-height: 0;
+  break-before: auto;
+  break-inside: auto;
+  break-after: auto;
+}
+/* Undo break-before ToC */
+@media print {
+  #toc {
+    break-before: auto;
+  }
+}
+/* Text in compact lists should not get extra bottom margin space,
+   since that would makes the list not compact */
+ul.compact p, .ulCompact p,
+ol.compact p, .olCompact p {
+ margin: 0;
+}
+/* But the list as a whole needs the extra space at the end */
+section ul.compact,
+section .ulCompact,
+section ol.compact,
+section .olCompact {
+  margin-bottom: 1em;                    /* same as p not within ul.compact etc. */
+}
+/* The tt and code background above interferes with for instance table cell
+   backgrounds.  Changed to something a bit more selective. */
+tt, code {
+  background-color: transparent;
+}
+p tt, p code, li tt, li code {
+  background-color: #f8f8f8;
+}
+/* Tweak the pre margin -- 0px doesn't come out well */
+pre {
+   margin-top: 0.5px;
+}
+/* Tweak the compact list text */
+ul.compact, .ulCompact,
+ol.compact, .olCompact,
+dl.compact, .dlCompact {
+  line-height: normal;
+}
+/* Don't add top margin for nested lists */
+li > ul, li > ol, li > dl,
+dd > ul, dd > ol, dd > dl,
+dl > dd > dl {
+  margin-top: initial;
+}
+/* Elements that should not be rendered on the same line as a <dt> */
+/* This should match the element list in writer.text.TextWriter.render_dl() */
+dd > div.artwork:first-child,
+dd > aside:first-child,
+dd > figure:first-child,
+dd > ol:first-child,
+dd > div.sourcecode:first-child,
+dd > table:first-child,
+dd > ul:first-child {
+  clear: left;
+}
+/* fix for weird browser behaviour when <dd/> is empty */
+dt+dd:empty::before{
+  content: "\00a0";
+}
+/* Make paragraph spacing inside <li> smaller than in body text, to fit better within the list */
+li > p {
+  margin-bottom: 0.5em
+}
+/* Don't let p margin spill out from inside list items */
+li > p:last-of-type:only-child {
+  margin-bottom: 0;
+}
+</style>
+<link href="rfc-local.css" rel="stylesheet" type="text/css">
+<script type="application/javascript">async function addMetadata(){try{const e=document.styleSheets[0].cssRules;for(let t=0;t<e.length;t++)if(/#identifiers/.exec(e[t].selectorText)){const a=e[t].cssText.replace("#identifiers","#external-updates");document.styleSheets[0].insertRule(a,document.styleSheets[0].cssRules.length)}}catch(e){console.log(e)}const e=document.getElementById("external-metadata");if(e)try{var t,a="",o=function(e){const t=document.getElementsByTagName("meta");for(let a=0;a<t.length;a++)if(t[a].getAttribute("name")===e)return t[a].getAttribute("content");return""}("rfc.number");if(o){t="https://www.rfc-editor.org/rfc/rfc"+o+".json";try{const e=await fetch(t);a=await e.json()}catch(e){t=document.URL.indexOf("html")>=0?document.URL.replace(/html$/,"json"):document.URL+".json";const o=await fetch(t);a=await o.json()}}if(!a)return;e.style.display="block";const s="",d="https://datatracker.ietf.org/doc",n="https://datatracker.ietf.org/ipr/search",c="https://www.rfc-editor.org/info",l=a.doc_id.toLowerCase(),i=a.doc_id.slice(0,3).toLowerCase(),f=a.doc_id.slice(3).replace(/^0+/,""),u={status:"Status",obsoletes:"Obsoletes",obsoleted_by:"Obsoleted By",updates:"Updates",updated_by:"Updated By",see_also:"See Also",errata_url:"Errata"};let h="<dl style='overflow:hidden' id='external-updates'>";["status","obsoletes","obsoleted_by","updates","updated_by","see_also","errata_url"].forEach(e=>{if("status"==e){a[e]=a[e].toLowerCase();var t=a[e].split(" "),o=t.length,w="",p=1;for(let e=0;e<o;e++)p<o?w=w+r(t[e])+" ":w+=r(t[e]),p++;a[e]=w}else if("obsoletes"==e||"obsoleted_by"==e||"updates"==e||"updated_by"==e){var g,m="",b=1;g=a[e].length;for(let t=0;t<g;t++)a[e][t]&&(a[e][t]=String(a[e][t]).toLowerCase(),m=b<g?m+"<a href='"+s+"/rfc/".concat(a[e][t])+"'>"+a[e][t].slice(3)+"</a>, ":m+"<a href='"+s+"/rfc/".concat(a[e][t])+"'>"+a[e][t].slice(3)+"</a>",b++);a[e]=m}else if("see_also"==e){var y,L="",C=1;y=a[e].length;for(let t=0;t<y;t++)if(a[e][t]){a[e][t]=String(a[e][t]);var _=a[e][t].slice(0,3),v=a[e][t].slice(3).replace(/^0+/,"");L=C<y?"RFC"!=_?L+"<a href='"+s+"/info/"+_.toLowerCase().concat(v.toLowerCase())+"'>"+_+" "+v+"</a>, ":L+"<a href='"+s+"/info/"+_.toLowerCase().concat(v.toLowerCase())+"'>"+v+"</a>, ":"RFC"!=_?L+"<a href='"+s+"/info/"+_.toLowerCase().concat(v.toLowerCase())+"'>"+_+" "+v+"</a>":L+"<a href='"+s+"/info/"+_.toLowerCase().concat(v.toLowerCase())+"'>"+v+"</a>",C++}a[e]=L}else if("errata_url"==e){var R="";R=a[e]?R+"<a href='"+a[e]+"'>Errata exist</a> | <a href='"+d+"/"+l+"'>Datatracker</a>| <a href='"+n+"/?"+i+"="+f+"&submit="+i+"'>IPR</a> | <a href='"+c+"/"+l+"'>Info page</a>":"<a href='"+d+"/"+l+"'>Datatracker</a> | <a href='"+n+"/?"+i+"="+f+"&submit="+i+"'>IPR</a> | <a href='"+c+"/"+l+"'>Info page</a>",a[e]=R}""!=a[e]?"Errata"==u[e]?h+=`<dt>More info:</dt><dd>${a[e]}</dd>`:h+=`<dt>${u[e]}:</dt><dd>${a[e]}</dd>`:"Errata"==u[e]&&(h+=`<dt>More info:</dt><dd>${a[e]}</dd>`)}),h+="</dl>",e.innerHTML=h}catch(e){console.log(e)}else console.log("Could not locate metadata <div> element");function r(e){return e.charAt(0).toUpperCase()+e.slice(1)}}window.removeEventListener("load",addMetadata),window.addEventListener("load",addMetadata);</script>
+</head>
+<body class="xml2rfc">
+<script src="metadata.min.js"></script>
+<table class="ears">
+<thead><tr>
+<td class="left">Internet-Draft</td>
+<td class="center">Email Modification Versioning</td>
+<td class="right">November 2025</td>
+</tr></thead>
+<tfoot><tr>
+<td class="left">Gondwana</td>
+<td class="center">Expires 5 May 2026</td>
+<td class="right">[Page]</td>
+</tr></tfoot>
+</table>
+<div id="external-metadata" class="document-information"></div>
+<div id="internal-metadata" class="document-information">
+<dl id="identifiers">
+<dt class="label-workgroup">Workgroup:</dt>
+<dd class="workgroup">Network Working Group</dd>
+<dt class="label-internet-draft">Internet-Draft:</dt>
+<dd class="internet-draft">draft-gondwana-dkim2-modification-alegbra-04</dd>
+<dt class="label-published">Published:</dt>
+<dd class="published">
+<time datetime="2025-11-01" class="published">1 November 2025</time>
+    </dd>
+<dt class="label-intended-status">Intended Status:</dt>
+<dd class="intended-status">Standards Track</dd>
+<dt class="label-expires">Expires:</dt>
+<dd class="expires"><time datetime="2026-05-05">5 May 2026</time></dd>
+<dt class="label-authors">Author:</dt>
+<dd class="authors">
+<div class="author">
+      <div class="author-name">B. Gondwana</div>
+<div class="org">Fastmail Pty Ltd</div>
+</div>
+</dd>
+</dl>
+</div>
+<h1 id="title">A method for describing changes made to an email</h1>
+<section id="section-abstract">
+      <h2 id="abstract"><a href="#abstract" class="selfRef">Abstract</a></h2>
+<p id="section-abstract-1">This memo describes a method for describing the changes made to an email
+during common email modifications, for example those caused by mailing lists
+and forwarders.<a href="#section-abstract-1" class="pilcrow">¶</a></p>
+<p id="section-abstract-2">While this is general enough to be used for any changes, it is anticipated that
+this method will normally be used for removing added data rather than large
+complex changes.<a href="#section-abstract-2" class="pilcrow">¶</a></p>
+</section>
+<div id="status-of-memo">
+<section id="section-boilerplate.1">
+        <h2 id="name-status-of-this-memo">
+<a href="#name-status-of-this-memo" class="section-name selfRef">Status of This Memo</a>
+        </h2>
+<p id="section-boilerplate.1-1">
+        This Internet-Draft is submitted in full conformance with the
+        provisions of BCP 78 and BCP 79.<a href="#section-boilerplate.1-1" class="pilcrow">¶</a></p>
+<p id="section-boilerplate.1-2">
+        Internet-Drafts are working documents of the Internet Engineering Task
+        Force (IETF). Note that other groups may also distribute working
+        documents as Internet-Drafts. The list of current Internet-Drafts is
+        at <span><a href="https://datatracker.ietf.org/drafts/current/">https://datatracker.ietf.org/drafts/current/</a></span>.<a href="#section-boilerplate.1-2" class="pilcrow">¶</a></p>
+<p id="section-boilerplate.1-3">
+        Internet-Drafts are draft documents valid for a maximum of six months
+        and may be updated, replaced, or obsoleted by other documents at any
+        time. It is inappropriate to use Internet-Drafts as reference
+        material or to cite them other than as "work in progress."<a href="#section-boilerplate.1-3" class="pilcrow">¶</a></p>
+<p id="section-boilerplate.1-4">
+        This Internet-Draft will expire on 5 May 2026.<a href="#section-boilerplate.1-4" class="pilcrow">¶</a></p>
+</section>
+</div>
+<div id="copyright">
+<section id="section-boilerplate.2">
+        <h2 id="name-copyright-notice">
+<a href="#name-copyright-notice" class="section-name selfRef">Copyright Notice</a>
+        </h2>
+<p id="section-boilerplate.2-1">
+            Copyright (c) 2025 IETF Trust and the persons identified as the
+            document authors. All rights reserved.<a href="#section-boilerplate.2-1" class="pilcrow">¶</a></p>
+<p id="section-boilerplate.2-2">
+            This document is subject to BCP 78 and the IETF Trust's Legal
+            Provisions Relating to IETF Documents
+            (<span><a href="https://trustee.ietf.org/license-info">https://trustee.ietf.org/license-info</a></span>) in effect on the date of
+            publication of this document. Please review these documents
+            carefully, as they describe your rights and restrictions with
+            respect to this document. Code Components extracted from this
+            document must include Revised BSD License text as described in
+            Section 4.e of the Trust Legal Provisions and are provided without
+            warranty as described in the Revised BSD License.<a href="#section-boilerplate.2-2" class="pilcrow">¶</a></p>
+</section>
+</div>
+<div id="toc">
+<section id="section-toc.1">
+        <a href="#" onclick="scroll(0,0)" class="toplink">▲</a><h2 id="name-table-of-contents">
+<a href="#name-table-of-contents" class="section-name selfRef">Table of Contents</a>
+        </h2>
+<nav class="toc"><ul class="compact toc ulBare ulEmpty">
+<li class="compact toc ulBare ulEmpty" id="section-toc.1-1.1">
+            <p id="section-toc.1-1.1.1" class="keepWithNext"><a href="#section-1" class="auto internal xref">1</a>.  <a href="#name-background-and-motivations" class="internal xref">Background and motivations</a></p>
+</li>
+          <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.2">
+            <p id="section-toc.1-1.2.1"><a href="#section-2" class="auto internal xref">2</a>.  <a href="#name-the-mailversion-header-fiel" class="internal xref">The MailVersion Header Field</a></p>
+<ul class="compact toc ulBare ulEmpty">
+<li class="compact toc ulBare ulEmpty" id="section-toc.1-1.2.2.1">
+                <p id="section-toc.1-1.2.2.1.1" class="keepWithNext"><a href="#section-2.1" class="auto internal xref">2.1</a>.  <a href="#name-mailversion-header" class="internal xref">MailVersion Header</a></p>
+</li>
+              <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.2.2.2">
+                <p id="section-toc.1-1.2.2.2.1" class="keepWithNext"><a href="#section-2.2" class="auto internal xref">2.2</a>.  <a href="#name-body-recipe" class="internal xref">body-recipe</a></p>
+</li>
+              <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.2.2.3">
+                <p id="section-toc.1-1.2.2.3.1"><a href="#section-2.3" class="auto internal xref">2.3</a>.  <a href="#name-header-recipe" class="internal xref">header-recipe</a></p>
+</li>
+              <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.2.2.4">
+                <p id="section-toc.1-1.2.2.4.1"><a href="#section-2.4" class="auto internal xref">2.4</a>.  <a href="#name-examples" class="internal xref">Examples</a></p>
+</li>
+            </ul>
+</li>
+          <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.3">
+            <p id="section-toc.1-1.3.1"><a href="#section-3" class="auto internal xref">3</a>.  <a href="#name-iterative-application" class="internal xref">Iterative application</a></p>
+</li>
+          <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.4">
+            <p id="section-toc.1-1.4.1"><a href="#section-4" class="auto internal xref">4</a>.  <a href="#name-security" class="internal xref">Security</a></p>
+</li>
+          <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.5">
+            <p id="section-toc.1-1.5.1"><a href="#section-5" class="auto internal xref">5</a>.  <a href="#name-iana-considerations" class="internal xref">IANA Considerations</a></p>
+</li>
+          <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.6">
+            <p id="section-toc.1-1.6.1"><a href="#section-6" class="auto internal xref">6</a>.  <a href="#name-references" class="internal xref">References</a></p>
+<ul class="compact toc ulBare ulEmpty">
+<li class="compact toc ulBare ulEmpty" id="section-toc.1-1.6.2.1">
+                <p id="section-toc.1-1.6.2.1.1"><a href="#section-6.1" class="auto internal xref">6.1</a>.  <a href="#name-normative-references" class="internal xref">Normative References</a></p>
+</li>
+              <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.6.2.2">
+                <p id="section-toc.1-1.6.2.2.1"><a href="#section-6.2" class="auto internal xref">6.2</a>.  <a href="#name-informative-references" class="internal xref">Informative References</a></p>
+</li>
+            </ul>
+</li>
+          <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.7">
+            <p id="section-toc.1-1.7.1"><a href="#appendix-A" class="auto internal xref">Appendix A</a>.  <a href="#name-changes-from-earlier-versio" class="internal xref">Changes from Earlier Versions</a></p>
+<ul class="compact toc ulBare ulEmpty">
+<li class="compact toc ulBare ulEmpty" id="section-toc.1-1.7.2.1">
+                <p id="section-toc.1-1.7.2.1.1"><a href="#appendix-A.1" class="auto internal xref">A.1</a>.  <a href="#name-draft-gondwana-dkim2-mailve" class="internal xref">draft-gondwana-dkim2-mailversion-00</a></p>
+</li>
+              <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.7.2.2">
+                <p id="section-toc.1-1.7.2.2.1"><a href="#appendix-A.2" class="auto internal xref">A.2</a>.  <a href="#name-draft-gondwana-dkim2-modifi" class="internal xref">draft-gondwana-dkim2-modification-algebra-03</a></p>
+</li>
+              <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.7.2.3">
+                <p id="section-toc.1-1.7.2.3.1"><a href="#appendix-A.3" class="auto internal xref">A.3</a>.  <a href="#name-draft-gondwana-dkim2-modific" class="internal xref">draft-gondwana-dkim2-modification-algebra-02</a></p>
+</li>
+              <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.7.2.4">
+                <p id="section-toc.1-1.7.2.4.1"><a href="#appendix-A.4" class="auto internal xref">A.4</a>.  <a href="#name-draft-gondwana-dkim2-modifica" class="internal xref">draft-gondwana-dkim2-modification-algebra-02</a></p>
+</li>
+              <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.7.2.5">
+                <p id="section-toc.1-1.7.2.5.1"><a href="#appendix-A.5" class="auto internal xref">A.5</a>.  <a href="#name-draft-gondwana-dkim2-modificat" class="internal xref">draft-gondwana-dkim2-modification-algebra-01</a></p>
+</li>
+              <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.7.2.6">
+                <p id="section-toc.1-1.7.2.6.1"><a href="#appendix-A.6" class="auto internal xref">A.6</a>.  <a href="#name-draft-gondwana-dkim2-modificati" class="internal xref">draft-gondwana-dkim2-modification-algebra-00</a></p>
+</li>
+            </ul>
+</li>
+          <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.8">
+            <p id="section-toc.1-1.8.1"><a href="#appendix-B" class="auto internal xref"></a><a href="#name-authors-address" class="internal xref">Author's Address</a></p>
+</li>
+        </ul>
+</nav>
+</section>
+</div>
+<div id="background-and-motivations">
+<section id="section-1">
+      <h2 id="name-background-and-motivations">
+<a href="#section-1" class="section-number selfRef">1. </a><a href="#name-background-and-motivations" class="section-name selfRef">Background and motivations</a>
+      </h2>
+<p id="section-1-1">Currently, when an email is sent with a DKIM signature, the message can go
+through multiple forwarders and still be authenticated, however if a single
+change is made to a header which is covered by the signature, or to the body,
+then the signature no longer validates - and it's impossible for the receiver
+to know what was changed, or even if the entire message was replaced.<a href="#section-1-1" class="pilcrow">¶</a></p>
+<p id="section-1-2">By producing a way to describe changes, the recipient can examine the sections
+which were changed and determine whether the change was malicious.  Along with
+signatures which validate against previous versions, this can be used to
+allow signing systems to take accountability for only the version of the
+message which passed through their system.<a href="#section-1-2" class="pilcrow">¶</a></p>
+</section>
+</div>
+<div id="the-mailversion-header-field">
+<section id="section-2">
+      <h2 id="name-the-mailversion-header-fiel">
+<a href="#section-2" class="section-number selfRef">2. </a><a href="#name-the-mailversion-header-fiel" class="section-name selfRef">The MailVersion Header Field</a>
+      </h2>
+<p id="section-2-1">This document describes an ordered set of header fields, each of
+which describes the message at a specific version, along with
+instructions on how to convert that version back to the previous
+version.<a href="#section-2-1" class="pilcrow">¶</a></p>
+<div id="mailversion-header">
+<section id="section-2.1">
+        <h3 id="name-mailversion-header">
+<a href="#section-2.1" class="section-number selfRef">2.1. </a><a href="#name-mailversion-header" class="section-name selfRef">MailVersion Header</a>
+        </h3>
+<p id="section-2.1-1">The format of the value is a tag-list.  Tag-lists contain key=value; key2=value2; - they can be wrapped,
+and all whitespace is normalised to a single space.<a href="#section-2.1-1" class="pilcrow">¶</a></p>
+<p id="section-2.1-2">TODO: we need to decide where we pull the specification of tag-list from!<a href="#section-2.1-2" class="pilcrow">¶</a></p>
+<table class="center" id="table-1">
+          <caption><a href="#table-1" class="selfRef">Table 1</a></caption>
+<thead>
+            <tr>
+              <th class="text-left" rowspan="1" colspan="1">Tag</th>
+              <th class="text-left" rowspan="1" colspan="1">Type</th>
+              <th class="text-left" rowspan="1" colspan="1">Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">v</td>
+              <td class="text-left" rowspan="1" colspan="1">position</td>
+              <td class="text-left" rowspan="1" colspan="1">Revision number (range: 1 to 100)</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">h</td>
+              <td class="text-left" rowspan="1" colspan="1">headerlist</td>
+              <td class="text-left" rowspan="1" colspan="1">List of headers signed by the hh field.</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">ha</td>
+              <td class="text-left" rowspan="1" colspan="1">hash-alg</td>
+              <td class="text-left" rowspan="1" colspan="1">Hash Algorithm used (at least sha256 must be supported); used for hh, bh and ph</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">hh</td>
+              <td class="text-left" rowspan="1" colspan="1">base64</td>
+              <td class="text-left" rowspan="1" colspan="1">Header Hash for the named headers, using the 'relaxed' header algorith from <span>[<a href="#DKIM" class="cite xref">DKIM</a>]</span>
+</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">bh</td>
+              <td class="text-left" rowspan="1" colspan="1">base64</td>
+              <td class="text-left" rowspan="1" colspan="1">Body Hash, using the 'relaxed' body algorithm from <span>[<a href="#DKIM" class="cite xref">DKIM</a>]</span>
+</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">ph.n.m</td>
+              <td class="text-left" rowspan="1" colspan="1">base64</td>
+              <td class="text-left" rowspan="1" colspan="1">Hash for the binary representation of the numbered mime part, after removal of any content-transfer-encoding (this is the data returned by <code>FETCH BINARY[n.m]</code> as described in <span>[<a href="#IMAP" class="cite xref">IMAP</a>]</span> section 7.5.2)</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">b</td>
+              <td class="text-left" rowspan="1" colspan="1">body-recipe</td>
+              <td class="text-left" rowspan="1" colspan="1">Recipe to replicate the previous version of the message body</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">h.header</td>
+              <td class="text-left" rowspan="1" colspan="1">head-recipe</td>
+              <td class="text-left" rowspan="1" colspan="1">Recipe to replicate the previous version of the named header field</td>
+            </tr>
+          </tbody>
+        </table>
+<p id="section-2.1-4">TODO: do we want to add 'bh.n.m' to hash the un-decoded body of individual MIME parts,
+and hh.n.m to hash the headers of the MIME part as well?<a href="#section-2.1-4" class="pilcrow">¶</a></p>
+</section>
+</div>
+<div id="body-recipe">
+<section id="section-2.2">
+        <h3 id="name-body-recipe">
+<a href="#section-2.2" class="section-number selfRef">2.2. </a><a href="#name-body-recipe" class="section-name selfRef">body-recipe</a>
+        </h3>
+<p id="section-2.2-1">The Body Recipe is a comma separated list of instructions.  Each instruction starts with a
+prefix.  Commas can be followed by optional whitespace.<a href="#section-2.2-1" class="pilcrow">¶</a></p>
+<p id="section-2.2-2">The presence of a recipe replaces the previous value, so the tag-value <code>b=</code> creates an empty body, while the tag-value <code>b=b:</code> creates a message with a single blank line for the body.<a href="#section-2.2-2" class="pilcrow">¶</a></p>
+<table class="center" id="table-2">
+          <caption><a href="#table-2" class="selfRef">Table 2</a></caption>
+<thead>
+            <tr>
+              <th class="text-left" rowspan="1" colspan="1">Prefix</th>
+              <th class="text-left" rowspan="1" colspan="1">Value</th>
+              <th class="text-left" rowspan="1" colspan="1">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">c:</td>
+              <td class="text-left" rowspan="1" colspan="1">start-end</td>
+              <td class="text-left" rowspan="1" colspan="1">Copy the lines (inclusive) numbered from 1.  E.g. "c:1-3" copies the first three lines.</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">b:</td>
+              <td class="text-left" rowspan="1" colspan="1">base64</td>
+              <td class="text-left" rowspan="1" colspan="1">Decode the base64 to get the value of a line to insert.  The base64 value does NOT include the trailing CRLF, which must be added at the end of the line, hence "b:" means insert an empty line, and "b:SGVsbG8=" inserts the line "Hello".</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">z</td>
+              <td class="text-left" rowspan="1" colspan="1">none</td>
+              <td class="text-left" rowspan="1" colspan="1">If present, says that changes have been made to the body which can not be described to get back to the earlier version, meaning the signing system takes accountability for the full content.</td>
+            </tr>
+          </tbody>
+        </table>
+</section>
+</div>
+<div id="header-recipe">
+<section id="section-2.3">
+        <h3 id="name-header-recipe">
+<a href="#section-2.3" class="section-number selfRef">2.3. </a><a href="#name-header-recipe" class="section-name selfRef">header-recipe</a>
+        </h3>
+<p id="section-2.3-1">The Header Recipe is a comma separated list of instructions.  Each instruction starts with a
+prefix.  Commas can be followed by optional whitespace.<a href="#section-2.3-1" class="pilcrow">¶</a></p>
+<p id="section-2.3-2">While key names are case insensitive, implementations SHOULD create the header with the same
+case as the key.<a href="#section-2.3-2" class="pilcrow">¶</a></p>
+<p id="section-2.3-3">The presence of a recipe removes every instance of the named header field before applying the recipe,
+so the tag-value <code>h.foo=</code> removes all instances of Foo from the message.<a href="#section-2.3-3" class="pilcrow">¶</a></p>
+<table class="center" id="table-3">
+          <caption><a href="#table-3" class="selfRef">Table 3</a></caption>
+<thead>
+            <tr>
+              <th class="text-left" rowspan="1" colspan="1">Prefix</th>
+              <th class="text-left" rowspan="1" colspan="1">Value</th>
+              <th class="text-left" rowspan="1" colspan="1">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">c:</td>
+              <td class="text-left" rowspan="1" colspan="1">start-end</td>
+              <td class="text-left" rowspan="1" colspan="1">Copy the values of the header-fields with the indexes, numbered from 1 and starting at the bottom;</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">b:</td>
+              <td class="text-left" rowspan="1" colspan="1">base64</td>
+              <td class="text-left" rowspan="1" colspan="1">Decode the base64 to get the value of a header field to insert. The base64 value does NOT include the trailing CRLF, which must be added at the end of the line, hence "b:" means insert a header-field with an empty value.</td>
+            </tr>
+            <tr>
+              <td class="text-left" rowspan="1" colspan="1">z</td>
+              <td class="text-left" rowspan="1" colspan="1">none</td>
+              <td class="text-left" rowspan="1" colspan="1">If present, says that changes have been made to the named header field which can not be described to get back to the earlier version, meaning the signing system takes accountability for the full content of this message.</td>
+            </tr>
+          </tbody>
+        </table>
+<p id="section-2.3-5">NOTE: the headers are inserted from the bottom, i.e. prepended to the message in the order that they are named.<a href="#section-2.3-5" class="pilcrow">¶</a></p>
+<p id="section-2.3-6">e.g. given a message with headers:<a href="#section-2.3-6" class="pilcrow">¶</a></p>
+<div class="alignLeft art-text artwork" id="section-2.3-7">
+<pre>
+Foo: three
+Foo: two
+Foo: one
+</pre><a href="#section-2.3-7" class="pilcrow">¶</a>
+</div>
+<p id="section-2.3-8">And the recipe: <code>h.Foo=c:1-1,b:Zm91cg==,c:2-3</code><a href="#section-2.3-8" class="pilcrow">¶</a></p>
+<p id="section-2.3-9">The output will be:
+~~~
+Foo: three
+Foo: two
+Foo: four
+Foo: one
+~~~<a href="#section-2.3-9" class="pilcrow">¶</a></p>
+</section>
+</div>
+<div id="examples">
+<section id="section-2.4">
+        <h3 id="name-examples">
+<a href="#section-2.4" class="section-number selfRef">2.4. </a><a href="#name-examples" class="section-name selfRef">Examples</a>
+        </h3>
+<p id="section-2.4-1">Example for a message which has had Subject and From replaced,
+and Reply-To added.<a href="#section-2.4-1" class="pilcrow">¶</a></p>
+<div class="alignLeft art-text artwork" id="section-2.4-2">
+<pre>
+From: brong@fastmailteam.com.dmarc.fail
+To: dkim2@lists.ietf.org
+Reply-To: dkim2@lists.ietf.org
+MailVersion: v=2;
+ h.Subject=b:QSByZXBsYWNlbWVudCBmb3IgREtJTQ==;
+ h.From=b:YnJvbmdAZmFzdG1haWx0ZWFtLmNvbQo=;
+ h.Reply-To=
+</pre><a href="#section-2.4-2" class="pilcrow">¶</a>
+</div>
+<p id="section-2.4-3">Example:<a href="#section-2.4-3" class="pilcrow">¶</a></p>
+<div class="alignLeft art-text artwork" id="section-2.4-4">
+<pre>
+MailVersion: v=3; b=c:1-500,c:520-520
+</pre><a href="#section-2.4-4" class="pilcrow">¶</a>
+</div>
+<p id="section-2.4-5">Example - a URL was substituted in the content of the body (complex, but still
+easily doable!)<a href="#section-2.4-5" class="pilcrow">¶</a></p>
+<div class="alignLeft art-text artwork" id="section-2.4-6">
+<pre>
+MailVersion: v=4;
+ b=c:1-500,
+ b:PGEgaHJlZj0iaHR0cHM6Ly93d3cuZXhhbXBsZS5jb20iPkV4YW1wbGU8L2E+Cg==,
+ c:501-702
+</pre><a href="#section-2.4-6" class="pilcrow">¶</a>
+</div>
+<p id="section-2.4-7">It is expected that 'c' will normally be used to copy lines directly from
+the new message, however in cases where a message needs to transit 7 bit systems
+cleanly, the email modifier may need to re-encode the octets of the original message,
+and this allows for doing so, albeit at some expense in header bloat!<a href="#section-2.4-7" class="pilcrow">¶</a></p>
+</section>
+</div>
+</section>
+</div>
+<div id="iterative-application">
+<section id="section-3">
+      <h2 id="name-iterative-application">
+<a href="#section-3" class="section-number selfRef">3. </a><a href="#name-iterative-application" class="section-name selfRef">Iterative application</a>
+      </h2>
+<p id="section-3-1">To get back to the original message and confirm that it was unchanged, it is necessary
+to apply this algorith iteratively.<a href="#section-3-1" class="pilcrow">¶</a></p>
+<p id="section-3-2">For example if you receive a message for which there is a modification to the
+headers at <code>v=3</code> and a modification to both headers and body at <code>v=2</code>, to recreate the
+original message you would first apply the header changes from <code>v=3</code>, then apply the
+header and body changes for <code>v=2</code>.  If this doesn't create a message which validates
+with the initial <code>v=1</code> hash, then some hop has corrupted the message.<a href="#section-3-2" class="pilcrow">¶</a></p>
+</section>
+</div>
+<div id="security">
+<section id="section-4">
+      <h2 id="name-security">
+<a href="#section-4" class="section-number selfRef">4. </a><a href="#name-security" class="section-name selfRef">Security</a>
+      </h2>
+<p id="section-4-1">TBA<a href="#section-4-1" class="pilcrow">¶</a></p>
+</section>
+</div>
+<div id="iana-considerations">
+<section id="section-5">
+      <h2 id="name-iana-considerations">
+<a href="#section-5" class="section-number selfRef">5. </a><a href="#name-iana-considerations" class="section-name selfRef">IANA Considerations</a>
+      </h2>
+<p id="section-5-1">TBA<a href="#section-5-1" class="pilcrow">¶</a></p>
+</section>
+</div>
+<section id="section-6">
+      <h2 id="name-references">
+<a href="#section-6" class="section-number selfRef">6. </a><a href="#name-references" class="section-name selfRef">References</a>
+      </h2>
+<section id="section-6.1">
+        <h3 id="name-normative-references">
+<a href="#section-6.1" class="section-number selfRef">6.1. </a><a href="#name-normative-references" class="section-name selfRef">Normative References</a>
+        </h3>
+<dl class="references">
+<dt id="DKIM">[DKIM]</dt>
+        <dd>
+<span class="refAuthor">Crocker, D., Ed.</span>, <span class="refAuthor">Hansen, T., Ed.</span>, and <span class="refAuthor">M. Kucherawy, Ed.</span>, <span class="refTitle">"DomainKeys Identified Mail (DKIM) Signatures"</span>, <span class="seriesInfo">STD 76</span>, <span class="seriesInfo">RFC 6376</span>, <span class="seriesInfo">DOI 10.17487/RFC6376</span>, <time datetime="2011-09" class="refDate">September 2011</time>, <span>&lt;<a href="https://www.rfc-editor.org/rfc/rfc6376">https://www.rfc-editor.org/rfc/rfc6376</a>&gt;</span>. </dd>
+<dd class="break"></dd>
+<dt id="IMAP">[IMAP]</dt>
+      <dd>
+<span class="refAuthor">Melnikov, A., Ed.</span> and <span class="refAuthor">B. Leiba, Ed.</span>, <span class="refTitle">"Internet Message Access Protocol (IMAP) - Version 4rev2"</span>, <span class="seriesInfo">RFC 9051</span>, <span class="seriesInfo">DOI 10.17487/RFC9051</span>, <time datetime="2021-08" class="refDate">August 2021</time>, <span>&lt;<a href="https://www.rfc-editor.org/rfc/rfc9051">https://www.rfc-editor.org/rfc/rfc9051</a>&gt;</span>. </dd>
+<dd class="break"></dd>
+</dl>
+</section>
+<section id="section-6.2">
+        <h3 id="name-informative-references">
+<a href="#section-6.2" class="section-number selfRef">6.2. </a><a href="#name-informative-references" class="section-name selfRef">Informative References</a>
+        </h3>
+<dl class="references">
+<dt id="RFC2046">[RFC2046]</dt>
+        <dd>
+<span class="refAuthor">Freed, N.</span> and <span class="refAuthor">N. Borenstein</span>, <span class="refTitle">"Multipurpose Internet Mail Extensions (MIME) Part Two: Media Types"</span>, <span class="seriesInfo">RFC 2046</span>, <span class="seriesInfo">DOI 10.17487/RFC2046</span>, <time datetime="1996-11" class="refDate">November 1996</time>, <span>&lt;<a href="https://www.rfc-editor.org/rfc/rfc2046">https://www.rfc-editor.org/rfc/rfc2046</a>&gt;</span>. </dd>
+<dd class="break"></dd>
+<dt id="RFC3284">[RFC3284]</dt>
+      <dd>
+<span class="refAuthor">Korn, D.</span>, <span class="refAuthor">MacDonald, J.</span>, <span class="refAuthor">Mogul, J.</span>, and <span class="refAuthor">K. Vo</span>, <span class="refTitle">"The VCDIFF Generic Differencing and Compression Data Format"</span>, <span class="seriesInfo">RFC 3284</span>, <span class="seriesInfo">DOI 10.17487/RFC3284</span>, <time datetime="2002-06" class="refDate">June 2002</time>, <span>&lt;<a href="https://www.rfc-editor.org/rfc/rfc3284">https://www.rfc-editor.org/rfc/rfc3284</a>&gt;</span>. </dd>
+<dd class="break"></dd>
+</dl>
+</section>
+</section>
+<div id="changes-from-earlier-versions">
+<section id="appendix-A">
+      <h2 id="name-changes-from-earlier-versio">
+<a href="#appendix-A" class="section-number selfRef">Appendix A. </a><a href="#name-changes-from-earlier-versio" class="section-name selfRef">Changes from Earlier Versions</a>
+      </h2>
+<div id="draft-gondwana-dkim2-mailversion-00">
+<section id="appendix-A.1">
+        <h3 id="name-draft-gondwana-dkim2-mailve">
+<a href="#appendix-A.1" class="section-number selfRef">A.1. </a><a href="#name-draft-gondwana-dkim2-mailve" class="section-name selfRef">draft-gondwana-dkim2-mailversion-00</a>
+        </h3>
+<ul class="normal">
+<li class="normal" id="appendix-A.1-1.1">
+            <p id="appendix-A.1-1.1.1">Rename this draft to "mailversion".<a href="#appendix-A.1-1.1.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.1-1.2">
+            <p id="appendix-A.1-1.2.1">Removed 't:' optional fields entirely.<a href="#appendix-A.1-1.2.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.1-1.3">
+            <p id="appendix-A.1-1.3.1">Added ha= to select the hash algorithm and documentation about how the hashes are calculated<a href="#appendix-A.1-1.3.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.1-1.4">
+            <p id="appendix-A.1-1.4.1">Renamed bin.partspec to ph.partspec for "part hash" and described it with reference to IMAP.<a href="#appendix-A.1-1.4.1" class="pilcrow">¶</a></p>
+</li>
+        </ul>
+</section>
+</div>
+<div id="draft-gondwana-dkim2-modification-algebra-03">
+<section id="appendix-A.2">
+        <h3 id="name-draft-gondwana-dkim2-modifi">
+<a href="#appendix-A.2" class="section-number selfRef">A.2. </a><a href="#name-draft-gondwana-dkim2-modifi" class="section-name selfRef">draft-gondwana-dkim2-modification-algebra-03</a>
+        </h3>
+<ul class="normal">
+<li class="normal" id="appendix-A.2-1.1">
+            <p id="appendix-A.2-1.1.1">Rename header to 'MailVersion'<a href="#appendix-A.2-1.1.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.2-1.2">
+            <p id="appendix-A.2-1.2.1">Remove all requirements that it integrates with DKIM2.<a href="#appendix-A.2-1.2.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.2-1.3">
+            <p id="appendix-A.2-1.3.1">Add body hash and per-mime-part hashes (NOTE: this is a bunch of extra calculation, so
+definitely to discuss)<a href="#appendix-A.2-1.3.1" class="pilcrow">¶</a></p>
+</li>
+        </ul>
+</section>
+</div>
+<div id="draft-gondwana-dkim2-modification-algebra-02">
+<section id="appendix-A.3">
+        <h3 id="name-draft-gondwana-dkim2-modific">
+<a href="#appendix-A.3" class="section-number selfRef">A.3. </a><a href="#name-draft-gondwana-dkim2-modific" class="section-name selfRef">draft-gondwana-dkim2-modification-algebra-02</a>
+        </h3>
+<ul class="normal">
+<li class="normal" id="appendix-A.3-1.1">
+            <p id="appendix-A.3-1.1.1">change the header format to have unique keys, making it fit the ABNF for these types
+of headers.<a href="#appendix-A.3-1.1.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.3-1.2">
+            <p id="appendix-A.3-1.2.1">allow easier editing of multi-value headers by always popping the first header and
+always prepending newly added headers.<a href="#appendix-A.3-1.2.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.3-1.3">
+            <p id="appendix-A.3-1.3.1">change body to use d.0, d.1, etc with the program in the value, so that the program
+ordering is reliable regardless of the parser used to read the header.<a href="#appendix-A.3-1.3.1" class="pilcrow">¶</a></p>
+</li>
+        </ul>
+</section>
+</div>
+<div id="draft-gondwana-dkim2-modification-algebra-02-1">
+<section id="appendix-A.4">
+        <h3 id="name-draft-gondwana-dkim2-modifica">
+<a href="#appendix-A.4" class="section-number selfRef">A.4. </a><a href="#name-draft-gondwana-dkim2-modifica" class="section-name selfRef">draft-gondwana-dkim2-modification-algebra-02</a>
+        </h3>
+<ul class="normal">
+<li class="normal" id="appendix-A.4-1.1">
+            <p id="appendix-A.4-1.1.1">change to using line numbers rather than octet offsets<a href="#appendix-A.4-1.1.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.4-1.2">
+            <p id="appendix-A.4-1.2.1">remove d= base64 decoding capability<a href="#appendix-A.4-1.2.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.4-1.3">
+            <p id="appendix-A.4-1.3.1">for multiple lines; require a separate b= or t= for each line<a href="#appendix-A.4-1.3.1" class="pilcrow">¶</a></p>
+</li>
+        </ul>
+</section>
+</div>
+<div id="draft-gondwana-dkim2-modification-algebra-01">
+<section id="appendix-A.5">
+        <h3 id="name-draft-gondwana-dkim2-modificat">
+<a href="#appendix-A.5" class="section-number selfRef">A.5. </a><a href="#name-draft-gondwana-dkim2-modificat" class="section-name selfRef">draft-gondwana-dkim2-modification-algebra-01</a>
+        </h3>
+<ul class="normal">
+<li class="normal" id="appendix-A.5-1.1">
+            <p id="appendix-A.5-1.1.1">rename 'DKIM2-Diff' headers to 'DKIM2-Delta'<a href="#appendix-A.5-1.1.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.5-1.2">
+            <p id="appendix-A.5-1.2.1">add 'z=y' option to DKIM2-Delta-Body for "complete replacement"<a href="#appendix-A.5-1.2.1" class="pilcrow">¶</a></p>
+</li>
+          <li class="normal" id="appendix-A.5-1.3">
+            <p id="appendix-A.5-1.3.1">add d= base64 decoding option to DKIM2-Delta-Body<a href="#appendix-A.5-1.3.1" class="pilcrow">¶</a></p>
+</li>
+        </ul>
+</section>
+</div>
+<div id="draft-gondwana-dkim2-modification-algebra-00">
+<section id="appendix-A.6">
+        <h3 id="name-draft-gondwana-dkim2-modificati">
+<a href="#appendix-A.6" class="section-number selfRef">A.6. </a><a href="#name-draft-gondwana-dkim2-modificati" class="section-name selfRef">draft-gondwana-dkim2-modification-algebra-00</a>
+        </h3>
+<ul class="normal">
+<li class="normal" id="appendix-A.6-1.1">
+            <p id="appendix-A.6-1.1.1">original version<a href="#appendix-A.6-1.1.1" class="pilcrow">¶</a></p>
+</li>
+        </ul>
+<p id="appendix-A.6-2">[[This section to be removed by RFC Editor]]<a href="#appendix-A.6-2" class="pilcrow">¶</a></p>
+</section>
+</div>
+</section>
+</div>
+<div id="authors-addresses">
+<section id="appendix-B">
+      <h2 id="name-authors-address">
+<a href="#name-authors-address" class="section-name selfRef">Author's Address</a>
+      </h2>
+<address class="vcard">
+        <div dir="auto" class="left"><span class="fn nameRole">Bron Gondwana</span></div>
+<div dir="auto" class="left"><span class="org">Fastmail Pty Ltd</span></div>
+<div dir="auto" class="left"><span class="street-address">Level 2, 114 William Street</span></div>
+<div dir="auto" class="left"><span class="postal-code">3000</span></div>
+<div dir="auto" class="left"><span class="country-name">Australia</span></div>
+<div class="tel">
+<span>Phone:</span>
+<a href="tel:+61%20457%20416%20436" class="tel">+61 457 416 436</a>
+</div>
+<div class="email">
+<span>Email:</span>
+<a href="mailto:brong@fastmailteam.com" class="email">brong@fastmailteam.com</a>
+</div>
+</address>
+</section>
+</div>
+<script>const toc = document.getElementById("toc");
+toc.querySelector("h2").addEventListener("click", e => {
+  toc.classList.toggle("active");
+});
+toc.querySelector("nav").addEventListener("click", e => {
+  toc.classList.remove("active");
+});
+</script>
+</body>
+</html>
