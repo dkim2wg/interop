@@ -1,4 +1,6 @@
 package DKIM2;
+use strict;
+use warnings;
 
 use Algorithm::Diff;
 use Email::Address;
@@ -20,8 +22,6 @@ sub undo {
   my $version = %vmap ? max(keys %vmap) : 0;
   return unless $version;
   my $header = $vmap{$version};
-
-  $msg->header_raw_set('Mail-Version', grep { getv($_) < $version } @mv);
 
   my $data = Mail::DKIM::KeyValueList->parse($header);
 
@@ -55,12 +55,13 @@ sub undo {
         }
       }
       my $body = join("\r\n", @outlist,'');
-      warn $body;
       $msg->body_set($body);
     }
   }
 
-  return $num;
+  $msg->header_raw_set('Mail-Version', grep { getv($_) < $version } @mv);
+
+  return $version;
 }
 
 # return (num, header)
@@ -136,6 +137,43 @@ sub diff {
   return ($num, @hdiff, @bdiff);
 }
 
+sub validate {
+  my $msg = shift;
+  my %dmap = map { getv($_) => $_ } $msg->header_raw('Mail-Version');
+  my $num = %dmap ? max(keys %dmap) : 0;  
+  return { valid => 0, error => "not a Mail-Version email" } unless $num;
+  my $sig = Mail::DKIM::KeyValueList->parse($dmap{$num});
+  my $canon = Mail::DKIM::Canonicalization::relaxed->new(Signature => 'dummy');
+  my $header_digest = Digest::SHA->new(256);
+  # XXX check that we used sha256
+  my %have;
+  for my $header (split /:/, $sig->get_tag('h')) {
+    $have{$header} ||= [ reverse $msg->header_raw($header) ];
+    my $item = shift @{$have{$header}};
+    return { valid => 0, error => "missing $header" }
+      if not defined $item;
+    $header_digest->add($canon->canonicalize_header("$header: $item"));
+  }
+  for my $header (keys %have) {
+    return { valid => 0, error => "excess copies of $header" }
+      if @{$have{$header}};
+  }
+  return { valid => 0, error => "mismatched header hash" }
+    if $sig->get_tag('hh') ne $header_digest->b64digest;
+  my $body_digest = Digest::SHA->new(256);
+  $body_digest->add($canon->canonicalize_body($msg->body_raw));
+  return { valid => 0, error => "mismatched body hash" }
+    if $sig->get_tag('bh') ne $body_digest->b64digest;
+  for my $item (calc_parts($msg)) {
+    my $had = $sig->get_tag("ph.".$item->[0]);
+    next unless $had;  # it's OK to not hash parts
+    return { valid => 0, error => "mismatched part $item->[0] hash ($had, $item->[1])" }
+      if $had ne $item->[1];
+  }
+
+  return { valid => 1, mv => $sig->get_tag('mv') };
+}
+
 sub calc {
   my $msg = shift;
   my %interesting;
@@ -158,7 +196,7 @@ sub calc {
   my $body_digest = Digest::SHA->new(256);
   $body_digest->add($canon->canonicalize_body($msg->body_raw));
   push @res, "bh=" . $body_digest->b64digest;
-  push @res, calc_parts($msg) if $msg->subparts();
+  push @res, map { "ph.$_->[0]=$_->[1]" } calc_parts($msg);
   return @res;
 }
 
@@ -167,7 +205,7 @@ sub calc_parts {
   my $prefix = shift;
   my @parts = $msg->subparts();
   my @res;
-  for $pos (0..$#parts) {
+  for my $pos (0..$#parts) {
     my $part = $parts[$pos];
     my $num = ($prefix ? "$prefix." : '') . ($pos + 1);
     if ($part->subparts()) {
@@ -175,7 +213,7 @@ sub calc_parts {
     } else {
       my $digest = Digest::SHA->new(256);
       $digest->add($part->body);
-      push @res, "ph.$num=" . $digest->b64digest;
+      push @res, [$num, $digest->b64digest];
     }
   }
   return @res;
