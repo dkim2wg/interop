@@ -1,3 +1,26 @@
+DKIM2-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=
+	test1.dkim2.com; s=sel1; mv=3; mf=
+	brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
+	authentication-results:authentication-results
+	:authentication-results:authentication-results
+	:authentication-results:received-spf:feedback-id:mime-version
+	:date:to:message-id:message-id-hash:precedence:subject:list-id
+	:archived-at:list-archive:list-help:list-owner:list-post
+	:list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
+	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=n2SayTCW0rZR08yaZErsgr93w
+	YqG5y+Cow1xxVHPiT0EEagVyNbHixFiTKvJ3UjbuwXvUhkBncQZ+2NPfvbNd+dSV
+	MenHi50zVulm07rmHLrwxVe3NRFQfWp9yYFxeQBZCRuxzuwuya0mWaKxHr13ya74
+	AHwG0o39Br7AczM7Y+pPXs+HvsQ+9rB9YpRnZGN7ybH6JN6TodU1rCoSm0yPNATQ
+	a8s0Faeo/EvWiLPUZXwEcrruasChr/gPCqhey8QnUOIzKLDB3n/GTPVfQY9L+a5e
+	GjIKeIgWddfr7X0j8hp0AuPI7fcKai+1nUDBsjAXlsqNaAWzNV+4Llaz8mpXA==
+Mail-Version: mv=3; a=sha256;
+	h=authentication-results:authentication-results:authentication-results:authentication-results:authentication-results:received-spf:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+	 hh=qZRwa5M++o9RtE6Tbw5QfmSgu1xH8dxZBbRC0j5yfC4=;
+	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
+	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
+	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
+	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
+	h.Authentication-Results=c:1-1; h.Received-SPF=
 Return-Path: <forwardingalgorithm@ietf.org>
 Received: from compute3.internal (compute3.nyi.internal [10.202.2.43])
 	 by sloti43n03 (Cyrus 3.11.0-alpha0-679-g88f70abd1-fm-20240802.001-g88f70abd) with LMTPA;
