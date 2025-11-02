@@ -4,12 +4,12 @@
 
 Network Working Group                                        B. Gondwana
 Internet-Draft                                          Fastmail Pty Ltd
-Intended status: Standards Track                         1 November 2025
-Expires: 5 May 2026
+Intended status: Standards Track                         2 November 2025
+Expires: 6 May 2026
 
 
             A method for describing changes made to an email
-              draft-gondwana-dkim2-modification-alegbra-04
+                  draft-gondwana-dkim2-mailversion-00
 
 Abstract
 
@@ -36,7 +36,7 @@ Status of This Memo
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 5 May 2026.
+   This Internet-Draft will expire on 6 May 2026.
 
 Copyright Notice
 
@@ -53,7 +53,7 @@ Copyright Notice
 
 
 
-Gondwana                   Expires 5 May 2026                   [Page 1]
+Gondwana                   Expires 6 May 2026                   [Page 1]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -70,8 +70,8 @@ Internet-Draft        Email Modification Versioning        November 2025
 Table of Contents
 
    1.  Background and motivations  . . . . . . . . . . . . . . . . .   2
-   2.  The MailVersion Header Field  . . . . . . . . . . . . . . . .   3
-     2.1.  MailVersion Header  . . . . . . . . . . . . . . . . . . .   3
+   2.  The Mail-Version Header Field . . . . . . . . . . . . . . . .   3
+     2.1.  Mail-Version Header . . . . . . . . . . . . . . . . . . .   3
      2.2.  body-recipe . . . . . . . . . . . . . . . . . . . . . . .   4
      2.3.  header-recipe . . . . . . . . . . . . . . . . . . . . . .   5
      2.4.  Examples  . . . . . . . . . . . . . . . . . . . . . . . .   6
@@ -109,19 +109,19 @@ Table of Contents
 
 
 
-Gondwana                   Expires 5 May 2026                   [Page 2]
+Gondwana                   Expires 6 May 2026                   [Page 2]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
 
-2.  The MailVersion Header Field
+2.  The Mail-Version Header Field
 
    This document describes an ordered set of header fields, each of
    which describes the message at a specific version, along with
    instructions on how to convert that version back to the previous
    version.
 
-2.1.  MailVersion Header
+2.1.  Mail-Version Header
 
    The format of the value is a tag-list.  Tag-lists contain key=value;
    key2=value2; - they can be wrapped, and all whitespace is normalised
@@ -165,7 +165,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 
 
-Gondwana                   Expires 5 May 2026                   [Page 3]
+Gondwana                   Expires 6 May 2026                   [Page 3]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -221,7 +221,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 
 
-Gondwana                   Expires 5 May 2026                   [Page 4]
+Gondwana                   Expires 6 May 2026                   [Page 4]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -277,7 +277,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 
 
-Gondwana                   Expires 5 May 2026                   [Page 5]
+Gondwana                   Expires 6 May 2026                   [Page 5]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -333,7 +333,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 
 
-Gondwana                   Expires 5 May 2026                   [Page 6]
+Gondwana                   Expires 6 May 2026                   [Page 6]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -341,19 +341,19 @@ Internet-Draft        Email Modification Versioning        November 2025
    From: brong@fastmailteam.com.dmarc.fail
    To: dkim2@lists.ietf.org
    Reply-To: dkim2@lists.ietf.org
-   MailVersion: v=2;
+   Mail-Version: mv=2;
     h.Subject=b:QSByZXBsYWNlbWVudCBmb3IgREtJTQ==;
     h.From=b:YnJvbmdAZmFzdG1haWx0ZWFtLmNvbQo=;
     h.Reply-To=
 
    Example:
 
-   MailVersion: v=3; b=c:1-500,c:520-520
+   Mail-Version: mv=3; b=c:1-500,c:520-520
 
    Example - a URL was substituted in the content of the body (complex,
    but still easily doable!)
 
-   MailVersion: v=4;
+   Mail-Version: mv=4;
     b=c:1-500,
     b:PGEgaHJlZj0iaHR0cHM6Ly93d3cuZXhhbXBsZS5jb20iPkV4YW1wbGU8L2E+Cg==,
     c:501-702
@@ -389,7 +389,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 
 
-Gondwana                   Expires 5 May 2026                   [Page 7]
+Gondwana                   Expires 6 May 2026                   [Page 7]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -424,6 +424,10 @@ A.1.  draft-gondwana-dkim2-mailversion-00
 
    *  Rename this draft to "mailversion".
 
+   *  Rename the header field to 'Mail-Version'
+
+   *  Change v= to mv=
+
    *  Removed 't:' optional fields entirely.
 
    *  Added ha= to select the hash algorithm and documentation about how
@@ -438,17 +442,16 @@ A.2.  draft-gondwana-dkim2-modification-algebra-03
 
    *  Remove all requirements that it integrates with DKIM2.
 
-   *  Add body hash and per-mime-part hashes (NOTE: this is a bunch of
-      extra calculation, so definitely to discuss)
 
 
 
-
-
-Gondwana                   Expires 5 May 2026                   [Page 8]
+Gondwana                   Expires 6 May 2026                   [Page 8]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
+
+   *  Add body hash and per-mime-part hashes (NOTE: this is a bunch of
+      extra calculation, so definitely to discuss)
 
 A.3.  draft-gondwana-dkim2-modification-algebra-02
 
@@ -498,7 +501,4 @@ Author's Address
 
 
 
-
-
-
-Gondwana                   Expires 5 May 2026                   [Page 9]
+Gondwana                   Expires 6 May 2026                   [Page 9]

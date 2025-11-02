@@ -1,7 +1,7 @@
 ---
 title: A method for describing changes made to an email
 abbrev: Email Modification Versioning
-docname: draft-gondwana-dkim2-modification-alegbra-04
+docname: draft-gondwana-dkim2-mailversion-00
 submissionType: IETF
 category: std
 updates:
@@ -57,14 +57,14 @@ signatures which validate against previous versions, this can be used to
 allow signing systems to take accountability for only the version of the
 message which passed through their system.
 
-# The MailVersion Header Field
+# The Mail-Version Header Field
 
 This document describes an ordered set of header fields, each of
 which describes the message at a specific version, along with
 instructions on how to convert that version back to the previous
 version.
 
-## MailVersion Header
+## Mail-Version Header
 
 The format of the value is a tag-list.  Tag-lists contain key=value; key2=value2; - they can be wrapped,
 and all whitespace is normalised to a single space.
@@ -144,7 +144,7 @@ and Reply-To added.
 From: brong@fastmailteam.com.dmarc.fail
 To: dkim2@lists.ietf.org
 Reply-To: dkim2@lists.ietf.org
-MailVersion: v=2;
+Mail-Version: mv=2;
  h.Subject=b:QSByZXBsYWNlbWVudCBmb3IgREtJTQ==;
  h.From=b:YnJvbmdAZmFzdG1haWx0ZWFtLmNvbQo=;
  h.Reply-To=
@@ -153,14 +153,14 @@ MailVersion: v=2;
 Example:
 
 ~~~~
-MailVersion: v=3; b=c:1-500,c:520-520
+Mail-Version: mv=3; b=c:1-500,c:520-520
 ~~~~
 
 Example - a URL was substituted in the content of the body (complex, but still
 easily doable!)
 
 ~~~~
-MailVersion: v=4;
+Mail-Version: mv=4;
  b=c:1-500,
  b:PGEgaHJlZj0iaHR0cHM6Ly93d3cuZXhhbXBsZS5jb20iPkV4YW1wbGU8L2E+Cg==,
  c:501-702
@@ -199,6 +199,8 @@ Changes from Earlier Versions
 ## draft-gondwana-dkim2-mailversion-00
 
 * Rename this draft to "mailversion".
+* Rename the header field to 'Mail-Version'
+* Change v= to mv=
 * Removed 't:' optional fields entirely.
 * Added ha= to select the hash algorithm and documentation about how the hashes are calculated
 * Renamed bin.partspec to ph.partspec for "part hash" and described it with reference to IMAP.
