@@ -8,6 +8,8 @@ use Mail::DKIM::TextWrap;
 use Mail::DKIM::KeyValueList;
 use Mail::DKIM::Verifier;
 use Mail::DKIM::PublicKey;
+use Mail::DKIM::Canonicalization::relaxed;
+use Digest::SHA;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 
@@ -66,12 +68,14 @@ sub diff {
   my $msg1 = shift;
   my $msg2 = shift;
   # message 2 is the old one; so find out which MailVersion header needs to be added
-  my %map = map { getv($_) => $_ } $msg2->header('MailVersion');
-  my %dmap = map { getv($_) => $_ } $msg1->header('MailVersion');
+  my %map = map { getv($_) => $_ } $msg2->header_raw('MailVersion');
+  my %dmap = map { getv($_) => $_ } $msg1->header_raw('MailVersion');
   my $num = %map ? max(keys %map) : 0;  
   $num++;
   if ($dmap{$num}) {
-    die "Destination message already has MailVersion header v=$num";
+    warn "clearing high MailVersions from destination message";
+    my @mv = $msg1->header_raw('MailVersion');
+    $msg1->header_raw_set('MailVersion', grep { getv($_) < $num } @mv);
   }
 
   # calculate the header difference
@@ -129,8 +133,50 @@ sub diff {
     # XXX - calculate mime part hashes
   }
 
-  return unless (@hdiff or @bdiff);
-  return ($num, join("; ", "v=$num", @hdiff, @bdiff));
+  return ($num, @hdiff, @bdiff);
+}
+
+sub calc {
+  my $msg = shift;
+  my %interesting;
+  # we're going to sign everything except trace headers and DKIM-Signature and X-Headers:
+  my $canon = Mail::DKIM::Canonicalization::relaxed->new(Signature => 'dummy');
+  # XXX - support others?
+  my @res;
+  my @h;
+  my $header_digest = Digest::SHA->new(256);
+  for my $header ($msg->header_names) {
+    next if should_skip($header);
+    for my $item (reverse $msg->header_raw($header)) {
+      $header_digest->add($canon->canonicalize_header("$header: $item"));
+      push @h, lc($header);
+    }
+  }
+  push @res, "a=sha256";
+  push @res, "h=" . join(':', @h);
+  push @res, "hh=" . $header_digest->b64digest;
+  my $body_digest = Digest::SHA->new(256);
+  $body_digest->add($canon->canonicalize_body($msg->body_raw));
+  push @res, "bh=" . $body_digest->b64digest;
+  push @res, calc_parts($msg);
+  return @res;
+}
+
+sub calc_parts {
+  my $msg = shift;
+  my $prefix = shift;
+  my @parts = $msg->subparts();
+  return unless @parts;
+  my @res;
+  for $pos (0..$#parts) {
+    my $part = $parts[$pos];
+    my $num = ($prefix ? "$prefix." : '') . ($pos + 1);
+    my $digest = Digest::SHA->new(256);
+    $digest->add($part->body);
+    push @res, "ph.$num=" . $digest->b64digest;
+    push @parts, calc_parts($part, $num);
+  }
+  return @res;
 }
 
 # returns ($num, $header_text)

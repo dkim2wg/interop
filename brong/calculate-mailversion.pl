@@ -7,28 +7,29 @@ use lib '.';
 use DKIM2;
 use Mail::DKIM::TextWrap;
 
-my $f1 = shift;
-my $f2 = shift || die "need two files";
+my $f1 = shift || die;
+my $f2 = shift;
 
 my $msg1 = Email::MIME->new(path($f1)->slurp);
-my $msg2 = Email::MIME->new(path($f2)->slurp);
-$msg1->header_raw_set('MailVersion');
+my $num = 1;
+my @bits;
+if ($f2) {
+  my $msg2 = Email::MIME->new(path($f2)->slurp);
+  ($num, @bits) = DKIM2::diff($msg1, $msg2);
+}
+unshift @bits, DKIM2::calc($msg1);
 
-my ($num, $header) = DKIM2::diff($msg1, $msg2);
-
-if ($num) {
-  my $output = '';
-  my $tw = Mail::DKIM::TextWrap->new(
+my $output = '';
+my $tw = Mail::DKIM::TextWrap->new(
 	     Margin => 72,
 	     Break => qr/[,;\s]/,
 	     Separator => "\n\t",
 	     Swallow => qr/\s+/,
              Output => \$output,
           );
-  $tw->add("MailVersion: " . $header);
-  $tw->finish;
-  $output =~ s/^MailVersion: //;
-  $msg1->header_raw_prepend('MailVersion', $output);
-}
+$tw->add("MailVersion: " . join('; ', "v=$num", @bits));
+$tw->finish;
+$output =~ s/^MailVersion: //;
+$msg1->header_raw_prepend('MailVersion', $output);
 
 print $msg1->as_string();
