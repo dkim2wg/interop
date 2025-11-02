@@ -34,8 +34,9 @@ my ($num, $header) = DKIM2::sign($msg1,
 );
 
 if ($opt->quiet) {
-  say "DKIM2-Signature: $header";
+  say "$header";
 } else {
+  $header =~ s{^DKIM2-Signature:\s*}{};
   $msg1->header_raw_prepend('DKIM2-Signature', $header);
   print $msg1->as_string();
-} 
+}

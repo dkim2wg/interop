@@ -159,11 +159,11 @@ sub validate {
       if @{$have{$header}};
   }
   return { valid => 0, error => "mismatched header hash" }
-    if $sig->get_tag('hh') ne $header_digest->b64digest;
+    if $sig->get_tag('hh') ne digest64($header_digest);
   my $body_digest = Digest::SHA->new(256);
   $body_digest->add($canon->canonicalize_body($msg->body_raw));
   return { valid => 0, error => "mismatched body hash" }
-    if $sig->get_tag('bh') ne $body_digest->b64digest;
+    if $sig->get_tag('bh') ne digest64($body_digest);
   for my $item (calc_parts($msg)) {
     my $had = $sig->get_tag("ph.".$item->[0]);
     next unless $had;  # it's OK to not hash parts
@@ -192,10 +192,10 @@ sub calc {
   }
   push @res, "a=sha256";
   push @res, "h=" . join(':', @h);
-  push @res, "hh=" . $header_digest->b64digest;
+  push @res, "hh=" . digest64($header_digest);
   my $body_digest = Digest::SHA->new(256);
   $body_digest->add($canon->canonicalize_body($msg->body_raw));
-  push @res, "bh=" . $body_digest->b64digest;
+  push @res, "bh=" . digest64($body_digest);
   push @res, map { "ph.$_->[0]=$_->[1]" } calc_parts($msg);
   return @res;
 }
@@ -213,10 +213,19 @@ sub calc_parts {
     } else {
       my $digest = Digest::SHA->new(256);
       $digest->add($part->body);
-      push @res, [$num, $digest->b64digest];
+      push @res, [$num, digest64($digest)];
     }
   }
   return @res;
+}
+
+sub digest64 {
+  my $digest = shift;
+  my $res = $digest->b64digest;
+  while (length($res) % 4) {
+    $res .= '=';
+  }
+  return $res;
 }
 
 # returns ($num, $header_text)
@@ -239,28 +248,42 @@ sub sign {
   my %vmap = map { getv($_) => $_ } $msg->header('Mail-Version');
   my $version = %vmap ? max(keys %vmap) : 0;
 
-  my $signer = Mail::DKIM::Signer->new(
+  my $mv = Mail::DKIM::KeyValueList->parse($vmap{$version});
+
+  my $from = $args{from} || extract_from($msg);
+  my @rt = $args{to} ? @{$args{to}} : extract_to($msg);
+
+  my $signature = Mail::DKIM::Signature->new(
     Algorithm => $alg,
-    Method => 'relaxed/simple',
+    Method => 'relaxed/relaxed',
     Domain => $dom,
     Selector => $sel,
     KeyFile => $key,
+  );
+  $signature->prefix("DKIM2-Signature: i=$num;");
+  $signature->set_tag('v');
+  $signature->set_tag('mv', $version) if $version;
+  $signature->set_tag('mf', $from);
+  $signature->set_tag('rt', join(',', @rt));
+  $signature->headerlist($mv->get_tag('h'));
+  my $policysub = sub {
+    my $self = shift;
+    $self->add_signature($signature);
+    return;
+  };
+
+  my $signer = Mail::DKIM::Signer->new(
+    Algorithm => $alg,
+    Method => 'relaxed/relaxed',
+    Domain => $dom,
+    Selector => $sel,
+    KeyFile => $key,
+    Policy => $policysub,
   );
   $signer->extended_headers(\%interesting);
   my $eml = $msg->as_string();
   $signer->PRINT($eml);
   $signer->CLOSE();
-  my $signature = $signer->signature;
-  $signature->set_tag('mv', $version) if $version;
-  # remove the generated 'h=' tag 
-  my $oldh = $signature->get_tag('h');
-  warn $oldh;
-  $signature->set_tag('h');
-  my $from = $args{from} || extract_from($msg);
-  $signature->set_tag('mf', $from);
-  my @rt = $args{to} ? @{$args{to}} : extract_to($msg);
-  $signature->set_tag('rt', join(',', @rt));
-  $signature->prefix("i=$num;");
   return ($num, $signature->as_string());
 } 
 
