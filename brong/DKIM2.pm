@@ -158,7 +158,7 @@ sub calc {
   my $body_digest = Digest::SHA->new(256);
   $body_digest->add($canon->canonicalize_body($msg->body_raw));
   push @res, "bh=" . $body_digest->b64digest;
-  push @res, calc_parts($msg);
+  push @res, calc_parts($msg) if $msg->subparts();
   return @res;
 }
 
@@ -166,15 +166,17 @@ sub calc_parts {
   my $msg = shift;
   my $prefix = shift;
   my @parts = $msg->subparts();
-  return unless @parts;
   my @res;
   for $pos (0..$#parts) {
     my $part = $parts[$pos];
     my $num = ($prefix ? "$prefix." : '') . ($pos + 1);
-    my $digest = Digest::SHA->new(256);
-    $digest->add($part->body);
-    push @res, "ph.$num=" . $digest->b64digest;
-    push @parts, calc_parts($part, $num);
+    if ($part->subparts()) {
+      push @res, calc_parts($part, $num);
+    } else {
+      my $digest = Digest::SHA->new(256);
+      $digest->add($part->body);
+      push @res, "ph.$num=" . $digest->b64digest;
+    }
   }
   return @res;
 }
