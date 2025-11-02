@@ -17,6 +17,10 @@ if ($f2) {
   my $msg2 = Email::MIME->new(path($f2)->slurp);
   ($num, @bits) = DKIM2::diff($msg1, $msg2);
 }
+elsif ($msg1->header_raw('MailVersion')) {
+  warn "Removing all exisiting MailVersion headers";
+  $msg1->header_raw_set('MailVersion');
+}
 unshift @bits, DKIM2::calc($msg1);
 
 my $output = '';
