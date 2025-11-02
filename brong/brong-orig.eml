@@ -1,4 +1,4 @@
-MailVersion: v=1; a=sha256;
+Mail-Version: mv=1; a=sha256;
 	h=mime-version:message-id:date:from:to:subject:content-type;
 	hh=U3l2NbFqfeFEKHSJfuElpPIf4UfEH5VU/OFjgODED0M;
 	bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw;

@@ -15,13 +15,13 @@ use Carp;
 
 sub undo {
   my ($msg, %args) = @_;
-  my @mv = $msg->header_raw('MailVersion');
+  my @mv = $msg->header_raw('Mail-Version');
   my %vmap = map { getv($_) => $_ } @mv;
   my $version = %vmap ? max(keys %vmap) : 0;
   return unless $version;
   my $header = $vmap{$version};
 
-  $msg->header_raw_set('MailVersion', grep { getv($_) < $version } @mv);
+  $msg->header_raw_set('Mail-Version', grep { getv($_) < $version } @mv);
 
   my $data = Mail::DKIM::KeyValueList->parse($header);
 
@@ -67,15 +67,15 @@ sub undo {
 sub diff {
   my $msg1 = shift;
   my $msg2 = shift;
-  # message 2 is the old one; so find out which MailVersion header needs to be added
-  my %map = map { getv($_) => $_ } $msg2->header_raw('MailVersion');
-  my %dmap = map { getv($_) => $_ } $msg1->header_raw('MailVersion');
+  # message 2 is the old one; so find out which Mail-Version header needs to be added
+  my %map = map { getv($_) => $_ } $msg2->header_raw('Mail-Version');
+  my %dmap = map { getv($_) => $_ } $msg1->header_raw('Mail-Version');
   my $num = %map ? max(keys %map) : 0;  
   $num++;
   if ($dmap{$num}) {
-    warn "clearing high MailVersions from destination message";
-    my @mv = $msg1->header_raw('MailVersion');
-    $msg1->header_raw_set('MailVersion', grep { getv($_) < $num } @mv);
+    warn "clearing high Mail-Versions from destination message";
+    my @mv = $msg1->header_raw('Mail-Version');
+    $msg1->header_raw_set('Mail-Version', grep { getv($_) < $num } @mv);
   }
 
   # calculate the header difference
@@ -198,7 +198,7 @@ sub sign {
   my %map = map { geti($_) => $_ } $msg->header('DKIM2-Signature');
   my $num = %map ? max(keys %map) : 0;
   $num++;
-  my %vmap = map { getv($_) => $_ } $msg->header('MailVersion');
+  my %vmap = map { getv($_) => $_ } $msg->header('Mail-Version');
   my $version = %vmap ? max(keys %vmap) : 0;
 
   my $signer = Mail::DKIM::Signer->new(
@@ -277,7 +277,7 @@ sub geti {
 
 sub getv {
   my $arg = shift;
-  return 0 unless $arg =~ m/v=(\d+)/;
+  return 0 unless $arg =~ m/mv=(\d+)/;
   return 0 + $1;
 }
 
@@ -286,7 +286,7 @@ sub should_skip {
   # Trace Headers
   return 1 if $hname eq 'received';
   return 1 if $hname eq 'return-path';
-  return 1 if $hname eq 'mailversion';
+  return 1 if $hname eq 'mail-version';
   return 1 if $hname eq 'dkim-signature';
   # X headers
   return 1 if $hname =~ m/^x-/;
