@@ -1,11 +1,3 @@
-Mail-Version: mv=3; a=sha256;
-	h=authentication-results:authentication-results:authentication-results:authentication-results:authentication-results:received-spf:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
-	 hh=qZRwa5M++o9RtE6Tbw5QfmSgu1xH8dxZBbRC0j5yfC4;
-	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k;
-	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q;
-	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU;
-	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM;
-	h.Authentication-Results=c:1-1; h.Received-SPF=
 Return-Path: <forwardingalgorithm@ietf.org>
 Received: from compute3.internal (compute3.nyi.internal [10.202.2.43])
 	 by sloti43n03 (Cyrus 3.11.0-alpha0-679-g88f70abd1-fm-20240802.001-g88f70abd) with LMTPA;
@@ -147,7 +139,40 @@ Received: from mail.ietf.org (mail.ietf.org [50.223.129.194])
 	(No client certificate requested)
 	by mx6.messagingengine.com (Postfix) with ESMTPS id 63B05116009E
 	for <brong@fastmailteam.com>; Wed,  7 Aug 2024 21:23:34 -0400 (EDT)
-Mail-Version: mv=2; a=sha256;                                                                                                       h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;                               hh=3OODvU+ITE/109CfNvgNMJRo6c8ewWbLSjlN9qWm6vo;                                                                            bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k;                                                                             ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q;                                                                         ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU;                                                                         ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM;                                                                           h.Archived-At=; h.Authentication-Results=;                                                                                  h.Content-Type=b:bXVsdGlwYXJ0L2FsdGVybmF0aXZlOyBib3VuZGFyeT0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==;                   h.Date=b:VGh1LCAyMSBNYXIgMjAyNCAxMjowOTozNyArMTAwMA==;                                                                     h.Feedback-ID=;                                                                                                             h.From=b:IkJyb24gR29uZHdhbmEiIDxicm9uZ0BmYXN0bWFpbHRlYW0uY29tPg==;                                                           h.List-Archive=; h.List-Help=; h.List-Id=; h.List-Owner=;                                                                  h.List-Post=; h.List-Subscribe=; h.List-Unsubscribe=;                                                                       h.Message-ID-Hash=;                                                                                                         h.Message-Id=b:PGZiMWIxMGFlLWVhMzYtNGVlNC1iODRmLWI2MmYwMzZjZmFmNUBhcHAuZmFzdG1haWwuY29tPg==;                                 h.Precedence=;                                                                                                             h.Subject=b:V29ya2luZyBncm91cCBsYXN0IGNhbGwgZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQ=;                                        b=b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:5-5,                                                                c:7-9,                                                                                                                      b:VGhpcyBlbWFpbCBzdGFydHMgYSB3b3JraW5nIGdyb3VwIGxhc3QgY2FsbCBmb3IgaHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIGFzIGRpc2N1c3NlZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLg==,
+DKIM2-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=
+        test1.dkim2.com; s=sel1; mv=2; mf=
+        brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
+        authentication-results:feedback-id:mime-version:date:to
+        :message-id:message-id-hash:precedence:subject:list-id
+        :archived-at:list-archive:list-help:list-owner:list-post
+        :list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
+        QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=Pr6Z2UiEBOBwqWXcvDrfJqJQU
+        m+SuIylglh29F2ZNKSxIM+UGO8+qGLAQhqSZijmx5p4ZpwcKzYNT9gH4Gr0iftdk
+        HAIPXQ/98rM7MQNJpvsyl+rT2ipRhVoU4RXENotlSsX1nKGdYq/XSGNlRycNPziy
+        Hfnk6QTqm84DFwx3fYAihLO4ERrQZcqhVeTPAKlDyFGTcSkN4siptnyNITvA3Drb
+        YL5lBto68qjPb47bCsYL+E3tkl1tLSvsR2WHKOMniu6vf0UlLIOdCpd+9sR2l91i
+        eyGTW8hqMXtcrgx12tAf6yVQl5yHUzScB44mHHeUmXGk4tOY+D0sPpHwKP3CQ==
+Mail-Version: mv=2; a=sha256;
+        h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+         hh=3OODvU+ITE/109CfNvgNMJRo6c8ewWbLSjlN9qWm6vo=;
+        bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
+        ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
+        ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
+        ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
+        h.Archived-At=; h.Authentication-Results=;
+        h.Content-Type=b:bXVsdGlwYXJ0L2FsdGVybmF0aXZlOyBib3VuZGFyeT0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==;
+         h.Date=b:VGh1LCAyMSBNYXIgMjAyNCAxMjowOTozNyArMTAwMA==;
+        h.Feedback-ID=;
+        h.From=b:IkJyb24gR29uZHdhbmEiIDxicm9uZ0BmYXN0bWFpbHRlYW0uY29tPg==;
+         h.List-Archive=; h.List-Help=; h.List-Id=; h.List-Owner=;
+        h.List-Post=; h.List-Subscribe=; h.List-Unsubscribe=;
+        h.Message-ID-Hash=;
+        h.Message-Id=b:PGZiMWIxMGFlLWVhMzYtNGVlNC1iODRmLWI2MmYwMzZjZmFmNUBhcHAuZmFzdG1haWwuY29tPg==;
+         h.Precedence=;
+        h.Subject=b:V29ya2luZyBncm91cCBsYXN0IGNhbGwgZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQ=;
+         b=b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:5-5,
+        c:7-9,
+        b:VGhpcyBlbWFpbCBzdGFydHMgYSB3b3JraW5nIGdyb3VwIGxhc3QgY2FsbCBmb3IgaHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIGFzIGRpc2N1c3NlZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLg==,
         c:11-11,
         b:UGxlYXNlIHBvc3QgYW55IGNvbW1lbnRzIG9yIHJlc3BvbnNlcyBieSAqVGh1cnNkYXksIEFwcmlsIDR0aCwgMjAyNCou,
         c:13-13,c:16-25,
@@ -218,12 +243,22 @@ Received: from fhigh4-smtp.messagingengine.com
  (No client certificate requested)
  by ietfa.amsl.com (Postfix) with ESMTPS id 59805C180B46
  for <jmap@ietf.org>; Wed,  7 Aug 2024 18:23:11 -0700 (PDT)
+DKIM2-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=
+        test1.dkim2.com; s=sel1; mv=1; mf=brong@fastmailteam.com; rt=
+        jmap@ietf.org; h=mime-version:message-id:date:from:to:subject
+        :content-type; bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw=; b=
+        HE85cxG4WuCP+lo2I4LEAK8rDjgKWyDmaquoBvAkJMEvDAHCP0DI3MkA6AygrtQi
+        I1DFeUfdH5cRhBKrPwnEmCDduS9iTYaLZCSDeFAAEXA1szsoPx8XHbG8psVyONxn
+        P9XsId86zOVA8XafBEDWObZXRNSOFPi53WOP+U2eeVPeggjKdpT5i+HXCWsm3dLn
+        mYBcp6hQyBfHhluoxXsj38wxHEDcTpXnU37/WEXiU+6mCN0Mm6UHwr6zFlqnJjKl
+        MLf2408tNZjGJz+u/y5a77e/ZM1sxiTweb85Pj43Cktce3JB0FhkTZnqZTUib7AM
+        4/CMRWwKHm5HF6BgWDdz+w==
 Mail-Version: mv=1; a=sha256;
         h=mime-version:message-id:date:from:to:subject:content-type;
-        hh=U3l2NbFqfeFEKHSJfuElpPIf4UfEH5VU/OFjgODED0M;
-        bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw;
-        ph.1=/tB6vGLb4bPaWWfxtA5OlqS4JZ65PQzca1IE/9BMNlY;
-        ph.2=q8q5JLRWa4i1isubOAXVMkI8iPQpYdBnaQFRCTnm3Oc
+        hh=U3l2NbFqfeFEKHSJfuElpPIf4UfEH5VU/OFjgODED0M=;
+        bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw=;
+        ph.1=/tB6vGLb4bPaWWfxtA5OlqS4JZ65PQzca1IE/9BMNlY=;
+        ph.2=q8q5JLRWa4i1isubOAXVMkI8iPQpYdBnaQFRCTnm3Oc=
 Received: from compute3.internal (compute3.nyi.internal [10.202.2.43])
  by mailfhigh.nyi.internal (Postfix) with ESMTP id 7F8CD1151BFC
  for <jmap@ietf.org>; Wed,  7 Aug 2024 21:23:10 -0400 (EDT)
