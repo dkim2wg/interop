@@ -1,3 +1,16 @@
+DKIM2-Signature: i=4; c=relaxed/relaxed; a=ed25519-sha256;
+        d=arobins.dev; s=dkim2-ed25519;
+        mf=arobins@arobins.dev;
+        rt=arobins@bar.com;
+        mv=4;
+        h=message-id:date:subject:to:from;
+        bh=m714Bx5f3ifoYKCJB0n5VykeMX+9YehjuGWL8RimVp0=;
+        b=f3QdifkbjUELEGVv7zkzNBJeAPteeu2F62NgkWiBI2eEedvyQiPG9JWspDQl3N9yajaWxzafATLg2ow1ww21CQ==
+Mail-Version: mv=4;
+   a=sha256;
+   hh=ND1zwxn6l2yx5pJlsdUsQHa0FLVyi4jOhIME94XAf9s=;
+   bh=m714Bx5f3ifoYKCJB0n5VykeMX+9YehjuGWL8RimVp0=;
+   h=message-id:date:subject:to:from;
 DKIM2-Signature: i=3; c=relaxed/relaxed; a=rsa-sha256;
         d=arobins.dev; s=dkim2-rsa;
         mf=arobins@arobins.dev;
