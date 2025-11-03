@@ -1,11 +1,11 @@
-DKIM2-Signature: i=1; a=rsa-sha256;
+DKIM2-Signature: i=1; c=relaxed/relaxed; a=rsa-sha256;
         d=arobins.dev; s=dkim2-rsa;
         mf=arobins@arobins.dev;
         rt=arobins@bar.com;
         mv=1;
         h=message-id:date:subject:to:from;
         bh=0uiXayCouECWmcjDHp750pJpXUoIWNdB5rEXHxGSbRs=;
-        b=Z71UuKjFyCCaVqbvlVltcaMtiHfBbq1kT2SvhshgNyFR8Y57+qPWUpW08rbPeFjhBZitqILaXIWGGU9iEcFBxe1A+oLL4OGEyp8en6Trgb0R3wyHa+3XYjDJpJSAkToumnosepC6tc1DHlM+edrpRamPmLeeymozy1OCg3X7ky8=
+        b=gh2TSWwTwrUANTB4BoIx0GRkRTE9xyIjH+FF4HIE7q2ApVqJgCil7v4VEF50JCrAXPnnjgpzUqmyplbxKz293aOo4RkMtw9UQgWDYdbxYHdmo6uYuY/EZ2xTociB/eJ+uYduMRd3tkjgeBmt+eQHEoeH9DZ6VJT7dxyEHKlr+pA=
 Mail-Version: mv=1;
 From: arobins@arobinstest.foo
 To: arobins@bar.com
