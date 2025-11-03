@@ -1,22 +1,21 @@
 DKIM2-Signature: i=4; a=rsa-sha256; c=relaxed/relaxed; d=
-	test1.dkim2.com; s=sel1; mv=5; mf=
+	test1.dkim2.com; s=sel3; mv=5; mf=
 	brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
 	authentication-results:authentication-results
 	:authentication-results:authentication-results
-	:authentication-results:received-spf:extra-header:feedback-id
-	:mime-version:date:to:message-id:message-id-hash:precedence
-	:subject:list-id:archived-at:list-archive:list-help:list-owner
-	:list-post:list-subscribe:list-unsubscribe:content-type:from;
-	 bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=fcMNW0C/xvei
-	jiaVPEkiCmIHlSBIsev7ZFJNt3Ieb3SN6Z0infS2taClkG/U9/+HwDwJ8FZt1R7z
-	6B/wA5MiPBk3vNQlP388tyXkHgY0Vj3DCzoUfmOIbOgotSJGDqHU4U3hMWngfmlB
-	fvytd5ZoQz8Ij2lPTYDv8yyo1BmwIc2yzD3aS2vWyQvGVga1fN6GtaepejSQ1gjy
-	aqdEjrjfchpvsy9Jntev43jVeuB1IQnrN3uAbs3ft7LeUtdXpbuar+LopIgTfgsk
-	KOVpF+QaSWcE6AzWFKkYYmz2s0AMiS/34m23MJpGqvp/lLbXJGzjG0eqq5UHIeZx
-	L1rmtEeHnw==
+	:authentication-results:received-spf:feedback-id:mime-version
+	:date:to:message-id:message-id-hash:precedence:subject:list-id
+	:archived-at:list-archive:list-help:list-owner:list-post
+	:list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
+	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=kvk0xv26QOrcOfrS/cns7oppT
+	oYS6nALsPiN1PM4/RGjRS1FE6ZWZ89Mi72dNo/ZxRsV6Ag+ojtkyrEytkBaQzFJF
+	t3NqfWdWARKUZ+2/ypvvADsrs98/8hyHbzFWVYS3ZNkm8Ejn26xNOMQrds64/Vjs
+	4T8Z00U6LkiA/0SejgDc6YJddfsqbura50HQc6QCbETVyxioDHiKyV4gSvPpZf8J
+	da4q6tj30mdVumDXKuxFgwXcYvPb74jJgSm1VTQKGuK0mLhib17BhcmUD4heCmjs
+	YC4ZkH5PtlndX8Q+YtTjPi5J5gFQFzvNVMjxpVYZydro+alyfm8oiCq5mihDw==
 Mail-Version: mv=5; a=sha256;
-	h=authentication-results:authentication-results:authentication-results:authentication-results:authentication-results:received-spf:extra-header:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
-	 hh=0pRgflA2Tm7j4OWbgdCepVA8rH4uXww/NxeD1g+kyMk=;
+	h=authentication-results:authentication-results:authentication-results:authentication-results:authentication-results:received-spf:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+	 hh=HTSOUvsVCIDFUlf4jmgHzgL3WFCQYwvgz0IuOKGreq8=;
 	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
 	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
 	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
@@ -164,88 +163,88 @@ Received: from mail.ietf.org (mail.ietf.org [50.223.129.194])
 	by mx6.messagingengine.com (Postfix) with ESMTPS id 63B05116009E
 	for <brong@fastmailteam.com>; Wed,  7 Aug 2024 21:23:34 -0400 (EDT)
 Mail-Version: mv=4; a=sha256;
-        h=extra-header:authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
-         hh=NEw6Zlcid4yspSBC5GdTF06NJTS3XN+THj+e5DFwXho=;
-        bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
-        ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
-        ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
-        ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=; b=c:1-15,
-        b:SGVyZSdzIHNvbWUgZXh0cmEgdGV4dC4=,b:,c:16-63
+	h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+	 hh=HVJs/ly+HX1SQ9MvhfqBSBb4p9OKdpdVdYgqlAmSHmM=;
+	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
+	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
+	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
+	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
+	h.Extra-Header=b:eWVz; b=c:1-15,
+	b:SGVyZSdzIHNvbWUgZXh0cmEgdGV4dC4=,b:,c:16-63
 Mail-Version: mv=3; a=sha256;
-        h=extra-header:authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
-         hh=NEw6Zlcid4yspSBC5GdTF06NJTS3XN+THj+e5DFwXho=;
-        bh=nYt9lVZofGRkBBqZ5ZfpELGdHwWfZAdxLrQIsUlUihM=;
-        ph.1.1=Fvtzu6vdcUoh6weOk9QXjZAZw4kkv8AkUiF08t9T/d4=;
-        ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
-        ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
-        h.Extra-Header=; b=c:1-15,c:18-65
-Extra-Header: yes
+	h=extra-header:authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+	 hh=vWWLQRGgkUxUJ6GHjbSTz/ffeA7HhELy6yolTB+wRjc=;
+	bh=nYt9lVZofGRkBBqZ5ZfpELGdHwWfZAdxLrQIsUlUihM=;
+	ph.1.1=Fvtzu6vdcUoh6weOk9QXjZAZw4kkv8AkUiF08t9T/d4=;
+	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
+	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
+	h.Extra-Header=; b=c:1-15,c:18-65
 DKIM2-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=
-        test1.dkim2.com; s=sel1; mv=2; mf=
-        brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
-        authentication-results:feedback-id:mime-version:date:to
-        :message-id:message-id-hash:precedence:subject:list-id
-        :archived-at:list-archive:list-help:list-owner:list-post
-        :list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
-        QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=hVzjCxAI4qW37Sx4BAmg7EjCg
-        na6oxr64xoqf1C69aLosqRaqVdxAlFfkFjZF0JLXvauc9bnOcC9e/YNX2I6vMLNR
-        R9UZkBzHo+OkoGWDOPAvW8WmoIK7yHlSgSlQsDkOjXHhYlBddn6eqan4/cw5MWFD
-        cKfFfb9qppuj+M16rqJyj+lsU16/w0ykJB6aaASWNdwEtFV+PwEzCPcsrNuyvVEE
-        Gluf0sJJCeaRpxk9MuusSNcgLbaz2Eud4VgIsPbE0k2Em6o9I7SjpOsmV2mnsrAI
-        A8TzpjUihhJkZuvcpk8AFEt7xVXpCUExRaGrC/1hKThtV1gaiYPVR+Wnx/G1A==
+	test1.dkim2.com; s=sel2; mv=2; mf=
+	brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
+	authentication-results:feedback-id:mime-version:date:to
+	:message-id:message-id-hash:precedence:subject:list-id
+	:archived-at:list-archive:list-help:list-owner:list-post
+	:list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
+	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=SH6qzqqmfC41KrqSJHVQZ9YzW
+	MgY8aiCoy56WgKVrbXdulCGPYYNkciK0IUVQLH35pSDU9kg11S4KTDpIkwEbDDWy
+	ipWX9S5vHf5dZ+n1+KgP0OVpUdDrM00T0SD8NYSDP+WOdJ7mviKCh9B+Ab4Dzget
+	AsKdrkG5dbjA0MQE/fSKL4GgGp1suyaAbXho/U4PTtcVhETMBEbirMFeRvoEP+lZ
+	8Qc4Fk6KeDSkWvYcAgR3smTuj1mNZ4pmF7tbTDV458PwTjA259Nvos0FmcmBAORs
+	DeGjE78/0e7RjhFtizyx3Cj7ojblyuUchVFvUDmJV5IMU2nWuDYOOtAJiWdLA==
 DKIM2-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=
-        test1.dkim2.com; s=sel1; mv=2; mf=
-        brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
-        authentication-results:feedback-id:mime-version:date:to
-        :message-id:message-id-hash:precedence:subject:list-id
-        :archived-at:list-archive:list-help:list-owner:list-post
-        :list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
-        QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=Pr6Z2UiEBOBwqWXcvDrfJqJQU
-        m+SuIylglh29F2ZNKSxIM+UGO8+qGLAQhqSZijmx5p4ZpwcKzYNT9gH4Gr0iftdk
-        HAIPXQ/98rM7MQNJpvsyl+rT2ipRhVoU4RXENotlSsX1nKGdYq/XSGNlRycNPziy
-        Hfnk6QTqm84DFwx3fYAihLO4ERrQZcqhVeTPAKlDyFGTcSkN4siptnyNITvA3Drb
-        YL5lBto68qjPb47bCsYL+E3tkl1tLSvsR2WHKOMniu6vf0UlLIOdCpd+9sR2l91i
-        eyGTW8hqMXtcrgx12tAf6yVQl5yHUzScB44mHHeUmXGk4tOY+D0sPpHwKP3CQ==
+	test1.dkim2.com; s=sel2; mv=2; mf=
+	brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
+	authentication-results:feedback-id:mime-version:date:to
+	:message-id:message-id-hash:precedence:subject:list-id
+	:archived-at:list-archive:list-help:list-owner:list-post
+	:list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
+	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=AIV0z2ge0tqfytFricS6BGFVw
+	1iFohk6Kgnq8aaAn+9Dmr6WqraSDjkN+0yD6TBaO4WXwQiTCEZzyEcN4j0LC4Ze3
+	Q/u8a7k48XxCxXFfHO96G+C1jcPpoEEQbA3z5HczqYh7ONOHmV4fPDQ2/f5uyZcR
+	1fT7XST9+rYeBLj8Kh4q9cDVDNqCJD8PxV2nvukzGizNmw84TP0O/TV4uM1jv9WG
+	MDVQiBRGewETpw0oLX0k4InArhTzpFM9iDSS5ozCPtkd0xjq3gBt2e1DSF/bKamR
+	Zij4dEnG0xSSMoXwC/F2RkGAnobCBOEixX2qBMBipQQnq3/hg6n+MnEenSNdQ==
 Mail-Version: mv=2; a=sha256;
-        h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
-         hh=3OODvU+ITE/109CfNvgNMJRo6c8ewWbLSjlN9qWm6vo=;
-        bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
-        ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
-        ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
-        ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
-        h.Archived-At=; h.Authentication-Results=;
-        h.Content-Type=b:bXVsdGlwYXJ0L2FsdGVybmF0aXZlOyBib3VuZGFyeT0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==;
-         h.Date=b:VGh1LCAyMSBNYXIgMjAyNCAxMjowOTozNyArMTAwMA==;
-        h.Feedback-ID=;
-        h.From=b:IkJyb24gR29uZHdhbmEiIDxicm9uZ0BmYXN0bWFpbHRlYW0uY29tPg==;
-         h.List-Archive=; h.List-Help=; h.List-Id=; h.List-Owner=;
-        h.List-Post=; h.List-Subscribe=; h.List-Unsubscribe=;
-        h.Message-ID-Hash=;
-        h.Message-Id=b:PGZiMWIxMGFlLWVhMzYtNGVlNC1iODRmLWI2MmYwMzZjZmFmNUBhcHAuZmFzdG1haWwuY29tPg==;
-         h.Precedence=;
-        h.Subject=b:V29ya2luZyBncm91cCBsYXN0IGNhbGwgZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQ=;
-         b=b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:5-5,
-        c:7-9,
-        b:VGhpcyBlbWFpbCBzdGFydHMgYSB3b3JraW5nIGdyb3VwIGxhc3QgY2FsbCBmb3IgaHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIGFzIGRpc2N1c3NlZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLg==,
-        c:11-11,
-        b:UGxlYXNlIHBvc3QgYW55IGNvbW1lbnRzIG9yIHJlc3BvbnNlcyBieSAqVGh1cnNkYXksIEFwcmlsIDR0aCwgMjAyNCou,
-        c:13-13,c:16-25,
-        b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:27-31,
-        b:YW1pbHk6QXJpYWw7Ij5IaSBBbGwsPGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48ZGl2PjxiPQ==,
-        b:cj48L2Rpdj48ZGl2PlRoaXMgZW1haWwgc3RhcnRzIGEgd29ya2luZyBncm91cCBsYXN0IGNhbGwgZm9yIDxhIGhyZWY9M0QiPQ==,
-        b:aHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIj5odHRwczovPQ==,
-        b:L2RhdGF0cmFja2VyLmlldGYub3JnL2RvYy9kcmFmdC1pZXRmLWptYXAtd2VicHVzaC12YXBpZC88L2E+IGFzIGRpc2N1c3NlPQ==,
-        b:ZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLjxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPQ==,
-        b:PjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5QbGVhc2UgcG9zdCBhbnkgY29tbWVudHMgb3IgcmVzPQ==,
-        b:cG9uc2VzIGJ5IDxiPlRodXJzZGF5LCBBcHJpbCA0dGgsIDIwMjQ8L2I+Ljxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtPQ==,
-        b:ZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5UaGFua3MsPGJyPjwvPQ==,
-        b:ZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48YnI+PC9kaXY+PGRpdiBzdHlsZT0zRCJmb250LWZhbWlsPQ==,
-        b:eTpBcmlhbDsiPkJyb24uPGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjwvZGl2PjxkaXYgaWQ9M0QiPQ==,
-        b:c2lnNTY2Mjk0MTciPjxkaXYgY2xhc3M9M0Qic2lnbmF0dXJlIj4tLTxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpZ25hdHVyPQ==,
-        b:ZSI+Jm5ic3A7IEJyb24gR29uZHdhbmEsIENFTywgRmFzdG1haWwgUHR5IEx0ZDxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpPQ==,
-        b:Z25hdHVyZSI+Jm5ic3A7IGJyb25nQGZhc3RtYWlsdGVhbS5jb208YnI+PC9kaXY+PGRpdiBjbGFzcz0zRCJzaWduYXR1cmUiPQ==,
-        b:Pjxicj48L2Rpdj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjwvYm9keT48L2h0PQ==,
-        b:bWw+,b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOC0t
+	h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
+	 hh=HVJs/ly+HX1SQ9MvhfqBSBb4p9OKdpdVdYgqlAmSHmM=;
+	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
+	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
+	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
+	ph.2=RvkbxQFigTaGWpkqLwdLyRQ4y5c2p1EkGOQ2+P3/dfM=;
+	h.Archived-At=; h.Authentication-Results=;
+	h.Content-Type=b:bXVsdGlwYXJ0L2FsdGVybmF0aXZlOyBib3VuZGFyeT0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==;
+	 h.Date=b:VGh1LCAyMSBNYXIgMjAyNCAxMjowOTozNyArMTAwMA==;
+	h.Feedback-ID=;
+	h.From=b:IkJyb24gR29uZHdhbmEiIDxicm9uZ0BmYXN0bWFpbHRlYW0uY29tPg==;
+	 h.List-Archive=; h.List-Help=; h.List-Id=; h.List-Owner=;
+	h.List-Post=; h.List-Subscribe=; h.List-Unsubscribe=;
+	h.Message-ID-Hash=;
+	h.Message-Id=b:PGZiMWIxMGFlLWVhMzYtNGVlNC1iODRmLWI2MmYwMzZjZmFmNUBhcHAuZmFzdG1haWwuY29tPg==;
+	 h.Precedence=;
+	h.Subject=b:V29ya2luZyBncm91cCBsYXN0IGNhbGwgZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQ=;
+	 b=b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:5-5,
+	c:7-9,
+	b:VGhpcyBlbWFpbCBzdGFydHMgYSB3b3JraW5nIGdyb3VwIGxhc3QgY2FsbCBmb3IgaHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIGFzIGRpc2N1c3NlZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLg==,
+	c:11-11,
+	b:UGxlYXNlIHBvc3QgYW55IGNvbW1lbnRzIG9yIHJlc3BvbnNlcyBieSAqVGh1cnNkYXksIEFwcmlsIDR0aCwgMjAyNCou,
+	c:13-13,c:16-25,
+	b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOA==,c:27-31,
+	b:YW1pbHk6QXJpYWw7Ij5IaSBBbGwsPGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48ZGl2PjxiPQ==,
+	b:cj48L2Rpdj48ZGl2PlRoaXMgZW1haWwgc3RhcnRzIGEgd29ya2luZyBncm91cCBsYXN0IGNhbGwgZm9yIDxhIGhyZWY9M0QiPQ==,
+	b:aHR0cHM6Ly9kYXRhdHJhY2tlci5pZXRmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvIj5odHRwczovPQ==,
+	b:L2RhdGF0cmFja2VyLmlldGYub3JnL2RvYy9kcmFmdC1pZXRmLWptYXAtd2VicHVzaC12YXBpZC88L2E+IGFzIGRpc2N1c3NlPQ==,
+	b:ZCBpbiB0aGUgSUVURjExOSBzZXNzaW9uLjxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPQ==,
+	b:PjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5QbGVhc2UgcG9zdCBhbnkgY29tbWVudHMgb3IgcmVzPQ==,
+	b:cG9uc2VzIGJ5IDxiPlRodXJzZGF5LCBBcHJpbCA0dGgsIDIwMjQ8L2I+Ljxicj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtPQ==,
+	b:ZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij5UaGFua3MsPGJyPjwvPQ==,
+	b:ZGl2PjxkaXYgc3R5bGU9M0QiZm9udC1mYW1pbHk6QXJpYWw7Ij48YnI+PC9kaXY+PGRpdiBzdHlsZT0zRCJmb250LWZhbWlsPQ==,
+	b:eTpBcmlhbDsiPkJyb24uPGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjxkaXY+PGJyPjwvZGl2PjwvZGl2PjxkaXYgaWQ9M0QiPQ==,
+	b:c2lnNTY2Mjk0MTciPjxkaXYgY2xhc3M9M0Qic2lnbmF0dXJlIj4tLTxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpZ25hdHVyPQ==,
+	b:ZSI+Jm5ic3A7IEJyb24gR29uZHdhbmEsIENFTywgRmFzdG1haWwgUHR5IEx0ZDxicj48L2Rpdj48ZGl2IGNsYXNzPTNEInNpPQ==,
+	b:Z25hdHVyZSI+Jm5ic3A7IGJyb25nQGZhc3RtYWlsdGVhbS5jb208YnI+PC9kaXY+PGRpdiBjbGFzcz0zRCJzaWduYXR1cmUiPQ==,
+	b:Pjxicj48L2Rpdj48L2Rpdj48ZGl2IHN0eWxlPTNEImZvbnQtZmFtaWx5OkFyaWFsOyI+PGJyPjwvZGl2PjwvYm9keT48L2h0PQ==,
+	b:bWw+,b:LS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2NzVmOC0t
 Received: from ietfa.amsl.com (localhost [IPv6:::1])
 	by ietfa.amsl.com (Postfix) with ESMTP id B5BE4C1CAE68
 	for <brong@fastmailteam.com>; Wed,  7 Aug 2024 18:23:32 -0700 (PDT)
@@ -301,15 +300,15 @@ DKIM2-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=
         test1.dkim2.com; s=sel1; mv=1; mf=brong@fastmailteam.com; rt=
         jmap@ietf.org; h=mime-version:message-id:date:from:to:subject
         :content-type; bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw=; b=
-        HE85cxG4WuCP+lo2I4LEAK8rDjgKWyDmaquoBvAkJMEvDAHCP0DI3MkA6AygrtQi
-        I1DFeUfdH5cRhBKrPwnEmCDduS9iTYaLZCSDeFAAEXA1szsoPx8XHbG8psVyONxn
-        P9XsId86zOVA8XafBEDWObZXRNSOFPi53WOP+U2eeVPeggjKdpT5i+HXCWsm3dLn
-        mYBcp6hQyBfHhluoxXsj38wxHEDcTpXnU37/WEXiU+6mCN0Mm6UHwr6zFlqnJjKl
-        MLf2408tNZjGJz+u/y5a77e/ZM1sxiTweb85Pj43Cktce3JB0FhkTZnqZTUib7AM
-        4/CMRWwKHm5HF6BgWDdz+w==
+        Wf25dKA74XiNSFBXVlKfCfcKxdwyIaSc1w+lOjq5eBHNbSO61GSPsfjNVkgSdIZZ
+        MJIeexooPD4jrE1uhxOcL3XM8HPLb0M63v+2SMKfCYKDwhESsQKWyF71izCKYCph
+        OqY3qB6emU/FQ9VqPypw0nL8SSbq209gLnmmkjc81cXKZz2+AlWhtVdTYE55Q+Eb
+        Ziw5nOuJtMB6axtb6v2W41KodEgliBp3ZOS3QOWxz1Y5vtHQBtkbAXVU9o01IdrG
+        FQuh9yJ8YOQgGxy3/1cUwjZV3gGoRhAH8kicOa/9ew84B5EDpFCNEZkGt7cmnsRt
+        77DQLHQX7Q11mKVWye8MIw==
 Mail-Version: mv=1; a=sha256;
         h=mime-version:message-id:date:from:to:subject:content-type;
-        hh=U3l2NbFqfeFEKHSJfuElpPIf4UfEH5VU/OFjgODED0M=;
+        hh=cHxjMZ4p2qdWHau3x6TITaqO2qyQMLpK5cxf+qLuvaY=;
         bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw=;
         ph.1=/tB6vGLb4bPaWWfxtA5OlqS4JZ65PQzca1IE/9BMNlY=;
         ph.2=q8q5JLRWa4i1isubOAXVMkI8iPQpYdBnaQFRCTnm3Oc=

@@ -1,6 +1,6 @@
 Mail-Version: mv=3; a=sha256;
 	h=extra-header:authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
-	 hh=NEw6Zlcid4yspSBC5GdTF06NJTS3XN+THj+e5DFwXho=;
+	 hh=vWWLQRGgkUxUJ6GHjbSTz/ffeA7HhELy6yolTB+wRjc=;
 	bh=nYt9lVZofGRkBBqZ5ZfpELGdHwWfZAdxLrQIsUlUihM=;
 	ph.1.1=Fvtzu6vdcUoh6weOk9QXjZAZw4kkv8AkUiF08t9T/d4=;
 	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
@@ -8,34 +8,34 @@ Mail-Version: mv=3; a=sha256;
 	h.Extra-Header=; b=c:1-15,c:18-65
 Extra-Header: yes
 DKIM2-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=
-	test1.dkim2.com; s=sel1; mv=2; mf=
+	test1.dkim2.com; s=sel2; mv=2; mf=
 	brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
 	authentication-results:feedback-id:mime-version:date:to
 	:message-id:message-id-hash:precedence:subject:list-id
 	:archived-at:list-archive:list-help:list-owner:list-post
 	:list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
-	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=hVzjCxAI4qW37Sx4BAmg7EjCg
-	na6oxr64xoqf1C69aLosqRaqVdxAlFfkFjZF0JLXvauc9bnOcC9e/YNX2I6vMLNR
-	R9UZkBzHo+OkoGWDOPAvW8WmoIK7yHlSgSlQsDkOjXHhYlBddn6eqan4/cw5MWFD
-	cKfFfb9qppuj+M16rqJyj+lsU16/w0ykJB6aaASWNdwEtFV+PwEzCPcsrNuyvVEE
-	Gluf0sJJCeaRpxk9MuusSNcgLbaz2Eud4VgIsPbE0k2Em6o9I7SjpOsmV2mnsrAI
-	A8TzpjUihhJkZuvcpk8AFEt7xVXpCUExRaGrC/1hKThtV1gaiYPVR+Wnx/G1A==
+	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=SH6qzqqmfC41KrqSJHVQZ9YzW
+	MgY8aiCoy56WgKVrbXdulCGPYYNkciK0IUVQLH35pSDU9kg11S4KTDpIkwEbDDWy
+	ipWX9S5vHf5dZ+n1+KgP0OVpUdDrM00T0SD8NYSDP+WOdJ7mviKCh9B+Ab4Dzget
+	AsKdrkG5dbjA0MQE/fSKL4GgGp1suyaAbXho/U4PTtcVhETMBEbirMFeRvoEP+lZ
+	8Qc4Fk6KeDSkWvYcAgR3smTuj1mNZ4pmF7tbTDV458PwTjA259Nvos0FmcmBAORs
+	DeGjE78/0e7RjhFtizyx3Cj7ojblyuUchVFvUDmJV5IMU2nWuDYOOtAJiWdLA==
 DKIM2-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=
-	test1.dkim2.com; s=sel1; mv=2; mf=
+	test1.dkim2.com; s=sel2; mv=2; mf=
 	brong=40fastmailteam.com@dmarc.ietf.org; rt=jmap@ietf.org; h=
 	authentication-results:feedback-id:mime-version:date:to
 	:message-id:message-id-hash:precedence:subject:list-id
 	:archived-at:list-archive:list-help:list-owner:list-post
 	:list-subscribe:list-unsubscribe:content-type:from; bh=WmM5apq+W
-	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=Pr6Z2UiEBOBwqWXcvDrfJqJQU
-	m+SuIylglh29F2ZNKSxIM+UGO8+qGLAQhqSZijmx5p4ZpwcKzYNT9gH4Gr0iftdk
-	HAIPXQ/98rM7MQNJpvsyl+rT2ipRhVoU4RXENotlSsX1nKGdYq/XSGNlRycNPziy
-	Hfnk6QTqm84DFwx3fYAihLO4ERrQZcqhVeTPAKlDyFGTcSkN4siptnyNITvA3Drb
-	YL5lBto68qjPb47bCsYL+E3tkl1tLSvsR2WHKOMniu6vf0UlLIOdCpd+9sR2l91i
-	eyGTW8hqMXtcrgx12tAf6yVQl5yHUzScB44mHHeUmXGk4tOY+D0sPpHwKP3CQ==
+	QpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=; b=AIV0z2ge0tqfytFricS6BGFVw
+	1iFohk6Kgnq8aaAn+9Dmr6WqraSDjkN+0yD6TBaO4WXwQiTCEZzyEcN4j0LC4Ze3
+	Q/u8a7k48XxCxXFfHO96G+C1jcPpoEEQbA3z5HczqYh7ONOHmV4fPDQ2/f5uyZcR
+	1fT7XST9+rYeBLj8Kh4q9cDVDNqCJD8PxV2nvukzGizNmw84TP0O/TV4uM1jv9WG
+	MDVQiBRGewETpw0oLX0k4InArhTzpFM9iDSS5ozCPtkd0xjq3gBt2e1DSF/bKamR
+	Zij4dEnG0xSSMoXwC/F2RkGAnobCBOEixX2qBMBipQQnq3/hg6n+MnEenSNdQ==
 Mail-Version: mv=2; a=sha256;
 	h=authentication-results:feedback-id:mime-version:date:to:message-id:message-id-hash:precedence:subject:list-id:archived-at:list-archive:list-help:list-owner:list-post:list-subscribe:list-unsubscribe:content-type:from;
-	 hh=3OODvU+ITE/109CfNvgNMJRo6c8ewWbLSjlN9qWm6vo=;
+	 hh=HVJs/ly+HX1SQ9MvhfqBSBb4p9OKdpdVdYgqlAmSHmM=;
 	bh=WmM5apq+WQpxS7eMhcbLvqgEs5dqin5Mlw/L82Lmt+k=;
 	ph.1.1=h1koLuRAyKa6ls3XaNd99SQujwAXcZwDnUQs0eIWS+Q=;
 	ph.1.2=lY1JktXbxIiRb46lz3BUY/tFmrbS34BIqPUHa4segYU=;
@@ -128,15 +128,15 @@ DKIM2-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=
         test1.dkim2.com; s=sel1; mv=1; mf=brong@fastmailteam.com; rt=
         jmap@ietf.org; h=mime-version:message-id:date:from:to:subject
         :content-type; bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw=; b=
-        HE85cxG4WuCP+lo2I4LEAK8rDjgKWyDmaquoBvAkJMEvDAHCP0DI3MkA6AygrtQi
-        I1DFeUfdH5cRhBKrPwnEmCDduS9iTYaLZCSDeFAAEXA1szsoPx8XHbG8psVyONxn
-        P9XsId86zOVA8XafBEDWObZXRNSOFPi53WOP+U2eeVPeggjKdpT5i+HXCWsm3dLn
-        mYBcp6hQyBfHhluoxXsj38wxHEDcTpXnU37/WEXiU+6mCN0Mm6UHwr6zFlqnJjKl
-        MLf2408tNZjGJz+u/y5a77e/ZM1sxiTweb85Pj43Cktce3JB0FhkTZnqZTUib7AM
-        4/CMRWwKHm5HF6BgWDdz+w==
+        Wf25dKA74XiNSFBXVlKfCfcKxdwyIaSc1w+lOjq5eBHNbSO61GSPsfjNVkgSdIZZ
+        MJIeexooPD4jrE1uhxOcL3XM8HPLb0M63v+2SMKfCYKDwhESsQKWyF71izCKYCph
+        OqY3qB6emU/FQ9VqPypw0nL8SSbq209gLnmmkjc81cXKZz2+AlWhtVdTYE55Q+Eb
+        Ziw5nOuJtMB6axtb6v2W41KodEgliBp3ZOS3QOWxz1Y5vtHQBtkbAXVU9o01IdrG
+        FQuh9yJ8YOQgGxy3/1cUwjZV3gGoRhAH8kicOa/9ew84B5EDpFCNEZkGt7cmnsRt
+        77DQLHQX7Q11mKVWye8MIw==
 Mail-Version: mv=1; a=sha256;
         h=mime-version:message-id:date:from:to:subject:content-type;
-        hh=U3l2NbFqfeFEKHSJfuElpPIf4UfEH5VU/OFjgODED0M=;
+        hh=cHxjMZ4p2qdWHau3x6TITaqO2qyQMLpK5cxf+qLuvaY=;
         bh=jbnAuci93jpWe4feVzX7Z+AnoXzA63XKly53RDMVoJw=;
         ph.1=/tB6vGLb4bPaWWfxtA5OlqS4JZ65PQzca1IE/9BMNlY=;
         ph.2=q8q5JLRWa4i1isubOAXVMkI8iPQpYdBnaQFRCTnm3Oc=
