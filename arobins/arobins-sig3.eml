@@ -1,0 +1,51 @@
+DKIM2-Signature: i=3; c=relaxed/relaxed; a=rsa-sha256;
+        d=arobins.dev; s=dkim2-rsa;
+        mf=arobins@arobins.dev;
+        rt=arobins@bar.com;
+        mv=3;
+        h=message-id:date:subject:to:from;
+        bh=m714Bx5f3ifoYKCJB0n5VykeMX+9YehjuGWL8RimVp0=;
+        b=m1JX30OIMgG3zdBZm11DhnZAnQcT/EiMfup4uixNjKcLiavaxV9IkryKt2fd5LvAuYkePBCT3z20o+pN1X2Cdsz1mvdEknoEGUb/9y/Ao+envoUMmN0W5kvLOEGldNUMIJBuY5tG6u4tZbInpzs1h4nSl2kG4YXm+mhCfSHLuNk=
+Mail-Version: mv=3;
+   a=sha256;
+   hh=ND1zwxn6l2yx5pJlsdUsQHa0FLVyi4jOhIME94XAf9s=;
+   bh=m714Bx5f3ifoYKCJB0n5VykeMX+9YehjuGWL8RimVp0=;
+   h=message-id:date:subject:to:from;
+   h.Subject=b:dGVzdCBlbWFpbA==;
+DKIM2-Signature: i=2; c=relaxed/relaxed; a=rsa-sha256;
+        d=arobins.dev; s=dkim2-rsa;
+        mf=arobins@arobins.dev;
+        rt=arobins@bar.com;
+        mv=2;
+        h=message-id:date:subject:to:from;
+        bh=m714Bx5f3ifoYKCJB0n5VykeMX+9YehjuGWL8RimVp0=;
+        b=mqSlyupvXD42s1XgQOO459SPXDTlK6wKnXpzcDXeexSwRQganjZYfEc0tuXC804GMNBwlWMac2AiBy7Hmw0vCynBBblSaCG4vsxVSicCFzEVGSZh7ZOFUYEoYF20ihTt/tbfJx42Y0S2KLiCOXvvbBLFO6AiqrGqDAluzzWCZHM=
+Mail-Version: mv=2;
+   a=sha256;
+   hh=sJTolRliVq/wFM1RCOglwElZVy/NqMtEW3APr1/btGE=;
+   bh=m714Bx5f3ifoYKCJB0n5VykeMX+9YehjuGWL8RimVp0=;
+   h=message-id:date:subject:to:from;
+   b=b:VGhpcyBpcyBhIHRlc3QgZW1haWw=,
+      b:VGhpcyB3YXMgYW5vdGhlciBsaW5l;
+DKIM2-Signature: i=1; c=relaxed/relaxed; a=rsa-sha256;
+        d=arobins.dev; s=dkim2-rsa;
+        mf=arobins@arobins.dev;
+        rt=arobins@bar.com;
+        mv=1;
+        h=message-id:date:subject:to:from;
+        bh=0uiXayCouECWmcjDHp750pJpXUoIWNdB5rEXHxGSbRs=;
+        b=Ein0Lux5DjU5gdjQK6TKS4cDTu3vHU0KhBRvQvAaa6SvzfgEn7Vr7vHWbruD3jFaMAuqR+dEZeRe5cdSUYlNkf69hKeeJrGKYPm0EbAuD/iMYYwcr2pPmmKY4KzCGxQFUUrZbG1Od1ylE+POxbrEIiWFR3q5tCNLQPxhyed2Kfg=
+Mail-Version: mv=1;
+   a=sha256;
+   hh=sJTolRliVq/wFM1RCOglwElZVy/NqMtEW3APr1/btGE=;
+   bh=0uiXayCouECWmcjDHp750pJpXUoIWNdB5rEXHxGSbRs=;
+   h=message-id:date:subject:to:from;
+From: arobins@arobinstest.foo
+To: arobins@bar.com
+Subject: changed in mv=3
+Date: today
+Message-ID: <test1@arobinstest.foo>
+
+This is a test email
+This was another line
+This line was added by mv=2
