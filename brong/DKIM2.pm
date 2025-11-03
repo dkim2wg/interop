@@ -376,6 +376,8 @@ sub verify {
   $dkim->CLOSE();
   my %res;
   $res{result} = $dkim->{result};
+  $res{s} = $signature->get_tag('s');
+  $res{d} = $signature->get_tag('d');
   return \%res;
 }
 

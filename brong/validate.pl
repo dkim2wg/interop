@@ -25,7 +25,7 @@ while (1) {
     my $check = DKIM2::validate($msg1);
     die "ERROR: $check->{error}\n" unless $check->{valid};
     die "DIDN'T FIND TOP $version <> $check->{mv}" unless $version == $check->{mv};
-    say "mv=$check->{mv} OK";
+    say "OK Mail-Version: mv=$check->{mv}";
     die "Failed to undo" unless DKIM2::undo($msg1);
     # Email::MIME keeps internal caches which get broken by replacing the body
     $version--;
@@ -44,7 +44,7 @@ while (1) {
   die "NO SUCH DKIM2-Header i=$num" unless $h;
   my $res = DKIM2::verify($msg1, sub { find_key(@_) } );
   if ($res->{result} eq 'pass') {
-    say "i=$num OK (mv=$version)";
+    say "OK DKIM2-Signature: i=$num; mv=$version; s=$res->{s}; d=$res->{d}";
   } else {
     use Data::Dumper;
     die Dumper($res);
