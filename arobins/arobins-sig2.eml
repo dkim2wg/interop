@@ -1,27 +1,37 @@
-DKIM2-Signature: i=2; c=relaxed/relaxed; a=rsa-sha256;
-        d=arobins.dev; s=dkim2-rsa;
-        mf=arobins@arobins.dev;
-        rt=arobins@bar.com;
-        mv=2;
-        h=message-id:date:subject:to:from;
-        bh=m714Bx5f3ifoYKCJB0n5VykeMX+9YehjuGWL8RimVp0=;
-        b=TzVcy20yWicj8TMqumtjLffUs6oTlmfhEHE+q/ujLctooCrmxxDBiksm3wWQwWGAVflvzY0EB3rnADVMmN8gPEgffumX88oQVCneSJ3BjsvavqD0MgB6ra33beSsoonMa8Eab/rG+fS3Blf29Hdv+8iCd2O+HOyL5/DexgZTUW0=
-Mail-Version: mv=2; b=c:1-2
-DKIM2-Signature: i=1; c=relaxed/relaxed; a=rsa-sha256;
-        d=arobins.dev; s=dkim2-rsa;
-        mf=arobins@arobins.dev;
-        rt=arobins@bar.com;
-        mv=1;
-        h=message-id:date:subject:to:from;
-        bh=0uiXayCouECWmcjDHp750pJpXUoIWNdB5rEXHxGSbRs=;
-        b=gh2TSWwTwrUANTB4BoIx0GRkRTE9xyIjH+FF4HIE7q2ApVqJgCil7v4VEF50JCrAXPnnjgpzUqmyplbxKz293aOo4RkMtw9UQgWDYdbxYHdmo6uYuY/EZ2xTociB/eJ+uYduMRd3tkjgeBmt+eQHEoeH9DZ6VJT7dxyEHKlr+pA=
-Mail-Version: mv=1;
-From: arobins@arobinstest.foo
-To: arobins@bar.com
-Subject: test email
-Date: today
-Message-ID: <test1@arobinstest.foo>
-
-This is a test email
-This was another line
-This line was added by mv=2
+DKIM2-Signature: i=2; c=relaxed/relaxed; a=rsa-sha256;
+        d=arobins.dev; s=dkim2-rsa;
+        mf=arobins@arobins.dev;
+        rt=arobins@bar.com;
+        mv=2;
+        h=message-id:date:subject:to:from;
+        bh=m714Bx5f3ifoYKCJB0n5VykeMX+9YehjuGWL8RimVp0=;
+        b=mqSlyupvXD42s1XgQOO459SPXDTlK6wKnXpzcDXeexSwRQganjZYfEc0tuXC804GMNBwlWMac2AiBy7Hmw0vCynBBblSaCG4vsxVSicCFzEVGSZh7ZOFUYEoYF20ihTt/tbfJx42Y0S2KLiCOXvvbBLFO6AiqrGqDAluzzWCZHM=
+Mail-Version: mv=2;
+   a=sha256;
+   hh=sJTolRliVq/wFM1RCOglwElZVy/NqMtEW3APr1/btGE=;
+   bh=m714Bx5f3ifoYKCJB0n5VykeMX+9YehjuGWL8RimVp0=;
+   h=message-id:date:subject:to:from;
+   b=b:VGhpcyBpcyBhIHRlc3QgZW1haWw=,
+      b:VGhpcyB3YXMgYW5vdGhlciBsaW5l;
+DKIM2-Signature: i=1; c=relaxed/relaxed; a=rsa-sha256;
+        d=arobins.dev; s=dkim2-rsa;
+        mf=arobins@arobins.dev;
+        rt=arobins@bar.com;
+        mv=1;
+        h=message-id:date:subject:to:from;
+        bh=0uiXayCouECWmcjDHp750pJpXUoIWNdB5rEXHxGSbRs=;
+        b=Ein0Lux5DjU5gdjQK6TKS4cDTu3vHU0KhBRvQvAaa6SvzfgEn7Vr7vHWbruD3jFaMAuqR+dEZeRe5cdSUYlNkf69hKeeJrGKYPm0EbAuD/iMYYwcr2pPmmKY4KzCGxQFUUrZbG1Od1ylE+POxbrEIiWFR3q5tCNLQPxhyed2Kfg=
+Mail-Version: mv=1;
+   a=sha256;
+   hh=sJTolRliVq/wFM1RCOglwElZVy/NqMtEW3APr1/btGE=;
+   bh=0uiXayCouECWmcjDHp750pJpXUoIWNdB5rEXHxGSbRs=;
+   h=message-id:date:subject:to:from;
+From: arobins@arobinstest.foo
+To: arobins@bar.com
+Subject: test email
+Date: today
+Message-ID: <test1@arobinstest.foo>
+
+This is a test email
+This was another line
+This line was added by mv=2
