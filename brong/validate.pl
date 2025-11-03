@@ -10,7 +10,10 @@ use JSON;
 
 
 my $f1 = shift;
-my $msg1 = Email::MIME->new(path($f1)->slurp);
+my $data = path($f1)->slurp;
+$data =~ s/\r//gs;
+$data =~ s/\n/\r\n/gs;
+my $msg1 = Email::MIME->new($data);
 
 my $dns = decode_json(path('../dns.json')->slurp);
 

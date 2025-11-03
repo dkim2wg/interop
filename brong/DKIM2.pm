@@ -38,6 +38,7 @@ sub undo {
   my $data = Mail::DKIM::KeyValueList->parse($header);
 
   for my $tag (@{$data->{tags}}) {
+    next unless $tag->{name};
     if ($tag->{name} =~ m/^h\.(.*)/) {
       my $h = $1;
       my $old;
