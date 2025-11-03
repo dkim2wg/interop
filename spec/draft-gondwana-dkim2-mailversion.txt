@@ -8,8 +8,8 @@ Intended status: Standards Track                         2 November 2025
 Expires: 6 May 2026
 
 
-            A method for describing changes made to an email
-                  draft-gondwana-dkim2-mailversion-00
+               A method for describing changes to emails
+                  draft-gondwana-dkim2-mailversion-01
 
 Abstract
 
@@ -20,6 +20,12 @@ Abstract
    While this is general enough to be used for any changes, it is
    anticipated that this method will normally be used for removing added
    data rather than large complex changes.
+
+   This method also captures hashes of important features of the
+   message, allowing validation that the changes were described
+   correctly, and allowing a signature which covers the Mail-Version
+   header to, by extention, ensure that the important content of the
+   message is unchanged.
 
 Status of This Memo
 
@@ -42,12 +48,6 @@ Copyright Notice
 
    Copyright (c) 2025 IETF Trust and the persons identified as the
    document authors.  All rights reserved.
-
-
-
-
-
-
 
 
 
@@ -77,18 +77,17 @@ Table of Contents
      2.4.  Examples  . . . . . . . . . . . . . . . . . . . . . . . .   6
    3.  Iterative application . . . . . . . . . . . . . . . . . . . .   7
    4.  Security  . . . . . . . . . . . . . . . . . . . . . . . . . .   7
-   5.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .   7
-   6.  References  . . . . . . . . . . . . . . . . . . . . . . . . .   7
-     6.1.  Normative References  . . . . . . . . . . . . . . . . . .   8
-     6.2.  Informative References  . . . . . . . . . . . . . . . . .   8
+   5.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .   8
+   6.  Normative References  . . . . . . . . . . . . . . . . . . . .   8
    Appendix A.  Changes from Earlier Versions  . . . . . . . . . . .   8
-     A.1.  draft-gondwana-dkim2-mailversion-00 . . . . . . . . . . .   8
-     A.2.  draft-gondwana-dkim2-modification-algebra-03  . . . . . .   8
-     A.3.  draft-gondwana-dkim2-modification-algebra-02  . . . . . .   9
+     A.1.  draft-gondwana-dkim2-mailversion-01 . . . . . . . . . . .   8
+     A.2.  draft-gondwana-dkim2-mailversion-00 . . . . . . . . . . .   8
+     A.3.  draft-gondwana-dkim2-modification-algebra-03  . . . . . .   9
      A.4.  draft-gondwana-dkim2-modification-algebra-02  . . . . . .   9
-     A.5.  draft-gondwana-dkim2-modification-algebra-01  . . . . . .   9
-     A.6.  draft-gondwana-dkim2-modification-algebra-00  . . . . . .   9
-   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .   9
+     A.5.  draft-gondwana-dkim2-modification-algebra-02  . . . . . .   9
+     A.6.  draft-gondwana-dkim2-modification-algebra-01  . . . . . .   9
+     A.7.  draft-gondwana-dkim2-modification-algebra-00  . . . . . .  10
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  10
 
 1.  Background and motivations
 
@@ -101,10 +100,11 @@ Table of Contents
 
    By producing a way to describe changes, the recipient can examine the
    sections which were changed and determine whether the change was
-   malicious.  Along with signatures which validate against previous
-   versions, this can be used to allow signing systems to take
-   accountability for only the version of the message which passed
-   through their system.
+   malicious.  By undoing the changes, it is possible to recreate a
+   message which matches the original signature, and hence provide
+   accountability for the content which was present in the copy of the
+   message to which the signature was applied.
+
 
 
 
@@ -121,17 +121,17 @@ Internet-Draft        Email Modification Versioning        November 2025
    instructions on how to convert that version back to the previous
    version.
 
+   To well formed, a message must have a monotonically increasing set of
+   Mail-Version header fields, with the first having mv=1 and each
+   having an increasing integer number, with no gaps.
+
 2.1.  Mail-Version Header
 
    The format of the value is a tag-list.  Tag-lists contain key=value;
    key2=value2; - they can be wrapped, and all whitespace is normalised
    to a single space.
 
-   TODO: we need to decide where we pull the specification of tag-list
-   from!
-
-
-
+   TODO: we need to specify tag-list.
 
 
 
@@ -173,12 +173,12 @@ Internet-Draft        Email Modification Versioning        November 2025
    +==========+=============+==========================================+
    | Tag      | Type        | Value                                    |
    +==========+=============+==========================================+
-   | v        | position    | Revision number (range: 1 to 100)        |
+   | mv       | position    | Revision number (range: 1 to 100)        |
    +----------+-------------+------------------------------------------+
    | h        | headerlist  | List of headers signed by the hh         |
    |          |             | field.                                   |
    +----------+-------------+------------------------------------------+
-   | ha       | hash-alg    | Hash Algorithm used (at least            |
+   | a        | hash-alg    | Hash Algorithm used (at least            |
    |          |             | sha256 must be supported); used          |
    |          |             | for hh, bh and ph                        |
    +----------+-------------+------------------------------------------+
@@ -353,10 +353,10 @@ Internet-Draft        Email Modification Versioning        November 2025
    Example - a URL was substituted in the content of the body (complex,
    but still easily doable!)
 
-   Mail-Version: mv=4;
-    b=c:1-500,
-    b:PGEgaHJlZj0iaHR0cHM6Ly93d3cuZXhhbXBsZS5jb20iPkV4YW1wbGU8L2E+Cg==,
-    c:501-702
+  Mail-Version: mv=4;
+   b=c:1-500,
+     b:PGEgaHJlZj0iaHR0cHM6Ly93d3cuZXhhbXBsZS5jb20iPkV4YW1wbGU8L2E+Cg==,
+     c:501-702
 
    It is expected that 'c' will normally be used to copy lines directly
    from the new message, however in cases where a message needs to
@@ -370,21 +370,21 @@ Internet-Draft        Email Modification Versioning        November 2025
    unchanged, it is necessary to apply this algorith iteratively.
 
    For example if you receive a message for which there is a
-   modification to the headers at v=3 and a modification to both headers
-   and body at v=2, to recreate the original message you would first
-   apply the header changes from v=3, then apply the header and body
-   changes for v=2.  If this doesn't create a message which validates
-   with the initial v=1 hash, then some hop has corrupted the message.
+   modification to the headers at mv=3 and a modification to both
+   headers and body at mv=2, to recreate the original message you would
+   first apply the header changes from mv=3, then apply the header and
+   body changes for mv=2.  If this doesn't create a message which
+   validates with the initial mv=1 hash, then some hop has corrupted the
+   message.
 
 4.  Security
 
-   TBA
-
-5.  IANA Considerations
-
-   TBA
-
-6.  References
+   Since a Mail-Version header can be used to recreate any email
+   content, implementations need to be aware that this could be used to
+   bypass security checks, and passing the generated message to a parser
+   could expose it to content that would otherwise be blocked by earlier
+   security checks, e.g. the base64 output could generate 8 bit content
+   or NULL bytes that would otherwise be blocked by a simple filter.
 
 
 
@@ -394,7 +394,24 @@ Gondwana                   Expires 6 May 2026                   [Page 7]
 Internet-Draft        Email Modification Versioning        November 2025
 
 
-6.1.  Normative References
+5.  IANA Considerations
+
+   IANA is requested to add to the Permanent Message Header Field Names
+   registry the following record.
+
+   *  Header Field Name: Mail-Version
+
+   *  Template:
+
+   *  Protocol: mail
+
+   *  Status: standard
+
+   *  Trace: no
+
+   *  Reference: this document
+
+6.  Normative References
 
    [DKIM]     Crocker, D., Ed., Hansen, T., Ed., and M. Kucherawy, Ed.,
               "DomainKeys Identified Mail (DKIM) Signatures", STD 76,
@@ -406,41 +423,24 @@ Internet-Draft        Email Modification Versioning        November 2025
               DOI 10.17487/RFC9051, August 2021,
               <https://www.rfc-editor.org/rfc/rfc9051>.
 
-6.2.  Informative References
-
-   [RFC2046]  Freed, N. and N. Borenstein, "Multipurpose Internet Mail
-              Extensions (MIME) Part Two: Media Types", RFC 2046,
-              DOI 10.17487/RFC2046, November 1996,
-              <https://www.rfc-editor.org/rfc/rfc2046>.
-
-   [RFC3284]  Korn, D., MacDonald, J., Mogul, J., and K. Vo, "The VCDIFF
-              Generic Differencing and Compression Data Format",
-              RFC 3284, DOI 10.17487/RFC3284, June 2002,
-              <https://www.rfc-editor.org/rfc/rfc3284>.
-
 Appendix A.  Changes from Earlier Versions
 
-A.1.  draft-gondwana-dkim2-mailversion-00
+A.1.  draft-gondwana-dkim2-mailversion-01
+
+   *  fix all text to mv=
+
+   *  Added security considerations
+
+   *  Added IANA considerations
+
+   *  Rewrote some bits
+
+A.2.  draft-gondwana-dkim2-mailversion-00
 
    *  Rename this draft to "mailversion".
 
    *  Rename the header field to 'Mail-Version'
 
-   *  Change v= to mv=
-
-   *  Removed 't:' optional fields entirely.
-
-   *  Added ha= to select the hash algorithm and documentation about how
-      the hashes are calculated
-
-   *  Renamed bin.partspec to ph.partspec for "part hash" and described
-      it with reference to IMAP.
-
-A.2.  draft-gondwana-dkim2-modification-algebra-03
-
-   *  Rename header to 'MailVersion'
-
-   *  Remove all requirements that it integrates with DKIM2.
 
 
 
@@ -450,10 +450,27 @@ Gondwana                   Expires 6 May 2026                   [Page 8]
 Internet-Draft        Email Modification Versioning        November 2025
 
 
+   *  Change 'v=' to 'mv=' so it matches DKIM2-Signature and doesn't
+      confuse protocol versions
+
+   *  Removed 't:' optional fields entirely.
+
+   *  Added ha= to select the hash algorithm and documentation about how
+      the hashes are calculated
+
+   *  Renamed bin.partspec to ph.partspec for "part hash" and described
+      it with reference to IMAP.
+
+A.3.  draft-gondwana-dkim2-modification-algebra-03
+
+   *  Rename header to 'MailVersion'
+
+   *  Remove all requirements that it integrates with DKIM2.
+
    *  Add body hash and per-mime-part hashes (NOTE: this is a bunch of
       extra calculation, so definitely to discuss)
 
-A.3.  draft-gondwana-dkim2-modification-algebra-02
+A.4.  draft-gondwana-dkim2-modification-algebra-02
 
    *  change the header format to have unique keys, making it fit the
       ABNF for these types of headers.
@@ -465,7 +482,7 @@ A.3.  draft-gondwana-dkim2-modification-algebra-02
       that the program ordering is reliable regardless of the parser
       used to read the header.
 
-A.4.  draft-gondwana-dkim2-modification-algebra-02
+A.5.  draft-gondwana-dkim2-modification-algebra-02
 
    *  change to using line numbers rather than octet offsets
 
@@ -473,7 +490,7 @@ A.4.  draft-gondwana-dkim2-modification-algebra-02
 
    *  for multiple lines; require a separate b= or t= for each line
 
-A.5.  draft-gondwana-dkim2-modification-algebra-01
+A.6.  draft-gondwana-dkim2-modification-algebra-01
 
    *  rename 'DKIM2-Diff' headers to 'DKIM2-Delta'
 
@@ -481,7 +498,15 @@ A.5.  draft-gondwana-dkim2-modification-algebra-01
 
    *  add d= base64 decoding option to DKIM2-Delta-Body
 
-A.6.  draft-gondwana-dkim2-modification-algebra-00
+
+
+
+Gondwana                   Expires 6 May 2026                   [Page 9]
+
+Internet-Draft        Email Modification Versioning        November 2025
+
+
+A.7.  draft-gondwana-dkim2-modification-algebra-00
 
    *  original version
 
@@ -501,4 +526,35 @@ Author's Address
 
 
 
-Gondwana                   Expires 6 May 2026                   [Page 9]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Gondwana                   Expires 6 May 2026                  [Page 10]
