@@ -164,7 +164,7 @@ sub validate {
     my $item = shift @{$have{$header}};
     return { valid => 0, error => "missing $header" }
       if not defined $item;
-    $header_digest->add($canon->canonicalize_header("$header: $item"));
+    $header_digest->add($canon->canonicalize_header("$header: $item\r\n"));
   }
   for my $header (keys %have) {
     return { valid => 0, error => "excess copies of $header" }
@@ -198,7 +198,8 @@ sub calc {
   for my $header ($msg->header_names) {
     next if should_skip($header);
     for my $item (reverse $msg->header_raw($header)) {
-      $header_digest->add($canon->canonicalize_header("$header: $item"));
+      my $chead = $canon->canonicalize_header("$header: $item\r\n");
+      $header_digest->add($chead);
       push @h, lc($header);
     }
   }
@@ -254,10 +255,10 @@ sub sign {
     $interesting{lc($header)} = '+' unless should_skip($header);
   }
 
-  my %map = map { geti($_) => $_ } $msg->header('DKIM2-Signature');
+  my %map = map { geti($_) => $_ } $msg->header_raw('DKIM2-Signature');
   my $num = %map ? max(keys %map) : 0;
   $num++;
-  my %vmap = map { getv($_) => $_ } $msg->header('Mail-Version');
+  my %vmap = map { getv($_) => $_ } $msg->header_raw('Mail-Version');
   my $version = %vmap ? max(keys %vmap) : 0;
 
   my $mv = Mail::DKIM::KeyValueList->parse($vmap{$version});
@@ -295,8 +296,10 @@ sub sign {
   $signer->extended_headers(\%interesting);
   my $eml = $msg->as_string();
   $signer->PRINT($eml);
+
   # Add the mailversion and dkim headers in order
   {
+    my $dest = $signer->{algorithms}[0]{canon};
     my $mv = 1;
     my $i = 1;
     while ($i < $num) {
@@ -305,19 +308,20 @@ sub sign {
       while ($mv <= $to) {
         my $val = $vmap{$mv};
         die "NO DATA FOR mv=$mv" unless $val;
-        $signer->add_header("Mail-Version: $val");
+        $dest->output($dest->canonicalize_header("Mail-Version: $val\r\n"));
         $mv++;
       }
-      $signer->add_header("DKIM2-Signature: $dk2");
+      $dest->output($dest->canonicalize_header("DKIM2-Signature: $dk2\r\n"));
       $i++;
     }
     while ($mv <= $version) {
       my $val = $vmap{$mv};
       die "NO DATA FOR mv=$mv" unless $val;
-      $signer->add_header("Mail-Version: $val");
+      $dest->output($dest->canonicalize_header("Mail-Version: $val\r\n"));
       $mv++;
     }
   }
+
   $signer->CLOSE();
   return ($num, $signature->as_string());
 } 
@@ -325,7 +329,9 @@ sub sign {
 sub verify {
   my $msg = shift;
   my $pubkey = shift;
-  my %map = map { geti($_) => $_ } $msg->header('DKIM2-Signature');
+  my %map = map { geti($_) => $_ } $msg->header_raw('DKIM2-Signature');
+  my %vmap = map { getv($_) => $_ } $msg->header_raw('Mail-Version');
+  my $version = %vmap ? max(keys %vmap) : 0;
   my $num = %map ? max(keys %map) : 0;
   die "NO NUM" unless $num;
   my $signature = Mail::DKIM::Signature->new();
@@ -343,6 +349,30 @@ sub verify {
   my $dkim = Mail::DKIM::Verifier->new();
   $dkim->add_signature($signature);
   $dkim->PRINT($msg->as_string());
+  # Add the mailversion and dkim headers in order
+  {
+    my $dest = $dkim->{algorithms}[0]{canon};
+    my $mv = 1;
+    my $i = 1;
+    while ($i < $num) {
+      my $dk2 = $map{$i};
+      my $to = getv($dk2);
+      while ($mv <= $to) {
+        my $val = $vmap{$mv};
+        die "NO DATA FOR mv=$mv" unless $val;
+        $dest->output($dest->canonicalize_header("Mail-Version: $val\r\n"));
+        $mv++;
+      }
+      $dest->output($dest->canonicalize_header("DKIM2-Signature: $dk2\r\n"));
+      $i++;
+    }
+    while ($mv <= $version) {
+      my $val = $vmap{$mv};
+      die "NO DATA FOR mv=$mv" unless $val;
+      $dest->output($dest->canonicalize_header("Mail-Version: $val\r\n"));
+      $mv++;
+    }
+  }
   $dkim->CLOSE();
   my %res;
   $res{result} = $dkim->{result};
