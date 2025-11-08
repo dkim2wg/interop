@@ -4,12 +4,12 @@
 
 Network Working Group                                        B. Gondwana
 Internet-Draft                                          Fastmail Pty Ltd
-Intended status: Standards Track                         2 November 2025
-Expires: 6 May 2026
+Intended status: Standards Track                         7 November 2025
+Expires: 11 May 2026
 
 
                A method for describing changes to emails
-                  draft-gondwana-dkim2-mailversion-01
+                draft-gondwana-dkim2-message-instance-00
 
 Abstract
 
@@ -23,7 +23,7 @@ Abstract
 
    This method also captures hashes of important features of the
    message, allowing validation that the changes were described
-   correctly, and allowing a signature which covers the Mail-Version
+   correctly, and allowing a signature which covers the Message-Instance
    header to, by extention, ensure that the important content of the
    message is unchanged.
 
@@ -42,7 +42,7 @@ Status of This Memo
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 6 May 2026.
+   This Internet-Draft will expire on 11 May 2026.
 
 Copyright Notice
 
@@ -53,7 +53,7 @@ Copyright Notice
 
 
 
-Gondwana                   Expires 6 May 2026                   [Page 1]
+Gondwana                   Expires 11 May 2026                  [Page 1]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -70,22 +70,25 @@ Internet-Draft        Email Modification Versioning        November 2025
 Table of Contents
 
    1.  Background and motivations  . . . . . . . . . . . . . . . . .   2
-   2.  The Mail-Version Header Field . . . . . . . . . . . . . . . .   3
-     2.1.  Mail-Version Header . . . . . . . . . . . . . . . . . . .   3
+   2.  The Message-Instance Header Field . . . . . . . . . . . . . .   3
+     2.1.  Message-Instance Header . . . . . . . . . . . . . . . . .   3
      2.2.  body-recipe . . . . . . . . . . . . . . . . . . . . . . .   4
      2.3.  header-recipe . . . . . . . . . . . . . . . . . . . . . .   5
      2.4.  Examples  . . . . . . . . . . . . . . . . . . . . . . . .   6
-   3.  Iterative application . . . . . . . . . . . . . . . . . . . .   7
-   4.  Security  . . . . . . . . . . . . . . . . . . . . . . . . . .   7
-   5.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .   8
-   6.  Normative References  . . . . . . . . . . . . . . . . . . . .   8
-   Appendix A.  Changes from Earlier Versions  . . . . . . . . . . .   8
-     A.1.  draft-gondwana-dkim2-mailversion-01 . . . . . . . . . . .   8
-     A.2.  draft-gondwana-dkim2-mailversion-00 . . . . . . . . . . .   8
-     A.3.  draft-gondwana-dkim2-modification-algebra-03  . . . . . .   9
-     A.4.  draft-gondwana-dkim2-modification-algebra-02  . . . . . .   9
-     A.5.  draft-gondwana-dkim2-modification-algebra-02  . . . . . .   9
-     A.6.  draft-gondwana-dkim2-modification-algebra-01  . . . . . .   9
+   3.  Calculating the hh value  . . . . . . . . . . . . . . . . . .   7
+   4.  Calculating the bh value  . . . . . . . . . . . . . . . . . .   8
+   5.  Calculating the ph.x.y values . . . . . . . . . . . . . . . .   8
+   6.  Iterative application . . . . . . . . . . . . . . . . . . . .   8
+   7.  Security  . . . . . . . . . . . . . . . . . . . . . . . . . .   8
+   8.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .   8
+   9.  Normative References  . . . . . . . . . . . . . . . . . . . .   9
+   Appendix A.  Changes from Earlier Versions  . . . . . . . . . . .   9
+     A.1.  draft-gondwana-dkim2-message-instance-00  . . . . . . . .   9
+     A.2.  draft-gondwana-dkim2-mailversion-00 . . . . . . . . . . .   9
+     A.3.  draft-gondwana-dkim2-modification-algebra-03  . . . . . .  10
+     A.4.  draft-gondwana-dkim2-modification-algebra-02  . . . . . .  10
+     A.5.  draft-gondwana-dkim2-modification-algebra-02  . . . . . .  10
+     A.6.  draft-gondwana-dkim2-modification-algebra-01  . . . . . .  10
      A.7.  draft-gondwana-dkim2-modification-algebra-00  . . . . . .  10
    Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  10
 
@@ -98,6 +101,19 @@ Table of Contents
    - and it's impossible for the receiver to know what was changed, or
    even if the entire message was replaced.
 
+
+
+
+
+
+
+
+
+Gondwana                   Expires 11 May 2026                  [Page 2]
+
+Internet-Draft        Email Modification Versioning        November 2025
+
+
    By producing a way to describe changes, the recipient can examine the
    sections which were changed and determine whether the change was
    malicious.  By undoing the changes, it is possible to recreate a
@@ -105,16 +121,7 @@ Table of Contents
    accountability for the content which was present in the copy of the
    message to which the signature was applied.
 
-
-
-
-
-Gondwana                   Expires 6 May 2026                   [Page 2]
-
-Internet-Draft        Email Modification Versioning        November 2025
-
-
-2.  The Mail-Version Header Field
+2.  The Message-Instance Header Field
 
    This document describes an ordered set of header fields, each of
    which describes the message at a specific version, along with
@@ -122,10 +129,10 @@ Internet-Draft        Email Modification Versioning        November 2025
    version.
 
    To well formed, a message must have a monotonically increasing set of
-   Mail-Version header fields, with the first having mv=1 and each
+   Message-Instance header fields, with the first having mi=1 and each
    having an increasing integer number, with no gaps.
 
-2.1.  Mail-Version Header
+2.1.  Message-Instance Header
 
    The format of the value is a tag-list.  Tag-lists contain key=value;
    key2=value2; - they can be wrapped, and all whitespace is normalised
@@ -158,14 +165,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 
 
-
-
-
-
-
-
-
-Gondwana                   Expires 6 May 2026                   [Page 3]
+Gondwana                   Expires 11 May 2026                  [Page 3]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -173,10 +173,10 @@ Internet-Draft        Email Modification Versioning        November 2025
    +==========+=============+==========================================+
    | Tag      | Type        | Value                                    |
    +==========+=============+==========================================+
-   | mv       | position    | Revision number (range: 1 to 100)        |
+   | mi       | position    | Instance number (range: 1 to 100)        |
    +----------+-------------+------------------------------------------+
    | h        | headerlist  | List of headers signed by the hh         |
-   |          |             | field.                                   |
+   |          |             | field (separated by :)                   |
    +----------+-------------+------------------------------------------+
    | a        | hash-alg    | Hash Algorithm used (at least            |
    |          |             | sha256 must be supported); used          |
@@ -221,7 +221,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 
 
-Gondwana                   Expires 6 May 2026                   [Page 4]
+Gondwana                   Expires 11 May 2026                  [Page 4]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -277,7 +277,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 
 
-Gondwana                   Expires 6 May 2026                   [Page 5]
+Gondwana                   Expires 11 May 2026                  [Page 5]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -333,7 +333,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 
 
-Gondwana                   Expires 6 May 2026                   [Page 6]
+Gondwana                   Expires 11 May 2026                  [Page 6]
 
 Internet-Draft        Email Modification Versioning        November 2025
 
@@ -341,69 +341,114 @@ Internet-Draft        Email Modification Versioning        November 2025
    From: brong@fastmailteam.com.dmarc.fail
    To: dkim2@lists.ietf.org
    Reply-To: dkim2@lists.ietf.org
-   Mail-Version: mv=2;
+   Message-Instance: mi=2;
     h.Subject=b:QSByZXBsYWNlbWVudCBmb3IgREtJTQ==;
     h.From=b:YnJvbmdAZmFzdG1haWx0ZWFtLmNvbQo=;
     h.Reply-To=
 
    Example:
 
-   Mail-Version: mv=3; b=c:1-500,c:520-520
+   Message-Instance: mi=3; b=c:1-500,c:520-520
 
    Example - a URL was substituted in the content of the body (complex,
    but still easily doable!)
 
-  Mail-Version: mv=4;
+  Message-Instance: mi=4;
    b=c:1-500,
      b:PGEgaHJlZj0iaHR0cHM6Ly93d3cuZXhhbXBsZS5jb20iPkV4YW1wbGU8L2E+Cg==,
      c:501-702
 
    It is expected that 'c' will normally be used to copy lines directly
    from the new message, however in cases where a message needs to
-   transit 7 bit systems cleanly, the email modifier may need to re-
+   transit 7-bit systems cleanly, the email modifier may need to re-
    encode the octets of the original message, and this allows for doing
    so, albeit at some expense in header bloat!
 
-3.  Iterative application
+3.  Calculating the hh value
+
+   The algorithm for calculating the hh value is to iterate through the
+   header names in the h= field and add each header field which matches
+   that name with a case insignificant comparison, starting from the
+   bottom (all header-fields start from the bottom and count upwards).
+   This uses the 'relaxed' algorithm described in [DKIM] section 2.4.3
+   for headers, lowercasing field names, and normalising whitespace in
+   header bodies, with a trailing CRLF.  These values are added to the
+   digest.
+
+   The final 'hh=' value includes all the listed headers in the h=
+   field, and nothing else.  There are no implicit fields included.  ALL
+   copies of every named header field is included.  If a later Message-
+   Instance is created where the header fields named in an earlier
+   Message-Instance are changed, it MUST describe how to get back to the
+   previous values, or affirmatively declare (with 'z') that it isn't
+   doing so.
+
+   These headers are fed in order to the algorithm specified by the a=
+   tag value, encoding the result as base64.
+
+
+
+
+Gondwana                   Expires 11 May 2026                  [Page 7]
+
+Internet-Draft        Email Modification Versioning        November 2025
+
+
+4.  Calculating the bh value
+
+   The algorithm for calculating the bh value is to process all the
+   lines of the body with the relaxed algorithm declared in [DKIM]
+   section 3.4.4, feeding them in order to the algorithm specified by
+   the a= tag value, and encoding the result as base64.
+
+5.  Calculating the ph.x.y values
+
+   For each MIME part following the algorithm used in [IMAP] section
+   6.4.5.1, decode the content as a binary data stream after performing
+   decoding as described by the section's Content-Transfer-Encoding, and
+   feed it to the algorithm specified by the a= tag value, encoding the
+   result as base64.
+
+6.  Iterative application
 
    To get back to the original message and confirm that it was
    unchanged, it is necessary to apply this algorith iteratively.
 
    For example if you receive a message for which there is a
-   modification to the headers at mv=3 and a modification to both
-   headers and body at mv=2, to recreate the original message you would
-   first apply the header changes from mv=3, then apply the header and
-   body changes for mv=2.  If this doesn't create a message which
-   validates with the initial mv=1 hash, then some hop has corrupted the
+   modification to the headers at mi=3 and a modification to both
+   headers and body at mi=2, to recreate the original message you would
+   first apply the header changes from mi=3, then apply the header and
+   body changes for mi=2.  If this doesn't create a message which
+   validates with the initial mi=1 hash, then some hop has corrupted the
    message.
 
-4.  Security
+7.  Security
 
-   Since a Mail-Version header can be used to recreate any email
+   Since a Message-Instance header can be used to recreate any email
    content, implementations need to be aware that this could be used to
    bypass security checks, and passing the generated message to a parser
    could expose it to content that would otherwise be blocked by earlier
-   security checks, e.g. the base64 output could generate 8 bit content
+   security checks, e.g. the base64 output could generate 8-bit content
    or NULL bytes that would otherwise be blocked by a simple filter.
 
-
-
-
-Gondwana                   Expires 6 May 2026                   [Page 7]
-
-Internet-Draft        Email Modification Versioning        November 2025
-
-
-5.  IANA Considerations
+8.  IANA Considerations
 
    IANA is requested to add to the Permanent Message Header Field Names
    registry the following record.
 
-   *  Header Field Name: Mail-Version
+   *  Header Field Name: Message-Instance
 
    *  Template:
 
    *  Protocol: mail
+
+
+
+
+Gondwana                   Expires 11 May 2026                  [Page 8]
+
+Internet-Draft        Email Modification Versioning        November 2025
+
 
    *  Status: standard
 
@@ -411,7 +456,7 @@ Internet-Draft        Email Modification Versioning        November 2025
 
    *  Reference: this document
 
-6.  Normative References
+9.  Normative References
 
    [DKIM]     Crocker, D., Ed., Hansen, T., Ed., and M. Kucherawy, Ed.,
               "DomainKeys Identified Mail (DKIM) Signatures", STD 76,
@@ -425,30 +470,20 @@ Internet-Draft        Email Modification Versioning        November 2025
 
 Appendix A.  Changes from Earlier Versions
 
-A.1.  draft-gondwana-dkim2-mailversion-01
+A.1.  draft-gondwana-dkim2-message-instance-00
 
-   *  fix all text to mv=
+   *  what's in a name anyway?  People didn't like "Mail" in the IETF124
+      meeting, and "Version" is confusing
 
-   *  Added security considerations
+   *  change mv= to mi=
 
-   *  Added IANA considerations
-
-   *  Rewrote some bits
+   *  each header name covers ALL instances of that header name.
 
 A.2.  draft-gondwana-dkim2-mailversion-00
 
    *  Rename this draft to "mailversion".
 
-   *  Rename the header field to 'Mail-Version'
-
-
-
-
-
-Gondwana                   Expires 6 May 2026                   [Page 8]
-
-Internet-Draft        Email Modification Versioning        November 2025
-
+   *  Rename the header field to 'Message-Instance'
 
    *  Change 'v=' to 'mv=' so it matches DKIM2-Signature and doesn't
       confuse protocol versions
@@ -460,6 +495,18 @@ Internet-Draft        Email Modification Versioning        November 2025
 
    *  Renamed bin.partspec to ph.partspec for "part hash" and described
       it with reference to IMAP.
+
+   *  Added security considerations
+
+
+
+
+Gondwana                   Expires 11 May 2026                  [Page 9]
+
+Internet-Draft        Email Modification Versioning        November 2025
+
+
+   *  Added IANA considerations
 
 A.3.  draft-gondwana-dkim2-modification-algebra-03
 
@@ -498,14 +545,6 @@ A.6.  draft-gondwana-dkim2-modification-algebra-01
 
    *  add d= base64 decoding option to DKIM2-Delta-Body
 
-
-
-
-Gondwana                   Expires 6 May 2026                   [Page 9]
-
-Internet-Draft        Email Modification Versioning        November 2025
-
-
 A.7.  draft-gondwana-dkim2-modification-algebra-00
 
    *  original version
@@ -513,6 +552,15 @@ A.7.  draft-gondwana-dkim2-modification-algebra-00
    [[This section to be removed by RFC Editor]]
 
 Author's Address
+
+
+
+
+
+Gondwana                   Expires 11 May 2026                 [Page 10]
+
+Internet-Draft        Email Modification Versioning        November 2025
+
 
    Bron Gondwana
    Fastmail Pty Ltd
@@ -557,4 +605,12 @@ Author's Address
 
 
 
-Gondwana                   Expires 6 May 2026                  [Page 10]
+
+
+
+
+
+
+
+
+Gondwana                   Expires 11 May 2026                 [Page 11]

@@ -12,7 +12,7 @@
 ]>
 
 
-<rfc ipr="trust200902" docName="draft-gondwana-dkim2-mailversion-01" category="std" consensus="true" submissionType="IETF" tocInclude="true" sortRefs="true" symRefs="true">
+<rfc ipr="trust200902" docName="draft-gondwana-dkim2-message-instance-00" category="std" consensus="true" submissionType="IETF" tocInclude="true" sortRefs="true" symRefs="true">
   <front>
     <title abbrev="Email Modification Versioning">A method for describing changes to emails</title>
 
@@ -29,7 +29,7 @@
       </address>
     </author>
 
-    <date year="2025" month="November" day="02"/>
+    <date year="2025" month="November" day="07"/>
 
     
     
@@ -48,7 +48,7 @@ complex changes.</t>
 
 <t>This method also captures hashes of important features of the message,
 allowing validation that the changes were described correctly, and allowing
-a signature which covers the Mail-Version header to, by extention, ensure
+a signature which covers the Message-Instance header to, by extention, ensure
 that the important content of the message is unchanged.</t>
 
 
@@ -77,7 +77,7 @@ signature, and hence provide accountability for the content which was present
 in the copy of the message to which the signature was applied.</t>
 
 </section>
-<section anchor="the-mail-version-header-field"><name>The Mail-Version Header Field</name>
+<section anchor="the-message-instance-header-field"><name>The Message-Instance Header Field</name>
 
 <t>This document describes an ordered set of header fields, each of
 which describes the message at a specific version, along with
@@ -85,10 +85,10 @@ instructions on how to convert that version back to the previous
 version.</t>
 
 <t>To well formed, a message must have a monotonically increasing
-set of Mail-Version header fields, with the first having mv=1
+set of Message-Instance header fields, with the first having mi=1
 and each having an increasing integer number, with no gaps.</t>
 
-<section anchor="mail-version-header"><name>Mail-Version Header</name>
+<section anchor="message-instance-header"><name>Message-Instance Header</name>
 
 <t>The format of the value is a tag-list.  Tag-lists contain key=value; key2=value2; - they can be wrapped,
 and all whitespace is normalised to a single space.</t>
@@ -99,12 +99,12 @@ and all whitespace is normalised to a single space.</t>
       <ttcol align='left'>Tag</ttcol>
       <ttcol align='left'>Type</ttcol>
       <ttcol align='left'>Value</ttcol>
-      <c>mv</c>
+      <c>mi</c>
       <c>position</c>
-      <c>Revision number (range: 1 to 100)</c>
+      <c>Instance number (range: 1 to 100)</c>
       <c>h</c>
       <c>headerlist</c>
-      <c>List of headers signed by the hh field.</c>
+      <c>List of headers signed by the hh field (separated by :)</c>
       <c>a</c>
       <c>hash-alg</c>
       <c>Hash Algorithm used (at least sha256 must be supported); used for hh, bh and ph</c>
@@ -208,7 +208,7 @@ and Reply-To added.</t>
 From: brong@fastmailteam.com.dmarc.fail
 To: dkim2@lists.ietf.org
 Reply-To: dkim2@lists.ietf.org
-Mail-Version: mv=2;
+Message-Instance: mi=2;
  h.Subject=b:QSByZXBsYWNlbWVudCBmb3IgREtJTQ==;
  h.From=b:YnJvbmdAZmFzdG1haWx0ZWFtLmNvbQo=;
  h.Reply-To=
@@ -217,25 +217,59 @@ Mail-Version: mv=2;
 <t>Example:</t>
 
 <figure><artwork><![CDATA[
-Mail-Version: mv=3; b=c:1-500,c:520-520
+Message-Instance: mi=3; b=c:1-500,c:520-520
 ]]></artwork></figure>
 
 <t>Example - a URL was substituted in the content of the body (complex, but still
 easily doable!)</t>
 
 <figure><artwork><![CDATA[
-Mail-Version: mv=4;
+Message-Instance: mi=4;
  b=c:1-500,
    b:PGEgaHJlZj0iaHR0cHM6Ly93d3cuZXhhbXBsZS5jb20iPkV4YW1wbGU8L2E+Cg==,
    c:501-702
 ]]></artwork></figure>
 
 <t>It is expected that 'c' will normally be used to copy lines directly from
-the new message, however in cases where a message needs to transit 7 bit systems
+the new message, however in cases where a message needs to transit 7-bit systems
 cleanly, the email modifier may need to re-encode the octets of the original message,
 and this allows for doing so, albeit at some expense in header bloat!</t>
 
 </section>
+</section>
+<section anchor="calculating-the-hh-value"><name>Calculating the hh value</name>
+
+<t>The algorithm for calculating the hh value is to iterate through the header names in the
+<spanx style="verb">h=</spanx> field and add each header field which matches that name with a case insignificant
+comparison, starting from the bottom (all header-fields start from the bottom and count
+upwards).  This uses the 'relaxed' algorithm described in <xref target="DKIM"/> section 2.4.3 for
+headers, lowercasing field names, and normalising whitespace in header bodies, with
+a trailing CRLF.  These values are added to the digest.</t>
+
+<t>The final 'hh=' value includes all the listed headers in the h= field, and nothing
+else.  There are no implicit fields included.  ALL copies of every named header field
+is included.  If a later Message-Instance is created where the header fields named in
+an earlier Message-Instance are changed, it MUST describe how to get back to the
+previous values, or affirmatively declare (with 'z') that it isn't doing so.</t>
+
+<t>These headers are fed in order to the algorithm specified by the a= tag value,
+encoding the result as base64.</t>
+
+</section>
+<section anchor="calculating-the-bh-value"><name>Calculating the bh value</name>
+
+<t>The algorithm for calculating the bh value is to process all the lines of the body
+with the relaxed algorithm declared in <xref target="DKIM"/> section 3.4.4, feeding them in
+order to the algorithm specified by the a= tag value, and encoding the result as base64.</t>
+
+</section>
+<section anchor="calculating-the-phxy-values"><name>Calculating the ph.x.y values</name>
+
+<t>For each MIME part following the algorithm used in <xref target="IMAP"/> section 6.4.5.1, decode
+the content as a binary data stream after performing decoding as described by
+the section's <spanx style="verb">Content-Transfer-Encoding</spanx>, and feed it to the algorithm specified
+by the a= tag value, encoding the result as base64.</t>
+
 </section>
 <section anchor="iterative-application"><name>Iterative application</name>
 
@@ -243,18 +277,18 @@ and this allows for doing so, albeit at some expense in header bloat!</t>
 to apply this algorith iteratively.</t>
 
 <t>For example if you receive a message for which there is a modification to the
-headers at <spanx style="verb">mv=3</spanx> and a modification to both headers and body at <spanx style="verb">mv=2</spanx>, to recreate the
-original message you would first apply the header changes from <spanx style="verb">mv=3</spanx>, then apply the
-header and body changes for <spanx style="verb">mv=2</spanx>.  If this doesn't create a message which validates
-with the initial <spanx style="verb">mv=1</spanx> hash, then some hop has corrupted the message.</t>
+headers at <spanx style="verb">mi=3</spanx> and a modification to both headers and body at <spanx style="verb">mi=2</spanx>, to recreate the
+original message you would first apply the header changes from <spanx style="verb">mi=3</spanx>, then apply the
+header and body changes for <spanx style="verb">mi=2</spanx>.  If this doesn't create a message which validates
+with the initial <spanx style="verb">mi=1</spanx> hash, then some hop has corrupted the message.</t>
 
 </section>
 <section anchor="security"><name>Security</name>
 
-<t>Since a Mail-Version header can be used to recreate any email content, implementations
+<t>Since a Message-Instance header can be used to recreate any email content, implementations
 need to be aware that this could be used to bypass security checks, and passing the
 generated message to a parser could expose it to content that would otherwise be blocked
-by earlier security checks, e.g. the base64 output could generate 8 bit content or NULL
+by earlier security checks, e.g. the base64 output could generate 8-bit content or NULL
 bytes that would otherwise be blocked by a simple filter.</t>
 
 </section>
@@ -264,7 +298,7 @@ bytes that would otherwise be blocked by a simple filter.</t>
 the following record.</t>
 
 <t><list style="symbols">
-  <t>Header Field Name: Mail-Version</t>
+  <t>Header Field Name: Message-Instance</t>
   <t>Template:</t>
   <t>Protocol: mail</t>
   <t>Status: standard</t>
@@ -326,13 +360,13 @@ the following record.</t>
 
 <section anchor="changes-from-earlier-versions"><name>Changes from Earlier Versions</name>
 
-<section anchor="draft-gondwana-dkim2-mailversion-01"><name>draft-gondwana-dkim2-mailversion-01</name>
+<section anchor="draft-gondwana-dkim2-message-instance-00"><name>draft-gondwana-dkim2-message-instance-00</name>
 
 <t><list style="symbols">
-  <t>fix all text to mv=</t>
-  <t>Added security considerations</t>
-  <t>Added IANA considerations</t>
-  <t>Rewrote some bits</t>
+  <t>what's in a name anyway?  People didn't like "Mail" in the IETF124 meeting,
+and "Version" is confusing</t>
+  <t>change mv= to mi=</t>
+  <t>each header name covers ALL instances of that header name.</t>
 </list></t>
 
 </section>
@@ -340,11 +374,13 @@ the following record.</t>
 
 <t><list style="symbols">
   <t>Rename this draft to "mailversion".</t>
-  <t>Rename the header field to 'Mail-Version'</t>
+  <t>Rename the header field to 'Message-Instance'</t>
   <t>Change 'v=' to 'mv=' so it matches DKIM2-Signature and doesn't confuse protocol versions</t>
   <t>Removed 't:' optional fields entirely.</t>
   <t>Added ha= to select the hash algorithm and documentation about how the hashes are calculated</t>
   <t>Renamed bin.partspec to ph.partspec for "part hash" and described it with reference to IMAP.</t>
+  <t>Added security considerations</t>
+  <t>Added IANA considerations</t>
 </list></t>
 
 </section>
@@ -403,98 +439,111 @@ ordering is reliable regardless of the parser used to read the header.</t>
   </back>
 
 <!-- ##markdown-source:
-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
-J789O+XxjW0j22RN27guZDgh8gjBOf6xnxCjhYQb8MRR0MAhXwOLVJTrvzx5
-iKWnEKTnicb50fz966OlevNV/umnaabenE3jN2+fn66/3E124/bTP9I0gg4/
-nT/7KdqZZu+vPjz97uNsFb3+9ovTnaO/HpJvEhmIN52NX0x3vHgnPE3TNxVs
-4YfkcjvefmA4zpOfau3ryyRzI2cOXB7SlXrVjbH7UWrJudrS0K8eDuloLsGX
-UtwaZo18gZaz8UBjRYw2vaRZMEPU4GIBNAu17sYatXYtpQN0AzmaLlOFqd9g
-uM6BnFk3IrfursMwwBmafEUaLEAJ1qCtJb2UXGYEeI1yo5q/0NzuBL0u37+4
-aZ677eAp1214vc0ExyccBpV24TSeudltNzUPU85Sx7SlXtOcl4uIwLufF2SB
-iZzqluPBRUu2kGvThkHxQOskcDeXrH19N7yx8WyLDqMbeUlRculuFu6sBVqn
-PaCXvh31u3YuRxsjWiJ8Rx/E6Mq0yFuu+QiSdgVbyH+cIRwz7BZlv1SEUUpg
-oNsDeR0nKDxPfE6iWqDcbuQDg+NuDC8GxQ2qTPBMpGaX3EV7FthTUlMxDNM9
-TFu5UBqWaI/kuY5b2GwtxHlGhYO6d5TpS+IQbf1ou1z7GPBIc6fcFSEeqHBZ
-URb0OZFvJ1ouRju60bpSli5VHE9Qlo6vrOuI6Buf/IW7cSNxBlNtRWMCS8wy
-WQQJ3elljR8MMw7y2c6mhvxslVmqXCh+4iudCLpi8lXHHSY4aw/qPp9H3WmB
-I/kFg0WHu7V89+3pKeg22v7Z6dRoUIfuEiqlu5pNdLL/bh81L7Ao4bDiSyl+
-mdFtyb9QAjd+2Jp05ch7DZAsiYe3XkXDAb58xw1LrZfIihTHaeh3SMUwL8oX
-nP0/dzfNN/wDKy5QQeaQfI7n97VpTGzyOV+g4sU5vKC1dM0OE6o6ofU1Uv8c
-II7nM71ArJf0uRleKLjbOQIrIcThMMqOvHX8+Vbs/dEPFyv/zl8JgBdqVaiz
-afQNuwwCCm/3udbufWHTCuF7Nsad7870CvrQLhLhFfbfZGcqeDNVi14ttIV4
-2hqsQ/c/WKXvNBzbQzttY63To9y+3uOJ3XZBD+j24K7hRoomsTvj8+5SiG/H
-AiYhMyBO6U6KbRzKcicpdYaJ3G7m232v7Bsxd8VHmSCoK1V7PPjXOZWFzDxN
-//rBsDvX+YIDdBUh3Nw1j1/e9dt53JL/JZ06EhoRT3jKiPqBTqrS/iMB7xYP
-FInKlr8B7Ka3/ja3Dp5J22maO/kD4w0yD035dVSr8XR3YMXuEttZZWAUpzl2
-PIpkKIpktl3+5Sugmmd5zBdbyGvSJRSnOgJI9HY09R53wtGwLTQ3bqStUPOV
-fAFHV+m16tTH/ZU1qMUSNO1IKjp3d62ZjVtrn3yu9Dskvb9CHXqnu5biee81
-DYszoBeNN4CvhbriS68GjuO8Yv/g3XFo4uB5zbpC6pOD2xdSBBdMkgpY0NdJ
-xt08lvAVux9hhDKAADZfUf9amaoKraS/lusSNY4Iq1yTRwtRQ0IjrvUenO5F
-ZEtAKgqQZDId4X8zZIwm7scQiBsYsgiV+XDg61t5v4IkpOaRlUEYnWdUlRNY
-A0HRdXVlpM93fVZWyUDZn+2xGzYz/gKH541ucmI3/tqEK1pwsrAobLHRTYdk
-shfyI18D8B/hqMp35ASzMGf31w9csL8Mni/7UR66DP4LhT33Vzo0v6O1nysR
-A3vtYnDbgdurbLHY7hyCItK/13mjKCL5ZuPnvXUAMlozWDLmiwYGEddHNd1I
-nyJ3y1O4Rw0Pk/tcsThBdOWqx2Ehfvj+h+/5Xj5cO7mqq/bgDOc/Oz6URwgR
-U//w4w8/CvF/sg61hqUnAAA=
+H4sIAAAAAAAAA81abXfbNrL+jl+BdT4o2bV0/JakVY7PruPYiXudNLWdZJu2
+5xokIZE13y5BWVG77W/fZ2YAkvJLuumXuzlNI1EgMJiXZ54ZYDweqzZrczvV
+B7qwbVolelY1OrEubrIoK+c6Tk05t063lbaFyXKnTBQ19nqqj+irfl0l2SyL
+TZtVpX5vG4d/8Z5Kqrg0BSZOGjNrx/OqTJamNOPkKit2xoV1zsztOCtda8rY
+jre2lFtERebo/YtVjRdPji6OFSa286pZTbVrE7WoE3x3U1VFrsotf8zqZqrb
+ZuHana2tr7d21JVdLasmwQRla5vStuMXJIKilZL/NXlVYvKVdarOpvqHtoo3
+tauatrEzh0+rgj78pJRZQB3NVOmx0vgDSaf6+US/9Bvhh7LD5w22vva8auZT
+fWxcyyp62670KaSnXxzWse1Un9prm+udTb29vac/ZHmemUKf8488Lq4SzLy7
+Bb3I10XZkhYOsM/GYDQ/rlPezMbfnmzrvcdP9d72E723+2SDf2RzTXUE6eb/
+mHlhWmuKSVwVSpVVU8Bq13bKo1/8z8nrqT47Pnyy+/QJPzl5ffCWn3y99Xhb
+qfF4rE1Eq8etUhdp5uAxRRV8BS5i7nGhNrWdGxUmseRLphT5VLJo2M2qoqj8
+M10MfAo2oensJ1PUOV5NK4fZzMLZREcrTePp/TxzLVyz5MWXpkngiROlPqQZ
+vwRh8d/clhbK07asFvOUxIis5ploCVOugpibOmvpBVO2WZzV8LkEk5hWtbJt
+3uUSVtOsxTxfrc3UQC/XJJVJEjyCzxrdGKihoVlKnZtmbhW2jB19CmtOOqXy
+7CZ3FfZZt4sGakuNS/FPNdNZUcNZIZieWSM/4imp2MfUpoI81ZKWv4ajJBKZ
+JP2aIZa2sZ3tEui/aWzc5qtNTUoMUyijXTYveSG9TLM4xchr6Jbneu2j+MRH
+sU4tzItNVptkG/uptSWtvgmNO8ygOin6XcRVSaNubIKUvyhF1mQizldkSZJb
+pR7o5ya+mjcIiYSFLSq4sTiLUocLbKTkjSxTW3aORjM6WmiZtSlclfy939vm
+2uIxXppXkLZhPykWeZuR8/Wuxeu6ljwAhieooJ0SWCWbOq2WiO5GZzNN6ivn
+kFq2QkJ0ERC0JWrFL6xZcWuSZiBcRTrlh1GVrDYVLbc+Bo6ogWxzzOetDhuP
+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
 
 -->
 
