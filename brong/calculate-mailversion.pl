@@ -20,12 +20,12 @@ my $mi = Mail::DKIM::DKIM2::MessageInstance->calculate($msg1, $msg2);
 my $output = '';
 my $tw = Mail::DKIM::TextWrap->new(
             Margin => 72,
-            Break => qr/[\,\;\|\:\s]/,
+            Break => qr/./,
             Separator => "\r\n\t",
             Swallow => qr/\s+/,
             Output => \$output,
           );
-$tw->add("Message-Instance:" . $mi->as_string());
+$tw->add("Message-Instance: " . $mi->as_string());
 $tw->finish;
 $output =~ s/^Message-Instance: //;
 $msg1->header_raw_prepend('Message-Instance', $output);

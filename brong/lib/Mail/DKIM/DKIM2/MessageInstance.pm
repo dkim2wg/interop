@@ -8,12 +8,11 @@ use Email::MIME;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Algorithm::Diff;
 use List::Util qw(max);
+use JSON::XS;
 
 our $VERSION = '1.20240923'; # VERSION
 
-# ABSTRACT: Subclass of Mail::DKIM::KeyValueList which represents a Message-Instance header
-
-# Copyright 2017 FastMail Pty Ltd. All Rights Reserved.
+# Copyright 2026 FastMail Pty Ltd. All Rights Reserved.
 # Bron Gondwana <brong@fastmailteam.com>
 
 # This program is free software; you can redistribute it and/or
@@ -66,11 +65,42 @@ BEGIN {
 
 }
 
-use base 'Mail::DKIM::KeyValueList';
 use Carp;
 
-sub DEFAULT_PREFIX {
-    return 'Message-Instance:';
+sub set_tag {
+    my $self = shift;
+    my $k = shift;
+    my $v = shift;
+    $self->{bits}{$k} = $v;
+}
+
+sub get_tag {
+    my $self = shift;
+    my $k = shift;
+    return $self->{bits}{$k};
+}
+
+sub as_string {
+    my $self = shift;
+    my %data = %{$self->{bits}};
+    use Data::Dumper;
+    my $v = delete $data{v};
+    my $json = JSON::XS->new()->canonical(1)->encode(\%data);
+    return "v=$v; j=" . encode_base64($json, '');
+}
+
+sub parse {
+    my $class = shift;
+    my $self = bless {}, ref $class || $class;
+    my $header = shift;
+    die "not a header $header" unless $header =~ m/\s*v=(\d+); j=(.*)/s;
+    my $v = $1;
+    my $j = $2;
+    $j =~ s/\s//gs;
+    my $data = JSON::XS->new()->decode(decode_base64($j));
+    $self->{bits} = $data;
+    $self->{bits}{v} = $v;
+    return $self;
 }
 
 sub SIMPLE {
@@ -147,7 +177,7 @@ sub calculate {
 
     $self->set_tag('a1', 'sha256');
     my ($h1, @h) = h_digest($msg1);
-    $self->set_tag('h', join(':', @h));
+    $self->set_tag('h', \@h);
     $self->set_tag('h1', $h1);
     $self->set_tag('b1', b_digest($msg1));
 
@@ -156,7 +186,7 @@ sub calculate {
 
     # calculate the header difference
     my %all = map { lc($_) => 1 } ($msg1->header_names, $msg2->header_names);
-    my @hdiff;
+    my %hdiff;
     for my $h (sort keys %all) {
         next if should_skip($h);
         my @h1 = reverse $msg1->header_raw($h);
@@ -164,22 +194,22 @@ sub calculate {
         next if join("\n", map { $relaxed->canonicalize_header($_) } @h1)
              eq join("\n", map { $relaxed->canonicalize_header($_) } @h2);
         # headers are indexed from 1 from the bottom up
-        my %known = map { $relaxed->canonicalize_header($h1[$_]) => $_+1 } 0..$#h1;
+        my %known = map { $relaxed->canonicalize_header($h1[$_]) => $_+1 } reverse 0..$#h1;
         # we want the values from h2
-        my @res = map { $known{$relaxed->canonicalize_header($_)} ? ['c', $known{$_}, $known{$_}] : ['b', encode_base64($_, '')] } @h2;
+        my @res = map { $known{$relaxed->canonicalize_header($_)} ? [$known{$_}, $known{$_}] : $_ } @h2;
         # combine multiples
         for (1..$#res) {
             # both copies
-            next unless ($res[$_][0] eq 'c' and $res[$_-1] eq 'c');
+            next unless (ref $res[$_] and ref $res[$_-1]);
             # ranges are adjacent
-            next unless ($res[$_][1] == $res[$_-1][2] + 1);
+            next unless ($res[$_][0] == $res[$_-1][1] + 1);
             # extend back
-            $res[$_][1] = $res[$_-1][1];
+            $res[$_][0] = $res[$_-1][0];
             # and nuke the old one
             $res[$_-1] = undef;
         }
-        my @vals = map { $_->[2] ? "$_->[0].$_->[1]-$_->[2]" : "$_->[0].$_->[1]" } grep { defined } @res;
-        push @hdiff, "$h:" . join(',', @vals);
+        my @vals = grep { defined } @res;
+        $hdiff{$h} = \@vals;
     }
 
     # calculate the body differences
@@ -199,20 +229,20 @@ sub calculate {
     my $dirty = 0;
     while ($diff->Next()) {
         if ($diff->Same()) {
-            push @list, 'c.' . $diff->Min(1) . '-' . $diff->Max(1);
+            push @list, [$diff->Min(1), $diff->Max(1)];
         } else {
             # contains things to copy back
             $dirty = 1;
-            push @list, map { 'b.' . encode_base64($_, '') } $diff->Items(2);
+            push @list, map { $_ } $diff->Items(2);
         }
     }
 
     if (@list > 1 || $dirty) {
-        $self->set_tag('rb', join(',', @list));
+        $self->set_tag('rb', \@list);
     }
 
-    if (@hdiff) {
-        $self->set_tag('rh', join('|', @hdiff));
+    if (keys %hdiff) {
+        $self->set_tag('rh', \%hdiff);
     }
 
     return $self;
@@ -257,47 +287,40 @@ sub undo {
 
     my $self = $class->parse($map{$num});
 
-    my $rh = $self->get_tag('rh');
     my $rb = $self->get_tag('rb');
+    my $rh = $self->get_tag('rh');
 
     # if 'z' we just don't try to undo things
-    if ($rb and $rb ne 'z') {
+    if ($rb) {
         my @old = split /\r?\n/, $msg->body_raw;
         my @new;
-        for my $cmd (split /\s*,\s*/, $rb) {
-            if ($cmd =~ m/b\.(.*)/) {
-                push @new, decode_base64($1);
-            } elsif ($cmd =~ m/c\.(\d+)-(\d+)/) {
-                my ($from, $to) = ($1-1, $2-1);
-                # numbers count indexed 1 from the bottom
+        for my $cmd (@$rb) {
+            if (ref($cmd) eq 'ARRAY') {
+                my ($from, $to) = ($cmd->[0]-1, $cmd->[1]-1);
                 push @new, @old[$from..$to];
-            } elsif ($cmd eq 'z') {
-                die "z which wasn't the only body recipe seen";
-            } else {
-                die "Unknown body recipe $cmd";
+            }
+            else {
+                push @new, $cmd;
             }
         }
         $msg->body_set(join("\r\n", @new, ''));
     }
 
     if ($rh) {
-        for my $item (split /\s*\|\s*/, $rh) {
-            my ($h, $v) = split /\s*:\s*/, $item;
-            # if 'z' we just don't try to undo things
-            next if $v eq 'z';
-            my @new;
+        for my $h (sort keys %$rh) {
+            my $v = $rh->{$h};
+            # if undef we don't do things
+            next unless defined $v;
             my @old = reverse $msg->header_raw($h);
-            for my $cmd (split /\s*,\s*/, $v) {
-                if ($cmd =~ m/b\.(.*)/) {
-                    push @new, decode_base64($1);
-                } elsif ($cmd =~ m/c\.(\d+)-(\d+)/) {
-                    my ($from, $to) = ($1-1, $2-1);
+            my @new;
+            for my $cmd (@$v) {
+                if (ref($cmd) eq 'ARRAY') {
                     # numbers count indexed 1 from the bottom; use ref so whitespace is kept
-                    push @new, map { $_ } @old[$from..$to];
-                } elsif ($cmd eq 'z') {
-                    die "z which wasn't the only header recipe seen for $h";
-                } else {
-                    die "Unknown header recipe $cmd for $h";
+                    my ($from, $to) = ($cmd->[0]-1, $cmd->[1]-1);
+                    push @new, @old[$from..$to];
+                }
+                else {
+                    push @new, $cmd;
                 }
             }
             $msg->header_obj->header_set_reverse($h, @new);
@@ -311,8 +334,8 @@ sub getmi {
     my $header = shift;
     $header = $header->[0] if ref($header) eq 'ARRAY';
     $header = $$header if ref($header);
-    my $kv = Mail::DKIM::KeyValueList->parse($header);
-    return $kv->get_tag('v');
+    return unless $header =~ m/^\s*v=(\d+)/;
+    return $1;
 }
 
 sub digest64 {
