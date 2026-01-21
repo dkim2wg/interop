@@ -29,17 +29,17 @@ BEGIN {
 
 sub undo {
   my ($msg, %args) = @_;
-  my @mv = $msg->header_raw('Mail-Version');
-  my %vmap = map { getv($_) => $_ } @mv;
-  my $version = %vmap ? max(keys %vmap) : 0;
-  return unless $version;
-  my $header = $vmap{$version};
+  my @mi = $msg->header_raw('Message-Instance');
+  my %mimap = map { getmi($_) => $_ } @mi;
+  my $instance = %mimap ? max(keys %mimap) : 0;
+  return unless $instance;
+  my $header = $mimap{$instance};
 
   my $data = Mail::DKIM::KeyValueList->parse($header);
 
   for my $tag (@{$data->{tags}}) {
     next unless $tag->{name};
-    if ($tag->{name} =~ m/^h\.(.*)/) {
+    if ($tag->{name} =~ m/^r_(.*)/) {
       my $h = $1;
       my $old;
       my @new;
@@ -49,22 +49,22 @@ sub undo {
           push @new, decode_base64($1);
         } elsif ($cmd =~ m/c:(\d+)-(\d+)/) {
           my ($from, $to) = ($1-1, $2-1);
-	  # numbers count indexed 1 from the bottom
+          # numbers count indexed 1 from the bottom
           $old ||= [ reverse $msg->header_raw($h) ];
-	  push @new, @$old[$from..$to];
+          push @new, @$old[$from..$to];
         }
       }
       $msg->header_raw_set($h, @new);
-    } elsif ($tag->{name} eq 'b') {
+    } elsif ($tag->{name} eq 'r') {
       my @lines = split /\r?\n/, $msg->body_raw;
       my @outlist;
       my @program = split /\s*,\s*/, $tag->{value};
       for my $cmd (@program) {
         if ($cmd =~ m/b:(.*)/) {
-	  push @outlist, decode_base64($1);
+          push @outlist, decode_base64($1);
         } elsif ($cmd =~ m/c:(\d+)-(\d+)/) {
-	  my ($from, $to) = ($1-1, $2-1);
-	  push @outlist, @lines[$from..$to];
+          my ($from, $to) = ($1-1, $2-1);
+          push @outlist, @lines[$from..$to];
         }
       }
       my $body = join("\r\n", @outlist,'');
@@ -72,24 +72,24 @@ sub undo {
     }
   }
 
-  $msg->header_raw_set('Mail-Version', grep { getv($_) < $version } @mv);
+  $msg->header_raw_set('Message-Instance', grep { getmi($_) < $instance } @mi);
 
-  return $version;
+  return $instance;
 }
 
 # return (num, header)
 sub diff {
   my $msg1 = shift;
   my $msg2 = shift;
-  # message 2 is the old one; so find out which Mail-Version header needs to be added
-  my %map = map { getv($_) => $_ } $msg2->header_raw('Mail-Version');
-  my %dmap = map { getv($_) => $_ } $msg1->header_raw('Mail-Version');
+  # message 2 is the old one; so find out which Message-Instance header needs to be added
+  my %map = map { getmi($_) => $_ } $msg2->header_raw('Message-Instance');
+  my %dmap = map { getmi($_) => $_ } $msg1->header_raw('Message-Instance');
   my $num = %map ? max(keys %map) : 0;  
   $num++;
   if ($dmap{$num}) {
-    warn "clearing high Mail-Versions from destination message";
-    my @mv = grep { getv($_) && getv($_) < $num } $msg1->header_raw('Mail-Version');
-    $msg1->header_raw_set('Mail-Version', @mv);
+    warn "clearing high Message-Instances from destination message";
+    my @mi = grep { getmi($_) && getmi($_) < $num } $msg1->header_raw('Message-Instance');
+    $msg1->header_raw_set('Message-Instance', @mi);
   }
 
   # calculate the header difference
@@ -112,12 +112,12 @@ sub diff {
       # ranges are adjacent
       next unless ($res[$_][1] == $res[$_-1][2] + 1);
       # extend back
-      $res[$_][1] = $res[$_-1][1]; 
+      $res[$_][1] = $res[$_-1][1];
       # and nuke the old one
       $res[$_-1] = undef;
     }
     my @vals = map { $_->[2] ? "$_->[0]:$_->[1]-$_->[2]" : "$_->[0]:$_->[1]" } grep { defined } @res;
-    push @hdiff, "h.$h=" . join(',', @vals);
+    push @hdiff, "r_$h=" . join(',', @vals);
   }
 
   # calculate the body differences
@@ -143,7 +143,7 @@ sub diff {
   }
 
   if (@list > 1 || $dirty) {
-    push @bdiff, "b=" . join(',', @list);
+    push @bdiff, "r=" . join(',', @list);
     # XXX - calculate mime part hashes
   }
 
@@ -152,9 +152,9 @@ sub diff {
 
 sub validate {
   my $msg = shift;
-  my %dmap = map { getv($_) => $_ } $msg->header_raw('Mail-Version');
+  my %dmap = map { getmi($_) => $_ } $msg->header_raw('Message-Instance');
   my $num = %dmap ? max(keys %dmap) : 0;  
-  return { valid => 0, error => "not a Mail-Version email" } unless $num;
+  return { valid => 0, error => "not a Message-Instance email" } unless $num;
   my $sig = Mail::DKIM::KeyValueList->parse($dmap{$num});
   my $canon = Mail::DKIM::Canonicalization::relaxed->new(Signature => 'dummy');
   my $header_digest = Digest::SHA->new(256);
@@ -177,14 +177,8 @@ sub validate {
   $body_digest->add($canon->canonicalize_body($msg->body_raw));
   return { valid => 0, error => "mismatched body hash" }
     if $sig->get_tag('bh') ne digest64($body_digest);
-  for my $item (calc_parts($msg)) {
-    my $had = $sig->get_tag("ph.".$item->[0]);
-    next unless $had;  # it's OK to not hash parts
-    return { valid => 0, error => "mismatched part $item->[0] hash ($had, $item->[1])" }
-      if $had ne $item->[1];
-  }
 
-  return { valid => 1, mv => $sig->get_tag('mv') };
+  return { valid => 1, mi => $sig->get_tag('v') };
 }
 
 sub calc {
@@ -204,32 +198,12 @@ sub calc {
       push @h, lc($header);
     }
   }
-  push @res, "a=sha256";
+  push @res, "a1=sha256";
   push @res, "h=" . join(':', @h);
-  push @res, "hh=" . digest64($header_digest);
+  push @res, "h1=" . digest64($header_digest);
   my $body_digest = Digest::SHA->new(256);
   $body_digest->add($canon->canonicalize_body($msg->body_raw));
-  push @res, "bh=" . digest64($body_digest);
-  push @res, map { "ph.$_->[0]=$_->[1]" } calc_parts($msg);
-  return @res;
-}
-
-sub calc_parts {
-  my $msg = shift;
-  my $prefix = shift;
-  my @parts = $msg->subparts();
-  my @res;
-  for my $pos (0..$#parts) {
-    my $part = $parts[$pos];
-    my $num = ($prefix ? "$prefix." : '') . ($pos + 1);
-    if ($part->subparts()) {
-      push @res, calc_parts($part, $num);
-    } else {
-      my $digest = Digest::SHA->new(256);
-      $digest->add($part->body);
-      push @res, [$num, digest64($digest)];
-    }
-  }
+  push @res, "b1=" . digest64($body_digest);
   return @res;
 }
 
@@ -259,10 +233,10 @@ sub sign {
   my %map = map { geti($_) => $_ } $msg->header_raw('DKIM2-Signature');
   my $num = %map ? max(keys %map) : 0;
   $num++;
-  my %vmap = map { getv($_) => $_ } $msg->header_raw('Mail-Version');
-  my $version = %vmap ? max(keys %vmap) : 0;
+  my %mimap = map { getmi($_) => $_ } $msg->header_raw('Message-Instance');
+  my $instance = %mimap ? max(keys %mimap) : 0;
 
-  my $mv = Mail::DKIM::KeyValueList->parse($vmap{$version});
+  my $mi = Mail::DKIM::KeyValueList->parse($mimap{$instance});
 
   my $from = $args{from} || extract_from($msg);
   my @rt = $args{to} ? @{$args{to}} : extract_to($msg);
@@ -275,11 +249,11 @@ sub sign {
     KeyFile => $key,
   );
   $signature->prefix("DKIM2-Signature: i=$num;");
-  $signature->set_tag('v');
-  $signature->set_tag('mv', $version) if $version;
-  $signature->set_tag('mf', $from);
-  $signature->set_tag('rt', join(',', @rt));
-  $signature->headerlist($mv->get_tag('h'));
+  $signature->set_tag('v', $instance) if $instance;
+  $signature->set_tag('t', time());
+  $signature->set_tag('mf', "<$from>");
+  $signature->set_tag('rt', join('', map { "<$_>" } @rt));
+  $signature->headerlist($mi->get_tag('h'));
   my $policysub = sub {
     my $self = shift;
     $self->add_signature($signature);
@@ -301,38 +275,38 @@ sub sign {
   # Add the mailversion and dkim headers in order
   {
     my $dest = $signer->{algorithms}[0]{canon};
-    my $mv = 1;
+    my $mi = 1;
     my $i = 1;
     while ($i < $num) {
       my $dk2 = $map{$i};
-      my $to = getv($dk2);
-      while ($mv <= $to) {
-        my $val = $vmap{$mv};
-        die "NO DATA FOR mv=$mv" unless $val;
-        $dest->output($dest->canonicalize_header("Mail-Version: $val\r\n"));
-        $mv++;
+      my $to = getmi($dk2);
+      while ($mi <= $to) {
+        my $val = $mimap{$mi};
+        die "NO DATA FOR v=$mi" unless $val;
+        $dest->output($dest->canonicalize_header("Message-Instance: $val\r\n"));
+        $mi++;
       }
       $dest->output($dest->canonicalize_header("DKIM2-Signature: $dk2\r\n"));
       $i++;
     }
-    while ($mv <= $version) {
-      my $val = $vmap{$mv};
-      die "NO DATA FOR mv=$mv" unless $val;
-      $dest->output($dest->canonicalize_header("Mail-Version: $val\r\n"));
-      $mv++;
+    while ($mi <= $instance) {
+      my $val = $mimap{$mi};
+      die "NO DATA FOR v=$mi" unless $val;
+      $dest->output($dest->canonicalize_header("Message-Instance: $val\r\n"));
+      $mi++;
     }
   }
 
   $signer->CLOSE();
   return ($num, $signature->as_string());
-} 
+}
 
 sub verify {
   my $msg = shift;
   my $pubkey = shift;
   my %map = map { geti($_) => $_ } $msg->header_raw('DKIM2-Signature');
-  my %vmap = map { getv($_) => $_ } $msg->header_raw('Mail-Version');
-  my $version = %vmap ? max(keys %vmap) : 0;
+  my %mimap = map { getmi($_) => $_ } $msg->header_raw('Message-Instance');
+  my $instance = %mimap ? max(keys %mimap) : 0;
   my $num = %map ? max(keys %map) : 0;
   die "NO NUM" unless $num;
   my $signature = Mail::DKIM::Signature->new();
@@ -353,25 +327,25 @@ sub verify {
   # Add the mailversion and dkim headers in order
   {
     my $dest = $dkim->{algorithms}[0]{canon};
-    my $mv = 1;
+    my $mi = 1;
     my $i = 1;
     while ($i < $num) {
       my $dk2 = $map{$i};
-      my $to = getv($dk2);
-      while ($mv <= $to) {
-        my $val = $vmap{$mv};
-        die "NO DATA FOR mv=$mv" unless $val;
-        $dest->output($dest->canonicalize_header("Mail-Version: $val\r\n"));
-        $mv++;
+      my $to = getmi($dk2);
+      while ($mi <= $to) {
+        my $val = $mimap{$mi};
+        die "NO DATA FOR v=$mi" unless $val;
+        $dest->output($dest->canonicalize_header("Message-Instance: $val\r\n"));
+        $mi++;
       }
       $dest->output($dest->canonicalize_header("DKIM2-Signature: $dk2\r\n"));
       $i++;
     }
-    while ($mv <= $version) {
-      my $val = $vmap{$mv};
-      die "NO DATA FOR mv=$mv" unless $val;
-      $dest->output($dest->canonicalize_header("Mail-Version: $val\r\n"));
-      $mv++;
+    while ($mi <= $instance) {
+      my $val = $mimap{$mi};
+      die "NO DATA FOR v=$mi" unless $val;
+      $dest->output($dest->canonicalize_header("Message-Instance: $val\r\n"));
+      $mi++;
     }
   }
   $dkim->CLOSE();
@@ -384,13 +358,13 @@ sub verify {
 
 sub geti {
   my $arg = shift;
-  return 0 unless $arg =~ m/i=(\d+)/;
+  return 0 unless $arg =~ m/\bi=(\d+)/;
   return 0 + $1;
 }
 
-sub getv {
+sub getmi {
   my $arg = shift;
-  return 0 unless $arg =~ m/mv=(\d+)/;
+  return 0 unless $arg =~ m/v=(\d+)/;
   return 0 + $1;
 }
 
@@ -399,12 +373,12 @@ sub should_skip {
   # Trace Headers
   return 1 if $hname eq 'received';
   return 1 if $hname eq 'return-path';
-  return 1 if $hname eq 'mail-version';
-  return 1 if $hname eq 'dkim-signature';
+  return 1 if $hname eq 'message-instance';
   return 1 if $hname eq 'dkim2-signature';
   # X headers
   return 1 if $hname =~ m/^x-/;
   # stuff we don't sign
+  return 1 if $hname eq 'dkim-signature';
   return 1 if $hname eq 'arc-authentication-results';
   return 1 if $hname eq 'arc-message-signature';
   return 1 if $hname eq 'arc-seal';
@@ -442,59 +416,4 @@ sub bval {
   return "$item->[0]:$item->[1]";
 }
 
-
-package Mail::DKIM::DKIM2::Signature;
-use strict;
-use warnings;
-# ABSTRACT: Subclass of Mail::DKIM::Signature which represents a DKIM2-Signature header
-
-# Copyright 2025 FastMail Pty Ltd. All Rights Reserved.
-# Bron Gondwana <brong@fastmailteam.com>
-
-# This program is free software; you can redistribute it and/or
-# modify it under the same terms as Perl itself.
-
-use base 'Mail::DKIM::Signature';
-use Carp;
-
-
-sub new {
-    my $class = shift;
-    my %prms  = @_;
-    my $self  = {};
-    bless $self, $class;
-
-    $self->instance( $prms{'Instance'} ) if exists $prms{'Instance'};
-    $self->algorithm( $prms{'Algorithm'} || 'rsa-sha256' );
-    $self->signature( $prms{'Signature'} );
-    $self->canonicalization( $prms{'Method'} ) if exists $prms{'Method'};
-    $self->domain( $prms{'Domain'} );
-    $self->protocol( $prms{'Query'} ) if exists $prms{'Query'};
-    $self->selector( $prms{'Selector'} );
-    $self->timestamp( $prms{'Timestamp'} )   if defined $prms{'Timestamp'};
-    $self->tags( $prms{'Tags'} ) if defined $prms{'Tags'};
-    $self->key( $prms{'Key'} )               if defined $prms{'Key'};
-
-    return $self;
-}
-
-sub DEFAULT_PREFIX {
-    return 'DKIM2-Signature:';
-}
-
-sub instance {
-    my $self = shift;
-
-    # DKIM2 identities must be a number
-    if (@_) {
-        my $val = int(shift);
-        die "INVALID instance $val" unless ( $val > 0 and $val < 1025 );
-        $self->set_tag( 'i', $val );
-    }
-
-    my $i = $self->get_tag('i');
-    return $i;
-}
-
 1;
-
