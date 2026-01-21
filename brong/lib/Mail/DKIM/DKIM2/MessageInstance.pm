@@ -21,6 +21,8 @@ our $VERSION = '1.20240923'; # VERSION
 
 # FILTHY PATCHING
 
+our $DEBUG = 0;
+
 BEGIN {
     # clone is broken for signatures with different prefixes
     *Mail::DKIM::Signature::clone = sub {
@@ -87,11 +89,12 @@ sub h_digest {
     my $relaxed = RELAXED();
     my @h;
     my $digest = Digest::SHA->new(256);
-    for my $header (sort { $a cmp $b } $msg->header_names) {
+    for my $header (sort { lc $a cmp lc $b } $msg->header_names) {
         # we're going to sign everything except trace headers and DKIM-Signature and X-Headers:
         next if should_skip($header);
         for my $item (reverse $msg->header_raw($header)) {
             my $chead = $relaxed->canonicalize_header("$header: $item\r\n");
+            warn "cdigest: $chead" if $DEBUG;
             $digest->add($chead);
             push @h, lc($header);
         }
