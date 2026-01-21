@@ -3,38 +3,31 @@
 use 5.020;
 use Path::Tiny;
 use Email::MIME;
-use lib '.';
-use DKIM2;
+use lib 'lib';
 use Mail::DKIM::TextWrap;
+use Mail::DKIM::DKIM2::MessageInstance;
 
 my $f1 = shift || die;
 my $f2 = shift;
 
 my $msg1 = Email::MIME->new(path($f1)->slurp);
-my $num = 1;
-my @bits;
-$msg1->header_raw_set('MailVersion');
+my $msg2;
 if ($f2) {
-  my $msg2 = Email::MIME->new(path($f2)->slurp);
-  ($num, @bits) = DKIM2::diff($msg1, $msg2);
+  $msg2 = Email::MIME->new(path($f2)->slurp);
 }
-elsif ($msg1->header_raw('Mail-Version')) {
-  warn "Removing all exisiting Mail-Version headers";
-  $msg1->header_raw_set('Mail-Version');
-}
-unshift @bits, DKIM2::calc($msg1);
 
+my $mi = Mail::DKIM::DKIM2::MessageInstance->calculate($msg1, $msg2);
 my $output = '';
 my $tw = Mail::DKIM::TextWrap->new(
-	     Margin => 72,
-	     Break => qr/[,;\s]/,
-	     Separator => "\r\n\t",
-	     Swallow => qr/\s+/,
-             Output => \$output,
+            Margin => 72,
+            Break => qr/[\,\;\|\:\s]/,
+            Separator => "\r\n\t",
+            Swallow => qr/\s+/,
+            Output => \$output,
           );
-$tw->add("Mail-Version: " . join('; ', "mv=$num", @bits));
+$tw->add("Message-Instance:" . $mi->as_string());
 $tw->finish;
-$output =~ s/^Mail-Version: //;
-$msg1->header_raw_prepend('Mail-Version', $output);
+$output =~ s/^Message-Instance: //;
+$msg1->header_raw_prepend('Message-Instance', $output);
 
 print $msg1->as_string();
