@@ -4,8 +4,8 @@ use 5.020;
 use Path::Tiny;
 use Email::MIME;
 use Getopt::Long::Descriptive;
-use lib '.';
-use DKIM2;
+use lib 'lib';
+use Mail::DKIM2::Signer;
 
 my ($opt, $usage) = describe_options(
   '%c %o file',
@@ -24,14 +24,21 @@ print($usage->text), exit if ($opt->help or not @ARGV);
 my $f1 = shift;
 my $msg1 = Email::MIME->new(path($f1)->slurp);
 
-my ($num, $header) = DKIM2::sign($msg1,
-  algorithm => $opt->algorithm,
-  selector => $opt->selector,
-  domain => $opt->domain,
-  key => $opt->key,
-  to => $opt->rcptto,
-  from => $opt->mailfrom,
+my $keyfile = $opt->key || "../keys/" . $opt->selector . "._domainkey." . $opt->domain . ".pem";
+
+my $signer = Mail::DKIM2::Signer->new(
+  Domain    => $opt->domain,
+  Selector  => $opt->selector,
+  KeyFile   => $keyfile,
+  Algorithm => $opt->algorithm,
+  MailFrom  => $opt->mailfrom,
+  RcptTo    => $opt->rcptto,
 );
+
+$signer->PRINT($msg1->as_string());
+$signer->CLOSE;
+
+my $header = $signer->as_string();
 
 if ($opt->quiet) {
   say "$header";

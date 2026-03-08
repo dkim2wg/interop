@@ -5,7 +5,7 @@ use Path::Tiny;
 use Email::MIME;
 use lib 'lib';
 use Mail::DKIM::TextWrap;
-use Mail::DKIM::DKIM2::MessageInstance;
+use Mail::DKIM2::MessageInstance;
 
 my $f1 = shift || die;
 my $f2 = shift;
@@ -16,7 +16,7 @@ if ($f2) {
   $msg2 = Email::MIME->new(path($f2)->slurp);
 }
 
-my $mi = Mail::DKIM::DKIM2::MessageInstance->calculate($msg1, $msg2);
+my $mi = Mail::DKIM2::MessageInstance->calculate($msg1, $msg2);
 my $output = '';
 my $tw = Mail::DKIM::TextWrap->new(
             Margin => 72,
