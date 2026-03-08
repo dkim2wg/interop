@@ -260,14 +260,9 @@ diag("=== Negative tests ===");
     $msg->header_raw_set('Subject', 'TAMPERED');
     $msg = Email::MIME->new($msg->as_string);
 
-    my $died = 0;
-    eval {
-        Mail::DKIM2::MessageInstance->verify($msg);
-        1;
-    } or do {
-        $died = 1;
-    };
-    ok($died, "MI verify dies on tampered header");
+    my ($result, $error) = Mail::DKIM2::MessageInstance->verify($msg);
+    is($result, 0, "MI verify returns 0 on tampered header");
+    like($error, qr/header hash mismatch/, "MI verify reports hash mismatch");
 }
 
 # Tamper with the signature and verify DKIM2 fails

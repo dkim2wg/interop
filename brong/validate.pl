@@ -4,6 +4,7 @@ use 5.020;
 use Path::Tiny;
 use Email::MIME;
 use lib 'lib';
+use Mail::DKIM2::Common qw(extract_mi_version);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
 use Mail::DKIM::PublicKey;
@@ -20,14 +21,14 @@ my $dns = decode_json(path('../dns.json')->slurp);
 
 my %map = map { _geti($_) => $_ } $msg1->header('DKIM2-Signature');
 my $num = %map ? max(keys %map) : 0;
-my %mimap = map { Mail::DKIM2::MessageInstance::getmi($_) => $_ } $msg1->header('Message-Instance');
+my %mimap = map { extract_mi_version($_) => $_ } $msg1->header('Message-Instance');
 my $instance = %mimap ? max(keys %mimap) : 0;
 
 while (1) {
   my $hi = $num ? _getv($map{$num}) : 0;
   while ($instance > $hi) {
-    my $check = Mail::DKIM2::MessageInstance->verify($msg1);
-    die "ERROR: failed to verify instance $instance\n" unless $check;
+    my ($check, $error) = Mail::DKIM2::MessageInstance->verify($msg1);
+    die "ERROR: failed to verify instance $instance: $error\n" unless $check;
     die "DIDN'T FIND TOP $instance <> $check" unless $instance == $check;
     say "OK Message-Instance: v=$check";
     die "Failed to undo" unless Mail::DKIM2::MessageInstance->undo($msg1);

@@ -2,7 +2,7 @@ package Mail::DKIM2::Signer;
 use strict;
 use warnings;
 
-use base 'Mail::DKIM::Common';
+use base 'Mail::DKIM2::HeaderParser';
 use Mail::DKIM::PrivateKey;
 use Digest::SHA;
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -11,6 +11,8 @@ use Carp;
 use Mail::DKIM2::Common qw(
     dkim2_canonicalize_header
     encode_tag_json
+    build_signing_input
+    extract_mi_version
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -18,7 +20,6 @@ use Mail::DKIM2::MessageInstance;
 sub init {
     my $self = shift;
     $self->SUPER::init;
-
     croak "Domain required" unless $self->{Domain};
     croak "Selector required" unless $self->{Selector};
     croak "KeyFile or Key required" unless $self->{KeyFile} || $self->{Key};
@@ -41,7 +42,7 @@ sub finish_header {
         if ($header =~ /^Message-Instance:/i) {
             my ($val) = $header =~ /^Message-Instance:\s*(.*)/is;
             $val =~ s/\r\n$//;
-            my $v = Mail::DKIM2::MessageInstance::getmi($val);
+            my $v = extract_mi_version($val);
             push @mi_headers, { v => $v, raw => $header } if $v;
         }
         elsif ($header =~ /^DKIM2-Signature:/i) {
@@ -101,34 +102,16 @@ sub finish_body {
     my @mi_headers   = @{$self->{_mi_headers}};
     my @dk2_headers  = @{$self->{_dk2_headers}};
 
-    # Build signing input: canonicalized MI headers (v= ascending)
-    # + canonicalized DKIM2-Sig headers (i= ascending)
-    # + canonicalized new DKIM2-Sig (with empty s= signature values)
-    # Interleaved: for each DKIM2-Sig at i=N, include all MI headers
-    # with v= up to the v= value referenced by that signature
+    # Include the new signature as the signing_i entry
+    my $next_i = $self->{_next_i};
+    my @all_dk2 = (@dk2_headers, { i => $next_i, sig => $signature });
 
-    my $signing_input = '';
-
-    # Interleave MI and DKIM2 headers in order
-    my $mi_idx = 0;
-    for my $dk2 (@dk2_headers) {
-        my $dk2_v = $dk2->{sig}->version || 0;
-        # Add all MI headers up to this DKIM2-Sig's version
-        while ($mi_idx < @mi_headers && $mi_headers[$mi_idx]{v} <= $dk2_v) {
-            $signing_input .= dkim2_canonicalize_header($mi_headers[$mi_idx]{raw});
-            $mi_idx++;
-        }
-        $signing_input .= dkim2_canonicalize_header($dk2->{raw});
-    }
-    # Add remaining MI headers
-    while ($mi_idx < @mi_headers) {
-        $signing_input .= dkim2_canonicalize_header($mi_headers[$mi_idx]{raw});
-        $mi_idx++;
-    }
-
-    # Add the new signature (with empty signature values)
-    my $new_sig_header = $signature->as_string_without_data();
-    $signing_input .= dkim2_canonicalize_header("$new_sig_header\r\n");
+    my $signing_input = build_signing_input(
+        mi_headers  => \@mi_headers,
+        dk2_headers => \@all_dk2,
+        signing_i   => $next_i,
+        signature   => $signature,
+    );
 
     # Hash the signing input
     my $sha = Digest::SHA->new(256);

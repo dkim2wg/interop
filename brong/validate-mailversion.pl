@@ -13,9 +13,11 @@ $data =~ s/\n/\r\n/gs;
 my $msg1 = Email::MIME->new($data);
 
 while (1) {
-  my $res = Mail::DKIM2::MessageInstance->verify($msg1);
-  last unless $res;
-  die "no valid instances $res" unless $res > 0;
+  my ($res, $error) = Mail::DKIM2::MessageInstance->verify($msg1);
+  if (!$res) {
+    die "verification failed: $error\n" if $error;
+    last;
+  }
   say "valid at $res";
 
   Mail::DKIM2::MessageInstance->undo($msg1);

@@ -16,6 +16,7 @@ use Mail::DKIM2::Common qw(
     digest64
     encode_tag_json
     decode_tag_json
+    extract_mi_version
 );
 
 our $DEBUG = 0;
@@ -233,7 +234,7 @@ sub calculate {
         my $canon_mi2 = join(',', map { dkim2_canonicalize_header($_) } @mi2);
         die "This isn't the same message" unless ($canon_mi1 eq $canon_mi2);
 
-        my %map = map { _getmi($_) => $_ } @mi1;
+        my %map = map { extract_mi_version($_) => $_ } @mi1;
         $self->set_tag('v', max(keys %map) + 1);
     }
     else {
@@ -320,7 +321,7 @@ sub verify {
         $msg = Email::MIME->new($msg);
     }
 
-    my %map = map { _getmi($_) => $_ } $msg->header_raw('Message-Instance');
+    my %map = map { extract_mi_version($_) => $_ } $msg->header_raw('Message-Instance');
     my $num = keys %map ? max(keys %map) : 0;
     return 0 unless $num;
 
@@ -329,8 +330,13 @@ sub verify {
     my $b1 = $self->get_tag('b1');
     my $hd = h_digest($msg);
     my $bd = b_digest($msg);
-    die "header hash mismatch ($h1 != $hd)" if $h1 ne $hd;
-    die "body hash mismatch ($b1 != $bd)" if $b1 ne $bd;
+
+    if ($h1 ne $hd) {
+        return wantarray ? (0, "header hash mismatch ($h1 != $hd)") : 0;
+    }
+    if ($b1 ne $bd) {
+        return wantarray ? (0, "body hash mismatch ($b1 != $bd)") : 0;
+    }
 
     return $num;
 }
@@ -345,11 +351,11 @@ sub undo {
         $msg = Email::MIME->new($msg);
     }
 
-    my %map = map { _getmi($_) => $_ } $msg->header_raw('Message-Instance');
+    my %map = map { extract_mi_version($_) => $_ } $msg->header_raw('Message-Instance');
     my $num = keys %map ? max(keys %map) : 0;
     return unless $num;
 
-    $msg->header_obj->header_filter('Message-Instance', sub { _getmi(shift) < $num });
+    $msg->header_obj->header_filter('Message-Instance', sub { extract_mi_version(shift) < $num });
 
     my $self = $class->parse($map{$num});
 
@@ -391,17 +397,7 @@ sub undo {
     return $msg;
 }
 
-# --- Helpers ---
-
-sub _getmi {
-    my ($header) = @_;
-    $header = $header->[0] if ref($header) eq 'ARRAY';
-    $header = $$header if ref($header);
-    return unless $header =~ m/^\s*v=(\d+)/;
-    return $1;
-}
-
-# Public version for use by other modules
-sub getmi { return _getmi(@_) }
+# Backwards-compatible alias for external callers
+sub getmi { return extract_mi_version(@_) }
 
 1;

@@ -2,7 +2,7 @@ package Mail::DKIM2::Verifier;
 use strict;
 use warnings;
 
-use base 'Mail::DKIM::Common';
+use base 'Mail::DKIM2::HeaderParser';
 use Mail::DKIM::PublicKey;
 use Digest::SHA;
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -12,6 +12,10 @@ use Mail::DKIM2::Common qw(
     dkim2_canonicalize_header
     decode_tag_json
     encode_tag_json
+    build_signing_input
+    extract_mi_version
+    extract_domain
+    relaxed_domain_match
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -19,19 +23,18 @@ use Mail::DKIM2::MessageInstance;
 sub init {
     my $self = shift;
     $self->SUPER::init;
-    $self->{_mi_headers} = {};
+    $self->{_mi_headers}  = {};
     $self->{_dk2_headers} = {};
-    $self->{result} = undef;
+    $self->{result}  = undef;
     $self->{details} = undef;
 }
 
 sub handle_header {
     my ($self, $field_name, $contents, $line) = @_;
-    $self->SUPER::handle_header($field_name, $contents);
 
     if (lc($field_name) eq 'message-instance') {
         eval {
-            my $v = Mail::DKIM2::MessageInstance::getmi($contents);
+            my $v = extract_mi_version($contents);
             if ($v) {
                 $self->{_mi_headers}{$v} = $line || "$field_name:$contents";
             }
@@ -98,18 +101,20 @@ sub finish_body {
         }
     }
 
-    # Verify the highest i= signature
-    my $result = $self->_verify_signature($max_i);
-    return unless $result;
+    # Verify ALL signatures in the chain, from i=1 to max_i
+    for my $i (1..$max_i) {
+        my $result = $self->_verify_signature($i);
+        return unless $result;
+    }
 
-    # If we also need to check chain of custody, do it
+    # Check chain of custody between consecutive signatures
     if ($max_i > 1) {
         my $chain_result = $self->_verify_chain();
         return unless $chain_result;
     }
 
     $self->{result} = 'pass';
-    $self->{details} = "i=$max_i verified";
+    $self->{details} = "i=1..$max_i verified";
 }
 
 sub _verify_signature {
@@ -120,35 +125,26 @@ sub _verify_signature {
     my $dk2_entry = $dk2_map{$i};
     my $signature = $dk2_entry->{sig};
 
-    # Reconstruct the signing input
-    my $signing_input = '';
+    # Only include headers that existed when signature $i was created:
+    # - DKIM2-Sig headers with i <= $i
+    # - MI headers with v <= the version referenced by signature $i
+    my $max_v = $signature->version || 0;
+    # If signature has no version (i=1 with no prior MI), include MI up to $i
+    $max_v = $i if !$max_v;
 
-    # Sort MI headers by v= ascending, DKIM2-Sig by i= ascending
-    my @mi_vs = sort { $a <=> $b } keys %mi_map;
-    my @dk2_is = sort { $a <=> $b } keys %dk2_map;
+    my @mi_arr  = map { { v => $_, raw => $mi_map{$_} } }
+                  sort { $a <=> $b }
+                  grep { $_ <= $max_v } keys %mi_map;
+    my @dk2_arr = map { { i => $_, raw => $dk2_map{$_}{raw}, sig => $dk2_map{$_}{sig} } }
+                  sort { $a <=> $b }
+                  grep { $_ <= $i } keys %dk2_map;
 
-    # Interleave MI and DKIM2 headers in order
-    my $mi_idx = 0;
-    for my $di (@dk2_is) {
-        my $dk2_v = $dk2_map{$di}{sig}->version || 0;
-        while ($mi_idx < @mi_vs && $mi_vs[$mi_idx] <= $dk2_v) {
-            $signing_input .= dkim2_canonicalize_header($mi_map{$mi_vs[$mi_idx]});
-            $mi_idx++;
-        }
-        if ($di == $i) {
-            # For the signature being verified, use empty signature values
-            # Add remaining MI headers first
-            while ($mi_idx < @mi_vs) {
-                $signing_input .= dkim2_canonicalize_header($mi_map{$mi_vs[$mi_idx]});
-                $mi_idx++;
-            }
-            my $sig_header = $signature->as_string_without_data();
-            $signing_input .= dkim2_canonicalize_header("$sig_header\r\n");
-            last;
-        } else {
-            $signing_input .= dkim2_canonicalize_header($dk2_map{$di}{raw});
-        }
-    }
+    my $signing_input = build_signing_input(
+        mi_headers  => \@mi_arr,
+        dk2_headers => \@dk2_arr,
+        signing_i   => $i,
+        signature   => $signature,
+    );
 
     # Hash the signing input
     my $sha = Digest::SHA->new(256);
@@ -218,11 +214,11 @@ sub _verify_chain {
 
         # Chain of custody: mf of N should relaxed-domain-match an rt of N-1
         if ($cur_mf && $prev_rt) {
-            my $cur_mf_domain = _extract_domain($cur_mf);
+            my $cur_mf_domain = extract_domain($cur_mf);
             my $match = 0;
             my @prev_rts = ref($prev_rt) eq 'ARRAY' ? @$prev_rt : ($prev_rt);
             for my $rt (@prev_rts) {
-                my $rt_domain = _extract_domain($rt);
+                my $rt_domain = extract_domain($rt);
                 if (relaxed_domain_match($cur_mf_domain, $rt_domain)) {
                     $match = 1;
                     last;
@@ -237,28 +233,6 @@ sub _verify_chain {
     }
 
     return 1;
-}
-
-sub relaxed_domain_match {
-    my ($mf_domain, $check_domain) = @_;
-    return 0 unless $mf_domain && $check_domain;
-    $mf_domain = lc($mf_domain);
-    $check_domain = lc($check_domain);
-    while ($mf_domain) {
-        return 1 if $mf_domain eq $check_domain;
-        $mf_domain =~ s/^[^.]+\.// or return 0;
-    }
-    return 0;
-}
-
-sub _extract_domain {
-    my ($addr) = @_;
-    return unless $addr;
-    # Handle <user@domain> and user@domain formats
-    $addr =~ s/^.*<//;
-    $addr =~ s/>.*$//;
-    return unless $addr =~ /\@(.+)$/;
-    return $1;
 }
 
 # Allow setting a callback for public key lookup (for testing with dns.json)
