@@ -1,0 +1,77 @@
+Mail::DKIM2 - DKIM2 signing and verification for email
+
+DESCRIPTION
+
+Mail::DKIM2 implements the DKIM2 email authentication protocol as specified
+in draft-clayton-dkim2-spec-08.  DKIM2 extends DKIM with chain-of-custody
+tracking, allowing each hop in the delivery path to add a cryptographic
+signature that covers all previous signatures and Message-Instance headers.
+
+Features:
+
+  - Sign outbound messages with DKIM2-Signature headers
+  - Verify all signatures in the DKIM2 chain (not just the outermost)
+  - Calculate, verify, and undo Message-Instance headers with diff recipes
+  - Chain-of-custody validation via SMTP envelope domain matching
+  - Streaming interface compatible with milter and other filter architectures
+
+INSTALLATION
+
+    perl Makefile.PL
+    make
+    make test
+    make install
+
+DEPENDENCIES
+
+    Perl 5.20 or later
+    Mail::DKIM 1.20200824 or later
+    Email::MIME
+    JSON::XS
+    Algorithm::Diff
+    Digest::SHA
+    MIME::Base64
+
+For running the test suite:
+
+    Path::Tiny
+    Test keys and DNS data from https://github.com/dkim2wg/interop
+
+SYNOPSIS
+
+    # Sign a message
+    use Mail::DKIM2::Signer;
+
+    my $signer = Mail::DKIM2::Signer->new(
+        Domain   => 'example.com',
+        Selector => 'sel1',
+        KeyFile  => '/path/to/private.pem',
+    );
+    $signer->PRINT($message_text);
+    $signer->CLOSE;
+    print $signer->as_string();
+
+    # Verify a message
+    use Mail::DKIM2::Verifier;
+
+    my $verifier = Mail::DKIM2::Verifier->new();
+    $verifier->set_pubkey_callback(\&find_key);
+    $verifier->PRINT($message_text);
+    $verifier->CLOSE;
+    print $verifier->result_detail();
+
+SEE ALSO
+
+    https://datatracker.ietf.org/doc/draft-clayton-dkim2-spec/
+    https://github.com/dkim2wg/interop
+
+AUTHOR
+
+    Bron Gondwana <brong@fastmailteam.com>
+
+COPYRIGHT AND LICENSE
+
+This software is copyright (c) 2025 by Bron Gondwana.
+
+This is free software; you can redistribute it and/or modify it under
+the same terms as the Perl 5 programming language system itself.

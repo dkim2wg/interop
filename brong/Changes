@@ -1,0 +1,11 @@
+Revision history for Mail::DKIM2
+
+0.01    2026-03-08
+        - Initial release
+        - Implements draft-clayton-dkim2-spec-08
+        - Signer: streaming DKIM2-Signature generation with SMTP param recording
+        - Verifier: full chain verification (all signatures, not just outermost)
+        - MessageInstance: calculate, verify, and undo with header/body diff recipes
+        - Signature: tag-value parser with base64-encoded JSON tags
+        - HeaderParser: thin streaming base class replacing Mail::DKIM::Common
+        - Common: shared canonicalization, hashing, domain matching utilities

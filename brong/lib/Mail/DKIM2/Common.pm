@@ -1,6 +1,9 @@
 package Mail::DKIM2::Common;
+use 5.20.0;
 use strict;
 use warnings;
+
+our $VERSION = '0.01';
 
 use Digest::SHA;
 use MIME::Base64 qw(encode_base64 decode_base64);
