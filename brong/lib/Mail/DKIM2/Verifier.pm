@@ -256,3 +256,111 @@ sub result_detail {
 }
 
 1;
+
+__END__
+
+=head1 NAME
+
+Mail::DKIM2::Verifier - Verify DKIM2-Signature chains on email messages
+
+=head1 SYNOPSIS
+
+    use Mail::DKIM2::Verifier;
+
+    my $verifier = Mail::DKIM2::Verifier->new();
+
+    # Optional: provide a custom public key lookup
+    $verifier->set_pubkey_callback(sub {
+        my ($signature) = @_;
+        # return a Mail::DKIM::PublicKey object
+    });
+
+    # Feed the message
+    $verifier->PRINT($message_text);
+    $verifier->CLOSE;
+
+    print $verifier->result(), "\n";         # pass, fail, none, etc.
+    print $verifier->result_detail(), "\n";  # pass (i=1..3 verified)
+
+=head1 DESCRIPTION
+
+Streaming DKIM2 chain verifier.  Verifies B<all> DKIM2-Signature headers in
+the chain (not just the outermost), checks chain completeness, validates
+cryptographic signatures, and performs chain-of-custody domain matching
+between consecutive hops.
+
+Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
+
+=head1 CONSTRUCTOR
+
+=head2 new(%args)
+
+Creates a new Verifier.  No required arguments.
+
+=head1 METHODS
+
+=head2 set_pubkey_callback(\&callback)
+
+Sets a callback for public key lookup.  The callback receives a
+L<Mail::DKIM2::Signature> object and should return a L<Mail::DKIM::PublicKey>
+object.  If not set, keys are fetched via DNS.
+
+=head2 result()
+
+Returns the verification result string:
+
+=over 4
+
+=item C<pass> - All signatures verified and chain is valid.
+
+=item C<fail> - A signature failed, chain is incomplete, or custody break.
+
+=item C<none> - No DKIM2-Signature headers found.
+
+=item C<permfail> - Permanent failure (e.g. missing public key).
+
+=item C<tempfail> - Temporary failure (e.g. DNS lookup error).
+
+=back
+
+=head2 result_detail()
+
+Returns the result with additional detail, e.g.
+C<"pass (i=1..3 verified)">.
+
+=head1 VERIFICATION PROCESS
+
+The verifier performs these checks:
+
+=over 4
+
+=item 1.
+
+B<Chain completeness>: All C<i=1> through C<i=N> signatures must be present
+with no gaps.  Message-Instance headers (if any) must also be complete.
+
+=item 2.
+
+B<Cryptographic verification>: Each signature C<i=1..N> is independently
+verified.  The signing input for signature C<i=K> includes only
+Message-Instance and DKIM2-Signature headers that existed when that signature
+was created.
+
+=item 3.
+
+B<Chain of custody>: For consecutive signatures, the MAIL FROM domain of
+signature C<i=K> must relaxed-domain-match a RCPT TO domain of signature
+C<i=K-1>.
+
+=back
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
+
+=cut

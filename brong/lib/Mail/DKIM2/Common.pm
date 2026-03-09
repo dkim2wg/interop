@@ -151,3 +151,125 @@ sub build_signing_input {
 }
 
 1;
+
+__END__
+
+=head1 NAME
+
+Mail::DKIM2::Common - Shared utilities for DKIM2 signing and verification
+
+=head1 SYNOPSIS
+
+    use Mail::DKIM2::Common qw(
+        should_skip
+        dkim2_canonicalize_header
+        digest64
+        encode_tag_json
+        decode_tag_json
+        build_signing_input
+        extract_mi_version
+        extract_domain
+        relaxed_domain_match
+    );
+
+    # Check if a header should be excluded from hashing
+    my $skip = should_skip('Received');  # returns 1
+
+    # Canonicalize a header line per DKIM2 rules
+    my $canon = dkim2_canonicalize_header("Subject: Hello World\r\n");
+
+    # Extract version from a Message-Instance header value
+    my $v = extract_mi_version("v=3; h=...");  # returns 3
+
+=head1 DESCRIPTION
+
+This module provides utility functions shared between L<Mail::DKIM2::Signer>,
+L<Mail::DKIM2::Verifier>, and L<Mail::DKIM2::MessageInstance>.  It also holds
+the distribution-wide C<$VERSION>.
+
+=head1 FUNCTIONS
+
+All functions are exportable on request.
+
+=head2 should_skip($header_name)
+
+Returns true if the named header should be excluded from DKIM2 hashing.
+Excluded headers include C<Received>, C<Return-Path>, C<Message-Instance>,
+C<DKIM2-Signature>, C<DKIM-Signature>, ARC headers, and any C<X-*> header.
+
+=head2 dkim2_canonicalize_header($line)
+
+Applies DKIM2 header canonicalization to a raw header line (including trailing
+CRLF).  This is DKIM relaxed canonicalization plus removal of whitespace
+around the colon separating the header name from its value.
+
+=head2 digest64($sha)
+
+Takes a L<Digest::SHA> object, calls C<b64digest>, and pads the result to
+a multiple of 4 characters with C<=> signs.
+
+=head2 encode_tag_json($data)
+
+Encodes a Perl data structure as canonical JSON, then base64-encodes it.
+Used for the JSON-in-base64 tag values in DKIM2-Signature and
+Message-Instance headers.
+
+=head2 decode_tag_json($base64)
+
+Decodes a base64-encoded JSON string back to a Perl data structure.
+
+=head2 extract_mi_version($header)
+
+Extracts the version number from a Message-Instance header value string.
+Accepts a plain string, a scalar ref, or an arrayref (uses first element).
+Returns the version number or undef if not found.
+
+=head2 extract_domain($address)
+
+Extracts the domain part from an email address.  Handles both bare
+C<user@domain> and angle-bracket C<< <user@domain> >> forms.
+
+=head2 relaxed_domain_match($domain1, $domain2)
+
+Returns true if C<$domain1> is equal to or a subdomain of C<$domain2>.
+Comparison is case-insensitive.
+
+=head2 build_signing_input(%args)
+
+Constructs the signing input string for DKIM2 signature creation or
+verification.  This is the canonicalized concatenation of Message-Instance
+and DKIM2-Signature headers in the correct interleaved order.
+
+Arguments:
+
+=over 4
+
+=item mi_headers
+
+Arrayref of C<< { v => N, raw => "..." } >> hashes, sorted by version.
+
+=item dk2_headers
+
+Arrayref of C<< { i => N, raw => "...", sig => $sig_obj } >> hashes, sorted
+by sequence number.
+
+=item signing_i
+
+The C<i=> value of the signature being signed or verified.
+
+=item signature
+
+The L<Mail::DKIM2::Signature> object for the entry being signed/verified.
+
+=back
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
+
+=cut

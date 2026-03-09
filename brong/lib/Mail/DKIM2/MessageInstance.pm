@@ -401,3 +401,111 @@ sub undo {
 sub getmi { return extract_mi_version(@_) }
 
 1;
+
+__END__
+
+=head1 NAME
+
+Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance headers
+
+=head1 SYNOPSIS
+
+    use Mail::DKIM2::MessageInstance;
+
+    # Calculate MI for the initial message (v=1)
+    my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+    print "Message-Instance: " . $mi->as_string . "\n";
+
+    # Calculate MI with diff recipes between two versions
+    my $mi = Mail::DKIM2::MessageInstance->calculate($msg_prev, $msg_current);
+
+    # Verify the highest MI header matches the message
+    my $version = Mail::DKIM2::MessageInstance->verify($msg);
+    # or in list context:
+    my ($version, $error) = Mail::DKIM2::MessageInstance->verify($msg);
+
+    # Undo the highest MI to recover the previous message version
+    my $prev_msg = Mail::DKIM2::MessageInstance->undo($msg);
+
+=head1 DESCRIPTION
+
+This module implements Message-Instance header computation as defined in
+draft-clayton-dkim2-spec-08.  A Message-Instance header records cryptographic
+hashes of the message headers and body at a point in the delivery chain, along
+with optional diff recipes that allow undoing changes made at each hop.
+
+The wire format is: C<< v=N; h=<base64json>; r=<base64json> >>
+
+=head1 CLASS METHODS
+
+=head2 calculate($msg)
+
+=head2 calculate($msg_prev, $msg_current)
+
+Creates a new MessageInstance object by computing hashes of C<$msg> (an
+L<Email::MIME> object or raw message string).  If a single message is given,
+it must not already have Message-Instance headers and produces a C<v=1> entry.
+
+With two messages, computes diff recipes (header and body) between C<$msg_prev>
+(the earlier version with existing MI headers) and C<$msg_current>, producing
+the next version.
+
+=head2 verify($msg)
+
+Verifies that the highest-versioned Message-Instance header on C<$msg> matches
+the current message content.  Returns the version number on success.  In list
+context, returns C<(0, $error_message)> on failure; in scalar context returns
+0 on failure.
+
+=head2 undo($msg)
+
+Applies the diff recipes from the highest Message-Instance header to reverse
+the message to its previous version.  Returns the modified L<Email::MIME>
+object, or undef if no MI headers exist.
+
+=head2 parse($header_value)
+
+Parses a Message-Instance header value string into an object.  Handles both
+the current C<-08> format (C<h=> and C<r=> tags) and the legacy C<-06> format
+(C<j=> tag).
+
+=head1 INSTANCE METHODS
+
+=head2 as_string()
+
+Serializes the MessageInstance to its wire format string.
+
+=head2 set_tag($key, $value)
+
+=head2 get_tag($key)
+
+Low-level accessors for the internal tag store.  Common tags: C<v> (version),
+C<h1> (header hash), C<b1> (body hash), C<rh> (header recipes), C<rb> (body
+recipes).
+
+=head1 FUNCTIONS
+
+=head2 h_digest($email_mime)
+
+Computes the SHA-256 header digest of an L<Email::MIME> message, using DKIM2
+canonicalization and sorted header order.  Returns a base64-encoded string.
+
+=head2 b_digest($email_mime)
+
+Computes the SHA-256 body digest of an L<Email::MIME> message using DKIM
+simple body canonicalization.  Returns a base64-encoded string.
+
+=head2 getmi($header)
+
+Backwards-compatible alias for L<Mail::DKIM2::Common/extract_mi_version>.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
+
+=cut

@@ -151,3 +151,116 @@ sub result {
 }
 
 1;
+
+__END__
+
+=head1 NAME
+
+Mail::DKIM2::Signer - Sign email messages with DKIM2-Signature headers
+
+=head1 SYNOPSIS
+
+    use Mail::DKIM2::Signer;
+
+    my $signer = Mail::DKIM2::Signer->new(
+        Domain   => 'example.com',
+        Selector => 'sel1',
+        KeyFile  => '/path/to/private.pem',
+        MailFrom => 'sender@example.com',
+        RcptTo   => ['recipient@example.com'],
+    );
+
+    # Feed the message (with CRLF line endings)
+    $signer->PRINT($message_text);
+    $signer->CLOSE;
+
+    # Get the generated DKIM2-Signature header
+    print $signer->as_string(), "\n";
+    print "Result: ", $signer->result(), "\n";
+
+=head1 DESCRIPTION
+
+Streaming DKIM2 message signer.  Feed an RFC 5322 message via the
+C<PRINT>/C<CLOSE> interface and retrieve the generated DKIM2-Signature
+header.  Automatically determines the next sequence number by examining
+existing DKIM2-Signature headers on the message.
+
+Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
+
+=head1 CONSTRUCTOR
+
+=head2 new(%args)
+
+Creates a new Signer.  Required arguments:
+
+=over 4
+
+=item Domain
+
+The signing domain (C<d=> tag).
+
+=item Selector
+
+The DNS selector (C<s=> tag in the signature item).
+
+=item KeyFile
+
+Path to a PEM-encoded private key file.  Either C<KeyFile> or C<Key> is
+required.
+
+=item Key
+
+A L<Mail::DKIM::PrivateKey> object.  Alternative to C<KeyFile>.
+
+=back
+
+Optional arguments:
+
+=over 4
+
+=item Algorithm
+
+Signing algorithm (default: C<rsa-sha256>).
+
+=item MailFrom
+
+SMTP MAIL FROM address, recorded in the C<m=> tag.
+
+=item RcptTo
+
+SMTP RCPT TO address(es), recorded in the C<m=> tag.
+
+=item Nonce
+
+A nonce value for the C<n=> tag.
+
+=item Flags
+
+An arrayref of flag strings for the C<f=> tag.
+
+=back
+
+=head1 METHODS
+
+=head2 signature()
+
+Returns the L<Mail::DKIM2::Signature> object (available after C<CLOSE>).
+
+=head2 as_string()
+
+Returns the complete C<DKIM2-Signature: ...> header line.
+
+=head2 result()
+
+Returns C<'signed'> on success, C<'?'> if not yet complete.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
+
+=cut

@@ -191,3 +191,156 @@ sub fetch_public_key {
 }
 
 1;
+
+__END__
+
+=head1 NAME
+
+Mail::DKIM2::Signature - Parse and construct DKIM2-Signature headers
+
+=head1 SYNOPSIS
+
+    use Mail::DKIM2::Signature;
+
+    # Parse an existing header
+    my $sig = Mail::DKIM2::Signature->parse($header_value);
+    say $sig->sequence;    # i= tag
+    say $sig->domain;      # d= tag
+    say $sig->selector;    # s= from first signature item
+
+    # Construct a new signature
+    my $sig = Mail::DKIM2::Signature->new(
+        Sequence   => 1,
+        Domain     => 'example.com',
+        Timestamp  => time(),
+        SmtpParams => { mf => 'sender@example.com' },
+        Signatures => [{ a => 'rsa-sha256', s => 'sel1', b => '' }],
+    );
+
+=head1 DESCRIPTION
+
+Represents a DKIM2-Signature header as defined in draft-clayton-dkim2-spec-08.
+Extends L<Mail::DKIM::KeyValueList> for tag-value parsing and serialization.
+
+The DKIM2-Signature header uses these tags:
+
+=over 4
+
+=item C<i=> - Sequence number (position in the signature chain)
+
+=item C<v=> - Message-Instance version this signature covers
+
+=item C<t=> - Timestamp (Unix epoch)
+
+=item C<d=> - Signing domain
+
+=item C<n=> - Nonce
+
+=item C<f=> - Flags (comma-separated)
+
+=item C<m=> - SMTP parameters (base64-encoded JSON)
+
+=item C<s=> - Signature items (base64-encoded JSON array)
+
+=back
+
+=head1 CONSTRUCTORS
+
+=head2 new(%args)
+
+Creates a new Signature object.  Accepted arguments: C<Sequence>, C<Version>,
+C<Timestamp>, C<Domain>, C<Nonce>, C<Flags> (arrayref), C<SmtpParams>
+(hashref), C<Signatures> (arrayref of hashrefs).
+
+=head2 parse($header_value)
+
+Parses a DKIM2-Signature header value string (with or without the
+C<DKIM2-Signature:> prefix) into a Signature object.
+
+=head1 TAG ACCESSORS
+
+=head2 sequence([$value])
+
+Get/set the C<i=> tag (sequence number).
+
+=head2 version([$value])
+
+Get/set the C<v=> tag (Message-Instance version).
+
+=head2 timestamp([$value])
+
+Get/set the C<t=> tag (Unix timestamp).
+
+=head2 domain([$value])
+
+Get/set the C<d=> tag (signing domain).
+
+=head2 nonce([$value])
+
+Get/set the C<n=> tag.
+
+=head2 flags()
+
+Returns the C<f=> tag as an arrayref of flag strings, or undef.
+
+=head1 JSON TAG ACCESSORS
+
+=head2 smtp_params()
+
+Decodes and returns the C<m=> tag as a hashref.  Keys include C<mf>
+(MAIL FROM) and C<rt> (RCPT TO).
+
+=head2 signatures_data()
+
+Decodes and returns the C<s=> tag as an arrayref of signature item hashrefs.
+Each item has keys C<a> (algorithm), C<s> (selector), and C<b> (signature
+value).
+
+=head2 mail_from()
+
+Convenience method: returns the C<mf> value from SMTP params.
+
+=head2 rcpt_to()
+
+Convenience method: returns the C<rt> value from SMTP params.
+
+=head2 selector([$index])
+
+Returns the selector from the signature item at C<$index> (default 0).
+
+=head2 algorithm([$index])
+
+Returns the algorithm from the signature item at C<$index> (default 0).
+
+=head2 signature_value([$index])
+
+Returns the base64 signature value from the item at C<$index> (default 0).
+
+=head1 SERIALIZATION
+
+=head2 as_string()
+
+Returns the full header line: C<< DKIM2-Signature: <tags> >>.
+
+=head2 as_string_without_data()
+
+Returns the header with empty C<b=> values in all signature items.  Used
+when constructing the signing input.
+
+=head1 DNS
+
+=head2 fetch_public_key([$index])
+
+Fetches the public key via DNS for the signature item at C<$index>
+(default 0), using the selector and domain from this signature.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
+
+=cut

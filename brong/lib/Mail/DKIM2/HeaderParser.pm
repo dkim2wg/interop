@@ -90,3 +90,88 @@ sub finish_header { }
 sub finish_body   { }
 
 1;
+
+__END__
+
+=head1 NAME
+
+Mail::DKIM2::HeaderParser - Thin streaming message parser base class
+
+=head1 SYNOPSIS
+
+    package My::Parser;
+    use base 'Mail::DKIM2::HeaderParser';
+
+    sub handle_header {
+        my ($self, $field_name, $contents, $raw_line) = @_;
+        # called for each header
+    }
+
+    sub finish_header {
+        my $self = shift;
+        # called after all headers are parsed
+    }
+
+    sub finish_body {
+        my $self = shift;
+        # called when CLOSE is invoked
+    }
+
+=head1 DESCRIPTION
+
+A minimal base class that provides the streaming C<PRINT>/C<CLOSE> interface
+for feeding RFC 5322 message data.  It splits input into headers and body,
+handles continuation (folded) lines, and invokes callbacks for subclasses.
+
+This replaces the deep C<Mail::DKIM::Common> inheritance chain with a focused
+implementation containing only what the DKIM2 Signer and Verifier need.
+
+=head1 METHODS
+
+=head2 new(%args)
+
+Constructor.  Calls C<init()> after blessing.
+
+=head2 init()
+
+Initialises internal state: input buffer, header-parsing flag, and the
+C<< $self->{headers} >> arrayref that collects raw header lines.  Subclasses
+should call C<< $self->SUPER::init >> if they override this.
+
+=head2 PRINT($data)
+
+Feeds message data (may be called multiple times with arbitrary chunks).
+Once the blank line separating headers from body is seen, headers are parsed
+and C<finish_header()> is called.
+
+=head2 CLOSE()
+
+Signals end of message.  If headers have not yet been finalised (e.g. a
+header-only message), they are parsed now.  Then C<finish_body()> is called.
+
+=head2 handle_header($field_name, $contents, $raw_line)
+
+Callback invoked for each parsed header.  C<$field_name> is the header name,
+C<$contents> is the value (without trailing newline), and C<$raw_line> is the
+original text including any continuation lines.  Default implementation is a
+no-op.
+
+=head2 finish_header()
+
+Callback invoked after all headers have been parsed.  Default is a no-op.
+
+=head2 finish_body()
+
+Callback invoked from C<CLOSE()> after all data has been received.  Default
+is a no-op.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
+
+=cut
