@@ -397,8 +397,6 @@ sub undo {
     return $msg;
 }
 
-# Backwards-compatible alias for external callers
-sub getmi { return extract_mi_version(@_) }
 
 1;
 
@@ -494,10 +492,6 @@ canonicalization and sorted header order.  Returns a base64-encoded string.
 
 Computes the SHA-256 body digest of an L<Email::MIME> message using DKIM
 simple body canonicalization.  Returns a base64-encoded string.
-
-=head2 getmi($header)
-
-Backwards-compatible alias for L<Mail::DKIM2::Common/extract_mi_version>.
 
 =head1 AUTHOR
 

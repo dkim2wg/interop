@@ -36,7 +36,7 @@ while (1) {
     $instance--;
     last unless $instance;
     $msg1 = Email::MIME->new($msg1->as_string);
-    %mimap = map { Mail::DKIM2::MessageInstance::getmi($_) => $_ } $msg1->header('Message-Instance');
+    %mimap = map { extract_mi_version($_) => $_ } $msg1->header('Message-Instance');
     %map = map { _geti($_) => $_ } $msg1->header('DKIM2-Signature');
     my $newnum = %map ? max(keys %map) : 0;
     my $newinstance = %mimap ? max(keys %mimap) : 0;
