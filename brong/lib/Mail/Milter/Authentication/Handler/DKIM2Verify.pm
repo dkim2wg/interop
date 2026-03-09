@@ -10,13 +10,18 @@ use base 'Mail::Milter::Authentication::Handler';
 use Mail::DKIM2::Common qw(extract_mi_version);
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;
+use Mail::DKIM2::MessageStore;
 use Mail::DKIM::PublicKey;
+use Mail::DKIM::TextWrap;
+use Email::MIME;
 
 sub default_config {
     return {
-        'hide_none'       => 0,
-        'extra_properties' => 0,
-        'dns_overrides'   => undef,  # path to dns.json for testing
+        'hide_none'            => 0,
+        'extra_properties'     => 0,
+        'dns_overrides'        => undef,  # path to dns.json for testing
+        'add_message_instance' => 1,      # compute and add MI header on inbound
+        'snapshot_directory'   => undef,  # store message snapshots for egress diffing
     };
 }
 
@@ -30,6 +35,7 @@ sub envfrom_callback {
     my ( $self, $env_from ) = @_;
     $self->{'failmode'}    = 0;
     $self->{'headers'}     = [];
+    $self->{'body'}        = [];
     $self->{'has_dkim2'}   = 0;
     $self->{'carry'}       = q{};
     $self->{'env_from'}    = $env_from;
@@ -96,7 +102,6 @@ sub eoh_callback {
         $self->metric_count( 'dkim2_verify_total', { 'result' => 'error' } );
     }
 
-    delete $self->{'headers'};
     $self->{'carry'} = q{};
 }
 
@@ -121,6 +126,8 @@ sub body_callback {
     }
 
     $chunk =~ s/\015?\012/$EOL/g;
+
+    push @{$self->{'body'}}, $chunk;
 
     my $verifier = $self->get_object('dkim2_verifier');
     eval {
@@ -171,6 +178,11 @@ sub eom_callback {
         }
 
         $self->add_auth_header( $header );
+
+        # Compute and add Message-Instance header, then store snapshot
+        if ( $result eq 'pass' && $config->{'add_message_instance'} ) {
+            $self->_add_mi_and_store();
+        }
     };
     if ( my $error = $@ ) {
         $self->handle_exception( $error );
@@ -181,10 +193,69 @@ sub eom_callback {
     }
 }
 
+sub _add_mi_and_store {
+    my ($self) = @_;
+    my $config = $self->handler_config();
+
+    eval {
+        # Reconstruct the full message
+        my $EOL = "\015\012";
+        my $message_data = join(q{}, @{$self->{'headers'}})
+                         . $EOL
+                         . join(q{}, @{$self->{'body'}});
+
+        my $msg = Email::MIME->new($message_data);
+
+        # Skip if the message already has an MI that matches current content
+        if ( Mail::DKIM2::MessageInstance->verify($msg) ) {
+            $self->dbgout( 'DKIM2MI', 'Message unchanged, skipping MI', LOG_DEBUG );
+            return;
+        }
+
+        my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+        my $mi_value = $self->_format_mi($mi);
+
+        # Add MI header to the message via the milter
+        $self->prepend_header( 'Message-Instance', $mi_value );
+        $self->dbgout( 'DKIM2MI', "Added Message-Instance v=" . ($mi->get_tag('v') || '?'), LOG_DEBUG );
+
+        # Store snapshot if configured
+        if ( $config->{'snapshot_directory'} ) {
+            my $store = Mail::DKIM2::MessageStore->new(
+                directory => $config->{'snapshot_directory'},
+            );
+            # Store the message as-is (with MI prepended)
+            my $snapshot = "Message-Instance: $mi_value$EOL" . $message_data;
+            $store->store($mi_value, $snapshot);
+            $self->dbgout( 'DKIM2Snapshot', "Stored snapshot for MI v=" . ($mi->get_tag('v') || '?'), LOG_DEBUG );
+        }
+    };
+    if ( my $error = $@ ) {
+        $self->handle_exception( $error );
+        $self->log_error( 'DKIM2 MI/Snapshot Error ' . $error );
+    }
+}
+
+sub _format_mi {
+    my ( $self, $mi ) = @_;
+    my $output = '';
+    my $tw = Mail::DKIM::TextWrap->new(
+        Margin    => 72,
+        Break     => qr/./,
+        Separator => "\015\012\t",
+        Swallow   => qr/\s+/,
+        Output    => \$output,
+    );
+    $tw->add($mi->as_string());
+    $tw->finish;
+    return $output;
+}
+
 sub close_callback {
     my ( $self ) = @_;
     delete $self->{'failmode'};
     delete $self->{'headers'};
+    delete $self->{'body'};
     delete $self->{'carry'};
     delete $self->{'has_dkim2'};
     delete $self->{'env_from'};
@@ -272,9 +343,19 @@ Authentication-Results headers with the verification outcome.
 =head1 CONFIGURATION
 
     "DKIM2Verify" : {
-        "hide_none"        : 0,          | Hide auth line if result is 'none'
-        "extra_properties" : 0,          | Add extra properties to auth results
-        "dns_overrides"    : null         | Path to dns.json for testing
+        "hide_none"            : 0,      | Hide auth line if result is 'none'
+        "extra_properties"     : 0,      | Add extra properties to auth results
+        "dns_overrides"        : null,   | Path to dns.json for testing
+        "add_message_instance" : 1,      | Compute and add MI header on inbound
+        "snapshot_directory"   : null     | Store message snapshots for egress diffing
     }
+
+When C<add_message_instance> is enabled, the handler computes a Message-Instance
+header after successful DKIM2 verification and prepends it to the message.
+
+When C<snapshot_directory> is also set, the full message (with the new MI header)
+is stored to disk.  The DKIM2Sign handler can later retrieve this snapshot to
+compute a diff-based MI when the message leaves the system, capturing any
+modifications made during local processing.
 
 =cut

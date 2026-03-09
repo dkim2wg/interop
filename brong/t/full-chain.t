@@ -95,6 +95,12 @@ sub strip_msg {
 
 sub add_mi {
     my ($msg, $prev_msg) = @_;
+
+    # Skip if the message already has an MI that matches current content
+    if ( Mail::DKIM2::MessageInstance->verify($msg) ) {
+        return undef;
+    }
+
     my $mi = Mail::DKIM2::MessageInstance->calculate($msg, $prev_msg);
     my $output = '';
     my $tw = Mail::DKIM::TextWrap->new(
@@ -294,6 +300,53 @@ diag("=== Negative tests ===");
     # because the set of MI headers changed)
     my $v = verify_msg($msg);
     isnt($v->result, 'pass', "verifier detects missing MI v=3 in chain");
+}
+
+# ============================================================
+# Phase 4: Unchanged message re-sign — no new MI added
+# ============================================================
+
+diag("=== Unchanged message re-sign ===");
+
+{
+    # Take the final 5-hop message and re-sign without modifications
+    my $msg = Email::MIME->new($current_msg->as_string);
+
+    my @mi_before = $msg->header_raw('Message-Instance');
+    my @dk2_before = $msg->header_raw('DKIM2-Signature');
+    is(scalar @mi_before, 5, "before re-sign: 5 MI headers");
+    is(scalar @dk2_before, 5, "before re-sign: 5 DKIM2-Signature headers");
+
+    # Verify the topmost MI still matches — message is unchanged
+    my $mi_v = Mail::DKIM2::MessageInstance->verify($msg);
+    ok($mi_v, "topmost MI still verifies (v=$mi_v)");
+
+    # add_mi should return undef (skip) since message is unchanged
+    my $mi = add_mi($msg);
+    ok(!defined $mi, "add_mi returns undef for unchanged message");
+
+    my @mi_after = $msg->header_raw('Message-Instance');
+    is(scalar @mi_after, 5, "after add_mi: still 5 MI headers (no new MI added)");
+
+    # Sign with a new hop — signature is added but MI count stays the same
+    my $hop6 = {
+        name     => 'unchanged re-sign',
+        domain   => 'test5.dkim2.com',
+        selector => 'sel2',
+        mailfrom => 'relay@fastmailteam.com',
+        rcptto   => ['dest@test1.dkim2.com'],
+    };
+    sign_msg($msg, $hop6);
+    $msg = Email::MIME->new($msg->as_string);
+
+    my @mi_final = $msg->header_raw('Message-Instance');
+    my @dk2_final = $msg->header_raw('DKIM2-Signature');
+    is(scalar @mi_final, 5, "after re-sign: still 5 MI headers");
+    is(scalar @dk2_final, 6, "after re-sign: 6 DKIM2-Signature headers");
+
+    # Full chain should still verify
+    my $v = verify_msg($msg);
+    is($v->result, 'pass', "full chain still verifies after unchanged re-sign");
 }
 
 done_testing();

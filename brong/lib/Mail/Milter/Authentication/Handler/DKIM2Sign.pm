@@ -11,6 +11,7 @@ use Mail::DKIM::PrivateKey;
 use Mail::DKIM::TextWrap;
 use Mail::DKIM2::Common qw(extract_mi_version);
 use Mail::DKIM2::MessageInstance;
+use Mail::DKIM2::MessageStore;
 use Mail::DKIM2::Signer;
 use Email::MIME;
 
@@ -30,6 +31,8 @@ sub default_config {
         'add_message_instance' => 1,
         # SMTP params to record in the signature
         'record_smtp_params'   => 1,
+        # Directory for message snapshots (shared with DKIM2Verify)
+        'snapshot_directory'   => undef,
     };
 }
 
@@ -179,7 +182,7 @@ sub addheader_callback {
 
         # Compute Message-Instance if configured
         if ( $config->{'add_message_instance'} ) {
-            my $mi = $self->_compute_message_instance($message_data);
+            my $mi = $self->_compute_message_instance($message_data, $config);
             if ($mi) {
                 my $mi_value = $self->_format_mi($mi);
                 # Prepend MI header (will be included when we re-feed the signer)
@@ -253,13 +256,45 @@ sub close_callback {
     delete $self->{'sign_domain'};
 }
 
-# Compute Message-Instance header for the message
+# Compute Message-Instance header for the message.
+# If a snapshot directory is configured and a snapshot exists for the
+# topmost MI on the current message, compute a diff MI between the
+# snapshot and the current message.  Otherwise fall back to a simple
+# hash-only MI.
 sub _compute_message_instance {
-    my ( $self, $message_data ) = @_;
+    my ( $self, $message_data, $config ) = @_;
 
     my $mi = eval {
         my $msg = Email::MIME->new($message_data);
-        # Calculate MI for this message version (v=1 hashes if no existing MI)
+
+        # Skip if the message already has an MI that matches current content
+        if ( Mail::DKIM2::MessageInstance->verify($msg) ) {
+            $self->dbgout( 'DKIM2MI', 'Message unchanged, skipping MI', LOG_DEBUG );
+            return undef;
+        }
+
+        # Try to find a stored snapshot via the topmost MI
+        if ( $config->{'snapshot_directory'} ) {
+            my @mi_headers = $msg->header_raw('Message-Instance');
+            if ( @mi_headers ) {
+                # Find the topmost (highest version) MI
+                my %mi_by_v = map { (extract_mi_version($_) || 0) => $_ } @mi_headers;
+                my $max_v = (sort { $b <=> $a } keys %mi_by_v)[0];
+                if ( $max_v ) {
+                    my $store = Mail::DKIM2::MessageStore->new(
+                        directory => $config->{'snapshot_directory'},
+                    );
+                    my $snapshot_data = $store->fetch($mi_by_v{$max_v});
+                    if ( $snapshot_data ) {
+                        $self->dbgout( 'DKIM2MI', "Found snapshot for MI v=$max_v, computing diff", LOG_DEBUG );
+                        my $snapshot_msg = Email::MIME->new($snapshot_data);
+                        return Mail::DKIM2::MessageInstance->calculate($snapshot_msg, $msg);
+                    }
+                }
+            }
+        }
+
+        # No snapshot available - calculate simple MI
         Mail::DKIM2::MessageInstance->calculate($msg);
     };
     if ( my $error = $@ ) {
@@ -392,8 +427,15 @@ via an HTTP REST endpoint.
         "sign_authenticated"   : 1,                | Sign for authenticated senders
         "sign_local"           : 1,                | Sign for local IP senders
         "add_message_instance" : 1,                | Add Message-Instance headers
-        "record_smtp_params"   : 1                 | Record MAIL FROM/RCPT TO in signature
+        "record_smtp_params"   : 1,                | Record MAIL FROM/RCPT TO in signature
+        "snapshot_directory"   : null               | Snapshot dir (shared with DKIM2Verify)
     }
+
+When C<snapshot_directory> is set, the handler looks up a stored message
+snapshot (written by DKIM2Verify on inbound) using the topmost Message-Instance
+header value as the key.  If found, a diff-based MI is computed capturing
+header and body changes made during local processing.  Without a snapshot,
+a simple hash-only MI is computed.
 
 =head1 HTTP KEY ENDPOINT
 

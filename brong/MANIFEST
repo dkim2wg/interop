@@ -9,6 +9,7 @@ contrib/strip.pl
 lib/Mail/DKIM2/Common.pm
 lib/Mail/DKIM2/HeaderParser.pm
 lib/Mail/DKIM2/MessageInstance.pm
+lib/Mail/DKIM2/MessageStore.pm
 lib/Mail/DKIM2/Signature.pm
 lib/Mail/DKIM2/Signer.pm
 lib/Mail/DKIM2/Verifier.pm
