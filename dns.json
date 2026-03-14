@@ -115,6 +115,20 @@
          ]
       ]
    },
+   "bar.example" : {
+      "selector._domainkey" : [
+         [
+            "txt",
+            "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvDckC9n3Ds9uFZ7Kd7CwT7qV69CCq4L9pWha1O1W38yGQ1wHiWFwTXG4Kc5Dr8COLnLOZDPTERKbfGC3/nr9yWVoL4c7Rkwfvzk9YmQl89znjMyXuB7R3KAKbU6uZKSuOX/HONL2LQWv4oB+ab2TE0WnZj41LYboOS+mkemSuDMVsyTGJZJvGQT8im1dnGiqPCYexVkVwCw4z8+iFo82fBkO/m5vNqfSKWHerbuQBkG1Ubm2cshXCf6JWnnbOHLqMkLNz0z9B9/P1OE6pyP1AsjJi7YwyEnICbQ6LQ7/I54IcLHDtSoTZtSX+Zn1M7ihCj7GVbPpQriatROdP1kmRwIDAQAB"
+         ]
+      ],
+      "selector2._domainkey" : [
+         [
+            "txt",
+            "v=DKIM1; k=ed25519; p=J3pRkHKe/Bz/V/hx4xPZMhYa7dnxgtgJlrSKIGP4G/Y="
+         ]
+      ]
+   },
    "test5.dkim2.com" : {
       "ed25519._domainkey" : [
          [
