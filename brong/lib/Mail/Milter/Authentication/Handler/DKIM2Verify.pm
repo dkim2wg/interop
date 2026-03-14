@@ -7,7 +7,7 @@ use Mail::Milter::Authentication::Pragmas;
 our $VERSION = '0.01';
 use base 'Mail::Milter::Authentication::Handler';
 
-use Mail::DKIM2::Common qw(extract_mi_version);
+use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey);
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
@@ -275,8 +275,7 @@ sub _setup_pubkey_callback {
             my $sel = $signature->selector($idx);
             my $dom = $signature->domain;
             my $key_txt = $dns_data->{$dom}{"$sel._domainkey"}[0][1];
-            return unless $key_txt;
-            return Mail::DKIM::PublicKey->parse($key_txt);
+            return parse_dkim_pubkey($key_txt);
         });
     }
     else {
@@ -295,7 +294,7 @@ sub _setup_pubkey_callback {
             foreach my $rr ( $reply->answer ) {
                 next unless $rr->type eq 'TXT';
                 my $txt = $rr->txtdata;
-                return Mail::DKIM::PublicKey->parse($txt);
+                return parse_dkim_pubkey($txt);
             }
             return;
         });

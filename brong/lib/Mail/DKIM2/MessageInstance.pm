@@ -107,13 +107,11 @@ sub as_string {
     return $result;
 }
 
-# Convert internal recipe list to -08 format
-# [from,to] arrays become "(from-to)" strings; strings stay as-is
+# Convert internal recipe list to wire format
+# [from,to] arrays stay as JSON arrays; strings stay as-is
 sub _encode_recipe_list {
     my ($list) = @_;
-    return [map {
-        ref($_) eq 'ARRAY' ? "($_->[0]-$_->[1])" : $_
-    } @$list];
+    return $list;
 }
 
 # --- Parsing ---
@@ -158,10 +156,10 @@ sub parse {
 
     if (exists $tags{r}) {
         my $recipe_data = decode_tag_json($tags{r});
-        if ($recipe_data->{b}) {
+        if ($recipe_data->{b} && ref($recipe_data->{b}) eq 'ARRAY') {
             $self->{bits}{rb} = _decode_recipe_list($recipe_data->{b});
         }
-        if ($recipe_data->{h}) {
+        if ($recipe_data->{h} && ref($recipe_data->{h}) eq 'HASH' && keys %{$recipe_data->{h}}) {
             my %rh;
             for my $h (keys %{$recipe_data->{h}}) {
                 $rh{$h} = _decode_recipe_list($recipe_data->{h}{$h});
@@ -173,13 +171,11 @@ sub parse {
     return $self;
 }
 
-# Convert -08 format recipe list back to internal format
-# "(from-to)" strings become [from,to] arrays; strings stay as-is
+# Convert wire format recipe list to internal format
+# JSON arrays [from,to] are copy ranges; strings are base64-encoded content
 sub _decode_recipe_list {
     my ($list) = @_;
-    return [map {
-        /^\((\d+)-(\d+)\)$/ ? [$1+0, $2+0] : $_
-    } @$list];
+    return $list;
 }
 
 # --- Digests ---
@@ -203,9 +199,14 @@ sub h_digest {
 sub b_digest {
     my ($msg) = @_;
 
-    my $simple = Mail::DKIM::Canonicalization::simple->new(Signature => 'dummy');
+    # DKIM simple body canonicalization: strip trailing empty lines,
+    # ensure exactly one trailing CRLF
+    my $body = $msg->body_raw;
+    $body =~ s/(\r\n)+\z//;
+    $body .= "\r\n";
+
     my $digest = Digest::SHA->new(256);
-    $digest->add($simple->canonicalize_body($msg->body_raw));
+    $digest->add($body);
     return digest64($digest);
 }
 

@@ -3,7 +3,7 @@
       "ed25519._domainkey" : [
          [
             "txt",
-            "v=DKIM1; k=ed25519; p=BCIEIIOQVf8MDGvvmIkpUbgoqtyUIxjlzRqaBR6aP12tcGGE"
+            "v=DKIM1; k=ed25519; p=hwjviTXyzUXSCWayBqE17s/4NSynQKxw58jayHudRAI="
          ]
       ],
       "rsa1024._domainkey" : [
@@ -35,7 +35,7 @@
       "ed25519._domainkey" : [
          [
             "txt",
-            "v=DKIM1; k=ed25519; p=BCIEIDzErxntsDYOeUZEcIznbTH/iCLmdYkwt9dG6xtfdfM1"
+            "v=DKIM1; k=ed25519; p=U62P/YVixJeLoAzIy1dTXRufMnA5SjRvgQrcuFNf/mY="
          ]
       ],
       "rsa1024._domainkey" : [
@@ -67,7 +67,7 @@
       "ed25519._domainkey" : [
          [
             "txt",
-            "v=DKIM1; k=ed25519; p=BCIEICzvxJIXzw80GCPujnuGVHREi9kIa0zxHkweookXPPvw"
+            "v=DKIM1; k=ed25519; p=reUWo3pXLWHk5dILIK4NoCR3F2iACFdQ/FlhvVvMtxc="
          ]
       ],
       "sel1._domainkey" : [
@@ -93,7 +93,7 @@
       "ed25519._domainkey" : [
          [
             "txt",
-            "v=DKIM1; k=ed25519; p=BCIEIKqcBfStdhMEilMLVTaCmBHYRj8vNJTHGx90RX2kvlpO"
+            "v=DKIM1; k=ed25519; p=fJAwKEPblCYdjrEIPeyOFy6AeXZUBALBdGQRjSPe97c="
          ]
       ],
       "sel1._domainkey" : [
@@ -133,7 +133,7 @@
       "ed25519._domainkey" : [
          [
             "txt",
-            "v=DKIM1; k=ed25519; p=BCIEIM+cCIFf7+vG24o4hUbUGh8B//9CvDGU+MKcdAh9YkRz"
+            "v=DKIM1; k=ed25519; p=IAG1F5P3LD1Q8Y67PeW7YJLuvrM19wpaof+dzdC679I="
          ]
       ],
       "sel1._domainkey" : [

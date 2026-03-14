@@ -9,6 +9,7 @@ use Digest::SHA;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use JSON::XS;
 use Mail::DKIM::Canonicalization::relaxed;
+use Mail::DKIM::PublicKey;
 
 use Exporter 'import';
 our @EXPORT_OK = qw(
@@ -21,6 +22,7 @@ our @EXPORT_OK = qw(
     extract_mi_version
     extract_domain
     relaxed_domain_match
+    parse_dkim_pubkey
 );
 
 # Headers excluded from hashing per the DKIM2 spec
@@ -148,6 +150,23 @@ sub build_signing_input {
     }
 
     return $signing_input;
+}
+
+# Parse a DKIM TXT record and return the appropriate key object.
+# For RSA keys (k=rsa or no k= tag): returns a Mail::DKIM::PublicKey object.
+# For ed25519 keys (k=ed25519): returns the raw 32-byte public key bytes.
+# Returns undef if the key record can't be parsed.
+sub parse_dkim_pubkey {
+    my ($key_txt) = @_;
+    return unless $key_txt;
+    my ($k) = $key_txt =~ /\bk=([^;\s]+)/;
+    $k //= 'rsa';  # default per RFC 6376
+    if ($k eq 'ed25519') {
+        my ($p) = $key_txt =~ /\bp=([A-Za-z0-9+\/=]+)/;
+        return unless $p;
+        return decode_base64($p);
+    }
+    return Mail::DKIM::PublicKey->parse($key_txt);
 }
 
 1;

@@ -81,7 +81,7 @@ sub finish_header {
     my $signature = Mail::DKIM2::Signature->new(
         Sequence   => $next_i,
         Version    => $mi_version || undef,
-        Timestamp  => time(),
+        Timestamp  => $self->{Timestamp} || time(),
         Domain     => $self->{Domain},
         SmtpParams => (keys %smtp_params ? \%smtp_params : undef),
         Signatures => \@sig_items,

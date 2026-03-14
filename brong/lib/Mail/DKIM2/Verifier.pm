@@ -6,6 +6,7 @@ use base 'Mail::DKIM2::HeaderParser';
 use Mail::DKIM::PublicKey;
 use Digest::SHA;
 use MIME::Base64 qw(encode_base64 decode_base64);
+use Crypt::Ed25519;
 use Carp;
 
 use Mail::DKIM2::Common qw(
@@ -146,10 +147,10 @@ sub _verify_signature {
         signature   => $signature,
     );
 
-    # Validate d= matches mf= domain
+    # Validate d= matches mf= domain (skip for null sender / DSN)
     my $mf = $signature->mail_from;
     my $sig_domain = $signature->domain;
-    if ($mf) {
+    if ($mf && $mf ne '<>') {
         my $mf_domain = extract_domain($mf);
         unless ($mf_domain && relaxed_domain_match($mf_domain, $sig_domain)) {
             $self->{result} = 'fail';
@@ -197,18 +198,26 @@ sub _verify_signature {
         }
 
         my $sig_raw = decode_base64($sig_b64);
+        my $alg = $signature->algorithm($idx) || 'unknown';
         eval {
-            my $verified = $pubkey->verify_digest('SHA-256', $digest, $sig_raw);
+            my $verified;
+            if ($alg eq 'ed25519') {
+                # Ed25519-SHA256: sign the SHA-256 digest with PureEdDSA
+                # pubkey is raw 32-byte public key for ed25519
+                $verified = Crypt::Ed25519::verify($digest, $pubkey, $sig_raw);
+            } else {
+                # RSA-SHA256: pubkey is a Mail::DKIM::PublicKey object
+                $verified = $pubkey->verify_digest('SHA-256', $digest, $sig_raw);
+            }
             unless ($verified) {
                 $self->{result} = 'fail';
-                my $alg = $signature->algorithm($idx) || 'unknown';
                 $self->{details} = "signature verification failed for $alg at i=$i";
                 return 0;
             }
             1;
         } or do {
             $self->{result} = 'fail';
-            $self->{details} = "signature verification error for sig item $idx: $@";
+            $self->{details} = "signature verification error for sig item $idx ($alg): $@";
             return 0;
         };
 

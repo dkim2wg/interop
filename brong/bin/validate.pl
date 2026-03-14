@@ -4,10 +4,9 @@ use 5.020;
 use Path::Tiny;
 use Email::MIME;
 use lib 'lib';
-use Mail::DKIM2::Common qw(extract_mi_version);
+use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
-use Mail::DKIM::PublicKey;
 use List::Util qw(max);
 use JSON;
 
@@ -81,6 +80,5 @@ sub find_key {
   my $sel = $signature->selector($idx);
   my $dom = $signature->domain;
   my $key_txt = $dns->{$dom}{"$sel._domainkey"}[0][1];
-  return unless $key_txt;
-  return Mail::DKIM::PublicKey->parse($key_txt);
+  return parse_dkim_pubkey($key_txt);
 }

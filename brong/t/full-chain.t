@@ -10,9 +10,8 @@ use JSON;
 use MIME::Base64;
 use lib 'lib';
 
-use Mail::DKIM::PublicKey;
 use Mail::DKIM::TextWrap;
-use Mail::DKIM2::Common qw(dkim2_canonicalize_header);
+use Mail::DKIM2::Common qw(dkim2_canonicalize_header parse_dkim_pubkey);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
@@ -27,8 +26,7 @@ sub find_key {
     my $sel = $signature->selector($idx);
     my $dom = $signature->domain;
     my $key_txt = $dns->{$dom}{"$sel._domainkey"}[0][1];
-    return unless $key_txt;
-    return Mail::DKIM::PublicKey->parse($key_txt);
+    return parse_dkim_pubkey($key_txt);
 }
 
 # ============================================================
@@ -44,7 +42,7 @@ sub find_key {
 my @hops = (
     {
         name     => 'originator',
-        file     => 'brong-orig.eml',
+        file     => 'tests/emails/brong-orig.eml',
         domain   => 'test1.dkim2.com',
         selector => 'sel1',
         mailfrom => 'brong@test1.dkim2.com',
@@ -52,7 +50,7 @@ my @hops = (
     },
     {
         name     => 'mailing list',
-        file     => 'brong-mm.eml',
+        file     => 'tests/emails/brong-mm.eml',
         domain   => 'test2.dkim2.com',
         selector => 'sel2',
         mailfrom => 'bounces@test2.dkim2.com',
@@ -60,7 +58,7 @@ my @hops = (
     },
     {
         name     => 'relay adds Extra-Header',
-        file     => 'brong-mm2.eml',
+        file     => 'tests/emails/brong-mm2.eml',
         domain   => 'test3.dkim2.com',
         selector => 'sel3',
         mailfrom => 'relay@test3.dkim2.com',
@@ -68,7 +66,7 @@ my @hops = (
     },
     {
         name     => 'relay removes Extra-Header',
-        file     => 'brong-mm3.eml',
+        file     => 'tests/emails/brong-mm3.eml',
         domain   => 'test4.dkim2.com',
         selector => 'sel1',
         mailfrom => 'relay@test4.dkim2.com',
@@ -76,7 +74,7 @@ my @hops = (
     },
     {
         name     => 'final delivery',
-        file     => 'brong-final.eml',
+        file     => 'tests/emails/brong-final.eml',
         domain   => 'test5.dkim2.com',
         selector => 'sel2',
         mailfrom => 'forwarder@test5.dkim2.com',
@@ -118,15 +116,19 @@ sub add_mi {
     return $mi;
 }
 
+# Fixed timestamp for reproducible output
+my $TIMESTAMP = 1740000000;
+
 sub sign_msg {
     my ($msg, $hop) = @_;
     my $keyfile = "../keys/$hop->{selector}._domainkey.$hop->{domain}.pem";
     my $signer = Mail::DKIM2::Signer->new(
-        Domain   => $hop->{domain},
-        Selector => $hop->{selector},
-        KeyFile  => $keyfile,
-        MailFrom => $hop->{mailfrom},
-        RcptTo   => $hop->{rcptto},
+        Domain    => $hop->{domain},
+        Selector  => $hop->{selector},
+        KeyFile   => $keyfile,
+        MailFrom  => $hop->{mailfrom},
+        RcptTo    => $hop->{rcptto},
+        Timestamp => $TIMESTAMP,
     );
     $signer->PRINT($msg->as_string());
     $signer->CLOSE;
@@ -150,6 +152,9 @@ sub verify_msg {
 # ============================================================
 
 diag("=== Building chain ===");
+
+my $out_dir = 'tests/expected';
+path($out_dir)->mkpath;
 
 my $current_msg;
 
@@ -211,6 +216,10 @@ for my $i (0..$#hops) {
     my @dk2 = $msg->header_raw('DKIM2-Signature');
     is(scalar @mi, $i + 1, "$label: has " . ($i + 1) . " MI headers");
     is(scalar @dk2, $i + 1, "$label: has " . ($i + 1) . " DKIM2-Signature headers");
+
+    # Write out each hop for cross-implementation testing
+    my $hop_file = sprintf("%s/chain-hop%d-%s.eml", $out_dir, $i + 1, $hop->{name} =~ s/\s+/-/gr);
+    path($hop_file)->spew($msg->as_string);
 
     $current_msg = $msg;
 }
@@ -349,6 +358,8 @@ diag("=== Unchanged message re-sign ===");
     my $v = verify_msg($msg);
     diag("re-sign result: " . $v->result_detail()) unless $v->result eq 'pass';
     is($v->result, 'pass', "full chain still verifies after unchanged re-sign");
+
+    path("$out_dir/chain-hop6-unchanged-re-sign.eml")->spew($msg->as_string);
 }
 
 done_testing();
