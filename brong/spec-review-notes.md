@@ -8,15 +8,33 @@ type: project
 
 ## Issues Found During Interop Testing
 
-### 1. Header ordering for header hash (Section 5.2)
+### 1. Header ordering for header hash (Section 5.2) — CONFIRMED INTEROP FAILURE
 
 The spec says duplicate headers with the same field name are "placed in the
 order in which they occur in the message header, from the top downwards."
-This should be bottom-to-top (reverse message order). The hs implementation
-and our implementation both use the same order and agree on hashes, but the
-spec text says the opposite.
+The hs implementation and our Perl implementation both use bottom-to-top
+(reverse message order) and agree on hashes.
 
-**Suggested fix:** Change "from the top downwards" to "from the bottom upwards".
+**This has been confirmed as a real interop failure.** During testing between
+the Perl and Python DKIM2 implementations on a message with 5
+authentication-results headers and 1 received-spf header:
+
+- **Perl implementation:** iterates bottom-to-top (`reverse`) within each
+  header name — authentication-results headers hashed starting from the
+  bottom-most in the message.
+- **Python implementation:** iterates top-to-bottom (natural message order)
+  within each header name — authentication-results headers hashed starting
+  from the top-most in the message.
+
+Both produce the same 24 canonicalized headers totalling 2753 bytes, but
+the different ordering produces completely different SHA-256 hashes
+(`PBdChCKT...` vs `VupJfc5...`). This means signatures cannot be
+cross-verified between implementations that disagree on this ordering.
+
+**Suggested fix:** Clarify whether duplicate headers with the same name are
+hashed top-to-bottom or bottom-to-top. The current spec text says "from the
+top downwards" but two of three implementations use bottom-to-top. Either
+direction works as long as all implementations agree.
 
 ### 2. Algorithm identifiers in s= tag (Section 7 / Section 10)
 
@@ -36,7 +54,7 @@ need to be changed to include the hash name!"
 - Use compound names like DKIM1 for consistency and future-proofing
 - Either way, define an IANA registry (Section 16 currently says "TBA")
 
-### 3. "Null s=" ambiguity in signing input (Section 11.5)
+### 3. "Null s=" ambiguity in signing input (Section 11.5) — CONFIRMED INTEROP FAILURE
 
 The spec says: "the signature value (s=) is null (that is the base64 value
 is absent)."
@@ -47,41 +65,155 @@ This is ambiguous. It could mean:
   `s=WyJzZWwiLCJyc2EiLCIiXQ==` (i.e. `["sel","rsa",""]`)
 - The s= tag is entirely absent from the header
 
-The parenthetical "(that is the base64 value is absent)" suggests `s=` with
-nothing after it, but this loses the selector and algorithm information that
-may be needed for the signing input to be deterministic.
+**This has been confirmed as a real interop failure.** During testing between
+the Perl and Python DKIM2 implementations:
+
+- The **Python implementation** reads "the base64 value is absent" as meaning
+  `s=` — literally nothing after the equals sign. The entire base64-encoded
+  blob is absent from the signing input.
+- The **Perl implementation** reads "the signature value is null" as meaning
+  the signature value *within* the JSON structure is empty, but the JSON
+  structure (including selector and algorithm) is preserved:
+  `s=W1sic2VsMSIsInJzYSIsIiJdXQ==` (which decodes to `[["sel1","rsa",""]]]`)
+
+Both are defensible readings. Because the s= tag is included in the signing
+input, this difference means the two implementations compute different signing
+inputs and **signatures cannot be cross-verified**. This is the
+highest-priority spec clarification needed.
+
+**Trade-offs between the two interpretations:**
+
+- `s=` (empty): Simpler, but loses the selector and algorithm information.
+  With multiple signature items (e.g. RSA + ed25519), the verifier can't
+  confirm which algorithms were intended or which selector maps to which
+  signature. The signing input becomes identical regardless of how many or
+  which algorithms are used.
+
+- `s=<base64 of JSON with empty values>`: Preserves the selector/algorithm
+  structure. The verifier can confirm the signing input included the correct
+  algorithm/selector pairs. However, this means the signer must decide all
+  its algorithms and selectors before computing the hash for any of them.
 
 **Suggested fix:** Provide an explicit example of the incomplete
 DKIM2-Signature header as it appears in the signing input, showing exactly
-what the s= tag looks like.
+what the s= tag looks like. This single example would resolve the ambiguity
+immediately. We recommend preserving the JSON structure with empty signature
+values, as it provides a more complete and verifiable signing input,
+particularly for multi-algorithm signatures.
 
-### 4. s= tag JSON format underspecified (Section 7)
+### 4. s= tag JSON schema is misleading — "items" keyword collision (Section 7)
 
-The JSON schema shows the s= tag as an array of 3-element arrays:
-`[["selector", "algorithm", "value"], ...]`
+The JSON schema for the s= tag uses `"items"` as both a **property name**
+(the object key holding the signature data) and a **JSON Schema keyword**
+(defining the array element type). This has caused three different
+implementations to produce three different interpretations:
 
-However, the hs implementation uses a flat array:
-`["selector", "rsa", "sig", "selector2", "ed25519", "sig"]`
-
-The schema text says:
+The schema as written in the spec:
 ```json
 {
-  "items": {
-    "description": "selector, algorithm, value",
-    "type": "array",
-    "items": {"type": "string"},
-    "minItems": 3, "maxItems": 3
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 3, "maxItems": 3
+    }
   }
 }
 ```
 
-This is clear enough (array of 3-element arrays), but adding a concrete
-example would prevent misinterpretation.
+The three interpretations seen in interop testing:
 
-**Suggested fix:** Add a worked example showing the JSON before and after
-base64 encoding, e.g.:
+1. **Python implementation (AI-written):** Read the schema literally as
+   `"type": "object"` with an `"items"` property, producing:
+   `{"items": ["selector", "algorithm", "value"]}`
+
+2. **hs implementation (human-written):** Ignored the object wrapper and
+   produced a flat array:
+   `["selector", "rsa", "sig", "selector2", "ed25519", "sig2"]`
+
+3. **Perl implementation (our reading):** Interpreted the inner `"items"`
+   as defining array-of-arrays:
+   `[["sel1", "rsa", "<sig>"], ["sel2", "ed25519", "<sig>"]]`
+
+The Python AI was particularly insistent that its reading was correct,
+arguing that `"type": "object"` at the top level unambiguously means the
+result should be a JSON object, not an array. This is a reasonable reading
+of the schema as written.
+
+**This is a significant interop problem.** The collision between the JSON
+Schema keyword `"items"` and the property name `"items"` makes the schema
+genuinely ambiguous. At minimum, the property should be renamed to avoid
+this collision (e.g. `"signatures"` or `"sigs"`).
+
+**Suggested fix:** Either:
+- Rename the property to avoid the keyword collision, OR
+- Replace the JSON Schema with a concrete example showing the expected
+  wire format before and after base64 encoding, e.g.:
 ```
 [["sel1", "rsa", "<base64sig>"], ["sel2", "ed25519", "<base64sig>"]]
+```
+  This would eliminate any ambiguity about the intended structure.
+
+### 12. Signing input header ordering ambiguity (Section 11.5) — CONFIRMED INTEROP FAILURE
+
+The spec says: "First come the Message-Instance header fields in ascending
+version (v=) order. Second are the DKIM2-Signature header fields in ascending
+sequence (i=) order. Last of all is an incomplete DKIM2-Signature header field."
+
+This was read two different ways:
+
+- **Python implementation:** All MI headers first, then all DKIM2-Signature
+  headers, then the incomplete sig. For a 2-hop message signing i=2:
+  `MI v=1, MI v=2, Sig i=1, Sig i=2 (incomplete)`
+
+- **Perl implementation:** Interleaved, so each DKIM2-Signature is preceded
+  only by the headers that existed when it was created:
+  `MI v=1, Sig i=1, MI v=2, Sig i=2 (incomplete)`
+
+The interleaved ordering is the correct semantic interpretation: when sig i=1
+was created, only MI v=1 existed. The signing input for sig i=2 should reflect
+the full chain of headers as they were added in sequence. The "all MIs first"
+reading groups headers by type rather than by chronological order, which loses
+the relationship between each signature and the message state it signed.
+
+**This has been confirmed as a real interop failure.** Signatures cannot be
+cross-verified between the two implementations because the signing input
+differs.
+
+**Suggested fix:** Replace "First come the Message-Instance header fields...
+Second are the DKIM2-Signature header fields..." with explicit interleaved
+ordering, e.g.:
+
+> "The headers are placed in the order they were added to the message:
+> Message-Instance v=1, DKIM2-Signature i=1, Message-Instance v=2,
+> DKIM2-Signature i=2, and so on. Last of all is the incomplete
+> DKIM2-Signature header field (the one this system is creating)."
+
+A worked example for a multi-hop message would eliminate any remaining
+ambiguity.
+
+### 13. Recipe copy ranges use strings instead of JSON arrays (Section 4.1/4.2)
+
+The r= tag value is base64-encoded JSON, but copy ranges within the JSON are
+encoded as parenthetical strings like `"(1-5)"` rather than as JSON arrays
+like `[1, 5]`. Since the recipe data is already JSON, using strings to
+represent structured data inside JSON is unnecessary and error-prone — it
+requires custom parsing logic on top of the JSON parser that's already in use.
+
+JSON arrays are the natural representation: `[1, 5]` is unambiguous, requires
+no custom parser, and is directly usable by any JSON consumer. The string
+format `"(1-5)"` adds complexity for no benefit.
+
+**Suggested fix:** Use JSON arrays `[start, end]` for copy ranges instead of
+parenthetical strings. For example, a body recipe that copies lines 1-500
+and inserts new content would be:
+```json
+{"b": [[1, 500], "PGEgaHJlZj0i..."]}
+```
+instead of:
+```json
+{"b": ["(1-500)", "PGEgaHJlZj0i..."]}
 ```
 
 ### 5. IANA Considerations incomplete (Section 16)
@@ -111,6 +243,25 @@ exact signing input. A complete worked example showing:
 - The resulting hash and signature
 
 would be invaluable for implementers.
+
+### 11. Relay mf= update requirement not clear enough (Section 10/11.2)
+
+The spec requires d= to match mf= at every hop, and the chain of custody
+requires mf of hop N to match an rt of hop N-1. The implication is that
+each relay MUST update the MAIL FROM (mf=) to its own domain when
+re-signing — this is necessary both for domain alignment and so that
+bounces route back through the chain correctly.
+
+However, this requirement is not spelled out explicitly. During interop
+testing, a Python implementation had relays that kept the original sender's
+MAIL FROM (`sender@test1.dkim2.com`) while signing with `d=test2.dkim2.com`,
+which violates the d= vs mf= match requirement. The implementer was not
+aware that the relay needs to update the envelope sender.
+
+**Suggested fix:** Add explicit text in Section 11.2 (or a new subsection)
+stating that when a relay adds a new DKIM2-Signature, it MUST set mf= to
+an address in its own domain (matching d=), both for domain alignment and
+to ensure bounces route back through the custody chain.
 
 ## Code Issues Found (our implementation vs spec)
 
