@@ -255,12 +255,24 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
 
     # Collect MI headers up to version v=
     mi_version = int(v_val)
-    relevant_mi = [h for h in mi_headers if _get_version_from_mi(h) <= mi_version]
+    relevant_mi = sorted(
+        [h for h in mi_headers if _get_version_from_mi(h) <= mi_version],
+        key=_get_version_from_mi,
+    )
+    prior_sigs = sorted(other_sig_headers, key=_get_seq_from_sig)
 
-    # Order: MI by v=, then prior sigs by i=, then incomplete sig
+    # Order: interleaved chronologically — MI v=1, Sig i=1, MI v=2, ...
+    # then the incomplete sig being verified
     ordered: list[str] = []
-    ordered.extend(sorted(relevant_mi, key=_get_version_from_mi))
-    ordered.extend(sorted(other_sig_headers, key=_get_seq_from_sig))
+    sig_idx = 0
+    for mi in relevant_mi:
+        ordered.append(mi)
+        if sig_idx < len(prior_sigs):
+            ordered.append(prior_sigs[sig_idx])
+            sig_idx += 1
+    while sig_idx < len(prior_sigs):
+        ordered.append(prior_sigs[sig_idx])
+        sig_idx += 1
     ordered.append(incomplete_sig)
 
     # Canonicalize and hash

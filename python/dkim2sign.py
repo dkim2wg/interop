@@ -262,15 +262,25 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Order: MI headers by ascending v=, then sigs by ascending i=,
-    # then the incomplete sig being created
+    # Order: interleaved chronologically — each MI followed by its
+    # corresponding sig, reflecting the order headers were added:
+    # MI v=1, Sig i=1, MI v=2, Sig i=2, ..., then the incomplete sig
     ordered: list[str] = []
 
     mi_sorted = sorted(mi_headers, key=_get_version_from_mi)
     sig_sorted = sorted(sig_headers, key=_get_seq_from_sig)
 
-    ordered.extend(mi_sorted)
-    ordered.extend(sig_sorted)
+    # Pair up MI and sig headers by position (MI v=N was signed by sig i=N)
+    sig_idx = 0
+    for mi in mi_sorted:
+        ordered.append(mi)
+        if sig_idx < len(sig_sorted):
+            ordered.append(sig_sorted[sig_idx])
+            sig_idx += 1
+    # Add any remaining sigs (shouldn't happen in normal flow)
+    while sig_idx < len(sig_sorted):
+        ordered.append(sig_sorted[sig_idx])
+        sig_idx += 1
     ordered.append(incomplete_sig)
 
     # Canonicalize each header

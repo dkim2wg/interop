@@ -60,10 +60,11 @@ def split_headers(headers):
 def generate_multihop_header_add():
     """Intermediary adds a List-Unsubscribe header. Recipe removes it."""
     raw = open(os.path.join(EMAILS_DIR, 'simple.eml'), 'rb').read()
+    # Hop 1 sends to relay at test2 (chain of custody: rt must match next hop's mf domain)
     signed1 = sign_message(raw, 'ed25519', 'test1.dkim2.com',
                            key_path('ed25519._domainkey.test1.dkim2.com.pem'),
                            mailfrom='sender@test1.dkim2.com',
-                           rcptto=['recipient@example.com'],
+                           rcptto=['list@test2.dkim2.com'],
                            timestamp=1740000000)
 
     headers, body = parse_message(signed1)
@@ -107,7 +108,7 @@ def generate_multihop_body_footer():
     signed1 = sign_message(raw, 'ed25519', 'test1.dkim2.com',
                            key_path('ed25519._domainkey.test1.dkim2.com.pem'),
                            mailfrom='sender@test1.dkim2.com',
-                           rcptto=['recipient@example.com'],
+                           rcptto=['list@test2.dkim2.com'],
                            timestamp=1740000000)
 
     headers, body = parse_message(signed1)
@@ -150,7 +151,7 @@ def generate_multihop_header_replace():
     signed1 = sign_message(raw, 'ed25519', 'test1.dkim2.com',
                            key_path('ed25519._domainkey.test1.dkim2.com.pem'),
                            mailfrom='sender@test1.dkim2.com',
-                           rcptto=['recipient@example.com'],
+                           rcptto=['list@test3.dkim2.com'],
                            timestamp=1740000000)
 
     headers, body = parse_message(signed1)
@@ -201,7 +202,7 @@ def generate_multihop_dup_headers():
     signed1 = sign_message(raw, 'ed25519', 'test1.dkim2.com',
                            key_path('ed25519._domainkey.test1.dkim2.com.pem'),
                            mailfrom='sender@test1.dkim2.com',
-                           rcptto=['recipient@example.com'],
+                           rcptto=['relay@test2.dkim2.com'],
                            timestamp=1740000000)
 
     headers, body = parse_message(signed1)
@@ -253,7 +254,7 @@ def generate_multihop_3hop_dup_headers():
     signed1 = sign_message(raw, 'ed25519', 'test1.dkim2.com',
                            key_path('ed25519._domainkey.test1.dkim2.com.pem'),
                            mailfrom='sender@test1.dkim2.com',
-                           rcptto=['recipient@example.com'],
+                           rcptto=['relay@test2.dkim2.com'],
                            timestamp=1740000000)
 
     # Hop 2: relay adds 2 Authentication-Results
@@ -278,7 +279,7 @@ def generate_multihop_3hop_dup_headers():
         mi_strs1, sig_strs1, mi2,
         'test2.dkim2.com', 'ed25519', private_key2, algorithm2,
         mailfrom='relay@test2.dkim2.com',
-        rcptto=['recipient@example.com'],
+        rcptto=['mx@test3.dkim2.com'],
         seq=2, mi_version=2, timestamp=1740001000,
     )
 
