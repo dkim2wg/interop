@@ -210,6 +210,199 @@ sub b_digest {
     return digest64($digest);
 }
 
+# --- Body recipe computation ---
+
+# Straight line-level diff using Algorithm::Diff.
+sub _body_recipe_linediff {
+    my ($l1, $l2) = @_;
+
+    my $diff = Algorithm::Diff->new($l1, $l2);
+    $diff->Base(1);
+
+    my @list;
+    my $dirty = 0;
+    while ($diff->Next()) {
+        if ($diff->Same()) {
+            push @list, [$diff->Min(1), $diff->Max(1)];
+        } else {
+            $dirty = 1;
+            push @list, map { $_ } $diff->Items(2);
+        }
+    }
+
+    return (@list > 1 || $dirty) ? \@list : undef;
+}
+
+# Build a cumulative offset table: entry i is the flat byte offset
+# where line i starts.  Final entry is the total flat length.
+sub _line_offsets {
+    my ($lines) = @_;
+    my @offsets = (0);
+    for my $line (@$lines) {
+        push @offsets, $offsets[-1] + length($line);
+    }
+    return \@offsets;
+}
+
+# Map a flat byte position to a 0-based line index.
+sub _flat_to_line {
+    my ($offsets, $byte_pos) = @_;
+    for my $i (0 .. $#$offsets - 1) {
+        return $i if $byte_pos < $offsets->[$i + 1];
+    }
+    return $#$offsets - 1;
+}
+
+# Build recipe entries for a region, using line-level matching.
+sub _recipe_for_region {
+    my ($cur_lines, $cur_start, $cur_end,
+        $prev_lines, $prev_start, $prev_end) = @_;
+
+    my @cur_region  = @{$cur_lines}[$cur_start .. $cur_end - 1];
+    my @prev_region = @{$prev_lines}[$prev_start .. $prev_end - 1];
+
+    return () unless @prev_region;
+    if ("@cur_region" eq "@prev_region"
+        and @cur_region == @prev_region) {
+        # Check element-by-element since join could false-match.
+        my $match = 1;
+        for my $i (0 .. $#cur_region) {
+            if ($cur_region[$i] ne $prev_region[$i]) {
+                $match = 0;
+                last;
+            }
+        }
+        return ([$cur_start + 1, $cur_end]) if $match;
+    }
+
+    my $diff = Algorithm::Diff->new(\@cur_region, \@prev_region);
+    $diff->Base(0);
+
+    my @recipe;
+    while ($diff->Next()) {
+        if ($diff->Same()) {
+            push @recipe,
+                [$cur_start + $diff->Min(1) + 1,
+                 $cur_start + $diff->Max(1) + 1];
+        } else {
+            push @recipe, $diff->Items(2);
+        }
+    }
+    return @recipe;
+}
+
+# Estimate the wire cost of a recipe.
+sub _recipe_cost {
+    my ($recipe) = @_;
+    return 999999 unless $recipe;
+    my $cost = 0;
+    for my $item (@$recipe) {
+        if (ref $item eq 'ARRAY') {
+            $cost += 8;    # [N, M] is cheap
+        } else {
+            $cost += length($item);
+        }
+    }
+    return $cost;
+}
+
+# Byte-level prefix/suffix matching strategy.
+# Flattens both bodies, finds common prefix and suffix, maps back
+# to line boundaries, then uses line-level matching on the middle.
+sub _body_recipe_flat {
+    my ($l1, $l2) = @_;
+
+    my $cur_flat  = join('', @$l1);
+    my $prev_flat = join('', @$l2);
+
+    # Find common prefix length.
+    my $min_len = length($cur_flat) < length($prev_flat)
+        ? length($cur_flat) : length($prev_flat);
+    my $prefix = 0;
+    while ($prefix < $min_len
+           and substr($cur_flat, $prefix, 1)
+               eq substr($prev_flat, $prefix, 1)) {
+        $prefix++;
+    }
+
+    # Find common suffix length (not overlapping prefix).
+    my $suffix = 0;
+    my $max_suffix = $min_len - $prefix;
+    while ($suffix < $max_suffix
+           and substr($cur_flat, -1 - $suffix, 1)
+               eq substr($prev_flat, -1 - $suffix, 1)) {
+        $suffix++;
+    }
+
+    # If no significant prefix or suffix, this strategy won't help.
+    return undef unless $prefix > 0 or $suffix > 0;
+
+    my $cur_offsets  = _line_offsets($l1);
+    my $prev_offsets = _line_offsets($l2);
+
+    # Find last complete line within the common prefix.
+    my $cur_prefix_end = 0;
+    for my $i (0 .. $#$l1) {
+        if ($cur_offsets->[$i + 1] <= $prefix) {
+            $cur_prefix_end = $i + 1;
+        } else {
+            last;
+        }
+    }
+    my $prev_prefix_end = 0;
+    for my $i (0 .. $#$l2) {
+        if ($prev_offsets->[$i + 1] <= $prefix) {
+            $prev_prefix_end = $i + 1;
+        } else {
+            last;
+        }
+    }
+
+    # Find first complete line within the common suffix.
+    my $cur_suffix_start = scalar @$l1;
+    if ($suffix > 0) {
+        my $tail_start = length($cur_flat) - $suffix;
+        for my $i (reverse 0 .. $#$l1) {
+            if ($cur_offsets->[$i] >= $tail_start) {
+                $cur_suffix_start = $i;
+            } else {
+                last;
+            }
+        }
+    }
+    my $prev_suffix_start = scalar @$l2;
+    if ($suffix > 0) {
+        my $tail_start = length($prev_flat) - $suffix;
+        for my $i (reverse 0 .. $#$l2) {
+            if ($prev_offsets->[$i] >= $tail_start) {
+                $prev_suffix_start = $i;
+            } else {
+                last;
+            }
+        }
+    }
+
+    # Ensure suffix doesn't overlap prefix.
+    $cur_suffix_start = $cur_prefix_end
+        if $cur_suffix_start < $cur_prefix_end;
+    $prev_suffix_start = $prev_prefix_end
+        if $prev_suffix_start < $prev_prefix_end;
+
+    # Build recipe: prefix region + middle region + suffix region.
+    my @recipe;
+    push @recipe, _recipe_for_region(
+        $l1, 0, $cur_prefix_end,
+        $l2, 0, $prev_prefix_end);
+    push @recipe, _recipe_for_region(
+        $l1, $cur_prefix_end, $cur_suffix_start,
+        $l2, $prev_prefix_end, $prev_suffix_start);
+    push @recipe, _recipe_for_region(
+        $l1, $cur_suffix_start, scalar @$l1,
+        $l2, $prev_suffix_start, scalar @$l2);
+
+    return @recipe ? \@recipe : undef;
+}
+
 # --- Calculate ---
 
 sub calculate {
@@ -287,22 +480,24 @@ sub calculate {
     my @l1 = split /\r?\n/, $str1;
     my @l2 = split /\r?\n/, $str2;
 
-    my $diff = Algorithm::Diff->new(\@l1, \@l2);
-    $diff->Base(1);
+    # Strategy 1: straight line-level diff.
+    my $line_recipe = _body_recipe_linediff(\@l1, \@l2);
 
-    my @list;
-    my $dirty = 0;
-    while ($diff->Next()) {
-        if ($diff->Same()) {
-            push @list, [$diff->Min(1), $diff->Max(1)];
-        } else {
-            $dirty = 1;
-            push @list, map { $_ } $diff->Items(2);
-        }
+    # Strategy 2: byte-level prefix/suffix matching.
+    # Handles cases where the content is the same but line wrapping
+    # changed (e.g. base64 re-wrapped at different line length).
+    my $flat_recipe = _body_recipe_flat(\@l1, \@l2);
+
+    # Pick whichever produced the more compact recipe.
+    my $recipe = $line_recipe;
+    if ($flat_recipe
+        and (!$line_recipe
+             or _recipe_cost($flat_recipe) < _recipe_cost($line_recipe))) {
+        $recipe = $flat_recipe;
     }
 
-    if (@list > 1 || $dirty) {
-        $self->set_tag('rb', \@list);
+    if ($recipe) {
+        $self->set_tag('rb', $recipe);
     }
 
     if (keys %hdiff) {
