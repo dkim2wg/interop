@@ -1,0 +1,21 @@
+DKIM2-Signature: i=3; v=3; t=1740002000; d=test3.dkim2.com; m=eyJtZiI6Im14QHRlc3QzLmRraW0yLmNvbSIsInJ0IjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdfQ==; s=W1siZWQyNTUxOSIsImVkMjU1MTkiLCJuMlBXOUVTWHB6MVVIcEZkeVN0Y0xrSXhtNmNsci9LM3hyUjdrdk1vY1ZTVkZQWGxZSC9rYXpRWjdCcWNYdDM0MWU0UmRnTmZBRm1KRE5TNVR5dkxEQT09Il1d
+DKIM2-Signature: i=2; v=2; t=1740001000; d=test2.dkim2.com; m=eyJtZiI6InJlbGF5QHRlc3QyLmRraW0yLmNvbSIsInJ0IjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdfQ==; s=W1siZWQyNTUxOSIsImVkMjU1MTkiLCJtWlJLb3FCZ1AxcEM4eklvZk1rRVpjTnpscGdtV2NnN0svT1FPbUgzK0V1eEkxcVF6YnVIakxCdlhOdFdJV2JhR3E2Mnk1U2J2cm03WnRydjVpNGxEZz09Il1d
+DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=W1siZWQyNTUxOSIsImVkMjU1MTkiLCJCNXE3VzZVVi9CZWRObk40OHQvZ3pXQ2pBKzhHTFRRMldFR29CQnpRWFRoSHpCMGZnS1BOK1dFUmxWVWVsb3MyOERHR2laMWRYSVgvQ3lQWnBTSy9DUT09Il1d
+Message-Instance: v=3; h=eyJoIjpbInNoYTI1NiIsImdyTys1SStmMVA0SU5HRkJNTkpRT1JRV3RDeTliV2MxbUVna2xBQzhibms9Il0sImIiOlsic2hhMjU2IiwiMXFwc0NIZ1lBNW05dFdVMXg4eW9tMnp0ZGlhQVFpcmhxSnVqTlJMRGJBcz0iXX0=; r=eyJoIjp7ImF1dGhlbnRpY2F0aW9uLXJlc3VsdHMiOlsiKDEtNSkiXX0sImIiOnt9fQ==
+Message-Instance: v=2; h=eyJoIjpbInNoYTI1NiIsIm1DMy9tSWNza3MrSFhaK0JFV25DcGp2TXh2eUEvcTlXQlYyMWhHSzhUYnM9Il0sImIiOlsic2hhMjU2IiwiMXFwc0NIZ1lBNW05dFdVMXg4eW9tMnp0ZGlhQVFpcmhxSnVqTlJMRGJBcz0iXX0=; r=eyJoIjp7ImF1dGhlbnRpY2F0aW9uLXJlc3VsdHMiOlsiKDEtMykiXX0sImIiOnt9fQ==
+Message-Instance: v=1; h=eyJoIjpbInNoYTI1NiIsIk95YVJpYUJvRFd4dk54WjBXbFpMd2ZWNkJwWEJLZ25XaU5ROS9CemJYbzQ9Il0sImIiOlsic2hhMjU2IiwiMXFwc0NIZ1lBNW05dFdVMXg4eW9tMnp0ZGlhQVFpcmhxSnVqTlJMRGJBcz0iXX0=
+Authentication-Results: mx.test3.dkim2.com; dmarc=pass
+Authentication-Results: relay.test2.dkim2.com; spf=pass
+Authentication-Results: relay.test2.dkim2.com; dkim=pass
+From: sender@test1.dkim2.com
+To: recipient@example.com
+Subject: Duplicate header ordering test
+Date: Sat, 01 Mar 2026 12:00:00 +0000
+Message-ID: <test-dupheaders@test1.dkim2.com>
+Received: from first.example.com by second.example.com; Sat, 01 Mar 2026 12:00:00 +0000
+Received: from origin.example.com by first.example.com; Sat, 01 Mar 2026 11:59:00 +0000
+Authentication-Results: mx1.example.com; spf=pass
+Authentication-Results: mx2.example.com; dkim=pass
+Authentication-Results: mx3.example.com; dmarc=pass
+
+Test message with duplicate headers that must be sorted bottom-up.

@@ -150,8 +150,10 @@ def compute_header_hash(headers: list[bytes]) -> bytes:
         canon = canonicalize_header_field(hdr)
         canon_headers.append((name, canon))
 
-    # Step 7-8: Sort alphabetically by name; preserve order for duplicates
-    # Python's sort is stable, so equal-named headers keep their original order
+    # Step 7-8: Sort alphabetically by name; duplicate names are ordered
+    # bottom-up (last occurrence first), matching recipe numbering.
+    # Reverse before sorting so Python's stable sort preserves bottom-up order.
+    canon_headers.reverse()
     canon_headers.sort(key=lambda x: x[0])
 
     # Concatenate with CRLF separators and a trailing CRLF
@@ -321,11 +323,13 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
         "rt": rcptto or ["unknown@example.com"],
     }
 
-    # Build the incomplete signature header (s= with empty base64 value)
-    # for hash computation
+    # Build the incomplete signature header with s= containing the
+    # selector and algorithm but an empty signature value, so the
+    # signing input is unambiguous about which algorithm slot is which.
+    s_incomplete = [[selector, algorithm, ""]]
     incomplete = (
         f"DKIM2-Signature: i={seq}; v={mi_version}; t={timestamp}; "
-        f"d={domain}; m={b64json(m_obj)}; s="
+        f"d={domain}; m={b64json(m_obj)}; s={b64json(s_incomplete)}"
     )
 
     # Collect all MI headers including the new one
@@ -335,13 +339,14 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     sig_bytes = compute_signature(all_mi, sig_headers, incomplete,
                                  private_key, algorithm)
 
-    # Build s= tag JSON
-    s_obj = {
-        "items": [selector, algorithm, b64(sig_bytes)],
-    }
+    # Build s= tag JSON: array of [selector, algorithm, value] arrays
+    s_complete = [[selector, algorithm, b64(sig_bytes)]]
 
-    # Replace empty s= with actual value
-    return incomplete + b64json(s_obj)
+    # Build the final header with the actual signature value
+    return (
+        f"DKIM2-Signature: i={seq}; v={mi_version}; t={timestamp}; "
+        f"d={domain}; m={b64json(m_obj)}; s={b64json(s_complete)}"
+    )
 
 
 # ---------------------------------------------------------------------------

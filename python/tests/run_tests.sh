@@ -168,15 +168,69 @@ run_test "simple-sel3" \
     "sender@test1.dkim2.com" \
     "recipient@example.com"
 
+# Test 11: Duplicate headers (bottom-up ordering)
+run_test "dupheaders-ed25519" \
+    "$EMAILS_DIR/dupheaders.eml" \
+    "ed25519" "test1.dkim2.com" \
+    "$KEYS_DIR/ed25519._domainkey.test1.dkim2.com.pem" \
+    "sender@test1.dkim2.com" \
+    "recipient@example.com"
+
 echo ""
 if [ "$GENERATE" = true ]; then
     echo "Expected output files generated in $EXPECTED_DIR"
-else
-    echo "Results: $PASS passed, $FAIL failed"
-    if [ -n "$ERRORS" ]; then
-        echo ""
-        echo "Failures:"
-        printf "$ERRORS"
-        exit 1
+    echo ""
+fi
+
+# ---------------------------------------------------------------------------
+# Multi-hop tests (generated via Python)
+# ---------------------------------------------------------------------------
+
+MULTIHOP_GEN="$SCRIPT_DIR/generate_multihop.py"
+
+echo "=== DKIM2 Multi-hop Tests ==="
+echo ""
+
+if [ "$GENERATE" = true ]; then
+    python3 "$MULTIHOP_GEN"
+    echo ""
+fi
+
+# ---------------------------------------------------------------------------
+# Verification tests - verify each expected output file
+# ---------------------------------------------------------------------------
+
+DNS_JSON="$(dirname "$PYTHON_DIR")/dns.json"
+VERIFIER="$PYTHON_DIR/dkim2verify.py"
+
+echo "=== DKIM2 Verification Tests ==="
+echo ""
+
+for signed in "$EXPECTED_DIR"/*.eml; do
+    name="$(basename "$signed" .eml)"
+
+    # Use --full-chain for multihop tests
+    CHAIN_FLAG=""
+    if [[ "$name" == multihop-* ]]; then
+        CHAIN_FLAG="--full-chain"
     fi
+
+    if python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG 2>/dev/null; then
+        echo "  PASS:      verify $name"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL:      verify $name"
+        FAIL=$((FAIL + 1))
+        ERRORS="${ERRORS}  verify ${name}: signature verification failed\n"
+        python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG -v 2>&1 | head -10
+    fi
+done
+
+echo ""
+echo "Results: $PASS passed, $FAIL failed"
+if [ -n "$ERRORS" ]; then
+    echo ""
+    echo "Failures:"
+    printf "$ERRORS"
+    exit 1
 fi
