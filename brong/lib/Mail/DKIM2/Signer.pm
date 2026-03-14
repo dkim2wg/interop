@@ -69,13 +69,13 @@ sub finish_header {
     $smtp_params{mf} = $self->{MailFrom} if defined $self->{MailFrom};
     $smtp_params{rt} = $self->{RcptTo} if defined $self->{RcptTo};
 
-    # Build initial signature items (without b= yet)
+    # Build initial signature items as [selector, algorithm, value] arrays
     my @sig_items;
-    push @sig_items, {
-        a => $self->{Algorithm},
-        s => $self->{Selector},
-        b => '',
-    };
+    push @sig_items, [
+        $self->{Selector},
+        $self->{Algorithm},
+        '',
+    ];
 
     # Create the signature object
     my $signature = Mail::DKIM2::Signature->new(
@@ -124,11 +124,11 @@ sub finish_body {
     my $signb64 = encode_base64($sig_raw, '');
 
     # Update the signature object with the actual signature
-    my @sig_items = ({
-        a => $self->{Algorithm},
-        s => $self->{Selector},
-        b => $signb64,
-    });
+    my @sig_items = ([
+        $self->{Selector},
+        $self->{Algorithm},
+        $signb64,
+    ]);
     $signature->set_tag('s', encode_tag_json(\@sig_items));
 
     $self->{result} = 'signed';

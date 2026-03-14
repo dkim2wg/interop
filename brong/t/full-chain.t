@@ -278,7 +278,7 @@ diag("=== Negative tests ===");
     # Corrupt the s= tag by replacing its base64 content with different valid JSON
     # that has a garbage signature value
     my $bad_sigs = encode_base64(
-        encode_json([{a => "rsa-sha256", s => "sel1", b => "AAAA"}]), '');
+        encode_json([["sel1", "rsa-sha256", "AAAA"]]), '');
     $dk2[0] =~ s/s=\S+/s=$bad_sigs/;
     $msg->header_raw_set('DKIM2-Signature', @dk2);
     $msg = Email::MIME->new($msg->as_string);

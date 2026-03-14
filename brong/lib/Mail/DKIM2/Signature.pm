@@ -11,6 +11,11 @@ use Mail::DKIM2::Common qw(encode_tag_json decode_tag_json);
 
 use base 'Mail::DKIM::KeyValueList';
 
+# Indices into the 3-element signature item arrays [selector, algorithm, value]
+use constant SIG_SELECTOR  => 0;
+use constant SIG_ALGORITHM => 1;
+use constant SIG_VALUE     => 2;
+
 # --- Construction ---
 
 sub new {
@@ -124,28 +129,44 @@ sub rcpt_to {
 
 # --- Convenience methods for signature items ---
 
+# Normalize signature items: handle both spec format (array of 3-element arrays)
+# and flat array format [sel, alg, val, sel2, alg2, val2, ...]
+sub _sig_items {
+    my ($self) = @_;
+    my $sigs = $self->signatures_data;
+    return unless $sigs && @$sigs;
+    # Spec format: array of 3-element arrays
+    return $sigs if ref($sigs->[0]) eq 'ARRAY';
+    # Flat array: group into triples
+    my @items;
+    for (my $i = 0; $i + 2 < @$sigs; $i += 3) {
+        push @items, [$sigs->[$i], $sigs->[$i+1], $sigs->[$i+2]];
+    }
+    return \@items;
+}
+
 sub selector {
     my ($self, $idx) = @_;
     $idx //= 0;
-    my $sigs = $self->signatures_data;
+    my $sigs = $self->_sig_items;
     return unless $sigs && $sigs->[$idx];
-    return $sigs->[$idx]{s};
+    return $sigs->[$idx][SIG_SELECTOR];
 }
 
 sub algorithm {
     my ($self, $idx) = @_;
     $idx //= 0;
-    my $sigs = $self->signatures_data;
+    my $sigs = $self->_sig_items;
     return unless $sigs && $sigs->[$idx];
-    return $sigs->[$idx]{a};
+    return $sigs->[$idx][SIG_ALGORITHM];
 }
 
 sub signature_value {
     my ($self, $idx) = @_;
     $idx //= 0;
-    my $sigs = $self->signatures_data;
+    my $sigs = $self->_sig_items;
     return unless $sigs && $sigs->[$idx];
-    return $sigs->[$idx]{b};
+    return $sigs->[$idx][SIG_VALUE];
 }
 
 # --- Serialization ---
@@ -155,18 +176,28 @@ sub as_string {
     return "DKIM2-Signature: " . $self->SUPER::as_string();
 }
 
-# For signing: serialize with empty signature values in s= tag
+# For signing: serialize with empty signature values in s= tag.
+# Preserves the original format (flat array vs array-of-arrays).
 sub as_string_without_data {
     my ($self) = @_;
-    my $sigs = $self->signatures_data;
-    return $self->as_string() unless $sigs;
+    my $raw_sigs = $self->signatures_data;
+    return $self->as_string() unless $raw_sigs;
 
-    # Create a copy with empty b= values in each signature item
-    my @empty_sigs = map {
-        my %copy = %$_;
-        $copy{b} = '';
-        \%copy;
-    } @$sigs;
+    my @empty_sigs;
+    if (ref($raw_sigs->[0]) eq 'ARRAY') {
+        # Array-of-arrays format: zero out SIG_VALUE in each triple
+        @empty_sigs = map {
+            my @copy = @$_;
+            $copy[SIG_VALUE] = '';
+            \@copy;
+        } @$raw_sigs;
+    } else {
+        # Flat array format: zero out every third element (the signature value)
+        @empty_sigs = @$raw_sigs;
+        for (my $i = SIG_VALUE; $i < @empty_sigs; $i += 3) {
+            $empty_sigs[$i] = '';
+        }
+    }
 
     my $saved = $self->get_tag('s');
     $self->set_tag('s', encode_tag_json(\@empty_sigs));
@@ -214,7 +245,7 @@ Mail::DKIM2::Signature - Parse and construct DKIM2-Signature headers
         Domain     => 'example.com',
         Timestamp  => time(),
         SmtpParams => { mf => 'sender@example.com' },
-        Signatures => [{ a => 'rsa-sha256', s => 'sel1', b => '' }],
+        Signatures => [['sel1', 'rsa-sha256', '']],
     );
 
 =head1 DESCRIPTION
