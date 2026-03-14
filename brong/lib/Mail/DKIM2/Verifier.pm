@@ -146,54 +146,80 @@ sub _verify_signature {
         signature   => $signature,
     );
 
+    # Validate d= matches mf= domain
+    my $mf = $signature->mail_from;
+    my $sig_domain = $signature->domain;
+    if ($mf) {
+        my $mf_domain = extract_domain($mf);
+        unless ($mf_domain && relaxed_domain_match($mf_domain, $sig_domain)) {
+            $self->{result} = 'fail';
+            $self->{details} = "d=$sig_domain does not match mf domain $mf_domain at i=$i";
+            return 0;
+        }
+    }
+
     # Hash the signing input
     my $sha = Digest::SHA->new(256);
     $sha->add($signing_input);
     my $digest = $sha->digest;
 
-    # Get the public key
-    my $pubkey;
-    if ($self->{_pubkey_callback}) {
-        $pubkey = $self->{_pubkey_callback}->($signature);
-    } else {
+    # Verify all signature items we support
+    my $sig_count = $signature->sig_count;
+    unless ($sig_count) {
+        $self->{result} = 'fail';
+        $self->{details} = 'no signature items in s= tag';
+        return 0;
+    }
+
+    my $verified_any = 0;
+    for my $idx (0 .. $sig_count - 1) {
+        my $sig_b64 = $signature->signature_value($idx);
+        next unless $sig_b64;
+
+        # Get the public key for this signature item
+        my $pubkey;
+        if ($self->{_pubkey_callback}) {
+            $pubkey = $self->{_pubkey_callback}->($signature, $idx);
+        } else {
+            eval {
+                $pubkey = $signature->fetch_public_key($idx);
+                1;
+            } or do {
+                $self->{result} = 'tempfail';
+                $self->{details} = "public key fetch failed for sig item $idx: $@";
+                return 0;
+            };
+        }
+
+        unless ($pubkey) {
+            # Can't fetch key for this algorithm — skip it
+            next;
+        }
+
+        my $sig_raw = decode_base64($sig_b64);
         eval {
-            $pubkey = $signature->fetch_public_key(0);
+            my $verified = $pubkey->verify_digest('SHA-256', $digest, $sig_raw);
+            unless ($verified) {
+                $self->{result} = 'fail';
+                my $alg = $signature->algorithm($idx) || 'unknown';
+                $self->{details} = "signature verification failed for $alg at i=$i";
+                return 0;
+            }
             1;
         } or do {
-            $self->{result} = 'tempfail';
-            $self->{details} = "public key fetch failed: $@";
+            $self->{result} = 'fail';
+            $self->{details} = "signature verification error for sig item $idx: $@";
             return 0;
         };
+
+        $verified_any = 1;
     }
 
-    unless ($pubkey) {
+    unless ($verified_any) {
         $self->{result} = 'permfail';
-        $self->{details} = 'no public key available';
+        $self->{details} = "no verifiable signature items at i=$i";
         return 0;
     }
-
-    # Verify the signature
-    my $sig_b64 = $signature->signature_value(0);
-    unless ($sig_b64) {
-        $self->{result} = 'fail';
-        $self->{details} = 'no signature data in s= tag';
-        return 0;
-    }
-
-    my $sig_raw = decode_base64($sig_b64);
-    eval {
-        my $verified = $pubkey->verify_digest('SHA-256', $digest, $sig_raw);
-        unless ($verified) {
-            $self->{result} = 'fail';
-            $self->{details} = 'signature verification failed';
-            return 0;
-        }
-        1;
-    } or do {
-        $self->{result} = 'fail';
-        $self->{details} = "signature verification error: $@";
-        return 0;
-    };
 
     return 1;
 }
@@ -212,23 +238,32 @@ sub _verify_chain {
         my $cur_mf = $cur_sig->mail_from;
         my $prev_rt = $prev_sig->rcpt_to;
 
-        # Chain of custody: mf of N should relaxed-domain-match an rt of N-1
-        if ($cur_mf && $prev_rt) {
-            my $cur_mf_domain = extract_domain($cur_mf);
-            my $match = 0;
-            my @prev_rts = ref($prev_rt) eq 'ARRAY' ? @$prev_rt : ($prev_rt);
-            for my $rt (@prev_rts) {
-                my $rt_domain = extract_domain($rt);
-                if (relaxed_domain_match($cur_mf_domain, $rt_domain)) {
-                    $match = 1;
-                    last;
-                }
+        # Chain of custody: mf of N must relaxed-domain-match an rt of N-1
+        unless ($cur_mf) {
+            $self->{result} = 'fail';
+            $self->{details} = "missing MAIL FROM at i=$cur_i";
+            return 0;
+        }
+        unless ($prev_rt) {
+            $self->{result} = 'fail';
+            $self->{details} = "missing RCPT TO at i=$prev_i";
+            return 0;
+        }
+
+        my $cur_mf_domain = extract_domain($cur_mf);
+        my $match = 0;
+        my @prev_rts = ref($prev_rt) eq 'ARRAY' ? @$prev_rt : ($prev_rt);
+        for my $rt (@prev_rts) {
+            my $rt_domain = extract_domain($rt);
+            if (relaxed_domain_match($cur_mf_domain, $rt_domain)) {
+                $match = 1;
+                last;
             }
-            unless ($match) {
-                $self->{result} = 'fail';
-                $self->{details} = "chain of custody break at i=$cur_i";
-                return 0;
-            }
+        }
+        unless ($match) {
+            $self->{result} = 'fail';
+            $self->{details} = "chain of custody break at i=$cur_i";
+            return 0;
         }
     }
 

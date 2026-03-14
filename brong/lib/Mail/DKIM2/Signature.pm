@@ -206,6 +206,13 @@ sub as_string_without_data {
     return $result;
 }
 
+sub sig_count {
+    my ($self) = @_;
+    my $sigs = $self->_sig_items;
+    return 0 unless $sigs;
+    return scalar @$sigs;
+}
+
 # --- DNS key lookup ---
 
 sub fetch_public_key {

@@ -20,8 +20,9 @@ $verifier->CLOSE;
 say $verifier->result_detail();
 
 sub find_key {
-  my $signature = shift;
-  my $sel = $signature->selector(0);
+  my ($signature, $idx) = @_;
+  $idx //= 0;
+  my $sel = $signature->selector($idx);
   my $dom = $signature->domain;
   my $key_txt = $dns->{$dom}{"$sel._domainkey"}[0][1];
   return unless $key_txt;

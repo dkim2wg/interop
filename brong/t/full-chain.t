@@ -22,8 +22,9 @@ use Mail::DKIM2::Verifier;
 my $dns = decode_json(path('../dns.json')->slurp);
 
 sub find_key {
-    my $signature = shift;
-    my $sel = $signature->selector(0);
+    my ($signature, $idx) = @_;
+    $idx //= 0;
+    my $sel = $signature->selector($idx);
     my $dom = $signature->domain;
     my $key_txt = $dns->{$dom}{"$sel._domainkey"}[0][1];
     return unless $key_txt;
@@ -79,7 +80,7 @@ my @hops = (
         domain   => 'test5.dkim2.com',
         selector => 'sel2',
         mailfrom => 'forwarder@test5.dkim2.com',
-        rcptto   => ['brong@fastmailteam.com'],
+        rcptto   => ['brong@test1.dkim2.com'],
     },
 );
 
@@ -331,10 +332,10 @@ diag("=== Unchanged message re-sign ===");
     # Sign with a new hop — signature is added but MI count stays the same
     my $hop6 = {
         name     => 'unchanged re-sign',
-        domain   => 'test5.dkim2.com',
-        selector => 'sel2',
-        mailfrom => 'relay@fastmailteam.com',
-        rcptto   => ['dest@test1.dkim2.com'],
+        domain   => 'test1.dkim2.com',
+        selector => 'sel1',
+        mailfrom => 'relay@test1.dkim2.com',
+        rcptto   => ['dest@test2.dkim2.com'],
     };
     sign_msg($msg, $hop6);
     $msg = Email::MIME->new($msg->as_string);
@@ -346,6 +347,7 @@ diag("=== Unchanged message re-sign ===");
 
     # Full chain should still verify
     my $v = verify_msg($msg);
+    diag("re-sign result: " . $v->result_detail()) unless $v->result eq 'pass';
     is($v->result, 'pass', "full chain still verifies after unchanged re-sign");
 }
 

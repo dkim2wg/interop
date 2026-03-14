@@ -270,8 +270,9 @@ sub _setup_pubkey_callback {
     if ( $config->{'dns_overrides'} ) {
         my $dns_data = JSON::XS::decode_json( File::Slurp::read_file($config->{'dns_overrides'}) );
         $verifier->set_pubkey_callback(sub {
-            my $signature = shift;
-            my $sel = $signature->selector(0);
+            my ($signature, $idx) = @_;
+            $idx //= 0;
+            my $sel = $signature->selector($idx);
             my $dom = $signature->domain;
             my $key_txt = $dns_data->{$dom}{"$sel._domainkey"}[0][1];
             return unless $key_txt;
@@ -281,8 +282,9 @@ sub _setup_pubkey_callback {
     else {
         # Use real DNS via the milter's resolver
         $verifier->set_pubkey_callback(sub {
-            my $signature = shift;
-            my $sel = $signature->selector(0);
+            my ($signature, $idx) = @_;
+            $idx //= 0;
+            my $sel = $signature->selector($idx);
             my $dom = $signature->domain;
             return unless $sel && $dom;
             my $resolver = $self->get_object('resolver');
