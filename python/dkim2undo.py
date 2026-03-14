@@ -9,7 +9,6 @@ and reconstructs the message as it was at a previous version.
 import argparse
 import base64
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -41,11 +40,11 @@ def decode_recipes(mi_hdr: str) -> dict | None:
     return json.loads(base64.b64decode(r_b64))
 
 
-def parse_range(recipe: str) -> tuple[int, int] | None:
-    """Parse a range recipe like '(1-3)'. Returns (start, end) or None."""
-    m = re.match(r"^\((\d+)-(\d+)\)$", recipe)
-    if m:
-        return int(m.group(1)), int(m.group(2))
+def parse_range(recipe) -> tuple[int, int] | None:
+    """Parse a range recipe. Accepts [start, end] arrays.
+    Returns (start, end) or None if this is a text recipe."""
+    if isinstance(recipe, list) and len(recipe) == 2:
+        return int(recipe[0]), int(recipe[1])
     return None
 
 
