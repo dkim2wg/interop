@@ -25,6 +25,7 @@ spec-review-notes.md
 t/body-canon.t
 t/full-chain.t
 t/interop.t
+t/milter.t
 tests/emails/brong-final.eml
 tests/emails/brong-mm.eml
 tests/emails/brong-mm2.eml
@@ -39,3 +40,7 @@ tests/expected/chain-hop3-relay-adds-Extra-Header.eml
 tests/expected/chain-hop4-relay-removes-Extra-Header.eml
 tests/expected/chain-hop5-final-delivery.eml
 tests/expected/chain-hop6-unchanged-re-sign.eml
+tests/expected/milter-case1-unchanged-forward.eml
+tests/expected/milter-case2-modified-no-intermediate-mi.eml
+tests/expected/milter-case3-modified-with-intermediate-mi.eml
+tests/expected/milter-originator.eml
