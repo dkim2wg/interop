@@ -10,7 +10,6 @@ use Carp;
 use Mail::DKIM2::Common qw(
     dkim2_canonicalize_header
     encode_tag_json
-    fold_header
     build_signing_input
     extract_mi_version
     load_private_key
@@ -147,7 +146,7 @@ sub signature {
 sub as_string {
     my $self = shift;
     return '' unless $self->{_signature};
-    return fold_header($self->{_signature}->as_string());
+    return $self->{_signature}->as_folded_string();
 }
 
 sub result {

@@ -19,6 +19,7 @@ our @EXPORT_OK = qw(
     encode_tag_json
     decode_tag_json
     fold_header
+    fold_value
     build_signing_input
     extract_mi_version
     extract_domain
@@ -105,9 +106,7 @@ sub fold_header {
     my $rest = substr($line, pos($line) // 0);
     push @parts, $rest if length($rest);
 
-    # Only fold at tag boundaries ("; ").  Never break in the middle of
-    # a base64 value — folding mid-value inserts a space that changes
-    # the canonicalized form and breaks signature verification.
+    # First, try to fold at tag boundaries ("; ").
     my @output;
     my $current = '';
     my $is_first = 1;
@@ -129,6 +128,22 @@ sub fold_header {
     push @output, $current if $current ne '';
 
     return join("\r\n ", @output);
+}
+
+# Fold a string at arbitrary character positions.
+# Only safe for content that has NOT been signed — e.g. the s= tag value
+# after signature computation but before insertion into the message.
+sub fold_value {
+    my ($line, $margin) = @_;
+    $margin //= 71;  # 71 to account for leading continuation space
+
+    return $line if length($line) <= $margin;
+
+    my @parts;
+    while (length($line) > 0) {
+        push @parts, substr($line, 0, $margin, '');
+    }
+    return join("\r\n ", @parts);
 }
 
 # Extract the version number from a Message-Instance header value

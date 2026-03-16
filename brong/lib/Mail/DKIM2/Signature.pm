@@ -5,7 +5,7 @@ use warnings;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 
-use Mail::DKIM2::Common qw(encode_tag_json decode_tag_json);
+use Mail::DKIM2::Common qw(encode_tag_json decode_tag_json fold_header fold_value);
 
 use base 'Mail::DKIM2::TagValueList';
 
@@ -169,12 +169,15 @@ sub signature_value {
 
 # --- Serialization ---
 
+# Raw unfolded header — used by the verifier to reconstruct signing input.
 sub as_string {
     my ($self) = @_;
     return "DKIM2-Signature: " . $self->SUPER::as_string();
 }
 
-# For signing: serialize with empty signature values in s= tag.
+# Phase 1 signing input: folded prefix (all tags except s=) + unfolded empty s=.
+# The fold positions of the prefix are baked into the signing input.
+# Returns the complete header line ready for canonicalization.
 sub as_string_without_data {
     my ($self) = @_;
     my $raw_sigs = $self->signatures_data;
@@ -194,11 +197,38 @@ sub as_string_without_data {
         }
     }
 
-    my $saved = $self->get_tag('s');
-    $self->set_tag('s', encode_tag_json(\@empty_sigs));
-    my $result = $self->as_string();
-    $self->set_tag('s', $saved);
-    return $result;
+    # Build prefix: all tags except s=, folded at tag boundaries
+    my @prefix_parts;
+    for my $t (@{$self->{order}}) {
+        next if $t eq 's';
+        push @prefix_parts, "$t=$self->{tags}{$t}";
+    }
+    my $prefix = fold_header("DKIM2-Signature: " . join('; ', @prefix_parts) . ";");
+
+    # Append empty s= on its own line (short, no folding needed)
+    my $empty_s = encode_tag_json(\@empty_sigs);
+    return $prefix . "\r\n s=$empty_s";
+}
+
+# Phase 2+3: folded header with real signature value, ready for insertion.
+# The prefix fold positions match as_string_without_data() exactly.
+# The s= value is folded separately since nothing has signed over it yet.
+sub as_folded_string {
+    my ($self) = @_;
+
+    # Build prefix: all tags except s=, folded at tag boundaries
+    # (same code path as as_string_without_data to guarantee identical folds)
+    my @prefix_parts;
+    for my $t (@{$self->{order}}) {
+        next if $t eq 's';
+        push @prefix_parts, "$t=$self->{tags}{$t}";
+    }
+    my $prefix = fold_header("DKIM2-Signature: " . join('; ', @prefix_parts) . ";");
+
+    # Fold the s= value on its own continuation line(s).
+    # Safe because nothing has signed over these bytes yet.
+    my $s_val = $self->{tags}{s} // '';
+    return $prefix . "\r\n " . fold_value("s=$s_val");
 }
 
 sub sig_count {
