@@ -320,6 +320,10 @@ This module provides utility functions shared between L<Mail::DKIM2::Signer>,
 L<Mail::DKIM2::Verifier>, and L<Mail::DKIM2::MessageInstance>.  It also holds
 the distribution-wide C<$VERSION>.
 
+B<EXPERIMENTAL> — This module implements draft-clayton-dkim2-spec-08, an
+Internet-Draft that has not yet been published as an RFC.  The API and wire
+format are subject to change.  Do not use in production.
+
 =head1 FUNCTIONS
 
 All functions are exportable on request.
@@ -367,6 +371,22 @@ C<user@domain> and angle-bracket C<< <user@domain> >> forms.
 Returns true if C<$domain1> is equal to or a subdomain of C<$domain2>.
 Comparison is case-insensitive.
 
+=head2 fold_header($line, $margin)
+
+Folds a header line at C<$margin> characters (default 72) for insertion into
+a message.  First tries to break at C<; > tag boundaries, then breaks any
+remaining long segments at character positions.  Extends past trailing C<=>
+padding, C<;> delimiters, and single remaining characters to avoid orphaning
+them on the next line.
+
+Only for headers we are creating — never for headers read from elsewhere.
+
+=head2 fold_value($line, $margin)
+
+Folds a string at arbitrary character positions.  C<$margin> defaults to 71
+(accounting for the leading continuation space).  Only safe for content that
+has not been signed.
+
 =head2 build_signing_input(%args)
 
 Constructs the signing input string for DKIM2 signature creation or
@@ -393,6 +413,15 @@ The C<i=> value of the signature being signed or verified.
 =item signature
 
 The L<Mail::DKIM2::Signature> object for the entry being signed/verified.
+
+=item signing_header
+
+Optional.  When provided, this string is used as the DKIM2-Signature header
+in the signing input instead of calling C<as_string_without_data()> on the
+signature object.  The Signer passes the folded form
+(C<as_folded_string_without_data()>) so that fold positions are part of what
+gets signed.  The Verifier omits this parameter, using the default unfolded
+path.
 
 =back
 

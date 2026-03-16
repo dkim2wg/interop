@@ -636,6 +636,10 @@ with optional diff recipes that allow undoing changes made at each hop.
 
 The wire format is: C<< v=N; h=<base64json>; r=<base64json> >>
 
+B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet
+been published as an RFC.  The API and wire format are subject to change.
+Do not use in production.
+
 =head1 CLASS METHODS
 
 =head2 calculate($msg)

@@ -403,11 +403,15 @@ Mail::Milter::Authentication::Handler::DKIM2Sign - Handler class for DKIM2 signi
 =head1 DESCRIPTION
 
 Signs outbound email with DKIM2-Signature headers and adds Message-Instance
-headers for chain-of-custody tracking. Runs in the addheader_callback phase
+headers for chain-of-custody tracking.  Runs in the addheader_callback phase
 so the signature covers all headers including those added by other handlers.
 
 Signing keys can be configured statically per domain, or looked up dynamically
 via an HTTP REST endpoint.
+
+B<EXPERIMENTAL> — This module implements draft-clayton-dkim2-spec-08, an
+Internet-Draft that has not yet been published as an RFC.  The API and wire
+format are subject to change.  Do not use in production.
 
 =head1 CONFIGURATION
 
@@ -461,5 +465,60 @@ or:
     }
 
 Return HTTP 404 or an empty response to decline signing for that domain.
+
+=head1 CALLBACKS
+
+=head2 default_config()
+
+Returns the default configuration hash for this handler.
+
+=head2 register_metrics()
+
+Returns the metrics hash for this handler (C<dkim2_sign_total>).
+
+=head2 envfrom_callback($env_from)
+
+Resets per-message state and records the envelope sender.
+
+=head2 envrcpt_callback($env_to)
+
+Records each envelope recipient for the C<m=> SMTP params tag.
+
+=head2 header_callback($header, $value, $original)
+
+Collects each header line for message reconstruction.
+
+=head2 eoh_callback()
+
+Called at end of headers.  Resets the body carry buffer.
+
+=head2 body_callback($body_chunk)
+
+Collects body chunks, normalizing line endings to CRLF.
+
+=head2 eom_callback()
+
+Called at end of message.  Flushes any remaining body carry data.
+Actual signing is deferred to C<addheader_callback()>.
+
+=head2 addheader_callback($handler)
+
+Performs the signing.  Determines the signing domain from the envelope
+sender, looks up the key configuration, computes a Message-Instance header
+if configured, creates the DKIM2-Signature, and adds both as prepended
+headers via the milter handler object.
+
+=head2 close_callback()
+
+Cleans up per-message state.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

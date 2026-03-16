@@ -115,6 +115,10 @@ the stored version and the (possibly modified) current version.
 Keys are derived by SHA-256 hashing the MI header value, stored under
 2-character prefix subdirectories to avoid filesystem crowding.
 
+B<EXPERIMENTAL> — This module implements draft-clayton-dkim2-spec-08, an
+Internet-Draft that has not yet been published as an RFC.  The API and wire
+format are subject to change.  Do not use in production.
+
 =head1 METHODS
 
 =head2 new(directory => $path)

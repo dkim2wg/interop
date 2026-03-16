@@ -126,6 +126,10 @@ handles continuation (folded) lines, and invokes callbacks for subclasses.
 This replaces the deep C<Mail::DKIM::Common> inheritance chain with a focused
 implementation containing only what the DKIM2 Signer and Verifier need.
 
+B<EXPERIMENTAL> — This module implements draft-clayton-dkim2-spec-08, an
+Internet-Draft that has not yet been published as an RFC.  The API and wire
+format are subject to change.  Do not use in production.
+
 =head1 METHODS
 
 =head2 new(%args)

@@ -322,6 +322,10 @@ Mail::DKIM2::Signature - Parse and construct DKIM2-Signature headers
 Represents a DKIM2-Signature header as defined in draft-clayton-dkim2-spec-08.
 Extends L<Mail::DKIM2::TagValueList> for tag-value parsing and serialization.
 
+B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet
+been published as an RFC.  The API and wire format are subject to change.
+Do not use in production.
+
 The DKIM2-Signature header uses these tags:
 
 =over 4
@@ -424,8 +428,24 @@ Returns the full header line: C<< DKIM2-Signature: <tags> >>.
 
 =head2 as_string_without_data()
 
-Returns the header with empty C<b=> values in all signature items.  Used
-when constructing the signing input.
+Returns the header with empty signature values in all C<s=> items, unfolded.
+Used by the verifier to reconstruct the signing input from a header read
+from the message.
+
+=head2 as_folded_string_without_data()
+
+Returns the header with empty signature values, folded at 72 characters.
+Used by the signer as the signing input — fold positions become part of
+what gets canonicalized and signed.
+
+=head2 as_folded_string()
+
+Returns the complete header (with real signature values) folded at 72
+characters, ready for insertion into a message.
+
+=head2 sig_count()
+
+Returns the number of signature items in the C<s=> tag.
 
 =head1 DNS
 

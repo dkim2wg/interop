@@ -346,6 +346,10 @@ Mail::Milter::Authentication::Handler::DKIM2Verify - Handler class for DKIM2 sig
 Verifies DKIM2 signatures and chain of custody on inbound email, adding
 Authentication-Results headers with the verification outcome.
 
+B<EXPERIMENTAL> — This module implements draft-clayton-dkim2-spec-08, an
+Internet-Draft that has not yet been published as an RFC.  The API and wire
+format are subject to change.  Do not use in production.
+
 =head1 CONFIGURATION
 
     "DKIM2Verify" : {
@@ -363,5 +367,55 @@ When C<snapshot_directory> is also set, the full message (with the new MI header
 is stored to disk.  The DKIM2Sign handler can later retrieve this snapshot to
 compute a diff-based MI when the message leaves the system, capturing any
 modifications made during local processing.
+
+=head1 CALLBACKS
+
+=head2 default_config()
+
+Returns the default configuration hash for this handler.
+
+=head2 register_metrics()
+
+Returns the metrics hash for this handler (C<dkim2_verify_total>).
+
+=head2 envfrom_callback($env_from)
+
+Resets per-message state and records the envelope sender.
+
+=head2 header_callback($header, $value, $original)
+
+Collects each header line and notes whether any DKIM2-Signature headers
+are present.
+
+=head2 eoh_callback()
+
+Called at end of headers.  If DKIM2-Signature headers were seen, creates a
+L<Mail::DKIM2::Verifier>, sets up the public key callback, and feeds the
+collected headers.  If no signatures were found, adds a C<dkim2=none>
+Authentication-Results header.
+
+=head2 body_callback($body_chunk)
+
+Feeds body data to the verifier, normalizing line endings to CRLF.
+
+=head2 eom_callback()
+
+Finalizes verification.  Calls C<CLOSE()> on the verifier, adds an
+Authentication-Results header with the outcome, and (if verification passed
+and configured) computes a Message-Instance header and stores a message
+snapshot.
+
+=head2 close_callback()
+
+Cleans up per-message state and destroys the verifier object.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

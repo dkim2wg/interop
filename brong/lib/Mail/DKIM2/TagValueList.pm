@@ -48,3 +48,67 @@ sub as_string {
 }
 
 1;
+
+__END__
+
+=head1 NAME
+
+Mail::DKIM2::TagValueList - Parse and serialize DKIM2 tag=value lists
+
+=head1 SYNOPSIS
+
+    use Mail::DKIM2::TagValueList;
+
+    my $tvl = Mail::DKIM2::TagValueList->parse("v=1; d=example.com");
+    say $tvl->get_tag('d');   # "example.com"
+
+    $tvl->set_tag('t', time());
+    say $tvl->as_string();    # "v=1; d=example.com; t=1740000000"
+
+=head1 DESCRIPTION
+
+Base class for tag=value list parsing and serialization as used in
+DKIM2-Signature and Message-Instance headers (draft-clayton-dkim2-spec-08
+Section 8).  Preserves insertion order for deterministic output.
+
+B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet
+been published as an RFC.  The API and wire format are subject to change.
+Do not use in production.
+
+=head1 CONSTRUCTORS
+
+=head2 new()
+
+Creates a new empty TagValueList.
+
+=head2 parse($string)
+
+Parses a semicolon-delimited tag=value string into a TagValueList object.
+Whitespace around tags and values is stripped.
+
+=head1 METHODS
+
+=head2 get_tag($name)
+
+Returns the value of the named tag, or undef if not present.
+
+=head2 set_tag($name, $value)
+
+Sets the value of the named tag.  If the tag does not already exist, it is
+appended to the end of the tag order.
+
+=head2 as_string()
+
+Serializes the tag-value list as a semicolon-delimited string, preserving
+the original insertion order.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
+
+=cut

@@ -196,6 +196,10 @@ existing DKIM2-Signature headers on the message.
 
 Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
 
+B<EXPERIMENTAL> — This module implements draft-clayton-dkim2-spec-08, an
+Internet-Draft that has not yet been published as an RFC.  The API and wire
+format are subject to change.  Do not use in production.
+
 =head1 CONSTRUCTOR
 
 =head2 new(%args)
