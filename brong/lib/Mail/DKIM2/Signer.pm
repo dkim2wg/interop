@@ -3,8 +3,7 @@ use strict;
 use warnings;
 
 use base 'Mail::DKIM2::HeaderParser';
-use Mail::DKIM::PrivateKey;
-use Digest::SHA;
+use Crypt::Digest::SHA256 qw(sha256);
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 
@@ -13,6 +12,7 @@ use Mail::DKIM2::Common qw(
     encode_tag_json
     build_signing_input
     extract_mi_version
+    load_private_key
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -27,7 +27,7 @@ sub init {
     $self->{Algorithm} ||= 'rsa-sha256';
 
     if ($self->{KeyFile} && !$self->{Key}) {
-        $self->{Key} = Mail::DKIM::PrivateKey->load(File => $self->{KeyFile});
+        $self->{Key} = load_private_key($self->{KeyFile});
     }
 }
 
@@ -113,14 +113,18 @@ sub finish_body {
         signature   => $signature,
     );
 
-    # Hash the signing input
-    my $sha = Digest::SHA->new(256);
-    $sha->add($signing_input);
-    my $digest = $sha->digest;
-
-    # Sign
+    # Sign the signing input
     my $key = $self->{Key};
-    my $sig_raw = $key->sign_digest('SHA-256', $digest);
+    my $alg = $self->{Algorithm} || 'rsa';
+    my $sig_raw;
+    if ($alg eq 'ed25519') {
+        # Ed25519-SHA256: hash first, then sign the digest
+        my $digest = sha256($signing_input);
+        $sig_raw = $key->sign_message($digest);
+    } else {
+        # RSA-SHA256: sign_message handles hashing internally
+        $sig_raw = $key->sign_message($signing_input, 'SHA256', 'v1.5');
+    }
     my $signb64 = encode_base64($sig_raw, '');
 
     # Update the signature object with the actual signature
@@ -210,7 +214,7 @@ required.
 
 =item Key
 
-A L<Mail::DKIM::PrivateKey> object.  Alternative to C<KeyFile>.
+A L<Crypt::PK::RSA> or L<Crypt::PK::Ed25519> object.  Alternative to C<KeyFile>.
 
 =back
 

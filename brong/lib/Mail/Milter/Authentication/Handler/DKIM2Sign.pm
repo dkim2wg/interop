@@ -7,13 +7,12 @@ use Mail::Milter::Authentication::Pragmas;
 our $VERSION = '0.01';
 use base 'Mail::Milter::Authentication::Handler';
 
-use Mail::DKIM::PrivateKey;
-use Mail::DKIM::TextWrap;
-use Mail::DKIM2::Common qw(extract_mi_version);
+use Mail::DKIM2::Common qw(extract_mi_version load_private_key);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
 use Mail::DKIM2::Signer;
 use Email::MIME;
+use MIME::Base64 qw(decode_base64);
 
 sub default_config {
     return {
@@ -146,10 +145,14 @@ sub addheader_callback {
         my $selector = $sign_config->{selector};
         my $key;
         if ( $sign_config->{key} ) {
-            $key = Mail::DKIM::PrivateKey->load( Data => $sign_config->{key} );
+            # Inline PEM key data (may be base64-encoded)
+            my $pem = $sign_config->{key};
+            $pem = decode_base64($pem) unless $pem =~ /^-----/;
+            require Crypt::PK::RSA;
+            $key = Crypt::PK::RSA->new(\$pem);
         }
         elsif ( $sign_config->{keyfile} ) {
-            $key = Mail::DKIM::PrivateKey->load( File => $sign_config->{keyfile} );
+            $key = load_private_key($sign_config->{keyfile});
         }
         else {
             die "No key or keyfile in signing config for $sign_domain";
@@ -257,44 +260,52 @@ sub close_callback {
 }
 
 # Compute Message-Instance header for the message.
-# If a snapshot directory is configured and a snapshot exists for the
-# topmost MI on the current message, compute a diff MI between the
-# snapshot and the current message.  Otherwise fall back to a simple
-# hash-only MI.
+#
+# 1. If the topmost MI already matches, return undef (no new MI needed).
+# 2. If a snapshot directory is configured, search all MI headers
+#    (highest version first) for one that has a stored snapshot.
+#    If found, compute a diff MI between the snapshot and current message.
+# 3. Otherwise, fall back to a hash-only MI (no recipes).
 sub _compute_message_instance {
     my ( $self, $message_data, $config ) = @_;
 
     my $mi = eval {
         my $msg = Email::MIME->new($message_data);
 
-        # Skip if the message already has an MI that matches current content
+        # Skip if the topmost MI already matches current content
         if ( Mail::DKIM2::MessageInstance->verify($msg) ) {
             $self->dbgout( 'DKIM2MI', 'Message unchanged, skipping MI', LOG_DEBUG );
             return undef;
         }
 
-        # Try to find a stored snapshot via the topmost MI
+        my @mi_headers = $msg->header_raw('Message-Instance');
+        my %mi_by_v = map { (extract_mi_version($_) || 0) => $_ } @mi_headers;
+        my $max_v = @mi_headers ? (sort { $b <=> $a } keys %mi_by_v)[0] : 0;
+
+        # Try to find a stored snapshot for any MI header
         if ( $config->{'snapshot_directory'} ) {
-            my @mi_headers = $msg->header_raw('Message-Instance');
-            if ( @mi_headers ) {
-                # Find the topmost (highest version) MI
-                my %mi_by_v = map { (extract_mi_version($_) || 0) => $_ } @mi_headers;
-                my $max_v = (sort { $b <=> $a } keys %mi_by_v)[0];
-                if ( $max_v ) {
-                    my $store = Mail::DKIM2::MessageStore->new(
-                        directory => $config->{'snapshot_directory'},
-                    );
-                    my $snapshot_data = $store->fetch($mi_by_v{$max_v});
-                    if ( $snapshot_data ) {
-                        $self->dbgout( 'DKIM2MI', "Found snapshot for MI v=$max_v, computing diff", LOG_DEBUG );
-                        my $snapshot_msg = Email::MIME->new($snapshot_data);
-                        return Mail::DKIM2::MessageInstance->calculate($snapshot_msg, $msg);
-                    }
+            my $store = Mail::DKIM2::MessageStore->new(
+                directory => $config->{'snapshot_directory'},
+            );
+            for my $v (sort { $b <=> $a } keys %mi_by_v) {
+                my $snapshot_data = $store->fetch($mi_by_v{$v});
+                if ( $snapshot_data ) {
+                    $self->dbgout( 'DKIM2MI', "Found snapshot for MI v=$v, computing diff", LOG_DEBUG );
+                    my $snapshot_msg = Email::MIME->new($snapshot_data);
+                    return Mail::DKIM2::MessageInstance->calculate($msg, $snapshot_msg);
                 }
             }
         }
 
-        # No snapshot available - calculate simple MI
+        # No snapshot available.
+        if ( @mi_headers ) {
+            # Message has been modified but we can't compute recipes
+            # without the previous state.  Log a warning.
+            $self->dbgout( 'DKIM2MI', 'Message modified but no snapshot available, cannot compute MI', LOG_INFO );
+            return undef;
+        }
+
+        # No existing MI headers — first-time signing, compute MI v=1
         Mail::DKIM2::MessageInstance->calculate($msg);
     };
     if ( my $error = $@ ) {
@@ -306,20 +317,10 @@ sub _compute_message_instance {
     return $mi;
 }
 
-# Format MI header value with text wrapping
+# Format MI header value (no folding needed — canonicalization handles it)
 sub _format_mi {
     my ( $self, $mi ) = @_;
-    my $output = '';
-    my $tw = Mail::DKIM::TextWrap->new(
-        Margin    => 72,
-        Break     => qr/./,
-        Separator => "\015\012\t",
-        Swallow   => qr/\s+/,
-        Output    => \$output,
-    );
-    $tw->add($mi->as_string());
-    $tw->finish;
-    return $output;
+    return $mi->as_string();
 }
 
 # Look up signing config for a domain (static config, then HTTP endpoint)

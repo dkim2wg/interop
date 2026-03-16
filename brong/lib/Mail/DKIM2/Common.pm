@@ -5,11 +5,11 @@ use warnings;
 
 our $VERSION = '0.01';
 
-use Digest::SHA;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use JSON::XS;
-use Mail::DKIM::Canonicalization::relaxed;
-use Mail::DKIM::PublicKey;
+use Crypt::PK::RSA;
+use Crypt::PK::Ed25519;
+use Crypt::Digest::SHA256 qw(sha256 sha256_b64 sha256_hex);
 
 use Exporter 'import';
 our @EXPORT_OK = qw(
@@ -23,6 +23,7 @@ our @EXPORT_OK = qw(
     extract_domain
     relaxed_domain_match
     parse_dkim_pubkey
+    load_private_key
 );
 
 # Headers excluded from hashing per the DKIM2 spec
@@ -40,28 +41,33 @@ sub should_skip {
     return 0;
 }
 
-# DKIM2-specific canonicalization: like DKIM relaxed but also removes
-# WSP around the colon separating header name from value
-{
-    my $relaxed = Mail::DKIM::Canonicalization::relaxed->new(Signature => 'dummy');
-
-    sub dkim2_canonicalize_header {
-        my ($line) = @_;
-        my $canon = $relaxed->canonicalize_header($line);
-        # DKIM relaxed already lowercases, unfolds, collapses WSP, strips trailing WSP.
-        # We additionally remove WSP around the colon.
-        # After relaxed, format is "name:value\r\n" (with possible SP around colon)
-        $canon =~ s/\s*:\s*/:/;
-        return $canon;
-    }
+# DKIM2 header canonicalization per spec Section 5.2 / 11.5:
+# 1. Lowercase header name
+# 2. Unfold continuation lines (remove CRLF before WSP)
+# 3. Collapse runs of WSP to single SP
+# 4. Strip trailing WSP before CRLF
+# 5. Remove WSP around the colon
+sub dkim2_canonicalize_header {
+    my ($line) = @_;
+    # Unfold: remove CRLF followed by WSP
+    $line =~ s/\r?\n[ \t]/ /g;
+    # Split on colon
+    my ($name, $value) = split(/:/, $line, 2);
+    return $line unless defined $value;
+    # Lowercase name
+    $name = lc($name);
+    # Collapse WSP runs to single SP
+    $value =~ s/[ \t]+/ /g;
+    # Strip leading and trailing WSP from value
+    $value =~ s/^[ \t]+//;
+    $value =~ s/[ \t]*\r?\n?$//;
+    return "$name:$value\r\n";
 }
 
-# Base64-encode a Digest::SHA with proper padding
+# Base64-encode a digest object (CryptX b64digest includes padding)
 sub digest64 {
     my ($sha) = @_;
-    my $res = $sha->b64digest;
-    $res .= '=' while length($res) % 4;
-    return $res;
+    return $sha->b64digest;
 }
 
 # Encode data as base64 JSON for a tag value
@@ -153,20 +159,35 @@ sub build_signing_input {
 }
 
 # Parse a DKIM TXT record and return the appropriate key object.
-# For RSA keys (k=rsa or no k= tag): returns a Mail::DKIM::PublicKey object.
-# For ed25519 keys (k=ed25519): returns the raw 32-byte public key bytes.
+# For RSA keys: returns a Crypt::PK::RSA object.
+# For ed25519 keys: returns a Crypt::PK::Ed25519 object.
 # Returns undef if the key record can't be parsed.
 sub parse_dkim_pubkey {
     my ($key_txt) = @_;
     return unless $key_txt;
     my ($k) = $key_txt =~ /\bk=([^;\s]+)/;
     $k //= 'rsa';  # default per RFC 6376
+    my ($p) = $key_txt =~ /\bp=([A-Za-z0-9+\/=]+)/;
+    return unless $p;
     if ($k eq 'ed25519') {
-        my ($p) = $key_txt =~ /\bp=([A-Za-z0-9+\/=]+)/;
-        return unless $p;
-        return decode_base64($p);
+        my $pk = Crypt::PK::Ed25519->new();
+        $pk->import_key_raw(decode_base64($p), 'public');
+        return $pk;
     }
-    return Mail::DKIM::PublicKey->parse($key_txt);
+    # RSA: p= is base64-encoded SubjectPublicKeyInfo DER
+    my $der = decode_base64($p);
+    my $rsa = eval { Crypt::PK::RSA->new(\$der) };
+    return $rsa;
+}
+
+# Load a private key from a PEM file.
+# Returns a Crypt::PK::RSA or Crypt::PK::Ed25519 object depending on key type.
+sub load_private_key {
+    my ($file) = @_;
+    # Try RSA first, then Ed25519
+    my $key = eval { Crypt::PK::RSA->new($file) };
+    return $key if $key;
+    return Crypt::PK::Ed25519->new($file);
 }
 
 1;
@@ -224,8 +245,8 @@ around the colon separating the header name from its value.
 
 =head2 digest64($sha)
 
-Takes a L<Digest::SHA> object, calls C<b64digest>, and pads the result to
-a multiple of 4 characters with C<=> signs.
+Takes a L<Crypt::Digest::SHA256> object and returns the base64-encoded
+digest value.
 
 =head2 encode_tag_json($data)
 

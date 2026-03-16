@@ -10,7 +10,6 @@ use JSON;
 use MIME::Base64;
 use lib 'lib';
 
-use Mail::DKIM::TextWrap;
 use Mail::DKIM2::Common qw(dkim2_canonicalize_header parse_dkim_pubkey);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
@@ -100,19 +99,10 @@ sub add_mi {
         return undef;
     }
 
-    my $mi = Mail::DKIM2::MessageInstance->calculate($msg, $prev_msg);
-    my $output = '';
-    my $tw = Mail::DKIM::TextWrap->new(
-        Margin    => 72,
-        Break     => qr/./,
-        Separator => "\r\n\t",
-        Swallow   => qr/\s+/,
-        Output    => \$output,
-    );
-    $tw->add("Message-Instance: " . $mi->as_string());
-    $tw->finish;
-    $output =~ s/^Message-Instance: //;
-    $msg->header_raw_prepend('Message-Instance', $output);
+    my $mi = $prev_msg
+        ? Mail::DKIM2::MessageInstance->calculate($msg, $prev_msg)
+        : Mail::DKIM2::MessageInstance->calculate($msg);
+    $msg->header_raw_prepend('Message-Instance', $mi->as_string());
     return $mi;
 }
 

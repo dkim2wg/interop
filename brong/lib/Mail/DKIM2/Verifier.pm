@@ -3,10 +3,8 @@ use strict;
 use warnings;
 
 use base 'Mail::DKIM2::HeaderParser';
-use Mail::DKIM::PublicKey;
-use Digest::SHA;
+use Crypt::Digest::SHA256 qw(sha256);
 use MIME::Base64 qw(encode_base64 decode_base64);
-use Crypt::Ed25519;
 use Carp;
 
 use Mail::DKIM2::Common qw(
@@ -159,11 +157,6 @@ sub _verify_signature {
         }
     }
 
-    # Hash the signing input
-    my $sha = Digest::SHA->new(256);
-    $sha->add($signing_input);
-    my $digest = $sha->digest;
-
     # Verify all signature items we support
     my $sig_count = $signature->sig_count;
     unless ($sig_count) {
@@ -202,12 +195,12 @@ sub _verify_signature {
         eval {
             my $verified;
             if ($alg eq 'ed25519') {
-                # Ed25519-SHA256: sign the SHA-256 digest with PureEdDSA
-                # pubkey is raw 32-byte public key for ed25519
-                $verified = Crypt::Ed25519::verify($digest, $pubkey, $sig_raw);
+                # Ed25519-SHA256: SHA-256 hash first, then verify with PureEdDSA
+                my $digest = sha256($signing_input);
+                $verified = $pubkey->verify_message($sig_raw, $digest);
             } else {
-                # RSA-SHA256: pubkey is a Mail::DKIM::PublicKey object
-                $verified = $pubkey->verify_digest('SHA-256', $digest, $sig_raw);
+                # RSA-SHA256: verify_message handles SHA-256 internally
+                $verified = $pubkey->verify_message($sig_raw, $signing_input, 'SHA256', 'v1.5');
             }
             unless ($verified) {
                 $self->{result} = 'fail';
@@ -316,7 +309,7 @@ Mail::DKIM2::Verifier - Verify DKIM2-Signature chains on email messages
     # Optional: provide a custom public key lookup
     $verifier->set_pubkey_callback(sub {
         my ($signature) = @_;
-        # return a Mail::DKIM::PublicKey object
+        # return a Crypt::PK::RSA or Crypt::PK::Ed25519 object
     });
 
     # Feed the message
@@ -346,7 +339,7 @@ Creates a new Verifier.  No required arguments.
 =head2 set_pubkey_callback(\&callback)
 
 Sets a callback for public key lookup.  The callback receives a
-L<Mail::DKIM2::Signature> object and should return a L<Mail::DKIM::PublicKey>
+L<Mail::DKIM2::Signature> object and should return a L<Crypt::PK::RSA> or L<Crypt::PK::Ed25519>
 object.  If not set, keys are fetched via DNS.
 
 =head2 result()

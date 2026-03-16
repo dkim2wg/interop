@@ -2,14 +2,12 @@ package Mail::DKIM2::Signature;
 use strict;
 use warnings;
 
-use Mail::DKIM::KeyValueList;
-use Mail::DKIM::PublicKey;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 
 use Mail::DKIM2::Common qw(encode_tag_json decode_tag_json);
 
-use base 'Mail::DKIM::KeyValueList';
+use base 'Mail::DKIM2::TagValueList';
 
 # Indices into the 3-element signature item arrays [selector, algorithm, value]
 use constant SIG_SELECTOR  => 0;
@@ -221,11 +219,20 @@ sub fetch_public_key {
     my $sel = $self->selector($idx);
     my $dom = $self->domain;
     croak "missing selector or domain" unless $sel && $dom;
-    return Mail::DKIM::PublicKey->fetch(
-        Protocol => 'dns/txt',
-        Selector => $sel,
-        Domain   => $dom,
-    );
+
+    # Fetch TXT record from DNS
+    require Net::DNS::Resolver;
+    my $resolver = Net::DNS::Resolver->new;
+    my $fqdn = "$sel._domainkey.$dom";
+    my $reply = $resolver->query($fqdn, 'TXT');
+    return unless $reply;
+    for my $rr ($reply->answer) {
+        next unless $rr->type eq 'TXT';
+        my $txt = join('', $rr->txtdata);
+        require Mail::DKIM2::Common;
+        return Mail::DKIM2::Common::parse_dkim_pubkey($txt);
+    }
+    return;
 }
 
 1;
@@ -258,7 +265,7 @@ Mail::DKIM2::Signature - Parse and construct DKIM2-Signature headers
 =head1 DESCRIPTION
 
 Represents a DKIM2-Signature header as defined in draft-clayton-dkim2-spec-08.
-Extends L<Mail::DKIM::KeyValueList> for tag-value parsing and serialization.
+Extends L<Mail::DKIM2::TagValueList> for tag-value parsing and serialization.
 
 The DKIM2-Signature header uses these tags:
 

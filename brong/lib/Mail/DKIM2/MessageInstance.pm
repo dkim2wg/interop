@@ -2,8 +2,8 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-use Mail::DKIM::Canonicalization::simple;
-use Digest::SHA;
+
+use Crypt::Digest::SHA256;
 use Email::MIME;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Algorithm::Diff;
@@ -183,7 +183,7 @@ sub _decode_recipe_list {
 sub h_digest {
     my ($msg) = @_;
 
-    my $digest = Digest::SHA->new(256);
+    my $digest = Crypt::Digest::SHA256->new();
     for my $header (sort { lc($a) cmp lc($b) } $msg->header_names) {
         next if should_skip($header);
         for my $item (reverse $msg->header_raw($header)) {
@@ -205,7 +205,7 @@ sub b_digest {
     $body =~ s/(\r\n)+\z//;
     $body .= "\r\n";
 
-    my $digest = Digest::SHA->new(256);
+    my $digest = Crypt::Digest::SHA256->new();
     $digest->add($body);
     return digest64($digest);
 }
@@ -406,61 +406,67 @@ sub _body_recipe_flat {
 # --- Calculate ---
 
 sub calculate {
-    my ($class, $msg1, $msg2) = @_;
-    croak "need a message" unless $msg1;
+    my ($class, $current, $previous) = @_;
+    croak "need a message" unless $current;
 
     my $self = bless {}, $class;
 
-    unless (ref($msg1) && $msg1->isa('Email::MIME')) {
-        $msg1 = Email::MIME->new($msg1);
+    unless (ref($current) && $current->isa('Email::MIME')) {
+        $current = Email::MIME->new($current);
     }
 
-    if ($msg2) {
-        unless (ref($msg2) && $msg2->isa('Email::MIME')) {
-            $msg2 = Email::MIME->new($msg2);
+    if ($previous) {
+        unless (ref($previous) && $previous->isa('Email::MIME')) {
+            $previous = Email::MIME->new($previous);
         }
 
-        my @mi1 = $msg1->header_raw('Message-Instance');
-        die "This message has no existing instances" unless @mi1;
-        my @mi2 = $msg2->header_raw('Message-Instance');
+        my @mi_cur = $current->header_raw('Message-Instance');
+        my @mi_prev = $previous->header_raw('Message-Instance');
+        die "Previous message has no existing instances" unless @mi_prev;
         # Verify same message by checking MI headers match
-        my $canon_mi1 = join(',', map { dkim2_canonicalize_header($_) } @mi1);
-        my $canon_mi2 = join(',', map { dkim2_canonicalize_header($_) } @mi2);
-        die "This isn't the same message" unless ($canon_mi1 eq $canon_mi2);
+        my $canon_cur  = join(',', map { dkim2_canonicalize_header($_) } @mi_cur);
+        my $canon_prev = join(',', map { dkim2_canonicalize_header($_) } @mi_prev);
+        die "This isn't the same message" unless ($canon_cur eq $canon_prev);
 
-        my %map = map { extract_mi_version($_) => $_ } @mi1;
+        my %map = map { extract_mi_version($_) => $_ } @mi_cur;
         $self->set_tag('v', max(keys %map) + 1);
     }
     else {
-        die "Already has Message-Instance headers" if $msg1->header_raw('Message-Instance');
+        die "Already has Message-Instance headers" if $current->header_raw('Message-Instance');
         $self->set_tag('v', 1);
     }
 
-    $self->set_tag('h1', h_digest($msg1));
-    $self->set_tag('b1', b_digest($msg1));
+    # Hashes are always of the current (newest) version of the message
+    $self->set_tag('h1', h_digest($current));
+    $self->set_tag('b1', b_digest($current));
 
-    # nothing to calculate, we exit now
-    return $self unless $msg2;
+    # nothing more to calculate without a previous version
+    return $self unless $previous;
+
+    # Recipes describe how to reconstruct the previous message from the
+    # current one.  Copy ranges reference positions in the current message;
+    # literal strings are values that existed in the previous message but
+    # not in the current one.
 
     # calculate the header difference
-    my %all = map { lc($_) => 1 } ($msg1->header_names, $msg2->header_names);
+    my %all = map { lc($_) => 1 } ($current->header_names, $previous->header_names);
     my %hdiff;
     for my $h (sort keys %all) {
         next if should_skip($h);
-        my @h1 = reverse $msg1->header_raw($h);
-        my @h2 = reverse $msg2->header_raw($h);
-        next if join("\n", map { dkim2_canonicalize_header($_) } @h1)
-             eq join("\n", map { dkim2_canonicalize_header($_) } @h2);
+        my @cur  = reverse $current->header_raw($h);
+        my @prev = reverse $previous->header_raw($h);
+        next if join("\n", map { dkim2_canonicalize_header($_) } @cur)
+             eq join("\n", map { dkim2_canonicalize_header($_) } @prev);
         # headers are indexed from 1 from the bottom up
         my %known = map {
-            dkim2_canonicalize_header($h1[$_]) => $_ + 1
-        } reverse 0..$#h1;
-        # we want the values from h2
+            dkim2_canonicalize_header($cur[$_]) => $_ + 1
+        } reverse 0..$#cur;
+        # Recipe: reconstruct @prev from @cur
         my @res = map {
             $known{dkim2_canonicalize_header($_)}
                 ? [$known{dkim2_canonicalize_header($_)}, $known{dkim2_canonicalize_header($_)}]
                 : $_
-        } @h2;
+        } @prev;
         # combine adjacent ranges
         for (1..$#res) {
             next unless (ref $res[$_] && ref $res[$_-1]);
@@ -473,8 +479,8 @@ sub calculate {
     }
 
     # calculate the body differences
-    my $str1 = $msg1->body_raw;
-    my $str2 = $msg2->body_raw;
+    my $str1 = $current->body_raw;
+    my $str2 = $previous->body_raw;
     $str1 =~ s/[\r\n]+$//;
     $str2 =~ s/[\r\n]+$//;
     my @l1 = split /\r?\n/, $str1;
@@ -611,7 +617,7 @@ Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance head
     print "Message-Instance: " . $mi->as_string . "\n";
 
     # Calculate MI with diff recipes between two versions
-    my $mi = Mail::DKIM2::MessageInstance->calculate($msg_prev, $msg_current);
+    my $mi = Mail::DKIM2::MessageInstance->calculate($msg_current, $msg_prev);
 
     # Verify the highest MI header matches the message
     my $version = Mail::DKIM2::MessageInstance->verify($msg);
@@ -634,15 +640,15 @@ The wire format is: C<< v=N; h=<base64json>; r=<base64json> >>
 
 =head2 calculate($msg)
 
-=head2 calculate($msg_prev, $msg_current)
+=head2 calculate($msg_current, $msg_previous)
 
-Creates a new MessageInstance object by computing hashes of C<$msg> (an
-L<Email::MIME> object or raw message string).  If a single message is given,
+Creates a new MessageInstance object by computing hashes of the current message
+(an L<Email::MIME> object or raw message string).  If a single message is given,
 it must not already have Message-Instance headers and produces a C<v=1> entry.
 
-With two messages, computes diff recipes (header and body) between C<$msg_prev>
-(the earlier version with existing MI headers) and C<$msg_current>, producing
-the next version.
+With two messages, computes diff recipes (header and body) that allow
+reconstruction of C<$msg_previous> from C<$msg_current>, producing the next
+version number.  The hashes recorded are of C<$msg_current>.
 
 =head2 verify($msg)
 

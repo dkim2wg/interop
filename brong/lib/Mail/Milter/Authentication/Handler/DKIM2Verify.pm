@@ -11,8 +11,6 @@ use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey);
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
-use Mail::DKIM::PublicKey;
-use Mail::DKIM::TextWrap;
 use Email::MIME;
 
 sub default_config {
@@ -148,6 +146,7 @@ sub eom_callback {
     return unless $self->{'has_dkim2'};
     return if $self->{'failmode'};
 
+    my $config = $self->handler_config();
     my $verifier = $self->get_object('dkim2_verifier');
 
     eval {
@@ -198,36 +197,49 @@ sub _add_mi_and_store {
     my $config = $self->handler_config();
 
     eval {
-        # Reconstruct the full message
         my $EOL = "\015\012";
         my $message_data = join(q{}, @{$self->{'headers'}})
                          . $EOL
                          . join(q{}, @{$self->{'body'}});
 
         my $msg = Email::MIME->new($message_data);
+        my @mi_headers = $msg->header_raw('Message-Instance');
+        my $mi_value;
+        my $snapshot;
 
-        # Skip if the message already has an MI that matches current content
-        if ( Mail::DKIM2::MessageInstance->verify($msg) ) {
-            $self->dbgout( 'DKIM2MI', 'Message unchanged, skipping MI', LOG_DEBUG );
-            return;
+        if ( @mi_headers ) {
+            # Case 2: Message has existing MI header(s).
+            # The topmost MI must match current content (already verified
+            # by the DKIM2 chain check).  Use it as the snapshot key.
+            my $mi_ver = Mail::DKIM2::MessageInstance->verify($msg);
+            unless ( $mi_ver ) {
+                # This shouldn't happen after successful DKIM2 verification
+                $self->log_error( 'DKIM2MI: MI headers present but none match current content' );
+                return;
+            }
+            my %mi_by_v = map { (extract_mi_version($_) || 0) => $_ } @mi_headers;
+            $mi_value = $mi_by_v{$mi_ver};
+            $snapshot = $message_data;
+            $self->dbgout( 'DKIM2MI', "Existing MI v=$mi_ver matches, using as snapshot key", LOG_DEBUG );
+        }
+        else {
+            # Case 1: No MI headers — first entry into DKIM2 ecosystem.
+            # Compute MI v=1 and prepend it.
+            my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+            $mi_value = $self->_format_mi($mi);
+            $self->prepend_header( 'Message-Instance', $mi_value );
+            $snapshot = "Message-Instance: $mi_value$EOL" . $message_data;
+            $self->dbgout( 'DKIM2MI', "Added Message-Instance v=" . ($mi->get_tag('v') || '?'), LOG_DEBUG );
         }
 
-        my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
-        my $mi_value = $self->_format_mi($mi);
-
-        # Add MI header to the message via the milter
-        $self->prepend_header( 'Message-Instance', $mi_value );
-        $self->dbgout( 'DKIM2MI', "Added Message-Instance v=" . ($mi->get_tag('v') || '?'), LOG_DEBUG );
-
-        # Store snapshot if configured
-        if ( $config->{'snapshot_directory'} ) {
+        # Store snapshot keyed by the MI value so the outbound signer can
+        # compute diff recipes if the message is modified during local processing
+        if ( $config->{'snapshot_directory'} && $mi_value ) {
             my $store = Mail::DKIM2::MessageStore->new(
                 directory => $config->{'snapshot_directory'},
             );
-            # Store the message as-is (with MI prepended)
-            my $snapshot = "Message-Instance: $mi_value$EOL" . $message_data;
             $store->store($mi_value, $snapshot);
-            $self->dbgout( 'DKIM2Snapshot', "Stored snapshot for MI v=" . ($mi->get_tag('v') || '?'), LOG_DEBUG );
+            $self->dbgout( 'DKIM2Snapshot', "Stored snapshot", LOG_DEBUG );
         }
     };
     if ( my $error = $@ ) {
@@ -236,19 +248,10 @@ sub _add_mi_and_store {
     }
 }
 
+# Format MI header value (no folding needed — canonicalization handles it)
 sub _format_mi {
     my ( $self, $mi ) = @_;
-    my $output = '';
-    my $tw = Mail::DKIM::TextWrap->new(
-        Margin    => 72,
-        Break     => qr/./,
-        Separator => "\015\012\t",
-        Swallow   => qr/\s+/,
-        Output    => \$output,
-    );
-    $tw->add($mi->as_string());
-    $tw->finish;
-    return $output;
+    return $mi->as_string();
 }
 
 sub close_callback {
