@@ -400,7 +400,12 @@ sub make_originator_message {
     $signer->PRINT($with_mi);
     $signer->CLOSE();
 
-    return $signer->as_string() . "\r\n" . $with_mi;
+    my $result = $signer->as_string() . "\r\n" . $with_mi;
+
+    # Write the originator message for interop testing
+    path("tests/expected")->child("milter-originator.eml")->spew($result);
+
+    return $result;
 }
 
 # Helper: run the full inbound verify with snapshot storage
@@ -435,6 +440,26 @@ sub run_outbound_sign {
     return ($handler, $mock);
 }
 
+# Helper: assemble the final outbound message from sign mock output.
+# pre_headers are prepended (in reverse, as milters do) to the message
+# that was fed to the signer.
+sub assemble_outbound {
+    my ($input_msg, $mock) = @_;
+    my $EOL = "\r\n";
+    my $result = '';
+    for my $h (reverse @{$mock->{pre_headers}}) {
+        my $val = $h->{value};
+        $val =~ s/\r?\n/\r\n/gs;
+        $result .= "$h->{field}: $val$EOL";
+    }
+    $input_msg =~ s/\r//gs;
+    $input_msg =~ s/\n/\r\n/gs;
+    $result .= $input_msg;
+    return $result;
+}
+
+my $expected_dir = path("tests/expected");
+
 # Case 1: Unchanged forwarding
 #
 # Email arrives at foo@example.com and is forwarded to bar@example.net
@@ -467,6 +492,10 @@ sub run_outbound_sign {
 
     ok(@dk2 > 0,        'case1: outbound added DKIM2-Signature i=2');
     is(scalar @mi, 0,   'case1: outbound did NOT add MI (unchanged)');
+
+    # Write the final outbound message for interop testing
+    my $outbound = assemble_outbound($signed_msg, $mock);
+    $expected_dir->child("milter-case1-unchanged-forward.eml")->spew($outbound);
 }
 
 # Case 2: Modified message, no intermediate MI
@@ -505,6 +534,10 @@ sub run_outbound_sign {
         like($mi[0]{value}, qr/^v=2/, 'case2: new MI is version 2');
         like($mi[0]{value}, qr/r=/,   'case2: new MI has recipes (diff from snapshot)');
     }
+
+    # Write the final outbound message for interop testing
+    my $outbound = assemble_outbound($modified, $mock);
+    $expected_dir->child("milter-case2-modified-no-intermediate-mi.eml")->spew($outbound);
 }
 
 # Case 3: Modified message, intermediate code already added MI v=2
@@ -546,6 +579,10 @@ sub run_outbound_sign {
 
     ok(@dk2 > 0,       'case3: outbound added DKIM2-Signature');
     is(scalar @mi, 0,  'case3: outbound did NOT add MI (v=2 already matches)');
+
+    # Write the final outbound message for interop testing
+    my $outbound = assemble_outbound($with_mi2, $mock);
+    $expected_dir->child("milter-case3-modified-with-intermediate-mi.eml")->spew($outbound);
 }
 
 done_testing();

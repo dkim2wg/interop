@@ -23,62 +23,62 @@ dependency on Mail::DKIM.
 
 This is critical to get right. Misunderstanding folding breaks signatures.
 
-### Core principle
+### Three categories of headers
 
-**Folding is only safe at the moment a header is being created, before it
-has been signed by anything.** Once a header's raw bytes have been included
-in any signing input, they are fixed and must not be refolded.
+1. **A header we are creating right now**: We can fold anywhere we want,
+   because nobody has signed it yet. The fold positions become part of the
+   header's raw bytes from this point forward.
 
-### Two types of canonicalization
+2. **A header we received from elsewhere** (disk, network, previous hop):
+   We can only re-fold at positions where whitespace already exists. Relaxed
+   header canonicalization collapses WSP runs to a single space, so inserting
+   `\r\n` before existing whitespace doesn't change the canonical form.
+   Inserting a fold where there is no existing whitespace adds a space to the
+   canonical form and will break any signature that covers this header.
 
-1. **Relaxed header canonicalization** (spec Section 5.2/11.5): Applied to
-   raw header lines when building the signing input. Unfolds continuation
-   lines, lowercases name, collapses WSP, strips trailing WSP, removes WSP
-   around colon.
+3. **Headers in a signing input**: Used as-is. Canonicalization handles any
+   existing folding. Never modify.
 
-2. **Tag-value parsing** (spec Section 8): Splits on `;`, strips whitespace.
-   Applied when parsing DKIM2-Signature or Message-Instance into structured
-   data. Base64 values are decoded with `decode_base64` which ignores
-   whitespace.
+### DKIM2-Signature — the header we create
 
-### Where folding is safe
+The DKIM2-Signature is the only header where we control the entire lifecycle.
+Folding happens in two phases:
 
-- **At tag boundaries (`; `)**: Safe under relaxed header canonicalization
-  because WSP around semicolons canonicalizes identically whether folded or
-  not.
+**Phase 1 — before computing `s=`**: The signer constructs the full header
+with empty `s=` value. It may fold anywhere (tag boundaries, within values —
+whatever it wants). This folded form IS the signing input. The fold positions
+are baked into what gets signed. In practice we fold at `; ` tag boundaries
+using `fold_header()`.
 
-- **Within tag values**: NOT safe under relaxed header canonicalization — a
-  fold becomes a space inside the value, changing the canonical form.
+**Phase 2 — after computing `s=`, before insertion**: The signer fills in
+the `s=` value and may fold within it using `fold_value()`. Nothing has
+signed over the `s=` bytes yet, so any folding is safe. The prefix (all
+tags before `s=`) MUST NOT change — those bytes were signed in phase 1.
 
-### DKIM2-Signature folding — three phases
+After the header is inserted into the message, it must never be refolded.
+The next hop's signer will include its raw bytes in a new signing input.
 
-1. **Before computing the signature**: The signer constructs the header with
-   empty `s=` tag. It may fold at tag boundaries (after `; `). This folded
-   form IS the signing input — the fold positions are baked in.
+### Message-Instance headers
 
-2. **After computing the signature, before insertion**: The signer fills in
-   the `s=` value. It may fold within the `s=` value because nothing has
-   signed over those bytes yet. The rest of the header MUST NOT change.
-
-3. **After the header is in the message**: Nothing may be refolded. The next
-   hop's signer will include this header's raw bytes in its signing input.
+MI headers are created before DKIM2-Signature signing. They can be folded
+freely at creation time (using `fold_header()` at tag boundaries). Once
+created and in the message, they become category 2 headers and must not
+be refolded.
 
 ### Implementation
 
 - `Signature::as_string()` and `MessageInstance::as_string()` return
-  **unfolded** output. They are used for signing input construction.
-- Folding happens only at **insertion points**: `Signer::as_string()`,
-  milter handlers' `_format_mi()`, and test helpers.
-- `fold_header()` in Common.pm folds at `; ` tag boundaries only. It never
-  breaks within a base64 value.
-- For the `s=` tag specifically, the Signer may fold within its value after
-  signing but before the header is added to the message.
-
-### Never modify headers read from disk
-
-Headers read from files or received from the network must be used exactly as
-received. They may have been signed by a previous hop and any change to the
-raw bytes (including refolding) would break signature verification.
+  **unfolded** output. Used for signing input construction by the verifier.
+- `Signature::as_string_without_data()` returns the phase 1 signing input:
+  prefix folded at tag boundaries + unfolded empty `s=`.
+- `Signature::as_folded_string()` returns the phase 2 insertion-ready
+  header: same folded prefix + `s=` value folded with `fold_value()`.
+- `Signer::as_string()` calls `as_folded_string()`.
+- `fold_header()` — folds at `; ` tag boundaries. For headers we create.
+- `fold_value()` — folds at arbitrary character positions. Only for the
+  `s=` value after signing.
+- Milter handlers fold MI values at insertion time via `_format_mi()`.
+- Headers read from disk or the network are **never** refolded.
 
 ## MessageInstance::calculate() API
 

@@ -1,0 +1,63 @@
+DKIM2-Signature: i=2; v=1; t=1773644390; d=example.com; 
+ m=eyJtZiI6ImZvcndhcmRlckBleGFtcGxlLmNvbSIsInJ0IjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdfQ==;
+ s=W1sicnNhMTAyNCIsInJzYS1zaGEyNTYiLCJDRVV5ZXlHWDBwRCtwNW5EczgyenNkVE03Y
+ U41bDVZbFk3Ty9UVTB3SC8vc2swQkdYRXM0TWI0RkdSVE9BNDdYNVhFKytrMkxnUVdHbnJu
+ dVdaNHZrd1o0d0RmK3l0RCtjWjdzQ3Q5NUdJQmJUdG9DYjl4OWlRcDBOWEw1bzVhL1NRR24
+ xY2xaMkJnWTlkV2d0L1NTeWl3cjZZbzJwUGh5Nnl6U2k1N09FdUk9Il1d
+DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; 
+ m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJmb29AZXhhbXBsZS5jb20iXX0=;
+ s=W1sicnNhMTAyNCIsInJzYS1zaGEyNTYiLCJCN0VLR091VVNvUXJ4NkYzNVd0VXBBcGhMR
+ kRtS3M2cVFFS1U1dERaS3ZHd1VnNFEzZy9IdVFlelFTMXppaEcrQzFiNWpGTUJwOWFTckwz
+ ZFdZaSt0V2IrVUFydS9HT0c3Qmx4UWdsQjFCM1lzK3gxSnM2OUR4N2hPWklSRWg4Y3JDRVV
+ ocmFsTk5oQ0Q3SXJZZGdpaWpmUHE2aUdJcHlzRWxPTTFnWFM2MWM9Il1d
+Message-Instance: v=1; h=eyJiIjpbInNoYTI1NiIsIlhJMjI4Vi83MjBYTmVsbTc2REZLUWY5MzRpT0VRUUN0NndaM3VLQ0lyOVE9Il0sImgiOlsic2hhMjU2IiwidEI4dXdQUWJjQ0hPNnp2VTBFbnpFRldVS0tCdHd5em1yeGVhdnk0Sm4xZz0iXX0=
+MIME-Version: 1.0
+Message-Id: <fb1b10ae-ea36-4ee4-b84f-b62f036cfaf5@app.fastmail.com>
+Date: Thu, 21 Mar 2024 12:09:37 +1000
+From: "Bron Gondwana" <brong@fastmailteam.com>
+To: jmap@ietf.org
+Subject: Working group last call draft-ietf-jmap-webpush-vapid
+Content-Type: multipart/alternative;
+ boundary=12b53dc829d24511bfa04f7d5e3675f8
+
+--12b53dc829d24511bfa04f7d5e3675f8
+Content-Type: text/plain
+
+Hi All,
+
+This email starts a working group last call for https://datatracker.ietf.org/doc/draft-ietf-jmap-webpush-vapid/ as discussed in the IETF119 session.
+
+Please post any comments or responses by *Thursday, April 4th, 2024*.
+
+Thanks,
+
+Bron.
+
+
+--
+  Bron Gondwana, CEO, Fastmail Pty Ltd
+  brong@fastmailteam.com
+
+
+--12b53dc829d24511bfa04f7d5e3675f8
+Content-Type: text/html
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html><html><head><title></title><style type=3D"text/css">p.Mso=
+Normal,p.MsoNoSpacing{margin:0}</style></head><body><div style=3D"font-f=
+amily:Arial;">Hi All,<br></div><div style=3D"font-family:Arial;"><div><b=
+r></div><div>This email starts a working group last call for <a href=3D"=
+https://datatracker.ietf.org/doc/draft-ietf-jmap-webpush-vapid/">https:/=
+/datatracker.ietf.org/doc/draft-ietf-jmap-webpush-vapid/</a> as discusse=
+d in the IETF119 session.<br></div><div style=3D"font-family:Arial;"><br=
+></div><div style=3D"font-family:Arial;">Please post any comments or res=
+ponses by <b>Thursday, April 4th, 2024</b>.<br></div><div style=3D"font-=
+family:Arial;"><br></div><div style=3D"font-family:Arial;">Thanks,<br></=
+div><div style=3D"font-family:Arial;"><br></div><div style=3D"font-famil=
+y:Arial;">Bron.<br></div><div><br></div><div><br></div></div><div id=3D"=
+sig56629417"><div class=3D"signature">--<br></div><div class=3D"signatur=
+e">&nbsp; Bron Gondwana, CEO, Fastmail Pty Ltd<br></div><div class=3D"si=
+gnature">&nbsp; brong@fastmailteam.com<br></div><div class=3D"signature"=
+><br></div></div><div style=3D"font-family:Arial;"><br></div></body></ht=
+ml>
+--12b53dc829d24511bfa04f7d5e3675f8--
