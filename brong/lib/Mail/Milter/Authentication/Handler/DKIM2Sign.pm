@@ -7,7 +7,7 @@ use Mail::Milter::Authentication::Pragmas;
 our $VERSION = '0.01';
 use base 'Mail::Milter::Authentication::Handler';
 
-use Mail::DKIM2::Common qw(extract_mi_version load_private_key);
+use Mail::DKIM2::Common qw(extract_mi_version load_private_key fold_header);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
 use Mail::DKIM2::Signer;
@@ -317,10 +317,12 @@ sub _compute_message_instance {
     return $mi;
 }
 
-# Format MI header value (no folding needed — canonicalization handles it)
+# Format MI header value with folding for insertion into message
 sub _format_mi {
     my ( $self, $mi ) = @_;
-    return $mi->as_string();
+    my $folded = fold_header("Message-Instance: " . $mi->as_string());
+    $folded =~ s/^Message-Instance: //;
+    return $folded;
 }
 
 # Look up signing config for a domain (static config, then HTTP endpoint)

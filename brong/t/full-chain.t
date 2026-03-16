@@ -10,7 +10,7 @@ use JSON;
 use MIME::Base64;
 use lib 'lib';
 
-use Mail::DKIM2::Common qw(dkim2_canonicalize_header parse_dkim_pubkey);
+use Mail::DKIM2::Common qw(dkim2_canonicalize_header parse_dkim_pubkey fold_header);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
@@ -102,7 +102,9 @@ sub add_mi {
     my $mi = $prev_msg
         ? Mail::DKIM2::MessageInstance->calculate($msg, $prev_msg)
         : Mail::DKIM2::MessageInstance->calculate($msg);
-    $msg->header_raw_prepend('Message-Instance', $mi->as_string());
+    my $folded = fold_header("Message-Instance: " . $mi->as_string());
+    $folded =~ s/^Message-Instance: //;
+    $msg->header_raw_prepend('Message-Instance', $folded);
     return $mi;
 }
 
@@ -279,7 +281,7 @@ diag("=== Negative tests ===");
     # that has a garbage signature value
     my $bad_sigs = encode_base64(
         encode_json([["sel1", "rsa-sha256", "AAAA"]]), '');
-    $dk2[0] =~ s/s=\S+/s=$bad_sigs/;
+    $dk2[0] =~ s/s=\S[\S\s]*$/s=$bad_sigs/;
     $msg->header_raw_set('DKIM2-Signature', @dk2);
     $msg = Email::MIME->new($msg->as_string);
 

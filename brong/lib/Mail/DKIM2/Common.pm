@@ -18,6 +18,7 @@ our @EXPORT_OK = qw(
     digest64
     encode_tag_json
     decode_tag_json
+    fold_header
     build_signing_input
     extract_mi_version
     extract_domain
@@ -80,6 +81,54 @@ sub encode_tag_json {
 sub decode_tag_json {
     my ($b64) = @_;
     return JSON::XS->new->decode(decode_base64($b64));
+}
+
+# Fold a header line at 72 characters.
+# First tries to fold at "; " tag boundaries.  If a single tag value is
+# still too long, folds within the value (safe for base64 per the spec's
+# base64string ABNF which allows FWS).
+# Input: a complete header line like "DKIM2-Signature: i=1; v=1; ..."
+# Output: folded with "\r\n " continuation lines
+sub fold_header {
+    my ($line, $margin) = @_;
+    $margin //= 72;
+
+    return $line if length($line) <= $margin;
+
+    # Split into tag-value segments at "; " boundaries
+    # Keep the "; " as part of the preceding segment
+    my @parts;
+    while ($line =~ /\G(.*?;\s*)/gc) {
+        push @parts, $1;
+    }
+    # Remainder after last semicolon (or whole string if no semicolons)
+    my $rest = substr($line, pos($line) // 0);
+    push @parts, $rest if length($rest);
+
+    # Only fold at tag boundaries ("; ").  Never break in the middle of
+    # a base64 value — folding mid-value inserts a space that changes
+    # the canonicalized form and breaks signature verification.
+    my @output;
+    my $current = '';
+    my $is_first = 1;
+
+    for my $part (@parts) {
+        my $limit = $is_first ? $margin : $margin - 1;
+        if ($current eq '') {
+            $current = $part;
+        }
+        elsif (length($current) + length($part) <= $limit) {
+            $current .= $part;
+        }
+        else {
+            push @output, $current;
+            $is_first = 0;
+            $current = $part;
+        }
+    }
+    push @output, $current if $current ne '';
+
+    return join("\r\n ", @output);
 }
 
 # Extract the version number from a Message-Instance header value

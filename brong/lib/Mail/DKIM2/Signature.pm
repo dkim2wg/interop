@@ -175,7 +175,6 @@ sub as_string {
 }
 
 # For signing: serialize with empty signature values in s= tag.
-# Preserves the original format (flat array vs array-of-arrays).
 sub as_string_without_data {
     my ($self) = @_;
     my $raw_sigs = $self->signatures_data;
@@ -183,14 +182,12 @@ sub as_string_without_data {
 
     my @empty_sigs;
     if (ref($raw_sigs->[0]) eq 'ARRAY') {
-        # Array-of-arrays format: zero out SIG_VALUE in each triple
         @empty_sigs = map {
             my @copy = @$_;
             $copy[SIG_VALUE] = '';
             \@copy;
         } @$raw_sigs;
     } else {
-        # Flat array format: zero out every third element (the signature value)
         @empty_sigs = @$raw_sigs;
         for (my $i = SIG_VALUE; $i < @empty_sigs; $i += 3) {
             $empty_sigs[$i] = '';
