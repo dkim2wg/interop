@@ -189,7 +189,7 @@ sub run_sign {
     push @header_lines, $current if $current ne '';
 
     $handler->envfrom_callback('<sender@test1.dkim2.com>');
-    $handler->envrcpt_callback('<recipient@example.com>');
+    $handler->envrcpt_callback('<recipient@test2.dkim2.com>');
 
     for my $hline (@header_lines) {
         my ($name, $value) = $hline =~ /^([^\s:]+)\s*:\s*(.*)/s;
@@ -394,7 +394,7 @@ sub make_originator_message {
         Selector  => 'rsa1024',
         KeyFile   => "$keyfile",
         MailFrom  => 'sender@test1.dkim2.com',
-        RcptTo    => ['foo@example.com'],
+        RcptTo    => ['foo@test2.dkim2.com'],
         Timestamp => 1740000000,
     );
     $signer->PRINT($with_mi);
@@ -422,7 +422,7 @@ sub run_outbound_sign {
     my ($raw, $snapshot_dir) = @_;
     my ($handler, $mock) = run_sign($raw,
         domains => {
-            'example.com' => {
+            'test2.dkim2.com' => {
                 selector => 'rsa1024',
                 keyfile  => path("../keys/rsa1024._domainkey.test2.dkim2.com.pem")->realpath . "",
             },
@@ -433,7 +433,7 @@ sub run_outbound_sign {
         _local               => 1,
     );
     # Override env_from for the forwarding domain
-    $handler->{'env_from'} = '<forwarder@example.com>';
+    $handler->{'env_from'} = '<forwarder@test2.dkim2.com>';
     # Re-run addheader with corrected env_from
     $mock = { pre_headers => [], add_headers => [] };
     $handler->addheader_callback($mock);
@@ -462,7 +462,7 @@ my $expected_dir = path("tests/expected");
 
 # Case 1: Unchanged forwarding
 #
-# Email arrives at foo@example.com and is forwarded to bar@example.net
+# Email arrives at foo@test2.dkim2.com and is forwarded to bar@example.net
 # with no changes made.
 #
 # Flow:
