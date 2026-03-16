@@ -106,11 +106,16 @@ sub finish_body {
     my $next_i = $self->{_next_i};
     my @all_dk2 = (@dk2_headers, { i => $next_i, sig => $signature });
 
+    # Fold before signing: the fold positions become part of what gets
+    # canonicalized and signed.
+    my $folded_header = $signature->as_folded_string_without_data();
+
     my $signing_input = build_signing_input(
-        mi_headers  => \@mi_headers,
-        dk2_headers => \@all_dk2,
-        signing_i   => $next_i,
-        signature   => $signature,
+        mi_headers     => \@mi_headers,
+        dk2_headers    => \@all_dk2,
+        signing_i      => $next_i,
+        signature      => $signature,
+        signing_header => $folded_header,
     );
 
     # Sign the signing input

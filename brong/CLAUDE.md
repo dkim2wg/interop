@@ -27,7 +27,9 @@ This is critical to get right. Misunderstanding folding breaks signatures.
 
 1. **A header we are creating right now**: We can fold anywhere we want,
    because nobody has signed it yet. The fold positions become part of the
-   header's raw bytes from this point forward.
+   header's raw bytes from this point forward. Per RFC 5322 Section 2.1.1,
+   lines SHOULD be no more than 78 characters and MUST be no more than 998.
+   We target 72 characters.
 
 2. **A header we received from elsewhere** (disk, network, previous hop):
    We can only re-fold at positions where whitespace already exists. Relaxed
@@ -41,19 +43,20 @@ This is critical to get right. Misunderstanding folding breaks signatures.
 
 ### DKIM2-Signature — the header we create
 
-The DKIM2-Signature is the only header where we control the entire lifecycle.
-Folding happens in two phases:
+Folding = inserting `\r\n ` whitespace into long lines (primarily base64
+values). It must happen **before** signature computation. The signer:
 
-**Phase 1 — before computing `s=`**: The signer constructs the full header
-with empty `s=` value. It may fold anywhere (tag boundaries, within values —
-whatever it wants). This folded form IS the signing input. The fold positions
-are baked into what gets signed. In practice we fold at `; ` tag boundaries
-using `fold_header()`.
+1. Constructs the DKIM2-Signature with empty `s=` values
+2. Folds it at 72 chars (`as_folded_string_without_data()`)
+3. Uses the folded form as the signing input (passed to
+   `build_signing_input()` via the `signing_header` parameter)
+4. Computes the signature over the canonicalized folded form
+5. Inserts the real `s=` values and folds the complete header
+   (`as_folded_string()`) for insertion into the message
 
-**Phase 2 — after computing `s=`, before insertion**: The signer fills in
-the `s=` value and may fold within it using `fold_value()`. Nothing has
-signed over the `s=` bytes yet, so any folding is safe. The prefix (all
-tags before `s=`) MUST NOT change — those bytes were signed in phase 1.
+The verifier reads the header from the message (already folded) and uses
+`as_string_without_data()` (unfolded) — canonicalization collapses the
+whitespace, producing the same canonical form either way.
 
 After the header is inserted into the message, it must never be refolded.
 The next hop's signer will include its raw bytes in a new signing input.
@@ -69,14 +72,16 @@ be refolded.
 
 - `Signature::as_string()` and `MessageInstance::as_string()` return
   **unfolded** output. Used for signing input construction by the verifier.
-- `Signature::as_string_without_data()` returns the phase 1 signing input:
-  prefix folded at tag boundaries + unfolded empty `s=`.
-- `Signature::as_folded_string()` returns the phase 2 insertion-ready
-  header: same folded prefix + `s=` value folded with `fold_value()`.
-- `Signer::as_string()` calls `as_folded_string()`.
-- `fold_header()` — folds at `; ` tag boundaries. For headers we create.
-- `fold_value()` — folds at arbitrary character positions. Only for the
-  `s=` value after signing.
+- `Signature::as_string_without_data()` returns unfolded header with empty
+  `s=` values. Used by the verifier in `build_signing_input()`.
+- `Signature::as_folded_string_without_data()` returns folded header with
+  empty `s=` values. Used by the signer as the signing input.
+- `Signature::as_folded_string()` returns the header folded at 72 chars,
+  ready for insertion. Only called from `Signer::as_string()`.
+- `build_signing_input()` accepts an optional `signing_header` parameter.
+  The signer passes the folded form; the verifier omits it (uses unfolded).
+- `fold_header()` — folds at `; ` tag boundaries first, then breaks long
+  segments at character positions. Only for headers we are creating.
 - Milter handlers fold MI values at insertion time via `_format_mi()`.
 - Headers read from disk or the network are **never** refolded.
 

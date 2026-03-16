@@ -85,9 +85,10 @@ sub decode_tag_json {
 }
 
 # Fold a header line at 72 characters.
-# First tries to fold at "; " tag boundaries.  If a single tag value is
-# still too long, folds within the value (safe for base64 per the spec's
-# base64string ABNF which allows FWS).
+# Fold a header line to $margin characters (default 72).
+# Only for headers we are creating — never for headers read from elsewhere.
+# First tries to fold at "; " tag boundaries, then breaks any remaining
+# long segments at character positions.
 # Input: a complete header line like "DKIM2-Signature: i=1; v=1; ..."
 # Output: folded with "\r\n " continuation lines
 sub fold_header {
@@ -106,7 +107,7 @@ sub fold_header {
     my $rest = substr($line, pos($line) // 0);
     push @parts, $rest if length($rest);
 
-    # First, try to fold at tag boundaries ("; ").
+    # Group parts into lines, preferring breaks at tag boundaries
     my @output;
     my $current = '';
     my $is_first = 1;
@@ -127,7 +128,33 @@ sub fold_header {
     }
     push @output, $current if $current ne '';
 
-    return join("\r\n ", @output);
+    # Break any lines that still exceed the margin
+    my @folded;
+    $is_first = 1;
+    for my $seg (@output) {
+        my $limit = $is_first ? $margin : $margin - 1;
+        while (length($seg) > $limit) {
+            # Extend past '=' padding, ';' delimiters, or a single
+            # trailing char to avoid orphaning them on the next line.
+            # This may produce lines up to ~74 chars, still under 78.
+            my $break = $limit;
+            while ($break < length($seg) && (
+                length($seg) - $break <= 1
+                || substr($seg, $break, 1) eq ';'
+                || substr($seg, $break, 1) eq '='
+            )) {
+                $break++;
+            }
+            last if $break >= length($seg);
+            push @folded, substr($seg, 0, $break, '');
+            $is_first = 0;
+            $limit = $margin - 1;
+        }
+        push @folded, $seg if length($seg);
+        $is_first = 0;
+    }
+
+    return join("\r\n ", @folded);
 }
 
 # Fold a string at arbitrary character positions.
@@ -211,8 +238,10 @@ sub build_signing_input {
                 $signing_input .= dkim2_canonicalize_header($mi_headers[$mi_idx]{raw});
                 $mi_idx++;
             }
-            my $sig_header = $signature->as_string_without_data();
-            $signing_input .= dkim2_canonicalize_header("$sig_header\r\n");
+            # Signer passes signing_header (folded); verifier uses default (unfolded)
+            my $sig_header = $args{signing_header} // $signature->as_string_without_data();
+            $sig_header .= "\r\n" unless $sig_header =~ /\r\n$/;
+            $signing_input .= dkim2_canonicalize_header($sig_header);
             last;
         } else {
             $signing_input .= dkim2_canonicalize_header($dk2->{raw});
