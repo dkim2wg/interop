@@ -1,4 +1,5 @@
 bin/calculate-dkim2.pl
+bin/dkim2-milter.pl
 bin/calculate-mailversion.pl
 bin/reverse-mailversion.pl
 bin/validate-mailversion.pl
