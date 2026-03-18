@@ -245,13 +245,12 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             f"sig says {algorithm!r}, key is {key_type!r}"
         )
 
-    # Reconstruct the incomplete signature: same structure but with
-    # empty signature value, so [selector, algorithm, ""]
-    s_incomplete = [[selector, algorithm, ""]]
+    # Reconstruct the incomplete signature with empty s= value,
+    # following the DKIM1 convention for b=.
     s_tag_pos = sig_hdr.rfind("s=")
     if s_tag_pos == -1:
         return [f"DKIM2-Signature i={i_val}: cannot find s= tag in header"]
-    incomplete_sig = sig_hdr[:s_tag_pos + 2] + b64json(s_incomplete)
+    incomplete_sig = sig_hdr[:s_tag_pos + 2]
 
     # Collect MI headers up to version v=
     mi_version = int(v_val)

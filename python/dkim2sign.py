@@ -333,13 +333,11 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
         "rt": rcptto or ["unknown@example.com"],
     }
 
-    # Build the incomplete signature header with s= containing the
-    # selector and algorithm but an empty signature value, so the
-    # signing input is unambiguous about which algorithm slot is which.
-    s_incomplete = [[selector, algorithm, ""]]
+    # Build the incomplete signature header with empty s= value,
+    # following the DKIM1 convention for b=.
     incomplete = (
         f"DKIM2-Signature: i={seq}; v={mi_version}; t={timestamp}; "
-        f"d={domain}; m={b64json(m_obj)}; s={b64json(s_incomplete)}"
+        f"d={domain}; m={b64json(m_obj)}; s="
     )
 
     # Collect all MI headers including the new one

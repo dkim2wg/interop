@@ -175,55 +175,19 @@ sub as_string {
     return "DKIM2-Signature: " . $self->SUPER::as_string();
 }
 
-# Serialize with empty signature values in s= tag.
+# Serialize with empty s= tag value.
 # Returns unfolded output. Used by the verifier to reconstruct the
 # signing input from a header read from the message.
+# The s= value is completely empty (not base64 JSON with empty signature
+# values), following the DKIM1 convention for b=.
 sub as_string_without_data {
     my ($self) = @_;
-    my $raw_sigs = $self->signatures_data;
-    return $self->as_string() unless $raw_sigs;
-
-    my @empty_sigs;
-    if (ref($raw_sigs->[0]) eq 'ARRAY') {
-        @empty_sigs = map {
-            my @copy = @$_;
-            $copy[SIG_VALUE] = '';
-            \@copy;
-        } @$raw_sigs;
-    } else {
-        @empty_sigs = @$raw_sigs;
-        for (my $i = SIG_VALUE; $i < @empty_sigs; $i += 3) {
-            $empty_sigs[$i] = '';
-        }
-    }
 
     my $saved = $self->get_tag('s');
-    $self->set_tag('s', encode_tag_json(\@empty_sigs));
+    $self->set_tag('s', '');
     my $result = $self->as_string();
     $self->set_tag('s', $saved);
     return $result;
-}
-
-# Build the empty signature JSON for _empty_s_value().
-sub _empty_sigs {
-    my ($self) = @_;
-    my $raw_sigs = $self->signatures_data;
-    return unless $raw_sigs;
-
-    my @empty;
-    if (ref($raw_sigs->[0]) eq 'ARRAY') {
-        @empty = map {
-            my @copy = @$_;
-            $copy[SIG_VALUE] = '';
-            \@copy;
-        } @$raw_sigs;
-    } else {
-        @empty = @$raw_sigs;
-        for (my $i = SIG_VALUE; $i < @empty; $i += 3) {
-            $empty[$i] = '';
-        }
-    }
-    return encode_tag_json(\@empty);
 }
 
 # Folded header with empty s= value, ready for signing.
@@ -232,14 +196,13 @@ sub _empty_sigs {
 sub as_folded_string_without_data {
     my ($self) = @_;
 
-    # All tags except s=, then "; s=<empty>"
+    # All tags except s=, then "; s="
     my @parts;
     for my $t (@{$self->{order}}) {
         next if $t eq 's';
         push @parts, "$t=$self->{tags}{$t}";
     }
-    my $empty_s = $self->_empty_sigs() // '';
-    my $line = "DKIM2-Signature: " . join('; ', @parts) . "; s=$empty_s";
+    my $line = "DKIM2-Signature: " . join('; ', @parts) . "; s=";
     return fold_header($line);
 }
 
