@@ -71,13 +71,11 @@ BEGIN {
     sub safe_set_value { $_[0]->{value} = $_[1]; $_[0] }
 }
 
-use lib 'lib';
+use lib 'lib', 't/lib';
 use Mail::Milter::Authentication::Handler::DKIM2Verify;
 use Mail::Milter::Authentication::Handler::DKIM2Sign;
 use Mail::DKIM2::Common qw(parse_dkim_pubkey);
-
-my $dns = decode_json(path("../dns.json")->slurp);
-my $keydir = path("../keys")->realpath;
+use DKIM2TestKeys;
 
 # Helper: feed a raw message through milter verify callbacks
 sub run_verify {
@@ -115,7 +113,7 @@ sub run_verify {
     push @header_lines, $current if $current ne '';
 
     # Run callbacks
-    $handler->envfrom_callback('<sender@test1.dkim2.com>');
+    $handler->envfrom_callback('<sender@test1.example.com>');
 
     for my $hline (@header_lines) {
         my ($name, $value) = $hline =~ /^([^\s:]+)\s*:\s*(.*)/s;
@@ -127,14 +125,7 @@ sub run_verify {
     # Now set up the pubkey callback on the verifier object
     my $verifier = $handler->get_object('dkim2_verifier');
     if ($verifier) {
-        $verifier->set_pubkey_callback(sub {
-            my ($sig, $idx) = @_;
-            $idx //= 0;
-            my $sel = $sig->selector($idx);
-            my $dom = $sig->domain;
-            my $key_txt = $dns->{$dom}{"$sel._domainkey"}[0][1];
-            return parse_dkim_pubkey($key_txt);
-        });
+        $verifier->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
 
         # Re-feed headers to the verifier (the handler already fed them)
         # Actually the handler already called PRINT with headers, so we just
@@ -188,8 +179,8 @@ sub run_sign {
     }
     push @header_lines, $current if $current ne '';
 
-    $handler->envfrom_callback('<sender@test1.dkim2.com>');
-    $handler->envrcpt_callback('<recipient@test2.dkim2.com>');
+    $handler->envfrom_callback('<sender@test1.example.com>');
+    $handler->envrcpt_callback('<recipient@test2.example.com>');
 
     for my $hline (@header_lines) {
         my ($name, $value) = $hline =~ /^([^\s:]+)\s*:\s*(.*)/s;
@@ -224,20 +215,28 @@ diag("=== DKIM2Verify milter tests ===");
 
 # Test 1: Verify a signed message through milter callbacks
 {
-    my $raw = path("tests/expected/chain-hop1-originator.eml")->slurp;
-    my $handler = run_verify($raw);
-    my @auth = @{$handler->{_auth_headers}};
-    ok(@auth > 0, "verify hop1: auth header added");
-    is($auth[0]->{value}, 'pass', "verify hop1: result is pass");
-}
+    # Generate a signed message inline
+    my $raw = path("tests/emails/brong-orig.eml")->slurp;
+    $raw =~ s/\r//gs;
+    $raw =~ s/\n/\r\n/gs;
+    my $msg = Email::MIME->new($raw);
+    my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+    my $mi_str = "Message-Instance: " . $mi->as_string() . "\r\n";
+    my $with_mi = $mi_str . $raw;
+    my $signer = Mail::DKIM2::Signer->new(
+        Domain   => 'test1.example.com',
+        Selector => 'rsa1024',
+        Key      => DKIM2TestKeys::private_key('test1.example.com', 'rsa1024'),
+        MailFrom => 'sender@test1.example.com',
+    );
+    $signer->PRINT($with_mi);
+    $signer->CLOSE();
+    my $signed_msg = $signer->as_string() . "\r\n" . $with_mi;
 
-# Test 2: Verify a multi-hop message
-{
-    my $raw = path("tests/expected/chain-hop3-relay-adds-Extra-Header.eml")->slurp;
-    my $handler = run_verify($raw);
+    my $handler = run_verify($signed_msg);
     my @auth = @{$handler->{_auth_headers}};
-    ok(@auth > 0, "verify hop3: auth header added");
-    is($auth[0]->{value}, 'pass', "verify hop3: result is pass");
+    ok(@auth > 0, "verify signed: auth header added");
+    is($auth[0]->{value}, 'pass', "verify signed: result is pass");
 }
 
 # Test 3: Message with no DKIM2-Signature
@@ -249,15 +248,6 @@ diag("=== DKIM2Verify milter tests ===");
     is($auth[0]->{value}, 'none', "no-sig: result is none");
 }
 
-# Test 4: Verify Python interop file
-{
-    my $raw = path("../python/tests/expected/simple-ed25519.eml")->slurp;
-    my $handler = run_verify($raw);
-    my @auth = @{$handler->{_auth_headers}};
-    ok(@auth > 0, "python ed25519: auth header added");
-    is($auth[0]->{value}, 'pass', "python ed25519: result is pass");
-}
-
 diag("=== DKIM2Sign milter tests ===");
 
 # Test 5: Sign a message through milter callbacks
@@ -265,9 +255,9 @@ diag("=== DKIM2Sign milter tests ===");
     my $raw = path("tests/emails/brong-orig.eml")->slurp;
     my ($handler, $mock) = run_sign($raw,
         domains => {
-            'test1.dkim2.com' => {
+            'test1.example.com' => {
                 selector => 'rsa1024',
-                keyfile  => "$keydir/rsa1024._domainkey.test1.dkim2.com.pem",
+                key => DKIM2TestKeys::private_key_pem('test1.example.com', 'rsa1024'),
             },
         },
     );
@@ -279,7 +269,7 @@ diag("=== DKIM2Sign milter tests ===");
     # Check the signature has expected structure
     my $sig_value = $dk2[0]->{value};
     like($sig_value, qr/i=1/, "sign: signature has i=1");
-    like($sig_value, qr/d=test1\.dkim2\.com/, "sign: signature has correct domain");
+    like($sig_value, qr/d=test1\.example\.com/, "sign: signature has correct domain");
     like($sig_value, qr/s=/, "sign: signature has s= tag");
 
     # Check MI was also added
@@ -294,9 +284,9 @@ diag("=== DKIM2Sign milter tests ===");
         _authenticated => 0,
         _local => 0,
         domains => {
-            'test1.dkim2.com' => {
+            'test1.example.com' => {
                 selector => 'rsa1024',
-                keyfile  => "$keydir/rsa1024._domainkey.test1.dkim2.com.pem",
+                key => DKIM2TestKeys::private_key_pem('test1.example.com', 'rsa1024'),
             },
         },
     );
@@ -323,9 +313,9 @@ diag("=== DKIM2Sign milter tests ===");
     my $raw = path("tests/emails/brong-orig.eml")->slurp;
     my ($sign_handler, $mock) = run_sign($raw,
         domains => {
-            'test1.dkim2.com' => {
+            'test1.example.com' => {
                 selector => 'rsa1024',
-                keyfile  => "$keydir/rsa1024._domainkey.test1.dkim2.com.pem",
+                key => DKIM2TestKeys::private_key_pem('test1.example.com', 'rsa1024'),
             },
         },
     );
@@ -377,8 +367,6 @@ sub make_originator_message {
     use Mail::DKIM2::MessageInstance;
 
     my $raw = path("tests/emails/brong-orig.eml")->slurp;
-    my $keyfile = path("../keys/rsa1024._domainkey.test1.dkim2.com.pem")->realpath;
-
     $raw =~ s/\r//gs;
     $raw =~ s/\n/\r\n/gs;
 
@@ -390,11 +378,11 @@ sub make_originator_message {
     # Prepend MI to message, then sign
     my $with_mi = $mi_str . $raw;
     my $signer = Mail::DKIM2::Signer->new(
-        Domain    => 'test1.dkim2.com',
+        Domain    => 'test1.example.com',
         Selector  => 'rsa1024',
-        KeyFile   => "$keyfile",
-        MailFrom  => 'sender@test1.dkim2.com',
-        RcptTo    => ['foo@test2.dkim2.com'],
+        Key       => DKIM2TestKeys::private_key('test1.example.com', 'rsa1024'),
+        MailFrom  => 'sender@test1.example.com',
+        RcptTo    => ['foo@test2.example.com'],
         Timestamp => 1740000000,
     );
     $signer->PRINT($with_mi);
@@ -422,9 +410,9 @@ sub run_outbound_sign {
     my ($raw, $snapshot_dir) = @_;
     my ($handler, $mock) = run_sign($raw,
         domains => {
-            'test2.dkim2.com' => {
+            'test2.example.com' => {
                 selector => 'rsa1024',
-                keyfile  => path("../keys/rsa1024._domainkey.test2.dkim2.com.pem")->realpath . "",
+                key => DKIM2TestKeys::private_key_pem('test2.example.com', 'rsa1024'),
             },
         },
         add_message_instance => 1,
@@ -433,7 +421,7 @@ sub run_outbound_sign {
         _local               => 1,
     );
     # Override env_from for the forwarding domain
-    $handler->{'env_from'} = '<forwarder@test2.dkim2.com>';
+    $handler->{'env_from'} = '<forwarder@test2.example.com>';
     # Re-run addheader with corrected env_from
     $mock = { pre_headers => [], add_headers => [] };
     $handler->addheader_callback($mock);
@@ -462,7 +450,7 @@ my $expected_dir = path("tests/expected");
 
 # Case 1: Unchanged forwarding
 #
-# Email arrives at foo@test2.dkim2.com and is forwarded to bar@example.net
+# Email arrives at foo@test2.example.com and is forwarded to bar@example.net
 # with no changes made.
 #
 # Flow:

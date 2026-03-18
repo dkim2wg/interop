@@ -209,12 +209,14 @@ sub relaxed_domain_match {
 # Args (hash):
 #   mi_headers  => arrayref of { v => N, raw => "..." } sorted by v ascending
 #   dk2_headers => arrayref of { i => N, raw => "...", sig => $sig_obj } sorted by i ascending
-#   signing_i   => the i= value being signed/verified (gets empty b= values)
+#   signing_i   => the i= value being signed/verified (gets empty s= value)
 #   signature   => the Signature object for the entry being signed/verified
+#   signing_header => optional folded header string (signer path)
 #
-# MI headers are interleaved before DKIM2-Sig headers based on version.
-# When we reach signing_i, remaining MI headers are flushed and the signature
-# is serialized with empty b= values. Headers beyond signing_i are excluded.
+# Per draft-clayton-dkim2-spec-08 Section 11.5:
+#   1. All Message-Instance headers in ascending v= order
+#   2. All prior DKIM2-Signature headers in ascending i= order
+#   3. The incomplete DKIM2-Signature (with empty s=) being signed/verified
 sub build_signing_input {
     my (%args) = @_;
     my @mi_headers  = @{$args{mi_headers}  || []};
@@ -223,30 +225,23 @@ sub build_signing_input {
     my $signature   = $args{signature};
 
     my $signing_input = '';
-    my $mi_idx = 0;
 
-    for my $dk2 (@dk2_headers) {
-        my $dk2_v = $dk2->{sig}->version || 0;
-        # Add MI headers up to this DKIM2-Sig's version
-        while ($mi_idx < @mi_headers && $mi_headers[$mi_idx]{v} <= $dk2_v) {
-            $signing_input .= dkim2_canonicalize_header($mi_headers[$mi_idx]{raw});
-            $mi_idx++;
-        }
-        if ($dk2->{i} == $signing_i) {
-            # Flush remaining MI headers before the signing entry
-            while ($mi_idx < @mi_headers) {
-                $signing_input .= dkim2_canonicalize_header($mi_headers[$mi_idx]{raw});
-                $mi_idx++;
-            }
-            # Signer passes signing_header (folded); verifier uses default (unfolded)
-            my $sig_header = $args{signing_header} // $signature->as_string_without_data();
-            $sig_header .= "\r\n" unless $sig_header =~ /\r\n$/;
-            $signing_input .= dkim2_canonicalize_header($sig_header);
-            last;
-        } else {
-            $signing_input .= dkim2_canonicalize_header($dk2->{raw});
-        }
+    # 1. All MI headers in ascending v= order
+    for my $mi (@mi_headers) {
+        $signing_input .= dkim2_canonicalize_header($mi->{raw});
     }
+
+    # 2. Prior DKIM2-Signature headers (i < signing_i) in ascending i= order
+    for my $dk2 (@dk2_headers) {
+        next if $dk2->{i} == $signing_i;
+        $signing_input .= dkim2_canonicalize_header($dk2->{raw});
+    }
+
+    # 3. The incomplete signature being signed/verified
+    # Signer passes signing_header (folded); verifier uses default (unfolded)
+    my $sig_header = $args{signing_header} // $signature->as_string_without_data();
+    $sig_header .= "\r\n" unless $sig_header =~ /\r\n$/;
+    $signing_input .= dkim2_canonicalize_header($sig_header);
 
     return $signing_input;
 }

@@ -262,25 +262,13 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Order: interleaved chronologically — each MI followed by its
-    # corresponding sig, reflecting the order headers were added:
-    # MI v=1, Sig i=1, MI v=2, Sig i=2, ..., then the incomplete sig
+    # Per draft-clayton-dkim2-spec-08 Section 11.5:
+    # 1. All MI headers in ascending v= order
+    # 2. All prior DKIM2-Signature headers in ascending i= order
+    # 3. The incomplete DKIM2-Signature being created
     ordered: list[str] = []
-
-    mi_sorted = sorted(mi_headers, key=_get_version_from_mi)
-    sig_sorted = sorted(sig_headers, key=_get_seq_from_sig)
-
-    # Pair up MI and sig headers by position (MI v=N was signed by sig i=N)
-    sig_idx = 0
-    for mi in mi_sorted:
-        ordered.append(mi)
-        if sig_idx < len(sig_sorted):
-            ordered.append(sig_sorted[sig_idx])
-            sig_idx += 1
-    # Add any remaining sigs (shouldn't happen in normal flow)
-    while sig_idx < len(sig_sorted):
-        ordered.append(sig_sorted[sig_idx])
-        sig_idx += 1
+    ordered.extend(sorted(mi_headers, key=_get_version_from_mi))
+    ordered.extend(sorted(sig_headers, key=_get_seq_from_sig))
     ordered.append(incomplete_sig)
 
     # Canonicalize each header

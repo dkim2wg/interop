@@ -260,18 +260,13 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     )
     prior_sigs = sorted(other_sig_headers, key=_get_seq_from_sig)
 
-    # Order: interleaved chronologically — MI v=1, Sig i=1, MI v=2, ...
-    # then the incomplete sig being verified
+    # Per draft-clayton-dkim2-spec-08 Section 11.5:
+    # 1. All MI headers in ascending v= order
+    # 2. All prior DKIM2-Signature headers in ascending i= order
+    # 3. The incomplete DKIM2-Signature being verified
     ordered: list[str] = []
-    sig_idx = 0
-    for mi in relevant_mi:
-        ordered.append(mi)
-        if sig_idx < len(prior_sigs):
-            ordered.append(prior_sigs[sig_idx])
-            sig_idx += 1
-    while sig_idx < len(prior_sigs):
-        ordered.append(prior_sigs[sig_idx])
-        sig_idx += 1
+    ordered.extend(relevant_mi)  # already sorted by version
+    ordered.extend(prior_sigs)   # already sorted by sequence
     ordered.append(incomplete_sig)
 
     # Canonicalize and hash

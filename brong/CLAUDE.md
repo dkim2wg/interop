@@ -101,7 +101,7 @@ in `../python/tests/expected/`. Both implementations must agree on:
 
 - Header hash computation (header ordering, canonicalization)
 - Body hash computation (simple body canonicalization)
-- Signing input construction (interleaved MI/DK2 ordering)
+- Signing input construction (all MI first, then all DK2, then incomplete sig)
 - Signature computation (RSA-SHA256, Ed25519-SHA256)
 
 Known spec ambiguities found during interop testing are documented in

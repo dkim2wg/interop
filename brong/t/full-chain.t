@@ -8,76 +8,65 @@ use Path::Tiny;
 use Email::MIME;
 use JSON;
 use MIME::Base64;
-use lib 'lib';
+use lib 'lib', 't/lib';
 
 use Mail::DKIM2::Common qw(dkim2_canonicalize_header parse_dkim_pubkey fold_header);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
-
-# Load DNS keys
-my $dns = decode_json(path('../dns.json')->slurp);
-
-sub find_key {
-    my ($signature, $idx) = @_;
-    $idx //= 0;
-    my $sel = $signature->selector($idx);
-    my $dom = $signature->domain;
-    my $key_txt = $dns->{$dom}{"$sel._domainkey"}[0][1];
-    return parse_dkim_pubkey($key_txt);
-}
+use DKIM2TestKeys;
 
 # ============================================================
 # The progression: 5 hops, each with a different domain/selector
 #
-#   brong-orig.eml  -- originator at test1.dkim2.com (sel1)
-#   brong-mm.eml    -- mailing list at test2.dkim2.com (sel2)
-#   brong-mm2.eml   -- relay adds header at test3.dkim2.com (sel3)
-#   brong-mm3.eml   -- relay removes header at test4.dkim2.com (sel1)
-#   brong-final.eml -- final delivery at test5.dkim2.com (sel2)
+#   brong-orig.eml  -- originator at test1.example.com (sel1)
+#   brong-mm.eml    -- mailing list at test2.example.com (sel2)
+#   brong-mm2.eml   -- relay adds header at test3.example.com (sel3)
+#   brong-mm3.eml   -- relay removes header at test4.example.com (sel1)
+#   brong-final.eml -- final delivery at test5.example.com (sel2)
 # ============================================================
 
 my @hops = (
     {
         name     => 'originator',
         file     => 'tests/emails/brong-orig.eml',
-        domain   => 'test1.dkim2.com',
+        domain   => 'test1.example.com',
         selector => 'sel1',
-        mailfrom => 'brong@test1.dkim2.com',
-        rcptto   => ['list@test2.dkim2.com'],
+        mailfrom => 'brong@test1.example.com',
+        rcptto   => ['list@test2.example.com'],
     },
     {
         name     => 'mailing list',
         file     => 'tests/emails/brong-mm.eml',
-        domain   => 'test2.dkim2.com',
+        domain   => 'test2.example.com',
         selector => 'sel2',
-        mailfrom => 'bounces@test2.dkim2.com',
-        rcptto   => ['user@test3.dkim2.com'],
+        mailfrom => 'bounces@test2.example.com',
+        rcptto   => ['user@test3.example.com'],
     },
     {
         name     => 'relay adds Extra-Header',
         file     => 'tests/emails/brong-mm2.eml',
-        domain   => 'test3.dkim2.com',
+        domain   => 'test3.example.com',
         selector => 'sel3',
-        mailfrom => 'relay@test3.dkim2.com',
-        rcptto   => ['user@test4.dkim2.com'],
+        mailfrom => 'relay@test3.example.com',
+        rcptto   => ['user@test4.example.com'],
     },
     {
         name     => 'relay removes Extra-Header',
         file     => 'tests/emails/brong-mm3.eml',
-        domain   => 'test4.dkim2.com',
+        domain   => 'test4.example.com',
         selector => 'sel1',
-        mailfrom => 'relay@test4.dkim2.com',
-        rcptto   => ['user@test5.dkim2.com'],
+        mailfrom => 'relay@test4.example.com',
+        rcptto   => ['user@test5.example.com'],
     },
     {
         name     => 'final delivery',
         file     => 'tests/emails/brong-final.eml',
-        domain   => 'test5.dkim2.com',
+        domain   => 'test5.example.com',
         selector => 'sel2',
-        mailfrom => 'forwarder@test5.dkim2.com',
-        rcptto   => ['brong@test1.dkim2.com'],
+        mailfrom => 'forwarder@test5.example.com',
+        rcptto   => ['brong@test1.example.com'],
     },
 );
 
@@ -113,11 +102,10 @@ my $TIMESTAMP = 1740000000;
 
 sub sign_msg {
     my ($msg, $hop) = @_;
-    my $keyfile = "../keys/$hop->{selector}._domainkey.$hop->{domain}.pem";
     my $signer = Mail::DKIM2::Signer->new(
         Domain    => $hop->{domain},
         Selector  => $hop->{selector},
-        KeyFile   => $keyfile,
+        Key       => DKIM2TestKeys::private_key($hop->{domain}, $hop->{selector}),
         MailFrom  => $hop->{mailfrom},
         RcptTo    => $hop->{rcptto},
         Timestamp => $TIMESTAMP,
@@ -133,7 +121,7 @@ sub sign_msg {
 sub verify_msg {
     my ($msg) = @_;
     my $verifier = Mail::DKIM2::Verifier->new();
-    $verifier->set_pubkey_callback(\&find_key);
+    $verifier->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
     $verifier->PRINT($msg->as_string());
     $verifier->CLOSE;
     return $verifier;
@@ -333,10 +321,10 @@ diag("=== Unchanged message re-sign ===");
     # Sign with a new hop — signature is added but MI count stays the same
     my $hop6 = {
         name     => 'unchanged re-sign',
-        domain   => 'test1.dkim2.com',
+        domain   => 'test1.example.com',
         selector => 'sel1',
-        mailfrom => 'relay@test1.dkim2.com',
-        rcptto   => ['dest@test2.dkim2.com'],
+        mailfrom => 'relay@test1.example.com',
+        rcptto   => ['dest@test2.example.com'],
     };
     sign_msg($msg, $hop6);
     $msg = Email::MIME->new($msg->as_string);
