@@ -255,7 +255,7 @@ sub cb_eom {
 
     # --- Insert MI header (even without signing, for downstream diffing) ---
     if ($mi_header) {
-        $ctx->insheader('Message-Instance', $mi_header, 0);
+        $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
         $ctx->insheader('X-DKIM2-MI-Source', 'dkim2-milter', 0);
         warn "dkim2-milter: added MI header for $msgid\n";
     }
@@ -272,7 +272,7 @@ sub cb_eom {
 
             my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
             if ($sig_header) {
-                $ctx->insheader('DKIM2-Signature', $sig_header, 0);
+                $ctx->insheader('DKIM2-Signature', _milter_value($sig_header), 0);
                 warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
                    . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
             }
@@ -406,9 +406,14 @@ sub _format_mi {
     my ($mi) = @_;
     my $folded = fold_header("Message-Instance: " . $mi->as_string());
     $folded =~ s/^Message-Instance: //;
-    # Convert CRLF folding to LF for milter protocol (CRLF = end of value)
-    $folded =~ s/\r\n/\n/g;
     return $folded;
+}
+
+# Convert CRLF folding to LF for milter insheader (CRLF = end of value)
+sub _milter_value {
+    my ($val) = @_;
+    $val =~ s/\r\n/\n/g;
+    return $val;
 }
 
 # --- Signing ---
