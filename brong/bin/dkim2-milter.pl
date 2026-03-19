@@ -368,19 +368,38 @@ sub _compute_mi {
     my @mi_hdrs = $msg->header_raw('Message-Instance');
 
     if (@mi_hdrs && $snapshot_store) {
-        # Try to find a snapshot for diff computation
         my %by_v = map { (extract_mi_version($_) || 0) => $_ } @mi_hdrs;
+        my $max_v = (sort { $b <=> $a } keys %by_v)[0];
+
+        # Try to find a snapshot for diff computation
         for my $v (sort { $b <=> $a } keys %by_v) {
             my $snap = $snapshot_store->fetch($by_v{$v});
             if ($snap) {
                 my $snap_msg = Email::MIME->new($snap);
-                my $mi = Mail::DKIM2::MessageInstance->calculate($msg, $snap_msg);
-                my $mi_val = _format_mi($mi);
-                # Store new snapshot
-                my $EOL = "\015\012";
-                $snapshot_store->store($mi_val,
-                    "Message-Instance: $mi_val$EOL" . $message);
-                return $mi_val;
+                my @snap_mi = $snap_msg->header_raw('Message-Instance');
+
+                # If the current message has more MI headers than the
+                # snapshot, upstream (e.g. Mailman) already computed the
+                # diff.  Just cache the current state and move on.
+                if (@mi_hdrs > @snap_mi) {
+                    $snapshot_store->store($by_v{$max_v}, $message);
+                    return undef;
+                }
+
+                my $mi = eval {
+                    Mail::DKIM2::MessageInstance->calculate($msg, $snap_msg);
+                };
+                if ($mi) {
+                    my $mi_val = _format_mi($mi);
+                    # Store new snapshot
+                    my $EOL = "\015\012";
+                    $snapshot_store->store($mi_val,
+                        "Message-Instance: $mi_val$EOL" . $message);
+                    return $mi_val;
+                }
+                # calculate failed — upstream may have added MI already
+                $snapshot_store->store($by_v{$max_v}, $message);
+                return undef;
             }
         }
         # Modified but no snapshot available
