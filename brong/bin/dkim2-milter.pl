@@ -256,7 +256,8 @@ sub cb_eom {
     # --- Insert MI header (even without signing, for downstream diffing) ---
     if ($mi_header) {
         $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
-        $ctx->insheader('X-DKIM2-MI-Source', 'dkim2-milter', 0);
+        my ($mi_ver) = $mi_header =~ /v=(\d+)/;
+        $ctx->insheader('X-DKIM2-MI-Source', "v=$mi_ver; dkim2-milter", 0);
         warn "dkim2-milter: added MI header for $msgid\n";
     }
 
