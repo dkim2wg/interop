@@ -1,0 +1,29 @@
+[Unit]
+Description=DKIM2 Milter Daemon
+After=network.target
+Before=postfix.service
+
+[Service]
+Type=simple
+User=dkim2
+Group=postfix
+ExecStartPre=/bin/mkdir -p /var/spool/postfix/var/run
+ExecStartPre=/bin/mkdir -p /var/spool/dkim2/snapshots
+ExecStart=/usr/bin/perl -I/opt/dkim2/interop/brong/lib \
+    /opt/dkim2/interop/brong/bin/dkim2-milter.pl \
+    --socket unix:/var/spool/postfix/var/run/dkim2-milter.sock \
+    --keydir /etc/dkim2/keys \
+    --snapshot-dir /var/spool/dkim2/snapshots \
+    --dns-json /opt/dkim2/interop/dns.json \
+    --verify --sign
+Restart=on-failure
+RestartSec=5
+UMask=0007
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/spool/postfix/var/run /var/spool/dkim2/snapshots
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

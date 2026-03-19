@@ -11,14 +11,14 @@ for my $file (glob "keys/*.pem") {
    # smaller than 500 bytes are ed25519
    my $r;
    if ($size < 500) {
-      # https://www.mailhardener.com/kb/how-to-use-dkim-with-ed25519
-      my $p = `openssl asn1parse -in $file -offset 12 -noout -out /dev/stdout | openssl base64`;
+      # RFC 8463: raw 32-byte public key, not SPKI-wrapped
+      # SPKI DER for Ed25519 is 44 bytes: 12-byte header + 32-byte key
+      my $p = `openssl pkey -in $file -pubout -outform DER 2>/dev/null | tail -c 32 | openssl base64 -A`;
       chomp $p;
       $r = "v=DKIM1; k=ed25519; p=$p";
    }
    else {
-      # https://www.mailhardener.com/kb/how-to-create-a-dkim-record-with-openssl
-      my $p = `openssl ec -in $file -pubout -outform der 2>/dev/null | openssl base64 -A`;
+      my $p = `openssl rsa -in $file -pubout -outform DER 2>/dev/null | openssl base64 -A`;
       chomp $p;
       $r = "v=DKIM1; k=rsa; p=$p";
    }

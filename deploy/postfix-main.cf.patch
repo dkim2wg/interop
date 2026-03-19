@@ -1,0 +1,30 @@
+# Postfix main.cf additions for DKIM2 demo server
+#
+# These settings are applied by setup-dkim2-demo.sh via postconf -e.
+# This file is provided as documentation of what gets changed.
+#
+# To apply manually instead of running the setup script:
+#   while IFS='=' read -r key value; do
+#     [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+#     postconf -e "$key = $value"
+#   done < postfix-main.cf.patch
+
+myhostname = mail.dkim2.com
+mydomain = dkim2.com
+myorigin = $mydomain
+mydestination = dkim2.com, test1.dkim2.com, test2.dkim2.com, test3.dkim2.com, test4.dkim2.com, test5.dkim2.com, sympa.dkim2.com, mailman.dkim2.com, localhost
+
+# Milter — socket path relative to Postfix chroot
+smtpd_milters = unix:var/run/dkim2-milter.sock
+non_smtpd_milters = unix:var/run/dkim2-milter.sock
+milter_default_action = accept
+milter_protocol = 6
+
+# TLS
+smtpd_tls_cert_file = /etc/letsencrypt/live/mail.dkim2.com/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/mail.dkim2.com/privkey.pem
+smtpd_tls_security_level = may
+smtp_tls_security_level = may
+
+# Keep it lean (1GB RAM)
+default_process_limit = 20
