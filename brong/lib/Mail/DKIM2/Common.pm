@@ -89,71 +89,69 @@ sub decode_tag_json {
 # First tries to fold at "; " tag boundaries, then breaks any remaining
 # long segments at character positions.
 # Input: a complete header line like "DKIM2-Signature: i=1; v=1; ..."
-# Output: folded with "\r\n " continuation lines
+# Output: folded with "\r\n\t" continuation lines
+# Tab = 8 chars visually, so continuation lines get 64 chars of content.
+# First line target: 72 chars.  Continuation: 64 content + 8 tab = 72.
 sub fold_header {
     my ($line, $margin) = @_;
     $margin //= 72;
+    my $cont_margin = $margin - 8;  # content chars on continuation lines
 
     return $line if length($line) <= $margin;
 
-    # Split into tag-value segments at "; " boundaries
-    # Keep the "; " as part of the preceding segment
-    my @parts;
-    while ($line =~ /\G(.*?;\s*)/gc) {
-        push @parts, $1;
-    }
-    # Remainder after last semicolon (or whole string if no semicolons)
-    my $rest = substr($line, pos($line) // 0);
-    push @parts, $rest if length($rest);
-
-    # Group parts into lines, preferring breaks at tag boundaries
-    my @output;
-    my $current = '';
-    my $is_first = 1;
-
-    for my $part (@parts) {
-        my $limit = $is_first ? $margin : $margin - 1;
-        if ($current eq '') {
-            $current = $part;
-        }
-        elsif (length($current) + length($part) <= $limit) {
-            $current .= $part;
-        }
-        else {
-            push @output, $current;
-            $is_first = 0;
-            $current = $part;
-        }
-    }
-    push @output, $current if $current ne '';
-
-    # Break any lines that still exceed the margin
     my @folded;
-    $is_first = 1;
-    for my $seg (@output) {
-        my $limit = $is_first ? $margin : $margin - 1;
-        while (length($seg) > $limit) {
-            # Extend past '=' padding, ';' delimiters, or a single
-            # trailing char to avoid orphaning them on the next line.
-            # This may produce lines up to ~74 chars, still under 78.
-            my $break = $limit;
-            while ($break < length($seg) && (
-                length($seg) - $break <= 1
-                || substr($seg, $break, 1) eq ';'
-                || substr($seg, $break, 1) eq '='
-            )) {
-                $break++;
-            }
-            last if $break >= length($seg);
-            push @folded, substr($seg, 0, $break, '');
-            $is_first = 0;
-            $limit = $margin - 1;
-        }
-        push @folded, $seg if length($seg);
-        $is_first = 0;
-    }
+    my $remaining = $line;
+    my $limit = $margin;
 
-    return join("\r\n ", @folded);
+    while (length($remaining) > $limit) {
+        # Find the best break point: prefer "; " boundaries, then
+        # any space.  Look backwards from the limit.
+        my $break = -1;
+
+        # Try to break at "; " (tag boundary)
+        my $search = substr($remaining, 0, $limit);
+        my $pos = rindex($search, '; ');
+        if ($pos > 0) {
+            # Break after the semicolon, before the space
+            $break = $pos + 1;
+        }
+
+        # If no tag boundary, try breaking at any space
+        if ($break < 0) {
+            $pos = rindex($search, ' ');
+            $break = $pos if $pos > 0;
+        }
+
+        # If a space occurs within 2 chars before the limit, fold at
+        # the space rather than leaving a 1-2 char orphan before the
+        # next forced break.
+        if ($break < 0 || $limit - $break <= 2) {
+            # Check for a space near the limit
+            for my $i (reverse ($limit - 3)..($limit - 1)) {
+                next if $i < 0 || $i >= length($remaining);
+                if (substr($remaining, $i, 1) eq ' ') {
+                    $break = $i;
+                    last;
+                }
+            }
+        }
+
+        # Last resort: hard break at limit
+        $break = $limit if $break < 0;
+
+        my $chunk = substr($remaining, 0, $break);
+        $remaining = substr($remaining, $break);
+
+        # Strip trailing WSP from chunk, leading WSP from remainder
+        $chunk =~ s/\s+$//;
+        $remaining =~ s/^\s+//;
+
+        push @folded, $chunk;
+        $limit = $cont_margin;
+    }
+    push @folded, $remaining if length($remaining);
+
+    return join("\r\n\t", @folded);
 }
 
 # Fold a string at arbitrary character positions.
@@ -161,7 +159,7 @@ sub fold_header {
 # after signature computation but before insertion into the message.
 sub fold_value {
     my ($line, $margin) = @_;
-    $margin //= 71;  # 71 to account for leading continuation space
+    $margin //= 64;  # 64 content + 8 tab = 72 visible
 
     return $line if length($line) <= $margin;
 
@@ -169,7 +167,7 @@ sub fold_value {
     while (length($line) > 0) {
         push @parts, substr($line, 0, $margin, '');
     }
-    return join("\r\n ", @parts);
+    return join("\r\n\t", @parts);
 }
 
 # Extract the version number from a Message-Instance header value
