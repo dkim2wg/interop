@@ -20,6 +20,7 @@ use Email::MIME;
 my %opts;
 GetOptions(\%opts,
     'socket|s=s',
+    'mode|m=s',
     'domain|d=s',
     'selector=s',
     'keyfile|k=s',
@@ -27,8 +28,6 @@ GetOptions(\%opts,
     'algorithm|a=s',
     'snapshot-dir=s',
     'dns-json=s',
-    'verify!',
-    'sign!',
     'help|h',
 ) or pod2usage(2);
 
@@ -36,18 +35,22 @@ pod2usage(-exitval => 0, -verbose => 2) if $opts{help};
 
 $opts{socket}    //= 'unix:/var/run/dkim2-milter.sock';
 $opts{algorithm} //= 'rsa-sha256';
-$opts{verify}    //= 1;
+$opts{mode}      //= 'both';
 
-# Determine if signing is enabled
+unless ($opts{mode} =~ /^(inbound|outbound|both)$/) {
+    die "Invalid --mode: must be inbound, outbound, or both\n";
+}
+
+my $do_verify = $opts{mode} eq 'inbound' || $opts{mode} eq 'both';
+my $do_sign   = $opts{mode} eq 'outbound' || $opts{mode} eq 'both';
+
+# Determine if signing is possible
 my $can_sign_single = $opts{domain} && $opts{selector} && $opts{keyfile};
 my $can_sign_keydir = $opts{keydir} && -d $opts{keydir};
 my $can_sign = $can_sign_single || $can_sign_keydir;
-if (defined $opts{sign}) {
-    if ($opts{sign} && !$can_sign) {
-        die "Signing requires --keydir OR (--domain, --selector, and --keyfile)\n";
-    }
-} else {
-    $opts{sign} = $can_sign ? 1 : 0;
+
+if ($do_sign && !$can_sign) {
+    die "Signing (--mode $opts{mode}) requires --keydir OR (--domain, --selector, and --keyfile)\n";
 }
 
 if ($can_sign_single && $can_sign_keydir) {
@@ -68,7 +71,7 @@ my %keydir_cache;
 if ($can_sign_keydir) {
     warn "dkim2-milter: signing enabled via keydir $opts{keydir}\n";
 }
-warn "dkim2-milter: verification " . ($opts{verify} ? "enabled" : "disabled") . "\n";
+warn "dkim2-milter: mode=$opts{mode}\n";
 
 # Preload DNS overrides if specified
 my $dns_data;
@@ -233,36 +236,47 @@ sub cb_eom {
         }
     }
 
-    warn "dkim2-milter: processing $msgid from=$priv->{env_from}\n";
+    warn "dkim2-milter: processing $msgid from=$priv->{env_from} mode=$opts{mode}\n";
 
-    # --- Verification ---
-    if ($opts{verify}) {
+    # --- Inbound: verify and cache snapshot ---
+    if ($do_verify) {
         my $result = _do_verify($message);
         warn "dkim2-milter: verify $msgid result=$result\n";
-        # Add Authentication-Results header at position 0 (top)
         $ctx->insheader('Authentication-Results',
             "localhost; dkim2=$result", 0);
-    }
 
-    # --- Message-Instance computation ---
-    my $mi_header;
-    if ($snapshot_store) {
-        $mi_header = _compute_mi($message);
+        # Compute MI for inbound: add v=1 if none, cache snapshot
+        my $mi_header;
+        if ($snapshot_store) {
+            $mi_header = _compute_mi($message);
+            if ($mi_header) {
+                warn "dkim2-milter: computed MI for $msgid\n";
+            }
+        }
+
         if ($mi_header) {
-            warn "dkim2-milter: computed MI for $msgid\n";
+            $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
+            my ($mi_ver) = $mi_header =~ /v=(\d+)/;
+            $ctx->insheader('X-DKIM2-MI-Source', "v=$mi_ver; dkim2-milter", 0);
+            warn "dkim2-milter: added MI header for $msgid\n";
         }
     }
 
-    # --- Insert MI header (even without signing, for downstream diffing) ---
-    if ($mi_header) {
-        $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
-        my ($mi_ver) = $mi_header =~ /v=(\d+)/;
-        $ctx->insheader('X-DKIM2-MI-Source', "v=$mi_ver; dkim2-milter", 0);
-        warn "dkim2-milter: added MI header for $msgid\n";
-    }
+    # --- Outbound: compute MI diff if needed, then sign ---
+    if ($do_sign) {
+        # Check if upstream already handled MI (more MI headers than cached)
+        my $mi_header;
+        if ($snapshot_store) {
+            $mi_header = _compute_mi($message);
+            if ($mi_header) {
+                warn "dkim2-milter: computed MI for $msgid\n";
+                $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
+                my ($mi_ver) = $mi_header =~ /v=(\d+)/;
+                $ctx->insheader('X-DKIM2-MI-Source', "v=$mi_ver; dkim2-milter", 0);
+                warn "dkim2-milter: added MI header for $msgid\n";
+            }
+        }
 
-    # --- Signing ---
-    if ($opts{sign}) {
         my $sign_config = _get_sign_config($priv->{env_from});
         if ($sign_config) {
             # If we computed an MI, prepend it to the message for the signer
