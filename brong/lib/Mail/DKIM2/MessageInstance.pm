@@ -72,19 +72,17 @@ sub get_tag {
     return $self->{bits}{$k};
 }
 
-# --- Wire format: v=N; h=<b64json>; r=<b64json> ---
+# --- Wire format: v=N; h=sha256:header_hash:body_hash; r=<b64json> ---
 
 sub as_string {
     my ($self) = @_;
     my %data = %{$self->{bits}};
     my $v = delete $data{v};
 
-    # Build h= tag JSON: {"h":["sha256","xxx"],"b":["sha256","xxx"]}
-    my %hash_json;
-    $hash_json{h} = ['sha256', delete $data{h1}] if exists $data{h1};
-    $hash_json{b} = ['sha256', delete $data{b1}] if exists $data{b1};
-
-    my $result = "v=$v; h=" . encode_tag_json(\%hash_json);
+    # Build h= tag: sha256:header_hash:body_hash
+    my $h1 = delete $data{h1} // '';
+    my $b1 = delete $data{b1} // '';
+    my $result = "v=$v; h=sha256:$h1:$b1";
 
     # Build r= tag JSON if there are recipes
     my %recipe_json;
@@ -136,22 +134,12 @@ sub parse {
         unless exists $tags{v};
     $self->{bits}{v} = $tags{v};
 
-    # Handle -08 format: h= and r= tags
+    # Parse h= tag: sha256:header_hash:body_hash
     if (exists $tags{h}) {
-        my $hash_data = decode_tag_json($tags{h});
-        if ($hash_data->{h} && ref $hash_data->{h} eq 'ARRAY') {
-            $self->{bits}{h1} = $hash_data->{h}[1];
-        }
-        if ($hash_data->{b} && ref $hash_data->{b} eq 'ARRAY') {
-            $self->{bits}{b1} = $hash_data->{b}[1];
-        }
-    }
-    # Handle legacy -06 format: j= tag
-    elsif (exists $tags{j}) {
-        my $data = decode_tag_json($tags{j});
-        for my $k (keys %$data) {
-            $self->{bits}{$k} = $data->{$k};
-        }
+        my @parts = split(/:/, $tags{h});
+        # algorithm:header_hash:body_hash
+        $self->{bits}{h1} = $parts[1];
+        $self->{bits}{b1} = $parts[2];
     }
 
     if (exists $tags{r}) {

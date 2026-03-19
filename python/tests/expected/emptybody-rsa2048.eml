@@ -1,0 +1,8 @@
+DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=sel1:rsa:VxoNlEdtoAWYsueglQ+B9Tp+OINTJrMvmvO5gm2I/wNCnSAOW2bk0qjTah+Rg+dMJJsyhWPlTQRyKRKrp/0iL3rLnS/UHOktZeku+8UGW3Rcu120eNEVp7TdqrDFNnFAKFzxQtolWHJOi/e5zgfxyqJUP/vXCka09f5rIx+gU1306UoL2VeV9EbD5SM/gZxYNeO+KrqzaYiEUBtpH5C7WxynxdyEqNRm8jLzvI7rDr3b0VY3D+DgtXBxxrpVChvdLfn0Pg69AZ8PNjisM8tkQD09VoJomTVB/VI+FXWk5BzZATrlRprBx4cY0XjVR2JMm5ZauQ8SA26mxr5eSzZOeQ==
+Message-Instance: v=1; h=sha256:WT8nqIyG8W1R78H1QT4oZdo1SKdQrY9JHQ4fMC+IXHU=:frcCV1k9oG9oKj3dpUqdJg1PxRT2RSN/XKdLCPjaYaY=
+From: sender@test4.dkim2.com
+To: recipient@example.com
+Subject: Message with empty body
+Date: Sat, 01 Mar 2026 12:00:00 +0000
+Message-ID: <test-empty@test4.dkim2.com>
+

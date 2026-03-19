@@ -1,4 +1,4 @@
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=ed25519:ed25519:zMGielIOO8HFuCvSlZNaXCmL+14z6kzdV/HcAiO4HSh2DzHFBnbb93CG1GSbHHXxxfwztJKVQlP8f3Ujxl+BAw==
+DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=rsa1024:rsa:aIDwTUxde/ec+dPhhTks6lxp+irVtAFELCdKF2pK1rZK2Bsgu65v/sRUB2+Zir3OZwvls9MLaqnbLfY5U+nVVnseyy3v0lV99qown289cP0T3/bG31HtBHxIoVjmYyAdEz3sL1zD10nmQAkJ8dYHcuxJ1JaB8q1OwUeqQQtWvGc=
 Message-Instance: v=1; h=sha256:AfpBX5VmAIJLyRjG5w0mENbh6QDhUw88/norVLXQLY8=:1qpsCHgYA5m9tWU1x8yom2ztdiaAQirhqJujNRLDbAs=
 From: sender@test1.dkim2.com
 To: recipient@example.com
@@ -11,4 +11,4 @@ Authentication-Results: mx1.example.com; spf=pass
 Authentication-Results: mx2.example.com; dkim=pass
 Authentication-Results: mx3.example.com; dmarc=pass
 
-Test message with duplicate headers that must be sorted bottom-up.
+Test message with duplicate headers that must be sorted bottom-up.

@@ -77,7 +77,8 @@ def parse_message(raw: bytes) -> tuple[list[bytes], bytes]:
 # Headers to exclude from the header hash
 _EXCLUDED_PREFIXES = (b"x-", b"arc-")
 _EXCLUDED_NAMES = {b"received", b"return-path", b"message-instance",
-                   b"dkim2-signature", b"dkim-signature"}
+                   b"dkim2-signature", b"dkim-signature",
+                   b"authentication-results"}
 
 
 def _header_name(hdr: bytes) -> bytes:
@@ -201,12 +202,7 @@ def build_message_instance(headers: list[bytes], body: bytes,
     h_hash = compute_header_hash(headers)
     b_hash = compute_body_hash(body)
 
-    hashes_obj = {
-        "h": ["sha256", b64(h_hash)],
-        "b": ["sha256", b64(b_hash)],
-    }
-
-    return f"Message-Instance: v={version}; h={b64json(hashes_obj)}"
+    return f"Message-Instance: v={version}; h=sha256:{b64(h_hash)}:{b64(b_hash)}"
 
 
 # ---------------------------------------------------------------------------
@@ -335,13 +331,13 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     sig_bytes = compute_signature(all_mi, sig_headers, incomplete,
                                  private_key, algorithm)
 
-    # Build s= tag JSON: array of [selector, algorithm, value] arrays
-    s_complete = [[selector, algorithm, b64(sig_bytes)]]
+    # Build s= tag: sel:alg:sig
+    s_complete = f"{selector}:{algorithm}:{b64(sig_bytes)}"
 
     # Build the final header with the actual signature value
     return (
         f"DKIM2-Signature: i={seq}; v={mi_version}; t={timestamp}; "
-        f"d={domain}; m={b64json(m_obj)}; s={b64json(s_complete)}"
+        f"d={domain}; m={b64json(m_obj)}; s={s_complete}"
     )
 
 

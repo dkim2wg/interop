@@ -346,13 +346,14 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
         if target_mi:
             colon = target_mi[1].find(":")
             value = target_mi[1][colon + 1:]
-            h_b64 = _extract_tag(value, "h")
-            if h_b64:
-                h_obj = json.loads(base64.b64decode(h_b64))
+            h_tag = _extract_tag(value, "h")
+            if h_tag:
+                # Parse h= tag: sha256:header_hash:body_hash
+                parts = h_tag.split(":")
+                if len(parts) == 3:
+                    _alg, h_b64, b_b64 = parts
 
-                h_info = h_obj.get("h")
-                if h_info:
-                    expected_h = base64.b64decode(h_info[1])
+                    expected_h = base64.b64decode(h_b64)
                     actual_h = compute_header_hash(current_content_headers)
                     if expected_h == actual_h:
                         if verbose:
@@ -361,12 +362,10 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
                     else:
                         print(f"WARNING: Header hash mismatch after undo!",
                               file=sys.stderr)
-                        print(f"  expected: {h_info[1]}", file=sys.stderr)
+                        print(f"  expected: {h_b64}", file=sys.stderr)
                         print(f"  got:      {b64(actual_h)}", file=sys.stderr)
 
-                b_info = h_obj.get("b")
-                if b_info:
-                    expected_b = base64.b64decode(b_info[1])
+                    expected_b = base64.b64decode(b_b64)
                     actual_b = compute_body_hash(current_body)
                     if expected_b == actual_b:
                         if verbose:
@@ -375,7 +374,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
                     else:
                         print(f"WARNING: Body hash mismatch after undo!",
                               file=sys.stderr)
-                        print(f"  expected: {b_info[1]}", file=sys.stderr)
+                        print(f"  expected: {b_b64}", file=sys.stderr)
                         print(f"  got:      {b64(actual_b)}", file=sys.stderr)
 
     # Reassemble the message

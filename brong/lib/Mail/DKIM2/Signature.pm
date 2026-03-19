@@ -37,7 +37,12 @@ sub new {
     }
 
     if (defined $args{Signatures}) {
-        $self->set_tag('s', encode_tag_json($args{Signatures}));
+        # Encode as sel:alg:sig,sel2:alg2:sig2,...
+        my @parts;
+        for my $item (@{$args{Signatures}}) {
+            push @parts, join(':', @$item);
+        }
+        $self->set_tag('s', join(',', @parts));
     }
 
     return $self;
@@ -105,8 +110,13 @@ sub smtp_params {
 sub signatures_data {
     my $self = shift;
     my $s = $self->get_tag('s');
-    return unless defined $s;
-    return decode_tag_json($s);
+    return unless defined $s && length $s;
+    # Parse sel:alg:sig,sel2:alg2:sig2,...
+    my @items;
+    for my $part (split /,/, $s) {
+        push @items, [split(/:/, $part, 3)];
+    }
+    return \@items;
 }
 
 # --- Convenience methods for SMTP params ---
@@ -127,20 +137,9 @@ sub rcpt_to {
 
 # --- Convenience methods for signature items ---
 
-# Normalize signature items: handle both spec format (array of 3-element arrays)
-# and flat array format [sel, alg, val, sel2, alg2, val2, ...]
 sub _sig_items {
     my ($self) = @_;
-    my $sigs = $self->signatures_data;
-    return unless $sigs && @$sigs;
-    # Spec format: array of 3-element arrays
-    return $sigs if ref($sigs->[0]) eq 'ARRAY';
-    # Flat array: group into triples
-    my @items;
-    for (my $i = 0; $i + 2 < @$sigs; $i += 3) {
-        push @items, [$sigs->[$i], $sigs->[$i+1], $sigs->[$i+2]];
-    }
-    return \@items;
+    return $self->signatures_data;
 }
 
 sub selector {

@@ -9,7 +9,6 @@ use Carp;
 
 use Mail::DKIM2::Common qw(
     dkim2_canonicalize_header
-    encode_tag_json
     build_signing_input
     extract_mi_version
     load_private_key
@@ -133,12 +132,8 @@ sub finish_body {
     my $signb64 = encode_base64($sig_raw, '');
 
     # Update the signature object with the actual signature
-    my @sig_items = ([
-        $self->{Selector},
-        $self->{Algorithm},
-        $signb64,
-    ]);
-    $signature->set_tag('s', encode_tag_json(\@sig_items));
+    # Format: sel:alg:sig
+    $signature->set_tag('s', join(':', $self->{Selector}, $self->{Algorithm}, $signb64));
 
     $self->{result} = 'signed';
 }

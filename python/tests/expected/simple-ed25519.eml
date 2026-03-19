@@ -1,5 +1,5 @@
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=W1siZWQyNTUxOSIsImVkMjU1MTkiLCJZT0V0Q1l0d2U4NUl6UXlscENhYm9abDdnamN3aUlFUjE2cHhZdWx2TlpIYTBMemFDdmMwZ0lJTlZTbFdDeDcxTUNTVURaTnlmTnJOUVlxV2Fyd29BQT09Il1d
-Message-Instance: v=1; h=eyJoIjpbInNoYTI1NiIsIlNMdHprNkxPNjhDQ2FYNGVkcko2eWZwV2JwM2h3Z3ZJOElkTUJSTERrK1k9Il0sImIiOlsic2hhMjU2IiwiU2dHNWZOR0VnMXgyNE13SXRDVVlHREhRa1dLbmcwNlcxL0l2VEdCZHd6VT0iXX0=
+DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=ed25519:ed25519:6xwMk2qewQN/pnzRvUqkrK7+Z3Hbvqz8Om+lhKC+twFaMlUvuSGgacZBeZmRGLkwdn45+PiMSNCjlloa04jwDA==
+Message-Instance: v=1; h=sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=
 From: sender@test1.dkim2.com
 To: recipient@example.com
 Subject: Simple test message

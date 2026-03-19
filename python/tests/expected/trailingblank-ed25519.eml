@@ -1,5 +1,5 @@
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test3.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0My5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=W1siZWQyNTUxOSIsImVkMjU1MTkiLCI5TXFZUkUvQXhhaCtGZWVRRy8zNTFSanlSVVVFdlRFWTNrNTNnbWZDdFc5OGRjOVJaelZockZjbDFESHFGOWFXSHJ4bkFYUHh2RC82Y0dlWlR5dW9Bdz09Il1d
-Message-Instance: v=1; h=eyJoIjpbInNoYTI1NiIsIll0RHd6TTdBQURLQzByeWgxS1Z0MWFaMGxtU0k3dFNoMFpTcHJwZms0dFE9Il0sImIiOlsic2hhMjU2IiwiNzY5VGU1ODFWbVRwcFF0RHBCYjl4ZHlENHRtblRKQ1BndGZRUlF2RG8ycz0iXX0=
+DKIM2-Signature: i=1; v=1; t=1740000000; d=test3.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0My5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=ed25519:ed25519:Uw+KeldsEs1OLQopX0ISsCfDVLxhnkeoHNec99UHjZiwf2WTHHLj73dmFGnxCgzeiGyhquiIibkrYt2K8MMVAg==
+Message-Instance: v=1; h=sha256:YtDwzM7AADKC0ryh1KVt1aZ0lmSI7tSh0ZSprpfk4tQ=:769Te581VmTppQtDpBb9xdyD4tmnTJCPgtfQRQvDo2s=
 From: sender@test3.dkim2.com
 To: recipient@example.com
 Subject: Message with trailing blank lines

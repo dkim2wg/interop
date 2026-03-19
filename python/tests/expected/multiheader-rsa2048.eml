@@ -1,0 +1,16 @@
+DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=sel1:rsa:FFfUAEHCwKyP9ujjd8j2nagPBmUE9nMerJD8pOqpxaI/bEPmIlsJrRJN6UXk5M45GLUR+l12RSyDxLwVPT5TtD3GFMffb2k5SifZz1JoGRvE2HKI9EF67IhfLjQg1HQkfnES3/k89KbGTcvl2q9qVuaQoGZNt87ElcbcBXDj0I2P3iBDdFXcvHDaC5sLsgBddO5d35ZDDq9ZXQIe9wAR3mtv6ZpdrgNlPm5ONIS3Hjwmfg9yGM1teV8K538wvoVqrT0tiqNzI5aARQ0F2EIeUsfV1kNBfABLTmX6pwL6g6BBa90mc1Om0dWuBgC32LLWe/g1kkkQyWYx9TpDO64apw==
+Message-Instance: v=1; h=sha256:ShmtblPBr8lV9zKrv7MAP81zN+N32REP2QOZnUk9Fc8=:CyfSEkygi5JDksVb4/R53JKT7GKBuBgsR1ZYpkHnQOs=
+From: sender@test2.dkim2.com
+To: recipient@example.com
+Cc: other@example.com
+Subject: A longer subject line that wraps
+ across multiple continuation lines
+Date: Sat, 01 Mar 2026 12:00:00 +0000
+Message-ID: <test-multi@test2.dkim2.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+X-Custom-Header: this should be excluded from header hash
+
+Hello, this is a test with multiple headers.
+
+It has multiple paragraphs too.

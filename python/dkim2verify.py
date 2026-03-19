@@ -139,50 +139,39 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
     """
     errors = []
     value = _get_header_value(mi_hdr)
-    h_b64 = _extract_tag(value, "h")
-    if not h_b64:
+    h_tag = _extract_tag(value, "h")
+    if not h_tag:
         return ["Message-Instance: missing h= tag"]
 
-    try:
-        h_obj = json.loads(base64.b64decode(h_b64))
-    except Exception as e:
-        return [f"Message-Instance: failed to decode h= tag: {e}"]
+    # Parse h= tag: sha256:header_hash:body_hash
+    parts = h_tag.split(":")
+    if len(parts) != 3:
+        return [f"Message-Instance: invalid h= format (expected alg:h_hash:b_hash, got {h_tag!r})"]
 
-    # Verify header hash
-    h_info = h_obj.get("h")
-    if not h_info or len(h_info) != 2:
-        errors.append("Message-Instance: invalid h.h format")
-    else:
-        h_alg, h_val = h_info
-        if h_alg != "sha256":
-            errors.append(f"Message-Instance: unsupported header hash algorithm: {h_alg}")
-        else:
-            expected = compute_header_hash(headers)
-            actual = base64.b64decode(h_val)
-            if expected != actual:
-                errors.append(
-                    f"Message-Instance: header hash mismatch\n"
-                    f"  expected: {b64(expected)}\n"
-                    f"  got:      {h_val}"
-                )
+    h_alg, h_val, b_val = parts
 
-    # Verify body hash
-    b_info = h_obj.get("b")
-    if not b_info or len(b_info) != 2:
-        errors.append("Message-Instance: invalid h.b format")
+    if h_alg != "sha256":
+        errors.append(f"Message-Instance: unsupported hash algorithm: {h_alg}")
     else:
-        b_alg, b_val = b_info
-        if b_alg != "sha256":
-            errors.append(f"Message-Instance: unsupported body hash algorithm: {b_alg}")
-        else:
-            expected = compute_body_hash(body)
-            actual = base64.b64decode(b_val)
-            if expected != actual:
-                errors.append(
-                    f"Message-Instance: body hash mismatch\n"
-                    f"  expected: {b64(expected)}\n"
-                    f"  got:      {b_val}"
-                )
+        # Verify header hash
+        expected = compute_header_hash(headers)
+        actual = base64.b64decode(h_val)
+        if expected != actual:
+            errors.append(
+                f"Message-Instance: header hash mismatch\n"
+                f"  expected: {b64(expected)}\n"
+                f"  got:      {h_val}"
+            )
+
+        # Verify body hash
+        expected = compute_body_hash(body)
+        actual = base64.b64decode(b_val)
+        if expected != actual:
+            errors.append(
+                f"Message-Instance: body hash mismatch\n"
+                f"  expected: {b64(expected)}\n"
+                f"  got:      {b_val}"
+            )
 
     return errors
 
@@ -207,27 +196,22 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     i_val = _extract_tag(value, "i")
     v_val = _extract_tag(value, "v")
     d_val = _extract_tag(value, "d")
-    s_b64 = _extract_tag(value, "s")
+    s_tag = _extract_tag(value, "s")
 
-    if not all([i_val, v_val, d_val, s_b64]):
+    if not all([i_val, v_val, d_val, s_tag]):
         return [f"DKIM2-Signature i={i_val}: missing required tags"]
+    if not s_tag:
+        return [f"DKIM2-Signature i={i_val}: missing s= tag"]
 
-    # Decode s= tag
-    try:
-        s_obj = json.loads(base64.b64decode(s_b64))
-    except Exception as e:
-        return [f"DKIM2-Signature i={i_val}: failed to decode s= tag: {e}"]
-
-    # s= is an array of [selector, algorithm, value] arrays
-    if not isinstance(s_obj, list) or len(s_obj) < 1:
-        return [f"DKIM2-Signature i={i_val}: invalid s= format (expected array of arrays)"]
+    sig_items = []
+    for part in s_tag.split(","):
+        fields = part.split(":", 2)
+        if len(fields) != 3:
+            return [f"DKIM2-Signature i={i_val}: invalid s= item format: {part!r}"]
+        sig_items.append(fields)
 
     # Verify the first signature item (TODO: support multiple for algorithm agility)
-    first_item = s_obj[0]
-    if not isinstance(first_item, list) or len(first_item) != 3:
-        return [f"DKIM2-Signature i={i_val}: invalid s= item format (expected [selector, algorithm, value])"]
-
-    selector, algorithm, sig_value_b64 = first_item
+    selector, algorithm, sig_value_b64 = sig_items[0]
 
     # Look up public key
     try:
@@ -460,15 +444,12 @@ def main():
             value = _get_header_value(sig)
             i_val = _extract_tag(value, "i")
             d_val = _extract_tag(value, "d")
-            s_b64 = _extract_tag(value, "s")
-            if s_b64:
-                try:
-                    s_obj = json.loads(base64.b64decode(s_b64))
-                    if isinstance(s_obj, list) and len(s_obj) >= 1 and len(s_obj[0]) >= 2:
-                        print(f"  i={i_val} d={d_val} selector={s_obj[0][0]} algorithm={s_obj[0][1]}")
-                    else:
-                        print(f"  i={i_val} d={d_val}")
-                except Exception:
+            s_tag = _extract_tag(value, "s")
+            if s_tag:
+                first = s_tag.split(",")[0].split(":", 2)
+                if len(first) >= 2:
+                    print(f"  i={i_val} d={d_val} selector={first[0]} algorithm={first[1]}")
+                else:
                     print(f"  i={i_val} d={d_val}")
             else:
                 print(f"  i={i_val} d={d_val}")
