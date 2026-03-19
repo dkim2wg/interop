@@ -192,6 +192,12 @@ sub cb_header {
     my ($ctx, $field, $value) = @_;
     my $priv = $ctx->getpriv;
     my $EOL = "\015\012";
+    if (lc($field) eq 'message-instance') {
+        my $dbg = $value;
+        $dbg =~ s/\r/\\r/g;
+        $dbg =~ s/\n/\\n/g;
+        warn "dkim2-milter: DEBUG cb_header MI value=[$dbg]\n";
+    }
     # Store parsed form and raw form
     push @{$priv->{headers}}, [$field, $value];
     push @{$priv->{raw_hdrs}}, "$field: $value$EOL";
@@ -401,9 +407,11 @@ sub _compute_mi {
 
 sub _format_mi {
     my ($mi) = @_;
-    # Return unfolded value — the milter protocol and MTA handle folding.
-    # Passing CRLF-folded values to insheader causes truncation.
-    return $mi->as_string();
+    my $folded = fold_header("Message-Instance: " . $mi->as_string());
+    $folded =~ s/^Message-Instance: //;
+    # Convert CRLF folding to LF for milter protocol (CRLF = end of value)
+    $folded =~ s/\r\n/\n/g;
+    return $folded;
 }
 
 # --- Signing ---
@@ -428,6 +436,8 @@ sub _do_sign {
     my $header = $signer->as_string();
     # Strip "DKIM2-Signature: " prefix for insheader
     $header =~ s/^DKIM2-Signature:\s*//;
+    # Convert CRLF folding to LF folding for milter protocol
+    $header =~ s/\r\n/\n/g;
     return $header;
 }
 
