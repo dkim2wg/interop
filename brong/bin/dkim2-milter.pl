@@ -125,7 +125,7 @@ sub _keydir_lookup {
                 if ($key) {
                     # Detect algorithm from key type
                     my $alg = ref($key) =~ /Ed25519/
-                        ? 'ed25519' : 'rsa-sha256';
+                        ? 'ed25519-sha256' : 'rsa-sha256';
                     my $config = {
                         domain    => $try,
                         selector  => $selector,

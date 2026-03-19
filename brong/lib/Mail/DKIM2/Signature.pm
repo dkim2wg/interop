@@ -174,16 +174,18 @@ sub as_string {
     return "DKIM2-Signature: " . $self->SUPER::as_string();
 }
 
-# Serialize with empty s= tag value.
+# Serialize with signature data replaced by "." in each s= entry.
 # Returns unfolded output. Used by the verifier to reconstruct the
 # signing input from a header read from the message.
-# The s= value is completely empty (not base64 JSON with empty signature
-# values), following the DKIM1 convention for b=.
+# Format: sel:alg:.,sel2:alg2:. (signature replaced with dot)
 sub as_string_without_data {
     my ($self) = @_;
 
     my $saved = $self->get_tag('s');
-    $self->set_tag('s', '');
+    # Replace each sel:alg:sig with sel:alg:.
+    my $stripped = $saved;
+    $stripped =~ s/([^,:]+:[^,:]+):[^,]*/$1:./g;
+    $self->set_tag('s', $stripped);
     my $result = $self->as_string();
     $self->set_tag('s', $saved);
     return $result;
@@ -195,13 +197,20 @@ sub as_string_without_data {
 sub as_folded_string_without_data {
     my ($self) = @_;
 
-    # All tags except s=, then "; s="
+    # Replace each sel:alg:sig with sel:alg:. in the s= tag
+    my $saved = $self->get_tag('s');
+    my $stripped = $saved;
+    $stripped =~ s/([^,:]+:[^,:]+):[^,]*/$1:./g;
+
     my @parts;
     for my $t (@{$self->{order}}) {
-        next if $t eq 's';
-        push @parts, "$t=$self->{tags}{$t}";
+        if ($t eq 's') {
+            push @parts, "s=$stripped";
+        } else {
+            push @parts, "$t=$self->{tags}{$t}";
+        }
     }
-    my $line = "DKIM2-Signature: " . join('; ', @parts) . "; s=";
+    my $line = "DKIM2-Signature: " . join('; ', @parts);
     return fold_header($line);
 }
 

@@ -119,9 +119,9 @@ sub finish_body {
 
     # Sign the signing input
     my $key = $self->{Key};
-    my $alg = $self->{Algorithm} || 'rsa';
+    my $alg = $self->{Algorithm} || 'rsa-sha256';
     my $sig_raw;
-    if ($alg eq 'ed25519') {
+    if ($alg =~ /^ed25519/) {
         # Ed25519-SHA256: hash first, then sign the digest
         my $digest = sha256($signing_input);
         $sig_raw = $key->sign_message($digest);

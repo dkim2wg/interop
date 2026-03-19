@@ -1,12 +1,12 @@
 DKIM2-Signature: i=2; v=2; t=1740000000; d=test2.example.com;
 	m=eyJtZiI6ImJvdW5jZXNAdGVzdDIuZXhhbXBsZS5jb20iLCJydCI6WyJ1c2VyQH
 	Rlc3QzLmV4YW1wbGUuY29tIl19;
-	s=sel2:rsa-sha256:aT354MUBsr/9g6wTZd5MB3i8cJ1rRNTFxKT3Um4h606suV
-	gZdDSVGzaZ2ivIEWtkl68q0IjliIuwzcPYmtwnOca0K7ohg+JANtNcnU4qoyvt8l
-	DC7SpGpIQQxCtY6m1imv5wGNzwFBsNJB9FQfNORck9ekGlqXzoA6/7m93XW2XReI
-	5OyQjTcAVdp4sf7MvQKNllyQ1sC/+qSL3b19UsBiGC0Pr9X1JG0gv8cdcZAfNAFF
-	vdRuhtIMWIcjdvBUVRtWNq+WVTwUYw22iuhbKRZwsONQfiUu8EiMIPH6YxZu3dFk
-	fzEOGMKjtNqzZ+84XL27cPCIuyeJGJqvKgzUW+bg==
+	s=sel2:rsa-sha256:tXd5Th8lN3ZttZMrNiOoODcGGQwQvmQXt/3SrxhY6z1fj8
+	iQXU88+aAxN7ycPlk1yopHkjEUvc8/Een5gw/Mu26xsocdjqPQKpN0vEeABOROdl
+	3+0BTaX8eNGJYSm//j6KquH09sZyYjaDPvrjiV3VqGrAdg4/IGfjl9X+X4B68QxH
+	iWj2hbNS7w7BCkPrHjB0Qw1PU6wOs1gxvPdQ7HSC+TvlNbvXwtxAmtYohhTaKSP1
+	lQgh5HqPCoEJzI1XJ21y2VgrG1NYQuQkbc0YA5rHwv474togjj167hwZ/wTXmWhg
+	Z6OcgZIKYWYYhSwXWzmmRRcGkbIhKEiTQ04Ceiiw==
 Message-Instance: v=2;
 	h=sha256:hWR2jUhGIbgUk4+GFw4I3YOvmisoa423Fowk/BcJs9M=:4olUkMUi2b
 	CCfVrAOg4rSNpPMBWnWoKd71+94zpiUqo=;
@@ -58,12 +58,12 @@ Message-Instance: v=1;
 DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.example.com;
  m=eyJtZiI6ImJyb25nQHRlc3QxLmV4YW1wbGUuY29tIiwicnQiOlsibGlzdEB0ZX
  N0Mi5leGFtcGxlLmNvbSJdfQ==;
- s=sel1:rsa-sha256:RhV1m0AeZ6mXcfzvgIBDZqPF1MEE2hVhrHAGO5M6Qhz3ip
- I8LXuz3Vy4vNFo4l7l2K4xQtkQHvqQ+PwQwDaujhCbCd74GhMtkgXX1+4ygDoTD7
- kLjUrdC93FUcxpDHXtwf3Scafr8tcsZ6ENMob9YUN/E6KMxhcXvZZv+Q8Yceqiav
- 3fgmQRP0M8wcBh7/6rYz1D96yO/A9D8F+YUTxnXBHdyxf8SzagPOBYtleujjfJda
- pRXM5l+e3sbqOHwbCurAWxqlJFpGHCfwUQzYJSaK7GLv6HB9ynbqq50esXkP7fef
- Kx0WVpfbU+H1vVRQ6NQQI+O5rlgw+Tgg5lVIqgFA==
+ s=sel1:rsa-sha256:i7q7DiiLo0eYbRT5r3lCkngV7SyXhhb7TW+X0VUebA9jqr
+ uavsHXTq7e8XiS8rUhcw6hj+av4dWk1ZMBxPwSAaVXR1P6+LRtnQbmPgucFNy3Vr
+ Op4isQ3kIDLgVtEXPdAt90WgZiua/gnU8APCI1F+bhNaRiwU8vMSQZAJ0XppXZb+
+ HznCs/W4hFrIR9j+NEf6ib4vI8PU7bz2z6PxQAvPyZBpCJ+loi31DXd0+3VaVCLT
+ /OLlv6O5FK4+cnPhK2QJpIAH1OewFx1CT1hXjs0YeBBUjObiewXqfmu6UH4VC16Q
+ ZrcOs65P6smzY79YEfuTZRLDRrkxr5dhUt4RVxoA==
 Received: from ietfa.amsl.com (localhost [IPv6:::1])
 	by ietfa.amsl.com (Postfix) with ESMTP id B5BE4C1CAE68
 	for <brong@fastmailteam.com>; Wed,  7 Aug 2024 18:23:32 -0700 (PDT)
