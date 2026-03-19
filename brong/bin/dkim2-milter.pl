@@ -250,6 +250,13 @@ sub cb_eom {
         }
     }
 
+    # --- Insert MI header (even without signing, for downstream diffing) ---
+    if ($mi_header) {
+        $ctx->insheader('Message-Instance', $mi_header, 0);
+        $ctx->insheader('X-DKIM2-MI-Source', 'dkim2-milter', 0);
+        warn "dkim2-milter: added MI header for $msgid\n";
+    }
+
     # --- Signing ---
     if ($opts{sign}) {
         my $sign_config = _get_sign_config($priv->{env_from});
@@ -262,12 +269,6 @@ sub cb_eom {
 
             my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
             if ($sig_header) {
-                # Insert MI first (if any), then DKIM2-Signature on top
-                if ($mi_header) {
-                    $ctx->insheader('Message-Instance', $mi_header, 0);
-                    $ctx->insheader('X-DKIM2-MI-Source', 'dkim2-milter', 0);
-                    warn "dkim2-milter: added MI header for $msgid\n";
-                }
                 $ctx->insheader('DKIM2-Signature', $sig_header, 0);
                 warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
                    . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
