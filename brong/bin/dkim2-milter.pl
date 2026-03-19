@@ -192,12 +192,9 @@ sub cb_header {
     my ($ctx, $field, $value) = @_;
     my $priv = $ctx->getpriv;
     my $EOL = "\015\012";
-    if (lc($field) eq 'message-instance') {
-        my $dbg = $value;
-        $dbg =~ s/\r/\\r/g;
-        $dbg =~ s/\n/\\n/g;
-        warn "dkim2-milter: DEBUG cb_header MI value=[$dbg]\n";
-    }
+    # Postfix delivers folded header values with LF continuations;
+    # normalize to CRLF so the reconstructed message is RFC 5322 compliant.
+    $value =~ s/\r?\n/$EOL/g;
     # Store parsed form and raw form
     push @{$priv->{headers}}, [$field, $value];
     push @{$priv->{raw_hdrs}}, "$field: $value$EOL";
