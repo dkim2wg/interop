@@ -224,8 +224,8 @@ sub cb_eom {
     if ($opts{verify}) {
         my $result = _do_verify($message);
         # Add Authentication-Results header at position 0 (top)
-        $ctx->insheader(0, 'Authentication-Results',
-            "localhost; dkim2=$result");
+        $ctx->insheader('Authentication-Results',
+            "localhost; dkim2=$result", 0);
     }
 
     # --- Message-Instance computation ---
@@ -248,9 +248,9 @@ sub cb_eom {
             if ($sig_header) {
                 # Insert MI first (if any), then DKIM2-Signature on top
                 if ($mi_header) {
-                    $ctx->insheader(0, 'Message-Instance', $mi_header);
+                    $ctx->insheader('Message-Instance', $mi_header, 0);
                 }
-                $ctx->insheader(0, 'DKIM2-Signature', $sig_header);
+                $ctx->insheader('DKIM2-Signature', $sig_header, 0);
             }
         }
     }
