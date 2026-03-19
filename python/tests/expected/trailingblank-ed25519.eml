@@ -1,4 +1,4 @@
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test3.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0My5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=ed25519:ed25519:Uw+KeldsEs1OLQopX0ISsCfDVLxhnkeoHNec99UHjZiwf2WTHHLj73dmFGnxCgzeiGyhquiIibkrYt2K8MMVAg==
+DKIM2-Signature: i=1; v=1; t=1740000000; d=test3.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0My5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=ed25519:ed25519-sha256:SZ6nWNI04aQRbE/giz90mcKXfu0b+05kJEaKci7jJIuHkevdHbciCKY7d5bC1KVZIREYMTnyiRWCdT1CjAHaBQ==
 Message-Instance: v=1; h=sha256:YtDwzM7AADKC0ryh1KVt1aZ0lmSI7tSh0ZSprpfk4tQ=:769Te581VmTppQtDpBb9xdyD4tmnTJCPgtfQRQvDo2s=
 From: sender@test3.dkim2.com
 To: recipient@example.com

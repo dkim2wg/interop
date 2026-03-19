@@ -279,11 +279,11 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     digest = hashlib.sha256(data).digest()
 
     # Sign
-    if algorithm == "ed25519":
+    if algorithm.startswith("ed25519"):
         # Ed25519 signs the raw data (PureEdDSA), but the spec says
         # "signs the hash" - so we sign the SHA-256 digest
         return private_key.sign(digest)
-    elif algorithm == "rsa":
+    elif algorithm.startswith("rsa"):
         return private_key.sign(
             digest,
             padding.PKCS1v15(),
@@ -317,11 +317,11 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
         "rt": rcptto or ["unknown@example.com"],
     }
 
-    # Build the incomplete signature header with empty s= value,
-    # following the DKIM1 convention for b=.
+    # Build the incomplete signature header with sel:alg:. in s= tag
+    # (dot replaces signature data, like DKIM1's b= convention).
     incomplete = (
         f"DKIM2-Signature: i={seq}; v={mi_version}; t={timestamp}; "
-        f"d={domain}; m={b64json(m_obj)}; s="
+        f"d={domain}; m={b64json(m_obj)}; s={selector}:{algorithm}:."
     )
 
     # Collect all MI headers including the new one
@@ -355,9 +355,9 @@ def load_private_key(keyfile: str) -> tuple:
     key = serialization.load_pem_private_key(key_data, password=None)
 
     if isinstance(key, ed25519.Ed25519PrivateKey):
-        return key, "ed25519"
+        return key, "ed25519-sha256"
     elif isinstance(key, rsa.RSAPrivateKey):
-        return key, "rsa"
+        return key, "rsa-sha256"
     else:
         raise ValueError(f"Unsupported key type: {type(key)}")
 

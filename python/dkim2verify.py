@@ -95,7 +95,7 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
                         raw = pub_bytes[-32:]
                         return ed25519.Ed25519PublicKey.from_public_bytes(raw), "ed25519"
                     return ed25519.Ed25519PublicKey.from_public_bytes(pub_bytes), "ed25519"
-            elif key_type == "rsa":
+            elif key_type in ("rsa", "rsa-sha256"):
                 # RSA public key is DER-encoded SubjectPublicKeyInfo
                 return serialization.load_der_public_key(pub_bytes), "rsa"
             else:
@@ -229,12 +229,16 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             f"sig says {algorithm!r}, key is {key_type!r}"
         )
 
-    # Reconstruct the incomplete signature with empty s= value,
-    # following the DKIM1 convention for b=.
+    # Reconstruct the incomplete signature: replace signature data in
+    # each s= entry with "." (sel:alg:. format).
     s_tag_pos = sig_hdr.rfind("s=")
     if s_tag_pos == -1:
         return [f"DKIM2-Signature i={i_val}: cannot find s= tag in header"]
-    incomplete_sig = sig_hdr[:s_tag_pos + 2]
+    prefix = sig_hdr[:s_tag_pos + 2]
+    stripped_items = []
+    for item in sig_items:
+        stripped_items.append(f"{item[0]}:{item[1]}:.")
+    incomplete_sig = prefix + ",".join(stripped_items)
 
     # Collect MI headers up to version v=
     mi_version = int(v_val)
