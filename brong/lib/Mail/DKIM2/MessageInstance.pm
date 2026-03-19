@@ -424,8 +424,9 @@ sub calculate {
         my @mi_prev = $previous->header_raw('Message-Instance');
         die "Previous message has no existing instances" unless @mi_prev;
         # Verify same message by checking MI headers match
-        my $canon_cur  = join(',', map { dkim2_canonicalize_header($_) } @mi_cur);
-        my $canon_prev = join(',', map { dkim2_canonicalize_header($_) } @mi_prev);
+        # header_raw returns values only, so prepend the name for canonicalization
+        my $canon_cur  = join(',', map { dkim2_canonicalize_header("Message-Instance: $_") } @mi_cur);
+        my $canon_prev = join(',', map { dkim2_canonicalize_header("Message-Instance: $_") } @mi_prev);
         die "This isn't the same message" unless ($canon_cur eq $canon_prev);
 
         my %map = map { extract_mi_version($_) => $_ } @mi_cur;
