@@ -220,9 +220,22 @@ sub cb_eom {
     # Reconstruct the full message
     my $message = join('', @{$priv->{raw_hdrs}}) . $EOL . $priv->{body};
 
+    # Extract message-id for logging
+    my $msgid = '';
+    for my $hdr (@{$priv->{headers}}) {
+        if (lc($hdr->[0]) eq 'message-id') {
+            $msgid = $hdr->[1];
+            $msgid =~ s/^\s+//;
+            last;
+        }
+    }
+
+    warn "dkim2-milter: processing $msgid from=$priv->{env_from}\n";
+
     # --- Verification ---
     if ($opts{verify}) {
         my $result = _do_verify($message);
+        warn "dkim2-milter: verify $msgid result=$result\n";
         # Add Authentication-Results header at position 0 (top)
         $ctx->insheader('Authentication-Results',
             "localhost; dkim2=$result", 0);
@@ -232,6 +245,9 @@ sub cb_eom {
     my $mi_header;
     if ($snapshot_store) {
         $mi_header = _compute_mi($message);
+        if ($mi_header) {
+            warn "dkim2-milter: computed MI for $msgid\n";
+        }
     }
 
     # --- Signing ---
@@ -249,9 +265,14 @@ sub cb_eom {
                 # Insert MI first (if any), then DKIM2-Signature on top
                 if ($mi_header) {
                     $ctx->insheader('Message-Instance', $mi_header, 0);
+                    warn "dkim2-milter: added MI header for $msgid\n";
                 }
                 $ctx->insheader('DKIM2-Signature', $sig_header, 0);
+                warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
+                   . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
             }
+        } else {
+            warn "dkim2-milter: no signing key for $msgid from=$priv->{env_from}\n";
         }
     }
 
