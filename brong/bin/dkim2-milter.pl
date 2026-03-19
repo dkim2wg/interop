@@ -159,7 +159,7 @@ $milter->register('dkim2-milter', {
     body    => \&cb_body,
     eom     => \&cb_eom,
     close   => \&cb_close,
-}, SMFIF_ADDHDRS | SMFIF_INSHDRS);
+}, SMFIF_ADDHDRS);
 
 warn "dkim2-milter: listening on $opts{socket}\n";
 $milter->main();
