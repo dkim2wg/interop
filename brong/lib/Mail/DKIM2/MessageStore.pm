@@ -17,6 +17,10 @@ sub new {
 # Derive a filesystem-safe key from an MI header value
 sub _key_for_mi {
     my ($self, $mi_value) = @_;
+    # Canonicalize: unfold continuation lines and collapse whitespace
+    # so that folded and unfolded forms hash identically.
+    $mi_value =~ s/\r?\n[ \t]/ /g;
+    $mi_value =~ s/\s+/ /g;
     $mi_value =~ s/^\s+//;
     $mi_value =~ s/\s+$//;
     return sha256_hex($mi_value);

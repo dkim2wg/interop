@@ -401,9 +401,9 @@ sub _compute_mi {
 
 sub _format_mi {
     my ($mi) = @_;
-    my $folded = fold_header("Message-Instance: " . $mi->as_string());
-    $folded =~ s/^Message-Instance: //;
-    return $folded;
+    # Return unfolded value — the milter protocol and MTA handle folding.
+    # Passing CRLF-folded values to insheader causes truncation.
+    return $mi->as_string();
 }
 
 # --- Signing ---
