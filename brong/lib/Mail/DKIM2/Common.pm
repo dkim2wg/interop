@@ -37,9 +37,8 @@ sub should_skip {
     return 1 if $hname eq 'dkim2-signature';
     return 1 if $hname =~ m/^x-/;
     return 1 if $hname eq 'dkim-signature';
-    return 1 if $hname eq 'arc-authentication-results';
-    return 1 if $hname eq 'arc-message-signature';
-    return 1 if $hname eq 'arc-seal';
+    return 1 if $hname eq 'authentication-results';
+    return 1 if $hname =~ m/^arc-/;
     return 0;
 }
 
