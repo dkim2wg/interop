@@ -13,11 +13,12 @@ use constant DKIM2_SOFTWARE => 'dkim2-milter.pl';
 
 sub _dkim2_info {
     my ($action) = @_;
+    # Fold at semicolons using LF+tab for milter protocol
     return "draft=" . DKIM2_DRAFT
-         . "; repo=" . DKIM2_REPO
-         . "; date=" . DKIM2_DATE
+         . ";\n\trepo=" . DKIM2_REPO
+         . ";\n\tdate=" . DKIM2_DATE
          . "; sw=" . DKIM2_SOFTWARE
-         . "; action=$action";
+         . ";\n\taction=$action";
 }
 
 use Mail::DKIM2::Common qw(
