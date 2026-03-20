@@ -6,6 +6,20 @@ use Getopt::Long;
 use Pod::Usage;
 use Sendmail::PMilter ':all';
 
+use constant DKIM2_DRAFT   => '08';
+use constant DKIM2_REPO    => 'github.com/dkim2wg/interop';
+use constant DKIM2_DATE    => '2026-03-20';
+use constant DKIM2_SOFTWARE => 'dkim2-milter.pl';
+
+sub _dkim2_info {
+    my ($action) = @_;
+    return "draft=" . DKIM2_DRAFT
+         . "; repo=" . DKIM2_REPO
+         . "; date=" . DKIM2_DATE
+         . "; sw=" . DKIM2_SOFTWARE
+         . "; action=$action";
+}
+
 use Mail::DKIM2::Common qw(
     parse_dkim_pubkey load_private_key fold_header extract_mi_version
 );
@@ -244,6 +258,7 @@ sub cb_eom {
         warn "dkim2-milter: verify $msgid result=$result\n";
         $ctx->insheader('Authentication-Results',
             "localhost; dkim2=$result", 0);
+        $ctx->insheader('X-DKIM2-Info', _dkim2_info("verify=$result"), 0);
 
         # Compute MI for inbound: add v=1 if none, cache snapshot
         my $mi_header;
@@ -257,7 +272,7 @@ sub cb_eom {
         if ($mi_header) {
             $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
             my ($mi_ver) = $mi_header =~ /v=(\d+)/;
-            $ctx->insheader('X-DKIM2-MI-Source', "v=$mi_ver; dkim2-milter", 0);
+            $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-v$mi_ver"), 0);
             warn "dkim2-milter: added MI header for $msgid\n";
         }
     }
@@ -272,7 +287,7 @@ sub cb_eom {
                 warn "dkim2-milter: computed MI for $msgid\n";
                 $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
                 my ($mi_ver) = $mi_header =~ /v=(\d+)/;
-                $ctx->insheader('X-DKIM2-MI-Source', "v=$mi_ver; dkim2-milter", 0);
+                $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-v$mi_ver"), 0);
                 warn "dkim2-milter: added MI header for $msgid\n";
             }
         }
@@ -288,6 +303,8 @@ sub cb_eom {
             my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
             if ($sig_header) {
                 $ctx->insheader('DKIM2-Signature', _milter_value($sig_header), 0);
+                $ctx->insheader('X-DKIM2-Info',
+                    _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
                 warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
                    . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
             }
