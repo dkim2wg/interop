@@ -465,6 +465,41 @@ sub _add_epilogue {
     return scalar(@all_lines) - scalar(@old_lines);  # 0-based count of prefix lines
 }
 
+# --- Calculate helpers ---
+
+# Count literal string items in a recipe (non-array items = lines not in current body).
+sub _recipe_literal_lines {
+    my ($recipe) = @_;
+    return 0 unless $recipe;
+    return scalar grep { !ref $_ } @$recipe;
+}
+
+# Return the cheaper of the two diff strategies for two raw body strings.
+# Returns undef if bodies are identical (no recipe needed).
+sub _best_body_diff {
+    my ($cur_raw, $prev_raw) = @_;
+    (my $s1 = $cur_raw)  =~ s/[\r\n]+$//;
+    (my $s2 = $prev_raw) =~ s/[\r\n]+$//;
+    my @l1 = split /\r?\n/, $s1;
+    my @l2 = split /\r?\n/, $s2;
+    my $line = _body_recipe_linediff(\@l1, \@l2);
+    my $flat = _body_recipe_flat(\@l1, \@l2);
+    return undef unless $line || $flat;
+    return $flat unless $line;
+    return $line unless $flat;
+    return _recipe_cost($flat) < _recipe_cost($line) ? $flat : $line;
+}
+
+# Store $old_body in the MIME epilogue of $current (modifying it in place),
+# then return a rb line-range recipe pointing at those lines.
+sub _epilogue_recipe {
+    my ($current, $old_body) = @_;
+    my @old_lines  = split /\r?\n/, $old_body;
+    return undef unless @old_lines;
+    my $prefix_len = _add_epilogue($current, $old_body);
+    return [[$prefix_len + 1, $prefix_len + @old_lines]];
+}
+
 # --- Calculate ---
 
 sub calculate {
@@ -476,6 +511,11 @@ sub calculate {
     unless (ref($current) && $current->isa('Email::MIME')) {
         $current = Email::MIME->new($current);
     }
+
+    # $rb_recipe is determined before hash computation because epilogue
+    # strategies modify $current in place, and hashes must cover the
+    # final (possibly modified) message.
+    my $rb_recipe;
 
     if ($previous) {
         unless (ref($previous) && $previous->isa('Email::MIME')) {
@@ -495,18 +535,24 @@ sub calculate {
         $self->set_tag('v', max(keys %map) + 1);
 
         if ($opts{UseEpilogue}) {
-            # Store previous body in MIME epilogue rather than computing a diff.
-            # _add_epilogue modifies $current in place; hashes are computed after.
-            # It returns the number of body lines that precede the old body, so we
-            # can record a simple line-range rb recipe using the existing format.
-            my $old_body   = $previous->body_raw;
-            my @old_lines  = split /\r?\n/, $old_body;
-            my $prefix_len = _add_epilogue($current, $old_body);
-            if (@old_lines) {
-                my $start = $prefix_len + 1;          # 1-indexed
-                my $end   = $prefix_len + @old_lines;
-                $self->set_tag('rb', [[$start, $end]]);
+            # Always store old body in MIME epilogue.
+            $rb_recipe = _epilogue_recipe($current, $previous->body_raw);
+        }
+        elsif (defined $opts{EpilogueThreshold}) {
+            # Use epilogue only when the diff would exceed the threshold of
+            # literal (non-range) lines.  Compute diff first (no side effects),
+            # then fall back to epilogue if it is too large.
+            my $diff = _best_body_diff($current->body_raw, $previous->body_raw);
+            if (!defined $diff || _recipe_literal_lines($diff) > $opts{EpilogueThreshold}) {
+                $rb_recipe = _epilogue_recipe($current, $previous->body_raw);
             }
+            else {
+                $rb_recipe = $diff;
+            }
+        }
+        else {
+            # Default: compute diff recipe (does not modify $current).
+            $rb_recipe = _best_body_diff($current->body_raw, $previous->body_raw);
         }
     }
     else {
@@ -521,11 +567,6 @@ sub calculate {
 
     # nothing more to calculate without a previous version
     return $self unless $previous;
-
-    # Recipes describe how to reconstruct the previous message from the
-    # current one.  Copy ranges reference positions in the current message;
-    # literal strings are values that existed in the previous message but
-    # not in the current one.
 
     # calculate the header difference (always, even for UseEpilogue, since
     # wrapping changes Content-Type and we need rh to undo that)
@@ -558,36 +599,9 @@ sub calculate {
         $hdiff{$h} = \@vals;
     }
 
-    unless ($opts{UseEpilogue}) {
-        # calculate the body differences
-        my $str1 = $current->body_raw;
-        my $str2 = $previous->body_raw;
-        $str1 =~ s/[\r\n]+$//;
-        $str2 =~ s/[\r\n]+$//;
-        my @l1 = split /\r?\n/, $str1;
-        my @l2 = split /\r?\n/, $str2;
-
-        # Strategy 1: straight line-level diff.
-        my $line_recipe = _body_recipe_linediff(\@l1, \@l2);
-
-        # Strategy 2: byte-level prefix/suffix matching.
-        # Handles cases where the content is the same but line wrapping
-        # changed (e.g. base64 re-wrapped at different line length).
-        my $flat_recipe = _body_recipe_flat(\@l1, \@l2);
-
-        # Pick whichever produced the more compact recipe.
-        my $recipe = $line_recipe;
-        if ($flat_recipe
-            and (!$line_recipe
-                 or _recipe_cost($flat_recipe) < _recipe_cost($line_recipe))) {
-            $recipe = $flat_recipe;
-        }
-
-        if ($recipe) {
-            $self->set_tag('rb', $recipe);
-        }
+    if ($rb_recipe) {
+        $self->set_tag('rb', $rb_recipe);
     }
-
     if (keys %hdiff) {
         $self->set_tag('rh', \%hdiff);
     }
@@ -730,6 +744,8 @@ Do not use in production.
 
 =head2 calculate($msg_current, $msg_previous, UseEpilogue => 1)
 
+=head2 calculate($msg_current, $msg_previous, EpilogueThreshold => N)
+
 Creates a new MessageInstance object by computing hashes of the current message
 (an L<Email::MIME> object or raw message string).  If a single message is given,
 it must not already have Message-Instance headers and produces a C<v=1> entry.
@@ -738,20 +754,28 @@ With two messages, computes diff recipes (header and body) that allow
 reconstruction of C<$msg_previous> from C<$msg_current>, producing the next
 version number.  The hashes recorded are of C<$msg_current>.
 
-With C<UseEpilogue =E<gt> 1>, the previous message body is stored in the MIME
-epilogue rather than encoded as a large diff in the MI header.  If
-C<$msg_current> is already C<multipart/*>, the previous body is appended after
-the final MIME boundary (C<--BOUNDARY--\r\n>).  If it is not multipart, the
-current content is wrapped in a C<multipart/mixed> single-part container and
-the previous body follows the new final boundary.
+With C<UseEpilogue =E<gt> 1>, the previous message body is always stored in the
+MIME epilogue rather than encoded as a diff in the MI header.
+
+With C<EpilogueThreshold =E<gt> N>, the best diff recipe is computed first.  If
+it contains more than C<N> literal (non-range) lines, the epilogue strategy is
+used instead; otherwise the diff is used.  C<N = 5> is a reasonable default
+that keeps MI headers small while avoiding the epilogue overhead for small
+changes.
+
+For both epilogue options: if C<$msg_current> is already C<multipart/*>, the
+previous body is appended after the final MIME boundary (C<--BOUNDARY--\r\n>).
+If it is not multipart, the current content is wrapped in a C<multipart/mixed>
+single-part container and the previous body follows the new final boundary.
 
 The returned MI uses the standard C<rb> line-range recipe (the old body
 occupies specific numbered lines of the modified body), so C<undo()> works
 without any special-case logic.  The header diff (C<rh>) automatically
 captures the C<Content-Type> change when wrapping occurs.
 
-B<Note:> C<UseEpilogue> modifies C<$msg_current> in place.  Hashes are
-computed after modification and cover the complete transmitted message.
+B<Note:> C<UseEpilogue> and C<EpilogueThreshold> (when epilogue is chosen)
+modify C<$msg_current> in place.  Hashes are computed after modification and
+cover the complete transmitted message.
 
 =head2 verify($msg)
 

@@ -501,4 +501,90 @@ diag("=== UseEpilogue long chain ===");
     }
 }
 
+# ============================================================
+# Phase 7: EpilogueThreshold
+#
+# EpilogueThreshold => N: use epilogue when the diff would produce
+# more than N literal (non-range) lines.
+#   Threshold=0  => always epilogue for any body change
+#   Threshold=99999 => always diff (same as no option)
+# ============================================================
+
+diag("=== EpilogueThreshold tests ===");
+
+for my $i (1..$#hops) {
+    my $label_base = "EpilogueThreshold hop $i->".($i+1)." ($hops[$i]{name})";
+
+    # Build clean v=1 previous message
+    my $prev = make_v1_msg($hops[$i-1]{file});
+    my $prev_body = $prev->body_raw;
+
+    # Build current message with previous MI headers grafted on
+    my $make_cur = sub {
+        my $cur = Email::MIME->new(path($hops[$i]{file})->slurp);
+        strip_msg($cur);
+        for my $h (reverse $prev->header_raw('Message-Instance')) {
+            $cur->header_raw_prepend('Message-Instance', $h);
+        }
+        return Email::MIME->new($cur->as_string);
+    };
+
+    my $cur_body = $make_cur->()->body_raw;
+    if ($cur_body eq $prev_body) {
+        pass("$label_base: body unchanged, skipping threshold test");
+        pass("$label_base: body unchanged, skipping threshold test");
+        next;
+    }
+
+    # --- Threshold=0: every body change triggers epilogue ---
+    {
+        my $cur = $make_cur->();
+        my $mi = Mail::DKIM2::MessageInstance->calculate(
+            $cur, $prev, EpilogueThreshold => 0,
+        );
+        ok($mi->get_tag('rb'), "$label_base threshold=0: rb recipe present (epilogue)");
+
+        my $folded = fold_header("Message-Instance: " . $mi->as_string());
+        $folded =~ s/^Message-Instance: //;
+        $cur->header_raw_prepend('Message-Instance', $folded);
+        $cur = Email::MIME->new($cur->as_string);
+
+        my $v = Mail::DKIM2::MessageInstance->verify($cur);
+        ok($v, "$label_base threshold=0: MI verifies (v=$v)");
+
+        my $restored = Mail::DKIM2::MessageInstance->undo(
+            Email::MIME->new($cur->as_string)
+        );
+        is($restored->body_raw, normalize_body($prev_body),
+            "$label_base threshold=0: undo restores previous body");
+    }
+
+    # --- Threshold=99999: diff always used (never epilogue) ---
+    {
+        my $cur = $make_cur->();
+        my $orig_body = $cur->body_raw;
+        my $mi = Mail::DKIM2::MessageInstance->calculate(
+            $cur, $prev, EpilogueThreshold => 99999,
+        );
+
+        # Body of $cur must not have been modified (no epilogue added)
+        is($cur->body_raw, $orig_body,
+            "$label_base threshold=99999: cur body not modified (diff used)");
+
+        my $folded = fold_header("Message-Instance: " . $mi->as_string());
+        $folded =~ s/^Message-Instance: //;
+        $cur->header_raw_prepend('Message-Instance', $folded);
+        $cur = Email::MIME->new($cur->as_string);
+
+        my $v = Mail::DKIM2::MessageInstance->verify($cur);
+        ok($v, "$label_base threshold=99999: MI verifies (v=$v)");
+
+        my $restored = Mail::DKIM2::MessageInstance->undo(
+            Email::MIME->new($cur->as_string)
+        );
+        is($restored->body_raw, normalize_body($prev_body),
+            "$label_base threshold=99999: undo restores previous body");
+    }
+}
+
 done_testing();
