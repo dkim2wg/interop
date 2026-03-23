@@ -1,83 +1,10 @@
-DKIM2-Signature: i=3; v=3; t=1740000000; d=test3.example.com;
-	m=eyJtZiI6InJlbGF5QHRlc3QzLmV4YW1wbGUuY29tIiwicnQiOlsidXNlckB0ZX
-	N0NC5leGFtcGxlLmNvbSJdfQ==;
-	s=sel3:rsa-sha256:sF/AY0SK0znaWfxrvity/xy9RXw0aYuIqPUGLopKq0FGQT
-	b4GKpdW/6xROQB2vo3r5iVbNf+Jua5tPyHlFIXKjU04ufQ4T7sfkI558dh/SpdBu
-	dvcDr5F1ByxLS0M6s4In0pNqgOS1oXjds6ATuU57tciwLYXVJOYn0Mpc9jsTIgsX
-	gO06u37JJzNNhTCpW7dO01MYXNnNqDkIwX4ICQtl7Xxskxom4aZw/ZZZKw8qp15T
-	MHd2cTZ/hzB7MpcQFbFGC5iNk8mq/Ua0IcrcXv1//kRF7m6XGIpIALTHqbYDPXeS
-	p6Af7vm5ggWxS/PCDg7VBXo6de5WATLMZdadWsLA==
-Message-Instance: v=3;
-	h=sha256:ElVBaJDUrsU0T5JD/75pQwfTLBnvQ+A7AcFbKt10wRU=:AU2ehAlvQ2
-	g+ZnJf3kTHsCycDFE7sCn6AhpbTGgSYFM=;
-	r=eyJiIjpbWzEsMTVdLFsxOCw2NV1dLCJoIjp7ImV4dHJhLWhlYWRlciI6W119fQ
-	==
 Message-Instance: v=2;
- h=sha256:hWR2jUhGIbgUk4+GFw4I3YOvmisoa423Fowk/BcJs9M=:4olUkMUi2b
- CCfVrAOg4rSNpPMBWnWoKd71+94zpiUqo=;
- r=eyJiIjpbIi0tMTJiNTNkYzgyOWQyNDUxMWJmYTA0ZjdkNWUzNjc1ZjgiLFs1LD
- VdLFs3LDldLCJUaGlzIGVtYWlsIHN0YXJ0cyBhIHdvcmtpbmcgZ3JvdXAgbGFzdC
- BjYWxsIGZvciBodHRwczovL2RhdGF0cmFja2VyLmlldGYub3JnL2RvYy9kcmFmdC
- 1pZXRmLWptYXAtd2VicHVzaC12YXBpZC8gYXMgZGlzY3Vzc2VkIGluIHRoZSBJRV
- RGMTE5IHNlc3Npb24uIixbMTEsMTFdLCJQbGVhc2UgcG9zdCBhbnkgY29tbWVudH
- Mgb3IgcmVzcG9uc2VzIGJ5ICpUaHVyc2RheSwgQXByaWwgNHRoLCAyMDI0Ki4iLF
- sxMywxM10sWzE2LDI1XSwiLS0xMmI1M2RjODI5ZDI0NTExYmZhMDRmN2Q1ZTM2Nz
- VmOCIsWzI3LDMxXSwiYW1pbHk6QXJpYWw7XCI+SGkgQWxsLDxicj48L2Rpdj48ZG
- l2IHN0eWxlPTNEXCJmb250LWZhbWlseTpBcmlhbDtcIj48ZGl2PjxiPSIsInI+PC
- 9kaXY+PGRpdj5UaGlzIGVtYWlsIHN0YXJ0cyBhIHdvcmtpbmcgZ3JvdXAgbGFzdC
- BjYWxsIGZvciA8YSBocmVmPTNEXCI9IiwiaHR0cHM6Ly9kYXRhdHJhY2tlci5pZX
- RmLm9yZy9kb2MvZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQvXCI+aHR0cH
- M6Lz0iLCIvZGF0YXRyYWNrZXIuaWV0Zi5vcmcvZG9jL2RyYWZ0LWlldGYtam1hcC
- 13ZWJwdXNoLXZhcGlkLzwvYT4gYXMgZGlzY3Vzc2U9IiwiZCBpbiB0aGUgSUVURj
- ExOSBzZXNzaW9uLjxicj48L2Rpdj48ZGl2IHN0eWxlPTNEXCJmb250LWZhbWlseT
- pBcmlhbDtcIj48YnI9IiwiPjwvZGl2PjxkaXYgc3R5bGU9M0RcImZvbnQtZmFtaW
- x5OkFyaWFsO1wiPlBsZWFzZSBwb3N0IGFueSBjb21tZW50cyBvciByZXM9IiwicG
- 9uc2VzIGJ5IDxiPlRodXJzZGF5LCBBcHJpbCA0dGgsIDIwMjQ8L2I+Ljxicj48L2
- Rpdj48ZGl2IHN0eWxlPTNEXCJmb250LT0iLCJmYW1pbHk6QXJpYWw7XCI+PGJyPj
- wvZGl2PjxkaXYgc3R5bGU9M0RcImZvbnQtZmFtaWx5OkFyaWFsO1wiPlRoYW5rcy
- w8YnI+PC89IiwiZGl2PjxkaXYgc3R5bGU9M0RcImZvbnQtZmFtaWx5OkFyaWFsO1
- wiPjxicj48L2Rpdj48ZGl2IHN0eWxlPTNEXCJmb250LWZhbWlsPSIsInk6QXJpYW
- w7XCI+QnJvbi48YnI+PC9kaXY+PGRpdj48YnI+PC9kaXY+PGRpdj48YnI+PC9kaX
- Y+PC9kaXY+PGRpdiBpZD0zRFwiPSIsInNpZzU2NjI5NDE3XCI+PGRpdiBjbGFzcz
- 0zRFwic2lnbmF0dXJlXCI+LS08YnI+PC9kaXY+PGRpdiBjbGFzcz0zRFwic2lnbm
- F0dXI9IiwiZVwiPiZuYnNwOyBCcm9uIEdvbmR3YW5hLCBDRU8sIEZhc3RtYWlsIF
- B0eSBMdGQ8YnI+PC9kaXY+PGRpdiBjbGFzcz0zRFwic2k9IiwiZ25hdHVyZVwiPi
- ZuYnNwOyBicm9uZ0BmYXN0bWFpbHRlYW0uY29tPGJyPjwvZGl2PjxkaXYgY2xhc3
- M9M0RcInNpZ25hdHVyZVwiPSIsIj48YnI+PC9kaXY+PC9kaXY+PGRpdiBzdHlsZT
- 0zRFwiZm9udC1mYW1pbHk6QXJpYWw7XCI+PGJyPjwvZGl2PjwvYm9keT48L2h0PS
- IsIm1sPiIsIi0tMTJiNTNkYzgyOWQyNDUxMWJmYTA0ZjdkNWUzNjc1ZjgtLSJdLC
- JoIjp7ImFyY2hpdmVkLWF0IjpbXSwiY29udGVudC10eXBlIjpbIm11bHRpcGFydC
- 9hbHRlcm5hdGl2ZTsgYm91bmRhcnk9MTJiNTNkYzgyOWQyNDUxMWJmYTA0ZjdkNW
- UzNjc1ZjgiXSwiZGF0ZSI6WyJUaHUsIDIxIE1hciAyMDI0IDEyOjA5OjM3ICsxMD
- AwIl0sImZlZWRiYWNrLWlkIjpbXSwiZnJvbSI6WyJcIkJyb24gR29uZHdhbmFcIi
- A8YnJvbmdAZmFzdG1haWx0ZWFtLmNvbT4iXSwibGlzdC1hcmNoaXZlIjpbXSwibG
- lzdC1oZWxwIjpbXSwibGlzdC1pZCI6W10sImxpc3Qtb3duZXIiOltdLCJsaXN0LX
- Bvc3QiOltdLCJsaXN0LXN1YnNjcmliZSI6W10sImxpc3QtdW5zdWJzY3JpYmUiOl
- tdLCJtZXNzYWdlLWlkIjpbIjxmYjFiMTBhZS1lYTM2LTRlZTQtYjg0Zi1iNjJmMD
- M2Y2ZhZjVAYXBwLmZhc3RtYWlsLmNvbT4iXSwibWVzc2FnZS1pZC1oYXNoIjpbXS
- wicHJlY2VkZW5jZSI6W10sInN1YmplY3QiOlsiV29ya2luZyBncm91cCBsYXN0IG
- NhbGwgZHJhZnQtaWV0Zi1qbWFwLXdlYnB1c2gtdmFwaWQiXX19
+	h=sha256:ElVBaJDUrsU0T5JD/75pQwfTLBnvQ+A7AcFbKt10wRU=:J6VauIREWw
+	r3c5kBrr1rcNJVHTIQZTA2jIrswdN9e10=;
+	r=eyJiIjpbWzY2LDEyOF1dLCJoIjp7ImV4dHJhLWhlYWRlciI6W119fQ==
 Message-Instance: v=1;
- h=sha256:tB8uwPQbcCHO6zvU0EnzEFWUKKBtwyzmrxeavy4Jn1g=:XI228V/720
- XNelm76DFKQf934iOEQQCt6wZ3uKCIr9Q=
-DKIM2-Signature: i=2; v=2; t=1740000000; d=test2.example.com;
- m=eyJtZiI6ImJvdW5jZXNAdGVzdDIuZXhhbXBsZS5jb20iLCJydCI6WyJ1c2VyQH
- Rlc3QzLmV4YW1wbGUuY29tIl19;
- s=sel2:rsa-sha256:NVeNHPtt7cQ8aQxhoPt/M+LUmwygS0hRUU4Bm8VmU2QA1H
- cehQbx8g6rLA2evTCgXB1XlK5lwml3xOwn9m6XRbdBpRtu8rQ0OK5C9ufZL5SeMK
- GRm+ueViKmv0FSuIizeH+Ns4Fkc0zZzK97szbubFeVLC9axWVLMVXZBicETCw0gP
- +IenNyhCSqm9TqqZhuw/gJXfm3fQTAdwevjSO7WCww0JYClAVINUJd+c1y+xFNha
- r5mY/knL7I6EoN+XTaQMKfFn36EtdVX+OtpeaB6MrnJZykDESqVTHjOo4lDtRtRO
- JUYWWs5oVxceSjzmxFZVzt7Z19EGmFbLjvG/d9aw==
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.example.com;
- m=eyJtZiI6ImJyb25nQHRlc3QxLmV4YW1wbGUuY29tIiwicnQiOlsibGlzdEB0ZX
- N0Mi5leGFtcGxlLmNvbSJdfQ==;
- s=sel1:rsa-sha256:C2xuFV5kF/NVqDPPal+aY5aD0ARBQ31fW0vpFQxNi71wQm
- j5XxtddRS1HDjGVrDiPum7gRSKMTQAvcRxOeGw9TAvZvkGOUqHlZrGu6947jjBq9
- Pg6Xc53U5aIHoy84yHfS7+bbf7y41yS1GhFTaeH4PrIS8wig6xsuJGQC1aEoccO8
- sFLjn06NevpVNmx7cRdCtKMwSyDaLN9fOQPZqiG1ftbUe6GxFpwrigvmuUcZzDHX
- eN8daNwiU2Y1tn4zgeoxTk+Invibl8h7sXo/wnjV+KLJ+qgcaoVWpjJv6m602pjX
- wAGDNkiipKqDNwCOA4uyRhKPk+0QNLZswRXyxGJg==
+ h=sha256:hWR2jUhGIbgUk4+GFw4I3YOvmisoa423Fowk/BcJs9M=:4olUkMUi2b
+ CCfVrAOg4rSNpPMBWnWoKd71+94zpiUqo=
 Extra-Header: yes
 Received: from ietfa.amsl.com (localhost [IPv6:::1])
 	by ietfa.amsl.com (Postfix) with ESMTP id B5BE4C1CAE68
@@ -220,6 +147,69 @@ https://datatracker.ietf.org/doc/draft-ietf-jmap-webpush-vapid/
 Please provide any comments on the updated draft by *Thursday August 22nd,* two weeks from today.  I'll submit to IESG then unless there are remaining unsolved issues.
 
 Here's some extra text.
+
+Thanks,
+
+Bron.
+
+
+--
+  Bron Gondwana, CEO, Fastmail Pty Ltd
+  brong@fastmailteam.com
+
+
+--050c6a6ec8c942ab825bbc048ba71c35
+Content-Type: text/html
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html><html><head><title></title><style type=3D"text/css">p.Mso=
+Normal,p.MsoNoSpacing{margin:0}</style></head><body><div style=3D"font-f=
+amily:Arial;">Hi All,<br></div><div style=3D"font-family:Arial;"><br></d=
+iv><div style=3D"font-family:Arial;">This starts a repeat working group =
+last call on the webpush vapid draft:<br></div><div style=3D"font-family=
+:Arial;"><br></div><div style=3D"font-family:Arial;"><a href=3D"https://=
+datatracker.ietf.org/doc/draft-ietf-jmap-webpush-vapid/">https://datatra=
+cker.ietf.org/doc/draft-ietf-jmap-webpush-vapid/</a><br></div><div style=
+=3D"font-family:Arial;"><br></div><div style=3D"font-family:Arial;">Plea=
+se provide any comments on the updated draft by <b>Thursday August 22nd,=
+</b> two weeks from today.&nbsp; I'll submit to IESG then unless there a=
+re remaining unsolved issues.<br></div><div style=3D"font-family:Arial;"=
+><br></div><div style=3D"font-family:Arial;">Thanks,<br></div><div style=
+=3D"font-family:Arial;"><br>Bron.<br></div><div style=3D"font-family:Ari=
+al;"><br></div><div style=3D"font-family:Arial;"><br></div><div id=3D"si=
+g56629417"><div class=3D"signature">--<br></div><div class=3D"signature"=
+>&nbsp; Bron Gondwana, CEO, Fastmail Pty Ltd<br></div><div class=3D"sign=
+ature">&nbsp; brong@fastmailteam.com<br></div><div class=3D"signature"><=
+br></div></div><div style=3D"font-family:Arial;"><br></div></body></html=
+>
+--050c6a6ec8c942ab825bbc048ba71c35--
+
+
+--===============6090836018512317826==
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+Content-Disposition: inline
+
+X19fX19fX19fX19fX19fX19fX19fX19fX19fX19fX19fX19fX19fX19fX19fX18KSm1hcCBtYWls
+aW5nIGxpc3QgLS0gam1hcEBpZXRmLm9yZwpUbyB1bnN1YnNjcmliZSBzZW5kIGFuIGVtYWlsIHRv
+IGptYXAtbGVhdmVAaWV0Zi5vcmcK
+
+--===============6090836018512317826==--
+--===============6090836018512317826==
+Content-Type: multipart/alternative; boundary=050c6a6ec8c942ab825bbc048ba71c35
+
+--050c6a6ec8c942ab825bbc048ba71c35
+Content-Type: text/plain
+Content-Transfer-Encoding: 7bit
+
+Hi All,
+
+This starts a repeat working group last call on the webpush vapid draft:
+
+https://datatracker.ietf.org/doc/draft-ietf-jmap-webpush-vapid/
+
+Please provide any comments on the updated draft by *Thursday August 22nd,* two weeks from today.  I'll submit to IESG then unless there are remaining unsolved issues.
 
 Thanks,
 
