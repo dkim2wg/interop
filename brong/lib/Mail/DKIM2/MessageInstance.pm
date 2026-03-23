@@ -759,9 +759,9 @@ MIME epilogue rather than encoded as a diff in the MI header.
 
 With C<EpilogueThreshold =E<gt> N>, the best diff recipe is computed first.  If
 it contains more than C<N> literal (non-range) lines, the epilogue strategy is
-used instead; otherwise the diff is used.  C<N = 5> is a reasonable default
+used instead; otherwise the diff is used.  C<N = 5> is a reasonable value
 that keeps MI headers small while avoiding the epilogue overhead for small
-changes.
+changes.  To always use the diff, simply omit both options (the default).
 
 For both epilogue options: if C<$msg_current> is already C<multipart/*>, the
 previous body is appended after the final MIME boundary (C<--BOUNDARY--\r\n>).

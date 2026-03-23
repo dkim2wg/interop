@@ -531,8 +531,8 @@ for my $i (1..$#hops) {
 
     my $cur_body = $make_cur->()->body_raw;
     if ($cur_body eq $prev_body) {
-        pass("$label_base: body unchanged, skipping threshold test");
-        pass("$label_base: body unchanged, skipping threshold test");
+        pass("$label_base: body unchanged, skipping epilogue threshold test");
+        pass("$label_base: body unchanged, skipping default diff test");
         next;
     }
 
@@ -559,17 +559,15 @@ for my $i (1..$#hops) {
             "$label_base threshold=0: undo restores previous body");
     }
 
-    # --- Threshold=99999: diff always used (never epilogue) ---
+    # --- No option (default): diff always used ---
     {
         my $cur = $make_cur->();
         my $orig_body = $cur->body_raw;
-        my $mi = Mail::DKIM2::MessageInstance->calculate(
-            $cur, $prev, EpilogueThreshold => 99999,
-        );
+        my $mi = Mail::DKIM2::MessageInstance->calculate($cur, $prev);
 
         # Body of $cur must not have been modified (no epilogue added)
         is($cur->body_raw, $orig_body,
-            "$label_base threshold=99999: cur body not modified (diff used)");
+            "$label_base default: cur body not modified (diff used)");
 
         my $folded = fold_header("Message-Instance: " . $mi->as_string());
         $folded =~ s/^Message-Instance: //;
@@ -577,13 +575,13 @@ for my $i (1..$#hops) {
         $cur = Email::MIME->new($cur->as_string);
 
         my $v = Mail::DKIM2::MessageInstance->verify($cur);
-        ok($v, "$label_base threshold=99999: MI verifies (v=$v)");
+        ok($v, "$label_base default: MI verifies (v=$v)");
 
         my $restored = Mail::DKIM2::MessageInstance->undo(
             Email::MIME->new($cur->as_string)
         );
         is($restored->body_raw, normalize_body($prev_body),
-            "$label_base threshold=99999: undo restores previous body");
+            "$label_base default: undo restores previous body");
     }
 }
 
