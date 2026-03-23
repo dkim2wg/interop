@@ -43,10 +43,16 @@ GetOptions(\%opts,
     'algorithm|a=s',
     'snapshot-dir=s',
     'dns-json=s',
+    'use-epilogue',
+    'epilogue-threshold=i',
     'help|h',
 ) or pod2usage(2);
 
 pod2usage(-exitval => 0, -verbose => 2) if $opts{help};
+
+if ($opts{'use-epilogue'} && defined $opts{'epilogue-threshold'}) {
+    die "--use-epilogue and --epilogue-threshold are mutually exclusive\n";
+}
 
 $opts{socket}    //= 'unix:/var/run/dkim2-milter.sock';
 $opts{algorithm} //= 'rsa-sha256';
@@ -107,6 +113,17 @@ if ($opts{'snapshot-dir'}) {
         directory => $opts{'snapshot-dir'},
     );
     warn "dkim2-milter: snapshots in $opts{'snapshot-dir'}\n";
+}
+
+# Options passed to MessageInstance->calculate() for diff-based MI
+my %mi_opts;
+if ($opts{'use-epilogue'}) {
+    $mi_opts{UseEpilogue} = 1;
+    warn "dkim2-milter: MI strategy: UseEpilogue (always store body in MIME epilogue)\n";
+}
+elsif (defined $opts{'epilogue-threshold'}) {
+    $mi_opts{EpilogueThreshold} = $opts{'epilogue-threshold'};
+    warn "dkim2-milter: MI strategy: EpilogueThreshold=$opts{'epilogue-threshold'}\n";
 }
 
 # --- Key directory lookup ---
@@ -419,7 +436,7 @@ sub _compute_mi {
                 }
 
                 my $mi = eval {
-                    Mail::DKIM2::MessageInstance->calculate($msg, $snap_msg);
+                    Mail::DKIM2::MessageInstance->calculate($msg, $snap_msg, %mi_opts);
                 };
                 if ($mi) {
                     my $mi_val = _format_mi($mi);
@@ -520,6 +537,18 @@ dkim2-milter.pl - Standalone DKIM2 milter for Postfix
     dkim2-milter.pl --socket unix:/var/run/dkim2.sock \
         --keydir /etc/dkim2/keys \
         --snapshot-dir /var/spool/dkim2/snapshots
+
+    # Epilogue-based MI (body in MIME epilogue, compact header)
+    dkim2-milter.pl --socket unix:/var/run/dkim2.sock \
+        --keydir /etc/dkim2/keys \
+        --snapshot-dir /var/spool/dkim2/snapshots \
+        --use-epilogue
+
+    # Auto-switch to epilogue when diff exceeds 5 literal lines
+    dkim2-milter.pl --socket unix:/var/run/dkim2.sock \
+        --keydir /etc/dkim2/keys \
+        --snapshot-dir /var/spool/dkim2/snapshots \
+        --epilogue-threshold 5
 
     # Testing with dns.json instead of real DNS
     dkim2-milter.pl --socket inet:8891@localhost \
@@ -664,6 +693,21 @@ In keydir mode, the algorithm is auto-detected from each key file.
 Directory for message snapshots.  Enables diff-based Message-Instance
 computation: on inbound, a snapshot is stored keyed by the MI header value;
 on outbound, the snapshot is used to compute recipes describing changes.
+
+=item B<--use-epilogue>
+
+When computing a diff-based MI, always store the previous message body in
+the MIME epilogue rather than as inline diff lines.  This keeps MI headers
+small regardless of how much the body changed, at the cost of increasing
+the transmitted message size.  Cannot be combined with C<--epilogue-threshold>.
+
+=item B<--epilogue-threshold> I<N>
+
+When computing a diff-based MI, switch to epilogue storage only when the
+diff recipe would contain more than I<N> literal (non-range) lines.  Small
+changes (C<< <= N >> lines) stay as a compact inline diff; large changes
+fall back to epilogue.  C<5> is a reasonable starting value.
+Cannot be combined with C<--use-epilogue>.
 
 =item B<--dns-json> I<PATH>
 
