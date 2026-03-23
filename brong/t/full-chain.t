@@ -342,4 +342,163 @@ diag("=== Unchanged message re-sign ===");
     path("$out_dir/chain-hop6-unchanged-re-sign.eml")->spew($msg->as_string);
 }
 
+# ============================================================
+# Phase 5: UseEpilogue — body-changing transitions
+# ============================================================
+
+diag("=== UseEpilogue body recipe tests ===");
+
+# Normalize a raw body to the form undo() produces: split by line, rejoin
+# with CRLF, single trailing CRLF.  Allows comparison independent of
+# how many blank lines trail the original multipart body.
+sub normalize_body {
+    my $b = shift;
+    return join("\r\n", split(/\r?\n/, $b), '');
+}
+
+# Helper: build a minimal one-hop message with a v=1 MI header.
+sub make_v1_msg {
+    my ($file) = @_;
+    my $msg = Email::MIME->new(path($file)->slurp);
+    strip_msg($msg);
+    my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+    my $folded = fold_header("Message-Instance: " . $mi->as_string());
+    $folded =~ s/^Message-Instance: //;
+    $msg->header_raw_prepend('Message-Instance', $folded);
+    return Email::MIME->new($msg->as_string);
+}
+
+# For each hop pair where the body actually changes, verify that:
+#   1. calculate(..., UseEpilogue => 1) sets an rb recipe
+#   2. MI verifies on the modified (epilogue-carrying) message
+#   3. undo() restores the exact previous body
+for my $i (1..$#hops) {
+    my $label = "UseEpilogue hop $i->".($i+1)." ($hops[$i]{name})";
+
+    # Build a clean previous message with a v=1 MI
+    my $prev = make_v1_msg($hops[$i-1]{file});
+    my $prev_body = $prev->body_raw;
+
+    # Build the current message and graft the previous MI headers onto it
+    my $cur = Email::MIME->new(path($hops[$i]{file})->slurp);
+    strip_msg($cur);
+    for my $h (reverse $prev->header_raw('Message-Instance')) {
+        $cur->header_raw_prepend('Message-Instance', $h);
+    }
+    $cur = Email::MIME->new($cur->as_string);
+
+    my $cur_body = $cur->body_raw;
+    if ($cur_body eq $prev_body) {
+        pass("$label: body unchanged, skipping epilogue test");
+        next;
+    }
+
+    # Calculate MI with UseEpilogue — modifies $cur in place
+    my $mi = Mail::DKIM2::MessageInstance->calculate(
+        $cur, $prev, UseEpilogue => 1,
+    );
+    ok($mi->get_tag('rb'), "$label: rb recipe present");
+
+    # Add the MI header to the now-modified (epilogue-carrying) message
+    my $folded = fold_header("Message-Instance: " . $mi->as_string());
+    $folded =~ s/^Message-Instance: //;
+    $cur->header_raw_prepend('Message-Instance', $folded);
+    $cur = Email::MIME->new($cur->as_string);
+
+    # MI must verify against the epilogue-carrying body
+    my $v = Mail::DKIM2::MessageInstance->verify($cur);
+    ok($v, "$label: MI verifies on epilogue-carrying message (v=$v)");
+
+    # undo() must restore the previous body.  undo() normalizes trailing
+    # CRLF via split/join, so compare against the normalized form.
+    my $restored = Mail::DKIM2::MessageInstance->undo(
+        Email::MIME->new($cur->as_string)
+    );
+    is($restored->body_raw, normalize_body($prev_body),
+        "$label: undo restores previous body");
+}
+
+# ============================================================
+# Phase 6: UseEpilogue long chain
+#
+# Build a chain where every body-changing hop uses UseEpilogue.
+# Each new hop's message has the previous version's body in its
+# MIME epilogue (and any header changes in rh).  Unwind from the
+# top and verify the body is restored at every step.
+# ============================================================
+
+diag("=== UseEpilogue long chain ===");
+
+{
+    # Accumulate messages hop by hop, using UseEpilogue when the body changes.
+    my @chain_msgs;   # one per hop, in order
+    my @chain_bodies; # original body (normalized) of each hop, for comparison
+
+    my $prev_msg;
+
+    for my $i (0..$#hops) {
+        my $hop   = $hops[$i];
+        my $label = "epilogue chain hop " . ($i + 1) . " ($hop->{name})";
+
+        my $msg = Email::MIME->new(path($hop->{file})->slurp);
+        strip_msg($msg);
+
+        if ($i == 0) {
+            # First hop: no previous, plain v=1 MI.
+            my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+            my $folded = fold_header("Message-Instance: " . $mi->as_string());
+            $folded =~ s/^Message-Instance: //;
+            $msg->header_raw_prepend('Message-Instance', $folded);
+            $msg = Email::MIME->new($msg->as_string);
+        } else {
+            # Graft accumulated MI headers onto the new message.
+            for my $h (reverse $prev_msg->header_raw('Message-Instance')) {
+                $msg->header_raw_prepend('Message-Instance', $h);
+            }
+            $msg = Email::MIME->new($msg->as_string);
+
+            my $body_changed = ($msg->body_raw ne $prev_msg->body_raw);
+
+            my $mi;
+            if ($body_changed) {
+                $mi = Mail::DKIM2::MessageInstance->calculate(
+                    $msg, $prev_msg, UseEpilogue => 1
+                );
+                ok($mi->get_tag('rb'), "$label: UseEpilogue set rb recipe");
+            } else {
+                $mi = Mail::DKIM2::MessageInstance->calculate($msg, $prev_msg);
+            }
+            ok($mi->get_tag('v') == $i + 1, "$label: MI version is " . ($i + 1));
+
+            my $folded = fold_header("Message-Instance: " . $mi->as_string());
+            $folded =~ s/^Message-Instance: //;
+            $msg->header_raw_prepend('Message-Instance', $folded);
+            $msg = Email::MIME->new($msg->as_string);
+        }
+
+        my $v = Mail::DKIM2::MessageInstance->verify($msg);
+        ok($v == $i + 1, "$label: MI v=" . ($i + 1) . " verifies");
+
+        push @chain_msgs,   $msg;
+        push @chain_bodies, normalize_body($msg->body_raw);
+        $prev_msg = $msg;
+    }
+
+    # Now unwind from the top, checking body restoration at each step.
+    my $msg = Email::MIME->new($chain_msgs[-1]->as_string);
+    for my $step (reverse 1..$#hops) {
+        my $label = "epilogue chain unwind to hop $step";
+
+        # Undo the top MI
+        $msg = Mail::DKIM2::MessageInstance->undo($msg);
+        $msg = Email::MIME->new($msg->as_string);
+
+        my $v = Mail::DKIM2::MessageInstance->verify($msg);
+        ok($v == $step, "$label: MI v=$step verifies after undo");
+
+        is(normalize_body($msg->body_raw), $chain_bodies[$step - 1],
+            "$label: body matches hop $step original");
+    }
+}
+
 done_testing();
