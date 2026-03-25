@@ -300,7 +300,7 @@ sub cb_eom {
         if ($mi_header) {
             $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
             my ($mi_ver) = $mi_header =~ /m=(\d+)/;
-            $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-v$mi_ver"), 0);
+            $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver"), 0);
             warn "dkim2-milter: added MI header for $msgid\n";
         }
     }
@@ -315,7 +315,7 @@ sub cb_eom {
                 warn "dkim2-milter: computed MI for $msgid\n";
                 $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
                 my ($mi_ver) = $mi_header =~ /m=(\d+)/;
-                $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-v$mi_ver"), 0);
+                $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver"), 0);
                 warn "dkim2-milter: added MI header for $msgid\n";
             }
         }
