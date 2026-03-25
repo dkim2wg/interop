@@ -274,14 +274,24 @@ sub cb_eom {
     if ($do_verify) {
         my $result = _do_verify($message);
         warn "dkim2-milter: verify $msgid result=$result\n";
-        $ctx->insheader('Authentication-Results',
-            "localhost; dkim2=$result", 0);
-        $ctx->insheader('X-DKIM2-Info', _dkim2_info("verify=$result"), 0);
 
-        # Compute MI for inbound: add v=1 if none, cache snapshot
+        # Build the A-R and X-DKIM2-Info headers we're about to add.
+        # Since Authentication-Results is no longer excluded from the
+        # header hash, the MI and snapshot must include it.
+        my $ar_value = "localhost; dkim2=$result";
+        my $info_value = _dkim2_info("verify=$result");
+        my $ar_raw = "Authentication-Results: $ar_value$EOL";
+        my $info_raw = "X-DKIM2-Info: $info_value$EOL";
+        my $message_with_ar = $info_raw . $ar_raw . $message;
+
+        # Insert the headers into the milter output
+        $ctx->insheader('Authentication-Results', $ar_value, 0);
+        $ctx->insheader('X-DKIM2-Info', _milter_value($info_value), 0);
+
+        # Compute MI from the message that includes A-R
         my $mi_header;
         if ($snapshot_store) {
-            $mi_header = _compute_mi($message);
+            $mi_header = _compute_mi($message_with_ar);
             if ($mi_header) {
                 warn "dkim2-milter: computed MI for $msgid\n";
             }
