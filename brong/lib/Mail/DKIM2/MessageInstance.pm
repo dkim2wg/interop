@@ -516,6 +516,7 @@ sub _best_body_diff {
     my ($cur_raw, $prev_raw) = @_;
     (my $s1 = $cur_raw)  =~ s/[\r\n]+$//;
     (my $s2 = $prev_raw) =~ s/[\r\n]+$//;
+    return undef if $s1 eq $s2;
     my @l1 = split /\r?\n/, $s1;
     my @l2 = split /\r?\n/, $s2;
     my $line = _body_recipe_linediff(\@l1, \@l2);
