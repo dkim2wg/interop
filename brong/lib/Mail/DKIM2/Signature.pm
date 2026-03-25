@@ -23,7 +23,7 @@ sub new {
     bless $self, $class;
 
     $self->set_tag('i', $args{Sequence})  if defined $args{Sequence};
-    $self->set_tag('v', $args{Version})   if defined $args{Version};
+    $self->set_tag('m', $args{Version})   if defined $args{Version};
     $self->set_tag('t', $args{Timestamp}) if defined $args{Timestamp};
     $self->set_tag('d', $args{Domain})    if defined $args{Domain};
     $self->set_tag('n', $args{Nonce})     if defined $args{Nonce};
@@ -32,8 +32,13 @@ sub new {
         $self->set_tag('f', join(',', @{$args{Flags}}));
     }
 
-    if (defined $args{SmtpParams}) {
-        $self->set_tag('m', encode_tag_json($args{SmtpParams}));
+    # mf= and rt= are base64-encoded SMTP addresses
+    if (defined $args{MailFrom}) {
+        $self->set_tag('mf', encode_base64($args{MailFrom}, ''));
+    }
+    if (defined $args{RcptTo}) {
+        my @encoded = map { encode_base64($_, '') } @{$args{RcptTo}};
+        $self->set_tag('rt', join(',', @encoded));
     }
 
     if (defined $args{Signatures}) {
@@ -69,8 +74,8 @@ sub sequence {
 
 sub version {
     my $self = shift;
-    if (@_) { $self->set_tag('v', shift) }
-    return $self->get_tag('v');
+    if (@_) { $self->set_tag('m', shift) }
+    return $self->get_tag('m');
 }
 
 sub timestamp {
@@ -98,15 +103,6 @@ sub flags {
     return [split /,/, $f];
 }
 
-# --- JSON tag accessors ---
-
-sub smtp_params {
-    my $self = shift;
-    my $m = $self->get_tag('m');
-    return unless defined $m;
-    return decode_tag_json($m);
-}
-
 sub signatures_data {
     my $self = shift;
     my $s = $self->get_tag('s');
@@ -119,20 +115,20 @@ sub signatures_data {
     return \@items;
 }
 
-# --- Convenience methods for SMTP params ---
+# --- SMTP parameter accessors (mf= and rt= tags) ---
 
 sub mail_from {
     my $self = shift;
-    my $params = $self->smtp_params;
-    return unless $params;
-    return $params->{mf};
+    my $mf = $self->get_tag('mf');
+    return unless defined $mf;
+    return decode_base64($mf);
 }
 
 sub rcpt_to {
     my $self = shift;
-    my $params = $self->smtp_params;
-    return unless $params;
-    return $params->{rt};
+    my $rt = $self->get_tag('rt');
+    return unless defined $rt;
+    return [map { decode_base64($_) } split /,/, $rt];
 }
 
 # --- Convenience methods for signature items ---

@@ -29,7 +29,7 @@ while (1) {
     my ($check, $error) = Mail::DKIM2::MessageInstance->verify($msg1);
     die "ERROR: failed to verify instance $instance: $error\n" unless $check;
     die "DIDN'T FIND TOP $instance <> $check" unless $instance == $check;
-    say "OK Message-Instance: v=$check";
+    say "OK Message-Instance: m=$check";
     die "Failed to undo" unless Mail::DKIM2::MessageInstance->undo($msg1);
     # Email::MIME keeps internal caches which get broken by replacing the body
     $instance--;
@@ -41,7 +41,7 @@ while (1) {
     my $newinstance = %mimap ? max(keys %mimap) : 0;
     die "MISMATCH TOP DKIM" unless $num == $newnum;
     die "MISMATCH TOP VERSION $instance <> $newinstance" unless $instance == $newinstance;
-    die "NO SUCH Message-Instance v=$instance" unless $mimap{$instance};
+    die "NO SUCH Message-Instance m=$instance" unless $mimap{$instance};
   }
   last unless $num;
   my $h = $map{$num};
@@ -54,7 +54,7 @@ while (1) {
   $verifier->CLOSE;
 
   if ($verifier->result eq 'pass') {
-    say "OK DKIM2-Signature: i=$num; v=$instance";
+    say "OK DKIM2-Signature: i=$num; m=$instance";
   } else {
     die "DKIM2-Signature i=$num: " . $verifier->result_detail();
   }
@@ -70,7 +70,7 @@ sub _geti {
 
 sub _getv {
   my $arg = shift;
-  return 0 unless $arg =~ m/\bv=(\d+)/;
+  return 0 unless $arg =~ m/\bm=(\d+)/;
   return 0 + $1;
 }
 

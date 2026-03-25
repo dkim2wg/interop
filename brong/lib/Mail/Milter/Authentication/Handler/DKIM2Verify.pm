@@ -220,16 +220,16 @@ sub _add_mi_and_store {
             my %mi_by_v = map { (extract_mi_version($_) || 0) => $_ } @mi_headers;
             $mi_value = $mi_by_v{$mi_ver};
             $snapshot = $message_data;
-            $self->dbgout( 'DKIM2MI', "Existing MI v=$mi_ver matches, using as snapshot key", LOG_DEBUG );
+            $self->dbgout( 'DKIM2MI', "Existing MI m=$mi_ver matches, using as snapshot key", LOG_DEBUG );
         }
         else {
             # Case 1: No MI headers — first entry into DKIM2 ecosystem.
-            # Compute MI v=1 and prepend it.
+            # Compute MI m=1 and prepend it.
             my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
             $mi_value = $self->_format_mi($mi);
             $self->prepend_header( 'Message-Instance', $mi_value );
             $snapshot = "Message-Instance: $mi_value$EOL" . $message_data;
-            $self->dbgout( 'DKIM2MI', "Added Message-Instance v=" . ($mi->get_tag('v') || '?'), LOG_DEBUG );
+            $self->dbgout( 'DKIM2MI', "Added Message-Instance m=" . ($mi->get_tag('m') || '?'), LOG_DEBUG );
         }
 
         # Store snapshot keyed by the MI value so the outbound signer can

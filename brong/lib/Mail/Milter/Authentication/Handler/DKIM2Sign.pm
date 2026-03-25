@@ -290,7 +290,7 @@ sub _compute_message_instance {
             for my $v (sort { $b <=> $a } keys %mi_by_v) {
                 my $snapshot_data = $store->fetch($mi_by_v{$v});
                 if ( $snapshot_data ) {
-                    $self->dbgout( 'DKIM2MI', "Found snapshot for MI v=$v, computing diff", LOG_DEBUG );
+                    $self->dbgout( 'DKIM2MI', "Found snapshot for MI m=$v, computing diff", LOG_DEBUG );
                     my $snapshot_msg = Email::MIME->new($snapshot_data);
                     return Mail::DKIM2::MessageInstance->calculate($msg, $snapshot_msg);
                 }
@@ -305,7 +305,7 @@ sub _compute_message_instance {
             return undef;
         }
 
-        # No existing MI headers — first-time signing, compute MI v=1
+        # No existing MI headers — first-time signing, compute MI m=1
         Mail::DKIM2::MessageInstance->calculate($msg);
     };
     if ( my $error = $@ ) {

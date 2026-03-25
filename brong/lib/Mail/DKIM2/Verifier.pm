@@ -94,7 +94,7 @@ sub finish_body {
         for my $v (1..$max_v) {
             unless ($mi_map{$v}) {
                 $self->{result} = 'fail';
-                $self->{details} = "missing Message-Instance v=$v";
+                $self->{details} = "missing Message-Instance m=$v";
                 return;
             }
         }
@@ -126,9 +126,9 @@ sub _verify_signature {
 
     # Only include headers that existed when signature $i was created:
     # - DKIM2-Sig headers with i <= $i
-    # - MI headers with v <= the version referenced by signature $i
+    # - MI headers with m <= the version referenced by signature $i
     my $max_v = $signature->version || 0;
-    # If signature has no version (i=1 with no prior MI), include MI up to $i
+    # If signature has no m= (i=1 with no prior MI), include MI up to $i
     $max_v = $i if !$max_v;
 
     my @mi_arr  = map { { v => $_, raw => $mi_map{$_} } }

@@ -150,7 +150,7 @@ for my $i (0..$#hops) {
     if ($i == 0) {
         # First hop: calculate v=1 MI (no previous message)
         my $mi = add_mi($msg);
-        ok($mi->get_tag('v') == 1, "$label: MI version is 1");
+        ok($mi->get_tag('m') == 1, "$label: MI version is 1");
     } else {
         # Graft MI and DKIM2-Sig headers from the accumulated chain
         # onto this new message version
@@ -171,7 +171,7 @@ for my $i (0..$#hops) {
         # Calculate MI diff: $msg is the new version (with modified content
         # but same MI chain), $current_msg is the previous version
         my $mi = add_mi($msg, $current_msg);
-        ok($mi->get_tag('v') == $i + 1, "$label: MI version is " . ($i + 1));
+        ok($mi->get_tag('m') == $i + 1, "$label: MI version is " . ($i + 1));
     }
 
     # Re-parse before signing (Email::MIME caching)
@@ -281,15 +281,15 @@ diag("=== Negative tests ===");
 {
     my $msg = Email::MIME->new($current_msg->as_string);
     my @mi = $msg->header_raw('Message-Instance');
-    # Remove v=3
-    my @filtered = grep { $_ !~ /^\s*v=3\b/ } @mi;
+    # Remove m=3
+    my @filtered = grep { $_ !~ /^\s*m=3\b/ } @mi;
     $msg->header_raw_set('Message-Instance', @filtered);
     $msg = Email::MIME->new($msg->as_string);
 
     # Verifier should detect the gap (the signing input no longer matches
     # because the set of MI headers changed)
     my $v = verify_msg($msg);
-    isnt($v->result, 'pass', "verifier detects missing MI v=3 in chain");
+    isnt($v->result, 'pass', "verifier detects missing MI m=3 in chain");
 }
 
 # ============================================================
@@ -468,7 +468,7 @@ diag("=== UseEpilogue long chain ===");
             } else {
                 $mi = Mail::DKIM2::MessageInstance->calculate($msg, $prev_msg);
             }
-            ok($mi->get_tag('v') == $i + 1, "$label: MI version is " . ($i + 1));
+            ok($mi->get_tag('m') == $i + 1, "$label: MI version is " . ($i + 1));
 
             my $folded = fold_header("Message-Instance: " . $mi->as_string());
             $folded =~ s/^Message-Instance: //;

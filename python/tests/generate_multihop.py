@@ -77,7 +77,7 @@ def generate_multihop_header_add():
     ] + content_hdrs
 
     # Recipe: remove List-Unsubscribe (empty array = remove all)
-    recipes = {'h': {'list-unsubscribe': []}, 'b': {}}
+    recipes = {'h': {'list-unsubscribe': []}}
 
     mi2 = build_message_instance(new_hdrs, body, version=2)
     mi2 += '; r=' + b64json(recipes)
@@ -120,7 +120,7 @@ def generate_multihop_body_footer():
     modified_body = modified_body.replace(b'\n', b'\r\n')
 
     # Recipe: keep only line 1 of body
-    recipes = {'h': {}, 'b': [[1, 1]]}
+    recipes = {'b': [{'c': [1, 1]}]}
 
     mi2 = build_message_instance(content_hdrs, modified_body, version=2)
     mi2 += '; r=' + b64json(recipes)
@@ -166,7 +166,7 @@ def generate_multihop_header_replace():
             modified_hdrs.append(hdr)
 
     # Recipe: restore original Subject (text = value without field name)
-    recipes = {'h': {'subject': [' Simple test message']}, 'b': {}}
+    recipes = {'h': {'subject': [{'d': [' Simple test message']}]}}
 
     mi2 = build_message_instance(modified_hdrs, body, version=2)
     mi2 += '; r=' + b64json(recipes)
@@ -216,7 +216,7 @@ def generate_multihop_dup_headers():
 
     # Recipe: keep only the original 3 Authentication-Results (instances 1-3,
     # bottom-up = the 3 that were in the original message)
-    recipes = {'h': {'authentication-results': [[1, 3]]}, 'b': {}}
+    recipes = {'h': {'authentication-results': [{'c': [1, 3]}]}}
 
     mi2 = build_message_instance(new_hdrs, body, version=2)
     mi2 += '; r=' + b64json(recipes)
@@ -266,7 +266,7 @@ def generate_multihop_3hop_dup_headers():
         b'Authentication-Results: relay.test2.dkim2.com; dkim=pass',
     ] + content_hdrs1
 
-    recipes2 = {'h': {'authentication-results': [[1, 3]]}, 'b': {}}
+    recipes2 = {'h': {'authentication-results': [{'c': [1, 3]}]}}
     mi2 = build_message_instance(hop2_hdrs, body, version=2)
     mi2 += '; r=' + b64json(recipes2)
 
@@ -298,7 +298,7 @@ def generate_multihop_3hop_dup_headers():
     ] + content_hdrs2
 
     # Recipe: keep all 5 from hop 2 (instances 1-5 bottom-up)
-    recipes3 = {'h': {'authentication-results': [[1, 5]]}, 'b': {}}
+    recipes3 = {'h': {'authentication-results': [{'c': [1, 5]}]}}
     mi3 = build_message_instance(hop3_hdrs, body3, version=3)
     mi3 += '; r=' + b64json(recipes3)
 

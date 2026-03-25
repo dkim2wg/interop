@@ -15,6 +15,7 @@ use Exporter 'import';
 our @EXPORT_OK = qw(
     should_skip
     dkim2_canonicalize_header
+    dkim2_canonicalize_sig_header
     digest64
     encode_tag_json
     decode_tag_json
@@ -28,7 +29,7 @@ our @EXPORT_OK = qw(
     load_private_key
 );
 
-# Headers excluded from hashing per the DKIM2 spec
+# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec Section 5.2
 sub should_skip {
     my $hname = lc(shift);
     return 1 if $hname eq 'received';
@@ -37,12 +38,11 @@ sub should_skip {
     return 1 if $hname eq 'dkim2-signature';
     return 1 if $hname =~ m/^x-/;
     return 1 if $hname eq 'dkim-signature';
-    return 1 if $hname eq 'authentication-results';
     return 1 if $hname =~ m/^arc-/;
     return 0;
 }
 
-# DKIM2 header canonicalization per spec Section 5.2 / 11.5:
+# DKIM2 header canonicalization for HEADER HASH per spec Section 5.2:
 # 1. Lowercase header name
 # 2. Unfold continuation lines (remove CRLF before WSP)
 # 3. Collapse runs of WSP to single SP
@@ -62,6 +62,25 @@ sub dkim2_canonicalize_header {
     # Strip leading and trailing WSP from value
     $value =~ s/^[ \t]+//;
     $value =~ s/[ \t]*\r?\n?$//;
+    return "$name:$value\r\n";
+}
+
+# DKIM2 header canonicalization for SIGNATURE INPUT per spec Section 9.5:
+# Same as header hash canonicalization except step 3 deletes ALL WSP
+# characters rather than collapsing to single SP.
+sub dkim2_canonicalize_sig_header {
+    my ($line) = @_;
+    # Unfold: remove CRLF followed by WSP
+    $line =~ s/\r?\n[ \t]//g;
+    # Split on colon
+    my ($name, $value) = split(/:/, $line, 2);
+    return $line unless defined $value;
+    # Lowercase name
+    $name = lc($name);
+    # Delete ALL WSP characters
+    $value =~ s/[ \t]+//g;
+    # Strip trailing CRLF/LF
+    $value =~ s/\r?\n?$//;
     return "$name:$value\r\n";
 }
 
@@ -170,12 +189,12 @@ sub fold_value {
     return join("\r\n\t", @parts);
 }
 
-# Extract the version number from a Message-Instance header value
+# Extract the revision number from a Message-Instance header value (m= tag)
 sub extract_mi_version {
     my ($header) = @_;
     $header = $header->[0] if ref($header) eq 'ARRAY';
     $header = $$header if ref($header);
-    return unless $header =~ m/^\s*v=(\d+)/;
+    return unless $header =~ m/^\s*m=(\d+)/;
     return $1;
 }
 
@@ -223,22 +242,22 @@ sub build_signing_input {
 
     my $signing_input = '';
 
-    # 1. All MI headers in ascending v= order
+    # 1. All MI headers in ascending m= order
     for my $mi (@mi_headers) {
-        $signing_input .= dkim2_canonicalize_header($mi->{raw});
+        $signing_input .= dkim2_canonicalize_sig_header($mi->{raw});
     }
 
     # 2. Prior DKIM2-Signature headers (i < signing_i) in ascending i= order
     for my $dk2 (@dk2_headers) {
         next if $dk2->{i} == $signing_i;
-        $signing_input .= dkim2_canonicalize_header($dk2->{raw});
+        $signing_input .= dkim2_canonicalize_sig_header($dk2->{raw});
     }
 
     # 3. The incomplete signature being signed/verified
     # Signer passes signing_header (folded); verifier uses default (unfolded)
     my $sig_header = $args{signing_header} // $signature->as_string_without_data();
     $sig_header .= "\r\n" unless $sig_header =~ /\r\n$/;
-    $signing_input .= dkim2_canonicalize_header($sig_header);
+    $signing_input .= dkim2_canonicalize_sig_header($sig_header);
 
     return $signing_input;
 }

@@ -194,11 +194,11 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
 
     # Extract required tags
     i_val = _extract_tag(value, "i")
-    v_val = _extract_tag(value, "v")
+    m_val = _extract_tag(value, "m")
     d_val = _extract_tag(value, "d")
     s_tag = _extract_tag(value, "s")
 
-    if not all([i_val, v_val, d_val, s_tag]):
+    if not all([i_val, m_val, d_val, s_tag]):
         return [f"DKIM2-Signature i={i_val}: missing required tags"]
     if not s_tag:
         return [f"DKIM2-Signature i={i_val}: missing s= tag"]
@@ -240,16 +240,16 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         stripped_items.append(f"{item[0]}:{item[1]}:.")
     incomplete_sig = prefix + ",".join(stripped_items)
 
-    # Collect MI headers up to version v=
-    mi_version = int(v_val)
+    # Collect MI headers up to version m=
+    mi_version = int(m_val)
     relevant_mi = sorted(
         [h for h in mi_headers if _get_version_from_mi(h) <= mi_version],
         key=_get_version_from_mi,
     )
     prior_sigs = sorted(other_sig_headers, key=_get_seq_from_sig)
 
-    # Per draft-clayton-dkim2-spec-08 Section 11.5:
-    # 1. All MI headers in ascending v= order
+    # Per draft-ietf-dkim-dkim2-spec Section 9.5:
+    # 1. All MI headers in ascending m= order
     # 2. All prior DKIM2-Signature headers in ascending i= order
     # 3. The incomplete DKIM2-Signature being verified
     ordered: list[str] = []
@@ -359,11 +359,11 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
         elif verbose:
             print(f"  MI v={version} hashes: OK", file=sys.stderr)
 
-        # Verify all DKIM2-Signatures that reference this MI version (v= tag)
+        # Verify all DKIM2-Signatures that reference this MI version (m= tag)
         for idx, sig_hdr in enumerate(sig_by_seq):
             sig_value = _get_header_value(sig_hdr)
-            sig_v = _extract_tag(sig_value, "v")
-            if sig_v and int(sig_v) == version:
+            sig_m = _extract_tag(sig_value, "m")
+            if sig_m and int(sig_m) == version:
                 i_val = _extract_tag(sig_value, "i")
                 # Collect MI headers up to this version
                 relevant_mi = [mi_by_version[v] for v in sorted(mi_by_version)

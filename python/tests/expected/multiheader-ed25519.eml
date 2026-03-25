@@ -1,5 +1,5 @@
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test2.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0Mi5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=ed25519:ed25519-sha256:rjPN3Xo/GyMjJknYzTCC14WySUZxrZL4y4VZGrVCJ3f+RlIm1SdwVvrFDapsq6a2CLwAs3EnGY9s6kaKvNRUDg==
-Message-Instance: v=1; h=sha256:ShmtblPBr8lV9zKrv7MAP81zN+N32REP2QOZnUk9Fc8=:CyfSEkygi5JDksVb4/R53JKT7GKBuBgsR1ZYpkHnQOs=
+DKIM2-Signature: i=1; m=1; t=1740000000; d=test2.dkim2.com; mf=c2VuZGVyQHRlc3QyLmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:JMzkO5JSdXJLneLv8zeVq4lFm+SvfVwTGYrkvNP/M+5pvj2lzn0+Qo2xKvlR48OpM7fcwvnefgjQV6Ut5cxYCA==
+Message-Instance: m=1; h=sha256:ShmtblPBr8lV9zKrv7MAP81zN+N32REP2QOZnUk9Fc8=:CyfSEkygi5JDksVb4/R53JKT7GKBuBgsR1ZYpkHnQOs=
 From: sender@test2.dkim2.com
 To: recipient@example.com
 Cc: other@example.com

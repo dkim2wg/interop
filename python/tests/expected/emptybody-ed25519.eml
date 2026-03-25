@@ -1,5 +1,5 @@
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test4.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0NC5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=ed25519:ed25519-sha256:G0UTyxSaGf7q/G61+kE8uVneOI/YplKMCty6rO99Q6W3DTtq14OU6L+huad5vR21ZE7OrjcFYwDNqesEGoS2DA==
-Message-Instance: v=1; h=sha256:WT8nqIyG8W1R78H1QT4oZdo1SKdQrY9JHQ4fMC+IXHU=:frcCV1k9oG9oKj3dpUqdJg1PxRT2RSN/XKdLCPjaYaY=
+DKIM2-Signature: i=1; m=1; t=1740000000; d=test4.dkim2.com; mf=c2VuZGVyQHRlc3Q0LmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:O24w67EXkflRqbYlN0ltq2PZGPS9G6g/5T5IHkpc+lE0iNLOUx/LT5ds1o3SvRbNDS4fQvOQCGxJmPJMeAgsAA==
+Message-Instance: m=1; h=sha256:WT8nqIyG8W1R78H1QT4oZdo1SKdQrY9JHQ4fMC+IXHU=:frcCV1k9oG9oKj3dpUqdJg1PxRT2RSN/XKdLCPjaYaY=
 From: sender@test4.dkim2.com
 To: recipient@example.com
 Subject: Message with empty body

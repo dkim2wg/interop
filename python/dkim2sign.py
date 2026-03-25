@@ -77,8 +77,7 @@ def parse_message(raw: bytes) -> tuple[list[bytes], bytes]:
 # Headers to exclude from the header hash
 _EXCLUDED_PREFIXES = (b"x-", b"arc-")
 _EXCLUDED_NAMES = {b"received", b"return-path", b"message-instance",
-                   b"dkim2-signature", b"dkim-signature",
-                   b"authentication-results"}
+                   b"dkim2-signature", b"dkim-signature"}
 
 
 def _header_name(hdr: bytes) -> bytes:
@@ -202,7 +201,7 @@ def build_message_instance(headers: list[bytes], body: bytes,
     h_hash = compute_header_hash(headers)
     b_hash = compute_body_hash(body)
 
-    return f"Message-Instance: v={version}; h=sha256:{b64(h_hash)}:{b64(b_hash)}"
+    return f"Message-Instance: m={version}; h=sha256:{b64(h_hash)}:{b64(b_hash)}"
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +211,27 @@ def build_message_instance(headers: list[bytes], body: bytes,
 def canonicalize_sig_header(raw_hdr: str) -> bytes:
     """Canonicalize a Message-Instance or DKIM2-Signature header for signing.
 
-    Same rules as Section 5.2 steps 2-6, applied to these specific headers.
+    Per Section 9.5: same as header hash except ALL WSP is deleted
+    (not collapsed to single SP).
     """
-    return canonicalize_header_field(raw_hdr.encode("utf-8", errors="surrogateescape"))
+    hdr = raw_hdr if isinstance(raw_hdr, str) else raw_hdr.decode("utf-8", errors="surrogateescape")
+    # Step 3: Unfold continuation lines
+    hdr = re.sub(r"\r\n([ \t])", r"\1", hdr)
+    # Split into name and value at first colon
+    colon = hdr.find(":")
+    if colon == -1:
+        name = hdr
+        value = ""
+    else:
+        name = hdr[:colon]
+        value = hdr[colon + 1:]
+    # Step 2: Lowercase the field name
+    name = name.lower().strip()
+    # Step 3 (sig-specific): Delete ALL WSP characters
+    value = re.sub(r"[ \t]+", "", value)
+    # Strip trailing CRLF/LF
+    value = value.rstrip("\r\n")
+    return (name + ":" + value + "\r\n").encode("utf-8", errors="surrogateescape")
 
 
 def _extract_tag(header_value: str, tag: str) -> str | None:
@@ -228,12 +245,12 @@ def _extract_tag(header_value: str, tag: str) -> str | None:
 
 
 def _get_version_from_mi(hdr: str) -> int:
-    """Extract v= value from a Message-Instance header string."""
-    # hdr is "Message-Instance: v=N; ..."
+    """Extract m= value from a Message-Instance header string."""
+    # hdr is "Message-Instance: m=N; ..."
     colon = hdr.find(":")
     value = hdr[colon + 1:] if colon != -1 else hdr
-    v = _extract_tag(value, "v")
-    return int(v) if v else 0
+    m = _extract_tag(value, "m")
+    return int(m) if m else 0
 
 
 def _get_seq_from_sig(hdr: str) -> int:
@@ -311,17 +328,16 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     if timestamp is None:
         timestamp = int(time.time())
 
-    # m= tag: SMTP parameters
-    m_obj = {
-        "mf": mailfrom,
-        "rt": rcptto or ["unknown@example.com"],
-    }
+    # mf= and rt= tags: base64-encoded SMTP addresses
+    mf_b64 = b64(mailfrom.encode("utf-8"))
+    rt_list = rcptto or ["unknown@example.com"]
+    rt_b64 = ",".join(b64(r.encode("utf-8")) for r in rt_list)
 
     # Build the incomplete signature header with sel:alg:. in s= tag
     # (dot replaces signature data, like DKIM1's b= convention).
     incomplete = (
-        f"DKIM2-Signature: i={seq}; v={mi_version}; t={timestamp}; "
-        f"d={domain}; m={b64json(m_obj)}; s={selector}:{algorithm}:."
+        f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
+        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={selector}:{algorithm}:."
     )
 
     # Collect all MI headers including the new one
@@ -336,8 +352,8 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
 
     # Build the final header with the actual signature value
     return (
-        f"DKIM2-Signature: i={seq}; v={mi_version}; t={timestamp}; "
-        f"d={domain}; m={b64json(m_obj)}; s={s_complete}"
+        f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
+        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={s_complete}"
     )
 
 

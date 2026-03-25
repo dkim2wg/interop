@@ -40,12 +40,31 @@ def decode_recipes(mi_hdr: str) -> dict | None:
     return json.loads(base64.b64decode(r_b64))
 
 
-def parse_range(recipe) -> tuple[int, int] | None:
-    """Parse a range recipe. Accepts [start, end] arrays.
-    Returns (start, end) or None if this is a text recipe."""
+def parse_step(recipe) -> tuple[str, any]:
+    """Parse a recipe step object.
+
+    Returns (type, data) where:
+    - ("c", (start, end)) for copy ranges
+    - ("d", ["val1", ...]) for data/literal values
+    - ("z", True) for truncation marker
+    - ("legacy_range", (start, end)) for bare [start, end] arrays
+    - ("legacy_str", "text") for bare strings
+    """
+    if isinstance(recipe, dict):
+        if "c" in recipe:
+            c = recipe["c"]
+            return ("c", (int(c[0]), int(c[1])))
+        elif "d" in recipe:
+            return ("d", recipe["d"])
+        elif "z" in recipe:
+            return ("z", True)
+    # Legacy bare array format
     if isinstance(recipe, list) and len(recipe) == 2:
-        return int(recipe[0]), int(recipe[1])
-    return None
+        return ("c", (int(recipe[0]), int(recipe[1])))
+    # Legacy bare string
+    if isinstance(recipe, str):
+        return ("d", [recipe])
+    return ("unknown", recipe)
 
 
 # ---------------------------------------------------------------------------
@@ -86,18 +105,18 @@ def apply_header_recipe(current_instances: list[bytes], field_name: str,
     emitted: list[bytes] = []
 
     for recipe in recipes:
-        rng = parse_range(recipe)
-        if rng is not None:
-            start, end = rng
+        step_type, step_data = parse_step(recipe)
+        if step_type == "c":
+            start, end = step_data
             # Emit instances numbered start through end (1-based, bottom-up)
             for i in range(start, end + 1):
                 idx = i - 1  # Convert to 0-based
                 if idx < len(bottom_up):
                     emitted.append(bottom_up[idx])
-        else:
-            # Text string: prepend field name and colon
-            line = f"{field_name}: {recipe}".encode("utf-8", errors="surrogateescape")
-            emitted.append(line)
+        elif step_type == "d":
+            for val in step_data:
+                line = f"{field_name}: {val}".encode("utf-8", errors="surrogateescape")
+                emitted.append(line)
 
     # Recipes emit so "later header fields appear above earlier ones"
     # Since we processed in order and appended, reverse to get top-to-bottom
@@ -201,16 +220,16 @@ def reconstruct_body(body: bytes, body_recipes: list[str]) -> bytes:
     result_lines: list[bytes] = []
 
     for recipe in body_recipes:
-        rng = parse_range(recipe)
-        if rng is not None:
-            start, end = rng
+        step_type, step_data = parse_step(recipe)
+        if step_type == "c":
+            start, end = step_data
             for i in range(start, end + 1):
                 idx = i - 1  # Convert to 0-based
                 if idx < len(lines):
                     result_lines.append(lines[idx])
-        else:
-            # Text string: append as a line
-            result_lines.append(recipe.encode("utf-8", errors="surrogateescape"))
+        elif step_type == "d":
+            for val in step_data:
+                result_lines.append(val.encode("utf-8", errors="surrogateescape"))
 
     # Rejoin with CRLF
     return b"\r\n".join(result_lines) + b"\r\n" if result_lines else b"\r\n"
@@ -389,8 +408,8 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
             hdr_str = hdr.decode("utf-8", errors="surrogateescape")
             colon = hdr_str.find(":")
             val = hdr_str[colon + 1:] if colon != -1 else hdr_str
-            v_val = _extract_tag(val, "v")
-            if v_val and int(v_val) <= target_version:
+            m_val = _extract_tag(val, "m")
+            if m_val and int(m_val) <= target_version:
                 output_parts.append(hdr)
         elif name == b"message-instance":
             hdr_str = hdr.decode("utf-8", errors="surrogateescape")

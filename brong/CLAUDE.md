@@ -1,4 +1,4 @@
-# Mail::DKIM2 — Perl implementation of draft-clayton-dkim2-spec-08
+# Mail::DKIM2 — Perl implementation of draft-ietf-dkim-dkim2-spec-00
 
 ## Project structure
 
@@ -11,7 +11,7 @@
 - `../dns.json` — shared DNS key records for interop testing
 - `../keys/` — shared private keys for interop testing
 - `../python/` — Python DKIM2 implementation (separate, for interop testing)
-- `../spec/` — draft-clayton-dkim2-spec-08.txt
+- `../spec/` — draft-ietf-dkim-dkim2-spec-00.txt
 
 ## Dependencies
 

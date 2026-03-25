@@ -1,7 +1,7 @@
-DKIM2-Signature: i=2; v=2; t=1740001000; d=test3.dkim2.com; m=eyJtZiI6InJlbGF5QHRlc3QzLmRraW0yLmNvbSIsInJ0IjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdfQ==; s=ed25519:ed25519-sha256:1g5i7rU74uWcKwIkYft9FPi6XQmsNiXEM4uVfB1aQ3iEddxHx+faZmi7Ca5qVvmeXfHa3V6dUtMa1HVgQKsdDA==
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJsaXN0QHRlc3QzLmRraW0yLmNvbSJdfQ==; s=ed25519:ed25519-sha256:GIg+RIQsHjXxSzoBbGjnhhx9FQz+7GVi2MNWuR0P5uBnbP8eq1UGBvg4szl8taqOu+zYKq6RgjSvWIKMyKr2Bw==
-Message-Instance: v=2; h=sha256:YQR+cQdwRx1EUHN5Hs0I0rdcwdmvtXuasYBEq2djXR0=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=; r=eyJoIjp7InN1YmplY3QiOlsiIFNpbXBsZSB0ZXN0IG1lc3NhZ2UiXX0sImIiOnt9fQ==
-Message-Instance: v=1; h=sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=
+DKIM2-Signature: i=2; m=2; t=1740001000; d=test3.dkim2.com; mf=cmVsYXlAdGVzdDMuZGtpbTIuY29t; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:6h+9/XaRnBstxRv97ZYb7C5AjTTvOu3p80hMiJ0dFaB0jTR9Pof5C9P4xWcc6w6mCroEtzWYcp8kpJQRMfRfBg==
+DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=c2VuZGVyQHRlc3QxLmRraW0yLmNvbQ==; rt=bGlzdEB0ZXN0My5ka2ltMi5jb20=; s=ed25519:ed25519-sha256:s3AUf58RafByhLxBZ4qg/fAEZ1JEzXTQfCWrVsmMQMByz5BtPXdVp+ECLYXNkKmZDkcD8srl3KlhscC7C/zfBQ==
+Message-Instance: m=2; h=sha256:YQR+cQdwRx1EUHN5Hs0I0rdcwdmvtXuasYBEq2djXR0=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=; r=eyJoIjp7InN1YmplY3QiOlt7ImQiOlsiIFNpbXBsZSB0ZXN0IG1lc3NhZ2UiXX1dfX0=
+Message-Instance: m=1; h=sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=
 From: sender@test1.dkim2.com
 To: recipient@example.com
 Subject: [MODIFIED] Simple test message

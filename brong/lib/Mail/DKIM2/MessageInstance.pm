@@ -72,17 +72,17 @@ sub get_tag {
     return $self->{bits}{$k};
 }
 
-# --- Wire format: v=N; h=sha256:header_hash:body_hash; r=<b64json> ---
+# --- Wire format: m=N; h=sha256:header_hash:body_hash; r=<b64json> ---
 
 sub as_string {
     my ($self) = @_;
     my %data = %{$self->{bits}};
-    my $v = delete $data{v};
+    my $m = delete $data{m};
 
     # Build h= tag: sha256:header_hash:body_hash
     my $h1 = delete $data{h1} // '';
     my $b1 = delete $data{b1} // '';
-    my $result = "v=$v; h=sha256:$h1:$b1";
+    my $result = "m=$m; h=sha256:$h1:$b1";
 
     # Build r= tag JSON if there are recipes
     my %recipe_json;
@@ -106,10 +106,28 @@ sub as_string {
 }
 
 # Convert internal recipe list to wire format
-# [from,to] arrays stay as JSON arrays; strings stay as-is
+# Internal: [from,to] arrays for copy ranges, strings for literal content
+# Wire: {"c": [from,to]} for copy, {"d": ["val1",...]} for data
 sub _encode_recipe_list {
     my ($list) = @_;
-    return $list;
+    my @encoded;
+    my @pending_strings;
+    for my $item (@$list) {
+        if (ref $item eq 'ARRAY') {
+            # Flush any pending strings as a {"d": [...]} step
+            if (@pending_strings) {
+                push @encoded, { d => [@pending_strings] };
+                @pending_strings = ();
+            }
+            push @encoded, { c => $item };
+        } else {
+            push @pending_strings, $item;
+        }
+    }
+    if (@pending_strings) {
+        push @encoded, { d => [@pending_strings] };
+    }
+    return \@encoded;
 }
 
 # --- Parsing ---
@@ -121,7 +139,7 @@ sub parse {
     # Strip leading whitespace
     $header =~ s/^\s+//;
 
-    # Parse tag-value format: v=N; h=...; r=...
+    # Parse tag-value format: m=N; h=...; r=...
     my %tags;
     for my $part (split /\s*;\s*/, $header) {
         next unless $part =~ /^(\w+)\s*=\s*(.*)/s;
@@ -130,9 +148,9 @@ sub parse {
         $tags{$name} = $val;
     }
 
-    die "missing v= tag in Message-Instance header"
-        unless exists $tags{v};
-    $self->{bits}{v} = $tags{v};
+    die "missing m= tag in Message-Instance header"
+        unless exists $tags{m};
+    $self->{bits}{m} = $tags{m};
 
     # Parse h= tag: sha256:header_hash:body_hash
     if (exists $tags{h}) {
@@ -160,10 +178,28 @@ sub parse {
 }
 
 # Convert wire format recipe list to internal format
-# JSON arrays [from,to] are copy ranges; strings are base64-encoded content
+# Wire: {"c": [from,to]} for copy, {"d": ["val1",...]} for data
+# Internal: [from,to] arrays for copy ranges, strings for literal content
 sub _decode_recipe_list {
     my ($list) = @_;
-    return $list;
+    my @decoded;
+    for my $item (@$list) {
+        if (ref $item eq 'HASH') {
+            if (exists $item->{c}) {
+                push @decoded, $item->{c};
+            } elsif (exists $item->{d}) {
+                push @decoded, @{$item->{d}};
+            }
+            # {"z": true} is currently ignored (truncation marker)
+        } elsif (ref $item eq 'ARRAY') {
+            # Legacy bare array format — accept for backward compat
+            push @decoded, $item;
+        } else {
+            # Legacy bare string — accept for backward compat
+            push @decoded, $item;
+        }
+    }
+    return \@decoded;
 }
 
 # --- Digests ---
@@ -532,7 +568,7 @@ sub calculate {
         die "This isn't the same message" unless ($canon_cur eq $canon_prev);
 
         my %map = map { extract_mi_version($_) => $_ } @mi_cur;
-        $self->set_tag('v', max(keys %map) + 1);
+        $self->set_tag('m', max(keys %map) + 1);
 
         if ($opts{UseEpilogue}) {
             # Always store old body in MIME epilogue.
@@ -557,7 +593,7 @@ sub calculate {
     }
     else {
         die "Already has Message-Instance headers" if $current->header_raw('Message-Instance');
-        $self->set_tag('v', 1);
+        $self->set_tag('m', 1);
     }
 
     # Hashes are always of the current (newest) version of the message,

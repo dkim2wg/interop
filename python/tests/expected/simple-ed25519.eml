@@ -1,5 +1,5 @@
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.dkim2.com; m=eyJtZiI6InNlbmRlckB0ZXN0MS5ka2ltMi5jb20iLCJydCI6WyJyZWNpcGllbnRAZXhhbXBsZS5jb20iXX0=; s=ed25519:ed25519-sha256:J/H1kQA85RmIyeitGB5SVycUSDxh6IgAT7IUPFnsJBDauIXbV7H3kPvpaGZXvQWpa62vVXEZ7zUdhyQQqKyJCg==
-Message-Instance: v=1; h=sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=
+DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=c2VuZGVyQHRlc3QxLmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:FAu0VeW927a/GjC0sn6siJv3rpiWeX+N9rFUqxhr3sb76NOJzt2MPpTgaTbeBgs+BXYF3XU7kr3YSjBvC+CtDA==
+Message-Instance: m=1; h=sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=
 From: sender@test1.dkim2.com
 To: recipient@example.com
 Subject: Simple test message

@@ -63,11 +63,6 @@ sub finish_header {
     # Determine highest MI version
     my $mi_version = @mi_headers ? $mi_headers[-1]{v} : 0;
 
-    # Build SMTP params
-    my %smtp_params;
-    $smtp_params{mf} = $self->{MailFrom} if defined $self->{MailFrom};
-    $smtp_params{rt} = $self->{RcptTo} if defined $self->{RcptTo};
-
     # Build initial signature items as [selector, algorithm, value] arrays
     my @sig_items;
     push @sig_items, [
@@ -82,7 +77,8 @@ sub finish_header {
         Version    => $mi_version || undef,
         Timestamp  => $self->{Timestamp} || time(),
         Domain     => $self->{Domain},
-        SmtpParams => (keys %smtp_params ? \%smtp_params : undef),
+        MailFrom   => $self->{MailFrom},
+        RcptTo     => $self->{RcptTo},
         Signatures => \@sig_items,
         ($self->{Nonce} ? (Nonce => $self->{Nonce}) : ()),
         ($self->{Flags} ? (Flags => $self->{Flags}) : ()),

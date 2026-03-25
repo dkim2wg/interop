@@ -519,7 +519,7 @@ my $expected_dir = path("tests/expected");
     ok(@dk2 > 0,      'case2: outbound added DKIM2-Signature');
     ok(@mi > 0,        'case2: outbound added MI v=2 (message was modified)');
     if (@mi) {
-        like($mi[0]{value}, qr/^v=2/, 'case2: new MI is version 2');
+        like($mi[0]{value}, qr/^m=2/, 'case2: new MI is version 2');
         like($mi[0]{value}, qr/r=/,   'case2: new MI has recipes (diff from snapshot)');
     }
 

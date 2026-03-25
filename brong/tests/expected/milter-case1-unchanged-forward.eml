@@ -1,22 +1,22 @@
-DKIM2-Signature: i=2; v=1; t=1774242331; d=test2.example.com;
-	m=eyJtZiI6ImZvcndhcmRlckB0ZXN0Mi5leGFtcGxlLmNvbSIsInJ0IjpbInJlY2
-	lwaWVudEB0ZXN0Mi5leGFtcGxlLmNvbSJdfQ==;
-	s=rsa1024:rsa-sha256:D09GG8GCMwWzvaHrYmk0/9sejOpkaDd/5+mP76T69qI
-	HMEfOHalqhqdjy8RLfRt2ejy1Tc1ryv18vRRRf+pUTN7HnUEuT9zvGf0BSC8YtuY
-	nfrftDgC7WFW2QfGCDnE0RBtRFc4n/ofoSjlS2+Xom7YUWXfU6UL5U3drwtGLSh0
-	rbo/EG3USZsIL9S/bWXc0fAVWyzrcwZ3diCeIeRQvB0gCp0HFbe9ClM7KKHjSJBv
-	9qLxl/djGMhVyrACcY7Wc1DBRejSPAUPx/WtYWzyzDMp4Icvrqv/nnzjk+5jxo9y
-	QBYQYSHodW79YDcPAssq7kb9jFlnfWsZseUN4bLI7Kg==
-DKIM2-Signature: i=1; v=1; t=1740000000; d=test1.example.com;
-	m=eyJtZiI6InNlbmRlckB0ZXN0MS5leGFtcGxlLmNvbSIsInJ0IjpbImZvb0B0ZX
-	N0Mi5leGFtcGxlLmNvbSJdfQ==;
-	s=rsa1024:rsa-sha256:4+HSOPmMmhPALl61Dw7XwsX9DEQiQtdkJpGY/XcXl3j
-	fgP61b5nxKpb0cxdx7IIKHiU2+PL24ywe7AZmR800J6OMjExxsGW3vwMmlhU0VeS
-	d9PY7CfOgrm1iKFWqrZCjj4onn16K1QBArQRpTZe00AaT+BfDKPceaRFAKn7l8X9
-	fGBSH4j4u0VaX+t2lgv375+6iUe2Zhnt9Rhv0YKgZFxey/sjp7MTP6J0FRwoXN+w
-	rIRJaAw4JV7sTPhkCwAUKKyOkKLHZ6MmIi/WOamcYHd/rBisiOglIH4Cg6CU34RO
-	gQ5aRXdZhHiUOm+NUmwZe/RJTJFt+1epZAv/ILsGHTg==
-Message-Instance: v=1; h=sha256:tB8uwPQbcCHO6zvU0EnzEFWUKKBtwyzmrxeavy4Jn1g=:XI228V/720XNelm76DFKQf934iOEQQCt6wZ3uKCIr9Q=
+DKIM2-Signature: i=2; m=1; t=1774453850; d=test2.example.com;
+	mf=Zm9yd2FyZGVyQHRlc3QyLmV4YW1wbGUuY29t;
+	rt=cmVjaXBpZW50QHRlc3QyLmV4YW1wbGUuY29t;
+	s=rsa1024:rsa-sha256:ee4jj71EgUcFsfMXlk70UGdWmE1sARdE/P+zZ8yNlmC
+	xb66pGsgcyQwDjlyFQc4AzPIaHkwmSYnffp7g/+fxcrFAoS1Nywu5Hp3ddSlPoqJ
+	QAIMCOsjSjV3quX1bzwQXzdl8Bfq/0R90CeGnEnd13YIWfr+k3Q4v6GhnTm5ccqC
+	6zpWT+aBsjM7rymf8+H9R/OFGsOYjJhGjWnK2V+z3joGZjYQWrf+w+x3junWgvmU
+	O85fhYoHCSViBBfoTd7955mhRCoPIpfDdw3yQIufJwyO3nCHeOFY2YxuIUiM4byd
+	gpJXTniiWs7/dPfpJfsgIhWExNc8Fd6GUFM+o4GEHwg==
+DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.example.com;
+	mf=c2VuZGVyQHRlc3QxLmV4YW1wbGUuY29t;
+	rt=Zm9vQHRlc3QyLmV4YW1wbGUuY29t;
+	s=rsa1024:rsa-sha256:XeJAHBAXVZPHMIJh5hN+I0yvQjxf0FjAX/GTvbYuUEU
+	m4rukzcNKbAp1cebM3IjCt7Y/tovL84ZctBoIAudApigFePKJ320h6ZbPZo026qc
+	e/te+5gZpFH1iH40jZPYdL4r5gLt3yHU3EcH1LLM4Anxx9mo1z/k4+Gl8sLtE37/
+	2RXnOaB43tuilymdjqFDdxuOAxMz/BYLq9xuagxb/BRz8efaPjRukayHCyQDLs+i
+	ova323jMi9EIH+MdFzklY5f5QWVtC/p3SzrTJIf/bikb1gL+04dHAdfZFoRqT1ud
+	uI1N08OVb8xutYr4qo8p/jtBQcgS6lGol3oXV1u4JsA==
+Message-Instance: m=1; h=sha256:tB8uwPQbcCHO6zvU0EnzEFWUKKBtwyzmrxeavy4Jn1g=:XI228V/720XNelm76DFKQf934iOEQQCt6wZ3uKCIr9Q=
 MIME-Version: 1.0
 Message-Id: <fb1b10ae-ea36-4ee4-b84f-b62f036cfaf5@app.fastmail.com>
 Date: Thu, 21 Mar 2024 12:09:37 +1000
