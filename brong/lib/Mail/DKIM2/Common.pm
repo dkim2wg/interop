@@ -229,7 +229,7 @@ sub relaxed_domain_match {
 #   signature   => the Signature object for the entry being signed/verified
 #   signing_header => optional folded header string (signer path)
 #
-# Per draft-clayton-dkim2-spec-08 Section 11.5:
+# Per draft-ietf-dkim-dkim2-spec-00 Section 11.5:
 #   1. All Message-Instance headers in ascending v= order
 #   2. All prior DKIM2-Signature headers in ascending i= order
 #   3. The incomplete DKIM2-Signature (with empty s=) being signed/verified
@@ -331,7 +331,7 @@ This module provides utility functions shared between L<Mail::DKIM2::Signer>,
 L<Mail::DKIM2::Verifier>, and L<Mail::DKIM2::MessageInstance>.  It also holds
 the distribution-wide C<$VERSION>.
 
-B<EXPERIMENTAL> — This module implements draft-clayton-dkim2-spec-08, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-00, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

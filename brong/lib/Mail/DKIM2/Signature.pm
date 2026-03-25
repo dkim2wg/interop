@@ -286,7 +286,7 @@ Mail::DKIM2::Signature - Parse and construct DKIM2-Signature headers
 
 =head1 DESCRIPTION
 
-Represents a DKIM2-Signature header as defined in draft-clayton-dkim2-spec-08.
+Represents a DKIM2-Signature header as defined in draft-ietf-dkim-dkim2-spec-00.
 Extends L<Mail::DKIM2::TagValueList> for tag-value parsing and serialization.
 
 B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet

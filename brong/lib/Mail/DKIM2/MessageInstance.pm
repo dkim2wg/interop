@@ -762,7 +762,7 @@ Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance head
 =head1 DESCRIPTION
 
 This module implements Message-Instance header computation as defined in
-draft-clayton-dkim2-spec-08.  A Message-Instance header records cryptographic
+draft-ietf-dkim-dkim2-spec-00.  A Message-Instance header records cryptographic
 hashes of the message headers and body at a point in the delivery chain, along
 with optional diff recipes that allow undoing changes made at each hop.
 
