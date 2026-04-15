@@ -124,14 +124,22 @@ dig +short TXT sel1._domainkey.dkim2.com
 
 ### Multi-hop test
 
-Set up a forwarding alias on the server so mail traverses two signing
-hops, producing `i=1` and `i=2` signatures with MI headers:
+The `looper` alias forwards through dkim2.com and then into Mailman,
+producing `i=1` (dkim2.com) and `i=2` (Mailman) signatures with MI headers.
+
+Install the helper script and set up the alias:
 
 ```bash
-# On the server, add to /etc/aliases:
-#   forward: test@dkim2.com
-# Then: newaliases
+install -m 755 deploy/looper-forward /usr/local/bin/looper-forward
+
+# Add to /etc/aliases:
+#   looper: |"/usr/local/bin/looper-forward"
+newaliases
 ```
+
+The script strips `Delivered-To` (added by Postfix during alias delivery)
+before re-injecting, so the re-injected message matches the inbound m=1
+snapshot and no spurious m=2 MI header is generated.
 
 ### Cross-implementation testing
 

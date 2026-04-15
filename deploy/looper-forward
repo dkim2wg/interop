@@ -1,0 +1,12 @@
+#!/bin/bash
+# Re-inject a forwarded message through the outbound DKIM2 milter for signing.
+#
+# Used as the pipe target for the "looper" alias in /etc/aliases:
+#   looper: |"/usr/local/bin/looper-forward"
+#
+# Strips Delivered-To so the re-injected message matches the m=1 MI snapshot
+# stored by the inbound milter, avoiding a spurious m=2 MI header for an
+# otherwise-unchanged message.  Uses a dkim2.com bounce address so the
+# outbound milter can find a signing key.
+perl -0777 -pe 's/^Delivered-To:.*\n([ \t].*\n)*//gmi' | \
+  /usr/sbin/sendmail -oi -f "looper-bounces@dkim2.com" test@mailman.dkim2.com
