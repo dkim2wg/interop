@@ -29,7 +29,7 @@ our @EXPORT_OK = qw(
     load_private_key
 );
 
-# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec Section 5.2
+# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-01 Section 5.2
 sub should_skip {
     my $hname = lc(shift);
     return 1 if $hname eq 'received';
@@ -42,7 +42,7 @@ sub should_skip {
     return 0;
 }
 
-# DKIM2 header canonicalization for HEADER HASH per spec Section 5.2:
+# DKIM2 header canonicalization for HEADER HASH per spec-01 Section 5.2:
 # 1. Lowercase header name
 # 2. Unfold continuation lines (remove CRLF before WSP)
 # 3. Collapse runs of WSP to single SP
@@ -65,7 +65,7 @@ sub dkim2_canonicalize_header {
     return "$name:$value\r\n";
 }
 
-# DKIM2 header canonicalization for SIGNATURE INPUT per spec Section 9.5:
+# DKIM2 header canonicalization for SIGNATURE INPUT per spec-01 Section 8.5:
 # Same as header hash canonicalization except step 3 deletes ALL WSP
 # characters rather than collapsing to single SP.
 sub dkim2_canonicalize_sig_header {
@@ -229,7 +229,7 @@ sub relaxed_domain_match {
 #   signature   => the Signature object for the entry being signed/verified
 #   signing_header => optional folded header string (signer path)
 #
-# Per draft-ietf-dkim-dkim2-spec-00 Section 11.5:
+# Per draft-ietf-dkim-dkim2-spec-01 Section 8.5:
 #   1. All Message-Instance headers in ascending v= order
 #   2. All prior DKIM2-Signature headers in ascending i= order
 #   3. The incomplete DKIM2-Signature (with empty s=) being signed/verified
