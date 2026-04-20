@@ -88,7 +88,7 @@ sub finish_body {
         }
     }
 
-    # Check MI completeness if there are MI headers
+    # Check MI completeness and coverage if there are MI headers
     if (keys %mi_map) {
         my $max_v = (sort { $b <=> $a } keys %mi_map)[0];
         for my $v (1..$max_v) {
@@ -97,6 +97,15 @@ sub finish_body {
                 $self->{details} = "missing Message-Instance m=$v";
                 return;
             }
+        }
+        # Verify the top signature covers the topmost MI
+        my $top_sig = $dk2_map{$max_i}{sig};
+        my $top_m   = $top_sig->version || 0;
+        if ($top_m != $max_v) {
+            $self->{result} = 'fail';
+            $self->{details} =
+                "top signature i=$max_i m=$top_m does not cover topmost MI m=$max_v";
+            return;
         }
     }
 
