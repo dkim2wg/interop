@@ -271,6 +271,7 @@ sub parse_dkim_pubkey {
     return unless $key_txt;
     my ($k) = $key_txt =~ /\bk=([^;\s]+)/;
     $k //= 'rsa';  # default per RFC 6376
+    # h= (hash algorithm list) MUST be ignored per spec-01 Section 10.3
     my ($p) = $key_txt =~ /\bp=([A-Za-z0-9+\/=]+)/;
     return unless $p;
     if ($k eq 'ed25519') {
