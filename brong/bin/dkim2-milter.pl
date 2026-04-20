@@ -6,9 +6,9 @@ use Getopt::Long;
 use Pod::Usage;
 use Sendmail::PMilter ':all';
 
-use constant DKIM2_DRAFT   => 'ietf-dkim-dkim2-spec-00';
+use constant DKIM2_DRAFT   => 'ietf-dkim-dkim2-spec-01';
 use constant DKIM2_REPO    => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE    => '2026-03-25';
+use constant DKIM2_DATE    => '2026-04-20';
 use constant DKIM2_SOFTWARE => 'dkim2-milter.pl';
 
 sub _dkim2_info {
