@@ -92,7 +92,11 @@ sub domain {
 
 sub nonce {
     my $self = shift;
-    if (@_) { $self->set_tag('n', shift) }
+    if (@_) {
+        my $val = shift;
+        Carp::croak "nonce must not exceed 64 characters" if length($val) > 64;
+        $self->set_tag('n', $val);
+    }
     return $self->get_tag('n');
 }
 
