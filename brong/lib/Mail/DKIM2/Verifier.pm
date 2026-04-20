@@ -201,27 +201,26 @@ sub _verify_signature {
 
         my $sig_raw = decode_base64($sig_b64);
         my $alg = $signature->algorithm($idx) || 'unknown';
-        eval {
-            my $verified;
-            if ($alg eq 'ed25519') {
+        my $verified = eval {
+            if ($alg =~ /^ed25519/) {
                 # Ed25519-SHA256: SHA-256 hash first, then verify with PureEdDSA
                 my $digest = sha256($signing_input);
-                $verified = $pubkey->verify_message($sig_raw, $digest);
+                $pubkey->verify_message($sig_raw, $digest);
             } else {
                 # RSA-SHA256: verify_message handles SHA-256 internally
-                $verified = $pubkey->verify_message($sig_raw, $signing_input, 'SHA256', 'v1.5');
+                $pubkey->verify_message($sig_raw, $signing_input, 'SHA256', 'v1.5');
             }
-            unless ($verified) {
-                $self->{result} = 'fail';
-                $self->{details} = "signature verification failed for $alg at i=$i";
-                return 0;
-            }
-            1;
-        } or do {
+        };
+        if ($@) {
             $self->{result} = 'fail';
             $self->{details} = "signature verification error for sig item $idx ($alg): $@";
             return 0;
-        };
+        }
+        unless ($verified) {
+            $self->{result} = 'fail';
+            $self->{details} = "signature verification failed for $alg at i=$i";
+            return 0;
+        }
 
         $verified_any = 1;
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 signer - draft-clayton-dkim2-spec-08
+DKIM2 signer - draft-ietf-dkim-dkim2-spec-01
 
 Takes a raw email, selector, domain, and keyfile and produces a signed
 message with Message-Instance and DKIM2-Signature headers on stdout.
@@ -275,7 +275,7 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Per draft-clayton-dkim2-spec-08 Section 11.5:
+    # Per draft-ietf-dkim-dkim2-spec-01 Section 9.5:
     # 1. All MI headers in ascending v= order
     # 2. All prior DKIM2-Signature headers in ascending i= order
     # 3. The incomplete DKIM2-Signature being created
@@ -284,13 +284,9 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     ordered.extend(sorted(sig_headers, key=_get_seq_from_sig))
     ordered.append(incomplete_sig)
 
-    # Canonicalize each header
+    # Canonicalize each header; each already ends in CRLF per spec Section 8.5
     canon = [canonicalize_sig_header(h) for h in ordered]
-
-    # Concatenate with CRLF, plus trailing CRLF
-    data = b"\r\n".join(canon)
-    if data:
-        data += b"\r\n"
+    data = b"".join(canon)
 
     # Hash with SHA-256
     digest = hashlib.sha256(data).digest()
@@ -438,7 +434,7 @@ def sign_message(raw: bytes, selector: str, domain: str, keyfile: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sign an email with DKIM2 (draft-clayton-dkim2-spec-08)")
+        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-01)")
     parser.add_argument("message", help="Path to raw email file (- for stdin)")
     parser.add_argument("-s", "--selector", required=True,
                         help="DKIM2 selector name")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 verifier - draft-clayton-dkim2-spec-08
+DKIM2 verifier - draft-ietf-dkim-dkim2-spec-01
 
 Takes a signed email and verifies its DKIM2 signatures using public keys
 from a dns.json file or DNS TXT records.
@@ -80,6 +80,7 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
             tags = parse_dkim1_txt(rec_value)
             key_type = tags.get("k", "rsa")
             pub_b64 = tags.get("p", "")
+            # h= (hash algorithm list) MUST be ignored per spec-01 Section 10.3
             pub_bytes = base64.b64decode(pub_b64)
 
             if key_type == "ed25519":
@@ -257,11 +258,9 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     ordered.extend(prior_sigs)   # already sorted by sequence
     ordered.append(incomplete_sig)
 
-    # Canonicalize and hash
+    # Canonicalize and hash; each header already ends in CRLF per spec Section 8.5
     canon = [canonicalize_sig_header(h) for h in ordered]
-    data = b"\r\n".join(canon)
-    if data:
-        data += b"\r\n"
+    data = b"".join(canon)
     digest = hashlib.sha256(data).digest()
 
     # Verify signature
@@ -307,6 +306,19 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
         return ["No DKIM2-Signature headers found"]
     if not mi_headers:
         return ["No Message-Instance headers found"]
+
+    # Spec-01 §9/§10: top DKIM2-Signature must cover the topmost MI
+    max_mi_version = max(_get_version_from_mi(h) for h in mi_headers)
+    top_sig = max(sig_headers, key=_get_seq_from_sig)
+    top_sig_value = _get_header_value(top_sig)
+    top_sig_seq = _extract_tag(top_sig_value, "i")
+    top_sig_m = _extract_tag(top_sig_value, "m")
+    top_sig_m_int = int(top_sig_m) if top_sig_m else 0
+    if top_sig_m_int != max_mi_version:
+        return [
+            f"top signature i={top_sig_seq} m={top_sig_m_int} does not cover "
+            f"topmost MI m={max_mi_version}"
+        ]
 
     # Collect the non-MI, non-sig headers for hash verification
     content_headers = []
@@ -418,7 +430,7 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Verify DKIM2 signatures (draft-clayton-dkim2-spec-08)")
+        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-01)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--dns-json", required=True,
                         help="Path to dns.json with public keys")

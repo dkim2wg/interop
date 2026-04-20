@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 message-instance undo - draft-clayton-dkim2-spec-08
+DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-01
 
 Takes a signed email with Message-Instance headers containing recipes
 and reconstructs the message as it was at a previous version.
@@ -434,7 +434,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Undo DKIM2 message-instance changes (draft-clayton-dkim2-spec-08)")
+        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-01)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--target-version", type=int, default=None,
                         help="MI version to reconstruct back to (default: highest - 1)")
