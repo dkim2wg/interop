@@ -332,7 +332,7 @@ This module provides utility functions shared between L<Mail::DKIM2::Signer>,
 L<Mail::DKIM2::Verifier>, and L<Mail::DKIM2::MessageInstance>.  It also holds
 the distribution-wide C<$VERSION>.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-00, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-01, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

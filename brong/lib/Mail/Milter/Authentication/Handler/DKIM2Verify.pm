@@ -346,7 +346,7 @@ Mail::Milter::Authentication::Handler::DKIM2Verify - Handler class for DKIM2 sig
 Verifies DKIM2 signatures and chain of custody on inbound email, adding
 Authentication-Results headers with the verification outcome.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-00, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-01, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

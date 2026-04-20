@@ -588,7 +588,7 @@ auto-detected from the key type (RSA or Ed25519).
 
 =back
 
-B<EXPERIMENTAL> — This tool implements draft-ietf-dkim-dkim2-spec-00, an
+B<EXPERIMENTAL> — This tool implements draft-ietf-dkim-dkim2-spec-01, an
 Internet-Draft that has not yet been published as an RFC.  Do not use in
 production.
 
