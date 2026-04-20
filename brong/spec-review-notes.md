@@ -66,3 +66,25 @@ returns pass — but MI v=2 is entirely unauthenticated.
 number of Message-Instance header fields present.  If there are more
 Message-Instance header fields than covered by the top DKIM2-Signature, the
 verifier MUST return FAIL."
+
+### 4. §5.2: MI computation ordering with Authentication-Results
+
+The spec's header hash exclusion list (§5.2) includes Received, Return-Path,
+Message-Instance, DKIM2-Signature, DKIM-Signature, and X-* / ARC-* prefixes.
+It does not mention Authentication-Results.
+
+The inbound milter must compute the MI hash over a message state that already
+includes the Authentication-Results header it is about to insert.  Because the
+milter protocol batches all header insertions (they are applied to the live
+message only after the EOM callback returns), the milter must construct a
+synthetic message string that prepends the AR header, compute MI over that
+string, and then queue both AR and the MI for insertion.
+
+The spec does not describe this ordering requirement.  Implementors must be
+aware that the MI hash covers AR (it is not excluded) and must therefore be
+computed in the correct order.
+
+**Suggested clarification:** Add a note in §8.1 that an intermediary inserting
+both an MI header and other transit headers (e.g. Authentication-Results) in
+the same pass MUST compute the MI hash over a message state that includes all
+headers that will be present in the delivered message.

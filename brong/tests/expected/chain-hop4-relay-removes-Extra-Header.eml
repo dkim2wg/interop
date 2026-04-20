@@ -1,12 +1,12 @@
 DKIM2-Signature: i=4; m=4; t=1740000000; d=test4.example.com;
 	mf=cmVsYXlAdGVzdDQuZXhhbXBsZS5jb20=;
 	rt=dXNlckB0ZXN0NS5leGFtcGxlLmNvbQ==;
-	s=sel1:rsa-sha256:cGJ/Lu5D0K/wwVJVA5cUae91Kmitn+mFiAp7srEpvyU5jm
-	AcSTrW9jd5JhfihO83zECNzY5paLVX39rBjyJJqq7MO2H6lLDdHVCM2pLcknG8r8
-	Zn6687fV6HizCg8zRo8u2hN1mXIZJQxwe4zwM0gA51vKb1+/Z/cb+ZMlTFepzXE1
-	hn67wZ1AKwxjS2i04GltrBmXTlPb/95WlF2CMY75nsO0BtB600Joyuf5PRV9gy3m
-	cRKGL/9jFi7fvdkC0CbE/3D6swRGO/V3jPj/WZTnZeon2zQDQ9OGjvn9ciYV5BB8
-	TmO/g6ZA+s5LTa2EMpLP07WratouNQZOHCuD1QXw==
+	s=sel1:rsa-sha256:EFPYT2pFfNHId04sPhVUWCm4zLc7+rAVBkW/uw93YkKKap
+	gFQD2sDTA9Su212vm3BHfZ2tcrQBdmK9cWZuQjpXMrjsURsE30hA4rjUJuMhdmE5
+	4/uLIE2+awqPF1LIassdxYOMk1ey2TfoHp9Nr4skGwj9GHAMvfV3b0EUxHd8pIcz
+	DR8C5uMITVVFaxS/dguod9LmV444mmneQqDY8EKm25P0V41ZQjVf7977eDnunl5a
+	xbxjGWhyhSqjHPRjr2u8AKoiL1GuW2FwL34M0inImTYFJ2kgoQN3RhSxuXHlXup+
+	m+dcKsf329s2xRjLKbH33IYc7ue5qFd2m9+yIr+A==
 Message-Instance: m=4;
 	h=sha256:rD6J9EqHwAVvbafsiQw4CCneCdTe4NCbPz0UDPu/NoA=:4olUkMUi2b
 	CCfVrAOg4rSNpPMBWnWoKd71+94zpiUqo=;
@@ -71,28 +71,28 @@ Message-Instance: m=1;
  XNelm76DFKQf934iOEQQCt6wZ3uKCIr9Q=
 DKIM2-Signature: i=3; m=3; t=1740000000; d=test3.example.com;
  mf=cmVsYXlAdGVzdDMuZXhhbXBsZS5jb20=; rt=dXNlckB0ZXN0NC5leGFtcGxlLmNvbQ==;
- s=sel3:rsa-sha256:m68pW5N1GTfAeVIFL8WNfBhQbcLAYUac4O1rl9ECHwiXmV
- fRj+K+yf2edajzijDu95TrSNdg7Q+iYfebF/+pue9/bG+SAXlNIz+sYBmSGW+iE+
- sIX0G4xJX44gVSB8OXZwYhK0M71Pc9oEasI95X9gBDu3lv7a6jBZ27J4jnERBUCu
- S9cB7wspv1GRJxUoC9aAlyi99CmkGwQ5/3kFhkfCP3fyVNbu7H++j4ZSxkgdV3yv
- oDvS0ja0BnzUKBKRIp+CJB02OaqbuOZxOyS96EnILaLavmgsH5hAB7Es8GOytHgw
- KNFyXA1kUKU2vaE3cG8ec0IJMt5xf4o5eJsSPfYQ==
+ s=sel3:rsa-sha256:esMFUiEiudbDvOsAkwy4uaOLUgS33a/hBOesX3+j0S4Hoi
+ Rek4Rrnk/nuG8rgo4/l7MPZsBmQNEHWxZXfMwow891aHb+SEcDOaYFlnoCd1/pGv
+ FDpzjot63TkpUPs0ZrCssDZFRBUUKu4JYaD0/04AVt8ICOiVx4dqm1tCM/ypeM3i
+ tJ7mGVziqeJBi+rBSb8g05AecNKK2c8Mj+UHqrhukbasD8MC9mzkmHZtYHdUPfSG
+ L+5LzlpCs0EdoeKLVjuehpvKZjJSno7tcbVXrwK0dbbEIwhEBvx659MtuBhX5Htk
+ epA/N+3NIEPqM8I8XAIB3Od/Jjf6pF2RqXy9nb+A==
 DKIM2-Signature: i=2; m=2; t=1740000000; d=test2.example.com;
  mf=Ym91bmNlc0B0ZXN0Mi5leGFtcGxlLmNvbQ==; rt=dXNlckB0ZXN0My5leGFtcGxlLmNvbQ==;
- s=sel2:rsa-sha256:a/GyTDhz5t5nugEO4zD+CjsMuuqTYn1esVizALSGr7QHOR
- 8t+vD10tD9jbFLctyjV/2QgzyCKcdDKHa2aHI4wFNylOdzBKi86sAvRYDuM0kzUp
- uyA+5QSuM+Uu6pUKV4C0CKtWMKg6tInXrrfA/vf5I6Qn2gf4GeM3vfEcdBibYR3t
- 8HqNijqQViGCNA9BLM4HnlPIKc61zDZwwPXMZW+96qFRsoDothuHnbppc2okmmmD
- 1ZbFCimWt2tKzS2L0iaLnZHwxWuYxbHYYHrIHW4I6NlVPuz2iikfNEn/ziXridi6
- mBYajK+gm7g3S8+RZeu/JKO+GwzoXJ2WTJnKQAVg==
+ s=sel2:rsa-sha256:gD0xsn6u9rpqQeEOQA6BVwkbkghxZHrjeytm8qc0C5xBXB
+ 9bA0uZJmTw9+ztf2/YPoQvmmiD3YuSFazN1Nuvc3V1ENxbYdZ3HCmyn2nLHh2uiQ
+ fSI7vUHQsXnLDHJ8kcne7mzsez0VFDok3TokXaGNdObBEhI7JBOmv9y8FV96WQSA
+ whNLP9ZrTAZU+EQ0xvhJHRawO20w7iDkkh1u0IoAfb1igQFXOj6ttfch9g6UvHZJ
+ qM/W9tSSzKzyqe0iabdRPq6j6Ol2OrpiHJ5RHHO9fUG+98FaHI2BYwmQx22okDyY
+ QVtnYQRfPbYF9zzA0ts7N9zmIJ+eDv7UQjMY6gYQ==
 DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.example.com;
  mf=YnJvbmdAdGVzdDEuZXhhbXBsZS5jb20=; rt=bGlzdEB0ZXN0Mi5leGFtcGxlLmNvbQ==;
- s=sel1:rsa-sha256:ZlSibQiVF+v58vK2P+37ofWxaVr9+Om87cq/k/UZM5iUkF
- K7andupMIfFNVC1FXIKmbL/iVbiIN5/dgrNfRqadSwjp2x1qcYuYvn7Nm4NB1ksW
- hOLtyKAEeCHW7osTpARvvP32rvyy8/JgPsu7NqKEPqdX6jl0y7x25k4tbaCO+fbJ
- BGIAU9RRO1Pj2mi4ECAlZEVeTbxZ8TnhVZHgOMcxjQ6cRFa6BZao92sv4wdZg3VG
- qoDgUCP6ZDvAr08lhGWrPhmh9K9WUtv0vCCMHEQyMfD73RjMXVj96hEnvZahR0+R
- FpkqDGpkxmR2wLYHUHfv4ar2AEhUr0b/n9bCANEw==
+ s=sel1:rsa-sha256:LoS4UrKjsrzWk0PCVdjlCGo0FgmfI13jdLKmZwqHwePjDy
+ GOJsRw2k47hqOleJhqTiHE0TiWfgqHRHXntS2Bul/3wc0ANFZjc5Ted2F47T2l99
+ 4p8On9BqVTUSuNuicgG27qLPDpACc6MvjpV2daOKe49F9ovFW2lSoKpT9KswhcEZ
+ 9s3OY5GxqKNSUCMxzQCMKxJNxbbzXshlsLzhrL0TSZ6wK0B0sFrxq+U/SyYkxx2J
+ n85nC3quWVVAJIQdOxpEdXra33VUyfbt5QBX6JCXy4xtfeEpRJ3PPdiromjkJ3my
+ PpyTvqsWmbLWdqnL5jO8Yl32rdz4cQ1dZ/P9BzKg==
 Received: from ietfa.amsl.com (localhost [IPv6:::1])
 	by ietfa.amsl.com (Postfix) with ESMTP id B5BE4C1CAE68
 	for <brong@fastmailteam.com>; Wed,  7 Aug 2024 18:23:32 -0700 (PDT)

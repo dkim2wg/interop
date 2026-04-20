@@ -276,8 +276,9 @@ sub cb_eom {
         warn "dkim2-milter: verify $msgid result=$result\n";
 
         # Build the A-R and X-DKIM2-Info headers we're about to add.
-        # Since Authentication-Results is no longer excluded from the
-        # header hash, the MI and snapshot must include it.
+        # Authentication-Results is not in the spec exclusion list so it
+        # is included in the header hash.  The MI must be computed over
+        # a synthetic message that already contains these headers.
         my $ar_value = "localhost; dkim2=$result";
         my $info_value = _dkim2_info("verify=$result");
         my $ar_raw = "Authentication-Results: $ar_value$EOL";

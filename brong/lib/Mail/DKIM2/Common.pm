@@ -345,6 +345,8 @@ All functions are exportable on request.
 Returns true if the named header should be excluded from DKIM2 hashing.
 Excluded headers include C<Received>, C<Return-Path>, C<Message-Instance>,
 C<DKIM2-Signature>, C<DKIM-Signature>, ARC headers, and any C<X-*> header.
+Note: C<Authentication-Results> is I<not> excluded — it is part of the
+message state captured by the MI header.
 
 =head2 dkim2_canonicalize_header($line)
 
