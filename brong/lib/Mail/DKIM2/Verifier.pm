@@ -179,7 +179,7 @@ sub _verify_signature {
                 $pubkey = $signature->fetch_public_key($idx);
                 1;
             } or do {
-                $self->{result} = 'tempfail';
+                $self->{result} = 'temperror';
                 $self->{details} = "public key fetch failed for sig item $idx: $@";
                 return 0;
             };
@@ -218,7 +218,7 @@ sub _verify_signature {
     }
 
     unless ($verified_any) {
-        $self->{result} = 'permfail';
+        $self->{result} = 'permerror';
         $self->{details} = "no verifiable signature items at i=$i";
         return 0;
     }
@@ -358,9 +358,9 @@ Returns the verification result string:
 
 =item C<none> - No DKIM2-Signature headers found.
 
-=item C<permfail> - Permanent failure (e.g. missing public key).
+=item C<permerror> - Permanent failure (e.g. missing public key).
 
-=item C<tempfail> - Temporary failure (e.g. DNS lookup error).
+=item C<temperror> - Temporary failure (e.g. DNS lookup error).
 
 =back
 
