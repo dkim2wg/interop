@@ -1,0 +1,12 @@
+# Source files: normalize to LF
+*.pm text eol=lf
+*.pl text eol=lf
+*.py text eol=lf
+*.t  text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+
+# Email test fixtures: CRLF is required by RFC 5322
+*.eml -text
