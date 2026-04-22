@@ -193,15 +193,19 @@ def compute_body_hash(body: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 def build_message_instance(headers: list[bytes], body: bytes,
-                           version: int = 1) -> str:
+                           version: int = 1, recipe: dict | None = None) -> str:
     """Build a Message-Instance header field value.
 
     Returns the complete header as a string (including field name).
+    Trailing semicolon is included per spec ABNF (tag-list grammar).
     """
     h_hash = compute_header_hash(headers)
     b_hash = compute_body_hash(body)
-
-    return f"Message-Instance: m={version}; h=sha256:{b64(h_hash)}:{b64(b_hash)}"
+    value = f"m={version}; h=sha256:{b64(h_hash)}:{b64(b_hash)}"
+    if recipe is not None:
+        value += f"; r={b64json(recipe)}"
+    value += ";"
+    return f"Message-Instance: {value}"
 
 
 # ---------------------------------------------------------------------------
@@ -331,9 +335,10 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
 
     # Build the incomplete signature header with sel:alg:. in s= tag
     # (dot replaces signature data, like DKIM1's b= convention).
+    # Trailing semicolon included per spec ABNF (tag-list grammar).
     incomplete = (
         f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
-        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={selector}:{algorithm}:."
+        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={selector}:{algorithm}:.;"
     )
 
     # Collect all MI headers including the new one
@@ -349,7 +354,7 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     # Build the final header with the actual signature value
     return (
         f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
-        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={s_complete}"
+        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={s_complete};"
     )
 
 

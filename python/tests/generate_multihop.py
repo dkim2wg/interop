@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dkim2sign import (
     parse_message, sign_message, _header_name, build_message_instance,
-    build_dkim2_signature, load_private_key, b64json,
+    build_dkim2_signature, load_private_key,
 )
 
 
@@ -79,8 +79,7 @@ def generate_multihop_header_add():
     # Recipe: remove List-Unsubscribe (empty array = remove all)
     recipes = {'h': {'list-unsubscribe': []}}
 
-    mi2 = build_message_instance(new_hdrs, body, version=2)
-    mi2 += '; r=' + b64json(recipes)
+    mi2 = build_message_instance(new_hdrs, body, version=2, recipe=recipes)
 
     mi_strs = [h.decode('utf-8') for h in mi_hdrs]
     sig_strs = [h.decode('utf-8') for h in sig_hdrs]
@@ -122,8 +121,7 @@ def generate_multihop_body_footer():
     # Recipe: keep only line 1 of body
     recipes = {'b': [{'c': [1, 1]}]}
 
-    mi2 = build_message_instance(content_hdrs, modified_body, version=2)
-    mi2 += '; r=' + b64json(recipes)
+    mi2 = build_message_instance(content_hdrs, modified_body, version=2, recipe=recipes)
 
     mi_strs = [h.decode('utf-8') for h in mi_hdrs]
     sig_strs = [h.decode('utf-8') for h in sig_hdrs]
@@ -168,8 +166,7 @@ def generate_multihop_header_replace():
     # Recipe: restore original Subject (text = value without field name)
     recipes = {'h': {'subject': [{'d': [' Simple test message']}]}}
 
-    mi2 = build_message_instance(modified_hdrs, body, version=2)
-    mi2 += '; r=' + b64json(recipes)
+    mi2 = build_message_instance(modified_hdrs, body, version=2, recipe=recipes)
 
     mi_strs = [h.decode('utf-8') for h in mi_hdrs]
     sig_strs = [h.decode('utf-8') for h in sig_hdrs]
@@ -218,8 +215,7 @@ def generate_multihop_dup_headers():
     # bottom-up = the 3 that were in the original message)
     recipes = {'h': {'authentication-results': [{'c': [1, 3]}]}}
 
-    mi2 = build_message_instance(new_hdrs, body, version=2)
-    mi2 += '; r=' + b64json(recipes)
+    mi2 = build_message_instance(new_hdrs, body, version=2, recipe=recipes)
 
     mi_strs = [h.decode('utf-8') for h in mi_hdrs]
     sig_strs = [h.decode('utf-8') for h in sig_hdrs]
@@ -267,8 +263,7 @@ def generate_multihop_3hop_dup_headers():
     ] + content_hdrs1
 
     recipes2 = {'h': {'authentication-results': [{'c': [1, 3]}]}}
-    mi2 = build_message_instance(hop2_hdrs, body, version=2)
-    mi2 += '; r=' + b64json(recipes2)
+    mi2 = build_message_instance(hop2_hdrs, body, version=2, recipe=recipes2)
 
     mi_strs1 = [h.decode('utf-8') for h in mi_hdrs1]
     sig_strs1 = [h.decode('utf-8') for h in sig_hdrs1]
@@ -299,8 +294,7 @@ def generate_multihop_3hop_dup_headers():
 
     # Recipe: keep all 5 from hop 2 (instances 1-5 bottom-up)
     recipes3 = {'h': {'authentication-results': [{'c': [1, 5]}]}}
-    mi3 = build_message_instance(hop3_hdrs, body3, version=3)
-    mi3 += '; r=' + b64json(recipes3)
+    mi3 = build_message_instance(hop3_hdrs, body3, version=3, recipe=recipes3)
 
     mi_strs2 = [h.decode('utf-8') for h in mi_hdrs2]
     sig_strs2 = [h.decode('utf-8') for h in sig_hdrs2]

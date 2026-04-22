@@ -147,11 +147,20 @@ sub _verify_signature {
                   sort { $a <=> $b }
                   grep { $_ <= $i } keys %dk2_map;
 
+    # Build signing header: use as_string_without_data() then re-add trailing
+    # semicolon if the raw header from the message had one (spec ABNF requires
+    # trailing ';' on every tag; new signatures have it, old ones may not).
+    my $sig_hdr_for_input = $signature->as_string_without_data();
+    if ($dk2_entry->{raw} =~ /;\s*(?:\r\n)?$/ && $sig_hdr_for_input !~ /;\s*$/) {
+        $sig_hdr_for_input .= ';';
+    }
+
     my $signing_input = build_signing_input(
-        mi_headers  => \@mi_arr,
-        dk2_headers => \@dk2_arr,
-        signing_i   => $i,
-        signature   => $signature,
+        mi_headers     => \@mi_arr,
+        dk2_headers    => \@dk2_arr,
+        signing_i      => $i,
+        signature      => $signature,
+        signing_header => $sig_hdr_for_input,
     );
 
     # Validate d= matches mf= domain (skip for null sender / DSN)

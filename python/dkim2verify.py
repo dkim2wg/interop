@@ -239,7 +239,10 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     stripped_items = []
     for item in sig_items:
         stripped_items.append(f"{item[0]}:{item[1]}:.")
-    incomplete_sig = prefix + ",".join(stripped_items)
+    # Preserve trailing semicolon if the raw header had one (spec ABNF mandates
+    # it for new signatures; old signatures may not have it).
+    trailing = ";" if re.search(r";\s*(?:\r?\n)?$", sig_hdr) else ""
+    incomplete_sig = prefix + ",".join(stripped_items) + trailing
 
     # Collect MI headers up to version m=
     mi_version = int(m_val)

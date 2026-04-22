@@ -210,7 +210,7 @@ sub as_folded_string_without_data {
             push @parts, "$t=$self->{tags}{$t}";
         }
     }
-    my $line = "DKIM2-Signature: " . join('; ', @parts);
+    my $line = "DKIM2-Signature: " . join('; ', @parts) . ";";
     return fold_header($line);
 }
 
@@ -226,7 +226,7 @@ sub as_folded_string {
         push @parts, "$t=$self->{tags}{$t}";
     }
     my $s_val = $self->{tags}{s} // '';
-    my $line = "DKIM2-Signature: " . join('; ', @parts) . "; s=$s_val";
+    my $line = "DKIM2-Signature: " . join('; ', @parts) . "; s=$s_val;";
     return fold_header($line);
 }
 

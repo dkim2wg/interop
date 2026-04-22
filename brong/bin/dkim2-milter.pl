@@ -12,17 +12,35 @@ use constant DKIM2_DATE    => '2026-04-20';
 use constant DKIM2_SOFTWARE => 'dkim2-milter.pl';
 
 sub _dkim2_info {
-    my ($action) = @_;
+    my ($action, %extra) = @_;
     # Fold at semicolons using LF+tab for milter protocol
-    return "draft=" . DKIM2_DRAFT
-         . ";\n\trepo=" . DKIM2_REPO
-         . ";\n\tdate=" . DKIM2_DATE
-         . "; sw=" . DKIM2_SOFTWARE
-         . ";\n\taction=$action";
+    my $val = "draft=" . DKIM2_DRAFT
+            . ";\n\trepo=" . DKIM2_REPO
+            . ";\n\tdate=" . DKIM2_DATE
+            . "; sw=" . DKIM2_SOFTWARE
+            . ";\n\taction=$action";
+    for my $key (sort keys %extra) {
+        next unless defined $extra{$key};
+        $val .= "; $key=$extra{$key}";
+    }
+    return $val;
+}
+
+# Return (count, comma-separated-names) of headers that would be included
+# in the header hash for the given Email::MIME message object.
+sub _header_list_for_hash {
+    my ($msg) = @_;
+    my @fields;
+    for my $header (sort { lc($a) cmp lc($b) } $msg->header_names) {
+        next if should_skip($header);
+        my @vals = $msg->header_raw($header);
+        push @fields, (lc($header)) x scalar(@vals);
+    }
+    return (scalar(@fields), join(',', @fields));
 }
 
 use Mail::DKIM2::Common qw(
-    parse_dkim_pubkey load_private_key fold_header extract_mi_version
+    parse_dkim_pubkey load_private_key fold_header extract_mi_version should_skip
 );
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
@@ -291,8 +309,9 @@ sub cb_eom {
 
         # Compute MI from the message that includes A-R
         my $mi_header;
+        my %mi_info;
         if ($snapshot_store) {
-            $mi_header = _compute_mi($message_with_ar);
+            $mi_header = _compute_mi($message_with_ar, \%mi_info);
             if ($mi_header) {
                 warn "dkim2-milter: computed MI for $msgid\n";
             }
@@ -301,7 +320,9 @@ sub cb_eom {
         if ($mi_header) {
             $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
             my ($mi_ver) = $mi_header =~ /m=(\d+)/;
-            $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver"), 0);
+            $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver",
+                hc => $mi_info{hc}, hn => $mi_info{hn},
+                snaps => $mi_info{snaps}), 0);
             warn "dkim2-milter: added MI header for $msgid\n";
         }
     }
@@ -310,13 +331,16 @@ sub cb_eom {
     if ($do_sign) {
         # Check if upstream already handled MI (more MI headers than cached)
         my $mi_header;
+        my %mi_info;
         if ($snapshot_store) {
-            $mi_header = _compute_mi($message);
+            $mi_header = _compute_mi($message, \%mi_info);
             if ($mi_header) {
                 warn "dkim2-milter: computed MI for $msgid\n";
                 $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
                 my ($mi_ver) = $mi_header =~ /m=(\d+)/;
-                $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver"), 0);
+                $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver",
+                    hc => $mi_info{hc}, hn => $mi_info{hn},
+                    snapf => $mi_info{snapf}, snaps => $mi_info{snaps}), 0);
                 warn "dkim2-milter: added MI header for $msgid\n";
             }
         }
@@ -408,10 +432,16 @@ sub _do_verify {
 # --- Message-Instance ---
 
 sub _compute_mi {
-    my ($message) = @_;
+    my ($message, $info) = @_;
+    $info //= {};
 
     my $msg = eval { Email::MIME->new($message) };
     return unless $msg;
+
+    # Record which headers will be included in any hash we compute.
+    my ($hcount, $hnames) = _header_list_for_hash($msg);
+    $info->{hc} = $hcount;
+    $info->{hn} = $hnames;
 
     # Check if topmost MI already matches
     if (Mail::DKIM2::MessageInstance->verify($msg)) {
@@ -421,6 +451,7 @@ sub _compute_mi {
             my %by_v = map { (extract_mi_version($_) || 0) => $_ } @mi_hdrs;
             my $max_v = (sort { $b <=> $a } keys %by_v)[0];
             $snapshot_store->store($by_v{$max_v}, $message);
+            $info->{snaps} = $snapshot_store->rel_path_for_mi($by_v{$max_v});
         }
         return undef;  # no new MI needed
     }
@@ -435,6 +466,7 @@ sub _compute_mi {
         for my $v (sort { $b <=> $a } keys %by_v) {
             my $snap = $snapshot_store->fetch($by_v{$v});
             if ($snap) {
+                $info->{snapf} = $snapshot_store->rel_path_for_mi($by_v{$v});
                 my $snap_msg = Email::MIME->new($snap);
                 my @snap_mi = $snap_msg->header_raw('Message-Instance');
 
@@ -443,6 +475,7 @@ sub _compute_mi {
                 # diff.  Just cache the current state and move on.
                 if (@mi_hdrs > @snap_mi) {
                     $snapshot_store->store($by_v{$max_v}, $message);
+                    $info->{snaps} = $snapshot_store->rel_path_for_mi($by_v{$max_v});
                     return undef;
                 }
 
@@ -455,10 +488,12 @@ sub _compute_mi {
                     my $EOL = "\015\012";
                     $snapshot_store->store($mi_val,
                         "Message-Instance: $mi_val$EOL" . $message);
+                    $info->{snaps} = $snapshot_store->rel_path_for_mi($mi_val);
                     return $mi_val;
                 }
                 # calculate failed — upstream may have added MI already
                 $snapshot_store->store($by_v{$max_v}, $message);
+                $info->{snaps} = $snapshot_store->rel_path_for_mi($by_v{$max_v});
                 return undef;
             }
         }
@@ -475,6 +510,7 @@ sub _compute_mi {
             my $EOL = "\015\012";
             $snapshot_store->store($mi_val,
                 "Message-Instance: $mi_val$EOL" . $message);
+            $info->{snaps} = $snapshot_store->rel_path_for_mi($mi_val);
         }
         return $mi_val;
     }

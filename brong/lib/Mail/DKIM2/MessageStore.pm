@@ -71,6 +71,13 @@ sub fetch {
     return $data;
 }
 
+sub rel_path_for_mi {
+    my ($self, $mi_value) = @_;
+    my $key = $self->_key_for_mi($mi_value);
+    my $prefix = substr($key, 0, 2);
+    return "$prefix/$key";
+}
+
 sub remove {
     my ($self, $mi_value) = @_;
     croak "mi_value required" unless defined $mi_value;

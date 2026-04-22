@@ -101,6 +101,7 @@ sub as_string {
     if (keys %recipe_json) {
         $result .= "; r=" . encode_tag_json(\%recipe_json);
     }
+    $result .= ";";
 
     return $result;
 }
