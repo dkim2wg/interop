@@ -288,9 +288,14 @@ sub cb_eom {
 
     warn "dkim2-milter: processing $msgid from=$priv->{env_from} mode=$opts{mode}\n";
 
+    # Verification result, shared between the verify and sign blocks.
+    # 'none' means no DKIM2-Signature headers were present.
+    my $verify_result = 'none';
+
     # --- Inbound: verify and cache snapshot ---
     if ($do_verify) {
-        my $result = _do_verify($message);
+        $verify_result = _do_verify($message);
+        my $result = $verify_result;
         warn "dkim2-milter: verify $msgid result=$result\n";
 
         # Build the A-R and X-DKIM2-Info headers we're about to add.
@@ -329,40 +334,71 @@ sub cb_eom {
 
     # --- Outbound: compute MI diff if needed, then sign ---
     if ($do_sign) {
-        # Check if upstream already handled MI (more MI headers than cached)
-        my $mi_header;
-        my %mi_info;
-        if ($snapshot_store) {
-            $mi_header = _compute_mi($message, \%mi_info);
-            if ($mi_header) {
-                warn "dkim2-milter: computed MI for $msgid\n";
-                $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
-                my ($mi_ver) = $mi_header =~ /m=(\d+)/;
-                $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver",
-                    hc => $mi_info{hc}, hn => $mi_info{hn},
-                    snapf => $mi_info{snapf}, snaps => $mi_info{snaps}), 0);
-                warn "dkim2-milter: added MI header for $msgid\n";
-            }
+        # If there are upstream DKIM2-Signature headers we must verify the
+        # chain before extending it.  In mode=both the verify block already
+        # ran; in mode=outbound we run it now on demand.
+        my $has_dk2 = grep { lc($_->[0]) eq 'dkim2-signature' } @{$priv->{headers}};
+        if ($has_dk2 && !$do_verify) {
+            $verify_result = _do_verify($message);
         }
 
-        my $sign_config = _get_sign_config($priv->{env_from});
-        if ($sign_config) {
-            # If we computed an MI, prepend it to the message for the signer
-            my $sign_msg = $message;
-            if ($mi_header) {
-                $sign_msg = "Message-Instance: $mi_header$EOL" . $sign_msg;
+        if ($has_dk2 && $verify_result !~ /^pass/) {
+            # Upstream chain is broken — don't extend it with a new signature.
+            warn "dkim2-milter: not signing $msgid: upstream DKIM2 chain "
+               . "result=$verify_result\n";
+        } else {
+            # Chain is valid (or there is no upstream chain) — proceed.
+            my $mi_header;
+            my %mi_info;
+            if ($snapshot_store) {
+                $mi_header = _compute_mi($message, \%mi_info);
+                if ($mi_header) {
+                    warn "dkim2-milter: computed MI for $msgid\n";
+                    $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
+                    my ($mi_ver) = $mi_header =~ /m=(\d+)/;
+                    $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver",
+                        hc => $mi_info{hc}, hn => $mi_info{hn},
+                        snapf => $mi_info{snapf}, snaps => $mi_info{snaps}), 0);
+                    warn "dkim2-milter: added MI header for $msgid\n";
+                }
             }
 
-            my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
-            if ($sig_header) {
-                $ctx->insheader('DKIM2-Signature', _milter_value($sig_header), 0);
-                $ctx->insheader('X-DKIM2-Info',
-                    _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
-                warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
-                   . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
+            my $sign_config = _get_sign_config($priv->{env_from});
+            if ($sign_config) {
+                # Log domain alignment: signing domain vs envelope-from and From:
+                my ($env_domain) = ($priv->{env_from} || '') =~ /\@(.+)$/;
+                $env_domain = lc($env_domain // '');
+                my $from_hdr_domain = '';
+                for my $hdr (@{$priv->{headers}}) {
+                    if (lc($hdr->[0]) eq 'from') {
+                        ($from_hdr_domain) = $hdr->[1] =~ /\@([\w.-]+)/;
+                        $from_hdr_domain = lc($from_hdr_domain // '');
+                        last;
+                    }
+                }
+                my $env_aligned  = ($env_domain  eq lc($sign_config->{domain})) ? 'yes' : 'no';
+                my $from_aligned = ($from_hdr_domain eq lc($sign_config->{domain})) ? 'yes' : 'no';
+                warn "dkim2-milter: domain alignment $msgid"
+                   . " signing=$sign_config->{domain}"
+                   . " env_from=$env_domain aligned=$env_aligned"
+                   . " from_hdr=$from_hdr_domain aligned=$from_aligned\n";
+                # If we computed an MI, prepend it to the message for the signer
+                my $sign_msg = $message;
+                if ($mi_header) {
+                    $sign_msg = "Message-Instance: $mi_header$EOL" . $sign_msg;
+                }
+
+                my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
+                if ($sig_header) {
+                    $ctx->insheader('DKIM2-Signature', _milter_value($sig_header), 0);
+                    $ctx->insheader('X-DKIM2-Info',
+                        _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
+                    warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
+                       . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
+                }
+            } else {
+                warn "dkim2-milter: no signing key for $msgid from=$priv->{env_from}\n";
             }
-        } else {
-            warn "dkim2-milter: no signing key for $msgid from=$priv->{env_from}\n";
         }
     }
 
@@ -384,9 +420,8 @@ sub _get_sign_config {
     return unless $from_domain;
     $from_domain = lc($from_domain);
 
-    # Single-domain mode
+    # Single-domain mode — sign regardless of alignment; caller logs alignment.
     if ($can_sign_single) {
-        return unless $from_domain eq lc($opts{domain});
         return {
             domain    => $opts{domain},
             selector  => $opts{selector},
