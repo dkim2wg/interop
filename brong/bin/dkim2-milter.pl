@@ -418,8 +418,8 @@ sub _do_verify {
             my $dom = $sig->domain;
             my $key_txt = $dns_data->{$dom}{"$sel._domainkey"}[0][1]
                 if $dns_data->{$dom} && $dns_data->{$dom}{"$sel._domainkey"};
-            return unless $key_txt;
-            return parse_dkim_pubkey($key_txt);
+            return parse_dkim_pubkey($key_txt) if $key_txt;
+            return $sig->fetch_public_key($idx);  # fall back to real DNS
         });
     }
 

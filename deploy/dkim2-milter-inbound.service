@@ -13,8 +13,7 @@ ExecStart=/usr/bin/perl -I/opt/dkim2/interop/brong/lib \
     /opt/dkim2/interop/brong/bin/dkim2-milter.pl \
     --mode inbound \
     --socket unix:/var/spool/postfix/var/run/dkim2-milter-in.sock \
-    --snapshot-dir /var/spool/dkim2/snapshots \
-    --dns-json /opt/dkim2/interop/dns.json
+    --snapshot-dir /var/spool/dkim2/snapshots
 Restart=on-failure
 RestartSec=5
 UMask=0007
