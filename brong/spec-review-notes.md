@@ -88,3 +88,22 @@ computed in the correct order.
 both an MI header and other transit headers (e.g. Authentication-Results) in
 the same pass MUST compute the MI hash over a message state that includes all
 headers that will be present in the delivered message.
+
+### 5. §8.5: Signing input uses null (empty) string for signature values
+
+The spec says (§8.5):
+
+> "the signature value(s) within the (s=) value are set to the null string
+> ("")."
+
+This means `s=sel:alg:` with an empty string after the final colon.  Early
+implementations of this code used `.` (a dot) as the placeholder, which
+breaks interoperability: after `dkim2_canonicalize_sig_header` removes all
+whitespace, `s=sel:alg:.` ≠ `s=sel:alg:`.
+
+**Fixed in -01:** Both the Perl and Python implementations now use the empty
+string per spec.  Verifiers must use empty string (not dot or any other
+placeholder) when reconstructing the incomplete DKIM2-Signature header for
+verification.  Note also that implementations MUST search for the `s=` tag
+by looking for `;s=` (semicolon tag separator) rather than a bare `rfind("s=")`
+since base64 signature values can contain the substring `s=`.

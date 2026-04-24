@@ -182,9 +182,9 @@ sub as_string_without_data {
     my ($self) = @_;
 
     my $saved = $self->get_tag('s');
-    # Replace each sel:alg:sig with sel:alg:.
+    # Replace each sel:alg:sig with sel:alg: (null/empty string per spec §8.5)
     my $stripped = $saved;
-    $stripped =~ s/([^,:]+:[^,:]+):[^,]*/$1:./g;
+    $stripped =~ s/([^,:]+:[^,:]+):[^,]*/$1:/g;
     $self->set_tag('s', $stripped);
     my $result = $self->as_string();
     $self->set_tag('s', $saved);
@@ -197,10 +197,10 @@ sub as_string_without_data {
 sub as_folded_string_without_data {
     my ($self) = @_;
 
-    # Replace each sel:alg:sig with sel:alg:. in the s= tag
+    # Replace each sel:alg:sig with sel:alg: (null/empty string per spec §8.5)
     my $saved = $self->get_tag('s');
     my $stripped = $saved;
-    $stripped =~ s/([^,:]+:[^,:]+):[^,]*/$1:./g;
+    $stripped =~ s/([^,:]+:[^,:]+):[^,]*/$1:/g;
 
     my @parts;
     for my $t (@{$self->{order}}) {

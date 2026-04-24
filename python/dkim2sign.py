@@ -333,12 +333,11 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     rt_list = rcptto or ["unknown@example.com"]
     rt_b64 = ",".join(b64(r.encode("utf-8")) for r in rt_list)
 
-    # Build the incomplete signature header with sel:alg:. in s= tag
-    # (dot replaces signature data, like DKIM1's b= convention).
+    # Build the incomplete signature header with sel:alg: (null/empty string per spec §8.5).
     # Trailing semicolon included per spec ABNF (tag-list grammar).
     incomplete = (
         f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
-        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={selector}:{algorithm}:.;"
+        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={selector}:{algorithm}:;"
     )
 
     # Collect all MI headers including the new one

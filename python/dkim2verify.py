@@ -231,14 +231,16 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         )
 
     # Reconstruct the incomplete signature: replace signature data in
-    # each s= entry with "." (sel:alg:. format).
-    s_tag_pos = sig_hdr.rfind("s=")
-    if s_tag_pos == -1:
+    # each s= entry with "" (null/empty string per spec §8.5).
+    # Use regex to find the s= TAG (preceded by ';') - base64 cannot contain
+    # ';' so this avoids false matches on 's=' inside the signature value.
+    s_match = re.search(r";\s*s=", sig_hdr)
+    if s_match is None:
         return [f"DKIM2-Signature i={i_val}: cannot find s= tag in header"]
-    prefix = sig_hdr[:s_tag_pos + 2]
+    prefix = sig_hdr[:s_match.end()]  # everything up to and including "s="
     stripped_items = []
     for item in sig_items:
-        stripped_items.append(f"{item[0]}:{item[1]}:.")
+        stripped_items.append(f"{item[0]}:{item[1]}:")
     # Preserve trailing semicolon if the raw header had one (spec ABNF mandates
     # it for new signatures; old signatures may not have it).
     trailing = ";" if re.search(r";\s*(?:\r?\n)?$", sig_hdr) else ""
