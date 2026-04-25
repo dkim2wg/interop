@@ -6,14 +6,23 @@ LDFLAGS = $(shell pkg-config --libs openssl) \
           $(shell PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig pkg-config --libs libcjson) \
           -lresolv
 
+MILTER_SRC  = /tmp/sendmail-8.18.2
+MILTER_INC  = -I$(MILTER_SRC)/include -I$(MILTER_SRC)/include/libmilter
+MILTER_LIB  = $(MILTER_SRC)/obj/libmilter/libmilter.a
+MILTER_DEFS = -DDARWIN=250000 -DBIND_8_COMPAT -DNETINET6
+
 CORE_SRCS = base64.c tagparse.c dkim2_hash.c dkim2_header.c \
             dkim2_recipe.c dkim2_dns.c dkim2_crypto.c \
             dkim2_sign.c dkim2_verify.c
 CORE_OBJS = $(CORE_SRCS:.c=.o)
 
-# Milter binary deferred to Task 11 (requires libmilter)
-# all: dkim2-milter
-all: $(CORE_OBJS)
+all: dkim2-milter
+
+dkim2-milter: dkim2_milter.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -pthread -o $@ $^ $(MILTER_LIB) $(LDFLAGS)
+
+dkim2_milter.o: dkim2_milter.c
+	$(CC) $(CFLAGS) $(MILTER_INC) $(MILTER_DEFS) -pthread -c -o $@ $<
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -47,4 +56,4 @@ tests/test_verify: tests/test_verify.c $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
-	rm -f *.o $(TESTS)
+	rm -f *.o dkim2-milter $(TESTS)

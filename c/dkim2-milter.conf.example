@@ -1,0 +1,23 @@
+# dkim2-milter configuration
+# Copy to dkim2-milter.conf and edit before use.
+
+# Milter socket (inet or unix)
+socket=inet:8891@localhost
+
+# Mode: s=signer, v=verifier, r=reviser
+mode=s
+
+# Signing domain (required for s/r modes)
+domain=example.com
+
+# DKIM2 selector (required for s/r modes)
+selector=default
+
+# Path to PEM-encoded private key (required for s/r modes)
+privkey=/etc/dkim2/private.pem
+
+# Signing algorithm: ed25519-sha256 (default) or rsa-sha256
+alg=ed25519-sha256
+
+# Authentication-Results authservid (verifier mode; defaults to "localhost")
+# authservid=mail.example.com
