@@ -45,19 +45,19 @@ static dkim2_pubkey_t *parse_key_record(const char *txt,
     }
 
     const char *k_tag = tag_get(tl, "k");
-    const char *alg = k_tag ? k_tag : "rsa";
+    char *alg = strdup(k_tag ? k_tag : "rsa"); /* strdup before taglist_free */
 
     unsigned char keybuf[4096];
     int keylen = b64_decode(p, keybuf, sizeof keybuf);
     taglist_free(tl);
     if (keylen < 0) {
+        free(alg);
         *statusp = DKIM2_PERMERROR; *errp = "Key base64 decode error"; return NULL;
     }
 
     dkim2_pubkey_t *key = calloc(1, sizeof *key);
-    if (!key) { *statusp = DKIM2_TEMPERROR; *errp = "OOM"; return NULL; }
-    key->alg = strdup(alg);
-
+    if (!key) { free(alg); *statusp = DKIM2_TEMPERROR; *errp = "OOM"; return NULL; }
+    key->alg = alg; /* transfer ownership */
     if (strcmp(alg, "rsa") == 0) {
         const unsigned char *kp = keybuf;
         key->pkey = d2i_PUBKEY(NULL, &kp, keylen);
