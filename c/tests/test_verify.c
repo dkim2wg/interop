@@ -11,13 +11,71 @@
 #include "../dkim2_dns.h"
 #include "../base64.h"
 
-/* DNS override: returns the key record for test._domainkey.example.com */
 static char *g_dns_txt = NULL;
 
 static char *test_dns_override(const char *qname) {
     if (strcmp(qname, "test._domainkey.example.com") == 0 && g_dns_txt)
         return strdup(g_dns_txt);
     return NULL;
+}
+
+/* Helper: sign a standard test message. Returns 0 on success. Caller frees *mi_out, *sig_out. */
+static int sign_test_message(
+    const char *mail_from, char *rcpts[],
+    const char *privkey_path, const char *domain, const char *sel,
+    const char **raw_hdrs, int n_hdrs,
+    const char *body,
+    char **mi_out, char **sig_out) {
+    dkim2_ctx_t ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.headers = (char **)raw_hdrs;
+    ctx.n_headers = n_hdrs;
+    ctx.body_buf = (unsigned char *)body;
+    ctx.body_len = strlen(body);
+    ctx.mail_from = (char *)mail_from;
+    ctx.rcpt_to = rcpts;
+    dkim2_sign_config_t cfg = {
+        .domain = (char *)domain, .selector = (char *)sel,
+        .privkey_path = (char *)privkey_path, .alg = "ed25519-sha256",
+    };
+    return dkim2_do_sign(&ctx, &cfg, mi_out, sig_out);
+}
+
+/* Helper: verify a standard test message. Returns the result status. */
+static dkim2_status_t verify_test_message(
+    const char *mail_from, char *rcpts[],
+    const char **raw_hdrs, int n_raw_hdrs,
+    const char *body, const char *mi_val, const char *sig_val) {
+    dkim2_ctx_t vctx;
+    memset(&vctx, 0, sizeof vctx);
+
+    char mi_hdr[1024], sig_hdr[2048];
+    snprintf(mi_hdr, sizeof mi_hdr, "Message-Instance: %s\r\n", mi_val);
+    snprintf(sig_hdr, sizeof sig_hdr, "DKIM2-Signature: %s\r\n", sig_val);
+
+    /* Build header array: original headers + MI + Sig */
+    char **all_hdrs = malloc((size_t)(n_raw_hdrs + 4) * sizeof(char *));
+    for (int i = 0; i < n_raw_hdrs; i++) all_hdrs[i] = (char *)raw_hdrs[i];
+    all_hdrs[n_raw_hdrs]     = mi_hdr;
+    all_hdrs[n_raw_hdrs + 1] = sig_hdr;
+
+    vctx.headers = all_hdrs;
+    vctx.n_headers = n_raw_hdrs + 2;
+    vctx.body_buf = (unsigned char *)body;
+    vctx.body_len = strlen(body);
+    vctx.mail_from = (char *)mail_from;
+    vctx.rcpt_to = rcpts;
+    vctx.mi_list = dkim2_mi_parse(mi_val);
+    vctx.sig_list = dkim2_sig_parse(sig_val);
+
+    dkim2_verify_result_t res;
+    dkim2_do_verify(&vctx, &res);
+
+    dkim2_status_t st = res.status;
+    dkim2_mi_free(vctx.mi_list);
+    dkim2_sig_free(vctx.sig_list);
+    free(all_hdrs);
+    return st;
 }
 
 int main(void) {
@@ -30,108 +88,131 @@ int main(void) {
     EVP_PKEY_CTX_free(kctx);
     assert(privkey != NULL);
 
-    /* Write private key to temp file */
     FILE *f = fopen("/tmp/dkim2_test_sign.pem", "w");
     assert(f != NULL);
     PEM_write_PrivateKey(f, privkey, NULL, NULL, 0, NULL, NULL);
     fclose(f);
 
-    /* Get raw public key bytes and base64-encode for DNS record */
     size_t publen = 32;
     unsigned char pubbuf[32];
     EVP_PKEY_get_raw_public_key(privkey, pubbuf, &publen);
     EVP_PKEY_free(privkey);
 
     char pub_b64[64];
-    extern int b64_encode(const unsigned char *, size_t, char *, size_t);
     b64_encode(pubbuf, publen, pub_b64, sizeof pub_b64);
 
-    /* Build DNS TXT record value */
     char dns_txt[256];
     snprintf(dns_txt, sizeof dns_txt, "v=DKIM1; k=ed25519; p=%s", pub_b64);
     g_dns_txt = dns_txt;
     dkim2_dns_override = test_dns_override;
-
-    /* Build a test message context */
-    dkim2_ctx_t ctx;
-    memset(&ctx, 0, sizeof ctx);
 
     const char *raw_headers[] = {
         "From: sender@example.com\r\n",
         "To: recipient@example.org\r\n",
         "Subject: Test DKIM2 message\r\n",
     };
-    ctx.headers = (char **)raw_headers;
-    ctx.n_headers = 3;
-
-    const char *body_text = "Hello, world!\r\n";
-    ctx.body_buf = (unsigned char *)body_text;
-    ctx.body_len = strlen(body_text);
-    ctx.mail_from = "<sender@example.com>";
-
+    const char *body = "Hello, world!\r\n";
     char *rcpts[] = { "<recipient@example.org>", NULL };
-    ctx.rcpt_to = rcpts;
-    ctx.n_rcpt = 1;
+    const char *mail_from = "<sender@example.com>";
 
-    /* Sign the message */
-    dkim2_sign_config_t cfg = {
-        .domain      = "example.com",
-        .selector    = "test",
-        .privkey_path = "/tmp/dkim2_test_sign.pem",
-        .alg         = "ed25519-sha256",
-    };
-
+    /* --- Happy path --- */
     char *mi_val = NULL, *sig_val = NULL;
-    int r = dkim2_do_sign(&ctx, &cfg, &mi_val, &sig_val);
-    assert(r == 0);
-    assert(mi_val != NULL);
-    assert(sig_val != NULL);
+    int r = sign_test_message(mail_from, rcpts,
+        "/tmp/dkim2_test_sign.pem", "example.com", "test",
+        raw_headers, 3, body, &mi_val, &sig_val);
+    assert(r == 0 && mi_val != NULL && sig_val != NULL);
 
-    printf("MI:  %s\n", mi_val);
-    printf("Sig: %s\n", sig_val);
+    dkim2_status_t st = verify_test_message(
+        mail_from, rcpts, raw_headers, 3, body, mi_val, sig_val);
+    assert(st == DKIM2_OK);
 
-    /* Now verify: parse the produced headers and add them to a new ctx */
-    dkim2_ctx_t vctx;
-    memset(&vctx, 0, sizeof vctx);
+    /* --- Error: tampered body → hash mismatch → FAIL --- */
+    st = verify_test_message(mail_from, rcpts, raw_headers, 3,
+        "TAMPERED body!\r\n", mi_val, sig_val);
+    assert(st == DKIM2_FAIL);
 
-    /* Add original headers + new MI + new Sig headers */
-    char mi_hdr[1024], sig_hdr[2048];
-    snprintf(mi_hdr, sizeof mi_hdr, "Message-Instance: %s\r\n", mi_val);
-    snprintf(sig_hdr, sizeof sig_hdr, "DKIM2-Signature: %s\r\n", sig_val);
+    /* --- Error: wrong MAIL FROM → PERMERROR --- */
+    st = verify_test_message("<wrong@example.com>", rcpts,
+        raw_headers, 3, body, mi_val, sig_val);
+    assert(st == DKIM2_PERMERROR);
 
-    char *all_headers[16];
-    int nh = 0;
-    all_headers[nh++] = (char *)raw_headers[0];
-    all_headers[nh++] = (char *)raw_headers[1];
-    all_headers[nh++] = (char *)raw_headers[2];
-    all_headers[nh++] = mi_hdr;
-    all_headers[nh++] = sig_hdr;
+    /* --- Error: wrong RCPT TO → PERMERROR --- */
+    char *wrong_rcpts[] = { "<wrong@example.org>", NULL };
+    st = verify_test_message(mail_from, wrong_rcpts,
+        raw_headers, 3, body, mi_val, sig_val);
+    assert(st == DKIM2_PERMERROR);
 
-    vctx.headers = all_headers;
-    vctx.n_headers = nh;
-    vctx.body_buf = (unsigned char *)body_text;
-    vctx.body_len = strlen(body_text);
-    vctx.mail_from = "<sender@example.com>";
-    vctx.rcpt_to = rcpts;
-    vctx.n_rcpt = 1;
+    /* --- Error: tampered sig → FAIL --- */
+    char tampered_sig[strlen(sig_val) + 1];
+    strcpy(tampered_sig, sig_val);
+    /* Flip a char in the base64 signature */
+    char *sval = strstr(tampered_sig, "ed25519-sha256:");
+    assert(sval != NULL);
+    sval += strlen("ed25519-sha256:");
+    sval[0] = (sval[0] == 'A') ? 'B' : 'A';
+    st = verify_test_message(mail_from, rcpts,
+        raw_headers, 3, body, mi_val, tampered_sig);
+    assert(st == DKIM2_FAIL);
 
-    /* Parse MI and Sig headers */
-    vctx.mi_list = dkim2_mi_parse(mi_val);
-    assert(vctx.mi_list != NULL);
-    vctx.sig_list = dkim2_sig_parse(sig_val);
-    assert(vctx.sig_list != NULL);
+    /* --- Error: DNS lookup fails (unknown selector) → FAIL (no passing ssets) --- */
+    char *orig_dns = g_dns_txt;
+    g_dns_txt = NULL; /* DNS override returns NULL → live DNS would fail */
+    /* Replace selector with one that won't match the override */
+    /* Build a sig with a different selector */
+    char *mi2 = NULL, *sig2 = NULL;
+    /* Use a different selector (won't be in DNS override) */
+    dkim2_sign_config_t cfg2 = {
+        .domain="example.com", .selector="badsel",
+        .privkey_path="/tmp/dkim2_test_sign.pem", .alg="ed25519-sha256"
+    };
+    dkim2_ctx_t ctx2;
+    memset(&ctx2, 0, sizeof ctx2);
+    ctx2.headers = (char **)raw_headers; ctx2.n_headers = 3;
+    ctx2.body_buf = (unsigned char *)body; ctx2.body_len = strlen(body);
+    ctx2.mail_from = (char *)mail_from; ctx2.rcpt_to = rcpts;
+    dkim2_do_sign(&ctx2, &cfg2, &mi2, &sig2);
+    g_dns_txt = orig_dns;
+    /* DNS for "badsel" selector not in override → fail */
+    if (mi2 && sig2) {
+        /* Temporarily null the override to force DNS miss */
+        char *saved_txt = g_dns_txt;
+        g_dns_txt = NULL;
+        st = verify_test_message(mail_from, rcpts, raw_headers, 3, body, mi2, sig2);
+        g_dns_txt = saved_txt;
+        assert(st == DKIM2_FAIL); /* no passing ssets */
+        free(mi2); free(sig2);
+    }
 
-    dkim2_verify_result_t vresult;
-    dkim2_do_verify(&vctx, &vresult);
+    /* --- Error: no DKIM2-Signature → PERMERROR --- */
+    {
+        dkim2_ctx_t vctx;
+        memset(&vctx, 0, sizeof vctx);
+        vctx.headers = (char **)raw_headers; vctx.n_headers = 3;
+        vctx.body_buf = (unsigned char *)body; vctx.body_len = strlen(body);
+        vctx.mail_from = (char *)mail_from; vctx.rcpt_to = rcpts;
+        vctx.mi_list = NULL; vctx.sig_list = NULL;
+        dkim2_verify_result_t res;
+        dkim2_do_verify(&vctx, &res);
+        assert(res.status == DKIM2_PERMERROR);
+    }
 
-    printf("Verify result: %s\n", vresult.message);
-    assert(vresult.status == DKIM2_OK);
+    /* --- Error: MI missing for signature's m= → PERMERROR --- */
+    {
+        dkim2_ctx_t vctx;
+        memset(&vctx, 0, sizeof vctx);
+        vctx.headers = (char **)raw_headers; vctx.n_headers = 3;
+        vctx.body_buf = (unsigned char *)body; vctx.body_len = strlen(body);
+        vctx.mail_from = (char *)mail_from; vctx.rcpt_to = rcpts;
+        vctx.mi_list = NULL; /* no MI */
+        vctx.sig_list = dkim2_sig_parse(sig_val);
+        dkim2_verify_result_t res;
+        dkim2_do_verify(&vctx, &res);
+        assert(res.status == DKIM2_PERMERROR);
+        dkim2_sig_free(vctx.sig_list);
+    }
 
-    dkim2_mi_free(vctx.mi_list);
-    dkim2_sig_free(vctx.sig_list);
     free(mi_val);
     free(sig_val);
-
     puts("sign+verify: all tests passed");
     return 0;
 }
