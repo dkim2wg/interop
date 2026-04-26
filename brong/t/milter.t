@@ -113,7 +113,7 @@ sub run_verify {
     push @header_lines, $current if $current ne '';
 
     # Run callbacks
-    $handler->envfrom_callback('<sender@test1.example.com>');
+    $handler->envfrom_callback('<sender@test1.dkim2.com>');
 
     for my $hline (@header_lines) {
         my ($name, $value) = $hline =~ /^([^\s:]+)\s*:\s*(.*)/s;
@@ -179,8 +179,8 @@ sub run_sign {
     }
     push @header_lines, $current if $current ne '';
 
-    $handler->envfrom_callback('<sender@test1.example.com>');
-    $handler->envrcpt_callback('<recipient@test2.example.com>');
+    $handler->envfrom_callback('<sender@test1.dkim2.com>');
+    $handler->envrcpt_callback('<recipient@test2.dkim2.com>');
 
     for my $hline (@header_lines) {
         my ($name, $value) = $hline =~ /^([^\s:]+)\s*:\s*(.*)/s;
@@ -224,10 +224,10 @@ diag("=== DKIM2Verify milter tests ===");
     my $mi_str = "Message-Instance: " . $mi->as_string() . "\r\n";
     my $with_mi = $mi_str . $raw;
     my $signer = Mail::DKIM2::Signer->new(
-        Domain   => 'test1.example.com',
+        Domain   => 'test1.dkim2.com',
         Selector => 'rsa1024',
-        Key      => DKIM2TestKeys::private_key('test1.example.com', 'rsa1024'),
-        MailFrom => 'sender@test1.example.com',
+        Key      => DKIM2TestKeys::private_key('test1.dkim2.com', 'rsa1024'),
+        MailFrom => 'sender@test1.dkim2.com',
     );
     $signer->PRINT($with_mi);
     $signer->CLOSE();
@@ -255,9 +255,9 @@ diag("=== DKIM2Sign milter tests ===");
     my $raw = path("tests/emails/brong-orig.eml")->slurp;
     my ($handler, $mock) = run_sign($raw,
         domains => {
-            'test1.example.com' => {
+            'test1.dkim2.com' => {
                 selector => 'rsa1024',
-                key => DKIM2TestKeys::private_key_pem('test1.example.com', 'rsa1024'),
+                key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'rsa1024'),
             },
         },
     );
@@ -269,7 +269,7 @@ diag("=== DKIM2Sign milter tests ===");
     # Check the signature has expected structure
     my $sig_value = $dk2[0]->{value};
     like($sig_value, qr/i=1/, "sign: signature has i=1");
-    like($sig_value, qr/d=test1\.example\.com/, "sign: signature has correct domain");
+    like($sig_value, qr/d=test1\.dkim2\.com/, "sign: signature has correct domain");
     like($sig_value, qr/s=/, "sign: signature has s= tag");
 
     # Check MI was also added
@@ -284,9 +284,9 @@ diag("=== DKIM2Sign milter tests ===");
         _authenticated => 0,
         _local => 0,
         domains => {
-            'test1.example.com' => {
+            'test1.dkim2.com' => {
                 selector => 'rsa1024',
-                key => DKIM2TestKeys::private_key_pem('test1.example.com', 'rsa1024'),
+                key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'rsa1024'),
             },
         },
     );
@@ -313,9 +313,9 @@ diag("=== DKIM2Sign milter tests ===");
     my $raw = path("tests/emails/brong-orig.eml")->slurp;
     my ($sign_handler, $mock) = run_sign($raw,
         domains => {
-            'test1.example.com' => {
+            'test1.dkim2.com' => {
                 selector => 'rsa1024',
-                key => DKIM2TestKeys::private_key_pem('test1.example.com', 'rsa1024'),
+                key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'rsa1024'),
             },
         },
     );
@@ -378,11 +378,11 @@ sub make_originator_message {
     # Prepend MI to message, then sign
     my $with_mi = $mi_str . $raw;
     my $signer = Mail::DKIM2::Signer->new(
-        Domain    => 'test1.example.com',
+        Domain    => 'test1.dkim2.com',
         Selector  => 'rsa1024',
-        Key       => DKIM2TestKeys::private_key('test1.example.com', 'rsa1024'),
-        MailFrom  => 'sender@test1.example.com',
-        RcptTo    => ['foo@test2.example.com'],
+        Key       => DKIM2TestKeys::private_key('test1.dkim2.com', 'rsa1024'),
+        MailFrom  => 'sender@test1.dkim2.com',
+        RcptTo    => ['foo@test2.dkim2.com'],
         Timestamp => 1740000000,
     );
     $signer->PRINT($with_mi);
@@ -410,9 +410,9 @@ sub run_outbound_sign {
     my ($raw, $snapshot_dir) = @_;
     my ($handler, $mock) = run_sign($raw,
         domains => {
-            'test2.example.com' => {
+            'test2.dkim2.com' => {
                 selector => 'rsa1024',
-                key => DKIM2TestKeys::private_key_pem('test2.example.com', 'rsa1024'),
+                key => DKIM2TestKeys::private_key_pem('test2.dkim2.com', 'rsa1024'),
             },
         },
         add_message_instance => 1,
@@ -421,7 +421,7 @@ sub run_outbound_sign {
         _local               => 1,
     );
     # Override env_from for the forwarding domain
-    $handler->{'env_from'} = '<forwarder@test2.example.com>';
+    $handler->{'env_from'} = '<forwarder@test2.dkim2.com>';
     # Re-run addheader with corrected env_from
     $mock = { pre_headers => [], add_headers => [] };
     $handler->addheader_callback($mock);
@@ -450,7 +450,7 @@ my $expected_dir = path("tests/expected");
 
 # Case 1: Unchanged forwarding
 #
-# Email arrives at foo@test2.example.com and is forwarded to bar@example.net
+# Email arrives at foo@test2.dkim2.com and is forwarded to bar@example.net
 # with no changes made.
 #
 # Flow:

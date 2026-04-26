@@ -2,48 +2,50 @@ package DKIM2TestKeys;
 use strict;
 use warnings;
 
-use Crypt::PK::RSA;
-use Crypt::PK::Ed25519;
-use MIME::Base64 qw(encode_base64);
-use Mail::DKIM2::Common qw(parse_dkim_pubkey);
+use Path::Tiny;
+use JSON qw(decode_json);
+use Mail::DKIM2::Common qw(load_private_key parse_dkim_pubkey);
 
-# Generate one shared RSA key and one shared Ed25519 key at load time.
-# Reused across all domain/selector combos for speed.
-my $RSA_KEY = Crypt::PK::RSA->new();
-$RSA_KEY->generate_key(256, 65537);  # 256 bytes = 2048 bits
+# Locate the shared keys/ and dns.json relative to this file's installation
+# point. Tests are run from the brong/ directory, so ../keys/ is correct.
+my $KEYS_DIR = path(__FILE__)->absolute->parent->parent->parent->parent->child('keys');
+my $DNS_JSON = path(__FILE__)->absolute->parent->parent->parent->parent->child('dns.json');
 
-my $ED25519_KEY = Crypt::PK::Ed25519->new();
-$ED25519_KEY->generate_key();
+my %_key_cache;
 
-# Build DKIM TXT record strings
-my $RSA_PUBKEY_TXT = "v=DKIM1; k=rsa; p="
-    . encode_base64($RSA_KEY->export_key_der('public'), '');
-my $ED25519_PUBKEY_TXT = "v=DKIM1; k=ed25519; p="
-    . encode_base64($ED25519_KEY->export_key_raw('public'), '');
-
-# Returns the private key object for a given selector.
-# Ed25519 selectors start with "ed25519", everything else is RSA.
+# Returns the private key object for a given domain and selector.
 sub private_key {
     my ($domain, $selector) = @_;
-    return $selector =~ /^ed25519/ ? $ED25519_KEY : $RSA_KEY;
+    my $cache_key = "$selector/$domain";
+    unless (exists $_key_cache{$cache_key}) {
+        my $pem = $KEYS_DIR->child("${selector}._domainkey.${domain}.pem");
+        die "No key file for $selector._domainkey.$domain (looked for $pem)\n"
+            unless $pem->exists;
+        $_key_cache{$cache_key} = load_private_key("$pem");
+    }
+    return $_key_cache{$cache_key};
 }
 
 # Returns PEM-encoded private key string for the given selector.
 sub private_key_pem {
     my ($domain, $selector) = @_;
-    my $key = private_key($domain, $selector);
-    return $key->export_key_pem('private');
+    my $pem = $KEYS_DIR->child("${selector}._domainkey.${domain}.pem");
+    die "No key file for $selector._domainkey.$domain\n" unless $pem->exists;
+    return $pem->slurp;
 }
 
 # Returns a pubkey callback sub for Verifier->set_pubkey_callback.
+# Looks up the key in the shared dns.json file.
 sub pubkey_callback {
+    my $dns = decode_json($DNS_JSON->slurp);
     return sub {
         my ($signature, $idx) = @_;
         $idx //= 0;
         my $sel = $signature->selector($idx);
-        my $alg = $signature->algorithm($idx) || '';
-        my $txt = ($sel =~ /^ed25519/ || $alg eq 'ed25519')
-            ? $ED25519_PUBKEY_TXT : $RSA_PUBKEY_TXT;
+        my $dom = $signature->domain;
+        my $entry = $dns->{$dom}{"${sel}._domainkey"};
+        return unless $entry && $entry->[0];
+        my $txt = $entry->[0][1];
         return parse_dkim_pubkey($txt);
     };
 }

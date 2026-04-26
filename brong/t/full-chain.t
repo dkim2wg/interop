@@ -20,53 +20,53 @@ use DKIM2TestKeys;
 # ============================================================
 # The progression: 5 hops, each with a different domain/selector
 #
-#   brong-orig.eml  -- originator at test1.example.com (sel1)
-#   brong-mm.eml    -- mailing list at test2.example.com (sel2)
-#   brong-mm2.eml   -- relay adds header at test3.example.com (sel3)
-#   brong-mm3.eml   -- relay removes header at test4.example.com (sel1)
-#   brong-final.eml -- final delivery at test5.example.com (sel2)
+#   brong-orig.eml  -- originator at test1.dkim2.com (sel1)
+#   brong-mm.eml    -- mailing list at test2.dkim2.com (sel2)
+#   brong-mm2.eml   -- relay adds header at test3.dkim2.com (sel3)
+#   brong-mm3.eml   -- relay removes header at test4.dkim2.com (sel1)
+#   brong-final.eml -- final delivery at test5.dkim2.com (sel2)
 # ============================================================
 
 my @hops = (
     {
         name     => 'originator',
         file     => 'tests/emails/brong-orig.eml',
-        domain   => 'test1.example.com',
+        domain   => 'test1.dkim2.com',
         selector => 'sel1',
-        mailfrom => 'brong@test1.example.com',
-        rcptto   => ['list@test2.example.com'],
+        mailfrom => 'brong@test1.dkim2.com',
+        rcptto   => ['list@test2.dkim2.com'],
     },
     {
         name     => 'mailing list',
         file     => 'tests/emails/brong-mm.eml',
-        domain   => 'test2.example.com',
+        domain   => 'test2.dkim2.com',
         selector => 'sel2',
-        mailfrom => 'bounces@test2.example.com',
-        rcptto   => ['user@test3.example.com'],
+        mailfrom => 'bounces@test2.dkim2.com',
+        rcptto   => ['user@test3.dkim2.com'],
     },
     {
         name     => 'relay adds Extra-Header',
         file     => 'tests/emails/brong-mm2.eml',
-        domain   => 'test3.example.com',
+        domain   => 'test3.dkim2.com',
         selector => 'sel3',
-        mailfrom => 'relay@test3.example.com',
-        rcptto   => ['user@test4.example.com'],
+        mailfrom => 'relay@test3.dkim2.com',
+        rcptto   => ['user@test4.dkim2.com'],
     },
     {
         name     => 'relay removes Extra-Header',
         file     => 'tests/emails/brong-mm3.eml',
-        domain   => 'test4.example.com',
+        domain   => 'test4.dkim2.com',
         selector => 'sel1',
-        mailfrom => 'relay@test4.example.com',
-        rcptto   => ['user@test5.example.com'],
+        mailfrom => 'relay@test4.dkim2.com',
+        rcptto   => ['user@test5.dkim2.com'],
     },
     {
         name     => 'final delivery',
         file     => 'tests/emails/brong-final.eml',
-        domain   => 'test5.example.com',
+        domain   => 'test5.dkim2.com',
         selector => 'sel2',
-        mailfrom => 'forwarder@test5.example.com',
-        rcptto   => ['brong@test1.example.com'],
+        mailfrom => 'forwarder@test5.dkim2.com',
+        rcptto   => ['brong@test1.dkim2.com'],
     },
 );
 
@@ -321,10 +321,10 @@ diag("=== Unchanged message re-sign ===");
     # Sign with a new hop — signature is added but MI count stays the same
     my $hop6 = {
         name     => 'unchanged re-sign',
-        domain   => 'test1.example.com',
+        domain   => 'test1.dkim2.com',
         selector => 'sel1',
-        mailfrom => 'relay@test1.example.com',
-        rcptto   => ['dest@test2.example.com'],
+        mailfrom => 'relay@test1.dkim2.com',
+        rcptto   => ['dest@test2.dkim2.com'],
     };
     sign_msg($msg, $hop6);
     $msg = Email::MIME->new($msg->as_string);

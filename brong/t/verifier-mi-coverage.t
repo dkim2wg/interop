@@ -17,8 +17,8 @@ my $RAW_EMAIL = join("\r\n",
     'MIME-Version: 1.0',
     'Message-Id: <test-mi-coverage@example.com>',
     'Date: Thu, 21 Mar 2024 12:09:37 +1000',
-    'From: sender@test1.example.com',
-    'To: recipient@test2.example.com',
+    'From: sender@test1.dkim2.com',
+    'To: recipient@test2.dkim2.com',
     'Subject: MI coverage test',
     'Content-Type: text/plain',
     '',
@@ -64,10 +64,10 @@ $msg->header_raw_prepend('Message-Instance', $mi->as_string());
 
 # Sign with i=1, m=1
 sign_msg($msg,
-    domain   => 'test1.example.com',
+    domain   => 'test1.dkim2.com',
     selector => 'sel1',
-    mailfrom => 'sender@test1.example.com',
-    rcptto   => ['recipient@test2.example.com'],
+    mailfrom => 'sender@test1.dkim2.com',
+    rcptto   => ['recipient@test2.dkim2.com'],
 );
 
 # Verify the original signed message passes
