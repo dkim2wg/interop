@@ -1,0 +1,13 @@
+*.o
+*.dSYM/
+dkim2-milter
+dkim2sign
+dkim2verify
+debug_verify
+tests/test_base64
+tests/test_crypto
+tests/test_hash
+tests/test_header
+tests/test_recipe
+tests/test_tagparse
+tests/test_verify

@@ -83,57 +83,141 @@ static int relaxed_domain_match(const char *d, const char *mf_domain) {
    but for the signature being verified, substitute empty string for its sig value.
    The sig_value_to_empty is the sig_b64 we want to blank out.
    We reconstruct an "incomplete" signature value by using dkim2_sig_format. */
+/* Blank sig bytes in a raw DKIM2-Signature value, preserving trailing semicolon.
+   Finds the s= tag and replaces each sel:alg:sigvalue with sel:alg: (empty).
+   Returns malloc'd string. */
+static char *blank_sig_values(const char *raw_val) {
+    size_t rlen = strlen(raw_val);
+    /* Detect trailing semicolon (ignoring any trailing whitespace) */
+    const char *end = raw_val + rlen;
+    while (end > raw_val && (end[-1] == ' ' || end[-1] == '\t' ||
+                              end[-1] == '\r' || end[-1] == '\n')) end--;
+    int has_trailing = (end > raw_val && end[-1] == ';');
+
+    /* Find the s= tag */
+    const char *s_tag = NULL;
+    /* Simple search: look for "s=" preceded by start or ";" */
+    for (const char *p = raw_val; *p; p++) {
+        if (p[0] == 's' && p[1] == '=') {
+            if (p == raw_val || p[-1] == ';' || p[-1] == ' ' || p[-1] == '\t') {
+                s_tag = p;
+                break;
+            }
+        }
+    }
+    if (!s_tag) return strdup(raw_val); /* no s= tag, return as-is */
+
+    /* Output buffer: prefix + blanked ssets + optional trailing ";" */
+    char *out = malloc(rlen + 32);
+    if (!out) return NULL;
+    size_t pos = 0;
+
+    /* Copy prefix up to and including "s=" */
+    size_t prefix_len = (size_t)(s_tag - raw_val) + 2;
+    memcpy(out, raw_val, prefix_len);
+    pos = prefix_len;
+
+    /* Parse comma-separated selector:alg:sigval entries */
+    const char *p = s_tag + 2;
+    int first = 1;
+    while (*p && *p != ';') {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p || *p == ';') break;
+
+        /* selector */
+        const char *c1 = p;
+        while (*c1 && *c1 != ':' && *c1 != ';' && *c1 != ',') c1++;
+        if (*c1 != ':') break;
+        size_t sel_len = (size_t)(c1 - p);
+
+        /* alg */
+        const char *c2 = c1 + 1;
+        while (*c2 && *c2 != ':' && *c2 != ';' && *c2 != ',') c2++;
+        if (*c2 != ':') break;
+        size_t alg_len = (size_t)(c2 - c1 - 1);
+
+        /* skip sig value to next comma or semicolon */
+        const char *sig_end = c2 + 1;
+        while (*sig_end && *sig_end != ',' && *sig_end != ';') sig_end++;
+
+        if (!first) out[pos++] = ',';
+        first = 0;
+        memcpy(out + pos, p, sel_len); pos += sel_len;
+        out[pos++] = ':';
+        memcpy(out + pos, c1 + 1, alg_len); pos += alg_len;
+        out[pos++] = ':';
+
+        p = sig_end;
+        if (*p == ',') p++;
+    }
+
+    if (has_trailing) out[pos++] = ';';
+    out[pos] = '\0';
+    return out;
+}
+
+static void append_canon(char *buf, size_t *pos, size_t bufsz,
+                         const char *hdr_name, const char *val) {
+    size_t vl = strlen(val);
+    char *full = malloc(vl + strlen(hdr_name) + 5);
+    if (!full) return;
+    sprintf(full, "%s: %s\r\n", hdr_name, val);
+    char *canon = canon_for_sig(full);
+    free(full);
+    if (canon) {
+        size_t cl = strlen(canon);
+        if (*pos + cl < bufsz) { memcpy(buf + *pos, canon, cl); *pos += cl; }
+        free(canon);
+    }
+}
+
 static unsigned char *build_verify_input(
     dkim2_mi_t *mi_list, dkim2_sig_t *sig_list,
     dkim2_sig_t *target_sig, int target_sset_idx __attribute__((unused)),
     size_t *out_len) {
+    /* Sort MI and sig lists into ascending order before building signing input.
+       The email stores them newest-first; spec §9.5 requires ascending m=/i= order. */
+    const int MAX = 64;
+    dkim2_mi_t *mi_arr[MAX]; int n_mi = 0;
+    dkim2_sig_t *sig_arr[MAX]; int n_sig = 0;
+
+    for (dkim2_mi_t *mi = mi_list; mi && n_mi < MAX; mi = mi->next)
+        if (mi->raw_value) mi_arr[n_mi++] = mi;
+    for (dkim2_sig_t *s = sig_list; s && n_sig < MAX; s = s->next)
+        if (s->raw_value) sig_arr[n_sig++] = s;
+
+    /* Insertion sort MI by ascending m= */
+    for (int i = 1; i < n_mi; i++) {
+        dkim2_mi_t *key = mi_arr[i]; int j = i - 1;
+        while (j >= 0 && mi_arr[j]->m > key->m) { mi_arr[j+1] = mi_arr[j]; j--; }
+        mi_arr[j+1] = key;
+    }
+    /* Insertion sort sig by ascending i= */
+    for (int i = 1; i < n_sig; i++) {
+        dkim2_sig_t *key = sig_arr[i]; int j = i - 1;
+        while (j >= 0 && sig_arr[j]->i > key->i) { sig_arr[j+1] = sig_arr[j]; j--; }
+        sig_arr[j+1] = key;
+    }
+
     char *buf = malloc(65536);
     if (!buf) return NULL;
     size_t pos = 0;
 
     /* MI headers ascending m= */
-    for (dkim2_mi_t *mi = mi_list; mi; mi = mi->next) {
-        char *mi_val = dkim2_mi_format(mi);
-        if (!mi_val) { free(buf); return NULL; }
-        size_t vl = strlen(mi_val);
-        char *full = malloc(vl + 24);
-        snprintf(full, vl + 24, "message-instance: %s\r\n", mi_val);
-        free(mi_val);
-        char *canon = canon_for_sig(full);
-        free(full);
-        if (canon) {
-            size_t cl = strlen(canon);
-            if (pos + cl < 65536) { memcpy(buf + pos, canon, cl); pos += cl; }
-            free(canon);
-        }
-    }
+    for (int i = 0; i < n_mi; i++)
+        append_canon(buf, &pos, 65536, "message-instance", mi_arr[i]->raw_value);
 
     /* DKIM2-Signature headers ascending i= */
-    for (dkim2_sig_t *sig = sig_list; sig; sig = sig->next) {
-        const char *raw_val;
-        char *formatted = NULL;
-
-        if (sig->i == target_sig->i) {
-            /* Reconstruct with empty sig value for the target sset */
-            /* We need to produce the value with sig blanked at target_sset_idx */
-            formatted = dkim2_sig_format(sig, 1); /* empty_sig=1 */
-            raw_val = formatted;
-        } else {
-            raw_val = sig->raw_value;
-        }
-
-        if (!raw_val) { free(formatted); continue; }
-        size_t vl = strlen(raw_val);
-        char *full = malloc(vl + 24);
-        snprintf(full, vl + 24, "dkim2-signature: %s\r\n", raw_val);
-        char *canon = canon_for_sig(full);
-        free(full);
-        free(formatted);
-        if (canon) {
-            size_t cl = strlen(canon);
-            if (pos + cl < 65536) { memcpy(buf + pos, canon, cl); pos += cl; }
-            free(canon);
-        }
+    for (int i = 0; i < n_sig; i++) {
+        dkim2_sig_t *sig = sig_arr[i];
+        char *to_use;
+        if (sig->i == target_sig->i)
+            to_use = blank_sig_values(sig->raw_value);
+        else
+            to_use = strdup(sig->raw_value);
+        if (!to_use) continue;
+        append_canon(buf, &pos, 65536, "dkim2-signature", to_use);
+        free(to_use);
     }
 
     *out_len = pos;
@@ -170,15 +254,17 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "PERMERROR: Message-Instance m=%d is not covered by any signature", m->m);
     }
 
-    /* §10.3: Timestamp check — within 14 days */
-    uint64_t now = (uint64_t)time(NULL);
-    if (latest->t > now + 300)
-        SETSTATUS(DKIM2_PERMERROR,
-            "PERMERROR: DKIM2-Signature i=%d timestamp is in the future", latest->i);
-    if (now > latest->t + 14ULL * 24 * 3600)
-        SETSTATUS(DKIM2_PERMERROR,
-            "PERMERROR: DKIM2-Signature i=%d has expired (t=%llu)",
-            latest->i, (unsigned long long)latest->t);
+    /* §10.3: Timestamp check — within 14 days (skip if testing) */
+    if (!ctx->skip_timestamp_check) {
+        uint64_t now = (uint64_t)time(NULL);
+        if (latest->t > now + 300)
+            SETSTATUS(DKIM2_PERMERROR,
+                "PERMERROR: DKIM2-Signature i=%d timestamp is in the future", latest->i);
+        if (now > latest->t + 14ULL * 24 * 3600)
+            SETSTATUS(DKIM2_PERMERROR,
+                "PERMERROR: DKIM2-Signature i=%d has expired (t=%llu)",
+                latest->i, (unsigned long long)latest->t);
+    }
 
     /* §10.4: Chain-of-custody — MAIL FROM must match mf= */
     if (ctx->mail_from && latest->mf) {
@@ -282,25 +368,29 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         SETSTATUS(DKIM2_FAIL,
             "FAIL: DKIM2-Signature i=%d signature verification failed", latest->i);
 
-    /* §10.7: Validate body and header hashes against covered_mi */
+    /* §10.7: Validate body and header hashes against covered_mi.
+       Compare decoded bytes (not base64 strings) to avoid encoding ambiguity. */
     for (int hi = 0; hi < covered_mi->n_hsets; hi++) {
-        char computed_bh[64];
-        if (dkim2_body_hash(
-                ctx->body_buf ? (const char *)ctx->body_buf : "",
-                ctx->body_len, computed_bh, sizeof computed_bh) < 0)
-            SETSTATUS(DKIM2_PERMERROR, "PERMERROR: body hash computation failed");
-
-        if (strcmp(computed_bh, covered_mi->hsets[hi].body_hash) != 0)
+        /* body_digest was computed incrementally as body data arrived */
+        unsigned char stored_bh[DKIM2_HASH_LEN];
+        int stored_bh_len = b64_decode(covered_mi->hsets[hi].body_hash,
+                                       stored_bh, sizeof stored_bh);
+        if (stored_bh_len != DKIM2_HASH_LEN ||
+            memcmp(ctx->body_digest, stored_bh, DKIM2_HASH_LEN) != 0)
             SETSTATUS(DKIM2_FAIL,
                 "FAIL: Message-Instance m=%d body hash mismatch (alg=%s)",
                 covered_mi->m, covered_mi->hsets[hi].alg);
 
-        char computed_hh[64];
-        if (dkim2_header_hash((const char **)ctx->headers, ctx->n_headers,
-                computed_hh, sizeof computed_hh) < 0)
+        unsigned char computed_hh[DKIM2_HASH_LEN];
+        if (dkim2_header_hash_raw((const char **)ctx->headers, ctx->n_headers,
+                computed_hh) < 0)
             SETSTATUS(DKIM2_PERMERROR, "PERMERROR: header hash computation failed");
 
-        if (strcmp(computed_hh, covered_mi->hsets[hi].hdr_hash) != 0)
+        unsigned char stored_hh[DKIM2_HASH_LEN];
+        int stored_hh_len = b64_decode(covered_mi->hsets[hi].hdr_hash,
+                                       stored_hh, sizeof stored_hh);
+        if (stored_hh_len != DKIM2_HASH_LEN ||
+            memcmp(computed_hh, stored_hh, DKIM2_HASH_LEN) != 0)
             SETSTATUS(DKIM2_FAIL,
                 "FAIL: Message-Instance m=%d header hash mismatch (alg=%s)",
                 covered_mi->m, covered_mi->hsets[hi].alg);

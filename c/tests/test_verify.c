@@ -30,8 +30,7 @@ static int sign_test_message(
     memset(&ctx, 0, sizeof ctx);
     ctx.headers = (char **)raw_hdrs;
     ctx.n_headers = n_hdrs;
-    ctx.body_buf = (unsigned char *)body;
-    ctx.body_len = strlen(body);
+    dkim2_body_hash_raw(body, strlen(body), ctx.body_digest);
     ctx.mail_from = (char *)mail_from;
     ctx.rcpt_to = rcpts;
     dkim2_sign_config_t cfg = {
@@ -61,8 +60,7 @@ static dkim2_status_t verify_test_message(
 
     vctx.headers = all_hdrs;
     vctx.n_headers = n_raw_hdrs + 2;
-    vctx.body_buf = (unsigned char *)body;
-    vctx.body_len = strlen(body);
+    dkim2_body_hash_raw(body, strlen(body), vctx.body_digest);
     vctx.mail_from = (char *)mail_from;
     vctx.rcpt_to = rcpts;
     vctx.mi_list = dkim2_mi_parse(mi_val);
@@ -168,7 +166,7 @@ int main(void) {
     dkim2_ctx_t ctx2;
     memset(&ctx2, 0, sizeof ctx2);
     ctx2.headers = (char **)raw_headers; ctx2.n_headers = 3;
-    ctx2.body_buf = (unsigned char *)body; ctx2.body_len = strlen(body);
+    dkim2_body_hash_raw(body, strlen(body), ctx2.body_digest);
     ctx2.mail_from = (char *)mail_from; ctx2.rcpt_to = rcpts;
     dkim2_do_sign(&ctx2, &cfg2, &mi2, &sig2);
     g_dns_txt = orig_dns;

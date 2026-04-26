@@ -68,14 +68,15 @@ static unsigned char *build_sign_input(
     if (!buf) return NULL;
     size_t pos = 0;
 
-    /* MI headers ascending m= — format and canonicalize each */
+    /* MI headers ascending m= — use raw_value when available (existing MIs),
+       else format from struct (newly created MI with no raw_value yet) */
     for (dkim2_mi_t *mi = mi_list; mi; mi = mi->next) {
-        char *mi_val = dkim2_mi_format(mi);
-        if (!mi_val) { free(buf); return NULL; }
-        /* Build full "header: value\r\n" */
-        size_t vl = strlen(mi_val);
+        char *mi_val = mi->raw_value ? NULL : dkim2_mi_format(mi);
+        const char *use_val = mi->raw_value ? mi->raw_value : mi_val;
+        if (!use_val) { free(buf); return NULL; }
+        size_t vl = strlen(use_val);
         char *full = malloc(vl + 24);
-        snprintf(full, vl + 24, "message-instance: %s\r\n", mi_val);
+        snprintf(full, vl + 24, "message-instance: %s\r\n", use_val);
         free(mi_val);
         char *canon = canon_for_sig(full);
         free(full);
@@ -119,12 +120,10 @@ static unsigned char *build_sign_input(
 
 int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     char **mi_out, char **sig_out) {
-    /* §8.3: Compute body hash */
+    /* §8.3: Body hash — already computed incrementally, just base64-encode */
     char body_hash[64];
-    if (dkim2_body_hash(
-            ctx->body_buf ? (const char *)ctx->body_buf : "",
-            ctx->body_len, body_hash, sizeof body_hash) < 0) {
-        snprintf(ctx->errmsg, sizeof ctx->errmsg, "body hash failed");
+    if (b64_encode(ctx->body_digest, DKIM2_HASH_LEN, body_hash, sizeof body_hash) < 0) {
+        snprintf(ctx->errmsg, sizeof ctx->errmsg, "body hash encode failed");
         return -1;
     }
 
@@ -197,14 +196,30 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
         free(mf_b64); free(rt_b64); return -1;
     }
 
+    /* Auto-detect algorithm from key type if not specified */
+    const char *alg = cfg->alg;
+    if (!alg) {
+        int key_id = EVP_PKEY_id(privkey);
+        if (key_id == EVP_PKEY_ED25519)      alg = "ed25519-sha256";
+        else if (key_id == EVP_PKEY_RSA)     alg = "rsa-sha256";
+        else {
+            EVP_PKEY_free(privkey);
+            free(mf_b64); free(rt_b64);
+            snprintf(ctx->errmsg, sizeof ctx->errmsg, "unsupported key type");
+            return -1;
+        }
+    }
+
+    /* Use configured timestamp or current time */
+    uint64_t now = cfg->timestamp ? cfg->timestamp : (uint64_t)time(NULL);
+
     /* Format incomplete DKIM2-Signature value (empty sig per §8.5) */
-    uint64_t now = (uint64_t)time(NULL);
     char incomplete_sig[4096];
     snprintf(incomplete_sig, sizeof incomplete_sig,
-        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s; s=%s:%s:",
+        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s; s=%s:%s:;",
         new_i, new_m, (unsigned long long)now,
         cfg->domain, mf_b64, rt_b64,
-        cfg->selector, cfg->alg);
+        cfg->selector, alg);
 
     /* Build MI list to sign: existing + new (if new_m > any existing) */
     dkim2_mi_t *mi_for_sign = ctx->mi_list;
@@ -250,7 +265,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     }
 
     /* Sign */
-    char *sig_b64 = dkim2_sign(privkey, cfg->alg, sign_input, sign_input_len);
+    char *sig_b64 = dkim2_sign(privkey, alg, sign_input, sign_input_len);
     EVP_PKEY_free(privkey);
     free(sign_input);
 
@@ -263,16 +278,16 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     /* Format complete DKIM2-Signature value */
     char complete_sig[4096];
     snprintf(complete_sig, sizeof complete_sig,
-        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s; s=%s:%s:%s",
+        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s; s=%s:%s:%s;",
         new_i, new_m, (unsigned long long)now,
         cfg->domain, mf_b64, rt_b64,
-        cfg->selector, cfg->alg, sig_b64);
+        cfg->selector, alg, sig_b64);
     free(sig_b64);
 
     /* Format MI value (only if new MI was created) */
     if (!already_in_list) {
         char mi_val[512];
-        snprintf(mi_val, sizeof mi_val, "m=%d; h=sha256:%s:%s", new_m, hdr_hash, body_hash);
+        snprintf(mi_val, sizeof mi_val, "m=%d; h=sha256:%s:%s;", new_m, hdr_hash, body_hash);
         *mi_out = strdup(mi_val);
     } else {
         *mi_out = NULL; /* no new MI header needed */

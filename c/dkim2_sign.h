@@ -5,7 +5,8 @@ typedef struct {
     char *domain;           /* d= signing domain */
     char *selector;         /* selector for DNS key lookup */
     char *privkey_path;     /* path to PEM private key file */
-    char *alg;              /* "rsa-sha256" or "ed25519-sha256" */
+    char *alg;              /* "rsa-sha256" or "ed25519-sha256"; NULL = auto-detect from key */
+    uint64_t timestamp;     /* t= unix timestamp; 0 = use current time */
 } dkim2_sign_config_t;
 
 /* Sign the message in ctx.

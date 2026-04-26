@@ -16,7 +16,7 @@ CORE_SRCS = base64.c tagparse.c dkim2_hash.c dkim2_header.c \
             dkim2_sign.c dkim2_verify.c
 CORE_OBJS = $(CORE_SRCS:.c=.o)
 
-all: dkim2-milter
+all: dkim2-milter dkim2sign dkim2verify
 
 dkim2-milter: dkim2_milter.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -pthread -o $@ $^ $(MILTER_LIB) $(LDFLAGS)
@@ -55,5 +55,11 @@ tests/test_crypto: tests/test_crypto.c dkim2_crypto.o base64.o
 tests/test_verify: tests/test_verify.c $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+dkim2sign: dkim2sign_cli.o eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+dkim2verify: dkim2verify_cli.o eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 clean:
-	rm -f *.o dkim2-milter $(TESTS)
+	rm -f *.o dkim2-milter dkim2sign dkim2verify $(TESTS)

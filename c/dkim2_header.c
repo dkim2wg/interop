@@ -6,6 +6,16 @@
 #include <stdio.h>
 #include <stdint.h>
 
+/* Strip all FWS (whitespace including CRLF) from a base64 string in-place. */
+static void strip_fws(char *s) {
+    char *r = s, *w = s;
+    while (*r) {
+        if (*r == ' ' || *r == '\t' || *r == '\r' || *r == '\n') { r++; continue; }
+        *w++ = *r++;
+    }
+    *w = '\0';
+}
+
 /* Parse h= value: "sha256:hhash:bhash,sha256:hhash:bhash,..." */
 static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
     int cnt = 1;
@@ -15,9 +25,10 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
     *n = 0;
     char *copy = strdup(h);
     if (!copy) { free(*out); *out = NULL; return -1; }
+    /* Strip all FWS from the copy so folded hashes parse correctly */
+    strip_fws(copy);
     char *saveptr = NULL, *tok = strtok_r(copy, ",", &saveptr);
     while (tok) {
-        while (*tok == ' ' || *tok == '\t') tok++;
         char *c1 = strchr(tok, ':');
         if (!c1) { free(copy); return -1; }
         *c1++ = '\0';
@@ -185,6 +196,8 @@ char *dkim2_mi_format(const dkim2_mi_t *mi) {
     }
     if (mi->r_raw)
         pos += snprintf(buf + pos, 4096 - pos, "; r=%s", mi->r_raw);
+    /* Trailing semicolon per spec ABNF tag-list grammar (matches Python/Perl) */
+    pos += snprintf(buf + pos, 4096 - pos, ";");
     return buf;
 }
 

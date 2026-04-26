@@ -29,7 +29,7 @@ static void state_reset(conn_state_t *s) {
     dkim2_ctx_t *c = &s->ctx;
     for (int i = 0; i < c->n_headers; i++) free(c->headers[i]);
     free(c->headers);
-    free(c->body_buf);
+    dkim2_body_hasher_free(c->body_hasher);
     free(c->mail_from);
     if (c->rcpt_to) {
         for (int i = 0; i < c->n_rcpt; i++) free(c->rcpt_to[i]);
@@ -106,19 +106,18 @@ static sfsistat cb_header(SMFICTX *ctx, char *name, char *value) {
 }
 
 static sfsistat cb_eoh(SMFICTX *ctx) {
-    (void)ctx;
+    conn_state_t *s = smfi_getpriv(ctx);
+    dkim2_ctx_t *c = &s->ctx;
+    c->body_hasher = dkim2_body_hasher_new();
+    if (!c->body_hasher) return SMFIS_TEMPFAIL;
     return SMFIS_CONTINUE;
 }
 
 static sfsistat cb_body(SMFICTX *ctx, unsigned char *bodyp, size_t bodylen) {
     conn_state_t *s = smfi_getpriv(ctx);
     dkim2_ctx_t *c = &s->ctx;
-    unsigned char *tmp = realloc(c->body_buf, c->body_len + bodylen + 1);
-    if (!tmp) return SMFIS_TEMPFAIL;
-    c->body_buf = tmp;
-    memcpy(c->body_buf + c->body_len, bodyp, bodylen);
-    c->body_len += bodylen;
-    c->body_buf[c->body_len] = '\0';
+    if (dkim2_body_hasher_update(c->body_hasher, (const char *)bodyp, bodylen) < 0)
+        return SMFIS_TEMPFAIL;
     return SMFIS_CONTINUE;
 }
 
@@ -126,6 +125,12 @@ static sfsistat cb_eom(SMFICTX *ctx) {
     conn_state_t *s = smfi_getpriv(ctx);
     dkim2_ctx_t *c = &s->ctx;
     char ar_value[1024];
+
+    /* Finalise body digest — no body buffer needed beyond this point */
+    if (dkim2_body_hasher_final(c->body_hasher, c->body_digest) < 0)
+        return SMFIS_TEMPFAIL;
+    dkim2_body_hasher_free(c->body_hasher);
+    c->body_hasher = NULL;
 
     if (g_cfg.mode == 'v') {
         dkim2_verify_result_t result;

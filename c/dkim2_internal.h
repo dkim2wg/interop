@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <openssl/evp.h>
+#include "dkim2_hash.h"
 
 typedef enum {
     DKIM2_OK = 0,
@@ -61,15 +62,17 @@ typedef struct dkim2_ctx {
     dkim2_mi_t  *mi_list;   /* ascending m= order */
     dkim2_sig_t *sig_list;  /* ascending i= order */
 
-    /* Body accumulation for hashing */
-    unsigned char *body_buf;
-    size_t body_len;
-    size_t body_cap;
+    /* Body hash — computed incrementally, never buffered */
+    unsigned char body_digest[DKIM2_HASH_LEN]; /* valid once body_hasher is NULL */
+    dkim2_body_hasher_t *body_hasher;           /* non-NULL during body accumulation */
 
     /* SMTP envelope */
     char *mail_from;        /* "<addr>" with angle brackets */
     char **rcpt_to;         /* NULL-terminated array of "<addr>" */
     int n_rcpt;
+
+    /* Verifier options */
+    int skip_timestamp_check;  /* 1 = skip t= expiry check (for testing) */
 
     /* Result */
     dkim2_status_t status;
