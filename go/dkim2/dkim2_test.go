@@ -1,8 +1,10 @@
 package dkim2
 
 import (
+	"bytes"
 	"encoding/base64"
 	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -437,4 +439,53 @@ func TestDKIM2SignatureIncompleteForm(t *testing.T) {
 	if incomplete != want {
 		t.Errorf("incompleteForm got:\n  %q\nwant:\n  %q", incomplete, want)
 	}
+}
+
+func TestSignSimpleEd25519(t *testing.T) {
+	raw, err := os.ReadFile("../../python/tests/emails/simple.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile("../../keys/ed25519._domainkey.test1.dkim2.com.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := loadPrivateKey(keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err = Sign(bytes.NewReader(raw), &out, key, SignOptions{
+		Selector:  "ed25519",
+		Domain:    "test1.dkim2.com",
+		MailFrom:  "sender@test1.dkim2.com",
+		RcptTo:    []string{"recipient@example.com"},
+		Timestamp: 1740000000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected, err := os.ReadFile("../../python/tests/expected/simple-ed25519.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The expected file was generated via shell command substitution
+	// (`result=$(...)`) which strips trailing newlines, so trim trailing
+	// CR/LF from both sides to match the canonical bash equality semantics
+	// used by the Python test runner.
+	got := bytes.TrimRight(out.Bytes(), "\r\n")
+	want := bytes.TrimRight(expected, "\r\n")
+	if !bytes.Equal(got, want) {
+		t.Errorf("output differs from expected\ngot (first 500):\n%s\nwant (first 500):\n%s",
+			truncate(string(got), 500), truncate(string(want), 500))
+	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
