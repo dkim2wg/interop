@@ -1,6 +1,8 @@
 package dkim2
 
 import (
+	"io"
+	"strings"
 	"testing"
 )
 
@@ -31,5 +33,58 @@ func TestTagValueListEmpty(t *testing.T) {
 	}
 	if got := tvl.String(); got != "" {
 		t.Errorf("empty String() got %q", got)
+	}
+}
+
+func TestParseHeaders(t *testing.T) {
+	raw := "From: sender@example.com\r\nSubject: Test\r\n\r\nBody here\r\n"
+	headers, bodyR, err := parseHeaders(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(headers) != 2 {
+		t.Fatalf("want 2 headers, got %d", len(headers))
+	}
+	if headers[0].Name != "From" || headers[0].Value != "sender@example.com" {
+		t.Errorf("From: got name=%q value=%q", headers[0].Name, headers[0].Value)
+	}
+	if headers[0].Raw != "From: sender@example.com\r\n" {
+		t.Errorf("From Raw: got %q", headers[0].Raw)
+	}
+	body, _ := io.ReadAll(bodyR)
+	if string(body) != "Body here\r\n" {
+		t.Errorf("body got %q", body)
+	}
+}
+
+func TestParseHeadersContinuation(t *testing.T) {
+	raw := "Subject: long\r\n subject continued\r\n\r\n"
+	headers, _, err := parseHeaders(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(headers) != 1 {
+		t.Fatalf("want 1 header, got %d", len(headers))
+	}
+	if headers[0].Value != "long subject continued" {
+		t.Errorf("value got %q", headers[0].Value)
+	}
+	if headers[0].Raw != "Subject: long\r\n subject continued\r\n" {
+		t.Errorf("Raw got %q", headers[0].Raw)
+	}
+}
+
+func TestParseHeadersLFOnly(t *testing.T) {
+	raw := "From: a@b.com\nTo: c@d.com\n\nbody\n"
+	headers, bodyR, err := parseHeaders(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(headers) != 2 {
+		t.Fatalf("want 2 headers, got %d", len(headers))
+	}
+	body, _ := io.ReadAll(bodyR)
+	if string(body) != "body\r\n" {
+		t.Errorf("body got %q", body)
 	}
 }
