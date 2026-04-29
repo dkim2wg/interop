@@ -71,7 +71,7 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 		keyType = "rsa"
 	}
 	pubB64 := tags["p"]
-	pubBytes, err := base64.StdEncoding.DecodeString(pubB64)
+	pubBytes, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(pubB64, "="))
 	if err != nil {
 		return nil, "", fmt.Errorf("decoding public key: %w", err)
 	}
@@ -81,11 +81,15 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 		if len(pubBytes) == 32 {
 			return ed25519.PublicKey(pubBytes), "ed25519-sha256", nil
 		}
-		// DER-encoded SubjectPublicKeyInfo: strip to last 32 bytes
-		if len(pubBytes) > 32 {
-			return ed25519.PublicKey(pubBytes[len(pubBytes)-32:]), "ed25519-sha256", nil
+		key, err := x509.ParsePKIXPublicKey(pubBytes)
+		if err != nil {
+			return nil, "", fmt.Errorf("parsing ed25519 public key: %w", err)
 		}
-		return nil, "", fmt.Errorf("ed25519 key too short: %d bytes", len(pubBytes))
+		edKey, ok := key.(ed25519.PublicKey)
+		if !ok {
+			return nil, "", fmt.Errorf("expected ed25519 key, got %T", key)
+		}
+		return edKey, "ed25519-sha256", nil
 	case "rsa", "rsa-sha256":
 		key, err := x509.ParsePKIXPublicKey(pubBytes)
 		if err != nil {

@@ -105,6 +105,12 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 			sig.Sigs = append(sig.Sigs, item)
 		}
 	}
+	if sig.Domain == "" {
+		return nil, fmt.Errorf("missing required d= tag in DKIM2-Signature")
+	}
+	if len(sig.Sigs) == 0 {
+		return nil, fmt.Errorf("missing required s= tag in DKIM2-Signature")
+	}
 	return sig, nil
 }
 
@@ -138,22 +144,25 @@ var reSTag = regexp.MustCompile(`;\s*s=`)
 // incompleteForm takes the original raw header and returns it with all
 // signature values in the s= tag replaced by empty string (per §8.5).
 func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
-	trailing := ";"
-	if !strings.HasSuffix(strings.TrimRight(rawHeader, "\r\n"), ";") {
-		trailing = ""
-	}
-
 	m := reSTag.FindStringIndex(rawHeader)
 	if m == nil {
 		return rawHeader
 	}
-	prefix := rawHeader[:m[1]] // everything up to and including "s="
+	prefix := rawHeader[:m[1]] // everything through "s="
+
+	// Find the s= value's end: the next semicolon after the s= tag start
+	rest := rawHeader[m[1]:]
+	semiIdx := strings.IndexByte(rest, ';')
+	var suffix string
+	if semiIdx >= 0 {
+		suffix = rest[semiIdx:] // from the closing ";" onward (including any trailing CRLF)
+	}
 
 	var stripped []string
 	for _, item := range sig.Sigs {
 		stripped = append(stripped, item.Selector+":"+item.Algorithm+":")
 	}
-	return prefix + strings.Join(stripped, ",") + trailing
+	return prefix + strings.Join(stripped, ",") + suffix
 }
 
 // buildIncomplete builds a fresh incomplete DKIM2-Signature header (s= values
