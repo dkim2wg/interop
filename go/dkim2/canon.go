@@ -14,6 +14,7 @@ import (
 func hashBody(r io.Reader) ([]byte, error) {
 	h := sha256.New()
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1 MiB max line
 	pendingCRLFs := 0
 	hasContent := false
 
