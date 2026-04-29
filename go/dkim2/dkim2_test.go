@@ -183,6 +183,72 @@ func TestCanonicalizeSigHeaderFolded(t *testing.T) {
 	}
 }
 
+func TestRecipeRoundTrip(t *testing.T) {
+	b64data := "eyJiIjpbeyJjIjpbMSwxXX1dfQ=="
+	rJSON, err := base64.StdEncoding.DecodeString(b64data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := parseRecipe(rJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Body) != 1 {
+		t.Fatalf("want 1 body step, got %d", len(r.Body))
+	}
+	if r.Body[0].Copy == nil || r.Body[0].Copy[0] != 1 || r.Body[0].Copy[1] != 1 {
+		t.Errorf("body step got %+v", r.Body[0])
+	}
+	got, err := encodeRecipe(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base64.StdEncoding.EncodeToString(got) != b64data {
+		t.Errorf("re-encoded: got %s want %s",
+			base64.StdEncoding.EncodeToString(got), b64data)
+	}
+}
+
+func TestMessageInstanceRoundTrip(t *testing.T) {
+	raw := "Message-Instance: m=1; h=sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=;"
+	mi, err := parseMI(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mi.Version != 1 {
+		t.Errorf("Version got %d want 1", mi.Version)
+	}
+	if base64.StdEncoding.EncodeToString(mi.HeaderHash) != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
+		t.Errorf("HeaderHash mismatch")
+	}
+	if base64.StdEncoding.EncodeToString(mi.BodyHash) != "SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=" {
+		t.Errorf("BodyHash mismatch")
+	}
+	if mi.Recipe != nil {
+		t.Error("Recipe should be nil")
+	}
+	if got := mi.String(); got != raw {
+		t.Errorf("String() got:\n  %q\nwant:\n  %q", got, raw)
+	}
+}
+
+func TestMessageInstanceWithRecipe(t *testing.T) {
+	raw := "Message-Instance: m=2; h=sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:DGv24YWxV2Z3AJ/C+rbwX078dNL59U5evazyN5MyTSE=; r=eyJiIjpbeyJjIjpbMSwxXX1dfQ==;"
+	mi, err := parseMI(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mi.Version != 2 {
+		t.Errorf("Version got %d want 2", mi.Version)
+	}
+	if mi.Recipe == nil {
+		t.Fatal("Recipe should not be nil")
+	}
+	if got := mi.String(); got != raw {
+		t.Errorf("String() got:\n  %q\nwant:\n  %q", got, raw)
+	}
+}
+
 func TestHashBody(t *testing.T) {
 	cases := []struct {
 		name string
