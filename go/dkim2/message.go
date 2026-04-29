@@ -93,7 +93,7 @@ func parseHeaders(r io.Reader) ([]Header, io.Reader, error) {
 		if len(chunk) > 0 {
 			line := strings.TrimRight(chunk, "\r\n")
 			bodyBuf.WriteString(line)
-			bodyBuf.WriteString("\r\n")
+			bodyBuf.WriteString("\r\n") // intentional: DKIM2 always hashes CRLF-normalised bodies
 		}
 		if err == io.EOF {
 			break

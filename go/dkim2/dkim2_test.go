@@ -88,3 +88,18 @@ func TestParseHeadersLFOnly(t *testing.T) {
 		t.Errorf("body got %q", body)
 	}
 }
+
+func TestParseHeadersNoBlankLine(t *testing.T) {
+	raw := "From: a@b.com\r\nSubject: Hi\r\n"
+	headers, bodyR, err := parseHeaders(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(headers) != 2 {
+		t.Fatalf("want 2 headers, got %d", len(headers))
+	}
+	body, _ := io.ReadAll(bodyR)
+	if len(body) != 0 {
+		t.Errorf("expected empty body, got %q", body)
+	}
+}
