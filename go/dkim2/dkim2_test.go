@@ -489,3 +489,110 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
+
+func TestVerifySimpleEd25519(t *testing.T) {
+	raw, err := os.ReadFile("../../python/tests/expected/simple-ed25519.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	results, err := Verify(bytes.NewReader(raw), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("want 1 result, got %d", len(results))
+	}
+	if results[0].Error != nil {
+		t.Errorf("verify failed: %v", results[0].Error)
+	}
+}
+
+func TestSignAllCases(t *testing.T) {
+	cases := []struct {
+		name     string
+		email    string
+		selector string
+		domain   string
+		keyFile  string
+		mailFrom string
+		rcptTo   []string
+	}{
+		{"simple-ed25519", "simple.eml", "ed25519", "test1.dkim2.com",
+			"ed25519._domainkey.test1.dkim2.com.pem",
+			"sender@test1.dkim2.com", []string{"recipient@example.com"}},
+		{"simple-rsa1024", "simple.eml", "rsa1024", "test1.dkim2.com",
+			"rsa1024._domainkey.test1.dkim2.com.pem",
+			"sender@test1.dkim2.com", []string{"recipient@example.com"}},
+		{"simple-rsa2048", "simple.eml", "sel1", "test1.dkim2.com",
+			"sel1._domainkey.test1.dkim2.com.pem",
+			"sender@test1.dkim2.com", []string{"recipient@example.com"}},
+		{"multiheader-ed25519", "multiheader.eml", "ed25519", "test2.dkim2.com",
+			"ed25519._domainkey.test2.dkim2.com.pem",
+			"sender@test2.dkim2.com", []string{"recipient@example.com"}},
+		{"trailingblank-ed25519", "trailingblank.eml", "ed25519", "test3.dkim2.com",
+			"ed25519._domainkey.test3.dkim2.com.pem",
+			"sender@test3.dkim2.com", []string{"recipient@example.com"}},
+		{"emptybody-ed25519", "emptybody.eml", "ed25519", "test4.dkim2.com",
+			"ed25519._domainkey.test4.dkim2.com.pem",
+			"sender@test4.dkim2.com", []string{"recipient@example.com"}},
+		{"multirecipient-ed25519", "multirecipient.eml", "ed25519", "test5.dkim2.com",
+			"ed25519._domainkey.test5.dkim2.com.pem",
+			"sender@test5.dkim2.com",
+			[]string{"alice@example.com", "bob@example.com", "charlie@example.com"}},
+		{"dsn-ed25519", "simple.eml", "ed25519", "test1.dkim2.com",
+			"ed25519._domainkey.test1.dkim2.com.pem",
+			"<>", []string{"recipient@example.com"}},
+		{"simple-sel2", "simple.eml", "sel2", "test1.dkim2.com",
+			"sel2._domainkey.test1.dkim2.com.pem",
+			"sender@test1.dkim2.com", []string{"recipient@example.com"}},
+		{"simple-sel3", "simple.eml", "sel3", "test1.dkim2.com",
+			"sel3._domainkey.test1.dkim2.com.pem",
+			"sender@test1.dkim2.com", []string{"recipient@example.com"}},
+		{"dupheaders-ed25519", "dupheaders.eml", "ed25519", "test1.dkim2.com",
+			"ed25519._domainkey.test1.dkim2.com.pem",
+			"sender@test1.dkim2.com", []string{"recipient@example.com"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := os.ReadFile("../../python/tests/emails/" + tc.email)
+			if err != nil {
+				t.Fatal(err)
+			}
+			keyPEM, err := os.ReadFile("../../keys/" + tc.keyFile)
+			if err != nil {
+				t.Skip("keyfile not found: " + tc.keyFile)
+			}
+			key, err := loadPrivateKey(keyPEM)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var out bytes.Buffer
+			err = Sign(bytes.NewReader(raw), &out, key, SignOptions{
+				Selector:  tc.selector,
+				Domain:    tc.domain,
+				MailFrom:  tc.mailFrom,
+				RcptTo:    tc.rcptTo,
+				Timestamp: 1740000000,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			expectedPath := "../../python/tests/expected/" + tc.name + ".eml"
+			expected, err := os.ReadFile(expectedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Expected files were generated via bash $(...) which strips trailing newlines
+			got := bytes.TrimRight(out.Bytes(), "\r\n")
+			want := bytes.TrimRight(expected, "\r\n")
+			if !bytes.Equal(got, want) {
+				t.Errorf("output differs from %s\ngot (first 300):\n%s\nwant (first 300):\n%s",
+					tc.name+".eml", truncate(string(got), 300), truncate(string(want), 300))
+			}
+		})
+	}
+}
