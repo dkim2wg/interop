@@ -283,6 +283,53 @@ func TestDiffLinesDuplicates(t *testing.T) {
 	}
 }
 
+func TestComputeDiff(t *testing.T) {
+	beforeHeaders := []Header{
+		{Name: "From", Value: "a@b.com", Raw: "From: a@b.com\r\n"},
+		{Name: "Subject", Value: "Old subject", Raw: "Subject: Old subject\r\n"},
+	}
+	afterHeaders := []Header{
+		{Name: "From", Value: "a@b.com", Raw: "From: a@b.com\r\n"},
+		{Name: "Subject", Value: "New subject", Raw: "Subject: New subject\r\n"},
+	}
+	beforeBody := []byte("Line 1\r\nLine 2\r\n")
+	afterBody := []byte("Line 1\r\nLine 3\r\n")
+
+	r, err := ComputeDiff(beforeHeaders, beforeBody, afterHeaders, afterBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r == nil {
+		t.Fatal("expected non-nil recipe")
+	}
+	// Body diff: Line 1 is copied, Line 2 is new data
+	if len(r.Body) != 2 {
+		t.Fatalf("body steps: want 2, got %d", len(r.Body))
+	}
+	if r.Body[0].Copy == nil {
+		t.Errorf("body step 0: want Copy, got %+v", r.Body[0])
+	}
+	if r.Body[1].Data == nil || r.Body[1].Data[0] != "Line 2" {
+		t.Errorf("body step 1: want Data[Line 2], got %+v", r.Body[1])
+	}
+	// Header diff: subject changed
+	if r.Headers == nil {
+		t.Fatal("expected header recipes")
+	}
+	if _, ok := r.Headers["subject"]; !ok {
+		t.Error("expected recipe for subject header")
+	}
+
+	// No-change case returns nil
+	r2, err := ComputeDiff(beforeHeaders, beforeBody, beforeHeaders, beforeBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2 != nil {
+		t.Error("unchanged message should return nil recipe")
+	}
+}
+
 func TestHashBody(t *testing.T) {
 	cases := []struct {
 		name string

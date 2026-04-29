@@ -162,9 +162,9 @@ func headerRecipeSteps(before, after []Header) []RecipeStep {
 		afterBottomUp[i], afterBottomUp[j] = afterBottomUp[j], afterBottomUp[i]
 	}
 
-	afterIdx := make(map[string]int)
+	afterIdx := make(map[string][]int)
 	for i, h := range afterBottomUp {
-		afterIdx[h.Raw] = i + 1
+		afterIdx[h.Raw] = append(afterIdx[h.Raw], i+1)
 	}
 
 	beforeBottomUp := make([]Header, len(before))
@@ -175,9 +175,10 @@ func headerRecipeSteps(before, after []Header) []RecipeStep {
 
 	var steps []RecipeStep
 	for _, h := range beforeBottomUp {
-		if idx, ok := afterIdx[h.Raw]; ok {
-			c := [2]int{idx, idx}
+		if idxs, ok := afterIdx[h.Raw]; ok && len(idxs) > 0 {
+			c := [2]int{idxs[0], idxs[0]}
 			steps = append(steps, RecipeStep{Copy: &c})
+			afterIdx[h.Raw] = idxs[1:]
 		} else {
 			steps = append(steps, RecipeStep{Data: []string{h.Value}})
 		}
