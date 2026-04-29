@@ -1,6 +1,7 @@
 package dkim2
 
 import (
+	"encoding/base64"
 	"io"
 	"strings"
 	"testing"
@@ -101,5 +102,58 @@ func TestParseHeadersNoBlankLine(t *testing.T) {
 	body, _ := io.ReadAll(bodyR)
 	if len(body) != 0 {
 		t.Errorf("expected empty body, got %q", body)
+	}
+}
+
+func TestHashBody(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string // base64 SHA-256
+	}{
+		{
+			name: "simple",
+			body: "Hello, this is a simple test message.\r\n",
+			want: "SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=",
+		},
+		{
+			name: "empty",
+			body: "",
+			want: "frcCV1k9oG9oKj3dpUqdJg1PxRT2RSN/XKdLCPjaYaY=",
+		},
+		{
+			name: "trailing_blanks_stripped",
+			// Three trailing blank lines — canonical is same as "Hello.\r\n"
+			body: "Hello.\r\n\r\n\r\n\r\n",
+			want: "", // filled in below
+		},
+		{
+			name: "lf_only_normalised",
+			body: "Hello.\n",
+			want: "", // same hash as "Hello.\r\n"
+		},
+	}
+
+	hashFn := func(b string) string {
+		h, err := hashBody(strings.NewReader(b))
+		if err != nil {
+			t.Fatalf("hashBody error: %v", err)
+		}
+		return base64.StdEncoding.EncodeToString(h)
+	}
+	cases[2].want = hashFn("Hello.\r\n")
+	cases[3].want = hashFn("Hello.\r\n")
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := hashBody(strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotB64 := base64.StdEncoding.EncodeToString(got)
+			if tc.want != "" && gotB64 != tc.want {
+				t.Errorf("got %s want %s", gotB64, tc.want)
+			}
+		})
 	}
 }
