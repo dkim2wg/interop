@@ -249,6 +249,40 @@ func TestMessageInstanceWithRecipe(t *testing.T) {
 	}
 }
 
+func TestMessageInstanceBareTags(t *testing.T) {
+	// parseMI must work without the "Message-Instance: " prefix
+	bare := "m=1; h=sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=;"
+	mi, err := parseMI(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mi.Version != 1 {
+		t.Errorf("Version got %d want 1", mi.Version)
+	}
+	if base64.StdEncoding.EncodeToString(mi.HeaderHash) != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
+		t.Errorf("HeaderHash mismatch")
+	}
+}
+
+func TestDiffLinesDuplicates(t *testing.T) {
+	// "foo" appears twice in before but only once in after:
+	// first should be a copy, second should be a data step
+	before := []string{"foo", "foo"}
+	after := []string{"foo", "bar"}
+	steps := diffLines(before, after)
+	if len(steps) != 2 {
+		t.Fatalf("want 2 steps, got %d", len(steps))
+	}
+	// First: copy step (foo exists at index 1 in after)
+	if steps[0].Copy == nil || steps[0].Copy[0] != 1 {
+		t.Errorf("step 0: want Copy[1,1], got %+v", steps[0])
+	}
+	// Second: data step (index 1 was consumed, no more foo in after)
+	if steps[1].Data == nil || len(steps[1].Data) == 0 || steps[1].Data[0] != "foo" {
+		t.Errorf("step 1: want Data[foo], got %+v", steps[1])
+	}
+}
+
 func TestHashBody(t *testing.T) {
 	cases := []struct {
 		name string

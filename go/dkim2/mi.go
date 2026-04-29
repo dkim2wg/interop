@@ -17,11 +17,16 @@ type MessageInstance struct {
 
 // parseMI parses a Message-Instance header (with or without the field name prefix).
 func parseMI(raw string) (*MessageInstance, error) {
-	colon := strings.IndexByte(raw, ':')
-	if colon < 0 {
-		return nil, fmt.Errorf("invalid Message-Instance: no colon")
+	value := raw
+	if colon := strings.IndexByte(raw, ':'); colon >= 0 {
+		name := strings.TrimSpace(raw[:colon])
+		// Only strip as field-name prefix when it looks like a header name
+		// (no '=' or ';' means it's not part of "sha256:..." or a tag value)
+		if !strings.ContainsAny(name, "=;") {
+			value = raw[colon+1:]
+		}
 	}
-	tvl := parseTagValueList(raw[colon+1:])
+	tvl := parseTagValueList(value)
 
 	mStr := tvl.get("m")
 	if mStr == "" {

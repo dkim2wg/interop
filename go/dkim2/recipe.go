@@ -144,9 +144,10 @@ func diffLines(before, after []string) []RecipeStep {
 
 	var steps []RecipeStep
 	for _, l := range before {
-		if idxs, ok := afterIdx[l]; ok {
+		if idxs, ok := afterIdx[l]; ok && len(idxs) > 0 {
 			c := [2]int{idxs[0], idxs[0]}
 			steps = append(steps, RecipeStep{Copy: &c})
+			afterIdx[l] = idxs[1:] // consume the used index
 		} else {
 			steps = append(steps, RecipeStep{Data: []string{l}})
 		}
