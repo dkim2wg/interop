@@ -147,6 +147,24 @@ func TestHashHeadersExclusion(t *testing.T) {
 	}
 }
 
+func TestHashHeadersDuplicateBottomUp(t *testing.T) {
+	// Two From headers: first "a@b.com", second (bottom) "z@y.com".
+	// Bottom-up ordering means the last occurrence (z@y.com) must sort first.
+	// Hash input should be: "from:z@y.com\r\nfrom:a@b.com\r\n"
+	headers := []Header{
+		{Name: "From", Value: "a@b.com", Raw: "From: a@b.com\r\n"},
+		{Name: "From", Value: "z@y.com", Raw: "From: z@y.com\r\n"},
+	}
+	got, err := hashHeaders(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "1JQe5BbA7apJ7348ocoxEM3ESwr3YUyXIdeRRYsnlGA="
+	if base64.StdEncoding.EncodeToString(got) != want {
+		t.Errorf("got %s want %s", base64.StdEncoding.EncodeToString(got), want)
+	}
+}
+
 func TestCanonicalizeSigHeader(t *testing.T) {
 	raw := "DKIM2-Signature: i=1; m=1; s=sel:alg:;\r\n"
 	got := string(canonicalizeSigHeader(raw))
