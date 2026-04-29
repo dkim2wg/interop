@@ -330,6 +330,40 @@ func TestComputeDiff(t *testing.T) {
 	}
 }
 
+func TestJSONKeyFetcher(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+
+	// Ed25519 key
+	key, alg, err := f.FetchPublicKey("ed25519", "test1.dkim2.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alg != "ed25519-sha256" {
+		t.Errorf("alg got %q want ed25519-sha256", alg)
+	}
+	if key == nil {
+		t.Error("key is nil")
+	}
+
+	// RSA key
+	key, alg, err = f.FetchPublicKey("sel1", "test1.dkim2.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alg != "rsa-sha256" {
+		t.Errorf("alg got %q want rsa-sha256", alg)
+	}
+	if key == nil {
+		t.Error("key is nil")
+	}
+
+	// Missing key
+	_, _, err = f.FetchPublicKey("notexist", "test1.dkim2.com")
+	if err == nil {
+		t.Error("expected error for missing key")
+	}
+}
+
 func TestHashBody(t *testing.T) {
 	cases := []struct {
 		name string
@@ -370,5 +404,37 @@ func TestHashBody(t *testing.T) {
 				t.Errorf("got %s want %s", gotB64, tc.want)
 			}
 		})
+	}
+}
+
+func TestDKIM2SignatureRoundTrip(t *testing.T) {
+	raw := "DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=c2VuZGVyQHRlc3QxLmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:F//Dt+leS4H/m5LHwv0hWWCjq1UeVBgE0wrKI0GLcuN/iKhdiytBgPMqS+tIlbSNJmYnB9LldrQ9jPnTHRK2CA==;"
+	sig, err := parseSig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sig.Sequence != 1 { t.Errorf("i= got %d", sig.Sequence) }
+	if sig.MIVersion != 1 { t.Errorf("m= got %d", sig.MIVersion) }
+	if sig.Timestamp != 1740000000 { t.Errorf("t= got %d", sig.Timestamp) }
+	if sig.Domain != "test1.dkim2.com" { t.Errorf("d= got %q", sig.Domain) }
+	if sig.MailFrom != "sender@test1.dkim2.com" { t.Errorf("mf= got %q", sig.MailFrom) }
+	if len(sig.RcptTo) != 1 || sig.RcptTo[0] != "recipient@example.com" {
+		t.Errorf("rt= got %v", sig.RcptTo)
+	}
+	if len(sig.Sigs) != 1 || sig.Sigs[0].Selector != "ed25519" {
+		t.Errorf("s= got %v", sig.Sigs)
+	}
+	if got := sig.String(); got != raw {
+		t.Errorf("String() got:\n  %q\nwant:\n  %q", got, raw)
+	}
+}
+
+func TestDKIM2SignatureIncompleteForm(t *testing.T) {
+	raw := "DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=c2VuZGVyQHRlc3QxLmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:F//Dt+leS4H/m5LHwv0hWWCjq1UeVBgE0wrKI0GLcuN/iKhdiytBgPMqS+tIlbSNJmYnB9LldrQ9jPnTHRK2CA==;"
+	sig, _ := parseSig(raw)
+	incomplete := sig.incompleteForm(raw)
+	want := "DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=c2VuZGVyQHRlc3QxLmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:;"
+	if incomplete != want {
+		t.Errorf("incompleteForm got:\n  %q\nwant:\n  %q", incomplete, want)
 	}
 }
