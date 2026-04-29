@@ -105,6 +105,66 @@ func TestParseHeadersNoBlankLine(t *testing.T) {
 	}
 }
 
+func TestHashHeaders(t *testing.T) {
+	// Known good: header hash from python/tests/expected/simple-ed25519.eml
+	// h= tag value: sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:...
+	wantB64 := "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y="
+
+	// These are the content headers from python/tests/emails/simple.eml
+	headers := []Header{
+		{Name: "From", Value: "sender@test1.dkim2.com", Raw: "From: sender@test1.dkim2.com\r\n"},
+		{Name: "To", Value: "recipient@example.com", Raw: "To: recipient@example.com\r\n"},
+		{Name: "Subject", Value: "Simple test message", Raw: "Subject: Simple test message\r\n"},
+		{Name: "Date", Value: "Sat, 01 Mar 2026 12:00:00 +0000", Raw: "Date: Sat, 01 Mar 2026 12:00:00 +0000\r\n"},
+		{Name: "Message-ID", Value: "<test-simple@test1.dkim2.com>", Raw: "Message-ID: <test-simple@test1.dkim2.com>\r\n"},
+	}
+	got, err := hashHeaders(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotB64 := base64.StdEncoding.EncodeToString(got)
+	if gotB64 != wantB64 {
+		t.Errorf("header hash got %s want %s", gotB64, wantB64)
+	}
+}
+
+func TestHashHeadersExclusion(t *testing.T) {
+	headers := []Header{
+		{Name: "From", Value: "a@b.com", Raw: "From: a@b.com\r\n"},
+		{Name: "Received", Value: "from x", Raw: "Received: from x\r\n"},
+		{Name: "DKIM2-Signature", Value: "i=1", Raw: "DKIM2-Signature: i=1\r\n"},
+		{Name: "Message-Instance", Value: "m=1", Raw: "Message-Instance: m=1\r\n"},
+		{Name: "X-Custom", Value: "val", Raw: "X-Custom: val\r\n"},
+		{Name: "ARC-Seal", Value: "val", Raw: "ARC-Seal: val\r\n"},
+	}
+	withExcluded, _ := hashHeaders(headers)
+
+	headersOnly := []Header{headers[0]}
+	withoutExcluded, _ := hashHeaders(headersOnly)
+
+	if string(withExcluded) != string(withoutExcluded) {
+		t.Error("excluded headers changed the hash")
+	}
+}
+
+func TestCanonicalizeSigHeader(t *testing.T) {
+	raw := "DKIM2-Signature: i=1; m=1; s=sel:alg:;\r\n"
+	got := string(canonicalizeSigHeader(raw))
+	want := "dkim2-signature:i=1;m=1;s=sel:alg:;\r\n"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestCanonicalizeSigHeaderFolded(t *testing.T) {
+	raw := "DKIM2-Signature: i=1;\r\n m=1;\r\n s=sel:alg:;\r\n"
+	got := string(canonicalizeSigHeader(raw))
+	want := "dkim2-signature:i=1;m=1;s=sel:alg:;\r\n"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
 func TestHashBody(t *testing.T) {
 	cases := []struct {
 		name string
