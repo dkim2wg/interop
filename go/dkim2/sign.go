@@ -136,10 +136,12 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 	// 11. Build complete DKIM2-Signature header by inserting the sig bytes
 	//     into the empty s= placeholder.
 	sigB64 := base64.StdEncoding.EncodeToString(sigBytes)
-	completeSig := strings.Replace(incomplete,
-		opts.Selector+":"+algorithm+":;",
-		opts.Selector+":"+algorithm+":"+sigB64+";",
-		1)
+	target := opts.Selector + ":" + algorithm + ":;"
+	completeSig := strings.Replace(incomplete, target,
+		opts.Selector+":"+algorithm+":"+sigB64+";", 1)
+	if completeSig == incomplete {
+		return fmt.Errorf("sign: s= placeholder %q not found in incomplete sig", target)
+	}
 
 	// 12. Write: complete sig + new MI + original headers + body.
 	if _, err := fmt.Fprintf(w, "%s\r\n", completeSig); err != nil {
