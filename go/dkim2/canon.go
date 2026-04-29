@@ -39,8 +39,8 @@ func hashBody(r io.Reader) ([]byte, error) {
 		return nil, err
 	}
 
-	// Trailing empty lines are discarded.
-	// For an empty body, write exactly one CRLF (the canonical form of an empty body).
+	// Trailing empty lines (and an all-blank body) are discarded.
+	// The canonical form always ends with exactly one CRLF.
 	if !hasContent {
 		h.Write([]byte("\r\n"))
 	}

@@ -125,24 +125,14 @@ func TestHashBody(t *testing.T) {
 			name: "trailing_blanks_stripped",
 			// Three trailing blank lines — canonical is same as "Hello.\r\n"
 			body: "Hello.\r\n\r\n\r\n\r\n",
-			want: "", // filled in below
+			want: "yZQq1c8wjBl0fZ4Wc/oraMCAG1mZJv5v/hlvyFy+t6A=",
 		},
 		{
 			name: "lf_only_normalised",
 			body: "Hello.\n",
-			want: "", // same hash as "Hello.\r\n"
+			want: "yZQq1c8wjBl0fZ4Wc/oraMCAG1mZJv5v/hlvyFy+t6A=",
 		},
 	}
-
-	hashFn := func(b string) string {
-		h, err := hashBody(strings.NewReader(b))
-		if err != nil {
-			t.Fatalf("hashBody error: %v", err)
-		}
-		return base64.StdEncoding.EncodeToString(h)
-	}
-	cases[2].want = hashFn("Hello.\r\n")
-	cases[3].want = hashFn("Hello.\r\n")
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
