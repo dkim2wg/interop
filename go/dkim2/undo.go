@@ -109,7 +109,10 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 				break
 			}
 		}
-		if targetMI != nil {
+		if targetMI == nil {
+			return fmt.Errorf("Message-Instance v=%d not found for verification", targetVersion)
+		}
+		{
 			gotHHash, err := hashHeaders(currentContent)
 			if err != nil {
 				return fmt.Errorf("computing header hash: %w", err)
