@@ -42,6 +42,13 @@ type VerifyResult struct {
 	Error    error // nil = pass
 }
 
+// VerifyOptions carries optional envelope values for §10.4 exact-match checking.
+// Zero value means no envelope checks are performed.
+type VerifyOptions struct {
+	MailFrom string   // SMTP MAIL FROM; empty = skip check
+	RcptTo   []string // SMTP RCPT TO values; nil = skip check
+}
+
 func parseSig(raw string) (*DKIM2Signature, error) {
 	colon := strings.IndexByte(raw, ':')
 	if colon < 0 {

@@ -949,6 +949,166 @@ func TestVerifyGap6OrphanMI(t *testing.T) {
 	verifyExpectFail(t, strings.Join(kept, "\r\n"), "orphan MI (m=2 with no referencing sig)")
 }
 
+// TestVerifyMultipleSigsAllChecked verifies that when a DKIM2-Signature contains
+// multiple s= items, ALL of them are checked — a bad second item causes failure
+// even when the first item passes.
+func TestVerifyMultipleSigsAllChecked(t *testing.T) {
+	msg := buildSignedMsg(t)
+	// Inject a second (invalid) sig item into the s= tag.
+	// The first item is valid; the second has a garbage signature value.
+	// If we only check item[0], we'd incorrectly PASS.
+	tampered := strings.Replace(string(msg),
+		";", // first semicolon (end of i=1)
+		";",  // no change to i= tag
+		1)
+	// Replace s=sel:alg:VALUE; with s=sel:alg:VALUE,sel:alg:BADVALUE;
+	tampered = strings.Replace(string(msg),
+		"s=ed25519:ed25519-sha256:",
+		"s=ed25519:ed25519-sha256:",
+		1)
+	// Actually, let's splice in the bad item after the real sig value
+	// Find the s= tag and add a comma + bad item before the trailing semicolon
+	idx := strings.Index(string(msg), "; s=ed25519:ed25519-sha256:")
+	if idx < 0 {
+		t.Skip("could not find s= tag in signed message")
+	}
+	// Find end of s= value (the semicolon after the base64)
+	sTagStart := idx + len("; s=")
+	rest := string(msg)[sTagStart:]
+	semiIdx := strings.Index(rest, ";")
+	if semiIdx < 0 {
+		t.Skip("no trailing semicolon found")
+	}
+	// Build tampered: original up through end of s= value, then add bad item
+	prefix := string(msg)[:sTagStart+semiIdx]
+	suffix := string(msg)[sTagStart+semiIdx:]
+	tampered = prefix + ",sel2:ed25519-sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" + suffix
+
+	verifyExpectFail(t, tampered, "bad second s= item should cause failure")
+}
+
+// TestVerifyMultipleSigsNoVerifiable verifies that when no sig items can be key-fetched,
+// the result is a failure (not a silent pass).
+func TestVerifyMultipleSigsNoVerifiable(t *testing.T) {
+	msg := buildSignedMsg(t)
+	// Replace the selector with one that doesn't exist in dns.json
+	tampered := strings.ReplaceAll(string(msg), "s=ed25519:ed25519-sha256:", "s=nonexistent:ed25519-sha256:")
+	verifyExpectFail(t, tampered, "no verifiable sig items (unknown selector)")
+}
+
+func buildDoubleSignedMsg(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+	raw, err := os.ReadFile("../../python/tests/emails/simple.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile("../../keys/ed25519._domainkey.test1.dkim2.com.pem")
+	if err != nil {
+		t.Skip("key not found")
+	}
+	key, err := LoadPrivateKey(keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts1 := SignOptions{
+		Selector: "ed25519", Domain: "test1.dkim2.com",
+		MailFrom: "sender@test1.dkim2.com", RcptTo: []string{"relay@test2.dkim2.com"},
+		Timestamp: 1740000000,
+	}
+	var signed1 bytes.Buffer
+	if err := Sign(bytes.NewReader(raw), &signed1, key, opts1); err != nil {
+		t.Fatal(err)
+	}
+
+	key2PEM, err := os.ReadFile("../../keys/ed25519._domainkey.test2.dkim2.com.pem")
+	if err != nil {
+		t.Skip("key2 not found")
+	}
+	key2, err := LoadPrivateKey(key2PEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts2 := SignOptions{
+		Selector: "ed25519", Domain: "test2.dkim2.com",
+		MailFrom: "relay@test2.dkim2.com", RcptTo: []string{"recipient@example.com"},
+		Timestamp: 1740000001,
+	}
+	var signed2 bytes.Buffer
+	if err := Sign(bytes.NewReader(signed1.Bytes()), &signed2, key2, opts2); err != nil {
+		t.Fatal(err)
+	}
+	return signed1.Bytes(), signed2.Bytes()
+}
+
+func TestVerifyChainCustodyPass(t *testing.T) {
+	_, doubleMsg := buildDoubleSignedMsg(t)
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	results, err := Verify(bytes.NewReader(doubleMsg), f)
+	if err != nil {
+		t.Fatalf("Verify error: %v", err)
+	}
+	for _, r := range results {
+		if r.Error != nil {
+			t.Errorf("i=%d: %v", r.Sequence, r.Error)
+		}
+	}
+}
+
+func TestVerifyChainCustodyBreak(t *testing.T) {
+	_, doubleMsg := buildDoubleSignedMsg(t)
+	// Tamper i=2's mf= to be a domain that doesn't match any rt= of i=1.
+	// i=1 has rt=relay@test2.dkim2.com; replace mf of i=2 (relay@test2.dkim2.com)
+	// with mf=attacker@evil.com (base64: YXR0YWNrZXJAZXZpbC5jb20=)
+	original := base64.StdEncoding.EncodeToString([]byte("relay@test2.dkim2.com"))
+	replacement := base64.StdEncoding.EncodeToString([]byte("attacker@evil.com"))
+	// Only replace the FIRST occurrence of this base64 (which is in i=2's mf= tag,
+	// since i=2 is at the top of the message)
+	tampered := strings.Replace(string(doubleMsg), "mf="+original+";", "mf="+replacement+";", 1)
+	if tampered == string(doubleMsg) {
+		t.Skip("could not find mf= to tamper (base64 may differ)")
+	}
+	verifyExpectFail(t, tampered, "chain-of-custody break")
+}
+
+func TestVerifyEnvelopeMatchPass(t *testing.T) {
+	msg := buildSignedMsg(t)
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	results, err := Verify(bytes.NewReader(msg), f, VerifyOptions{
+		MailFrom: "sender@test1.dkim2.com",
+		RcptTo:   []string{"recipient@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("Verify error: %v", err)
+	}
+	for _, r := range results {
+		if r.Error != nil {
+			t.Errorf("i=%d: %v", r.Sequence, r.Error)
+		}
+	}
+}
+
+func TestVerifyEnvelopeMailFromMismatch(t *testing.T) {
+	msg := buildSignedMsg(t)
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	_, err := Verify(bytes.NewReader(msg), f, VerifyOptions{
+		MailFrom: "wrong@test1.dkim2.com",
+	})
+	if err == nil {
+		t.Error("expected error for mismatched MAIL FROM")
+	}
+}
+
+func TestVerifyEnvelopeRcptToMismatch(t *testing.T) {
+	msg := buildSignedMsg(t)
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	_, err := Verify(bytes.NewReader(msg), f, VerifyOptions{
+		RcptTo: []string{"someone@else.com"},
+	})
+	if err == nil {
+		t.Error("expected error for RCPT TO not in rt=")
+	}
+}
+
 func TestUndoBodyRecipe(t *testing.T) {
 	body := []byte("line1\r\nline2\r\nline3\r\n")
 	c1 := [2]int{1, 1}

@@ -13,7 +13,8 @@ import (
 
 // Verify reads r and verifies all DKIM2-Signature headers.
 // Returns one VerifyResult per signature. Body is never buffered.
-func Verify(r io.Reader, fetcher KeyFetcher) ([]VerifyResult, error) {
+// An optional VerifyOptions may be passed to enable §10.4 envelope matching.
+func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 	headers, bodyReader, err := parseHeaders(r)
 	if err != nil {
 		return nil, fmt.Errorf("parsing headers: %w", err)
@@ -74,6 +75,32 @@ func Verify(r io.Reader, fetcher KeyFetcher) ([]VerifyResult, error) {
 			Error: fmt.Errorf("top signature i=%d m=%d does not cover topmost MI m=%d",
 				topSig.Sequence, topSig.MIVersion, maxMIVersion),
 		}}, nil
+	}
+
+	// §10.4 MUST: envelope exact-match against top sig if caller provided values
+	if len(opts) > 0 && topSig != nil {
+		opt := opts[0]
+		if opt.MailFrom != "" {
+			if normAddr(opt.MailFrom) != normAddr(topSig.MailFrom) {
+				return nil, fmt.Errorf("MAIL FROM %q did not match mf= %q in top signature i=%d",
+					opt.MailFrom, topSig.MailFrom, topSig.Sequence)
+			}
+		}
+		if opt.RcptTo != nil {
+			for _, delivered := range opt.RcptTo {
+				found := false
+				for _, rt := range topSig.RcptTo {
+					if normAddr(delivered) == normAddr(rt) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("RCPT TO %q not found in rt= of top signature i=%d",
+						delivered, topSig.Sequence)
+				}
+			}
+		}
 	}
 
 	// Compute content header hash for MI hash verification
@@ -144,6 +171,39 @@ func Verify(r io.Reader, fetcher KeyFetcher) ([]VerifyResult, error) {
 		}
 	}
 
+	// §8.2 MUST: chain-of-custody between consecutive signatures.
+	// For sig i=N: mf= domain must relaxed-match at least one rt= domain of sig i=N-1.
+	if len(sigHeaders) > 1 {
+		parsedSigs := make([]*DKIM2Signature, len(sigHeaders))
+		for i, raw := range sigHeaders {
+			parsedSigs[i], _ = parseSig(raw)
+		}
+		for idx := 1; idx < len(parsedSigs); idx++ {
+			cur := parsedSigs[idx]
+			prev := parsedSigs[idx-1]
+			if cur == nil || prev == nil {
+				continue
+			}
+			curMFDomain := domainFromAddr(cur.MailFrom)
+			if curMFDomain == "" {
+				continue // null sender (DSN) — no chain check required
+			}
+			matched := false
+			for _, rt := range prev.RcptTo {
+				if rtDomain := domainFromAddr(rt); rtDomain != "" {
+					if relaxedDomainMatch(curMFDomain, rtDomain) {
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
+				return nil, fmt.Errorf("chain-of-custody break at i=%d: mf= domain %q not covered by rt= of i=%d",
+					cur.Sequence, curMFDomain, prev.Sequence)
+			}
+		}
+	}
+
 	var results []VerifyResult
 
 	for idx, rawSig := range sigHeaders {
@@ -155,12 +215,10 @@ func Verify(r io.Reader, fetcher KeyFetcher) ([]VerifyResult, error) {
 
 		res := VerifyResult{Sequence: sig.Sequence, Domain: sig.Domain}
 
-		// §7.7 MUST: d= must be a suffix of the mf= domain
+		// §7.7 MUST: d= must be a suffix of (i.e. relaxed match against) the mf= domain
 		if sig.MailFrom != "" && sig.MailFrom != "<>" {
-			if at := strings.LastIndexByte(sig.MailFrom, '@'); at >= 0 {
-				mfDomain := strings.ToLower(sig.MailFrom[at+1:])
-				d := strings.ToLower(sig.Domain)
-				if mfDomain != d && !strings.HasSuffix(mfDomain, "."+d) {
+			if mfDomain := domainFromAddr(sig.MailFrom); mfDomain != "" {
+				if !relaxedDomainMatch(mfDomain, strings.ToLower(sig.Domain)) {
 					res.Error = fmt.Errorf("i=%d: d=%s is not a suffix of mf= domain %s",
 						sig.Sequence, sig.Domain, mfDomain)
 					results = append(results, res)
@@ -200,25 +258,6 @@ func Verify(r io.Reader, fetcher KeyFetcher) ([]VerifyResult, error) {
 			}
 		}
 
-		// Fetch public key
-		item := sig.Sigs[0]
-		pubKey, keyAlg, err := fetcher.FetchPublicKey(item.Selector, sig.Domain)
-		if err != nil {
-			res.Error = fmt.Errorf("i=%d: key fetch: %w", sig.Sequence, err)
-			results = append(results, res)
-			continue
-		}
-
-		// Check algorithm compatibility
-		normAlg := strings.TrimSuffix(item.Algorithm, "-sha256")
-		normKeyAlg := strings.TrimSuffix(keyAlg, "-sha256")
-		if normAlg != normKeyAlg {
-			res.Error = fmt.Errorf("i=%d: algorithm mismatch: sig=%s key=%s",
-				sig.Sequence, item.Algorithm, keyAlg)
-			results = append(results, res)
-			continue
-		}
-
 		// Build signing input:
 		// MI headers with m= <= this sig's MIVersion (ascending)
 		// Sig headers with i= < this sig's Sequence (ascending, i.e. indices 0..idx-1)
@@ -242,13 +281,66 @@ func Verify(r io.Reader, fetcher KeyFetcher) ([]VerifyResult, error) {
 
 		digest := sha256.Sum256(sigInput)
 
-		if err := verifyDigest(pubKey, keyAlg, digest[:], item.Value); err != nil {
-			res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, err)
+		// §10.6 MUST: verify ALL sig items; any crypto failure is an error
+		var itemErr error
+		verifiedAny := false
+		for _, item := range sig.Sigs {
+			pubKey, keyAlg, fetchErr := fetcher.FetchPublicKey(item.Selector, sig.Domain)
+			if fetchErr != nil {
+				if itemErr == nil {
+					itemErr = fmt.Errorf("sel=%s: key fetch: %w", item.Selector, fetchErr)
+				}
+				continue
+			}
+			normAlg := strings.TrimSuffix(item.Algorithm, "-sha256")
+			normKeyAlg := strings.TrimSuffix(keyAlg, "-sha256")
+			if normAlg != normKeyAlg {
+				itemErr = fmt.Errorf("sel=%s: algorithm mismatch: sig=%s key=%s",
+					item.Selector, item.Algorithm, keyAlg)
+				continue
+			}
+			if verr := verifyDigest(pubKey, keyAlg, digest[:], item.Value); verr != nil {
+				itemErr = fmt.Errorf("sel=%s: %w", item.Selector, verr)
+				continue // MUST check all remaining items even on failure
+			}
+			verifiedAny = true
+		}
+		if itemErr != nil {
+			res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, itemErr)
+		} else if !verifiedAny {
+			res.Error = fmt.Errorf("i=%d: no verifiable signature items", sig.Sequence)
 		}
 		results = append(results, res)
 	}
 
 	return results, nil
+}
+
+// normAddr normalises an email address for §10.4 exact-match comparison:
+// domain part is lowercased, local-part case is preserved.
+func normAddr(addr string) string {
+	at := strings.LastIndexByte(addr, '@')
+	if at < 0 {
+		return strings.ToLower(addr)
+	}
+	return addr[:at+1] + strings.ToLower(addr[at+1:])
+}
+
+// domainFromAddr extracts the domain from an email address (with or without angle brackets).
+func domainFromAddr(addr string) string {
+	addr = strings.TrimLeft(addr, "<")
+	addr = strings.TrimRight(addr, ">")
+	if at := strings.LastIndexByte(addr, '@'); at >= 0 {
+		return strings.ToLower(addr[at+1:])
+	}
+	return ""
+}
+
+// relaxedDomainMatch reports whether d1 is equal to d2 or a subdomain of d2.
+func relaxedDomainMatch(d1, d2 string) bool {
+	d1 = strings.ToLower(d1)
+	d2 = strings.ToLower(d2)
+	return d1 == d2 || strings.HasSuffix(d1, "."+d2)
 }
 
 func verifyDigest(key crypto.PublicKey, alg string, digest, sig []byte) error {
