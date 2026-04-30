@@ -110,6 +110,19 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
 # Verification
 # ---------------------------------------------------------------------------
 
+def _domain_from_addr(addr: str) -> str:
+    """Extract lowercase domain from '<local@domain>' or 'local@domain'."""
+    addr = addr.strip().strip("<>")
+    at = addr.rfind("@")
+    return addr[at + 1:].lower() if at >= 0 else addr.lower()
+
+
+def _relaxed_domain_match(d1: str, d2: str) -> bool:
+    """Return True if d1 equals d2 or d1 is a subdomain of d2."""
+    d1, d2 = d1.lower(), d2.lower()
+    return d1 == d2 or d1.endswith("." + d2)
+
+
 def extract_mi_headers(headers: list[bytes]) -> list[str]:
     """Extract all Message-Instance headers as strings."""
     result = []
@@ -232,42 +245,15 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             return [f"DKIM2-Signature i={i_val}: invalid s= item format: {part!r}"]
         sig_items.append(fields)
 
-    # Verify the first signature item (TODO: support multiple for algorithm agility)
-    selector, algorithm, sig_value_b64 = sig_items[0]
-
-    # Look up public key
-    try:
-        public_key, key_type = lookup_public_key(d_val, selector, dns_data)
-    except (KeyError, ValueError) as e:
-        return [f"DKIM2-Signature i={i_val}: key lookup failed: {e}"]
-
-    # Normalise algorithm names: "rsa-sha256" and "rsa" are equivalent
-    ALG_ALIASES = {"rsa-sha256": "rsa", "ed25519-sha256": "ed25519"}
-    norm_algorithm = ALG_ALIASES.get(algorithm, algorithm)
-
-    if norm_algorithm != key_type:
-        errors.append(
-            f"DKIM2-Signature i={i_val}: algorithm mismatch: "
-            f"sig says {algorithm!r}, key is {key_type!r}"
-        )
-
-    # Reconstruct the incomplete signature: replace signature data in
-    # each s= entry with "" (null/empty string per spec §8.5).
-    # Use regex to find the s= TAG (preceded by ';') - base64 cannot contain
-    # ';' so this avoids false matches on 's=' inside the signature value.
+    # Build the signing input once — same for all s= items
     s_match = re.search(r";\s*s=", sig_hdr)
     if s_match is None:
         return [f"DKIM2-Signature i={i_val}: cannot find s= tag in header"]
     prefix = sig_hdr[:s_match.end()]  # everything up to and including "s="
-    stripped_items = []
-    for item in sig_items:
-        stripped_items.append(f"{item[0]}:{item[1]}:")
-    # Preserve trailing semicolon if the raw header had one (spec ABNF mandates
-    # it for new signatures; old signatures may not have it).
+    stripped_items = [f"{item[0]}:{item[1]}:" for item in sig_items]
     trailing = ";" if re.search(r";\s*(?:\r?\n)?$", sig_hdr) else ""
     incomplete_sig = prefix + ",".join(stripped_items) + trailing
 
-    # Collect MI headers up to version m=
     mi_version = int(m_val)
     relevant_mi = sorted(
         [h for h in mi_headers if _get_version_from_mi(h) <= mi_version],
@@ -275,38 +261,57 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     )
     prior_sigs = sorted(other_sig_headers, key=_get_seq_from_sig)
 
-    # Per draft-ietf-dkim-dkim2-spec Section 9.5:
-    # 1. All MI headers in ascending m= order
-    # 2. All prior DKIM2-Signature headers in ascending i= order
-    # 3. The incomplete DKIM2-Signature being verified
     ordered: list[str] = []
-    ordered.extend(relevant_mi)  # already sorted by version
-    ordered.extend(prior_sigs)   # already sorted by sequence
+    ordered.extend(relevant_mi)
+    ordered.extend(prior_sigs)
     ordered.append(incomplete_sig)
 
-    # Canonicalize and hash; each header already ends in CRLF per spec Section 8.5
     canon = [canonicalize_sig_header(h) for h in ordered]
     data = b"".join(canon)
     digest = hashlib.sha256(data).digest()
 
-    # Verify signature
-    sig_bytes = base64.b64decode(sig_value_b64)
+    ALG_ALIASES = {"rsa-sha256": "rsa", "ed25519-sha256": "ed25519"}
 
-    try:
-        if norm_algorithm == "ed25519":
-            public_key.verify(sig_bytes, digest)
-        elif norm_algorithm == "rsa":
-            public_key.verify(
-                sig_bytes,
-                digest,
-                padding.PKCS1v15(),
-                utils.Prehashed(hashes.SHA256()),
+    # §10.6: ALL s= items must verify; any crypto failure is an error
+    verified_any = False
+    item_err = None
+    for selector, algorithm, sig_value_b64 in sig_items:
+        try:
+            public_key, key_type = lookup_public_key(d_val, selector, dns_data)
+        except (KeyError, ValueError) as e:
+            if item_err is None:
+                item_err = f"DKIM2-Signature i={i_val}: key lookup failed: {e}"
+            continue
+
+        norm_algorithm = ALG_ALIASES.get(algorithm, algorithm)
+        if norm_algorithm != key_type:
+            item_err = (
+                f"DKIM2-Signature i={i_val}: algorithm mismatch: "
+                f"sig says {algorithm!r}, key is {key_type!r}"
             )
-        else:
-            errors.append(f"DKIM2-Signature i={i_val}: unsupported algorithm: {algorithm}")
+            continue
+
+        sig_bytes = base64.b64decode(sig_value_b64)
+        try:
+            if norm_algorithm == "ed25519":
+                public_key.verify(sig_bytes, digest)
+            elif norm_algorithm == "rsa":
+                public_key.verify(
+                    sig_bytes,
+                    digest,
+                    padding.PKCS1v15(),
+                    utils.Prehashed(hashes.SHA256()),
+                )
+            else:
+                item_err = f"DKIM2-Signature i={i_val}: unsupported algorithm: {algorithm}"
+                continue
+        except Exception as e:
+            errors.append(f"DKIM2-Signature i={i_val}: signature verification FAILED: {e}")
             return errors
-    except Exception as e:
-        errors.append(f"DKIM2-Signature i={i_val}: signature verification FAILED: {e}")
+        verified_any = True
+
+    if not verified_any:
+        errors.append(item_err or f"DKIM2-Signature i={i_val}: no verifiable signature items")
 
     return errors
 
@@ -361,6 +366,33 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
             all_errors.extend(errs)
 
         sig_by_seq = sorted(sig_headers, key=_get_seq_from_sig)
+
+        # §8.2: inter-sig chain custody — mf= domain of sig[N] must relaxed-match
+        # at least one rt= domain of sig[N-1]
+        for k in range(1, len(sig_by_seq)):
+            cur_val  = _get_header_value(sig_by_seq[k])
+            prev_val = _get_header_value(sig_by_seq[k - 1])
+            cur_i    = _extract_tag(cur_val, "i")
+            cur_mf_b64  = _extract_tag(cur_val, "mf")
+            prev_rt_raw = _extract_tag(prev_val, "rt")
+            if not cur_mf_b64 or not prev_rt_raw:
+                all_errors.append(
+                    f"DKIM2-Signature i={cur_i}: missing mf= or rt= for chain custody check"
+                )
+                continue
+            cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
+            prev_rts = [
+                base64.b64decode(rt.strip()).decode("utf-8", errors="surrogateescape")
+                for rt in prev_rt_raw.split(",") if rt.strip()
+            ]
+            cur_mf_domain = _domain_from_addr(cur_mf)
+            if not any(_relaxed_domain_match(cur_mf_domain, _domain_from_addr(rt))
+                       for rt in prev_rts):
+                all_errors.append(
+                    f"DKIM2-Signature i={cur_i}: chain of custody break "
+                    f"(mf domain {cur_mf_domain!r} not in rt= domains of previous signature)"
+                )
+
         for idx, sig_hdr in enumerate(sig_by_seq):
             prior_sigs = sig_by_seq[:idx]
             errs = verify_dkim2_signature(sig_hdr, mi_headers, prior_sigs, dns_data,
@@ -378,6 +410,31 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
         mi_by_version[v] = mi_hdr
 
     sig_by_seq = sorted(sig_headers, key=_get_seq_from_sig)
+
+    # §8.2: inter-sig chain custody check (full-chain mode)
+    for k in range(1, len(sig_by_seq)):
+        cur_val  = _get_header_value(sig_by_seq[k])
+        prev_val = _get_header_value(sig_by_seq[k - 1])
+        cur_i    = _extract_tag(cur_val, "i")
+        cur_mf_b64  = _extract_tag(cur_val, "mf")
+        prev_rt_raw = _extract_tag(prev_val, "rt")
+        if not cur_mf_b64 or not prev_rt_raw:
+            all_errors.append(
+                f"DKIM2-Signature i={cur_i}: missing mf= or rt= for chain custody check"
+            )
+            continue
+        cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
+        prev_rts = [
+            base64.b64decode(rt.strip()).decode("utf-8", errors="surrogateescape")
+            for rt in prev_rt_raw.split(",") if rt.strip()
+        ]
+        cur_mf_domain = _domain_from_addr(cur_mf)
+        if not any(_relaxed_domain_match(cur_mf_domain, _domain_from_addr(rt))
+                   for rt in prev_rts):
+            all_errors.append(
+                f"DKIM2-Signature i={cur_i}: chain of custody break "
+                f"(mf domain {cur_mf_domain!r} not in rt= domains of previous signature)"
+            )
 
     versions = sorted(mi_by_version.keys(), reverse=True)
     highest = versions[0]

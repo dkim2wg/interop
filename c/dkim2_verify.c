@@ -175,16 +175,17 @@ static unsigned char *build_verify_input(
     dkim2_mi_t *mi_list, dkim2_sig_t *sig_list,
     dkim2_sig_t *target_sig, int target_sset_idx __attribute__((unused)),
     size_t *out_len) {
-    /* Sort MI and sig lists into ascending order before building signing input.
-       The email stores them newest-first; spec §9.5 requires ascending m=/i= order. */
+    /* Build signing input for target_sig: include only MI headers with m <=
+       target_sig->m, and only DKIM2-Signature headers with i <= target_sig->i.
+       The email stores them newest-first; spec §9.5 requires ascending order. */
     const int MAX = 64;
     dkim2_mi_t *mi_arr[MAX]; int n_mi = 0;
     dkim2_sig_t *sig_arr[MAX]; int n_sig = 0;
 
     for (dkim2_mi_t *mi = mi_list; mi && n_mi < MAX; mi = mi->next)
-        if (mi->raw_value) mi_arr[n_mi++] = mi;
+        if (mi->raw_value && mi->m <= target_sig->m) mi_arr[n_mi++] = mi;
     for (dkim2_sig_t *s = sig_list; s && n_sig < MAX; s = s->next)
-        if (s->raw_value) sig_arr[n_sig++] = s;
+        if (s->raw_value && s->i <= target_sig->i) sig_arr[n_sig++] = s;
 
     /* Insertion sort MI by ascending m= */
     for (int i = 1; i < n_mi; i++) {
@@ -233,13 +234,29 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     if (!ctx->sig_list)
         SETSTATUS(DKIM2_PERMERROR, "PERMERROR: No DKIM2-Signature header");
 
-    /* Find highest-numbered DKIM2-Signature */
-    dkim2_sig_t *latest = ctx->sig_list;
-    for (dkim2_sig_t *s = ctx->sig_list; s; s = s->next)
-        if (s->i > latest->i) latest = s;
+    /* Build sorted array of all sigs (ascending i=) */
+    const int MAX = 64;
+    dkim2_sig_t *sig_arr[MAX]; int n_sigs = 0;
+    for (dkim2_sig_t *s = ctx->sig_list; s && n_sigs < MAX; s = s->next)
+        sig_arr[n_sigs++] = s;
+    for (int i = 1; i < n_sigs; i++) {
+        dkim2_sig_t *key = sig_arr[i]; int j = i - 1;
+        while (j >= 0 && sig_arr[j]->i > key->i) { sig_arr[j+1] = sig_arr[j]; j--; }
+        sig_arr[j+1] = key;
+    }
+
+    dkim2_sig_t *latest = sig_arr[n_sigs - 1];
     result->sig_i = latest->i;
 
-    /* Find the MI this signature covers */
+    /* §7.1: i= sequence must be contiguous 1..N */
+    for (int i = 0; i < n_sigs; i++) {
+        if (sig_arr[i]->i != i + 1)
+            SETSTATUS(DKIM2_PERMERROR,
+                "PERMERROR: DKIM2-Signature sequence not contiguous "
+                "(expected i=%d, got i=%d)", i + 1, sig_arr[i]->i);
+    }
+
+    /* Find the MI the latest signature covers */
     dkim2_mi_t *covered_mi = NULL;
     for (dkim2_mi_t *m = ctx->mi_list; m; m = m->next)
         if (m->m == latest->m) { covered_mi = m; break; }
@@ -254,30 +271,15 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "PERMERROR: Message-Instance m=%d is not covered by any signature", m->m);
     }
 
-    /* §10.3: Timestamp check — within 14 days (skip if testing) */
-    if (!ctx->skip_timestamp_check) {
-        uint64_t now = (uint64_t)time(NULL);
-        if (latest->t > now + 300)
-            SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: DKIM2-Signature i=%d timestamp is in the future", latest->i);
-        if (now > latest->t + 14ULL * 24 * 3600)
-            SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: DKIM2-Signature i=%d has expired (t=%llu)",
-                latest->i, (unsigned long long)latest->t);
-    }
-
-    /* §10.4: Chain-of-custody — MAIL FROM must match mf= */
+    /* §10.4: Envelope MAIL FROM must exactly match top sig's mf= */
     if (ctx->mail_from && latest->mf) {
         char *ctx_d = addr_domain(ctx->mail_from);
         char *sig_d = addr_domain(latest->mf);
-        /* Compare full normalised form (simplification: compare as strings) */
         int dom_ok = (ctx_d && sig_d && strcmp(ctx_d, sig_d) == 0);
-        /* Also compare local part (before the @) */
         const char *ctx_at = strrchr(ctx->mail_from, '@');
         const char *sig_at = strrchr(latest->mf, '@');
         int local_ok = 1;
         if (ctx_at && sig_at) {
-            /* Strip leading < */
             const char *cp = ctx->mail_from; if (*cp == '<') cp++;
             const char *sp = latest->mf;     if (*sp == '<') sp++;
             size_t cl = (size_t)(ctx_at - (ctx->mail_from + (*ctx->mail_from == '<' ? 1 : 0)));
@@ -303,75 +305,110 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         }
     }
 
-    /* §10.4: d= must cover mf= domain (relaxed match) */
-    if (latest->mf && strcmp(latest->mf, "<>") != 0) {
-        char *mf_d = addr_domain(latest->mf);
-        int dm = mf_d ? relaxed_domain_match(latest->d, mf_d) : 0;
-        free(mf_d);
-        if (!dm)
-            SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: d=%s does not cover mf= domain in DKIM2-Signature i=%d",
-                latest->d, latest->i);
+    /* §10.6: Verify ALL signatures i=1..N */
+    for (int si = 0; si < n_sigs; si++) {
+        dkim2_sig_t *sig = sig_arr[si];
+
+        /* §10.3: Timestamp check per sig */
+        if (!ctx->skip_timestamp_check) {
+            uint64_t now = (uint64_t)time(NULL);
+            if (sig->t > now + 300)
+                SETSTATUS(DKIM2_PERMERROR,
+                    "PERMERROR: DKIM2-Signature i=%d timestamp is in the future", sig->i);
+            if (now > sig->t + 14ULL * 24 * 3600)
+                SETSTATUS(DKIM2_PERMERROR,
+                    "PERMERROR: DKIM2-Signature i=%d has expired (t=%llu)",
+                    sig->i, (unsigned long long)sig->t);
+        }
+
+        /* §7.7: d= must cover mf= domain (relaxed match) */
+        if (sig->mf && strcmp(sig->mf, "<>") != 0) {
+            char *mf_d = addr_domain(sig->mf);
+            int dm = mf_d ? relaxed_domain_match(sig->d, mf_d) : 0;
+            free(mf_d);
+            if (!dm)
+                SETSTATUS(DKIM2_PERMERROR,
+                    "PERMERROR: d=%s does not cover mf= domain in DKIM2-Signature i=%d",
+                    sig->d, sig->i);
+        }
+
+        /* Verify all s= items for this signature */
+        int any_pass = 0;
+        for (int j = 0; j < sig->n_ssets; j++) {
+            dkim2_sigset_t *sset = &sig->ssets[j];
+
+            dkim2_status_t dns_status;
+            const char *dns_err = NULL;
+            dkim2_pubkey_t *pubkey = dkim2_dns_getkey(
+                sset->selector, sig->d, &dns_status, &dns_err);
+
+            if (!pubkey) {
+                if (dns_status == DKIM2_TEMPERROR)
+                    SETSTATUS(DKIM2_TEMPERROR,
+                        "TEMPERROR: DNS lookup for %s._domainkey.%s: %s",
+                        sset->selector, sig->d, dns_err ? dns_err : "unknown");
+                continue; /* PERMERROR for this sset — try next */
+            }
+            if (pubkey->revoked) {
+                dkim2_pubkey_free(pubkey);
+                continue;
+            }
+
+            if (strcmp(sset->alg, "rsa-sha256") != 0 &&
+                strcmp(sset->alg, "ed25519-sha256") != 0) {
+                dkim2_pubkey_free(pubkey);
+                continue;
+            }
+
+            size_t sign_input_len;
+            unsigned char *sign_input = build_verify_input(
+                ctx->mi_list, ctx->sig_list, sig, j, &sign_input_len);
+
+            if (!sign_input) {
+                dkim2_pubkey_free(pubkey);
+                SETSTATUS(DKIM2_PERMERROR,
+                    "PERMERROR: Failed to build signing input for DKIM2-Signature i=%d", sig->i);
+            }
+
+            int vr = dkim2_verify(pubkey->pkey, sset->alg,
+                sign_input, sign_input_len, sset->sig_b64);
+            dkim2_pubkey_free(pubkey);
+            free(sign_input);
+
+            if (vr == 0) { any_pass = 1; break; }
+        }
+
+        if (!any_pass)
+            SETSTATUS(DKIM2_FAIL,
+                "FAIL: DKIM2-Signature i=%d signature verification failed", sig->i);
     }
 
-    /* §10.5 & §10.6: For each signature set, try to verify */
-    int any_pass = 0;
-    for (int si = 0; si < latest->n_ssets; si++) {
-        dkim2_sigset_t *sset = &latest->ssets[si];
+    /* §8.2: Inter-sig chain of custody — mf= domain of sig[N] must relaxed-match
+       at least one rt= domain of sig[N-1] */
+    for (int k = 1; k < n_sigs; k++) {
+        dkim2_sig_t *cur  = sig_arr[k];
+        dkim2_sig_t *prev = sig_arr[k - 1];
 
-        /* Fetch public key */
-        dkim2_status_t dns_status;
-        const char *dns_err = NULL;
-        dkim2_pubkey_t *pubkey = dkim2_dns_getkey(
-            sset->selector, latest->d, &dns_status, &dns_err);
-
-        if (!pubkey) {
-            if (dns_status == DKIM2_TEMPERROR)
-                SETSTATUS(DKIM2_TEMPERROR,
-                    "TEMPERROR: DNS lookup for %s._domainkey.%s: %s",
-                    sset->selector, latest->d, dns_err ? dns_err : "unknown");
-            /* PERMERROR for this sset — try next */
-            continue;
-        }
-        if (pubkey->revoked) {
-            dkim2_pubkey_free(pubkey);
-            continue; /* revoked — skip this sset */
-        }
-
-        /* Check algorithm compatibility */
-        if (strcmp(sset->alg, "rsa-sha256") != 0 &&
-            strcmp(sset->alg, "ed25519-sha256") != 0) {
-            dkim2_pubkey_free(pubkey);
-            continue; /* unknown alg — skip */
-        }
-
-        /* Build signing input (with this sig's s= values blanked) */
-        size_t sign_input_len;
-        unsigned char *sign_input = build_verify_input(
-            ctx->mi_list, ctx->sig_list, latest, si, &sign_input_len);
-
-        if (!sign_input) {
-            dkim2_pubkey_free(pubkey);
+        if (!cur->mf || !prev->rt)
             SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: Failed to build signing input for DKIM2-Signature i=%d", latest->i);
+                "PERMERROR: missing mf= or rt= for chain custody at i=%d", cur->i);
+
+        char *cur_mf_d = addr_domain(cur->mf);
+        int match = 0;
+        for (int j = 0; prev->rt[j] && !match; j++) {
+            char *rt_d = addr_domain(prev->rt[j]);
+            if (rt_d && cur_mf_d && relaxed_domain_match(rt_d, cur_mf_d))
+                match = 1;
+            free(rt_d);
         }
-
-        int vr = dkim2_verify(pubkey->pkey, sset->alg,
-            sign_input, sign_input_len, sset->sig_b64);
-        dkim2_pubkey_free(pubkey);
-        free(sign_input);
-
-        if (vr == 0) { any_pass = 1; break; }
+        free(cur_mf_d);
+        if (!match)
+            SETSTATUS(DKIM2_FAIL,
+                "FAIL: Chain of custody break at i=%d", cur->i);
     }
 
-    if (!any_pass)
-        SETSTATUS(DKIM2_FAIL,
-            "FAIL: DKIM2-Signature i=%d signature verification failed", latest->i);
-
-    /* §10.7: Validate body and header hashes against covered_mi.
-       Compare decoded bytes (not base64 strings) to avoid encoding ambiguity. */
+    /* §10.7: Validate body and header hashes against covered_mi */
     for (int hi = 0; hi < covered_mi->n_hsets; hi++) {
-        /* body_digest was computed incrementally as body data arrived */
         unsigned char stored_bh[DKIM2_HASH_LEN];
         int stored_bh_len = b64_decode(covered_mi->hsets[hi].body_hash,
                                        stored_bh, sizeof stored_bh);

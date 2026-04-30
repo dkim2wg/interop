@@ -186,7 +186,7 @@ int main(void) {
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
         vctx.headers = (char **)raw_headers; vctx.n_headers = 3;
-        vctx.body_buf = (unsigned char *)body; vctx.body_len = strlen(body);
+        dkim2_body_hash_raw(body, strlen(body), vctx.body_digest);
         vctx.mail_from = (char *)mail_from; vctx.rcpt_to = rcpts;
         vctx.mi_list = NULL; vctx.sig_list = NULL;
         dkim2_verify_result_t res;
@@ -199,7 +199,7 @@ int main(void) {
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
         vctx.headers = (char **)raw_headers; vctx.n_headers = 3;
-        vctx.body_buf = (unsigned char *)body; vctx.body_len = strlen(body);
+        dkim2_body_hash_raw(body, strlen(body), vctx.body_digest);
         vctx.mail_from = (char *)mail_from; vctx.rcpt_to = rcpts;
         vctx.mi_list = NULL; /* no MI */
         vctx.sig_list = dkim2_sig_parse(sig_val);
