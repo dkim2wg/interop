@@ -75,7 +75,7 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--no-timestamp-check") == 0)
             no_timestamp = 1;
         else if (strcmp(argv[i], "--full-chain") == 0)
-            ; /* accepted but ignored for now — we verify the highest sig */
+            ; /* body bytes are always kept; full-chain MI hash walk is automatic */
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); usage(argv[0]); }
     }
 
@@ -95,12 +95,13 @@ int main(int argc, char *argv[]) {
     if (!g_dns_json) { fprintf(stderr, "Failed to parse %s\n", dns_json_path); return 1; }
     dkim2_dns_override = dns_json_lookup;
 
-    /* Parse the email */
+    /* Parse the email (keep body bytes for full-chain MI hash verification) */
     char **headers = NULL;
     int n_headers = 0;
     dkim2_ctx_t ctx;
     memset(&ctx, 0, sizeof ctx);
-    if (eml_parse(eml_path, &headers, &n_headers, ctx.body_digest) < 0) {
+    if (eml_parse_with_body(eml_path, &headers, &n_headers, ctx.body_digest,
+                            &ctx.body, &ctx.body_len) < 0) {
         perror(eml_path); cJSON_Delete(g_dns_json); return 1;
     }
 
@@ -162,6 +163,7 @@ int main(int argc, char *argv[]) {
 
     dkim2_mi_free(ctx.mi_list);
     dkim2_sig_free(ctx.sig_list);
+    free(ctx.body);
     eml_free(headers, n_headers);
     cJSON_Delete(g_dns_json);
 

@@ -4,9 +4,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-int eml_parse(const char *path,
-              char ***headers_out, int *n_headers_out,
-              unsigned char body_digest_out[DKIM2_HASH_LEN]) {
+static int eml_parse_internal(const char *path,
+    char ***headers_out, int *n_headers_out,
+    unsigned char body_digest_out[DKIM2_HASH_LEN],
+    char **body_out, size_t *body_len_out)
+{
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
     fseek(f, 0, SEEK_END);
@@ -79,14 +81,35 @@ int eml_parse(const char *path,
         nh++;
     }
 
-    /* Hash the body — temp buffer freed immediately after; ctx never holds body bytes */
     size_t body_data_len = (body_start < blen) ? (blen - body_start) : 0;
     dkim2_body_hash_raw((const char *)(buf + body_start), body_data_len, body_digest_out);
-    free(buf);
 
+    if (body_out && body_len_out) {
+        *body_out = malloc(body_data_len + 1);
+        if (!*body_out) { eml_free(hdrs, nh); free(buf); return -1; }
+        memcpy(*body_out, buf + body_start, body_data_len);
+        (*body_out)[body_data_len] = '\0';
+        *body_len_out = body_data_len;
+    }
+
+    free(buf);
     *headers_out   = hdrs;
     *n_headers_out = nh;
     return 0;
+}
+
+int eml_parse(const char *path,
+              char ***headers_out, int *n_headers_out,
+              unsigned char body_digest_out[DKIM2_HASH_LEN]) {
+    return eml_parse_internal(path, headers_out, n_headers_out, body_digest_out, NULL, NULL);
+}
+
+int eml_parse_with_body(const char *path,
+                        char ***headers_out, int *n_headers_out,
+                        unsigned char body_digest_out[DKIM2_HASH_LEN],
+                        char **body_out, size_t *body_len_out) {
+    return eml_parse_internal(path, headers_out, n_headers_out, body_digest_out,
+                              body_out, body_len_out);
 }
 
 /* Feed one normalised byte to the separator-detection + emit state machine. */

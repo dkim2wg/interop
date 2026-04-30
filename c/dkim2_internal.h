@@ -66,6 +66,11 @@ typedef struct dkim2_ctx {
     unsigned char body_digest[DKIM2_HASH_LEN]; /* valid once body_hasher is NULL */
     dkim2_body_hasher_t *body_hasher;           /* non-NULL during body accumulation */
 
+    /* Optional: CRLF-normalised body bytes for full-chain MI hash verification.
+       If NULL, only the topmost MI's body hash is checked (via body_digest). */
+    char *body;
+    size_t body_len;
+
     /* SMTP envelope */
     char *mail_from;        /* "<addr>" with angle brackets */
     char **rcpt_to;         /* NULL-terminated array of "<addr>" */

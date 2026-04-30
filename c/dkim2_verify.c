@@ -3,6 +3,7 @@
 #include "dkim2_header.h"
 #include "dkim2_crypto.h"
 #include "dkim2_dns.h"
+#include "dkim2_recipe.h"
 #include "base64.h"
 #include <time.h>
 #include <stdlib.h>
@@ -225,6 +226,134 @@ static unsigned char *build_verify_input(
     return (unsigned char *)buf;
 }
 
+/* Verify all MI body+header hashes, walking from highest to lowest version
+   and applying recipes to reconstruct earlier message states.
+   Returns 0 on success, sets errbuf on failure. */
+static int verify_mi_hashes(
+    dkim2_mi_t **mi_arr, int n_mi,
+    char **all_hdrs, int n_all_hdrs,
+    const char *initial_body, size_t initial_body_len,
+    const unsigned char *top_body_digest,
+    char *errbuf, size_t errbufsz)
+{
+    /* Build content-headers array (exclude Message-Instance and DKIM2-Signature). */
+    char **content = malloc((size_t)n_all_hdrs * sizeof(char *));
+    if (!content) { snprintf(errbuf, errbufsz, "PERMERROR: OOM"); return -1; }
+    int n_content = 0;
+    for (int i = 0; i < n_all_hdrs; i++) {
+        const char *colon = strchr(all_hdrs[i], ':');
+        size_t nl = colon ? (size_t)(colon - all_hdrs[i]) : strlen(all_hdrs[i]);
+        char lname[64] = {0};
+        if (nl < sizeof lname) {
+            for (size_t j = 0; j < nl; j++)
+                lname[j] = (char)tolower((unsigned char)all_hdrs[i][j]);
+            if (strcmp(lname, "message-instance") == 0 ||
+                strcmp(lname, "dkim2-signature")  == 0) continue;
+        }
+        content[n_content++] = all_hdrs[i];
+    }
+    int content_owned = 0; /* initially points into all_hdrs, not owned */
+
+    char *cur_body = NULL;
+    size_t cur_body_len = 0;
+    if (initial_body && initial_body_len > 0) {
+        cur_body = malloc(initial_body_len + 1);
+        if (!cur_body) {
+            free(content);
+            snprintf(errbuf, errbufsz, "PERMERROR: OOM");
+            return -1;
+        }
+        memcpy(cur_body, initial_body, initial_body_len);
+        cur_body[initial_body_len] = '\0';
+        cur_body_len = initial_body_len;
+    }
+
+    int ret = 0;
+    for (int vi = n_mi - 1; vi >= 0; vi--) {
+        dkim2_mi_t *mi = mi_arr[vi];
+
+        for (int hi = 0; hi < mi->n_hsets; hi++) {
+            /* Verify body hash */
+            unsigned char stored_bh[DKIM2_HASH_LEN];
+            int bh_len = (int)b64_decode(mi->hsets[hi].body_hash, stored_bh, sizeof stored_bh);
+            if (bh_len != DKIM2_HASH_LEN) {
+                snprintf(errbuf, errbufsz, "PERMERROR: bad body hash in MI m=%d", mi->m);
+                ret = -1; goto done;
+            }
+            unsigned char computed_bh[DKIM2_HASH_LEN];
+            if (cur_body) {
+                dkim2_body_hash_raw(cur_body, cur_body_len, computed_bh);
+            } else if (vi == n_mi - 1 && top_body_digest) {
+                memcpy(computed_bh, top_body_digest, DKIM2_HASH_LEN);
+            } else {
+                continue; /* no body bytes for inner MIs; skip */
+            }
+            if (memcmp(computed_bh, stored_bh, DKIM2_HASH_LEN) != 0) {
+                snprintf(errbuf, errbufsz,
+                    "FAIL: Message-Instance m=%d body hash mismatch", mi->m);
+                ret = -1; goto done;
+            }
+
+            /* Verify header hash */
+            unsigned char computed_hh[DKIM2_HASH_LEN];
+            if (dkim2_header_hash_raw((const char **)content, n_content, computed_hh) < 0) {
+                snprintf(errbuf, errbufsz, "PERMERROR: header hash computation failed");
+                ret = -1; goto done;
+            }
+            unsigned char stored_hh[DKIM2_HASH_LEN];
+            int hh_len = (int)b64_decode(mi->hsets[hi].hdr_hash, stored_hh, sizeof stored_hh);
+            if (hh_len != DKIM2_HASH_LEN || memcmp(computed_hh, stored_hh, DKIM2_HASH_LEN) != 0) {
+                snprintf(errbuf, errbufsz,
+                    "FAIL: Message-Instance m=%d header hash mismatch", mi->m);
+                ret = -1; goto done;
+            }
+        }
+
+        /* Undo this MI's recipe to reconstruct the previous hop's state */
+        if (vi > 0 && mi->r_raw) {
+            size_t rraw_len = strlen(mi->r_raw);
+            size_t decoded_max = rraw_len * 3 / 4 + 4;
+            unsigned char *r_json_bytes = malloc(decoded_max + 1);
+            if (!r_json_bytes) continue; /* OOM — skip undo, inner hash unverified */
+
+            int r_json_len = (int)b64_decode(mi->r_raw, r_json_bytes, decoded_max);
+            if (r_json_len <= 0) { free(r_json_bytes); continue; }
+            r_json_bytes[r_json_len] = '\0';
+            const char *rj = (const char *)r_json_bytes;
+
+            /* Apply body recipe */
+            if (cur_body) {
+                size_t new_len;
+                char *new_body = dkim2_apply_body_recipe(rj, cur_body, cur_body_len, &new_len);
+                free(cur_body);
+                cur_body = new_body;
+                cur_body_len = new_body ? new_len : 0;
+            }
+
+            /* Apply header recipe — result is always a new owned array */
+            int new_n = 0;
+            char **new_content = dkim2_apply_header_recipe(rj, content, n_content, &new_n);
+            if (new_content) {
+                if (content_owned) {
+                    for (int i = 0; i < n_content; i++) free(content[i]);
+                }
+                free(content);
+                content = new_content;
+                n_content = new_n;
+                content_owned = 1;
+            }
+
+            free(r_json_bytes);
+        }
+    }
+
+done:
+    if (content_owned) for (int i = 0; i < n_content; i++) free(content[i]);
+    free(content);
+    free(cur_body);
+    return ret;
+}
+
 void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->status = DKIM2_PERMERROR;
     result->message[0] = '\0';
@@ -407,30 +536,27 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "FAIL: Chain of custody break at i=%d", cur->i);
     }
 
-    /* §10.7: Validate body and header hashes against covered_mi */
-    for (int hi = 0; hi < covered_mi->n_hsets; hi++) {
-        unsigned char stored_bh[DKIM2_HASH_LEN];
-        int stored_bh_len = b64_decode(covered_mi->hsets[hi].body_hash,
-                                       stored_bh, sizeof stored_bh);
-        if (stored_bh_len != DKIM2_HASH_LEN ||
-            memcmp(ctx->body_digest, stored_bh, DKIM2_HASH_LEN) != 0)
-            SETSTATUS(DKIM2_FAIL,
-                "FAIL: Message-Instance m=%d body hash mismatch (alg=%s)",
-                covered_mi->m, covered_mi->hsets[hi].alg);
-
-        unsigned char computed_hh[DKIM2_HASH_LEN];
-        if (dkim2_header_hash_raw((const char **)ctx->headers, ctx->n_headers,
-                computed_hh) < 0)
-            SETSTATUS(DKIM2_PERMERROR, "PERMERROR: header hash computation failed");
-
-        unsigned char stored_hh[DKIM2_HASH_LEN];
-        int stored_hh_len = b64_decode(covered_mi->hsets[hi].hdr_hash,
-                                       stored_hh, sizeof stored_hh);
-        if (stored_hh_len != DKIM2_HASH_LEN ||
-            memcmp(computed_hh, stored_hh, DKIM2_HASH_LEN) != 0)
-            SETSTATUS(DKIM2_FAIL,
-                "FAIL: Message-Instance m=%d header hash mismatch (alg=%s)",
-                covered_mi->m, covered_mi->hsets[hi].alg);
+    /* §10.7: Verify all MI body+header hashes, undoing recipes for inner hops. */
+    {
+        const int MAX_MI = 64;
+        dkim2_mi_t *mi_sorted[MAX_MI]; int n_mi = 0;
+        for (dkim2_mi_t *m = ctx->mi_list; m && n_mi < MAX_MI; m = m->next)
+            mi_sorted[n_mi++] = m;
+        for (int i = 1; i < n_mi; i++) {
+            dkim2_mi_t *key = mi_sorted[i]; int j = i - 1;
+            while (j >= 0 && mi_sorted[j]->m > key->m) { mi_sorted[j+1] = mi_sorted[j]; j--; }
+            mi_sorted[j+1] = key;
+        }
+        char mi_errbuf[512];
+        if (verify_mi_hashes(mi_sorted, n_mi,
+                             ctx->headers, ctx->n_headers,
+                             ctx->body, ctx->body_len,
+                             ctx->body_digest,
+                             mi_errbuf, sizeof mi_errbuf) < 0) {
+            SETSTATUS(
+                (mi_errbuf[0] == 'F') ? DKIM2_FAIL : DKIM2_PERMERROR,
+                "%s", mi_errbuf);
+        }
     }
 
     result->status = DKIM2_OK;

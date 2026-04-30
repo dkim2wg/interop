@@ -1,5 +1,5 @@
 CC      = cc
-CFLAGS  = -std=c11 -Wall -Wextra -g \
+CFLAGS  = -std=c11 -Wall -Wextra -g -MMD -MP \
           $(shell pkg-config --cflags openssl) \
           $(shell PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig pkg-config --cflags libcjson)
 LDFLAGS = $(shell pkg-config --libs openssl) \
@@ -61,5 +61,7 @@ dkim2sign: dkim2sign_cli.o eml_parse.o $(CORE_OBJS)
 dkim2verify: dkim2verify_cli.o eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+-include $(CORE_SRCS:.c=.d) dkim2_milter.d dkim2sign_cli.d dkim2verify_cli.d eml_parse.d
+
 clean:
-	rm -f *.o dkim2-milter dkim2sign dkim2verify $(TESTS)
+	rm -f *.o *.d dkim2-milter dkim2sign dkim2verify $(TESTS)

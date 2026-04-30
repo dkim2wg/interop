@@ -1,7 +1,7 @@
 # DKIM2 Interop Status Report
 
 **Spec:** draft-ietf-dkim-dkim2-spec-01  
-**Date:** 2026-04-30  
+**Date:** 2026-05-01  
 **Audience:** DKIM2 Working Group participants, hackathon attendees
 
 ---
@@ -41,11 +41,7 @@ testing but is not yet a complete sign/verify implementation.
 | §10.4 | Envelope exact-match (MAIL FROM / RCPT TO) | ✅ | ✅ | ✅ | ✅ |
 | §10.6 | Verify all s= items (algorithm agility) | ✅ | ✅ | ✅ | ✅ |
 | §10.7 | Verify MI body + header hashes | ✅ | ✅ | ✅ | ✅ |
-| §10 | Full chain walk with recipe undo | ✅ | ✅ | ✅ | — |
-
-The C implementation does not yet implement multi-hop recipe undo during
-verification (it verifies the topmost MI against the live message, which is
-sufficient for final delivery but not for intermediate hop-by-hop auditing).
+| §10 | Full chain walk with recipe undo | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
