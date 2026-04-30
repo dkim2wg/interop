@@ -761,6 +761,194 @@ func TestApplyHeaderRecipeCopy(t *testing.T) {
 	}
 }
 
+func TestVerifyGap3DomainSuffix(t *testing.T) {
+	// Build a signed message and tamper the d= domain to a non-suffix value.
+	raw, err := os.ReadFile("../../python/tests/emails/simple.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile("../../keys/ed25519._domainkey.test1.dkim2.com.pem")
+	if err != nil {
+		t.Skip("key not found")
+	}
+	key, err := LoadPrivateKey(keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var signed bytes.Buffer
+	if err := Sign(bytes.NewReader(raw), &signed, key, SignOptions{
+		Selector:  "ed25519",
+		Domain:    "test1.dkim2.com",
+		MailFrom:  "sender@test1.dkim2.com",
+		RcptTo:    []string{"recipient@example.com"},
+		Timestamp: 1740000000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Replace d=test1.dkim2.com with d=evil.com in the signed output
+	tampered := strings.ReplaceAll(signed.String(), "d=test1.dkim2.com", "d=evil.com")
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	results, err := Verify(strings.NewReader(tampered), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 || results[0].Error == nil {
+		t.Error("expected domain suffix mismatch error")
+	}
+}
+
+func TestVerifyGap3SubdomainOK(t *testing.T) {
+	// d=sub.test1.dkim2.com is a valid suffix of mf= sender@test1.dkim2.com — NOT
+	// wait, the check is that d= is a suffix of mf='s domain. So if mf=sender@sub.test1.dkim2.com
+	// and d=test1.dkim2.com, that should PASS (d is a suffix of the mf domain).
+	// Build directly using Sign with subdomain mf.
+	raw, err := os.ReadFile("../../python/tests/emails/simple.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile("../../keys/ed25519._domainkey.test1.dkim2.com.pem")
+	if err != nil {
+		t.Skip("key not found")
+	}
+	key, err := LoadPrivateKey(keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var signed bytes.Buffer
+	// mf= sender@sub.test1.dkim2.com, d= test1.dkim2.com → should verify OK
+	if err := Sign(bytes.NewReader(raw), &signed, key, SignOptions{
+		Selector:  "ed25519",
+		Domain:    "test1.dkim2.com",
+		MailFrom:  "sender@sub.test1.dkim2.com",
+		RcptTo:    []string{"recipient@example.com"},
+		Timestamp: 1740000000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	results, err := Verify(bytes.NewReader(signed.Bytes()), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 || results[0].Error != nil {
+		t.Errorf("expected pass for subdomain mf=, got: %v", results[0].Error)
+	}
+}
+
+func buildSignedMsg(t *testing.T) []byte {
+	t.Helper()
+	raw, err := os.ReadFile("../../python/tests/emails/simple.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile("../../keys/ed25519._domainkey.test1.dkim2.com.pem")
+	if err != nil {
+		t.Skip("key not found")
+	}
+	key, err := LoadPrivateKey(keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := Sign(bytes.NewReader(raw), &out, key, SignOptions{
+		Selector:  "ed25519",
+		Domain:    "test1.dkim2.com",
+		MailFrom:  "sender@test1.dkim2.com",
+		RcptTo:    []string{"recipient@example.com"},
+		Timestamp: 1740000000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+// verifyExpectFail checks that Verify rejects the message (either top-level error
+// or at least one failing result).
+func verifyExpectFail(t *testing.T, msg string, desc string) {
+	t.Helper()
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	results, err := Verify(strings.NewReader(msg), f)
+	if err != nil {
+		return // top-level error — expected
+	}
+	for _, r := range results {
+		if r.Error != nil {
+			return // at least one failing result — expected
+		}
+	}
+	t.Errorf("expected failure for %s, but all results passed", desc)
+}
+
+func TestVerifyGap5NonContiguousSig(t *testing.T) {
+	msg := buildSignedMsg(t)
+	// Replace i=1 with i=2 in the DKIM2-Signature header to create a gap (no i=1)
+	tampered := strings.ReplaceAll(string(msg), "i=1;", "i=99;")
+	verifyExpectFail(t, tampered, "non-contiguous i= sequence")
+}
+
+func TestVerifyGap5NonContiguousMI(t *testing.T) {
+	msg := buildSignedMsg(t)
+	// Replace m=1 in the Message-Instance header to m=99 (no m=1 MI exists)
+	lines := strings.Split(string(msg), "\r\n")
+	tampered := make([]string, len(lines))
+	for i, line := range lines {
+		if strings.HasPrefix(strings.ToLower(line), "message-instance:") {
+			line = strings.ReplaceAll(line, "m=1;", "m=99;")
+		}
+		tampered[i] = line
+	}
+	verifyExpectFail(t, strings.Join(tampered, "\r\n"), "non-contiguous m= sequence")
+}
+
+func TestVerifyGap6OrphanMI(t *testing.T) {
+	// Build a double-signed message then strip the outer sig,
+	// leaving m=2 orphaned (referenced by no sig).
+	raw, err := os.ReadFile("../../python/tests/emails/simple.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile("../../keys/ed25519._domainkey.test1.dkim2.com.pem")
+	if err != nil {
+		t.Skip("key not found")
+	}
+	key, err := LoadPrivateKey(keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := SignOptions{
+		Selector: "ed25519", Domain: "test1.dkim2.com",
+		MailFrom: "sender@test1.dkim2.com", RcptTo: []string{"recipient@example.com"},
+		Timestamp: 1740000000,
+	}
+	var signed1 bytes.Buffer
+	if err := Sign(bytes.NewReader(raw), &signed1, key, opts); err != nil {
+		t.Fatal(err)
+	}
+	opts.Timestamp = 1740000001
+	var signed2 bytes.Buffer
+	if err := Sign(bytes.NewReader(signed1.Bytes()), &signed2, key, opts); err != nil {
+		t.Fatal(err)
+	}
+	// Strip the outer DKIM2-Signature (i=2) — leave m=2 but no sig referencing it
+	lines := strings.Split(signed2.String(), "\r\n")
+	var kept []string
+	skipNext := false
+	for _, line := range lines {
+		if skipNext {
+			if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+				continue // continuation line
+			}
+			skipNext = false
+		}
+		if strings.HasPrefix(strings.ToLower(line), "dkim2-signature:") && strings.Contains(line, "i=2;") {
+			skipNext = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	verifyExpectFail(t, strings.Join(kept, "\r\n"), "orphan MI (m=2 with no referencing sig)")
+}
+
 func TestUndoBodyRecipe(t *testing.T) {
 	body := []byte("line1\r\nline2\r\nline3\r\n")
 	c1 := [2]int{1, 1}

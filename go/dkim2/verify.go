@@ -102,6 +102,48 @@ func Verify(r io.Reader, fetcher KeyFetcher) ([]VerifyResult, error) {
 		return a.Version < b.Version
 	})
 
+	// §7.1 MUST: i= values must be contiguous 1..N
+	for idx, raw := range sigHeaders {
+		sig, _ := parseSig(raw)
+		if sig == nil || sig.Sequence != idx+1 {
+			expected := idx + 1
+			got := 0
+			if sig != nil {
+				got = sig.Sequence
+			}
+			return nil, fmt.Errorf("i= not contiguous: expected %d got %d", expected, got)
+		}
+	}
+	// §7.1 MUST: m= values must be contiguous 1..N
+	for idx, raw := range miHeaders {
+		mi, _ := parseMI(raw)
+		if mi == nil || mi.Version != idx+1 {
+			expected := idx + 1
+			got := 0
+			if mi != nil {
+				got = mi.Version
+			}
+			return nil, fmt.Errorf("m= not contiguous: expected %d got %d", expected, got)
+		}
+	}
+
+	// §7.1 MUST: every MI must be referenced by at least one signature
+	{
+		miReferenced := make(map[int]bool)
+		for _, raw := range sigHeaders {
+			sig, _ := parseSig(raw)
+			if sig != nil {
+				miReferenced[sig.MIVersion] = true
+			}
+		}
+		for _, raw := range miHeaders {
+			mi, _ := parseMI(raw)
+			if mi != nil && !miReferenced[mi.Version] {
+				return nil, fmt.Errorf("Message-Instance m=%d has no referencing signature", mi.Version)
+			}
+		}
+	}
+
 	var results []VerifyResult
 
 	for idx, rawSig := range sigHeaders {
@@ -112,6 +154,20 @@ func Verify(r io.Reader, fetcher KeyFetcher) ([]VerifyResult, error) {
 		}
 
 		res := VerifyResult{Sequence: sig.Sequence, Domain: sig.Domain}
+
+		// §7.7 MUST: d= must be a suffix of the mf= domain
+		if sig.MailFrom != "" && sig.MailFrom != "<>" {
+			if at := strings.LastIndexByte(sig.MailFrom, '@'); at >= 0 {
+				mfDomain := strings.ToLower(sig.MailFrom[at+1:])
+				d := strings.ToLower(sig.Domain)
+				if mfDomain != d && !strings.HasSuffix(mfDomain, "."+d) {
+					res.Error = fmt.Errorf("i=%d: d=%s is not a suffix of mf= domain %s",
+						sig.Sequence, sig.Domain, mfDomain)
+					results = append(results, res)
+					continue
+				}
+			}
+		}
 
 		// Find the MI for this signature's MI version
 		var thisMI *MessageInstance
