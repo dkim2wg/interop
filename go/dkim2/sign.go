@@ -187,8 +187,8 @@ func signDigest(key crypto.PrivateKey, digest []byte) ([]byte, error) {
 	}
 }
 
-// loadPrivateKey parses a PEM-encoded private key (PKCS#8 format).
-func loadPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
+// LoadPrivateKey parses a PEM-encoded private key (PKCS#8 format).
+func LoadPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 	block, _ := pem.Decode(pemData)
 	if block == nil {
 		return nil, fmt.Errorf("no PEM block found")

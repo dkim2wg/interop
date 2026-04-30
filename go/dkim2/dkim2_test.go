@@ -451,7 +451,7 @@ func TestSignSimpleEd25519(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := loadPrivateKey(keyPEM)
+	key, err := LoadPrivateKey(keyPEM)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +613,7 @@ func TestSignAllCases(t *testing.T) {
 			if err != nil {
 				t.Skip("keyfile not found: " + tc.keyFile)
 			}
-			key, err := loadPrivateKey(keyPEM)
+			key, err := LoadPrivateKey(keyPEM)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -657,7 +657,7 @@ func TestUndoNoRecipe(t *testing.T) {
 	if err != nil {
 		t.Skip("key not found")
 	}
-	key, err := loadPrivateKey(keyPEM)
+	key, err := LoadPrivateKey(keyPEM)
 	if err != nil {
 		t.Fatal(err)
 	}
