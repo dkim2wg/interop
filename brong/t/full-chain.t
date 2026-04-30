@@ -122,6 +122,7 @@ sub verify_msg {
     my ($msg) = @_;
     my $verifier = Mail::DKIM2::Verifier->new();
     $verifier->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+    $verifier->skip_timestamp_check(1);  # test emails have fixed timestamps
     $verifier->PRINT($msg->as_string());
     $verifier->CLOSE;
     return $verifier;

@@ -14,6 +14,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -179,7 +180,8 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
 
 def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
                            other_sig_headers: list[str],
-                           dns_data: dict) -> list[str]:
+                           dns_data: dict,
+                           skip_timestamp_check: bool = False) -> list[str]:
     """Verify a single DKIM2-Signature header.
 
     Args:
@@ -187,6 +189,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         mi_headers: All Message-Instance headers in the message
         other_sig_headers: All DKIM2-Signature headers with lower i= values
         dns_data: DNS records dict from dns.json
+        skip_timestamp_check: if True, skip §10.3 14-day expiry check
 
     Returns a list of errors (empty = success).
     """
@@ -203,6 +206,24 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         return [f"DKIM2-Signature i={i_val}: missing required tags"]
     if not s_tag:
         return [f"DKIM2-Signature i={i_val}: missing s= tag"]
+
+    # §7.3 SHOULD: n= nonce must not exceed 64 characters
+    n_val = _extract_tag(value, "n")
+    if n_val and len(n_val) > 64:
+        return [f"DKIM2-Signature i={i_val}: n= nonce exceeds 64 characters ({len(n_val)})"]
+
+    # §10.3 SHOULD: reject signatures more than 14 days old or in the future
+    t_val = _extract_tag(value, "t")
+    if t_val and not skip_timestamp_check:
+        try:
+            ts = int(t_val)
+            now = int(time.time())
+            if ts > now + 300:
+                return [f"DKIM2-Signature i={i_val}: timestamp is in the future"]
+            if now > ts + 14 * 24 * 3600:
+                return [f"DKIM2-Signature i={i_val}: signature has expired (age > 14 days)"]
+        except ValueError:
+            pass
 
     sig_items = []
     for part in s_tag.split(","):
@@ -291,7 +312,8 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
 
 
 def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
-                   verbose: bool = False) -> list[str]:
+                   verbose: bool = False,
+                   skip_timestamp_check: bool = False) -> list[str]:
     """Verify all DKIM2 signatures in a message.
 
     If full_chain is True, walks backwards through MI versions, undoing
@@ -341,7 +363,8 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
         sig_by_seq = sorted(sig_headers, key=_get_seq_from_sig)
         for idx, sig_hdr in enumerate(sig_by_seq):
             prior_sigs = sig_by_seq[:idx]
-            errs = verify_dkim2_signature(sig_hdr, mi_headers, prior_sigs, dns_data)
+            errs = verify_dkim2_signature(sig_hdr, mi_headers, prior_sigs, dns_data,
+                                          skip_timestamp_check=skip_timestamp_check)
             all_errors.extend(errs)
 
         return all_errors
@@ -387,7 +410,8 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
                                if v <= version]
                 prior_sigs = sig_by_seq[:idx]
                 errs = verify_dkim2_signature(
-                    sig_hdr, relevant_mi, prior_sigs, dns_data
+                    sig_hdr, relevant_mi, prior_sigs, dns_data,
+                    skip_timestamp_check=skip_timestamp_check,
                 )
                 if errs:
                     all_errors.extend(errs)
@@ -444,6 +468,8 @@ def main():
     parser.add_argument("--full-chain", action="store_true",
                         help="Walk backwards through all MI versions, "
                              "undoing recipes and verifying each signature")
+    parser.add_argument("--skip-timestamp-check", action="store_true",
+                        help="Disable §10.3 14-day expiry check (for testing)")
     args = parser.parse_args()
 
     if args.message == "-":
@@ -453,7 +479,8 @@ def main():
 
     dns_data = load_dns_json(args.dns_json)
     errors = verify_message(raw, dns_data, full_chain=args.full_chain,
-                            verbose=args.verbose)
+                            verbose=args.verbose,
+                            skip_timestamp_check=args.skip_timestamp_check)
 
     if args.verbose or errors:
         headers, _ = parse_message(raw)

@@ -159,7 +159,11 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     REQ("s");
     if (parse_ssets(v, &sig->ssets, &sig->n_ssets) < 0) goto err;
 #undef REQ
-    v = tag_get(tl, "n"); if (v) sig->n = strdup(v);
+    v = tag_get(tl, "n");
+    if (v) {
+        if (strlen(v) > 64) goto err;  /* §7.3: n= must not exceed 64 chars */
+        sig->n = strdup(v);
+    }
     sig->raw_value = strdup(value);
     taglist_free(tl);
     return sig;

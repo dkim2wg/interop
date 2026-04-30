@@ -498,7 +498,8 @@ func verifyEML(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
-	results, err := Verify(bytes.NewReader(raw), f)
+	// Skip timestamp check: test emails have fixed timestamps from 2026-02-20
+	results, err := Verify(bytes.NewReader(raw), f, VerifyOptions{SkipTimestampCheck: true})
 	if err != nil {
 		t.Fatalf("Verify error: %v", err)
 	}
@@ -545,7 +546,7 @@ func TestVerifySimpleEd25519(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
-	results, err := Verify(bytes.NewReader(raw), f)
+	results, err := Verify(bytes.NewReader(raw), f, VerifyOptions{SkipTimestampCheck: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -826,7 +827,7 @@ func TestVerifyGap3SubdomainOK(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
-	results, err := Verify(bytes.NewReader(signed.Bytes()), f)
+	results, err := Verify(bytes.NewReader(signed.Bytes()), f, VerifyOptions{SkipTimestampCheck: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,11 +864,12 @@ func buildSignedMsg(t *testing.T) []byte {
 }
 
 // verifyExpectFail checks that Verify rejects the message (either top-level error
-// or at least one failing result).
+// or at least one failing result). Timestamp check is skipped so tests are
+// isolated to the specific failure mode being tested.
 func verifyExpectFail(t *testing.T, msg string, desc string) {
 	t.Helper()
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
-	results, err := Verify(strings.NewReader(msg), f)
+	results, err := Verify(strings.NewReader(msg), f, VerifyOptions{SkipTimestampCheck: true})
 	if err != nil {
 		return // top-level error — expected
 	}
@@ -1043,7 +1045,7 @@ func buildDoubleSignedMsg(t *testing.T) ([]byte, []byte) {
 func TestVerifyChainCustodyPass(t *testing.T) {
 	_, doubleMsg := buildDoubleSignedMsg(t)
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
-	results, err := Verify(bytes.NewReader(doubleMsg), f)
+	results, err := Verify(bytes.NewReader(doubleMsg), f, VerifyOptions{SkipTimestampCheck: true})
 	if err != nil {
 		t.Fatalf("Verify error: %v", err)
 	}
@@ -1074,8 +1076,9 @@ func TestVerifyEnvelopeMatchPass(t *testing.T) {
 	msg := buildSignedMsg(t)
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	results, err := Verify(bytes.NewReader(msg), f, VerifyOptions{
-		MailFrom: "sender@test1.dkim2.com",
-		RcptTo:   []string{"recipient@example.com"},
+		SkipTimestampCheck: true,
+		MailFrom:           "sender@test1.dkim2.com",
+		RcptTo:             []string{"recipient@example.com"},
 	})
 	if err != nil {
 		t.Fatalf("Verify error: %v", err)
@@ -1091,7 +1094,8 @@ func TestVerifyEnvelopeMailFromMismatch(t *testing.T) {
 	msg := buildSignedMsg(t)
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	_, err := Verify(bytes.NewReader(msg), f, VerifyOptions{
-		MailFrom: "wrong@test1.dkim2.com",
+		SkipTimestampCheck: true,
+		MailFrom:           "wrong@test1.dkim2.com",
 	})
 	if err == nil {
 		t.Error("expected error for mismatched MAIL FROM")
@@ -1102,11 +1106,37 @@ func TestVerifyEnvelopeRcptToMismatch(t *testing.T) {
 	msg := buildSignedMsg(t)
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	_, err := Verify(bytes.NewReader(msg), f, VerifyOptions{
-		RcptTo: []string{"someone@else.com"},
+		SkipTimestampCheck: true,
+		RcptTo:             []string{"someone@else.com"},
 	})
 	if err == nil {
 		t.Error("expected error for RCPT TO not in rt=")
 	}
+}
+
+func TestVerifyTimestampExpired(t *testing.T) {
+	// A message signed with timestamp 1740000000 (2026-02-20) is >14 days old.
+	raw, err := os.ReadFile("../../python/tests/expected/simple-ed25519.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	// Without SkipTimestampCheck the old test email should be rejected.
+	results, err := Verify(bytes.NewReader(raw), f)
+	if err != nil {
+		t.Fatal(err) // top-level error is not expected
+	}
+	if len(results) == 0 || results[0].Error == nil {
+		t.Error("expected expiry error for old test email")
+	}
+}
+
+func TestVerifyNonceTooLong(t *testing.T) {
+	msg := string(buildSignedMsg(t))
+	// Inject an n= tag with 65 characters before the s= tag.
+	nonce65 := strings.Repeat("a", 65)
+	tampered := strings.Replace(msg, "; s=", "; n="+nonce65+"; s=", 1)
+	verifyExpectFail(t, tampered, "n= nonce exceeding 64 characters")
 }
 
 func TestUndoBodyRecipe(t *testing.T) {

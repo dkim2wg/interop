@@ -6,6 +6,7 @@ use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
+use POSIX qw();
 
 use Mail::DKIM2::Common qw(
     dkim2_canonicalize_header
@@ -22,10 +23,17 @@ use Mail::DKIM2::MessageInstance;
 sub init {
     my $self = shift;
     $self->SUPER::init;
-    $self->{_mi_headers}  = {};
-    $self->{_dk2_headers} = {};
-    $self->{result}  = undef;
-    $self->{details} = undef;
+    $self->{_mi_headers}         = {};
+    $self->{_dk2_headers}        = {};
+    $self->{result}              = undef;
+    $self->{details}             = undef;
+    $self->{skip_timestamp_check} = 0;
+}
+
+sub skip_timestamp_check {
+    my ($self, $val) = @_;
+    $self->{skip_timestamp_check} = $val if defined $val;
+    return $self->{skip_timestamp_check};
 }
 
 sub handle_header {
@@ -162,6 +170,32 @@ sub _verify_signature {
         signature      => $signature,
         signing_header => $sig_hdr_for_input,
     );
+
+    # §7.3 SHOULD: n= nonce must not exceed 64 characters
+    my $nonce = $signature->get_tag('n');
+    if (defined $nonce && length($nonce) > 64) {
+        $self->{result}  = 'fail';
+        $self->{details} = "n= nonce exceeds 64 characters at i=$i";
+        return 0;
+    }
+
+    # §10.3 SHOULD: reject signatures more than 14 days old or in the future
+    unless ($self->{skip_timestamp_check}) {
+        my $ts = $signature->timestamp;
+        if (defined $ts && $ts > 0) {
+            my $now = time();
+            if ($ts > $now + 300) {
+                $self->{result}  = 'fail';
+                $self->{details} = "DKIM2-Signature i=$i timestamp is in the future";
+                return 0;
+            }
+            if ($now > $ts + 14 * 24 * 3600) {
+                $self->{result}  = 'fail';
+                $self->{details} = "DKIM2-Signature i=$i has expired (age > 14 days)";
+                return 0;
+            }
+        }
+    }
 
     # Validate d= matches mf= domain (skip for null sender / DSN)
     my $mf = $signature->mail_from;

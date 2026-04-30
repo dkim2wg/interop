@@ -16,6 +16,7 @@ type DKIM2Signature struct {
 	Domain    string
 	MailFrom  string
 	RcptTo    []string
+	Nonce     string // n= tag (optional); max 64 ASCII chars per §7.3
 	Sigs      []SigItem
 }
 
@@ -45,8 +46,9 @@ type VerifyResult struct {
 // VerifyOptions carries optional envelope values for §10.4 exact-match checking.
 // Zero value means no envelope checks are performed.
 type VerifyOptions struct {
-	MailFrom string   // SMTP MAIL FROM; empty = skip check
-	RcptTo   []string // SMTP RCPT TO values; nil = skip check
+	MailFrom           string   // SMTP MAIL FROM; empty = skip check
+	RcptTo             []string // SMTP RCPT TO values; nil = skip check
+	SkipTimestampCheck bool     // disable §10.3 14-day expiry check (for testing)
 }
 
 func parseSig(raw string) (*DKIM2Signature, error) {
@@ -111,6 +113,12 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 			}
 			sig.Sigs = append(sig.Sigs, item)
 		}
+	}
+	if v := tvl.get("n"); v != "" {
+		if len(v) > 64 {
+			return nil, fmt.Errorf("n= nonce exceeds 64 characters (%d)", len(v))
+		}
+		sig.Nonce = v
 	}
 	if sig.Domain == "" {
 		return nil, fmt.Errorf("missing required d= tag in DKIM2-Signature")

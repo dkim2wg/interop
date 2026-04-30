@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Verify reads r and verifies all DKIM2-Signature headers.
@@ -204,6 +205,9 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
+	skipTS := len(opts) > 0 && opts[0].SkipTimestampCheck
+	now := time.Now().Unix()
+
 	var results []VerifyResult
 
 	for idx, rawSig := range sigHeaders {
@@ -214,6 +218,22 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 
 		res := VerifyResult{Sequence: sig.Sequence, Domain: sig.Domain}
+
+		// §10.3 SHOULD: reject signatures more than 14 days old or in the future
+		if !skipTS && sig.Timestamp > 0 {
+			const tolerance = 300 // 5-minute clock-skew tolerance
+			const maxAge = 14 * 24 * 3600
+			if sig.Timestamp > now+tolerance {
+				res.Error = fmt.Errorf("i=%d: timestamp is in the future", sig.Sequence)
+				results = append(results, res)
+				continue
+			}
+			if now > sig.Timestamp+maxAge {
+				res.Error = fmt.Errorf("i=%d: signature has expired (age > 14 days)", sig.Sequence)
+				results = append(results, res)
+				continue
+			}
+		}
 
 		// §7.7 MUST: d= must be a suffix of (i.e. relaxed match against) the mf= domain
 		if sig.MailFrom != "" && sig.MailFrom != "<>" {

@@ -215,14 +215,14 @@ for signed in "$EXPECTED_DIR"/*.eml; do
         CHAIN_FLAG="--full-chain"
     fi
 
-    if python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG 2>/dev/null; then
+    if python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG --skip-timestamp-check 2>/dev/null; then
         echo "  PASS:      verify $name"
         PASS=$((PASS + 1))
     else
         echo "  FAIL:      verify $name"
         FAIL=$((FAIL + 1))
         ERRORS="${ERRORS}  verify ${name}: signature verification failed\n"
-        python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG -v 2>&1 | head -10
+        python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG --skip-timestamp-check -v 2>&1 | head -10
     fi
 done
 
