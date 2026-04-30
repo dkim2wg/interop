@@ -12,12 +12,7 @@ import (
 // applying header and body recipes backward. targetVersion=-1 means
 // highestVersion-1. targetVersion=0 reconstructs the original pre-signing state.
 func Undo(r io.Reader, w io.Writer, targetVersion int) error {
-	raw, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
-
-	headers, bodyReader, err := parseHeaders(bytes.NewReader(raw))
+	headers, bodyReader, err := parseHeaders(r)
 	if err != nil {
 		return fmt.Errorf("parsing headers: %w", err)
 	}
@@ -101,6 +96,7 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 	}
 
 	// Verify reconstructed state against target MI hashes.
+	// targetVersion=0 means pre-signing; no MI v=0 exists to verify against.
 	if targetVersion >= 1 {
 		var targetMI *miEntry
 		for i := range miList {
@@ -134,7 +130,10 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 	// reconstructed content headers, blank line, body.
 	for _, raw := range sigRaws {
 		sig, err := parseSig(raw)
-		if err != nil || sig.MIVersion > targetVersion {
+		if err != nil {
+			return fmt.Errorf("parsing DKIM2-Signature for output: %w", err)
+		}
+		if sig.MIVersion > targetVersion {
 			continue
 		}
 		if _, err := io.WriteString(w, raw); err != nil {

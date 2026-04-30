@@ -645,6 +645,39 @@ func TestUndoNoRecipe(t *testing.T) {
 	}
 }
 
+// TestUndoHeaderRecipesRoundTrip verifies that undoHeaderRecipes correctly
+// reconstructs the "before" state using a recipe computed by ComputeDiff.
+func TestUndoHeaderRecipesRoundTrip(t *testing.T) {
+	before := []Header{
+		{Name: "Subject", Value: "Hello World", Raw: "Subject: Hello World\r\n"},
+		{Name: "From", Value: "alice@example.com", Raw: "From: alice@example.com\r\n"},
+	}
+	after := []Header{
+		{Name: "Subject", Value: "Goodbye World", Raw: "Subject: Goodbye World\r\n"},
+		{Name: "From", Value: "alice@example.com", Raw: "From: alice@example.com\r\n"},
+	}
+	body := []byte("Test body.\r\n")
+
+	recipe, err := ComputeDiff(before, body, after, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recipe == nil || recipe.Headers == nil {
+		t.Fatal("expected recipe with header changes, got nil")
+	}
+
+	result := undoHeaderRecipes(after, recipe.Headers)
+
+	if len(result) != len(before) {
+		t.Fatalf("got %d headers, want %d", len(result), len(before))
+	}
+	for i, h := range result {
+		if h.Raw != before[i].Raw {
+			t.Errorf("header[%d]: got %q, want %q", i, h.Raw, before[i].Raw)
+		}
+	}
+}
+
 func TestApplyHeaderRecipe(t *testing.T) {
 	// Before: Subject: Hello. After: Subject: World.
 	// Recipe has one Data step with the "before" value.
