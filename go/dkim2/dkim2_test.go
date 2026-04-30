@@ -596,3 +596,101 @@ func TestSignAllCases(t *testing.T) {
 		})
 	}
 }
+
+// TestUndoNoRecipe: double-sign a message (no content change = no recipe),
+// then Undo back to v=1 and compare with the original single-signed output.
+func TestUndoNoRecipe(t *testing.T) {
+	raw, err := os.ReadFile("../../python/tests/emails/simple.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile("../../keys/ed25519._domainkey.test1.dkim2.com.pem")
+	if err != nil {
+		t.Skip("key not found")
+	}
+	key, err := loadPrivateKey(keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := SignOptions{
+		Selector:  "ed25519",
+		Domain:    "test1.dkim2.com",
+		MailFrom:  "sender@test1.dkim2.com",
+		RcptTo:    []string{"recipient@example.com"},
+		Timestamp: 1740000000,
+	}
+
+	// Sign once.
+	var signed1 bytes.Buffer
+	if err := Sign(bytes.NewReader(raw), &signed1, key, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sign again without content change — MI v=2 will have no recipe.
+	opts.Timestamp = 1740000001
+	var signed2 bytes.Buffer
+	if err := Sign(bytes.NewReader(signed1.Bytes()), &signed2, key, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	// Undo back to v=1.
+	var undone bytes.Buffer
+	if err := Undo(bytes.NewReader(signed2.Bytes()), &undone, -1); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(undone.Bytes(), signed1.Bytes()) {
+		t.Errorf("undo result does not match single-signed message\ngot:\n%s\nwant:\n%s",
+			truncate(string(undone.Bytes()), 500), truncate(string(signed1.Bytes()), 500))
+	}
+}
+
+func TestApplyHeaderRecipe(t *testing.T) {
+	// Before: Subject: Hello. After: Subject: World.
+	// Recipe has one Data step with the "before" value.
+	steps := []RecipeStep{{Data: []string{"Hello"}}}
+	current := []Header{
+		{Name: "Subject", Value: "World", Raw: "Subject: World\r\n"},
+	}
+	got := applyHeaderRecipe(current, "Subject", steps)
+	if len(got) != 1 || got[0].Value != "Hello" {
+		t.Errorf("expected Subject: Hello, got %v", got)
+	}
+	if got[0].Raw != "Subject: Hello\r\n" {
+		t.Errorf("unexpected Raw: %q", got[0].Raw)
+	}
+}
+
+func TestApplyHeaderRecipeCopy(t *testing.T) {
+	// Before had [Subject: A, Subject: B]; after has only [Subject: B] (A removed).
+	// headerRecipeSteps produces steps in before-bottom-up order:
+	//   beforeBottomUp = [B, A]; B is found at afterIdx 1, A is not found.
+	//   → [Copy{1,1}, Data["A"]]
+	// Applying to current=[B]:
+	//   bottomUp=[B]; Copy{1,1}→B, Data["A"]→A; emitted=[B,A]; reversed=[A,B].
+	c1 := [2]int{1, 1}
+	steps := []RecipeStep{{Copy: &c1}, {Data: []string{"A"}}}
+	current := []Header{
+		{Name: "Subject", Value: "B", Raw: "Subject: B\r\n"},
+	}
+	got := applyHeaderRecipe(current, "Subject", steps)
+	if len(got) != 2 || got[0].Value != "A" || got[1].Value != "B" {
+		t.Errorf("expected [A, B], got %v", got)
+	}
+}
+
+func TestUndoBodyRecipe(t *testing.T) {
+	body := []byte("line1\r\nline2\r\nline3\r\n")
+	c1 := [2]int{1, 1}
+	c3 := [2]int{3, 3}
+	steps := []RecipeStep{
+		{Copy: &c1},
+		{Data: []string{"inserted"}},
+		{Copy: &c3},
+	}
+	got := undoBodyRecipe(body, steps)
+	want := []byte("line1\r\ninserted\r\nline3\r\n")
+	if !bytes.Equal(got, want) {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
