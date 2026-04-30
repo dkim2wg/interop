@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -488,6 +489,54 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+func verifyEML(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	results, err := Verify(bytes.NewReader(raw), f)
+	if err != nil {
+		t.Fatalf("Verify error: %v", err)
+	}
+	for _, r := range results {
+		if r.Error != nil {
+			t.Errorf("i=%d: %v", r.Sequence, r.Error)
+		}
+	}
+}
+
+func TestVerifyAllPython(t *testing.T) {
+	matches, err := filepath.Glob("../../python/tests/expected/*.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) == 0 {
+		t.Skip("no python expected files found")
+	}
+	for _, path := range matches {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			verifyEML(t, path)
+		})
+	}
+}
+
+func TestVerifyAllBrong(t *testing.T) {
+	matches, err := filepath.Glob("../../brong/tests/expected/*.eml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) == 0 {
+		t.Skip("no brong expected files found")
+	}
+	for _, path := range matches {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			verifyEML(t, path)
+		})
+	}
 }
 
 func TestVerifySimpleEd25519(t *testing.T) {

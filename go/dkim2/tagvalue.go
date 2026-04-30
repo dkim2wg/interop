@@ -2,6 +2,17 @@ package dkim2
 
 import "strings"
 
+// stripB64WSP removes whitespace from a base64 string (needed when the value
+// spans multiple folded header continuation lines).
+func stripB64WSP(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == ' ' || r == '\t' || r == '\r' || r == '\n' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 type tagValueList struct {
 	order []string
 	vals  map[string]string

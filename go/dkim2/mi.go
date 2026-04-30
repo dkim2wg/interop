@@ -37,7 +37,7 @@ func parseMI(raw string) (*MessageInstance, error) {
 		return nil, fmt.Errorf("invalid m= tag: %w", err)
 	}
 
-	h := tvl.get("h")
+	h := stripB64WSP(tvl.get("h"))
 	parts := strings.SplitN(h, ":", 3)
 	if len(parts) != 3 || parts[0] != "sha256" {
 		return nil, fmt.Errorf("invalid h= tag: %q", h)
@@ -53,7 +53,7 @@ func parseMI(raw string) (*MessageInstance, error) {
 
 	mi := &MessageInstance{Version: m, HeaderHash: hHash, BodyHash: bHash}
 
-	if rB64 := tvl.get("r"); rB64 != "" {
+	if rB64 := stripB64WSP(tvl.get("r")); rB64 != "" {
 		rJSON, err := base64.StdEncoding.DecodeString(rB64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid r= tag: %w", err)

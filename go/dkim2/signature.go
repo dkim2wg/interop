@@ -73,7 +73,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	}
 	sig.Domain = tvl.get("d")
 	if v := tvl.get("mf"); v != "" {
-		b, err := base64.StdEncoding.DecodeString(v)
+		b, err := base64.StdEncoding.DecodeString(stripB64WSP(v))
 		if err != nil {
 			return nil, fmt.Errorf("invalid mf=: %w", err)
 		}
@@ -81,7 +81,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	}
 	if v := tvl.get("rt"); v != "" {
 		for _, part := range strings.Split(v, ",") {
-			b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(part))
+			b, err := base64.StdEncoding.DecodeString(stripB64WSP(part))
 			if err != nil {
 				return nil, fmt.Errorf("invalid rt= item: %w", err)
 			}
@@ -96,7 +96,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 			}
 			item := SigItem{Selector: fields[0], Algorithm: fields[1]}
 			if fields[2] != "" {
-				b, err := base64.StdEncoding.DecodeString(fields[2])
+				b, err := base64.StdEncoding.DecodeString(stripB64WSP(fields[2]))
 				if err != nil {
 					return nil, fmt.Errorf("invalid sig value: %w", err)
 				}
