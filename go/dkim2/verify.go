@@ -128,24 +128,23 @@ func Verify(r io.Reader, fetcher KeyFetcher) ([]VerifyResult, error) {
 			continue
 		}
 
-		// Verify MI header and body hashes
-		if string(thisMI.HeaderHash) != string(contentHeaderHash) {
-			res.Error = fmt.Errorf("i=%d: header hash mismatch", sig.Sequence)
-			results = append(results, res)
-			continue
-		}
-		if string(thisMI.BodyHash) != string(bodyHash) {
-			res.Error = fmt.Errorf("i=%d: body hash mismatch", sig.Sequence)
-			results = append(results, res)
-			continue
+		// Verify MI header and body hashes only for the outermost (latest) MI.
+		// Earlier MI versions recorded hashes from a prior message state;
+		// an intermediary may have modified headers/body since then.
+		if sig.MIVersion == maxMIVersion {
+			if string(thisMI.HeaderHash) != string(contentHeaderHash) {
+				res.Error = fmt.Errorf("i=%d: header hash mismatch", sig.Sequence)
+				results = append(results, res)
+				continue
+			}
+			if string(thisMI.BodyHash) != string(bodyHash) {
+				res.Error = fmt.Errorf("i=%d: body hash mismatch", sig.Sequence)
+				results = append(results, res)
+				continue
+			}
 		}
 
 		// Fetch public key
-		if len(sig.Sigs) == 0 {
-			res.Error = fmt.Errorf("i=%d: no s= items", sig.Sequence)
-			results = append(results, res)
-			continue
-		}
 		item := sig.Sigs[0]
 		pubKey, keyAlg, err := fetcher.FetchPublicKey(item.Selector, sig.Domain)
 		if err != nil {
