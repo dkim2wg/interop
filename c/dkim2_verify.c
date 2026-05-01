@@ -358,6 +358,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->status = DKIM2_PERMERROR;
     result->message[0] = '\0';
     result->sig_i = 0;
+    result->domain[0] = '\0';
 
     /* §10.2: Require at least one DKIM2-Signature */
     if (!ctx->sig_list)
@@ -376,6 +377,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
 
     dkim2_sig_t *latest = sig_arr[n_sigs - 1];
     result->sig_i = latest->i;
+    snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
 
     /* §7.1: i= sequence must be contiguous 1..N */
     for (int i = 0; i < n_sigs; i++) {
@@ -437,6 +439,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     /* §10.6: Verify ALL signatures i=1..N */
     for (int si = 0; si < n_sigs; si++) {
         dkim2_sig_t *sig = sig_arr[si];
+        result->sig_i = sig->i;
+        snprintf(result->domain, sizeof result->domain, "%s", sig->d ? sig->d : "");
 
         /* §10.3: Timestamp check per sig */
         if (!ctx->skip_timestamp_check) {

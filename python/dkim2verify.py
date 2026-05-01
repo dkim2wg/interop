@@ -10,6 +10,7 @@ Exits 0 if all signatures verify, non-zero otherwise.
 
 import argparse
 import base64
+from dataclasses import dataclass, field
 import hashlib
 import json
 import re
@@ -27,6 +28,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, padding, rsa, uti
 
 from dkim2sign import (
     parse_message,
+    _to_bytes,
     _header_name,
     _should_exclude_header,
     canonicalize_header_field,
@@ -38,6 +40,7 @@ from dkim2sign import (
     _get_seq_from_sig,
     b64,
     b64json,
+    Source,
 )
 
 
@@ -316,9 +319,60 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     return errors
 
 
-def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
+@dataclass
+class VerifyResult:
+    ok: bool                      # True iff verification passed
+    status: str                   # 'pass', 'fail', 'permerror', 'temperror', 'none'
+    failing_i: int | None         # i= of the signature that failed, None on pass
+    domain: str | None            # d= of the failing/passing signature
+    message: str                  # one-line human-readable summary
+    errors: list[str] = field(default_factory=list)  # all error detail strings
+
+
+def _classify_status(errors: list[str]) -> str:
+    """Map collected errors to a result status string."""
+    if not errors:
+        return 'pass'
+    e = errors[0].lower()
+    if 'no dkim2-signature' in e:
+        return 'none'
+    if 'temperror' in e:
+        return 'temperror'
+    # Crypto/hash/custody failures
+    if any(k in e for k in ('failed', 'mismatch', 'break', 'expired')):
+        return 'fail'
+    # Structural/format problems
+    return 'permerror'
+
+
+def _extract_failing_i(errors: list[str]) -> int | None:
+    """Extract the first i= value mentioned in any error string."""
+    for err in errors:
+        m = re.search(r'\bi=(\d+)\b', err)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _make_result(errors: list[str], top_sig_i: int, top_domain: str) -> VerifyResult:
+    if not errors:
+        return VerifyResult(
+            ok=True, status='pass', failing_i=None, domain=top_domain,
+            message=f'pass: DKIM2-Signature i={top_sig_i} d={top_domain}',
+            errors=[],
+        )
+    status = _classify_status(errors)
+    failing_i = _extract_failing_i(errors)
+    return VerifyResult(
+        ok=False, status=status, failing_i=failing_i,
+        domain=top_domain if failing_i == top_sig_i else None,
+        message=errors[0], errors=errors,
+    )
+
+
+def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                    verbose: bool = False,
-                   skip_timestamp_check: bool = False) -> list[str]:
+                   skip_timestamp_check: bool = False) -> "VerifyResult":
     """Verify all DKIM2 signatures in a message.
 
     If full_chain is True, walks backwards through MI versions, undoing
@@ -326,8 +380,9 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
     reconstructed message state, and each DKIM2-Signature verifies against
     the MI/sig headers that existed at that point.
 
-    Returns a list of errors (empty = all passed).
+    Returns a VerifyResult (ok=True on success).
     """
+    raw = _to_bytes(source)
     headers, body = parse_message(raw)
     all_errors = []
 
@@ -335,9 +390,13 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
     sig_headers = extract_sig_headers(headers)
 
     if not sig_headers:
-        return ["No DKIM2-Signature headers found"]
+        return VerifyResult(ok=False, status='none', failing_i=None, domain=None,
+                            message='no DKIM2-Signature headers',
+                            errors=['no DKIM2-Signature headers'])
     if not mi_headers:
-        return ["No Message-Instance headers found"]
+        return VerifyResult(ok=False, status='permerror', failing_i=None, domain=None,
+                            message='no Message-Instance headers',
+                            errors=['no Message-Instance headers'])
 
     # Spec-01 §9/§10: top DKIM2-Signature must cover the topmost MI
     max_mi_version = max(_get_version_from_mi(h) for h in mi_headers)
@@ -347,10 +406,12 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
     top_sig_m = _extract_tag(top_sig_value, "m")
     top_sig_m_int = int(top_sig_m) if top_sig_m else 0
     if top_sig_m_int != max_mi_version:
-        return [
-            f"top signature i={top_sig_seq} m={top_sig_m_int} does not cover "
-            f"topmost MI m={max_mi_version}"
-        ]
+        top_sig_i = _get_seq_from_sig(top_sig)
+        top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
+        msg = (f"top signature i={top_sig_seq} m={top_sig_m_int} does not cover "
+               f"topmost MI m={max_mi_version}")
+        return VerifyResult(ok=False, status='permerror', failing_i=top_sig_i,
+                            domain=top_domain, message=msg, errors=[msg])
 
     # Collect the non-MI, non-sig headers for hash verification
     content_headers = []
@@ -399,7 +460,9 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
                                           skip_timestamp_check=skip_timestamp_check)
             all_errors.extend(errs)
 
-        return all_errors
+        top_sig_i = _get_seq_from_sig(top_sig)
+        top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
+        return _make_result(all_errors, top_sig_i, top_domain)
 
     # Full chain validation: walk backwards through MI versions
     from dkim2undo import decode_recipes, reconstruct_headers, reconstruct_body
@@ -507,7 +570,9 @@ def verify_message(raw: bytes, dns_data: dict, full_chain: bool = False,
                             f"v={version}: failed to undo body recipes: {e}"
                         )
 
-    return all_errors
+    top_sig_i = _get_seq_from_sig(top_sig)
+    top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
+    return _make_result(all_errors, top_sig_i, top_domain)
 
 
 # ---------------------------------------------------------------------------
@@ -535,11 +600,11 @@ def main():
         raw = Path(args.message).read_bytes()
 
     dns_data = load_dns_json(args.dns_json)
-    errors = verify_message(raw, dns_data, full_chain=args.full_chain,
+    result = verify_message(raw, dns_data, full_chain=args.full_chain,
                             verbose=args.verbose,
                             skip_timestamp_check=args.skip_timestamp_check)
 
-    if args.verbose or errors:
+    if args.verbose or not result.ok:
         headers, _ = parse_message(raw)
         sig_headers = extract_sig_headers(headers)
         mi_headers = extract_mi_headers(headers)
@@ -559,15 +624,18 @@ def main():
             else:
                 print(f"  i={i_val} d={d_val}")
 
-    if errors:
+    if not result.ok:
         print("")
-        for err in errors:
-            print(f"ERROR: {err}")
+        if result.errors:
+            for err in result.errors:
+                print(f"ERROR: {err}")
+        else:
+            print(f"ERROR: {result.message}")
         sys.exit(1)
     else:
         if args.verbose:
             print("")
-        print("PASS: all signatures verified")
+        print(f"PASS: {result.message}")
         sys.exit(0)
 
 

@@ -9,14 +9,29 @@ message with Message-Instance and DKIM2-Signature headers on stdout.
 import argparse
 import base64
 import hashlib
+import io
 import json
 import re
 import sys
 import time
 from pathlib import Path
+from typing import IO, Union
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, utils
+
+
+# Source can be raw bytes, a file path (str/Path), or any binary-mode file-like object.
+Source = Union[bytes, str, "Path", "IO[bytes]"]
+
+
+def _to_bytes(source: "Source") -> bytes:
+    """Normalize any message source to bytes."""
+    if isinstance(source, bytes):
+        return source
+    if isinstance(source, (str, Path)):
+        return Path(source).read_bytes()
+    return source.read()
 
 
 # ---------------------------------------------------------------------------
@@ -37,13 +52,14 @@ def b64json(obj) -> str:
 # Parse raw message into (header_lines, body)
 # ---------------------------------------------------------------------------
 
-def parse_message(raw: bytes) -> tuple[list[bytes], bytes]:
+def parse_message(source: "Source") -> tuple[list[bytes], bytes]:
     """Split a raw RFC 5322 message into header lines and body.
 
     Returns (headers, body) where headers is a list of complete header
     fields (including continuation lines) as raw bytes, and body is the
     raw body bytes (everything after the blank line separator).
     """
+    raw = _to_bytes(source)
     # Normalise line endings to CRLF
     raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").replace(b"\n", b"\r\n")
 
@@ -382,7 +398,7 @@ def load_private_key(keyfile: str) -> tuple:
 # Main
 # ---------------------------------------------------------------------------
 
-def sign_message(raw: bytes, selector: str, domain: str, keyfile: str,
+def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  mailfrom: str = "<>", rcptto: list[str] | None = None,
                  timestamp: int | None = None) -> bytes:
     """Sign a raw email message with DKIM2.
@@ -390,6 +406,7 @@ def sign_message(raw: bytes, selector: str, domain: str, keyfile: str,
     Returns the complete message with Message-Instance and DKIM2-Signature
     headers prepended.
     """
+    raw = _to_bytes(source)
     private_key, algorithm = load_private_key(keyfile)
 
     headers, body = parse_message(raw)
