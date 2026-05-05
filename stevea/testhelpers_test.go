@@ -20,12 +20,14 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-type TestResolver struct{}
+type TestResolver struct {
+	jsonFile string
+}
 
 func (t TestResolver) Resolve(_ context.Context, selector string, domain string) ([]string, error) {
 	records := sync.OnceValue(
 		func() map[string]map[string][][]string {
-			f, err := os.Open(filepath.Join("testdata", "dns.json"))
+			f, err := os.Open(t.jsonFile)
 			if err != nil {
 				panic(err)
 			}
@@ -54,8 +56,16 @@ func (t TestResolver) Resolve(_ context.Context, selector string, domain string)
 
 var _ KeyResolver = TestResolver{}
 
-func NewTestResolver() TestResolver {
-	return TestResolver{}
+func NewTestResolver(file ...string) TestResolver {
+	if len(file) > 0 {
+		return TestResolver{
+			jsonFile: file[0],
+		}
+	}
+
+	return TestResolver{
+		jsonFile: filepath.Join("testdata", "dns.json"),
+	}
 }
 
 func loadPrivateKey(t testing.TB, name string) crypto.Signer {
