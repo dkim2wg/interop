@@ -29,7 +29,7 @@ our @EXPORT_OK = qw(
     load_private_key
 );
 
-# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-01 Section 5.2
+# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-02 Section 5.2
 sub should_skip {
     my $hname = lc(shift);
     return 1 if $hname eq 'received';
@@ -39,6 +39,7 @@ sub should_skip {
     return 1 if $hname =~ m/^x-/;
     return 1 if $hname eq 'dkim-signature';
     return 1 if $hname =~ m/^arc-/;
+    return 1 if $hname eq 'authentication-results';
     return 0;
 }
 
@@ -344,9 +345,8 @@ All functions are exportable on request.
 
 Returns true if the named header should be excluded from DKIM2 hashing.
 Excluded headers include C<Received>, C<Return-Path>, C<Message-Instance>,
-C<DKIM2-Signature>, C<DKIM-Signature>, ARC headers, and any C<X-*> header.
-Note: C<Authentication-Results> is I<not> excluded — it is part of the
-message state captured by the MI header.
+C<DKIM2-Signature>, C<DKIM-Signature>, C<Authentication-Results>, ARC
+headers, and any C<X-*> header.
 
 =head2 dkim2_canonicalize_header($line)
 
