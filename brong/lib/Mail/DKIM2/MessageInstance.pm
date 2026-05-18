@@ -191,7 +191,9 @@ sub _decode_recipe_list {
             } elsif (exists $item->{d}) {
                 push @decoded, @{$item->{d}};
             }
-            # {"z": true} is currently ignored (truncation marker)
+            # {"z": true} is ignored — spec-02 removed it from the JSON schema
+            # but §11 still uses it for truncated-body DSNs (spec inconsistency;
+            # see spec-review-notes.md). Keep ignoring for backward compatibility.
         } elsif (ref $item eq 'ARRAY') {
             # Legacy bare array format — accept for backward compat
             push @decoded, $item;
@@ -764,7 +766,7 @@ Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance head
 =head1 DESCRIPTION
 
 This module implements Message-Instance header computation as defined in
-draft-ietf-dkim-dkim2-spec-01.  A Message-Instance header records cryptographic
+draft-ietf-dkim-dkim2-spec-02.  A Message-Instance header records cryptographic
 hashes of the message headers and body at a point in the delivery chain, along
 with optional diff recipes that allow undoing changes made at each hop.
 

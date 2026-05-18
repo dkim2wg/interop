@@ -107,3 +107,19 @@ placeholder) when reconstructing the incomplete DKIM2-Signature header for
 verification.  Note also that implementations MUST search for the `s=` tag
 by looking for `;s=` (semicolon tag separator) rather than a bare `rfind("s=")`
 since base64 signature values can contain the substring `s=`.
+
+## spec-02: §11 vs JSON schema inconsistency for `z` body recipe step
+
+spec-02 removed the `{"z": true}` body recipe step from the JSON schema
+(changelog: "Removed the z body recipe since DSNs do not actually need this")
+but §11 (DSN handling) still says:
+
+> "If the message body has been truncated (rather than omitted altogether)
+> then in order to allow verification of the DNS contents a Message-Instance
+> header field MUST be added to the message with a body recipe containing a
+> {"z": true} step."
+
+The `MUST` in §11 and the removed schema entry are contradictory.
+Our implementation ignores `z` steps if encountered (backward compat) and
+does not generate them (since DSN truncation is not yet implemented).
+This inconsistency should be raised with the spec authors.

@@ -6,9 +6,9 @@ use Getopt::Long;
 use Pod::Usage;
 use Sendmail::PMilter ':all';
 
-use constant DKIM2_DRAFT   => 'ietf-dkim-dkim2-spec-01';
+use constant DKIM2_DRAFT   => 'ietf-dkim-dkim2-spec-02';
 use constant DKIM2_REPO    => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE    => '2026-04-20';
+use constant DKIM2_DATE    => '2026-05-17';
 use constant DKIM2_SOFTWARE => 'dkim2-milter.pl';
 
 sub _dkim2_info {
@@ -660,7 +660,7 @@ auto-detected from the key type (RSA or Ed25519).
 
 =back
 
-B<EXPERIMENTAL> — This tool implements draft-ietf-dkim-dkim2-spec-01, an
+B<EXPERIMENTAL> — This tool implements draft-ietf-dkim-dkim2-spec-02, an
 Internet-Draft that has not yet been published as an RFC.  Do not use in
 production.
 

@@ -409,7 +409,7 @@ so the signature covers all headers including those added by other handlers.
 Signing keys can be configured statically per domain, or looked up dynamically
 via an HTTP REST endpoint.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-01, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-02, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 
