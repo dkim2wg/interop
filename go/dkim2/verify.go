@@ -1,6 +1,7 @@
 package dkim2
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
@@ -201,6 +202,48 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			if !matched {
 				return nil, fmt.Errorf("chain-of-custody break at i=%d: mf= domain %q not covered by rt= of i=%d",
 					cur.Sequence, curMFDomain, prev.Sequence)
+			}
+		}
+	}
+
+	// §10.8 SHOULD: reject if a donotmodify or donotexplode request was violated
+	{
+		miByVersion := make(map[int]*MessageInstance)
+		for _, raw := range miHeaders {
+			mi, err := parseMI(raw)
+			if err == nil {
+				miByVersion[mi.Version] = mi
+			}
+		}
+		for _, raw := range sigHeaders {
+			sig, err := parseSig(raw)
+			if err != nil {
+				continue
+			}
+			for _, flag := range sig.Flags {
+				switch flag {
+				case "donotmodify":
+					m := sig.MIVersion
+					cur, hasCur := miByVersion[m]
+					next, hasNext := miByVersion[m+1]
+					if hasCur && hasNext {
+						if !bytes.Equal(cur.BodyHash, next.BodyHash) || !bytes.Equal(cur.HeaderHash, next.HeaderHash) {
+							return nil, fmt.Errorf("i=%d: message modified despite donotmodify request", sig.Sequence)
+						}
+					}
+				case "donotexplode":
+					for _, raw2 := range sigHeaders {
+						sig2, err2 := parseSig(raw2)
+						if err2 != nil || sig2.Sequence <= sig.Sequence {
+							continue
+						}
+						for _, f2 := range sig2.Flags {
+							if f2 == "exploded" {
+								return nil, fmt.Errorf("i=%d: message exploded despite donotexplode request at i=%d", sig2.Sequence, sig.Sequence)
+							}
+						}
+					}
+				}
 			}
 		}
 	}
