@@ -123,11 +123,12 @@ int dkim2_body_hash(const char *body, size_t bodylen, char *out, size_t outlen) 
 /* Returns 1 if this lowercase header name should be ignored per §5.2 */
 static int hdr_ignore(const char *lname, size_t nlen) {
     static const struct { const char *s; size_t l; } skip[] = {
-        {"received",          8},
-        {"return-path",      11},
-        {"message-instance", 16},
-        {"dkim2-signature",  15},
-        {"dkim-signature",   14},
+        {"received",               8},
+        {"return-path",           11},
+        {"message-instance",      16},
+        {"dkim2-signature",       15},
+        {"dkim-signature",        14},
+        {"authentication-results", 22},
     };
     for (size_t i = 0; i < sizeof skip / sizeof skip[0]; i++)
         if (nlen == skip[i].l && memcmp(lname, skip[i].s, nlen) == 0) return 1;

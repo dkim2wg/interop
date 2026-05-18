@@ -16,7 +16,8 @@ type DKIM2Signature struct {
 	Domain    string
 	MailFrom  string
 	RcptTo    []string
-	Nonce     string // n= tag (optional); max 64 ASCII chars per §7.3
+	Nonce     string   // n= tag (optional); max 64 ASCII chars per §7.3
+	Flags     []string // f= tag (optional); comma-separated flags per §10.8
 	Sigs      []SigItem
 }
 
@@ -119,6 +120,13 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 			return nil, fmt.Errorf("n= nonce exceeds 64 characters (%d)", len(v))
 		}
 		sig.Nonce = v
+	}
+	if v := tvl.get("f"); v != "" {
+		for _, part := range strings.Split(strings.ReplaceAll(v, " ", ""), ",") {
+			if part != "" {
+				sig.Flags = append(sig.Flags, part)
+			}
+		}
 	}
 	if sig.Domain == "" {
 		return nil, fmt.Errorf("missing required d= tag in DKIM2-Signature")

@@ -20,6 +20,16 @@ use Mail::DKIM2::Common qw(
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 
+sub _extract_mi_hashes {
+    my ($raw) = @_;
+    $raw =~ s/^[^:]+://;        # strip "Message-Instance:" field name
+    $raw =~ s/\r?\n[ \t]/ /g;   # unfold continuation lines
+    if ($raw =~ /\bh=sha256:([A-Za-z0-9+\/=]+):([A-Za-z0-9+\/=]+)/) {
+        return ($1, $2);         # (header_hash, body_hash)
+    }
+    return (undef, undef);
+}
+
 sub init {
     my $self = shift;
     $self->SUPER::init;
@@ -127,6 +137,38 @@ sub finish_body {
     if ($max_i > 1) {
         my $chain_result = $self->_verify_chain();
         return unless $chain_result;
+    }
+
+    # §10.8: Check donotmodify and donotexplode requests
+    for my $i (1..$max_i) {
+        my $sig   = $dk2_map{$i}{sig};
+        my $flags = $sig->flags // [];
+
+        if (grep { $_ eq 'donotmodify' } @$flags) {
+            my $m = $sig->version || 0;
+            if ($m >= 1 && $mi_map{$m} && $mi_map{$m + 1}) {
+                my ($hh_m,  $bh_m)  = _extract_mi_hashes($mi_map{$m});
+                my ($hh_m1, $bh_m1) = _extract_mi_hashes($mi_map{$m + 1});
+                if (   (defined $bh_m  && defined $bh_m1  && $bh_m  ne $bh_m1)
+                    || (defined $hh_m  && defined $hh_m1  && $hh_m  ne $hh_m1))
+                {
+                    $self->{result}  = 'fail';
+                    $self->{details} = 'Message modified despite donotmodify request at i=' . $i;
+                    return;
+                }
+            }
+        }
+
+        if (grep { $_ eq 'donotexplode' } @$flags) {
+            for my $j ($i + 1 .. $max_i) {
+                my $later_flags = $dk2_map{$j}{sig}->flags // [];
+                if (grep { $_ eq 'exploded' } @$later_flags) {
+                    $self->{result}  = 'fail';
+                    $self->{details} = 'Message exploded despite donotexplode request at i=' . $i;
+                    return;
+                }
+            }
+        }
     }
 
     $self->{result} = 'pass';
@@ -379,7 +421,7 @@ between consecutive hops.
 
 Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-01, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-02, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

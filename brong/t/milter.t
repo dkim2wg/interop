@@ -126,10 +126,7 @@ sub run_verify {
     my $verifier = $handler->get_object('dkim2_verifier');
     if ($verifier) {
         $verifier->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
-
-        # Re-feed headers to the verifier (the handler already fed them)
-        # Actually the handler already called PRINT with headers, so we just
-        # need to feed the body
+        $verifier->skip_timestamp_check(1);
     }
 
     # Feed body in chunks

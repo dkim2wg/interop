@@ -93,7 +93,8 @@ def parse_message(source: "Source") -> tuple[list[bytes], bytes]:
 # Headers to exclude from the header hash
 _EXCLUDED_PREFIXES = (b"x-", b"arc-")
 _EXCLUDED_NAMES = {b"received", b"return-path", b"message-instance",
-                   b"dkim2-signature", b"dkim-signature"}
+                   b"dkim2-signature", b"dkim-signature",
+                   b"authentication-results"}
 
 
 def _header_name(hdr: bytes) -> bytes:
