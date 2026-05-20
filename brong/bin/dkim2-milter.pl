@@ -40,7 +40,7 @@ sub _header_list_for_hash {
 }
 
 use Mail::DKIM2::Common qw(
-    parse_dkim_pubkey load_private_key fold_header extract_mi_version should_skip
+    parse_dkim_pubkey load_private_key fold_header extract_mi_version strip_mi_versions should_skip
 );
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
@@ -361,6 +361,33 @@ sub cb_eom {
                         snapf => $mi_info{snapf}, snaps => $mi_info{snaps}), 0);
                     warn "dkim2-milter: added MI header for $msgid\n";
                 }
+                # If _compute_mi stripped broken intermediate MI headers, delete them
+                # from the wire message and log a warning.
+                if ($mi_info{strip_mi_versions}) {
+                    for my $v (@{$mi_info{strip_mi_versions}}) {
+                        my $count = 0;
+                        my $del_idx = 0;
+                        for my $hdr (@{$priv->{headers}}) {
+                            if (lc($hdr->[0]) eq 'message-instance') {
+                                $count++;
+                                my $val = $hdr->[1];
+                                $val =~ s/^\s+//;
+                                if ((extract_mi_version($val) // 0) == $v) {
+                                    $del_idx = $count;
+                                    last;
+                                }
+                            }
+                        }
+                        if ($del_idx) {
+                            $ctx->chgheader('Message-Instance', $del_idx, '');
+                            warn "dkim2-milter: deleted broken MI m=$v from wire message\n";
+                        }
+                    }
+                    my $stripped_str = join(',', map { "m=$_" } @{$mi_info{strip_mi_versions}});
+                    my $recomp_from  = $mi_info{strip_mi_versions}[0] - 1;
+                    $ctx->insheader('X-DKIM2-Info',
+                        _dkim2_info("stripped-broken-mi=$stripped_str,recomputed-from=m$recomp_from"), 0);
+                }
             }
 
             my $sign_config = _get_sign_config($priv->{env_from});
@@ -382,8 +409,10 @@ sub cb_eom {
                    . " signing=$sign_config->{domain}"
                    . " env_from=$env_domain aligned=$env_aligned"
                    . " from_hdr=$from_hdr_domain aligned=$from_aligned\n";
-                # If we computed an MI, prepend it to the message for the signer
-                my $sign_msg = $message;
+                # Build the signing message: strip any broken MIs, then prepend the new MI
+                my $sign_msg = $mi_info{strip_mi_versions}
+                    ? strip_mi_versions($message, @{$mi_info{strip_mi_versions}})
+                    : $message;
                 if ($mi_header) {
                     $sign_msg = "Message-Instance: $mi_header$EOL" . $sign_msg;
                 }
@@ -505,28 +534,36 @@ sub _compute_mi {
                 my $snap_msg = Email::MIME->new($snap);
                 my @snap_mi = $snap_msg->header_raw('Message-Instance');
 
-                # If the current message has more MI headers than the
-                # snapshot, upstream (e.g. Mailman) already computed the
-                # diff.  Just cache the current state and move on.
+                        # The current message may have more MI headers than the snapshot
+                # because upstream added intermediate MI headers.  Since verify()
+                # already told us the top MI is wrong, those intermediate MIs
+                # are invalid.  Strip them and recompute a fresh diff from the
+                # snapshot rather than silently propagating a broken chain.
+                my ($work_message, $work_msg) = ($message, $msg);
                 if (@mi_hdrs > @snap_mi) {
-                    $snapshot_store->store($by_v{$max_v}, $message);
-                    $info->{snaps} = $snapshot_store->rel_path_for_mi($by_v{$max_v});
-                    return undef;
+                    my %snap_by_v = map { (extract_mi_version($_) || 0) => $_ } @snap_mi;
+                    my $snap_max_v = (sort { $b <=> $a } keys %snap_by_v)[0] // 0;
+                    my @to_strip = ($snap_max_v + 1 .. $max_v);
+                    $work_message = strip_mi_versions($message, @to_strip);
+                    $work_msg = eval { Email::MIME->new($work_message) };
+                    $info->{strip_mi_versions} = \@to_strip;
+                    warn "dkim2-milter: stripping broken MI versions "
+                       . join(',', map { "m=$_" } @to_strip)
+                       . " (snapshot at m=$snap_max_v) — broken chain detected\n";
                 }
 
                 my $mi = eval {
-                    Mail::DKIM2::MessageInstance->calculate($msg, $snap_msg, %mi_opts);
+                    Mail::DKIM2::MessageInstance->calculate($work_msg, $snap_msg, %mi_opts);
                 };
                 if ($mi) {
                     my $mi_val = _format_mi($mi);
-                    # Store new snapshot
                     my $EOL = "\015\012";
                     $snapshot_store->store($mi_val,
-                        "Message-Instance: $mi_val$EOL" . $message);
+                        "Message-Instance: $mi_val$EOL" . $work_message);
                     $info->{snaps} = $snapshot_store->rel_path_for_mi($mi_val);
                     return $mi_val;
                 }
-                # calculate failed — upstream may have added MI already
+                # calculate failed — cache current state and skip
                 $snapshot_store->store($by_v{$max_v}, $message);
                 $info->{snaps} = $snapshot_store->rel_path_for_mi($by_v{$max_v});
                 return undef;

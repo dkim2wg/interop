@@ -74,7 +74,7 @@ BEGIN {
 use lib 'lib', 't/lib';
 use Mail::Milter::Authentication::Handler::DKIM2Verify;
 use Mail::Milter::Authentication::Handler::DKIM2Sign;
-use Mail::DKIM2::Common qw(parse_dkim_pubkey);
+use Mail::DKIM2::Common qw(parse_dkim_pubkey strip_mi_versions);
 use DKIM2TestKeys;
 
 # Helper: feed a raw message through milter verify callbacks
@@ -197,8 +197,9 @@ sub run_sign {
 
     # Simulate addheader phase
     my $mock_handler = {
-        pre_headers => [],
-        add_headers => [],
+        pre_headers    => [],
+        add_headers    => [],
+        remove_headers => [],
     };
     $handler->addheader_callback($mock_handler);
 
@@ -420,7 +421,7 @@ sub run_outbound_sign {
     # Override env_from for the forwarding domain
     $handler->{'env_from'} = '<forwarder@test2.dkim2.com>';
     # Re-run addheader with corrected env_from
-    $mock = { pre_headers => [], add_headers => [] };
+    $mock = { pre_headers => [], add_headers => [], remove_headers => [] };
     $handler->addheader_callback($mock);
     return ($handler, $mock);
 }
@@ -439,6 +440,14 @@ sub assemble_outbound {
     }
     $input_msg =~ s/\r//gs;
     $input_msg =~ s/\n/\r\n/gs;
+    # Apply header removals recorded by the signer (e.g. stripped broken MI headers)
+    if (my @removals = @{$mock->{remove_headers} // []}) {
+        my @mi_versions = map { $_->{version} }
+                          grep { lc($_->{field}) eq 'message-instance' } @removals;
+        if (@mi_versions) {
+            $input_msg = strip_mi_versions($input_msg, @mi_versions);
+        }
+    }
     $result .= $input_msg;
     return $result;
 }
@@ -568,6 +577,77 @@ my $expected_dir = path("tests/expected");
     # Write the final outbound message for interop testing
     my $outbound = assemble_outbound($with_mi2, $mock);
     $expected_dir->child("milter-case3-modified-with-intermediate-mi.eml")->spew($outbound);
+}
+
+# Case 4: Broken intermediate MI — strip-and-recompute
+#
+# An upstream hop (e.g. Mailman with a bug) added an MI v=2 whose hash
+# is wrong.  The outbound signer detects the mismatch, finds the valid
+# snapshot for MI v=1, strips the bad MI v=2 from the chain, and computes
+# a correct MI v=2 from the v=1 snapshot.  The resulting outbound message
+# has a clean, verifiable chain.
+#
+# Flow:
+#   Inbound:  verify pass → snapshot stored for MI v=1
+#   Processing: fake broken MI v=2 prepended (wrong hashes)
+#   Outbound: top MI v=2 doesn't match → finds v=1 snapshot →
+#             strips v=2 → computes correct MI v=2 → signs with i=2
+{
+    my $snapshot_dir = tempdir(CLEANUP => 1);
+    my $signed_msg = make_originator_message();
+
+    # Inbound — stores snapshot keyed by MI v=1
+    my $verify_handler = run_inbound_verify($signed_msg, $snapshot_dir);
+    is($verify_handler->{_auth_headers}[0]{value}, 'pass',
+        'case4: inbound verify passes');
+
+    # Simulate: mailman added List-Id header BUT computed a broken MI v=2
+    # (wrong hashes — all A's — doesn't describe the actual modification)
+    my $bad_hash = 'A' x 43 . '=';   # 44-char base64 (32 bytes, all 0x00)
+    my $broken_mi2_val = "m=2 v=1 h=sha256:${bad_hash}:${bad_hash}";
+    my $modified = $signed_msg;
+    $modified =~ s/\r//gs;
+    $modified =~ s/\n/\r\n/gs;
+    $modified =~ s/\r\n\r\n/\r\nList-Id: test.list\r\n\r\n/;   # content change
+    my $broken_mi2_line = "Message-Instance: $broken_mi2_val\r\n";
+    my $with_broken_mi2 = $broken_mi2_line . $modified;
+
+    # Outbound — should detect v=2 is wrong, strip it, recompute from v=1
+    my ($sign_handler, $mock) = run_outbound_sign($with_broken_mi2, $snapshot_dir);
+    my @dk2 = grep { $_->{field} eq 'DKIM2-Signature' } @{$mock->{pre_headers}};
+    my @mi  = grep { $_->{field} eq 'Message-Instance' } @{$mock->{pre_headers}};
+    my @rem = grep { lc($_->{field}) eq 'message-instance' } @{$mock->{remove_headers}};
+
+    ok(@dk2 > 0,       'case4: outbound added DKIM2-Signature');
+    ok(@mi > 0,        'case4: outbound added a new MI v=2');
+    ok(@rem > 0,       'case4: outbound recorded bad MI v=2 for removal');
+    if (@mi) {
+        like($mi[0]{value}, qr/^m=2/, 'case4: new MI is version 2');
+        like($mi[0]{value}, qr/r=/,   'case4: new MI has recipes (diff from snapshot)');
+    }
+    if (@rem) {
+        is($rem[0]{version}, 2, 'case4: removal targets MI version 2');
+    }
+
+    # Assemble the outbound message (with bad MI v=2 stripped)
+    my $outbound = assemble_outbound($with_broken_mi2, $mock);
+
+    # The outbound message must NOT contain the broken MI v=2
+    my $parsed = Email::MIME->new($outbound);
+    my @all_mi = $parsed->header_raw('Message-Instance');
+    my %mi_versions = map { (Mail::DKIM2::Common::extract_mi_version($_) || 0) => 1 } @all_mi;
+    ok(!$mi_versions{2} || do {
+        # Verify the m=2 that IS there is the new correct one (not the fake)
+        my ($good_mi2) = grep { (Mail::DKIM2::Common::extract_mi_version($_) || 0) == 2 } @all_mi;
+        defined $good_mi2 && $good_mi2 !~ /\Q$bad_hash\E/;
+    }, 'case4: outbound does not contain the broken MI v=2');
+
+    # The assembled outbound message must verify clean
+    my $verify2 = run_verify($outbound);
+    is($verify2->{_auth_headers}[0]{value}, 'pass',
+        'case4: outbound message verifies clean after strip-and-recompute');
+
+    $expected_dir->child("milter-case4-broken-mi-stripped.eml")->spew($outbound);
 }
 
 done_testing();

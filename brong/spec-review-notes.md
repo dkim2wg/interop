@@ -108,6 +108,36 @@ verification.  Note also that implementations MUST search for the `s=` tag
 by looking for `;s=` (semicolon tag separator) rather than a bare `rfind("s=")`
 since base64 signature values can contain the substring `s=`.
 
+## spec-02: No normative guidance when outbound signer finds invalid intermediate MI
+
+The spec describes how a signing MTA computes a diff Message-Instance header
+(§8.1) but does not specify what a signer MUST or SHOULD do if the topmost
+existing MI header does not match the current message content AND the signer
+holds a snapshot for an earlier MI version.
+
+In practice (observed at Fastmail during Mailman integration), an intermediate
+MTA may add an incorrect MI header due to a bug (e.g., including
+Authentication-Results in the header hash when the spec says to exclude it).
+The outbound signer then finds:
+  - MI v=1 (correct, snapshot available)
+  - MI v=2 (invalid — wrong hashes, from a buggy upstream hop)
+
+If the signer naively creates MI v=3 over this chain (computing a diff from
+the v=1 snapshot), the resulting chain has a lie at v=2: it claims the message
+had certain hashes at that point, which is false.  A verifier that only checks
+the top MI would not detect this.
+
+**Suggested fix:** Add a normative requirement in §8.1 (or a new subsection):
+"If the existing topmost Message-Instance header field's hash values do not
+match the current message content, and the signing MTA holds a valid snapshot
+for an earlier Message-Instance version m=K, it MUST:
+  (a) discard all Message-Instance header fields with m > K,
+  (b) compute a new Message-Instance header field as a diff from the m=K
+      snapshot to the current message state (this becomes the new m=K+1), and
+  (c) log a warning that broken intermediate MI headers were discarded."
+
+Our implementation (dkim2-milter.pl and DKIM2Sign.pm) follows this behaviour.
+
 ## spec-02: §11 vs JSON schema inconsistency for `z` body recipe step
 
 spec-02 removed the `{"z": true}` body recipe step from the JSON schema

@@ -23,6 +23,7 @@ our @EXPORT_OK = qw(
     fold_value
     build_signing_input
     extract_mi_version
+    strip_mi_versions
     extract_domain
     relaxed_domain_match
     parse_dkim_pubkey
@@ -197,6 +198,50 @@ sub extract_mi_version {
     $header = $$header if ref($header);
     return unless $header =~ m/^\s*m=(\d+)/;
     return $1;
+}
+
+# Strip Message-Instance headers with the given version numbers from a raw message string.
+# The message must use CRLF line endings.  Returns the modified message string.
+sub strip_mi_versions {
+    my ($message, @versions) = @_;
+    return $message unless @versions;
+    my %to_strip = map { $_ => 1 } @versions;
+
+    my $EOL = "\015\012";
+    my $sep_pos = index($message, $EOL . $EOL);
+    return $message if $sep_pos < 0;
+
+    my $hdrs_raw = substr($message, 0, $sep_pos);
+    my $rest     = substr($message, $sep_pos);   # includes blank line + body
+
+    # Parse folded headers into whole-header strings
+    my @entries;
+    my $cur = '';
+    for my $line (split /\015\012/, $hdrs_raw, -1) {
+        if ($line =~ /^[ \t]/ && $cur ne '') {
+            $cur .= $EOL . $line;
+        } else {
+            push @entries, $cur if $cur ne '';
+            $cur = $line;
+        }
+    }
+    push @entries, $cur if $cur ne '';
+
+    # Keep all headers except Message-Instance ones with versions in %to_strip
+    my @kept;
+    for my $entry (@entries) {
+        if ($entry =~ /^Message-Instance:/i) {
+            my ($val) = $entry =~ /^[^:]+:\s*(.*)/s;
+            if (defined $val) {
+                $val =~ s/\015?\012[ \t]+/ /g;   # unfold for version extraction
+                my $ver = extract_mi_version($val);
+                next if defined $ver && $to_strip{$ver};
+            }
+        }
+        push @kept, $entry;
+    }
+
+    return join($EOL, @kept) . $rest;
 }
 
 # Extract the domain from an email address (handles <user@domain> and user@domain)
