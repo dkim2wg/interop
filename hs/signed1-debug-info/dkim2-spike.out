@@ -1,0 +1,24 @@
+New Message-Instance: m=2; h=sha256:8QVWwKrbt6EVO5mfBAXV2W2qrUakghw9z9Sbc8wy0xk=:fdkeB/A0FkbVP2k4J4pNPoeWH6vqBm9+b0C3OY87Cw8=; r=eyJoIjpudWxsfQ==;
+New template: i=1; m=2; t=2;
+ mf=PGZvb0BiYXIuZXhhbXBsZT4=;
+ rt=PGJhcjFAYmFyLmV4YW1wbGU+,
+  PGJhcjJAYmFyLmV4YW1wbGU+;
+ d=bar.example;
+ s=selector:rsa-sha256:,
+  selector2:ed25519-sha256:;
+RSA key bits: 2048
+RSA signature: eOPHetWUHtGaBgkKHW8gGpjIGTagpcDe99VJQQ73x1uvkxIDrtLZUvmDlbSbfFt7t0Xx8sjbpYZFeOFf1Z94bt394qwzt8D8oqWxAcq56g5MA2P7B7lm+m4CmuspVDVHtRTTnqX9BTuj1G8oA8oCXRviO92ljTKBZV6NaIc/DSNdA/mYSw8UgctIIvdMzMhEStE8yq88psZJsZbT9Ao8ITonvNuWABVZ/lBvvbmJ/0ZAS4ktjAtFTQsEc8WGQjFaqDAqLJ6a/CP1Xggt4nmr5N0NGd1rvjHpYfp5LYfXMu+NtsKF/in7MuGzYV5IXooduD+sn6poG5X7alwFr91l0g==
+ED25519 signature: E6aN9nPEjKzzIbA7QC6tiI/v4MP7mltTubA5N17UcrO0ECrLQOKV3Y0eeY3lby/Dup1yF9Hi8EH46ieFNhwtCQ==
+newDkim2SignatureValue: i=1; m=2; t=2;
+ mf=PGZvb0BiYXIuZXhhbXBsZT4=;
+ rt=PGJhcjFAYmFyLmV4YW1wbGU+,
+  PGJhcjJAYmFyLmV4YW1wbGU+;
+ d=bar.example;
+ s=selector:rsa-sha256:eOPHetWUHtGaBgkKHW8gGpjIGTag
+   pcDe99VJQQ73x1uvkxIDrtLZUvmDlbSbfFt7t0Xx8sjbpYZFeOFf1Z94bt394qwzt8D8oqWxAcq
+   56g5MA2P7B7lm+m4CmuspVDVHtRTTnqX9BTuj1G8oA8oCXRviO92ljTKBZV6NaIc/DSNdA/mYSw
+   8UgctIIvdMzMhEStE8yq88psZJsZbT9Ao8ITonvNuWABVZ/lBvvbmJ/0ZAS4ktjAtFTQsEc8WGQ
+   jFaqDAqLJ6a/CP1Xggt4nmr5N0NGd1rvjHpYfp5LYfXMu+NtsKF/in7MuGzYV5IXooduD+sn6po
+   G5X7alwFr91l0g==,
+  selector2:ed25519-sha256:E6aN9nPEjKzzIbA7QC6tiI/v4MP7
+   mltTubA5N17UcrO0ECrLQOKV3Y0eeY3lby/Dup1yF9Hi8EH46ieFNhwtCQ==;

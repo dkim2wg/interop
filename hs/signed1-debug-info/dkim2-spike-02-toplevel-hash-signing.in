@@ -1,0 +1,3 @@
+message-instance:m=1;h=sha256:+uEFbziRNvhgZC2f9b4yEV5D/7Ee0CSmZEnmKyheXPw=:fdkeB/A0FkbVP2k4J4pNPoeWH6vqBm9+b0C3OY87Cw8=;
+message-instance:m=2;h=sha256:8QVWwKrbt6EVO5mfBAXV2W2qrUakghw9z9Sbc8wy0xk=:fdkeB/A0FkbVP2k4J4pNPoeWH6vqBm9+b0C3OY87Cw8=;r=eyJoIjpudWxsfQ==;
+dkim2-signature:i=1;m=2;t=2;mf=PGZvb0BiYXIuZXhhbXBsZT4=;rt=PGJhcjFAYmFyLmV4YW1wbGU+,PGJhcjJAYmFyLmV4YW1wbGU+;d=bar.example;s=selector:rsa-sha256:,selector2:ed25519-sha256:;
