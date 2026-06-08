@@ -1,24 +1,26 @@
-DKIM2-Signature: i=1; v=1; t=2;
+DKIM2-Signature: i=1; m=2; t=2;
+ mf=PGZvb0BiYXIuZXhhbXBsZT4=;
+ rt=PGJhcjFAYmFyLmV4YW1wbGU+,
+  PGJhcjJAYmFyLmV4YW1wbGU+;
  d=bar.example;
- m=eyJtZiI6Ijxmb29AYmFyLmV4YW1wbGU+IiwicnQiOlsiPGJhcjFAYmFyLmV4
- YW1wbGU+IiwiPGJhcjJAYmFyLmV4YW1wbGU+Il19;
- s=WyJzZWxlY3RvciIsInJzYSIsInNoeEVZOFI3WjVsN2pxTjRIRE1CaFJQMzdz
- NUxHT2dRam05MXRNZzQ0N09MSEJHcXoxeW15SWJMU2pidDc5SDQvZXVLWERq
- V2FhampmZnk0dGVVM2Y0TUd2U0JxZllRbStjYXVYdjlFYUJyZWJJM1lGR1lS
- MmpsZndaWmdLcjJ6S0pXYnNDTGpqeHRjWFlHVUIzMVcwaTFJK2lYSEphU1d6
- REExZFZVNzVEUXAyTmpQS2tGN0ZJNkwvK2pZOEdaT2VyZ1hGYUdOSDZ1Z0V5
- dEhlRm41bG5rMEFDakswUmZIL3h3cTJsWE84SmRnSk1FTzRDc005UEZ5V1lq
- VlNhbkdTYm15eW1kbmN2TWJxdVhocW55Y0NqNldvNWFYeXozWVRTRjhob09I
- Z2JPc29uck9DSlRXckxONXhiOXZjcGN2OWxzN2V3OUFEaFhObGU3dTg3UTh2
- dz09Iiwic2VsZWN0b3IyIiwiZWQyNTUxOSIsIlR2aHVBdC9tQkRNby9LTytP
- N3Nhc1YxbEZGSHRTaTB4UHdDSk9iS2RoVnIrbUlrQ3YyODRYcjMyd2o4eWlN
- NjNXWHNuVXhXamU4Tkl4R0ZNMkxGQkRnPT0iXQ==
-Message-Instance: v=1;
- h=eyJiIjpbInNoYTI1NiIsImZka2VCL0EwRmtiVlAyazRKNHBOUG9lV0g2dnFC
- bTkrYjBDM09ZODdDdzg9Il0sImgiOlsic2hhMjU2IiwiK3VFRmJ6aVJOdmhn
- WkMyZjliNHlFVjVELzdFZTBDU21aRW5tS3loZVhQdz0iXX0=
+ s=selector:rsa-sha256:eOPHetWUHtGaBgkKHW8gGpjIGTag
+   pcDe99VJQQ73x1uvkxIDrtLZUvmDlbSbfFt7t0Xx8sjbpYZFeOFf1Z94bt394qwzt8D8oqWxAcq
+   56g5MA2P7B7lm+m4CmuspVDVHtRTTnqX9BTuj1G8oA8oCXRviO92ljTKBZV6NaIc/DSNdA/mYSw
+   8UgctIIvdMzMhEStE8yq88psZJsZbT9Ao8ITonvNuWABVZ/lBvvbmJ/0ZAS4ktjAtFTQsEc8WGQ
+   jFaqDAqLJ6a/CP1Xggt4nmr5N0NGd1rvjHpYfp5LYfXMu+NtsKF/in7MuGzYV5IXooduD+sn6po
+   G5X7alwFr91l0g==,
+  selector2:ed25519-sha256:E6aN9nPEjKzzIbA7QC6tiI/v4MP7
+   mltTubA5N17UcrO0ECrLQOKV3Y0eeY3lby/Dup1yF9Hi8EH46ieFNhwtCQ==;
+Message-Instance: m=2; h=sha256:8QVWwKrbt6EVO5mfBAXV2W2qrUakghw9z9Sbc8wy0xk=:fdkeB/A0FkbVP2k4J4pNPoeWH6vqBm9+b0C3OY87Cw8=; r=eyJoIjpudWxsfQ==;
+Message-Instance: m=1; h=sha256:+uEFbziRNvhgZC2f9b4yEV5D/7Ee0CSmZEnmKyheXPw=:fdkeB/A0FkbVP2k4J4pNPoeWH6vqBm9+b0C3OY87Cw8=;
 From: Foo <foo@bar.example>
-To: Bar1 <bar1@bar.example>, Bar2 <bar2@bar.example>
+To : 	Bar1 <bar1@bar.example>,	
+  	Bar2 <bar2@bar.example>	        
 Subject: Test
+Subject: Test2
 
 Test
+
+
+
+
