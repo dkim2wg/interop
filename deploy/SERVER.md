@@ -248,6 +248,28 @@ ssh dkim2 systemctl restart sympa sympa-bulk sympa-archived
 - `/etc/letsencrypt/live/sympa.dkim2.com/`
 - `/etc/letsencrypt/live/mail.dkim2.com/` (for Postfix SMTP TLS)
 
+**Renewal (webroot, no downtime):** All three certs renew via the
+`webroot` authenticator, served from `/var/www/acme`. Each port-80
+server block (including a minimal `mail.dkim2.com` vhost that exists
+only for this) includes `snippets/acme-challenge.conf`, which maps
+`/.well-known/acme-challenge/` to that webroot. Auto-renewal runs from
+the system `certbot.timer`.
+
+> History: certs were originally issued with the `standalone`
+> authenticator, which binds port 80 itself and so conflicted with
+> nginx — every auto-renewal failed and the certs expired 2026-06-17.
+> Switched to webroot 2026-06-18. NOTE: `certbot renew` adds a random
+> delay of up to ~8 min before renewing (anti-thundering-herd); this is
+> normal, not a hang. Add `--no-random-sleep-on-renew` for an immediate
+> manual renew.
+
+```bash
+# Manual renew / force:
+ssh dkim2 'certbot renew --no-random-sleep-on-renew'
+# Dry-run (verifies webroot path, nginx stays up):
+ssh dkim2 'certbot renew --dry-run --no-random-sleep-on-renew'
+```
+
 ---
 
 ## Updating Code on the Server
