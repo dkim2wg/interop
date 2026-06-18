@@ -588,10 +588,11 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Print detailed verification results")
     parser.add_argument("--full-chain", action="store_true",
-                        help="Walk backwards through all MI versions, "
-                             "undoing recipes and verifying each signature")
-    parser.add_argument("--skip-timestamp-check", action="store_true",
-                        help="Disable §10.3 14-day expiry check (for testing)")
+                        help="Accepted for compatibility; full-chain validation "
+                             "is the default")
+    parser.add_argument("--ignore-timestamps", "--skip-timestamp-check",
+                        dest="skip_timestamp_check", action="store_true",
+                        help="Disable the §10.3 timestamp (14-day/future) check")
     args = parser.parse_args()
 
     if args.message == "-":
@@ -600,7 +601,8 @@ def main():
         raw = Path(args.message).read_bytes()
 
     dns_data = load_dns_json(args.dns_json)
-    result = verify_message(raw, dns_data, full_chain=args.full_chain,
+    # Full-chain validation is the default; --full-chain kept for compatibility.
+    result = verify_message(raw, dns_data, full_chain=True,
                             verbose=args.verbose,
                             skip_timestamp_check=args.skip_timestamp_check)
 
