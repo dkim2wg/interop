@@ -328,6 +328,49 @@ ssh dkim2 'cat /root/interop/deploy/reflector-aliases >> /etc/aliases && newalia
 
 ---
 
+### 7. DKIM2 Validator (web form)
+
+**Role:** A web page at `https://dkim2.com/validate/` to paste an email and get
+a per-level breakdown — each DKIM2-Signature and each Message-Instance (with
+undo). Two-column: paste left, results right.
+
+**Components:**
+- **Page:** static `index.html` + `validate.css` + `validate.js` under
+  `/var/www/dkim2.com/validate/` (source in `deploy/www/validate/`). Vanilla JS
+  POSTs the pasted message to the API and renders the JSON.
+- **API:** `POST /validate/api` (raw `text/plain` → JSON). nginx routes it via
+  **fcgiwrap** to the CGI `/usr/local/bin/dkim2-validate.cgi` (source
+  `brong/bin/validate.cgi`), which calls `Mail::DKIM2::Validate::report`.
+- **Reporter:** `Mail::DKIM2::Validate` (installed with the other libs).
+- **DNS:** the CGI uses **live DNS** for public-key lookup. The
+  `DKIM2_DNS_JSON` override points at `/root/interop/dns.json` but the CGI runs
+  as `www-data`, which can't read `/root`, so in practice it always uses real
+  DNS — correct for validating real mail. The interop test domains
+  (`test{1..5}.dkim2.com`) are published in real DNS too, so they validate.
+
+**nginx** (`/etc/nginx/sites-available/dkim2.com`, the 443 `default_server`):
+```
+location = /validate/api {
+    client_max_body_size 512k;
+    include /etc/nginx/fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME /usr/local/bin/dkim2-validate.cgi;
+    fastcgi_param DKIM2_DNS_JSON  /root/interop/dns.json;
+    fastcgi_pass unix:/run/fcgiwrap.socket;
+}
+```
+The static `/validate/` files are served by the existing `root` + `location /`.
+
+**Deploy / update:**
+```bash
+ssh dkim2 'cd /root/interop && git pull && \
+    cd brong && perl Makefile.PL && make && make install && \
+    install -m 755 bin/validate.cgi /usr/local/bin/dkim2-validate.cgi && \
+    install -m 644 ../deploy/www/validate/* /var/www/dkim2.com/validate/'
+# one-time: apt-get install -y fcgiwrap; systemctl enable --now fcgiwrap.socket
+```
+
+---
+
 ## Updating Code on the Server
 
 ### DKIM2 milter (Perl, this repo)
