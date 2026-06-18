@@ -74,4 +74,34 @@ sub reflected_verifies {
     like($r->{message}, qr/^X-DKIM2-Reflector:.*signed=no/m, 'X- header shows signed=no');
 }
 
+# --- subject / body / both: new MI with recipes; verifies; undo restores ---
+for my $case (
+    { mode => 'subject', restores_subject => 1, restores_body => 0 },
+    { mode => 'body',    restores_subject => 0, restores_body => 1 },
+    { mode => 'both',    restores_subject => 1, restores_body => 1 },
+) {
+    my $m = $case->{mode};
+    my $in = signed_input(
+        "From: a\@test1.dkim2.com\r\nTo: reflector-$m\@test2.dkim2.com\r\nSubject: hello\r\n\r\noriginal body\r\n");
+    my $r = Mail::DKIM2::Reflector::reflect(%common, mode => $m, message => $in);
+    is($r->{signed}, 1, "$m: signed");
+
+    my $msg = Email::MIME->new($r->{message});
+    my @mi  = $msg->header_raw('Message-Instance');
+    is(scalar @mi, 2, "$m: a new MI was added (now 2)");
+
+    like($msg->header('Subject'), qr/^\Q[DKIM2]\E /, "$m: subject prefixed")
+        if $m ne 'body';
+    like($r->{message}, qr/Reflected and signed by the DKIM2 reflector/, "$m: footer added")
+        if $m ne 'subject';
+
+    is(reflected_verifies($r->{message}), 'pass', "$m: reflected verifies");
+
+    my $undone = Mail::DKIM2::MessageInstance->undo(Email::MIME->new($r->{message}));
+    is($undone->header('Subject'), 'hello', "$m: undo restores subject")
+        if $case->{restores_subject};
+    unlike($undone->body_raw, qr/Reflected and signed/, "$m: undo restores body")
+        if $case->{restores_body};
+}
+
 done_testing;
