@@ -2,6 +2,7 @@
 use 5.020; use strict; use warnings;
 use Test::More;
 use Email::MIME;
+use MIME::Base64 qw(decode_base64);
 use lib 'lib', 't/lib';
 use Mail::DKIM2::Common qw(fold_header);
 use Mail::DKIM2::Verifier;
@@ -102,6 +103,44 @@ for my $case (
         if $case->{restores_subject};
     unlike($undone->body_raw, qr/Reflected and signed/, "$m: undo restores body")
         if $case->{restores_body};
+}
+
+# --- redacted: footer added, MI body recipe null, verifies, but undo can't recover ---
+{
+    my $in = signed_input(
+        "From: a\@test1.dkim2.com\r\nTo: reflector-redacted\@test2.dkim2.com\r\nSubject: hi\r\n\r\nsecret body\r\n");
+    my $r = Mail::DKIM2::Reflector::reflect(%common, mode => 'redacted', message => $in);
+    is($r->{signed}, 1, 'redacted: signed');
+
+    # Find the highest-m MI and check its recipe is b:null (base64 JSON).
+    my @mi = (Email::MIME->new($r->{message}))->header_raw('Message-Instance');
+    my ($top) = sort {
+        Mail::DKIM2::MessageInstance->parse($b)->get_tag('m')
+            <=> Mail::DKIM2::MessageInstance->parse($a)->get_tag('m')
+    } @mi;
+    my ($rtag) = $top =~ /r=([^;\s]+)/;
+    ok($rtag, 'redacted: top MI has an r= tag');
+    like(decode_base64($rtag), qr/"b"\s*:\s*null/, 'redacted: null body recipe');
+
+    is(reflected_verifies($r->{message}), 'pass', 'redacted: reflected verifies (current content)');
+
+    my $undone = Mail::DKIM2::MessageInstance->undo(Email::MIME->new($r->{message}));
+    like($undone->body_raw, qr/Reflected and signed/, 'redacted: body NOT recoverable (footer remains)');
+}
+
+# --- damage: signed correctly, then a line appended -> recipient verify FAILS ---
+{
+    my $in = signed_input(
+        "From: a\@test1.dkim2.com\r\nTo: reflector-damage\@test2.dkim2.com\r\nSubject: hi\r\n\r\nclean body\r\n");
+    my $r = Mail::DKIM2::Reflector::reflect(%common, mode => 'damage', message => $in);
+    is($r->{signed}, 1, 'damage: a signature was produced');
+    like($r->{message}, qr/damage line, breaks the signature/, 'damage: breaking line appended');
+    # The signature crypto still verifies (the MI bytes were not changed)...
+    is(reflected_verifies($r->{message}), 'pass', 'damage: signature crypto still valid');
+    # ...but the top MI body hash no longer matches the (post-sign) body, which
+    # is exactly how a recipient detects the tampering (spec §10.7).
+    ok(!Mail::DKIM2::MessageInstance->verify(Email::MIME->new($r->{message})),
+       'damage: top MI body hash no longer matches -> recipient detects tampering');
 }
 
 done_testing;
