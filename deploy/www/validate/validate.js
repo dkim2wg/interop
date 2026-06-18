@@ -11,13 +11,15 @@
     out.appendChild(verdict);
     if (rep.summary) out.appendChild(el('p', 'muted', rep.summary));
     (rep.levels || []).forEach(function (lvl) {
-      var cls = lvl.result === 'pass' ? 'pass' : (lvl.result === 'not-checked' ? 'notchecked' : 'fail');
+      var cls = lvl.result === 'pass' ? 'pass'
+              : lvl.result === 'warn' ? 'warn'
+              : lvl.result === 'not-checked' ? 'notchecked' : 'fail';
       var card = el('div', 'card ' + cls);
       if (lvl.kind === 'signature') {
         card.appendChild(el('h3', null, 'DKIM2-Signature i=' + lvl.i + ' (m=' + lvl.m + ') — ' + lvl.result));
         card.appendChild(kv('domain', lvl.domain || ''));
         (lvl.items || []).forEach(function (it) { card.appendChild(kv('item', it.selector + ' / ' + it.algorithm + ' → ' + (it.result || ''))); });
-        if (lvl.timestamp) card.appendChild(kv('timestamp', lvl.timestamp.ok ? 'ok' : ('FAIL — ' + lvl.timestamp.detail)));
+        if (lvl.timestamp) card.appendChild(kv('timestamp', lvl.timestamp.ok ? 'ok' : ((lvl.timestamp.status || 'fail') + ' — ' + lvl.timestamp.detail)));
         if (lvl.custody) card.appendChild(kv('chain-of-custody', lvl.custody.ok ? 'ok' : ('FAIL — ' + lvl.custody.detail)));
       } else {
         card.appendChild(el('h3', null, 'Message-Instance m=' + lvl.m + ' — ' + lvl.result));

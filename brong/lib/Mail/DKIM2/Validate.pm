@@ -54,8 +54,10 @@ sub report {
         unless @sig_hdrs;
 
     # Overall verdict from the full verifier (includes the §10.7 deep MI walk).
+    # Timestamp age is graded per-signature as a soft 'warn' below, so it must
+    # not hard-fail the crypto verdict here.
     my $v = Mail::DKIM2::Verifier->new;
-    $v->skip_timestamp_check(1) if $skip_ts;
+    $v->skip_timestamp_check(1);
     $v->set_pubkey_callback($cb);
     eval { $v->PRINT($text); $v->CLOSE; 1 };
     my $ov = $v->result // 'fail';
@@ -104,6 +106,14 @@ sub report {
     }
 
     $res{summary} = ($res{summary} ? "$res{summary}; " : '') . $stopped if $stopped;
+
+    # An old/future timestamp is a soft warning, not a hard fail: if the chain
+    # otherwise verified, surface it as an amber 'warn' overall.
+    if ($res{overall} eq 'pass'
+        && grep { ($_->{result} // '') eq 'warn' } @levels) {
+        $res{overall} = 'warn';
+    }
+
     $res{levels} = \@levels;
     return \%res;
 }
@@ -162,8 +172,8 @@ sub _sig_level {
             my $ts = $sig->timestamp;
             if (defined $ts && $ts > 0) {
                 my $now = time();
-                if    ($ts > $now + 300)            { $lvl{timestamp} = { ok => 0, detail => 'timestamp in the future' }; }
-                elsif ($now > $ts + 14*24*3600)     { $lvl{timestamp} = { ok => 0, detail => 'older than 14 days' }; }
+                if    ($ts > $now + 300)        { $lvl{timestamp} = { ok => 0, status => 'future', detail => 'timestamp in the future' }; }
+                elsif ($now > $ts + 14*24*3600) { $lvl{timestamp} = { ok => 0, status => 'old',    detail => 'older than 14 days' }; }
             }
         }
         if ($num > 1 && $sig_by_i->{$num - 1}) {
@@ -181,14 +191,18 @@ sub _sig_level {
         $lvl{detail} = 'unparseable DKIM2-Signature';
     }
 
+    # Timestamp age never hard-fails here; it is graded as a soft warn above.
     my $vv = Mail::DKIM2::Verifier->new;
-    $vv->skip_timestamp_check(1) if $skip_ts;
+    $vv->skip_timestamp_check(1);
     $vv->set_pubkey_callback($cb);
     eval { $vv->PRINT($work->as_string); $vv->CLOSE; 1 };
     my $r = $vv->result // 'fail';
-    $lvl{result} = ($r eq 'pass') ? 'pass' : 'fail';
-    $lvl{detail} = ($vv->result_detail // $lvl{detail}) unless $r eq 'pass';
-    $_->{result} = $lvl{result} for @{$lvl{items}};
+    my $crypto = ($r eq 'pass') ? 'pass' : 'fail';
+    $lvl{result} = $crypto;
+    $lvl{detail} = ($vv->result_detail // $lvl{detail}) unless $crypto eq 'pass';
+    # Crypto verified but timestamp old/future -> soft amber warning.
+    $lvl{result} = 'warn' if $crypto eq 'pass' && !$lvl{timestamp}{ok};
+    $_->{result} = $crypto for @{$lvl{items}};
     return \%lvl;
 }
 

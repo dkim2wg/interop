@@ -97,4 +97,16 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
     ok((grep { $_->{kind} eq 'signature' && $_->{result} eq 'fail' } @{$rep->{levels}}), 'a signature level failed');
 }
 
+# 6) old timestamp is a soft warn, not a hard fail
+{
+    # signed_input uses Timestamp=1740000000 (well over 14 days ago).
+    my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: x\@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n");
+    my $rep = Mail::DKIM2::Validate::report($in, pubkey_cb => $cb);  # NO skip_timestamp_check
+    is($rep->{overall}, 'warn', 'old signature -> overall warn (not fail)');
+    my ($sig1) = grep { $_->{kind} eq 'signature' && $_->{i} == 1 } @{$rep->{levels}};
+    is($sig1->{result}, 'warn', 'old signature level is warn');
+    is($sig1->{timestamp}{status}, 'old', 'timestamp marked old');
+    is($sig1->{items}[0]{result}, 'pass', 'the crypto item still passes');
+}
+
 done_testing;
