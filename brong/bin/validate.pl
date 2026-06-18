@@ -9,6 +9,11 @@ use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
 use List::Util qw(max);
 use JSON;
+use Getopt::Long qw(GetOptions);
+
+my $ignore_ts = 0;
+GetOptions('ignore-timestamps' => \$ignore_ts)
+  or die "usage: $0 [--ignore-timestamps] <file>\n";
 
 my $f1 = shift;
 my $data = path($f1)->slurp;
@@ -49,6 +54,7 @@ while (1) {
 
   # Create a verifier for this specific signature
   my $verifier = Mail::DKIM2::Verifier->new();
+  $verifier->skip_timestamp_check(1) if $ignore_ts;
   $verifier->set_pubkey_callback(sub { find_key(@_) });
   $verifier->PRINT($msg1->as_string());
   $verifier->CLOSE;
