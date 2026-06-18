@@ -74,10 +74,14 @@ reflector-damage:   |"/usr/local/bin/dkim2-reflect damage"
    not passed. SPF/DKIM1 are not consulted.
 3. **Transform** per mode (see table). Always applied.
 4. **If `passed`:** compute the Message-Instance (per the mode) and sign with
-   `Mail::DKIM2::Signer` as `d=dkim2.com` (selectors `sel1` RSA + `ed25519`,
-   keys from `/etc/dkim2/keys/dkim2.com/`), producing the next `i=N+1`
-   signature with `mf=reflector-bounces@dkim2.com` and `rt=` set to the reply
-   recipient. **If not passed:** skip MI and signature.
+   `Mail::DKIM2::Signer` as `d=dkim2.com`, **a single signature** with selector
+   `sel1` / `rsa-sha256` (key `/etc/dkim2/keys/dkim2.com/sel1.key`) — one
+   `Signer` instance produces one `DKIM2-Signature` (the lib signs one
+   algorithm per instance, matching the milter). Produces the next `i=N+1`
+   with `mf=reflector-bounces@dkim2.com` and `rt=` the reply recipient.
+   (The `ed25519.key` also exists; multi-algorithm signing is a possible
+   later enhancement and out of scope here.) **If not passed:** skip MI and
+   signature.
 5. For `damage` only: after signing, append the damage line to the body
    (post-signature mutation — see table).
 6. Add explanation headers (both excluded from the DKIM2 header hash by
