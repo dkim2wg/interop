@@ -285,6 +285,49 @@ ssh dkim2 'certbot renew --dry-run --no-random-sleep-on-renew'
 
 ---
 
+### 6. DKIM2 Reflector
+
+**Role:** Six addresses that verify an incoming DKIM2 message, transform it per
+mode, and reflect it back to the sender — signing as `dkim2.com` only when the
+incoming DKIM2 chain verified. For interop testing of chain behaviour.
+
+**Addresses** (`/etc/aliases`, snippet in `deploy/reflector-aliases`):
+
+| Address | Behaviour at the sender |
+|---------|-------------------------|
+| `reflector-raw@dkim2.com` | re-signed, unchanged (new sig, same `m=`) — verifies |
+| `reflector-subject@dkim2.com` | `Subject:` prefixed `[DKIM2] `; new MI `rh` recipe |
+| `reflector-body@dkim2.com` | footer appended; new MI `rb` recipe |
+| `reflector-both@dkim2.com` | subject + footer |
+| `reflector-redacted@dkim2.com` | footer appended; MI body recipe `"b":null` (not undoable) |
+| `reflector-damage@dkim2.com` | a line appended *after* signing — fails body-hash verification |
+
+Always adds `Authentication-Results` + `X-DKIM2-Reflector` (mode/auth/signed).
+If the incoming chain did not verify, the transform is still applied but no
+reflector signature is added (`X-DKIM2-Reflector: ... signed=no`).
+
+**Code:** `Mail::DKIM2::Reflector` (in this repo, installed system-wide with the
+other libs) + wrapper `brong/bin/dkim2-reflector.pl` deployed to
+`/usr/local/bin/dkim2-reflect`. Signs `dkim2.com` / `sel1` / `rsa-sha256` with
+`/etc/dkim2/keys/dkim2.com/sel1.key`.
+
+**No-milter injector:** the wrapper submits the finished (already-signed) reply
+over SMTP to `127.0.0.1:10588`, a `master.cf` service with `smtpd_milters=` and
+`non_smtpd_milters=` emptied, so the outbound milter does **not** re-sign it.
+
+**Deploy / update:**
+```bash
+ssh dkim2 'cd /root/interop && git pull && \
+    cd brong && perl Makefile.PL && make && make install && \
+    install -m 755 bin/dkim2-reflector.pl /usr/local/bin/dkim2-reflect'
+# aliases (once):
+ssh dkim2 'cat /root/interop/deploy/reflector-aliases >> /etc/aliases && newaliases'
+# injector service (once): add the 127.0.0.1:10588 block to /etc/postfix/master.cf
+#   with smtpd_milters= and non_smtpd_milters= emptied, then: systemctl reload postfix
+```
+
+---
+
 ## Updating Code on the Server
 
 ### DKIM2 milter (Perl, this repo)
