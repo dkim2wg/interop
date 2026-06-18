@@ -229,6 +229,20 @@ outbound milter processes it (not the inbound milter).
 
 **Web UI:** `https://sympa.dkim2.com/sympa` → nginx → FastCGI
 
+**Static assets (fixed 2026-06-18):** the nginx vhost must serve two distinct
+trees under the `/static-sympa/` URL, or the UI loads unstyled with broken
+icons:
+- `/static-sympa/css/` → **`/var/lib/sympa/css/`** — per-robot CSS that Sympa
+  generates at runtime (`css_path`), e.g. `css/sympa.dkim2.com/style.css`.
+- `/static-sympa/` → **`/opt/sympa-dkim2/www/`** — the shipped JS/fonts/icons
+  for the running 6.2.76 build (Font Awesome 6). NOTE: the distro
+  `/usr/share/sympa/static_content` is a **stale older bundle** (Font Awesome 4,
+  wrong filenames) — do not point nginx there.
+```
+location /static-sympa/css/ { alias /var/lib/sympa/css/; }
+location /static-sympa/     { alias /opt/sympa-dkim2/www/; }
+```
+
 **Database:** `/var/lib/sympa/sympa.sqlite` (SQLite)
 
 **Perl dependency (Mail::DKIM2):** Installed system-wide from this repo:
