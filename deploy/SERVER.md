@@ -145,6 +145,19 @@ url: sqlite:////var/lib/mailman3/mailman.db
 - `test-body-only@mailman.dkim2.com` — footer only
 - `test-passthrough@mailman.dkim2.com` — no modification (passthrough)
 
+**Log rotation gotcha (fixed 2026-06-18):** Mailman core runs as user
+`mailman`, but the distro `/etc/logrotate.d/mailman3` shipped
+`create 640 list list`. After a rotation, `mailman.log` became owned by
+`list`, the `mailman`-user service could no longer write it, and `mailman3`
+crash-looped (`PermissionError: /var/log/mailman3/mailman.log`) — taking down
+Postorius ("Mailman REST API not available"). A second `mailman3-fix` stanza was
+ignored by logrotate as a duplicate. Corrected config is committed at
+`deploy/logrotate-mailman3` (single stanza, `create 640 mailman mailman`,
+`su mailman mailman`, `mailman reopen` postrotate); deploy it to
+`/etc/logrotate.d/mailman3` and delete `/etc/logrotate.d/mailman3-fix`.
+Recovery if it recurs: `chown mailman:mailman /var/log/mailman3/mailman.log &&
+systemctl restart mailman3`.
+
 **Update process:**
 
 Sync changed handler files from the local brong/mailman checkout:
