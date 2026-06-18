@@ -22,8 +22,8 @@ transformation and always adds an explanation header.
 - **Always** verify the incoming message and add explanation headers.
 - **Always** apply the mode's transformation, regardless of the auth result.
 - Add the reflector's **DKIM2 signature only if incoming auth passed**, where
-  *passed* = the incoming DKIM2 chain verified, OR there was no DKIM2 and an
-  existing `Authentication-Results` shows `dkim=pass` or `spf=pass`.
+  *passed* = the incoming DKIM2 chain verified. This is **DKIM2-only**: SPF and
+  DKIM1 are not consulted. A message with no valid DKIM2 chain is "not passed".
 - On auth failure: forward the (transformed) message **without** a reflector
   signature and without a new Message-Instance.
 
@@ -69,11 +69,9 @@ reflector-damage:   |"/usr/local/bin/dkim2-reflect damage"
 ## Per-message flow
 
 1. Read the message from stdin; read `$SENDER`; mode from `$ARGV[0]`.
-2. **Verify** with `Mail::DKIM2::Verifier`. Determine `passed`:
-   - DKIM2 chain verified → passed.
-   - No DKIM2 present, but an existing `Authentication-Results` header shows
-     `dkim=pass` or `spf=pass` → passed.
-   - Otherwise → not passed.
+2. **Verify** with `Mail::DKIM2::Verifier` (DKIM2-only): a verified DKIM2
+   chain → `passed`; anything else (no DKIM2, broken chain, failed hashes) →
+   not passed. SPF/DKIM1 are not consulted.
 3. **Transform** per mode (see table). Always applied.
 4. **If `passed`:** compute the Message-Instance (per the mode) and sign with
    `Mail::DKIM2::Signer` as `d=dkim2.com` (selectors `sel1` RSA + `ed25519`,
@@ -172,8 +170,7 @@ Plus a `MessageInstance` test for emitting and round-tripping `"b": null`.
 
 ## Out of scope
 
-- Adding SPF/DKIM1 verification to the inbound path (the reflector only reads
-  any `Authentication-Results` already present; if absent, no-DKIM2 input is
-  treated as not-passed and reflected unsigned). Can be added later.
+- SPF and DKIM1 entirely. Auth is DKIM2-only: input without a verified DKIM2
+  chain is treated as not-passed and reflected unsigned.
 - Web UI or listing of reflector addresses on the dkim2.com landing page
   (may be added later).
