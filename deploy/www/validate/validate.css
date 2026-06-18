@@ -9,7 +9,7 @@ a { color:var(--accent); }
 .cols { max-width:72rem; margin:0 auto; padding:1rem 1.25rem 3rem;
         display:grid; grid-template-columns:1fr 1fr; gap:1.25rem; }
 .pane { min-width:0; }
-label { display:block; font-weight:600; margin-bottom:.4rem; }
+label, .colhead { display:block; font-weight:600; margin:0 0 .4rem; }
 textarea { width:100%; height:60vh; font-family:ui-monospace,Menlo,Consolas,monospace;
            font-size:.85rem; padding:.6rem; border:1px solid var(--rule); border-radius:6px; }
 .actions { margin-top:.6rem; display:flex; gap:1rem; align-items:center; }
