@@ -240,15 +240,28 @@ ssh dkim2 systemctl restart sympa sympa-bulk sympa-archived
 **Role:** TLS termination and reverse proxy.
 
 **Config:** `/etc/nginx/sites-enabled/`
+- `dkim2.com` → apex landing page (also the 443 `default_server`); `www` → apex
 - `mailman.dkim2.com` → proxy to gunicorn :8080
 - `sympa.dkim2.com` → FastCGI to wwsympa socket
 
+**Apex landing page:** Static `index.html` + `style.css` served from
+`/var/www/dkim2.com`. Source of truth is `deploy/www/` in this repo. The
+`dkim2.com` vhost is the 443 `default_server`, so the bare domain (and
+unknown-host hits) land on the explainer instead of falling through to
+Mailman. Deploy after editing `deploy/www/`:
+```bash
+ssh dkim2 'cd /root/interop && git pull && \
+    install -m 644 deploy/www/index.html deploy/www/style.css /var/www/dkim2.com/'
+# (no service restart needed — nginx serves the files directly)
+```
+
 **TLS certificates:** Let's Encrypt, stored at:
+- `/etc/letsencrypt/live/dkim2.com/` (covers `dkim2.com` + `www.dkim2.com`)
 - `/etc/letsencrypt/live/mailman.dkim2.com/`
 - `/etc/letsencrypt/live/sympa.dkim2.com/`
 - `/etc/letsencrypt/live/mail.dkim2.com/` (for Postfix SMTP TLS)
 
-**Renewal (webroot, no downtime):** All three certs renew via the
+**Renewal (webroot, no downtime):** All four certs renew via the
 `webroot` authenticator, served from `/var/www/acme`. Each port-80
 server block (including a minimal `mail.dkim2.com` vhost that exists
 only for this) includes `snippets/acme-challenge.conf`, which maps
