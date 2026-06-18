@@ -72,6 +72,13 @@ sub get_tag {
     return $self->{bits}{$k};
 }
 
+# Mark the body recipe as null per spec-02 §4.2: the body changed but the
+# previous state cannot be recreated. as_string() then emits "b": null.
+sub set_null_body_recipe {
+    my ($self) = @_;
+    $self->{bits}{rb} = \'null';   # scalar-ref sentinel
+}
+
 # --- Wire format: m=N; h=sha256:header_hash:body_hash; r=<b64json> ---
 
 sub as_string {
@@ -87,7 +94,12 @@ sub as_string {
     # Build r= tag JSON if there are recipes
     my %recipe_json;
     if (exists $data{rb}) {
-        $recipe_json{b} = _encode_recipe_list(delete $data{rb});
+        if (ref $data{rb} eq 'SCALAR' && ${$data{rb}} eq 'null') {
+            $recipe_json{b} = undef;          # encodes as JSON null
+            delete $data{rb};
+        } else {
+            $recipe_json{b} = _encode_recipe_list(delete $data{rb});
+        }
     }
     if (exists $data{rh}) {
         my $rh = delete $data{rh};
