@@ -45,7 +45,7 @@ static char *dns_json_lookup(const char *qname) {
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s <email.eml> --dns-json <path> [--mailfrom <addr>] "
-        "[--rcptto <addr>]... [-v]\n", prog);
+        "[--rcptto <addr>]... [--ignore-timestamps] [-v]\n", prog);
     exit(1);
 }
 
@@ -69,7 +69,8 @@ int main(int argc, char *argv[]) {
             if (n_rcpt < 63) rcptto[n_rcpt++] = argv[++i];
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0)
             verbose = 1;
-        else if (strcmp(argv[i], "--no-timestamp-check") == 0)
+        else if (strcmp(argv[i], "--no-timestamp-check") == 0 ||
+                 strcmp(argv[i], "--ignore-timestamps") == 0)
             no_timestamp = 1;
         else if (strcmp(argv[i], "--full-chain") == 0)
             ; /* body bytes are always kept; full-chain MI hash walk is automatic */
