@@ -135,12 +135,12 @@ for my $case (
     my $r = Mail::DKIM2::Reflector::reflect(%common, mode => 'damage', message => $in);
     is($r->{signed}, 1, 'damage: a signature was produced');
     like($r->{message}, qr/damage line, breaks the signature/, 'damage: breaking line appended');
-    # The signature crypto still verifies (the MI bytes were not changed)...
-    is(reflected_verifies($r->{message}), 'pass', 'damage: signature crypto still valid');
-    # ...but the top MI body hash no longer matches the (post-sign) body, which
-    # is exactly how a recipient detects the tampering (spec §10.7).
+    # The signature crypto is intact, but the verifier now enforces §10.7:
+    # the top MI body hash no longer matches the post-sign body -> reject.
+    is(reflected_verifies($r->{message}), 'fail',
+       'damage: verifier rejects (MI body hash mismatch, §10.7)');
     ok(!Mail::DKIM2::MessageInstance->verify(Email::MIME->new($r->{message})),
-       'damage: top MI body hash no longer matches -> recipient detects tampering');
+       'damage: top MI body hash no longer matches content');
 }
 
 done_testing;

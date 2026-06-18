@@ -17,6 +17,7 @@ use Mail::DKIM2::Common qw(
     extract_domain
     relaxed_domain_match
 );
+use Email::MIME;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 
@@ -171,8 +172,55 @@ sub finish_body {
         }
     }
 
+    # §10.7: the cryptographic chain proves the MI headers are authentic, but
+    # NOT that the current body/headers still match them. Walk the MI chain:
+    # verify the top instance against the current content, then undo each
+    # instance and verify the reconstructed content against the next one down,
+    # until m=1 or an instance that declares the previous state unrecoverable.
+    return unless $self->_verify_mi_chain();
+
     $self->{result} = 'pass';
     $self->{details} = "i=1..$max_i verified";
+}
+
+sub _verify_mi_chain {
+    my ($self) = @_;
+
+    my $raw = join('', @{$self->{headers}}) . "\r\n" . ($self->{_buf} // '');
+    my $msg = Email::MIME->new($raw);
+
+    while (1) {
+        my @mi = $msg->header_raw('Message-Instance');
+        my %by_v = map { (extract_mi_version($_) // 0) => $_ } @mi;
+        my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
+        last unless $num;
+
+        my ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg);
+        unless ($ok) {
+            $self->{result}  = 'fail';
+            $self->{details} = "Message-Instance m=$num does not match content"
+                             . ($err ? " ($err)" : '');
+            return 0;
+        }
+
+        last if $num <= 1;
+
+        # If this instance declares the previous state non-recreatable, the
+        # chain cannot (and need not) be undone further — accept what verified.
+        my $mi_obj = Mail::DKIM2::MessageInstance->parse($by_v{$num});
+        last if $mi_obj->unrecoverable;
+
+        my $prev = eval { Mail::DKIM2::MessageInstance->undo($msg) };
+        if ($@ || !$prev) {
+            $self->{result}  = 'fail';
+            $self->{details} = "Message-Instance m=$num did not undo cleanly"
+                             . ($@ ? ": $@" : '');
+            return 0;
+        }
+        $msg = $prev;
+    }
+
+    return 1;
 }
 
 sub _verify_signature {

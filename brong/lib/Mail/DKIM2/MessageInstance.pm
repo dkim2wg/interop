@@ -79,6 +79,13 @@ sub set_null_body_recipe {
     $self->{bits}{rb} = \'null';   # scalar-ref sentinel
 }
 
+# True if this instance declares the previous state non-recreatable (a null
+# "b" or "h" recipe). Such an instance cannot be undone to a prior version.
+sub unrecoverable {
+    my ($self) = @_;
+    return ($self->{bits}{rb_null} || $self->{bits}{rh_null}) ? 1 : 0;
+}
+
 # --- Wire format: m=N; h=sha256:header_hash:body_hash; r=<b64json> ---
 
 sub as_string {
@@ -175,15 +182,25 @@ sub parse {
 
     if (exists $tags{r}) {
         my $recipe_data = decode_tag_json($tags{r});
-        if ($recipe_data->{b} && ref($recipe_data->{b}) eq 'ARRAY') {
-            $self->{bits}{rb} = _decode_recipe_list($recipe_data->{b});
-        }
-        if ($recipe_data->{h} && ref($recipe_data->{h}) eq 'HASH' && keys %{$recipe_data->{h}}) {
-            my %rh;
-            for my $h (keys %{$recipe_data->{h}}) {
-                $rh{$h} = _decode_recipe_list($recipe_data->{h}{$h});
+        # A present-but-null "b"/"h" (spec §4.1/§4.2) means the previous state
+        # cannot be recreated — distinct from an absent field (no change).
+        if (exists $recipe_data->{b}) {
+            if (defined $recipe_data->{b} && ref($recipe_data->{b}) eq 'ARRAY') {
+                $self->{bits}{rb} = _decode_recipe_list($recipe_data->{b});
+            } else {
+                $self->{bits}{rb_null} = 1;
             }
-            $self->{bits}{rh} = \%rh;
+        }
+        if (exists $recipe_data->{h}) {
+            if (defined $recipe_data->{h} && ref($recipe_data->{h}) eq 'HASH' && keys %{$recipe_data->{h}}) {
+                my %rh;
+                for my $h (keys %{$recipe_data->{h}}) {
+                    $rh{$h} = _decode_recipe_list($recipe_data->{h}{$h});
+                }
+                $self->{bits}{rh} = \%rh;
+            } else {
+                $self->{bits}{rh_null} = 1;
+            }
         }
     }
 
@@ -681,6 +698,9 @@ sub verify {
     my $hd = h_digest($msg);
     my $bd = b_digest($msg);
 
+    unless (defined $h1 && defined $b1) {
+        return wantarray ? (0, "Message-Instance m=$num has no hash") : 0;
+    }
     if ($h1 ne $hd) {
         return wantarray ? (0, "header hash mismatch ($h1 != $hd)") : 0;
     }
