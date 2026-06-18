@@ -179,6 +179,50 @@ about *replay*, a separate problem from list breakage.)
 
 ---
 
+## 8a. Latest WG interim — 2026-06-17 (virtual)
+
+Notes: https://notes.ietf.org/notes-ietf-interim-2026-dkim-04-dkim
+(informal meeting notes; spec details may still change). Documents discussed:
+DKIM2 **spec**, plus a new **DNS** document and a **BCP** document.
+
+Decisions / consensus:
+- **Adopt** the **DNS** and **BCP** documents as WG documents (for change
+  tracking / issue management). *(action: Murray)*
+- **Imaginary hops** extended to arbitrary domains via a **`nextd` override**;
+  spec to be updated. *(action: Richard)* — extends recipient binding across
+  multiple signing domains (brand + enterprise use cases).
+- **Remove the NULL recipe for headers.** Bounces should instead contain the
+  **full received headers** so replay protection holds across multiple bounces
+  (full header preservation lets you detect multiple passes through the same
+  systems; distinguishes synthetic-hop creation from header hiding).
+  > Relevant to us: we implemented `rh_null`/`rb_null` ("unrecoverable") in
+  > `MessageInstance`. The **body** null recipe (`b:null`, §4.2) stands; the
+  > **header** null recipe is being removed. Revisit `set_null_body_recipe` /
+  > `unrecoverable()` and the reflector "redacted" mode when the spec updates.
+- **Do NOT sign X-headers.** Poll **9 opposed / 2 in favour** — signing
+  X-headers adds complexity for negligible benefit. Bron: *"making everybody
+  wear padded helmets to stop people punching themselves in the face."*
+  Richard: *"there's nothing at useful scale so far,"* and it would *"delay
+  implementation … a lot."*
+  > Corroborates our design: the reflector's `X-DKIM2-Reflector` and
+  > `Authentication-Results` headers are deliberately outside the signed set.
+- **DKIM erratum** accepted (no objections); Murray to authorise Andy.
+
+Open / deferred:
+- **Post-quantum crypto:** wait for CFRG rather than pick algorithms now. John:
+  *"we shouldn't try to pick things until the fight over in TLS is done."*
+  Wei to start a WG threat-model thread (Andy: *"clearly define … the threat we
+  see"* for CFRG).
+- **Terminology "gateway" vs "MTA":** MTAs do classic relaying; **gateways**
+  re-post/re-submit with new addresses. Precise behavioural definitions still
+  unresolved (Dave wants precision; Pete questioned needing new terminology).
+- **Line-based ranges:** Richard skeptical the complexity is justified (real
+  parts can contain hundreds of messages).
+
+No explicit timeline set.
+
+---
+
 ## 9. Primary sources
 
 - `draft-ietf-dkim-dkim2-motivation` — https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-motivation/
@@ -192,3 +236,5 @@ about *replay*, a separate problem from list breakage.)
 - DKIM WG — https://datatracker.ietf.org/group/dkim/about/
 - ietf-dkim list archive — https://mailarchive.ietf.org/arch/browse/ietf-dkim/
   (corroborating threads incl. Dave Crocker's review of `-01`, 2025-01-31)
+- DKIM WG interim, 2026-06-17 (notes) —
+  https://notes.ietf.org/notes-ietf-interim-2026-dkim-04-dkim
