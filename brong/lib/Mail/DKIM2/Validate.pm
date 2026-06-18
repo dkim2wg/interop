@@ -11,9 +11,6 @@ use Mail::DKIM2::Signature;
 sub _i { my $h = shift // ''; $h =~ /\bi=(\d+)/ ? 0 + $1 : 0 }
 sub _m { my $h = shift // ''; $h =~ /\bm=(\d+)/ ? 0 + $1 : 0 }
 
-# Strip a "Field-Name: " prefix from a raw header line, if present.
-sub _strip_name { my $h = shift // ''; $h =~ s/^[^:]*:\s*//; return $h; }
-
 # Default live-DNS pubkey callback (dns.json override if $dns_path readable).
 sub _default_cb {
     my ($dns_path) = @_;
@@ -146,7 +143,8 @@ sub _mi_level {
 # Signature-level hashref for i=$num, verifying the chain prefix on $work.
 sub _sig_level {
     my ($work, $num, $sig_by_i, $cb, $skip_ts) = @_;
-    my $sig = eval { Mail::DKIM2::Signature->parse(_strip_name($sig_by_i->{$num})) };
+    # $sig_by_i values come from Email::MIME->header() — already bare values.
+    my $sig = eval { Mail::DKIM2::Signature->parse($sig_by_i->{$num}) };
     my %lvl = (kind => 'signature', i => $num, m => _m($sig_by_i->{$num}),
                domain => ($sig ? ($sig->domain // '') : ''),
                items => [], timestamp => { ok => 1, detail => '' },
@@ -169,7 +167,7 @@ sub _sig_level {
             }
         }
         if ($num > 1 && $sig_by_i->{$num - 1}) {
-            my $prev = eval { Mail::DKIM2::Signature->parse(_strip_name($sig_by_i->{$num-1})) };
+            my $prev = eval { Mail::DKIM2::Signature->parse($sig_by_i->{$num-1}) };
             my $mf = $sig->mail_from;
             if ($prev && $mf && $mf ne '<>') {
                 my $mfd = extract_domain($mf);
