@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DKIM2 — verifiable email handling</title>
+  <meta name="description" content="DKIM2 lets every domain that handles an email document it with a verifiable cryptographic signature, forming a tamper-evident chain from author to recipient. A work in progress in the IETF DKIM working group.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hero">
+    <h1>DKIM2</h1>
+    <p class="tagline">Every domain that handles a message documents it with a
+      verifiable cryptographic signature — building a tamper-evident chain
+      from author to recipient.</p>
+    <p class="badge">Work in progress · IETF Internet-Draft</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>Status: a work in progress</h2>
+      <p>DKIM2 is being developed in the IETF
+        <a href="https://datatracker.ietf.org/wg/dkim/about/">DKIM working
+        group</a>. It is an active Internet-Draft, not yet a finished
+        standard — details may still change.</p>
+    </section>
+
+    <section>
+      <h2>The problem with DKIM today</h2>
+      <p>DKIM (v1) adds one signature per hop, and each relay can only sign
+        what it added. It has no way to show whether a message was modified
+        between hops — so ordinary forwarding and mailing lists routinely
+        break signatures, and there is no record of who changed what.</p>
+    </section>
+
+    <section>
+      <h2>How DKIM2 works</h2>
+      <p>DKIM2 records the journey of a message with two linked mechanisms:</p>
+      <ul>
+        <li><strong>Message-Instance (MI) headers</strong> — a hash snapshot
+          of the message taken at each hop, so a verifier can confirm the
+          chain of snapshots is intact.</li>
+        <li><strong>Chained DKIM2-Signature headers</strong> — each hop signs
+          the current snapshot <em>and</em> every previous signature, forming
+          a tamper-evident chain. Inserting or forging a hop means breaking a
+          signature.</li>
+      </ul>
+      <p>The same chain lets recipients detect unexpected message
+        <em>replay</em>, and ensures delivery status notifications only reach
+        parties that actually handled the message.</p>
+    </section>
+
+    <section>
+      <h2>Implementations &amp; demo</h2>
+      <p>This host runs a live DKIM2 demonstration server. Four independent
+        implementations — in Python, Perl, Go, and C — interoperate in the
+        project repository. Two mailing-list managers on this host sign with
+        DKIM2 as they forward:</p>
+      <ul>
+        <li><a href="https://mailman.dkim2.com/">Mailman</a> (this host)</li>
+        <li><a href="https://sympa.dkim2.com/sympa">Sympa</a> (this host)</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Learn more</h2>
+      <ul>
+        <li><a href="https://datatracker.ietf.org/wg/dkim/about/">IETF DKIM
+          working group</a></li>
+        <li><a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-spec/">DKIM2
+          specification (Internet-Draft)</a></li>
+        <li><a href="https://github.com/dkim2wg/interop">Source &amp;
+          reference implementations on GitHub</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <p>DKIM2 · developed in the IETF DKIM working group · 2026</p>
+  </footer>
+</body>
+</html>
