@@ -342,6 +342,26 @@ other libs) + wrapper `brong/bin/dkim2-reflector.pl` deployed to
 over SMTP to `127.0.0.1:10588`, a `master.cf` service with `smtpd_milters=` and
 `non_smtpd_milters=` emptied, so the outbound milter does **not** re-sign it.
 
+**DKIM1 bridge (inbound verification):** the reflector also signs a message that
+has **no DKIM2 chain** but a valid classic-DKIM (DKIM1) signature aligned
+(relaxed) with its `From:` domain. It learns the DKIM1 result by reading an
+`Authentication-Results` header, trusting only those whose authserv-id is
+`mail.dkim2.com` (passed by `dkim2-reflect`). That header is produced by
+OpenDKIM, which must verify inbound mail:
+- `/etc/opendkim.conf`: set `Mode sv` (was `s` — sign only), add
+  `AuthservID mail.dkim2.com` and `RemoveOldAuthenticationResults yes` (so an
+  externally-forged A-R bearing our authserv-id is dropped before ours is
+  added). OpenDKIM signs for internal hosts and verifies for external ones, so
+  the same instance covers both directions.
+- `/etc/postfix/main.cf`: add the OpenDKIM socket to `smtpd_milters` (it is
+  already in `non_smtpd_milters` for outbound signing), e.g.
+  `smtpd_milters = unix:var/run/dkim2-milter-in.sock, inet:localhost:8891`.
+  `milter_default_action = accept` ensures inbound mail still flows if OpenDKIM
+  is unavailable.
+- Reload after changes: `systemctl reload opendkim postfix`.
+- Keep the authserv-id in `opendkim.conf` and in `dkim2-reflect`
+  (`authserv_id => 'mail.dkim2.com'`) in sync.
+
 **Deploy / update:**
 ```bash
 ssh dkim2 'cd /root/interop && git pull && \
