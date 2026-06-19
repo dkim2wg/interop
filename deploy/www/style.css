@@ -64,6 +64,41 @@ a { color: var(--accent); }
 ul { padding-left: 1.2rem; }
 li { margin: 0.3rem 0; }
 
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: #f4f4f4;
+  border-radius: 3px;
+  padding: 0.1em 0.3em;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.95rem;
+}
+
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+th {
+  font-weight: 600;
+  border-bottom: 2px solid var(--rule);
+}
+
+td code { white-space: nowrap; }
+
+@media (max-width: 30rem) {
+  table { font-size: 0.85rem; }
+  th, td { padding: 0.4rem 0.35rem; }
+  td code { white-space: normal; word-break: break-all; }
+}
+
 footer {
   border-top: 1px solid var(--rule);
   padding-top: 1.5rem;

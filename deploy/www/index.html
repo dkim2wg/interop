@@ -85,6 +85,64 @@
     </section>
 
     <section>
+      <h2>Try it: reflector addresses</h2>
+      <p>Six addresses on this host let you watch DKIM2 chain behaviour
+        end-to-end. Each one verifies the message you send, applies a defined
+        transformation, and mails it straight back to you.</p>
+      <p>Send a <strong>DKIM2-signed</strong> message — for example from one of
+        the reference implementations — to a <code>reflector-*@dkim2.com</code>
+        address. You'll get a reply, transformed per the mode below. The reply
+        carries a new <code>dkim2.com</code> link in the chain <em>only if your
+        incoming chain verified</em>; either way it includes
+        <code>Authentication-Results</code> and <code>X-DKIM2-Reflector</code>
+        headers explaining what happened. Paste the reply into
+        <a href="/validate/">the validator</a> to see the result.</p>
+      <table>
+        <thead>
+          <tr><th>Address</th><th>What it does</th><th>What to expect</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="mailto:reflector-raw@dkim2.com"><code>reflector-raw@dkim2.com</code></a></td>
+            <td>Re-signs the unchanged message</td>
+            <td>Chain verifies cleanly</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-subject@dkim2.com"><code>reflector-subject@dkim2.com</code></a></td>
+            <td>Prefixes the subject with <code>[DKIM2]&nbsp;</code></td>
+            <td>Verifies; the change reverses to restore the original subject</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-body@dkim2.com"><code>reflector-body@dkim2.com</code></a></td>
+            <td>Appends a footer line to the body</td>
+            <td>Verifies; the change reverses to restore the original body</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-both@dkim2.com"><code>reflector-both@dkim2.com</code></a></td>
+            <td>Subject prefix <em>and</em> body footer</td>
+            <td>Verifies; both changes reverse</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-redacted@dkim2.com"><code>reflector-redacted@dkim2.com</code></a></td>
+            <td>Changes the body, recording it as non-reversible
+              (<code>r={"b":null}</code>)</td>
+            <td>Verifies, but the body <strong>cannot</strong> be
+              reconstructed</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-damage@dkim2.com"><code>reflector-damage@dkim2.com</code></a></td>
+            <td>Mutates the body <em>after</em> signing</td>
+            <td>Body-hash verification <strong>fails</strong> — tamper
+              detection at work</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>An unsigned or failing message is still reflected, but without a
+        <code>dkim2.com</code> signature
+        (<code>X-DKIM2-Reflector: … signed=no</code>).</p>
+    </section>
+
+    <section>
       <h2>Learn more</h2>
       <ul>
         <li><a href="/validate/">Validate a DKIM2 message</a> — paste an email
