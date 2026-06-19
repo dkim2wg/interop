@@ -109,4 +109,28 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
     is($sig1->{items}[0]{result}, 'pass', 'the crypto item still passes');
 }
 
+# 7) Received-SPF added by a receiving MTA breaks the hash; report() should
+#    strip it and retry, recovering the verdict and saying so.
+{
+    my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-body\@test2.dkim2.com\r\nSubject: hi\r\n\r\norig body\r\n");
+    my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'body', message=>$in);
+    my $good = $r2->{message};
+
+    # sanity: clean message verifies
+    is(Mail::DKIM2::Validate::report($good, %ropt)->{overall}, 'pass', 'clean reflected verifies');
+
+    # a folded Received-SPF prepended by the receiver pollutes the header hash
+    my $polluted = "Received-SPF: pass\r\n (test.example: 1.2.3.4 authorized)\r\n" . $good;
+    my $rep = Mail::DKIM2::Validate::report($polluted, %ropt);
+    is($rep->{overall}, 'pass', 'recovered after stripping Received-SPF');
+    is_deeply($rep->{stripped_headers}, ['Received-SPF'], 'reports which header was stripped');
+    like($rep->{summary}, qr/Received-SPF/, 'summary explains the Received-SPF removal');
+
+    # a genuinely broken message must NOT be rescued just by stripping Received-SPF
+    my $broken = $good; $broken =~ s/orig body/evil body/;
+    $broken = "Received-SPF: pass\r\n" . $broken;
+    is(Mail::DKIM2::Validate::report($broken, %ropt)->{overall}, 'fail',
+       'tampered body still fails even with Received-SPF stripped');
+}
+
 done_testing;

@@ -33,7 +33,51 @@ sub _default_cb {
     };
 }
 
+# Numeric rank of an overall verdict, best to worst, so the retry wrapper can
+# tell whether stripping a header actually improved things.
+my %_RANK = (pass => 3, warn => 2, none => 1, fail => 0);
+sub _rank { $_RANK{ $_[0] // 'fail' } // 0 }
+
+# Remove a header (and its folded continuation lines) from raw message text
+# with a line-based regex. We deliberately do NOT round-trip through
+# Email::MIME: reserialising can refold other headers and change their
+# canonical bytes, which would corrupt the very hashes we are verifying.
+sub _strip_header {
+    my ($text, $name) = @_;
+    $text =~ s/\r?\n/\r\n/g;
+    $text =~ s/^\Q$name\E:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*\r\n//mig;
+    return $text;
+}
+
+# report($text, %opts) — verify a DKIM2 message and return a structured report.
+#
+# Some receiving MTAs (e.g. Fastmail) add a Received-SPF: trace header on
+# inbound. Unlike Received/ARC/Authentication-Results it is NOT in should_skip(),
+# so it is covered by the Message-Instance header hash and breaks verification at
+# every level. When the message fails, retry once with Received-SPF removed; if
+# that verifies, return the better result and say so in the summary.
 sub report {
+    my ($text, %opts) = @_;
+    $text //= '';
+
+    my $rep = _report_once($text, %opts);
+    return $rep if ($rep->{overall} // '') eq 'pass';
+
+    # Only worth retrying when the message actually carries a Received-SPF header.
+    return $rep unless $text =~ /^Received-SPF:/mi;
+
+    my $rep2 = _report_once(_strip_header($text, 'Received-SPF'), %opts);
+    return $rep if _rank($rep2->{overall}) <= _rank($rep->{overall});
+
+    $rep2->{stripped_headers} = ['Received-SPF'];
+    $rep2->{summary} = ($rep2->{summary} ? "$rep2->{summary}; " : '')
+        . 'verified only after removing Received-SPF (a trace header added by '
+        . 'the receiving MTA that is not excluded from the Message-Instance '
+        . 'header hash)';
+    return $rep2;
+}
+
+sub _report_once {
     my ($text, %opts) = @_;
     $text //= '';
     $text =~ s/\r?\n/\r\n/g;
