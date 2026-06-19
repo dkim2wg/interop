@@ -338,6 +338,17 @@ other libs) + wrapper `brong/bin/dkim2-reflector.pl` deployed to
 `/usr/local/bin/dkim2-reflect`. Signs `dkim2.com` / `sel1` / `rsa-sha256` with
 `/etc/dkim2/keys/dkim2.com/sel1.key`.
 
+**Signing-key access:** the alias pipe runs the reflector as `nobody`
+(postfix `default_privs`), but the signing key tree is `dkim2:postfix`
+(`drwxr-x---` dirs, `-rw-r-----` key) — the same group the signing milter uses
+(`Group=postfix`). So `nobody` must be in group `postfix` to read it:
+`gpasswd -a nobody postfix` (then `systemctl reload postfix` so `local(8)`
+re-inits supplementary groups). Without this the reflector logs
+`reflect failed: ... non-existing file '.../sel1.key'` and reflects nothing.
+The wrapper logs failures (and a success line) to syslog (`LOG_MAIL`,
+tag `dkim2-reflector`) and dumps a failing message to
+`/var/tmp/dkim2-reflector-lasterror.eml`.
+
 **No-milter injector:** the wrapper submits the finished (already-signed) reply
 over SMTP to `127.0.0.1:10588`, a `master.cf` service with `smtpd_milters=` and
 `non_smtpd_milters=` emptied, so the outbound milter does **not** re-sign it.
