@@ -140,6 +140,30 @@ Both remain excluded from the DKIM2 header hash by `should_skip()` (`^x-` and
   through to `reflect()`.
 - **Server config** — OpenDKIM inbound verify; documented in SERVER.md §6.
 
+## Website documentation
+
+Update the "Try it: reflector addresses" section of `deploy/www/index.html`
+(added 2026-06-19) so visitors understand the new signing rules and know what
+to inspect:
+
+- **When you get a signed reply.** Explain the three outcomes in plain terms:
+  - your message already had a verified DKIM2 chain → the reply continues the
+    chain (signed);
+  - your message had no DKIM2 chain but a valid DKIM1 signature aligned with
+    your `From:` domain → the reply is signed as a **DKIM1→DKIM2 bridge**;
+  - neither → the reply comes back **unsigned** (transform still applied).
+- **"Headers to look at in the reflected message"** — a short reference list of
+  the headers a visitor should read in the reply, and what each tells them:
+  - `X-DKIM2-Reflector:` — mode, the auth verdicts (`auth=`/`dkim1=`), the
+    signing `basis=`, and `signed=`;
+  - `Authentication-Results:` — the `dkim2=`/`dkim=` verdicts the reflector saw;
+  - `DKIM2-Signature:` — present only when signed (the reflector's chain link);
+  - `Message-Instance:` — the `m=` snapshot recording the reflector's change
+    (present for changing modes).
+
+Keep it consistent with the existing page style (plain `<section>`/`<table>`,
+no new CSS beyond what already exists). Redeploy `index.html` per SERVER.md §5.
+
 ## Error handling (unchanged in spirit)
 
 - No `Authentication-Results` present, or none from our authserv-id → DKIM1
