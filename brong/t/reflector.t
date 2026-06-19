@@ -77,6 +77,8 @@ sub reflected_verifies {
     my @mi = (Email::MIME->new($r->{message}))->header_raw('Message-Instance');
     is(scalar @mi, 1, 'raw: no NEW MI added (still just m=1)');
     is(reflected_verifies($r->{message}), 'pass', 'raw: reflected message verifies');
+    like($r->{message}, qr/^X-DKIM2-Info:.*sw=dkim2-reflector\.pl/ms, 'raw: X-DKIM2-Info present');
+    like($r->{message}, qr/action=reflect-raw/, 'raw: X-DKIM2-Info action=reflect-raw (no new MI)');
 }
 
 # --- failing input (no DKIM2) -> not signed, headers present ---
@@ -111,6 +113,14 @@ for my $case (
         if $m ne 'subject';
 
     is(reflected_verifies($r->{message}), 'pass', "$m: reflected verifies");
+
+    # X-DKIM2-Info records the new MI as mi-m<N> with the hashed-header list,
+    # same format as dkim2-milter.pl.
+    my $info = join '', grep { /^X-DKIM2-Info:/ } split /(?<=\r\n)(?=\S)/, ($r->{message} =~ s/\r\n[ \t]/ /gr);
+    like($info, qr/sw=dkim2-reflector\.pl/, "$m: X-DKIM2-Info present");
+    like($info, qr/action=mi-m2\b/, "$m: X-DKIM2-Info action=mi-m2");
+    like($info, qr/\bhc=\d+\b/, "$m: X-DKIM2-Info has header count");
+    like($info, qr/\bhn=\S*subject\S*/, "$m: X-DKIM2-Info header list includes subject");
 
     my $undone = Mail::DKIM2::MessageInstance->undo(Email::MIME->new($r->{message}));
     is($undone->header('Subject'), 'hello', "$m: undo restores subject")

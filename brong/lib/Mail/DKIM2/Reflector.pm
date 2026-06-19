@@ -7,11 +7,47 @@ use Carp;
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::MessageInstance;
-use Mail::DKIM2::Common qw(fold_header);
+use Mail::DKIM2::Common qw(fold_header should_skip);
 
 our $SUBJECT_PREFIX = '[DKIM2] ';
 our $FOOTER         = "-- \r\nReflected and signed by the DKIM2 reflector at dkim2.com\r\n";
 our $DAMAGE_LINE    = "damage line, breaks the signature\r\n";
+
+# X-DKIM2-Info provenance, in the same format dkim2-milter.pl emits.
+# NOTE: DKIM2_DRAFT/DKIM2_DATE also live in bin/dkim2-milter.pl and the
+# mailman/sympa handlers — keep them in sync on a spec bump (see the
+# dkim2-spec-version memory).
+use constant DKIM2_DRAFT    => 'ietf-dkim-dkim2-spec-02';
+use constant DKIM2_REPO     => 'github.com/dkim2wg/interop';
+use constant DKIM2_DATE     => '2026-05-17';
+use constant DKIM2_SOFTWARE => 'dkim2-reflector.pl';
+
+sub _dkim2_info {
+    my ($action, %extra) = @_;
+    my $val = "draft=" . DKIM2_DRAFT
+            . "; repo=" . DKIM2_REPO
+            . "; date=" . DKIM2_DATE
+            . "; sw=" . DKIM2_SOFTWARE
+            . "; action=$action";
+    for my $key (sort keys %extra) {
+        next unless defined $extra{$key};
+        $val .= "; $key=$extra{$key}";
+    }
+    return $val;
+}
+
+# (count, comma-separated-names) of the headers a Message-Instance hash covers,
+# matching dkim2-milter.pl's hc=/hn= fields.
+sub _header_list_for_hash {
+    my ($msg) = @_;
+    my @fields;
+    for my $h (sort { lc($a) cmp lc($b) } $msg->header_names) {
+        next if should_skip($h);
+        my @vals = $msg->header_raw($h);
+        push @fields, (lc $h) x scalar(@vals);
+    }
+    return (scalar(@fields), join(',', @fields));
+}
 
 my %VALID = map { $_ => 1 } qw(raw subject body both redacted damage);
 
@@ -81,7 +117,21 @@ sub reflect {
     my $xr = "X-DKIM2-Reflector: mode=$mode; auth=$auth; dkim1=$dkim1; "
            . "basis=$basis; signed=" . ($signed ? 'yes' : 'no')
            . "; note=reflected-to-sender\r\n";
-    $cur_text = $ar . $xr . $cur_text;
+
+    # X-DKIM2-Info: provenance in dkim2-milter.pl's format. When we recorded a
+    # new Message-Instance, report it as mi-m<N> with the hashed-header list,
+    # exactly as the milter does; otherwise note the verify-only reflect.
+    my $info;
+    if ($mi) {
+        my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($cur_text));
+        $info = _dkim2_info("mi-m" . $mi->get_tag('m'), hc => $hc, hn => $hn);
+    } else {
+        $info = _dkim2_info("reflect-$mode", verify => $auth);
+    }
+    (my $xi = fold_header("X-DKIM2-Info: $info")) =~ s/\r?\n\z//;
+    $xi .= "\r\n";
+
+    $cur_text = $ar . $xr . $xi . $cur_text;
 
     return {
         message => $cur_text, auth => $auth, dkim1 => $dkim1,
