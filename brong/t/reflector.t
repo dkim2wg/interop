@@ -159,4 +159,23 @@ for my $case (
         'reflected message still verifies after prologue stripped');
 }
 
+# --- relaxed domain alignment (PSL-free) ---
+{
+    no warnings 'once';
+    ok( Mail::DKIM2::Reflector::_domains_align('brong.net', 'brong.net'),
+        'align: exact match');
+    ok( Mail::DKIM2::Reflector::_domains_align('BRONG.NET', 'brong.net'),
+        'align: case-insensitive');
+    ok( Mail::DKIM2::Reflector::_domains_align('mail.brong.net', 'brong.net'),
+        'align: from is a subdomain of d');
+    ok( Mail::DKIM2::Reflector::_domains_align('brong.net', 'mail.brong.net'),
+        'align: d is a subdomain of from');
+    ok( !Mail::DKIM2::Reflector::_domains_align('brong.net', 'evil.example'),
+        'align: unrelated domains do not align');
+    ok( !Mail::DKIM2::Reflector::_domains_align('notbrong.net', 'brong.net'),
+        'align: suffix-without-dot does not count as subdomain');
+    ok( !Mail::DKIM2::Reflector::_domains_align('brong.net', ''),
+        'align: empty d does not align');
+}
+
 done_testing;

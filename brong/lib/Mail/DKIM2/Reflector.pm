@@ -98,6 +98,17 @@ sub _split {
     return (substr($text, 0, $i), substr($text, $i + 4));
 }
 
+# Relaxed, PSL-free domain alignment: equal, or one a subdomain of the other.
+sub _domains_align {
+    my ($f, $d) = @_;
+    return 0 unless defined $f && defined $d && length $f && length $d;
+    $f = lc $f; $d = lc $d;
+    return 1 if $f eq $d;
+    return 1 if $f =~ /\.\Q$d\E\z/;   # f is a subdomain of d
+    return 1 if $d =~ /\.\Q$f\E\z/;   # d is a subdomain of f
+    return 0;
+}
+
 sub _transform_text {
     my ($text, $mode) = @_;
     return $text if $mode eq 'raw';
