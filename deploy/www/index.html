@@ -137,6 +137,13 @@
           </tr>
         </tbody>
       </table>
+      <p><small>Note: the <code>body</code>/<code>both</code> footer is appended
+        to the raw message body. On a <code>multipart/*</code> message that
+        lands in the MIME epilogue (after the closing boundary), so most mail
+        clients won't render it — but it is present in the raw bytes, covered by
+        the body hash, and recorded in the <code>Message-Instance</code> recipe
+        (so the change still verifies and reverses). On a simple
+        <code>text/plain</code> message the footer is visible.</small></p>
       <h3 id="reflector-signing">When the reply is signed</h3>
       <p>The reflector adds its own <code>dkim2.com</code> chain link only when
         it can vouch for your message:</p>
