@@ -142,6 +142,7 @@ sub _dkim1_aligned {
     my @ar = eval { Email::MIME->new($text)->header_raw('Authentication-Results') };
     for my $ar (@ar) {
         $ar =~ s/\r?\n[ \t]+/ /g;             # unfold
+        1 while $ar =~ s/\([^()]*\)//g;       # strip CFWS comments (may hold ';')
         my ($id, $rest) = split /;/, $ar, 2;
         next unless defined $rest;
         $id =~ s/^\s+|\s+$//g;

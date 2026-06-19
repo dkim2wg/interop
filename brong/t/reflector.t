@@ -240,6 +240,16 @@ for my $case (
           . $base,
             'brong.net', 'mail.dkim2.com'),
         undef, 'dkim1: forged A-R below the genuine top one is ignored');
+    # Real OpenDKIM output: folded, with CFWS comments that contain a ';'
+    # (e.g. "(2048-bit key; unprotected)") and multiple results.
+    is( Mail::DKIM2::Reflector::_dkim1_aligned(
+            "Authentication-Results: mail.dkim2.com;\r\n"
+          . "\tdkim=pass (2048-bit key; unprotected) header.d=brong.net header.i=\@brong.net header.a=rsa-sha256 header.s=fm3 header.b=N0aU1+d9;\r\n"
+          . "\tdkim=pass (2048-bit key; unprotected) header.d=messagingengine.com header.i=\@messagingengine.com header.a=rsa-sha256 header.s=fm1 header.b=DZK/hQT9;\r\n"
+          . "\tdkim-atps=neutral\r\n"
+          . $base,
+            'brong.net', 'mail.dkim2.com'),
+        'brong.net', 'dkim1: real folded OpenDKIM A-R with comment semicolons parses');
 }
 
 my $AUTHSERV = 'mail.dkim2.com';
