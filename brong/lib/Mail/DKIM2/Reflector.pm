@@ -109,6 +109,16 @@ sub _domains_align {
     return 0;
 }
 
+# Lowercased domain of the message's From: header, or undef.
+sub _from_domain {
+    my ($text) = @_;
+    my $from = eval { Email::MIME->new($text)->header('From') };
+    return undef unless defined $from && length $from;
+    my $addr = ($from =~ /<([^>]+)>/) ? $1 : $from;
+    my ($dom) = $addr =~ /\@([A-Za-z0-9.\-]+)/;
+    return defined $dom ? lc $dom : undef;
+}
+
 sub _transform_text {
     my ($text, $mode) = @_;
     return $text if $mode eq 'raw';

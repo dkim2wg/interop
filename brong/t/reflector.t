@@ -178,4 +178,18 @@ for my $case (
         'align: empty d does not align');
 }
 
+# --- From: domain extraction ---
+{
+    no warnings 'once';
+    is( Mail::DKIM2::Reflector::_from_domain(
+            "From: a\@brong.net\r\nSubject: x\r\n\r\nbody\r\n"),
+        'brong.net', 'from_domain: bare addr-spec');
+    is( Mail::DKIM2::Reflector::_from_domain(
+            "From: \"Bron G\" <bron\@Brong.NET>\r\nSubject: x\r\n\r\nb\r\n"),
+        'brong.net', 'from_domain: display name + angle addr, lowercased');
+    is( Mail::DKIM2::Reflector::_from_domain(
+            "Subject: x\r\n\r\nbody\r\n"),
+        undef, 'from_domain: no From header -> undef');
+}
+
 done_testing;
