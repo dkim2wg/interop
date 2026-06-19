@@ -192,4 +192,32 @@ for my $case (
         undef, 'from_domain: no From header -> undef');
 }
 
+# --- DKIM1 verdict read from Authentication-Results (scoped to authserv-id) ---
+{
+    no warnings 'once';
+    my $base = "From: a\@brong.net\r\nSubject: x\r\n\r\nbody\r\n";
+    my $with_ar = sub {
+        my ($ar) = @_;
+        return "Authentication-Results: $ar\r\n" . $base;
+    };
+    is( Mail::DKIM2::Reflector::_dkim1_aligned(
+            $with_ar->('mail.dkim2.com; dkim=pass header.d=brong.net'),
+            'brong.net', 'mail.dkim2.com'),
+        'brong.net', 'dkim1: aligned pass is found');
+    is( Mail::DKIM2::Reflector::_dkim1_aligned(
+            $with_ar->('mail.dkim2.com; dkim=pass header.d=evil.example'),
+            'brong.net', 'mail.dkim2.com'),
+        undef, 'dkim1: unaligned d is rejected');
+    is( Mail::DKIM2::Reflector::_dkim1_aligned(
+            $with_ar->('other.host; dkim=pass header.d=brong.net'),
+            'brong.net', 'mail.dkim2.com'),
+        undef, 'dkim1: foreign authserv-id is ignored');
+    is( Mail::DKIM2::Reflector::_dkim1_aligned(
+            $with_ar->('mail.dkim2.com; dkim=fail header.d=spoof.com; dkim=pass header.d=brong.net'),
+            'brong.net', 'mail.dkim2.com'),
+        'brong.net', 'dkim1: one matching pass among several wins');
+    is( Mail::DKIM2::Reflector::_dkim1_aligned($base, 'brong.net', 'mail.dkim2.com'),
+        undef, 'dkim1: no A-R header -> undef');
+}
+
 done_testing;

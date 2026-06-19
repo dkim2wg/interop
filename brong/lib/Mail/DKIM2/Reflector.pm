@@ -119,6 +119,29 @@ sub _from_domain {
     return defined $dom ? lc $dom : undef;
 }
 
+# The aligned header.d of a dkim=pass result in our authserv-id's
+# Authentication-Results, or undef. Only A-R bearing $authserv_id are trusted.
+sub _dkim1_aligned {
+    my ($text, $from_domain, $authserv_id) = @_;
+    return undef unless defined $from_domain && defined $authserv_id;
+    my @ar = eval { Email::MIME->new($text)->header_raw('Authentication-Results') };
+    for my $ar (@ar) {
+        $ar =~ s/\r?\n[ \t]+/ /g;             # unfold
+        my ($id, $rest) = split /;/, $ar, 2;
+        next unless defined $rest;
+        $id =~ s/^\s+|\s+$//g;
+        $id =~ s/\s.*\z//;                     # drop optional version after authserv-id
+        next unless lc($id) eq lc($authserv_id);
+        for my $chunk (split /;/, $rest) {     # one resinfo per chunk
+            next unless $chunk =~ /\bdkim\s*=\s*pass\b/i;
+            next unless $chunk =~ /header\.d\s*=\s*([A-Za-z0-9.\-]+)/i;
+            my $d = lc $1;
+            return $d if _domains_align($from_domain, $d);
+        }
+    }
+    return undef;
+}
+
 sub _transform_text {
     my ($text, $mode) = @_;
     return $text if $mode eq 'raw';
