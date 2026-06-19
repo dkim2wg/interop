@@ -338,15 +338,21 @@ other libs) + wrapper `brong/bin/dkim2-reflector.pl` deployed to
 `/usr/local/bin/dkim2-reflect`. Signs `dkim2.com` / `sel1` / `rsa-sha256` with
 `/etc/dkim2/keys/dkim2.com/sel1.key`.
 
-**Signing-key access:** the alias pipe runs the reflector as `nobody`
-(postfix `default_privs`), but the signing key tree is `dkim2:postfix`
-(`drwxr-x---` dirs, `-rw-r-----` key) — the same group the signing milter uses
-(`Group=postfix`). So `nobody` must be in group `postfix` to read it:
-`gpasswd -a nobody postfix` (then `systemctl reload postfix` so `local(8)`
-re-inits supplementary groups). Without this the reflector logs
-`reflect failed: ... non-existing file '.../sel1.key'` and reflects nothing.
-The wrapper logs failures (and a success line) to syslog (`LOG_MAIL`,
-tag `dkim2-reflector`) and dumps a failing message to
+**Signing-key access:** the alias pipe runs the reflector as `nobody:nogroup`,
+and Postfix `local(8)` command delivery sets only the primary uid/gid — it does
+**not** apply supplementary groups, so adding `nobody` to a group cannot grant
+key access. The main signing key tree is `dkim2:postfix` `drwxr-x---` / `-rw-r-----`,
+unreadable by `nobody`. So the reflector uses a dedicated copy owned by `nobody`:
+```bash
+install -d -m 755 -o root -g root /etc/dkim2/reflector
+install -m 600 -o nobody -g nogroup /etc/dkim2/keys/dkim2.com/sel1.key \
+    /etc/dkim2/reflector/sel1.key
+```
+The wrapper signs with `/etc/dkim2/reflector/sel1.key` (same `dkim2.com`/`sel1`
+key, just readable by uid `nobody`). Re-copy if the published `sel1` key rotates.
+Without it the reflector logs `reflect failed: ... non-existing file` and
+reflects nothing. The wrapper logs failures and a success line to syslog
+(`LOG_MAIL`, tag `dkim2-reflector`) and dumps a failing message to
 `/var/tmp/dkim2-reflector-lasterror.eml`.
 
 **No-milter injector:** the wrapper submits the finished (already-signed) reply

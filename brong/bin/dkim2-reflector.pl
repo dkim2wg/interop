@@ -37,7 +37,7 @@ my $result = eval {
         sender   => $sender,
         domain   => 'dkim2.com',
         selector => 'sel1',
-        keyfile  => '/etc/dkim2/keys/dkim2.com/sel1.key',
+        keyfile  => '/etc/dkim2/reflector/sel1.key',
         mailfrom => 'reflector-bounces@dkim2.com',
         authserv_id => 'mail.dkim2.com',
     );
