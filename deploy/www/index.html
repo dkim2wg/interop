@@ -91,12 +91,12 @@
         transformation, and mails it straight back to you.</p>
       <p>Send a <strong>DKIM2-signed</strong> message — for example from one of
         the reference implementations — to a <code>reflector-*@dkim2.com</code>
-        address. You'll get a reply, transformed per the mode below. The reply
-        carries a new <code>dkim2.com</code> link in the chain <em>only if your
-        incoming chain verified</em>; either way it includes
-        <code>Authentication-Results</code> and <code>X-DKIM2-Reflector</code>
-        headers explaining what happened. Paste the reply into
-        <a href="/validate/">the validator</a> to see the result.</p>
+        address. You'll get a reply, transformed per the mode below. Whether the
+        reply is signed depends on how it was authenticated (see
+        <a href="#reflector-signing">When the reply is signed</a>); either way it
+        includes <code>Authentication-Results</code> and
+        <code>X-DKIM2-Reflector</code> headers explaining what happened. Paste the
+        reply into <a href="/validate/">the validator</a> to see the result.</p>
       <table>
         <thead>
           <tr><th>Address</th><th>What it does</th><th>What to expect</th></tr>
@@ -137,9 +137,52 @@
           </tr>
         </tbody>
       </table>
-      <p>An unsigned or failing message is still reflected, but without a
-        <code>dkim2.com</code> signature
-        (<code>X-DKIM2-Reflector: … signed=no</code>).</p>
+      <h3 id="reflector-signing">When the reply is signed</h3>
+      <p>The reflector adds its own <code>dkim2.com</code> chain link only when
+        it can vouch for your message:</p>
+      <ul>
+        <li>your message already had a <strong>verified DKIM2 chain</strong> —
+          the reply continues the chain;</li>
+        <li>your message had <strong>no DKIM2 chain but a valid DKIM1
+          signature</strong> aligned with your <code>From:</code> domain — the
+          reply is signed as a <strong>DKIM1&nbsp;&rarr;&nbsp;DKIM2 bridge</strong>;</li>
+        <li>neither — the reply comes back <strong>unsigned</strong> (the
+          mode's transformation is still applied).</li>
+      </ul>
+      <p>A change-recording <code>Message-Instance</code> is added for every
+        mode that alters the message (subject, body, both, redacted), whether
+        or not the reply is signed.</p>
+
+      <h3>Headers to look at in the reflected message</h3>
+      <table>
+        <thead>
+          <tr><th>Header</th><th>What it tells you</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>X-DKIM2-Reflector</code></td>
+            <td>The reflector's summary: <code>mode</code>, the verdicts it saw
+              (<code>auth</code> = DKIM2, <code>dkim1</code>), what it signed on
+              (<code>basis</code> = <code>dkim2</code>/<code>dkim1</code>/<code>none</code>),
+              and <code>signed</code>.</td>
+          </tr>
+          <tr>
+            <td><code>Authentication-Results</code></td>
+            <td>The <code>dkim2=</code> and (when a bridge applied)
+              <code>dkim=pass header.d=</code> results the reflector relied on.</td>
+          </tr>
+          <tr>
+            <td><code>DKIM2-Signature</code></td>
+            <td>Present only when the reply is signed — the reflector's link in
+              the chain.</td>
+          </tr>
+          <tr>
+            <td><code>Message-Instance</code></td>
+            <td>The <code>m=</code> snapshot recording the reflector's change
+              (present for the changing modes).</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <section>
