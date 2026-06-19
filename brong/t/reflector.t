@@ -143,4 +143,20 @@ for my $case (
        'damage: top MI body hash no longer matches content');
 }
 
+# --- Postfix local(8) pipe prologue: a leading mbox "From " line is stripped ---
+# Postfix prepends a Unix mailbox "From sender timestamp" envelope line (no
+# colon) when piping a message to an alias command. If it survives into the
+# reflected message it prematurely terminates the header block when the reply
+# is re-injected, dumping every real header into the body.
+{
+    my $prologue = "From a\@test1.dkim2.com  Fri Jun 19 05:07:56 2026\r\n";
+    my $in = signed_input(
+        "From: a\@test1.dkim2.com\r\nTo: reflector-raw\@dkim2.com\r\nSubject: hi\r\n\r\noriginal body\r\n");
+    my $r = Mail::DKIM2::Reflector::reflect(%common, mode => 'raw', message => $prologue . $in);
+    unlike($r->{message}, qr/^From [^\r\n]*\r\n/m,
+        'mbox From_ prologue line stripped (no bare "From " line survives)');
+    is(reflected_verifies($r->{message}), 'pass',
+        'reflected message still verifies after prologue stripped');
+}
+
 done_testing;

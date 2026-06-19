@@ -30,6 +30,14 @@ sub reflect {
 
     (my $incoming = $a{message}) =~ s/\r?\n/\r\n/g;
 
+    # Strip the Unix mailbox "From sender timestamp" envelope line that Postfix
+    # local(8) prepends when piping a message to an alias command. It has no
+    # colon, so if it survived into the reflected message it would prematurely
+    # terminate the header block when the reply is re-injected (RFC 5322),
+    # dumping every real header into the body. A genuine header is "From:";
+    # only the mbox line is "From " followed by a space.
+    $incoming =~ s/\AFrom [^\r\n]*\r\n//;
+
     # 1. Verify (DKIM2-only).
     my $auth   = _verify($incoming, $a{pubkey_cb}, $a{skip_timestamp_check});
     my $passed = ($auth eq 'pass') ? 1 : 0;
