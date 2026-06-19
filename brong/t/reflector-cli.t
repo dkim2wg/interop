@@ -12,6 +12,7 @@ like($src, qr/reflector-bounces\@dkim2\.com/, 'wrapper uses the reflector bounce
 like($src, qr{/etc/dkim2/keys/dkim2\.com/sel1\.key}, 'wrapper signs with dkim2.com sel1');
 like($src, qr/authserv_id\s*=>\s*'mail\.dkim2\.com'/,
     'wrapper passes the configured authserv-id');
+like($src, qr/Sys::Syslog/, 'wrapper logs failures to syslog');
 
 # Compiles cleanly.
 my $out = qx{perl -c -Ilib bin/dkim2-reflector.pl 2>&1};
