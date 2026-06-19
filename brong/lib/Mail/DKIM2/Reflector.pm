@@ -147,12 +147,15 @@ sub _dkim1_aligned {
         $id =~ s/^\s+|\s+$//g;
         $id =~ s/\s.*\z//;                     # drop optional version after authserv-id
         next unless lc($id) eq lc($authserv_id);
+        # The first A-R bearing our authserv-id is OpenDKIM's genuine result
+        # (it prepends on top of any sender-forged copy). Trust ONLY this one.
         for my $chunk (split /;/, $rest) {     # one resinfo per chunk
             next unless $chunk =~ /\bdkim\s*=\s*pass\b/i;
             next unless $chunk =~ /header\.d\s*=\s*([A-Za-z0-9.\-]+)/i;
             my $d = lc $1;
             return $d if _domains_align($from_domain, $d);
         }
+        return undef;                          # ignore any lower A-R headers
     }
     return undef;
 }

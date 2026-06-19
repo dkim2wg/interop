@@ -348,11 +348,16 @@ has **no DKIM2 chain** but a valid classic-DKIM (DKIM1) signature aligned
 `Authentication-Results` header, trusting only those whose authserv-id is
 `mail.dkim2.com` (passed by `dkim2-reflect`). That header is produced by
 OpenDKIM, which must verify inbound mail:
-- `/etc/opendkim.conf`: set `Mode sv` (was `s` — sign only), add
-  `AuthservID mail.dkim2.com` and `RemoveOldAuthenticationResults yes` (so an
-  externally-forged A-R bearing our authserv-id is dropped before ours is
-  added). OpenDKIM signs for internal hosts and verifies for external ones, so
-  the same instance covers both directions.
+- `/etc/opendkim.conf`: set `Mode sv` (was `s` — sign only) and add
+  `AuthservID mail.dkim2.com`. OpenDKIM signs for internal hosts and verifies
+  for external ones, so the same instance covers both directions.
+- A-R trust boundary: OpenDKIM prepends its genuine `Authentication-Results`
+  on top of the message, so the reflector trusts only the **topmost** A-R
+  bearing our authserv-id and ignores any sender-supplied copy below it
+  (`_dkim1_aligned`). This is a test host with no reputation, so it is a
+  correctness nicety rather than a security boundary; we do **not** strip
+  inbound A-R at the MTA. (OpenDKIM has no `RemoveOldAuthenticationResults`
+  directive — do not add one; it fails the config check.)
 - `/etc/postfix/main.cf`: add the OpenDKIM socket to `smtpd_milters` (it is
   already in `non_smtpd_milters` for outbound signing), e.g.
   `smtpd_milters = unix:var/run/dkim2-milter-in.sock, inet:localhost:8891`.

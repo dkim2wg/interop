@@ -57,18 +57,22 @@ absence, so it is treated as T3 (no signature).
       header.d=brong.net header.i=@brong.net header.s=fm3
   ```
 
-- Configure OpenDKIM to **remove any pre-existing `Authentication-Results`
-  for our authserv-id** before adding its own (so an externally-forged A-R
-  bearing our authserv-id can't be trusted).
-- The `authserv-id` is fixed and documented in SERVER.md; the reflector is
-  configured with the same value.
+- The `authserv-id` is fixed (`mail.dkim2.com`) and documented in SERVER.md;
+  the reflector is configured with the same value.
+- A-R trust boundary: OpenDKIM **prepends** its genuine `Authentication-Results`
+  on top of the message, so a sender-forged copy bearing our authserv-id is
+  always below it. The reflector therefore trusts only the topmost A-R bearing
+  our authserv-id (see below). OpenDKIM has **no** `RemoveOldAuthenticationResults`
+  directive, and this is a no-reputation test host, so we do not strip inbound
+  A-R at the MTA — the topmost-only read is a correctness nicety, not a hard
+  security boundary.
 
 ### Reflector
 
-- Parse the incoming `Authentication-Results` headers, considering **only**
-  those whose authserv-id matches our configured value. (A-R with any other
-  authserv-id — i.e. added by some other host upstream — are ignored.)
-- Collect every `dkim=pass` result and its `header.d`.
+- Find the **topmost** `Authentication-Results` header whose authserv-id
+  matches our configured value (the genuine OpenDKIM result). A-R with any
+  other authserv-id are skipped; A-R below the first matching one are ignored.
+- Within that one header, collect every `dkim=pass` result and its `header.d`.
 - A message has a valid, aligned DKIM1 signature if **any one** of those
   `header.d` values aligns with the domain of the message's `From:` header.
   Multiple DKIM signatures for different domains are expected; only one needs

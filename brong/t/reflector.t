@@ -232,6 +232,14 @@ for my $case (
         'brong.net', 'dkim1: one matching pass among several wins');
     is( Mail::DKIM2::Reflector::_dkim1_aligned($base, 'brong.net', 'mail.dkim2.com'),
         undef, 'dkim1: no A-R header -> undef');
+    # Only the topmost A-R bearing our authserv-id is trusted: OpenDKIM prepends
+    # its genuine result on top, so a sender-forged copy below it is ignored.
+    is( Mail::DKIM2::Reflector::_dkim1_aligned(
+            "Authentication-Results: mail.dkim2.com; dkim=fail header.d=brong.net\r\n"
+          . "Authentication-Results: mail.dkim2.com; dkim=pass header.d=brong.net\r\n"
+          . $base,
+            'brong.net', 'mail.dkim2.com'),
+        undef, 'dkim1: forged A-R below the genuine top one is ignored');
 }
 
 my $AUTHSERV = 'mail.dkim2.com';
