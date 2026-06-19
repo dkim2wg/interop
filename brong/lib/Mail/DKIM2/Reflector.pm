@@ -38,40 +38,55 @@ sub reflect {
     # only the mbox line is "From " followed by a space.
     $incoming =~ s/\AFrom [^\r\n]*\r\n//;
 
-    # 1. Verify (DKIM2-only).
-    my $auth   = _verify($incoming, $a{pubkey_cb}, $a{skip_timestamp_check});
-    my $passed = ($auth eq 'pass') ? 1 : 0;
+    # 1. DKIM2 verdict (computed here) + DKIM1 verdict (read from A-R).
+    my $auth = _verify($incoming, $a{pubkey_cb}, $a{skip_timestamp_check});
+    my $from_domain = _from_domain($incoming);
+    my $dkim1_d = _dkim1_aligned($incoming, $from_domain, $a{authserv_id});
+    my $dkim1   = $dkim1_d ? 'pass' : 'none';
 
-    # 2. Transform (always, except damage which mutates after signing).
+    # 2. Three-tier signing basis: DKIM2 chain, else DKIM1 bridge (only when no
+    #    chain present — a broken chain, dkim2=fail, does NOT fall back).
+    my $basis = ($auth eq 'pass')                  ? 'dkim2'
+              : ($auth eq 'none' && $dkim1_d)      ? 'dkim1'
+              :                                       'none';
+    my $will_sign = ($basis ne 'none');
+
+    # 3. Transform (always, except damage which mutates after signing).
     my $prev_text = $incoming;
     my $cur_text  = ($mode eq 'damage') ? $incoming : _transform_text($incoming, $mode);
 
+    # 4. Message-Instance for our change — ALWAYS for changing modes (raw/damage
+    #    reuse the top m=). Emitted whether or not we sign.
+    my $mi = _build_mi($cur_text, $prev_text, $mode);
+    if ($mi) {
+        my $val = fold_header("Message-Instance: " . $mi->as_string);
+        $val =~ s/^Message-Instance:\s*//;
+        $cur_text = "Message-Instance: $val\r\n" . $cur_text;
+    }
+
+    # 5. Sign when we have a basis; for damage, break the body AFTER signing.
     my $signed = 0;
-    if ($passed) {
-        # 3. Message-Instance: none for raw/damage (reuse top m=); new MI otherwise.
-        my $mi = _build_mi($cur_text, $prev_text, $mode);
-        if ($mi) {
-            my $val = fold_header("Message-Instance: " . $mi->as_string);
-            $val =~ s/^Message-Instance:\s*//;
-            $cur_text = "Message-Instance: $val\r\n" . $cur_text;
-        }
-        # 4. Sign (single sel/alg).
+    if ($will_sign) {
         my $sig = _sign($cur_text, %a);
         $cur_text = "$sig\r\n" . $cur_text;
         $signed = 1;
-        # 5. Damage: append a line AFTER signing so the body hash no longer matches.
         $cur_text .= $DAMAGE_LINE if $mode eq 'damage';
     }
 
     # 6. Explanation headers (excluded from the DKIM2 header hash by
     #    should_skip(): ^x- and authentication-results). Safe to prepend last.
-    my $verdict = ($auth eq 'pass') ? 'pass' : ($auth eq 'fail' ? 'fail' : 'none');
-    my $ar = "Authentication-Results: $a{domain}; dkim2=$verdict\r\n";
-    my $xr = "X-DKIM2-Reflector: mode=$mode; auth=$verdict; "
-           . "signed=" . ($signed ? 'yes' : 'no') . "; note=reflected-to-sender\r\n";
+    my $ar = "Authentication-Results: $a{domain}; dkim2=$auth";
+    $ar .= "; dkim=pass header.d=$dkim1_d" if $dkim1_d;
+    $ar .= "\r\n";
+    my $xr = "X-DKIM2-Reflector: mode=$mode; auth=$auth; dkim1=$dkim1; "
+           . "basis=$basis; signed=" . ($signed ? 'yes' : 'no')
+           . "; note=reflected-to-sender\r\n";
     $cur_text = $ar . $xr . $cur_text;
 
-    return { message => $cur_text, auth => $auth, signed => $signed, mode => $mode };
+    return {
+        message => $cur_text, auth => $auth, dkim1 => $dkim1,
+        basis => $basis, signed => $signed, mode => $mode,
+    };
 }
 
 sub _verify {

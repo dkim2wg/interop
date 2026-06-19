@@ -33,6 +33,20 @@ sub signed_input {
     return $msg->as_string;
 }
 
+# A message with an inbound MI (m=1) and optional A-R, but NO DKIM2 chain —
+# mirrors what the inbound milter produces for non-DKIM2 mail.
+sub mi_only_input {
+    my ($raw, $ar) = @_;
+    $raw =~ s/\r?\n/\r\n/g;
+    my $msg = Email::MIME->new($raw);
+    my $mi  = Mail::DKIM2::MessageInstance->calculate($msg);
+    my $folded = fold_header("Message-Instance: " . $mi->as_string);
+    $folded =~ s/^Message-Instance:\s*//;
+    $msg->header_raw_prepend('Message-Instance', $folded);
+    $msg->header_raw_prepend('Authentication-Results', $ar) if defined $ar;
+    return $msg->as_string;
+}
+
 my $cb = DKIM2TestKeys::pubkey_callback();
 my %common = (
     sender    => 'a@test1.dkim2.com',         # reflect target (rt of our sig)
@@ -218,6 +232,82 @@ for my $case (
         'brong.net', 'dkim1: one matching pass among several wins');
     is( Mail::DKIM2::Reflector::_dkim1_aligned($base, 'brong.net', 'mail.dkim2.com'),
         undef, 'dkim1: no A-R header -> undef');
+}
+
+my $AUTHSERV = 'mail.dkim2.com';
+
+# --- T2: no DKIM2 chain but aligned DKIM1 -> bridge-signed ---
+{
+    my $in = mi_only_input(
+        "From: a\@test1.dkim2.com\r\nTo: reflector-raw\@dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n",
+        "$AUTHSERV; dkim=pass header.d=test1.dkim2.com");
+    my $r = Mail::DKIM2::Reflector::reflect(
+        %common, authserv_id => $AUTHSERV, mode => 'raw', message => $in);
+    is($r->{auth},  'none', 'T2: no DKIM2 chain');
+    is($r->{dkim1}, 'pass', 'T2: aligned DKIM1 found');
+    is($r->{basis}, 'dkim1', 'T2: signing basis is dkim1');
+    is($r->{signed}, 1, 'T2: bridge signed');
+    like($r->{message}, qr/^DKIM2-Signature:/m, 'T2: has a DKIM2-Signature');
+    like($r->{message}, qr/^X-DKIM2-Reflector:.*basis=dkim1.*signed=yes/m, 'T2: X- header');
+    is(reflected_verifies($r->{message}), 'pass', 'T2: bridge-signed message verifies');
+}
+
+# --- T2 negative: DKIM1 present but not aligned -> not signed ---
+{
+    my $in = mi_only_input(
+        "From: a\@test1.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n",
+        "$AUTHSERV; dkim=pass header.d=unrelated.example");
+    my $r = Mail::DKIM2::Reflector::reflect(
+        %common, authserv_id => $AUTHSERV, mode => 'raw', message => $in);
+    is($r->{basis}, 'none', 'unaligned DKIM1: no signing basis');
+    is($r->{signed}, 0, 'unaligned DKIM1: not signed');
+    like($r->{message}, qr/^X-DKIM2-Reflector:.*signed=no/m, 'unaligned: signed=no');
+}
+
+# --- subdomain alignment bridges ---
+{
+    my $in = mi_only_input(
+        "From: a\@mail.test1.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n",
+        "$AUTHSERV; dkim=pass header.d=test1.dkim2.com");
+    my $r = Mail::DKIM2::Reflector::reflect(
+        %common, authserv_id => $AUTHSERV, mode => 'raw', message => $in);
+    is($r->{signed}, 1, 'subdomain From aligns with parent d -> signed');
+}
+
+# --- foreign authserv-id is ignored -> not signed ---
+{
+    my $in = mi_only_input(
+        "From: a\@test1.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n",
+        "evil.relay; dkim=pass header.d=test1.dkim2.com");
+    my $r = Mail::DKIM2::Reflector::reflect(
+        %common, authserv_id => $AUTHSERV, mode => 'raw', message => $in);
+    is($r->{signed}, 0, 'foreign authserv-id A-R is not trusted');
+}
+
+# --- broken DKIM2 chain does NOT fall back to DKIM1 ---
+{
+    my $good = signed_input(
+        "From: a\@test1.dkim2.com\r\nTo: reflector-raw\@dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n");
+    # Append a body line so the DKIM2 body hash no longer matches -> dkim2=fail.
+    my $broken = $good . "tampered\r\n";
+    $broken =~ s/^(From: a\@test1\.dkim2\.com\r\n)/Authentication-Results: $AUTHSERV; dkim=pass header.d=test1.dkim2.com\r\n$1/m;
+    my $r = Mail::DKIM2::Reflector::reflect(
+        %common, authserv_id => $AUTHSERV, mode => 'raw', message => $broken);
+    is($r->{auth}, 'fail', 'broken chain reports dkim2=fail');
+    is($r->{dkim1}, 'pass', 'aligned DKIM1 still reported');
+    is($r->{basis}, 'none', 'no bridge on a broken chain');
+    is($r->{signed}, 0, 'broken chain + DKIM1 -> not signed');
+}
+
+# --- MI is emitted for transforming modes even when unsigned (T3) ---
+{
+    my $in = mi_only_input("From: a\@nodkim.example\r\nSubject: hi\r\n\r\nbody\r\n");
+    my $r = Mail::DKIM2::Reflector::reflect(
+        %common, authserv_id => $AUTHSERV, mode => 'body', message => $in);
+    is($r->{signed}, 0, 'T3: unsigned (no DKIM2, no DKIM1)');
+    my @mi = (Email::MIME->new($r->{message}))->header_raw('Message-Instance');
+    is(scalar @mi, 2, 'T3: change-recording MI added even though unsigned');
+    like($r->{message}, qr/Reflected and signed by the DKIM2 reflector/, 'T3: footer applied');
 }
 
 done_testing;
