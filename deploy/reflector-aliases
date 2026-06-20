@@ -1,16 +1,14 @@
-# DKIM2 reflector addresses for dkim2.com.
+# DKIM2 reflector aliases for dkim2.com.
 # Append to /etc/aliases on the server, then run `newaliases`.
 #
-# Each address verifies the incoming DKIM2 chain, applies a transformation,
-# and reflects the message back to the sender — signing as dkim2.com only if
-# the incoming chain verified. See deploy/SERVER.md and
-# docs/superpowers/specs/2026-06-18-dkim2-reflector-design.md.
-reflector-raw:      |"/usr/local/bin/dkim2-reflect raw"
-reflector-subject:  |"/usr/local/bin/dkim2-reflect subject"
-reflector-body:     |"/usr/local/bin/dkim2-reflect body"
-reflector-both:     |"/usr/local/bin/dkim2-reflect both"
-reflector-redacted: |"/usr/local/bin/dkim2-reflect redacted"
-reflector-damage:   |"/usr/local/bin/dkim2-reflect damage"
+# NOTE: the reflector-{raw,subject,body,both,redacted,damage} addresses are NO
+# LONGER aliases. They are delivered by the dkim2-reflect pipe(8) transport
+# (deploy/postfix-dkim2-reflect.master.cf + deploy/postfix-dkim2-transport),
+# because a local(8) "|command" alias makes Postfix prepend a Delivered-To:
+# header that the reflector would hash into its Message-Instance, breaking
+# verification. See docs/dkim2-implementer-guide.md.
+#
+# Only the bounce sink remains an alias.
 
 # Envelope sender of every reflected message. Bounces/DSNs for undeliverable
 # replies come back here; dump them to an mbox so failures are captured for

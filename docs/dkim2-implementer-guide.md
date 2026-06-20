@@ -324,6 +324,32 @@ item that fails cryptographically is a hard failure, even if another item passes
 inner signature's signing input must use only the MI and sig headers that existed at
 the time that hop signed — i.e., MI with `m ≤ sig.m` and sigs with `i ≤ sig.i`.
 
+**MTA-injected headers at signing time (the `Delivered-To` / `Received-SPF` trap)**:
+The §5.2 hash excludes a fixed set of trace/transient headers — `Received`,
+`Return-Path`, `Authentication-Results`, `X-*`, `DKIM-Signature`, `ARC-*`,
+`Message-Instance`, `DKIM2-Signature` — but **not** every header an MTA may add.
+Two real-world headers bite signers that run *inside* an MTA delivery pipeline:
+
+- **`Delivered-To`** — Postfix `local(8)` prepends it when delivering to a
+  `.forward`/alias **`|command`**. A signer invoked that way (e.g. a mailing-list
+  or reflector hook) will hash a `Delivered-To` that is **renamed or stripped
+  before the message is delivered onward**, so the header-field hash can never be
+  reproduced by the verifier. `Delivered-To` is *not* an IANA trace header (only
+  `Received`/`Return-Path` are; `Delivered-To` is provisionally registered, RFC
+  9228), so it is correctly *not* in the skip list — the signer must not let it
+  into the message it hashes. Fixes: invoke the signer via a transport that does
+  not add it (Postfix `pipe(8)` instead of a `local(8)` alias; set
+  `prepend_delivered_header` to drop the `command` context; or strip the header
+  before signing).
+- **`Received-SPF`** — added by receiving MTAs (RFC 7208). Same shape: present
+  when a downstream hop signs/verifies, absent or different elsewhere.
+
+General rule: **a signer must hash only headers that will travel unchanged with
+the message.** If your signing point sits inside an MTA, audit exactly which
+headers that MTA injects/rewrites at that hop, and keep transient ones out of the
+signed message. The reflector in this repo hit this with `Delivered-To`; see
+`deploy/postfix-dkim2-reflect.master.cf` for the `pipe(8)` transport that avoids it.
+
 ---
 
 ## Recipe field (§6 — undo support)

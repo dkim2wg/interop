@@ -6,8 +6,10 @@ use Mail::DKIM2::Reflector;
 use Net::SMTP;
 use Sys::Syslog qw(:standard :macros);
 
-# Usage (from a postfix alias):  dkim2-reflector.pl <mode>
-# Reads the message on stdin; envelope sender from $ENV{SENDER}.
+# Usage:
+#   Postfix pipe(8):  dkim2-reflect ${user} ${sender}   (preferred; see SERVER.md)
+#   legacy alias:     dkim2-reflect <mode>              (sender from $ENV{SENDER})
+# Reads the message on stdin.
 #
 # Verifies the incoming message, applies the per-mode transformation, signs as
 # dkim2.com (when the incoming DKIM2 chain verified, or as a DKIM1 bridge), and
@@ -19,12 +21,27 @@ use Sys::Syslog qw(:standard :macros);
 openlog('dkim2-reflector', 'pid', LOG_MAIL);
 sub logmsg { my $m = shift; warn "dkim2-reflector: $m\n"; syslog(LOG_WARNING, '%s', $m); }
 
-my $mode   = $ARGV[0] or die "usage: $0 <mode>\n";
-my $sender = $ENV{SENDER} // '';
+# Postfix pipe(8) passes the recipient localpart and envelope sender as argv
+# macros (${user} ${sender}); the legacy local(8) alias passed a bare <mode>
+# with the sender in $ENV{SENDER}. Accept both. pipe(8) is preferred because,
+# unlike local(8), it does NOT prepend a Delivered-To: header — which would be
+# hashed into our Message-Instance and make it unverifiable. See
+# docs/dkim2-implementer-guide.md.
+my %VALID_MODE = map { $_ => 1 } qw(raw subject body both redacted damage);
+my $arg0 = $ARGV[0] // '';
+my $mode = ($arg0 =~ /^reflector-(\w+)$/) ? $1 : $arg0;
+unless ($VALID_MODE{$mode}) {
+    logmsg("unknown mode " . ($arg0 ne '' ? "'$arg0'" : '(none)') . ", dropping");
+    exit 0;
+}
 
-# Null return-path (e.g. a bounce) -> nothing to reflect; drop quietly.
-if ($sender eq '' || $sender eq '<>') {
-    logmsg("empty SENDER, dropping");
+my $sender = defined $ARGV[1] ? $ARGV[1] : ($ENV{SENDER} // '');
+
+# Null return-path (a bounce) -> nothing to reflect; drop quietly. pipe(8)
+# expands ${sender} for the null sender to $null_sender (default
+# "MAILER-DAEMON"), so treat that as null too.
+if ($sender eq '' || $sender eq '<>' || $sender =~ /^mailer-daemon(?:[@>]|$)/i) {
+    logmsg("empty/null sender ($sender), dropping");
     exit 0;
 }
 

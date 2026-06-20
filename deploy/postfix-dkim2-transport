@@ -1,0 +1,22 @@
+# DKIM2 reflector addresses -> the dkim2-reflect pipe(8) transport.
+# (See postfix-dkim2-reflect.master.cf for the service and the rationale.)
+#
+# This one map is referenced by BOTH:
+#   transport_maps        - route these recipients to the pipe service, so
+#                           local(8) never runs (and never adds Delivered-To).
+#   local_recipient_maps  - so the addresses are accepted at RCPT TO. Needed
+#                           because they are no longer in /etc/aliases; only the
+#                           value's key matters here, the transport value is
+#                           ignored for validation.
+#
+# Install:
+#   cp deploy/postfix-dkim2-transport /etc/postfix/dkim2-transport
+#   postmap /etc/postfix/dkim2-transport
+# In main.cf append "hash:/etc/postfix/dkim2-transport" to BOTH transport_maps
+# and local_recipient_maps, then: postfix reload
+reflector-raw@dkim2.com      dkim2-reflect:
+reflector-subject@dkim2.com  dkim2-reflect:
+reflector-body@dkim2.com     dkim2-reflect:
+reflector-both@dkim2.com     dkim2-reflect:
+reflector-redacted@dkim2.com dkim2-reflect:
+reflector-damage@dkim2.com   dkim2-reflect:

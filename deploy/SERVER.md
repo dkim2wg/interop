@@ -318,7 +318,7 @@ ssh dkim2 'certbot renew --dry-run --no-random-sleep-on-renew'
 mode, and reflect it back to the sender — signing as `dkim2.com` only when the
 incoming DKIM2 chain verified. For interop testing of chain behaviour.
 
-**Addresses** (`/etc/aliases`, snippet in `deploy/reflector-aliases`):
+**Addresses** (delivered by the `dkim2-reflect` pipe transport — see below):
 
 | Address | Behaviour at the sender |
 |---------|-------------------------|
@@ -333,15 +333,46 @@ Always adds `Authentication-Results` + `X-DKIM2-Reflector` (mode/auth/signed).
 If the incoming chain did not verify, the transform is still applied but no
 reflector signature is added (`X-DKIM2-Reflector: ... signed=no`).
 
+**Delivery — pipe(8) transport, NOT a local(8) alias.** The reflector addresses
+are routed by a `pipe(8)` transport, *not* `/etc/aliases` `|command` entries.
+A `local(8)` alias prepends a `Delivered-To:` header before running the command;
+the reflector would hash that into its Message-Instance, but it is renamed/
+stripped before delivery, so the `m=` header hash could never be verified.
+`Delivered-To` is not an IANA trace header (only `Received`/`Return-Path` are;
+it is provisionally registered, RFC 9228), so it is correctly *not* in the DKIM2
+skip list — the fix is to not let `local(8)` add it. `pipe(8)` does not.
+
+Setup (sources in `deploy/`):
+```bash
+# 1. pipe service
+cat deploy/postfix-dkim2-reflect.master.cf >> /etc/postfix/master.cf
+# 2. transport + recipient map (same file serves both roles)
+install -m 644 deploy/postfix-dkim2-transport /etc/postfix/dkim2-transport
+postmap /etc/postfix/dkim2-transport
+# 3. main.cf: append the map to BOTH lists, and one invocation per recipient
+postconf -e \
+  "transport_maps = regexp:/var/lib/mailman3/data/postfix_lmtp hash:/etc/postfix/dkim2-transport" \
+  "local_recipient_maps = proxy:unix:passwd.byname \$alias_maps regexp:/var/lib/mailman3/data/postfix_lmtp hash:/etc/postfix/dkim2-transport" \
+  "dkim2-reflect_destination_recipient_limit = 1"
+# 4. remove the old reflector-* |command lines from /etc/aliases (keep
+#    reflector-bounces), then:
+newaliases && postfix reload
+```
+`transport_maps` routes the addresses to the pipe so `local(8)` never runs;
+`local_recipient_maps` lists them so they still pass RCPT (they are no longer in
+`$alias_maps`). The wrapper takes the mode from `${user}` (the localpart, e.g.
+`reflector-both`) and the envelope sender from `${sender}` (pipe(8) does not
+export `$SENDER`). Only `reflector-bounces` remains an alias (the bounce mbox).
+
 **Code:** `Mail::DKIM2::Reflector` (in this repo, installed system-wide with the
 other libs) + wrapper `brong/bin/dkim2-reflector.pl` deployed to
 `/usr/local/bin/dkim2-reflect`. Signs `dkim2.com` / `sel1` / `rsa-sha256` with
 `/etc/dkim2/keys/dkim2.com/sel1.key`.
 
-**Signing-key access:** the alias pipe runs the reflector as `nobody:nogroup`,
-and Postfix `local(8)` command delivery sets only the primary uid/gid — it does
-**not** apply supplementary groups, so adding `nobody` to a group cannot grant
-key access. The main signing key tree is `dkim2:postfix` `drwxr-x---` / `-rw-r-----`,
+**Signing-key access:** the pipe transport runs the reflector as `nobody:nogroup`
+(`user=nobody:nogroup`), and like `local(8)` it sets only the primary uid/gid —
+it does **not** apply supplementary groups, so adding `nobody` to a group cannot
+grant key access. The main signing key tree is `dkim2:postfix` `drwxr-x---` / `-rw-r-----`,
 unreadable by `nobody`. So the reflector uses a dedicated copy owned by `nobody`:
 ```bash
 install -d -m 755 -o root -g root /etc/dkim2/reflector
