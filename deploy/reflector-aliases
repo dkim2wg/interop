@@ -11,3 +11,15 @@ reflector-body:     |"/usr/local/bin/dkim2-reflect body"
 reflector-both:     |"/usr/local/bin/dkim2-reflect both"
 reflector-redacted: |"/usr/local/bin/dkim2-reflect redacted"
 reflector-damage:   |"/usr/local/bin/dkim2-reflect damage"
+
+# Envelope sender of every reflected message. Bounces/DSNs for undeliverable
+# replies come back here; dump them to an mbox so failures are captured for
+# inspection instead of double-bouncing as "unknown user". Postfix delivers to
+# the file as its default_privs user (nobody) and dotlocks it, so the mbox must
+# live in a nobody-writable directory under a world-traversable parent (NOT
+# /var/mail, which nobody can't lock in, and NOT /var/spool/dkim2, which nobody
+# can't traverse). Create it once:
+#   install -d -o nobody -g mail -m 2750 /var/spool/reflector-bounces
+#   install -o nobody -g mail -m 660 /dev/null /var/spool/reflector-bounces/mbox
+# Read it with e.g. `mutt -f /var/spool/reflector-bounces/mbox`.
+reflector-bounces:  /var/spool/reflector-bounces/mbox
