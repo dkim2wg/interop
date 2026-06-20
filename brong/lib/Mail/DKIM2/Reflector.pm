@@ -69,6 +69,22 @@ sub reflect {
     # only the mbox line is "From " followed by a space.
     $incoming =~ s/\AFrom [^\r\n]*\r\n//;
 
+    # Strip any Delivered-To: header Postfix local(8) prepends when piping the
+    # message to this alias command. It is a per-hop delivery header (renamed to
+    # X-Remote-Delivered-To / dropped before the reply is delivered), so it is
+    # not seen by verifiers — but it is NOT an IANA trace header, so it is not in
+    # should_skip(). If we left it in, _build_mi would hash it into our
+    # Message-Instance and the resulting header hash could never be verified.
+    # Remove it from the header block only, before we hash or sign anything.
+    {
+        my $hend = index($incoming, "\r\n\r\n");
+        $hend = length($incoming) if $hend < 0;
+        my $head = substr($incoming, 0, $hend);
+        my $tail = substr($incoming, $hend);
+        $head =~ s/^Delivered-To:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*(?:\r\n|\z)//img;
+        $incoming = $head . $tail;
+    }
+
     # 1. DKIM2 verdict (computed here) + DKIM1 verdict (read from A-R).
     my $auth = _verify($incoming, $a{pubkey_cb}, $a{skip_timestamp_check});
     my $from_domain = _from_domain($incoming);

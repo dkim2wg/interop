@@ -338,4 +338,24 @@ my $AUTHSERV = 'mail.dkim2.com';
     like($r->{message}, qr/Reflected and signed by the DKIM2 reflector/, 'T3: footer applied');
 }
 
+# --- Delivered-To from the alias pipe must not be hashed into our MI ---
+# Postfix local(8) prepends a Delivered-To: header when piping to the alias
+# command. It is renamed/dropped before the reply is delivered, so if we hash
+# it into m=2 the header hash can never be verified. The reflector must strip
+# it before signing.
+for my $m (qw(both subject body)) {
+    my $base = signed_input(
+        "From: a\@test1.dkim2.com\r\nTo: reflector-$m\@test2.dkim2.com\r\nSubject: hi\r\n\r\norig body\r\n");
+    my $in = "Delivered-To: reflector-$m\@test2.dkim2.com\r\n" . $base;
+    my $r = Mail::DKIM2::Reflector::reflect(%common, mode => $m, message => $in);
+    is(reflected_verifies($r->{message}), 'pass',
+       "$m: reflected message verifies despite an incoming Delivered-To");
+    unlike($r->{message}, qr/^Delivered-To:/mi,
+       "$m: Delivered-To stripped from the reflected message");
+    my ($info) = $r->{message} =~ /^(X-DKIM2-Info:.*?)(?=\r\n\S)/ms;
+    $info =~ s/\r\n[ \t]//g;   # unfold
+    unlike($info, qr/\bhn=\S*\bdelivered-to\b/,
+       "$m: Delivered-To not listed in the hashed-header set");
+}
+
 done_testing;
