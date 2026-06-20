@@ -28,7 +28,18 @@ our @EXPORT_OK = qw(
     relaxed_domain_match
     parse_dkim_pubkey
     load_private_key
+    DKIM2_DRAFT
+    DKIM2_REPO
+    DKIM2_DATE
 );
+
+# Spec-version provenance, emitted in X-DKIM2-Info headers by the milter, the
+# reflector, and the mailman/sympa handlers. This is the single source of truth
+# for the Perl implementation; bump on a spec change (see the dkim2-spec-version
+# memory for the full cross-repo list).
+use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-02';
+use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
+use constant DKIM2_DATE  => '2026-05-17';
 
 # Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-02 Section 5.2
 sub should_skip {

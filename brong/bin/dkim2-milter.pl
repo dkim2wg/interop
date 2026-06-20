@@ -6,9 +6,13 @@ use Getopt::Long;
 use Pod::Usage;
 use Sendmail::PMilter ':all';
 
-use constant DKIM2_DRAFT   => 'ietf-dkim-dkim2-spec-02';
-use constant DKIM2_REPO    => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE    => '2026-05-17';
+# Imported before _dkim2_info/_header_list_for_hash so the constants and
+# should_skip are known at compile time. Spec version constants are the single
+# source of truth in Mail::DKIM2::Common.
+use Mail::DKIM2::Common qw(
+    parse_dkim_pubkey load_private_key fold_header extract_mi_version strip_mi_versions should_skip
+    DKIM2_DRAFT DKIM2_REPO DKIM2_DATE
+);
 use constant DKIM2_SOFTWARE => 'dkim2-milter.pl';
 
 sub _dkim2_info {
@@ -39,9 +43,6 @@ sub _header_list_for_hash {
     return (scalar(@fields), join(',', @fields));
 }
 
-use Mail::DKIM2::Common qw(
-    parse_dkim_pubkey load_private_key fold_header extract_mi_version strip_mi_versions should_skip
-);
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;

@@ -7,19 +7,14 @@ use Carp;
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::MessageInstance;
-use Mail::DKIM2::Common qw(fold_header should_skip);
+use Mail::DKIM2::Common qw(fold_header should_skip DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
 
 our $SUBJECT_PREFIX = '[DKIM2] ';
 our $FOOTER         = "-- \r\nReflected and signed by the DKIM2 reflector at dkim2.com\r\n";
 our $DAMAGE_LINE    = "damage line, breaks the signature\r\n";
 
-# X-DKIM2-Info provenance, in the same format dkim2-milter.pl emits.
-# NOTE: DKIM2_DRAFT/DKIM2_DATE also live in bin/dkim2-milter.pl and the
-# mailman/sympa handlers — keep them in sync on a spec bump (see the
-# dkim2-spec-version memory).
-use constant DKIM2_DRAFT    => 'ietf-dkim-dkim2-spec-02';
-use constant DKIM2_REPO     => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE     => '2026-05-17';
+# X-DKIM2-Info provenance, in the same format dkim2-milter.pl emits. The spec
+# version constants come from Mail::DKIM2::Common (single source of truth).
 use constant DKIM2_SOFTWARE => 'dkim2-reflector.pl';
 
 sub _dkim2_info {
