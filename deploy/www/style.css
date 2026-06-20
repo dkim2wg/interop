@@ -53,6 +53,17 @@ body {
   margin: 0;
 }
 
+a.badge {
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+a.badge:hover,
+a.badge:focus {
+  background: var(--accent);
+  color: #fff;
+}
+
 main { padding-top: 1rem; padding-bottom: 2rem; }
 
 section { margin: 2rem 0; }
