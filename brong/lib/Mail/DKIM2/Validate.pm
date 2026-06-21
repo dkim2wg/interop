@@ -167,7 +167,8 @@ sub _mi_level {
     my ($msg, $inst, $mi_raw) = @_;
     my %lvl = (kind => 'mi', m => $inst, result => 'fail',
                header_hash => 'mismatch', body_hash => 'mismatch',
-               recipe => 'none', undo => 'n/a', detail => '');
+               recipe => 'none', undo => 'n/a', detail => '',
+               header_recipes => [], body_recipe => 'none');
     my $mi = eval { Mail::DKIM2::MessageInstance->parse($mi_raw) };
     unless ($mi) { $lvl{detail} = 'unparseable Message-Instance'; return \%lvl; }
 
@@ -176,8 +177,10 @@ sub _mi_level {
     my $bd = Mail::DKIM2::MessageInstance::b_digest($msg);
     $lvl{header_hash} = (defined $h1 && $h1 eq $hd) ? 'match' : 'mismatch';
     $lvl{body_hash}   = (defined $b1 && $b1 eq $bd) ? 'match' : 'mismatch';
-    $lvl{recipe} = $mi->unrecoverable ? 'null'
-                 : ($mi->get_tag('rb') || $mi->get_tag('rh')) ? 'diff' : 'none';
+    my $rh = $mi->get_tag('rh');
+    my $rb = $mi->get_tag('rb');
+    $lvl{recipe} = $mi->unrecoverable ? 'null' : ($rb || $rh) ? 'diff' : 'none';
+    $lvl{body_recipe} = $mi->unrecoverable ? 'null' : ($rb ? 'diff' : 'none');
 
     if ($inst <= 1) {
         $lvl{undo} = 'n/a';
@@ -187,6 +190,17 @@ sub _mi_level {
         my $clone = Email::MIME->new($msg->as_string);
         my $ok = eval { Mail::DKIM2::MessageInstance->undo($clone) };
         $lvl{undo} = ($ok && !$@) ? 'clean' : 'failed';
+        if ($ok && !$@ && $rh) {
+            for my $h (sort keys %$rh) {
+                my $cur  = join(' / ', $msg->header($h));
+                my $prev = join(' / ', $clone->header($h));
+                push @{$lvl{header_recipes}}, {
+                    name => $h,
+                    current  => (length $cur  ? $cur  : '(absent)'),
+                    previous => (length $prev ? $prev : '(absent)'),
+                };
+            }
+        }
     }
 
     $lvl{result} = ($lvl{header_hash} eq 'match' && $lvl{body_hash} eq 'match')
@@ -201,10 +215,14 @@ sub _sig_level {
     my $sig = eval { Mail::DKIM2::Signature->parse($sig_by_i->{$num}) };
     my %lvl = (kind => 'signature', i => $num, m => _m($sig_by_i->{$num}),
                domain => ($sig ? ($sig->domain // '') : ''),
+               mail_from => '', rcpt_to => [],
                items => [], timestamp => { ok => 1, detail => '' },
                custody => { ok => 1, detail => '' }, result => 'fail', detail => '');
 
     if ($sig) {
+        $lvl{mail_from} = $sig->mail_from // '';
+        my $rt = $sig->rcpt_to;
+        $lvl{rcpt_to} = [ ref $rt eq 'ARRAY' ? @$rt : (defined $rt ? ($rt) : ()) ];
         my $n = $sig->sig_count || 0;
         for my $idx (0 .. $n - 1) {
             push @{$lvl{items}}, {

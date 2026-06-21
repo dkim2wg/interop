@@ -133,4 +133,23 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
        'tampered body still fails even with Received-SPF stripped');
 }
 
+# 8) per-hop details: signature From/To + recovered MI recipe values
+{
+    my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-both\@test2.dkim2.com\r\nSubject: hi\r\n\r\norig body\r\n");
+    my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'both', message=>$in);
+    my $rep = Mail::DKIM2::Validate::report($r2->{message}, %ropt);
+
+    my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i} == 2 } @{$rep->{levels}};
+    ok($sig2->{mail_from}, 'sig i=2 has mail_from');
+    is(ref $sig2->{rcpt_to}, 'ARRAY', 'sig i=2 rcpt_to is a list');
+    ok(scalar @{$sig2->{rcpt_to}}, 'sig i=2 has at least one rcpt_to');
+
+    my ($topmi) = grep { $_->{kind} eq 'mi' && $_->{m} == 2 } @{$rep->{levels}};
+    is($topmi->{body_recipe}, 'diff', 'top MI body_recipe is diff');
+    my ($subj) = grep { $_->{name} eq 'subject' } @{$topmi->{header_recipes} || []};
+    ok($subj, 'top MI has a subject header recipe');
+    like($subj->{current},  qr/\Q[DKIM2]\E/, 'subject recipe current is the prefixed subject');
+    is($subj->{previous}, 'hi', 'subject recipe previous is the original subject');
+}
+
 done_testing;
