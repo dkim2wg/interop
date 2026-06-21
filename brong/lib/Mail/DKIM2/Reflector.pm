@@ -154,6 +154,44 @@ sub _dkim2test_cname_ok {
     return 0;
 }
 
+# sign_dkim1($text, @specs) — prepend a classic DKIM1 DKIM-Signature per spec.
+# Each spec: { domain, selector, keyfile } or { domain, selector, key => <PEM> }.
+# rsa-sha256 / relaxed-relaxed. Composable post-step: only prepends headers,
+# never touches the body or the DKIM2/MI headers. See
+# docs/superpowers/specs/2026-06-21-dkim2-reflector-dkim1-signing-design.md.
+sub sign_dkim1 {
+    my ($text, @specs) = @_;
+    require Mail::DKIM::Signer;
+    require Mail::DKIM::PrivateKey;
+    for my $s (@specs) {
+        # Mail::DKIM::PrivateKey's Data=> path does not parse a PEM string; only
+        # File=> does. So an in-memory PEM (key=>) goes via a temp file.
+        my ($key, $tmp);
+        if (defined $s->{key}) {
+            require File::Temp;
+            $tmp = File::Temp->new(SUFFIX => '.pem');
+            print {$tmp} $s->{key};
+            close $tmp;
+            $key = Mail::DKIM::PrivateKey->load(File => "$tmp");
+        } else {
+            $key = Mail::DKIM::PrivateKey->load(File => $s->{keyfile});
+        }
+        my $signer = Mail::DKIM::Signer->new(
+            Algorithm => 'rsa-sha256',
+            Method    => 'relaxed/relaxed',
+            Domain    => $s->{domain},
+            Selector  => $s->{selector},
+            Key       => $key,
+        );
+        $signer->PRINT($text);
+        $signer->CLOSE;
+        (my $sig = $signer->signature->as_string) =~ s/\r?\n/\r\n/g;
+        $sig =~ s/\r\n\z//;
+        $text = "$sig\r\n" . $text;
+    }
+    return $text;
+}
+
 # generate_brand(%args) — the reflector-brand behaviour. With delegated=1, build a
 # fresh message From the brand and sign it twice (i=1 as the brand via the
 # delegated key, i=2 as <domain>), on one Message-Instance. With delegated=0, fall
