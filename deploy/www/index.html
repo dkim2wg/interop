@@ -86,9 +86,11 @@
 
     <section>
       <h2>Try it: reflector addresses</h2>
-      <p>Six addresses on this host let you watch DKIM2 chain behaviour
-        end-to-end. Each one verifies the message you send, applies a defined
-        transformation, and mails it straight back to you.</p>
+      <p>Addresses on this host let you watch DKIM2 behaviour end-to-end, in two
+        flavours: six that <strong>reflect</strong> the message you send back to
+        you after a defined transformation (below), and two that
+        <strong>originate</strong> a brand-new message for you
+        (<a href="#originate">Originate a new message</a>).</p>
       <p>Send a <strong>DKIM2-signed</strong> message — for example from one of
         the reference implementations — to a <code>reflector-*@dkim2.com</code>
         address. You'll get a reply, transformed per the mode below. Whether the
@@ -188,8 +190,67 @@
             <td>The <code>m=</code> snapshot recording the reflector's change
               (present for the changing modes).</td>
           </tr>
+          <tr>
+            <td><code>DKIM-Signature</code> (classic DKIM1)</td>
+            <td>Every reply also carries an ordinary DKIM1 signature
+              (<code>d=dkim2.com</code>; the brand address adds a second,
+              <code>d=&lt;your-domain&gt;</code>), so the demo mail looks like
+              real-world mail.</td>
+          </tr>
         </tbody>
       </table>
+    </section>
+
+    <section id="originate">
+      <h2>Originate a new message</h2>
+      <p>Two addresses don't reflect your message at all — they
+        <strong>originate a brand-new DKIM2 message</strong> and send it to you.
+        Because they send from a <code>dkim2.com</code>-aligned identity, the
+        replies pass DMARC and land in your <strong>inbox</strong>.</p>
+
+      <h3><a href="mailto:reflector-fresh@dkim2.com"><code>reflector-fresh@dkim2.com</code></a></h3>
+      <p>Generates the simplest valid DKIM2 message: a single
+        <code>Message-Instance</code> (<code>m=1</code>) and one
+        <code>dkim2.com</code> DKIM2-Signature — no forwarding chain — plus a
+        matching <code>dkim2.com</code> DKIM1 signature. From
+        <code>&lt;fresh@dkim2.com&gt;</code> to you. Paste it into
+        <a href="/validate/">the validator</a> to see one clean signature and
+        one instance.</p>
+
+      <h3 id="reflector-brand"><a href="mailto:reflector-brand@dkim2.com"><code>reflector-brand@dkim2.com</code></a> — brand delegation</h3>
+      <p>Models an <strong>email sending platform (ESP)</strong> that sends on a
+        brand's behalf without showing its own identity. With one DNS record you
+        delegate a signing key to <code>dkim2.com</code>, and it returns a
+        brand-new message that is <strong>signed as your domain</strong>:</p>
+      <ul>
+        <li><strong>Two DKIM2-Signatures on one Message-Instance</strong> —
+          <code>i=1</code> as <em>your</em> domain (the delegated key) and
+          <code>i=2</code> as <code>dkim2.com</code>, forming a chain of
+          custody.</li>
+        <li><strong>Two classic DKIM1 signatures</strong> —
+          <code>d=&lt;your-domain&gt;</code> (the same delegated key) and
+          <code>d=dkim2.com</code> — exactly how a real ESP signs.</li>
+        <li>The visible <code>From:</code> is
+          <code>dkim2demo@&lt;your-domain&gt;</code> and <code>To:</code> is you;
+          <code>dkim2.com</code> never appears in the headers a reader sees — it
+          is only in the signatures and the envelope.</li>
+      </ul>
+      <p>Because the delegated <code>d=&lt;your-domain&gt;</code> DKIM1 aligns
+        with the <code>From:</code> domain, the message passes DMARC and lands in
+        the inbox — the same way Mailchimp, SendGrid and similar platforms send
+        for a brand today.</p>
+      <p><strong>Setup — publish one CNAME</strong> in your domain's DNS:</p>
+      <pre class="cname">dkim2test._domainkey.&lt;your-domain&gt;.  CNAME  dkim2test._domainkey.dkim2.com.</pre>
+      <p>This single delegation serves <em>both</em> the DKIM2 chain signature
+        and the DKIM1 signature — one key, held by <code>dkim2.com</code>, that
+        your domain authorises it to use. Then email
+        <a href="mailto:reflector-brand@dkim2.com"><code>reflector-brand@dkim2.com</code></a>
+        from an address at that domain and paste the reply into
+        <a href="/validate/">the validator</a> to watch both DKIM2 signatures
+        verify.</p>
+      <p><small>Until the CNAME is in place (and has propagated), the address
+        replies with a plain <code>reflector-fresh</code>-style message
+        explaining how to set up the delegation.</small></p>
     </section>
 
     <section>

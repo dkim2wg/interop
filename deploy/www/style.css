@@ -83,6 +83,16 @@ code {
   padding: 0.1em 0.3em;
 }
 
+pre.cname {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  background: #f4f4f4;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  overflow-x: auto;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
