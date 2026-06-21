@@ -358,4 +358,35 @@ for my $m (qw(both subject body)) {
        "$m: Delivered-To not listed in the hashed-header set");
 }
 
+# --- fresh: originate a brand-new single-instance message ---
+{
+    my $msg = Mail::DKIM2::Reflector::generate(
+        sender     => 'a@test1.dkim2.com',
+        domain     => 'test2.dkim2.com',
+        selector   => 'sel1',
+        key        => DKIM2TestKeys::private_key('test2.dkim2.com', 'sel1'),
+        mailfrom   => 'reflector-bounces@test2.dkim2.com',
+        now        => 1740000000,
+        message_id => '<fresh-test@test2.dkim2.com>',
+    );
+    my $em = Email::MIME->new($msg);
+    is($em->header('To'), 'a@test1.dkim2.com', 'fresh: To is the sender');
+    like($em->header('From'), qr/<fresh\@test2\.dkim2\.com>/, 'fresh: From is the generator identity');
+    my @sigs = $em->header_raw('DKIM2-Signature');
+    my @mis  = $em->header_raw('Message-Instance');
+    is(scalar @sigs, 1, 'fresh: exactly one signature (no chain)');
+    is(scalar @mis, 1, 'fresh: exactly one Message-Instance');
+    like($msg, qr/^X-DKIM2-Info:.*action=generate/ms, 'fresh: X-DKIM2-Info action=generate');
+    unlike($msg, qr/^X-DKIM2-Reflector:/mi, 'fresh: no X-DKIM2-Reflector on the originated message');
+    is(Mail::DKIM2::MessageInstance->verify(Email::MIME->new($msg)), 1, 'fresh: MI m=1 verifies');
+    is(reflected_verifies($msg), 'pass', 'fresh: generated message verifies end to end');
+    # determinism
+    my $msg2 = Mail::DKIM2::Reflector::generate(
+        sender => 'a@test1.dkim2.com', domain => 'test2.dkim2.com', selector => 'sel1',
+        key => DKIM2TestKeys::private_key('test2.dkim2.com', 'sel1'),
+        mailfrom => 'reflector-bounces@test2.dkim2.com',
+        now => 1740000000, message_id => '<fresh-test@test2.dkim2.com>');
+    is($msg2, $msg, 'fresh: deterministic for fixed now + message_id');
+}
+
 done_testing;

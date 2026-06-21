@@ -4,6 +4,7 @@ use 5.020;
 
 use Email::MIME;
 use Carp;
+use POSIX qw(strftime);
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::MessageInstance;
@@ -42,6 +43,70 @@ sub _header_list_for_hash {
         push @fields, (lc $h) x scalar(@vals);
     }
     return (scalar(@fields), join(',', @fields));
+}
+
+# RFC 5322 date string (always UTC) for the given epoch.
+sub _rfc2822_date {
+    my ($epoch) = @_;
+    return POSIX::strftime('%a, %d %b %Y %H:%M:%S +0000', gmtime($epoch));
+}
+
+# generate(%args) — ORIGINATE a brand-new DKIM2 message back to the sender:
+# a single Message-Instance (m=1) and a single DKIM2-Signature (i=1), no chain.
+# Unlike reflect(), the incoming message is not used (the caller passes only the
+# reply target as `sender`). From is a <domain> identity so DMARC aligns and the
+# message lands in the inbox. See
+# docs/superpowers/specs/2026-06-20-dkim2-reflector-fresh-design.md.
+sub generate {
+    my (%a) = @_;
+    croak "need a sender" unless $a{sender};
+    $a{domain}   //= 'dkim2.com';
+    $a{selector} //= 'sel1';
+    $a{mailfrom} //= "reflector-bounces\@$a{domain}";
+    my $now = $a{now} // time();
+    $a{timestamp} //= $now;                       # _sign reads $a{timestamp}
+    my $mid  = $a{message_id} // sprintf('<fresh-%d-%d@%s>', $now, $$, $a{domain});
+    my $date = _rfc2822_date($now);
+
+    my $body =
+        "Hello,\r\n\r\n"
+      . "This is a freshly-originated DKIM2 message from $a{domain}, generated\r\n"
+      . "because you sent mail to reflector-fresh\@$a{domain}.\r\n\r\n"
+      . "Unlike the other reflector addresses, this is NOT a forward of your\r\n"
+      . "message: it is a brand-new message with a single Message-Instance (m=1)\r\n"
+      . "and a single DKIM2-Signature (i=1), and no forwarding chain.\r\n\r\n"
+      . "Paste it into https://$a{domain}/validate/ to see it verify.\r\n\r\n"
+      . "Requested by: $a{sender}\r\n"
+      . "Generated at: $date\r\n\r\n"
+      . "-- \r\n"
+      . "The DKIM2 reflector at $a{domain}\r\n";
+
+    my $text =
+        "From: \"DKIM2 Generator\" <fresh\@$a{domain}>\r\n"
+      . "To: $a{sender}\r\n"
+      . "Subject: Freshly generated DKIM2 message\r\n"
+      . "Date: $date\r\n"
+      . "Message-ID: $mid\r\n"
+      . "MIME-Version: 1.0\r\n"
+      . "Content-Type: text/plain; charset=utf-8\r\n"
+      . "\r\n"
+      . $body;
+
+    # m=1 Message-Instance (hashes only, no previous version).
+    my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($text));
+    (my $miv = fold_header("Message-Instance: " . $mi->as_string)) =~ s/^Message-Instance:\s*//;
+    $text = "Message-Instance: $miv\r\n" . $text;
+
+    # i=1 DKIM2-Signature (mf= relaxed-matches d=; rt = [sender]; no predecessor).
+    my $sig = _sign($text, %a);
+    $text = "$sig\r\n" . $text;
+
+    # X-DKIM2-Info provenance (action=generate), same format as the milter.
+    my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($text));
+    (my $xi = fold_header("X-DKIM2-Info: " . _dkim2_info('generate', hc => $hc, hn => $hn))) =~ s/\r?\n\z//;
+    $text = "$xi\r\n" . $text;
+
+    return $text;
 }
 
 my %VALID = map { $_ => 1 } qw(raw subject body both redacted damage);
