@@ -27,7 +27,7 @@ sub logmsg { my $m = shift; warn "dkim2-reflector: $m\n"; syslog(LOG_WARNING, '%
 # unlike local(8), it does NOT prepend a Delivered-To: header — which would be
 # hashed into our Message-Instance and make it unverifiable. See
 # docs/dkim2-implementer-guide.md.
-my %VALID_MODE = map { $_ => 1 } qw(raw subject body both redacted damage);
+my %VALID_MODE = map { $_ => 1 } qw(raw subject body both redacted damage fresh);
 my $arg0 = $ARGV[0] // '';
 my $mode = ($arg0 =~ /^reflector-(\w+)$/) ? $1 : $arg0;
 unless ($VALID_MODE{$mode}) {
@@ -48,16 +48,28 @@ if ($sender eq '' || $sender eq '<>' || $sender =~ /^mailer-daemon(?:[@>]|$)/i) 
 my $message = do { local $/; <STDIN> };
 
 my $result = eval {
-    Mail::DKIM2::Reflector::reflect(
-        message  => $message,
-        mode     => $mode,
-        sender   => $sender,
-        domain   => 'dkim2.com',
-        selector => 'sel1',
-        keyfile  => '/etc/dkim2/reflector/sel1.key',
-        mailfrom => 'reflector-bounces@dkim2.com',
-        authserv_id => 'mail.dkim2.com',
-    );
+    if ($mode eq 'fresh') {
+        # Originate a brand-new message rather than reflecting the incoming one.
+        my $msg = Mail::DKIM2::Reflector::generate(
+            sender   => $sender,
+            domain   => 'dkim2.com',
+            selector => 'sel1',
+            keyfile  => '/etc/dkim2/reflector/sel1.key',
+            mailfrom => 'reflector-bounces@dkim2.com',
+        );
+        { message => $msg, signed => 1, basis => 'origin', mode => 'fresh' };
+    } else {
+        Mail::DKIM2::Reflector::reflect(
+            message  => $message,
+            mode     => $mode,
+            sender   => $sender,
+            domain   => 'dkim2.com',
+            selector => 'sel1',
+            keyfile  => '/etc/dkim2/reflector/sel1.key',
+            mailfrom => 'reflector-bounces@dkim2.com',
+            authserv_id => 'mail.dkim2.com',
+        );
+    }
 };
 if (my $err = $@) {
     chomp(my $e = $err);

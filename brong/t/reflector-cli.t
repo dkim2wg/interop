@@ -13,6 +13,8 @@ like($src, qr{/etc/dkim2/reflector/sel1\.key}, 'wrapper signs with the reflector
 like($src, qr/authserv_id\s*=>\s*'mail\.dkim2\.com'/,
     'wrapper passes the configured authserv-id');
 like($src, qr/Sys::Syslog/, 'wrapper logs failures to syslog');
+like($src, qr/\bfresh\b/, 'wrapper knows the fresh mode');
+like($src, qr/Mail::DKIM2::Reflector::generate/, 'wrapper dispatches to generate() for fresh');
 
 # Compiles cleanly.
 my $out = qx{perl -c -Ilib bin/dkim2-reflector.pl 2>&1};
