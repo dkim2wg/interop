@@ -419,6 +419,7 @@ for my $m (qw(both subject body)) {
     like("@sigs", qr/\bd=test1\.dkim2\.com\b/, 'brand: i=1 signs as the brand domain');
     like("@sigs", qr/\bd=test2\.dkim2\.com\b/, 'brand: i=2 signs as dkim2.com role');
     is(reflected_verifies($msg), 'pass', 'brand: two-sig message verifies (chain of custody ok)');
+    like($msg, qr/\Qsent for test1.dkim2.com\E/, 'brand: body names the brand domain (no $bd apostrophe bug)');
 
     # not delegated -> fresh style with an error body, single signature
     my $err = Mail::DKIM2::Reflector::generate_brand(%common_brand, delegated => 0);

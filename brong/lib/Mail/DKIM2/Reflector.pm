@@ -187,8 +187,8 @@ sub generate_brand {
     my $from = "dkim2demo\@$bd";
     my $body =
         "Hello,\r\n\r\n"
-      . "This is a brand-signed DKIM2 message, sent on $bd's behalf by an ESP\r\n"
-      . "that does not show its own identity in the visible headers. It is freshly\r\n"
+      . "This is a brand-signed DKIM2 message, sent for $bd by an ESP that does\r\n"
+      . "not show its own identity in the visible headers. It is freshly\r\n"
       . "originated (a single Message-Instance, m=1) but carries TWO DKIM2-Signatures:\r\n\r\n"
       . "  i=1  d=$bd  (signed with the key you delegated via the\r\n"
       . "       dkim2test._domainkey.$bd CNAME to dkim2test._domainkey.$a{domain})\r\n"
