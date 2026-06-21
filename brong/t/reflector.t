@@ -389,4 +389,40 @@ for my $m (qw(both subject body)) {
     is($msg2, $msg, 'fresh: deterministic for fixed now + message_id');
 }
 
+# --- brand: delegated two-signature message on a single MI ---
+{
+    my %common_brand = (
+        sender   => 'brand@test1.dkim2.com',     # the brand
+        domain   => 'test2.dkim2.com',           # the dkim2.com-role signer
+        selector => 'sel1',
+        key      => DKIM2TestKeys::private_key('test2.dkim2.com', 'sel1'),
+        mailfrom => 'reflector-bounces@test2.dkim2.com',
+        brand_selector => 'dkim2test',
+        brand_key => DKIM2TestKeys::private_key('test1.dkim2.com', 'dkim2test'),
+        now => 1740000000, message_id => '<brand-test@test2.dkim2.com>',
+    );
+
+    # delegated -> two signatures, one MI, verifies
+    my $msg = Mail::DKIM2::Reflector::generate_brand(%common_brand, delegated => 1);
+    my $em = Email::MIME->new($msg);
+    is($em->header('From'), 'brand@test1.dkim2.com', 'brand: From is the brand');
+    is($em->header('To'), 'reflector-brand@test2.dkim2.com', 'brand: To is reflector-brand');
+    my @sigs = $em->header_raw('DKIM2-Signature');
+    my @mis  = $em->header_raw('Message-Instance');
+    is(scalar @sigs, 2, 'brand: two signatures');
+    is(scalar @mis, 1, 'brand: one Message-Instance');
+    like($msg, qr/^X-DKIM2-Info:.*action=brand/ms, 'brand: X-DKIM2-Info action=brand');
+    like("@sigs", qr/\bd=test1\.dkim2\.com\b/, 'brand: i=1 signs as the brand domain');
+    like("@sigs", qr/\bd=test2\.dkim2\.com\b/, 'brand: i=2 signs as dkim2.com role');
+    is(reflected_verifies($msg), 'pass', 'brand: two-sig message verifies (chain of custody ok)');
+
+    # not delegated -> fresh style with an error body, single signature
+    my $err = Mail::DKIM2::Reflector::generate_brand(%common_brand, delegated => 0);
+    my $eem = Email::MIME->new($err);
+    my @esigs = $eem->header_raw('DKIM2-Signature');
+    is(scalar @esigs, 1, 'brand(no cname): single signature');
+    like($eem->header('From'), qr/<fresh\@test2\.dkim2\.com>/, 'brand(no cname): fresh From identity');
+    like($err, qr/dkim2test\._domainkey/, 'brand(no cname): body explains the missing CNAME');
+}
+
 done_testing;

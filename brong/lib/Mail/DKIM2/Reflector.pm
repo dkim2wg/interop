@@ -136,6 +136,89 @@ sub generate {
     return "$xi\r\n" . $text;
 }
 
+# Domain part of an email address.
+sub _addr_domain { my ($a) = @_; $a =~ /\@([^>]+?)>?\s*$/ ? $1 : $a }
+
+# True iff dkim2test._domainkey.$domain is a CNAME to dkim2test._domainkey.dkim2.com.
+# Live DNS (kept out of generate_brand so the message logic is testable offline).
+sub _dkim2test_cname_ok {
+    my ($domain) = @_;
+    require Net::DNS::Resolver;
+    my $r = Net::DNS::Resolver->new;
+    my $q = $r->query("dkim2test._domainkey.$domain", 'CNAME') or return 0;
+    for my $rr ($q->answer) {
+        next unless $rr->type eq 'CNAME';
+        (my $t = $rr->cname) =~ s/\.\z//;
+        return 1 if lc($t) eq 'dkim2test._domainkey.dkim2.com';
+    }
+    return 0;
+}
+
+# generate_brand(%args) — the reflector-brand behaviour. With delegated=1, build a
+# fresh message From the brand and sign it twice (i=1 as the brand via the
+# delegated key, i=2 as <domain>), on one Message-Instance. With delegated=0, fall
+# back to the fresh generator carrying a CNAME-setup error body. See
+# docs/superpowers/specs/2026-06-20-dkim2-reflector-brand-design.md.
+sub generate_brand {
+    my (%a) = @_;
+    croak "need a sender" unless $a{sender};
+    $a{domain}   //= 'dkim2.com';
+    $a{selector} //= 'sel1';
+    $a{mailfrom} //= "reflector-bounces\@$a{domain}";
+    $a{brand_selector} //= 'dkim2test';
+    my $now = $a{now} // time();
+    my $bd  = _addr_domain($a{sender});
+
+    unless ($a{delegated}) {
+        my $err =
+            "Hello,\r\n\r\n"
+          . "You asked for the DKIM2 brand demo, but dkim2test._domainkey.$bd is not\r\n"
+          . "a CNAME to dkim2test._domainkey.$a{domain}. Publish that CNAME and try\r\n"
+          . "again to get a brand-signed (two-signature) message.\r\n\r\n"
+          . "In the meantime, here is a plain freshly-generated DKIM2 message.\r\n\r\n"
+          . "-- \r\n"
+          . "The DKIM2 reflector at $a{domain}\r\n";
+        return generate(sender => $a{sender}, domain => $a{domain}, selector => $a{selector},
+                        key => $a{key}, keyfile => $a{keyfile}, mailfrom => $a{mailfrom},
+                        now => $now, message_id => $a{message_id}, body => $err);
+    }
+
+    my $rcpt = "reflector-brand\@$a{domain}";
+    my $body =
+        "Hello,\r\n\r\n"
+      . "This is a brand-signed DKIM2 message. It is freshly originated (a single\r\n"
+      . "Message-Instance, m=1) but carries TWO DKIM2-Signatures:\r\n\r\n"
+      . "  i=1  d=$bd  (signed with the key you delegated via the\r\n"
+      . "       dkim2test._domainkey.$bd CNAME to dkim2test._domainkey.$a{domain})\r\n"
+      . "  i=2  d=$a{domain}  (the platform hop out to you)\r\n\r\n"
+      . "Paste it into https://$a{domain}/validate/ to see both signatures verify.\r\n\r\n"
+      . "-- \r\n"
+      . "The DKIM2 reflector at $a{domain}\r\n";
+
+    my $text = _fresh_message_text(
+        from => $a{sender}, to => $rcpt, subject => 'Brand-signed DKIM2 message',
+        body => $body, now => $now, message_id => $a{message_id}, domain => $a{domain},
+    );
+
+    # i=1: sign AS the brand using the delegated key.
+    my %b = (Domain => $bd, Selector => $a{brand_selector},
+             MailFrom => $a{sender}, RcptTo => [ $rcpt ], Timestamp => $now);
+    $b{Key} = $a{brand_key} if $a{brand_key};
+    $b{KeyFile} = $a{brand_keyfile} if $a{brand_keyfile} && !$a{brand_key};
+    $text = _sign_with($text, %b) . "\r\n" . $text;
+
+    # i=2: the dkim2.com hop out to the sender.
+    my %d = (Domain => $a{domain}, Selector => $a{selector},
+             MailFrom => $a{mailfrom}, RcptTo => [ $a{sender} ], Timestamp => $now);
+    $d{Key} = $a{key} if $a{key};
+    $d{KeyFile} = $a{keyfile} if $a{keyfile} && !$a{key};
+    $text = _sign_with($text, %d) . "\r\n" . $text;
+
+    my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($text));
+    (my $xi = fold_header("X-DKIM2-Info: " . _dkim2_info('brand', hc => $hc, hn => $hn))) =~ s/\r?\n\z//;
+    return "$xi\r\n" . $text;
+}
+
 my %VALID = map { $_ => 1 } qw(raw subject body both redacted damage);
 
 # reflect(%args) — verify an incoming message, transform it per mode, and
