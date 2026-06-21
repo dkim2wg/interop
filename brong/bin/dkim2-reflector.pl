@@ -98,6 +98,19 @@ if (my $err = $@) {
     exit 0;   # never bounce
 }
 
+# Add classic DKIM1 signatures so the reply looks like real-world mail. Always
+# sign as dkim2.com; for a delegated brand reply also sign as the brand domain
+# with the delegated key (this is what DMARC-aligns From: dkim2demo@<brand>).
+my @dkim1 = ({ domain => 'dkim2.com', selector => 'sel1',
+               keyfile => '/etc/dkim2/reflector/sel1.key' });
+if ($mode eq 'brand' && $result->{basis} eq 'brand') {
+    my $bd = $sender; $bd =~ s/.*\@//;
+    unshift @dkim1, { domain => $bd, selector => 'dkim2test',
+                      keyfile => '/etc/dkim2/reflector/dkim2test.key' };
+}
+my $signed1 = eval { Mail::DKIM2::Reflector::sign_dkim1($result->{message}, @dkim1) };
+if ($signed1) { $result->{message} = $signed1; } else { logmsg("dkim1 sign failed: $@"); }
+
 # Inject to the milter-free postfix service (see deploy/SERVER.md) so we do not
 # get re-signed by the outbound milter.
 my $smtp = Net::SMTP->new('127.0.0.1', Port => 10588, Timeout => 30)

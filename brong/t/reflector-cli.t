@@ -19,6 +19,8 @@ like($src, qr/\bbrand\b/, 'wrapper knows the brand mode');
 like($src, qr/generate_brand/, 'wrapper dispatches to generate_brand()');
 like($src, qr/_dkim2test_cname_ok/, 'wrapper does the delegation CNAME check');
 like($src, qr{/etc/dkim2/reflector/dkim2test\.key}, 'wrapper uses the delegated dkim2test key');
+like($src, qr/sign_dkim1/, 'wrapper adds DKIM1 signatures to the reply');
+like($src, qr{/etc/dkim2/reflector/sel1\.key}, 'wrapper DKIM1-signs as dkim2.com/sel1');
 
 # Compiles cleanly.
 my $out = qx{perl -c -Ilib bin/dkim2-reflector.pl 2>&1};
