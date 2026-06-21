@@ -15,6 +15,10 @@ like($src, qr/authserv_id\s*=>\s*'mail\.dkim2\.com'/,
 like($src, qr/Sys::Syslog/, 'wrapper logs failures to syslog');
 like($src, qr/\bfresh\b/, 'wrapper knows the fresh mode');
 like($src, qr/Mail::DKIM2::Reflector::generate/, 'wrapper dispatches to generate() for fresh');
+like($src, qr/\bbrand\b/, 'wrapper knows the brand mode');
+like($src, qr/generate_brand/, 'wrapper dispatches to generate_brand()');
+like($src, qr/_dkim2test_cname_ok/, 'wrapper does the delegation CNAME check');
+like($src, qr{/etc/dkim2/reflector/dkim2test\.key}, 'wrapper uses the delegated dkim2test key');
 
 # Compiles cleanly.
 my $out = qx{perl -c -Ilib bin/dkim2-reflector.pl 2>&1};
