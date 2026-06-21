@@ -405,8 +405,12 @@ for my $m (qw(both subject body)) {
     # delegated -> two signatures, one MI, verifies
     my $msg = Mail::DKIM2::Reflector::generate_brand(%common_brand, delegated => 1);
     my $em = Email::MIME->new($msg);
-    is($em->header('From'), 'brand@test1.dkim2.com', 'brand: From is the brand');
-    is($em->header('To'), 'reflector-brand@test2.dkim2.com', 'brand: To is reflector-brand');
+    is($em->header('From'), 'dkim2demo@test1.dkim2.com', 'brand: From is dkim2demo@<brand>');
+    is($em->header('To'), 'brand@test1.dkim2.com', 'brand: To is the sender');
+    # The platform/ESP identity (the reflector domain test2.dkim2.com, and the
+    # reflector-brand intake) must not appear in the visible headers.
+    unlike($em->header('From').'|'.$em->header('To').'|'.$em->header('Subject'),
+           qr/test2\.dkim2\.com|reflector-brand/, 'brand: platform identity not in visible From/To/Subject');
     my @sigs = $em->header_raw('DKIM2-Signature');
     my @mis  = $em->header_raw('Message-Instance');
     is(scalar @sigs, 2, 'brand: two signatures');

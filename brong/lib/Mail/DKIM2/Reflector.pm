@@ -184,25 +184,27 @@ sub generate_brand {
     }
 
     my $rcpt = "reflector-brand\@$a{domain}";
+    my $from = "dkim2demo\@$bd";
     my $body =
         "Hello,\r\n\r\n"
-      . "This is a brand-signed DKIM2 message. It is freshly originated (a single\r\n"
-      . "Message-Instance, m=1) but carries TWO DKIM2-Signatures:\r\n\r\n"
+      . "This is a brand-signed DKIM2 message, sent on $bd's behalf by an ESP\r\n"
+      . "that does not show its own identity in the visible headers. It is freshly\r\n"
+      . "originated (a single Message-Instance, m=1) but carries TWO DKIM2-Signatures:\r\n\r\n"
       . "  i=1  d=$bd  (signed with the key you delegated via the\r\n"
       . "       dkim2test._domainkey.$bd CNAME to dkim2test._domainkey.$a{domain})\r\n"
-      . "  i=2  d=$a{domain}  (the platform hop out to you)\r\n\r\n"
+      . "  i=2  d=$a{domain}  (the ESP/platform hop out to you)\r\n\r\n"
       . "Paste it into https://$a{domain}/validate/ to see both signatures verify.\r\n\r\n"
       . "-- \r\n"
       . "The DKIM2 reflector at $a{domain}\r\n";
 
     my $text = _fresh_message_text(
-        from => $a{sender}, to => $rcpt, subject => 'Brand-signed DKIM2 message',
+        from => $from, to => $a{sender}, subject => 'Brand-signed DKIM2 message',
         body => $body, now => $now, message_id => $a{message_id}, domain => $a{domain},
     );
 
     # i=1: sign AS the brand using the delegated key.
     my %b = (Domain => $bd, Selector => $a{brand_selector},
-             MailFrom => $a{sender}, RcptTo => [ $rcpt ], Timestamp => $now);
+             MailFrom => $from, RcptTo => [ $rcpt ], Timestamp => $now);
     $b{Key} = $a{brand_key} if $a{brand_key};
     $b{KeyFile} = $a{brand_keyfile} if $a{brand_keyfile} && !$a{brand_key};
     $text = _sign_with($text, %b) . "\r\n" . $text;
