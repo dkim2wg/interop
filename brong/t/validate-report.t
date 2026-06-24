@@ -75,6 +75,16 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
     my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i}==2 } @{$rep->{levels}};
     ok($sig2->{custody}{ok}, 'nd= hop: i=2 custody ok (not the stale mf/rt FAIL)');
     like($sig2->{custody}{detail}, qr/nd=test2\.dkim2\.com matches/, 'custody detail explains the nd= match');
+
+    # parsed-tag breakdown for the UI: every tag present, decoded.
+    my ($sig1) = grep { $_->{kind} eq 'signature' && $_->{i}==1 } @{$rep->{levels}};
+    ok($sig1->{tags} && @{$sig1->{tags}}, 'i=1 has a parsed tag list');
+    ok((grep { $_->{tag} eq 'nd' && $_->{value} eq 'test2.dkim2.com' } @{$sig1->{tags}}),
+       'i=1 tags include nd=test2.dkim2.com');
+    ok(!(grep { $_->{tag} eq 'mf' } @{$sig1->{tags}}), 'i=1 tags omit mf= (nd= hop)');
+    my ($mi1) = grep { $_->{kind} eq 'mi' && $_->{m}==1 } @{$rep->{levels}};
+    ok((grep { $_->{tag} eq 'h' && $_->{value} =~ /^sha256:/ } @{$mi1->{tags}}),
+       'MI tags expose the full sha256 hash values');
 }
 
 # 2) Post-sign body tamper (damage)

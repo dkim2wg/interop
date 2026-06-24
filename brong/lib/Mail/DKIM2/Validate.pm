@@ -11,6 +11,80 @@ use Mail::DKIM2::Signature;
 sub _i { my $h = shift // ''; $h =~ /\bi=(\d+)/ ? 0 + $1 : 0 }
 sub _m { my $h = shift // ''; $h =~ /\bm=(\d+)/ ? 0 + $1 : 0 }
 
+# --- parsed-tag breakdown for the validator UI ---------------------------
+# A compact, human-readable rendering of every tag in a DKIM2-Signature or
+# Message-Instance, so the validator can show the full parsed structure.
+
+# Unix timestamp -> "<n> (YYYY-MM-DD HH:MM:SSZ)".
+sub _fmt_ts {
+    my $t = shift;
+    return '' unless defined $t && $t ne '';
+    return $t unless $t =~ /^\d+$/;
+    my @g = gmtime($t);
+    return sprintf('%s (%04d-%02d-%02d %02d:%02d:%02dZ)',
+                   $t, $g[5]+1900, $g[4]+1, $g[3], $g[2], $g[1], $g[0]);
+}
+
+# Middle-truncate a long base64 blob to keep the structure compact.
+sub _trunc {
+    my ($s, $keep) = @_;
+    $keep //= 16;
+    $s //= '';
+    return $s if length($s) <= 2*$keep + 1;
+    return substr($s, 0, $keep) . '…' . substr($s, -$keep);
+}
+
+# Ordered [{tag,label,value}] for every tag present in a DKIM2-Signature.
+sub _sig_tags {
+    my ($sig) = @_;
+    return [] unless $sig;
+    my @t;
+    push @t, { tag => 'i',  label => 'sequence',   value => ($sig->sequence  // '') };
+    push @t, { tag => 'm',  label => 'covers MI',  value => ($sig->version   // '') };
+    push @t, { tag => 't',  label => 'timestamp',  value => _fmt_ts($sig->timestamp) };
+    push @t, { tag => 'd',  label => 'domain',     value => ($sig->domain    // '') };
+    my $nd = $sig->next_domain;
+    push @t, { tag => 'nd', label => 'next-domain (imaginary hop)', value => $nd } if defined $nd;
+    my $mf = $sig->mail_from;
+    push @t, { tag => 'mf', label => 'MAIL FROM',  value => ($mf // ''), decoded => 1 } if defined $mf;
+    my $rt = $sig->rcpt_to;
+    push @t, { tag => 'rt', label => 'RCPT TO', value => join(', ', @$rt), decoded => 1 } if $rt && @$rt;
+    my $n = $sig->nonce;
+    push @t, { tag => 'n',  label => 'nonce', value => $n } if defined $n && length $n;
+    my $f = $sig->flags;
+    push @t, { tag => 'f',  label => 'flags', value => join(', ', @$f) } if $f && @$f;
+    my $cnt = $sig->sig_count || 0;
+    for my $idx (0 .. $cnt - 1) {
+        my $v = $sig->signature_value($idx) // '';
+        push @t, { tag => 's', label => 'signature',
+                   value => sprintf('%s : %s : %s (%d bytes b64)',
+                                    $sig->selector($idx) // '', $sig->algorithm($idx) // '',
+                                    _trunc($v), length $v) };
+    }
+    return \@t;
+}
+
+# Ordered [{tag,label,value}] for a Message-Instance.
+sub _mi_tags {
+    my ($mi) = @_;
+    return [] unless $mi;
+    my @t;
+    push @t, { tag => 'm', label => 'instance', value => ($mi->get_tag('m') // '') };
+    push @t, { tag => 'h', label => 'header hash', value => 'sha256:' . ($mi->get_tag('h1') // '') };
+    push @t, { tag => 'h', label => 'body hash',   value => 'sha256:' . ($mi->get_tag('b1') // '') };
+    my $rh = $mi->get_tag('rh');
+    my $rb = $mi->get_tag('rb');
+    if ($mi->unrecoverable) {
+        push @t, { tag => 'r', label => 'recipe', value => 'null (previous state not recoverable)' };
+    } elsif ($rh || $rb) {
+        my @parts;
+        push @parts, 'headers: ' . join(', ', sort keys %$rh) if $rh && %$rh;
+        push @parts, 'body: ' . (ref $rb eq 'ARRAY' ? scalar(@$rb) . ' step(s)' : 'changed') if $rb;
+        push @t, { tag => 'r', label => 'recipe', value => join('; ', @parts) };
+    }
+    return \@t;
+}
+
 # Default live-DNS pubkey callback (dns.json override if $dns_path readable).
 sub _default_cb {
     my ($dns_path) = @_;
@@ -172,6 +246,7 @@ sub _mi_level {
     my $mi = eval { Mail::DKIM2::MessageInstance->parse($mi_raw) };
     unless ($mi) { $lvl{detail} = 'unparseable Message-Instance'; return \%lvl; }
 
+    $lvl{tags} = _mi_tags($mi);
     my $h1 = $mi->get_tag('h1'); my $b1 = $mi->get_tag('b1');
     my $hd = Mail::DKIM2::MessageInstance::h_digest($msg);
     my $bd = Mail::DKIM2::MessageInstance::b_digest($msg);
@@ -220,6 +295,7 @@ sub _sig_level {
                custody => { ok => 1, detail => '' }, result => 'fail', detail => '');
 
     if ($sig) {
+        $lvl{tags} = _sig_tags($sig);
         $lvl{mail_from} = $sig->mail_from // '';
         my $rt = $sig->rcpt_to;
         $lvl{rcpt_to} = [ ref $rt eq 'ARRAY' ? @$rt : (defined $rt ? ($rt) : ()) ];

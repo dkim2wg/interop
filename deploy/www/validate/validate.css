@@ -27,4 +27,11 @@ button { background:var(--accent); color:#fff; border:0; border-radius:6px;
 .card h3 { margin:0 0 .3rem; font-size:1rem; }
 .card .kv { font-size:.85rem; color:var(--muted); }
 .card code { font-family:ui-monospace,Menlo,Consolas,monospace; }
+/* Parsed-tag breakdown: compact 3-column grid (tag= | label | value). */
+.tags { display:grid; grid-template-columns:auto auto 1fr; gap:.05rem .6rem;
+        margin:.35rem 0 .5rem; font-size:.82rem; align-items:baseline; }
+.tagrow { display:contents; }
+.tagname { font-family:ui-monospace,Menlo,Consolas,monospace; font-weight:600; color:var(--accent); }
+.taglabel { color:var(--muted); }
+.tagval { font-family:ui-monospace,Menlo,Consolas,monospace; word-break:break-all; }
 @media (max-width:48rem){ .cols{ grid-template-columns:1fr; } textarea{height:40vh;} .out{min-height:auto;} }

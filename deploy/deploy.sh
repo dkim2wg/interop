@@ -40,6 +40,15 @@ make install >/dev/null
 install -m 755 bin/dkim2-reflector.pl /usr/local/bin/dkim2-reflect
 install -m 755 bin/validate.cgi       /usr/local/bin/dkim2-validate.cgi
 
+# 2b. Static web assets: apex landing page + the validator UI. Kept here so a
+#     change to validate.js/.css/.html can't be left stale relative to the
+#     Mail::DKIM2::Validate report shape it renders.
+if [ -d /var/www/dkim2.com ]; then
+    install -m 644 "$REPO/deploy/www/index.html" "$REPO/deploy/www/style.css" /var/www/dkim2.com/
+    install -d -m 755 /var/www/dkim2.com/validate
+    install -m 644 "$REPO"/deploy/www/validate/* /var/www/dkim2.com/validate/
+fi
+
 # 3. Postfix reflector transport map (idempotent: picks up new addresses).
 install -m 644 "$REPO/deploy/postfix-dkim2-transport" /etc/postfix/dkim2-transport
 postmap /etc/postfix/dkim2-transport
