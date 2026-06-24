@@ -240,13 +240,25 @@ sub _sig_level {
         }
         if ($num > 1 && $sig_by_i->{$num - 1}) {
             my $prev = eval { Mail::DKIM2::Signature->parse($sig_by_i->{$num-1}) };
-            my $mf = $sig->mail_from;
-            if ($prev && $mf && $mf ne '<>') {
-                my $mfd = extract_domain($mf);
-                my @rts = do { my $rt = $prev->rcpt_to; ref $rt eq 'ARRAY' ? @$rt : ($rt // ()) };
-                my $ok = grep { relaxed_domain_match($mfd // '', extract_domain($_) // '') } @rts;
-                $lvl{custody} = $ok ? { ok => 1, detail => '' }
-                                    : { ok => 0, detail => "mf domain " . ($mfd // '?') . " not in previous rt domains" };
+            if ($prev) {
+                my $prev_nd = $prev->next_domain;
+                if (defined $prev_nd && length $prev_nd) {
+                    # draft-03 §11.4: an nd= "imaginary hop" must name the domain
+                    # that signs the next signature; nd= MUST exactly match its d=.
+                    my $cur_d = $sig->domain // '';
+                    $lvl{custody} = (lc($prev_nd) eq lc($cur_d))
+                        ? { ok => 1, detail => "nd=$prev_nd matches d= of i=$num" }
+                        : { ok => 0, detail => "nd=$prev_nd does not match d= of i=$num" };
+                } else {
+                    my $mf = $sig->mail_from;
+                    if ($mf && $mf ne '<>') {
+                        my $mfd = extract_domain($mf);
+                        my @rts = do { my $rt = $prev->rcpt_to; ref $rt eq 'ARRAY' ? @$rt : ($rt // ()) };
+                        my $ok = grep { relaxed_domain_match($mfd // '', extract_domain($_) // '') } @rts;
+                        $lvl{custody} = $ok ? { ok => 1, detail => '' }
+                                            : { ok => 0, detail => "mf domain " . ($mfd // '?') . " not in previous rt domains" };
+                    }
+                }
             }
         }
     } else {

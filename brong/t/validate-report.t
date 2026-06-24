@@ -59,6 +59,24 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
     is($topmi->{undo}, 'clean', 'top MI undo clean');
 }
 
+# 1b) nd= imaginary-hop chain: i=1 carries nd= instead of mf=/rt=. The report's
+# per-signature chain-of-custody must recognise nd= and report ok (regression:
+# it previously did only the mf/rt check and wrongly showed FAIL on i=2 while
+# the overall verdict was pass).
+{
+    my $msg = Mail::DKIM2::Reflector::generate_brand(
+        sender=>'brand@test1.dkim2.com', domain=>'test2.dkim2.com', selector=>'sel1',
+        key=>DKIM2TestKeys::private_key('test2.dkim2.com','sel1'),
+        mailfrom=>'reflector-bounces@test2.dkim2.com',
+        brand_selector=>'dkim2test', brand_key=>DKIM2TestKeys::private_key('test1.dkim2.com','dkim2test'),
+        now=>1740000000, delegated=>1, nd=>1);
+    my $rep = Mail::DKIM2::Validate::report($msg, %ropt);
+    is($rep->{overall}, 'pass', 'nd= chain overall pass');
+    my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i}==2 } @{$rep->{levels}};
+    ok($sig2->{custody}{ok}, 'nd= hop: i=2 custody ok (not the stale mf/rt FAIL)');
+    like($sig2->{custody}{detail}, qr/nd=test2\.dkim2\.com matches/, 'custody detail explains the nd= match');
+}
+
 # 2) Post-sign body tamper (damage)
 {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-damage\@test2.dkim2.com\r\nSubject: hi\r\n\r\nclean body\r\n");

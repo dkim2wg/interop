@@ -475,9 +475,34 @@ ssh dkim2 'cd /root/interop && git pull && \
 
 ## Updating Code on the Server
 
-### DKIM2 milter (Perl, this repo)
+### Library + milters + reflector + validator (Perl, this repo) — USE THE SCRIPT
+
+Always deploy the Perl side with `deploy/deploy.sh`. Do **not** hand-run
+`git pull && make && make install`: that has bitten us with **stale artifacts**
+(e.g. a CLI rebuilt only with `make test` — which does NOT build the CLIs — or a
+`blib/` that retained a removed module). The script does a clean rebuild, gates
+on `make test`, installs the lib + reflector + validator + transport map,
+restarts the milters, and runs a post-deploy **smoke test** (sign + verify
+against live DNS) so a stale/broken deploy fails loudly.
+
 ```bash
-ssh dkim2 'cd /root/interop && git pull && \
+ssh dkim2 'cd /root/interop && git pull --ff-only && deploy/deploy.sh'
+```
+
+If you only changed a `Mail::DKIM2::*` module, the script still does the right
+thing — the milters are restarted (daemons), while the reflector wrapper and
+validator CGI pick up the new lib per-invocation. The validator's
+`Mail::DKIM2::Validate` report module is part of the lib, so it is covered by
+`make install`; there is no separate validator build step.
+
+Staleness rule of thumb: any change under `brong/lib/` or `brong/bin/` ⇒ run
+`deploy/deploy.sh` (never a partial manual install). For the C reference tree,
+`make test` does not build the CLIs — use `make check` (or `make tools`).
+
+### DKIM2 milter — manual fallback (only if the script is unavailable)
+```bash
+ssh dkim2 'cd /root/interop && git pull && cd brong && \
+    make clean && perl Makefile.PL && make && make test && make install && \
     systemctl restart dkim2-milter-inbound dkim2-milter-outbound'
 ```
 

@@ -18,6 +18,16 @@ CORE_OBJS = $(CORE_SRCS:.c=.o)
 
 all: dkim2-milter dkim2sign dkim2verify
 
+# CLIs only (no milter — avoids the libmilter dependency that is usually absent
+# in dev). NOTE: `make test` builds the tests/ binaries but NOT these CLIs, so
+# always run `make tools` (or `make check`) before cross-impl interop testing,
+# otherwise dkim2sign/dkim2verify may be stale relative to the library sources.
+tools: dkim2sign dkim2verify
+
+# Rebuild the CLIs and run the unit tests together — the safe target to use
+# before relying on dkim2sign/dkim2verify for interop checks.
+check: tools test
+
 dkim2-milter: dkim2_milter.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -pthread -o $@ $^ $(MILTER_LIB) $(LDFLAGS)
 
