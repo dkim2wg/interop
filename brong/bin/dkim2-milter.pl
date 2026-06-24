@@ -343,10 +343,24 @@ sub cb_eom {
             $verify_result = _do_verify($message);
         }
 
+        # Always run the full undo check on the existing Message-Instance chain
+        # before signing — not just the top MI.  An upstream that emitted a
+        # non-reversible recipe (e.g. a mailing list) produces a chain whose top
+        # instance matches the current content but cannot be undone back to m=1;
+        # signing it would mint a signature over a chain that fails at every
+        # recipient.  Refuse, exactly as we refuse a broken DKIM2-Signature chain.
+        my ($mi_chain_ok, $mi_chain_why) =
+            Mail::DKIM2::MessageInstance->chain_verifies($message);
+
         if ($has_dk2 && $verify_result !~ /^pass/) {
             # Upstream chain is broken — don't extend it with a new signature.
             warn "dkim2-milter: not signing $msgid: upstream DKIM2 chain "
                . "result=$verify_result\n";
+        } elsif (!$mi_chain_ok) {
+            warn "dkim2-milter: not signing $msgid: Message-Instance chain "
+               . "does not undo cleanly: $mi_chain_why\n";
+            $ctx->insheader('X-DKIM2-Info',
+                _milter_value(_dkim2_info("not-signed=broken-mi-chain")), 0);
         } else {
             # Chain is valid (or there is no upstream chain) — proceed.
             my $mi_header;

@@ -771,6 +771,39 @@ sub undo {
     return $msg;
 }
 
+# Verify the WHOLE Message-Instance chain reverses cleanly: check the top
+# instance against the current content, then undo it and check the next one
+# down, until m=1 or an instance that declares the previous state
+# unrecoverable. This is the undo check a recipient performs — running it
+# before signing catches an upstream that emitted a non-reversible recipe.
+# Returns (1, undef) on success or (0, reason) on the first failure.
+sub chain_verifies {
+    my ($class, $msg) = @_;
+    unless (ref($msg) && $msg->isa('Email::MIME')) {
+        $msg = Email::MIME->new("$msg");
+    }
+    while (1) {
+        my @mi = $msg->header_raw('Message-Instance');
+        my %by_v = map { (extract_mi_version($_) // 0) => $_ } @mi;
+        my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
+        last unless $num;
+
+        my ($ok, $err) = $class->verify($msg);
+        return (0, "Message-Instance m=$num does not match content"
+                 . ($err ? " ($err)" : '')) unless $ok;
+
+        last if $num <= 1;
+        my $self = $class->parse($by_v{$num});
+        last if $self->unrecoverable;
+
+        my $prev = eval { $class->undo($msg) };
+        return (0, "Message-Instance m=$num did not undo cleanly"
+                 . ($@ ? ": $@" : '')) if $@ || !$prev;
+        $msg = $prev;
+    }
+    return (1, undef);
+}
+
 
 1;
 
