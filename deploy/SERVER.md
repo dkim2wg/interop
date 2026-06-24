@@ -337,12 +337,20 @@ reflector signature is added (`X-DKIM2-Reflector: ... signed=no`).
 
 **Delivery — pipe(8) transport, NOT a local(8) alias.** The reflector addresses
 are routed by a `pipe(8)` transport, *not* `/etc/aliases` `|command` entries.
-A `local(8)` alias prepends a `Delivered-To:` header before running the command;
-the reflector would hash that into its Message-Instance, but it is renamed/
-stripped before delivery, so the `m=` header hash could never be verified.
-`Delivered-To` is not an IANA trace header (only `Received`/`Return-Path` are;
-it is provisionally registered, RFC 9228), so it is correctly *not* in the DKIM2
-skip list — the fix is to not let `local(8)` add it. `pipe(8)` does not.
+
+> **Historical note (no longer the reason):** the original motivation was that
+> a `local(8)` alias prepends a `Delivered-To:` header, which the reflector
+> would hash into its Message-Instance and break verification. As of
+> draft-ietf-dkim-dkim2-spec-03 §4.1, **`Delivered-To` IS in the DKIM2 skip
+> list** (added with RFC 9228), so it no longer affects the hash and that
+> motivation is obsolete.
+
+`pipe(8)` is still preferred for two independent reasons that remain valid: it
+exposes the recipient localpart and envelope sender as `${user}`/`${sender}`
+macros (how the wrapper learns the mode and return-path — `pipe(8)` does not
+export `$SENDER`), and it avoids `local(8)`'s mailbox/alias semantics for these
+command addresses. Switching back to a `local(8)` alias is therefore possible
+but unnecessary; leave the `pipe(8)` transport as-is.
 
 Setup (sources in `deploy/`):
 ```bash

@@ -225,6 +225,20 @@ sub addheader_callback {
             }
         }
 
+        # Full-chain undo check before signing: refuse to sign a
+        # Message-Instance chain that does not reverse cleanly (e.g. an upstream
+        # that emitted a non-reversible recipe) — the same guard the standalone
+        # dkim2-milter.pl applies. Checking the current chain, not just the top
+        # MI, stops us minting a signature over a chain that fails at recipients.
+        my ($mi_chain_ok, $mi_chain_why) =
+            Mail::DKIM2::MessageInstance->chain_verifies($message_data);
+        unless ($mi_chain_ok) {
+            $self->metric_count( 'dkim2_sign_total', { 'result' => 'broken-mi-chain' } );
+            $self->log_error( "DKIM2 not signing for $sign_domain: "
+                . "Message-Instance chain does not undo cleanly: $mi_chain_why" );
+            return;
+        }
+
         # Create the signer and feed the message
         my $signer = Mail::DKIM2::Signer->new(%signer_args);
         $signer->PRINT($message_data);
