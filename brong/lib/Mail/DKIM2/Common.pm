@@ -41,11 +41,12 @@ use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-02';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
 use constant DKIM2_DATE  => '2026-05-17';
 
-# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-02 Section 5.2
+# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-03 Section 4
 sub should_skip {
     my $hname = lc(shift);
     return 1 if $hname eq 'received';
     return 1 if $hname eq 'return-path';
+    return 1 if $hname eq 'delivered-to';
     return 1 if $hname eq 'message-instance';
     return 1 if $hname eq 'dkim2-signature';
     return 1 if $hname =~ m/^x-/;

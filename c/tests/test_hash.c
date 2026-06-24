@@ -53,6 +53,16 @@ int main(void) {
     assert(dkim2_header_hash(hdrs_b, 2, hb, sizeof hb) == 0);
     assert(strcmp(ha, hb) == 0);
 
+    /* §4.1 (draft-03): Delivered-To is ignored in the header hash */
+    const char *hdrs_dt[] = {
+        "From: sender@example.com\r\n",
+        "Subject: Test\r\n",
+        "Delivered-To: someone@example.com\r\n", /* ignored */
+    };
+    char hdt[64];
+    assert(dkim2_header_hash(hdrs_dt, 3, hdt, sizeof hdt) == 0);
+    assert(strcmp(hdt, hb) == 0);
+
     /* Header name case doesn't matter for hash */
     const char *hdrs_c[] = { "FROM: sender@example.com\r\n" };
     const char *hdrs_d[] = { "from: sender@example.com\r\n" };

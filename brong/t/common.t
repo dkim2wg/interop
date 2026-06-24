@@ -9,5 +9,6 @@ is(should_skip('Authentication-Results'), 1, 'Authentication-Results (mixed case
 is(should_skip('subject'), 0, 'subject is NOT skipped');
 is(should_skip('from'), 0, 'from is NOT skipped');
 is(should_skip('received'), 1, 'received is still skipped');
+is(should_skip('Delivered-To'), 1, 'Delivered-To is skipped (draft-03 §4.1)');
 
 done_testing;

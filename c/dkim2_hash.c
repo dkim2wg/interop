@@ -127,6 +127,7 @@ static int hdr_ignore(const char *lname, size_t nlen) {
         {"return-path",           11},
         {"message-instance",      16},
         {"dkim2-signature",       15},
+        {"delivered-to",          12},
         {"dkim-signature",        14},
         {"authentication-results", 22},
     };

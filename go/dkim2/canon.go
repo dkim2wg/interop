@@ -51,7 +51,7 @@ func hashBody(r io.Reader) ([]byte, error) {
 var excludedHeaderNames = map[string]bool{
 	"received": true, "return-path": true, "message-instance": true,
 	"dkim2-signature": true, "dkim-signature": true,
-	"authentication-results": true,
+	"authentication-results": true, "delivered-to": true,
 }
 var excludedHeaderPrefixes = []string{"x-", "arc-"}
 
