@@ -44,7 +44,7 @@ sub _sig_tags {
     push @t, { tag => 't',  label => 'timestamp',  value => _fmt_ts($sig->timestamp) };
     push @t, { tag => 'd',  label => 'domain',     value => ($sig->domain    // '') };
     my $nd = $sig->next_domain;
-    push @t, { tag => 'nd', label => 'next-domain (imaginary hop)', value => $nd } if defined $nd;
+    push @t, { tag => 'nd', label => 'next-domain', value => $nd } if defined $nd;
     my $mf = $sig->mail_from;
     push @t, { tag => 'mf', label => 'MAIL FROM',  value => ($mf // ''), decoded => 1 } if defined $mf;
     my $rt = $sig->rcpt_to;
