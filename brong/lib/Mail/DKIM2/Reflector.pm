@@ -254,26 +254,42 @@ sub generate_brand {
 
     my $rcpt = "reflector-brand\@$a{domain}";
     my $from = "dkim2demo\@$bd";
+    my $i1_desc = $a{nd}
+      ? "  i=1  d=$bd  (the brand hop; instead of mf=/rt= it carries\r\n"
+      . "       nd=$a{domain}, naming the domain that signs the next hop --\r\n"
+      . "       the \"imaginary hop\" encoding from draft-03 Section 9.3)\r\n"
+      : "  i=1  d=$bd  (signed with the key you delegated via the\r\n"
+      . "       dkim2test._domainkey.$bd CNAME to dkim2test._domainkey.$a{domain})\r\n";
     my $body =
         "Hello,\r\n\r\n"
       . "This is a brand-signed DKIM2 message, sent for $bd by an ESP that does\r\n"
       . "not show its own identity in the visible headers. It is freshly\r\n"
       . "originated (a single Message-Instance, m=1) but carries TWO DKIM2-Signatures:\r\n\r\n"
-      . "  i=1  d=$bd  (signed with the key you delegated via the\r\n"
-      . "       dkim2test._domainkey.$bd CNAME to dkim2test._domainkey.$a{domain})\r\n"
+      . $i1_desc
       . "  i=2  d=$a{domain}  (the ESP/platform hop out to you)\r\n\r\n"
       . "Paste it into https://$a{domain}/validate/ to see both signatures verify.\r\n\r\n"
       . "-- \r\n"
       . "The DKIM2 reflector at $a{domain}\r\n";
 
+    my $subject = $a{nd}
+      ? 'Brand-signed DKIM2 message (nd= imaginary hop)'
+      : 'Brand-signed DKIM2 message';
     my $text = _fresh_message_text(
-        from => $from, to => $a{sender}, subject => 'Brand-signed DKIM2 message',
+        from => $from, to => $a{sender}, subject => $subject,
         body => $body, now => $now, message_id => $a{message_id}, domain => $a{domain},
     );
 
-    # i=1: sign AS the brand using the delegated key.
-    my %b = (Domain => $bd, Selector => $a{brand_selector},
-             MailFrom => $from, RcptTo => [ $rcpt ], Timestamp => $now);
+    # i=1: sign AS the brand using the delegated key. With nd=>1 this hop uses
+    # the nd= "imaginary hop" encoding (nd=<platform domain>) instead of mf=/rt=
+    # (draft-03 §9.3); the chain still validates because nd= must equal the d=
+    # of the next signature (i=2).
+    my %b = (Domain => $bd, Selector => $a{brand_selector}, Timestamp => $now);
+    if ($a{nd}) {
+        $b{NextDomain} = $a{domain};
+    } else {
+        $b{MailFrom} = $from;
+        $b{RcptTo}   = [ $rcpt ];
+    }
     $b{Key} = $a{brand_key} if $a{brand_key};
     $b{KeyFile} = $a{brand_keyfile} if $a{brand_keyfile} && !$a{brand_key};
     $text = _sign_with($text, %b) . "\r\n" . $text;
@@ -286,7 +302,8 @@ sub generate_brand {
     $text = _sign_with($text, %d) . "\r\n" . $text;
 
     my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($text));
-    (my $xi = fold_header("X-DKIM2-Info: " . _dkim2_info('brand', hc => $hc, hn => $hn))) =~ s/\r?\n\z//;
+    my $action = $a{nd} ? 'brand-nd' : 'brand';
+    (my $xi = fold_header("X-DKIM2-Info: " . _dkim2_info($action, hc => $hc, hn => $hn))) =~ s/\r?\n\z//;
     return "$xi\r\n" . $text;
 }
 

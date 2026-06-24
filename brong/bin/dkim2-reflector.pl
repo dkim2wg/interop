@@ -27,9 +27,10 @@ sub logmsg { my $m = shift; warn "dkim2-reflector: $m\n"; syslog(LOG_WARNING, '%
 # unlike local(8), it does NOT prepend a Delivered-To: header — which would be
 # hashed into our Message-Instance and make it unverifiable. See
 # docs/dkim2-implementer-guide.md.
-my %VALID_MODE = map { $_ => 1 } qw(raw subject body both redacted damage fresh brand dsn);
+my %VALID_MODE = map { $_ => 1 } qw(raw subject body both redacted damage fresh brand brand-nd dsn);
 my $arg0 = $ARGV[0] // '';
-my $mode = ($arg0 =~ /^reflector-(\w+)$/) ? $1 : $arg0;
+# Modes may contain hyphens (e.g. brand-nd), so match [\w-]+ not just \w+.
+my $mode = ($arg0 =~ /^reflector-([\w-]+)$/) ? $1 : $arg0;
 unless ($VALID_MODE{$mode}) {
     logmsg("unknown mode " . ($arg0 ne '' ? "'$arg0'" : '(none)') . ", dropping");
     exit 0;
@@ -58,9 +59,11 @@ my $result = eval {
             mailfrom => 'reflector-bounces@dkim2.com',
         );
         { message => $msg, signed => 1, basis => 'origin', mode => 'fresh' };
-    } elsif ($mode eq 'brand') {
+    } elsif ($mode eq 'brand' || $mode eq 'brand-nd') {
         # Brand demo: if the sender delegated a key via a dkim2test._domainkey
         # CNAME, originate a two-signature message; otherwise fresh + error body.
+        # brand-nd uses the nd= "imaginary hop" encoding on the i=1 brand hop
+        # instead of mf=/rt= (draft-03 §9.3).
         my $bd = $sender; $bd =~ s/.*\@//;
         my $delegated = Mail::DKIM2::Reflector::_dkim2test_cname_ok($bd);
         my $msg = Mail::DKIM2::Reflector::generate_brand(
@@ -72,8 +75,9 @@ my $result = eval {
             delegated      => $delegated,
             brand_selector => 'dkim2test',
             brand_keyfile  => '/etc/dkim2/reflector/dkim2test.key',
+            nd             => ($mode eq 'brand-nd' ? 1 : 0),
         );
-        { message => $msg, signed => 1, basis => ($delegated ? 'brand' : 'origin'), mode => 'brand' };
+        { message => $msg, signed => 1, basis => ($delegated ? 'brand' : 'origin'), mode => $mode };
     } elsif ($mode eq 'dsn') {
         # Return a DKIM2-signed Delivery Status Notification to the sender,
         # regardless of whether the incoming message was DKIM2-signed.
@@ -114,7 +118,7 @@ if (my $err = $@) {
 # with the delegated key (this is what DMARC-aligns From: dkim2demo@<brand>).
 my @dkim1 = ({ domain => 'dkim2.com', selector => 'sel1',
                keyfile => '/etc/dkim2/reflector/sel1.key' });
-if ($mode eq 'brand' && $result->{basis} eq 'brand') {
+if (($mode eq 'brand' || $mode eq 'brand-nd') && $result->{basis} eq 'brand') {
     my $bd = $sender; $bd =~ s/.*\@//;
     unshift @dkim1, { domain => $bd, selector => 'dkim2test',
                       keyfile => '/etc/dkim2/reflector/dkim2test.key' };

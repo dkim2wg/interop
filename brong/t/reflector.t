@@ -428,6 +428,19 @@ for my $m (qw(both subject body)) {
     is(scalar @esigs, 1, 'brand(no cname): single signature');
     like($eem->header('From'), qr/<fresh\@test2\.dkim2\.com>/, 'brand(no cname): fresh From identity');
     like($err, qr/dkim2test\._domainkey/, 'brand(no cname): body explains the missing CNAME');
+
+    # nd variant -> i=1 carries nd=<platform> instead of mf=/rt= (draft-03 §9.3)
+    my $ndmsg = Mail::DKIM2::Reflector::generate_brand(%common_brand, delegated => 1, nd => 1);
+    my $ndem = Email::MIME->new($ndmsg);
+    my %byi = map { Mail::DKIM2::Signature->parse($_)->sequence => Mail::DKIM2::Signature->parse($_) }
+              $ndem->header_raw('DKIM2-Signature');
+    is(scalar(keys %byi), 2, 'brand-nd: two signatures');
+    is($byi{1}->next_domain, 'test2.dkim2.com', 'brand-nd: i=1 has nd=<platform domain>');
+    is($byi{1}->mail_from, undef, 'brand-nd: i=1 omits mf=');
+    is($byi{1}->rcpt_to,   undef, 'brand-nd: i=1 omits rt=');
+    ok(defined $byi{2}->mail_from, 'brand-nd: i=2 keeps real mf=');
+    like($ndmsg, qr/^X-DKIM2-Info:.*action=brand-nd/ms, 'brand-nd: X-DKIM2-Info action=brand-nd');
+    is(reflected_verifies($ndmsg), 'pass', 'brand-nd: nd= chain verifies');
 }
 
 done_testing;

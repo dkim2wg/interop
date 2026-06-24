@@ -329,6 +329,7 @@ incoming DKIM2 chain verified. For interop testing of chain behaviour.
 | `reflector-redacted@dkim2.com` | footer appended; MI body recipe `"b":null` (not undoable) |
 | `reflector-damage@dkim2.com` | a line appended *after* signing — fails body-hash verification |
 | `reflector-dsn@dkim2.com` | returns a fresh DKIM2-signed DSN (`multipart/report`) for the message, regardless of whether it arrived signed (draft-03 §12.1) — verifies as a new one-hop message |
+| `reflector-brand-nd@dkim2.com` | like `reflector-brand`, but the i=1 brand hop uses the `nd=` "imaginary hop" encoding (draft-03 §9.3) instead of `mf=`/`rt=`; the chain still verifies (nd= matches i=2's d=) |
 
 Always adds `Authentication-Results` + `X-DKIM2-Reflector` (mode/auth/signed).
 If the incoming chain did not verify, the transform is still applied but no
