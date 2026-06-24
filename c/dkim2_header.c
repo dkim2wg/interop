@@ -111,6 +111,30 @@ static char **parse_rt(const char *rt_val, int *n_out) {
     return out;
 }
 
+/* Parse f= value: comma-separated plain flag tokens (draft-03 §8.10).
+   Flags are an open list; tokens are stored verbatim with WSP trimmed. */
+static char **parse_flags(const char *f_val, int *n_out) {
+    int cnt = 1;
+    for (const char *p = f_val; *p; p++) if (*p == ',') cnt++;
+    char **out = calloc((size_t)(cnt + 1), sizeof(char *));
+    if (!out) return NULL;
+    int n = 0;
+    char *copy = strdup(f_val), *saveptr = NULL, *tok;
+    if (!copy) { free(out); return NULL; }
+    tok = strtok_r(copy, ",", &saveptr);
+    while (tok) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        size_t len = strlen(tok);
+        while (len && (tok[len-1] == ' ' || tok[len-1] == '\t')) tok[--len] = '\0';
+        if (len) { out[n] = strdup(tok); if (!out[n]) { free(copy); for (int i=0;i<n;i++) free(out[i]); free(out); return NULL; } n++; }
+        tok = strtok_r(NULL, ",", &saveptr);
+    }
+    free(copy);
+    out[n] = NULL;
+    *n_out = n;
+    return out;
+}
+
 /* Parse s= value: comma-separated "selector:alg:sig" triples */
 static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
     int cnt = 1;
@@ -169,8 +193,14 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
 #undef REQ
     v = tag_get(tl, "n");
     if (v) {
-        if (strlen(v) > 64) goto err;  /* §7.3: n= must not exceed 64 chars */
+        if (strlen(v) > 64) goto err;  /* §8.3: n= must not exceed 64 chars */
         sig->n = strdup(v);
+    }
+    v = tag_get(tl, "f");
+    if (v) {
+        int nf = 0;
+        sig->flags = parse_flags(v, &nf);
+        if (!sig->flags) goto err;
     }
     sig->raw_value = strdup(value);
     taglist_free(tl);
@@ -243,5 +273,13 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     }
     if (sig->n)
         pos += snprintf(buf + pos, 8192 - pos, "; n=%s", sig->n);
+    /* f= flags (draft-03 §8.10), e.g. feedback, feedhere — preserved verbatim */
+    if (sig->flags && sig->flags[0]) {
+        pos += snprintf(buf + pos, 8192 - pos, "; f=");
+        for (int i = 0; sig->flags[i]; i++) {
+            if (i) buf[pos++] = ',';
+            pos += snprintf(buf + pos, 8192 - pos, "%s", sig->flags[i]);
+        }
+    }
     return buf;
 }

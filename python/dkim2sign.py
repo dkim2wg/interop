@@ -339,12 +339,13 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
                           rcptto: list[str] | None = None,
                           seq: int = 1, mi_version: int = 1,
                           timestamp: int | None = None,
-                          next_domain: str | None = None) -> str:
+                          next_domain: str | None = None,
+                          flags: list[str] | None = None) -> str:
     """Build a complete DKIM2-Signature header.
 
     If next_domain is given, the signature carries an nd= tag for an imaginary
     forwarding hop (draft-03 §9.3) and omits mf=/rt=. Otherwise it carries
-    mf=/rt= as usual.
+    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-03 §8.10).
 
     Returns the full header string including field name.
     """
@@ -360,11 +361,13 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
         rt_b64 = ",".join(b64(r.encode("utf-8")) for r in rt_list)
         chain = f"mf={mf_b64}; rt={rt_b64}"
 
+    f_tag = f" f={','.join(flags)};" if flags else ""
+
     # Build the incomplete signature header with sel:alg: (null/empty string per spec §9.6).
     # Trailing semicolon included per spec ABNF (tag-list grammar).
     incomplete = (
         f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
-        f"d={domain}; {chain}; s={selector}:{algorithm}:;"
+        f"d={domain}; {chain}; s={selector}:{algorithm}:;{f_tag}"
     )
 
     # Collect all MI headers including the new one
@@ -380,7 +383,7 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     # Build the final header with the actual signature value
     return (
         f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
-        f"d={domain}; {chain}; s={s_complete};"
+        f"d={domain}; {chain}; s={s_complete};{f_tag}"
     )
 
 

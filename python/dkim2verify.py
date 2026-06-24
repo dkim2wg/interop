@@ -170,6 +170,58 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
     return errors
 
 
+def _sig_flags(sig_hdr: str) -> list[str]:
+    """Return the f= flag list of a DKIM2-Signature header (draft-03 §8.10)."""
+    f = _extract_tag(_get_header_value(sig_hdr), "f")
+    return [x.strip() for x in f.split(",") if x.strip()] if f else []
+
+
+def _flag_enforcement_errors(sig_by_seq: list[str], mi_headers: list[str]) -> list[str]:
+    """Enforce the donotmodify/donotexplode flags (draft-03 §11.8).
+
+    feedback/feedhere are recognised but carry no verifier enforcement.
+    """
+    errors = []
+    # Map MI version -> (header_hash, body_hash)
+    mi_hash = {}
+    for mi in mi_headers:
+        val = _get_header_value(mi)
+        m = _extract_tag(val, "m")
+        h = _extract_tag(val, "h")
+        if m is None or h is None:
+            continue
+        parts = h.split(":")
+        if len(parts) >= 3:
+            mi_hash[int(m)] = (parts[1], parts[2])
+
+    sigs = []
+    for s in sig_by_seq:
+        val = _get_header_value(s)
+        sigs.append({
+            "i": _extract_tag(val, "i"),
+            "m": _extract_tag(val, "m"),
+            "flags": _sig_flags(s),
+        })
+
+    for p in sigs:
+        if "donotmodify" in p["flags"] and p["m"] is not None:
+            m = int(p["m"])
+            if m in mi_hash and (m + 1) in mi_hash and mi_hash[m] != mi_hash[m + 1]:
+                errors.append(
+                    f"DKIM2-Signature i={p['i']}: message modified despite "
+                    f"donotmodify request"
+                )
+        if "donotexplode" in p["flags"] and p["i"] is not None:
+            for q in sigs:
+                if (q["i"] is not None and int(q["i"]) > int(p["i"])
+                        and "exploded" in q["flags"]):
+                    errors.append(
+                        f"DKIM2-Signature i={q['i']}: message exploded despite "
+                        f"donotexplode request at i={p['i']}"
+                    )
+    return errors
+
+
 def extract_mi_headers(headers: list[bytes]) -> list[str]:
     """Extract all Message-Instance headers as strings."""
     result = []
@@ -485,6 +537,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
         # §8.2/§11.4: inter-sig chain custody (nd= or mf=/rt=)
         all_errors.extend(_chain_custody_errors(sig_by_seq))
+        # §11.8: donotmodify/donotexplode enforcement
+        all_errors.extend(_flag_enforcement_errors(sig_by_seq, mi_headers))
 
         for idx, sig_hdr in enumerate(sig_by_seq):
             prior_sigs = sig_by_seq[:idx]
@@ -508,6 +562,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
     # §8.2/§11.4: inter-sig chain custody check (full-chain mode)
     all_errors.extend(_chain_custody_errors(sig_by_seq))
+    # §11.8: donotmodify/donotexplode enforcement
+    all_errors.extend(_flag_enforcement_errors(sig_by_seq, mi_headers))
 
     versions = sorted(mi_by_version.keys(), reverse=True)
     highest = versions[0]

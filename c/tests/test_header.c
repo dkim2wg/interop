@@ -97,6 +97,24 @@ int main(void) {
         "s=sel1:rsa-sha256:AAAA");
     assert(sig == NULL);
 
+    /* draft-03 §8.10: f= flags parsed and round-tripped (incl. feedhere) */
+    sig = dkim2_sig_parse(
+        "i=1; m=1; t=1; d=ex.example; "
+        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
+        "f=donotmodify,feedhere; s=sel1:rsa-sha256:AAAA");
+    assert(sig != NULL);
+    assert(sig->flags != NULL);
+    assert(sig->flags[0] && strcmp(sig->flags[0], "donotmodify") == 0);
+    assert(sig->flags[1] && strcmp(sig->flags[1], "feedhere") == 0);
+    assert(sig->flags[2] == NULL);
+    {
+        char *out = dkim2_sig_format(sig, 1);
+        assert(out != NULL);
+        assert(strstr(out, "f=donotmodify,feedhere") != NULL);
+        free(out);
+    }
+    dkim2_sig_free(sig);
+
     puts("header: all tests passed");
     return 0;
 }

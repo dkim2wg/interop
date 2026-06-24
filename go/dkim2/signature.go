@@ -179,10 +179,15 @@ func (sig *DKIM2Signature) String() string {
 		chain = fmt.Sprintf("mf=%s; rt=%s", mf, rt)
 	}
 
-	return fmt.Sprintf(
+	out := fmt.Sprintf(
 		"DKIM2-Signature: i=%d; m=%d; t=%d; d=%s; %s; s=%s;",
 		sig.Sequence, sig.MIVersion, sig.Timestamp, sig.Domain, chain, s,
 	)
+	// f= flags (draft-03 §8.10), e.g. feedback, feedhere — preserved verbatim.
+	if len(sig.Flags) > 0 {
+		out += " f=" + strings.Join(sig.Flags, ",") + ";"
+	}
+	return out
 }
 
 // reSTag matches "; s=" (semicolon followed by optional whitespace and s=).
