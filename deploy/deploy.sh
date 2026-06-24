@@ -47,6 +47,10 @@ if [ -d /var/www/dkim2.com ]; then
     install -m 644 "$REPO/deploy/www/index.html" "$REPO/deploy/www/style.css" /var/www/dkim2.com/
     install -d -m 755 /var/www/dkim2.com/validate
     install -m 644 "$REPO"/deploy/www/validate/* /var/www/dkim2.com/validate/
+    # Cache-bust the validator assets: stamp __VER__ with the current commit so
+    # browsers always fetch fresh JS/CSS after a deploy (no stale-asset confusion).
+    VER=$(git -C "$REPO" rev-parse --short HEAD)
+    sed -i "s/__VER__/$VER/g" /var/www/dkim2.com/validate/index.html
 fi
 
 # 3. Postfix reflector transport map (idempotent: picks up new addresses).
