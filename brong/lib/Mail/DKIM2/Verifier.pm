@@ -498,7 +498,7 @@ between consecutive hops.
 
 Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-02, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-03, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

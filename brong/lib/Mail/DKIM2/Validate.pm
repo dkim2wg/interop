@@ -283,6 +283,6 @@ structured breakdown of each DKIM2-Signature and Message-Instance level
 (including MI undo), for display by the web validator. Never dies. See
 C<docs/superpowers/specs/2026-06-18-dkim2-web-validator-design.md>.
 
-B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-02.
+B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-03.
 
 =cut

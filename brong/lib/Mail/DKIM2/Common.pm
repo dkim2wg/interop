@@ -37,9 +37,9 @@ our @EXPORT_OK = qw(
 # reflector, and the mailman/sympa handlers. This is the single source of truth
 # for the Perl implementation; bump on a spec change (see the dkim2-spec-version
 # memory for the full cross-repo list).
-use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-02';
+use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-03';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE  => '2026-05-17';
+use constant DKIM2_DATE  => '2026-06-24';
 
 # Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-03 Section 4
 sub should_skip {
@@ -390,7 +390,7 @@ This module provides utility functions shared between L<Mail::DKIM2::Signer>,
 L<Mail::DKIM2::Verifier>, and L<Mail::DKIM2::MessageInstance>.  It also holds
 the distribution-wide C<$VERSION>.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-02, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-03, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

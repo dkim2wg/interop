@@ -525,6 +525,6 @@ the message to send back to the sender. A reflector DKIM2-Signature is added
 only when the incoming chain verified. See
 C<docs/superpowers/specs/2026-06-18-dkim2-reflector-design.md>.
 
-B<EXPERIMENTAL> — implements draft-ietf-dkim-dkim2-spec-02.
+B<EXPERIMENTAL> — implements draft-ietf-dkim-dkim2-spec-03.
 
 =cut
