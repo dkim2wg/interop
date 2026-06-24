@@ -80,10 +80,12 @@ sub set_null_body_recipe {
 }
 
 # True if this instance declares the previous state non-recreatable (a null
-# "b" or "h" recipe). Such an instance cannot be undone to a prior version.
+# "b" recipe). Such an instance cannot be undone to a prior version. Under
+# draft-03 §5.1 a header recipe can no longer be null, so only the body
+# recipe can render an instance unrecoverable.
 sub unrecoverable {
     my ($self) = @_;
-    return ($self->{bits}{rb_null} || $self->{bits}{rh_null}) ? 1 : 0;
+    return $self->{bits}{rb_null} ? 1 : 0;
 }
 
 # --- Wire format: m=N; h=sha256:header_hash:body_hash; r=<b64json> ---
@@ -199,7 +201,9 @@ sub parse {
                 }
                 $self->{bits}{rh} = \%rh;
             } else {
-                $self->{bits}{rh_null} = 1;
+                # draft-03 §5.1 removed the null header recipe: a present "h"
+                # MUST be a non-empty object. Reject anything else.
+                die "header recipe is null: not permitted under draft-03 \xA75.1\n";
             }
         }
     }

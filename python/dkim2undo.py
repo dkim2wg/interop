@@ -319,16 +319,19 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
             print(f"  v={version}: applying recipes", file=sys.stderr)
 
         # Apply header recipes
+        # draft-03 §5.1 removed the null header recipe: a present "h" that is
+        # null is now a syntax error (distinct from an absent "h", which means
+        # the header fields were unchanged).
+        if "h" in recipes and recipes["h"] is None:
+            raise ValueError(
+                f"v={version}: header recipes are null — "
+                f"not permitted under draft-03 §5.1"
+            )
         h_recipes = recipes.get("h")
         if h_recipes is not None:
             if isinstance(h_recipes, dict) and len(h_recipes) == 0:
                 if verbose:
                     print(f"    headers: unmodified", file=sys.stderr)
-            elif h_recipes is None:
-                raise ValueError(
-                    f"v={version}: header recipes are null, "
-                    f"cannot reconstruct"
-                )
             else:
                 if verbose:
                     print(f"    headers: {len(h_recipes)} field(s) modified",

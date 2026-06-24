@@ -86,6 +86,11 @@ int main(void) {
     for (int i = 0; i < n_out; i++) free(new_hdrs[i]);
     free(new_hdrs);
 
+    /* draft-03 §5.1: a null header recipe must be rejected (returns NULL) */
+    int n_null = 0;
+    char **null_h = dkim2_apply_header_recipe("{\"h\":null}", hdrs, 3, &n_null);
+    assert(null_h == NULL);
+
     puts("recipe: all tests passed");
     return 0;
 }

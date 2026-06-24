@@ -1,6 +1,9 @@
 package dkim2
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
 
 // RecipeStep is one step in a body or header recipe.
 type RecipeStep struct {
@@ -15,6 +18,14 @@ type Recipe struct {
 }
 
 func parseRecipe(data []byte) (*Recipe, error) {
+	// draft-03 §5.1: an explicit JSON null for "h" is no longer permitted
+	// (distinct from an absent "h", which means the headers were unchanged).
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err == nil {
+		if v, ok := probe["h"]; ok && string(v) == "null" {
+			return nil, errors.New("null header recipe not permitted (draft-03 §5.1)")
+		}
+	}
 	var r Recipe
 	if err := json.Unmarshal(data, &r); err != nil {
 		return nil, err

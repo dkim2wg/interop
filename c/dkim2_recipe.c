@@ -138,6 +138,11 @@ char **dkim2_apply_header_recipe(const char *r_json,
     if (!root) return NULL;
 
     cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
+    if (h && cJSON_IsNull(h)) {
+        /* draft-03 §5.1: a null header recipe is no longer permitted. */
+        cJSON_Delete(root);
+        return NULL;
+    }
     if (!h || !cJSON_IsObject(h)) {
         cJSON_Delete(root);
         char **out = malloc((size_t)(n + 1) * sizeof(char *));
