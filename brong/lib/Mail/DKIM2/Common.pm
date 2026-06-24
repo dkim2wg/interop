@@ -333,9 +333,21 @@ sub parse_dkim_pubkey {
     my ($p) = $key_txt =~ /\bp=([A-Za-z0-9+\/=]+)/;
     return unless $p;
     if ($k eq 'ed25519') {
-        my $pk = Crypt::PK::Ed25519->new();
-        $pk->import_key_raw(decode_base64($p), 'public');
-        return $pk;
+        # RFC 8463 publishes the raw 32-byte key in p=, but some signers
+        # publish a DER SubjectPublicKeyInfo (as RSA does). Accept either, and
+        # never die on a malformed/oversized key: return undef so the verifier
+        # reports a clean fail/temperror instead of aborting the whole operation
+        # (the RSA branch below is likewise eval-wrapped).
+        my $raw = decode_base64($p);
+        return eval {
+            my $pk = Crypt::PK::Ed25519->new();
+            if (length($raw) == 32) {
+                $pk->import_key_raw($raw, 'public');
+            } else {
+                $pk->import_key(\$raw);   # DER SubjectPublicKeyInfo
+            }
+            $pk;
+        };
     }
     # RSA: p= is base64-encoded SubjectPublicKeyInfo DER
     my $der = decode_base64($p);
