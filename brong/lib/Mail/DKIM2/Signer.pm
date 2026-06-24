@@ -72,13 +72,16 @@ sub finish_header {
     ];
 
     # Create the signature object
+    # draft-03 §9.3: when NextDomain is set this is an imaginary forwarding
+    # hop — emit nd= and omit mf=/rt= (Signature->new enforces the exclusion).
     my $signature = Mail::DKIM2::Signature->new(
         Sequence   => $next_i,
         Version    => $mi_version || undef,
         Timestamp  => $self->{Timestamp} || time(),
         Domain     => $self->{Domain},
-        MailFrom   => $self->{MailFrom},
-        RcptTo     => $self->{RcptTo},
+        ($self->{NextDomain}
+            ? (NextDomain => $self->{NextDomain})
+            : (MailFrom => $self->{MailFrom}, RcptTo => $self->{RcptTo})),
         Signatures => \@sig_items,
         ($self->{Nonce} ? (Nonce => $self->{Nonce}) : ()),
         ($self->{Flags} ? (Flags => $self->{Flags}) : ()),

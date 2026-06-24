@@ -126,6 +126,50 @@ def _relaxed_domain_match(d1: str, d2: str) -> bool:
     return d1 == d2 or d1.endswith("." + d2)
 
 
+def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
+    """Validate §8.2/§11.4 chain-of-custody across consecutive signatures.
+
+    For each adjacent pair (ascending i=), either the lower signature carries
+    nd= (which MUST exactly match the higher signature's d=), or the higher
+    signature's mf= domain MUST relaxed-match an rt= domain of the lower one.
+    """
+    errors = []
+    for k in range(1, len(sig_by_seq)):
+        cur_val = _get_header_value(sig_by_seq[k])
+        prev_val = _get_header_value(sig_by_seq[k - 1])
+        cur_i = _extract_tag(cur_val, "i")
+        prev_i = _extract_tag(prev_val, "i")
+        prev_nd = _extract_tag(prev_val, "nd")
+        if prev_nd:
+            # draft-03 §11.4: nd= MUST exactly match the next sig's d=.
+            cur_d = _extract_tag(cur_val, "d") or ""
+            if prev_nd.lower() != cur_d.lower():
+                errors.append(
+                    f"DKIM2-Signature i={prev_i} nd= does not match d= of i={cur_i}"
+                )
+            continue
+        cur_mf_b64 = _extract_tag(cur_val, "mf")
+        prev_rt_raw = _extract_tag(prev_val, "rt")
+        if not cur_mf_b64 or not prev_rt_raw:
+            errors.append(
+                f"DKIM2-Signature i={cur_i}: missing mf= or rt= for chain custody check"
+            )
+            continue
+        cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
+        prev_rts = [
+            base64.b64decode(rt.strip()).decode("utf-8", errors="surrogateescape")
+            for rt in prev_rt_raw.split(",") if rt.strip()
+        ]
+        cur_mf_domain = _domain_from_addr(cur_mf)
+        if not any(_relaxed_domain_match(cur_mf_domain, _domain_from_addr(rt))
+                   for rt in prev_rts):
+            errors.append(
+                f"DKIM2-Signature i={cur_i}: chain of custody break "
+                f"(mf domain {cur_mf_domain!r} not in rt= domains of previous signature)"
+            )
+    return errors
+
+
 def extract_mi_headers(headers: list[bytes]) -> list[str]:
     """Extract all Message-Instance headers as strings."""
     result = []
@@ -215,13 +259,24 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     # Extract required tags
     i_val = _extract_tag(value, "i")
     m_val = _extract_tag(value, "m")
+    t_val0 = _extract_tag(value, "t")
     d_val = _extract_tag(value, "d")
     s_tag = _extract_tag(value, "s")
+    nd_val = _extract_tag(value, "nd")
+    mf_val = _extract_tag(value, "mf")
+    rt_val = _extract_tag(value, "rt")
 
-    if not all([i_val, m_val, d_val, s_tag]):
-        return [f"DKIM2-Signature i={i_val}: missing required tags"]
-    if not s_tag:
-        return [f"DKIM2-Signature i={i_val}: missing s= tag"]
+    # draft-03 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+    # mf= and rt= (and nd= excludes mf=/rt=).
+    if not all([i_val, m_val, t_val0, d_val, s_tag]):
+        return [f"DKIM2-Signature i={i_val}: missing required tag(s) "
+                f"(need i=, m=, t=, d=, s=)"]
+    if nd_val and (mf_val or rt_val):
+        return [f"DKIM2-Signature i={i_val} tag=nd was unexpected: "
+                f"nd= excludes mf=/rt="]
+    if not nd_val and not (mf_val and rt_val):
+        return [f"DKIM2-Signature i={i_val}: missing chain tags "
+                f"(need nd= or both mf=+rt=)"]
 
     # §7.3 SHOULD: n= nonce must not exceed 64 characters
     n_val = _extract_tag(value, "n")
@@ -428,31 +483,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
         sig_by_seq = sorted(sig_headers, key=_get_seq_from_sig)
 
-        # §8.2: inter-sig chain custody — mf= domain of sig[N] must relaxed-match
-        # at least one rt= domain of sig[N-1]
-        for k in range(1, len(sig_by_seq)):
-            cur_val  = _get_header_value(sig_by_seq[k])
-            prev_val = _get_header_value(sig_by_seq[k - 1])
-            cur_i    = _extract_tag(cur_val, "i")
-            cur_mf_b64  = _extract_tag(cur_val, "mf")
-            prev_rt_raw = _extract_tag(prev_val, "rt")
-            if not cur_mf_b64 or not prev_rt_raw:
-                all_errors.append(
-                    f"DKIM2-Signature i={cur_i}: missing mf= or rt= for chain custody check"
-                )
-                continue
-            cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
-            prev_rts = [
-                base64.b64decode(rt.strip()).decode("utf-8", errors="surrogateescape")
-                for rt in prev_rt_raw.split(",") if rt.strip()
-            ]
-            cur_mf_domain = _domain_from_addr(cur_mf)
-            if not any(_relaxed_domain_match(cur_mf_domain, _domain_from_addr(rt))
-                       for rt in prev_rts):
-                all_errors.append(
-                    f"DKIM2-Signature i={cur_i}: chain of custody break "
-                    f"(mf domain {cur_mf_domain!r} not in rt= domains of previous signature)"
-                )
+        # §8.2/§11.4: inter-sig chain custody (nd= or mf=/rt=)
+        all_errors.extend(_chain_custody_errors(sig_by_seq))
 
         for idx, sig_hdr in enumerate(sig_by_seq):
             prior_sigs = sig_by_seq[:idx]
@@ -474,30 +506,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
     sig_by_seq = sorted(sig_headers, key=_get_seq_from_sig)
 
-    # §8.2: inter-sig chain custody check (full-chain mode)
-    for k in range(1, len(sig_by_seq)):
-        cur_val  = _get_header_value(sig_by_seq[k])
-        prev_val = _get_header_value(sig_by_seq[k - 1])
-        cur_i    = _extract_tag(cur_val, "i")
-        cur_mf_b64  = _extract_tag(cur_val, "mf")
-        prev_rt_raw = _extract_tag(prev_val, "rt")
-        if not cur_mf_b64 or not prev_rt_raw:
-            all_errors.append(
-                f"DKIM2-Signature i={cur_i}: missing mf= or rt= for chain custody check"
-            )
-            continue
-        cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
-        prev_rts = [
-            base64.b64decode(rt.strip()).decode("utf-8", errors="surrogateescape")
-            for rt in prev_rt_raw.split(",") if rt.strip()
-        ]
-        cur_mf_domain = _domain_from_addr(cur_mf)
-        if not any(_relaxed_domain_match(cur_mf_domain, _domain_from_addr(rt))
-                   for rt in prev_rts):
-            all_errors.append(
-                f"DKIM2-Signature i={cur_i}: chain of custody break "
-                f"(mf domain {cur_mf_domain!r} not in rt= domains of previous signature)"
-            )
+    # §8.2/§11.4: inter-sig chain custody check (full-chain mode)
+    all_errors.extend(_chain_custody_errors(sig_by_seq))
 
     versions = sorted(mi_by_version.keys(), reverse=True)
     highest = versions[0]

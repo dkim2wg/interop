@@ -173,36 +173,14 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	// §8.2 MUST: chain-of-custody between consecutive signatures.
-	// For sig i=N: mf= domain must relaxed-match at least one rt= domain of sig i=N-1.
+	// §8.2/§11.4 MUST: chain-of-custody between consecutive signatures.
 	if len(sigHeaders) > 1 {
 		parsedSigs := make([]*DKIM2Signature, len(sigHeaders))
 		for i, raw := range sigHeaders {
 			parsedSigs[i], _ = parseSig(raw)
 		}
-		for idx := 1; idx < len(parsedSigs); idx++ {
-			cur := parsedSigs[idx]
-			prev := parsedSigs[idx-1]
-			if cur == nil || prev == nil {
-				continue
-			}
-			curMFDomain := domainFromAddr(cur.MailFrom)
-			if curMFDomain == "" {
-				continue // null sender (DSN) — no chain check required
-			}
-			matched := false
-			for _, rt := range prev.RcptTo {
-				if rtDomain := domainFromAddr(rt); rtDomain != "" {
-					if relaxedDomainMatch(curMFDomain, rtDomain) {
-						matched = true
-						break
-					}
-				}
-			}
-			if !matched {
-				return nil, fmt.Errorf("chain-of-custody break at i=%d: mf= domain %q not covered by rt= of i=%d",
-					cur.Sequence, curMFDomain, prev.Sequence)
-			}
+		if err := checkChainOfCustody(parsedSigs); err != nil {
+			return nil, err
 		}
 	}
 
@@ -397,6 +375,47 @@ func domainFromAddr(addr string) string {
 		return strings.ToLower(addr[at+1:])
 	}
 	return ""
+}
+
+// checkChainOfCustody validates the §8.2/§11.4 chain across consecutive
+// signatures (ascending i= order). For each adjacent pair, either the lower
+// signature carries nd= (which MUST exactly match the higher signature's d=),
+// or the higher signature's mf= domain MUST relaxed-match an rt= domain of the
+// lower one. A null-sender (DSN) hop skips the mf=/rt= check.
+func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
+	for idx := 1; idx < len(parsedSigs); idx++ {
+		cur := parsedSigs[idx]
+		prev := parsedSigs[idx-1]
+		if cur == nil || prev == nil {
+			continue
+		}
+		if prev.NextDomain != "" {
+			// draft-03 §11.4: nd= MUST exactly match the next sig's d=.
+			if !strings.EqualFold(prev.NextDomain, cur.Domain) {
+				return fmt.Errorf("DKIM2-Signature i=%d nd= does not match d= of i=%d",
+					prev.Sequence, cur.Sequence)
+			}
+			continue
+		}
+		curMFDomain := domainFromAddr(cur.MailFrom)
+		if curMFDomain == "" {
+			continue // null sender (DSN) — no chain check required
+		}
+		matched := false
+		for _, rt := range prev.RcptTo {
+			if rtDomain := domainFromAddr(rt); rtDomain != "" {
+				if relaxedDomainMatch(curMFDomain, rtDomain) {
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched {
+			return fmt.Errorf("chain-of-custody break at i=%d: mf= domain %q not covered by rt= of i=%d",
+				cur.Sequence, curMFDomain, prev.Sequence)
+		}
+	}
+	return nil
 }
 
 // relaxedDomainMatch reports whether d1 is equal to d2 or a subdomain of d2.

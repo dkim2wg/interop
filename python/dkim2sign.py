@@ -338,24 +338,33 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
                           mailfrom: str = "<>",
                           rcptto: list[str] | None = None,
                           seq: int = 1, mi_version: int = 1,
-                          timestamp: int | None = None) -> str:
+                          timestamp: int | None = None,
+                          next_domain: str | None = None) -> str:
     """Build a complete DKIM2-Signature header.
+
+    If next_domain is given, the signature carries an nd= tag for an imaginary
+    forwarding hop (draft-03 §9.3) and omits mf=/rt=. Otherwise it carries
+    mf=/rt= as usual.
 
     Returns the full header string including field name.
     """
     if timestamp is None:
         timestamp = int(time.time())
 
-    # mf= and rt= tags: base64-encoded SMTP addresses
-    mf_b64 = b64(mailfrom.encode("utf-8"))
-    rt_list = rcptto or ["unknown@example.com"]
-    rt_b64 = ",".join(b64(r.encode("utf-8")) for r in rt_list)
+    # draft-03 §9.3: an nd= hop carries nd= instead of mf=/rt=.
+    if next_domain:
+        chain = f"nd={next_domain}"
+    else:
+        mf_b64 = b64(mailfrom.encode("utf-8"))
+        rt_list = rcptto or ["unknown@example.com"]
+        rt_b64 = ",".join(b64(r.encode("utf-8")) for r in rt_list)
+        chain = f"mf={mf_b64}; rt={rt_b64}"
 
-    # Build the incomplete signature header with sel:alg: (null/empty string per spec §8.5).
+    # Build the incomplete signature header with sel:alg: (null/empty string per spec §9.6).
     # Trailing semicolon included per spec ABNF (tag-list grammar).
     incomplete = (
         f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
-        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={selector}:{algorithm}:;"
+        f"d={domain}; {chain}; s={selector}:{algorithm}:;"
     )
 
     # Collect all MI headers including the new one
@@ -371,7 +380,7 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     # Build the final header with the actual signature value
     return (
         f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
-        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={s_complete};"
+        f"d={domain}; {chain}; s={s_complete};"
     )
 
 

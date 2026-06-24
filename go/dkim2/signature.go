@@ -13,12 +13,13 @@ type DKIM2Signature struct {
 	Sequence  int
 	MIVersion int
 	Timestamp int64
-	Domain    string
-	MailFrom  string
-	RcptTo    []string
-	Nonce     string   // n= tag (optional); max 64 ASCII chars per §7.3
-	Flags     []string // f= tag (optional); comma-separated flags per §10.8
-	Sigs      []SigItem
+	Domain     string
+	NextDomain string // nd= tag (draft-03 §8.7); empty if absent
+	MailFrom   string
+	RcptTo     []string
+	Nonce      string   // n= tag (optional); max 64 ASCII chars per §8.3
+	Flags      []string // f= tag (optional); comma-separated flags per §8.10
+	Sigs       []SigItem
 }
 
 // SigItem is one sel:alg:value entry in the s= tag.
@@ -30,11 +31,12 @@ type SigItem struct {
 
 // SignOptions carries per-message signing parameters.
 type SignOptions struct {
-	Selector  string
-	Domain    string
-	MailFrom  string
-	RcptTo    []string
-	Timestamp int64 // 0 = use time.Now()
+	Selector   string
+	Domain     string
+	MailFrom   string
+	RcptTo     []string
+	NextDomain string // nd= (draft-03 §9.3); when set, emit nd= instead of mf=/rt=
+	Timestamp  int64  // 0 = use time.Now()
 }
 
 // VerifyResult is the outcome for one DKIM2-Signature in the message.
@@ -82,6 +84,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		sig.Timestamp = n
 	}
 	sig.Domain = tvl.get("d")
+	sig.NextDomain = tvl.get("nd")
 	if v := tvl.get("mf"); v != "" {
 		b, err := base64.StdEncoding.DecodeString(stripB64WSP(v))
 		if err != nil {
@@ -128,11 +131,25 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 			}
 		}
 	}
+	// draft-03 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+	// mf= and rt=. nd= and mf=/rt= are mutually exclusive.
+	if !tvl.has("i") || !tvl.has("m") || !tvl.has("t") {
+		return nil, fmt.Errorf("DKIM2-Signature i=%d: missing required i=/m=/t= tag", sig.Sequence)
+	}
 	if sig.Domain == "" {
 		return nil, fmt.Errorf("missing required d= tag in DKIM2-Signature")
 	}
 	if len(sig.Sigs) == 0 {
 		return nil, fmt.Errorf("missing required s= tag in DKIM2-Signature")
+	}
+	hasND := tvl.has("nd")
+	hasMF := tvl.has("mf")
+	hasRT := tvl.has("rt")
+	if hasND && (hasMF || hasRT) {
+		return nil, fmt.Errorf("DKIM2-Signature i=%d tag=nd was unexpected: nd= excludes mf=/rt=", sig.Sequence)
+	}
+	if !hasND && !(hasMF && hasRT) {
+		return nil, fmt.Errorf("DKIM2-Signature i=%d: missing chain tags (need nd= or both mf=+rt=)", sig.Sequence)
 	}
 	return sig, nil
 }
@@ -154,9 +171,17 @@ func (sig *DKIM2Signature) String() string {
 	}
 	s := strings.Join(sParts, ",")
 
+	// draft-03 §8: an nd= signature carries nd= instead of mf=/rt=.
+	var chain string
+	if sig.NextDomain != "" {
+		chain = fmt.Sprintf("nd=%s", sig.NextDomain)
+	} else {
+		chain = fmt.Sprintf("mf=%s; rt=%s", mf, rt)
+	}
+
 	return fmt.Sprintf(
-		"DKIM2-Signature: i=%d; m=%d; t=%d; d=%s; mf=%s; rt=%s; s=%s;",
-		sig.Sequence, sig.MIVersion, sig.Timestamp, sig.Domain, mf, rt, s,
+		"DKIM2-Signature: i=%d; m=%d; t=%d; d=%s; %s; s=%s;",
+		sig.Sequence, sig.MIVersion, sig.Timestamp, sig.Domain, chain, s,
 	)
 }
 
@@ -191,15 +216,21 @@ func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
 // buildIncomplete builds a fresh incomplete DKIM2-Signature header (s= values
 // are empty per §8.5), for use as the signing input when creating a new sig.
 func buildIncomplete(seq, miVer int, ts int64, domain, mailFrom string,
-	rcptTo []string, selector, algorithm string) string {
-	mf := base64.StdEncoding.EncodeToString([]byte(mailFrom))
-	var rtParts []string
-	for _, r := range rcptTo {
-		rtParts = append(rtParts, base64.StdEncoding.EncodeToString([]byte(r)))
+	rcptTo []string, nextDomain, selector, algorithm string) string {
+	// draft-03 §9.3: an imaginary-hop signature carries nd= instead of mf=/rt=.
+	var chain string
+	if nextDomain != "" {
+		chain = fmt.Sprintf("nd=%s", nextDomain)
+	} else {
+		mf := base64.StdEncoding.EncodeToString([]byte(mailFrom))
+		var rtParts []string
+		for _, r := range rcptTo {
+			rtParts = append(rtParts, base64.StdEncoding.EncodeToString([]byte(r)))
+		}
+		chain = fmt.Sprintf("mf=%s; rt=%s", mf, strings.Join(rtParts, ","))
 	}
-	rt := strings.Join(rtParts, ",")
 	return fmt.Sprintf(
-		"DKIM2-Signature: i=%d; m=%d; t=%d; d=%s; mf=%s; rt=%s; s=%s:%s:;",
-		seq, miVer, ts, domain, mf, rt, selector, algorithm,
+		"DKIM2-Signature: i=%d; m=%d; t=%d; d=%s; %s; s=%s:%s:;",
+		seq, miVer, ts, domain, chain, selector, algorithm,
 	)
 }

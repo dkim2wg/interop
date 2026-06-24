@@ -261,7 +261,23 @@ sub _verify_signature {
         signing_header => $sig_hdr_for_input,
     );
 
-    # §7.3 SHOULD: n= nonce must not exceed 64 characters
+    # draft-03 §8: a signature carries either nd= or both mf= and rt=, never
+    # both forms. nd= together with mf=/rt= is a PERMERROR.
+    my $nd_tag = $signature->get_tag('nd');
+    my $mf_tag = $signature->get_tag('mf');
+    my $rt_tag = $signature->get_tag('rt');
+    if (defined $nd_tag && (defined $mf_tag || defined $rt_tag)) {
+        $self->{result}  = 'permerror';
+        $self->{details} = "DKIM2-Signature i=$i tag=nd was unexpected";
+        return 0;
+    }
+    if (!defined $nd_tag && !(defined $mf_tag && defined $rt_tag)) {
+        $self->{result}  = 'permerror';
+        $self->{details} = "DKIM2-Signature i=$i missing chain tags (nd= or mf=+rt=)";
+        return 0;
+    }
+
+    # §8.3 SHOULD: n= nonce must not exceed 64 characters
     my $nonce = $signature->get_tag('n');
     if (defined $nonce && length($nonce) > 64) {
         $self->{result}  = 'fail';
@@ -377,6 +393,19 @@ sub _verify_chain {
         my $prev_i = $dk2_is[$idx - 1];
         my $cur_sig = $dk2_map{$cur_i}{sig};
         my $prev_sig = $dk2_map{$prev_i}{sig};
+
+        # draft-03 §11.4: an nd= hop declares the domain that signs the next
+        # signature; nd= MUST exactly match that signature's d=.
+        my $prev_nd = $prev_sig->next_domain;
+        if (defined $prev_nd && length $prev_nd) {
+            my $cur_d = $cur_sig->domain // '';
+            unless (lc($prev_nd) eq lc($cur_d)) {
+                $self->{result} = 'fail';
+                $self->{details} = "DKIM2-Signature i=$prev_i nd= does not match d= of i=$cur_i";
+                return 0;
+            }
+            next;
+        }
 
         my $cur_mf = $cur_sig->mail_from;
         my $prev_rt = $prev_sig->rcpt_to;

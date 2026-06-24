@@ -226,6 +226,7 @@ diag("=== DKIM2Verify milter tests ===");
         Selector => 'rsa1024',
         Key      => DKIM2TestKeys::private_key('test1.dkim2.com', 'rsa1024'),
         MailFrom => 'sender@test1.dkim2.com',
+        RcptTo   => ['recipient@test2.dkim2.com'],
     );
     $signer->PRINT($with_mi);
     $signer->CLOSE();

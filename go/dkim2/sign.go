@@ -93,7 +93,7 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 	// 7. Build incomplete DKIM2-Signature (s= values empty per §8.5).
 	incomplete := buildIncomplete(sigSeq, miVersion, ts,
 		opts.Domain, opts.MailFrom, opts.RcptTo,
-		opts.Selector, algorithm)
+		opts.NextDomain, opts.Selector, algorithm)
 
 	// 8. Build the signing input: existing MIs (incl. new) ascending, existing
 	//    sigs ascending, then the incomplete sig.

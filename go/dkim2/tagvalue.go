@@ -43,6 +43,11 @@ func (t *tagValueList) get(key string) string {
 	return t.vals[key]
 }
 
+func (t *tagValueList) has(key string) bool {
+	_, ok := t.vals[key]
+	return ok
+}
+
 func (t *tagValueList) set(key, val string) {
 	if _, exists := t.vals[key]; !exists {
 		t.order = append(t.order, key)

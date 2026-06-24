@@ -522,6 +522,16 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         dkim2_sig_t *cur  = sig_arr[k];
         dkim2_sig_t *prev = sig_arr[k - 1];
 
+        /* draft-03 §11.4: an nd= hop declares the next sig's signing domain;
+           nd= MUST exactly match that signature's d=. */
+        if (prev->nd) {
+            if (!cur->d || strcasecmp(prev->nd, cur->d) != 0)
+                SETSTATUS(DKIM2_PERMERROR,
+                    "PERMERROR: DKIM2-Signature i=%d nd= does not match d= of i=%d",
+                    prev->i, cur->i);
+            continue;
+        }
+
         if (!cur->mf || !prev->rt)
             SETSTATUS(DKIM2_PERMERROR,
                 "PERMERROR: missing mf= or rt= for chain custody at i=%d", cur->i);

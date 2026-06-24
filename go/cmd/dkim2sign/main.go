@@ -17,6 +17,7 @@ func main() {
 	rcptToStr := flag.String("rcpt-to", "", "Comma-separated RCPT TO addresses")
 	keyFile := flag.String("key", "", "Path to PKCS#8 PEM private key file (required)")
 	timestamp := flag.Int64("timestamp", 0, "Signature timestamp (0 = now)")
+	nextDomain := flag.String("nd", "", "nd= next-domain for an imaginary forwarding hop (draft-03 §9.3); omits mf=/rt=")
 	flag.Parse()
 
 	if *selector == "" || *domain == "" || *keyFile == "" {
@@ -52,11 +53,12 @@ func main() {
 	}
 
 	opts := dkim2.SignOptions{
-		Selector:  *selector,
-		Domain:    *domain,
-		MailFrom:  *mailFrom,
-		RcptTo:    rcptTo,
-		Timestamp: ts,
+		Selector:   *selector,
+		Domain:     *domain,
+		MailFrom:   *mailFrom,
+		RcptTo:     rcptTo,
+		NextDomain: *nextDomain,
+		Timestamp:  ts,
 	}
 
 	if err := dkim2.Sign(os.Stdin, os.Stdout, key, opts); err != nil {

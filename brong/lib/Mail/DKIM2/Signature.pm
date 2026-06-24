@@ -26,19 +26,23 @@ sub new {
     $self->set_tag('m', $args{Version})   if defined $args{Version};
     $self->set_tag('t', $args{Timestamp}) if defined $args{Timestamp};
     $self->set_tag('d', $args{Domain})    if defined $args{Domain};
+    # nd= (draft-03 §8.7) replaces mf=/rt= for an imaginary forwarding hop.
+    $self->set_tag('nd', $args{NextDomain}) if defined $args{NextDomain};
     $self->set_tag('n', $args{Nonce})     if defined $args{Nonce};
 
     if (defined $args{Flags}) {
         $self->set_tag('f', join(',', @{$args{Flags}}));
     }
 
-    # mf= and rt= are base64-encoded SMTP addresses
-    if (defined $args{MailFrom}) {
-        $self->set_tag('mf', encode_base64($args{MailFrom}, ''));
-    }
-    if (defined $args{RcptTo}) {
-        my @encoded = map { encode_base64($_, '') } @{$args{RcptTo}};
-        $self->set_tag('rt', join(',', @encoded));
+    # mf= and rt= are base64-encoded SMTP addresses; mutually exclusive with nd=
+    if (!defined $args{NextDomain}) {
+        if (defined $args{MailFrom}) {
+            $self->set_tag('mf', encode_base64($args{MailFrom}, ''));
+        }
+        if (defined $args{RcptTo}) {
+            my @encoded = map { encode_base64($_, '') } @{$args{RcptTo}};
+            $self->set_tag('rt', join(',', @encoded));
+        }
     }
 
     if (defined $args{Signatures}) {
@@ -88,6 +92,14 @@ sub domain {
     my $self = shift;
     if (@_) { $self->set_tag('d', shift) }
     return $self->get_tag('d');
+}
+
+# nd= the domain that signs the next DKIM2-Signature (draft-03 §8.7). Present
+# only for an imaginary forwarding hop, where it replaces mf=/rt=.
+sub next_domain {
+    my $self = shift;
+    if (@_) { $self->set_tag('nd', shift) }
+    return $self->get_tag('nd');
 }
 
 sub nonce {

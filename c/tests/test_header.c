@@ -70,7 +70,32 @@ int main(void) {
 
     /* Missing required tag → NULL */
     sig = dkim2_sig_parse("i=1; m=1; t=123; d=example.com; s=sel:rsa-sha256:XXX");
-    assert(sig == NULL); /* mf= missing */
+    assert(sig == NULL); /* neither nd= nor mf=+rt= present */
+
+    /* draft-03 §8.7: nd= parsed, mf=/rt= absent */
+    sig = dkim2_sig_parse(
+        "i=2; m=2; t=1745798400; d=fwd.example; nd=mx.dest.example; "
+        "s=sel1:rsa-sha256:AAAA");
+    assert(sig != NULL);
+    assert(sig->nd != NULL && strcmp(sig->nd, "mx.dest.example") == 0);
+    assert(sig->mf == NULL && sig->rt == NULL);
+    /* Format round-trip: nd= emitted, mf=/rt= omitted */
+    {
+        char *out = dkim2_sig_format(sig, 1);
+        assert(out != NULL);
+        assert(strstr(out, "nd=mx.dest.example") != NULL);
+        assert(strstr(out, "mf=") == NULL);
+        assert(strstr(out, "rt=") == NULL);
+        free(out);
+    }
+    dkim2_sig_free(sig);
+
+    /* draft-03 §8: nd= together with mf=/rt= → NULL (mutually exclusive) */
+    sig = dkim2_sig_parse(
+        "i=2; m=2; t=1; d=fwd.example; nd=mx.dest.example; "
+        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
+        "s=sel1:rsa-sha256:AAAA");
+    assert(sig == NULL);
 
     puts("header: all tests passed");
     return 0;
