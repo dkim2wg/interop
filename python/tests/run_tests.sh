@@ -226,6 +226,26 @@ for signed in "$EXPECTED_DIR"/*.eml; do
     fi
 done
 
+# ---------------------------------------------------------------------------
+# Standalone unit tests (draft-03 features). Each tests/test_*.py is a plain
+# script that runs its checks under __main__ and exits non-zero on failure.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Unit tests (draft-03) ==="
+for unit in "$SCRIPT_DIR"/test_*.py; do
+    [ -e "$unit" ] || continue
+    uname="$(basename "$unit" .py)"
+    if python3 "$unit" >/dev/null 2>&1; then
+        echo "  PASS:      $uname"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL:      $uname"
+        FAIL=$((FAIL + 1))
+        ERRORS="${ERRORS}  ${uname}: unit test failed\n"
+        python3 "$unit" 2>&1 | tail -10
+    fi
+done
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [ -n "$ERRORS" ]; then

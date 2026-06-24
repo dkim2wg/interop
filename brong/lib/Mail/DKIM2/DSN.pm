@@ -133,9 +133,13 @@ sub generate {
         body => $orig->as_string,
     );
 
+    # Use verbatim `header` (not `header_str`) for these plain-ASCII fields:
+    # header_str runs the address encoder, which warns "empty host portion" on
+    # a bare addr-spec in some Email::MIME versions. The values are already
+    # well-formed, so emit them as-is.
     my $dsn = Email::MIME->create(
         attributes => { content_type => 'multipart/report', encoding => '7bit' },
-        header_str => [
+        header => [
             From    => "Mail Delivery System <postmaster\@$mta>",
             To      => $to,
             Subject => 'Delivery Status Notification (Failure)',
