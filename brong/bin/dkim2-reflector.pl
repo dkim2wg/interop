@@ -27,7 +27,7 @@ sub logmsg { my $m = shift; warn "dkim2-reflector: $m\n"; syslog(LOG_WARNING, '%
 # unlike local(8), it does NOT prepend a Delivered-To: header — which would be
 # hashed into our Message-Instance and make it unverifiable. See
 # docs/dkim2-implementer-guide.md.
-my %VALID_MODE = map { $_ => 1 } qw(raw subject body both redacted damage fresh brand);
+my %VALID_MODE = map { $_ => 1 } qw(raw subject body both redacted damage fresh brand dsn);
 my $arg0 = $ARGV[0] // '';
 my $mode = ($arg0 =~ /^reflector-(\w+)$/) ? $1 : $arg0;
 unless ($VALID_MODE{$mode}) {
@@ -74,6 +74,17 @@ my $result = eval {
             brand_keyfile  => '/etc/dkim2/reflector/dkim2test.key',
         );
         { message => $msg, signed => 1, basis => ($delegated ? 'brand' : 'origin'), mode => 'brand' };
+    } elsif ($mode eq 'dsn') {
+        # Return a DKIM2-signed Delivery Status Notification to the sender,
+        # regardless of whether the incoming message was DKIM2-signed.
+        my $msg = Mail::DKIM2::Reflector::generate_dsn(
+            sender   => $sender,
+            message  => $message,
+            domain   => 'dkim2.com',
+            selector => 'sel1',
+            keyfile  => '/etc/dkim2/reflector/sel1.key',
+        );
+        { message => $msg, signed => 1, basis => 'origin', mode => 'dsn' };
     } else {
         Mail::DKIM2::Reflector::reflect(
             message  => $message,

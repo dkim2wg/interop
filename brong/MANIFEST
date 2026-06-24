@@ -8,6 +8,7 @@ bin/verify-sig.pl
 Changes
 contrib/strip.pl
 lib/Mail/DKIM2/Common.pm
+lib/Mail/DKIM2/DSN.pm
 lib/Mail/DKIM2/HeaderParser.pm
 lib/Mail/DKIM2/MessageInstance.pm
 lib/Mail/DKIM2/MessageStore.pm
