@@ -126,18 +126,26 @@ leaves as a clean **origin** DKIM2 message. The chain-undo check
 - `_do_sign`: when `env_from` is empty, construct the `Signer` with a null
   `MailFrom` (→ `mf=<>`) while keeping `RcptTo => $priv->{env_rcpt}` (→ `rt=`).
 
-No library (`Mail::DKIM2::*`) changes are expected: `Signer`/`Signature` already
-encode a null `MailFrom`, and `MessageInstance->calculate` already produces `m=1`
-for a message with no prior MI. If null-`MailFrom` signing turns out not to round
--trip through the verifier, that is a library bug to fix separately, not part of
-this feature.
+**Library round-trip for null `MailFrom` (in scope).** The signing path assumes
+`Signer`/`Signature` encode a null `MailFrom` as `mf=<>` and that the `Verifier`
+accepts it (skipping the `d=`/`mf=` alignment check for a null sender, as
+`Verifier.pm` already flags for DSNs), and that `MessageInstance->calculate`
+produces `m=1` for a message with no prior MI. The plan's **first** step verifies
+this end-to-end with a focused test (sign with null `MailFrom` → verify `pass`,
+`mf=<>` present). If any leg does not round-trip, the library fix
+(`Signer`/`Signature`/`Verifier`) is folded into this feature rather than deferred —
+the milter change is worthless without it.
 
 ## Postfix deploy artifacts
 
 - `deploy/postfix-dkim2-transport` is **not** the place for this address (that map
-  feeds the `dkim2-reflect` pipe). Add a separate `transport_maps` /
-  `local_recipient_maps` entry — either a new small map file
-  (`deploy/postfix-dkim2-delayedbounce`) or documented inline in `SERVER.md`.
+  feeds the `dkim2-reflect` pipe). Add a **new** map file
+  `deploy/postfix-dkim2-delayedbounce` holding the single entry
+  `reflector-delayedbounce@dkim2.com  error:5.1.1 DKIM2 delayed-bounce demo …`,
+  referenced from **both** `transport_maps` (to route to `error:`) and
+  `local_recipient_maps` (to accept at RCPT) — the same dual-use pattern as the
+  existing `dkim2-transport` map. `postmap` it and `postfix reload`; install
+  steps documented in the file header and `SERVER.md`.
 - `main.cf`: add `internal_mail_filter_classes = bounce`; change
   `non_smtpd_milters` to the outbound socket only.
 
