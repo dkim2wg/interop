@@ -268,11 +268,10 @@ sub fetch_public_key {
     # undef (seen as spurious temperror / "no verifiable signature items").
     # Advertise EDNS0 and query over TCP so the full record arrives reliably and
     # a transient hiccup fails fast instead of hanging.
-    $resolver->udppacketsize(1232);   # EDNS0: fit a large DKIM TXT without truncation
-    $resolver->usevc(1);              # use TCP (reliable for >512-byte records)
+    $resolver->udppacketsize(1232);   # EDNS0 (defence-in-depth if usevc is ever removed)
+    $resolver->usevc(1);              # query over TCP — avoids UDP truncation/drops entirely
     $resolver->persistent_tcp(0);
-    $resolver->tcp_timeout(5);
-    $resolver->retry(2);
+    $resolver->tcp_timeout(5);        # bound each attempt (default is 120s); no UDP retry loop applies under usevc
     my $fqdn = "$sel._domainkey.$dom";
     my $reply = $resolver->query($fqdn, 'TXT');
     return unless $reply;
