@@ -58,7 +58,25 @@ install -m 644 "$REPO/deploy/postfix-dkim2-transport" /etc/postfix/dkim2-transpo
 postmap /etc/postfix/dkim2-transport
 postfix reload
 
-# 4. Restart the long-running milters so they load the freshly-installed lib.
+# 3c. Patch the (effectively unmaintained) Sendmail::PMilter for the null-sender
+#     hang: its SMFIC_MAIL handler skips the envfrom hook and sends NO reply when
+#     the sender arg list is empty (MAIL FROM:<>), so Postfix blocks until
+#     milter_command_timeout and internally-generated bounces ship unsigned.
+#     Idempotent: re-applies after a CPAN reinstall, skips if already patched.
+PMILTER_CTX=$(perl -MSendmail::PMilter::Context -e 'print $INC{"Sendmail/PMilter/Context.pm"}' 2>/dev/null)
+if [ -n "$PMILTER_CTX" ]; then
+    if grep -q 'null sender MAIL FROM' "$PMILTER_CTX"; then
+        echo ">> Sendmail::PMilter null-sender patch already applied"
+    else
+        patch --forward --backup "$PMILTER_CTX" < "$REPO/deploy/patches/pmilter-null-sender-envfrom.patch"
+        echo ">> applied Sendmail::PMilter null-sender patch to $PMILTER_CTX"
+    fi
+else
+    echo ">> WARNING: Sendmail::PMilter::Context not found; skipping null-sender patch" >&2
+fi
+
+# 4. Restart the long-running milters so they load the freshly-installed lib
+#    (and the patched Sendmail::PMilter above).
 #    (The reflector wrapper and validator CGI run per-invocation, so they pick
 #    up the new lib without a restart — but the milters are daemons.)
 systemctl restart dkim2-milter-inbound dkim2-milter-outbound
@@ -81,5 +99,11 @@ perl -e '
       unless $v->result eq q{pass};
   print "   smoke test: pass (" . $v->result_detail . ")\n";
 '
+
+# 7. NULL-SENDER SMOKE TEST. Confirm the outbound milter answers a MAIL FROM:<>
+#    envelope instead of hanging (regression guard for the Sendmail::PMilter
+#    null-sender bug patched in step 3c). Fails in ~8s if the patch is missing.
+echo ">> smoke test: null-sender MAIL FROM:<> through the outbound milter ..."
+perl "$REPO/deploy/smoke-null-sender-milter.pl" /var/spool/postfix/var/run/dkim2-milter-out.sock
 
 echo ">> deploy complete and verified."

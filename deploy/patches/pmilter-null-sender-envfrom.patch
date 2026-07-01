@@ -1,0 +1,15 @@
+--- a/Sendmail/PMilter/Context.pm
++++ b/Sendmail/PMilter/Context.pm
+@@ -291,8 +291,10 @@
+ 			} elsif ($cmd eq SMFIC_MAIL) {
+ 				if ($this->{lastsymbol} ne SMFIC_MAIL) { delete $this->{symbols}{&SMFIC_MAIL}; }
+ 				my $envfrom = &$split_buf;
+-				$this->call_hooks('envfrom', @$envfrom)
+-					if scalar @$envfrom >= 1;
++				# null sender MAIL FROM:<> yields an empty arg list; ensure the
++				# envfrom hook still fires (and a reply is sent) instead of hanging.
++				push(@$envfrom, q{}) if (@$envfrom == 0);
++				$this->call_hooks(q{envfrom}, @$envfrom);
+ 
+ #				delete $this->{symbols}{&SMFIC_MAIL};
+ 			} elsif ($cmd eq SMFIC_EOH) {
