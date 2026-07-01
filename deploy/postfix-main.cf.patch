@@ -16,9 +16,25 @@ mydestination = dkim2.com, test1.dkim2.com, test2.dkim2.com, test3.dkim2.com, te
 
 # Milter — socket path relative to Postfix chroot
 smtpd_milters = unix:var/run/dkim2-milter.sock
-non_smtpd_milters = unix:var/run/dkim2-milter.sock
 milter_default_action = accept
 milter_protocol = 6
+
+# --- DKIM2 delayed-bounce signing (draft-02 §11) ---
+# Run non_smtpd_milters (and content filters) on Postfix-originated bounce
+# messages so the outbound DKIM2 milter signs them. Off by default.
+internal_mail_filter_classes = bounce
+
+# Internally-injected mail (bounces, local submissions) must hit ONLY the
+# outbound (signing) milter — never the inbound (verify + MI-stamp) milter,
+# which would otherwise add Authentication-Results and a spurious
+# Message-Instance to the bounce before it is signed. Inbound DSNs from
+# outside still reach the inbound milter via smtpd_milters on port 25.
+non_smtpd_milters = unix:var/run/dkim2-milter-out.sock
+
+# Route the demo address to a permanent failure (generates a real bounce) and
+# accept it at RCPT. (hash:/etc/postfix/dkim2-delayedbounce — see that file.)
+transport_maps = hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
+local_recipient_maps = $alias_maps, hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
 
 # TLS
 smtpd_tls_cert_file = /etc/letsencrypt/live/mail.dkim2.com/fullchain.pem
