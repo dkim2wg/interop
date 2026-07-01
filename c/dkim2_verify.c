@@ -454,6 +454,21 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                     sig->i, (unsigned long long)sig->t);
         }
 
+        /* §7.5/§7.6: mf= and each rt= MUST be a bracketed RFC5321 path.
+           nd= hops carry no mf/rt (sig->mf/sig->rt are NULL there) — skip. */
+        if (sig->mf && sig->mf[0] &&
+            !(sig->mf[0] == '<' && sig->mf[strlen(sig->mf) - 1] == '>'))
+            SETSTATUS(DKIM2_PERMERROR,
+                "PERMERROR: DKIM2-Signature i=%d: mf= is not a bracketed "
+                "RFC5321 reverse-path (spec 7.5)", sig->i);
+        for (int ri = 0; sig->rt && sig->rt[ri]; ri++) {
+            size_t rn = strlen(sig->rt[ri]);
+            if (!(rn >= 2 && sig->rt[ri][0] == '<' && sig->rt[ri][rn - 1] == '>'))
+                SETSTATUS(DKIM2_PERMERROR,
+                    "PERMERROR: DKIM2-Signature i=%d: rt= entry is not a "
+                    "bracketed RFC5321 forward-path (spec 7.6)", sig->i);
+        }
+
         /* §7.7: d= must cover mf= domain (relaxed match) */
         if (sig->mf && strcmp(sig->mf, "<>") != 0) {
             char *mf_d = addr_domain(sig->mf);

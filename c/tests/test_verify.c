@@ -209,6 +209,71 @@ int main(void) {
         dkim2_sig_free(vctx.sig_list);
     }
 
+    /* --- Error: mf= present but not bracketed (spec 7.5) → PERMERROR --- */
+    {
+        /* Locate "mf=<b64>;" in sig_val, decode it, strip the brackets
+           (RFC5321 path -> bare address), and re-encode as bare base64. */
+        char *mf_tag = strstr(sig_val, "mf=");
+        assert(mf_tag != NULL);
+        char *mf_b64_start = mf_tag + 3;
+        char *mf_b64_end = strchr(mf_b64_start, ';');
+        assert(mf_b64_end != NULL);
+        size_t mf_b64_len = (size_t)(mf_b64_end - mf_b64_start);
+
+        char mf_b64[256];
+        assert(mf_b64_len < sizeof mf_b64);
+        memcpy(mf_b64, mf_b64_start, mf_b64_len);
+        mf_b64[mf_b64_len] = '\0';
+
+        unsigned char decoded[256];
+        int declen = b64_decode(mf_b64, decoded, sizeof decoded);
+        assert(declen > 0);
+        decoded[declen] = '\0';
+        assert(decoded[0] == '<' && decoded[declen - 1] == '>');
+
+        /* Strip the brackets to produce the bare (non-conformant) address */
+        char bare[256];
+        memcpy(bare, decoded + 1, (size_t)(declen - 2));
+        bare[declen - 2] = '\0';
+
+        char bare_b64[256];
+        b64_encode((const unsigned char *)bare, strlen(bare), bare_b64, sizeof bare_b64);
+
+        /* Rebuild sig_val with the bare-form mf= base64 spliced in */
+        char tampered_mf_sig[4096];
+        size_t prefix_len = (size_t)(mf_b64_start - sig_val);
+        snprintf(tampered_mf_sig, sizeof tampered_mf_sig, "%.*s%s%s",
+            (int)prefix_len, sig_val, bare_b64, mf_b64_end);
+
+        dkim2_status_t bad_mf_st = verify_test_message(
+            mail_from, rcpts, raw_headers, 3, body, mi_val, tampered_mf_sig);
+        assert(bad_mf_st == DKIM2_PERMERROR);
+
+        /* Confirm the failure message cites 7.5 */
+        dkim2_ctx_t vctx;
+        memset(&vctx, 0, sizeof vctx);
+        char mi_hdr[1024], sig_hdr[2048];
+        snprintf(mi_hdr, sizeof mi_hdr, "Message-Instance: %s\r\n", mi_val);
+        snprintf(sig_hdr, sizeof sig_hdr, "DKIM2-Signature: %s\r\n", tampered_mf_sig);
+        char *all_hdrs[5];
+        for (int i = 0; i < 3; i++) all_hdrs[i] = (char *)raw_headers[i];
+        all_hdrs[3] = mi_hdr;
+        all_hdrs[4] = sig_hdr;
+        vctx.headers = all_hdrs;
+        vctx.n_headers = 5;
+        dkim2_body_hash_raw(body, strlen(body), vctx.body_digest);
+        vctx.mail_from = (char *)mail_from;
+        vctx.rcpt_to = rcpts;
+        vctx.mi_list = dkim2_mi_parse(mi_val);
+        vctx.sig_list = dkim2_sig_parse(tampered_mf_sig);
+        dkim2_verify_result_t res;
+        dkim2_do_verify(&vctx, &res);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strstr(res.message, "7.5") != NULL);
+        dkim2_mi_free(vctx.mi_list);
+        dkim2_sig_free(vctx.sig_list);
+    }
+
     free(mi_val);
     free(sig_val);
     puts("sign+verify: all tests passed");

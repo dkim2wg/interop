@@ -184,8 +184,15 @@ of this automatically — prefer using it over manual compilation.
 The `mf=` tag stores the base64 encoding of whatever was passed. Both `addr_domain()`
 and the local-part comparison must handle both formats.
 
-**Recommendation:** Normalise MAIL FROM to include angle brackets at the point
-of entry (envelope receipt), so the stored form is consistent.
+**Resolution (2026-07):** Per spec §7.5/§7.6, `mf=`/`rt=` MUST carry the bracketed
+RFC5321 path. The C signer now normalizes at encode time — `dkim2_sign.c`'s
+`to_rfc5321_path()` wraps a bare address in `<...>` before base64-encoding
+`mf=` and each `rt=` entry (NULL/empty mail_from becomes `<>`; an already-bracketed
+value passes through unchanged). This makes bare CLI input (e.g. Python-style
+`--mailfrom sender@example.com`) conformant too, so the historical bare-vs-bracketed
+divergence between implementations is closed: all implementations (C, Perl, Python)
+now emit and require bracketed `mf=`/`rt=`. The verifier hard-fails (PERMERROR)
+any present `mf=` or `rt=` entry that isn't bracketed — see note 9 below.
 
 ---
 
@@ -205,6 +212,14 @@ Options:
 
 Python's verifier appears to skip envelope matching entirely when verifying
 stored test emails, as the check is not in the verify path for the test suite.
+
+**Resolution (2026-07):** Independent of the envelope-matching question above,
+`dkim2_verify.c` now enforces the bracketing format of `mf=`/`rt=` themselves
+(spec §7.5/§7.6) regardless of whether envelope data is available to cross-check
+against: in the per-signature loop, a present `mf=` that isn't `<...>`-bracketed,
+or any `rt=` entry that isn't `<...>`-bracketed, is a PERMERROR citing the
+relevant spec section. `<>` (null reverse-path) passes. `nd=` hops carry no
+mf=/rt= and are unaffected.
 
 ---
 
