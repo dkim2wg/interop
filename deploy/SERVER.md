@@ -74,12 +74,16 @@ non_smtpd_milters = unix:var/run/dkim2-milter-out.sock
   milter via `smtpd_milters` on port 25 — internally-injected mail (bounces,
   local submissions) only ever needs the outbound (signing) milter.
 
-**Routing (`transport_maps` / `local_recipient_maps`):** append the
-`dkim2-delayedbounce` map (`deploy/postfix-dkim2-delayedbounce`) to both:
-```
-transport_maps = hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
-local_recipient_maps = $alias_maps, hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
-```
+**Routing (`transport_maps` / `local_recipient_maps`):** append
+`hash:/etc/postfix/dkim2-delayedbounce` (the map at
+`deploy/postfix-dkim2-delayedbounce`) to your existing `transport_maps` and
+`local_recipient_maps` — do **not** set either parameter to a bare/partial
+value, since Postfix takes only one value per parameter in `main.cf` and this
+server's `transport_maps`/`local_recipient_maps` already carry the Mailman
+`regexp:` map and (for `local_recipient_maps`) `proxy:unix:passwd.byname`. See
+the Mailman/Sympa routing setup below (§6, "DKIM2 Reflector" — the `postconf
+-e` block) for this server's actual full values, which already include the
+`dkim2-delayedbounce` map appended.
 This is the demo's own live address, `reflector-delayedbounce@dkim2.com`:
 accepted at RCPT, then routed to Postfix's `error:` transport, which fails it
 permanently — accept-then-permanent-fail deterministically models a delayed
@@ -434,8 +438,8 @@ install -m 644 deploy/postfix-dkim2-transport /etc/postfix/dkim2-transport
 postmap /etc/postfix/dkim2-transport
 # 3. main.cf: append the map to BOTH lists, and one invocation per recipient
 postconf -e \
-  "transport_maps = regexp:/var/lib/mailman3/data/postfix_lmtp hash:/etc/postfix/dkim2-transport" \
-  "local_recipient_maps = proxy:unix:passwd.byname \$alias_maps regexp:/var/lib/mailman3/data/postfix_lmtp hash:/etc/postfix/dkim2-transport" \
+  "transport_maps = regexp:/var/lib/mailman3/data/postfix_lmtp hash:/etc/postfix/dkim2-transport hash:/etc/postfix/dkim2-delayedbounce" \
+  "local_recipient_maps = proxy:unix:passwd.byname \$alias_maps regexp:/var/lib/mailman3/data/postfix_lmtp hash:/etc/postfix/dkim2-transport hash:/etc/postfix/dkim2-delayedbounce" \
   "dkim2-reflect_destination_recipient_limit = 1"
 # 4. remove the old reflector-* |command lines from /etc/aliases (keep
 #    reflector-bounces), then:

@@ -45,6 +45,8 @@ is($sig->mail_from, '<>', 'mf decodes to <>');
 is_deeply($sig->rcpt_to, ['sender@origin.example'], 'rt decodes to recipient');
 
 my $v = Mail::DKIM2::Verifier->new;
+# $TS is a fixed past timestamp, outside the verifier's 14-day freshness
+# window (same reason t/dsn.t and t/reflector.t skip this check).
 $v->skip_timestamp_check(1);
 $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
 $v->PRINT($signed);

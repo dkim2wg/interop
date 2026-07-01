@@ -15,13 +15,20 @@ myorigin = $mydomain
 mydestination = dkim2.com, test1.dkim2.com, test2.dkim2.com, test3.dkim2.com, test4.dkim2.com, test5.dkim2.com, sympa.dkim2.com, mailman.dkim2.com, localhost
 
 # Milter — socket path relative to Postfix chroot
+# NOTE: this combined single-socket smtpd_milters is a simpler alternative to
+# the split-socket setup (dkim2-milter-in.sock / dkim2-milter-out.sock)
+# described in deploy/SERVER.md §1. The non_smtpd_milters line below
+# (outbound-only, for delayed-bounce signing) assumes that split setup — if
+# you keep this single combined socket instead, point non_smtpd_milters at it
+# too rather than at dkim2-milter-out.sock.
 smtpd_milters = unix:var/run/dkim2-milter.sock
 milter_default_action = accept
 milter_protocol = 6
 
 # --- DKIM2 delayed-bounce signing (draft-02 §11) ---
 # Run non_smtpd_milters (and content filters) on Postfix-originated bounce
-# messages so the outbound DKIM2 milter signs them. Off by default.
+# messages so the outbound DKIM2 milter signs them.
+# Off by default in Postfix; we enable it here so bounces get signed.
 internal_mail_filter_classes = bounce
 
 # Internally-injected mail (bounces, local submissions) must hit ONLY the
@@ -33,8 +40,21 @@ non_smtpd_milters = unix:var/run/dkim2-milter-out.sock
 
 # Route the demo address to a permanent failure (generates a real bounce) and
 # accept it at RCPT. (hash:/etc/postfix/dkim2-delayedbounce — see that file.)
-transport_maps = hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
-local_recipient_maps = $alias_maps, hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
+#
+# NOT applied via postconf -e here (commented out of this loop on purpose):
+# transport_maps and local_recipient_maps allow only ONE value each in
+# main.cf, and this demo server already has other maps in both (Mailman/Sympa
+# routing — a regexp: map, plus proxy:unix:passwd.byname in
+# local_recipient_maps; see deploy/SERVER.md's Mailman/Sympa setup for the
+# full values). Applying this file's own absolute values verbatim would
+# clobber that routing. Instead, append "hash:/etc/postfix/dkim2-delayedbounce"
+# to BOTH your existing transport_maps and local_recipient_maps by hand, e.g.:
+#   postconf -e "transport_maps = <your existing value> hash:/etc/postfix/dkim2-delayedbounce"
+#   postconf -e "local_recipient_maps = <your existing value> hash:/etc/postfix/dkim2-delayedbounce"
+# On this demo server, see deploy/SERVER.md ("DKIM2 Reflector" setup, §6) for
+# the actual full values already in use.
+#transport_maps = hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
+#local_recipient_maps = $alias_maps, hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
 
 # TLS
 smtpd_tls_cert_file = /etc/letsencrypt/live/mail.dkim2.com/fullchain.pem
