@@ -124,13 +124,20 @@ sub addheader_callback {
     }
     return unless $should_sign;
 
-    # Determine the signing domain from the envelope sender
+    # Determine the signing domain from the envelope sender.
     my $env_from = $self->{'env_from'} || '';
     $env_from =~ s/^<//;
     $env_from =~ s/>$//;
     my $sign_domain;
     if ( $env_from =~ /\@(.+)$/ ) {
         $sign_domain = lc $1;
+    }
+    # Null sender (MAIL FROM <>) — e.g. a Postfix-generated bounce/DSN. There is
+    # no envelope domain to sign for, so fall back to the From: header domain
+    # (typically MAILER-DAEMON@<host>). We only sign if it resolves to a key,
+    # i.e. it is genuinely one of our own bounces.
+    if ( !$sign_domain && $env_from eq '' ) {
+        $sign_domain = $self->_from_header_domain();
     }
     return unless $sign_domain;
 
@@ -218,7 +225,7 @@ sub addheader_callback {
         );
 
         if ( $config->{'record_smtp_params'} ) {
-            $signer_args{MailFrom} = $env_from if $env_from;
+            $signer_args{MailFrom} = ( $env_from ne '' ) ? $env_from : '<>';
             if ( @{$self->{'env_rcpt'} || []} ) {
                 my @cleaned = map { my $r = $_; $r =~ s/^<//; $r =~ s/>$//; $r } @{$self->{'env_rcpt'}};
                 $signer_args{RcptTo} = \@cleaned;
@@ -371,6 +378,18 @@ sub _format_mi {
     my $folded = fold_header("Message-Instance: " . $mi->as_string());
     $folded =~ s/^Message-Instance: //;
     return $folded;
+}
+
+# Domain of the From: header (lower-cased) from the stored raw header chunks,
+# or undef. Used to pick a signing domain for null-sender bounces/DSNs.
+sub _from_header_domain {
+    my ($self) = @_;
+    for my $h ( @{ $self->{'headers'} || [] } ) {
+        next unless $h =~ /^From:/i;
+        return lc $1 if $h =~ /\@([\w.-]+)/;
+        last;
+    }
+    return;
 }
 
 # Look up signing config for a domain (static config, then HTTP endpoint)

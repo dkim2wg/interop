@@ -405,19 +405,21 @@ sub cb_eom {
                 }
             }
 
-            my $sign_config = _get_sign_config($priv->{env_from});
+            # From: domain — needed for the null-sender signing fallback and for
+            # alignment logging below.
+            my $from_hdr_domain = '';
+            for my $hdr (@{$priv->{headers}}) {
+                if (lc($hdr->[0]) eq 'from') {
+                    ($from_hdr_domain) = $hdr->[1] =~ /\@([\w.-]+)/;
+                    $from_hdr_domain = lc($from_hdr_domain // '');
+                    last;
+                }
+            }
+            my $sign_config = _get_sign_config($priv->{env_from}, $from_hdr_domain);
             if ($sign_config) {
                 # Log domain alignment: signing domain vs envelope-from and From:
                 my ($env_domain) = ($priv->{env_from} || '') =~ /\@(.+)$/;
                 $env_domain = lc($env_domain // '');
-                my $from_hdr_domain = '';
-                for my $hdr (@{$priv->{headers}}) {
-                    if (lc($hdr->[0]) eq 'from') {
-                        ($from_hdr_domain) = $hdr->[1] =~ /\@([\w.-]+)/;
-                        $from_hdr_domain = lc($from_hdr_domain // '');
-                        last;
-                    }
-                }
                 my $env_aligned  = ($env_domain  eq lc($sign_config->{domain})) ? 'yes' : 'no';
                 my $from_aligned = ($from_hdr_domain eq lc($sign_config->{domain})) ? 'yes' : 'no';
                 warn "dkim2-milter: domain alignment $msgid"
@@ -459,8 +461,12 @@ sub cb_close {
 
 # Returns { domain, selector, key, algorithm } or undef.
 sub _get_sign_config {
-    my ($env_from) = @_;
+    my ($env_from, $from_domain_fallback) = @_;
     my ($from_domain) = ($env_from || '') =~ /\@(.+)$/;
+    # Null sender (bounce/DSN): no envelope domain — fall back to the From:
+    # header domain so our own Postfix-generated bounces still get signed.
+    $from_domain = $from_domain_fallback
+        if (!$from_domain && defined $from_domain_fallback && length $from_domain_fallback);
     return unless $from_domain;
     $from_domain = lc($from_domain);
 
@@ -629,7 +635,7 @@ sub _do_sign {
         Selector  => $config->{selector},
         Key       => $config->{key},
         Algorithm => $config->{algorithm},
-        MailFrom  => $priv->{env_from},
+        MailFrom  => ( length($priv->{env_from} // '') ? $priv->{env_from} : '<>' ),
         RcptTo    => $priv->{env_rcpt},
     );
 

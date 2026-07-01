@@ -145,6 +145,8 @@ sub run_verify {
 # Helper: feed a raw message through milter sign callbacks
 sub run_sign {
     my ($raw, %opts) = @_;
+    my $env_from = exists $opts{env_from} ? delete $opts{env_from} : '<sender@test1.dkim2.com>';
+    my $env_rcpt = exists $opts{env_rcpt} ? delete $opts{env_rcpt} : '<recipient@test2.dkim2.com>';
     my $config = {
         domains => {},
         sign_authenticated => 1,
@@ -176,8 +178,8 @@ sub run_sign {
     }
     push @header_lines, $current if $current ne '';
 
-    $handler->envfrom_callback('<sender@test1.dkim2.com>');
-    $handler->envrcpt_callback('<recipient@test2.dkim2.com>');
+    $handler->envfrom_callback($env_from);
+    $handler->envrcpt_callback($env_rcpt);
 
     for my $hline (@header_lines) {
         my ($name, $value) = $hline =~ /^([^\s:]+)\s*:\s*(.*)/s;
@@ -335,6 +337,79 @@ diag("=== DKIM2Sign milter tests ===");
     my @auth = @{$verify_handler->{_auth_headers}};
     ok(@auth > 0, "round-trip: auth header added");
     is($auth[0]->{value}, 'pass', "round-trip: verify passes after sign");
+}
+
+# Bounce signing: a Postfix-style null-sender DSN gets origin-signed.
+{
+    my $raw = join("\r\n",
+        'From: Mail Delivery System <MAILER-DAEMON@test1.dkim2.com>',
+        'To: sender@origin.example',
+        'Subject: Undelivered Mail Returned to Sender',
+        'Content-Type: multipart/report; report-type=delivery-status; boundary="B"',
+        'MIME-Version: 1.0',
+        '',
+        '--B',
+        'Content-Type: text/plain',
+        '',
+        'This is the mail system. Delivery permanently failed.',
+        '--B',
+        'Content-Type: message/delivery-status',
+        '',
+        'Reporting-MTA: dns; mail.test1.dkim2.com',
+        'Action: failed',
+        'Status: 5.1.1',
+        '--B',
+        'Content-Type: message/rfc822',
+        '',
+        'From: orig@elsewhere.example',
+        'Subject: greetings',
+        '',
+        'hello',
+        '--B--',
+        '');
+
+    my ($handler, $mock) = run_sign($raw,
+        env_from => '<>',
+        env_rcpt => '<sender@origin.example>',
+        domains  => {
+            'test1.dkim2.com' => {
+                selector => 'rsa1024',
+                key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'rsa1024'),
+            },
+        },
+    );
+
+    my @pre = @{$mock->{pre_headers}};
+    my @dk2 = grep { $_->{field} eq 'DKIM2-Signature' } @pre;
+    ok(@dk2 > 0, "bounce: DKIM2-Signature added for null sender");
+    my $sig = $dk2[0]->{value};
+    like($sig, qr/i=1/,                  "bounce: i=1");
+    like($sig, qr/d=test1\.dkim2\.com/,  "bounce: d= from From: header");
+    like($sig, qr/mf=PD4=/,              "bounce: mf=<> (base64 PD4=)");
+    my @mi = grep { $_->{field} eq 'Message-Instance' } @pre;
+    ok(@mi > 0, "bounce: Message-Instance m=1 added");
+    like($mi[0]->{value}, qr/m=1/, "bounce: MI is m=1");
+}
+
+# Negative: null sender whose From: domain has no key is left unsigned.
+{
+    my $raw = join("\r\n",
+        'From: Mail Delivery System <MAILER-DAEMON@unknown.example>',
+        'To: sender@origin.example',
+        'Subject: bounce',
+        '', 'x', '');
+    my ($handler, $mock) = run_sign($raw,
+        env_from => '<>',
+        env_rcpt => '<sender@origin.example>',
+        domains  => {
+            'test1.dkim2.com' => {
+                selector => 'rsa1024',
+                key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'rsa1024'),
+            },
+        },
+    );
+    my @dk2 = grep { $_->{field} eq 'DKIM2-Signature' } @{$mock->{pre_headers}};
+    is(scalar @dk2, 0, "bounce: unknown From: domain not signed");
 }
 
 diag("=== Forwarding flow tests ===");
