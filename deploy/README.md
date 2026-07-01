@@ -145,3 +145,20 @@ snapshot and no spurious m=2 MI header is generated.
 
 Other implementers send DKIM2-signed mail to `test@dkim2.com` and check
 `Authentication-Results` headers in the response or server logs.
+
+### Reflector addresses
+
+Send mail to any of these to see a DKIM2-signed reply (see `deploy/SERVER.md`
+§6 for full behaviour and delivery details):
+
+| Address | Behaviour |
+|---------|-----------|
+| `reflector-raw@dkim2.com` | re-signed, unchanged |
+| `reflector-subject@dkim2.com` | `Subject:` prefixed |
+| `reflector-body@dkim2.com` | footer appended |
+| `reflector-both@dkim2.com` | subject + footer |
+| `reflector-redacted@dkim2.com` | footer appended; not undoable |
+| `reflector-damage@dkim2.com` | corrupted after signing — fails verification |
+| `reflector-dsn@dkim2.com` | returns a fresh, hand-built DKIM2-signed DSN |
+| `reflector-brand-nd@dkim2.com` | brand hop using `nd=` "imaginary hop" encoding |
+| `reflector-delayedbounce@dkim2.com` | accept-then-bounce; demonstrates a Postfix-originated, DKIM2-signed delayed bounce |

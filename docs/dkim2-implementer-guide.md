@@ -350,6 +350,33 @@ headers that MTA injects/rewrites at that hop, and keep transient ones out of th
 signed message. The reflector in this repo hit this with `Delivered-To`; see
 `deploy/postfix-dkim2-reflect.master.cf` for the `pipe(8)` transport that avoids it.
 
+### Signing an MTA's own bounces (§11) — EXPERIMENTAL
+
+DKIM2 §11 expects a bounce/DSN to be signed like any other outbound message,
+but most MTAs run no milters or content filters on the bounces they generate
+themselves — a *delayed* bounce (accept at RCPT, delivery fails later,
+`bounce(8)`-style DSN with `MAIL FROM <>`) would otherwise leave unsigned.
+
+This repo demonstrates two distinct ways to produce a signed DSN, at two
+different addresses:
+
+- **`reflector-dsn@dkim2.com`** hand-builds a DSN synchronously in our own
+  code (`Mail::DKIM2::DSN`) and injects it — a *reflector transform*, not a
+  real delivery failure.
+- **`reflector-delayedbounce@dkim2.com`** is genuinely **Postfix-originated**:
+  the address is accepted, delivery is made to fail, and Postfix's own
+  `bounce(8)` builds the RFC3464 DSN. We only arrange for the outbound DKIM2
+  milter to run over it and sign it on the way out — no DSN construction code
+  at all. The signing side needs one fallback: with `MAIL FROM <>` there is no
+  envelope-sender domain to sign as, so the milter derives the domain from the
+  `From:` header instead (only signing if that domain resolves to a held key)
+  and emits `mf=<>` on the resulting `DKIM2-Signature`.
+
+The copy-pasteable Postfix recipe (`internal_mail_filter_classes = bounce` +
+an outbound-only `non_smtpd_milters`, plus the routing map) and the §11
+conformance notes/limits live in `deploy/SERVER.md`, under "Signing
+Postfix-generated (delayed) DKIM2 bounces".
+
 ---
 
 ## Recipe field (§6 — undo support)

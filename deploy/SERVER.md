@@ -50,6 +50,74 @@ milter (sign + MI diff).
 
 **Update:** `systemctl restart postfix`
 
+#### Signing Postfix-generated (delayed) DKIM2 bounces
+
+**Why:** Postfix runs no milters or content filters on its own bounces by
+default. A *delayed* bounce — accept at RCPT (`250`), delivery fails later,
+`bounce(8)` originates an RFC3464 DSN with `MAIL FROM <>` — would otherwise
+leave unsigned and unverifiable per draft-02 §11. This is the recipe (the
+substance of a mailing-list reply to that question).
+
+**The recipe (`main.cf`):**
+```
+internal_mail_filter_classes = bounce
+non_smtpd_milters = unix:var/run/dkim2-milter-out.sock
+```
+- `internal_mail_filter_classes = bounce` is the key knob: it makes Postfix
+  run `non_smtpd_milters` (and content filters) on its own bounce/notification
+  messages, off by default.
+- `non_smtpd_milters` must be **outbound-only**. Left listing both sockets (as
+  in the "Key `main.cf` settings" above), the inbound milter would stamp the
+  bounce with `Authentication-Results` and a spurious `Message-Instance`
+  before the outbound milter signs it. Dropping the inbound socket here loses
+  nothing: a genuine *inbound* DSN from outside still reaches the inbound
+  milter via `smtpd_milters` on port 25 — internally-injected mail (bounces,
+  local submissions) only ever needs the outbound (signing) milter.
+
+**Routing (`transport_maps` / `local_recipient_maps`):** append the
+`dkim2-delayedbounce` map (`deploy/postfix-dkim2-delayedbounce`) to both:
+```
+transport_maps = hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
+local_recipient_maps = $alias_maps, hash:/etc/postfix/dkim2-transport, hash:/etc/postfix/dkim2-delayedbounce
+```
+This is the demo's own live address, `reflector-delayedbounce@dkim2.com`:
+accepted at RCPT, then routed to Postfix's `error:` transport, which fails it
+permanently — accept-then-permanent-fail deterministically models a delayed
+bounce with no external dependency. See `deploy/postfix-dkim2-delayedbounce`
+for the map file and install steps.
+
+**Milter requirement:** the outbound milter must sign a null-sender (`MAIL
+FROM <>`) message by falling back to the `From:` header domain (e.g.
+`MAILER-DAEMON@mail.dkim2.com` → `dkim2.com`, via the existing keydir
+parent-walk) when that domain resolves to a held key, and emit `mf=<>` on the
+resulting `DKIM2-Signature`. This is already implemented in the stock
+`brong/bin/dkim2-milter.pl`, so any operator running it gets bounce-signing
+"for free" once the two `main.cf` settings above are in place — no code
+changes needed on the operator side. With no existing DKIM2 chain on a fresh
+bounce, this produces a clean origin signature: `Message-Instance m=1` +
+`DKIM2-Signature i=1`.
+
+**§11 conformance and known limits:**
+- **Addressing.** Postfix addresses the DSN to the envelope `MAIL FROM`,
+  which in a DKIM2 chain *is* the `mf=` of the highest-numbered
+  `DKIM2-Signature` — satisfying §11's "a DSN MUST be addressed to the MTA
+  that sent the message."
+- **Null `mf=` on the DSN itself.** The DSN's own signature carries `mf=<>` —
+  you cannot bounce a bounce, matching "if this field is null (`mf=<>`) then
+  a DSN MUST NOT be sent."
+- **Embedded-original verification (§11.1.2) is receiver-side.** We preserve
+  the embedded original's headers verbatim, but if Postfix truncates the
+  original body (`bounce_size_limit`), the enclosed message's own body-MI may
+  not verify — draft-02 removed the `z` body recipe that §11 had relied on
+  for truncated bodies. Acceptable for a demo, and documented rather than
+  worked around; the enclosed message in the demo is usually not itself
+  DKIM2-signed anyway.
+
+This is **EXPERIMENTAL**: it signs Postfix's bounce verbatim (no
+reconstruction of the enclosed original, no re-addressing to a different
+hop's `mf=`), and does not attempt bounce *propagation* through a forwarder
+(§11.1.1) — that is `reflector-dsn`'s job, via `Mail::DKIM2::DSN->propagate`.
+
 ---
 
 ### 2. DKIM2 Milter (dkim2-milter.pl)
@@ -330,6 +398,11 @@ incoming DKIM2 chain verified. For interop testing of chain behaviour.
 | `reflector-damage@dkim2.com` | a line appended *after* signing — fails body-hash verification |
 | `reflector-dsn@dkim2.com` | returns a fresh DKIM2-signed DSN (`multipart/report`) for the message, regardless of whether it arrived signed (draft-03 §12.1) — verifies as a new one-hop message |
 | `reflector-brand-nd@dkim2.com` | like `reflector-brand`, but the i=1 brand hop uses the `nd=` "imaginary hop" encoding (draft-03 §9.3) instead of `mf=`/`rt=`; the chain still verifies (nd= matches i=2's d=) |
+
+> **Not part of this table:** `reflector-delayedbounce@dkim2.com` is a
+> separate demo address — a genuinely **Postfix-originated** delayed bounce,
+> not a `dkim2-reflect` pipe transform. See "Signing Postfix-generated
+> (delayed) DKIM2 bounces" under Postfix (§1) above.
 
 Always adds `Authentication-Results` + `X-DKIM2-Reflector` (mode/auth/signed).
 If the incoming chain did not verify, the transform is still applied but no
