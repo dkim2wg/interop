@@ -161,6 +161,24 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
        'tampered body still fails even with Received-SPF stripped');
 }
 
+# 9) mf= decoding to a BARE address (missing RFC5321 angle brackets) must be
+#    reported as a failing level whose detail cites the spec 7.5 rule.
+{
+    use MIME::Base64 qw(encode_base64);
+    my $build_signed_message_bare_mf = sub {
+        my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: r\@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n");
+        my $bare_b64 = encode_base64('a@test1.dkim2.com', '');
+        my $brkt_b64 = encode_base64('<a@test1.dkim2.com>', '');
+        (my $bad = $in) =~ s/\Q$brkt_b64\E/$bare_b64/;
+        return $bad;
+    };
+    my $signed = $build_signed_message_bare_mf->();
+    my $rep = Mail::DKIM2::Validate::report($signed, %ropt);
+    my ($lvl) = grep { ($_->{result}//'') eq 'fail' } @{$rep->{levels}};
+    ok($lvl, 'validator reports a failing level for bare mf=');
+    like($lvl->{detail}, qr/mf=.*7\.5|bracket/i, 'detail names the mf= bracket rule');
+}
+
 # 8) per-hop details: signature From/To + recovered MI recipe values
 {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-both\@test2.dkim2.com\r\nSubject: hi\r\n\r\norig body\r\n");
