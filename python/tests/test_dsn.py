@@ -64,8 +64,8 @@ def test_propagate_basic():
         selector="ed25519", domain="test3.dkim2.com", timestamp=1740000000)
 
     # After undoing the forwarder hop (i=2/m=2), the now-top signature is i=1
-    # with mf=sender@origin.example.
-    assert out["upstream_mailfrom"] == "sender@origin.example", out["upstream_mailfrom"]
+    # with mf=<sender@origin.example> (spec 7.5: mf= is a bracketed RFC5321 path).
+    assert out["upstream_mailfrom"] == "<sender@origin.example>", out["upstream_mailfrom"]
 
     msg = email.message_from_bytes(out["raw"])
     assert msg.get_content_type() == "multipart/report"

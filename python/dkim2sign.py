@@ -48,6 +48,16 @@ def b64json(obj) -> str:
     return b64(json.dumps(obj, separators=(",", ":")).encode("utf-8"))
 
 
+def to_rfc5321_path(addr: str) -> str:
+    """Wrap an address as an RFC5321 path for mf=/rt= (spec 7.5/7.6): angle
+    brackets MUST be present. Empty -> '<>'; already-bracketed unchanged."""
+    if not addr:
+        return "<>"
+    if addr.startswith("<") and addr.endswith(">"):
+        return addr
+    return f"<{addr}>"
+
+
 # ---------------------------------------------------------------------------
 # Parse raw message into (header_lines, body)
 # ---------------------------------------------------------------------------
@@ -356,9 +366,9 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     if next_domain:
         chain = f"nd={next_domain}"
     else:
-        mf_b64 = b64(mailfrom.encode("utf-8"))
+        mf_b64 = b64(to_rfc5321_path(mailfrom).encode("utf-8"))
         rt_list = rcptto or ["unknown@example.com"]
-        rt_b64 = ",".join(b64(r.encode("utf-8")) for r in rt_list)
+        rt_b64 = ",".join(b64(to_rfc5321_path(r).encode("utf-8")) for r in rt_list)
         chain = f"mf={mf_b64}; rt={rt_b64}"
 
     f_tag = f" f={','.join(flags)};" if flags else ""

@@ -126,6 +126,31 @@ def _relaxed_domain_match(d1: str, d2: str) -> bool:
     return d1 == d2 or d1.endswith("." + d2)
 
 
+def _bracket_errors(sig_headers: list[str]) -> list[str]:
+    """Spec §7.5/§7.6: every present mf= and rt= entry MUST be a bracketed
+    RFC5321 path (matches <...>, incl. <>). nd= hops carry no mf/rt and are
+    skipped (checked implicitly since their mf=/rt= tags are absent)."""
+    errs = []
+    for sig_hdr in sig_headers:
+        value = _get_header_value(sig_hdr)
+        i_val = _extract_tag(value, "i")
+        for tag, section in (("mf", "5"), ("rt", "6")):
+            raw = _extract_tag(value, tag)
+            if not raw:
+                continue
+            for part in raw.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                dec = base64.b64decode(part).decode("utf-8", errors="surrogateescape")
+                if not (dec.startswith("<") and dec.endswith(">")):
+                    errs.append(
+                        f"DKIM2-Signature i={i_val}: {tag}= is not a bracketed "
+                        f"RFC5321 path (spec 7.{section})"
+                    )
+    return errs
+
+
 def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
     """Validate §8.2/§11.4 chain-of-custody across consecutive signatures.
 
@@ -539,6 +564,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         all_errors.extend(_chain_custody_errors(sig_by_seq))
         # §11.8: donotmodify/donotexplode enforcement
         all_errors.extend(_flag_enforcement_errors(sig_by_seq, mi_headers))
+        # §7.5/§7.6: mf=/rt= MUST be bracketed RFC5321 paths
+        all_errors.extend(_bracket_errors(sig_by_seq))
 
         for idx, sig_hdr in enumerate(sig_by_seq):
             prior_sigs = sig_by_seq[:idx]
@@ -564,6 +591,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     all_errors.extend(_chain_custody_errors(sig_by_seq))
     # §11.8: donotmodify/donotexplode enforcement
     all_errors.extend(_flag_enforcement_errors(sig_by_seq, mi_headers))
+    # §7.5/§7.6: mf=/rt= MUST be bracketed RFC5321 paths
+    all_errors.extend(_bracket_errors(sig_by_seq))
 
     versions = sorted(mi_by_version.keys(), reverse=True)
     highest = versions[0]
