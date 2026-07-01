@@ -75,8 +75,8 @@ func TestPropagate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Propagate: %v", err)
 	}
-	if upstream != "sender@origin.example" {
-		t.Fatalf("upstream = %q, want sender@origin.example", upstream)
+	if upstream != "<sender@origin.example>" {
+		t.Fatalf("upstream = %q, want <sender@origin.example>", upstream)
 	}
 
 	// The propagated DSN is a fresh one-hop message: one MI, one DKIM2-Signature.

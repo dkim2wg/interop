@@ -22,6 +22,18 @@ type DKIM2Signature struct {
 	Sigs       []SigItem
 }
 
+// toRFC5321Path wraps an address as an RFC5321 path for mf=/rt= (spec 7.5/7.6):
+// angle brackets MUST be present. "" -> "<>"; already-bracketed unchanged.
+func toRFC5321Path(a string) string {
+	if a == "" {
+		return "<>"
+	}
+	if strings.HasPrefix(a, "<") && strings.HasSuffix(a, ">") {
+		return a
+	}
+	return "<" + a + ">"
+}
+
 // SigItem is one sel:alg:value entry in the s= tag.
 type SigItem struct {
 	Selector  string
@@ -157,10 +169,10 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 // String returns the complete DKIM2-Signature header (with field name, no trailing CRLF).
 // Format matches Python output exactly: single line, no folding.
 func (sig *DKIM2Signature) String() string {
-	mf := base64.StdEncoding.EncodeToString([]byte(sig.MailFrom))
+	mf := base64.StdEncoding.EncodeToString([]byte(toRFC5321Path(sig.MailFrom)))
 	var rtParts []string
 	for _, r := range sig.RcptTo {
-		rtParts = append(rtParts, base64.StdEncoding.EncodeToString([]byte(r)))
+		rtParts = append(rtParts, base64.StdEncoding.EncodeToString([]byte(toRFC5321Path(r))))
 	}
 	rt := strings.Join(rtParts, ",")
 
@@ -227,10 +239,10 @@ func buildIncomplete(seq, miVer int, ts int64, domain, mailFrom string,
 	if nextDomain != "" {
 		chain = fmt.Sprintf("nd=%s", nextDomain)
 	} else {
-		mf := base64.StdEncoding.EncodeToString([]byte(mailFrom))
+		mf := base64.StdEncoding.EncodeToString([]byte(toRFC5321Path(mailFrom)))
 		var rtParts []string
 		for _, r := range rcptTo {
-			rtParts = append(rtParts, base64.StdEncoding.EncodeToString([]byte(r)))
+			rtParts = append(rtParts, base64.StdEncoding.EncodeToString([]byte(toRFC5321Path(r))))
 		}
 		chain = fmt.Sprintf("mf=%s; rt=%s", mf, strings.Join(rtParts, ","))
 	}

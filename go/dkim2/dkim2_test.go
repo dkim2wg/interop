@@ -411,7 +411,7 @@ func TestHashBody(t *testing.T) {
 }
 
 func TestDKIM2SignatureRoundTrip(t *testing.T) {
-	raw := "DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=c2VuZGVyQHRlc3QxLmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:F//Dt+leS4H/m5LHwv0hWWCjq1UeVBgE0wrKI0GLcuN/iKhdiytBgPMqS+tIlbSNJmYnB9LldrQ9jPnTHRK2CA==;"
+	raw := "DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+; rt=PHJlY2lwaWVudEBleGFtcGxlLmNvbT4=; s=ed25519:ed25519-sha256:F//Dt+leS4H/m5LHwv0hWWCjq1UeVBgE0wrKI0GLcuN/iKhdiytBgPMqS+tIlbSNJmYnB9LldrQ9jPnTHRK2CA==;"
 	sig, err := parseSig(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -420,8 +420,8 @@ func TestDKIM2SignatureRoundTrip(t *testing.T) {
 	if sig.MIVersion != 1 { t.Errorf("m= got %d", sig.MIVersion) }
 	if sig.Timestamp != 1740000000 { t.Errorf("t= got %d", sig.Timestamp) }
 	if sig.Domain != "test1.dkim2.com" { t.Errorf("d= got %q", sig.Domain) }
-	if sig.MailFrom != "sender@test1.dkim2.com" { t.Errorf("mf= got %q", sig.MailFrom) }
-	if len(sig.RcptTo) != 1 || sig.RcptTo[0] != "recipient@example.com" {
+	if sig.MailFrom != "<sender@test1.dkim2.com>" { t.Errorf("mf= got %q", sig.MailFrom) }
+	if len(sig.RcptTo) != 1 || sig.RcptTo[0] != "<recipient@example.com>" {
 		t.Errorf("rt= got %v", sig.RcptTo)
 	}
 	if len(sig.Sigs) != 1 || sig.Sigs[0].Selector != "ed25519" {
@@ -433,10 +433,10 @@ func TestDKIM2SignatureRoundTrip(t *testing.T) {
 }
 
 func TestDKIM2SignatureIncompleteForm(t *testing.T) {
-	raw := "DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=c2VuZGVyQHRlc3QxLmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:F//Dt+leS4H/m5LHwv0hWWCjq1UeVBgE0wrKI0GLcuN/iKhdiytBgPMqS+tIlbSNJmYnB9LldrQ9jPnTHRK2CA==;"
+	raw := "DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+; rt=PHJlY2lwaWVudEBleGFtcGxlLmNvbT4=; s=ed25519:ed25519-sha256:F//Dt+leS4H/m5LHwv0hWWCjq1UeVBgE0wrKI0GLcuN/iKhdiytBgPMqS+tIlbSNJmYnB9LldrQ9jPnTHRK2CA==;"
 	sig, _ := parseSig(raw)
 	incomplete := sig.incompleteForm(raw)
-	want := "DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=c2VuZGVyQHRlc3QxLmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=ed25519:ed25519-sha256:;"
+	want := "DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+; rt=PHJlY2lwaWVudEBleGFtcGxlLmNvbT4=; s=ed25519:ed25519-sha256:;"
 	if incomplete != want {
 		t.Errorf("incompleteForm got:\n  %q\nwant:\n  %q", incomplete, want)
 	}
@@ -1060,9 +1060,9 @@ func TestVerifyChainCustodyBreak(t *testing.T) {
 	_, doubleMsg := buildDoubleSignedMsg(t)
 	// Tamper i=2's mf= to be a domain that doesn't match any rt= of i=1.
 	// i=1 has rt=relay@test2.dkim2.com; replace mf of i=2 (relay@test2.dkim2.com)
-	// with mf=attacker@evil.com (base64: YXR0YWNrZXJAZXZpbC5jb20=)
-	original := base64.StdEncoding.EncodeToString([]byte("relay@test2.dkim2.com"))
-	replacement := base64.StdEncoding.EncodeToString([]byte("attacker@evil.com"))
+	// with mf=attacker@evil.com (base64 of the bracketed RFC5321 path).
+	original := base64.StdEncoding.EncodeToString([]byte("<relay@test2.dkim2.com>"))
+	replacement := base64.StdEncoding.EncodeToString([]byte("<attacker@evil.com>"))
 	// Only replace the FIRST occurrence of this base64 (which is in i=2's mf= tag,
 	// since i=2 is at the top of the message)
 	tampered := strings.Replace(string(doubleMsg), "mf="+original+";", "mf="+replacement+";", 1)

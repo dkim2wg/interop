@@ -256,6 +256,21 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			}
 		}
 
+		// spec 7.5/7.6 MUST: mf=/rt= values must carry RFC5321 angle brackets.
+		if sig.MailFrom != "" && !(strings.HasPrefix(sig.MailFrom, "<") && strings.HasSuffix(sig.MailFrom, ">")) {
+			res.Error = fmt.Errorf("i=%d: mf= is not a bracketed RFC5321 reverse-path (spec 7.5)", sig.Sequence)
+		}
+		for _, r := range sig.RcptTo {
+			if !(strings.HasPrefix(r, "<") && strings.HasSuffix(r, ">")) {
+				res.Error = fmt.Errorf("i=%d: rt= entry is not a bracketed RFC5321 forward-path (spec 7.6)", sig.Sequence)
+				break
+			}
+		}
+		if res.Error != nil {
+			results = append(results, res)
+			continue
+		}
+
 		// §7.7 MUST: d= must be a suffix of (i.e. relaxed match against) the mf= domain
 		if sig.MailFrom != "" && sig.MailFrom != "<>" {
 			if mfDomain := domainFromAddr(sig.MailFrom); mfDomain != "" {
@@ -358,8 +373,12 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 }
 
 // normAddr normalises an email address for §10.4 exact-match comparison:
-// domain part is lowercased, local-part case is preserved.
+// surrounding RFC5321 angle brackets (if any) are stripped, domain part is
+// lowercased, local-part case is preserved. VerifyOptions.MailFrom/RcptTo are
+// bare SMTP-level addresses; topSig.MailFrom/RcptTo are bracketed per §7.5/7.6.
 func normAddr(addr string) string {
+	addr = strings.TrimPrefix(addr, "<")
+	addr = strings.TrimSuffix(addr, ">")
 	at := strings.LastIndexByte(addr, '@')
 	if at < 0 {
 		return strings.ToLower(addr)
