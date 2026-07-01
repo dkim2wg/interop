@@ -258,9 +258,21 @@ sub fetch_public_key {
     my $dom = $self->domain;
     croak "missing selector or domain" unless $sel && $dom;
 
-    # Fetch TXT record from DNS
+    # Fetch TXT record from DNS.
     require Net::DNS::Resolver;
     my $resolver = Net::DNS::Resolver->new;
+    # DKIM key records (RSA-2048) are ~500 bytes — right at the 512-byte plain-UDP
+    # limit — so a plain-UDP query can be truncated or, against some stub
+    # resolvers (e.g. systemd-resolved's 127.0.0.53), intermittently dropped,
+    # leaving Net::DNS retransmitting for ~30s before giving up and returning
+    # undef (seen as spurious temperror / "no verifiable signature items").
+    # Advertise EDNS0 and query over TCP so the full record arrives reliably and
+    # a transient hiccup fails fast instead of hanging.
+    $resolver->udppacketsize(1232);   # EDNS0: fit a large DKIM TXT without truncation
+    $resolver->usevc(1);              # use TCP (reliable for >512-byte records)
+    $resolver->persistent_tcp(0);
+    $resolver->tcp_timeout(5);
+    $resolver->retry(2);
     my $fqdn = "$sel._domainkey.$dom";
     my $reply = $resolver->query($fqdn, 'TXT');
     return unless $reply;
