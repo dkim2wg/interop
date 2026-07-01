@@ -303,6 +303,23 @@ sub _verify_signature {
         }
     }
 
+    # Spec §7.5/§7.6: mf= and each rt= MUST be a bracketed RFC5321 path.
+    my $mf_raw = $signature->mail_from;
+    if (defined $mf_raw && length $mf_raw && $mf_raw !~ /^<.*>$/s) {
+        $self->{result}  = 'fail';
+        $self->{details} = "mf= is not a bracketed RFC5321 reverse-path at i=$i (spec 7.5)";
+        return 0;
+    }
+    my $rt_raw = $signature->rcpt_to;
+    if ($rt_raw) {
+        for my $r (@$rt_raw) {
+            next if defined $r && $r =~ /^<.*>$/s;
+            $self->{result}  = 'fail';
+            $self->{details} = "rt= entry is not a bracketed RFC5321 forward-path at i=$i (spec 7.6)";
+            return 0;
+        }
+    }
+
     # Validate d= matches mf= domain (skip for null sender / DSN)
     my $mf = $signature->mail_from;
     my $sig_domain = $signature->domain;

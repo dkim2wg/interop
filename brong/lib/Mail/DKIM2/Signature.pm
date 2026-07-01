@@ -5,7 +5,7 @@ use warnings;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 
-use Mail::DKIM2::Common qw(encode_tag_json decode_tag_json fold_header);
+use Mail::DKIM2::Common qw(encode_tag_json decode_tag_json fold_header to_rfc5321_path);
 
 use base 'Mail::DKIM2::TagValueList';
 
@@ -37,10 +37,10 @@ sub new {
     # mf= and rt= are base64-encoded SMTP addresses; mutually exclusive with nd=
     if (!defined $args{NextDomain}) {
         if (defined $args{MailFrom}) {
-            $self->set_tag('mf', encode_base64($args{MailFrom}, ''));
+            $self->set_tag('mf', encode_base64(to_rfc5321_path($args{MailFrom}), ''));
         }
         if (defined $args{RcptTo}) {
-            my @encoded = map { encode_base64($_, '') } @{$args{RcptTo}};
+            my @encoded = map { encode_base64(to_rfc5321_path($_), '') } @{$args{RcptTo}};
             $self->set_tag('rt', join(',', @encoded));
         }
     }

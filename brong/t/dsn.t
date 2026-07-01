@@ -88,7 +88,7 @@ sub forwarded_twohop {
     ok($out->{raw}, 'propagate returned a DSN');
     # After stripping the forwarder hop (i=2), the now-top sig is i=1 with
     # mf=sender@origin.example.
-    is($out->{upstream_mailfrom}, 'sender@origin.example',
+    is($out->{upstream_mailfrom}, '<sender@origin.example>',
        'propagated DSN addressed to upstream MAIL FROM');
     my $m = Email::MIME->new($out->{raw});
     like($m->header('Content-Type'), qr{multipart/report}i, 'still multipart/report');
@@ -104,7 +104,7 @@ sub forwarded_twohop {
         raw => $inbound, signer => $bouncer, reporting_mta => 'test2.dkim2.com',
     });
     ok($out->{raw}, 'generate returned a DSN');
-    is($out->{send_to}, 'sender@origin.example', 'DSN addressed to original sender');
+    is($out->{send_to}, '<sender@origin.example>', 'DSN addressed to original sender');
 
     my $m = Email::MIME->new($out->{raw});
     like($m->header('Content-Type'), qr{multipart/report}i, 'is multipart/report');

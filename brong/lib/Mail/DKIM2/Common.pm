@@ -25,6 +25,7 @@ our @EXPORT_OK = qw(
     extract_mi_version
     strip_mi_versions
     extract_domain
+    to_rfc5321_path
     relaxed_domain_match
     parse_dkim_pubkey
     load_private_key
@@ -264,6 +265,16 @@ sub extract_domain {
     $addr =~ s/>.*$//;
     return unless $addr =~ /\@(.+)$/;
     return $1;
+}
+
+# Wrap an address as an RFC5321 reverse-/forward-path for mf=/rt= (spec
+# §7.5/§7.6): angle brackets MUST be present. Empty/undef -> "<>"; an
+# already-bracketed value (incl. "<>") is returned unchanged.
+sub to_rfc5321_path {
+    my ($addr) = @_;
+    return '<>' unless defined $addr && length $addr;
+    return $addr if $addr =~ /^<.*>$/s;
+    return "<$addr>";
 }
 
 # Check if mf_domain is a subdomain of (or equal to) check_domain

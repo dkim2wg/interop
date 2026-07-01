@@ -42,7 +42,7 @@ my $signed  = $sig_hdr . "\r\n" . $with_mi;
 (my $sig_only = $sig_hdr) =~ s/^DKIM2-Signature:\s*//s;
 my $sig = Mail::DKIM2::Signature->parse($sig_only);
 is($sig->mail_from, '<>', 'mf decodes to <>');
-is_deeply($sig->rcpt_to, ['sender@origin.example'], 'rt decodes to recipient');
+is_deeply($sig->rcpt_to, ['<sender@origin.example>'], 'rt decodes to recipient');
 
 my $v = Mail::DKIM2::Verifier->new;
 # $TS is a fixed past timestamp, outside the verifier's 14-day freshness
