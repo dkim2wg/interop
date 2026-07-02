@@ -21,12 +21,21 @@ use Mail::DKIM2::Common qw(relaxed_domain_match extract_domain);
 #   2. d= (the DKIM2-DSN signing domain) relaxed-domain-matches a top-hop
 #      rt= domain of the enclosed message -- i.e. the domain vouching for
 #      this bounce was actually a recipient of the original send.
-#   3. h= (the DKIM2-DSN header hash) equals the header-hash RECOMPUTED over
-#      the enclosed message's headers (never a value merely parsed out of the
-#      enclosed Message-Instance text) -- i.e. the bounce is about *this*
-#      message content, not a substituted one.
-#   4. The DKIM2-DSN signature itself verifies against the d=/selector
-#      public key.
+#   3. The enclosed message's headers validate: the header-hash RECOMPUTED
+#      over them equals the header-hash component of the enclosed top
+#      Message-Instance -- i.e. the returned headers are the ones the chain
+#      describes, not a substituted set.
+#   4. The DKIM2-DSN signature verifies over the enclosed message's
+#      Message-Instance + DKIM2-Signature chain (with the DKIM2-DSN as the
+#      last signature), using the d=/selector public key -- binding the
+#      signing recipient's key to that chain, and so to the top Message-
+#      Instance whose header hash check (3) tied to the returned headers.
+#
+# (3) and (4) are both required and interlock: (4) proves the top Message-
+# Instance text -- including its header hash -- is what the legitimate
+# recipient signed; (3) proves the returned headers match that signed hash.
+# Neither alone is sufficient (the enclosed Message-Instance is attacker-
+# supplied bytes until (4) authenticates it).
 #
 # Any failure -> capture (never relay something we can't authenticate).
 
@@ -71,22 +80,29 @@ sub process {
     my $d_ok = grep { relaxed_domain_match(extract_domain($_), $d->domain) } @$rts;
     return { action => 'capture' } unless $d_ok;
 
-    # (3) h= must equal the header-hash RECOMPUTED over the enclosed headers
-    # (never a value merely parsed out of the enclosed Message-Instance text,
-    # which is attacker-controlled copied bytes and proves nothing). The DSN
-    # is headers-only by design, so only the header hash is bound here --
-    # Mail::DKIM2::MessageInstance::h_digest() is the same function calculate()
-    # uses to produce a Message-Instance's h1 component, reused as-is so the
-    # hashing logic (canonicalization, header selection/ordering) can never
-    # drift between signer and this check.
+    # (3) The enclosed headers must validate against the enclosed top
+    # Message-Instance: the header hash RECOMPUTED over the enclosed headers
+    # must equal that Message-Instance's header-hash component.
+    # Mail::DKIM2::MessageInstance::h_digest() is the same function
+    # calculate() uses to produce a Message-Instance's h1 component, reused
+    # as-is so the hashing logic (canonicalization, header selection and
+    # ordering) can never drift between signer and this check. This alone
+    # proves nothing (the enclosed Message-Instance is attacker-supplied
+    # until (4) authenticates it); it interlocks with (4) below.
+    my @mis = map { [ (/m=(\d+)/)[0] // 0, $_ ] } $eom->header_raw('Message-Instance');
+    my ($top_mi_raw) = map { $_->[1] } sort { $b->[0] <=> $a->[0] } @mis;
+    return { action => 'capture' } unless defined $top_mi_raw;
+    my $top_mi_hh = eval { Mail::DKIM2::MessageInstance->parse($top_mi_raw)->header_hash };
     my $recomputed_hh = eval { Mail::DKIM2::MessageInstance::h_digest($eom) };
     return { action => 'capture' }
-        unless defined $recomputed_hh && $d->header_hash eq "sha256:$recomputed_hh";
+        unless defined $top_mi_hh && defined $recomputed_hh && $top_mi_hh eq $recomputed_hh;
 
-    # (4) DKIM2-DSN signature must verify with the d=/selector public key.
+    # (4) The DKIM2-DSN signature must verify over the enclosed message's
+    # Message-Instance + DKIM2-Signature chain (with the DKIM2-DSN as the last
+    # signature), using the d=/selector public key.
     my $pub = _resolve_pubkey($d, $a{pubkey_cb});
     return { action => 'capture' } unless $pub;
-    return { action => 'capture' } unless eval { $d->verify($pub) };
+    return { action => 'capture' } unless eval { $d->verify($pub, $eom) };
 
     # All checks pass: undo the chain to reconstruct the message as it was
     # delivered to the top hop, and relay it back to the reconstructed

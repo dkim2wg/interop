@@ -203,8 +203,8 @@ sub forwarded_twohop {
 
     my $p = Mail::DKIM2::DSNHeader->parse(
         do { (my $h = $out) =~ /^DKIM2-DSN:(.*?)(?=\r\n\S)/ms; (my $v = $1) =~ s/^\s*//; $v =~ s/\r\n[ \t]+//g; $v });
-    ok($p->verify(DKIM2TestKeys::private_key('test2.dkim2.com', 'rsa1024')),
-       'legit inbound chain -> DKIM2-DSN signature verifies');
+    ok($p->verify(DKIM2TestKeys::private_key('test2.dkim2.com', 'rsa1024'), Email::MIME->new($inbound)),
+       'legit inbound chain -> DKIM2-DSN signature verifies over the returned chain');
 }
 
 done_testing;

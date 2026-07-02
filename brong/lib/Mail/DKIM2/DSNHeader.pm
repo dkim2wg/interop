@@ -4,31 +4,67 @@ use warnings;
 
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Crypt::Digest::SHA256 qw(sha256);
+use Mail::DKIM2::Common qw(fold_header to_rfc5321_path build_signing_input extract_mi_version);
+use Mail::DKIM2::Signature;
 
-# NOTE: signing input uses dkim2_canonicalize_sig_header (all WSP removed),
-# which is the function the rest of the codebase uses for *signature input*
-# canonicalization (see Common::build_signing_input, spec Section 8.5).
-# dkim2_canonicalize_header (WSP collapsed to a single space) is the
-# *header hash* canonicalization (spec Section 5.2) and is not used here.
-# As long as sign and verify below call the same function with the same
-# blanked-signature string, the two stay identical -- that is the only
-# correctness requirement for this header.
-use Mail::DKIM2::Common qw(dkim2_canonicalize_sig_header fold_header to_rfc5321_path);
+# The DKIM2-DSN signature is computed the same way a DKIM2-Signature is
+# (Common::build_signing_input, spec Section 9.6): over the returned message's
+# Message-Instance header fields, then its DKIM2-Signature header fields, then
+# the DKIM2-DSN header itself with the s= signature blanked -- i.e. the
+# DKIM2-DSN signs the returned chain as though it were the last DKIM2-Signature
+# appended to it. As long as sign and verify build the identical signing input
+# (same returned message, same blanked-signature line), the two stay in step;
+# that is the only correctness requirement for this header.
 
-# Build the header value with the s= signature blanked (signing input form).
+# The header value with the s= signature blanked (signing-input form).
 sub _value_blank_sig {
-    my ($d, $rt_b64, $hh, $sel, $alg) = @_;
-    return "d=$d; rt=$rt_b64; h=sha256:$hh; s=$sel:$alg:";
+    my ($d, $rt_b64, $sel, $alg) = @_;
+    return "d=$d; rt=$rt_b64; s=$sel:$alg:";
+}
+
+# Extract the returned message's Message-Instance and DKIM2-Signature header
+# fields, in the shapes build_signing_input expects, plus the notional next
+# sequence number (one past the highest DKIM2-Signature i=) used as signing_i
+# so that every real signature is included and none is skipped. Used
+# identically by sign (new) and verify.
+sub _returned_chain {
+    my ($eom) = @_;
+    my (@mi, @dk2);
+    for my $val ($eom->header_raw('Message-Instance')) {
+        my $v = extract_mi_version($val);
+        push @mi, { v => $v, raw => "Message-Instance: $val" } if $v;
+    }
+    for my $val ($eom->header_raw('DKIM2-Signature')) {
+        my $sig = eval { Mail::DKIM2::Signature->parse($val) };
+        push @dk2, { i => $sig->sequence, raw => "DKIM2-Signature: $val" }
+            if $sig && $sig->sequence;
+    }
+    @mi  = sort { $a->{v} <=> $b->{v} } @mi;
+    @dk2 = sort { $a->{i} <=> $b->{i} } @dk2;
+    my $next_i = @dk2 ? $dk2[-1]{i} + 1 : 1;
+    return (\@mi, \@dk2, $next_i);
+}
+
+# The signing input: returned MI + DKIM2-Signature fields, then the blanked
+# DKIM2-DSN header as the (last) incomplete signature.
+sub _signing_input {
+    my ($eom, $blank_line) = @_;
+    my ($mi, $dk2, $next_i) = _returned_chain($eom);
+    return build_signing_input(
+        mi_headers     => $mi,
+        dk2_headers    => $dk2,
+        signing_i      => $next_i,   # matches no real i= -> all real sigs included
+        signing_header => $blank_line,
+    );
 }
 
 sub new {
     my ($class, %a) = @_;
-    my $self = bless { d => $a{Domain}, hh => $a{HeaderHash},
-                       sel => $a{Selector}, alg => $a{Algorithm} || 'rsa-sha256' }, $class;
+    my $self = bless { d => $a{Domain}, sel => $a{Selector},
+                       alg => $a{Algorithm} || 'rsa-sha256' }, $class;
     $self->{rt_b64} = encode_base64(to_rfc5321_path($a{RcptTo}), '');
-    # signing input: canonicalized "DKIM2-DSN: <value with blank sig>"
-    my $blank = "DKIM2-DSN: " . _value_blank_sig($self->{d}, $self->{rt_b64}, $self->{hh}, $self->{sel}, $self->{alg});
-    my $input = dkim2_canonicalize_sig_header($blank);
+    my $blank = "DKIM2-DSN: " . _value_blank_sig($self->{d}, $self->{rt_b64}, $self->{sel}, $self->{alg});
+    my $input = _signing_input($a{Returned}, $blank);
     my $key = $a{Key};
     my $sig = ($self->{alg} =~ /^ed25519/)
         ? $key->sign_message(sha256($input))
@@ -39,7 +75,7 @@ sub new {
 
 sub as_string {
     my ($self) = @_;
-    my $val = "d=$self->{d}; rt=$self->{rt_b64}; h=sha256:$self->{hh}; "
+    my $val = "d=$self->{d}; rt=$self->{rt_b64}; "
             . "s=$self->{sel}:$self->{alg}:$self->{sig_b64}";
     return fold_header("DKIM2-DSN: $val");
 }
@@ -49,25 +85,25 @@ sub parse {
     my $self = bless {}, $class;
     my %t; for my $p (split /\s*;\s*/, $value) { $p =~ /^(\w+)\s*=\s*(.*)/s or next;
         my ($k,$v)=($1,$2); $v =~ s/\s//gs; $t{$k}=$v; }
-    $self->{d}   = $t{d};
+    $self->{d}      = $t{d};
     $self->{rt_b64} = $t{rt};
-    ($self->{hh_full} = $t{h} // '') ;                 # "sha256:<hh>"
     ($self->{sel},$self->{alg},$self->{sig_b64}) = split /:/, ($t{s} // ''), 3;
     return $self;
 }
 
-sub domain      { $_[0]->{d} }
-sub rcpt_to     { decode_base64($_[0]->{rt_b64} // '') }
-sub header_hash { $_[0]->{hh_full} }                    # "sha256:<hh>"
-sub selector    { $_[0]->{sel} }
-sub algorithm   { $_[0]->{alg} }
-sub signature   { decode_base64($_[0]->{sig_b64} // '') }
+sub domain    { $_[0]->{d} }
+sub rcpt_to   { decode_base64($_[0]->{rt_b64} // '') }
+sub selector  { $_[0]->{sel} }
+sub algorithm { $_[0]->{alg} }
+sub signature { decode_base64($_[0]->{sig_b64} // '') }
 
+# Verify the DKIM2-DSN signature over the returned message ($eom), rebuilding
+# the identical signing input new() signed.
 sub verify {
-    my ($self, $pubkey) = @_;
-    my ($hh) = ($self->{hh_full} // '') =~ /^sha256:(.*)$/ or return 0;
-    my $blank = "DKIM2-DSN: " . _value_blank_sig($self->{d}, $self->{rt_b64}, $hh, $self->{sel}, $self->{alg});
-    my $input = dkim2_canonicalize_sig_header($blank);
+    my ($self, $pubkey, $returned) = @_;
+    return 0 unless $returned;
+    my $blank = "DKIM2-DSN: " . _value_blank_sig($self->{d}, $self->{rt_b64}, $self->{sel}, $self->{alg});
+    my $input = _signing_input($returned, $blank);
     my $sig = $self->signature;
     return $self->{alg} =~ /^ed25519/
         ? $pubkey->verify_message($sig, sha256($input))
@@ -87,50 +123,54 @@ Mail::DKIM2::DSNHeader - Build/sign/parse/verify the DKIM2-DSN singleton header
     use Mail::DKIM2::DSNHeader;
 
     my $h = Mail::DKIM2::DSNHeader->new(
-        Domain     => 'example.com',
-        RcptTo     => 'bounce@sender.example',
-        HeaderHash => $header_hash_b64,   # bare base64, no "sha256:" prefix
-        Selector   => 'sel1',
-        Key        => $private_key,       # Crypt::PK::RSA or ::Ed25519
-        Algorithm  => 'rsa-sha256',
+        Domain    => 'example.com',
+        RcptTo    => 'bounce@sender.example',
+        Selector  => 'sel1',
+        Key       => $private_key,        # Crypt::PK::RSA or ::Ed25519
+        Algorithm => 'rsa-sha256',
+        Returned  => $email_mime,         # the returned (bounced) message
     );
-    print $h->as_string, "\n";            # "DKIM2-DSN: d=...; rt=...; h=...; s=...\r\n\t..."
+    print $h->as_string, "\n";            # "DKIM2-DSN: d=...; rt=...; s=...\r\n\t..."
 
     my $p = Mail::DKIM2::DSNHeader->parse($header_value);
-    $p->domain; $p->rcpt_to; $p->header_hash; $p->selector; $p->algorithm;
-    $p->verify($pubkey) or die "bad DKIM2-DSN signature";
+    $p->domain; $p->rcpt_to; $p->selector; $p->algorithm;
+    $p->verify($pubkey, $returned_email_mime) or die "bad DKIM2-DSN signature";
 
 =head1 DESCRIPTION
 
-B<EXPERIMENTAL> — prototype support for a standalone C<DKIM2-DSN> header,
-used to carry a signed reference (recipient + header hash) into a delivery
-status notification generated by an MTA (e.g. Postfix) that does not have
-access to the original DKIM2 signing context.
+B<EXPERIMENTAL> - prototype support for the standalone C<DKIM2-DSN> header,
+which authenticates the Delivery Status Notification for a DKIM2 message.
+
+The C<DKIM2-DSN> header takes the place of the C<DKIM2-Signature> and
+C<Message-Instance> header fields a non-DSN message would carry. Its
+signature is computed exactly as a C<DKIM2-Signature>'s would be
+(L<Mail::DKIM2::Common/build_signing_input>, spec Section 9.6), over the
+B<returned> (bounced) message's C<Message-Instance> header fields, then its
+C<DKIM2-Signature> header fields, then the C<DKIM2-DSN> header itself with the
+C<s=> signature value blanked -- so the C<DKIM2-DSN> signs the returned chain
+as though it were the last C<DKIM2-Signature> appended to it.
 
 Tags:
 
 =over 4
 
-=item C<d=> - signing domain
+=item C<d=> - signing domain (the DSN-generating recipient)
 
-=item C<rt=> - base64-encoded RFC 5321 forward-path (bracketed address)
-
-=item C<h=> - C<sha256:> prefix followed by the base64 header hash being referenced
+=item C<rt=> - base64-encoded RFC 5321 forward-path (bracketed address): the
+returned message's top-hop C<mf=>, i.e. the DSN's destination
 
 =item C<s=> - C<selector:algorithm:signature> triple, base64 signature
 
 =back
 
-The signing/verification input is the canonicalized C<DKIM2-DSN:> header
-line with the C<s=> tag's signature value blanked (selector and algorithm
-still present, trailing colon, no value) — the same blank-signature
-construction pattern used by C<Mail::DKIM2::Signature>. Canonicalization
-uses C<Mail::DKIM2::Common::dkim2_canonicalize_sig_header>, the same
-function used to build DKIM2-Signature signing input (spec Section 8.5:
-all whitespace removed) — as opposed to
-C<dkim2_canonicalize_header>, which is used for header-hash computation
-(Section 5.2: whitespace collapsed, not removed). Sign and verify must
-(and do) use the identical canonicalized blanked-signature string.
+There is no C<h=> tag (the returned C<Message-Instance> header fields the
+signature covers already carry the header hashes), no C<t=> (freshness is
+bounded by the returned message's own signatures) and no C<i=> (the
+C<DKIM2-DSN> is a distinct header field, not a numbered member of the chain).
+
+Both C<new> and C<verify> require the returned message (C<Returned> /
+the second argument to C<verify>) because the signing input is built over
+its C<Message-Instance>/C<DKIM2-Signature> header fields.
 
 =head1 AUTHOR
 

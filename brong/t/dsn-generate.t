@@ -38,12 +38,10 @@ my ($dsnhdr) = $dsn =~ /^(DKIM2-DSN:.*?)(?=\r\n\S)/ms;
 (my $v=$dsnhdr)=~s/^DKIM2-DSN:\s*//s; $v=~s/\r\n[ \t]+//g;
 my $p = Mail::DKIM2::DSNHeader->parse($v);
 is($p->rcpt_to, '<sender@test1.dkim2.com>', 'rt= == top-hop mf=');
-# h= must equal the signed message's top-MI header-hash
-my ($topmi) = $signed =~ /^Message-Instance:\s*(.*?)(?=\r\n\S)/ms; $topmi=~s/\r\n[ \t]+//g;
-is($p->header_hash, "sha256:".Mail::DKIM2::MessageInstance->parse($topmi)->header_hash,
-   'h= == top-MI header-hash');
-# signature verifies with test2.dkim2.com key
-ok($p->verify(DKIM2TestKeys::private_key('test2.dkim2.com','rsa1024')), 's= verifies');
+unlike($v, qr/(?:^|;\s*)h=/,                'no h= tag');
+# signature verifies over the returned message's chain with test2's key
+ok($p->verify(DKIM2TestKeys::private_key('test2.dkim2.com','rsa1024'), Email::MIME->new($signed)),
+   's= verifies over the returned chain');
 
 # no legit chain -> plain DSN, no DKIM2-DSN
 my $plain = Mail::DKIM2::DSN::generate_dkim2_dsn(raw=>"From: x\@y\r\nTo: r\@test2.dkim2.com\r\n\r\nb\r\n",

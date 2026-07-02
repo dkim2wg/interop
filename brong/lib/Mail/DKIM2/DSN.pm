@@ -335,10 +335,6 @@ sub generate_dkim2_dsn {
         return __PACKAGE__->generate({ raw => $raw, signer => _plain_signer(\%args), %args });
     }
     my $rt = $top->mail_from;                       # bracketed per to_rfc5321_path
-    # top (highest m=) Message-Instance -> its header-hash is h=
-    my @mis = $msg->header_raw('Message-Instance');
-    my ($topmi) = sort { ($b=~/m=(\d+)/)[0] <=> ($a=~/m=(\d+)/)[0] } @mis;
-    my $hh = Mail::DKIM2::MessageInstance->parse($topmi)->header_hash;
 
     # Only load the signing key once we know we need it (the legit-chain
     # branch that actually signs a DKIM2-DSN); the plain-DSN fallback above
@@ -352,9 +348,16 @@ sub generate_dkim2_dsn {
     # then the DKIM2-DSN header. Reuse the headers-only construction from propagate().
     my $dsn_text = _build_headers_only_dsn($msg, $rt, \%args)->as_string;  # multipart/report, text/rfc822-headers
     $dsn_text =~ s/\r?\n/\r\n/g;
+    # The DKIM2-DSN signs the returned message's Message-Instance/DKIM2-Signature
+    # chain, as the next signature would. The returned headers-only part carries
+    # $msg's header block verbatim (_headers_only_part uses header_obj->as_string),
+    # so signing over $msg yields the same canonical chain the verifier will
+    # reconstruct from the embedded part.
     my $hdr = Mail::DKIM2::DSNHeader->new(
-        Domain => $args{domain}, RcptTo => $rt, HeaderHash => $hh,
-        Selector => $args{selector}, Key => $key, Algorithm => $args{algorithm} || 'rsa-sha256');
+        Domain => $args{domain}, RcptTo => $rt,
+        Selector => $args{selector}, Key => $key,
+        Algorithm => $args{algorithm} || 'rsa-sha256',
+        Returned => $msg);
     $dsn_text = $hdr->as_string . "\r\n" . $dsn_text;   # prepend the singleton; no MI/DKIM2-Signature
     return { raw => $dsn_text, send_to => $rt };
 }

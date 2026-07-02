@@ -26,8 +26,11 @@ is($out->{action}, 'relay',                     'verified DKIM2-DSN -> relay');
 is($out->{relay_to}, 'sender@test1.dkim2.com',  'relays to reconstructed originator (top-hop mf=)');
 like($out->{message}, qr/From: s\@test1\.dkim2\.com/, 'reconstructed original headers present');
 
-# a bounce we cannot authenticate -> capture, not relay
-my $bad = $dsn; $bad =~ s/(h=sha256:)[^;]+/$1YmFk/;   # break h=
+# a bounce we cannot authenticate -> capture, not relay. Corrupt the first
+# base64 char of the DKIM2-DSN signature (the DKIM2-DSN is the first header, so
+# its s= is the first one in the message) so the signature no longer verifies.
+my $bad = $dsn;
+$bad =~ s{(s=rsa1024:rsa-sha256:\s*)([A-Za-z0-9+/])}{$1 . ($2 eq 'A' ? 'B' : 'A')}es;
 my $cap = Mail::DKIM2::BounceHandler::process(raw=>$bad, pubkey_cb=>DKIM2TestKeys::pubkey_callback());
 is($cap->{action}, 'capture', 'unverifiable bounce -> capture (not relayed)');
 
@@ -42,16 +45,16 @@ is($cap->{action}, 'capture', 'unverifiable bounce -> capture (not relayed)');
 # (1), a bounce could be redirected to an address that never sent the
 # original message.
 {
-    my $orig_msg = Email::MIME->new($dsn);
-    my ($orig_hdr) = $orig_msg->header_raw('DKIM2-DSN');
-    my $parsed = Mail::DKIM2::DSNHeader->parse($orig_hdr);
-    my ($hh) = $parsed->header_hash =~ /^sha256:(.*)$/;
-
+    # A DKIM2-DSN that is valid in every way except rt=: same d=, signed over
+    # the same returned chain (so checks 2, 3 and 4 all pass), but rt= names a
+    # different address ("attacker@test1.dkim2.com") than the enclosed top-hop
+    # mf= ("sender@test1.dkim2.com"). Only the rt=-vs-mf= equality check (1)
+    # can reject it.
     my $tamper_hdr = Mail::DKIM2::DSNHeader->new(
         Domain => 'test2.dkim2.com', RcptTo => 'attacker@test1.dkim2.com',
-        HeaderHash => $hh, Selector => 'rsa1024',
+        Selector => 'rsa1024',
         Key => DKIM2TestKeys::private_key('test2.dkim2.com', 'rsa1024'),
-        Algorithm => 'rsa-sha256');
+        Algorithm => 'rsa-sha256', Returned => Email::MIME->new($signed));
 
     (my $rt_tampered = $dsn) =~ s/^DKIM2-DSN:.*?\r?\n(?!\s)/$tamper_hdr->as_string . "\r\n"/es;
 
@@ -83,19 +86,18 @@ is($cap->{action}, 'capture', 'unverifiable bounce -> capture (not relayed)');
         'd= not matching any top-hop rt= domain -> capture (check 2: anti-backscatter)');
 }
 
-# --- check (3): h= must be the header-hash RECOMPUTED over the enclosed
-# headers, not a value merely parsed out of the enclosed Message-Instance
-# text (anti-content-substitution / bounce-relay backscatter) ---------------
-# Take the VALID $dsn verbatim -- its signed DKIM2-DSN header (d=, rt=, h=,
-# s=) is untouched, so checks (1), (2), and (4) all still pass -- but swap
-# the enclosed text/rfc822-headers payload for attacker-controlled content
-# while copying the *same* Message-Instance/DKIM2-Signature header lines
-# across verbatim. A parse-based check (3) would happily extract h1 from the
-# copied Message-Instance text and find it matches the DSN's h=, since that
-# text was never re-hashed against the new content. Only recomputing the
-# header-hash over the actual enclosed headers can catch this: recomputing
-# over "Subject: PWNED" et al yields a different digest than the one bound
-# into d='s signature.
+# --- check (3): the enclosed headers must validate against the enclosed top
+# Message-Instance (anti-content-substitution / bounce-relay backscatter) ----
+# Take the VALID $dsn verbatim -- its signed DKIM2-DSN header (d=, rt=, s=) is
+# untouched -- but swap the enclosed text/rfc822-headers payload for
+# attacker-controlled content while copying the *same* Message-Instance and
+# DKIM2-Signature header lines across verbatim. Because the DKIM2-DSN signs
+# only the enclosed Message-Instance/DKIM2-Signature chain (not the other
+# header fields), copying those lines verbatim leaves the DKIM2-DSN signature
+# check (4) passing. Only recomputing the header hash over the actual enclosed
+# headers and comparing it to the enclosed top Message-Instance (check 3)
+# catches this: hashing "Subject: PWNED" et al yields a different digest than
+# the copied Message-Instance records, so validation fails.
 {
     my $dsn_msg = Email::MIME->new($dsn);
     my @parts = $dsn_msg->subparts;
@@ -103,8 +105,8 @@ is($cap->{action}, 'capture', 'unverifiable bounce -> capture (not relayed)');
     die "test setup: no text/rfc822-headers part found" unless defined $orig_idx;
 
     # The genuine enclosed original's Message-Instance/DKIM2-Signature header
-    # lines, copied out VERBATIM -- these are exactly the bytes a parse-based
-    # check (3) would extract h1= from and find "matching" the DSN's h=.
+    # lines, copied out VERBATIM -- copying them keeps the DKIM2-DSN signature
+    # (which covers exactly these lines) verifying over the forged message.
     my $enclosed = Email::MIME->new($parts[$orig_idx]->body);
     my ($mi_line)  = $enclosed->header_raw('Message-Instance');
     my ($sig_line) = $enclosed->header_raw('DKIM2-Signature');
@@ -113,8 +115,8 @@ is($cap->{action}, 'capture', 'unverifiable bounce -> capture (not relayed)');
 
     # Forged enclosed original: attacker content, but the Message-Instance
     # and DKIM2-Signature header lines are copied verbatim from the genuine
-    # enclosed message (so a parse-based check on those lines would still
-    # "match" the DSN's h=/signature).
+    # enclosed message (so the DKIM2-DSN signature over that chain still
+    # verifies -- only the header-hash validation can catch the swap).
     my $forged_body = "DKIM2-Signature: $sig_line\r\n"
                      . "Message-Instance: $mi_line\r\n"
                      . "From: attacker\@evil.example\r\n"
