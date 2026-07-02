@@ -38,6 +38,19 @@ internal_mail_filter_classes = bounce
 # outside still reach the inbound milter via smtpd_milters on port 25.
 non_smtpd_milters = unix:var/run/dkim2-milter-out.sock
 
+# Prevent Postfix's 8bit->7bit MIME output conversion (spec §12, "Preventing
+# Transport Conversions"). bounce(8) emits DSNs as 8bit (the human-readable
+# text/plain part is charset=utf-8, Content-Transfer-Encoding: 8bit, propagated
+# to the multipart/report container and the message/rfc822 part). The outbound
+# milter signs that 8bit DSN in cleanup; if Postfix later downgrades it to 7bit
+# delivering to a hop that does NOT advertise 8BITMIME, the
+# Content-Transfer-Encoding header is rewritten AFTER signing — invalidating the
+# DKIM2 Message-Instance header hash. Disabling output conversion keeps the
+# signed 8bit form intact end to end. (Trade-off: an 8-bit body is sent as-is to
+# a non-8BITMIME server; universally tolerated in practice, and required for
+# DKIM2 signature integrity.)
+disable_mime_output_conversion = yes
+
 # Route the demo address to a permanent failure (generates a real bounce) and
 # accept it at RCPT. (hash:/etc/postfix/dkim2-delayedbounce — see that file.)
 #

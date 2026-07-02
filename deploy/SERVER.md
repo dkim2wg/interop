@@ -62,6 +62,7 @@ substance of a mailing-list reply to that question).
 ```
 internal_mail_filter_classes = bounce
 non_smtpd_milters = unix:var/run/dkim2-milter-out.sock
+disable_mime_output_conversion = yes
 ```
 - `internal_mail_filter_classes = bounce` is the key knob: it makes Postfix
   run `non_smtpd_milters` (and content filters) on its own bounce/notification
@@ -73,6 +74,18 @@ non_smtpd_milters = unix:var/run/dkim2-milter-out.sock
   nothing: a genuine *inbound* DSN from outside still reaches the inbound
   milter via `smtpd_milters` on port 25 — internally-injected mail (bounces,
   local submissions) only ever needs the outbound (signing) milter.
+- `disable_mime_output_conversion = yes` is **required for the signed bounce to
+  survive delivery** (spec §12, "Preventing Transport Conversions"). `bounce(8)`
+  emits DSNs as **8bit** (the human-readable part is `charset=utf-8;
+  Content-Transfer-Encoding: 8bit`, propagated to the `multipart/report`
+  container and the `message/rfc822` part — regardless of body content). The
+  milter signs that 8bit DSN; without this setting, Postfix downgrades it to
+  7bit when the next hop does not advertise `8BITMIME`, rewriting the
+  `Content-Transfer-Encoding` header **after** signing and invalidating the
+  DKIM2 Message-Instance header hash. Verified: to an 8BITMIME hop the DSN
+  verifies either way; to a non-8BITMIME hop it verifies **only** with this
+  setting. (See the interoperability note in `c/INTEROP-NOTES.md` — Postfix's
+  8bit DSNs are a general DKIM2 transport-conversion hazard.)
 
 **Routing (`transport_maps` / `local_recipient_maps`):** append
 `hash:/etc/postfix/dkim2-delayedbounce` (the map at

@@ -334,6 +334,46 @@ fully buffered (for hash computation), but the body can be hashed on the fly.
 
 ---
 
+## 15. 8bit DSNs + transport 8→7 conversion break DKIM2 signatures (spec §12)
+
+**Impact:** A DKIM2-signed Delivery Status Notification verifies at the signer
+but FAILS at a receiver reached across a non-8BITMIME hop.
+
+**Detail:** Postfix's `bounce(8)` composes DSNs as **8bit** — the human-readable
+`text/plain` part is `charset=utf-8; Content-Transfer-Encoding: 8bit` by default
+(so the notice can carry non-ASCII addresses/subjects), and that `8bit`
+propagates to the `multipart/report` container and the enclosed `message/rfc822`
+part. This is independent of body content: a pure-ASCII bounce is still declared
+8bit.
+
+When a signer (here, our outbound milter) signs the 8bit DSN and it is then
+relayed to a next hop that does **not** advertise `8BITMIME`, the MTA performs
+an 8bit→7bit MIME conversion, rewriting `Content-Transfer-Encoding: 8bit` →
+`7bit` (and re-encoding the body). That rewrite happens **after** signing, so the
+DKIM2 Message-Instance header hash (which covers `Content-Transfer-Encoding`) no
+longer matches → PERMFAIL header-hash mismatch. Confirmed empirically: delivered
+to an 8BITMIME-advertising sink the DSN verifies `pass`; to a plain sink it
+fails, differing only in that one header.
+
+This is precisely spec **§12 "Preventing Transport Conversions"**: DKIM2 is
+predicated on network-normal input and a transport conversion invalidates the
+signature. It is a general interoperability hazard for *any* DKIM2 signer of
+8bit content, not specific to bounces or to Postfix.
+
+**Resolutions:**
+- **Deployed mitigation (operational):** `disable_mime_output_conversion = yes`
+  in Postfix `main.cf` — stops the 8→7 output conversion so the signed 8bit form
+  survives to any hop. Trade-off: 8bit body sent as-is to non-8BITMIME servers
+  (universally tolerated in practice). See `deploy/postfix-main.cf.patch` /
+  `deploy/SERVER.md`.
+- **Ideal (not readily achievable):** have the DSN generated as **7bit/us-ascii**
+  in the first place, so there is nothing to downgrade. Postfix's `bounce(8)`
+  does not expose a knob to force 7bit DSN notices, so this cannot be done by
+  configuration alone — it would require patching the bounce templates / DSN
+  generation. Recorded as an open interop issue: **a spec-conformant DKIM2
+  signer should either ensure 7bit content or guarantee no downstream transport
+  conversion**, and MTAs that auto-downgrade 8bit are hostile to DKIM2 integrity.
+
 ---
 
 ## Spec Quality Issues
