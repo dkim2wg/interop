@@ -300,8 +300,9 @@ sub _plain_signer {
     my ($args) = @_;
     my %sa = (Domain => $args->{domain}, Selector => $args->{selector},
               MailFrom => '<>');
-    $sa{Key}     = $args->{key}     if $args->{key};
-    $sa{KeyFile} = $args->{keyfile} if $args->{keyfile} && !$args->{key};
+    $sa{Key}       = $args->{key}     if $args->{key};
+    $sa{KeyFile}   = $args->{keyfile} if $args->{keyfile} && !$args->{key};
+    $sa{Timestamp} = $args->{now}     if defined $args->{now};
     return Mail::DKIM2::Signer->new(%sa);
 }
 
@@ -316,7 +317,6 @@ sub _plain_signer {
 sub generate_dkim2_dsn {
     my (%args) = @_;
     my $raw = $args{raw} or croak "generate_dkim2_dsn: need raw";
-    my $key = $args{key} // load_private_key($args{keyfile});
 
     my $v = Mail::DKIM2::Verifier->new;
     $v->set_pubkey_callback($args{pubkey_cb}) if $args{pubkey_cb};
@@ -330,13 +330,23 @@ sub generate_dkim2_dsn {
 
     my $msg = Email::MIME->new($raw);
     # top (highest i=) DKIM2-Signature -> its mf= is the bounce destination (rt=)
-    my @sigs = map { Mail::DKIM2::Signature->parse($_) } $msg->header_raw('DKIM2-Signature');
-    my ($top) = sort { $b->sequence <=> $a->sequence } @sigs;
+    my $top = _top_sig($msg);
+    unless ($top) {
+        return __PACKAGE__->generate({ raw => $raw, signer => _plain_signer(\%args), %args });
+    }
     my $rt = $top->mail_from;                       # bracketed per to_rfc5321_path
     # top (highest m=) Message-Instance -> its header-hash is h=
     my @mis = $msg->header_raw('Message-Instance');
     my ($topmi) = sort { ($b=~/m=(\d+)/)[0] <=> ($a=~/m=(\d+)/)[0] } @mis;
     my $hh = Mail::DKIM2::MessageInstance->parse($topmi)->header_hash;
+
+    # Only load the signing key once we know we need it (the legit-chain
+    # branch that actually signs a DKIM2-DSN); the plain-DSN fallback above
+    # never needs it, and a missing/bad key should croak cleanly here rather
+    # than dying inside Crypt::PK.
+    croak "generate_dkim2_dsn: need key or keyfile to sign the DKIM2-DSN"
+        unless $args{key} || $args{keyfile};
+    my $key = $args{key} // load_private_key($args{keyfile});
 
     # Build the DSN: headers-only embedded original + human notice + delivery-status,
     # then the DKIM2-DSN header. Reuse the headers-only construction from propagate().
