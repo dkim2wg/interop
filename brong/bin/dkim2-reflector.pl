@@ -56,7 +56,7 @@ my $result = eval {
             domain   => 'dkim2.com',
             selector => 'sel1',
             keyfile  => '/etc/dkim2/reflector/sel1.key',
-            mailfrom => 'reflector-bounces@dkim2.com',
+            mailfrom => 'dkim2-bounces@dkim2.com',
         );
         { message => $msg, signed => 1, basis => 'origin', mode => 'fresh' };
     } elsif ($mode eq 'brand' || $mode eq 'brand-nd') {
@@ -71,7 +71,7 @@ my $result = eval {
             domain   => 'dkim2.com',
             selector => 'sel1',
             keyfile  => '/etc/dkim2/reflector/sel1.key',
-            mailfrom => 'reflector-bounces@dkim2.com',
+            mailfrom => 'dkim2-bounces@dkim2.com',
             delegated      => $delegated,
             brand_selector => 'dkim2test',
             brand_keyfile  => '/etc/dkim2/reflector/dkim2test.key',
@@ -97,7 +97,7 @@ my $result = eval {
             domain   => 'dkim2.com',
             selector => 'sel1',
             keyfile  => '/etc/dkim2/reflector/sel1.key',
-            mailfrom => 'reflector-bounces@dkim2.com',
+            mailfrom => 'dkim2-bounces@dkim2.com',
             authserv_id => 'mail.dkim2.com',
         );
     }
@@ -130,7 +130,7 @@ if ($signed1) { $result->{message} = $signed1; } else { logmsg("dkim1 sign faile
 # get re-signed by the outbound milter.
 my $smtp = Net::SMTP->new('127.0.0.1', Port => 10588, Timeout => 30)
     or do { logmsg("cannot connect to injector on 127.0.0.1:10588"); exit 0; };
-$smtp->mail('reflector-bounces@dkim2.com');
+$smtp->mail('dkim2-bounces@dkim2.com');
 $smtp->recipient($sender);
 $smtp->data();
 $smtp->datasend($result->{message});

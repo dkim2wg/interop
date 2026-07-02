@@ -36,8 +36,10 @@ echo ">> Mail::DKIM2 test suite (deploy gate; aborts on failure) ..."
 make test
 make install >/dev/null
 
-# 2. Binaries that embed the library (reflector wrapper + validator CGI).
+# 2. Binaries that embed the library (reflector wrapper + bounce handler +
+#    validator CGI).
 install -m 755 bin/dkim2-reflector.pl /usr/local/bin/dkim2-reflect
+install -m 755 bin/dkim2-bounces.pl   /usr/local/bin/dkim2-bounces
 install -m 755 bin/validate.cgi       /usr/local/bin/dkim2-validate.cgi
 
 # 2b. Static web assets: apex landing page + the validator UI. Kept here so a

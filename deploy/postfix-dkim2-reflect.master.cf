@@ -22,3 +22,15 @@
 dkim2-reflect unix  -       n       n       -       -       pipe
   flags=q user=nobody:nogroup
   argv=/usr/local/bin/dkim2-reflect ${user} ${sender}
+
+# dkim2-bounces@dkim2.com: envelope MAIL FROM on reflector-sent mail (see
+# dkim2-reflector.pl). Verifies + undoes + relays DKIM2-DSN bounces of
+# reflected messages back to the reconstructed originator; anything it
+# cannot authenticate falls through to the reflector-bounces mbox instead
+# of being relayed. Same pipe(8) rationale as dkim2-reflect above (no
+# Delivered-To header, ${user}/${sender} macros available). The handler
+# itself does not need ${user}/${sender} (it reads the DKIM2-DSN's own
+# rt=/mf= from the message body), but they are passed for parity/logging.
+dkim2-bounces unix  -       n       n       -       -       pipe
+  flags=q user=nobody:nogroup
+  argv=/usr/local/bin/dkim2-bounces ${user} ${sender}

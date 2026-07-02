@@ -17,6 +17,13 @@
 # DSN. That DSN is signed on the way out by the outbound DKIM2 milter (see
 # deploy/SERVER.md, "Signing Postfix-generated (delayed) DKIM2 bounces").
 #
+# dkim2-bounces@dkim2.com is likewise NOT an alias: it is the envelope
+# MAIL FROM on reflector-sent mail (see dkim2-reflector.pl) and is delivered
+# by its own dkim2-bounces pipe(8) service (deploy/postfix-dkim2-reflect.master.cf
+# + deploy/postfix-dkim2-transport), which verifies+undoes+relays DKIM2-DSN
+# bounces to the reconstructed originator, falling back to the
+# reflector-bounces mbox below for anything it cannot authenticate.
+#
 # Only the bounce sink remains an alias.
 
 # Envelope sender of every reflected message. Bounces/DSNs for undeliverable
