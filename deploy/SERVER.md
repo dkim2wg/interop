@@ -421,29 +421,12 @@ incoming DKIM2 chain verified. For interop testing of chain behaviour.
 > not a `dkim2-reflect` pipe transform. See "Signing Postfix-generated
 > (delayed) DKIM2 bounces" under Postfix (§1) above.
 
-#### `dkim2-bounces@dkim2.com` — envelope sender on reflector-sent mail
+#### `reflector-bounces@dkim2.com` — envelope sender on reflector-sent mail
 
-`dkim2-bounces@dkim2.com` is the envelope `MAIL FROM` the reflector wrapper
-uses on every message it sends (all modes, including `fresh`/`brand`/`dsn`).
-It is **not** a `dkim2-reflect` mode and receives no mail from senders
-directly — it only ever sees bounces/DSNs that some downstream MTA sends back
-because a reflected message could not be delivered.
-
-It is delivered by its own `dkim2-bounces` pipe(8) service (see "Delivery"
-below), which runs `Mail::DKIM2::BounceHandler` (Task 3): it verifies the
-inbound message is a well-formed DKIM2-DSN (`rt=`/`d=`/`h=`/`s=` all check
-out), undoes the enclosed Message-Instance chain to reconstruct the
-originally-sent message, and relays it to the reconstructed originator (the
-DSN's `rt=`) via the milter-free injector — so the *original* sender of the
-now-undeliverable reflected mail gets a bounce that looks like it came from
-them, not from `dkim2.com`. Anything it cannot authenticate (not a DKIM2-DSN,
-signature failure, hash mismatch, etc.) is **not** relayed; it falls back to
-the `reflector-bounces` mbox below, same as before this address existed, so
-nothing is silently dropped.
-
-`reflector-bounces@dkim2.com` remains a plain alias to the mbox — it is now
-only the *fallback capture sink*, no longer the reflector's outgoing MAIL
-FROM.
+`reflector-bounces@dkim2.com` is the envelope `MAIL FROM` the reflector
+wrapper uses on every message it sends (all modes). It is a plain alias to an
+mbox (see `deploy/reflector-aliases`): bounces/DSNs for undeliverable reflected
+mail come back here and are captured for inspection rather than double-bouncing.
 
 Always adds `Authentication-Results` + `X-DKIM2-Reflector` (mode/auth/signed).
 If the incoming chain did not verify, the transform is still applied but no
@@ -487,12 +470,6 @@ newaliases && postfix reload
 `$alias_maps`). The wrapper takes the mode from `${user}` (the localpart, e.g.
 `reflector-both`) and the envelope sender from `${sender}` (pipe(8) does not
 export `$SENDER`). Only `reflector-bounces` remains an alias (the bounce mbox).
-
-The same `postfix-dkim2-reflect.master.cf` file also defines the
-`dkim2-bounces` pipe(8) service (step 1 above installs both services in one
-`cat >>`), and `deploy/postfix-dkim2-transport` (step 2) carries the
-`dkim2-bounces@dkim2.com  dkim2-bounces:` routing entry alongside the
-`reflector-*` ones — so no separate install step is needed for it.
 
 **Code:** `Mail::DKIM2::Reflector` (in this repo, installed system-wide with the
 other libs) + wrapper `brong/bin/dkim2-reflector.pl` deployed to
@@ -549,8 +526,7 @@ OpenDKIM, which must verify inbound mail:
 ```bash
 ssh dkim2 'cd /root/interop && git pull && \
     cd brong && perl Makefile.PL && make && make install && \
-    install -m 755 bin/dkim2-reflector.pl /usr/local/bin/dkim2-reflect && \
-    install -m 755 bin/dkim2-bounces.pl   /usr/local/bin/dkim2-bounces'
+    install -m 755 bin/dkim2-reflector.pl /usr/local/bin/dkim2-reflect'
 # aliases (once):
 ssh dkim2 'cat /root/interop/deploy/reflector-aliases >> /etc/aliases && newaliases'
 # injector service (once): add the 127.0.0.1:10588 block to /etc/postfix/master.cf

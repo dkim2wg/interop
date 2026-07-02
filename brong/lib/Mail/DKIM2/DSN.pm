@@ -8,10 +8,7 @@ use List::Util qw(max);
 
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
-use Mail::DKIM2::Verifier;
-use Mail::DKIM2::DSNHeader;
 use Mail::DKIM2::Signer;
-use Mail::DKIM2::Common qw(load_private_key);
 
 # Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (draft-03 §12.1.1).
 #
@@ -71,58 +68,14 @@ sub _sign_as_new {
 }
 
 # Build a text/rfc822-headers embedded-original part: the headers only (no
-# body) of $orig, an Email::MIME. Used whenever a DSN must not carry the
-# original body — either because it is unrecoverable (propagate()) or by
-# design (generate_dkim2_dsn(), which always emits headers-only per the
-# DKIM2-DSN header contract).
+# body) of $orig, an Email::MIME. Used by propagate() when the original body
+# is unrecoverable (a "null recipe" upstream) and so must not be carried.
 sub _headers_only_part {
     my ($orig) = @_;
     return Email::MIME->create(
         attributes => { content_type => 'text/rfc822-headers', encoding => '7bit' },
         body => $orig->header_obj->as_string,
     );
-}
-
-# Build a complete headers-only multipart/report DSN: a human-readable
-# text/plain part, a message/delivery-status part, and a text/rfc822-headers
-# part (via _headers_only_part) carrying only the embedded original's headers.
-# Returns an Email::MIME object (report-type set, not yet signed).
-sub _build_headers_only_dsn {
-    my ($orig, $to, $args) = @_;
-    my $mta    = $args->{reporting_mta} // 'dkim2.com';
-    my $status = $args->{status}        // '5.7.1';
-    my $reason = $args->{reason}        // 'message rejected (DKIM2-DSN headers-only bounce)';
-    my $final_rcpt = $args->{final_recipient} // $orig->header('To') // $to;
-
-    my $human = Email::MIME->create(
-        attributes => { content_type => 'text/plain', charset => 'UTF-8', encoding => '7bit' },
-        body_str => "This is a DKIM2 Delivery Status Notification.\n\n"
-                  . "Reason: $reason\n",
-    );
-
-    my $ds = Email::MIME->create(
-        attributes => { content_type => 'message/delivery-status', encoding => '7bit' },
-        body => "Reporting-MTA: dns; $mta\r\n"
-              . "\r\n"
-              . "Final-Recipient: rfc822; $final_rcpt\r\n"
-              . "Action: failed\r\n"
-              . "Status: $status\r\n"
-              . "Diagnostic-Code: smtp; $status $reason\r\n",
-    );
-
-    my $orig_part = _headers_only_part($orig);
-
-    my $dsn = Email::MIME->create(
-        attributes => { content_type => 'multipart/report', encoding => '7bit' },
-        header => [
-            From    => "Mail Delivery System <postmaster\@$mta>",
-            To      => $to,
-            Subject => 'Delivery Status Notification (Failure)',
-        ],
-        parts => [ $human, $ds, $orig_part ],
-    );
-    _set_report_type($dsn);
-    return $dsn;
 }
 
 # Build the multipart/report Content-Type (with report-type) by reading the
@@ -292,74 +245,6 @@ sub propagate {
     $signer->{MailFrom} = '<>';
     $signer->{RcptTo}   = [$upstream];
     return { raw => _sign_as_new($signer, $dsn), upstream_mailfrom => $upstream };
-}
-
-# Build a MailFrom => '<>' signer for generate_dkim2_dsn()'s plain-DSN fallback
-# (the existing generate() re-signs the DSN as a fresh message from <>).
-sub _plain_signer {
-    my ($args) = @_;
-    my %sa = (Domain => $args->{domain}, Selector => $args->{selector},
-              MailFrom => '<>');
-    $sa{Key}       = $args->{key}     if $args->{key};
-    $sa{KeyFile}   = $args->{keyfile} if $args->{keyfile} && !$args->{key};
-    $sa{Timestamp} = $args->{now}     if defined $args->{now};
-    return Mail::DKIM2::Signer->new(%sa);
-}
-
-# Build a DSN for $args->{raw}. If the incoming message has a verifiable DKIM2
-# chain, emit a headers-only DSN carrying a DKIM2-DSN header; otherwise a plain
-# RFC3464 DSN (delegate to generate()). Returns { raw, send_to }.
-#
-# Args: raw (inbound message), domain, selector, key/keyfile, algorithm
-# (default rsa-sha256), pubkey_cb / skip_timestamp_check (passed through to the
-# Verifier used to decide legit-vs-plain), plus generate()'s optional args
-# (reporting_mta, status, reason) used only on the plain-DSN fallback path.
-sub generate_dkim2_dsn {
-    my (%args) = @_;
-    my $raw = $args{raw} or croak "generate_dkim2_dsn: need raw";
-
-    my $v = Mail::DKIM2::Verifier->new;
-    $v->set_pubkey_callback($args{pubkey_cb}) if $args{pubkey_cb};
-    $v->skip_timestamp_check(1) if $args{skip_timestamp_check};
-    $v->PRINT($raw); $v->CLOSE;
-
-    # No legit chain -> plain DSN (existing path), no DKIM2-DSN.
-    unless (($v->result // '') =~ /^pass/) {
-        return __PACKAGE__->generate({ raw => $raw, signer => _plain_signer(\%args), %args });
-    }
-
-    my $msg = Email::MIME->new($raw);
-    # top (highest i=) DKIM2-Signature -> its mf= is the bounce destination (rt=)
-    my $top = _top_sig($msg);
-    unless ($top) {
-        return __PACKAGE__->generate({ raw => $raw, signer => _plain_signer(\%args), %args });
-    }
-    my $rt = $top->mail_from;                       # bracketed per to_rfc5321_path
-
-    # Only load the signing key once we know we need it (the legit-chain
-    # branch that actually signs a DKIM2-DSN); the plain-DSN fallback above
-    # never needs it, and a missing/bad key should croak cleanly here rather
-    # than dying inside Crypt::PK.
-    croak "generate_dkim2_dsn: need key or keyfile to sign the DKIM2-DSN"
-        unless $args{key} || $args{keyfile};
-    my $key = $args{key} // load_private_key($args{keyfile});
-
-    # Build the DSN: headers-only embedded original + human notice + delivery-status,
-    # then the DKIM2-DSN header. Reuse the headers-only construction from propagate().
-    my $dsn_text = _build_headers_only_dsn($msg, $rt, \%args)->as_string;  # multipart/report, text/rfc822-headers
-    $dsn_text =~ s/\r?\n/\r\n/g;
-    # The DKIM2-DSN signs the returned message's Message-Instance/DKIM2-Signature
-    # chain, as the next signature would. The returned headers-only part carries
-    # $msg's header block verbatim (_headers_only_part uses header_obj->as_string),
-    # so signing over $msg yields the same canonical chain the verifier will
-    # reconstruct from the embedded part.
-    my $hdr = Mail::DKIM2::DSNHeader->new(
-        Domain => $args{domain}, RcptTo => $rt,
-        Selector => $args{selector}, Key => $key,
-        Algorithm => $args{algorithm} || 'rsa-sha256',
-        Returned => $msg);
-    $dsn_text = $hdr->as_string . "\r\n" . $dsn_text;   # prepend the singleton; no MI/DKIM2-Signature
-    return { raw => $dsn_text, send_to => $rt };
 }
 
 1;

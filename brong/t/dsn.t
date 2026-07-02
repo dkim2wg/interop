@@ -9,7 +9,6 @@ use Mail::DKIM2::Signer;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Reflector;
-use Mail::DKIM2::DSNHeader;
 use DKIM2TestKeys;
 
 my $TS = 1740000000;
@@ -138,8 +137,9 @@ sub forwarded_twohop {
     is(scalar(@sig), 1, 'unsigned-source DSN is DKIM2-signed');
 }
 
-# === reflector-dsn: Reflector::generate_dsn end to end, UNSIGNED/expired-chain
-# inbound (no pubkey_cb/skip_timestamp_check passed through) -> plain DSN ===
+# === reflector-dsn: Reflector::generate_dsn end to end -> a fresh DKIM2 DSN
+# (per spec: MAIL FROM <>, one Message-Instance + one DKIM2-Signature on the
+# top message, embedding the original as message/rfc822) that verifies. ===
 {
     my $inbound = signed_inbound();
     my $out = Mail::DKIM2::Reflector::generate_dsn(
@@ -154,7 +154,9 @@ sub forwarded_twohop {
     my $m = Email::MIME->new($out);
     like($m->header('Content-Type'), qr{multipart/report}i, 'reflector-dsn is multipart/report');
     is($m->header('To'), 'sender@origin.example', 'reflector-dsn returned to the sender');
-    unlike($out, qr/^DKIM2-DSN:/m, 'no skip_timestamp_check -> chain looks expired -> plain DSN');
+    like($out, qr/^DKIM2-Signature:/m,  'DSN carries its own DKIM2-Signature (top message)');
+    like($out, qr/^Message-Instance:/m, 'DSN carries its own Message-Instance (top message)');
+    like($out, qr{message/rfc822}i,     'DSN embeds the original as message/rfc822');
 
     my $v = Mail::DKIM2::Verifier->new();
     $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
@@ -163,12 +165,8 @@ sub forwarded_twohop {
     is($v->result, 'pass', 'reflector-dsn output verifies (pass)');
 }
 
-# === reflector-dsn: Reflector::generate_dsn end to end, LEGIT inbound chain
-# (pubkey_cb + skip_timestamp_check passed through) -> headers-only DKIM2-DSN ===
-# NOTE: signed_inbound()'s mf= (origin.example) deliberately does NOT align
-# with its d= (test1.dkim2.com) -- that's fine for a plain bounce (which does
-# not care about chain validity) but is by definition not a *legit* DKIM2
-# chain, so it is unsuitable here. Build a properly mf=/d=-aligned message.
+# === reflector-dsn: the embedded original round-trips -- the message/rfc822
+# part holds the inbound message verbatim, so the sender can see what bounced. ===
 {
     my $raw = "From: Sender <sender\@test1.dkim2.com>\r\n"
             . "To: user\@test2.dkim2.com\r\n"
@@ -185,26 +183,24 @@ sub forwarded_twohop {
     my $inbound = $sig . "\r\n" . $with_mi;
 
     my $out = Mail::DKIM2::Reflector::generate_dsn(
-        sender               => 'sender@test1.dkim2.com',
-        message              => $inbound,
-        domain               => 'test2.dkim2.com',
-        selector             => 'rsa1024',
-        key                  => DKIM2TestKeys::private_key('test2.dkim2.com', 'rsa1024'),
-        now                  => $TS,
-        pubkey_cb            => DKIM2TestKeys::pubkey_callback(),
-        skip_timestamp_check => 1,
+        sender   => 'sender@test1.dkim2.com',
+        message  => $inbound,
+        domain   => 'test2.dkim2.com',
+        selector => 'rsa1024',
+        key      => DKIM2TestKeys::private_key('test2.dkim2.com', 'rsa1024'),
+        now      => $TS,
     );
     ok($out, 'generate_dsn produced a DSN');
     my $m = Email::MIME->new($out);
-    like($m->header('Content-Type'), qr{multipart/report}i, 'reflector-dsn is multipart/report');
-    is($m->header('To'), '<sender@test1.dkim2.com>', 'reflector-dsn returned to the sender');
-    like($out, qr/^DKIM2-DSN:/m, 'legit inbound chain -> DKIM2-DSN header');
-    like($out, qr{text/rfc822-headers}i, 'legit inbound chain -> headers-only embedded original');
+    is($m->header('To'), 'sender@test1.dkim2.com', 'reflector-dsn returned to the sender');
+    like($out, qr{message/rfc822}i, 'DSN embeds the original as message/rfc822');
+    like($out, qr/Subject: hello/,  'embedded original message is present verbatim');
 
-    my $p = Mail::DKIM2::DSNHeader->parse(
-        do { (my $h = $out) =~ /^DKIM2-DSN:(.*?)(?=\r\n\S)/ms; (my $v = $1) =~ s/^\s*//; $v =~ s/\r\n[ \t]+//g; $v });
-    ok($p->verify(DKIM2TestKeys::private_key('test2.dkim2.com', 'rsa1024'), Email::MIME->new($inbound)),
-       'legit inbound chain -> DKIM2-DSN signature verifies over the returned chain');
+    my $v = Mail::DKIM2::Verifier->new();
+    $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+    $v->skip_timestamp_check(1);
+    $v->PRINT($out); $v->CLOSE;
+    is($v->result, 'pass', 'reflector-dsn DSN verifies (pass)');
 }
 
 done_testing;

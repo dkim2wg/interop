@@ -140,11 +140,9 @@ sub generate {
 # generate_dsn(%args) — return a Delivery Status Notification for the incoming
 # message, addressed back to the sender. Used by the reflector-dsn address,
 # which bounces every message regardless of whether it arrived DKIM2-signed
-# (draft-03 §12.1). If the incoming message carries a verifiable DKIM2 chain,
-# the DSN is headers-only and carries a DKIM2-DSN header (referencing the
-# top-hop mf=/top-MI header-hash) instead of its own Message-Instance/
-# DKIM2-Signature; otherwise it is a plain, freshly-signed DSN (MAIL FROM <>,
-# one Message-Instance, one DKIM2-Signature) as before.
+# (draft-03 §12.1). The DSN is a fresh DKIM2 message signed as new: MAIL FROM
+# <>, one Message-Instance and one DKIM2-Signature on the top message,
+# embedding the original as a message/rfc822 part.
 sub generate_dsn {
     my (%a) = @_;
     croak "need a sender" unless $a{sender};
@@ -153,20 +151,20 @@ sub generate_dsn {
     $a{selector} //= 'sel1';
     my $now = $a{now} // time();
 
-    my $out = Mail::DKIM2::DSN::generate_dkim2_dsn(
-        raw                  => $a{message},
-        domain               => $a{domain},
-        selector             => $a{selector},
-        key                  => $a{key},
-        keyfile              => $a{keyfile},
-        pubkey_cb            => $a{pubkey_cb},
-        skip_timestamp_check => $a{skip_timestamp_check},
-        to                   => $a{sender},
-        reporting_mta        => $a{domain},
-        now                  => $now,
-        reason               => $a{reason}
+    my %sa = (Domain => $a{domain}, Selector => $a{selector}, MailFrom => '<>',
+              Timestamp => $now);
+    $sa{Key}     = $a{key}     if $a{key};
+    $sa{KeyFile} = $a{keyfile} if $a{keyfile} && !$a{key};
+    my $signer = Mail::DKIM2::Signer->new(%sa);
+
+    my $out = Mail::DKIM2::DSN->generate({
+        raw           => $a{message},
+        signer        => $signer,
+        to            => $a{sender},
+        reporting_mta => $a{domain},
+        reason        => $a{reason}
             // 'message accepted then returned by the reflector-dsn demo address',
-    );
+    });
     return $out->{raw};
 }
 
