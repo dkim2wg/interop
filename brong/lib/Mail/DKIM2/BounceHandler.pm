@@ -21,9 +21,10 @@ use Mail::DKIM2::Common qw(relaxed_domain_match extract_domain);
 #   2. d= (the DKIM2-DSN signing domain) relaxed-domain-matches a top-hop
 #      rt= domain of the enclosed message -- i.e. the domain vouching for
 #      this bounce was actually a recipient of the original send.
-#   3. h= (the DKIM2-DSN header hash) equals the enclosed message's top-MI
-#      header-hash -- i.e. the bounce is about *this* message content, not
-#      a substituted one.
+#   3. h= (the DKIM2-DSN header hash) equals the header-hash RECOMPUTED over
+#      the enclosed message's headers (never a value merely parsed out of the
+#      enclosed Message-Instance text) -- i.e. the bounce is about *this*
+#      message content, not a substituted one.
 #   4. The DKIM2-DSN signature itself verifies against the d=/selector
 #      public key.
 #
@@ -70,15 +71,17 @@ sub process {
     my $d_ok = grep { relaxed_domain_match(extract_domain($_), $d->domain) } @$rts;
     return { action => 'capture' } unless $d_ok;
 
-    # (3) h= must equal the enclosed top-MI header-hash.
-    my @mis = $eom->header_raw('Message-Instance');
-    my ($topmi) = sort { ($b =~ /m=(\d+)/)[0] <=> ($a =~ /m=(\d+)/)[0] } @mis;
-    return { action => 'capture' } unless $topmi;
-    my $mi_obj = eval { Mail::DKIM2::MessageInstance->parse($topmi) };
-    return { action => 'capture' } unless $mi_obj;
-    my $hh = $mi_obj->header_hash;
+    # (3) h= must equal the header-hash RECOMPUTED over the enclosed headers
+    # (never a value merely parsed out of the enclosed Message-Instance text,
+    # which is attacker-controlled copied bytes and proves nothing). The DSN
+    # is headers-only by design, so only the header hash is bound here --
+    # Mail::DKIM2::MessageInstance::h_digest() is the same function calculate()
+    # uses to produce a Message-Instance's h1 component, reused as-is so the
+    # hashing logic (canonicalization, header selection/ordering) can never
+    # drift between signer and this check.
+    my $recomputed_hh = eval { Mail::DKIM2::MessageInstance::h_digest($eom) };
     return { action => 'capture' }
-        unless defined $hh && $d->header_hash eq "sha256:$hh";
+        unless defined $recomputed_hh && $d->header_hash eq "sha256:$recomputed_hh";
 
     # (4) DKIM2-DSN signature must verify with the d=/selector public key.
     my $pub = _resolve_pubkey($d, $a{pubkey_cb});

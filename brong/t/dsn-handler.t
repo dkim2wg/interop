@@ -83,4 +83,60 @@ is($cap->{action}, 'capture', 'unverifiable bounce -> capture (not relayed)');
         'd= not matching any top-hop rt= domain -> capture (check 2: anti-backscatter)');
 }
 
+# --- check (3): h= must be the header-hash RECOMPUTED over the enclosed
+# headers, not a value merely parsed out of the enclosed Message-Instance
+# text (anti-content-substitution / bounce-relay backscatter) ---------------
+# Take the VALID $dsn verbatim -- its signed DKIM2-DSN header (d=, rt=, h=,
+# s=) is untouched, so checks (1), (2), and (4) all still pass -- but swap
+# the enclosed text/rfc822-headers payload for attacker-controlled content
+# while copying the *same* Message-Instance/DKIM2-Signature header lines
+# across verbatim. A parse-based check (3) would happily extract h1 from the
+# copied Message-Instance text and find it matches the DSN's h=, since that
+# text was never re-hashed against the new content. Only recomputing the
+# header-hash over the actual enclosed headers can catch this: recomputing
+# over "Subject: PWNED" et al yields a different digest than the one bound
+# into d='s signature.
+{
+    my $dsn_msg = Email::MIME->new($dsn);
+    my @parts = $dsn_msg->subparts;
+    my ($orig_idx) = grep { ($parts[$_]->content_type // '') =~ m{text/rfc822-headers}i } 0..$#parts;
+    die "test setup: no text/rfc822-headers part found" unless defined $orig_idx;
+
+    # The genuine enclosed original's Message-Instance/DKIM2-Signature header
+    # lines, copied out VERBATIM -- these are exactly the bytes a parse-based
+    # check (3) would extract h1= from and find "matching" the DSN's h=.
+    my $enclosed = Email::MIME->new($parts[$orig_idx]->body);
+    my ($mi_line)  = $enclosed->header_raw('Message-Instance');
+    my ($sig_line) = $enclosed->header_raw('DKIM2-Signature');
+    die "test setup: enclosed original missing MI/sig lines"
+        unless defined $mi_line && defined $sig_line;
+
+    # Forged enclosed original: attacker content, but the Message-Instance
+    # and DKIM2-Signature header lines are copied verbatim from the genuine
+    # enclosed message (so a parse-based check on those lines would still
+    # "match" the DSN's h=/signature).
+    my $forged_body = "DKIM2-Signature: $sig_line\r\n"
+                     . "Message-Instance: $mi_line\r\n"
+                     . "From: attacker\@evil.example\r\n"
+                     . "To: victim\@example.com\r\n"
+                     . "Subject: PWNED\r\n";
+    $parts[$orig_idx]->body_set($forged_body);
+    $dsn_msg->parts_set(\@parts);
+    my $forged = $dsn_msg->as_string;
+
+    # Sanity: the forgery actually landed, and Email::MIME's reserialization
+    # left the signed DKIM2-DSN singleton header byte-for-byte untouched
+    # (otherwise this test would pass/fail for the wrong reason).
+    my ($orig_dsn_line)   = Email::MIME->new($dsn)->header_raw('DKIM2-DSN');
+    my ($forged_dsn_line) = $dsn_msg->header_raw('DKIM2-DSN');
+    like($forged, qr/Subject: PWNED/, 'forged DSN contains attacker payload (sanity check)');
+    is($forged_dsn_line, $orig_dsn_line,
+        'forged DSN still carries the genuine (unmodified) DKIM2-DSN header (sanity check)');
+
+    my $forged_out = Mail::DKIM2::BounceHandler::process(
+        raw => $forged, pubkey_cb => DKIM2TestKeys::pubkey_callback());
+    is($forged_out->{action}, 'capture',
+        'enclosed payload swapped for attacker content (MI/sig lines copied verbatim) -> capture (check 3: recomputed header-hash)');
+}
+
 done_testing;
