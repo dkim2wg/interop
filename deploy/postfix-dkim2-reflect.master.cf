@@ -22,3 +22,15 @@
 dkim2-reflect unix  -       n       n       -       -       pipe
   flags=q user=nobody:nogroup
   argv=/usr/local/bin/dkim2-reflect ${user} ${sender}
+
+# dkim2-delayedbounce: delivery transport for reflector-delayedbounce@dkim2.com
+# (routed here by deploy/postfix-dkim2-transport... i.e. the dkim2-delayedbounce
+# map). The address is a valid recipient, so Postfix accepts it at RCPT (250);
+# this pipe's delivery agent then always exits with a permanent failure, so
+# Postfix's own bounce(8) originates a DSN, which the outbound milter DKIM2-signs
+# (main.cf: internal_mail_filter_classes = bounce). This is what makes the bounce
+# genuinely *delayed* (async, MTA-generated) rather than a synchronous RCPT 550.
+# Set "dkim2-delayedbounce_destination_recipient_limit = 1" in main.cf.
+dkim2-delayedbounce unix  -     n       n       -       -       pipe
+  flags= user=nobody:nogroup
+  argv=/usr/local/bin/dkim2-delayedbounce-fail

@@ -98,10 +98,21 @@ the Mailman/Sympa routing setup below (§6, "DKIM2 Reflector" — the `postconf
 -e` block) for this server's actual full values, which already include the
 `dkim2-delayedbounce` map appended.
 This is the demo's own live address, `reflector-delayedbounce@dkim2.com`:
-accepted at RCPT, then routed to Postfix's `error:` transport, which fails it
-permanently — accept-then-permanent-fail deterministically models a delayed
-bounce with no external dependency. See `deploy/postfix-dkim2-delayedbounce`
-for the map file and install steps.
+accepted at RCPT (`250`), then routed to the **`dkim2-delayedbounce` pipe(8)
+transport** (`deploy/postfix-dkim2-reflect.master.cf`), whose delivery agent
+(`/usr/local/bin/dkim2-delayedbounce-fail`) always exits with a permanent
+failure — so Postfix's `bounce(8)` originates the DSN. Accept-then-fail-at-
+delivery deterministically models a delayed bounce with no external dependency.
+
+> **Do NOT use the `error:` transport for this.** `error:` rejects the
+> recipient at RCPT time for SMTP clients (a synchronous `550`), which is
+> *not* a delayed bounce — no DSN is generated. (It only appears to work via
+> local pickup, which bypasses smtpd.) The failing pipe accepts at RCPT and
+> fails at delivery, which is what produces the asynchronous, MTA-generated
+> DSN. Add the `dkim2-delayedbounce` pipe service to `master.cf` and set
+> `dkim2-delayedbounce_destination_recipient_limit = 1`.
+
+See `deploy/postfix-dkim2-delayedbounce` for the map file and install steps.
 
 **Milter requirement:** the outbound milter must sign a null-sender (`MAIL
 FROM <>`) message by falling back to the `From:` header domain (e.g.

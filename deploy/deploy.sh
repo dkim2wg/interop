@@ -36,10 +36,11 @@ echo ">> Mail::DKIM2 test suite (deploy gate; aborts on failure) ..."
 make test
 make install >/dev/null
 
-# 2. Binaries that embed the library (reflector wrapper + bounce handler +
-#    validator CGI).
-install -m 755 bin/dkim2-reflector.pl /usr/local/bin/dkim2-reflect
-install -m 755 bin/validate.cgi       /usr/local/bin/dkim2-validate.cgi
+# 2. Binaries that embed the library (reflector wrapper + validator CGI) plus
+#    the delayed-bounce demo's failing delivery agent.
+install -m 755 bin/dkim2-reflector.pl        /usr/local/bin/dkim2-reflect
+install -m 755 bin/dkim2-delayedbounce-fail.pl /usr/local/bin/dkim2-delayedbounce-fail
+install -m 755 bin/validate.cgi              /usr/local/bin/dkim2-validate.cgi
 
 # 2b. Static web assets: apex landing page + the validator UI. Kept here so a
 #     change to validate.js/.css/.html can't be left stale relative to the
@@ -57,6 +58,12 @@ fi
 # 3. Postfix reflector transport map (idempotent: picks up new addresses).
 install -m 644 "$REPO/deploy/postfix-dkim2-transport" /etc/postfix/dkim2-transport
 postmap /etc/postfix/dkim2-transport
+# 3b. Delayed-bounce demo map (idempotent). Its main.cf transport_maps/
+#     local_recipient_maps hookup and the dkim2-delayedbounce master.cf pipe
+#     service are one-time manual steps (see SERVER.md); this just keeps the
+#     installed map in sync with the repo.
+install -m 644 "$REPO/deploy/postfix-dkim2-delayedbounce" /etc/postfix/dkim2-delayedbounce
+postmap /etc/postfix/dkim2-delayedbounce
 postfix reload
 
 # 3c. Patch the (effectively unmaintained) Sendmail::PMilter for the null-sender
