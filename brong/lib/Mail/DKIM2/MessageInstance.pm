@@ -72,6 +72,9 @@ sub get_tag {
     return $self->{bits}{$k};
 }
 
+# The header-hash component (base64) of this Message-Instance's h= tag.
+sub header_hash { return $_[0]->{bits}{h1} }
+
 # Mark the body recipe as null per spec-02 §4.2: the body changed but the
 # previous state cannot be recreated. as_string() then emits "b": null.
 sub set_null_body_recipe {
