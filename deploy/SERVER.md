@@ -309,20 +309,38 @@ out and sign after-queue for the accepted set; a *downstream* per-recipient
 failure is async regardless (and is then subject to the bounce-trust rules —
 see the DSN discussion in `docs/` / the interop notes).
 
-> Status: the LMTP splitter daemon is **implemented and unit/integration
-> tested** (`brong/bin/dkim2-split-lmtp.pl`, `Mail::DKIM2::Split`,
-> `t/split.t`, `t/split-lmtp.t`), and has been **validated end-to-end on this
-> box** via a temporary loopback pipeline exactly as described above (test
-> submission `smtpd` → splitter → a `10589` signing `smtpd` running the real
-> outbound DKIM2 milter → recipients captured): a message `To:` two disclosed
-> recipients with a third Bcc'd produced two signed instances — the disclosed
-> copy's `rt=` listed only the two disclosed recipients, the Bcc copy's `rt=`
-> listed only the Bcc recipient, and the Bcc address never appeared in the
-> disclosed copy. That pipeline was **torn down, not left running**. To make it
-> permanent you would keep the `10589` signing listener, the submission
-> `content_filter=lmtp:[127.0.0.1]:10590`, and a systemd unit for the daemon.
-> The reflector demo itself never triggers the Bcc case (one recipient per
-> message), so it isn't wired in by default.
+**Deployed on this box (loopback demo/reference path).** The splitter runs
+permanently:
+
+- **Daemon:** `dkim2-split.service` (systemd, `deploy/dkim2-split.service`) runs
+  `/usr/local/bin/dkim2-split-lmtp` on `127.0.0.1:10590`, re-injecting to `10589`.
+- **Postfix listeners** (`deploy/postfix-dkim2-split.master.cf`, appended to
+  `master.cf`): `127.0.0.1:10586` = submission entry (`content_filter` → the
+  splitter, no signing) and `127.0.0.1:10589` = signing re-injection (outbound
+  DKIM2 milter, `content_filter=` empty).
+
+Both listeners are loopback-only (this box has no public submission; `mynetworks`
+is localhost), so there is no open-relay exposure — origination is
+localhost-injected, like the `10587`/`10588` injectors. Submit a multi-recipient
+message with a Bcc to `127.0.0.1:10586` and each delivered copy's `rt=` lists
+only its own group (the Bcc recipient never appears in anyone else's signature).
+
+Setup (one-time):
+```bash
+ssh dkim2 'cd /root/interop && deploy/deploy.sh'   # installs /usr/local/bin/dkim2-split-lmtp
+ssh dkim2 'install -m644 /root/interop/deploy/dkim2-split.service /etc/systemd/system/ \
+  && systemctl daemon-reload && systemctl enable --now dkim2-split'
+ssh dkim2 'cat /root/interop/deploy/postfix-dkim2-split.master.cf >> /etc/postfix/master.cf \
+  && postfix check && postfix reload'
+```
+
+The reflector/originate demo addresses themselves never trigger the Bcc case
+(one recipient per message), so nothing on this box *routes* through the splitter
+by default — it's a running reference path you submit to directly. Wiring it into
+the default local-submission path (`non_smtpd_milters`/`pickup`) would sign all
+locally-originated multi-recipient mail Bcc-safely, but is deliberately not done
+(it would disturb the existing single-recipient reflector/Mailman/Sympa flows for
+no benefit — those are already per-recipient).
 
 ---
 

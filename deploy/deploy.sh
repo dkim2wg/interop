@@ -40,6 +40,7 @@ make install >/dev/null
 #    the delayed-bounce demo's failing delivery agent.
 install -m 755 bin/dkim2-reflector.pl        /usr/local/bin/dkim2-reflect
 install -m 755 bin/dkim2-delayedbounce-fail.pl /usr/local/bin/dkim2-delayedbounce-fail
+install -m 755 bin/dkim2-split-lmtp.pl       /usr/local/bin/dkim2-split-lmtp
 install -m 755 bin/validate.cgi              /usr/local/bin/dkim2-validate.cgi
 
 # 2b. Static web assets: apex landing page + the validator UI. Kept here so a
@@ -88,6 +89,10 @@ fi
 #    (The reflector wrapper and validator CGI run per-invocation, so they pick
 #    up the new lib without a restart — but the milters are daemons.)
 systemctl restart dkim2-milter-inbound dkim2-milter-outbound
+# The Bcc-safe split daemon is also long-running; restart it if installed (it
+# uses the freshly-installed Mail::DKIM2::Split). try-restart is a no-op if the
+# service isn't set up on this host.
+systemctl try-restart dkim2-split 2>/dev/null || true
 
 # 5. POST-DEPLOY SMOKE TEST. Sign a fresh message as dkim2.com/sel1 with the
 #    freshly-installed library and verify it against LIVE DNS. This exercises

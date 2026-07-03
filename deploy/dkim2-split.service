@@ -1,0 +1,26 @@
+[Unit]
+Description=DKIM2 Bcc-safe split LMTP content filter (dkim2-split-lmtp)
+Documentation=https://github.com/dkim2wg/interop
+After=network.target
+
+[Service]
+Type=simple
+# Fans a submitted message into Bcc-safe per-copy re-injections (see
+# Mail::DKIM2::Split / deploy/SERVER.md "Bcc-safe origination"). Listens on
+# 10590 (LMTP), re-injects each copy to the signing listener on 10589.
+ExecStart=/usr/local/bin/dkim2-split-lmtp
+Environment=DKIM2_SPLIT_HOST=127.0.0.1
+Environment=DKIM2_SPLIT_PORT=10590
+Environment=DKIM2_INJECT_HOST=127.0.0.1
+Environment=DKIM2_INJECT_PORT=10589
+User=nobody
+Group=nogroup
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

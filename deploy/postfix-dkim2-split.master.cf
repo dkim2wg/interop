@@ -1,0 +1,30 @@
+# DKIM2 Bcc-safe origination: split content filter + signing re-injection.
+# Append these two services to /etc/postfix/master.cf. Both are loopback-only
+# (this box has no public submission and mynetworks is localhost, so there is
+# no open-relay exposure); origination is localhost-injected, like the existing
+# 10587/10588 injectors.
+#
+# Flow: submit (from localhost) to 10586
+#   -> content_filter hands the message to the dkim2-split LMTP daemon on 10590
+#      (a systemd service, deploy/dkim2-split.service)
+#   -> the daemon re-injects one copy per disclosed group / per Bcc recipient
+#      to 10589
+#   -> the outbound DKIM2 milter signs each copy, recording only that copy's
+#      recipients in rt= (so a Bcc recipient never appears in anyone else's
+#      signature) -> normal delivery.
+# See deploy/SERVER.md "Bcc-safe origination".
+
+# 1. Submission entry: apply the split content filter; do NOT sign here.
+127.0.0.1:10586 inet n - n - - smtpd
+  -o content_filter=lmtp:[127.0.0.1]:10590
+  -o smtpd_milters=
+  -o smtpd_relay_restrictions=permit_mynetworks,reject
+  -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks
+
+# 2. Signing re-injection: run the outbound DKIM2 milter; do NOT re-filter
+#    (empty content_filter is the loop guard, or copies would be re-split).
+127.0.0.1:10589 inet n - n - - smtpd
+  -o content_filter=
+  -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
+  -o smtpd_relay_restrictions=permit_mynetworks,reject
+  -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks
