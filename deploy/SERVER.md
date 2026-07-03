@@ -261,6 +261,33 @@ Notes:
   submission — so it signs the single-recipient copies (correct `rt=`), not the
   pre-split message.
 
+**Cleaner variant — an LMTP content filter.** Instead of the per-recipient
+`pipe(8)` fan-out, run the filter as a persistent **LMTP** daemon:
+
+```
+# on the submission smtpd (master.cf): filter, don't sign here
+  -o content_filter=lmtp:[127.0.0.1]:10590
+  -o smtpd_milters=
+```
+
+LMTP is the right protocol because it returns a **separate status per
+recipient** after the final `.` (that's exactly what distinguishes it from
+SMTP). So Postfix delivers the message to the daemon **once, with all
+recipients**, and for each recipient the daemon does one of:
+
+- **re-inject** a single-recipient (or disclosed-group) copy to the signing
+  listener (`127.0.0.1:10589`, milter on / `content_filter=` empty) and reply
+  `250` for that recipient; or
+- **bounce** that recipient by replying a per-recipient `5xx` — Postfix then
+  generates the DSN for just that address.
+
+This is nicer than the pipe: one invocation with full recipient visibility (so
+you can keep disclosed `To:`/`Cc:` recipients together in a single copy and
+split only the Bcc'd ones), per-recipient accept-or-bounce in the protocol
+itself, and no per-message process spawn. Same loop guard applies — the
+re-injection listener (`10589`) must not re-filter. (Not implemented in this
+repo yet; documented as the recommended shape.)
+
 ---
 
 ### 3. Mailman 3
