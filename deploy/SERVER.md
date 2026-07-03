@@ -180,6 +180,87 @@ git pull
 systemctl restart dkim2-milter-inbound dkim2-milter-outbound
 ```
 
+#### Known limitation: Bcc leak on origination (and how to fix it)
+
+The outbound milter signs each message **once**, recording **all** of the SMTP
+transaction's envelope recipients in a single DKIM2-Signature `rt=`. It does
+**not** split the message into per-recipient instances.
+
+- **Forwarding hops are unaffected**: the message was already split at
+  origination, so each copy carries a disclosed recipient set and the single
+  `rt=` reveals nothing new.
+- **Origination/submission is the problem**: a submitted message with
+  undisclosed (Bcc) recipients — envelope recipients not in `To:`/`Cc:` — has
+  those Bcc addresses written into `rt=`, visible to every recipient. That
+  **leaks the Bcc**, against draft-03's `rt=` requirement.
+
+The milter can't fix this: the Postfix milter protocol edits a single queued
+message at end-of-message and cannot fan one message into several
+separately-signed instances. The split must happen **before** signing. The
+reflector demo never hits this (it only ever sends one recipient per message),
+so the split is **not deployed here** — but this is the recommended recipe for
+Bcc-safe DKIM2 origination on Postfix without patching:
+
+**A content filter that re-injects one copy per recipient through the signing
+milter.** New mail is submitted to a filter that fans it out per recipient;
+each single-recipient copy is re-injected to a signing listener, so `rt=`
+records only that copy's recipient.
+
+1. Split transport (`master.cf`):
+   ```
+   dkim2-split unix  -       n       n       -       -       pipe
+     flags=q user=nobody:nogroup
+     argv=/usr/local/bin/dkim2-split ${sender} ${recipient}
+   ```
+2. One recipient per invocation (`main.cf`):
+   ```
+   dkim2-split_destination_recipient_limit = 1
+   ```
+3. Submission service runs the split filter and does **not** sign there
+   (signing happens post-split) — on the `submission`/`smtps` `smtpd` in
+   `master.cf`:
+   ```
+     -o content_filter=dkim2-split:
+     -o smtpd_milters=
+   ```
+4. A re-injection listener that **does** sign and does **not** re-filter (the
+   loop guard) — add to `master.cf`:
+   ```
+   127.0.0.1:10589 inet  n  -  n  -  -  smtpd
+     -o content_filter=
+     -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
+     -o receive_override_options=no_address_mappings,no_unknown_recipient_checks,no_header_body_checks
+     -o smtpd_authorized_xclient_hosts=127.0.0.0/8
+   ```
+5. `/usr/local/bin/dkim2-split` re-injects one copy per recipient:
+   ```perl
+   #!/usr/bin/perl
+   use strict; use warnings;
+   use Net::SMTP;
+   # Postfix invokes this once per recipient (dkim2-split_destination_recipient_limit=1),
+   # passing ${sender} and the single ${recipient}. Re-inject one copy for that
+   # recipient to the signing listener (127.0.0.1:10589), which runs the DKIM2
+   # milter and NO content filter, so rt= records only this recipient -> no Bcc leak.
+   my ($sender, $rcpt) = @ARGV;
+   my $msg = do { local $/; <STDIN> };
+   my $smtp = Net::SMTP->new('127.0.0.1', Port => 10589, Timeout => 30) or exit 75; # EX_TEMPFAIL -> retry
+   $smtp->mail(length $sender ? $sender : '<>');
+   $smtp->recipient($rcpt) or exit 75;
+   $smtp->data(); $smtp->datasend($msg); $smtp->dataend(); $smtp->quit;
+   exit 0;
+   ```
+
+Notes:
+- Per-recipient split is always Bcc-safe. It also separates disclosed
+  (`To:`/`Cc:`) recipients into their own copies, which the spec permits; for
+  efficiency you could keep disclosed recipients together in one copy and split
+  only the Bcc'd ones, but per-recipient is the simplest always-safe rule.
+- The loop guard is essential: the re-injection listener (`10589`) MUST have
+  `content_filter=` empty, or copies are re-split forever.
+- The signing milter runs **only** on the re-injection path, never on
+  submission — so it signs the single-recipient copies (correct `rt=`), not the
+  pre-split message.
+
 ---
 
 ### 3. Mailman 3

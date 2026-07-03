@@ -480,6 +480,33 @@ B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-03, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 
+=head1 LIMITATIONS
+
+=head2 Bcc recipients are recorded in a single rt= (Bcc leak)
+
+The milter signs each message B<once>, recording B<all> of the SMTP
+transaction's envelope recipients (every C<RCPT TO> seen in
+C<envrcpt_callback>) in a single DKIM2-Signature C<rt=> tag.  It does B<not>
+split the message into per-recipient instances.
+
+This is fine for a forwarding hop, where the message has already been split at
+origination and each copy carries a disclosed recipient set.  But at
+B<origination / submission>, a message with undisclosed (Bcc) recipients —
+envelope recipients that do not appear in the C<To:>/C<Cc:> headers — will have
+those Bcc addresses recorded in C<rt=>, visible to every recipient.  That
+B<leaks the Bcc>, contrary to draft-ietf-dkim-dkim2-spec-03, whose C<rt=>
+description requires that Bcc recipients not be revealed to other recipients.
+
+The milter cannot fix this itself: the Postfix milter protocol modifies a
+single queued message at end-of-message and cannot fan one message out into
+several separately-signed instances.  Bcc-safe origination must split the
+message into one instance per recipient (or per disclosed group) B<before>
+DKIM2 signing — in the submitting client/MSA, or via a Postfix content filter
+that re-injects per-recipient copies through the signing milter.  See
+C<deploy/SERVER.md> ("Bcc-safe origination: splitting recipients") for a
+content-filter recipe.  A native MTA that emits per-recipient instances
+directly does not have this problem; it is specific to the bolt-on-milter model.
+
 =head1 CONFIGURATION
 
     "DKIM2Sign" : {
