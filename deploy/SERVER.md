@@ -261,8 +261,13 @@ Notes:
   submission — so it signs the single-recipient copies (correct `rt=`), not the
   pre-split message.
 
-**Cleaner variant — an LMTP content filter.** Instead of the per-recipient
-`pipe(8)` fan-out, run the filter as a persistent **LMTP** daemon:
+**Cleaner variant — an LMTP content filter (implemented).** Instead of the
+per-recipient `pipe(8)` fan-out, run the filter as a persistent **LMTP**
+daemon. This repo ships one: `brong/bin/dkim2-split-lmtp.pl` (grouping logic in
+`Mail::DKIM2::Split`, tested by `t/split.t` + `t/split-lmtp.t`). It listens on
+`127.0.0.1:10590`, and for each message re-injects one copy per disclosed group
+/ per Bcc recipient to the signing listener (`10589`), answering one LMTP status
+per recipient. Run it as a service (as `nobody`), then point submission at it:
 
 ```
 # on the submission smtpd (master.cf): filter, don't sign here
@@ -304,9 +309,13 @@ out and sign after-queue for the accepted set; a *downstream* per-recipient
 failure is async regardless (and is then subject to the bounce-trust rules —
 see the DSN discussion in `docs/` / the interop notes).
 
-> Status: documented recipe, not yet deployed on this demo. The signing/fan-out
-> primitives exist (the milter, the injectors); the LMTP splitter daemon is the
-> missing piece.
+> Status: the LMTP splitter daemon is **implemented and unit/integration
+> tested** (`brong/bin/dkim2-split-lmtp.pl`, `Mail::DKIM2::Split`,
+> `t/split.t`, `t/split-lmtp.t`), but **not yet wired into the demo Postfix** —
+> that still needs the `10589` signing listener (a `smtpd` with the outbound
+> milter and `content_filter=` empty) plus the submission `content_filter`
+> above, and a systemd unit for the daemon. The reflector demo never triggers
+> the Bcc case (one recipient per message), so it hasn't been deployed here yet.
 
 ---
 
