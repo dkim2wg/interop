@@ -311,11 +311,18 @@ see the DSN discussion in `docs/` / the interop notes).
 
 > Status: the LMTP splitter daemon is **implemented and unit/integration
 > tested** (`brong/bin/dkim2-split-lmtp.pl`, `Mail::DKIM2::Split`,
-> `t/split.t`, `t/split-lmtp.t`), but **not yet wired into the demo Postfix** —
-> that still needs the `10589` signing listener (a `smtpd` with the outbound
-> milter and `content_filter=` empty) plus the submission `content_filter`
-> above, and a systemd unit for the daemon. The reflector demo never triggers
-> the Bcc case (one recipient per message), so it hasn't been deployed here yet.
+> `t/split.t`, `t/split-lmtp.t`), and has been **validated end-to-end on this
+> box** via a temporary loopback pipeline exactly as described above (test
+> submission `smtpd` → splitter → a `10589` signing `smtpd` running the real
+> outbound DKIM2 milter → recipients captured): a message `To:` two disclosed
+> recipients with a third Bcc'd produced two signed instances — the disclosed
+> copy's `rt=` listed only the two disclosed recipients, the Bcc copy's `rt=`
+> listed only the Bcc recipient, and the Bcc address never appeared in the
+> disclosed copy. That pipeline was **torn down, not left running**. To make it
+> permanent you would keep the `10589` signing listener, the submission
+> `content_filter=lmtp:[127.0.0.1]:10590`, and a systemd unit for the daemon.
+> The reflector demo itself never triggers the Bcc case (one recipient per
+> message), so it isn't wired in by default.
 
 ---
 
