@@ -285,8 +285,28 @@ This is nicer than the pipe: one invocation with full recipient visibility (so
 you can keep disclosed `To:`/`Cc:` recipients together in a single copy and
 split only the Bcc'd ones), per-recipient accept-or-bounce in the protocol
 itself, and no per-message process spawn. Same loop guard applies — the
-re-injection listener (`10589`) must not re-filter. (Not implemented in this
-repo yet; documented as the recommended shape.)
+re-injection listener (`10589`) must not re-filter.
+
+**Before-queue vs after-queue.** Both recipes above run *after* Postfix has
+accepted the message — the client already got its `250` — so a per-recipient
+failure becomes an async bounce. You can instead run the filter *before-queue*
+(`smtpd_proxy_filter`), inside the client's SMTP session, so a failure is a
+synchronous `5xx` to the client and **no bounce is generated at all** — the
+cleanest outcome for origination. The catch is the SMTP response model: the
+client gets per-recipient answers only at **RCPT** (before you have the body to
+sign or split) and a **single** verdict after the final `.`. So before-queue
+you can accept-or-reject the *whole* submission in session, but you can't hand
+back per-recipient sign/bounce results — LMTP's per-recipient statuses only
+help when Postfix speaks LMTP to the filter as an *after-queue* delivery. A
+before-queue proxy also ties up an smtpd worker for the whole split+re-inject.
+Pragmatic split: reject what you can at RCPT in-session (no bounce), then fan
+out and sign after-queue for the accepted set; a *downstream* per-recipient
+failure is async regardless (and is then subject to the bounce-trust rules —
+see the DSN discussion in `docs/` / the interop notes).
+
+> Status: documented recipe, not yet deployed on this demo. The signing/fan-out
+> primitives exist (the milter, the injectors); the LMTP splitter daemon is the
+> missing piece.
 
 ---
 
