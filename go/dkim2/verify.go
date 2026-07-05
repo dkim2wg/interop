@@ -440,8 +440,8 @@ func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
 			}
 		}
 		if !matched {
-			return fmt.Errorf("chain-of-custody break at i=%d: mf= domain %q not covered by rt= of i=%d",
-				cur.Sequence, curMFDomain, prev.Sequence)
+			return fmt.Errorf("DKIM2-Signature i=%d MAIL FROM %s did not match",
+				cur.Sequence, cur.MailFrom)
 		}
 	}
 	return nil
