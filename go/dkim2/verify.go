@@ -409,7 +409,7 @@ func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
 			continue
 		}
 		if prev.NextDomain != "" {
-			// draft-03 §11.4: nd= MUST exactly match the next sig's d=.
+			// draft-04 §11.4: nd= MUST exactly match the next sig's d=.
 			if !strings.EqualFold(prev.NextDomain, cur.Domain) {
 				return fmt.Errorf("DKIM2-Signature i=%d nd= does not match d= of i=%d",
 					prev.Sequence, cur.Sequence)

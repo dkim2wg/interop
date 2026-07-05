@@ -19,7 +19,7 @@ type PropagateOptions struct {
 
 var reBoundary = regexp.MustCompile(`(?i)boundary="?([^";]+)"?`)
 
-// Propagate returns a DKIM2 DSN propagated upstream (draft-03 §12.1.1): the
+// Propagate returns a DKIM2 DSN propagated upstream (draft-04 §12.1.1): the
 // Forwarder rebuilds the enclosed original to its forwarded-outward state
 // (undoing its Message-Instance modification, which also drops the
 // DKIM2-Signature it added), then re-signs the whole DSN as a new message
