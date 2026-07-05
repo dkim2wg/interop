@@ -379,6 +379,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = latest->i;
     snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
 
+    /* Local policy (stricter than spec-04): the topmost (highest i=)
+       DKIM2-Signature MUST NOT carry nd=. The only legitimate nd= producer
+       emits the nd= hop together with a matching higher-i= signature, so
+       nd= should never appear on the top signature. Non-top nd= adjacency
+       (§11.4, matched further below) is unaffected by this check. */
+    if (latest->nd && latest->nd[0])
+        SETSTATUS(DKIM2_PERMERROR, "DKIM2-Signature i=%d unexpected nd= tag", latest->i);
+
     /* §7.1: i= sequence must be contiguous 1..N */
     for (int i = 0; i < n_sigs; i++) {
         if (sig_arr[i]->i != i + 1)

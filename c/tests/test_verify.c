@@ -274,6 +274,60 @@ int main(void) {
         dkim2_sig_free(vctx.sig_list);
     }
 
+    /* --- Error: top-level nd= (spec-04 local policy) → PERMERROR ---
+       The only legitimate nd= producer emits an nd= hop together with a
+       matching higher-i= signature, so nd= must never appear on the
+       topmost (highest i=) DKIM2-Signature. */
+    {
+        dkim2_sig_t *s1 = dkim2_sig_parse(
+            "i=1; m=1; t=1; d=fwd.example.com; mf=PA==; rt=PA==; "
+            "s=test:ed25519-sha256:AAAA");
+        dkim2_sig_t *s2 = dkim2_sig_parse(
+            "i=2; m=2; t=1; d=fwd.example.com; nd=next.example.com; "
+            "s=test:ed25519-sha256:AAAA");
+        assert(s1 != NULL && s2 != NULL);
+        s1->next = s2;
+
+        dkim2_ctx_t vctx;
+        memset(&vctx, 0, sizeof vctx);
+        vctx.sig_list = s1;
+
+        dkim2_verify_result_t res;
+        dkim2_do_verify(&vctx, &res);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strstr(res.message, "unexpected nd= tag") != NULL);
+
+        dkim2_sig_free(vctx.sig_list);
+    }
+
+    /* --- Regression: non-top nd= (legitimate hand-off hop) must NOT be
+       rejected by the new top-nd= check. The existing adjacency match
+       (prev->nd must equal cur->d, §11.4) still governs it, and the sig
+       chain proceeds to later checks instead of being killed here. --- */
+    {
+        dkim2_sig_t *s1 = dkim2_sig_parse(
+            "i=1; m=1; t=1; d=fwd.example.com; nd=next.example.com; "
+            "s=test:ed25519-sha256:AAAA");
+        dkim2_sig_t *s2 = dkim2_sig_parse(
+            "i=2; m=2; t=1; d=next.example.com; mf=PA==; rt=PA==; "
+            "s=test:ed25519-sha256:AAAA");
+        assert(s1 != NULL && s2 != NULL);
+        s1->next = s2;
+
+        dkim2_ctx_t vctx;
+        memset(&vctx, 0, sizeof vctx);
+        vctx.sig_list = s1;
+
+        dkim2_verify_result_t res;
+        dkim2_do_verify(&vctx, &res);
+        /* Top sig (i=2) carries no nd=, so it must never be rejected with
+           our new local-policy message — it fails later for unrelated
+           reasons (no Message-Instance / DNS / crypto). */
+        assert(strstr(res.message, "unexpected nd= tag") == NULL);
+
+        dkim2_sig_free(vctx.sig_list);
+    }
+
     free(mi_val);
     free(sig_val);
     puts("sign+verify: all tests passed");
