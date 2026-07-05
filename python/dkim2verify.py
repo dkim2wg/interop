@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 verifier - draft-ietf-dkim-dkim2-spec-01
+DKIM2 verifier - draft-ietf-dkim-dkim2-spec-04
 
 Takes a signed email and verifies its DKIM2 signatures using public keys
 from a dns.json file or DNS TXT records.
@@ -84,7 +84,7 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
             tags = parse_dkim1_txt(rec_value)
             key_type = tags.get("k", "rsa")
             pub_b64 = tags.get("p", "")
-            # h= (hash algorithm list) MUST be ignored per spec-01 Section 10.3
+            # h= (hash algorithm list) MUST be ignored per spec-04 Section 10.3
             pub_bytes = base64.b64decode(pub_b64)
 
             if key_type == "ed25519":
@@ -166,7 +166,7 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
         prev_i = _extract_tag(prev_val, "i")
         prev_nd = _extract_tag(prev_val, "nd")
         if prev_nd:
-            # draft-03 §11.4: nd= MUST exactly match the next sig's d=.
+            # draft-04 §11.4: nd= MUST exactly match the next sig's d=.
             cur_d = _extract_tag(cur_val, "d") or ""
             if prev_nd.lower() != cur_d.lower():
                 errors.append(
@@ -196,13 +196,13 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
 
 
 def _sig_flags(sig_hdr: str) -> list[str]:
-    """Return the f= flag list of a DKIM2-Signature header (draft-03 §8.10)."""
+    """Return the f= flag list of a DKIM2-Signature header (draft-04 §8.10)."""
     f = _extract_tag(_get_header_value(sig_hdr), "f")
     return [x.strip() for x in f.split(",") if x.strip()] if f else []
 
 
 def _flag_enforcement_errors(sig_by_seq: list[str], mi_headers: list[str]) -> list[str]:
-    """Enforce the donotmodify/donotexplode flags (draft-03 §11.8).
+    """Enforce the donotmodify/donotexplode flags (draft-04 §11.8).
 
     feedback/feedhere are recognised but carry no verifier enforcement.
     """
@@ -343,7 +343,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     mf_val = _extract_tag(value, "mf")
     rt_val = _extract_tag(value, "rt")
 
-    # draft-03 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+    # draft-04 §8: i= m= t= d= s= MUST be present; plus either nd= or both
     # mf= and rt= (and nd= excludes mf=/rt=).
     if not all([i_val, m_val, t_val0, d_val, s_tag]):
         return [f"DKIM2-Signature i={i_val}: missing required tag(s) "
@@ -676,7 +676,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-01)")
+        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-04)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--dns-json", required=True,
                         help="Path to dns.json with public keys")

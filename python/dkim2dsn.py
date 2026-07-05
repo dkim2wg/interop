@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DKIM2 DSN propagation (draft-ietf-dkim-dkim2-spec-03 §12.1.1).
+"""DKIM2 DSN propagation (draft-ietf-dkim-dkim2-spec-04 §12.1.1).
 
 When a Forwarder receives a DKIM2-signed Delivery Status Notification for a
 message it forwarded, it may propagate that DSN back towards the original

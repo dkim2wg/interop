@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 signer - draft-ietf-dkim-dkim2-spec-01
+DKIM2 signer - draft-ietf-dkim-dkim2-spec-04
 
 Takes a raw email, selector, domain, and keyfile and produces a signed
 message with Message-Instance and DKIM2-Signature headers on stdout.
@@ -307,7 +307,7 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Per draft-ietf-dkim-dkim2-spec-01 Section 9.5:
+    # Per draft-ietf-dkim-dkim2-spec-04 Section 9.5:
     # 1. All MI headers in ascending v= order
     # 2. All prior DKIM2-Signature headers in ascending i= order
     # 3. The incomplete DKIM2-Signature being created
@@ -354,15 +354,15 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     """Build a complete DKIM2-Signature header.
 
     If next_domain is given, the signature carries an nd= tag for an imaginary
-    forwarding hop (draft-03 §9.3) and omits mf=/rt=. Otherwise it carries
-    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-03 §8.10).
+    forwarding hop (draft-04 §9.3) and omits mf=/rt=. Otherwise it carries
+    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-04 §8.10).
 
     Returns the full header string including field name.
     """
     if timestamp is None:
         timestamp = int(time.time())
 
-    # draft-03 §9.3: an nd= hop carries nd= instead of mf=/rt=.
+    # draft-04 §9.3: an nd= hop carries nd= instead of mf=/rt=.
     if next_domain:
         chain = f"nd={next_domain}"
     else:
@@ -479,7 +479,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-01)")
+        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-04)")
     parser.add_argument("message", help="Path to raw email file (- for stdin)")
     parser.add_argument("-s", "--selector", required=True,
                         help="DKIM2 selector name")
