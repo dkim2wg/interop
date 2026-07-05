@@ -98,6 +98,16 @@ sub finish_body {
     my $dk2_entry = $dk2_map{$max_i};
     my $signature = $dk2_entry->{sig};
 
+    # Local policy (stricter than spec-04 §"Check the Chain-of-Custody"): the
+    # highest-numbered DKIM2-Signature MUST NOT carry nd=. The only legitimate
+    # nd= producer is reflector-brand-nd, which always emits the matching
+    # higher-i= signature too, so nd= never appears on top.
+    if (defined $signature->next_domain && length $signature->next_domain) {
+        $self->{result}  = 'permerror';
+        $self->{details} = "DKIM2-Signature i=$max_i unexpected nd= tag";
+        return;
+    }
+
     # Validate chain completeness - check for gaps
     for my $i (1..$max_i) {
         unless ($dk2_map{$i}) {
@@ -260,6 +270,26 @@ sub _verify_signature {
         signature      => $signature,
         signing_header => $sig_hdr_for_input,
     );
+
+    # draft-04: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
+    # via get_tag() (not the sequence/version/timestamp/domain accessors)
+    # because those accessors just proxy get_tag() and would themselves
+    # return undef for an absent tag anyway -- get_tag() is used directly
+    # here to make explicit that "missing" means "tag truly absent", not
+    # coerced to 0/''. (Verified against TagValueList::get_tag/Signature.pm:
+    # none of these accessors coerce a missing tag to a false-but-defined
+    # value.)
+    for my $t (qw(i m t d s)) {
+        my $present =
+              $t eq 's' ? ($signature->sig_count ? 1 : 0)
+            : $t eq 'd' ? (defined($signature->get_tag('d')) && length $signature->get_tag('d'))
+            :             defined $signature->get_tag($t);
+        unless ($present) {
+            $self->{result}  = 'permerror';
+            $self->{details} = "DKIM2-Signature i=$i tag=$t missing";
+            return 0;
+        }
+    }
 
     # draft-04 §8: a signature carries either nd= or both mf= and rt=, never
     # both forms. nd= together with mf=/rt= is a PERMERROR.
