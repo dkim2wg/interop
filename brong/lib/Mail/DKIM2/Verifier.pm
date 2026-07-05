@@ -324,7 +324,7 @@ sub _verify_signature {
     }
     if (!defined $nd_tag && !(defined $mf_tag && defined $rt_tag)) {
         $self->{result}  = 'permerror';
-        $self->{details} = "DKIM2-Signature i=$i missing chain tags (nd= or mf=+rt=)";
+        $self->{details} = "DKIM2-Signature i=$i tag=mf missing";
         return 0;
     }
 
@@ -378,7 +378,7 @@ sub _verify_signature {
         my $mf_domain = extract_domain($mf);
         unless ($mf_domain && relaxed_domain_match($mf_domain, $sig_domain)) {
             $self->{result} = 'fail';
-            $self->{details} = "d=$sig_domain does not match mf domain $mf_domain at i=$i";
+            $self->{details} = "DKIM2-Signature i=$i MAIL FROM and d= do not match";
             return 0;
         }
     }
@@ -469,7 +469,7 @@ sub _verify_chain {
             my $cur_d = $cur_sig->domain // '';
             unless (lc($prev_nd) eq lc($cur_d)) {
                 $self->{result} = 'fail';
-                $self->{details} = "DKIM2-Signature i=$prev_i nd= does not match d= of i=$cur_i";
+                $self->{details} = "DKIM2-Signature i=$prev_i MAIL nd= does not match";
                 return 0;
             }
             next;
@@ -481,12 +481,12 @@ sub _verify_chain {
         # Chain of custody: mf of N must relaxed-domain-match an rt of N-1
         unless ($cur_mf) {
             $self->{result} = 'fail';
-            $self->{details} = "missing MAIL FROM at i=$cur_i";
+            $self->{details} = "DKIM2-Signature i=$cur_i MAIL FROM <> did not match";
             return 0;
         }
         unless ($prev_rt) {
             $self->{result} = 'fail';
-            $self->{details} = "missing RCPT TO at i=$prev_i";
+            $self->{details} = "DKIM2-Signature i=$prev_i RCPT TO <> did not match";
             return 0;
         }
 
@@ -502,7 +502,7 @@ sub _verify_chain {
         }
         unless ($match) {
             $self->{result} = 'fail';
-            $self->{details} = "chain of custody break at i=$cur_i";
+            $self->{details} = "DKIM2-Signature i=$cur_i MAIL FROM $cur_mf did not match";
             return 0;
         }
     }
