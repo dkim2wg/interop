@@ -479,6 +479,72 @@ int main(void) {
         free(sig2_out);
     }
 
+    /* --- Error: inter-signature chain-of-custody break (§8.2) → FAIL,
+       canonical spec-04 message (matches Perl Verifier.pm's _verify_chain:
+       "DKIM2-Signature i=%d MAIL FROM %s did not match"). Both hops are
+       produced by the normal signer (no nd= involved this time), chained
+       via ctx2.sig_list so hop i=2 gets a real, independently-verifiable
+       signature. hop1's rt= is scoped to a subdomain (sub.example.com)
+       while hop2's mf= is the parent domain (example.com) — both fall
+       under the same d=example.com (so DNS-key lookup and the §7.7 d=/mf=
+       check both succeed for hop2 and crypto passes for both hops), but
+       relaxed-domain-match requires the *previous* rt= to be equal-or-
+       parent of the *current* mf=, and "sub.example.com" is not a parent
+       of "example.com" — so the custody check (which runs after per-sig
+       crypto verification) is the one that fires. */
+    {
+        char *hop1_rcpts[] = { "<mid@sub.example.com>", NULL };
+        char *mi1_out = NULL, *sig1_out = NULL;
+        int r1 = sign_test_message(mail_from, hop1_rcpts,
+            "/tmp/dkim2_test_sign.pem", "example.com", "test",
+            raw_headers, 3, body, &mi1_out, &sig1_out);
+        assert(r1 == 0 && mi1_out != NULL && sig1_out != NULL);
+
+        dkim2_sig_t *sig1_parsed = dkim2_sig_parse(sig1_out);
+        assert(sig1_parsed != NULL);
+
+        dkim2_ctx_t ctx2;
+        memset(&ctx2, 0, sizeof ctx2);
+        ctx2.headers = (char **)raw_headers;
+        ctx2.n_headers = 3;
+        dkim2_body_hash_raw(body, strlen(body), ctx2.body_digest);
+        char *hop2_mail_from = "<attacker@example.com>"; /* not covered by hop1's sub.example.com rt= */
+        char *hop2_rcpts[] = { "<final@example.com>", NULL };
+        ctx2.mail_from = hop2_mail_from;
+        ctx2.rcpt_to = hop2_rcpts;
+        ctx2.mi_list = NULL;
+        ctx2.sig_list = sig1_parsed;
+        dkim2_sign_config_t cfg2 = {
+            .domain = "example.com", .selector = "test",
+            .privkey_path = "/tmp/dkim2_test_sign.pem", .alg = "ed25519-sha256",
+        };
+        char *mi2_out = NULL, *sig2_out = NULL;
+        int r2 = dkim2_do_sign(&ctx2, &cfg2, &mi2_out, &sig2_out);
+        assert(r2 == 0 && mi2_out != NULL && sig2_out != NULL);
+
+        dkim2_sig_t *sig2_parsed = dkim2_sig_parse(sig2_out);
+        assert(sig2_parsed != NULL);
+        sig1_parsed->next = sig2_parsed;
+
+        dkim2_ctx_t vctx;
+        memset(&vctx, 0, sizeof vctx);
+        vctx.mi_list = dkim2_mi_parse(mi2_out);
+        vctx.sig_list = sig1_parsed;
+
+        dkim2_verify_result_t res;
+        dkim2_do_verify(&vctx, &res);
+        assert(res.status == DKIM2_FAIL);
+        assert(strstr(res.message,
+            "DKIM2-Signature i=2 MAIL FROM <attacker@example.com> did not match") != NULL);
+
+        dkim2_mi_free(vctx.mi_list);
+        dkim2_sig_free(vctx.sig_list); /* frees sig1_parsed + chained sig2_parsed */
+        free(mi1_out);
+        free(sig1_out);
+        free(mi2_out);
+        free(sig2_out);
+    }
+
     free(mi_val);
     free(sig_val);
     puts("sign+verify: all tests passed");

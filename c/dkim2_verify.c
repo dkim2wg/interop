@@ -556,9 +556,12 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
             continue;
         }
 
-        if (!cur->mf || !prev->rt)
+        if (!cur->mf)
             SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: missing mf= or rt= for chain custody at i=%d", cur->i);
+                "DKIM2-Signature i=%d MAIL FROM <> did not match", cur->i);
+        if (!prev->rt)
+            SETSTATUS(DKIM2_PERMERROR,
+                "DKIM2-Signature i=%d RCPT TO <> did not match", prev->i);
 
         char *cur_mf_d = addr_domain(cur->mf);
         int match = 0;
@@ -571,7 +574,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         free(cur_mf_d);
         if (!match)
             SETSTATUS(DKIM2_FAIL,
-                "FAIL: Chain of custody break at i=%d", cur->i);
+                "DKIM2-Signature i=%d MAIL FROM %s did not match", cur->i, cur->mf);
     }
 
     /* §10.7: Verify all MI body+header hashes, undoing recipes for inner hops. */
