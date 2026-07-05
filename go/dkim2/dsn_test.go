@@ -103,3 +103,51 @@ func TestPropagate(t *testing.T) {
 		t.Fatalf("propagated DSN is not multipart/report: %q", ctype)
 	}
 }
+
+// TestPropagateRejectsMissingDeliveryStatus verifies that Propagate enforces
+// the RFC 3462 three-part multipart/report structure: a multipart/report DSN
+// with three (or more) parts but no message/delivery-status part must be
+// rejected, even though it still has a leading text part and a trailing
+// message/rfc822 part.
+func TestPropagateRejectsMissingDeliveryStatus(t *testing.T) {
+	const keys = "../../keys/"
+	raw := []byte("From: sender@origin.example\r\n" +
+		"To: user@test1.dkim2.com\r\n" +
+		"Subject: hello\r\n\r\nbody line\r\n")
+
+	hop1 := signOnce(t, raw, keys+"rsa1024._domainkey.test1.dkim2.com.pem",
+		"rsa1024", "test1.dkim2.com", "sender@origin.example",
+		[]string{"user@test2.dkim2.com"})
+	hop2 := signOnce(t, hop1, keys+"rsa1024._domainkey.test2.dkim2.com.pem",
+		"rsa1024", "test2.dkim2.com", "user@test2.dkim2.com",
+		[]string{"dest@test3.dkim2.com"})
+
+	// Three parts, but the middle part is NOT message/delivery-status.
+	boundary := "BOUNDARY43"
+	var dsn bytes.Buffer
+	dsn.WriteString("From: postmaster@test3.dkim2.com\r\n")
+	dsn.WriteString("To: user@test2.dkim2.com\r\n")
+	dsn.WriteString("Subject: failure\r\n")
+	dsn.WriteString("Content-Type: multipart/report; report-type=delivery-status; boundary=\"" + boundary + "\"\r\n")
+	dsn.WriteString("\r\n")
+	dsn.WriteString("--" + boundary + "\r\n")
+	dsn.WriteString("Content-Type: text/plain\r\n\r\ndelivery failed\r\n")
+	dsn.WriteString("--" + boundary + "\r\n")
+	dsn.WriteString("Content-Type: application/octet-stream\r\n\r\nnot a delivery status\r\n")
+	dsn.WriteString("--" + boundary + "\r\n")
+	dsn.WriteString("Content-Type: message/rfc822\r\n\r\n")
+	dsn.Write(hop2)
+	dsn.WriteString("\r\n--" + boundary + "--\r\n")
+
+	_, _, err := Propagate(dsn.Bytes(), PropagateOptions{
+		ForwarderDomain: "test2.dkim2.com",
+		Key:             loadKey(t, keys+"ed25519._domainkey.test3.dkim2.com.pem"),
+		Selector:        "ed25519", Domain: "test3.dkim2.com", Timestamp: 1740000000,
+	})
+	if err == nil {
+		t.Fatalf("Propagate: expected error for missing message/delivery-status part, got success")
+	}
+	if !strings.Contains(err.Error(), "delivery-status") {
+		t.Fatalf("Propagate error = %v, want mention of delivery-status", err)
+	}
+}

@@ -10,7 +10,7 @@ import (
 
 // PropagateOptions carries the signing parameters for the propagated DSN.
 type PropagateOptions struct {
-	ForwarderDomain string           // the Forwarder's own domain (informational)
+	ForwarderDomain string // the Forwarder's own domain (informational)
 	Key             crypto.PrivateKey
 	Selector        string
 	Domain          string
@@ -19,12 +19,13 @@ type PropagateOptions struct {
 
 var reBoundary = regexp.MustCompile(`(?i)boundary="?([^";]+)"?`)
 
-// Propagate returns a DKIM2 DSN propagated upstream (draft-04 §12.1.1): the
-// Forwarder rebuilds the enclosed original to its forwarded-outward state
-// (undoing its Message-Instance modification, which also drops the
-// DKIM2-Signature it added), then re-signs the whole DSN as a new message
-// (MAIL FROM <>, one Message-Instance, one DKIM2-Signature). Returns the
-// propagated DSN bytes and the upstream MAIL FROM it should be sent to.
+// Propagate returns a DKIM2 DSN propagated upstream (RFC 3462 / draft-04
+// §12.1.1): the Forwarder rebuilds the enclosed original to its
+// forwarded-outward state (undoing its Message-Instance modification, which
+// also drops the DKIM2-Signature it added), then re-signs the whole DSN as a
+// new message (MAIL FROM <>, one Message-Instance, one DKIM2-Signature).
+// Returns the propagated DSN bytes and the upstream MAIL FROM it should be
+// sent to.
 func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	headers, bodyReader, err := parseHeaders(bytes.NewReader(raw))
 	if err != nil {
@@ -54,14 +55,35 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	delim := "--" + boundary
 	segments := strings.Split(body.String(), delim)
 	// segments[0] is the preamble; the last is the closing "--\r\n" epilogue.
+	//
+	// RFC 3462 requires a multipart/report DSN to have (at least) three
+	// component parts: a human-readable text part first, a
+	// message/delivery-status part, and a part carrying the returned
+	// message (message/rfc822 or, if only headers are echoed back,
+	// text/rfc822-headers). Validate all three are present before trusting
+	// the structure enough to rebuild and re-sign it.
+	hasTextPart := false
+	hasDeliveryStatus := false
 	embeddedSeg := -1
 	for i := 1; i < len(segments)-1; i++ {
 		hdr, _ := splitPartHeaders(segments[i])
-		if strings.Contains(strings.ToLower(hdr), "message/rfc822") ||
-			strings.Contains(strings.ToLower(hdr), "text/rfc822-headers") {
-			embeddedSeg = i
-			break
+		lhdr := strings.ToLower(hdr)
+		if i == 1 && strings.Contains(lhdr, "text/plain") {
+			hasTextPart = true
 		}
+		if strings.Contains(lhdr, "message/delivery-status") {
+			hasDeliveryStatus = true
+		}
+		if embeddedSeg < 0 && (strings.Contains(lhdr, "message/rfc822") ||
+			strings.Contains(lhdr, "text/rfc822-headers")) {
+			embeddedSeg = i
+		}
+	}
+	if !hasTextPart {
+		return nil, "", fmt.Errorf("DSN first part is not human-readable text/plain (RFC 3462)")
+	}
+	if !hasDeliveryStatus {
+		return nil, "", fmt.Errorf("DSN missing message/delivery-status part (RFC 3462)")
 	}
 	if embeddedSeg < 0 {
 		return nil, "", fmt.Errorf("no embedded original message part")
