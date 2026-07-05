@@ -170,14 +170,19 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
             cur_d = _extract_tag(cur_val, "d") or ""
             if prev_nd.lower() != cur_d.lower():
                 errors.append(
-                    f"DKIM2-Signature i={prev_i} nd= does not match d= of i={cur_i}"
+                    f"DKIM2-Signature i={prev_i} MAIL nd= does not match"
                 )
             continue
         cur_mf_b64 = _extract_tag(cur_val, "mf")
         prev_rt_raw = _extract_tag(prev_val, "rt")
-        if not cur_mf_b64 or not prev_rt_raw:
+        if not cur_mf_b64:
             errors.append(
-                f"DKIM2-Signature i={cur_i}: missing mf= or rt= for chain custody check"
+                f"DKIM2-Signature i={cur_i} MAIL FROM <> did not match"
+            )
+            continue
+        if not prev_rt_raw:
+            errors.append(
+                f"DKIM2-Signature i={prev_i} RCPT TO <> did not match"
             )
             continue
         cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
@@ -189,8 +194,7 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
         if not any(_relaxed_domain_match(cur_mf_domain, _domain_from_addr(rt))
                    for rt in prev_rts):
             errors.append(
-                f"DKIM2-Signature i={cur_i}: chain of custody break "
-                f"(mf domain {cur_mf_domain!r} not in rt= domains of previous signature)"
+                f"DKIM2-Signature i={cur_i} MAIL FROM {cur_mf} did not match"
             )
     return errors
 
@@ -346,14 +350,15 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     # draft-04 §8: i= m= t= d= s= MUST be present; plus either nd= or both
     # mf= and rt= (and nd= excludes mf=/rt=).
     if not all([i_val, m_val, t_val0, d_val, s_tag]):
-        return [f"DKIM2-Signature i={i_val}: missing required tag(s) "
-                f"(need i=, m=, t=, d=, s=)"]
+        for tag_name, tag_val in (
+            ("i", i_val), ("m", m_val), ("t", t_val0), ("d", d_val), ("s", s_tag),
+        ):
+            if not tag_val:
+                return [f"DKIM2-Signature i={i_val} tag={tag_name} missing"]
     if nd_val and (mf_val or rt_val):
-        return [f"DKIM2-Signature i={i_val} tag=nd was unexpected: "
-                f"nd= excludes mf=/rt="]
+        return [f"DKIM2-Signature i={i_val} tag=nd was unexpected"]
     if not nd_val and not (mf_val and rt_val):
-        return [f"DKIM2-Signature i={i_val}: missing chain tags "
-                f"(need nd= or both mf=+rt=)"]
+        return [f"DKIM2-Signature i={i_val} tag=mf missing"]
 
     # §7.3 SHOULD: n= nonce must not exceed 64 characters
     n_val = _extract_tag(value, "n")
@@ -471,7 +476,7 @@ def _classify_status(errors: list[str]) -> str:
     if 'temperror' in e:
         return 'temperror'
     # Crypto/hash/custody failures
-    if any(k in e for k in ('failed', 'mismatch', 'break', 'expired')):
+    if any(k in e for k in ('failed', 'mismatch', 'break', 'expired', 'did not match')):
         return 'fail'
     # Structural/format problems
     return 'permerror'
