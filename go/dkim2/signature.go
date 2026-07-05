@@ -69,7 +69,9 @@ type VerifyOptions struct {
 func parseSig(raw string) (*DKIM2Signature, error) {
 	colon := strings.IndexByte(raw, ':')
 	if colon < 0 {
-		return nil, fmt.Errorf("invalid DKIM2-Signature: no colon")
+		// i= is not yet parsed at this point (the tag-value list hasn't even
+		// been split off the field name), so no i=<x> prefix is available.
+		return nil, fmt.Errorf("DKIM2-Signature: no colon found")
 	}
 	tvl := parseTagValueList(raw[colon+1:])
 	sig := &DKIM2Signature{}
@@ -77,21 +79,23 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	if v := tvl.get("i"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return nil, fmt.Errorf("invalid i=: %w", err)
+			// The i= tag itself is malformed, so its value can't be trusted
+			// to prefix this error.
+			return nil, fmt.Errorf("DKIM2-Signature tag=i syntax error: %w", err)
 		}
 		sig.Sequence = n
 	}
 	if v := tvl.get("m"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return nil, fmt.Errorf("invalid m=: %w", err)
+			return nil, fmt.Errorf("DKIM2-Signature i=%d tag=m syntax error: %w", sig.Sequence, err)
 		}
 		sig.MIVersion = n
 	}
 	if v := tvl.get("t"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid t=: %w", err)
+			return nil, fmt.Errorf("DKIM2-Signature i=%d tag=t syntax error: %w", sig.Sequence, err)
 		}
 		sig.Timestamp = n
 	}
@@ -149,10 +153,10 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		return nil, fmt.Errorf("DKIM2-Signature i=%d: missing required i=/m=/t= tag", sig.Sequence)
 	}
 	if sig.Domain == "" {
-		return nil, fmt.Errorf("missing required d= tag in DKIM2-Signature")
+		return nil, fmt.Errorf("DKIM2-Signature i=%d tag=d missing", sig.Sequence)
 	}
 	if len(sig.Sigs) == 0 {
-		return nil, fmt.Errorf("missing required s= tag in DKIM2-Signature")
+		return nil, fmt.Errorf("DKIM2-Signature i=%d tag=s missing", sig.Sequence)
 	}
 	hasND := tvl.has("nd")
 	hasMF := tvl.has("mf")
