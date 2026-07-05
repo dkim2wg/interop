@@ -324,7 +324,9 @@ sub _sig_level {
                     my $cur_d = $sig->domain // '';
                     $lvl{custody} = (lc($prev_nd) eq lc($cur_d))
                         ? { ok => 1, detail => "nd=$prev_nd matches d= of i=$num" }
-                        : { ok => 0, detail => "nd=$prev_nd does not match d= of i=$num" };
+                        # Canonical spec-04 wording (Task 3.1), verbatim "MAIL nd="
+                        # typo preserved, keyed on the *previous* hop's i=.
+                        : { ok => 0, detail => "DKIM2-Signature i=" . ($num - 1) . " MAIL nd= does not match" };
                 } else {
                     my $mf = $sig->mail_from;
                     if ($mf && $mf ne '<>') {
@@ -332,7 +334,9 @@ sub _sig_level {
                         my @rts = do { my $rt = $prev->rcpt_to; ref $rt eq 'ARRAY' ? @$rt : ($rt // ()) };
                         my $ok = grep { relaxed_domain_match($mfd // '', extract_domain($_) // '') } @rts;
                         $lvl{custody} = $ok ? { ok => 1, detail => '' }
-                                            : { ok => 0, detail => "mf domain " . ($mfd // '?') . " not in previous rt domains" };
+                                            # Canonical spec-04 wording (Task 3.1), same
+                                            # form as Verifier.pm's chain-of-custody permerror.
+                                            : { ok => 0, detail => "DKIM2-Signature i=$num MAIL FROM $mf did not match" };
                     }
                 }
             }
