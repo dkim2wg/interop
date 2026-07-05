@@ -800,13 +800,19 @@ git add -A && git commit -m "test: refresh interop fixtures for spec-04 error st
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
 
-### Task 5.3: Deploy the Perl stack + live smoke test
+### Task 5.3: Deploy the full stack (Perl + Mailman + Sympa) + live smoke test
 
 **Files:** none (deploy) — follow `deploy/SERVER.md`.
 
-- [ ] **Step 1:** Merge `dkim2-spec-04-upgrade` to `master` locally (per project convention — finishing a dev branch here is always "merge locally"), then on the demo box `git pull` the interop repo and `rsync` the Mailman/Sympa branches; restart the milter/reflector services per `deploy/SERVER.md`.
-- [ ] **Step 2:** Send a live test message through `mail.dkim2.com` and confirm the outbound `X-DKIM2-Info` header advertises `draft=ietf-dkim-dkim2-spec-04` and the message verifies (`dkim2-milter` logs `pass`).
-- [ ] **Step 3:** Record the validation in `deploy/SERVER.md` or a short note commit.
+Deploy ALL THREE deployed components to the demo box, not just the Perl milter/reflector: the Perl `Mail::DKIM2` stack, the **Mailman** handler, and the **Sympa** integration must all advertise `-04` on live mail.
+
+- [ ] **Step 1 (Perl stack):** Merge `dkim2-spec-04-upgrade` to `master` locally (per project convention — finishing a dev branch here is always "merge locally"), then on the demo box `git pull` the interop repo and restart the milter/reflector services per `deploy/SERVER.md`.
+- [ ] **Step 2 (Mailman):** Deploy the Mailman `dkim2` branch to the server's Mailman install (rsync/pull the `src/mailman/handlers/message_instance.py` change per `deploy/SERVER.md`'s Mailman procedure) and restart the Mailman service so the handler reloads.
+- [ ] **Step 3 (Sympa):** Deploy the Sympa `dkim2` branch (`src/lib/Sympa/Message.pm`) to the server's Sympa install and restart the Sympa services so `X-DKIM2-Info` picks up `-04`.
+- [ ] **Step 4 (smoke test):** Send a live test message through each path on `mail.dkim2.com` — direct milter, a Mailman list, and a Sympa list — and confirm each outbound message's `X-DKIM2-Info` header advertises `draft=ietf-dkim-dkim2-spec-04` and verifies (`dkim2-milter` logs `pass`).
+- [ ] **Step 5:** Record the validation (all three paths) in `deploy/SERVER.md` or a short note commit.
+
+> Note: Mailman and Sympa tests can't run in the local dev environment (no `tox`; Sympa deps). Their behavioral verification happens here, on the server, via the live smoke test.
 
 ---
 
