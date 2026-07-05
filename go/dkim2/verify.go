@@ -70,6 +70,16 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
+	// Local policy (stricter than spec-04): the top (highest i=) signature
+	// MUST NOT carry nd=. The only legitimate nd= producer emits the nd=
+	// signature together with the matching higher-i= signature at the same
+	// time, so nd= should never appear alone on the top signature. This is
+	// distinct from checkChainOfCustody's adjacency handling below, which
+	// still allows (and requires) nd= on non-top signatures.
+	if topSig != nil && topSig.NextDomain != "" {
+		return nil, fmt.Errorf("DKIM2-Signature i=%d unexpected nd= tag", topSig.Sequence)
+	}
+
 	if topSig != nil && topSig.MIVersion != maxMIVersion {
 		return []VerifyResult{{
 			Sequence: topSig.Sequence,
