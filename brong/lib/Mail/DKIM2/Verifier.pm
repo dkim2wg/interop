@@ -261,7 +261,7 @@ sub _verify_signature {
         signing_header => $sig_hdr_for_input,
     );
 
-    # draft-03 §8: a signature carries either nd= or both mf= and rt=, never
+    # draft-04 §8: a signature carries either nd= or both mf= and rt=, never
     # both forms. nd= together with mf=/rt= is a PERMERROR.
     my $nd_tag = $signature->get_tag('nd');
     my $mf_tag = $signature->get_tag('mf');
@@ -411,7 +411,7 @@ sub _verify_chain {
         my $cur_sig = $dk2_map{$cur_i}{sig};
         my $prev_sig = $dk2_map{$prev_i}{sig};
 
-        # draft-03 §11.4: an nd= hop declares the domain that signs the next
+        # draft-04 §11.4: an nd= hop declares the domain that signs the next
         # signature; nd= MUST exactly match that signature's d=.
         my $prev_nd = $prev_sig->next_domain;
         if (defined $prev_nd && length $prev_nd) {
@@ -515,7 +515,7 @@ between consecutive hops.
 
 Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-03, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-04, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

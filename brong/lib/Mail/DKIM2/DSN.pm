@@ -10,7 +10,7 @@ use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
 
-# Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (draft-03 §12.1.1).
+# Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (draft-04 §12.1.1).
 #
 # When a Forwarder receives a Delivery Status Notification for a message it
 # forwarded, it may propagate that DSN back towards the original sender. The
@@ -89,7 +89,7 @@ sub _set_report_type {
 }
 
 # Generate a fresh DKIM2-signed DSN for an inbound message, sent back to the
-# original sender (draft-03 §12.1). Used by the reflector-dsn address, which
+# original sender (draft-04 §12.1). Used by the reflector-dsn address, which
 # bounces every message regardless of whether it arrived DKIM2-signed.
 #
 # Args: raw (inbound message), signer (MailFrom => '<>'), to (envelope sender
@@ -253,7 +253,7 @@ __END__
 
 =head1 NAME
 
-Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (draft-03 §12.1.1)
+Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (draft-04 §12.1.1)
 
 =head1 SYNOPSIS
 

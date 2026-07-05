@@ -26,7 +26,7 @@ sub new {
     $self->set_tag('m', $args{Version})   if defined $args{Version};
     $self->set_tag('t', $args{Timestamp}) if defined $args{Timestamp};
     $self->set_tag('d', $args{Domain})    if defined $args{Domain};
-    # nd= (draft-03 §8.7) replaces mf=/rt= for an imaginary forwarding hop.
+    # nd= (draft-04 §8.7) replaces mf=/rt= for an imaginary forwarding hop.
     $self->set_tag('nd', $args{NextDomain}) if defined $args{NextDomain};
     $self->set_tag('n', $args{Nonce})     if defined $args{Nonce};
 
@@ -94,7 +94,7 @@ sub domain {
     return $self->get_tag('d');
 }
 
-# nd= the domain that signs the next DKIM2-Signature (draft-03 §8.7). Present
+# nd= the domain that signs the next DKIM2-Signature (draft-04 §8.7). Present
 # only for an imaginary forwarding hop, where it replaces mf=/rt=.
 sub next_domain {
     my $self = shift;
@@ -302,7 +302,7 @@ Mail::DKIM2::Signature - Parse and construct DKIM2-Signature headers
 
 =head1 DESCRIPTION
 
-Represents a DKIM2-Signature header as defined in draft-ietf-dkim-dkim2-spec-02.
+Represents a DKIM2-Signature header as defined in draft-ietf-dkim-dkim2-spec-04.
 Extends L<Mail::DKIM2::TagValueList> for tag-value parsing and serialization.
 
 B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet

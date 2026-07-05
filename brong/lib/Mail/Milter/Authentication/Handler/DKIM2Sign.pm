@@ -476,7 +476,7 @@ so the signature covers all headers including those added by other handlers.
 Signing keys can be configured statically per domain, or looked up dynamically
 via an HTTP REST endpoint.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-03, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-04, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 
@@ -494,7 +494,7 @@ origination and each copy carries a disclosed recipient set.  But at
 B<origination / submission>, a message with undisclosed (Bcc) recipients —
 envelope recipients that do not appear in the C<To:>/C<Cc:> headers — will have
 those Bcc addresses recorded in C<rt=>, visible to every recipient.  That
-B<leaks the Bcc>, contrary to draft-ietf-dkim-dkim2-spec-03, whose C<rt=>
+B<leaks the Bcc>, contrary to draft-ietf-dkim-dkim2-spec-04, whose C<rt=>
 description requires that Bcc recipients not be revealed to other recipients.
 
 The milter cannot fix this itself: the Postfix milter protocol modifies a

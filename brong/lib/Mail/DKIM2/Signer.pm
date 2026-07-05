@@ -72,7 +72,7 @@ sub finish_header {
     ];
 
     # Create the signature object
-    # draft-03 §9.3: when NextDomain is set this is an imaginary forwarding
+    # draft-04 §9.3: when NextDomain is set this is an imaginary forwarding
     # hop — emit nd= and omit mf=/rt= (Signature->new enforces the exclusion).
     my $signature = Mail::DKIM2::Signature->new(
         Sequence   => $next_i,
@@ -190,7 +190,7 @@ existing DKIM2-Signature headers on the message.
 
 Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-03, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-04, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

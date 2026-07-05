@@ -2,7 +2,7 @@ package Mail::DKIM2::TagValueList;
 use strict;
 use warnings;
 
-# Simple tag=value list as defined in draft-ietf-dkim-dkim2-spec-02 Sections 6 and 7.
+# Simple tag=value list as defined in draft-ietf-dkim-dkim2-spec-04 Sections 6 and 7.
 # Preserves insertion order for serialization.
 
 sub new {
@@ -68,7 +68,7 @@ Mail::DKIM2::TagValueList - Parse and serialize DKIM2 tag=value lists
 =head1 DESCRIPTION
 
 Base class for tag=value list parsing and serialization as used in
-DKIM2-Signature and Message-Instance headers (draft-ietf-dkim-dkim2-spec-02
+DKIM2-Signature and Message-Instance headers (draft-ietf-dkim-dkim2-spec-04
 Sections 6 and 7).  Preserves insertion order for deterministic output.
 
 B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet

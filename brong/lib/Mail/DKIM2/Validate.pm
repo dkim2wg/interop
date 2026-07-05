@@ -319,7 +319,7 @@ sub _sig_level {
             if ($prev) {
                 my $prev_nd = $prev->next_domain;
                 if (defined $prev_nd && length $prev_nd) {
-                    # draft-03 §11.4: an nd= "imaginary hop" must name the domain
+                    # draft-04 §11.4: an nd= "imaginary hop" must name the domain
                     # that signs the next signature; nd= MUST exactly match its d=.
                     my $cur_d = $sig->domain // '';
                     $lvl{custody} = (lc($prev_nd) eq lc($cur_d))
@@ -371,6 +371,6 @@ structured breakdown of each DKIM2-Signature and Message-Instance level
 (including MI undo), for display by the web validator. Never dies. See
 C<docs/superpowers/specs/2026-06-18-dkim2-web-validator-design.md>.
 
-B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-03.
+B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-04.
 
 =cut
