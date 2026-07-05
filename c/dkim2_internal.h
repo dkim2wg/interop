@@ -44,7 +44,7 @@ typedef struct dkim2_sig {
     char *mf;               /* mf= decoded MAIL FROM e.g. "<user@example.com>" */
     char **rt;              /* rt= decoded RCPT TO values (NULL-terminated) */
     char *d;                /* d= signing domain */
-    char *nd;               /* nd= next-domain (draft-03 §8.7); NULL if absent */
+    char *nd;               /* nd= next-domain (draft-04 §8.7); NULL if absent */
     dkim2_sigset_t *ssets;  /* s= signature sets */
     int n_ssets;
     char **flags;           /* f= flags (NULL-terminated) */

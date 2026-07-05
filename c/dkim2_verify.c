@@ -537,7 +537,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         dkim2_sig_t *cur  = sig_arr[k];
         dkim2_sig_t *prev = sig_arr[k - 1];
 
-        /* draft-03 §11.4: an nd= hop declares the next sig's signing domain;
+        /* draft-04 §11.4: an nd= hop declares the next sig's signing domain;
            nd= MUST exactly match that signature's d=. */
         if (prev->nd) {
             if (!cur->d || strcasecmp(prev->nd, cur->d) != 0)

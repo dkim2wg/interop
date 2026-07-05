@@ -139,7 +139,7 @@ char **dkim2_apply_header_recipe(const char *r_json,
 
     cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
     if (h && cJSON_IsNull(h)) {
-        /* draft-03 §5.1: a null header recipe is no longer permitted. */
+        /* draft-04 §5.1: a null header recipe is no longer permitted. */
         cJSON_Delete(root);
         return NULL;
     }

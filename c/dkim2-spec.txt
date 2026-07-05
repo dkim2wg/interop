@@ -5,14 +5,14 @@
 Network Working Group                                         R. Clayton
 Internet-Draft                                                     Yahoo
 Intended status: Standards Track                               W. Chuang
-Expires: 22 October 2026                                          Google
+Expires: 6 January 2027                                           Google
                                                              B. Gondwana
                                                         Fastmail Pty Ltd
-                                                           20 April 2026
+                                                             5 July 2026
 
 
             DomainKeys Identified Mail Signatures v2 (DKIM2)
-                     draft-ietf-dkim-dkim2-spec-01
+                     draft-ietf-dkim-dkim2-spec-04
 
 Abstract
 
@@ -53,12 +53,12 @@ Status of This Memo
 
 
 
-Clayton, et al.          Expires 22 October 2026                [Page 1]
+Clayton, et al.          Expires 6 January 2027                 [Page 1]
 
-Internet-Draft              DKIM2 Signatures                  April 2026
+Internet-Draft              DKIM2 Signatures                   July 2026
 
 
-   This Internet-Draft will expire on 22 October 2026.
+   This Internet-Draft will expire on 6 January 2027.
 
 Copyright Notice
 
@@ -77,101 +77,109 @@ Copyright Notice
 Table of Contents
 
    1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   4
-     1.1.  DKIM2 Architecture Documents  . . . . . . . . . . . . . .   4
-   2.  Terminology and Definitions . . . . . . . . . . . . . . . . .   4
+     1.1.  DKIM2 Architecture Documents  . . . . . . . . . . . . . .   5
+   2.  Terminology and Definitions . . . . . . . . . . . . . . . . .   5
      2.1.  Signer  . . . . . . . . . . . . . . . . . . . . . . . . .   5
-     2.2.  Forwarder . . . . . . . . . . . . . . . . . . . . . . . .   5
+     2.2.  Forwarder . . . . . . . . . . . . . . . . . . . . . . . .   6
      2.3.  Reviser . . . . . . . . . . . . . . . . . . . . . . . . .   6
      2.4.  Verifier  . . . . . . . . . . . . . . . . . . . . . . . .   6
      2.5.  Signing Domain  . . . . . . . . . . . . . . . . . . . . .   6
      2.6.  Originator  . . . . . . . . . . . . . . . . . . . . . . .   6
-     2.7.  Header Field  . . . . . . . . . . . . . . . . . . . . . .   6
-     2.8.  Tag . . . . . . . . . . . . . . . . . . . . . . . . . . .   6
+     2.7.  Header Field  . . . . . . . . . . . . . . . . . . . . . .   7
+     2.8.  Tag . . . . . . . . . . . . . . . . . . . . . . . . . . .   7
      2.9.  Message Body  . . . . . . . . . . . . . . . . . . . . . .   7
      2.10. Hash  . . . . . . . . . . . . . . . . . . . . . . . . . .   7
      2.11. Glossary  . . . . . . . . . . . . . . . . . . . . . . . .   7
      2.12. Whitespace  . . . . . . . . . . . . . . . . . . . . . . .   8
      2.13. Imported ABNF Tokens  . . . . . . . . . . . . . . . . . .   8
-     2.14. Common ABNF Tokens  . . . . . . . . . . . . . . . . . . .   8
+     2.14. Common ABNF Tokens  . . . . . . . . . . . . . . . . . . .   9
    3.  Signing and Verification Cryptographic Algorithms . . . . . .   9
      3.1.  The SHA256 Hashing Algorithm  . . . . . . . . . . . . . .   9
-     3.2.  The RSA-SHA256 Signing Algorithm  . . . . . . . . . . . .   9
+     3.2.  The RSA-SHA256 Signing Algorithm  . . . . . . . . . . . .  10
      3.3.  The Ed25519-SHA256 Signing Algorithm  . . . . . . . . . .  10
      3.4.  Other Algorithms  . . . . . . . . . . . . . . . . . . . .  10
      3.5.  Selectors . . . . . . . . . . . . . . . . . . . . . . . .  10
      3.6.  Key Management  . . . . . . . . . . . . . . . . . . . . .  11
-   4.  Recipes . . . . . . . . . . . . . . . . . . . . . . . . . . .  11
-     4.1.  Header Recipes  . . . . . . . . . . . . . . . . . . . . .  13
-     4.2.  Body Recipes  . . . . . . . . . . . . . . . . . . . . . .  14
-   5.  Message Hash Values . . . . . . . . . . . . . . . . . . . . .  15
-     5.1.  Computing the Body Hash . . . . . . . . . . . . . . . . .  15
-     5.2.  Computing the Header Fields Hash  . . . . . . . . . . . .  16
+   4.  Unsigned Header Fields  . . . . . . . . . . . . . . . . . . .  11
+     4.1.  Summary . . . . . . . . . . . . . . . . . . . . . . . . .  12
+   5.  Recipes . . . . . . . . . . . . . . . . . . . . . . . . . . .  13
+     5.1.  Header Recipes  . . . . . . . . . . . . . . . . . . . . .  14
+     5.2.  Body Recipes  . . . . . . . . . . . . . . . . . . . . . .  16
+   6.  Message Hash Values . . . . . . . . . . . . . . . . . . . . .  16
 
 
 
-Clayton, et al.          Expires 22 October 2026                [Page 2]
+Clayton, et al.          Expires 6 January 2027                 [Page 2]
 
-Internet-Draft              DKIM2 Signatures                  April 2026
+Internet-Draft              DKIM2 Signatures                   July 2026
 
 
-   6.  The Message-Instance Header Field . . . . . . . . . . . . . .  17
-     6.1.  m= the revision number of the Message-Instance header
-           field . . . . . . . . . . . . . . . . . . . . . . . . . .  18
-     6.2.  r= recipes to recreate the previous instance of the
-           message . . . . . . . . . . . . . . . . . . . . . . . . .  18
-     6.3.  h= the hash values for the message  . . . . . . . . . . .  18
-   7.  The DKIM2-Signature Header Field  . . . . . . . . . . . . . .  19
-     7.1.  i= the sequence number of the DKIM2-Signature header
+     6.1.  Computing the Body Hash . . . . . . . . . . . . . . . . .  17
+     6.2.  Computing the Header Fields Hash  . . . . . . . . . . . .  17
+   7.  The Message-Instance Header Field . . . . . . . . . . . . . .  19
+     7.1.  m= the revision number of the Message-Instance header
            field . . . . . . . . . . . . . . . . . . . . . . . . . .  19
-     7.2.  m= the highest numbered Message-Instance header field . .  20
-     7.3.  n= nonce value  . . . . . . . . . . . . . . . . . . . . .  20
-     7.4.  t= signature timestamp  . . . . . . . . . . . . . . . . .  20
-     7.5.  mf= the MAIL FROM used when the message was sent  . . . .  21
-     7.6.  rt= the RCPT TO value(s) used when the message was
-           sent  . . . . . . . . . . . . . . . . . . . . . . . . . .  21
-     7.7.  d= the domain associated with this signature. . . . . . .  22
-     7.8.  s= the signature value(s) for the message . . . . . . . .  22
-     7.9.  f= flags  . . . . . . . . . . . . . . . . . . . . . . . .  23
-   8.  Signer Actions  . . . . . . . . . . . . . . . . . . . . . . .  24
-     8.1.  Add any Necessary Message-Instance Header Fields  . . . .  24
-     8.2.  Provide a "Chain of Custody" for the Message  . . . . . .  24
-     8.3.  The Relaxed Domain Match Algorithm  . . . . . . . . . . .  25
-     8.4.  Select a Private Key and Corresponding Selector Value . .  26
-     8.5.  Calculate a Signature Value . . . . . . . . . . . . . . .  26
-   9.  Verification Requirements . . . . . . . . . . . . . . . . . .  27
-     9.1.  Check Most Recent Signature and Hashes for the Message  .  27
-     9.2.  Checking the Message-Instance Header Fields . . . . . . .  28
-     9.3.  Checking the DKIM2-Signature Header Fields  . . . . . . .  28
-     9.4.  Interpret Results/Apply Local Policy  . . . . . . . . . .  28
-   10. Verifier Actions  . . . . . . . . . . . . . . . . . . . . . .  29
-     10.1.  Output States  . . . . . . . . . . . . . . . . . . . . .  29
-     10.2.  Ensure that the DKIM2 Header Fields are Valid  . . . . .  30
-     10.3.  Check the timestamps . . . . . . . . . . . . . . . . . .  31
-     10.4.  Check the Chain-of-Custody . . . . . . . . . . . . . . .  31
-     10.5.  Fetch the Public Key . . . . . . . . . . . . . . . . . .  32
-     10.6.  Perform the Signature Verification Calculation . . . . .  32
-     10.7.  Validating Body and Header hashes  . . . . . . . . . . .  33
-   11. Delivery Status Notifications in the DKIM2 ecosystem  . . . .  33
-     11.1.  DSN contents . . . . . . . . . . . . . . . . . . . . . .  34
-       11.1.1.  Bounce Propagation . . . . . . . . . . . . . . . . .  34
-       11.1.2.  Authentication of Inbound Bounce Notifications . . .  34
-   12. Preventing Transport Conversions  . . . . . . . . . . . . . .  35
-   13. EAI (RFC6530) Considerations for DKIM2  . . . . . . . . . . .  36
-   14. IANA Considerations . . . . . . . . . . . . . . . . . . . . .  36
-   15. Security Considerations . . . . . . . . . . . . . . . . . . .  36
-   16. Changes from Earlier Versions . . . . . . . . . . . . . . . .  36
-   17. References  . . . . . . . . . . . . . . . . . . . . . . . . .  37
-     17.1.  Normative References . . . . . . . . . . . . . . . . . .  37
+     7.2.  r= recipes to recreate the previous instance of the
+           message . . . . . . . . . . . . . . . . . . . . . . . . .  19
+     7.3.  h= the hash values for the message  . . . . . . . . . . .  20
+   8.  The DKIM2-Signature Header Field  . . . . . . . . . . . . . .  20
+     8.1.  i= the sequence number of the DKIM2-Signature header
+            field  . . . . . . . . . . . . . . . . . . . . . . . . .  21
+     8.2.  m= the highest numbered Message-Instance header field . .  21
+     8.3.  n= nonce value  . . . . . . . . . . . . . . . . . . . . .  21
+     8.4.  t= signature timestamp  . . . . . . . . . . . . . . . . .  21
+     8.5.  mf= the MAIL FROM used when the message was sent  . . . .  22
+     8.6.  rt= the RCPT TO value(s) used when the message was
+            sent . . . . . . . . . . . . . . . . . . . . . . . . . .  22
+     8.7.  nd= the domain that will appear in the next DKIM2-Signature
+            header field . . . . . . . . . . . . . . . . . . . . . .  23
+     8.8.  d= the domain associated with this signature. . . . . . .  23
+     8.9.  s= the signature value(s) for the message . . . . . . . .  24
+     8.10. f= flags  . . . . . . . . . . . . . . . . . . . . . . . .  24
+   9.  Signer Actions  . . . . . . . . . . . . . . . . . . . . . . .  25
+     9.1.  Add any Necessary Message-Instance Header Fields  . . . .  26
+     9.2.  Provide a "Chain of Custody" for the Message  . . . . . .  26
+     9.3.  "Chain of Custody" for Imaginary Hops . . . . . . . . . .  27
+     9.4.  The Relaxed Domain Match Algorithm  . . . . . . . . . . .  28
+     9.5.  Select a Private Key and Corresponding Selector Value . .  29
+     9.6.  Calculate a Signature Value . . . . . . . . . . . . . . .  29
+   10. Verification Requirements . . . . . . . . . . . . . . . . . .  30
+     10.1.  Check Most Recent Signature and Hashes for the
+            Message  . . . . . . . . . . . . . . . . . . . . . . . .  30
+     10.2.  Checking the Message-Instance Header Fields  . . . . . .  30
+     10.3.  Checking the DKIM2-Signature Header Fields . . . . . . .  31
+     10.4.  Interpret Results/Apply Local Policy . . . . . . . . . .  31
+   11. Verifier Actions  . . . . . . . . . . . . . . . . . . . . . .  31
+     11.1.  Output States  . . . . . . . . . . . . . . . . . . . . .  32
+     11.2.  Ensure that the DKIM2 Header Fields are Valid  . . . . .  33
+     11.3.  Check the Timestamps . . . . . . . . . . . . . . . . . .  33
+     11.4.  Check the Chain-of-Custody . . . . . . . . . . . . . . .  34
+     11.5.  Fetch the Public Key . . . . . . . . . . . . . . . . . .  34
+     11.6.  Perform the Signature Verification Calculation . . . . .  35
+     11.7.  Validating Body and Header Hashes  . . . . . . . . . . .  36
+     11.8.  Check if donotmodify and donotexplode Requests Were
+            Honored  . . . . . . . . . . . . . . . . . . . . . . . .  36
+   12. Delivery Status Notifications in the DKIM2 Ecosystem  . . . .  36
+     12.1.  DSN Contents . . . . . . . . . . . . . . . . . . . . . .  37
+       12.1.1.  DSN Propagation  . . . . . . . . . . . . . . . . . .  37
 
 
 
-Clayton, et al.          Expires 22 October 2026                [Page 3]
+Clayton, et al.          Expires 6 January 2027                 [Page 3]
 
-Internet-Draft              DKIM2 Signatures                  April 2026
+Internet-Draft              DKIM2 Signatures                   July 2026
 
 
-     17.2.  Informative References . . . . . . . . . . . . . . . . .  38
-   Authors' Addresses  . . . . . . . . . . . . . . . . . . . . . . .  39
+       12.1.2.  Authentication of Inbound DSNs . . . . . . . . . . .  38
+   13. Preventing Transport Conversions  . . . . . . . . . . . . . .  38
+   14. EAI (RFC6530) Considerations for DKIM2  . . . . . . . . . . .  39
+   15. IANA Considerations . . . . . . . . . . . . . . . . . . . . .  39
+   16. Security Considerations . . . . . . . . . . . . . . . . . . .  39
+   17. Changes from Earlier Versions . . . . . . . . . . . . . . . .  39
+   18. References  . . . . . . . . . . . . . . . . . . . . . . . . .  41
+     18.1.  Normative References . . . . . . . . . . . . . . . . . .  41
+     18.2.  Informative References . . . . . . . . . . . . . . . . .  42
+   Authors' Addresses  . . . . . . . . . . . . . . . . . . . . . . .  43
 
 1.  Introduction
 
@@ -205,6 +213,19 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    was considered to be spam) that the eventual recipient of the message
    wishes to share.
 
+
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                 [Page 4]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
 1.1.  DKIM2 Architecture Documents
 
    Readers are advised to be familiar with the material in TBA, TBA and
@@ -215,16 +236,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 2.  Terminology and Definitions
 
    This section defines terms used in the rest of the document.
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026                [Page 4]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
    The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
    "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
@@ -259,6 +270,18 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    some way.  The key point is that a message must be signed before it
    leaves the administrative domain of the Signer.
 
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                 [Page 5]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
 2.2.  Forwarder
 
    [RFC5598] defines a Relay as transmitting or retransmitting a message
@@ -269,18 +292,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    receives a message and then, as an alternative to delivering it into
    a destination mailbox, can forward it on to another system in an
    automated, pre-determined, manner.
-
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026                [Page 5]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
 2.3.  Reviser
 
@@ -313,6 +324,20 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    Originator adds the first Message-Instance header field (m=1) and the
    first DKIM2-Signature header field (i=1) to the message.
 
+
+
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                 [Page 6]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
 2.7.  Header Field
 
    As defined in [RFC5322], a header field is a single logical line in
@@ -323,20 +348,9 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
 2.8.  Tag
 
-   A named element within a header field (see Section 6 and Section 7).
+   A named element within a header field (see Section 7 and Section 8).
    A tag consists of a tag-name and a tag-value separated by an equals
    sign.  Tags are separated by semicolons within the header field.
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026                [Page 6]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
 2.9.  Message Body
 
@@ -373,6 +387,13 @@ Internet-Draft              DKIM2 Signatures                  April 2026
       state, by specifying which parts of the header fields or body to
       copy and which literal values to substitute.
 
+
+
+Clayton, et al.          Expires 6 January 2027                 [Page 7]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
    Chain of Custody  The sequence of DKIM2-Signature header fields on a
       message, each recording the SMTP envelope addresses (MAIL FROM and
       RCPT TO) used at each hop.  A valid chain of custody demonstrates
@@ -383,16 +404,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
       used to look up the public key in DNS.  The selector value is
       combined with the signing domain to form the DNS query name:
       selector._domainkey.domain.
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026                [Page 7]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
 2.12.  Whitespace
 
@@ -429,6 +440,16 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    *  "field-name" (name of a header field)
 
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                 [Page 8]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
    Other tokens not defined herein are imported from [RFC5234].  These
    are intuitive primitives such as SP, HTAB, WSP, ALPHA, DIGIT, CRLF,
    etc.
@@ -436,19 +457,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 2.14.  Common ABNF Tokens
 
    The following ABNF tokens are used elsewhere in this document:
-
-
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026                [Page 8]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
    ALPHADIGITD  = (ALPHA / DIGIT / "-" / "_")
 
@@ -459,8 +467,9 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    base64string =  ALPHADIGITPS *(ALPHADIGITPS) [[FWS] "=" [[FWS] "="]]
 
    Note that base64strings are defined in [RFC4648], but that document
-   does not contain any ABNF.  Note that a base64string MUST be padded
-   with trailing = characters if needed.
+   does not contain any ABNF.  A base64string MUST be padded with zero
+   bits and trailing = characters provided if needed.  This allows
+   implementations to compare base64string values without decoding them.
 
    Note that the definition of base64string allows for the presence of
    FWS, which simplifies folding header fields to an allowable line
@@ -479,16 +488,29 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 3.1.  The SHA256 Hashing Algorithm
 
    The SHA256 hashing algorithm is used to compute body and header
-   hashes as defined in Section 5.1 and Section 5.2.
+   hashes as defined in Section 6.1 and Section 6.2.
 
    The resultant values are identified by the text string "sha256" and
    placed into Message-Instance header fields.
+
+
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                 [Page 9]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
 3.2.  The RSA-SHA256 Signing Algorithm
 
    The RSA-SHA256 Signing Algorithm computes a hash over all the
    Message-Instance and DKIM2-Signature header fields as described in
-   Section 8.5 using SHA-256 (FIPS-180-4-2015) as the hash-alg.  That
+   Section 9.6 using SHA-256 (FIPS-180-4-2015) as the hash-alg.  That
    hash is then signed by the Signer using the RSA algorithm (defined in
    PKCS#1 version 1.5 [RFC8017]) as the crypt-alg and the Signer's
    private key.  The hash MUST NOT be truncated or converted into any
@@ -499,13 +521,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    able to validate signatures with keys ranging from 1024 bits to 2048
    bits, and they MAY be able to validate signatures with larger keys.
 
-
-
-Clayton, et al.          Expires 22 October 2026                [Page 9]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    The signature value (expressed in base64) is placed (with the
    identifying text string "rsa-sha256") into DKIM2-Signature header
    fields.
@@ -514,7 +529,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    The Ed25519-SHA256 Signing Algorithm computes a hash over all the
    Message-Instance and DKIM2-Signature fields as described in
-   Section 8.5 using SHA-256 (FIPS-180-4-2015) as the hash-alg.  It
+   Section 9.6 using SHA-256 (FIPS-180-4-2015) as the hash-alg.  It
    signs the hash with the PureEdDSA variant Ed25519, as defined in
    Section 5.1 of [RFC8032].
 
@@ -531,6 +546,21 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    To support multiple concurrent public keys per signing domain, the
    key namespace is subdivided using "selectors".
+
+
+
+
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 10]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    The number of public keys and corresponding selectors for each domain
    is determined by the domain owner.  Many domain owners will use just
@@ -551,17 +581,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    selector = Domain
 
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 10]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
 3.6.  Key Management
 
    Some level of assurance is required that a public key is associated
@@ -579,7 +598,91 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    Further details can be found in [DKIMKEYS].
 
-4.  Recipes
+4.  Unsigned Header Fields
+
+   As explained in detail below, DKIM2 will provide a cryptographic
+   signature for all header fields that are present within a message,
+   whether they have a standardised meaning or are just placed there at
+   the whim of a particular sender.
+
+   However, for reasons of simplicity some header fields are not signed
+   and processing of the message MUST be performed as if they were not
+   present.
+
+   The exceptions fall into three classes:
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 11]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+   1.  Trace Headers
+
+       "Received" or "Return-Path" header fields MUST be ignored.  These
+       are Trace Headers as described in [RFC5321] and serve only to
+       document details of the SMTP transmission process.
+
+       The experimental "Delivered-To:" header field ([RFC9228]) MUST
+       also be ignored.
+
+   2.  Other Email Authentication Mechanisms
+
+       "DKIM-Signature" header fields and any header fields whose field
+       name starts with "ARC-" MUST be ignored.
+
+       Not including DKIM1 and ARC header fields means that systems that
+       wish to add other types of signature as well as a DKIM2 signature
+       are free to do this in any convenient order.
+
+   3.  Headers With Purely Local Meaning
+
+       "Authentication-Results header fields MUST be ignored.  These
+       header fields are defined in [RFC8601] where it is made clear
+       that their contents are only intended for use within the the
+       ""trust boundary" of an Administrative Management Domain".  As
+       they can only used reliably within that trust boundary there has
+       been no need to secure them cryptographically and given how they
+       may be added or removed as messages cross trust boundaries it is
+       inconvenient and unnecessary for DKIM2 to sign them.
+
+       Header fields with a header field name starting with "X-" MUST be
+       ignored.  Currently deployed email systems use these fields as
+       proprietary Trace headers or for other proprietary reasons.  They
+       have no defined meaning for other systems and it considerably
+       simplifies reporting on changes to header fields to ignore them.
+       Note that the recommendations in [RFC6648] mean that it is most
+       unlikely that any header field name starting "X-" will be
+       developed within the IETF.
+
+4.1.  Summary
+
+   These header fields are not signed:
+
+
+
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 12]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+   ARC-*:
+   Authentication-Results:
+   Delivered-To:
+   DKIM-Signature:
+   Received:
+   Return-Path:
+   X-*:
+
+5.  Recipes
 
    A set of "recipes" is used to recreate the previous version of the
    body and/or header fields of a message.  The recipes are provided
@@ -593,31 +696,12 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    "type": "object",
    "properties": {
      "h": {
-       "description": [ "recipes to recreate header fields",
-         "keys are header field names matched case-insensitively",
-         "and there MUST NOT be keys that differ only in case"],
-       "oneOf": [
-         {
-           "description": "per-field-name recipe arrays",
-           "type": "object",
-           "minProperties": 1,
-           "additionalProperties": { "$ref": "#/$defs/recipe-steps" }
-         },
-         {
-           "description": "previous header state cannot be recreated",
-           "type": "null"
-         }
-       ]
+       "description": "recipes to recreate specific header fields",
+       "type": "object",
+       "minProperties": 1,
+       "additionalProperties": { "$ref": "#/$defs/recipe-steps" }
      },
      "b": {
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 11]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
        "description": "recipes to recreate the body",
        "oneOf": [
          {
@@ -627,14 +711,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
          {
            "description": "previous body state cannot be recreated",
            "type": "null"
-         },
-         {
-           "description": "body was truncated (DSN)",
-           "type": "object",
-           "properties": {
-             "z": { "type": "boolean", "const": true }
-           },
-           "required": ["z"], "additionalProperties": false
          }
        ]
      }
@@ -646,6 +722,14 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    "$defs": {
      "recipe-steps": {
        "type": "array",
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 13]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
        "items": {
          "oneOf": [
            {
@@ -666,14 +750,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
                "d": { "type": "array",
                  "items": { "type": "string" },
                  "minItems": 1
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 12]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
                }
              },
              "required": ["d"], "additionalProperties": false
@@ -688,24 +764,32 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    Schema organisation, and the relevant specification document is
    linked to by the $schema field in each JSON schema.
 
-4.1.  Header Recipes
+5.1.  Header Recipes
 
-   A Header Recipe is an array of instructions applied to the specified
-   header fields with the given header field name.  These instructions
-   are applied in order to the message which has been received so as to
-   recreate the message as it was before modifications were made.
+   A Header Recipe is an array of instructions ("recipes") applied to
+   the specified header fields with the given header field name.  These
+   recipes are applied in order to the message which has been received
+   so as to recreate the message as it was before modifications were
+   made.  Recipes MUST be provided for any relevant header field (see
+   Section 4 for header fields that are not relevant) that is changed;
+   i.e. it is not possible to indicate that the previous state of the
+   header fields cannot be recreated.
 
    If there is no "h" field in the JSON object then there was no
    modification to the header fields.
 
-   If the "h" field value is null (there are no recipes for any header
-   field) then the previous state of the header fields cannot be
-   recreated.  Verifiers of the message may be able to determine, by
-   seeing which entity makes this declaration, that this is acceptable
-   to them because, for example, that entity is providing a
-   contractually arranged service.
 
-   Matching of header field names is always done without regard to case.
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 14]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+   Matching of header field names is always done without regard to case
+   and there MUST NOT be JSON keys that differ only in case.  Recipes
+   SHOULD NOT be specified for header fields that will not be signed
+   (see Section 4
 
    If a header field name is not present in the JSON object then all
    header fields with that header field name are to be retained.
@@ -720,15 +804,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    field instance encountered with any particular header field name is
    numbered 1, the header field (with the same header field name) above
    that is numbered 2, and so on.
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 13]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
    The header fields should be treated as being unwrapped (in the normal
    [RFC5321] manner).  That is, all of the physical lines that form a
@@ -750,12 +825,24 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    in the array is treated as a value to which the relevant header field
    name and a colon is prepended and a CRLF is appended and the
    resultant string is then emitted.  Note that the way in which hashes
-   are calculated (see Section 5.2) means that no heed needs to be taken
+   are calculated (see Section 6.2) means that no heed needs to be taken
    of wrapping or the case of the header field name.  The text strings
    MUST NOT contain CR or LF characters.  If a string is empty then the
    CRLF will immediately follow the header field name and colon.
 
-4.2.  Body Recipes
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 15]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+5.2.  Body Recipes
 
    A Body Recipe is an array of instructions applied to the message body
    which can recreate the message as it was before modifications were
@@ -776,16 +863,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    blank line that indicates that there are no more header fields) is
    numbered 1.
 
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 14]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    The recipes are processed in order and the resulting body lines
    fields are emitted so that later lines will appear below earlier
    lines in the recreated message.
@@ -802,10 +879,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    The text strings MUST NOT contain CR or LF characters.  If a string
    is empty then just a CRLF is emitted.
 
-   A "z" step has the form {"z": true} and indicates that the body was
-   truncated (see the DSN handling in Section 11).
-
-5.  Message Hash Values
+6.  Message Hash Values
 
    A set of cryptographic "hashes" are used to record the current
    message body and header fields.  The hashes are placed into the h=
@@ -815,11 +889,20 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    a different algorithm MAY be supplied in the same Message-Instance
    header field.
 
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 16]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
    Since Message-Instance header fields are ignored when calculating the
    header hash value, the body hash and header hash may be calculated in
    any convenient order.
 
-5.1.  Computing the Body Hash
+6.1.  Computing the Body Hash
 
    The body of messages is treated as merely a string of octets.  DKIM2
    messages MAY be either in plain-text or in MIME format; no special
@@ -835,13 +918,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    is added.  That is "*CRLF" at the end of the body is converted to
    "CRLF".
 
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 15]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    No other changes are made to the body, which is then processed by the
    relevant hash algorithm(s).  The name of the hash and the hash value
    (converted to base64 form) is then inserted into (Signers) or
@@ -850,7 +926,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    hashes are calculated then multiple entries within the "h=" value
    will be inserted/compared.
 
-5.2.  Computing the Header Fields Hash
+6.2.  Computing the Header Fields Hash
 
    The header fields hash calculation done by a Signer MUST apply the
    following steps in the order given.  A Verifier will need to do the
@@ -859,17 +935,9 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    *  Ignore some header fields
 
-      When calculating the header field hash "Received" or "Return-Path"
-      header fields MUST be ignored.  These are Trace headers as
-      described in [RFC5321] and serve only to document details of the
-      SMTP transmission process.
-
-      When calculating the header field hash any header field with a
-      header field name starting with "X-" MUST be ignored.  Currently
-      deployed email systems use these fields as proprietary Trace
-      headers which have no defined meaning for other systems and it
-      considerably simplifies reporting on changes to header fields to
-      ignore them.
+      When calculating the header field hash some header fields are
+      entirely ignored.  See Section 4 for the list of header field
+      names that MUST be ignored.
 
       When calculating the header field hash any "Message-Instance" or
       "DKIM2-Signature" header fields MUST be ignored.  These header
@@ -878,25 +946,16 @@ Internet-Draft              DKIM2 Signatures                  April 2026
       they are not included twice, especially when determining whether
       all modifications to a message have been correctly declared.
 
-      When calculating the header field hash any "DKIM-Signature" header
-      fields and any header fields whose field name starts with "ARC-"
-      MUST be ignored.  Not including DKIM1 and ARC signatures means
-      that systems that wish to add other types of signature as well as
-      a DKIM2 signature are free to do this in any convenient order.
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 17]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    *  Convert all header field names (not the header field values) to
       lowercase.  For example, convert "SUBJect: AbC" to "subject: AbC".
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 16]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
    *  Unfold all header field continuation lines as described in
       [RFC5322]; in particular, lines with terminators embedded in
@@ -922,7 +981,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
       then the header fields are placed in the order in which they were
       likely to have been placed into the message header, that is from
       the last within the header upwards (the same ordering as is used
-      in the header recipes (see Section 4.1).
+      in the header recipes (see Section 5.1).
 
       It is sometimes suggested that some MTAs re-order header fields
       after they receive an email.  If an MTA does change the order of
@@ -940,23 +999,27 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    created/verified.  If multiple hashes are calculated then multiple
    entries within the "h=" value will be inserted/compared.
 
-6.  The Message-Instance Header Field
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 18]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+7.  The Message-Instance Header Field
 
    A Message-Instance header field documents the current contents of the
    message and, in the case of a Reviser, records any relevant changes
    that have been made to the incoming message.
 
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 17]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    The Message-Instance header field is a list of tag values as
    described below.  The m= and h= tags MUST be present.  The r= tag is
-   optional.
+   optional.  Note that the syntax is such that semi-colons will never
+   occur within tags or values, they only act as a separators.
 
    The tag identifiers (before the = sign) MUST be treated as case
    insignificant, the tag value (after the = sign) is case significant.
@@ -968,10 +1031,13 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    mi-field    = "Message-Instance:" mi-tag-list
    mi-tag-list = *([FWS] mi-tag [FWS] ";" [FWS])
    mi-tag      = mi-m-tag / mi-h-tag / mi-r-tag / x-tag
-   x-tag       = ALPHA *(ALPHA / DIGIT / "_") "=" %x21-3A / %x3C-7E
-                 ; for extension
+                 ; x-tag is for extension
+   x-tag       = x-tag-name [FWS] "=" [FWS] [x-tag-value]
+   x-tag-name  = ALPHA *(ALPHA / DIGIT / "_")
+   x-tag-char  = %x21-3A / %x3C-7E
+   x-tag-value = x-tag-char *([FWS] x-tag-char)
 
-6.1.  m= the revision number of the Message-Instance header field
+7.1.  m= the revision number of the Message-Instance header field
 
    The Originator of a message uses the value 1.  Further Message-
    Instance header fields are added with a value one more than the
@@ -983,59 +1049,60 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    mi-m-tag    = %x6d [FWS] "=" [FWS] 1*DIGIT
 
-6.2.  r= recipes to recreate the previous instance of the message
+7.2.  r= recipes to recreate the previous instance of the message
 
    The r= tag value is the base64 encoded version of the JSON object
    that contains the recipes that allow the previous instance of the
-   message to be recreated (see Section 4}.
+   message to be recreated (see Section 5}.
 
    ABNF:
 
    mi-r-tag    = %x72 [FWS] "=" base64string
 
-6.3.  h= the hash values for the message
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 19]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+7.3.  h= the hash values for the message
 
    The h= tag value contains the hash name, header hash value and body
-   hash value.  Calculating the hash values is explained in Section 5.
+   hash value.  Calculating the hash values is explained in Section 6.
 
    ABNF:
 
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 18]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-   mi-h-tag    = %x68 [FWS] "=" hash-set *("," hash-set )
+   mi-h-tag    = %x68 [FWS] "=" hash-set *("," hash-set)
    hash-set    = [FWS] hash-name [FWS] ":" header-hash ":" body-hash
    hash-name   = "sha256" / x-hash-name
    header-hash = base64string
    body-hash   = base64string
    x-hash-name = textstring ; for later expansion
 
-7.  The DKIM2-Signature Header Field
+8.  The DKIM2-Signature Header Field
 
    The signature of the email is stored in a DKIM2-Signature header
    field.  This header field contains tag values that provide the
-   signature and key-fetching data.  The i=, m=, t=, mf=, rt=, d= and s=
-   tags MUST be present.  The other tags are optional.
+   signature and key-fetching data.  Note that the syntax is such that
+   semi-colons will never occur within tags or values, they only act as
+   a separators.
+
+   The i=, m=, t=, d= and s= tags MUST be present.  There MUST be either
+   an nd= tag or both mf= and rt= tags.  The other tags are optional.
 
    The tag identifiers (before the = sign) MUST be treated as case
    insignificant, the tag value (after the = sign) is case significant.
-   The tags may appear in any order, but MUST be only one of each kind.
-   Unknown tags, for extensions, MUST be ignored.
+   The tags may appear in any order, but there MUST be only one of each
+   kind.  Unknown tags, for extensions, MUST be ignored.
 
    ABNF:
 
    sig-field    = "DKIM2-Signature:" sig-tag-list
    sig-tag-list = *([FWS] sig-tag [FWS] ";" [FWS])
    sig-tag      = sig-i-tag / sig-m-tag / sig-t-tag / sig-mf-tag /
-                  sig-rt-tag / sig-d-tag / sig-s-tag / sig-n-tag /
-                  sig-f-tag / x-tag
+                  sig-rt-tag / sig-nd-tag / sig-d-tag / sig-s-tag /
+                  sig-n-tag / sig-f-tag / x-tag
 
    It will be noted that we have not included a version number.
    Experience from IMF onwards shows that it is essentially impossible
@@ -1044,7 +1111,18 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    support, it is expected that header fields will be labelled as DKIM3
    instead.
 
-7.1.  i= the sequence number of the DKIM2-Signature header field
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 20]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+8.1.  i= the sequence number of the DKIM2-Signature header field
 
    The Originator of a message uses the value 1.  Further
    DKIM2-Signature header fields are added with a value one more than
@@ -1055,18 +1133,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    sig-i-tag = %x69 [FWS] "=" [FWS] 1*DIGIT
 
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 19]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-7.2.  m= the highest numbered Message-Instance header field
+8.2.  m= the highest numbered Message-Instance header field
 
    This value allows verifiers to determine which entity made a
    particular revision to the message header fields or body.
@@ -1075,7 +1142,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    sig-m-tag = %x6d [FWS] "=" [FWS] 1*DIGIT
 
-7.3.  n= nonce value
+8.3.  n= nonce value
 
    This text value, if present, has a meaning to the creator of the
    signature but MUST NOT be assumed to have any meaning to any other
@@ -1095,13 +1162,21 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    nonce-value = *64(%x21-3A / %x3C-7E)
                      ; printable ASCII except semicolon, max 64 chars
 
-7.4.  t= signature timestamp
+8.4.  t= signature timestamp
 
    The time that this header field was created.  The format is the
    number of seconds since 00:00:00 on January 1, 1970 in the UTC time
    zone.  The value is expressed as an unsigned integer in decimal
    ASCII.  This value is not constrained to fit into a 31- or 32-bit
    integer.
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 21]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    Implementations SHOULD be prepared to handle values up to at least
    10^12 (until approximately AD 200,000; this fits into 40 bits).
@@ -1114,15 +1189,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    sig-t-tag    = %x74 [FWS] "=" [FWS] 1*DIGIT
 
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 20]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-7.5.  mf= the MAIL FROM used when the message was sent
+8.5.  mf= the MAIL FROM used when the message was sent
 
    DKIM2 records the [RFC5321] MAIL FROM value that was used when the
    message was transmitted over an SMTP link from the signing MTA.  Note
@@ -1140,7 +1207,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    sig-mf-tag  = %x6d %x66 [FWS] "=" base64string
 
-7.6.  rt= the RCPT TO value(s) used when the message was sent
+8.6.  rt= the RCPT TO value(s) used when the message was sent
 
    DKIM2 records the [RFC5321] RCPT TO value(s) that were used when the
    message was transmitted over an SMTP link from the signing MTA.
@@ -1159,26 +1226,44 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    generated so as to not immediately reveal who else received the
    email.
 
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 22]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
    However, if "bcc:" recipients are involved then in order to meet the
    requirements of [RFC5322] Section 3.6.3 each and every bcc recipients
-   MUST NOT revealed to any other message recipient.
+   MUST NOT be revealed to any other message recipient.
 
    ABNF:
 
    sig-rt-tag = %x72 %x74 [FWS] "=" base64string *("," base64string)
 
+8.7.  nd= the domain that will appear in the next DKIM2-Signature header
+      field
 
+   This tag is used in order to provide a valid "chain of custody" when
+   a message is being forwarded from a different domain than the one to
+   which it arrived.  The domain MUST be a valid DNS name under which a
+   DKIM2 key record is published.
 
+   The domain name in the nd= tag MUST exactly match the domain name of
+   the d= tag of the next DKIM2-Signature in sequence (i=) order.
 
+   Note that when an nd= tag is present both mf= and rt= MUST be
+   omitted.  It is permissible to have a sequence of more than one
+   DKIM2-Signature header fields with an nd= tag, but this sequence (in
+   unbroken ascending numeric order of i= tags) MUST end with a
+   DKIM2-Signature that contains mf= and rt= tags.
 
+   ABNF:
 
+   sig-nd-tag   = %x6e %x64 [FWS] "=" [FWS] Domain
 
-Clayton, et al.          Expires 22 October 2026               [Page 21]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-7.7.  d= the domain associated with this signature.
+8.8.  d= the domain associated with this signature.
 
    This domain is used to form the query for the public key.  The domain
    MUST be a valid DNS name under which the DKIM2 key record is
@@ -1196,10 +1281,19 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    sig-d-tag   = %x64 [FWS] "=" [FWS] Domain
 
-7.8.  s= the signature value(s) for the message
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 23]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+8.9.  s= the signature value(s) for the message
 
    The s= tag value contains the selector, signature algorithm name and
-   signature value.  Calculating the value is explained in Section 8.5.
+   signature value.  Calculating the value is explained in Section 9.6.
 
    The selector values subdivides the namespace for the domain being
    used for signing.
@@ -1222,19 +1316,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    x-sig-name  = textstring     ; for later extension
    message-sig = base64string
 
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 22]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-7.9.  f= flags
+8.10.  f= flags
 
    Flags serve two purposes; they either report what has been done to
    the message by the system creating the DKIM2-Signature or they make a
@@ -1256,6 +1338,14 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    particular message (identified by relevant cryptographic hash values)
    is intended to exist;
 
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 24]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
    The flags values that make requests are:
 
    "donotexplode": this Signer requests that the message not be sent to
@@ -1264,43 +1354,60 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    forwarded on to any MTA outside its control.
 
    "donotmodify": this Signer requests that the message not be modified
-   from the form in which it is sent.  A system that, by local policy,
-   ignores this request MUST NOT allow the message to be forwarded on to
-   any MTA outside its control.
+   from the form in which it is sent.  If this request is honored then
+   the body MUST NOT be changed in any way that alters the body hash and
+   header fields MUST NOT be removed or changed.  It is permissible to
+   add header fields but a subsequent receiver SHOULD consider whether
+   such header fields have an impact on how the message will be viewed
+   or responded to and MAY reject the message if it has concerns.  A
+   system that, by local policy, ignores this request and makes other
+   changes MUST NOT allow the message to be forwarded on to any MTA
+   outside its control.
 
    "feedback": this Signer requests feedback about how this message is
    handled during delivery and thereafter.  This document does not
    describe what such feedback might be or where it might be delivered.
    If this flag is absent then feedback is explicitly not required.
 
+   "feedhere": this Signer requests that any feedback about how this
+   message is handled during delivery and thereafter is relayed via this
+   hop.  This flag will be set by privacy-conscious Forwarders when a
+   message has a "feedback" flag set and the Forwarder does not wish the
+   identity of systems to which the message is forwarded to be reveal to
+   the requestor of feedback.
+
    ABNF:
 
    sig-f-tag        = %x66 [FWS] "=" [FWS] sig-f-tag-data
                       *( [FWS] "," [FWS] sig-f-tag-data)
    sig-f-tag-data   = "donotmodify" | "donotexplode" | "feedback" |
-                      "exploded" | x-sig-f-tag-data
+                      "feedhere" | "exploded" | x-sig-f-tag-data
    x-sig-f-tag-data = textstring ; for later extension
 
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 23]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-8.  Signer Actions
+9.  Signer Actions
 
    This section gives the actions that need to be undertaken by the
    signer of a message.  They may be done in any appropriate order.
 
-8.1.  Add any Necessary Message-Instance Header Fields
+
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 25]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+9.1.  Add any Necessary Message-Instance Header Fields
 
    If a system is generating the initial form of a message or if it is a
    Reviser that has made changes to the message body and/or header
-   fields then it MUST compute the body hash as described in Section 5.1
-   and the hash of the header fields as described in Section 5.2.
+   fields then it MUST compute the body hash as described in Section 6.1
+   and the hash of the header fields as described in Section 6.2.
 
    If the message does not contain a Message-Instance header field then
    one MUST be added.
@@ -1327,7 +1434,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    it enters the DKIM2 ecosystem.  All other Message-Instance header
    fields SHOULD contain at least one "recipe".
 
-8.2.  Provide a "Chain of Custody" for the Message
+9.2.  Provide a "Chain of Custody" for the Message
 
    The DKIM2-Signature header field contains the MAIL FROM and RCPT TO
    values that will be used when the message is transmitted, so these
@@ -1338,19 +1445,20 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    the local parts of the email addresses) between the MAIL FROM / RCPT
    TO [RFC5321] protocol values and the mf= and rt= values in the
    highest numbered (most recent) DKIM2-Signature header field.  It is
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 24]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    acceptable for there to be more RCPT TO email addresses recorded in
    rt= than are actually used in the SMTP conversation, but any RCPT TO
    value which is used MUST be present.
 
-   Verifiers will check for a relaxed domain match (see Section 8.3)
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 26]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+   Verifiers will check for a relaxed domain match (see Section 9.4)
    between the signing domain (d=) and the domain in the MAIL FROM
    value.
 
@@ -1361,23 +1469,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    custody" contributes to the way in which DKIM2 tackles "DKIM replay"
    attacks.
 
-   In any situation where a message will be forwarded in such a way that
-   the mf= on the outgoing message is such that the "chain of custody"
-   would be broken then the Signer MUST generate an extra
-   DKIM2-Signature header field that causes values to match, i.e. a
-   record must be fabricated that documents the mail being passed from
-   one domain to another.
-
-   It will be noted that the creation of this extra header field will
-   require the Signer to have access to a DKIM2 private key associated
-   with a domain in the RCPT TO entry.  This is often achieved by the
-   Signer creating the private key and never sharing it and then taking
-   one of two approaches to publishing the public key.  The first is to
-   provide the public key (and selector value) to the domain owner who
-   creates an appropriate DNS entry.  The alternative is for the Signer
-   to create a public key DNS entry within a part of the DNS that they
-   control and the domain owner publishes a CNAME pointing at this.
-
    If an MTA does not change anything in the message which would require
    a new Message-Instance header field and it is going to send it
    onwards to a system that be able to verify the existing message (that
@@ -1386,7 +1477,64 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    MAY choose not to add one.  This means that an essentially
    transparent SMTP forwarding system need not be made "DKIM2 aware".
 
-8.3.  The Relaxed Domain Match Algorithm
+9.3.  "Chain of Custody" for Imaginary Hops
+
+   In any situation where a message will be forwarded in such a way that
+   the mf= on the outgoing message is such that the "chain of custody"
+   would be broken then the Signer MUST ensure this is not the case.
+
+   One way of doing this would be to generate an extra DKIM2-Signature
+   header field that causes values to match, i.e. a record is fabricated
+   that documents the mail being passed from one domain to another with
+   appropriate "mf=" and "rt=" tag values which document the imaginary
+   transfer of the email from one domain to the next.
+
+   Alternatively the "nd=" tag may be used.  When present the next
+   higher sequence numbered DKIM2-Signature header field MUST be signed
+   by the specified domain.  However, since there are no mf= or rt= tag
+   values there is no need to provide imaginary values for the imaginary
+   "hop" between the domain used for receiving the message and the
+   domain used to forward it.
+
+   It will be noted that the creation of an extra DKIM2-Signature header
+   field (whether the nd= scheme is used or not) will require the Signer
+   to have access to a DKIM2 private key associated with a domain in the
+   RCPT TO entry of the message as it arrived.
+
+
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 27]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+   Access to this private key is often achieved by the Signer creating
+   the private key and never sharing it.  One of two approaches is then
+   taken to publishing the public key.  The first is to provide the
+   public key (and selector value) to the domain owner who creates an
+   appropriate DNS entry.  The alternative is for the Signer to create a
+   public key DNS entry within a part of the DNS that they control and
+   the domain owner publishes a CNAME pointing at this.
+
+   The general expectation is that signatures with an nd= tag have been
+   applied by the same system as the next DKIM2-Signature field without
+   an nd= tag.  However, as a special case (where arrangements have been
+   put in place to cover the situation) a message with an nd= tag in the
+   highest numbered DKIM2-Signature header field may be sent over an
+   SMTP connection.  The receiving system will not be able to validate
+   the MAIL FROM and RCPT TO parameters and MUST rely on out-of-band
+   information to deem the message acceptable.  The system MUST then
+   provide a DKIM2-Signature header field with a d= tag that exactly
+   matches the nd= tag.  Adding such a header field will signal that the
+   break in the chain of custody is intentional.
+
+9.4.  The Relaxed Domain Match Algorithm
 
    To assist in addressing the "DKIM replay" problem DKIM2 provides a
    "chain of custody" for every message.  This is established by
@@ -1394,13 +1542,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    header field (except of course the i=1 instance) can be matched with
    a RCPT TO value of the next lower numbered DKIM2-Signature header
    field.
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 25]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
    It is also necessary to check DKIM2-Signature header fields for a
    match between the signing domain (specified in the d= tag) and the
@@ -1419,14 +1560,24 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    *  If no labels remain then there is no match.
 
-8.4.  Select a Private Key and Corresponding Selector Value
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 28]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+9.5.  Select a Private Key and Corresponding Selector Value
 
    This specification does not define the basis by which a Signer should
    choose which private key and selector value to use -- this will be a
    matter of administrative convenience.  Distribution and management of
    private keys is also outside the scope of this document.
 
-8.5.  Calculate a Signature Value
+9.6.  Calculate a Signature Value
 
    A Signer calculates a signature solely over the Message-Instance and
    DKIM2-Signature header fields of the message.  The hashes of the body
@@ -1448,16 +1599,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
       values) to lowercase.  For example, convert "DKIM2-signature" to
       "dkim2-signature".
 
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 26]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    *  Unfold all header field continuation lines as described in
       [RFC5322]; in particular, lines with terminators embedded in
       continued header field values (that is, CRLF sequences followed by
@@ -1467,8 +1608,23 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    *  Delete all WSP characters.  This means all WSP characters before
       and after the colon separating the header field name from the
       header field value, all WSP characters within the unfolded header
-      field value and all trailing WPS characters before the CRLF.  The
+      field value and all trailing WSP characters before the CRLF.  The
       colon separator and the CRLF MUST be retained.
+
+
+
+
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 29]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    *  Place the header fields in order.  First come the Message-Instance
       header fields in ascending instance (m=) order.  Second are the
@@ -1485,13 +1641,13 @@ Internet-Draft              DKIM2 Signatures                  April 2026
       signature value strings are replaced by the base64 values of the
       signatures.
 
-9.  Verification Requirements
+10.  Verification Requirements
 
-   The details of verification appear in Section 10 below.  This section
+   The details of verification appear in Section 11 below.  This section
    considers when verification should be performed and how thorough it
    needs to be.
 
-9.1.  Check Most Recent Signature and Hashes for the Message
+10.1.  Check Most Recent Signature and Hashes for the Message
 
    A Verifier SHOULD check the validity of the most recently applied
    (highest numbered i= value) DKIM2-Signature header field and the
@@ -1504,34 +1660,34 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    If the check gives a TEMPFAIL result then a 4xx error code SHOULD be
    used to allow the sending MTA to understand the situation.
 
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 27]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    If the checks do pass and it is later determined that the email is
    unacceptable for any reason then a DSN MAY be created and passed to
    the system that delivered the email.  The details of this procedure
-   appear in Section 11.
+   appear in Section 12.
 
-9.2.  Checking the Message-Instance Header Fields
+10.2.  Checking the Message-Instance Header Fields
 
    If the message has been modified since its original creation then the
    Message-Instance header fields will enable a Verifier to determine
    whether or not all the changes made are correctly recorded by using
    the "recipes" to construct each preceding version of the message.
 
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 30]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
    Note that if it is only the first form of the message is of interest
    then all the "recipes" can be applied in turn and only one hash value
    checked -- the correctness of the intermediate hash values are not
    relevant to this assessment.
 
-9.3.  Checking the DKIM2-Signature Header Fields
+10.3.  Checking the DKIM2-Signature Header Fields
 
    However, in order to check the chain of custody, to assess whether
    the message has been exploded, to pick out "feedback" requests to be
@@ -1539,7 +1695,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    DKIM2-Signature header fields will have to checked for validity.  The
    TBA document explores these issues in more detail.
 
-9.4.  Interpret Results/Apply Local Policy
+10.4.  Interpret Results/Apply Local Policy
 
    It is beyond the scope of this specification to describe what actions
    the recipient of an email performs, but mail carrying valid DKIM2
@@ -1562,15 +1718,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    SMTP reply code.  In particular, cryptographic signature verification
    failures MUST NOT provoke 4xx SMTP replies.
 
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 28]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-10.  Verifier Actions
+11.  Verifier Actions
 
    This section discusses the detail of the actions taken by a Verifier.
    In essence this will involve repeating all the actions taken by a
@@ -1581,6 +1729,15 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    used to determine whether a signature that has been provided is
    correct.
 
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 31]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
    When a Verifier is determining whether a particular DKIM2-Signature
    header field it MUST consider the state of the message when that
    header field was added to the message.  That means it MUST first
@@ -1588,7 +1745,7 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    and it MUST ignore any Message-Instance and DKIM2-Signature fields
    that were added after that point.
 
-10.1.  Output States
+11.1.  Output States
 
    For compatibility with the Authentication-Results header field
    defined in [RFC8601] a verification will result in one of four
@@ -1609,23 +1766,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    A Verifier MAY cease verifying once a single failure is detected.
 
-
-
-
-
-
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 29]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    Verifiers wishing to communicate the results of verification to other
    parts of the mail system may do so in whatever manner they see fit.
    If they wish to provide a human-readable string to describe a failure
@@ -1642,8 +1782,17 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    4xx response string.
 
    If the results of the verification are being communicated in a
-   Delivery Status Notification message ([RFC3461]) the human-readable
+   Delivery Status Notification message ([RFC3462]) the human-readable
    string should be included.
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 32]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    If, by local policy, a system wishes to accept a message which has
    failed authentication it might choose to add an email header field to
@@ -1652,35 +1801,23 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    existing DKIM2-Signature or pre-existing authentication status header
    fields in the header field block.  The Authentication-Results: header
    field ([RFC8601]) MAY be used for this purpose.  It should be noted
-   that any "Authentication-Results" header field will count as a
+   that any "Authentication-Results" header field does not count as a
    modification to the email if any further DKIM2-Signature header
    fields are to be generated.
 
-10.2.  Ensure that the DKIM2 Header Fields are Valid
+11.2.  Ensure that the DKIM2 Header Fields are Valid
 
    Verifiers MUST meticulously validate the format and values of all
    relevant Message-Instance and DKIM2-Signature header fields.  It MUST
    also ensure that all required instances of these header fields are
-   present and that all required tags are present.  Recall however that
-   unknown tags MUST be ignored.
+   present and that all required tags are present and tags that cannot
+   appear together do not do so.  Recall however that unknown tags MUST
+   be ignored.
 
    As a special case, there MUST NOT be a Message-Instance field with a
    higher m= value than occurs in any DKIM2-Signature field.
 
    Possible errors:
-
-
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 30]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
    PERMERROR Message-Instance m=<x> missing
    PERMERROR Message-Instance m=<x> syntax error
@@ -1689,20 +1826,33 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    PERMERROR DKIM2-Signature i=<x> missing
    PERMERROR DKIM2-Signature i=<x> syntax error
    PERMERROR DKIM2-Signature i=<x> tag=<y> missing
+   PERMERROR DKIM2-Signature i=<x> tag=<y> was unexpected
 
-10.3.  Check the timestamps
+11.3.  Check the Timestamps
 
-   Verifiers SHOULD return a failure it is more than 14 days since the
-   timestamp recorded in the "t=" tag of any DKIM2-Signature header
+   Verifiers SHOULD return a failure if it is more than 14 days since
+   the timestamp recorded in the "t=" tag of any DKIM2-Signature header
    field.
 
    Possible errors:
 
    PERMERROR DKIM2-Signature i=<x> signature expired
 
-10.4.  Check the Chain-of-Custody
 
-   As explained in Section 8.2 a Verifier MUST check an exact match
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 33]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+11.4.  Check the Chain-of-Custody
+
+   As explained in Section 9.2 a Verifier MUST check for an exact match
    between the MAIL FROM and RCPT TO parameters used when delivering a
    message and the values found in the mf= and rt= tags of the highest
    numbered DKIM2-Signature header field.  There may be extra values in
@@ -1719,32 +1869,42 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    recently applied DKIM2-Signature header field and the mf= value in
    that header field.
 
+   If an nd= tag has been used instead of mf= and rt= tags then a
+   Verifier MUST ensure that there is an exact match with the d= value
+   in the next DKIM2-Signature field in sequence number order.
+
+   Verifiers SHOULD ensure that there are out-of-band arrangements in
+   place to assess message validity when the highest numbered
+   DKIM2-Signature header field contains an nd= tag.
+
    Possible errors:
 
-   PERMERROR: MAIL FROM <value> did not match
-   PERMERROR: RCPT TO <value> did not match
-   PERMERROR: MAIL FROM and d= do not match
+   PERMERROR: DKIM2-Signature i=<x> MAIL FROM <value> did not match
+   PERMERROR: DKIM2-Signature i=<x> RCPT TO <value> did not match
+   PERMERROR: DKIM2-Signature i=<x> MAIL FROM and d= do not match
+   PERMERROR: DKIM2-Signature i=<x> MAIL nd= does not match
+   PERMERROR: DKIM2-Signature i=<x> unexpected nd= tag
 
-
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 31]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-10.5.  Fetch the Public Key
+11.5.  Fetch the Public Key
 
    The public keys of all the signatures in DKIM2-Signature fields are
    needed to complete the verification process.  Details of key
    management and representation are described in Section 3.6 and
    [DKIMKEYS].  The Verifier MUST validate the key record and MUST NOT
    use any public key records that are malformed.
+
+
+
+
+
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 34]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    Note that DNS timeouts MUST be reported as TEMPERROR but a DNS result
    that indicates the key is absent MUST be reported as a PERMERROR.
@@ -1765,13 +1925,13 @@ PERMERROR: DKIM2-Signature i=<x> public key <value> has a syntax error
 PERMERROR: DKIM2-Signature i=<x> public key <value> algorithm mismatch
 PERMERROR: DKIM2-Signature i=<x> public key <value> has been revoked
 
-10.6.  Perform the Signature Verification Calculation
+11.6.  Perform the Signature Verification Calculation
 
    Verifying a signature consists of actions semantically equivalent to
    the following steps:
 
    1.  Prepare a canonicalized version of the Message-Instance and
-       DKIM2-Signature header fields as described in Section 8.5.  The
+       DKIM2-Signature header fields as described in Section 9.6.  The
        signature value(s) themselves will need to be removed to
        correspond with what was actually signed.  Note that this
        canonicalized version does not actually replace the original
@@ -1784,16 +1944,6 @@ PERMERROR: DKIM2-Signature i=<x> public key <value> has been revoked
        fails then an error SHOULD be reported.  If all signatures that
        can be checked fail then PERMFAIL MUST be reported.
 
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 32]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    4.  If some signatures fail and other pass then any error that is
        reported should provide that information (e.g. PERMFAIL "rsa-
        sha256 signature passed, ed25519-sha256 signature failed").
@@ -1804,6 +1954,14 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    (unbroken) signature scheme.  However, such a Signer may still
    provide the other signature for the benefit of Verifiers that have
    yet to upgrade -- reasoning perhaps that attacks are too expensive to
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 35]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
    be a very significant security issue.  A Verifier that determines
    that one signature passes whilst the other fails may well be in a
    position to prevent an attack.
@@ -1812,11 +1970,11 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    FAIL: DKIM2-Signature i=<x> public key <value> incorrect signature
 
-10.7.  Validating Body and Header hashes
+11.7.  Validating Body and Header Hashes
 
    Verifying a hash value requires a Verifier to repeat the hash
-   calculation performed by the Signer as set out in Section 5.1 and
-   Section 5.1.  The values can then be directly compared.
+   calculation performed by the Signer as set out in Section 6.1 and
+   Section 6.1.  The values can then be directly compared.
 
    Since there may be more than one hash algorithm given the human-
    readable error message SHOULD indicate which algorithm's result
@@ -1827,84 +1985,111 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    FAIL: Message Instance m=<x> header hash <value> mismatch
    FAIL: Message Instance m=<x> body hash <value> mismatch
 
-11.  Delivery Status Notifications in the DKIM2 ecosystem
+11.8.  Check if donotmodify and donotexplode Requests Were Honored
+
+   If a verifier receives a message with a nonotmodify request and a
+   later hop has altered the message body or removed or altered header
+   fields then the message SHOULD be rejected.
+
+   If a verifier receives a message with a donotexplode request and a
+   later hop has indicated that it has exploded the message then the
+   message SHOULD be rejected.
+
+   Possible errors:
+
+   FAIL: Message has been modified despite a donotmodify request
+   FAIL: Message has been exploded despite a donotexplode request
+
+12.  Delivery Status Notifications in the DKIM2 Ecosystem
 
    In the DKIM2 ecosystem, when a message cannot be delivered then this
    is reported to the sending machine by means of an [RFC5321] return
    code or, if the SMTP session has completed, by generating a Delivery
-   Status Notification (DSN, as defined in [RFC3461].
+   Status Notification (DSN), as defined in [RFC3462].
 
    A DSN MUST be addressed to the MTA that sent the message.  This
    prevents "backscatter" by passing failures back along the chain of
    MTAs that were in involved in passing the message forwards.  This is
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 36]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
    achieved by using the mf= tag from the highest numbered
    DKIM2-Signature field.  If this field is null ("mf=<>") then a DSN
    MUST NOT be sent.
 
+12.1.  DSN Contents
 
+   As set out in [RFC3462], a DSN has a top-level MIME part of type
+   multipart/report.
 
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 33]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-11.1.  DSN contents
-
-   As set out in [RFC3461], the DSN has a top-level MIME part of type
-   multipart/report.  Among other things, that MIME part must contain a
-   MIME part of type message/rfc822 that holds either the original
-   message exactly as it was submitted by the sending system or just the
-   header fields of that message.
+   A valid DSN generated by a DKIM2 system MUST always contain three
+   sections, the human-readable text, the machine readable status (in a
+   message/delivery-status MIME part and either a MIME part of type
+   message/rfc822 that holds the original message exactly as it was
+   submitted by the sending system or `text/rfc822-headers' which has
+   just the header fields of that message.
 
    All relevant DKIM2-Signature header fields (and Message-Instance
-   header fields if the message body is supplied) MUST verify.  The DSN
-   itself MUST have appropriate Message-Instance and DKIM2-Signature
-   fields, noting that the MAIL FROM to be used will be null ("<>").
+   header fields if the message body is supplied) MUST verify.
 
-   If the message body has been truncated (rather than omitted
-   altogether) then in order to allow verification of the DNS contents a
-   Message-Instance header field MUST be added to the message with a
-   body recipe containing a {"z": true} step.
+   The DSN itself MUST have appropriate Message-Instance and
+   DKIM2-Signature fields, noting that the MAIL FROM to be used will be
+   null ("<>").
 
-11.1.1.  Bounce Propagation
+12.1.1.  DSN Propagation
 
-   A Forwarder which receives a DSN MAY decide to propagate this DSN to
-   the MAIL FROM address used to deliver the message to it (which can be
-   found in the relevant DKIM2-Signature header field).  The DSN SHOULD
-   be handled in the usual way, with Message-Instance header fields
-   documenting any changes and a DKIM2-Signature field with an
-   incremented hop count value added.
+   A Forwarder which receives a DSN MAY propagate this DSN to the MAIL
+   FROM address used to deliver the message to it (which can be found in
+   the relevant DKIM2-Signature header field).
 
-   The Forwarder MAY alternatively decide to reconstruct the message (or
-   just the message header fields) as they were when the message was
-   delivered to the Forwarder and construct a DSN using that
-   information.  The information in Message-Instance header fields can
-   be used to achieve this.  The resultant DSN is sent to the MAIL FROM
-   address from the now highest numbered DKIM2-Signature header field.
-   Doing this will ensure that details of where the message was
-   forwarded to will not be revealed to the previous hop.
+   The DSN MUST be rebuilt so that the message (or just the message
+   header fields) are placed into the DSN to reflect the state the
+   message was in when it was forwarded.  This means that the
+   DKIM2-Signature header field that was added MUST be removed.
 
-11.1.2.  Authentication of Inbound Bounce Notifications
+   Additionally, if the message was modified by the Forwarder on the
+   outward journey those modifications must be undone and the Message-
+   Instance header field documenting those changes MUST be removed.
 
-   When a system receives a DKIM2 signed bounce notification, and the
-   included original message is also DKIM2 signed, it SHOULD verify that
-   this message (or just the header fields if the body is not present)
-   has not been altered.
+   If it is impossible to regenerate the body of the message, because it
+   was changed on the outgoing path and a "null recipe" means that the
+   previous version cannot be reconstructed then the body MUST be
+   removed from the third part of the DSN and a text/rfc822-headers MIME
+   part must be supplied.
+
+   Where appropriate the reason for the delivery failure (as recorded in
+   the first part of the DSN) should be rewritten to remove destination
+   specific information.
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 37]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+   The resultant DSN is sent to the MAIL FROM address from the now
+   highest numbered DKIM2-Signature header field.  The DSN itself MUST
+   have only one DKIM2-Signature field and only one Message-Instance
+   header : i.e. it is a new message.
+
+   Following these procedures will ensure that limited details of where
+   the message was forwarded to will be revealed to the previous hop.
+
+12.1.2.  Authentication of Inbound DSNs
+
+   When a system receives a DKIM2 signed DSN, and the included original
+   message is also DKIM2 signed, it SHOULD verify that this message (or
+   just the header fields if the body is not present) has not been
+   altered.
 
    This means:
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 34]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
    1.  The DSN's DKIM2-Signature will have a signing domain that is
        aligned with the recipient of the message that is being returned.
@@ -1913,13 +2098,15 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    2.  The last (highest i= tag) DKIM2-Signature header field of the
        returned message will be one that was generated by the system
-       receiving the bounce notification, determined by examining the d=
-       and mf= tags of that DKIM2-Signature header field.
+       receiving the DSN, determined by examining the d= and mf= tags of
+       that DKIM2-Signature header field.
 
    3.  The header fields of the embedded message (in the message/rfc822
-       MIME part) can be verified.  If the message body is present then
-       that can also be verified by inspecting the Message-Instance
-       header field(s).
+       MIME part) can be verified by checking the header hash values in
+       the highest numbered Message-Instance header field.  If the
+       message body is present then that can be verified by inspecting
+       the body hash value in the highest numbered Message-Instance
+       header field.
 
    If the verification fails then the DSN MUST NOT be propagated any
    further.  If verification has been performed prior to accepting the
@@ -1928,13 +2115,20 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    temporary issue (with DNS lookups) then a 4xx return code should be
    used.
 
-12.  Preventing Transport Conversions
+13.  Preventing Transport Conversions
 
    DKIM2's design is predicated on valid input.
 
    In order to be signed a message will need to be in "network normal"
    format (text is ASCII encoded, lines are separated with CRLF
    characters, etc.).
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 38]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    A message that is not compliant with [RFC5322], [RFC2045], [RFC2047]
    and other relevant message format standards can be subject to
@@ -1953,15 +2147,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    beginning with a "." to avoid confusion with the SMTP end-of-message
    marker, as specified in [RFC5321]).
 
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 35]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
    Further, if the message contains local encoding that will be modified
    before transmission, that modification to canonical [RFC5322] form
    MUST be done before signing.  In particular, bare CR or LF characters
@@ -1975,29 +2160,87 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    be received by the Verifier rather than in some local or internal
    form.
 
-13.  EAI ([RFC6530]) Considerations for DKIM2
+14.  EAI ([RFC6530]) Considerations for DKIM2
 
    TBA
 
-14.  IANA Considerations
+15.  IANA Considerations
 
    TBA
 
-15.  Security Considerations
+16.  Security Considerations
 
    TBA
 
-16.  Changes from Earlier Versions
+17.  Changes from Earlier Versions
+
+   draft-ietf-dkim-dkim2-spec-04
+
+   Provided summary of unsigned header fields.
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 39]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
+
+   Added text for situation when the highest DKIM2-Signature field of a
+   message has an nd= tag.
+
+   Added text to clarify checking of Message-Instance in a DSN.
+
+   draft-ietf-dkim-dkim2-spec-03
+
+   Move list of ignored header fields into its own section.  Added the
+   experimental Delivered-To: header field to the list.
+
+   Remove possibility of a null recipe for header field changes.
+
+   Add nd= tag as an alternative to mf= rt= for imaginary hops.
+
+   Change DSN propagation rules so that a DSN always contains the
+   message headers up to the point at which the DSN creator saw the
+   message on the outward journey.
+
+   "feedhere" flag added.
+
+   draft-ietf-dkim-dkim2-spec-02
+
+   Made explicit that base64strings must be padded with zero bits.
+
+   Fixed header field description in JSON to be single string. and moved
+   the removed info into the textual discussion.  Removed the z body
+   recipe since DSNs do not actually need this.
+
+   Added text to emphasise that semi-colons are (easy to parse)
+   separators in Message-Instance and DKIM2-Signature.  Also fixed the
+   syntax for extension tags.
+
+   Added Authentication-Results to the list of headers that are excluded
+   from being signed.
+
+   Added text about what donotmodify means and added text to the
+   verification section about this and the donotexplode flag.
 
    draft-ietf-dkim-dkim2-spec-01
 
-   Additions to terninology.  Improved ABNF.  Removed definition of tag-
+   Additions to terminology.  Improved ABNF.  Removed definition of tag-
    list and placed relevant text in the two header field definitions.
-   Untangled he description of what needs to be verified from the
+   Untangled the description of what needs to be verified from the
    description of how to verify and provided a list of human-readable
    strings to generate for errors.
 
    draft-ietf-dkim-dkim2-spec-00
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 40]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    Removed JSON for hashes, signatures and SMTP parameters.  Provided
    valid JSON for recipes and added "z" for truncated body.  Changed
@@ -2010,17 +2253,9 @@ Internet-Draft              DKIM2 Signatures                  April 2026
 
    [[This section to be removed by RFC Editor]]
 
+18.  References
 
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 36]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
-
-17.  References
-
-17.1.  Normative References
+18.1.  Normative References
 
    [DKIMKEYS] Chuang, W., "Domain Name Specification for DKIM2", Work in
               Progress, Internet-Draft, draft-chuang-dkim2-dns-04, 18
@@ -2046,14 +2281,22 @@ Internet-Draft              DKIM2 Signatures                  April 2026
               DOI 10.17487/RFC2119, March 1997,
               <https://www.rfc-editor.org/rfc/rfc2119>.
 
-   [RFC3461]  Moore, K., "Simple Mail Transfer Protocol (SMTP) Service
-              Extension for Delivery Status Notifications (DSNs)",
-              RFC 3461, DOI 10.17487/RFC3461, January 2003,
-              <https://www.rfc-editor.org/rfc/rfc3461>.
+   [RFC3462]  Vaudreuil, G., "The Multipart/Report Content Type for the
+              Reporting of Mail System Administrative Messages",
+              RFC 3462, DOI 10.17487/RFC3462, January 2003,
+              <https://www.rfc-editor.org/rfc/rfc3462>.
 
    [RFC4648]  Josefsson, S., "The Base16, Base32, and Base64 Data
               Encodings", RFC 4648, DOI 10.17487/RFC4648, October 2006,
               <https://www.rfc-editor.org/rfc/rfc4648>.
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 41]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    [RFC5234]  Crocker, D., Ed. and P. Overell, "Augmented BNF for Syntax
               Specifications: ABNF", STD 68, RFC 5234,
@@ -2063,16 +2306,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
    [RFC5321]  Klensin, J., "Simple Mail Transfer Protocol", RFC 5321,
               DOI 10.17487/RFC5321, October 2008,
               <https://www.rfc-editor.org/rfc/rfc5321>.
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 37]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
    [RFC5322]  Resnick, P., Ed., "Internet Message Format", RFC 5322,
               DOI 10.17487/RFC5322, October 2008,
@@ -2091,6 +2324,12 @@ Internet-Draft              DKIM2 Signatures                  April 2026
               Internationalized Email", RFC 6530, DOI 10.17487/RFC6530,
               February 2012, <https://www.rfc-editor.org/rfc/rfc6530>.
 
+   [RFC6648]  Saint-Andre, P., Crocker, D., and M. Nottingham,
+              "Deprecating the "X-" Prefix and Similar Constructs in
+              Application Protocols", BCP 178, RFC 6648,
+              DOI 10.17487/RFC6648, June 2012,
+              <https://www.rfc-editor.org/rfc/rfc6648>.
+
    [RFC8259]  Bray, T., Ed., "The JavaScript Object Notation (JSON) Data
               Interchange Format", STD 90, RFC 8259,
               DOI 10.17487/RFC8259, December 2017,
@@ -2101,7 +2340,19 @@ Internet-Draft              DKIM2 Signatures                  April 2026
               DOI 10.17487/RFC8601, May 2019,
               <https://www.rfc-editor.org/rfc/rfc8601>.
 
-17.2.  Informative References
+   [RFC9228]  Crocker, D., Ed., "Delivered-To Email Header Field",
+              RFC 9228, DOI 10.17487/RFC9228, April 2022,
+              <https://www.rfc-editor.org/rfc/rfc9228>.
+
+18.2.  Informative References
+
+
+
+
+Clayton, et al.          Expires 6 January 2027                [Page 42]
+
+Internet-Draft              DKIM2 Signatures                   July 2026
+
 
    [CONCLUDEARC]
               Adams, J. T. and J. R. Levine, "Concluding the ARC
@@ -2118,17 +2369,6 @@ Internet-Draft              DKIM2 Signatures                  April 2026
               "PKCS #1: RSA Cryptography Specifications Version 2.2",
               RFC 8017, DOI 10.17487/RFC8017, November 2016,
               <https://www.rfc-editor.org/rfc/rfc8017>.
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 38]
-
-Internet-Draft              DKIM2 Signatures                  April 2026
-
 
    [RFC8032]  Josefsson, S. and I. Liusvaara, "Edwards-Curve Digital
               Signature Algorithm (EdDSA)", RFC 8032,
@@ -2165,20 +2405,4 @@ Authors' Addresses
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Clayton, et al.          Expires 22 October 2026               [Page 39]
+Clayton, et al.          Expires 6 January 2027                [Page 43]

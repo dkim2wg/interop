@@ -378,7 +378,7 @@ signature. It is a general interoperability hazard for *any* DKIM2 signer of
 
 ## Spec Quality Issues
 
-These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-01 that caused
+These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
 implementation mistakes. Recorded here as input for future spec revisions.
 The ratio of genuine spec issues to implementation sloppiness is roughly 4:3 —
 worse than expected for a new protocol seeking broad adoption.
