@@ -545,6 +545,17 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         return VerifyResult(ok=False, status='permerror', failing_i=top_sig_i,
                             domain=top_domain, message=msg, errors=[msg])
 
+    # Local policy: the top (highest-i=) DKIM2-Signature MUST NOT carry nd=.
+    # nd= only ever legitimately appears together with a subsequent, higher-i=
+    # signature that takes over custody; a top-of-chain nd= means the chain
+    # is incomplete/tampered, so reject before any further checks run.
+    if _extract_tag(top_sig_value, "nd"):
+        top_i = _get_seq_from_sig(top_sig)
+        msg = f"DKIM2-Signature i={top_sig_seq} unexpected nd= tag"
+        return VerifyResult(ok=False, status='permerror', failing_i=top_i,
+                            domain=_extract_tag(top_sig_value, 'd') or '',
+                            message=msg, errors=[msg])
+
     # Collect the non-MI, non-sig headers for hash verification
     content_headers = []
     for hdr in headers:
