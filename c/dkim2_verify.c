@@ -379,6 +379,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = latest->i;
     snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
 
+    /* Local policy (stricter than spec-04): the topmost (highest i=)
+       DKIM2-Signature MUST NOT carry nd=. The only legitimate nd= producer
+       emits the nd= hop together with a matching higher-i= signature, so
+       nd= should never appear on the top signature. Non-top nd= adjacency
+       (§11.4, matched further below) is unaffected by this check. */
+    if (latest->nd && latest->nd[0])
+        SETSTATUS(DKIM2_PERMERROR, "DKIM2-Signature i=%d unexpected nd= tag", latest->i);
+
     /* §7.1: i= sequence must be contiguous 1..N */
     for (int i = 0; i < n_sigs; i++) {
         if (sig_arr[i]->i != i + 1)
@@ -420,7 +428,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         free(ctx_d); free(sig_d);
         if (!dom_ok || !local_ok)
             SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: MAIL FROM does not match mf= in DKIM2-Signature i=%d", latest->i);
+                "DKIM2-Signature i=%d MAIL FROM %s did not match",
+                latest->i, ctx->mail_from);
     }
 
     /* RCPT TO: every envelope recipient must appear in rt= */
@@ -431,8 +440,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 if (strcmp(ctx->rcpt_to[i], latest->rt[j]) == 0) { found = 1; break; }
             if (!found)
                 SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: RCPT TO %s not in rt= of DKIM2-Signature i=%d",
-                    ctx->rcpt_to[i], latest->i);
+                    "DKIM2-Signature i=%d RCPT TO %s did not match",
+                    latest->i, ctx->rcpt_to[i]);
         }
     }
 
@@ -476,8 +485,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
             free(mf_d);
             if (!dm)
                 SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: d=%s does not cover mf= domain in DKIM2-Signature i=%d",
-                    sig->d, sig->i);
+                    "DKIM2-Signature i=%d MAIL FROM and d= do not match",
+                    sig->i);
         }
 
         /* Verify all s= items for this signature */
@@ -537,19 +546,22 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         dkim2_sig_t *cur  = sig_arr[k];
         dkim2_sig_t *prev = sig_arr[k - 1];
 
-        /* draft-03 §11.4: an nd= hop declares the next sig's signing domain;
+        /* draft-04 §11.4: an nd= hop declares the next sig's signing domain;
            nd= MUST exactly match that signature's d=. */
         if (prev->nd) {
             if (!cur->d || strcasecmp(prev->nd, cur->d) != 0)
                 SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: DKIM2-Signature i=%d nd= does not match d= of i=%d",
-                    prev->i, cur->i);
+                    "DKIM2-Signature i=%d MAIL nd= does not match",
+                    prev->i);
             continue;
         }
 
-        if (!cur->mf || !prev->rt)
+        if (!cur->mf)
             SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: missing mf= or rt= for chain custody at i=%d", cur->i);
+                "DKIM2-Signature i=%d MAIL FROM <> did not match", cur->i);
+        if (!prev->rt)
+            SETSTATUS(DKIM2_PERMERROR,
+                "DKIM2-Signature i=%d RCPT TO <> did not match", prev->i);
 
         char *cur_mf_d = addr_domain(cur->mf);
         int match = 0;
@@ -562,7 +574,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         free(cur_mf_d);
         if (!match)
             SETSTATUS(DKIM2_FAIL,
-                "FAIL: Chain of custody break at i=%d", cur->i);
+                "DKIM2-Signature i=%d MAIL FROM %s did not match", cur->i, cur->mf);
     }
 
     /* §10.7: Verify all MI body+header hashes, undoing recipes for inner hops. */

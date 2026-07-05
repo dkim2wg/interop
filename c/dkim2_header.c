@@ -111,7 +111,7 @@ static char **parse_rt(const char *rt_val, int *n_out) {
     return out;
 }
 
-/* Parse f= value: comma-separated plain flag tokens (draft-03 §8.10).
+/* Parse f= value: comma-separated plain flag tokens (draft-04 §8.10).
    Flags are an open list; tokens are stored verbatim with WSP trimmed. */
 static char **parse_flags(const char *f_val, int *n_out) {
     int cnt = 1;
@@ -174,7 +174,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     REQ("m"); sig->m = atoi(v);
     REQ("t"); sig->t = (uint64_t)strtoull(v, NULL, 10);
     REQ("d"); sig->d = strdup(v);
-    /* draft-03 §8: either nd= or both mf=+rt=, never both forms. */
+    /* draft-04 §8: either nd= or both mf=+rt=, never both forms. */
     {   const char *nd = tag_get(tl, "nd");
         const char *mf = tag_get(tl, "mf");
         const char *rt = tag_get(tl, "rt");
@@ -249,7 +249,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     int pos = snprintf(buf, 8192, "i=%d; m=%d; t=%llu; d=%s",
         sig->i, sig->m, (unsigned long long)sig->t, sig->d);
     if (sig->nd) {
-        /* draft-03 §9.3: imaginary hop carries nd= instead of mf=/rt= */
+        /* draft-04 §9.3: imaginary hop carries nd= instead of mf=/rt= */
         pos += snprintf(buf + pos, 8192 - pos, "; nd=%s", sig->nd);
     } else {
         char mf_b64[512];
@@ -273,7 +273,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     }
     if (sig->n)
         pos += snprintf(buf + pos, 8192 - pos, "; n=%s", sig->n);
-    /* f= flags (draft-03 §8.10), e.g. feedback, feedhere — preserved verbatim */
+    /* f= flags (draft-04 §8.10), e.g. feedback, feedhere — preserved verbatim */
     if (sig->flags && sig->flags[0]) {
         pos += snprintf(buf + pos, 8192 - pos, "; f=");
         for (int i = 0; sig->flags[i]; i++) {

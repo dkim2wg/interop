@@ -39,12 +39,26 @@ sub init {
     $self->{result}              = undef;
     $self->{details}             = undef;
     $self->{skip_timestamp_check} = 0;
+    $self->{mid_process}         = 0;
 }
 
 sub skip_timestamp_check {
     my ($self, $val) = @_;
     $self->{skip_timestamp_check} = $val if defined $val;
     return $self->{skip_timestamp_check};
+}
+
+# mid_process: set when this Verifier is being run against a partial view of
+# the chain (e.g. Validate.pm's per-level sub-verify, which strips
+# higher-numbered DKIM2-Signature headers before re-verifying). In that view
+# the highest remaining i= is NOT the true top of the whole chain, so the
+# top-nd= rejection below (only valid for a final, whole-message verify)
+# must be suppressed. Defaults to 0: a standalone/whole-message verify still
+# rejects a true top nd=.
+sub mid_process {
+    my ($self, $val) = @_;
+    $self->{mid_process} = $val if defined $val;
+    return $self->{mid_process};
 }
 
 sub handle_header {
@@ -97,6 +111,23 @@ sub finish_body {
     my $max_i = (sort { $b <=> $a } keys %dk2_map)[0];
     my $dk2_entry = $dk2_map{$max_i};
     my $signature = $dk2_entry->{sig};
+
+    # Local policy (stricter than spec-04 §"Check the Chain-of-Custody"): the
+    # highest-numbered DKIM2-Signature MUST NOT carry nd=. The only legitimate
+    # nd= producer is reflector-brand-nd, which always emits the matching
+    # higher-i= signature too, so nd= never appears on top.
+    #
+    # Only valid for a FINAL, whole-message verification: $max_i here is the
+    # top of whatever chain view this Verifier was fed. During a partial/
+    # mid-chain verify (mid_process set, e.g. by Validate.pm's per-level
+    # sub-verify after stripping higher signatures) that "top" is not the
+    # real top of the chain, so this rejection must be suppressed.
+    if (!$self->{mid_process}
+        && defined $signature->next_domain && length $signature->next_domain) {
+        $self->{result}  = 'permerror';
+        $self->{details} = "DKIM2-Signature i=$max_i unexpected nd= tag";
+        return;
+    }
 
     # Validate chain completeness - check for gaps
     for my $i (1..$max_i) {
@@ -261,7 +292,27 @@ sub _verify_signature {
         signing_header => $sig_hdr_for_input,
     );
 
-    # draft-03 §8: a signature carries either nd= or both mf= and rt=, never
+    # draft-04: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
+    # via get_tag() (not the sequence/version/timestamp/domain accessors)
+    # because those accessors just proxy get_tag() and would themselves
+    # return undef for an absent tag anyway -- get_tag() is used directly
+    # here to make explicit that "missing" means "tag truly absent", not
+    # coerced to 0/''. (Verified against TagValueList::get_tag/Signature.pm:
+    # none of these accessors coerce a missing tag to a false-but-defined
+    # value.)
+    for my $t (qw(i m t d s)) {
+        my $present =
+              $t eq 's' ? ($signature->sig_count ? 1 : 0)
+            : $t eq 'd' ? (defined($signature->get_tag('d')) && length $signature->get_tag('d'))
+            :             defined $signature->get_tag($t);
+        unless ($present) {
+            $self->{result}  = 'permerror';
+            $self->{details} = "DKIM2-Signature i=$i tag=$t missing";
+            return 0;
+        }
+    }
+
+    # draft-04 §8: a signature carries either nd= or both mf= and rt=, never
     # both forms. nd= together with mf=/rt= is a PERMERROR.
     my $nd_tag = $signature->get_tag('nd');
     my $mf_tag = $signature->get_tag('mf');
@@ -273,7 +324,7 @@ sub _verify_signature {
     }
     if (!defined $nd_tag && !(defined $mf_tag && defined $rt_tag)) {
         $self->{result}  = 'permerror';
-        $self->{details} = "DKIM2-Signature i=$i missing chain tags (nd= or mf=+rt=)";
+        $self->{details} = "DKIM2-Signature i=$i tag=mf missing";
         return 0;
     }
 
@@ -327,7 +378,7 @@ sub _verify_signature {
         my $mf_domain = extract_domain($mf);
         unless ($mf_domain && relaxed_domain_match($mf_domain, $sig_domain)) {
             $self->{result} = 'fail';
-            $self->{details} = "d=$sig_domain does not match mf domain $mf_domain at i=$i";
+            $self->{details} = "DKIM2-Signature i=$i MAIL FROM and d= do not match";
             return 0;
         }
     }
@@ -411,14 +462,14 @@ sub _verify_chain {
         my $cur_sig = $dk2_map{$cur_i}{sig};
         my $prev_sig = $dk2_map{$prev_i}{sig};
 
-        # draft-03 §11.4: an nd= hop declares the domain that signs the next
+        # draft-04 §11.4: an nd= hop declares the domain that signs the next
         # signature; nd= MUST exactly match that signature's d=.
         my $prev_nd = $prev_sig->next_domain;
         if (defined $prev_nd && length $prev_nd) {
             my $cur_d = $cur_sig->domain // '';
             unless (lc($prev_nd) eq lc($cur_d)) {
                 $self->{result} = 'fail';
-                $self->{details} = "DKIM2-Signature i=$prev_i nd= does not match d= of i=$cur_i";
+                $self->{details} = "DKIM2-Signature i=$prev_i MAIL nd= does not match";
                 return 0;
             }
             next;
@@ -430,12 +481,12 @@ sub _verify_chain {
         # Chain of custody: mf of N must relaxed-domain-match an rt of N-1
         unless ($cur_mf) {
             $self->{result} = 'fail';
-            $self->{details} = "missing MAIL FROM at i=$cur_i";
+            $self->{details} = "DKIM2-Signature i=$cur_i MAIL FROM <> did not match";
             return 0;
         }
         unless ($prev_rt) {
             $self->{result} = 'fail';
-            $self->{details} = "missing RCPT TO at i=$prev_i";
+            $self->{details} = "DKIM2-Signature i=$prev_i RCPT TO <> did not match";
             return 0;
         }
 
@@ -451,7 +502,7 @@ sub _verify_chain {
         }
         unless ($match) {
             $self->{result} = 'fail';
-            $self->{details} = "chain of custody break at i=$cur_i";
+            $self->{details} = "DKIM2-Signature i=$cur_i MAIL FROM $cur_mf did not match";
             return 0;
         }
     }
@@ -515,7 +566,7 @@ between consecutive hops.
 
 Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-03, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-04, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

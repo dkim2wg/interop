@@ -75,7 +75,7 @@ sub get_tag {
 # The header-hash component (base64) of this Message-Instance's h= tag.
 sub header_hash { return $_[0]->{bits}{h1} }
 
-# Mark the body recipe as null per spec-02 §4.2: the body changed but the
+# Mark the body recipe as null per spec-04 §4.2: the body changed but the
 # previous state cannot be recreated. as_string() then emits "b": null.
 sub set_null_body_recipe {
     my ($self) = @_;
@@ -84,7 +84,7 @@ sub set_null_body_recipe {
 
 # True if this instance declares the previous state non-recreatable (a null
 # "b" recipe). Such an instance cannot be undone to a prior version. Under
-# draft-03 §5.1 a header recipe can no longer be null, so only the body
+# draft-04 §5.1 a header recipe can no longer be null, so only the body
 # recipe can render an instance unrecoverable.
 sub unrecoverable {
     my ($self) = @_;
@@ -204,9 +204,9 @@ sub parse {
                 }
                 $self->{bits}{rh} = \%rh;
             } else {
-                # draft-03 §5.1 removed the null header recipe: a present "h"
+                # draft-04 §5.1 removed the null header recipe: a present "h"
                 # MUST be a non-empty object. Reject anything else.
-                die "header recipe is null: not permitted under draft-03 \xA75.1\n";
+                die "header recipe is null: not permitted under draft-04 \xA75.1\n";
             }
         }
     }
@@ -227,7 +227,7 @@ sub _decode_recipe_list {
             } elsif (exists $item->{d}) {
                 push @decoded, @{$item->{d}};
             }
-            # {"z": true} is ignored — spec-02 removed it from the JSON schema
+            # {"z": true} is ignored — spec-04 removed it from the JSON schema
             # but §11 still uses it for truncated-body DSNs (spec inconsistency;
             # see spec-review-notes.md). Keep ignoring for backward compatibility.
         } elsif (ref $item eq 'ARRAY') {
@@ -838,7 +838,7 @@ Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance head
 =head1 DESCRIPTION
 
 This module implements Message-Instance header computation as defined in
-draft-ietf-dkim-dkim2-spec-02.  A Message-Instance header records cryptographic
+draft-ietf-dkim-dkim2-spec-04.  A Message-Instance header records cryptographic
 hashes of the message headers and body at a point in the delivery chain, along
 with optional diff recipes that allow undoing changes made at each hop.
 

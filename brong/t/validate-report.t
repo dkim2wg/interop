@@ -30,6 +30,46 @@ sub signed_input {
     return $m->as_string;
 }
 
+# Build an arbitrary chain of hops onto a single freshly-originated message
+# (one Message-Instance, m=1). Mirrors t/error-strings.t's build_chain, reused
+# here so the validator's own per-signature custody messages (as opposed to
+# the wrapped sub-verifier's) can be exercised directly.
+sub build_chain {
+    my (@hops) = @_;
+    my $raw = "From: sender\@test1.dkim2.com\r\nTo: rcpt\@test5.dkim2.com\r\n"
+            . "Subject: error string test\r\n\r\nbody\r\n";
+    my $msg = Email::MIME->new($raw);
+
+    my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+    (my $f = fold_header("Message-Instance: " . $mi->as_string)) =~ s/^Message-Instance:\s*//;
+    $msg->header_raw_prepend('Message-Instance', $f);
+    $msg = Email::MIME->new($msg->as_string);
+
+    for my $hop (@hops) {
+        my $selector = $hop->{selector} // 'sel1';
+        my %args = (
+            Domain    => $hop->{domain},
+            Selector  => $selector,
+            Key       => DKIM2TestKeys::private_key($hop->{domain}, $selector),
+            Timestamp => 1740000000,
+        );
+        if ($hop->{next_domain}) {
+            $args{NextDomain} = $hop->{next_domain};
+        } else {
+            $args{MailFrom} = $hop->{mailfrom};
+            $args{RcptTo}   = $hop->{rcptto};
+        }
+        my $signer = Mail::DKIM2::Signer->new(%args);
+        $signer->PRINT($msg->as_string);
+        $signer->CLOSE;
+        my $header = $signer->as_string;
+        $header =~ s/^DKIM2-Signature:\s*//;
+        $msg->header_raw_prepend('DKIM2-Signature', $header);
+        $msg = Email::MIME->new($msg->as_string);
+    }
+    return $msg->as_string;
+}
+
 my %common = (
     sender=>'a@test1.dkim2.com', domain=>'test2.dkim2.com', selector=>'sel1',
     key=>DKIM2TestKeys::private_key('test2.dkim2.com','sel1'),
@@ -82,9 +122,97 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
     ok((grep { $_->{tag} eq 'nd' && $_->{value} eq 'test2.dkim2.com' } @{$sig1->{tags}}),
        'i=1 tags include nd=test2.dkim2.com');
     ok(!(grep { $_->{tag} eq 'mf' } @{$sig1->{tags}}), 'i=1 tags omit mf= (nd= hop)');
+    # The i=1 sub-verify runs against a partial view (higher DKIM2-Signature
+    # headers stripped for the top-down walk), where nd= at i=1 *looks*
+    # locally topmost. That must NOT trip the top-nd= rejection -- this is a
+    # legitimate non-top nd= hop, not the real top of the chain.
+    isnt($sig1->{result}, 'fail', 'i=1 legitimate non-top nd= hop is not flagged fail');
+    unlike($sig1->{detail} // '', qr/unexpected nd= tag/,
+        'i=1 detail does not wrongly report the top-nd rejection');
     my ($mi1) = grep { $_->{kind} eq 'mi' && $_->{m}==1 } @{$rep->{levels}};
     ok((grep { $_->{tag} eq 'h' && $_->{value} =~ /^sha256:/ } @{$mi1->{tags}}),
        'MI tags expose the full sha256 hash values');
+    # The real top-of-chain signature (i=2, no nd=) must never be flagged by
+    # the new top-nd check; only the highest-numbered DKIM2-Signature in the
+    # whole chain is eligible.
+    unlike($sig2->{detail} // '', qr/unexpected nd= tag/,
+        'top-of-chain hop (no nd=) is not flagged by the new top-nd check');
+}
+
+# 1c) top-level nd=: the highest-numbered DKIM2-Signature carries nd= instead
+# of mf=/rt=. Local policy (spec-04, stricter than the letter of the draft;
+# matches the Verifier.pm permerror added for Task 2.1) rejects this: the
+# report must surface a failing level whose detail matches the same message
+# as the Verifier's permerror.
+sub signed_input_nd {
+    my ($raw, $next_domain) = @_; $raw =~ s/\r?\n/\r\n/g;
+    my $m = Email::MIME->new($raw);
+    my $mi = Mail::DKIM2::MessageInstance->calculate($m);
+    (my $f = fold_header("Message-Instance: ".$mi->as_string)) =~ s/^Message-Instance:\s*//;
+    $m->header_raw_prepend('Message-Instance', $f);
+    my $s = Mail::DKIM2::Signer->new(
+        Domain=>'test1.dkim2.com', Selector=>'sel1',
+        Key=>DKIM2TestKeys::private_key('test1.dkim2.com','sel1'),
+        NextDomain=>$next_domain,
+        Timestamp=>1740000000);
+    $s->PRINT($m->as_string); $s->CLOSE;
+    (my $sig=$s->as_string)=~s/^DKIM2-Signature:\s*//;
+    $m->header_raw_prepend('DKIM2-Signature',$sig);
+    return $m->as_string;
+}
+{
+    my $msg = signed_input_nd(
+        "From: a\@test1.dkim2.com\r\nTo: r\@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n",
+        'test2.dkim2.com');
+    my $rep = Mail::DKIM2::Validate::report($msg, %ropt);
+    is($rep->{overall}, 'fail', 'top nd= chain overall fail');
+    my ($lvl) = grep { ($_->{result}//'') eq 'fail' && $_->{kind} eq 'signature' }
+                @{$rep->{levels}};
+    ok($lvl, 'validator reports a failing signature level for top nd=');
+    like($lvl->{detail}, qr/unexpected nd= tag/,
+         'detail names the top nd= rule');
+    is($lvl->{detail}, "DKIM2-Signature i=1 unexpected nd= tag",
+       'detail matches the exact canonical message');
+}
+
+# 1d) nd= adjacency mismatch: i=1 declares nd=test2.dkim2.com but i=2's d= is
+# test3.dkim2.com. This is checked by Validate.pm's OWN per-signature custody
+# logic (not the wrapped sub-verifier -- Validate.pm walks the chain top-down
+# and only ever sub-verifies one signature at a time against a partial
+# message view, so it never sees both i=1 and i=2 together the way
+# Verifier.pm's whole-chain _verify_chain() does). It must use the exact
+# same canonical spec-04 wording as Task 3.1's Verifier.pm permerror
+# (verbatim "MAIL nd=" typo preserved), keyed on the *previous* hop's i=.
+{
+    my $msg = build_chain(
+        { domain => 'test1.dkim2.com', next_domain => 'test2.dkim2.com' },
+        { domain => 'test3.dkim2.com', mailfrom => 'sender@test3.dkim2.com',
+          rcptto => ['rcpt@test5.dkim2.com'] },
+    );
+    my $rep = Mail::DKIM2::Validate::report($msg, %ropt);
+    my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i} == 2 } @{$rep->{levels}};
+    ok($sig2, 'nd= mismatch: i=2 level present');
+    ok(!$sig2->{custody}{ok}, 'nd= mismatch: custody flagged not ok');
+    is($sig2->{custody}{detail}, 'DKIM2-Signature i=1 MAIL nd= does not match',
+       'nd= adjacency custody detail matches the canonical spec-04 wording');
+}
+
+# 1e) chain of custody break: i=2's mf= domain does not relaxed-match any rt=
+# of i=1. Also Validate.pm's OWN custody logic (see 1d above). Must match the
+# same canonical wording as the Verifier.pm chain-of-custody permerror.
+{
+    my $msg = build_chain(
+        { domain => 'test1.dkim2.com', mailfrom => 'sender@test1.dkim2.com',
+          rcptto => ['rcpt@test5.dkim2.com'] },
+        { domain => 'test2.dkim2.com', mailfrom => 'sender@test2.dkim2.com',
+          rcptto => ['rcpt@test5.dkim2.com'] },
+    );
+    my $rep = Mail::DKIM2::Validate::report($msg, %ropt);
+    my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i} == 2 } @{$rep->{levels}};
+    ok($sig2, 'custody break: i=2 level present');
+    ok(!$sig2->{custody}{ok}, 'custody break: custody flagged not ok');
+    is($sig2->{custody}{detail}, 'DKIM2-Signature i=2 MAIL FROM <sender@test2.dkim2.com> did not match',
+       'custody-break detail matches the canonical spec-04 wording');
 }
 
 # 2) Post-sign body tamper (damage)

@@ -10,7 +10,8 @@ use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
 
-# Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (draft-03 §12.1.1).
+# Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 3462 DSN
+# structure; DKIM2 draft-04 §12.1.1 propagation procedure).
 #
 # When a Forwarder receives a Delivery Status Notification for a message it
 # forwarded, it may propagate that DSN back towards the original sender. The
@@ -89,7 +90,8 @@ sub _set_report_type {
 }
 
 # Generate a fresh DKIM2-signed DSN for an inbound message, sent back to the
-# original sender (draft-03 §12.1). Used by the reflector-dsn address, which
+# original sender (RFC 3462 three-part multipart/report structure; DKIM2
+# draft-04 §12.1). Used by the reflector-dsn address, which
 # bounces every message regardless of whether it arrived DKIM2-signed.
 #
 # Args: raw (inbound message), signer (MailFrom => '<>'), to (envelope sender
@@ -179,11 +181,25 @@ sub propagate {
     my @parts = $dsn->subparts;
     croak "propagate: DSN must have at least three parts" unless @parts >= 3;
 
+    # Validate the RFC 3462 three-part multipart/report structure: part[0] is
+    # human-readable text, one part is machine-readable delivery-status, and
+    # one part is the returned original (message/rfc822 or, when the body is
+    # unrecoverable, text/rfc822-headers). A bare part count is not enough --
+    # e.g. a report with two text/plain parts and an embedded original would
+    # pass a ">=3" check without being a valid DSN.
+    my $part0_ct = $parts[0]->content_type // '';
+    croak "propagate: DSN part 1 is not human-readable text (text/plain)"
+        unless $part0_ct =~ m{^text/plain}i;
+
+    my $has_delivery_status = grep { ($_->content_type // '') =~ m{^message/delivery-status}i } @parts;
+    croak "propagate: DSN has no message/delivery-status part"
+        unless $has_delivery_status;
+
     # Locate the embedded original (message/rfc822 or text/rfc822-headers).
     my ($orig_idx, $orig_part);
     for my $i (0 .. $#parts) {
         my $pct = $parts[$i]->content_type // '';
-        if ($pct =~ m{message/rfc822}i || $pct =~ m{text/rfc822-headers}i) {
+        if ($pct =~ m{^message/rfc822}i || $pct =~ m{^text/rfc822-headers}i) {
             $orig_idx = $i; $orig_part = $parts[$i]; last;
         }
     }
@@ -253,7 +269,8 @@ __END__
 
 =head1 NAME
 
-Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (draft-03 §12.1.1)
+Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 3462 DSN
+structure; DKIM2 draft-04 §12.1.1 propagation procedure)
 
 =head1 SYNOPSIS
 

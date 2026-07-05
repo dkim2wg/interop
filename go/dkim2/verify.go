@@ -70,6 +70,16 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
+	// Local policy (stricter than spec-04): the top (highest i=) signature
+	// MUST NOT carry nd=. The only legitimate nd= producer emits the nd=
+	// signature together with the matching higher-i= signature at the same
+	// time, so nd= should never appear alone on the top signature. This is
+	// distinct from checkChainOfCustody's adjacency handling below, which
+	// still allows (and requires) nd= on non-top signatures.
+	if topSig != nil && topSig.NextDomain != "" {
+		return nil, fmt.Errorf("DKIM2-Signature i=%d unexpected nd= tag", topSig.Sequence)
+	}
+
 	if topSig != nil && topSig.MIVersion != maxMIVersion {
 		return []VerifyResult{{
 			Sequence: topSig.Sequence,
@@ -84,8 +94,8 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		opt := opts[0]
 		if opt.MailFrom != "" {
 			if normAddr(opt.MailFrom) != normAddr(topSig.MailFrom) {
-				return nil, fmt.Errorf("MAIL FROM %q did not match mf= %q in top signature i=%d",
-					opt.MailFrom, topSig.MailFrom, topSig.Sequence)
+				return nil, fmt.Errorf("DKIM2-Signature i=%d MAIL FROM %s did not match",
+					topSig.Sequence, opt.MailFrom)
 			}
 		}
 		if opt.RcptTo != nil {
@@ -98,8 +108,8 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 					}
 				}
 				if !found {
-					return nil, fmt.Errorf("RCPT TO %q not found in rt= of top signature i=%d",
-						delivered, topSig.Sequence)
+					return nil, fmt.Errorf("DKIM2-Signature i=%d RCPT TO %s did not match",
+						topSig.Sequence, delivered)
 				}
 			}
 		}
@@ -275,8 +285,8 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		if sig.MailFrom != "" && sig.MailFrom != "<>" {
 			if mfDomain := domainFromAddr(sig.MailFrom); mfDomain != "" {
 				if !relaxedDomainMatch(mfDomain, strings.ToLower(sig.Domain)) {
-					res.Error = fmt.Errorf("i=%d: d=%s is not a suffix of mf= domain %s",
-						sig.Sequence, sig.Domain, mfDomain)
+					res.Error = fmt.Errorf("DKIM2-Signature i=%d MAIL FROM and d= do not match",
+						sig.Sequence)
 					results = append(results, res)
 					continue
 				}
@@ -409,10 +419,10 @@ func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
 			continue
 		}
 		if prev.NextDomain != "" {
-			// draft-03 §11.4: nd= MUST exactly match the next sig's d=.
+			// draft-04 §11.4: nd= MUST exactly match the next sig's d=.
 			if !strings.EqualFold(prev.NextDomain, cur.Domain) {
-				return fmt.Errorf("DKIM2-Signature i=%d nd= does not match d= of i=%d",
-					prev.Sequence, cur.Sequence)
+				return fmt.Errorf("DKIM2-Signature i=%d MAIL nd= does not match",
+					prev.Sequence)
 			}
 			continue
 		}
@@ -430,8 +440,8 @@ func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
 			}
 		}
 		if !matched {
-			return fmt.Errorf("chain-of-custody break at i=%d: mf= domain %q not covered by rt= of i=%d",
-				cur.Sequence, curMFDomain, prev.Sequence)
+			return fmt.Errorf("DKIM2-Signature i=%d MAIL FROM %s did not match",
+				cur.Sequence, cur.MailFrom)
 		}
 	}
 	return nil

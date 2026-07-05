@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 verifier - draft-ietf-dkim-dkim2-spec-01
+DKIM2 verifier - draft-ietf-dkim-dkim2-spec-04
 
 Takes a signed email and verifies its DKIM2 signatures using public keys
 from a dns.json file or DNS TXT records.
@@ -84,7 +84,7 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
             tags = parse_dkim1_txt(rec_value)
             key_type = tags.get("k", "rsa")
             pub_b64 = tags.get("p", "")
-            # h= (hash algorithm list) MUST be ignored per spec-01 Section 10.3
+            # h= (hash algorithm list) MUST be ignored per spec-04 Section 10.3
             pub_bytes = base64.b64decode(pub_b64)
 
             if key_type == "ed25519":
@@ -124,6 +124,19 @@ def _relaxed_domain_match(d1: str, d2: str) -> bool:
     """Return True if d1 equals d2 or d1 is a subdomain of d2."""
     d1, d2 = d1.lower(), d2.lower()
     return d1 == d2 or d1.endswith("." + d2)
+
+
+def _envelope_addr_equal(a: str, b: str) -> bool:
+    """Exact envelope-address match per spec "Check the Chain-of-Custody":
+    domains are compared case-insensitively, local-parts case-sensitively.
+    Surrounding angle brackets are ignored so bracketed and bare forms
+    compare equal; the null sender (<>) matches only the null sender."""
+    a = a.strip().strip("<>")
+    b = b.strip().strip("<>")
+    a_at, b_at = a.rfind("@"), b.rfind("@")
+    if a_at < 0 or b_at < 0:
+        return a == b
+    return a[:a_at] == b[:b_at] and a[a_at + 1:].lower() == b[b_at + 1:].lower()
 
 
 def _bracket_errors(sig_headers: list[str]) -> list[str]:
@@ -166,18 +179,23 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
         prev_i = _extract_tag(prev_val, "i")
         prev_nd = _extract_tag(prev_val, "nd")
         if prev_nd:
-            # draft-03 §11.4: nd= MUST exactly match the next sig's d=.
+            # draft-04 §11.4: nd= MUST exactly match the next sig's d=.
             cur_d = _extract_tag(cur_val, "d") or ""
             if prev_nd.lower() != cur_d.lower():
                 errors.append(
-                    f"DKIM2-Signature i={prev_i} nd= does not match d= of i={cur_i}"
+                    f"DKIM2-Signature i={prev_i} MAIL nd= does not match"
                 )
             continue
         cur_mf_b64 = _extract_tag(cur_val, "mf")
         prev_rt_raw = _extract_tag(prev_val, "rt")
-        if not cur_mf_b64 or not prev_rt_raw:
+        if not cur_mf_b64:
             errors.append(
-                f"DKIM2-Signature i={cur_i}: missing mf= or rt= for chain custody check"
+                f"DKIM2-Signature i={cur_i} MAIL FROM <> did not match"
+            )
+            continue
+        if not prev_rt_raw:
+            errors.append(
+                f"DKIM2-Signature i={prev_i} RCPT TO <> did not match"
             )
             continue
         cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
@@ -189,20 +207,19 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
         if not any(_relaxed_domain_match(cur_mf_domain, _domain_from_addr(rt))
                    for rt in prev_rts):
             errors.append(
-                f"DKIM2-Signature i={cur_i}: chain of custody break "
-                f"(mf domain {cur_mf_domain!r} not in rt= domains of previous signature)"
+                f"DKIM2-Signature i={cur_i} MAIL FROM {cur_mf} did not match"
             )
     return errors
 
 
 def _sig_flags(sig_hdr: str) -> list[str]:
-    """Return the f= flag list of a DKIM2-Signature header (draft-03 §8.10)."""
+    """Return the f= flag list of a DKIM2-Signature header (draft-04 §8.10)."""
     f = _extract_tag(_get_header_value(sig_hdr), "f")
     return [x.strip() for x in f.split(",") if x.strip()] if f else []
 
 
 def _flag_enforcement_errors(sig_by_seq: list[str], mi_headers: list[str]) -> list[str]:
-    """Enforce the donotmodify/donotexplode flags (draft-03 §11.8).
+    """Enforce the donotmodify/donotexplode flags (draft-04 §11.8).
 
     feedback/feedhere are recognised but carry no verifier enforcement.
     """
@@ -343,17 +360,18 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     mf_val = _extract_tag(value, "mf")
     rt_val = _extract_tag(value, "rt")
 
-    # draft-03 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+    # draft-04 §8: i= m= t= d= s= MUST be present; plus either nd= or both
     # mf= and rt= (and nd= excludes mf=/rt=).
     if not all([i_val, m_val, t_val0, d_val, s_tag]):
-        return [f"DKIM2-Signature i={i_val}: missing required tag(s) "
-                f"(need i=, m=, t=, d=, s=)"]
+        for tag_name, tag_val in (
+            ("i", i_val), ("m", m_val), ("t", t_val0), ("d", d_val), ("s", s_tag),
+        ):
+            if not tag_val:
+                return [f"DKIM2-Signature i={i_val} tag={tag_name} missing"]
     if nd_val and (mf_val or rt_val):
-        return [f"DKIM2-Signature i={i_val} tag=nd was unexpected: "
-                f"nd= excludes mf=/rt="]
+        return [f"DKIM2-Signature i={i_val} tag=nd was unexpected"]
     if not nd_val and not (mf_val and rt_val):
-        return [f"DKIM2-Signature i={i_val}: missing chain tags "
-                f"(need nd= or both mf=+rt=)"]
+        return [f"DKIM2-Signature i={i_val} tag=mf missing"]
 
     # §7.3 SHOULD: n= nonce must not exceed 64 characters
     n_val = _extract_tag(value, "n")
@@ -372,6 +390,19 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
                 return [f"DKIM2-Signature i={i_val}: signature has expired (age > 14 days)"]
         except ValueError:
             pass
+
+    # Relaxed d<->mf per-sig check (mirrors Perl Verifier.pm:326-333): the
+    # envelope MAIL FROM domain must equal or be a subdomain of d=, unless
+    # the sender is the null sender (<>).
+    if mf_val:
+        decoded_mf = base64.b64decode(mf_val).decode("utf-8", errors="surrogateescape")
+        if decoded_mf != "<>":
+            mf_domain = _domain_from_addr(decoded_mf)
+            if not _relaxed_domain_match(mf_domain, d_val):
+                errors.append(
+                    f"DKIM2-Signature i={i_val} MAIL FROM and d= do not match"
+                )
+                return errors
 
     sig_items = []
     for part in s_tag.split(","):
@@ -471,7 +502,7 @@ def _classify_status(errors: list[str]) -> str:
     if 'temperror' in e:
         return 'temperror'
     # Crypto/hash/custody failures
-    if any(k in e for k in ('failed', 'mismatch', 'break', 'expired')):
+    if any(k in e for k in ('failed', 'mismatch', 'break', 'expired', 'not match')):
         return 'fail'
     # Structural/format problems
     return 'permerror'
@@ -504,7 +535,9 @@ def _make_result(errors: list[str], top_sig_i: int, top_domain: str) -> VerifyRe
 
 def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                    verbose: bool = False,
-                   skip_timestamp_check: bool = False) -> "VerifyResult":
+                   skip_timestamp_check: bool = False,
+                   mail_from: str | None = None,
+                   rcpt_to: list[str] | None = None) -> "VerifyResult":
     """Verify all DKIM2 signatures in a message.
 
     If full_chain is True, walks backwards through MI versions, undoing
@@ -544,6 +577,44 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                f"topmost MI m={max_mi_version}")
         return VerifyResult(ok=False, status='permerror', failing_i=top_sig_i,
                             domain=top_domain, message=msg, errors=[msg])
+
+    # Local policy: the top (highest-i=) DKIM2-Signature MUST NOT carry nd=.
+    # nd= only ever legitimately appears together with a subsequent, higher-i=
+    # signature that takes over custody; a top-of-chain nd= means the chain
+    # is incomplete/tampered, so reject before any further checks run.
+    if _extract_tag(top_sig_value, "nd"):
+        top_i = _get_seq_from_sig(top_sig)
+        msg = f"DKIM2-Signature i={top_sig_seq} unexpected nd= tag"
+        return VerifyResult(ok=False, status='permerror', failing_i=top_i,
+                            domain=_extract_tag(top_sig_value, 'd') or '',
+                            message=msg, errors=[msg])
+
+    # Envelope MAIL FROM / RCPT TO checks (spec §"Check the Chain-of-Custody"):
+    # exact match against the top signature's declared mf=/rt=, domains
+    # lowercased, local-part case-sensitive. Applies regardless of
+    # full_chain/simple mode. rt= MAY carry extra recipients beyond what was
+    # actually delivered; every delivered RCPT TO must be present in the set.
+    if mail_from is not None or rcpt_to:
+        top_i = _get_seq_from_sig(top_sig)
+        top_mf_b64 = _extract_tag(top_sig_value, "mf")
+        top_rt_raw = _extract_tag(top_sig_value, "rt")
+        top_mf = (base64.b64decode(top_mf_b64).decode("utf-8", errors="surrogateescape")
+                  if top_mf_b64 else None)
+        top_rts = [
+            base64.b64decode(rt.strip()).decode("utf-8", errors="surrogateescape")
+            for rt in (top_rt_raw.split(",") if top_rt_raw else []) if rt.strip()
+        ]
+
+        if mail_from is not None:
+            if top_mf is None or not _envelope_addr_equal(mail_from, top_mf):
+                all_errors.append(
+                    f"DKIM2-Signature i={top_i} MAIL FROM {mail_from} did not match"
+                )
+        for rcpt in (rcpt_to or []):
+            if not any(_envelope_addr_equal(rcpt, rt) for rt in top_rts):
+                all_errors.append(
+                    f"DKIM2-Signature i={top_i} RCPT TO {rcpt} did not match"
+                )
 
     # Collect the non-MI, non-sig headers for hash verification
     content_headers = []
@@ -637,6 +708,13 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         if version > versions[-1]:
             recipes = decode_recipes(mi_hdr)
             if recipes is not None:
+                # draft-04 §5.1: a present "h" that is JSON null is a syntax
+                # error (distinct from an absent "h", which means headers
+                # were unchanged); mirrors dkim2undo.py's rejection.
+                if "h" in recipes and recipes["h"] is None:
+                    all_errors.append(
+                        f"v={version}: header recipe is null: not permitted"
+                    )
                 h_recipes = recipes.get("h")
                 if h_recipes and isinstance(h_recipes, dict) and len(h_recipes) > 0:
                     try:
@@ -676,7 +754,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-01)")
+        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-04)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--dns-json", required=True,
                         help="Path to dns.json with public keys")
@@ -688,6 +766,12 @@ def main():
     parser.add_argument("--ignore-timestamps", "--skip-timestamp-check",
                         dest="skip_timestamp_check", action="store_true",
                         help="Disable the §10.3 timestamp (14-day/future) check")
+    parser.add_argument("--mail-from",
+                        help="Envelope MAIL FROM to check against the top "
+                             "signature's mf= tag")
+    parser.add_argument("--rcpt-to", action="append",
+                        help="Envelope RCPT TO to check against the top "
+                             "signature's rt= tag (repeatable)")
     args = parser.parse_args()
 
     if args.message == "-":
@@ -699,7 +783,9 @@ def main():
     # Full-chain validation is the default; --full-chain kept for compatibility.
     result = verify_message(raw, dns_data, full_chain=True,
                             verbose=args.verbose,
-                            skip_timestamp_check=args.skip_timestamp_check)
+                            skip_timestamp_check=args.skip_timestamp_check,
+                            mail_from=args.mail_from,
+                            rcpt_to=args.rcpt_to)
 
     if args.verbose or not result.ok:
         headers, _ = parse_message(raw)

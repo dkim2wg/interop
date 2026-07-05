@@ -56,6 +56,51 @@ def _wrap_dsn(embedded: bytes) -> bytes:
     return report.as_bytes()
 
 
+def _wrap_dsn_no_delivery_status(embedded: bytes) -> bytes:
+    """A multipart/report with >=3 parts but no message/delivery-status part
+    (violates the RFC 3462 3-part structure)."""
+    report = MIMEMultipart("report", report_type="delivery-status")
+    report["From"] = "postmaster@test3.dkim2.com"
+    report["To"] = "user@test2.dkim2.com"
+    report["Subject"] = "Delivery failure"
+    report.attach(MIMEText("delivery failed\n"))
+    # Second part is plain text instead of message/delivery-status.
+    report.attach(MIMEText("not a delivery-status part\n"))
+    rfc822 = Message()
+    rfc822.set_type("message/rfc822")
+    rfc822.set_payload([email.message_from_bytes(embedded)])
+    report.attach(rfc822)
+    return report.as_bytes()
+
+
+def test_propagate_rejects_missing_delivery_status():
+    dsn = _wrap_dsn_no_delivery_status(_two_hop_embedded())
+    try:
+        dkim2dsn.propagate(
+            dsn, forwarder_domain="test2.dkim2.com",
+            keyfile=_key("ed25519", "test3.dkim2.com"),
+            selector="ed25519", domain="test3.dkim2.com", timestamp=1740000000)
+        assert False, "propagate should reject a DSN with no message/delivery-status part"
+    except ValueError as e:
+        assert "delivery-status" in str(e), str(e)
+
+
+def test_propagate_accepts_wellformed_three_part_dsn():
+    dsn = _wrap_dsn(_two_hop_embedded())
+    msg = email.message_from_bytes(dsn)
+    parts = msg.get_payload()
+    assert len(parts) == 3
+    assert parts[0].get_content_type() == "text/plain"
+    assert parts[1].get_content_type() == "message/delivery-status"
+    assert parts[2].get_content_type() == "message/rfc822"
+
+    out = dkim2dsn.propagate(
+        dsn, forwarder_domain="test2.dkim2.com",
+        keyfile=_key("ed25519", "test3.dkim2.com"),
+        selector="ed25519", domain="test3.dkim2.com", timestamp=1740000000)
+    assert out["upstream_mailfrom"] == "<sender@origin.example>", out["upstream_mailfrom"]
+
+
 def test_propagate_basic():
     dsn = _wrap_dsn(_two_hop_embedded())
     out = dkim2dsn.propagate(
@@ -77,5 +122,7 @@ def test_propagate_basic():
 
 
 if __name__ == "__main__":
+    test_propagate_rejects_missing_delivery_status()
+    test_propagate_accepts_wellformed_three_part_dsn()
     test_propagate_basic()
     print("python dsn tests OK")

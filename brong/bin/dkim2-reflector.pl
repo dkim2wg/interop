@@ -63,7 +63,7 @@ my $result = eval {
         # Brand demo: if the sender delegated a key via a dkim2test._domainkey
         # CNAME, originate a two-signature message; otherwise fresh + error body.
         # brand-nd uses the nd= "imaginary hop" encoding on the i=1 brand hop
-        # instead of mf=/rt= (draft-03 §9.3).
+        # instead of mf=/rt= (draft-04 §9.3).
         my $bd = $sender; $bd =~ s/.*\@//;
         my $delegated = Mail::DKIM2::Reflector::_dkim2test_cname_ok($bd);
         my $msg = Mail::DKIM2::Reflector::generate_brand(

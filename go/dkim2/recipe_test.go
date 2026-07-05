@@ -3,9 +3,9 @@ package dkim2
 import "testing"
 
 func TestNullHeaderRecipeRejected(t *testing.T) {
-	// draft-03 §5.1: "h": null is no longer permitted.
+	// draft-04 §5.1: "h": null is no longer permitted.
 	if _, err := parseRecipe([]byte(`{"h":null,"b":[{"c":[1,1]}]}`)); err == nil {
-		t.Fatal("null header recipe must be rejected (draft-03 §5.1)")
+		t.Fatal("null header recipe must be rejected (draft-04 §5.1)")
 	}
 }
 

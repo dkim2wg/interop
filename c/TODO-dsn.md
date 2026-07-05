@@ -1,4 +1,4 @@
-# TODO: DSN propagation (draft-03 §12.1.1) — not yet implemented in C
+# TODO: DSN propagation (draft-04 §12.1.1) — not yet implemented in C
 
 The C reference implementation does **not** implement DSN propagation
 (`Mail::DKIM2::DSN->propagate` / `dkim2dsn.py` / `dkim2.Propagate` in the Perl,

@@ -1069,7 +1069,28 @@ func TestVerifyChainCustodyBreak(t *testing.T) {
 	if tampered == string(doubleMsg) {
 		t.Skip("could not find mf= to tamper (base64 may differ)")
 	}
-	verifyExpectFail(t, tampered, "chain-of-custody break")
+	// Canonical form matches Perl's Task 3.1 (§8.2/§11.4 custody break):
+	// "DKIM2-Signature i=%d MAIL FROM %s did not match".
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	results, err := Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})
+	var got string
+	if err != nil {
+		got = err.Error()
+	} else {
+		for _, r := range results {
+			if r.Error != nil {
+				got = r.Error.Error()
+				break
+			}
+		}
+	}
+	if got == "" {
+		t.Fatal("expected failure for chain-of-custody break, but all results passed")
+	}
+	const wantSubstr = "DKIM2-Signature i=2 MAIL FROM <attacker@evil.com> did not match"
+	if !strings.Contains(got, wantSubstr) {
+		t.Errorf("error message = %q, want substring %q", got, wantSubstr)
+	}
 }
 
 func TestVerifyEnvelopeMatchPass(t *testing.T) {

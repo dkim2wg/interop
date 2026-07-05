@@ -24,14 +24,14 @@ def test_missing_chain_tags():
     errs = verify_dkim2_signature(
         _sig("i=2; m=2; t=1; d=fwd.example; s=sel:rsa-sha256:AAAA"),
         [], [], {})
-    assert any("missing chain tags" in e for e in errs), errs
+    assert any("tag=mf missing" in e for e in errs), errs
 
 
 def test_missing_t_tag():
     errs = verify_dkim2_signature(
         _sig("i=2; m=2; d=fwd.example; nd=x.example; s=sel:rsa-sha256:AAAA"),
         [], [], {})
-    assert any("missing required tag" in e for e in errs), errs
+    assert any("tag=t missing" in e for e in errs), errs
 
 
 # --- chain-of-custody (draft-03 §11.4) ---

@@ -14,7 +14,7 @@ type DKIM2Signature struct {
 	MIVersion int
 	Timestamp int64
 	Domain     string
-	NextDomain string // nd= tag (draft-03 §8.7); empty if absent
+	NextDomain string // nd= tag (draft-04 §8.7); empty if absent
 	MailFrom   string
 	RcptTo     []string
 	Nonce      string   // n= tag (optional); max 64 ASCII chars per §8.3
@@ -47,7 +47,7 @@ type SignOptions struct {
 	Domain     string
 	MailFrom   string
 	RcptTo     []string
-	NextDomain string // nd= (draft-03 §9.3); when set, emit nd= instead of mf=/rt=
+	NextDomain string // nd= (draft-04 §9.3); when set, emit nd= instead of mf=/rt=
 	Timestamp  int64  // 0 = use time.Now()
 }
 
@@ -69,7 +69,9 @@ type VerifyOptions struct {
 func parseSig(raw string) (*DKIM2Signature, error) {
 	colon := strings.IndexByte(raw, ':')
 	if colon < 0 {
-		return nil, fmt.Errorf("invalid DKIM2-Signature: no colon")
+		// i= is not yet parsed at this point (the tag-value list hasn't even
+		// been split off the field name), so no i=<x> prefix is available.
+		return nil, fmt.Errorf("DKIM2-Signature: no colon found")
 	}
 	tvl := parseTagValueList(raw[colon+1:])
 	sig := &DKIM2Signature{}
@@ -77,21 +79,23 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	if v := tvl.get("i"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return nil, fmt.Errorf("invalid i=: %w", err)
+			// The i= tag itself is malformed, so its value can't be trusted
+			// to prefix this error.
+			return nil, fmt.Errorf("DKIM2-Signature tag=i syntax error: %w", err)
 		}
 		sig.Sequence = n
 	}
 	if v := tvl.get("m"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return nil, fmt.Errorf("invalid m=: %w", err)
+			return nil, fmt.Errorf("DKIM2-Signature i=%d tag=m syntax error: %w", sig.Sequence, err)
 		}
 		sig.MIVersion = n
 	}
 	if v := tvl.get("t"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid t=: %w", err)
+			return nil, fmt.Errorf("DKIM2-Signature i=%d tag=t syntax error: %w", sig.Sequence, err)
 		}
 		sig.Timestamp = n
 	}
@@ -143,16 +147,16 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 			}
 		}
 	}
-	// draft-03 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+	// draft-04 §8: i= m= t= d= s= MUST be present; plus either nd= or both
 	// mf= and rt=. nd= and mf=/rt= are mutually exclusive.
 	if !tvl.has("i") || !tvl.has("m") || !tvl.has("t") {
 		return nil, fmt.Errorf("DKIM2-Signature i=%d: missing required i=/m=/t= tag", sig.Sequence)
 	}
 	if sig.Domain == "" {
-		return nil, fmt.Errorf("missing required d= tag in DKIM2-Signature")
+		return nil, fmt.Errorf("DKIM2-Signature i=%d tag=d missing", sig.Sequence)
 	}
 	if len(sig.Sigs) == 0 {
-		return nil, fmt.Errorf("missing required s= tag in DKIM2-Signature")
+		return nil, fmt.Errorf("DKIM2-Signature i=%d tag=s missing", sig.Sequence)
 	}
 	hasND := tvl.has("nd")
 	hasMF := tvl.has("mf")
@@ -183,7 +187,7 @@ func (sig *DKIM2Signature) String() string {
 	}
 	s := strings.Join(sParts, ",")
 
-	// draft-03 §8: an nd= signature carries nd= instead of mf=/rt=.
+	// draft-04 §8: an nd= signature carries nd= instead of mf=/rt=.
 	var chain string
 	if sig.NextDomain != "" {
 		chain = fmt.Sprintf("nd=%s", sig.NextDomain)
@@ -195,7 +199,7 @@ func (sig *DKIM2Signature) String() string {
 		"DKIM2-Signature: i=%d; m=%d; t=%d; d=%s; %s; s=%s;",
 		sig.Sequence, sig.MIVersion, sig.Timestamp, sig.Domain, chain, s,
 	)
-	// f= flags (draft-03 §8.10), e.g. feedback, feedhere — preserved verbatim.
+	// f= flags (draft-04 §8.10), e.g. feedback, feedhere — preserved verbatim.
 	if len(sig.Flags) > 0 {
 		out += " f=" + strings.Join(sig.Flags, ",") + ";"
 	}
@@ -234,7 +238,7 @@ func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
 // are empty per §8.5), for use as the signing input when creating a new sig.
 func buildIncomplete(seq, miVer int, ts int64, domain, mailFrom string,
 	rcptTo []string, nextDomain, selector, algorithm string) string {
-	// draft-03 §9.3: an imaginary-hop signature carries nd= instead of mf=/rt=.
+	// draft-04 §9.3: an imaginary-hop signature carries nd= instead of mf=/rt=.
 	var chain string
 	if nextDomain != "" {
 		chain = fmt.Sprintf("nd=%s", nextDomain)
