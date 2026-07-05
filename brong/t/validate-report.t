@@ -85,6 +85,47 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
     my ($mi1) = grep { $_->{kind} eq 'mi' && $_->{m}==1 } @{$rep->{levels}};
     ok((grep { $_->{tag} eq 'h' && $_->{value} =~ /^sha256:/ } @{$mi1->{tags}}),
        'MI tags expose the full sha256 hash values');
+    # The real top-of-chain signature (i=2, no nd=) must never be flagged by
+    # the new top-nd check; only the highest-numbered DKIM2-Signature in the
+    # whole chain is eligible.
+    unlike($sig2->{detail} // '', qr/unexpected nd= tag/,
+        'top-of-chain hop (no nd=) is not flagged by the new top-nd check');
+}
+
+# 1c) top-level nd=: the highest-numbered DKIM2-Signature carries nd= instead
+# of mf=/rt=. Local policy (spec-04, stricter than the letter of the draft;
+# matches the Verifier.pm permerror added for Task 2.1) rejects this: the
+# report must surface a failing level whose detail matches the same message
+# as the Verifier's permerror.
+sub signed_input_nd {
+    my ($raw, $next_domain) = @_; $raw =~ s/\r?\n/\r\n/g;
+    my $m = Email::MIME->new($raw);
+    my $mi = Mail::DKIM2::MessageInstance->calculate($m);
+    (my $f = fold_header("Message-Instance: ".$mi->as_string)) =~ s/^Message-Instance:\s*//;
+    $m->header_raw_prepend('Message-Instance', $f);
+    my $s = Mail::DKIM2::Signer->new(
+        Domain=>'test1.dkim2.com', Selector=>'sel1',
+        Key=>DKIM2TestKeys::private_key('test1.dkim2.com','sel1'),
+        NextDomain=>$next_domain,
+        Timestamp=>1740000000);
+    $s->PRINT($m->as_string); $s->CLOSE;
+    (my $sig=$s->as_string)=~s/^DKIM2-Signature:\s*//;
+    $m->header_raw_prepend('DKIM2-Signature',$sig);
+    return $m->as_string;
+}
+{
+    my $msg = signed_input_nd(
+        "From: a\@test1.dkim2.com\r\nTo: r\@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n",
+        'test2.dkim2.com');
+    my $rep = Mail::DKIM2::Validate::report($msg, %ropt);
+    is($rep->{overall}, 'fail', 'top nd= chain overall fail');
+    my ($lvl) = grep { ($_->{result}//'') eq 'fail' && $_->{kind} eq 'signature' }
+                @{$rep->{levels}};
+    ok($lvl, 'validator reports a failing signature level for top nd=');
+    like($lvl->{detail}, qr/unexpected nd= tag/,
+         'detail names the top nd= rule');
+    is($lvl->{detail}, "DKIM2-Signature i=1 unexpected nd= tag",
+       'detail matches the exact canonical message');
 }
 
 # 2) Post-sign body tamper (damage)

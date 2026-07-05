@@ -353,6 +353,24 @@ sub _sig_level {
     # Crypto verified but timestamp old/future -> soft amber warning.
     $lvl{result} = 'warn' if $crypto eq 'pass' && !$lvl{timestamp}{ok};
     $_->{result} = $crypto for @{$lvl{items}};
+
+    # Local policy (spec-04 §"Check the Chain-of-Custody"): the
+    # highest-numbered DKIM2-Signature in the *whole* chain MUST NOT carry
+    # nd= (mirrors the Verifier.pm permerror from Task 2.1). $sig_by_i is the
+    # original, unmodified full signature set for every call in this walk,
+    # so max(keys %$sig_by_i) is the true top-of-chain i=, not merely the
+    # top of this step's partial $work view (a lower, legitimately-nd=
+    # hop can look locally "topmost" once higher signatures are stripped
+    # for the walk; that must not trip this check). Checked last so it
+    # always wins over the partial-view crypto verdict above.
+    if ($sig && $num == max(keys %$sig_by_i)) {
+        my $nd = $sig->next_domain;
+        if (defined $nd && length $nd) {
+            $lvl{result} = 'fail';
+            $lvl{detail} = "DKIM2-Signature i=$num unexpected nd= tag";
+        }
+    }
+
     return \%lvl;
 }
 
