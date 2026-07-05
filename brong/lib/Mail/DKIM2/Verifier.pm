@@ -39,12 +39,26 @@ sub init {
     $self->{result}              = undef;
     $self->{details}             = undef;
     $self->{skip_timestamp_check} = 0;
+    $self->{mid_process}         = 0;
 }
 
 sub skip_timestamp_check {
     my ($self, $val) = @_;
     $self->{skip_timestamp_check} = $val if defined $val;
     return $self->{skip_timestamp_check};
+}
+
+# mid_process: set when this Verifier is being run against a partial view of
+# the chain (e.g. Validate.pm's per-level sub-verify, which strips
+# higher-numbered DKIM2-Signature headers before re-verifying). In that view
+# the highest remaining i= is NOT the true top of the whole chain, so the
+# top-nd= rejection below (only valid for a final, whole-message verify)
+# must be suppressed. Defaults to 0: a standalone/whole-message verify still
+# rejects a true top nd=.
+sub mid_process {
+    my ($self, $val) = @_;
+    $self->{mid_process} = $val if defined $val;
+    return $self->{mid_process};
 }
 
 sub handle_header {
@@ -102,7 +116,14 @@ sub finish_body {
     # highest-numbered DKIM2-Signature MUST NOT carry nd=. The only legitimate
     # nd= producer is reflector-brand-nd, which always emits the matching
     # higher-i= signature too, so nd= never appears on top.
-    if (defined $signature->next_domain && length $signature->next_domain) {
+    #
+    # Only valid for a FINAL, whole-message verification: $max_i here is the
+    # top of whatever chain view this Verifier was fed. During a partial/
+    # mid-chain verify (mid_process set, e.g. by Validate.pm's per-level
+    # sub-verify after stripping higher signatures) that "top" is not the
+    # real top of the chain, so this rejection must be suppressed.
+    if (!$self->{mid_process}
+        && defined $signature->next_domain && length $signature->next_domain) {
         $self->{result}  = 'permerror';
         $self->{details} = "DKIM2-Signature i=$max_i unexpected nd= tag";
         return;

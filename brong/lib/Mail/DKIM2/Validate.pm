@@ -342,8 +342,14 @@ sub _sig_level {
     }
 
     # Timestamp age never hard-fails here; it is graded as a soft warn above.
+    # mid_process: $work is a partial view (higher DKIM2-Signature headers
+    # already stripped for this top-down walk), so its locally-highest i= is
+    # not necessarily the true top of the whole chain. Verifier.pm's top-nd=
+    # rejection must not fire here; the real top-of-chain check is done
+    # separately below against $sig_by_i (the full, original signature set).
     my $vv = Mail::DKIM2::Verifier->new;
     $vv->skip_timestamp_check(1);
+    $vv->mid_process(1);
     $vv->set_pubkey_callback($cb);
     eval { $vv->PRINT($work->as_string); $vv->CLOSE; 1 };
     my $r = $vv->result // 'fail';

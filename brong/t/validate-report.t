@@ -82,6 +82,13 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
     ok((grep { $_->{tag} eq 'nd' && $_->{value} eq 'test2.dkim2.com' } @{$sig1->{tags}}),
        'i=1 tags include nd=test2.dkim2.com');
     ok(!(grep { $_->{tag} eq 'mf' } @{$sig1->{tags}}), 'i=1 tags omit mf= (nd= hop)');
+    # The i=1 sub-verify runs against a partial view (higher DKIM2-Signature
+    # headers stripped for the top-down walk), where nd= at i=1 *looks*
+    # locally topmost. That must NOT trip the top-nd= rejection -- this is a
+    # legitimate non-top nd= hop, not the real top of the chain.
+    isnt($sig1->{result}, 'fail', 'i=1 legitimate non-top nd= hop is not flagged fail');
+    unlike($sig1->{detail} // '', qr/unexpected nd= tag/,
+        'i=1 detail does not wrongly report the top-nd rejection');
     my ($mi1) = grep { $_->{kind} eq 'mi' && $_->{m}==1 } @{$rep->{levels}};
     ok((grep { $_->{tag} eq 'h' && $_->{value} =~ /^sha256:/ } @{$mi1->{tags}}),
        'MI tags expose the full sha256 hash values');
