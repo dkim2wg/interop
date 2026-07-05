@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <ctype.h>
+#include <time.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include "../dkim2_internal.h"
@@ -9,7 +11,27 @@
 #include "../dkim2_verify.h"
 #include "../dkim2_header.h"
 #include "../dkim2_dns.h"
+#include "../dkim2_crypto.h"
 #include "../base64.h"
+
+/* Mirror of the production §8.5 canonicalization used by both the signer
+   (dkim2_sign.c: canon_for_sig) and the verifier (dkim2_verify.c:
+   canon_for_sig / append_canon): lowercase header name, strip all
+   whitespace from the value, terminate with CRLF. Used here only to
+   hand-build a valid signing input for a synthetic nd= hop, since the
+   C signer itself has no way to emit nd= (see test below). */
+static void test_canon_append(char *buf, size_t *pos,
+                              const char *hdr_name, const char *value) {
+    for (const char *h = hdr_name; *h; h++)
+        buf[(*pos)++] = (char)tolower((unsigned char)*h);
+    buf[(*pos)++] = ':';
+    for (const char *h = value; *h; h++) {
+        if (*h == ' ' || *h == '\t' || *h == '\r' || *h == '\n') continue;
+        buf[(*pos)++] = *h;
+    }
+    buf[(*pos)++] = '\r';
+    buf[(*pos)++] = '\n';
+}
 
 static char *g_dns_txt = NULL;
 
@@ -40,11 +62,14 @@ static int sign_test_message(
     return dkim2_do_sign(&ctx, &cfg, mi_out, sig_out);
 }
 
-/* Helper: verify a standard test message. Returns the result status. */
-static dkim2_status_t verify_test_message(
+/* Helper: verify a standard test message. Fills *res_out with the full
+   result (status + message), so callers can assert on the canonical
+   error string, not just the status code. */
+static void verify_test_message_full(
     const char *mail_from, char *rcpts[],
     const char **raw_hdrs, int n_raw_hdrs,
-    const char *body, const char *mi_val, const char *sig_val) {
+    const char *body, const char *mi_val, const char *sig_val,
+    dkim2_verify_result_t *res_out) {
     dkim2_ctx_t vctx;
     memset(&vctx, 0, sizeof vctx);
 
@@ -66,14 +91,22 @@ static dkim2_status_t verify_test_message(
     vctx.mi_list = dkim2_mi_parse(mi_val);
     vctx.sig_list = dkim2_sig_parse(sig_val);
 
-    dkim2_verify_result_t res;
-    dkim2_do_verify(&vctx, &res);
+    dkim2_do_verify(&vctx, res_out);
 
-    dkim2_status_t st = res.status;
     dkim2_mi_free(vctx.mi_list);
     dkim2_sig_free(vctx.sig_list);
     free(all_hdrs);
-    return st;
+}
+
+/* Helper: verify a standard test message. Returns the result status. */
+static dkim2_status_t verify_test_message(
+    const char *mail_from, char *rcpts[],
+    const char **raw_hdrs, int n_raw_hdrs,
+    const char *body, const char *mi_val, const char *sig_val) {
+    dkim2_verify_result_t res;
+    verify_test_message_full(mail_from, rcpts, raw_hdrs, n_raw_hdrs,
+        body, mi_val, sig_val, &res);
+    return res.status;
 }
 
 int main(void) {
@@ -129,16 +162,28 @@ int main(void) {
         "TAMPERED body!\r\n", mi_val, sig_val);
     assert(st == DKIM2_FAIL);
 
-    /* --- Error: wrong MAIL FROM → PERMERROR --- */
-    st = verify_test_message("<wrong@example.com>", rcpts,
-        raw_headers, 3, body, mi_val, sig_val);
-    assert(st == DKIM2_PERMERROR);
+    /* --- Error: wrong MAIL FROM → PERMERROR, canonical spec-04 message --- */
+    {
+        dkim2_verify_result_t res;
+        verify_test_message_full("<wrong@example.com>", rcpts,
+            raw_headers, 3, body, mi_val, sig_val, &res);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strstr(res.message,
+            "DKIM2-Signature i=1 MAIL FROM <wrong@example.com> did not match") != NULL);
+        st = res.status;
+    }
 
-    /* --- Error: wrong RCPT TO → PERMERROR --- */
+    /* --- Error: wrong RCPT TO → PERMERROR, canonical spec-04 message --- */
     char *wrong_rcpts[] = { "<wrong@example.org>", NULL };
-    st = verify_test_message(mail_from, wrong_rcpts,
-        raw_headers, 3, body, mi_val, sig_val);
-    assert(st == DKIM2_PERMERROR);
+    {
+        dkim2_verify_result_t res;
+        verify_test_message_full(mail_from, wrong_rcpts,
+            raw_headers, 3, body, mi_val, sig_val, &res);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strstr(res.message,
+            "DKIM2-Signature i=1 RCPT TO <wrong@example.org> did not match") != NULL);
+        st = res.status;
+    }
 
     /* --- Error: tampered sig → FAIL --- */
     char tampered_sig[strlen(sig_val) + 1];
@@ -274,6 +319,25 @@ int main(void) {
         dkim2_sig_free(vctx.sig_list);
     }
 
+    /* --- Error: d= does not relaxed-match mf= domain → PERMERROR,
+       canonical spec-04 message (§7.7 check fires before crypto, so
+       tampering d= post-signature doesn't need to preserve validity). --- */
+    {
+        char *d_tag = strstr(sig_val, "d=example.com");
+        assert(d_tag != NULL);
+        char tampered_d_sig[4096];
+        size_t prefix_len = (size_t)(d_tag - sig_val);
+        snprintf(tampered_d_sig, sizeof tampered_d_sig, "%.*sd=other-domain.com%s",
+            (int)prefix_len, sig_val, d_tag + strlen("d=example.com"));
+
+        dkim2_verify_result_t res;
+        verify_test_message_full(mail_from, rcpts, raw_headers, 3, body,
+            mi_val, tampered_d_sig, &res);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strstr(res.message,
+            "DKIM2-Signature i=1 MAIL FROM and d= do not match") != NULL);
+    }
+
     /* --- Error: top-level nd= (spec-04 local policy) → PERMERROR ---
        The only legitimate nd= producer emits an nd= hop together with a
        matching higher-i= signature, so nd= must never appear on the
@@ -326,6 +390,93 @@ int main(void) {
         assert(strstr(res.message, "unexpected nd= tag") == NULL);
 
         dkim2_sig_free(vctx.sig_list);
+    }
+
+    /* --- Error: chain-of-custody nd= adjacency mismatch (§11.4) → PERMERROR,
+       canonical spec-04 message (verbatim "MAIL nd=" typo, per spec-04).
+       The C signer cannot emit nd= itself, so hop i=1 is hand-signed here:
+       its own DKIM2-Signature header (with a genuine nd= tag) is covered by
+       its own signature, so tampering it after the fact would invalidate the
+       crypto — instead we build a real signing input (matching
+       build_verify_input's canonicalization) and sign it directly with the
+       test keypair already registered in the DNS override. Hop i=2 is
+       produced by the normal signer, chained onto hop i=1, so both hops
+       carry genuinely valid signatures and the chain-custody check (which
+       runs after full per-signature crypto verification) is actually
+       reached. */
+    {
+        uint64_t now = (uint64_t)time(NULL);
+
+        /* Hop i=1: hand-built, carries nd= pointing at a domain that will
+           NOT match hop i=2's d=, to trigger the adjacency mismatch. */
+        char sig1_incomplete[512];
+        snprintf(sig1_incomplete, sizeof sig1_incomplete,
+            "i=1;m=1;t=%llu;d=example.com;nd=wrong-nd.example.com;"
+            "s=test:ed25519-sha256:;",
+            (unsigned long long)now);
+
+        char sign_input_buf[4096];
+        size_t pos = 0;
+        test_canon_append(sign_input_buf, &pos, "message-instance", mi_val);
+        test_canon_append(sign_input_buf, &pos, "dkim2-signature", sig1_incomplete);
+
+        EVP_PKEY *sign_privkey = dkim2_load_privkey("/tmp/dkim2_test_sign.pem");
+        assert(sign_privkey != NULL);
+        char *sig1_b64 = dkim2_sign(sign_privkey, "ed25519-sha256",
+            (unsigned char *)sign_input_buf, pos);
+        EVP_PKEY_free(sign_privkey);
+        assert(sig1_b64 != NULL);
+
+        char sig1_final[600];
+        snprintf(sig1_final, sizeof sig1_final,
+            "i=1;m=1;t=%llu;d=example.com;nd=wrong-nd.example.com;"
+            "s=test:ed25519-sha256:%s;",
+            (unsigned long long)now, sig1_b64);
+        free(sig1_b64);
+
+        dkim2_sig_t *sig1_parsed = dkim2_sig_parse(sig1_final);
+        assert(sig1_parsed != NULL);
+
+        /* Hop i=2: normal signer, chained onto hop i=1 (new i=2, real mf=/rt=,
+           d=example.com — deliberately NOT matching hop i=1's nd=). */
+        dkim2_ctx_t ctx2;
+        memset(&ctx2, 0, sizeof ctx2);
+        ctx2.headers = (char **)raw_headers;
+        ctx2.n_headers = 3;
+        dkim2_body_hash_raw(body, strlen(body), ctx2.body_digest);
+        char *hop2_mail_from = "<recipient@example.com>";
+        char *hop2_rcpts[] = { "<dest@example.com>", NULL };
+        ctx2.mail_from = hop2_mail_from;
+        ctx2.rcpt_to = hop2_rcpts;
+        ctx2.mi_list = NULL;
+        ctx2.sig_list = sig1_parsed;
+        dkim2_sign_config_t cfg2 = {
+            .domain = "example.com", .selector = "test",
+            .privkey_path = "/tmp/dkim2_test_sign.pem", .alg = "ed25519-sha256",
+        };
+        char *mi2_out = NULL, *sig2_out = NULL;
+        int r2 = dkim2_do_sign(&ctx2, &cfg2, &mi2_out, &sig2_out);
+        assert(r2 == 0 && mi2_out != NULL && sig2_out != NULL);
+
+        dkim2_sig_t *sig2_parsed = dkim2_sig_parse(sig2_out);
+        assert(sig2_parsed != NULL);
+        sig1_parsed->next = sig2_parsed;
+
+        dkim2_ctx_t vctx;
+        memset(&vctx, 0, sizeof vctx);
+        vctx.mi_list = dkim2_mi_parse(mi2_out);
+        vctx.sig_list = sig1_parsed;
+
+        dkim2_verify_result_t res;
+        dkim2_do_verify(&vctx, &res);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strstr(res.message,
+            "DKIM2-Signature i=1 MAIL nd= does not match") != NULL);
+
+        dkim2_mi_free(vctx.mi_list);
+        dkim2_sig_free(vctx.sig_list); /* frees sig1_parsed + chained sig2_parsed */
+        free(mi2_out);
+        free(sig2_out);
     }
 
     free(mi_val);

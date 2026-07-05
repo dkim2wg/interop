@@ -428,7 +428,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         free(ctx_d); free(sig_d);
         if (!dom_ok || !local_ok)
             SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: MAIL FROM does not match mf= in DKIM2-Signature i=%d", latest->i);
+                "DKIM2-Signature i=%d MAIL FROM %s did not match",
+                latest->i, ctx->mail_from);
     }
 
     /* RCPT TO: every envelope recipient must appear in rt= */
@@ -439,8 +440,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 if (strcmp(ctx->rcpt_to[i], latest->rt[j]) == 0) { found = 1; break; }
             if (!found)
                 SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: RCPT TO %s not in rt= of DKIM2-Signature i=%d",
-                    ctx->rcpt_to[i], latest->i);
+                    "DKIM2-Signature i=%d RCPT TO %s did not match",
+                    latest->i, ctx->rcpt_to[i]);
         }
     }
 
@@ -484,8 +485,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
             free(mf_d);
             if (!dm)
                 SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: d=%s does not cover mf= domain in DKIM2-Signature i=%d",
-                    sig->d, sig->i);
+                    "DKIM2-Signature i=%d MAIL FROM and d= do not match",
+                    sig->i);
         }
 
         /* Verify all s= items for this signature */
@@ -550,8 +551,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         if (prev->nd) {
             if (!cur->d || strcasecmp(prev->nd, cur->d) != 0)
                 SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: DKIM2-Signature i=%d nd= does not match d= of i=%d",
-                    prev->i, cur->i);
+                    "DKIM2-Signature i=%d MAIL nd= does not match",
+                    prev->i);
             continue;
         }
 
