@@ -1,6 +1,6 @@
 # DKIM2 Implementer Guide
 
-**Spec:** draft-ietf-dkim-dkim2-spec-01  
+**Spec:** draft-ietf-dkim-dkim2-spec-04  
 **Audience:** Authors writing a DKIM2 library or integrating DKIM2 into an MTA
 
 ---

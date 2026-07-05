@@ -611,7 +611,7 @@ are routed by a `pipe(8)` transport, *not* `/etc/aliases` `|command` entries.
 > **Historical note (no longer the reason):** the original motivation was that
 > a `local(8)` alias prepends a `Delivered-To:` header, which the reflector
 > would hash into its Message-Instance and break verification. As of
-> draft-ietf-dkim-dkim2-spec-03 §4.1, **`Delivered-To` IS in the DKIM2 skip
+> draft-ietf-dkim-dkim2-spec-04 §4.1, **`Delivered-To` IS in the DKIM2 skip
 > list** (added with RFC 9228), so it no longer affects the hash and that
 > motivation is obsolete.
 

@@ -1,6 +1,6 @@
 # DKIM2 Interop Status Report
 
-**Spec:** draft-ietf-dkim-dkim2-spec-01  
+**Spec:** draft-ietf-dkim-dkim2-spec-04  
 **Date:** 2026-05-01  
 **Audience:** DKIM2 Working Group participants, hackathon attendees
 
@@ -217,7 +217,7 @@ These have not been resolved and should be addressed in a future draft revision:
 dns.json       DNS TXT records for all test domains (test1..test5.dkim2.com)
 keys/          Private key files for all selectors, all test domains
                Format: <selector>._domainkey.<domain>.pem  (PKCS#8 PEM)
-spec/          draft-ietf-dkim-dkim2-spec-01.txt
+spec/          draft-ietf-dkim-dkim2-spec-04.txt
 ```
 
 Test domains: `test1.dkim2.com` through `test5.dkim2.com`  

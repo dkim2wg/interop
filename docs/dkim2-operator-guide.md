@@ -1,6 +1,6 @@
 # DKIM2 Operator Guide
 
-**Spec:** draft-ietf-dkim-dkim2-spec-01  
+**Spec:** draft-ietf-dkim-dkim2-spec-04  
 **Audience:** MTA operators and postmasters deploying DKIM2
 
 ---
