@@ -96,6 +96,88 @@ sub forwarded_twohop {
     is(scalar(() = $m->header_raw('DKIM2-Signature')), 1, 'exactly one DKIM2-Signature');
 }
 
+# Build a 2-hop message where the second hop forwards UNCHANGED: no new
+# Message-Instance is recorded (body/headers untouched), just a second
+# DKIM2-Signature (i=2) stacked on top of the origin's (i=1). Unlike
+# forwarded_twohop(), this carries no body-diff ('rb') recipe, so undo() is a
+# clean no-op -- useful for exercising propagate() without also touching the
+# unrelated undo/rebuild machinery.
+sub forwarded_unchanged {
+    my $h1 = signed_inbound();                 # MI v=1 + sig i=1
+    my $cur = Email::MIME->new($h1);
+    my $signer = mk_signer(domain => 'test2.dkim2.com',
+                           mailfrom => 'user@test2.dkim2.com',
+                           rcptto => ['dest@test3.dkim2.com']);
+    $signer->PRINT($cur->as_string); $signer->CLOSE;
+    my $sig = $signer->as_string; $sig =~ s/\r?\n$//;
+    $sig =~ s{^DKIM2-Signature:\s*}{};
+    $cur->header_raw_prepend('DKIM2-Signature', $sig);
+    return $cur->as_string;
+}
+
+# === propagate: rejects a multipart/report with >=3 parts but no
+# message/delivery-status part (RFC 3462 structural validation, not just a
+# bare part count) ===
+{
+    my $embedded = forwarded_twohop();
+    my $dsn = Email::MIME->create(
+        attributes => { content_type => 'multipart/report', encoding => '7bit' },
+        header_str => [ From => 'postmaster@test3.dkim2.com',
+                        To => 'user@test2.dkim2.com',
+                        Subject => 'failure' ],
+        parts => [
+            Email::MIME->create(attributes => { content_type => 'text/plain', charset=>'UTF-8', encoding=>'7bit' },
+                                body_str => "delivery failed\n"),
+            # No message/delivery-status part here -- just a second text/plain,
+            # so @parts >= 3 but the RFC 3462 structure is not satisfied.
+            Email::MIME->create(attributes => { content_type => 'text/plain', charset=>'UTF-8', encoding=>'7bit' },
+                                body_str => "not a delivery-status part\n"),
+            Email::MIME->create(attributes => { content_type => 'message/rfc822' },
+                                body => $embedded),
+        ],
+    );
+
+    my $signer = mk_signer(domain => 'test2.dkim2.com');
+    eval {
+        Mail::DKIM2::DSN->propagate({
+            raw => $dsn->as_string, forwarder_domain => 'test2.dkim2.com', signer => $signer,
+        });
+    };
+    like($@, qr/propagate/i,
+         'propagate rejects a >=3-part DSN lacking a message/delivery-status part');
+}
+
+# === propagate: accepts a well-formed 3-part DSN whose embedded original is
+# text/rfc822-headers (the other half of the message/rfc822 OR
+# text/rfc822-headers structural requirement) ===
+{
+    my $embedded = forwarded_unchanged();
+    my $dsn = Email::MIME->create(
+        attributes => { content_type => 'multipart/report', encoding => '7bit' },
+        header_str => [ From => 'postmaster@test3.dkim2.com',
+                        To => 'user@test2.dkim2.com',
+                        Subject => 'failure' ],
+        parts => [
+            Email::MIME->create(attributes => { content_type => 'text/plain', charset=>'UTF-8', encoding=>'7bit' },
+                                body_str => "delivery failed\n"),
+            Email::MIME->create(attributes => { content_type => 'message/delivery-status' },
+                                body => "Reporting-MTA: dns; test3.dkim2.com\r\n\r\n"
+                                      . "Final-Recipient: rfc822; dest\@test3.dkim2.com\r\n"
+                                      . "Action: failed\r\nStatus: 5.1.1\r\n"),
+            Email::MIME->create(attributes => { content_type => 'text/rfc822-headers' },
+                                body => Email::MIME->new($embedded)->header_obj->as_string),
+        ],
+    );
+
+    my $signer = mk_signer(domain => 'test2.dkim2.com');
+    my $out = Mail::DKIM2::DSN->propagate({
+        raw => $dsn->as_string, forwarder_domain => 'test2.dkim2.com', signer => $signer,
+    });
+    ok($out->{raw}, 'propagate accepts a valid 3-part DSN (text/rfc822-headers variant)');
+    is($out->{upstream_mailfrom}, '<sender@origin.example>',
+       'propagated DSN (headers-only variant) addressed to upstream MAIL FROM');
+}
+
 # === generate: reflector-dsn behaviour ===
 {
     my $inbound = signed_inbound();
