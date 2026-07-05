@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DKIM2 DSN propagation (draft-ietf-dkim-dkim2-spec-04 §12.1.1).
+"""DKIM2 DSN propagation (draft-ietf-dkim-dkim2-spec-04 §12.1.1, RFC 3462).
 
 When a Forwarder receives a DKIM2-signed Delivery Status Notification for a
 message it forwarded, it may propagate that DSN back towards the original
@@ -74,6 +74,16 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
     parts = dsn.get_payload()
     if not isinstance(parts, list) or len(parts) < 3:
         raise ValueError("DSN must have at least three parts")
+
+    # RFC 3462 defines the multipart/report structure as exactly three parts:
+    # (1) a human-readable text part, (2) a message/delivery-status part, and
+    # (3) the returned message or its headers. Validate all three are present
+    # rather than just counting parts.
+    if parts[0].get_content_type() != "text/plain":
+        raise ValueError("DSN part 1 must be human-readable text/plain")
+
+    if not any(p.get_content_type() == "message/delivery-status" for p in parts):
+        raise ValueError("DSN missing required message/delivery-status part")
 
     orig_idx = None
     for i, p in enumerate(parts):
