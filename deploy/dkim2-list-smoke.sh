@@ -25,7 +25,7 @@ LIB=$REPO/brong/lib
 CAP=/var/spool/dkim2-capture/Maildir/new
 FROM=dkim2capture@dkim2.com
 MAILMAN_LIST=${1:-dkim2test@mailman.dkim2.com}
-SYMPA_LIST=${2:-test@sympa.dkim2.com}
+SYMPA_LIST=${2:-dkim2test@sympa.dkim2.com}
 
 export LIB
 rc=0

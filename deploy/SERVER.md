@@ -861,9 +861,21 @@ the outbound list-modified + milter-signed copy locally, and asserts `-04` +
   **Gotcha:** after creating a Mailman list you MUST run
   `mailman --run-as-root aliases && postfix reload`, or Postfix rejects it
   ("User unknown in local recipient table").
-- **Sympa**: `echo dkim2capture@dkim2.com | sympa add test@sympa.dkim2.com`
-  (a dedicated `dkim2test@sympa` list was not created — `sympa create` threw an
-  opaque `create_list [intern]`; using the existing wired `test@` list instead).
+- **Sympa list** `dkim2test@sympa.dkim2.com`, sole member `dkim2capture@`.
+  Create XML (`discussion_list`), then `sympa create --input-file=X.xml sympa.dkim2.com`.
+  Three gotchas (all resolved):
+  1. `<topic>` is REQUIRED by the template and must exist in the RUNTIME
+     `/etc/sympa/topics.conf` — use `computers` (`computing` is only in the
+     *default* topics.conf → opaque `create_list [intern]`).
+  2. The robot dir `/var/lib/sympa/list_data/sympa.dkim2.com/` was `root:root`
+     (install anomaly), so the `sympa` user couldn't create the list —
+     `chown sympa:sympa` it (non-recursive).
+  3. `sympa create`'s alias hook can't rebuild the map as non-root. Append the
+     six list aliases to `/etc/sympa/sympa/aliases` (mirror the `test:` lines),
+     rebuild with **`postalias`** (NOT `postmap` — the file is alias-format
+     `key: value`; `postmap` mis-builds the `.db` → RCPT "User unknown in local
+     recipient table"), then `postfix reload`. Finally
+     `echo dkim2capture@dkim2.com | sympa add dkim2test@sympa.dkim2.com`.
 
 ### Two capture caveats (artifacts of reading mail back out of a mailbox — NOT signature bugs)
 
