@@ -834,3 +834,45 @@ ssh dkim2 tail -f /var/log/mail.log
 # Sympa
 ssh dkim2 journalctl -fu sympa
 ```
+
+## DKIM2 list smoke test (Mailman + Sympa, no-spam local capture)
+
+Confirm both list managers stamp `draft-ietf-dkim-dkim2-spec-04` end-to-end and
+produce chains that verify, **without emailing real subscribers**. Run on the box:
+
+```bash
+ssh dkim2 'cd /root/interop && deploy/dkim2-list-smoke.sh'
+```
+
+It injects a message (from the capture address) through each test list, captures
+the outbound list-modified + milter-signed copy locally, and asserts `-04` +
+`verify=pass` for each. Expected output: two `PASS` lines.
+
+### One-time infra (already set up 2026-07-06)
+
+- **Local capture** (byte-exact; mbox `>From ` escaping corrupts signed bytes, so
+  use Maildir): `/etc/aliases`: `dkim2capture:  /var/spool/dkim2-capture/Maildir/`
+  then `newaliases`. `dkim2.com` is in `mydestination`, so `dkim2capture@dkim2.com`
+  delivers to that local Maildir.
+- **Mailman list** `dkim2test@mailman.dkim2.com`, sole member `dkim2capture@`, via
+  the REST API (`localhost:8001`, `restadmin:dkim2demo`): create with style
+  `legacy-default`; set `subject_prefix`, `default_member_action=accept`,
+  `advertised=false`; subscribe `dkim2capture@` pre-verified/confirmed/approved.
+  **Gotcha:** after creating a Mailman list you MUST run
+  `mailman --run-as-root aliases && postfix reload`, or Postfix rejects it
+  ("User unknown in local recipient table").
+- **Sympa**: `echo dkim2capture@dkim2.com | sympa add test@sympa.dkim2.com`
+  (a dedicated `dkim2test@sympa` list was not created — `sympa create` threw an
+  opaque `create_list [intern]`; using the existing wired `test@` list instead).
+
+### Two capture caveats (artifacts of reading mail back out of a mailbox — NOT signature bugs)
+
+1. **`local $/` leak:** slurping the captured file with an unscoped `local $/`
+   leaves `$/` undef, which breaks Net::DNS key lookups inside the verifier
+   (query "times out"). Scope it: `my $raw = do { local $/; <$fh> };`. (Same
+   class as the earlier delayed-bounce red herring.)
+2. **CRLF→LF:** local MDA delivery rewrites line endings to bare LF, but the
+   milter signed CRLF → body-hash mismatch. Normalise back to CRLF before
+   verifying: `$raw =~ s/\r\n/\n/g; $raw =~ s/\n/\r\n/g;`.
+
+Both are handled inside `deploy/dkim2-list-smoke.sh`.
