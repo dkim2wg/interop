@@ -258,12 +258,28 @@ sub fetch_public_key {
     my $dom = $self->domain;
     croak "missing selector or domain" unless $sel && $dom;
 
-    # Fetch TXT record from DNS
-    require Net::DNS::Resolver;
-    my $resolver = Net::DNS::Resolver->new;
+    # Fetch TXT record from DNS. Resolver is injectable for testing.
+    my $resolver = $self->{_resolver};
+    unless ($resolver) {
+        require Net::DNS::Resolver;
+        $resolver = Net::DNS::Resolver->new;
+    }
     my $fqdn = "$sel._domainkey.$dom";
     my $reply = $resolver->query($fqdn, 'TXT');
-    return unless $reply;
+    unless ($reply) {
+        # Distinguish a TRANSIENT DNS failure (timeout, SERVFAIL, network
+        # unreachable) from a genuine no-record answer. Per
+        # draft-ietf-dkim-dkim2-spec-04 §10, DNS timeouts MUST be reported as
+        # TEMPERROR (retryable) — not as a permanent "no verifiable signature
+        # items". We signal the transient case by dying; the verifier's eval
+        # maps that to temperror. NXDOMAIN / NOERROR-with-no-record is permanent
+        # (the key really is absent), so we return undef.
+        my $err = $resolver->errorstring // '';
+        if ($err =~ /timeout|timed out|SERVFAIL|REFUSED|network|unreachable|connection|no reply/i) {
+            croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
+        }
+        return;
+    }
     for my $rr ($reply->answer) {
         next unless $rr->type eq 'TXT';
         my $txt = join('', $rr->txtdata);
