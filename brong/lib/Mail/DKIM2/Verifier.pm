@@ -405,8 +405,13 @@ sub _verify_signature {
                 $pubkey = $signature->fetch_public_key($idx);
                 1;
             } or do {
-                $self->{result} = 'temperror';
-                $self->{details} = "public key fetch failed for sig item $idx: $@";
+                # A transient DNS failure (fetch_public_key dies) is a
+                # TEMPERROR per spec-04 §10 — retryable, not a permanent
+                # "no verifiable signature items".
+                my $sel = $signature->selector($idx) // '?';
+                (my $why = $@) =~ s/\s+\z//;
+                $self->{result}  = 'temperror';
+                $self->{details} = "DKIM2-Signature i=$i public key $sel could not be fetched ($why)";
                 return 0;
             };
         }
