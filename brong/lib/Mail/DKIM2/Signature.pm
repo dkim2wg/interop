@@ -193,14 +193,20 @@ sub as_string {
 sub as_string_without_data {
     my ($self) = @_;
 
-    my $saved = $self->get_tag('s');
-    # Replace each sel:alg:sig with sel:alg: (null/empty string per spec §8.5)
-    my $stripped = $saved;
-    $stripped =~ s/([^,:]+:[^,:]+):[^,]*/$1:/g;
-    $self->set_tag('s', $stripped);
-    my $result = $self->as_string();
-    $self->set_tag('s', $saved);
-    return $result;
+    # Rebuild from the parsed tags in their original order and case, blanking
+    # each s= item's signature value in place.  Done directly (not via
+    # set_tag/as_string) so a non-lowercase 's' tag name — e.g. "S=" in a
+    # mixed-case header — is not duplicated by a fresh lowercase 's' key.
+    my @parts;
+    for my $t (@{$self->{order}}) {
+        my $v = defined $self->{tags}{$t} ? $self->{tags}{$t} : '';
+        if (lc $t eq 's') {
+            # Replace each sel:alg:sig with sel:alg: (empty value per §8.5)
+            $v =~ s/([^,:]+:[^,:]+):[^,]*/$1:/g;
+        }
+        push @parts, "$t=$v";
+    }
+    return "DKIM2-Signature: " . join('; ', @parts);
 }
 
 # Folded header with empty s= value, ready for signing.

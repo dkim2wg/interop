@@ -267,13 +267,29 @@ def canonicalize_sig_header(raw_hdr: str) -> bytes:
 
 
 def _extract_tag(header_value: str, tag: str) -> str | None:
-    """Extract a tag value from a DKIM2-style tag-list header value."""
-    # header_value is the part after "HeaderName: "
+    """Extract a tag value from a DKIM2-style tag-list header value.
+
+    Per spec-04 §8, tag identifiers are case-insensitive, may appear in any
+    order, and FWS is permitted around the '=' and ';' separators.
+    """
+    tl = tag.lower()
     for part in header_value.split(";"):
-        part = part.strip()
-        if part.startswith(tag + "="):
-            return part[len(tag) + 1:].strip()
+        if "=" not in part:
+            continue
+        name, val = part.split("=", 1)
+        if name.strip().lower() == tl:
+            return val.strip()
     return None
+
+
+def _tag_names(header_value: str) -> list[str]:
+    """Lowercased tag names in a tag-list value, in order (for duplicate
+    detection per spec-04 §8: 'there MUST be only one of each kind')."""
+    names = []
+    for part in header_value.split(";"):
+        if "=" in part:
+            names.append(part.split("=", 1)[0].strip().lower())
+    return names
 
 
 def _get_version_from_mi(hdr: str) -> int:

@@ -18,10 +18,16 @@ sub parse {
     $string =~ s/^\s+//;
     $string =~ s/\s+$//;
     my @order;
+    my %seen;
+    # Tag names keep their ORIGINAL case and order so the header can be
+    # re-serialized byte-for-byte for signing-input reconstruction; get_tag()
+    # does the case-insensitive lookup required by spec-04 §8.
     for my $part (split /\s*;\s*/, $string) {
         next unless $part =~ /^(\w+)\s*=\s*(.*)/s;
         my ($name, $val) = ($1, $2);
         $val =~ s/\s+$//;
+        # §8: "there MUST be only one of each kind" — flag any repeat.
+        $self->{_duplicate} = lc($name) if $seen{lc $name}++;
         $self->{tags}{$name} = $val;
         push @order, $name;
     }
@@ -29,10 +35,20 @@ sub parse {
     return $self;
 }
 
+# §8: tag identifiers are case-insensitive.  Try an exact match first (the
+# common case), then fall back to a case-insensitive scan.
 sub get_tag {
     my ($self, $name) = @_;
-    return $self->{tags}{$name};
+    return $self->{tags}{$name} if exists $self->{tags}{$name};
+    my $lc = lc $name;
+    for my $k (keys %{$self->{tags}}) {
+        return $self->{tags}{$k} if lc($k) eq $lc;
+    }
+    return undef;
 }
+
+# The lowercased tag name that appeared more than once, if any (spec-04 §8).
+sub duplicate_tag { return $_[0]->{_duplicate} }
 
 sub set_tag {
     my ($self, $name, $value) = @_;

@@ -262,6 +262,13 @@ sub _verify_signature {
     my $dk2_entry = $dk2_map{$i};
     my $signature = $dk2_entry->{sig};
 
+    # §8: "there MUST be only one of each kind" of tag.
+    if (my $dup = $signature->duplicate_tag) {
+        $self->{result}  = 'permerror';
+        $self->{details} = "DKIM2-Signature i=$i duplicate tag $dup not permitted (spec 8)";
+        return 0;
+    }
+
     # Only include headers that existed when signature $i was created:
     # - DKIM2-Sig headers with i <= $i
     # - MI headers with m <= the version referenced by signature $i
@@ -421,8 +428,20 @@ sub _verify_signature {
             next;
         }
 
-        my $sig_raw = decode_base64($sig_b64);
         my $alg = $signature->algorithm($idx) || 'unknown';
+
+        # §3.2: RSA keys MUST be at least 1024 bits; reject shorter keys
+        # (permerror) rather than trusting a weak signature.
+        if ($alg !~ /^ed25519/ && $pubkey->can('size')) {
+            my $bits = $pubkey->size * 8;
+            if ($bits < 1024) {
+                $self->{result}  = 'permerror';
+                $self->{details} = "DKIM2-Signature i=$i RSA key too short ($bits bits < 1024, spec 3.2)";
+                return 0;
+            }
+        }
+
+        my $sig_raw = decode_base64($sig_b64);
         my $verified = eval {
             if ($alg =~ /^ed25519/) {
                 # Ed25519-SHA256: SHA-256 hash first, then verify with PureEdDSA

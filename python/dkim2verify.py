@@ -36,6 +36,7 @@ from dkim2sign import (
     compute_body_hash,
     canonicalize_sig_header,
     _extract_tag,
+    _tag_names,
     _get_version_from_mi,
     _get_seq_from_sig,
     b64,
@@ -350,6 +351,12 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     errors = []
     value = _get_header_value(sig_hdr)
 
+    # §8: "there MUST be only one of each kind" of tag.
+    seen = _tag_names(value)
+    dups = sorted({n for n in seen if seen.count(n) > 1})
+    if dups:
+        return [f"DKIM2-Signature: duplicate tag {dups[0]!r} not permitted (§8)"]
+
     # Extract required tags
     i_val = _extract_tag(value, "i")
     m_val = _extract_tag(value, "m")
@@ -411,14 +418,16 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             return [f"DKIM2-Signature i={i_val}: invalid s= item format: {part!r}"]
         sig_items.append(fields)
 
-    # Build the signing input once — same for all s= items
-    s_match = re.search(r";\s*s=", sig_hdr)
-    if s_match is None:
-        return [f"DKIM2-Signature i={i_val}: cannot find s= tag in header"]
-    prefix = sig_hdr[:s_match.end()]  # everything up to and including "s="
-    stripped_items = [f"{item[0]}:{item[1]}:" for item in sig_items]
-    trailing = ";" if re.search(r";\s*(?:\r?\n)?$", sig_hdr) else ""
-    incomplete_sig = prefix + ",".join(stripped_items) + trailing
+    # Build the incomplete signature (the signed form) by blanking each s=
+    # item's signature value in place.  This is independent of tag order and
+    # whitespace: we simply remove the base64 signature bytes wherever they
+    # appear, leaving selector:algorithm: and every other tag untouched.
+    incomplete_sig = sig_hdr
+    for selector, algorithm, sig_value_b64 in sig_items:
+        incomplete_sig = incomplete_sig.replace(
+            f"{selector}:{algorithm}:{sig_value_b64}",
+            f"{selector}:{algorithm}:",
+        )
 
     mi_version = int(m_val)
     relevant_mi = sorted(
@@ -447,6 +456,15 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         except (KeyError, ValueError) as e:
             if item_err is None:
                 item_err = f"DKIM2-Signature i={i_val}: key lookup failed: {e}"
+            continue
+
+        # §3.2: RSA keys MUST be at least 1024 bits; reject shorter keys
+        # (permerror) rather than trusting a weak signature.
+        if key_type == "rsa" and getattr(public_key, "key_size", 0) < 1024:
+            item_err = (
+                f"DKIM2-Signature i={i_val}: RSA key too short "
+                f"({public_key.key_size} bits < 1024, §3.2)"
+            )
             continue
 
         norm_algorithm = ALG_ALIASES.get(algorithm, algorithm)
