@@ -93,6 +93,11 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 	case "rsa", "rsa-sha256":
 		key, err := x509.ParsePKIXPublicKey(pubBytes)
 		if err != nil {
+			// Some DKIM keys are published as bare PKCS#1 (RSAPublicKey)
+			// rather than SubjectPublicKeyInfo; accept both.
+			if k1, e1 := x509.ParsePKCS1PublicKey(pubBytes); e1 == nil {
+				return k1, "rsa-sha256", nil
+			}
 			return nil, "", fmt.Errorf("parsing RSA public key: %w", err)
 		}
 		rsaKey, ok := key.(*rsa.PublicKey)

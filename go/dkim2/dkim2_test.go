@@ -534,7 +534,13 @@ func TestVerifyAllBrong(t *testing.T) {
 		t.Skip("no brong expected files found")
 	}
 	for _, path := range matches {
-		t.Run(filepath.Base(path), func(t *testing.T) {
+		base := filepath.Base(path)
+		// chain-fraud-*.eml are deliberate forgeries (negative fixtures for
+		// the Perl fraud-detection test); they MUST NOT verify.
+		if strings.HasPrefix(base, "chain-fraud-") {
+			continue
+		}
+		t.Run(base, func(t *testing.T) {
 			verifyEML(t, path)
 		})
 	}

@@ -250,6 +250,13 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 
 		res := VerifyResult{Sequence: sig.Sequence, Domain: sig.Domain}
 
+		// §8: "there MUST be only one of each kind" of tag.
+		if sig.Duplicate != "" {
+			res.Error = fmt.Errorf("i=%d: duplicate tag %s not permitted (§8)", sig.Sequence, sig.Duplicate)
+			results = append(results, res)
+			continue
+		}
+
 		// §10.3 SHOULD: reject signatures more than 14 days old or in the future
 		if !skipTS && sig.Timestamp > 0 {
 			const tolerance = 300 // 5-minute clock-skew tolerance
@@ -350,12 +357,19 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		// §10.6 MUST: verify ALL sig items; any crypto failure is an error
 		var itemErr error
 		verifiedAny := false
+		cryptoFail := false
 		for _, item := range sig.Sigs {
 			pubKey, keyAlg, fetchErr := fetcher.FetchPublicKey(item.Selector, sig.Domain)
 			if fetchErr != nil {
 				if itemErr == nil {
 					itemErr = fmt.Errorf("sel=%s: key fetch: %w", item.Selector, fetchErr)
 				}
+				continue
+			}
+			// §3.2: RSA keys MUST be at least 1024 bits; reject shorter keys.
+			if rk, ok := pubKey.(*rsa.PublicKey); ok && rk.N.BitLen() < 1024 {
+				itemErr = fmt.Errorf("sel=%s: RSA key too short (%d bits < 1024, §3.2)",
+					item.Selector, rk.N.BitLen())
 				continue
 			}
 			normAlg := strings.TrimSuffix(item.Algorithm, "-sha256")
@@ -366,15 +380,24 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 				continue
 			}
 			if verr := verifyDigest(pubKey, keyAlg, digest[:], item.Value); verr != nil {
-				itemErr = fmt.Errorf("sel=%s: %w", item.Selector, verr)
-				continue // MUST check all remaining items even on failure
+				// §10.6: a genuine crypto failure of a known, fetchable item is
+				// a hard error even if another item verifies.
+				res.Error = fmt.Errorf("i=%d: sel=%s: %w", sig.Sequence, item.Selector, verr)
+				cryptoFail = true
+				break
 			}
 			verifiedAny = true
 		}
-		if itemErr != nil {
-			res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, itemErr)
-		} else if !verifiedAny {
-			res.Error = fmt.Errorf("i=%d: no verifiable signature items", sig.Sequence)
+		// Items we could not process (unfetchable key, unknown algorithm,
+		// under-strength key) are SKIPPED, not failures: a future-algorithm
+		// item alongside a good one still passes.  Only report the skip reason
+		// when nothing verified.
+		if !cryptoFail && !verifiedAny {
+			if itemErr != nil {
+				res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, itemErr)
+			} else {
+				res.Error = fmt.Errorf("i=%d: no verifiable signature items", sig.Sequence)
+			}
 		}
 		results = append(results, res)
 	}

@@ -20,6 +20,7 @@ type DKIM2Signature struct {
 	Nonce      string   // n= tag (optional); max 64 ASCII chars per §8.3
 	Flags      []string // f= tag (optional); comma-separated flags per §8.10
 	Sigs       []SigItem
+	Duplicate  string // lowercased tag name that appeared more than once (§8), if any
 }
 
 // toRFC5321Path wraps an address as an RFC5321 path for mf=/rt= (spec 7.5/7.6):
@@ -74,7 +75,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		return nil, fmt.Errorf("DKIM2-Signature: no colon found")
 	}
 	tvl := parseTagValueList(raw[colon+1:])
-	sig := &DKIM2Signature{}
+	sig := &DKIM2Signature{Duplicate: tvl.duplicate}
 
 	if v := tvl.get("i"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -206,32 +207,49 @@ func (sig *DKIM2Signature) String() string {
 	return out
 }
 
-// reSTag matches "; s=" (semicolon followed by optional whitespace and s=).
-// Base64 cannot contain semicolons, so this won't false-match inside a sig value.
-var reSTag = regexp.MustCompile(`;\s*s=`)
+// reSTag matches the s= tag at a tag boundary — the start of the header value
+// or after a ";" — case-insensitively and tolerating FWS around "=". This is
+// independent of tag order (s= may be first) and case (S=), per spec-04 §8.
+// Base64 cannot contain ";" so the value runs to the next ";".
+var reSTag = regexp.MustCompile(`(?i)(^|;)\s*s\s*=`)
 
-// incompleteForm takes the original raw header and returns it with all
-// signature values in the s= tag replaced by empty string (per §8.5).
+// incompleteForm takes the original raw header value (after the field name)
+// and returns it with each s= item's signature value replaced by empty string
+// (per §8.5), preserving every other byte — tag order, case, whitespace, and
+// folding — so the reconstruction canonicalizes to exactly what was signed.
 func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
-	m := reSTag.FindStringIndex(rawHeader)
+	// Operate on the value after the field-name colon so a leading s= (no
+	// preceding ";") is still matched by the "^" alternative.
+	colon := strings.IndexByte(rawHeader, ':')
+	if colon < 0 {
+		return rawHeader
+	}
+	head, value := rawHeader[:colon+1], rawHeader[colon+1:]
+
+	m := reSTag.FindStringIndex(value)
 	if m == nil {
 		return rawHeader
 	}
-	prefix := rawHeader[:m[1]] // everything through "s="
-
-	// Find the s= value's end: the next semicolon after the s= tag start
-	rest := rawHeader[m[1]:]
-	semiIdx := strings.IndexByte(rest, ';')
-	var suffix string
-	if semiIdx >= 0 {
-		suffix = rest[semiIdx:] // from the closing ";" onward (including any trailing CRLF)
+	prefix := value[:m[1]] // through the "=" of the s tag (any order/case/WSP)
+	rest := value[m[1]:]
+	sval := rest
+	suffix := ""
+	if semi := strings.IndexByte(rest, ';'); semi >= 0 {
+		sval, suffix = rest[:semi], rest[semi:]
 	}
 
+	// Blank the 3rd (signature) field of each comma-separated item, dropping
+	// any folding within it.
 	var stripped []string
-	for _, item := range sig.Sigs {
-		stripped = append(stripped, item.Selector+":"+item.Algorithm+":")
+	for _, item := range strings.Split(sval, ",") {
+		f := strings.SplitN(item, ":", 3)
+		if len(f) == 3 {
+			stripped = append(stripped, f[0]+":"+f[1]+":")
+		} else {
+			stripped = append(stripped, item)
+		}
 	}
-	return prefix + strings.Join(stripped, ",") + suffix
+	return head + prefix + strings.Join(stripped, ",") + suffix
 }
 
 // buildIncomplete builds a fresh incomplete DKIM2-Signature header (s= values
