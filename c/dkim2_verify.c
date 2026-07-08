@@ -67,6 +67,31 @@ static char *addr_domain(const char *addr) {
     return d;
 }
 
+/* Strip optional RFC5321 angle brackets into out (NUL-terminated). */
+static void unbracket(const char *s, char *out, size_t outsz) {
+    if (*s == '<') s++;
+    size_t n = strlen(s);
+    if (n > 0 && s[n - 1] == '>') n--;
+    if (n >= outsz) n = outsz - 1;
+    memcpy(out, s, n);
+    out[n] = '\0';
+}
+
+/* §7.7/§10.4 envelope comparison: local-part case-sensitive, domain
+   case-insensitive, angle brackets ignored; two null senders (<>) are equal. */
+static int env_addr_eq(const char *a, const char *b) {
+    char ab[512], bb[512];
+    unbracket(a, ab, sizeof ab);
+    unbracket(b, bb, sizeof bb);
+    if (ab[0] == '\0' && bb[0] == '\0') return 1; /* both null sender */
+    const char *aat = strrchr(ab, '@');
+    const char *bat = strrchr(bb, '@');
+    if (!aat || !bat) return strcasecmp(ab, bb) == 0;
+    size_t al = (size_t)(aat - ab), bl = (size_t)(bat - bb);
+    if (al != bl || strncmp(ab, bb, al) != 0) return 0; /* local-part: exact */
+    return strcasecmp(aat + 1, bat + 1) == 0;           /* domain: case-insensitive */
+}
+
 /* Relaxed domain match: d must be equal to or a parent domain of mf_domain. */
 static int relaxed_domain_match(const char *d, const char *mf_domain) {
     if (strcasecmp(mf_domain, d) == 0) return 1;
@@ -89,17 +114,12 @@ static int relaxed_domain_match(const char *d, const char *mf_domain) {
    Returns malloc'd string. */
 static char *blank_sig_values(const char *raw_val) {
     size_t rlen = strlen(raw_val);
-    /* Detect trailing semicolon (ignoring any trailing whitespace) */
-    const char *end = raw_val + rlen;
-    while (end > raw_val && (end[-1] == ' ' || end[-1] == '\t' ||
-                              end[-1] == '\r' || end[-1] == '\n')) end--;
-    int has_trailing = (end > raw_val && end[-1] == ';');
 
-    /* Find the s= tag */
+    /* Find the s= tag at a tag boundary (start, or after ';'/WSP), matching
+       the tag name case-insensitively per spec-04 §8. */
     const char *s_tag = NULL;
-    /* Simple search: look for "s=" preceded by start or ";" */
     for (const char *p = raw_val; *p; p++) {
-        if (p[0] == 's' && p[1] == '=') {
+        if ((p[0] == 's' || p[0] == 'S') && p[1] == '=') {
             if (p == raw_val || p[-1] == ';' || p[-1] == ' ' || p[-1] == '\t') {
                 s_tag = p;
                 break;
@@ -152,7 +172,11 @@ static char *blank_sig_values(const char *raw_val) {
         if (*p == ',') p++;
     }
 
-    if (has_trailing) out[pos++] = ';';
+    /* Copy everything from the end of the s= value onward verbatim: a trailing
+       ';' and/or any tags that follow s= when it is not the last tag (so the
+       reconstruction is independent of tag order). */
+    size_t rest_len = strlen(p);
+    memcpy(out + pos, p, rest_len); pos += rest_len;
     out[pos] = '\0';
     return out;
 }
@@ -410,34 +434,22 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "PERMERROR: Message-Instance m=%d is not covered by any signature", m->m);
     }
 
-    /* §10.4: Envelope MAIL FROM must exactly match top sig's mf= */
+    /* §10.4: Envelope MAIL FROM must match top sig's mf= (domain
+       case-insensitive, local-part case-sensitive, null sender aware). */
     if (ctx->mail_from && latest->mf) {
-        char *ctx_d = addr_domain(ctx->mail_from);
-        char *sig_d = addr_domain(latest->mf);
-        int dom_ok = (ctx_d && sig_d && strcmp(ctx_d, sig_d) == 0);
-        const char *ctx_at = strrchr(ctx->mail_from, '@');
-        const char *sig_at = strrchr(latest->mf, '@');
-        int local_ok = 1;
-        if (ctx_at && sig_at) {
-            const char *cp = ctx->mail_from; if (*cp == '<') cp++;
-            const char *sp = latest->mf;     if (*sp == '<') sp++;
-            size_t cl = (size_t)(ctx_at - (ctx->mail_from + (*ctx->mail_from == '<' ? 1 : 0)));
-            size_t sl = (size_t)(sig_at  - (latest->mf     + (*latest->mf     == '<' ? 1 : 0)));
-            local_ok = (cl == sl && strncmp(cp, sp, cl) == 0);
-        }
-        free(ctx_d); free(sig_d);
-        if (!dom_ok || !local_ok)
+        if (!env_addr_eq(ctx->mail_from, latest->mf))
             SETSTATUS(DKIM2_PERMERROR,
                 "DKIM2-Signature i=%d MAIL FROM %s did not match",
                 latest->i, ctx->mail_from);
     }
 
-    /* RCPT TO: every envelope recipient must appear in rt= */
+    /* RCPT TO: every envelope recipient must appear in rt= (§7.7 domains
+       match case-insensitively). */
     if (ctx->rcpt_to && latest->rt) {
         for (int i = 0; ctx->rcpt_to[i]; i++) {
             int found = 0;
             for (int j = 0; latest->rt[j]; j++)
-                if (strcmp(ctx->rcpt_to[i], latest->rt[j]) == 0) { found = 1; break; }
+                if (env_addr_eq(ctx->rcpt_to[i], latest->rt[j])) { found = 1; break; }
             if (!found)
                 SETSTATUS(DKIM2_PERMERROR,
                     "DKIM2-Signature i=%d RCPT TO %s did not match",
@@ -513,6 +525,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
 
             if (strcmp(sset->alg, "rsa-sha256") != 0 &&
                 strcmp(sset->alg, "ed25519-sha256") != 0) {
+                dkim2_pubkey_free(pubkey);
+                continue;
+            }
+
+            /* §3.2: RSA keys MUST be at least 1024 bits; skip weaker keys so
+               they cannot verify a signature. */
+            if (strcmp(sset->alg, "rsa-sha256") == 0 &&
+                EVP_PKEY_bits(pubkey->pkey) < 1024) {
                 dkim2_pubkey_free(pubkey);
                 continue;
             }

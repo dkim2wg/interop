@@ -166,6 +166,8 @@ static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
 dkim2_sig_t *dkim2_sig_parse(const char *value) {
     taglist_t *tl = tagparse(value, NULL);
     if (!tl) return NULL;
+    /* §8: "there MUST be only one of each kind" of tag. */
+    if (tl->duplicate) { taglist_free(tl); return NULL; }
     dkim2_sig_t *sig = calloc(1, sizeof *sig);
     if (!sig) { taglist_free(tl); return NULL; }
     const char *v;

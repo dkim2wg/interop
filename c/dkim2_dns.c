@@ -61,6 +61,12 @@ static dkim2_pubkey_t *parse_key_record(const char *txt,
     if (strcmp(alg, "rsa") == 0) {
         const unsigned char *kp = keybuf;
         key->pkey = d2i_PUBKEY(NULL, &kp, keylen);
+        if (!key->pkey) {
+            /* Some DKIM keys are published as bare PKCS#1 (RSAPublicKey)
+               rather than SubjectPublicKeyInfo; accept both. */
+            const unsigned char *kp2 = keybuf;
+            key->pkey = d2i_PublicKey(EVP_PKEY_RSA, NULL, &kp2, keylen);
+        }
     } else if (strcmp(alg, "ed25519") == 0) {
         key->pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL, keybuf, (size_t)keylen);
     } else {
