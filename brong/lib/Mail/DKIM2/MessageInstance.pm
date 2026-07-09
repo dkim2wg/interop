@@ -116,8 +116,10 @@ sub as_string {
     if (exists $data{rh}) {
         my $rh = delete $data{rh};
         my %encoded;
+        # Header field names are case-insensitive; always emit recipe keys in
+        # canonical lowercase form (not yet mandated by the draft, but we do it).
         for my $h (sort keys %$rh) {
-            $encoded{$h} = _encode_recipe_list($rh->{$h});
+            $encoded{lc $h} = _encode_recipe_list($rh->{$h});
         }
         $recipe_json{h} = \%encoded;
     }

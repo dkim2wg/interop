@@ -231,9 +231,24 @@ def build_message_instance(headers: list[bytes], body: bytes,
     b_hash = compute_body_hash(body)
     value = f"m={version}; h=sha256:{b64(h_hash)}:{b64(b_hash)}"
     if recipe is not None:
-        value += f"; r={b64json(recipe)}"
+        value += f"; r={b64json(_lowercase_recipe_keys(recipe))}"
     value += ";"
     return f"Message-Instance: {value}"
+
+
+def _lowercase_recipe_keys(recipe: dict) -> dict:
+    """Force the header-recipe (h) keys to lowercase on output.
+
+    Header field names are case-insensitive; emitting recipe keys in a
+    canonical lowercase form keeps them stable and unambiguous.  (Not yet
+    mandated by the draft, but we always do it.)
+    """
+    h = recipe.get("h")
+    if not isinstance(h, dict):
+        return recipe
+    out = dict(recipe)
+    out["h"] = {k.lower(): v for k, v in h.items()}
+    return out
 
 
 # ---------------------------------------------------------------------------

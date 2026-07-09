@@ -91,6 +91,15 @@ int main(void) {
     char **null_h = dkim2_apply_header_recipe("{\"h\":null}", hdrs, 3, &n_null);
     assert(null_h == NULL);
 
+    /* Header recipe generation always emits lowercase keys (canonical form),
+       regardless of the supplied field-name case. */
+    char *new_only[] = { (char *)"List-ID: <l.example.com>\r\n", NULL };
+    char *hr = dkim2_gen_header_recipe("List-ID", NULL, 0, new_only, 1);
+    assert(hr != NULL);
+    assert(strstr(hr, "\"list-id\"") != NULL);
+    assert(strstr(hr, "List-ID") == NULL);
+    free(hr);
+
     puts("recipe: all tests passed");
     return 0;
 }
