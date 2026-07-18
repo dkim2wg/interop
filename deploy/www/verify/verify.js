@@ -73,9 +73,14 @@ export async function verifyMessage(raw, opts = {}) {
   const maxM = miNums[miNums.length - 1];
   const maxI = sigNums[sigNums.length - 1];
   const structErr = [];
+  // A signed message MUST carry at least Message-Instance m=1 (§11.2).
+  if (miNums.length === 0) structErr.push('Message-Instance m=1 missing');
   for (let i = 1; i <= maxI; i++) if (!signatures[i]) structErr.push(`DKIM2-Signature i=${i} missing`);
   for (let m = 1; m <= maxM; m++) if (!instances[m]) structErr.push(`Message-Instance m=${m} missing`);
-  if (maxM > maxI) structErr.push(`Message-Instance m=${maxM} is not signed`);
+  // §11.2: the highest MI m= must be covered by some signature's m= VALUE
+  // (i= hop count and m= do not necessarily track together).
+  const maxSigM = Math.max(...sigNums.map((i) => parseInt(signatures[i].map.m, 10)));
+  if (maxM > maxSigM) structErr.push(`Message-Instance m=${maxM} is not signed`);
   for (const i of sigNums) {
     const s = signatures[i];
     for (const t of ['i', 'm', 't', 'd', 's']) if (!(t in s.map)) structErr.push(`DKIM2-Signature i=${i} tag=${t} missing`);
@@ -96,17 +101,20 @@ export async function verifyMessage(raw, opts = {}) {
   const states = {};
   states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(body) };
   let undoBroken = null; // m at which undo became impossible
+  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'broken'
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
-    if (!('r' in mi.map)) { undoBroken = m; break; }
+    if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
     let recipe;
-    try { recipe = decodeRecipe(mi.map.r); } catch (e) { undoBroken = m; break; }
-    if (recipe.b === null) { undoBroken = m; break; } // §5.2 unrecoverable
+    try { recipe = decodeRecipe(mi.map.r); } catch (e) { undoBroken = m; undoBrokenReason = 'broken'; break; }
+    if (recipe.b === null) { undoBroken = m; undoBrokenReason = 'redacted'; break; } // §5.2 intentional redaction
     const cur = states[m];
     let fields = cur.fields;
     let bodyLines = cur.bodyLines;
-    if (recipe.h) fields = applyHeaderRecipe(cur.fields, recipe.h);
-    if (recipe.b) bodyLines = applyBodyRecipe(cur.bodyLines, recipe.b);
+    try {
+      if (recipe.h) fields = applyHeaderRecipe(cur.fields, recipe.h);
+      if (recipe.b) bodyLines = applyBodyRecipe(cur.bodyLines, recipe.b);
+    } catch (e) { undoBroken = m; undoBrokenReason = 'broken'; break; }
     states[m - 1] = { fields, bodyLines };
   }
 
@@ -122,24 +130,38 @@ export async function verifyMessage(raw, opts = {}) {
       result: 'pass', detail: '',
     };
     if (!state) {
+      // No reconstructed state: distinguish intentional redaction (§5.2 —
+      // legitimate, do NOT downgrade overall) from a broken chain (fail).
       level.result = 'not-checked';
-      level.undo = undoBroken === m + 1 ? 'unrecoverable' : 'not-checked';
-      level.detail = `state unavailable (undo broke at m=${undoBroken})`;
+      if (undoBrokenReason === 'redacted') {
+        level.undo = 'unrecoverable';
+        level.detail = `state unavailable (redaction at m=${undoBroken})`;
+      } else {
+        level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
+        level.detail = `state unavailable (undo broke at m=${undoBroken})`;
+        bump('fail');
+      }
       levels.push(level);
       continue;
     }
-    const sets = parseHashSets(mi.map.h);
-    const hdrBytes = stringToBytes(canonHeaderHash(signedFields(state.fields)));
-    const bodyBytes = stringToBytes(canonBody(linesToBody(state.bodyLines)));
-    const hdrHash = await sha256B64(hdrBytes);
-    const bodyHash = await sha256B64(bodyBytes);
-    // Compare against the sha256 hash-set (ignore unknown algs, §3.4).
-    const sha = sets.find((s) => s.alg === 'sha256');
-    if (sha) {
-      level.header_hash = hdrHash === sha.headerHash ? 'match' : 'mismatch';
-      level.body_hash = bodyHash === sha.bodyHash ? 'match' : 'mismatch';
-      if (level.header_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} header hash mismatch`; bump('fail'); }
-      else if (level.body_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} body hash mismatch`; bump('fail'); }
+    try {
+      const sets = parseHashSets(mi.map.h);
+      const hdrBytes = stringToBytes(canonHeaderHash(signedFields(state.fields)));
+      const bodyBytes = stringToBytes(canonBody(linesToBody(state.bodyLines)));
+      const hdrHash = await sha256B64(hdrBytes);
+      const bodyHash = await sha256B64(bodyBytes);
+      // Compare against the sha256 hash-set (ignore unknown algs, §3.4).
+      const sha = sets.find((s) => s.alg === 'sha256');
+      if (sha) {
+        level.header_hash = hdrHash === sha.headerHash ? 'match' : 'mismatch';
+        level.body_hash = bodyHash === sha.bodyHash ? 'match' : 'mismatch';
+        if (level.header_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} header hash mismatch`; bump('fail'); }
+        else if (level.body_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} body hash mismatch`; bump('fail'); }
+      }
+    } catch (e) {
+      level.result = 'fail';
+      level.detail = `Message Instance m=${m} hash computation error`;
+      bump('fail');
     }
     if (m >= 2 && undoBroken === m) level.undo = recipeUndoLabel(instances[m]);
     levels.push(level);
@@ -155,32 +177,56 @@ export async function verifyMessage(raw, opts = {}) {
       custody: { ok: true, detail: '' }, result: 'pass', detail: '',
     };
 
-    // §11.3 timestamp: >14 days old (or, if configured, future).
+    // §11.3 timestamp: reject if more than 14 days old. (No future-dated
+    // check is implemented.)
     if (!opts.skipTimestamp && sig.map.t) {
       const t = parseInt(sig.map.t, 10);
-      const ageDays = (now - t) / 86400;
-      if (ageDays > 14) { level.timestamp = { ok: false, status: 'expired', detail: `signature expired (${Math.floor(ageDays)}d)` }; level.result = 'fail'; bump('fail'); }
+      if (Number.isFinite(t)) {
+        const ageDays = (now - t) / 86400;
+        if (ageDays > 14) { level.timestamp = { ok: false, status: 'expired', detail: `signature expired (${Math.floor(ageDays)}d)` }; level.result = 'fail'; bump('fail'); }
+      }
     }
 
     // §11.4 chain-of-custody (inter-signature + d=/mf=).
-    custodyCheck(level, signatures, i, maxI, opts);
+    try {
+      custodyCheck(level, signatures, i, maxI, opts);
+    } catch (e) {
+      // e.g. invalid base64 in a present mf=/rt= (b64ToString throws).
+      level.custody = { ok: false, detail: `i=${i} mf/rt malformed` };
+      level.custodyState = 'permerror';
+    }
     if (!level.custody.ok) { level.result = 'fail'; bump(level.custodyState || 'permerror'); }
 
     // §11.5/§11.6 fetch key + verify each s= sig-set.
     const mAtSig = parseInt(sig.map.m, 10);
     const state = states[mAtSig];
     if (!state) {
+      // Reconstruction did not reach this signature's instance: broken chain
+      // downgrades overall; intentional redaction (§5.2) does not.
       level.result = 'not-checked';
       level.detail = 'message state for this signature could not be reconstructed';
+      if (undoBrokenReason === 'broken') bump('fail');
       levels.push(level);
       continue;
     }
     // Signing input = MI 1..mAtSig then DKIM2-Signature 1..i (target blanked).
-    const ordered = [];
-    for (let m = 1; m <= mAtSig; m++) ordered.push(fieldFor(instances[m]));
-    for (let k = 1; k <= i; k++) ordered.push(fieldFor(signatures[k]));
-    const inputBytes = stringToBytes(signingInput(ordered, sig.field));
-    const inputHash = await sha256Bytes(inputBytes);
+    // Build `ordered` from the actual parsed Field objects so the target
+    // signature matches by REFERENCE inside signingInput() (which blanks s=
+    // only for the element that is `=== sig.field`).
+    let inputBytes, inputHash;
+    try {
+      const ordered = [];
+      for (let m = 1; m <= mAtSig; m++) ordered.push(instances[m].field);
+      for (let k = 1; k <= i; k++) ordered.push(signatures[k].field);
+      inputBytes = stringToBytes(signingInput(ordered, sig.field));
+      inputHash = await sha256Bytes(inputBytes);
+    } catch (e) {
+      level.result = 'fail';
+      level.detail = `DKIM2-Signature i=${i} signing input error`;
+      bump('fail');
+      levels.push(level);
+      continue;
+    }
 
     const sigSets = parseSigSets(sig.map.s);
     let anyChecked = false, allPass = true;
@@ -207,8 +253,13 @@ export async function verifyMessage(raw, opts = {}) {
       level.items.push({ selector: ss.selector, algorithm: ss.alg, result: ok ? 'pass' : (detail || 'fail') });
     }
     if (!anyChecked) {
-      level.result = level.result === 'fail' ? 'fail' : 'not-checked';
-      if (level.result === 'not-checked') level.detail = 'no supported signature algorithm';
+      // No verifiable signature set (no supported algorithm, or none parsed):
+      // this signature cannot be trusted — fail it (matches algorithm_only
+      // _future=fail). §3.4 only lets us IGNORE unknown algs alongside a known
+      // one, not accept a signature we cannot check at all.
+      level.result = 'fail';
+      if (!level.detail) level.detail = `DKIM2-Signature i=${i} has no supported signature algorithm`;
+      bump('fail');
     } else if (!allPass) {
       if (level.itemTemp) { level.result = 'temperror'; bump('temperror'); }
       else { level.result = 'fail'; level.detail = `DKIM2-Signature i=${i} incorrect signature`; bump('fail'); }
@@ -221,8 +272,6 @@ export async function verifyMessage(raw, opts = {}) {
     : levels.filter((l) => l.detail).map((l) => l.detail).join('; ') || `verification ${overall}`;
   return { overall, summary, levels };
 }
-
-function fieldFor(level) { return { name: level.field.name, value: level.field.value }; }
 
 function recipeUndoLabel(mi) {
   try {
