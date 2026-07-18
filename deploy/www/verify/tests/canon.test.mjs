@@ -40,3 +40,40 @@ test('signingInput removes all WSP, keeps colon and CRLF, blanks target s=', () 
     'message-instance:m=1;h=sha256:AA=:BB=\r\n' +
     'dkim2-signature:i=1;s=sel:ed25519-sha256:\r\n');
 });
+
+test('canonHeaderHash collapses an interior WSP run to a single SP, not deletes it', () => {
+  // §6.2 collapses runs of WSP to one SP; it must NOT delete them entirely
+  // (that is the §9.6 signing-input rule). This would fail if hashLine were
+  // ever changed to delete-all-WSP instead of collapse-to-one-SP.
+  const fields = [{ name: 'Subject', value: 'a  b' }];
+  assert.equal(canonHeaderHash(fields), 'subject:a b\r\n');
+});
+
+test('canonHeaderHash unfolds a header value with an embedded CRLF+WSP fold', () => {
+  // The fold (CRLF followed by WSP) must be removed entirely by unfold(),
+  // then the single remaining space is left as-is by the WSP-collapse step.
+  const fields = [{ name: 'Subject', value: 'a\r\n b' }];
+  assert.equal(canonHeaderHash(fields), 'subject:a b\r\n');
+});
+
+test('signingInput unfolds a header value with an embedded CRLF+WSP fold', () => {
+  // unfold() strips the CRLF of the fold; the WSP that follows (and any
+  // other WSP in the value) is then deleted entirely per §9.6.
+  const mi = { name: 'Message-Instance', value: ' m=1;\r\n h=sha256:AA=:BB=' };
+  const sig = { name: 'DKIM2-Signature', value: ' i=1; s=sel:ed25519-sha256:ZZ' };
+  const out = signingInput([mi, sig], sig);
+  assert.equal(out,
+    'message-instance:m=1;h=sha256:AA=:BB=\r\n' +
+    'dkim2-signature:i=1;s=sel:ed25519-sha256:\r\n');
+});
+
+test('canonHeaderHash orders duplicates bottom-up by document index, not array adjacency', () => {
+  const fields = [
+    { name: 'From', value: 'a' },
+    { name: 'To', value: 'x' },
+    { name: 'From', value: 'b' },
+    { name: 'From', value: 'c' },
+  ];
+  assert.equal(canonHeaderHash(fields),
+    'from:c\r\nfrom:b\r\nfrom:a\r\nto:x\r\n');
+});
