@@ -326,4 +326,27 @@ sub signed_input_nd {
     is($subj->{previous}, 'hi', 'subject recipe previous is the original subject');
 }
 
+# --- _default_cb: production uses live DNS, dns.json is a test-only override ---
+# Regression guard: without an explicit dns_path the validator MUST use real DNS
+# (never dns.json), so a broken/stale key record is surfaced rather than masked.
+{
+    package FakeSig;
+    sub new { bless { called => 0, sel => $_[1], dom => $_[2] }, $_[0] }
+    sub selector { $_[0]{sel} }
+    sub domain   { $_[0]{dom} }
+    sub fetch_public_key { $_[0]{called}++; return 'REAL_DNS_KEY'; }
+}
+
+my $live = FakeSig->new('sel1', 'test1.dkim2.com');
+my $cb_live = Mail::DKIM2::Validate::_default_cb(undef);
+my $r_live = $cb_live->($live, 0);
+is($live->{called}, 1, '_default_cb with no dns_path calls fetch_public_key (real DNS)');
+is($r_live, 'REAL_DNS_KEY', '... and returns the real-DNS key, not a dns.json value');
+
+my $ovr = FakeSig->new('sel1', 'test1.dkim2.com');   # a domain present in dns.json
+my $cb_ovr = Mail::DKIM2::Validate::_default_cb('../dns.json');
+my $r_ovr = $cb_ovr->($ovr, 0);
+is($ovr->{called}, 0, 'dns.json override (explicit path) short-circuits real DNS — test-only affordance');
+ok(defined $r_ovr, '... and returns a parsed key from the override');
+
 done_testing;

@@ -722,11 +722,13 @@ undo). Two-column: paste left, results right.
   **fcgiwrap** to the CGI `/usr/local/bin/dkim2-validate.cgi` (source
   `brong/bin/validate.cgi`), which calls `Mail::DKIM2::Validate::report`.
 - **Reporter:** `Mail::DKIM2::Validate` (installed with the other libs).
-- **DNS:** the CGI uses **live DNS** for public-key lookup. The
-  `DKIM2_DNS_JSON` override points at `/root/interop/dns.json` but the CGI runs
-  as `www-data`, which can't read `/root`, so in practice it always uses real
-  DNS — correct for validating real mail. The interop test domains
-  (`test{1..5}.dkim2.com`) are published in real DNS too, so they validate.
+- **DNS:** the CGI validates against **live DNS only** — exactly like the milter
+  and any real-world verifier — so a broken/stale key record is surfaced, not
+  masked (and the result matches the client-side `/verify/` tool). The interop
+  test domains (`test{1..5}.dkim2.com`) are published in real DNS. A `dns.json`
+  override exists **only for offline testing** (`t/validate-cgi.t` sets
+  `DKIM2_DNS_JSON`); it is deliberately NOT configured in production nginx, and
+  `validate.cgi` does not default it. Do not add it back to the vhost.
 
 **nginx** (`/etc/nginx/sites-available/dkim2.com`, the 443 `default_server`):
 ```
@@ -734,8 +736,8 @@ location = /validate/api {
     client_max_body_size 512k;
     include /etc/nginx/fastcgi_params;
     fastcgi_param SCRIPT_FILENAME /usr/local/bin/dkim2-validate.cgi;
-    fastcgi_param DKIM2_DNS_JSON  /root/interop/dns.json;
     fastcgi_pass unix:/run/fcgiwrap.socket;
+    # NB: no DKIM2_DNS_JSON here — production uses live DNS (see above).
 }
 ```
 The static `/validate/` files are served by the existing `root` + `location /`.

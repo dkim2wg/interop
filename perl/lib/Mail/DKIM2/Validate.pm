@@ -85,7 +85,9 @@ sub _mi_tags {
     return \@t;
 }
 
-# Default live-DNS pubkey callback (dns.json override if $dns_path readable).
+# Default pubkey callback: LIVE DNS. A dns.json override applies only when a
+# readable $dns_path is passed in (offline testing) — production passes none,
+# so the validator uses real DNS and never masks a broken key record.
 sub _default_cb {
     my ($dns_path) = @_;
     my $dns;

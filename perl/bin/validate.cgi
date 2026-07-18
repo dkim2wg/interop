@@ -7,7 +7,11 @@ use Mail::DKIM2::Validate;
 
 binmode STDIN; binmode STDOUT;
 my $MAX = 256 * 1024;
-my $dns_path = $ENV{DKIM2_DNS_JSON} || '/root/interop/dns.json';
+# Production validates against LIVE DNS (like the milter and any real-world
+# verifier), so a broken/truncated key record is surfaced, not masked. The
+# dns.json override is available ONLY for offline testing via the
+# DKIM2_DNS_JSON env var, and is deliberately NOT defaulted here.
+my $dns_path = $ENV{DKIM2_DNS_JSON};
 
 my $len = $ENV{CONTENT_LENGTH} // 0;
 my $body = '';
