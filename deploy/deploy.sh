@@ -27,7 +27,7 @@ cd "$REPO"
 echo ">> interop HEAD: $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
 
 # 1. Perl library: clean rebuild + mandatory test gate, then install.
-cd "$REPO/brong"
+cd "$REPO/perl"
 echo ">> clean rebuild of Mail::DKIM2 ..."
 make clean >/dev/null 2>&1 || true
 perl Makefile.PL >/dev/null

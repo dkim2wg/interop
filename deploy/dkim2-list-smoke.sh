@@ -21,7 +21,7 @@
 
 set -u
 REPO=/root/interop
-LIB=$REPO/brong/lib
+LIB=$REPO/perl/lib
 CAP=/var/spool/dkim2-capture/Maildir/new
 FROM=dkim2capture@dkim2.com
 MAILMAN_LIST=${1:-dkim2test@mailman.dkim2.com}

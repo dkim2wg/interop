@@ -9,8 +9,8 @@ User=dkim2
 Group=postfix
 ExecStartPre=/bin/mkdir -p /var/spool/postfix/var/run
 ExecStartPre=/bin/mkdir -p /var/spool/dkim2/snapshots
-ExecStart=/usr/bin/perl -I/opt/dkim2/interop/brong/lib \
-    /opt/dkim2/interop/brong/bin/dkim2-milter.pl \
+ExecStart=/usr/bin/perl -I/opt/dkim2/interop/perl/lib \
+    /opt/dkim2/interop/perl/bin/dkim2-milter.pl \
     --mode inbound \
     --socket unix:/var/spool/postfix/var/run/dkim2-milter-in.sock \
     --snapshot-dir /var/spool/dkim2/snapshots

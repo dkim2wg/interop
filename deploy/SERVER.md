@@ -119,7 +119,7 @@ FROM <>`) message by falling back to the `From:` header domain (e.g.
 `MAILER-DAEMON@mail.dkim2.com` → `dkim2.com`, via the existing keydir
 parent-walk) when that domain resolves to a held key, and emit `mf=<>` on the
 resulting `DKIM2-Signature`. This is already implemented in the stock
-`brong/bin/dkim2-milter.pl`, so any operator running it gets bounce-signing
+`perl/bin/dkim2-milter.pl`, so any operator running it gets bounce-signing
 "for free" once the two `main.cf` settings above are in place — no code
 changes needed on the operator side. With no existing DKIM2 chain on a fresh
 bounce, this produces a clean origin signature: `Message-Instance m=1` +
@@ -153,7 +153,7 @@ hop's `mf=`), and does not attempt bounce *propagation* through a forwarder
 **Role:** DKIM2 signing and verification + Message-Instance header computation.
 
 **Source:** `/root/interop/` — this git repository (`github.com/dkim2wg/interop`).
-The milter code is in `brong/bin/dkim2-milter.pl` and `brong/lib/Mail/DKIM2/`.
+The milter code is in `perl/bin/dkim2-milter.pl` and `perl/lib/Mail/DKIM2/`.
 
 **Two instances run:**
 
@@ -263,7 +263,7 @@ Notes:
 
 **Cleaner variant — an LMTP content filter (implemented).** Instead of the
 per-recipient `pipe(8)` fan-out, run the filter as a persistent **LMTP**
-daemon. This repo ships one: `brong/bin/dkim2-split-lmtp.pl` (grouping logic in
+daemon. This repo ships one: `perl/bin/dkim2-split-lmtp.pl` (grouping logic in
 `Mail::DKIM2::Split`, tested by `t/split.t` + `t/split-lmtp.t`). It listens on
 `127.0.0.1:10590`, and for each message re-injects one copy per disclosed group
 / per Bcc recipient to the signing listener (`10589`), answering one LMTP status
@@ -506,7 +506,7 @@ location /static-sympa/     { alias /opt/sympa-dkim2/www/; }
 **Perl dependency (Mail::DKIM2):** Installed system-wide from this repo:
 ```bash
 ssh dkim2
-cd /root/interop/brong
+cd /root/interop/perl
 perl Makefile.PL && make && make install
 ```
 
@@ -645,7 +645,7 @@ newaliases && postfix reload
 export `$SENDER`). Only `reflector-bounces` remains an alias (the bounce mbox).
 
 **Code:** `Mail::DKIM2::Reflector` (in this repo, installed system-wide with the
-other libs) + wrapper `brong/bin/dkim2-reflector.pl` deployed to
+other libs) + wrapper `perl/bin/dkim2-reflector.pl` deployed to
 `/usr/local/bin/dkim2-reflect`. Signs `dkim2.com` / `sel1` / `rsa-sha256` with
 `/etc/dkim2/keys/dkim2.com/sel1.key`.
 
@@ -698,7 +698,7 @@ OpenDKIM, which must verify inbound mail:
 **Deploy / update:**
 ```bash
 ssh dkim2 'cd /root/interop && git pull && \
-    cd brong && perl Makefile.PL && make && make install && \
+    cd perl && perl Makefile.PL && make && make install && \
     install -m 755 bin/dkim2-reflector.pl /usr/local/bin/dkim2-reflect'
 # aliases (once):
 ssh dkim2 'cat /root/interop/deploy/reflector-aliases >> /etc/aliases && newaliases'
@@ -720,7 +720,7 @@ undo). Two-column: paste left, results right.
   POSTs the pasted message to the API and renders the JSON.
 - **API:** `POST /validate/api` (raw `text/plain` → JSON). nginx routes it via
   **fcgiwrap** to the CGI `/usr/local/bin/dkim2-validate.cgi` (source
-  `brong/bin/validate.cgi`), which calls `Mail::DKIM2::Validate::report`.
+  `perl/bin/validate.cgi`), which calls `Mail::DKIM2::Validate::report`.
 - **Reporter:** `Mail::DKIM2::Validate` (installed with the other libs).
 - **DNS:** the CGI validates against **live DNS only** — exactly like the milter
   and any real-world verifier — so a broken/stale key record is surfaced, not
@@ -745,7 +745,7 @@ The static `/validate/` files are served by the existing `root` + `location /`.
 **Deploy / update:**
 ```bash
 ssh dkim2 'cd /root/interop && git pull && \
-    cd brong && perl Makefile.PL && make && make install && \
+    cd perl && perl Makefile.PL && make && make install && \
     install -m 755 bin/validate.cgi /usr/local/bin/dkim2-validate.cgi && \
     install -m 644 ../deploy/www/validate/* /var/www/dkim2.com/validate/'
 # one-time: apt-get install -y fcgiwrap; systemctl enable --now fcgiwrap.socket
@@ -809,13 +809,13 @@ validator CGI pick up the new lib per-invocation. The validator's
 `Mail::DKIM2::Validate` report module is part of the lib, so it is covered by
 `make install`; there is no separate validator build step.
 
-Staleness rule of thumb: any change under `brong/lib/` or `brong/bin/` ⇒ run
+Staleness rule of thumb: any change under `perl/lib/` or `perl/bin/` ⇒ run
 `deploy/deploy.sh` (never a partial manual install). For the C reference tree,
 `make test` does not build the CLIs — use `make check` (or `make tools`).
 
 ### DKIM2 milter — manual fallback (only if the script is unavailable)
 ```bash
-ssh dkim2 'cd /root/interop && git pull && cd brong && \
+ssh dkim2 'cd /root/interop && git pull && cd perl && \
     make clean && perl Makefile.PL && make && make test && make install && \
     systemctl restart dkim2-milter-inbound dkim2-milter-outbound'
 ```
