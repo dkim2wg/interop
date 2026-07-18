@@ -48,6 +48,18 @@ function parseSigSets(sValue) {
 
 const SUPPORTED_ALGS = new Set(['rsa-sha256', 'ed25519-sha256']);
 
+// Return the (lowercased) name of the first tag that appears more than once in
+// a parsed tag list, or null. Tag names are case-insensitive (§7/§8), and
+// parseTagList already lowercases them.
+function duplicateTag(tags) {
+  const seen = new Set();
+  for (const t of tags) {
+    if (seen.has(t.tag)) return t.tag;
+    seen.add(t.tag);
+  }
+  return null;
+}
+
 export async function verifyMessage(raw, opts = {}) {
   const fetchKey = opts.fetchKey || dohFetchKey;
   const now = opts.now || Math.floor(Date.now() / 1000);
@@ -91,6 +103,17 @@ export async function verifyMessage(raw, opts = {}) {
   for (const m of miNums) {
     const mi = instances[m];
     for (const t of ['m', 'h']) if (!(t in mi.map)) structErr.push(`Message-Instance m=${m} tag=${t} missing`);
+    // §7: tags may appear in any order but MUST be only one of each kind.
+    const dupM = duplicateTag(mi.tags);
+    if (dupM) structErr.push(`Message-Instance m=${m} tag=${dupM} appears more than once`);
+  }
+  for (const i of sigNums) {
+    const s = signatures[i];
+    // §8: tags may appear in any order but MUST be only one of each kind.
+    const dupS = duplicateTag(s.tags);
+    if (dupS) structErr.push(`DKIM2-Signature i=${i} tag=${dupS} appears more than once`);
+    // §8.3: the n= nonce value MUST NOT exceed 64 characters.
+    if ('n' in s.map && s.map.n.length > 64) structErr.push(`DKIM2-Signature i=${i} n= nonce exceeds 64 characters`);
   }
   if (structErr.length) {
     return { overall: 'permerror', summary: structErr.join('; '), levels: [] };
@@ -195,7 +218,16 @@ export async function verifyMessage(raw, opts = {}) {
       level.custody = { ok: false, detail: `i=${i} mf/rt malformed` };
       level.custodyState = 'permerror';
     }
-    if (!level.custody.ok) { level.result = 'fail'; level.detail = level.custody.detail; bump(level.custodyState || 'permerror'); }
+    if (!level.custody.ok) {
+      // A chain-of-custody / envelope failure (§11.4) is a permanent error for
+      // this signature; short-circuit before the crypto check so a subsequent
+      // key-not-found does not mask the permerror as a plain 'fail'.
+      level.result = level.custodyState || 'permerror';
+      level.detail = level.custody.detail;
+      bump(level.custodyState || 'permerror');
+      levels.push(level);
+      continue;
+    }
 
     // §11.5/§11.6 fetch key + verify each s= sig-set.
     const mAtSig = parseInt(sig.map.m, 10);
@@ -229,6 +261,18 @@ export async function verifyMessage(raw, opts = {}) {
     }
 
     const sigSets = parseSigSets(sig.map.s);
+    // §8.9 syntax: the s= value must contain sig-sets, each with a selector and
+    // an algorithm name. An empty/malformed s= is a syntax error (permerror),
+    // distinct from a well-formed sig-set naming an unsupported algorithm
+    // (algorithm_only_future), which is a plain 'fail' below.
+    const sSyntaxOk = (sig.map.s || '').trim() !== '' && sigSets.every((ss) => ss.selector && ss.alg);
+    if (!sSyntaxOk) {
+      level.result = 'permerror';
+      level.detail = `DKIM2-Signature i=${i} syntax error`;
+      bump('permerror');
+      levels.push(level);
+      continue;
+    }
     let anyChecked = false, allPass = true;
     for (const ss of sigSets) {
       if (!SUPPORTED_ALGS.has(ss.alg)) continue; // §3.4 ignore unknown
@@ -238,16 +282,20 @@ export async function verifyMessage(raw, opts = {}) {
         const key = await fetchKey(ss.selector, sig.map.d);
         const sigBytes = b64ToBytes(ss.sig);
         if (ss.alg === 'ed25519-sha256') {
-          if (key.k !== 'ed25519') { detail = 'algorithm mismatch'; }
+          if (key.k !== 'ed25519') { detail = 'algorithm mismatch'; level.itemPerm = true; }
           else ok = await verifyEd25519(key.p, sigBytes, inputHash);
         } else { // rsa-sha256
-          if (key.k !== 'rsa') { detail = 'algorithm mismatch'; }
+          if (key.k !== 'rsa') { detail = 'algorithm mismatch'; level.itemPerm = true; }
           else ok = await verifyRsa(key.p, sigBytes, inputBytes);
         }
       } catch (e) {
         detail = keyErrorDetail(e);
+        // §11.5/§11.6: a permanent key problem (not found, syntax, revoked,
+        // too small) is a permerror; a fetch failure is a temperror.
         if (e.message === 'key-temperror') { level.itemTemp = true; }
+        else if (e.message === 'key-tooshort') { detail = `RSA public key size too small, ${e.bits} bits`; level.itemPerm = true; }
         else if (e.message === 'ed25519-unsupported') { detail = 'ed25519 unsupported in this browser'; }
+        else if (['key-notfound', 'key-multiple', 'key-syntax', 'key-revoked'].includes(e.message)) { level.itemPerm = true; }
       }
       if (!ok) allPass = false;
       level.items.push({ selector: ss.selector, algorithm: ss.alg, result: ok ? 'pass' : (detail || 'fail') });
@@ -261,7 +309,8 @@ export async function verifyMessage(raw, opts = {}) {
       if (!level.detail) level.detail = `DKIM2-Signature i=${i} has no supported signature algorithm`;
       bump('fail');
     } else if (!allPass) {
-      if (level.itemTemp) { level.result = 'temperror'; bump('temperror'); }
+      if (level.itemPerm) { level.result = 'permerror'; level.detail = `DKIM2-Signature i=${i} public key ${level.items.map((it) => it.result).find((r) => r !== 'pass') || 'error'}`; bump('permerror'); }
+      else if (level.itemTemp) { level.result = 'temperror'; bump('temperror'); }
       else { level.result = 'fail'; level.detail = `DKIM2-Signature i=${i} incorrect signature`; bump('fail'); }
     }
     levels.push(level);
@@ -312,8 +361,17 @@ function custodyCheck(level, signatures, i, maxI, opts) {
     return;
   }
 
+  // §8.5: the decoded mf= reverse-path MUST include the angle brackets
+  // (unless empty). A non-empty value that is not <...> is a permerror.
+  const mfDecoded = b64ToString(sig.map.mf || '');
+  if (mfDecoded !== '' && !(mfDecoded.startsWith('<') && mfDecoded.endsWith('>'))) {
+    level.custody = { ok: false, detail: `i=${i} MAIL FROM ${mfDecoded} did not match (missing angle brackets)` };
+    level.custodyState = 'permerror';
+    return;
+  }
+
   // d= vs mf= relaxed match (skip when mf empty, e.g. DSN).
-  const mfDomain = domainOf(b64ToString(sig.map.mf || ''));
+  const mfDomain = domainOf(mfDecoded);
   if (mfDomain && !relaxedDomainMatch(mfDomain, (sig.map.d || '').toLowerCase())) {
     level.custody = { ok: false, detail: `i=${i} MAIL FROM and d= do not match` };
     level.custodyState = 'permerror';

@@ -26,9 +26,11 @@ export function parseToml(text) {
         if (lines[i].trim() === '"""') break;
         buf.push(lines[i]);
       }
-      // Fixture multiline lines already end with a literal \r; join with \n
-      // and append a trailing \n for the final line.
-      target[key] = buf.join('\n') + '\n';
+      // A """...""" block is a TOML multi-line basic string: real newlines in
+      // the file are literal, and backslash escapes (\r \n \t \\ \" ...) are
+      // decoded. The fixtures encode CRLF as `\r` + a real newline, so decode
+      // escapes over the joined content. Trailing \n restores the final line.
+      target[key] = unescapeBasic(buf.join('\n') + '\n');
     } else if (rhs.startsWith('[')) {
       const inner = rhs.replace(/^\[/, '').replace(/\]$/, '').trim();
       target[key] = inner === '' ? [] : inner.split(',').map((s) => unquote(s.trim()));
@@ -37,6 +39,29 @@ export function parseToml(text) {
     }
   }
   return root;
+}
+
+// Decode TOML basic-string backslash escapes. Left alone: any char that is
+// not part of a recognized escape (kept verbatim, backslash included).
+function unescapeBasic(s) {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== '\\') { out += s[i]; continue; }
+    const c = s[++i];
+    switch (c) {
+      case 'r': out += '\r'; break;
+      case 'n': out += '\n'; break;
+      case 't': out += '\t'; break;
+      case 'b': out += '\b'; break;
+      case 'f': out += '\f'; break;
+      case '"': out += '"'; break;
+      case '\\': out += '\\'; break;
+      case 'u': out += String.fromCharCode(parseInt(s.slice(i + 1, i + 5), 16)); i += 4; break;
+      case 'U': out += String.fromCodePoint(parseInt(s.slice(i + 1, i + 9), 16)); i += 8; break;
+      default: out += '\\' + (c ?? ''); break;
+    }
+  }
+  return out;
 }
 
 function unquote(s) {
