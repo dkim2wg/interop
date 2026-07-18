@@ -4,6 +4,13 @@ function toCRLF(raw) {
   return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');
 }
 
+// Field = { name: string, value: string, raw: string }
+// `raw` is the full folded field text including its terminating CRLF.
+// `value` is the unfolded value: each physical line's own trailing CRLF is
+// stripped during continuation handling, so no literal `\r\n` ever survives
+// in `value` — only the fold-boundary whitespace (the continuation line's
+// leading WSP) remains. No leading colon, no trailing CRLF. Use `raw` if you
+// need the literal folded bytes.
 export function parseMessage(raw) {
   const text = toCRLF(raw);
   const sep = text.indexOf('\r\n\r\n');
@@ -29,8 +36,10 @@ export function parseMessage(raw) {
 }
 
 export function parseTagList(value) {
-  // value is the raw header value (may contain folding CRLF+WSP). Semicolons
-  // only ever separate tags (spec §7/§8).
+  // value is a header value as produced by parseMessage: fold CRLFs are
+  // already stripped, so this only needs to guard against a literal \r\n
+  // reaching us directly (e.g. from `raw`). Semicolons only ever separate
+  // tags (spec §7/§8).
   const flat = value.replace(/\r\n/g, ''); // drop folding
   const tags = [];
   const map = {};
@@ -60,12 +69,12 @@ export function collectLevels(headers) {
       miFields.push(f);
       const parsed = parseTagList(f.value);
       const m = parseInt(parsed.map.m, 10);
-      instances[m] = { field: f, tags: parsed.tags, map: parsed.map };
+      if (!Number.isNaN(m)) instances[m] = { field: f, tags: parsed.tags, map: parsed.map };
     } else if (isName(f, 'dkim2-signature')) {
       sigFields.push(f);
       const parsed = parseTagList(f.value);
       const i = parseInt(parsed.map.i, 10);
-      signatures[i] = { field: f, tags: parsed.tags, map: parsed.map };
+      if (!Number.isNaN(i)) signatures[i] = { field: f, tags: parsed.tags, map: parsed.map };
     }
   }
   return { instances, signatures, miFields, sigFields };

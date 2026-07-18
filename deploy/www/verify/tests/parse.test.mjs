@@ -16,8 +16,12 @@ test('parseMessage splits headers and body, unfolds', () => {
   assert.equal(headers.length, 4);
   assert.equal(headers[0].name, 'Message-Instance');
   assert.equal(headers[2].name, 'From');
-  // Folded DKIM2-Signature value keeps its raw folded bytes.
-  assert.match(headers[1].value, /d=test\.dkim2\.eu/);
+  // Folded DKIM2-Signature value is unfolded: the fold CRLF is removed but
+  // the continuation line's leading whitespace survives (no literal \r\n).
+  assert.equal(
+    headers[1].value,
+    ' i=1; m=1; d=test.dkim2.eu; s=sel:ed25519-sha256:ZZ'
+  );
   assert.equal(body, 'body line\r\n');
 });
 
@@ -40,4 +44,22 @@ test('collectLevels indexes instances and signatures', () => {
   const { instances, signatures } = collectLevels(headers);
   assert.equal(instances[1].map.m, '1');
   assert.equal(signatures[1].map.d, 'test.dkim2.eu');
+});
+
+test('collectLevels does not create NaN-keyed entries for malformed headers', () => {
+  const malformed =
+    'Message-Instance: h=sha256:AA=:BB=\r\n' +
+    'DKIM2-Signature: d=test.dkim2.eu; s=sel:ed25519-sha256:ZZ\r\n' +
+    'From: a@b\r\n' +
+    '\r\n' +
+    'body\r\n';
+  const { headers } = parseMessage(malformed);
+  const { instances, signatures, miFields, sigFields } = collectLevels(headers);
+  assert.equal(Object.keys(instances).length, 0);
+  assert.equal(Object.keys(signatures).length, 0);
+  assert.ok(!Object.prototype.hasOwnProperty.call(instances, 'NaN'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(signatures, 'NaN'));
+  // The malformed headers must still be retained for downstream count checks.
+  assert.equal(miFields.length, 1);
+  assert.equal(sigFields.length, 1);
 });
