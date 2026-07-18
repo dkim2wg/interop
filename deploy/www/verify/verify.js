@@ -195,7 +195,7 @@ export async function verifyMessage(raw, opts = {}) {
       level.custody = { ok: false, detail: `i=${i} mf/rt malformed` };
       level.custodyState = 'permerror';
     }
-    if (!level.custody.ok) { level.result = 'fail'; bump(level.custodyState || 'permerror'); }
+    if (!level.custody.ok) { level.result = 'fail'; level.detail = level.custody.detail; bump(level.custodyState || 'permerror'); }
 
     // §11.5/§11.6 fetch key + verify each s= sig-set.
     const mAtSig = parseInt(sig.map.m, 10);

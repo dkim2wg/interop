@@ -30,11 +30,20 @@ test('verifyMessage returns a levels array (shape contract)', async () => {
 const stubKey = async () => ({ k: 'rsa', p: 'AAAA' });
 
 test('DKIM2-Signature with NO Message-Instance yields permerror (fix #3)', async () => {
-  // sigNums=[1] but miNums=[]; the structural block must raise the missing
-  // MI m=1 rather than silently no-op'ing every `m <= maxM` loop.
-  const raw = 'From: a@b\r\nDKIM2-Signature: i=1; m=1\r\n\r\nhi\r\n';
+  // sigNums=[1] but miNums=[]. The DKIM2-Signature header below is fully
+  // valid structurally (i=, m=, t=, d=, s=, and mf=+rt= all present), so the
+  // pre-existing per-tag presence check does NOT fire here. Only the
+  // dedicated zero-MI guard (miNums.length === 0) can catch the missing
+  // Message-Instance header, so this test would regress to a non-permerror
+  // (or wrong-reason) result if that guard were removed.
+  const raw =
+    'From: a@b\r\n' +
+    'DKIM2-Signature: i=1; m=1; t=1000000; d=test.dkim2.eu; ' +
+    's=sel:rsa-sha256:AAAA; mf=PHNlbmRlckB0ZXN0LmRraW0yLmV1Pg==; rt=PHJlY2lwaWVudEBleGFtcGxlLmNvbT4=\r\n' +
+    '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   assert.equal(rep.overall, 'permerror');
+  assert.match(rep.summary, /Message-Instance/);
 });
 
 test('signature with only an unsupported algorithm fails, overall=fail (fix #2a)', async () => {
@@ -66,4 +75,29 @@ test('present but invalid-base64 mf= does not throw; custody fails (fix #5a)', a
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
   assert.ok(sig, 'signature level present');
   assert.equal(sig.custody.ok, false);
+  // fix #4: a custody failure must surface into level.detail (and hence the
+  // top-level summary), not just level.custody.detail.
+  assert.match(sig.detail, /mf\/rt malformed/);
+  assert.match(rep.summary, /mf\/rt malformed/);
+});
+
+test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary (fix #4)', async () => {
+  // mf= decodes to a domain that does not relaxed-match d=, so custodyCheck's
+  // normal (non-exception) `if (!level.custody.ok)` branch fires. Timestamp
+  // is fresh and the MI hash-set uses a non-sha256 alg so the MI check is
+  // skipped (stays pass); the sig-set alg is unsupported so no real crypto
+  // is needed. custody is the only reason this signature is unusable, so its
+  // detail must be the one that reaches the summary.
+  const raw =
+    'From: a@b\r\n' +
+    'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+    'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; ' +
+    's=sel:banana:AAA; mf=PHNlbmRlckB3cm9uZy5leGFtcGxlPg==; rt=AAAA\r\n' +
+    '\r\nhi\r\n';
+  const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
+  const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
+  assert.ok(sig, 'signature level present');
+  assert.equal(sig.custody.ok, false);
+  assert.match(sig.detail, /MAIL FROM and d= do not match/);
+  assert.match(rep.summary, /MAIL FROM and d= do not match/);
 });
