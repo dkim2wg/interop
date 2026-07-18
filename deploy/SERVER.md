@@ -751,6 +751,40 @@ ssh dkim2 'cd /root/interop && git pull && \
 
 ---
 
+### 8. DKIM2 Browser Verifier (static, no backend)
+
+**Role:** A second web page at `https://dkim2.com/verify/`, sibling to
+`/validate/` above, that verifies a pasted DKIM2 message **entirely
+client-side** — parsing, canonicalization, hashing, and signature
+cryptography all run in the browser (vanilla JS ES modules). Public keys are
+fetched directly from the browser over DNS-over-HTTPS (`cloudflare-dns.com`);
+the message body never leaves the browser and never touches this server.
+
+**Components:**
+- **Page:** static `index.html` + `verify.css` + `main.js` + the verifier
+  modules (`parse.js`, `canon.js`, `recipes.js`, `crypto.js`, `b64.js`,
+  `doh.js`, `report.js`) under `/var/www/dkim2.com/verify/` (source in
+  `deploy/www/verify/`).
+- **No CGI, no fastcgi, no backend process.** Unlike `/validate/api`, there
+  is nothing for nginx to proxy and no `fcgiwrap` route to add — the page is
+  pure static assets served the same way as `index.html`/`style.css`.
+  `deploy/www/verify/tests/` is the local conformance-harness fixture tree
+  used to validate the code against the Turscar vectors and is **not**
+  deployed to the web root.
+- **nginx:** no config change needed. The existing static `root` +
+  `location /` on the `dkim2.com` vhost (the same one that already serves
+  `/validate/`'s static files) covers `/verify/` automatically as soon as the
+  files are installed under `/var/www/dkim2.com/verify/`.
+
+**Deploy / update:** installed by `deploy/deploy.sh` (step 2b) alongside the
+landing page and the validator's static assets — no separate command needed;
+just run the standard deploy:
+```bash
+ssh dkim2 'cd /root/interop && git pull --ff-only && deploy/deploy.sh'
+```
+
+---
+
 ## Updating Code on the Server
 
 ### Library + milters + reflector + validator (Perl, this repo) — USE THE SCRIPT

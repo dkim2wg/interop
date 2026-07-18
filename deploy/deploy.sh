@@ -43,9 +43,12 @@ install -m 755 bin/dkim2-delayedbounce-fail.pl /usr/local/bin/dkim2-delayedbounc
 install -m 755 bin/dkim2-split-lmtp.pl       /usr/local/bin/dkim2-split-lmtp
 install -m 755 bin/validate.cgi              /usr/local/bin/dkim2-validate.cgi
 
-# 2b. Static web assets: apex landing page + the validator UI. Kept here so a
-#     change to validate.js/.css/.html can't be left stale relative to the
-#     Mail::DKIM2::Validate report shape it renders.
+# 2b. Static web assets: apex landing page + the validator UI + the standalone
+#     browser verifier. Kept here so a change to validate.js/.css/.html can't
+#     be left stale relative to the Mail::DKIM2::Validate report shape it
+#     renders. The browser verifier (deploy/www/verify/) is pure static
+#     files (HTML/CSS/JS, no CGI/backend) — same install-and-copy treatment,
+#     just no fastcgi wiring.
 if [ -d /var/www/dkim2.com ]; then
     install -m 644 "$REPO/deploy/www/index.html" "$REPO/deploy/www/style.css" /var/www/dkim2.com/
     install -d -m 755 /var/www/dkim2.com/validate
@@ -54,6 +57,9 @@ if [ -d /var/www/dkim2.com ]; then
     # browsers always fetch fresh JS/CSS after a deploy (no stale-asset confusion).
     VER=$(git -C "$REPO" rev-parse --short HEAD)
     sed -i "s/__VER__/$VER/g" /var/www/dkim2.com/validate/index.html
+    install -d -m 755 /var/www/dkim2.com/verify
+    install -m 644 "$REPO"/deploy/www/verify/*.html "$REPO"/deploy/www/verify/*.css \
+        "$REPO"/deploy/www/verify/*.js /var/www/dkim2.com/verify/
 fi
 
 # 3. Postfix reflector transport map (idempotent: picks up new addresses).
