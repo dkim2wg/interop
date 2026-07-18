@@ -55,6 +55,9 @@ export function applyHeaderRecipe(fields, hObj) {
         for (let num = s; num <= e; num++) emitted.push(bottomUp[num - 1]);
       } else if ('d' in step) {
         for (const val of step.d) {
+          // `name` here is the lowercased recipe key; `raw` is a synthesized,
+          // space-less approximation. Both are harmless: canon/parse always
+          // lowercase name and never read raw.
           emitted.push({ name, value: val, raw: name + ':' + val + '\r\n' });
         }
       }

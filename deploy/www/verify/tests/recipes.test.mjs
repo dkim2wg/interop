@@ -40,6 +40,46 @@ test('applyHeaderRecipe empty array removes all instances of a name', () => {
   assert.equal(out.find((f) => f.name.toLowerCase() === 'list-id'), undefined);
 });
 
+test('applyHeaderRecipe c-step copies specific bottom-up-numbered instances (multi-instance)', () => {
+  // Three Received instances in document order top->bottom: top, middle, bottom.
+  // Bottom-up numbering (last in doc = #1): bottom=#1, middle=#2, top=#3.
+  const fields = [
+    { name: 'Received', value: ' top', raw: 'Received: top\r\n' },
+    { name: 'Received', value: ' middle', raw: 'Received: middle\r\n' },
+    { name: 'Received', value: ' bottom', raw: 'Received: bottom\r\n' },
+    { name: 'From', value: ' a@b', raw: 'From: a@b\r\n' },
+  ];
+  // c:[2,3] selects #2 (middle) and #3 (top), dropping #1 (bottom).
+  const out = applyHeaderRecipe(fields, { received: [{ c: [2, 3] }] });
+  const received = out.filter((f) => f.name.toLowerCase() === 'received');
+  assert.equal(received.length, 2);
+  // Reconstructed doc order (top->bottom) must be: top, then middle.
+  assert.deepEqual(received.map((f) => f.value), [' top', ' middle']);
+  // Untouched header name is retained unchanged.
+  const from = out.find((f) => f.name === 'From');
+  assert.equal(from.value, ' a@b');
+});
+
+test('applyHeaderRecipe mixed d+c steps on a signed header order correctly under bottom-up processing', () => {
+  // Two List-Id instances in document order top->bottom: first, second.
+  // Bottom-up numbering: second=#1, first=#2.
+  const fields = [
+    { name: 'List-Id', value: ' <first.list>', raw: 'List-Id: <first.list>\r\n' },
+    { name: 'List-Id', value: ' <second.list>', raw: 'List-Id: <second.list>\r\n' },
+  ];
+  // Recipe emits a literal 'd' value, then copies bottom-up instance #1 (second).
+  // Processing (bottom-up) order is [restored, second]; reversing to get doc
+  // order puts the c-copied instance (second) on top and the d-emitted value
+  // last, even though 'd' was listed first in the recipe.
+  const out = applyHeaderRecipe(fields, {
+    'list-id': [{ d: [' restored'] }, { c: [1, 1] }],
+  });
+  const lids = out.filter((f) => f.name.toLowerCase() === 'list-id');
+  assert.equal(lids.length, 2);
+  assert.deepEqual(lids.map((f) => f.value), [' <second.list>', ' restored']);
+  assert.equal(lids[1].name, 'list-id');
+});
+
 test('decodeRecipe base64-decodes JSON', () => {
   const b64 = Buffer.from(JSON.stringify({ b: [{ c: [1, 1] }] })).toString('base64');
   assert.deepEqual(decodeRecipe(b64), { b: [{ c: [1, 1] }] });
