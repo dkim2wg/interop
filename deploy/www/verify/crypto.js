@@ -19,11 +19,13 @@ export async function verifyRsa(spkiB64, sigBytes, msgBytes) {
 }
 
 export async function verifyEd25519(rawPubB64, sigBytes, hashBytes) {
+  const rawPub = b64ToBytes(rawPubB64);
   let key;
   try {
-    key = await subtle.importKey('raw', b64ToBytes(rawPubB64), { name: 'Ed25519' }, false, ['verify']);
+    key = await subtle.importKey('raw', rawPub, { name: 'Ed25519' }, false, ['verify']);
   } catch (e) {
-    throw new Error('ed25519-unsupported');
+    if (e.name === 'NotSupportedError') throw new Error('ed25519-unsupported');
+    throw e;
   }
   // §3.3: Ed25519 signs the SHA-256 hash value as its message.
   return subtle.verify({ name: 'Ed25519' }, key, sigBytes, hashBytes);

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sha256B64, verifyEd25519, verifyRsa } from '../crypto.js';
-import { stringToBytes, b64ToBytes } from '../b64.js';
+import { stringToBytes, b64ToBytes, bytesToB64 } from '../b64.js';
 
 test('sha256B64 matches known DKIM2 body hash', async () => {
   // §6.1 canonical body "Hello, this is a simple test message.\r\n"
@@ -22,6 +22,18 @@ test('verifyEd25519 accepts a valid signature and rejects a corrupt one', async 
   assert.equal(await verifyEd25519(pub, sig, hash), true);
   const bad = sig.slice(); bad[0] ^= 0xff;
   assert.equal(await verifyEd25519(pub, bad, hash), false);
+});
+
+test('verifyEd25519 with a malformed/wrong-length key surfaces the real error, not ed25519-unsupported', async () => {
+  // A 5-byte "public key" is not a valid raw Ed25519 key (must be 32 bytes).
+  // WebCrypto's importKey should throw (e.g. DataError), which must propagate
+  // unchanged rather than being relabeled as "browser doesn't support Ed25519".
+  const badPub = bytesToB64(new Uint8Array([1, 2, 3, 4, 5]));
+  const hash = new Uint8Array(32);
+  const sig = new Uint8Array(64);
+  await assert.rejects(
+    verifyEd25519(badPub, sig, hash),
+    (err) => err.message !== 'ed25519-unsupported');
 });
 
 test('verifyRsa verifies a self-produced RSASSA-PKCS1-v1_5/SHA-256 signature', async () => {
