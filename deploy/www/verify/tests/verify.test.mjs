@@ -228,3 +228,40 @@ test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary 
   assert.match(sig.detail, /MAIL FROM and d= do not match/);
   assert.match(rep.summary, /MAIL FROM and d= do not match/);
 });
+
+// --- recipe breakdown display (§5/§7.2): per-header current<-previous + JSON ---
+test('MI levels expose the decoded recipe breakdown (header current<-previous, summary, JSON)', async () => {
+  // A real 6-hop chain message (m=1..5) with header + body recipes at each hop.
+  // Keys are irrelevant to the recipe breakdown, so use a stub resolver.
+  const chain = readFileSync(
+    join(repoRoot, 'perl', 'tests', 'expected', 'chain-hop6-unchanged-re-sign.eml'), 'utf8');
+  const rep = await verifyMessage(chain, {
+    fetchKey: async () => { throw new Error('key-notfound'); },
+    skipTimestamp: true,
+  });
+  // m=4 adds an Extra-Header and body text; its recipe reconstructs the prior
+  // state (Extra-Header absent). This is exactly what the breakdown must show.
+  const m4 = rep.levels.find((l) => l.kind === 'instance' && l.m === 4);
+  assert.ok(m4, 'm=4 instance level present');
+  assert.equal(m4.recipe, 'diff');
+  assert.equal(m4.body_recipe, 'diff');
+  const eh = (m4.header_recipes || []).find((r) => r.name === 'extra-header');
+  assert.ok(eh, 'm=4 has an extra-header recipe');
+  assert.equal(eh.current, '(absent)');   // Extra-Header not present at m=4's prior state...
+  assert.equal(eh.previous, 'yes');        // ...it existed one hop earlier
+  // The decoded recipe JSON is exposed for display.
+  assert.ok(m4.recipe_json && Array.isArray(m4.recipe_json.b), 'recipe_json has a body step array');
+  assert.ok(m4.recipe_json.h && 'extra-header' in m4.recipe_json.h, 'recipe_json names the header change');
+  // The r= tag is shown as a readable summary, not raw base64.
+  const rtag = m4.tags.find((t) => t.tag === 'r');
+  assert.ok(rtag && /headers:|body:/.test(rtag.value), 'r= tag shows a decoded summary');
+  assert.ok(!/^[A-Za-z0-9+/=]{40,}$/.test(rtag.value), 'r= tag is not raw base64');
+});
+
+test('an instance with no r= recipe has no recipe_json', async () => {
+  const rep = await verifyMessage(SIGNED_SAMPLE, { fetchKey: realFetchKey, skipTimestamp: true });
+  const m1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
+  assert.ok(m1);
+  assert.equal(m1.recipe_json, undefined);
+  assert.deepEqual(m1.header_recipes, []);
+});

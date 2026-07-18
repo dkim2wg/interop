@@ -48,6 +48,23 @@ function parseSigSets(sValue) {
 
 const SUPPORTED_ALGS = new Set(['rsa-sha256', 'ed25519-sha256']);
 
+// All (unfolded, WSP-trimmed) values of a header field name, in document order.
+function headerValues(fields, name) {
+  const n = name.toLowerCase();
+  return fields.filter((f) => f.name.toLowerCase() === n).map((f) => f.value.trim());
+}
+
+// A short human-readable summary of a decoded recipe (§5), e.g.
+// "headers: subject; body: 1 step" — mirrors the /validate/ r= tag display.
+function recipeSummary(rec) {
+  if (rec == null) return 'null (previous state not recoverable)';
+  const parts = [];
+  if (rec.h && Object.keys(rec.h).length) parts.push('headers: ' + Object.keys(rec.h).sort().join(', '));
+  if (rec.b === null) parts.push('body: null (not recoverable)');
+  else if (Array.isArray(rec.b)) parts.push('body: ' + rec.b.length + ' step' + (rec.b.length === 1 ? '' : 's'));
+  return parts.length ? parts.join('; ') : 'none';
+}
+
 // Return the (lowercased) name of the first tag that appears more than once in
 // a parsed tag list, or null. Tag names are case-insensitive (§7/§8), and
 // parseTagList already lowercases them.
@@ -194,6 +211,36 @@ export async function verifyMessage(raw, opts = {}) {
       bump('fail');
     }
     if (m >= 2 && undoBroken === m) level.undo = recipeUndoLabel(instances[m]);
+
+    // Recipe breakdown (§5/§7.2): decode r= and show what it changed — a
+    // readable summary in the r= tag, the decoded recipe JSON, and per-header
+    // current<-previous values (matching the /validate/ display).
+    if ('r' in mi.map) {
+      let rec;
+      try { rec = decodeRecipe(mi.map.r); } catch (e) { rec = undefined; }
+      if (rec !== undefined) {
+        const hasH = rec.h && Object.keys(rec.h).length > 0;
+        level.recipe = rec.b === null ? 'null' : (hasH || Array.isArray(rec.b)) ? 'diff' : 'none';
+        level.body_recipe = rec.b === null ? 'null' : (Array.isArray(rec.b) ? 'diff' : 'none');
+        level.recipe_json = rec;
+        // Replace the raw base64 r= value in the tag grid with a readable summary.
+        const rtag = level.tags.find((t) => t.tag === 'r');
+        if (rtag) rtag.value = recipeSummary(rec);
+        // Per-header current<-previous, only when the previous state exists.
+        const prev = states[m - 1];
+        if (rec.h && prev) {
+          for (const name of Object.keys(rec.h).sort()) {
+            const cur = headerValues(state.fields, name).join(' / ');
+            const pre = headerValues(prev.fields, name).join(' / ');
+            level.header_recipes.push({
+              name,
+              current: cur.length ? cur : '(absent)',
+              previous: pre.length ? pre : '(absent)',
+            });
+          }
+        }
+      }
+    }
     levels.push(level);
   }
 

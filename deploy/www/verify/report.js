@@ -34,6 +34,10 @@ export function renderReport(rep, out) {
       card.appendChild(kv('header hash', lvl.header_hash));
       card.appendChild(kv('body hash', lvl.body_hash));
       (lvl.header_recipes || []).forEach((r) => card.appendChild(kv('recipe', r.name + ': "' + r.current + '" ← "' + r.previous + '"')));
+      if (lvl.recipe_json !== undefined) {
+        card.appendChild(kv('recipe (decoded)', ''));
+        card.appendChild(el('pre', 'recipejson', JSON.stringify(lvl.recipe_json, null, 2)));
+      }
       card.appendChild(kv('undo', lvl.undo));
     }
     if (lvl.detail) card.appendChild(kv('detail', lvl.detail));

@@ -37,6 +37,10 @@ button { background:var(--accent); color:#fff; border:0; border-radius:6px;
 @media (max-width:48rem){ .cols{ grid-template-columns:1fr; } textarea{height:40vh;} .out{min-height:auto;} }
 
 /* browser-verifier additions */
+.recipejson { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.78rem;
+  background:var(--code-bg,#f6f8fa); border:1px solid var(--rule); border-radius:5px;
+  padding:.4rem .6rem; margin:.15rem 0 .5rem; overflow-x:auto; white-space:pre;
+  max-height:16rem; overflow-y:auto; }
 .privacy, .caps { font-size: .85rem; color: #666; max-width: 60ch; }
 .caps { color: #a15c00; }
 .verdict.temperror { background: #fff4e5; color: #a15c00; }
