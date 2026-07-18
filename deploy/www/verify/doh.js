@@ -25,9 +25,12 @@ export async function fetchKey(selector, domain, opts = {}) {
   url.searchParams.set('type', 'TXT');
   let resp;
   try {
-    resp = await fetch(url, { headers: { accept: 'application/dns-json' } });
+    // Bound a hung DoH request so it surfaces as a temperror rather than
+    // hanging the verification. Any fetch rejection (incl. AbortError on
+    // timeout) maps to key-temperror, preserving the cause for diagnosis.
+    resp = await fetch(url, { headers: { accept: 'application/dns-json' }, signal: AbortSignal.timeout(5000) });
   } catch (e) {
-    throw new Error('key-temperror');
+    throw new Error('key-temperror', { cause: e });
   }
   if (resp.status >= 500) throw new Error('key-temperror');
   if (!resp.ok) throw new Error('key-notfound');

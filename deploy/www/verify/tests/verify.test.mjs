@@ -1,6 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { verifyMessage, relaxedDomainMatch, domainOf } from '../verify.js';
+import { parseKeyRecord } from '../doh.js';
+
+// A real, single-hop signed sample (mailfrom_case vector) whose Message-Instance
+// sha256 hashes and RSA signature genuinely verify against the shared dns.json
+// key. Using it lets the §11.4 envelope / §11.3 timestamp checks be the sole
+// determinant of the outcome (MI + crypto both pass on their own).
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, '..', '..', '..', '..');
+const SIGNED_SAMPLE = readFileSync(join(repoRoot, 'dkim2tests', 'tests', 'mailfrom_case.signed'), 'utf8');
+const dns = JSON.parse(readFileSync(join(repoRoot, 'dkim2tests', 'dns.json'), 'utf8'));
+const realFetchKey = async (selector, domain) => {
+  const rec = dns[`${selector}._domainkey.${domain}`];
+  if (rec === undefined) throw new Error('key-notfound');
+  return parseKeyRecord(rec);
+};
+const SAMPLE_T = 1782394336;      // t= in the sample
+const FRESH_NOW = SAMPLE_T + 3600; // well within the §11.3 14-day window
 
 test('relaxedDomainMatch strips labels from the left of the from-domain', () => {
   assert.equal(relaxedDomainMatch('bounce.a.example.com', 'example.com'), true);
@@ -79,6 +99,97 @@ test('present but invalid-base64 mf= does not throw; custody fails (fix #5a)', a
   // top-level summary), not just level.custody.detail.
   assert.match(sig.detail, /mf\/rt malformed/);
   assert.match(rep.summary, /mf\/rt malformed/);
+});
+
+// --- §11.3 expired signature is PERMERROR, not fail --------------------
+test('expired signature (>14 days) is PERMERROR (§11.3)', async () => {
+  const rep = await verifyMessage(SIGNED_SAMPLE, {
+    fetchKey: realFetchKey,
+    mailFrom: '<sender@test.dkim2.eu>',
+    rcptTo: ['<recipient@example.com>'],
+    now: SAMPLE_T + 20 * 86400, // 20 days after the signature timestamp
+  });
+  assert.equal(rep.overall, 'permerror');
+  assert.match(rep.summary, /signature expired/);
+  const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
+  assert.equal(sig.result, 'permerror');
+  assert.equal(sig.timestamp.ok, false);
+});
+
+// --- §11.7 MI hash fails closed when no supported hash algorithm ---------
+test('MI with no supported hash algorithm fails closed (§11.7)', async () => {
+  // h= names only `blake` (no sha256). The instance MUST NOT stay at pass.
+  const raw =
+    'From: a@b\r\n' +
+    'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+    'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:rsa-sha256:AAA; nd=example.net\r\n' +
+    '\r\nhi\r\n';
+  const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
+  const mi = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
+  assert.ok(mi, 'instance level present');
+  assert.equal(mi.result, 'fail');
+  assert.match(mi.detail, /no supported hash algorithm/);
+});
+
+// --- §11.4 top-hop envelope exact-match ---------------------------------
+test('envelope match with differing domain case is not a permerror (§11.4)', async () => {
+  // mf/rt domains are lower-cased before comparison, so an upper-case delivery
+  // domain must still match. With the real key the whole message verifies.
+  const rep = await verifyMessage(SIGNED_SAMPLE, {
+    fetchKey: realFetchKey,
+    mailFrom: '<sender@TEST.DKIM2.EU>',
+    rcptTo: ['<recipient@EXAMPLE.com>'],
+    now: FRESH_NOW,
+  });
+  assert.equal(rep.overall, 'pass');
+  assert.doesNotMatch(rep.summary, /did not match/);
+  const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
+  assert.equal(sig.custody.ok, true);
+});
+
+test('wrong MAIL FROM is PERMERROR with a MAIL FROM detail (§11.4)', async () => {
+  const rep = await verifyMessage(SIGNED_SAMPLE, {
+    fetchKey: realFetchKey,
+    mailFrom: '<attacker@evil.example>',
+    rcptTo: ['<recipient@example.com>'],
+    now: FRESH_NOW,
+  });
+  assert.equal(rep.overall, 'permerror');
+  assert.match(rep.summary, /MAIL FROM .*did not match/);
+  const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
+  assert.equal(sig.result, 'permerror');
+});
+
+test('a used RCPT TO absent from rt= is PERMERROR (§11.4)', async () => {
+  const rep = await verifyMessage(SIGNED_SAMPLE, {
+    fetchKey: realFetchKey,
+    mailFrom: '<sender@test.dkim2.eu>',
+    rcptTo: ['<nobody@example.com>'],
+    now: FRESH_NOW,
+  });
+  assert.equal(rep.overall, 'permerror');
+  assert.match(rep.summary, /RCPT TO .*did not match/);
+});
+
+test('local-part case is significant in the envelope match (§11.4)', async () => {
+  // rt= carries recipient@example.com; a differently-cased local part must NOT
+  // match (only the domain is lower-cased).
+  const rep = await verifyMessage(SIGNED_SAMPLE, {
+    fetchKey: realFetchKey,
+    mailFrom: '<sender@test.dkim2.eu>',
+    rcptTo: ['<RECIPIENT@example.com>'],
+    now: FRESH_NOW,
+  });
+  assert.equal(rep.overall, 'permerror');
+  assert.match(rep.summary, /RCPT TO .*did not match/);
+});
+
+test('omitting the envelope skips the §11.4 check (browser paste case)', async () => {
+  // No mailFrom/rcptTo: the envelope check must not fire, so no envelope-based
+  // permerror; the message otherwise verifies cleanly.
+  const rep = await verifyMessage(SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
+  assert.equal(rep.overall, 'pass');
+  assert.doesNotMatch(rep.summary, /did not match/);
 });
 
 test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary (fix #4)', async () => {

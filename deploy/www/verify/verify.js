@@ -180,6 +180,13 @@ export async function verifyMessage(raw, opts = {}) {
         level.body_hash = bodyHash === sha.bodyHash ? 'match' : 'mismatch';
         if (level.header_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} header hash mismatch`; bump('fail'); }
         else if (level.body_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} body hash mismatch`; bump('fail'); }
+      } else {
+        // Fail closed: an MI whose h= names no supported (sha256) hash algorithm
+        // cannot be verified and MUST NOT be left at pass (mirrors the signature
+        // path's no-supported-algorithm handling).
+        level.result = 'fail';
+        level.detail = `Message Instance m=${m} no supported hash algorithm`;
+        bump('fail');
       }
     } catch (e) {
       level.result = 'fail';
@@ -200,19 +207,27 @@ export async function verifyMessage(raw, opts = {}) {
       custody: { ok: true, detail: '' }, result: 'pass', detail: '',
     };
 
-    // §11.3 timestamp: reject if more than 14 days old. (No future-dated
+    // §11.3 timestamp: reject if more than 14 days old. The output state is
+    // PERMERROR ("DKIM2-Signature i=<x> signature expired"). (No future-dated
     // check is implemented.)
     if (!opts.skipTimestamp && sig.map.t) {
       const t = parseInt(sig.map.t, 10);
       if (Number.isFinite(t)) {
         const ageDays = (now - t) / 86400;
-        if (ageDays > 14) { level.timestamp = { ok: false, status: 'expired', detail: `signature expired (${Math.floor(ageDays)}d)` }; level.result = 'fail'; bump('fail'); }
+        if (ageDays > 14) {
+          level.timestamp = { ok: false, status: 'expired', detail: `signature expired (${Math.floor(ageDays)}d)` };
+          level.result = 'permerror';
+          level.detail = `DKIM2-Signature i=${i} signature expired`;
+          bump('permerror');
+        }
       }
     }
 
-    // §11.4 chain-of-custody (inter-signature + d=/mf=).
+    // §11.4 chain-of-custody (inter-signature + d=/mf=), plus the top-hop
+    // envelope exact-match against the actual delivery MAIL FROM / RCPT TO.
     try {
       custodyCheck(level, signatures, i, maxI, opts);
+      if (i === maxI && level.custody.ok) envelopeCheck(level, sig, i, opts);
     } catch (e) {
       // e.g. invalid base64 in a present mf=/rt= (b64ToString throws).
       level.custody = { ok: false, detail: `i=${i} mf/rt malformed` };
@@ -310,7 +325,7 @@ export async function verifyMessage(raw, opts = {}) {
       bump('fail');
     } else if (!allPass) {
       if (level.itemPerm) { level.result = 'permerror'; level.detail = `DKIM2-Signature i=${i} public key ${level.items.map((it) => it.result).find((r) => r !== 'pass') || 'error'}`; bump('permerror'); }
-      else if (level.itemTemp) { level.result = 'temperror'; bump('temperror'); }
+      else if (level.itemTemp) { level.result = 'temperror'; level.detail = `DKIM2-Signature i=${i} ${(level.items.find((it) => it.result !== 'pass') || {}).result || 'public key could not be fetched'}`; bump('temperror'); }
       else { level.result = 'fail'; level.detail = `DKIM2-Signature i=${i} incorrect signature`; bump('fail'); }
     }
     levels.push(level);
@@ -390,4 +405,50 @@ function custodyCheck(level, signatures, i, maxI, opts) {
     }
   }
   level.custody = { ok: true, detail: i === 1 ? 'origin' : 'chain intact' };
+}
+
+// Normalize an envelope address for the §11.4 EXACT comparison: strip one
+// leading '<' and trailing '>', split on the LAST '@' into localpart+domain,
+// lower-case ONLY the domain (the local part case is significant), and keep
+// the local part verbatim. An address with no '@' is returned as-is.
+function normalizeAddr(a) {
+  let s = String(a == null ? '' : a).trim();
+  if (s.startsWith('<')) s = s.slice(1);
+  if (s.endsWith('>')) s = s.slice(0, -1);
+  const at = s.lastIndexOf('@');
+  if (at < 0) return s;
+  return s.slice(0, at) + '@' + s.slice(at + 1).toLowerCase();
+}
+
+// §11.4: the actual delivery MAIL FROM / RCPT TO MUST EXACTLY match (NOT the
+// relaxed algorithm) the mf=/rt= of the highest-numbered DKIM2-Signature; only
+// the domain is lower-cased. Applies only when the caller supplies the real
+// envelope (opts.mailFrom + opts.rcptTo); the browser paste case has no
+// envelope and skips this check. nd= (out-of-band, §11.4) and an empty '<>'
+// reverse-path (DSN, §8.5/§12) skip the MAIL FROM comparison.
+function envelopeCheck(level, sig, i, opts) {
+  const mailFrom = opts.mailFrom;
+  const rcptTo = opts.rcptTo;
+  if (typeof mailFrom !== 'string' || !Array.isArray(rcptTo) || rcptTo.length === 0) return;
+  if ('nd' in sig.map) return; // §11.4 out-of-band case: no mf=/rt= to match
+
+  const mfDecoded = b64ToString(sig.map.mf || '');
+  if (mfDecoded !== '<>') {
+    if (normalizeAddr(mfDecoded) !== normalizeAddr(mailFrom)) {
+      level.custody = { ok: false, detail: `DKIM2-Signature i=${i} MAIL FROM ${mailFrom} did not match` };
+      level.custodyState = 'permerror';
+      return;
+    }
+  }
+
+  const rtNorm = (sig.map.rt || '').split(',')
+    .filter((r) => r.trim() !== '')
+    .map((r) => normalizeAddr(b64ToString(r.trim())));
+  for (const rcpt of rcptTo) {
+    if (!rtNorm.includes(normalizeAddr(rcpt))) {
+      level.custody = { ok: false, detail: `DKIM2-Signature i=${i} RCPT TO ${rcpt} did not match` };
+      level.custodyState = 'permerror';
+      return;
+    }
+  }
 }
