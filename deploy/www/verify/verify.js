@@ -77,7 +77,7 @@ export async function verifyMessage(raw, opts = {}) {
   let overall = 'pass';
   const bump = (state) => {
     // Precedence for the overall verdict: fail > permerror > temperror > pass.
-    const rank = { pass: 0, temperror: 1, permerror: 2, fail: 3 };
+    const rank = { pass: 0, warn: 1, temperror: 2, permerror: 3, fail: 4 };
     if (rank[state] > rank[overall]) overall = state;
   };
 
@@ -207,18 +207,20 @@ export async function verifyMessage(raw, opts = {}) {
       custody: { ok: true, detail: '' }, result: 'pass', detail: '',
     };
 
-    // §11.3 timestamp: reject if more than 14 days old. The output state is
-    // PERMERROR ("DKIM2-Signature i=<x> signature expired"). (No future-dated
-    // check is implemented.)
+    // §11.3 timestamp: a signature more than 14 days old is graded as a soft
+    // WARNING, not a hard failure. The spec says a verifier SHOULD fail on age
+    // (§11.3) but MAY ignore it (§8.4); for a paste-a-saved-message tool, old
+    // messages are the norm, so we surface age as a warning and still verify
+    // the crypto (matching the reference /validate/ behaviour). The upgrade to
+    // 'warn' happens only if the signature otherwise passes (see below).
+    let expired = false;
     if (!opts.skipTimestamp && sig.map.t) {
       const t = parseInt(sig.map.t, 10);
       if (Number.isFinite(t)) {
         const ageDays = (now - t) / 86400;
         if (ageDays > 14) {
-          level.timestamp = { ok: false, status: 'expired', detail: `signature expired (${Math.floor(ageDays)}d)` };
-          level.result = 'permerror';
-          level.detail = `DKIM2-Signature i=${i} signature expired`;
-          bump('permerror');
+          expired = true;
+          level.timestamp = { ok: false, status: 'expired', detail: `signature more than 14 days old (${Math.floor(ageDays)}d)` };
         }
       }
     }
@@ -328,11 +330,20 @@ export async function verifyMessage(raw, opts = {}) {
       else if (level.itemTemp) { level.result = 'temperror'; level.detail = `DKIM2-Signature i=${i} ${(level.items.find((it) => it.result !== 'pass') || {}).result || 'public key could not be fetched'}`; bump('temperror'); }
       else { level.result = 'fail'; level.detail = `DKIM2-Signature i=${i} incorrect signature`; bump('fail'); }
     }
+    // A valid but old signature is a soft warning, not a failure (§11.3/§8.4).
+    // Only downgrade a level that otherwise passed — a real failure outranks it.
+    if (expired && level.result === 'pass') {
+      level.result = 'warn';
+      level.detail = `DKIM2-Signature i=${i} more than 14 days old`;
+      bump('warn');
+    }
     levels.push(level);
   }
 
   const summary = overall === 'pass'
     ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact`
+    : overall === 'warn'
+    ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact — with warnings: ${levels.filter((l) => l.result === 'warn' && l.detail).map((l) => l.detail).join('; ')}`
     : levels.filter((l) => l.detail).map((l) => l.detail).join('; ') || `verification ${overall}`;
   return { overall, summary, levels };
 }

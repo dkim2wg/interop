@@ -48,7 +48,13 @@ export function parseTagList(value) {
     const eq = seg.indexOf('=');
     if (eq < 0) continue;
     const name = seg.slice(0, eq).trim().toLowerCase();
-    const val = seg.slice(eq + 1).trim();
+    // DKIM2 tag values are base64 / tokens / digits / domains and never carry
+    // significant internal whitespace; any WSP present came from header folding
+    // (FWS). Strip ALL whitespace so a value split across continuation lines —
+    // e.g. a base64 h= hash or s= signature folded mid-token — is reassembled
+    // intact. Leaving embedded fold WSP breaks hash-string comparison (the
+    // folded-list-message verifier bug).
+    const val = seg.slice(eq + 1).replace(/[ \t\r\n]/g, '');
     tags.push({ tag: name, value: val, raw: seg });
     if (!(name in map)) map[name] = val;
   }

@@ -102,18 +102,34 @@ test('present but invalid-base64 mf= does not throw; custody fails (fix #5a)', a
 });
 
 // --- §11.3 expired signature is PERMERROR, not fail --------------------
-test('expired signature (>14 days) is PERMERROR (§11.3)', async () => {
+test('an old-but-otherwise-valid signature (>14 days) is a soft WARN, not a failure (§11.3/§8.4)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<sender@test.dkim2.eu>',
     rcptTo: ['<recipient@example.com>'],
     now: SAMPLE_T + 20 * 86400, // 20 days after the signature timestamp
   });
-  assert.equal(rep.overall, 'permerror');
-  assert.match(rep.summary, /signature expired/);
+  // Crypto/hashes are fine; only the age is stale — overall must be 'warn'
+  // (the reference /validate/ grades age as a soft warning), NOT a hard error.
+  assert.equal(rep.overall, 'warn');
+  assert.match(rep.summary, /more than 14 days old/);
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
-  assert.equal(sig.result, 'permerror');
+  assert.equal(sig.result, 'warn');
   assert.equal(sig.timestamp.ok, false);
+  assert.equal(sig.timestamp.status, 'expired');
+});
+
+test('a signature within 14 days is a clean pass (no age warning)', async () => {
+  const rep = await verifyMessage(SIGNED_SAMPLE, {
+    fetchKey: realFetchKey,
+    mailFrom: '<sender@test.dkim2.eu>',
+    rcptTo: ['<recipient@example.com>'],
+    now: SAMPLE_T + 3600, // an hour after signing
+  });
+  assert.equal(rep.overall, 'pass');
+  const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
+  assert.equal(sig.result, 'pass');
+  assert.equal(sig.timestamp.ok, true);
 });
 
 // --- §11.7 MI hash fails closed when no supported hash algorithm ---------

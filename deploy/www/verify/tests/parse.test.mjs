@@ -39,6 +39,29 @@ test('parseTagList parses tags case-insensitively, values case-significant', () 
   assert.equal(tags.length, 3);   // trailing empty segment dropped
 });
 
+test('parseTagList strips fold whitespace embedded inside a value', () => {
+  // A base64 value split across a header fold: continuation-line WSP lands in
+  // the middle of the token. It MUST be removed so the reassembled value is the
+  // intact base64 (otherwise hash-string comparison fails — the folded-list bug).
+  const { map } = parseTagList('h=sha256:AAAA=:4olUkMUi2b\tCCfVrAOg==');
+  assert.equal(map.h, 'sha256:AAAA=:4olUkMUi2bCCfVrAOg==');
+  assert.ok(!/[ \t]/.test(map.h));
+});
+
+test('collectLevels reassembles a folded Message-Instance h= base64 intact', () => {
+  // The Message-Instance header is folded mid-base64 (as real MTAs emit).
+  const raw =
+    'Message-Instance: m=1;\r\n' +
+    '\th=sha256:hixqBKGSX/pbmi3l0M1YQzc8Ad5BVkkHhRl4fNWkqjs=:4olUkMUi2b\r\n' +
+    '\tCCfVrAOg4rSNpPMBWnWoKd71+94zpiUqo=\r\n' +
+    'From: a@b\r\n\r\nbody\r\n';
+  const { headers } = parseMessage(raw);
+  const { instances } = collectLevels(headers);
+  const bodyHash = instances[1].map.h.split(',')[0].split(':')[2];
+  assert.equal(bodyHash, '4olUkMUi2bCCfVrAOg4rSNpPMBWnWoKd71+94zpiUqo=');
+  assert.ok(!/[ \t]/.test(instances[1].map.h));
+});
+
 test('collectLevels indexes instances and signatures', () => {
   const { headers } = parseMessage(MSG);
   const { instances, signatures } = collectLevels(headers);
