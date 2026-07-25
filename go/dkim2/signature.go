@@ -120,13 +120,17 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	}
 	if v := tvl.get("s"); v != "" {
 		for _, part := range strings.Split(v, ",") {
-			fields := strings.SplitN(strings.TrimSpace(part), ":", 3)
+			// §2.12: strip folding whitespace before splitting, not after.
+			// A fold may land between the selector colon and the algorithm
+			// token, in which case splitting first leaves the CRLF+WSP
+			// attached to the algorithm name and the comparison fails.
+			fields := strings.SplitN(stripB64WSP(part), ":", 3)
 			if len(fields) != 3 {
 				return nil, fmt.Errorf("invalid s= item: %q", part)
 			}
 			item := SigItem{Selector: fields[0], Algorithm: fields[1]}
 			if fields[2] != "" {
-				b, err := base64.StdEncoding.DecodeString(stripB64WSP(fields[2]))
+				b, err := base64.StdEncoding.DecodeString(fields[2])
 				if err != nil {
 					return nil, fmt.Errorf("invalid sig value: %w", err)
 				}
@@ -142,7 +146,8 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		sig.Nonce = v
 	}
 	if v := tvl.get("f"); v != "" {
-		for _, part := range strings.Split(strings.ReplaceAll(v, " ", ""), ",") {
+		// §2.12: a folded f= list carries CRLF+WSP, not just spaces.
+		for _, part := range strings.Split(stripB64WSP(v), ",") {
 			if part != "" {
 				sig.Flags = append(sig.Flags, part)
 			}

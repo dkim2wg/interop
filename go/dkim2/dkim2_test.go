@@ -653,8 +653,13 @@ func TestSignAllCases(t *testing.T) {
 	}
 }
 
-// TestUndoNoRecipe: double-sign a message (no content change = no recipe),
-// then Undo back to v=1 and compare with the original single-signed output.
+// TestUndoNoRecipe: a recipe-less Message-Instance means "no change asserted",
+// so undoing across one must leave the content untouched.
+//
+// Our signer no longer *produces* a recipe-less instance (an unmodified hop
+// reuses the existing m= instead — see Sign), but we must still accept one from
+// an upstream that does, so the fixture is built by hand rather than by
+// double-signing.
 func TestUndoNoRecipe(t *testing.T) {
 	raw, err := os.ReadFile("../../python/tests/emails/simple.eml")
 	if err != nil {
@@ -682,16 +687,22 @@ func TestUndoNoRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Sign again without content change — MI v=2 will have no recipe.
-	opts.Timestamp = 1740000001
-	var signed2 bytes.Buffer
-	if err := Sign(bytes.NewReader(signed1.Bytes()), &signed2, key, opts); err != nil {
-		t.Fatal(err)
+	// Graft on a second hop that added a recipe-less m=2 carrying the same
+	// hashes -- what an upstream that does emit one on a transparent re-sign
+	// puts on the wire.
+	mi1 := firstHeaderLine(t, signed1.String(), "Message-Instance:")
+	sig1 := firstHeaderLine(t, signed1.String(), "DKIM2-Signature:")
+	mi2 := strings.Replace(mi1, "m=1;", "m=2;", 1)
+	sig2 := strings.Replace(sig1, "i=1; m=1;", "i=2; m=2;", 1)
+	if mi2 == mi1 || sig2 == sig1 {
+		t.Fatalf("failed to build m=2 fixture from\n%s%s", mi1, sig1)
 	}
+	signed2 := sig2 + mi2 + signed1.String()
 
-	// Undo back to v=1.
+	// Undo back to v=1: the recipe-less m=2 asserts no change, so this must
+	// reproduce the single-signed message byte for byte.
 	var undone bytes.Buffer
-	if err := Undo(bytes.NewReader(signed2.Bytes()), &undone, -1); err != nil {
+	if err := Undo(strings.NewReader(signed2), &undone, -1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -699,6 +710,28 @@ func TestUndoNoRecipe(t *testing.T) {
 		t.Errorf("undo result does not match single-signed message\ngot:\n%s\nwant:\n%s",
 			truncate(string(undone.Bytes()), 500), truncate(string(signed1.Bytes()), 500))
 	}
+}
+
+// firstHeaderLine returns the first header field (including any folded
+// continuation lines and the trailing CRLF) whose name matches prefix.
+func firstHeaderLine(t *testing.T, msg, prefix string) string {
+	t.Helper()
+	lines := strings.SplitAfter(msg, "\r\n")
+	for i, ln := range lines {
+		if !strings.HasPrefix(ln, prefix) {
+			continue
+		}
+		out := ln
+		for _, cont := range lines[i+1:] {
+			if cont == "" || (cont[0] != ' ' && cont[0] != '\t') {
+				break
+			}
+			out += cont
+		}
+		return out
+	}
+	t.Fatalf("header %q not found", prefix)
+	return ""
 }
 
 // TestUndoHeaderRecipesRoundTrip verifies that undoHeaderRecipes correctly
@@ -932,29 +965,15 @@ func TestVerifyGap6OrphanMI(t *testing.T) {
 	if err := Sign(bytes.NewReader(raw), &signed1, key, opts); err != nil {
 		t.Fatal(err)
 	}
-	opts.Timestamp = 1740000001
-	var signed2 bytes.Buffer
-	if err := Sign(bytes.NewReader(signed1.Bytes()), &signed2, key, opts); err != nil {
-		t.Fatal(err)
+	// Graft on an m=2 instance with no DKIM2-Signature referencing it.  (Signing
+	// twice no longer produces an m=2 at all, since an unmodified hop reuses the
+	// existing instance, so build the orphan directly.)
+	mi1 := firstHeaderLine(t, signed1.String(), "Message-Instance:")
+	mi2 := strings.Replace(mi1, "m=1;", "m=2;", 1)
+	if mi2 == mi1 {
+		t.Fatalf("failed to build m=2 fixture from %s", mi1)
 	}
-	// Strip the outer DKIM2-Signature (i=2) — leave m=2 but no sig referencing it
-	lines := strings.Split(signed2.String(), "\r\n")
-	var kept []string
-	skipNext := false
-	for _, line := range lines {
-		if skipNext {
-			if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
-				continue // continuation line
-			}
-			skipNext = false
-		}
-		if strings.HasPrefix(strings.ToLower(line), "dkim2-signature:") && strings.Contains(line, "i=2;") {
-			skipNext = true
-			continue
-		}
-		kept = append(kept, line)
-	}
-	verifyExpectFail(t, strings.Join(kept, "\r\n"), "orphan MI (m=2 with no referencing sig)")
+	verifyExpectFail(t, mi2+signed1.String(), "orphan MI (m=2 with no referencing sig)")
 }
 
 // TestVerifyMultipleSigsAllChecked verifies that when a DKIM2-Signature contains

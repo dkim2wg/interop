@@ -55,6 +55,37 @@ int main(void) {
     assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
     dkim2_sig_free(sig);
 
+    /* Folding whitespace inside tag values (spec-04 §2.12): FWS may appear
+       inside a base64 string and around the colons of an s= item, and MUST be
+       ignored when the value is used.  A fold between the selector colon and
+       the algorithm token used to leave CRLF+TAB glued to the algorithm name. */
+    sig = dkim2_sig_parse(
+        "i=1; m=1; t=1745798400; "
+        "mf=PHVzZXJAZXh\r\n\thbXBsZS5jb20+; "
+        "rt=PHJjcHRAZXh\r\n\thbXBsZS5vcmc+; "
+        "d=example.com; "
+        "s=sel1:\r\n\trsa-sha256:\r\n\tAA\r\n\tAA");
+    assert(sig != NULL);
+    assert(strcmp(sig->mf, "<user@example.com>") == 0);
+    assert(sig->rt != NULL && sig->rt[0] != NULL);
+    assert(strcmp(sig->rt[0], "<rcpt@example.org>") == 0);
+    assert(sig->n_ssets == 1);
+    assert(strcmp(sig->ssets[0].selector, "sel1") == 0);
+    assert(strcmp(sig->ssets[0].alg, "rsa-sha256") == 0);
+    assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
+    dkim2_sig_free(sig);
+
+    /* Same, folded with space-continuation rather than tab */
+    sig = dkim2_sig_parse(
+        "i=1; m=1; t=1745798400; "
+        "mf=PHVzZXJAZXhhbXBsZS5jb20+; "
+        "rt=PHJjcHRAZXhhbXBsZS5vcmc+; "
+        "d=example.com; "
+        "s=sel1:\r\n rsa-sha256:AAAA");
+    assert(sig != NULL);
+    assert(strcmp(sig->ssets[0].alg, "rsa-sha256") == 0);
+    dkim2_sig_free(sig);
+
     /* Multiple rt= values */
     /* base64("<a@example.com>") = "PGFAZXhhbXBsZS5jb20+" */
     /* base64("<b@example.com>") = "PGJAZXhhbXBsZS5jb20+" */

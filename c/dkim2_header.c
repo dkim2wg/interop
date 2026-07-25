@@ -146,7 +146,10 @@ static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
     if (!copy) { free(*out); *out = NULL; return -1; }
     tok = strtok_r(copy, ",", &saveptr);
     while (tok) {
-        while (*tok == ' ' || *tok == '\t') tok++;
+        /* Strip FWS before splitting: a fold may land between the selector
+           colon and the algorithm token, which would otherwise leave CRLF+WSP
+           attached to the algorithm name. */
+        strip_fws(tok);
         char *c1 = strchr(tok, ':');
         if (!c1) { free(copy); return -1; }
         *c1++ = '\0';

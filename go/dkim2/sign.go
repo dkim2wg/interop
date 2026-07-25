@@ -55,10 +55,12 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 	}
 
 	miVersion := 1
+	var topMI *MessageInstance
 	for _, raw := range existingMI {
 		mi, err := parseMI(raw)
 		if err == nil && mi.Version >= miVersion {
 			miVersion = mi.Version + 1
+			topMI = mi
 		}
 	}
 
@@ -76,13 +78,29 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		return fmt.Errorf("header hash: %w", err)
 	}
 
-	// 5. Build new MI header.
-	newMI := &MessageInstance{
-		Version:    miVersion,
-		HeaderHash: headerHash,
-		BodyHash:   bodyHash,
+	// 5. Build new MI header — unless this hop changed nothing.
+	//
+	// draft-04 §9.1/§9.2.5: a forwarder that leaves both hashes unchanged adds
+	// no new Message-Instance; it signs against the existing top instance and
+	// reuses its m=.  An instance with identical hashes and no recipe is pure
+	// waste — verifiers must tolerate one, but nothing should produce it.
+	addMI := true
+	if topMI != nil &&
+		bytes.Equal(topMI.HeaderHash, headerHash) &&
+		bytes.Equal(topMI.BodyHash, bodyHash) {
+		addMI = false
+		miVersion = topMI.Version
 	}
-	newMIStr := newMI.String()
+
+	var newMIStr string
+	if addMI {
+		newMI := &MessageInstance{
+			Version:    miVersion,
+			HeaderHash: headerHash,
+			BodyHash:   bodyHash,
+		}
+		newMIStr = newMI.String()
+	}
 
 	// 6. Determine algorithm from key type.
 	algorithm, err := algorithmForKey(key)
@@ -118,7 +136,9 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 	for _, mi := range existingMI {
 		sigInput = append(sigInput, canonicalizeSigHeader(mi)...)
 	}
-	sigInput = append(sigInput, canonicalizeSigHeader(newMIStr+"\r\n")...)
+	if addMI {
+		sigInput = append(sigInput, canonicalizeSigHeader(newMIStr+"\r\n")...)
+	}
 	for _, s := range existingSigs {
 		sigInput = append(sigInput, canonicalizeSigHeader(s)...)
 	}
@@ -147,8 +167,10 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 	if _, err := fmt.Fprintf(w, "%s\r\n", completeSig); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "%s\r\n", newMIStr); err != nil {
-		return err
+	if addMI {
+		if _, err := fmt.Fprintf(w, "%s\r\n", newMIStr); err != nil {
+			return err
+		}
 	}
 	for _, h := range headers {
 		if _, err := io.WriteString(w, h.Raw); err != nil {

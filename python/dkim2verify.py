@@ -213,6 +213,20 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
     return errors
 
 
+def _strip_fws(s: str) -> str:
+    """Remove folding whitespace from a tag value.
+
+    Per spec-04 §2.12 folding whitespace may appear inside a base64 string or
+    around the colons of an s= item, and MUST be ignored when the value is
+    used.  Selectors, algorithm names and base64 never contain significant
+    whitespace, so removing all of it is safe.
+    """
+    return s.translate(_FWS_TABLE)
+
+
+_FWS_TABLE = {ord(c): None for c in " \t\r\n"}
+
+
 def _sig_flags(sig_hdr: str) -> list[str]:
     """Return the f= flag list of a DKIM2-Signature header (draft-04 §8.10)."""
     f = _extract_tag(_get_header_value(sig_hdr), "f")
@@ -411,19 +425,28 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
                 )
                 return errors
 
+    # Two parallel views of each s= item.  The *raw* fields keep whatever
+    # folding whitespace the producer inserted, and are what we blank out of
+    # the raw header below.  The *semantic* fields have FWS removed per §2.12
+    # ("folding whitespace ... MUST be ignored when the value is used"), so a
+    # fold anywhere inside the item -- including between the selector colon
+    # and the algorithm token -- doesn't corrupt the selector, the algorithm
+    # name or the base64 signature.
+    sig_items_raw = []
     sig_items = []
     for part in s_tag.split(","):
         fields = part.split(":", 2)
         if len(fields) != 3:
             return [f"DKIM2-Signature i={i_val}: invalid s= item format: {part!r}"]
-        sig_items.append(fields)
+        sig_items_raw.append(fields)
+        sig_items.append([_strip_fws(f) for f in fields])
 
     # Build the incomplete signature (the signed form) by blanking each s=
     # item's signature value in place.  This is independent of tag order and
     # whitespace: we simply remove the base64 signature bytes wherever they
     # appear, leaving selector:algorithm: and every other tag untouched.
     incomplete_sig = sig_hdr
-    for selector, algorithm, sig_value_b64 in sig_items:
+    for selector, algorithm, sig_value_b64 in sig_items_raw:
         incomplete_sig = incomplete_sig.replace(
             f"{selector}:{algorithm}:{sig_value_b64}",
             f"{selector}:{algorithm}:",

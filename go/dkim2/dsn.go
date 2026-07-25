@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -92,15 +93,29 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	partHdr, partBody := splitPartHeaders(segments[embeddedSeg])
 	embedded := []byte(partBody)
 
-	// 1. Undo the Forwarder's outward modification. Undo also drops the
-	//    DKIM2-Signature whose m= covers the removed MI. If there is nothing to
-	//    undo (single MI), strip the top signature directly.
+	// 1. Undo the Forwarder's outward modification, so what remains is the
+	//    message as the upstream hop signed it.
+	//
+	//    The target is the upstream signature's m=, NOT simply "highest MI - 1":
+	//    a forwarder that changed nothing adds no Message-Instance at all and
+	//    reuses the existing m= (§9.1/§9.2.5), so both signatures share one
+	//    instance and there is no MI to unwind — unwinding by version anyway
+	//    would strip the upstream's own signature along with the forwarder's.
+	//    In that case we only drop the forwarder's signature.
+	target, haveTarget := upstreamSigMIVersion(embedded)
+
 	var rebuilt bytes.Buffer
-	if err := Undo(bytes.NewReader(embedded), &rebuilt, -1); err != nil {
-		// No MI to undo (or unrecoverable) — strip the Forwarder's signature.
+	undone := false
+	if haveTarget {
+		if err := Undo(bytes.NewReader(embedded), &rebuilt, target); err == nil {
+			undone = true
+		}
+	}
+	if !undone {
+		// Nothing to unwind (or unrecoverable) — strip the Forwarder's signature.
 		stripped, serr := stripTopSig(embedded)
 		if serr != nil {
-			return nil, "", fmt.Errorf("rebuild embedded original: %v / %v", err, serr)
+			return nil, "", fmt.Errorf("rebuild embedded original: %v", serr)
 		}
 		rebuilt.Reset()
 		rebuilt.Write(stripped)
@@ -148,6 +163,30 @@ func splitPartHeaders(seg string) (string, string) {
 
 // stripTopSig removes the highest-sequence DKIM2-Signature header from a raw
 // message (used when there is no Message-Instance to undo).
+// upstreamSigMIVersion returns the m= of the second-highest DKIM2-Signature —
+// the instance the upstream hop signed against, and therefore the state we want
+// to reconstruct by undoing the top (Forwarder) hop. Reports false when there
+// is no second signature to fall back to.
+func upstreamSigMIVersion(raw []byte) (int, bool) {
+	headers, _, err := parseHeaders(bytes.NewReader(raw))
+	if err != nil {
+		return 0, false
+	}
+	var sigs []*DKIM2Signature
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "dkim2-signature") {
+			if sig, err := parseSig(h.Raw); err == nil {
+				sigs = append(sigs, sig)
+			}
+		}
+	}
+	if len(sigs) < 2 {
+		return 0, false
+	}
+	sort.Slice(sigs, func(i, j int) bool { return sigs[i].Sequence < sigs[j].Sequence })
+	return sigs[len(sigs)-2].MIVersion, true
+}
+
 func stripTopSig(raw []byte) ([]byte, error) {
 	headers, bodyReader, err := parseHeaders(bytes.NewReader(raw))
 	if err != nil {

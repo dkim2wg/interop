@@ -48,4 +48,17 @@ $cur->body_set($cur->body_raw . "footer line\r\n");
     like($why, qr/m=1 does not match|did not undo/, 'failure names the broken instance');
 }
 
+# --- recipe-less m=2 over UNCHANGED content: legal, and must be accepted ---
+#     An instance with no r= asserts no change.  We never emit one (an
+#     unmodified hop reuses the existing m= per §9.1/§9.2.5), but an upstream
+#     may, and rejecting it would break the chain for no reason.
+{
+    my $same = Email::MIME->new($with1);
+    my $hh = Mail::DKIM2::MessageInstance::h_digest($same);
+    my $bh = Mail::DKIM2::MessageInstance::b_digest($same);
+    $same->header_raw_prepend('Message-Instance', "m=2; h=sha256:$hh:$bh;");
+    my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($same->as_string);
+    ok($ok, 'recipe-less instance asserting no change is accepted') or diag($why);
+}
+
 done_testing;

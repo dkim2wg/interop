@@ -316,6 +316,20 @@ def _get_version_from_mi(hdr: str) -> int:
     return int(m) if m else 0
 
 
+def _mi_hashes(hdr: str) -> str | None:
+    """Extract the h= hash set of a Message-Instance header, FWS removed.
+
+    Folding whitespace may appear inside the base64 hashes (spec-04 §2.12), so
+    strip it before comparing two instances' hashes.
+    """
+    colon = hdr.find(":")
+    value = hdr[colon + 1:] if colon != -1 else hdr
+    h = _extract_tag(value, "h")
+    if h is None:
+        return None
+    return "".join(h.split())
+
+
 def _get_seq_from_sig(hdr: str) -> int:
     """Extract i= value from a DKIM2-Signature header string."""
     colon = hdr.find(":")
@@ -374,7 +388,7 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
 # ---------------------------------------------------------------------------
 
 def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
-                          new_mi: str, domain: str, selector: str,
+                          new_mi: str | None, domain: str, selector: str,
                           private_key, algorithm: str,
                           mailfrom: str = "<>",
                           rcptto: list[str] | None = None,
@@ -411,8 +425,10 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
         f"d={domain}; {chain}; s={selector}:{algorithm}:;{f_tag}"
     )
 
-    # Collect all MI headers including the new one
-    all_mi = mi_headers + [new_mi]
+    # Collect all MI headers, including the new one if this hop created one
+    # (new_mi is None when the hop changed nothing and reuses the existing top
+    # instance — see sign_message).
+    all_mi = mi_headers + ([new_mi] if new_mi is not None else [])
 
     # Compute signature
     sig_bytes = compute_signature(all_mi, sig_headers, incomplete,
@@ -479,9 +495,11 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
             existing_sig.append(hdr.decode("utf-8", errors="surrogateescape"))
 
     # Determine version numbers
+    top_mi = None
     mi_version = 1
     if existing_mi:
-        mi_version = max(_get_version_from_mi(h) for h in existing_mi) + 1
+        top_mi = max(existing_mi, key=_get_version_from_mi)
+        mi_version = _get_version_from_mi(top_mi) + 1
 
     sig_seq = 1
     if existing_sig:
@@ -489,6 +507,14 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
     # Build Message-Instance header
     mi_hdr = build_message_instance(headers, body, version=mi_version)
+
+    # draft-04 §9.1/§9.2.5: a hop that leaves both hashes unchanged adds no new
+    # Message-Instance at all — it signs against the existing top instance and
+    # reuses its m=.  Emitting an instance with identical hashes and no recipe
+    # is pure waste; verifiers must tolerate one, but nothing should produce it.
+    if top_mi is not None and _mi_hashes(top_mi) == _mi_hashes(mi_hdr):
+        mi_version = _get_version_from_mi(top_mi)
+        mi_hdr = None
 
     # Build DKIM2-Signature header
     sig_hdr = build_dkim2_signature(
@@ -505,7 +531,8 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").replace(b"\n", b"\r\n")
 
     output = sig_hdr.encode("utf-8") + b"\r\n"
-    output += mi_hdr.encode("utf-8") + b"\r\n"
+    if mi_hdr is not None:
+        output += mi_hdr.encode("utf-8") + b"\r\n"
     output += raw
 
     return output
