@@ -17,17 +17,27 @@ use constant DKIM2_SOFTWARE => 'dkim2-milter.pl';
 
 sub _dkim2_info {
     my ($action, %extra) = @_;
-    # Fold at semicolons using LF+tab for milter protocol
     my $val = "draft=" . DKIM2_DRAFT
-            . ";\n\trepo=" . DKIM2_REPO
-            . ";\n\tdate=" . DKIM2_DATE
+            . "; repo=" . DKIM2_REPO
+            . "; date=" . DKIM2_DATE
             . "; sw=" . DKIM2_SOFTWARE
-            . ";\n\taction=$action";
+            . "; action=$action";
     for my $key (sort keys %extra) {
         next unless defined $extra{$key};
         $val .= "; $key=$extra{$key}";
     }
-    return $val;
+    # Fold at tag boundaries.  Previously only the first three tags were folded
+    # and everything after action= ran onto one line, which a long hn= list or a
+    # snaps= digest pushed well past the RFC 5322 recommendation of 78 (200+
+    # characters in practice).  X-DKIM2-Info is excluded from the header hash by
+    # the x-* rule, so how it is folded can never affect a signature.
+    #
+    # fold_header() budgets for the field name, so fold with it attached and
+    # then strip it -- insheader() takes the value alone, in LF form for the
+    # milter protocol.
+    (my $folded = fold_header("X-DKIM2-Info: $val")) =~ s/^X-DKIM2-Info:\s*//;
+    $folded =~ s/\r\n/\n/g;
+    return $folded;
 }
 
 # Return (count, comma-separated-names) of headers that would be included
