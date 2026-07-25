@@ -4,6 +4,7 @@ bin/dkim2-delayedbounce-fail.pl
 bin/dkim2-milter.pl
 bin/dkim2-reflector.pl
 bin/dkim2-split-lmtp.pl
+bin/dkim2sign.pl
 bin/reverse-mailversion.pl
 bin/validate-mailversion.pl
 bin/validate.cgi
@@ -52,6 +53,7 @@ t/recipe-lowercase.t
 t/reflector-cli.t
 t/reflector-dkim1.t
 t/reflector.t
+t/sign-cli.t
 t/signature-flags.t
 t/signature-nd.t
 t/signature-nonce.t

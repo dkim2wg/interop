@@ -166,10 +166,16 @@ resign_c() {
         -k "$(key test2.dkim2.com)" --mailfrom '<sender@test2.dkim2.com>' \
         --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) > "$2"
 }
+resign_perl() {
+    perl "$ROOT/perl/bin/dkim2sign.pl" -s sel1 -d test2.dkim2.com \
+        -k "$(key test2.dkim2.com)" --mailfrom '<sender@test2.dkim2.com>' \
+        --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) "$1" > "$2"
+}
 
 SIGNERS="python"
-[ $have_go = 1 ] && SIGNERS="$SIGNERS go"
-[ $have_c  = 1 ] && SIGNERS="$SIGNERS c"
+[ $have_go   = 1 ] && SIGNERS="$SIGNERS go"
+[ $have_c    = 1 ] && SIGNERS="$SIGNERS c"
+[ $have_perl = 1 ] && SIGNERS="$SIGNERS perl"
 
 for s in $SIGNERS; do
     out="$WORK/resign_$s.eml"
