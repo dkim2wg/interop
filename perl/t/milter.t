@@ -155,6 +155,10 @@ sub run_sign {
         record_smtp_params => 1,
         snapshot_directory => undef,
         _authenticated => 1,
+        # Pin t= so the fixtures written to tests/expected/ are identical on
+        # every run; otherwise a live timestamp dirties the working tree each
+        # time the suite is run.
+        signature_timestamp => 1740000000,
         %opts,
     };
 

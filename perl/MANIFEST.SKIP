@@ -1,4 +1,6 @@
 ^\.claude/
+^\.gitignore$
+^CLAUDE\.md$
 ^blib/
 ^Makefile$
 ^Makefile\.old$

@@ -224,6 +224,14 @@ sub addheader_callback {
             Key      => $key,
         );
 
+        # Pin t= when configured.  Only the test suite sets this, so that the
+        # fixtures it writes to tests/expected/ are byte-reproducible instead
+        # of changing on every run; in production it is absent and the signer
+        # uses the current time.
+        if ( $config->{'signature_timestamp'} ) {
+            $signer_args{Timestamp} = $config->{'signature_timestamp'};
+        }
+
         if ( $config->{'record_smtp_params'} ) {
             $signer_args{MailFrom} = ( $env_from ne '' ) ? $env_from : '<>';
             if ( @{$self->{'env_rcpt'} || []} ) {
