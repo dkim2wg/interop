@@ -376,6 +376,77 @@ signature. It is a general interoperability hazard for *any* DKIM2 signer of
 
 ---
 
+## 16. Leading WSP stripped before unfolding, not after (C-specific)
+
+**Symptom:** a real Mailman list message verified in Perl, Python, Go and the
+browser JS verifier but failed `Message-Instance m=2 header hash mismatch` in C.
+
+`canon_header_for_hash()` applied §6.2 step 6 ("delete WSP at the start of the
+value") to the *raw* header bytes, before the unfolding step had run:
+
+```c
+size_t vi = 0;
+while (vi < vl && (v[vi] == ' ' || v[vi] == '\t')) vi++;   /* too early */
+int in_wsp = 0;
+for (size_t i = vi; i < vl; i++) { ... }                   /* unfolds here */
+```
+
+For a header folded *immediately after the colon* — which Gmail and Mailman both
+emit — the value's raw bytes start with CRLF, so the pre-pass finds no leading
+WSP to delete. The collapse loop then skips the CRLF, hits the space that opens
+the continuation line, and emits it, leaving a stray leading SP:
+
+```
+Message-ID:\r\n <x@y>   ->  "message-id: <x@y>"   (wrong)
+                            "message-id:<x@y>"     (Perl/Python/Go/JS)
+```
+
+The message that surfaced it had three such headers (`Message-ID:`,
+`Archived-At:`, `List-Archive:`) of the 17 signed fields, so the hash was wrong
+while every individual field *looked* right in a diff.
+
+**Fix:** start the collapse loop already inside a WSP run (`int in_wsp = 1`), so
+a leading WSP run is swallowed whichever side of the fold it sits on. The
+separate pre-pass is then redundant and was removed. Covered by `test_hash.c`
+(folded-after-colon, with and without a trailing space before the fold).
+
+**Lesson:** ordering matters in the §6.2 step list, and the spec's step order is
+not the only order that "looks" correct — see spec issue **S4**. Any step
+phrased "at the start of the value" must run *after* unfolding, because
+unfolding is what determines where the value starts.
+
+---
+
+## 17. NULL holes in the working header array crash the recipe undo (C-specific)
+
+**Symptom:** SIGSEGV in `strchr` via `headers_for_name()` while undoing a
+Mailman `Message-Instance` recipe. Latent until issue #16 was fixed — the header
+hash mismatch had been short-circuiting before the recipe was ever applied.
+
+`dkim2_apply_header_recipe()` processes each field named in the recipe's `h`
+object in turn. Removing a field's existing instances blanks the slots rather
+than compacting the array (compaction happens once, at the end):
+
+```c
+if (strcmp(tmp, fname) == 0) { free(working[i]); working[i] = NULL; }
+```
+
+The removal loop guards with `if (!working[i]) continue;`, but
+`headers_for_name()` — called for the *next* field in the recipe — did not, and
+dereferenced the hole. So any recipe naming **two or more** header fields, where
+the first-processed one was present in the message, crashed. Single-field
+recipes (all the existing tests) never hit it; Mailman recipes name a dozen
+fields, so real list mail hit it every time.
+
+**Fix:** skip NULL entries in both passes of `headers_for_name()`. Covered by a
+multi-field-recipe case in `test_recipe.c`.
+
+**Lesson:** a sentinel-holes-then-compact array is fine, but *every* reader of
+the array has to know about the holes. Prefer compacting eagerly, or wrap the
+array in an accessor that hides them.
+
+---
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
@@ -547,6 +618,9 @@ message, fixed timestamp, known key, showing every intermediate value.
 | 12 | eml_parse whole-file buffering | TODO | Low (performance) |
 | 13 | Perl test keys were ephemeral random | Fixed (static keys from keys/) | Critical for interop |
 | 14 | Folded base64 hash compared as string | Fixed (compare decoded bytes) | High (correctness) |
+| 15 | 8bit DSN downgraded 8→7 breaks signatures | Mitigated (Postfix config) | High (correctness) |
+| 16 | Leading WSP stripped before unfolding | Fixed (`in_wsp = 1`) | Critical for interop |
+| 17 | NULL holes crash multi-field recipe undo | Fixed (skip holes) | Critical (crash) |
 | S1 | Trailing `;` should be normative | Spec issue | Critical for interop |
 | S2 | `ed25519-sha256` prehash semantics unstated | Spec issue | Critical for interop |
 | S3 | §5.2 vs §8.5 WSP rules not cross-referenced | Spec issue | High |

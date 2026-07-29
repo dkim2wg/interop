@@ -100,6 +100,34 @@ int main(void) {
     assert(strstr(hr, "List-ID") == NULL);
     free(hr);
 
+    /* A recipe naming SEVERAL header fields: removing the first one leaves a
+       NULL hole in the working array (holes are only compacted at the very
+       end), so every later lookup must tolerate them. Mailman recipes name a
+       dozen fields, so this is the normal case, not an edge case. */
+    char *multi[] = {
+        (char *)"From: alice@example.com\r\n",
+        (char *)"Subject: [List] Hello\r\n",
+        (char *)"List-Id: <l.example.com>\r\n",
+        (char *)"Precedence: list\r\n",
+        NULL
+    };
+    int n_multi = 0;
+    char **red = dkim2_apply_header_recipe(
+        "{\"h\":{\"list-id\":[],\"precedence\":[],"
+        "\"subject\":[{\"d\":[\"Hello\"]}]}}", multi, 4, &n_multi);
+    assert(red != NULL);
+    assert(n_multi == 2);            /* From + rewritten Subject */
+    int seen_from = 0, seen_subj = 0;
+    for (int i = 0; i < n_multi; i++) {
+        assert(strstr(red[i], "List-Id") == NULL);
+        assert(strstr(red[i], "Precedence") == NULL);
+        if (strstr(red[i], "From:")) seen_from = 1;
+        if (strstr(red[i], "subject: Hello\r\n")) seen_subj = 1;
+    }
+    assert(seen_from && seen_subj);
+    for (int i = 0; i < n_multi; i++) free(red[i]);
+    free(red);
+
     puts("recipe: all tests passed");
     return 0;
 }

@@ -77,7 +77,43 @@ function duplicateTag(tags) {
   return null;
 }
 
+// Remove a header field (and its folded continuation lines) from raw message
+// text. Line-based on purpose: re-parsing and re-serialising the message could
+// refold other headers and change the very bytes whose hashes we check.
+// Line endings are tolerated in either form: a <textarea> paste arrives as bare
+// LF and is only normalized to CRLF later, inside parseMessage.
+function stripHeader(raw, name) {
+  const re = new RegExp(`^${name}:[^\\r\\n]*(?:\\r?\\n[ \\t][^\\r\\n]*)*\\r?\\n`, 'gim');
+  return raw.replace(re, '');
+}
+
+// Verdicts ordered best to worst, so the retry below can tell whether stripping
+// a header actually improved the outcome.
+const OVERALL_RANK = { pass: 0, warn: 1, none: 2, temperror: 3, permerror: 4, fail: 5 };
+const rankOf = (o) => (o in OVERALL_RANK ? OVERALL_RANK[o] : OVERALL_RANK.fail);
+
+// Received-SPF is NOT in the spec-04 §4.1 list of unsigned header fields, so
+// unlike Received/ARC-*/Authentication-Results it IS covered by the
+// Message-Instance header hash. A receiving MTA that prepends one (Fastmail
+// does) therefore breaks verification at every level. When a message that
+// carries one fails, retry once with it removed; if that verifies, return the
+// better result and say so. Mirrors Mail::DKIM2::Validate::report().
 export async function verifyMessage(raw, opts = {}) {
+  const rep = await verifyOnce(raw, opts);
+  if (rep.overall === 'pass') return rep;
+  if (!/^Received-SPF:/im.test(raw || '')) return rep;
+
+  const rep2 = await verifyOnce(stripHeader(raw, 'Received-SPF'), opts);
+  if (rankOf(rep2.overall) >= rankOf(rep.overall)) return rep;
+
+  rep2.stripped_headers = ['Received-SPF'];
+  rep2.summary = (rep2.summary ? rep2.summary + '; ' : '')
+    + 'verified only after removing Received-SPF (a trace header added by the '
+    + 'receiving MTA that is not excluded from the Message-Instance header hash)';
+  return rep2;
+}
+
+async function verifyOnce(raw, opts = {}) {
   const fetchKey = opts.fetchKey || dohFetchKey;
   const now = opts.now || Math.floor(Date.now() / 1000);
   const { headers, body } = parseMessage(raw);

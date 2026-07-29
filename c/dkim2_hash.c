@@ -173,12 +173,14 @@ static char *canon_header_for_hash(const char *hdr) {
     size_t vl = vallen;
     while (vl >= 2 && v[vl-2] == '\r' && v[vl-1] == '\n') vl -= 2;
     while (vl >= 1 && (v[vl-1] == '\r' || v[vl-1] == '\n')) vl--;
-    /* Strip leading WSP (§5.2 step 6: delete WSP at start of value) */
-    size_t vi = 0;
-    while (vi < vl && (v[vi] == ' ' || v[vi] == '\t')) vi++;
-
-    int in_wsp = 0;
-    for (size_t i = vi; i < vl; i++) {
+    /* §5.2 step 6 (delete WSP at the start of the value) must be applied AFTER
+       unfolding, not before: for a header folded immediately after the colon
+       ("Message-ID:\r\n <x@y>") the leading WSP is the space that opens the
+       continuation line, which only becomes leading once the CRLF is gone.
+       Starting the collapse loop already "in" a WSP run swallows that whole
+       run, so leading WSP is deleted in either position. */
+    int in_wsp = 1;
+    for (size_t i = 0; i < vl; i++) {
         unsigned char c = (unsigned char)v[i];
         if (c == '\r') continue;
         if (c == '\n') continue;  /* folded: CRLF is removed, next char is WSP */
