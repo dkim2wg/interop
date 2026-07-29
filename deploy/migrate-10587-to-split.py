@@ -40,9 +40,11 @@ if '\n127.0.0.1:10587 ' not in fragment:
 if '\n127.0.0.1:10589 ' not in fragment:
     sys.exit('!! %s does not define the 10589 signing re-injection; aborting.'
              % FRAGMENT)
-if '10586' in fragment:
-    sys.exit('!! %s still mentions 10586 -- that entry was retired; aborting.'
-             % FRAGMENT)
+# A *definition* of 10586, not a mention: the fragment's comments legitimately
+# explain why that entry was retired.
+if '\n127.0.0.1:10586 ' in fragment:
+    sys.exit('!! %s still defines 127.0.0.1:10586 -- that entry was retired in '
+             'favour of 10587; aborting.' % FRAGMENT)
 
 src = open(MASTER).read()
 if 'postfix/dkim2-split-in' in src:
