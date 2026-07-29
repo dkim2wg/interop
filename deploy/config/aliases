@@ -1,0 +1,16 @@
+# See man 5 aliases for format
+postmaster:    root
+brong: brong@brong.net
+admin: brong@brong.net
+looper: |"/usr/local/bin/looper-forward"
+# DKIM2 reflector addresses for dkim2.com.
+# Append to /etc/aliases on the server, then run `newaliases`.
+#
+# Each address verifies the incoming DKIM2 chain, applies a transformation,
+# and reflects the message back to the sender — signing as dkim2.com only if
+# the incoming chain verified. See deploy/SERVER.md and
+# docs/superpowers/specs/2026-06-18-dkim2-reflector-design.md.
+
+# Bounces/DSNs from reflected mail; dumped here instead of double-bouncing.
+reflector-bounces:  /var/spool/reflector-bounces/mbox
+dkim2capture:  /var/spool/dkim2-capture/Maildir/

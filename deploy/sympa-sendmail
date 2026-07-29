@@ -1,0 +1,56 @@
+#!/usr/bin/perl
+# Relay mail via SMTP to the listserv port (10587) so only the
+# outbound milter processes it.
+use strict;
+use warnings;
+use IO::Socket::INET;
+
+my $sender;
+my @recips;
+my $i = 0;
+while ($i < @ARGV) {
+    if ($ARGV[$i] eq "-f") {
+        $sender = $ARGV[++$i];
+    } elsif ($ARGV[$i] =~ /^-/) {
+        # skip other flags (and their args if needed)
+        $i++ if $ARGV[$i] =~ /^-[NVo]$/;
+    } else {
+        push @recips, $ARGV[$i];
+    }
+    $i++;
+}
+$sender //= "";
+
+my $msg = do { local $/; <STDIN> };
+
+my $sock = IO::Socket::INET->new(
+    PeerAddr => "127.0.0.1",
+    PeerPort => 10587,
+    Proto    => "tcp",
+    Timeout  => 30,
+) or die "Cannot connect to localhost:10587: $!\n";
+
+sub smtp_read {
+    my $line = <$sock>;
+    die "SMTP error: $line" unless $line =~ /^[23]/;
+    return $line;
+}
+
+smtp_read();
+print $sock "EHLO localhost\r\n";
+# Read all EHLO response lines
+while (my $line = <$sock>) {
+    last if $line =~ /^250 /;
+    die "EHLO error: $line" unless $line =~ /^250-/;
+}
+print $sock "MAIL FROM:<$sender>\r\n"; smtp_read();
+for my $r (@recips) {
+    print $sock "RCPT TO:<$r>\r\n"; smtp_read();
+}
+print $sock "DATA\r\n"; smtp_read();
+$msg =~ s/\r?\n/\r\n/g;
+$msg =~ s/^\./\.\./gm;
+print $sock $msg;
+print $sock "\r\n.\r\n"; smtp_read();
+print $sock "QUIT\r\n";
+close $sock;
