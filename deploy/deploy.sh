@@ -125,4 +125,13 @@ perl -e '
 echo ">> smoke test: null-sender MAIL FROM:<> through the outbound milter ..."
 perl "$REPO/deploy/smoke-null-sender-milter.pl" /var/spool/postfix/var/run/dkim2-milter-out.sock
 
+# 8. CONFIG DRIFT CHECK. Report where the server's live nginx/Mailman/Sympa/
+#    Postfix config has diverged from the tracked snapshot in deploy/config/.
+#    Deliberately a WARNING, not a gate: a stale snapshot needs to be visible on
+#    every deploy (that is how it rotted unnoticed for months before it was
+#    tracked at all), but it must never block shipping a signing fix.
+echo ">> config drift check (deploy/config/) ..."
+bash "$REPO/deploy/check-server-config.sh" || \
+    echo "   WARNING: config drift above — refresh with deploy/capture-server-config.sh"
+
 echo ">> deploy complete and verified."
