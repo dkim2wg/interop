@@ -1,29 +1,70 @@
-# DKIM2 Bcc-safe origination: split content filter + signing re-injection.
-# Append these two services to /etc/postfix/master.cf. Both are loopback-only
-# (this box has no public submission and mynetworks is localhost, so there is
-# no open-relay exposure); origination is localhost-injected, like the existing
-# 10587/10588 injectors.
+# DKIM2 split outbound gateway: ALL originated mail is fanned out per recipient
+# BEFORE it is signed, so a DKIM2-Signature rt= never names anyone but that
+# copy's own recipient(s).
 #
-# Flow: submit (from localhost) to 10586
-#   -> content_filter hands the message to the dkim2-split LMTP daemon on 10590
-#      (a systemd service, deploy/dkim2-split.service)
-#   -> the daemon re-injects one copy per disclosed group / per Bcc recipient
-#      to 10589
-#   -> the outbound DKIM2 milter signs each copy, recording only that copy's
-#      recipients in rt= (so a Bcc recipient never appears in anyone else's
-#      signature) -> normal delivery.
-# See deploy/SERVER.md "Bcc-safe origination".
+# Why: the outbound milter signs a queued message ONCE, recording every RCPT TO
+# of the SMTP transaction in one rt= (Postfix's milter protocol cannot fan a
+# message out into separately-signed copies). A Mailman post therefore published
+# the whole subscriber list to every subscriber. Spec-04 §8.6 permits one rt=
+# naming every recipient, so this is a privacy failure rather than a conformance
+# one -- but list subscribers are not named in To:/Cc:, so disclosing them is the
+# same leak as a leaked Bcc.
+#
+# Flow (everything below is loopback-only; this box has no public submission and
+# mynetworks is localhost, so there is no open-relay exposure):
+#
+#   Mailman / Sympa / swaks --server 127.0.0.1:10587
+#        |
+#        v
+#   10587  split entry: NO milter, content_filter -> the LMTP splitter
+#        |
+#        v
+#   10590  dkim2-split-lmtp (systemd, deploy/dkim2-split.service):
+#          one copy per disclosed group, one per undisclosed recipient
+#        |
+#        v
+#   10589  signing re-injection: outbound milter signs each copy separately
+#        |
+#        v
+#   normal delivery
+#
+# 10587 was chosen as the entry deliberately: it is the port Mailman's
+# smtp_port, /usr/local/bin/sympa-sendmail and every documented swaks recipe
+# ALREADY talk to, so nothing needed reconfiguring and no sender can bypass the
+# split by using the old port -- there is no old port. A separate entry (this
+# file previously used 10586) left two outbound paths, and anything not migrated
+# kept leaking.
+#
+# NOT routed through here, on purpose:
+#   - the reflector (10588): signs itself and would be double-signed; one
+#     recipient per message anyway.
+#   - Postfix-generated bounces/DSNs: signed by non_smtpd_milters in cleanup,
+#     never through an smtpd listener, and always single-recipient.
+#
+# TRADE-OFF: dkim2-split.service is now load-bearing for all list mail. If it is
+# down Postfix defers with 451 -- delayed, never delivered unsigned or with a
+# leaking rt=. The unit has Restart=on-failure.
+#
+# See deploy/SERVER.md "Split outbound gateway".
 
-# 1. Submission entry: apply the split content filter; do NOT sign here.
-127.0.0.1:10586 inet n - n - - smtpd
+# 1. Split entry. REPLACES the previous signing definition of 10587 (which had
+#    smtpd_milters=dkim2-milter-out.sock and syslog_name=postfix/listserv):
+#    signing now happens on 10589, after the split, so this listener must NOT
+#    sign. receive_override_options matters -- without no_address_mappings,
+#    alias/virtual expansion runs here AND again after re-injection.
+127.0.0.1:10587 inet n  -       y       -       -       smtpd
+  -o syslog_name=postfix/dkim2-split-in
   -o content_filter=lmtp:[127.0.0.1]:10590
   -o smtpd_milters=
-  -o smtpd_relay_restrictions=permit_mynetworks,reject
+  -o smtpd_client_restrictions=permit_mynetworks,reject
+  -o local_recipient_maps=
+  -o smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination
   -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks
 
 # 2. Signing re-injection: run the outbound DKIM2 milter; do NOT re-filter
-#    (empty content_filter is the loop guard, or copies would be re-split).
+#    (the empty content_filter is the loop guard, or copies would be re-split).
 127.0.0.1:10589 inet n - n - - smtpd
+  -o syslog_name=postfix/dkim2-sign-out
   -o content_filter=
   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
   -o smtpd_relay_restrictions=permit_mynetworks,reject
