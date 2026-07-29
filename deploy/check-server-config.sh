@@ -12,13 +12,17 @@
 # Refresh the snapshot from your local checkout with:
 #   deploy/capture-server-config.sh
 #
-# Lines holding a redacted placeholder (__FOO__) are skipped -- the real values
-# are not in the repo, so they can never match.
+# The live side is passed through the SAME redaction the snapshot was captured
+# with, so a credential line compares placeholder-to-placeholder. Deleting
+# placeholder lines instead would report every redacted file as drift, since the
+# live file still has a value there.
 
 set -uo pipefail   # NOT -e: every file must be checked even after a diff
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SRC="$REPO/deploy/config"
+# shellcheck source=deploy/lib-config-redact.sh
+source "$REPO/deploy/lib-config-redact.sh"
 drift=0
 
 # compare <live-path> <tracked-relative-path>
@@ -30,14 +34,9 @@ compare() {
     if [ ! -r "$live" ]; then
         echo "   !! missing on server: $live (tracked as $2)"; drift=1; return
     fi
-    # Drop placeholder lines from BOTH sides so a redacted secret never reads as
-    # drift; the line is removed by position, so a genuine change elsewhere in
-    # the file is still caught.
-    if ! diff -q <(grep -v '__[A-Z_]*__' "$tracked") \
-                 <(grep -v '__[A-Z_]*__' "$live") >/dev/null; then
+    if ! diff -q "$tracked" <(redact_config < "$live") >/dev/null; then
         echo "   ~~ DRIFTED: $2"
-        diff -u <(grep -v '__[A-Z_]*__' "$tracked") \
-                <(grep -v '__[A-Z_]*__' "$live") | sed -n '3,12p' | sed 's/^/      /'
+        diff -u "$tracked" <(redact_config < "$live") | sed -n '3,12p' | sed 's/^/      /'
         drift=1
     fi
 }

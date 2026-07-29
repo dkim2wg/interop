@@ -33,21 +33,11 @@ DEST="$REPO/deploy/config"
 
 echo ">> capturing $HOST config into deploy/config/"
 
-# Keys whose values are credentials. Each appears under two names -- once in the
-# Mailman core/archiver config and once on the Django side of the same secret --
-# so both spellings must be redacted or the credential is still published.
-SECRET_KEYS='admin_pass|api_key|SECRET_KEY|MAILMAN_REST_API_PASS|MAILMAN_ARCHIVER_KEY'
-
-# Replace credentials with placeholders. Keyed on the setting NAME, not the
-# value, so rotating a secret on the box does not silently defeat the redaction.
-redact() {
-    sed -E \
-        -e 's/^([[:space:]]*admin_pass[[:space:]]*:[[:space:]]*).*/\1__MAILMAN_REST_PASS__/' \
-        -e 's/^([[:space:]]*api_key[[:space:]]*:[[:space:]]*).*/\1__HYPERKITTY_API_KEY__/' \
-        -e "s/^([[:space:]]*SECRET_KEY[[:space:]]*=[[:space:]]*).*/\1'__DJANGO_SECRET_KEY__'/" \
-        -e "s/^([[:space:]]*MAILMAN_REST_API_PASS[[:space:]]*=[[:space:]]*).*/\1'__MAILMAN_REST_PASS__'/" \
-        -e "s/^([[:space:]]*MAILMAN_ARCHIVER_KEY[[:space:]]*=[[:space:]]*).*/\1'__HYPERKITTY_API_KEY__'/"
-}
+# Redaction is shared with check-server-config.sh: if the two disagreed about
+# what a redacted line looks like, every affected file would read as drift.
+# shellcheck source=deploy/lib-config-redact.sh
+source "$REPO/deploy/lib-config-redact.sh"
+redact() { redact_config; }
 
 # fetch <remote-path> <dest-relative-path>
 fetch() {
@@ -94,9 +84,7 @@ chmod 755 "$REPO/deploy/sympa-sendmail"
 echo "   ../sympa-sendmail"
 
 # Fail loudly if a redaction missed: better to abort than to commit a credential.
-# Checked against the same SECRET_KEYS list the redactions are built from, so
-# adding a key there without a matching sed rule fails here instead of leaking.
-if grep -rnE "^[[:space:]]*($SECRET_KEYS)[[:space:]]*[:=]" "$DEST" | grep -v '__'; then
+if redact_leaks "$DEST"; then
     echo "!! a credential survived redaction -- do NOT commit" >&2
     exit 1
 fi
