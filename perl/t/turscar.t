@@ -59,13 +59,16 @@ sub verdict {
             $v->result, $v->result_detail);
 }
 
+my ($gated, $skipped) = (0, 0);
 my @tomls = sort $tests_dir->children(qr/\.toml$/);
 for my $toml (@tomls) {
     my ($name, $exp, $got, $detail) = verdict($toml);
     if (my $why = $KNOWN_DIVERGENCE{$name}) {
     SKIP: { skip "$name: $why (got $got)", 1 }
+        $skipped++;
         next;
     }
+    $gated++;
     my $exp_accept = ($exp eq 'pass') ? 1 : 0;
     my $got_accept = ($got eq 'pass') ? 1 : 0;
     is($got_accept, $exp_accept, "$name: expect=$exp got=$got")
@@ -73,5 +76,7 @@ for my $toml (@tomls) {
     diag("  note: $name rejects as '$got', vector labels it '$exp'")
         if !$exp_accept && !$got_accept && $exp ne $got;
 }
+
+diag("$gated gated vectors agree on accept/reject; $skipped skipped");
 
 done_testing;

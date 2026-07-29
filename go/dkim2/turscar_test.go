@@ -110,6 +110,7 @@ func TestTurscarConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gated, skipped := 0, 0
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".toml") {
 			continue
@@ -117,8 +118,10 @@ func TestTurscarConformance(t *testing.T) {
 		v := parseTurscarTOML(t, dir, e.Name())
 		if why, known := turscarKnownDivergence[v.name]; known {
 			t.Logf("SKIP %s: %s", v.name, why)
+			skipped++
 			continue
 		}
+		gated++
 		results, err := VerifyFull(bytes.NewReader(v.signed), &mapKeyFetcher{v.dns},
 			VerifyOptions{MailFrom: v.mailFrom, RcptTo: v.rcptTo, SkipTimestampCheck: true})
 		accept := err == nil && len(results) > 0
@@ -137,4 +140,5 @@ func TestTurscarConformance(t *testing.T) {
 			t.Errorf("%s: expected=%s got accept=%v (%s)", v.name, v.expected, accept, detail)
 		}
 	}
+	t.Logf("%d gated vectors agree on accept/reject; %d skipped", gated, skipped)
 }
