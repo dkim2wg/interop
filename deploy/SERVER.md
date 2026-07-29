@@ -18,7 +18,9 @@ A Digital Ocean VPS running the DKIM2 demonstration server.
 ### 1. Postfix (system package)
 
 **Role:** Edge MTA — receives inbound mail on port 25, routes outbound mail
-from lists via port 10587 (listserv).
+from lists via port 10587, the DKIM2 **split gateway** (see "Split outbound
+gateway" below: 10587 fans each message out per recipient, then 10589 signs each
+copy, so a `DKIM2-Signature` `rt=` never names anyone but its own recipient).
 
 **Config files:**
 - `/etc/postfix/main.cf` — main configuration
@@ -36,17 +38,26 @@ non_smtpd_milters = unix:var/run/dkim2-milter-in.sock,
                     unix:var/run/dkim2-milter-out.sock
 ```
 
-**`master.cf` listserv entry (port 10587):**
+**`master.cf` split-gateway entry (port 10587):** receives mail from
+Mailman/Sympa and runs **no** milter — it hands the message to the splitter, and
+signing happens on 10589 after the fan-out. Source of truth is
+`deploy/postfix-dkim2-split.master.cf`; the live process table is captured in
+`deploy/config/postfix/master.cf.live`.
+
 ```
 127.0.0.1:10587 inet n  -  y  -  -  smtpd
-  -o syslog_name=postfix/listserv
-  -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
+  -o syslog_name=postfix/dkim2-split-in
+  -o content_filter=lmtp:[127.0.0.1]:10590
+  -o smtpd_milters=
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o local_recipient_maps=
   -o smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination
+  -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks
 ```
-Listserv port receives mail from Mailman/Sympa, runs only the outbound
-milter (sign + MI diff).
+
+Until 2026-07-29 this port signed directly (`syslog_name=postfix/listserv`,
+`smtpd_milters=dkim2-milter-out.sock`), which is what leaked whole subscriber
+lists into one `rt=`.
 
 **Update:** `systemctl restart postfix`
 
@@ -180,7 +191,7 @@ git pull
 systemctl restart dkim2-milter-inbound dkim2-milter-outbound
 ```
 
-#### Known limitation: Bcc leak on origination (and how to fix it)
+#### Recipient leak on origination — FIXED 2026-07-29 by the split gateway
 
 The outbound milter signs each message **once**, recording **all** of the SMTP
 transaction's envelope recipients in a single DKIM2-Signature `rt=`. It does
@@ -189,17 +200,23 @@ transaction's envelope recipients in a single DKIM2-Signature `rt=`. It does
 - **Forwarding hops are unaffected**: the message was already split at
   origination, so each copy carries a disclosed recipient set and the single
   `rt=` reveals nothing new.
-- **Origination/submission is the problem**: a submitted message with
-  undisclosed (Bcc) recipients — envelope recipients not in `To:`/`Cc:` — has
-  those Bcc addresses written into `rt=`, visible to every recipient. That
-  **leaks the Bcc**, against draft-03's `rt=` requirement.
+- **Origination is the problem**: envelope recipients not named in `To:`/`Cc:`
+  get written into `rt=`, visible to every recipient. That covers a submitted
+  message's `Bcc`, and — as observed on a real `test@mailman.dkim2.com` post
+  whose `rt=` listed all five subscribers — **every subscriber of a mailing
+  list**, since a list post names only the list address in `To:`. Spec-04 §8.6
+  permits one `rt=` naming every recipient, so this is a privacy failure, not a
+  conformance one.
 
 The milter can't fix this: the Postfix milter protocol edits a single queued
 message at end-of-message and cannot fan one message into several
-separately-signed instances. The split must happen **before** signing. The
-reflector demo never hits this (it only ever sends one recipient per message),
-so the split is **not deployed here** — but this is the recommended recipe for
-Bcc-safe DKIM2 origination on Postfix without patching:
+separately-signed instances. The split must happen **before** signing.
+
+**This is now fixed on this box for all originated mail** — port 10587, which
+Mailman, Sympa and every `swaks` recipe below already use, is the split entry.
+See "Split outbound gateway" below for the deployed wiring. The rest of this
+section is the generic Postfix recipe, kept because it is the answer for anyone
+running DKIM2 on Postfix without this repo's LMTP daemon:
 
 **A content filter that re-injects one copy per recipient through the signing
 milter.** New mail is submitted to a filter that fans it out per recipient;
@@ -309,38 +326,68 @@ out and sign after-queue for the accepted set; a *downstream* per-recipient
 failure is async regardless (and is then subject to the bounce-trust rules —
 see the DSN discussion in `docs/` / the interop notes).
 
-**Deployed on this box (loopback demo/reference path).** The splitter runs
-permanently:
+#### Split outbound gateway (DEPLOYED — all originated mail, since 2026-07-29)
 
-- **Daemon:** `dkim2-split.service` (systemd, `deploy/dkim2-split.service`) runs
-  `/usr/local/bin/dkim2-split-lmtp` on `127.0.0.1:10590`, re-injecting to `10589`.
-- **Postfix listeners** (`deploy/postfix-dkim2-split.master.cf`, appended to
-  `master.cf`): `127.0.0.1:10586` = submission entry (`content_filter` → the
-  splitter, no signing) and `127.0.0.1:10589` = signing re-injection (outbound
-  DKIM2 milter, `content_filter=` empty).
+Every message this box originates is fanned out per recipient **before** signing.
 
-Both listeners are loopback-only (this box has no public submission; `mynetworks`
-is localhost), so there is no open-relay exposure — origination is
-localhost-injected, like the `10587`/`10588` injectors. Submit a multi-recipient
-message with a Bcc to `127.0.0.1:10586` and each delivered copy's `rt=` lists
-only its own group (the Bcc recipient never appears in anyone else's signature).
-
-Setup (one-time):
-```bash
-ssh dkim2 'cd /root/interop && deploy/deploy.sh'   # installs /usr/local/bin/dkim2-split-lmtp
-ssh dkim2 'install -m644 /root/interop/deploy/dkim2-split.service /etc/systemd/system/ \
-  && systemctl daemon-reload && systemctl enable --now dkim2-split'
-ssh dkim2 'cat /root/interop/deploy/postfix-dkim2-split.master.cf >> /etc/postfix/master.cf \
-  && postfix check && postfix reload'
+```
+Mailman (smtp_port: 10587)  ─┐
+Sympa (via sympa-sendmail)  ─┼─→  10587  split entry: NO milter, content_filter
+swaks --server ...:10587    ─┘         │
+                                       ▼
+                                  10590  dkim2-split-lmtp
+                                       │   one copy per disclosed group,
+                                       │   one per undisclosed recipient
+                                       ▼
+                                  10589  outbound milter signs each copy
+                                       │
+                                       ▼
+                                   delivery
 ```
 
-The reflector/originate demo addresses themselves never trigger the Bcc case
-(one recipient per message), so nothing on this box *routes* through the splitter
-by default — it's a running reference path you submit to directly. Wiring it into
-the default local-submission path (`non_smtpd_milters`/`pickup`) would sign all
-locally-originated multi-recipient mail Bcc-safely, but is deliberately not done
-(it would disturb the existing single-recipient reflector/Mailman/Sympa flows for
-no benefit — those are already per-recipient).
+- **Daemon:** `dkim2-split.service` (`deploy/dkim2-split.service`) runs
+  `/usr/local/bin/dkim2-split-lmtp` on `127.0.0.1:10590`, re-injecting to `10589`.
+- **Postfix listeners:** `deploy/postfix-dkim2-split.master.cf` defines both
+  `10587` (split entry) and `10589` (signing re-injection, `content_filter=`
+  empty as the loop guard).
+- All loopback-only — this box has no public submission and `mynetworks` is
+  localhost, so there is no open-relay exposure.
+
+**Why 10587 and not a new port.** It is the port Mailman's `smtp_port`,
+`/usr/local/bin/sympa-sendmail` and every documented `swaks` recipe already talk
+to, so nothing needed reconfiguring — and, more importantly, there is no
+surviving unsplit path for a future sender to point at by mistake. An earlier
+iteration of this used a separate `10586` entry that nothing routed through,
+which is exactly how the leak went unnoticed. `10586` has been retired.
+
+**Not routed through the gateway, deliberately:**
+- the **reflector** (`10588`) — signs itself, so it would be double-signed, and
+  it only ever sends to one recipient;
+- **Postfix-generated bounces/DSNs** — signed by `non_smtpd_milters` in cleanup,
+  never via an `smtpd` listener, and always single-recipient.
+
+**Trade-off:** `dkim2-split.service` is now load-bearing for all list mail. If it
+is down, Postfix defers with `451` — mail is delayed, never delivered unsigned or
+with a leaking `rt=`. The unit has `Restart=on-failure`.
+
+Migration (already applied; idempotent, so safe to re-run):
+```bash
+ssh dkim2 'cd /root/interop && git pull && python3 deploy/migrate-10587-to-split.py'
+ssh dkim2 'postfix check && postfix reload'
+```
+It backs `master.cf` up first and refuses to run from a stale checkout (it will
+not remove `10587` unless the fragment it is about to append actually defines it).
+
+Verifying the split:
+```bash
+# two recipients, one disclosed in To: and one not -> two copies, disjoint rt=
+ssh dkim2 'swaks --server 127.0.0.1:10587 --from dkim2capture@dkim2.com \
+  --to dkim2capture@dkim2.com,dkim2capture@test1.dkim2.com \
+  --h-To dkim2capture@dkim2.com --h-Subject "split test" --body x'
+ssh dkim2 'journalctl -u dkim2-split -n5 --no-pager'     # one "copy rcpts=[...]" per copy
+```
+Both addresses alias to the same capture Maildir, so both copies are readable
+locally. Decode each copy's `rt=` and expect exactly one recipient in each.
 
 ---
 
@@ -374,7 +421,7 @@ outgoing: mailman.mta.deliver.deliver
 lmtp_host: 127.0.0.1
 lmtp_port: 8024
 smtp_host: localhost
-smtp_port: 10587        # listserv port → outbound milter only
+smtp_port: 10587        # DKIM2 split gateway → fan out, then sign on 10589
 message_instance: yes   # global DKIM2 MI enable
 
 [database]
@@ -475,8 +522,10 @@ sendmail /usr/local/bin/sympa-sendmail
 ```
 
 **`/usr/local/bin/sympa-sendmail`:** Custom sendmail wrapper that submits
-outbound mail via SMTP to localhost:10587 (listserv port) so that only the
-outbound milter processes it (not the inbound milter).
+outbound mail via SMTP to localhost:10587 — the DKIM2 split gateway — so the
+message is fanned out per recipient and then signed by the outbound milter only
+(never the inbound one). Tracked as `deploy/sympa-sendmail`; it existed nowhere
+but the box until 2026-07-29.
 
 **Services:**
 - `sympa.service` — main Sympa process
@@ -846,6 +895,85 @@ scp src/lib/Sympa/Message.pm \
     root@dkim2.com:/usr/share/sympa/lib/Sympa/Message.pm
 ssh dkim2 systemctl restart sympa sympa-bulk sympa-archived sympa-bounced
 ```
+
+---
+
+## Server configuration snapshot (`deploy/config/`)
+
+`deploy/` covers the DKIM2 mail path, but until 2026-07-29 the nginx vhosts, both
+list managers' configuration, the live Postfix state and
+`/usr/local/bin/sympa-sendmail` existed **only** in `/etc` on the box —
+recoverable after a loss only by re-deriving them from this document. They are
+now tracked:
+
+```
+deploy/config/nginx/{dkim2.com,mail.dkim2.com,mailman.dkim2.com,sympa.dkim2.com}
+deploy/config/mailman3/{mailman.cfg,mailman-hyperkitty.cfg,web-settings.py}
+deploy/config/sympa/{sympa.conf,aliases}
+deploy/config/postfix/{main.cf.live,master.cf.live}
+deploy/config/aliases
+deploy/sympa-sendmail
+```
+
+`postfix/main.cf.live` is `postconf -n` output, which records the real
+`transport_maps` and `local_recipient_maps` — both several maps deep, and both
+deliberately omitted from `deploy/postfix-main.cf.patch` because `main.cf` takes
+only one value per setting.
+
+**Refresh the snapshot** (run locally; fetches over ssh):
+```bash
+deploy/capture-server-config.sh            # default host: dkim2
+git diff deploy/                           # review, then commit
+```
+
+**Drift** between live and tracked is reported by `deploy/check-server-config.sh`,
+which `deploy.sh` runs last. It is a **warning, not a gate**: a stale snapshot
+must be visible on every deploy, but must never block shipping a signing fix.
+
+### Secrets
+
+This repo is **public**. `deploy/capture-server-config.sh` replaces credentials
+with placeholders on the way in, keyed on the setting *name* so rotating a value
+on the box cannot silently defeat the redaction, and aborts if any survives.
+
+| File | Setting | Placeholder |
+|---|---|---|
+| `mailman3/mailman.cfg` | `admin_pass` | `__MAILMAN_REST_PASS__` |
+| `mailman3/mailman-hyperkitty.cfg` | `api_key` | `__HYPERKITTY_API_KEY__` |
+| `mailman3/web-settings.py` | `SECRET_KEY` | `__DJANGO_SECRET_KEY__` |
+| `mailman3/web-settings.py` | `MAILMAN_REST_API_PASS` | `__MAILMAN_REST_PASS__` |
+| `mailman3/web-settings.py` | `MAILMAN_ARCHIVER_KEY` | `__HYPERKITTY_API_KEY__` |
+
+Each Mailman secret appears under **two** names — once in the Mailman
+core/archiver config and once on the Django side — and both must be redacted or
+the value is still published by the file that was missed.
+
+`sympa.conf` (SQLite, no password), the nginx vhosts (certificate *paths*, not
+keys) and the Postfix state contain no credentials and are captured verbatim.
+**Check any file you add here for secrets before committing.**
+
+### Restoring after a loss
+
+Not a script — rebuilding also means installing Postfix, nginx, Mailman 3 and
+Sympa, which no captured config replaces. Follow "Software Components" above for
+the packages and one-time setup, then:
+
+1. `install -m644 deploy/config/nginx/* /etc/nginx/sites-available/` and symlink
+   the four into `sites-enabled/`.
+2. `install` the Mailman and Sympa configs to `/etc/mailman3/` (rename
+   `web-settings.py` → `web/settings.py`) and `/etc/sympa/sympa/`.
+3. Substitute the placeholders. The two Mailman secrets must match between the
+   Mailman core config and the Django settings, or HyperKitty archiving and the
+   web UI fail to talk to the REST API. Generate the Django key with
+   `openssl rand -hex 32` and paste the **result** — check that the value in
+   `settings.py` is 64 hex characters, not the command that generates them.
+4. `install -m644 deploy/config/aliases /etc/aliases && newaliases`;
+   `postalias /etc/sympa/sympa/aliases`.
+5. Restore `master.cf` from `deploy/config/postfix/master.cf.live`, apply
+   `main.cf.live` with `postconf -e`, then `postfix check`.
+6. `install -m755 deploy/sympa-sendmail /usr/local/bin/sympa-sendmail`.
+7. `deploy/deploy.sh` for the library, milters, reflector, validator and web
+   assets, then `deploy/check-server-config.sh` to confirm no drift.
 
 ---
 
