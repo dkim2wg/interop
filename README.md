@@ -15,3 +15,8 @@ git submodule at `dkim2tests/`. To run all of them against every verifier here
 
 Each language's runner is also runnable on its own — see the comment at the top
 of `util/turscar-all.sh`.
+
+# An Alternative Proposal
+
+A Deployment Profile for DKIM2 via Milter Interface (IETF Datatracker):
+[https://datatracker.ietf.org/doc/draft-moccia-dkim2-deployment-profile/](https://datatracker.ietf.org/doc/draft-moccia-dkim2-deployment-profile/)
