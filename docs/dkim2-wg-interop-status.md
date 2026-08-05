@@ -13,12 +13,13 @@ Four independent implementations exist in this repository:
 | Language | Location | Signing | Verification | Notes |
 |----------|----------|---------|--------------|-------|
 | Python | `python/` | ✅ | ✅ | Script-based; reference for test vectors |
-| Perl | `brong/` | ✅ | ✅ | `Mail::DKIM2`; streaming object API |
+| Perl | `perl/` | ✅ | ✅ | `Mail::DKIM2`; streaming object API |
 | Go | `go/` | ✅ | ✅ | Library + CLI; streaming, zero-copy body |
 | C | `c/` | ✅ | ✅ | Low-level; libmilter integration included |
 
-A fifth implementation (`hs/`) contains Haskell key material used for interop
-testing but is not yet a complete sign/verify implementation.
+A fifth implementation (`hs/`) contains Hannah Stern's worked example signature
+and key material used for interop testing, but is not a complete sign/verify
+implementation.
 
 ---
 
@@ -68,7 +69,7 @@ All four implementations verify all 16 emails.
 | `multihop-header-add.eml` | Two-hop: relay adds a header |
 | `multihop-header-replace.eml` | Two-hop: relay replaces a header |
 
-### Perl-generated (10 emails, `brong/tests/expected/`)
+### Perl-generated (10 emails, `perl/tests/expected/`)
 
 All four implementations verify all 10 emails.
 
@@ -96,7 +97,7 @@ Add `--generate` to regenerate expected emails.
 ### Perl
 
 ```bash
-cd brong
+cd perl
 cpanm --installdeps .   # installs CryptX and other deps
 perl -I lib t/full-chain.t
 perl -I lib t/interop.t
@@ -116,7 +117,7 @@ go test ./dkim2/...
 cd c
 make             # requires OpenSSL and cjson via pkg-config
 make test        # runs test_base64, test_tagparse, test_hash, test_header,
-                 #           test_recipe, test_crypto, test_verify
+                 #           test_recipe, test_crypto, test_dns, test_verify
 ```
 
 The C milter binary (`dkim2-milter`) requires libmilter from a local sendmail
@@ -234,10 +235,10 @@ Key format: PKCS#8 PEM (Go, Python, C) and Crypt::PK objects (Perl).  The
 2. Add your implementation under a new top-level directory.
 3. Point your verifier at `dns.json` for public key lookup.
 4. Run verification against `python/tests/expected/*.eml` and
-   `brong/tests/expected/*.eml`.
+   `perl/tests/expected/*.eml`.
 5. Generate signed emails from the source messages in `python/tests/emails/` and
    verify them with at least one other implementation.
-6. Add your expected emails directory to `brong/t/interop.t` and
+6. Add your expected emails directory to `perl/t/interop.t` and
    `python/tests/run_tests.sh` so the cross-check runs automatically.
 
 The most common first-failure mode is the signing input construction — use the

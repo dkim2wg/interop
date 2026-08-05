@@ -198,7 +198,7 @@ Key lookup is via a `dns_data` dict loaded from `dns.json`, or live DNS.  The
 `full_chain` flag enables walking backwards through MI versions and undoing recipes at
 each step before verifying that hop's hashes.
 
-### Perl (`brong/lib/Mail/DKIM2/`)
+### Perl (`perl/lib/Mail/DKIM2/`)
 
 Streaming object API modelled on `Mail::DKIM`:
 
