@@ -39,7 +39,7 @@ dkim2_milter.o: dkim2_milter.c
 
 TESTS = tests/test_base64 tests/test_tagparse tests/test_hash \
         tests/test_header tests/test_recipe tests/test_crypto \
-        tests/test_verify
+        tests/test_dns tests/test_verify
 
 test: $(TESTS)
 	@for t in $(TESTS); do echo "Running $$t..."; $$t || exit 1; done
@@ -60,6 +60,9 @@ tests/test_recipe: tests/test_recipe.c dkim2_recipe.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 tests/test_crypto: tests/test_crypto.c dkim2_crypto.o base64.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+tests/test_dns: tests/test_dns.c dkim2_dns.o tagparse.o base64.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 tests/test_verify: tests/test_verify.c eml_parse.o $(CORE_OBJS)
