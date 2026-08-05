@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-01
+DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-04
 
 Takes a signed email with Message-Instance headers containing recipes
 and reconstructs the message as it was at a previous version.
@@ -319,16 +319,19 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
             print(f"  v={version}: applying recipes", file=sys.stderr)
 
         # Apply header recipes
+        # draft-04 §5.1 removed the null header recipe: a present "h" that is
+        # null is now a syntax error (distinct from an absent "h", which means
+        # the header fields were unchanged).
+        if "h" in recipes and recipes["h"] is None:
+            raise ValueError(
+                f"v={version}: header recipes are null — "
+                f"not permitted under draft-04 §5.1"
+            )
         h_recipes = recipes.get("h")
         if h_recipes is not None:
             if isinstance(h_recipes, dict) and len(h_recipes) == 0:
                 if verbose:
                     print(f"    headers: unmodified", file=sys.stderr)
-            elif h_recipes is None:
-                raise ValueError(
-                    f"v={version}: header recipes are null, "
-                    f"cannot reconstruct"
-                )
             else:
                 if verbose:
                     print(f"    headers: {len(h_recipes)} field(s) modified",
@@ -434,7 +437,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-01)")
+        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-04)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--target-version", type=int, default=None,
                         help="MI version to reconstruct back to (default: highest - 1)")

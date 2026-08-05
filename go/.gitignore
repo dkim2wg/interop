@@ -1,0 +1,4 @@
+# Go build artifacts
+dkim2sign
+dkim2verify
+dkim2undo

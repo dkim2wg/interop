@@ -1,4 +1,5 @@
 *.o
+*.d
 *.dSYM/
 dkim2-milter
 dkim2sign

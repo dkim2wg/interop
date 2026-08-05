@@ -5,6 +5,7 @@ typedef struct {
     dkim2_status_t status;
     char message[512];  /* human-readable result per §10.1 */
     int sig_i;          /* i= of the DKIM2-Signature that was checked */
+    char domain[256];   /* d= value of the signature where failure/success occurred */
 } dkim2_verify_result_t;
 
 /* Verify the message in ctx.

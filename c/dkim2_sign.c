@@ -10,6 +10,17 @@
 #include <ctype.h>
 #include <openssl/evp.h>
 
+/* RFC5321 path for mf=/rt= (spec 7.5/7.6): brackets MUST be present.
+ * Returns a malloc'd string the caller frees. NULL/empty -> "<>". */
+static char *to_rfc5321_path(const char *addr) {
+    if (!addr || !*addr) return strdup("<>");
+    size_t n = strlen(addr);
+    if (addr[0] == '<' && addr[n-1] == '>') return strdup(addr);
+    char *out = malloc(n + 3);
+    snprintf(out, n + 3, "<%s>", addr);
+    return out;
+}
+
 /* §8.5 canonicalization for signature input:
    lowercase name, unfold (remove CRLF+following WSP), delete ALL remaining WSP,
    re-add trailing CRLF.
@@ -163,23 +174,26 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     for (dkim2_sig_t *sig = ctx->sig_list; sig; sig = sig->next)
         if (sig->i >= new_i) new_i = sig->i + 1;
 
-    /* Base64-encode mf= */
-    const char *mf = ctx->mail_from ? ctx->mail_from : "<>";
-    size_t mf_b64_len = ((strlen(mf) + 2) / 3) * 4 + 2;
+    /* Base64-encode mf= — normalized to a bracketed RFC5321 path (spec §7.5) */
+    char *mfp = to_rfc5321_path(ctx->mail_from);
+    size_t mf_b64_len = ((strlen(mfp) + 2) / 3) * 4 + 2;
     char *mf_b64 = malloc(mf_b64_len);
-    b64_encode((const unsigned char *)mf, strlen(mf), mf_b64, mf_b64_len);
+    b64_encode((const unsigned char *)mfp, strlen(mfp), mf_b64, mf_b64_len);
+    free(mfp);
 
-    /* Base64-encode each rt= value, comma-separated */
+    /* Base64-encode each rt= value, comma-separated — each normalized to a
+       bracketed RFC5321 path (spec §7.6) */
     /* Estimate size: each rcpt ~64 chars encoded */
     size_t rt_buf_size = 4096;
     char *rt_b64 = calloc(1, rt_buf_size);
     size_t rt_pos = 0;
     if (ctx->rcpt_to) {
         for (int i = 0; ctx->rcpt_to[i]; i++) {
-            const char *rcpt = ctx->rcpt_to[i];
+            char *rcpt = to_rfc5321_path(ctx->rcpt_to[i]);
             size_t rcpt_enc_len = ((strlen(rcpt) + 2) / 3) * 4 + 2;
             char *enc = malloc(rcpt_enc_len);
             b64_encode((const unsigned char *)rcpt, strlen(rcpt), enc, rcpt_enc_len);
+            free(rcpt);
             if (i) { rt_b64[rt_pos++] = ','; }
             size_t el = strlen(enc);
             memcpy(rt_b64 + rt_pos, enc, el);

@@ -111,6 +111,30 @@ static char **parse_rt(const char *rt_val, int *n_out) {
     return out;
 }
 
+/* Parse f= value: comma-separated plain flag tokens (draft-04 §8.10).
+   Flags are an open list; tokens are stored verbatim with WSP trimmed. */
+static char **parse_flags(const char *f_val, int *n_out) {
+    int cnt = 1;
+    for (const char *p = f_val; *p; p++) if (*p == ',') cnt++;
+    char **out = calloc((size_t)(cnt + 1), sizeof(char *));
+    if (!out) return NULL;
+    int n = 0;
+    char *copy = strdup(f_val), *saveptr = NULL, *tok;
+    if (!copy) { free(out); return NULL; }
+    tok = strtok_r(copy, ",", &saveptr);
+    while (tok) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        size_t len = strlen(tok);
+        while (len && (tok[len-1] == ' ' || tok[len-1] == '\t')) tok[--len] = '\0';
+        if (len) { out[n] = strdup(tok); if (!out[n]) { free(copy); for (int i=0;i<n;i++) free(out[i]); free(out); return NULL; } n++; }
+        tok = strtok_r(NULL, ",", &saveptr);
+    }
+    free(copy);
+    out[n] = NULL;
+    *n_out = n;
+    return out;
+}
+
 /* Parse s= value: comma-separated "selector:alg:sig" triples */
 static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
     int cnt = 1;
@@ -122,7 +146,10 @@ static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
     if (!copy) { free(*out); *out = NULL; return -1; }
     tok = strtok_r(copy, ",", &saveptr);
     while (tok) {
-        while (*tok == ' ' || *tok == '\t') tok++;
+        /* Strip FWS before splitting: a fold may land between the selector
+           colon and the algorithm token, which would otherwise leave CRLF+WSP
+           attached to the algorithm name. */
+        strip_fws(tok);
         char *c1 = strchr(tok, ':');
         if (!c1) { free(copy); return -1; }
         *c1++ = '\0';
@@ -142,6 +169,8 @@ static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
 dkim2_sig_t *dkim2_sig_parse(const char *value) {
     taglist_t *tl = tagparse(value, NULL);
     if (!tl) return NULL;
+    /* §8: "there MUST be only one of each kind" of tag. */
+    if (tl->duplicate) { taglist_free(tl); return NULL; }
     dkim2_sig_t *sig = calloc(1, sizeof *sig);
     if (!sig) { taglist_free(tl); return NULL; }
     const char *v;
@@ -150,16 +179,34 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     REQ("m"); sig->m = atoi(v);
     REQ("t"); sig->t = (uint64_t)strtoull(v, NULL, 10);
     REQ("d"); sig->d = strdup(v);
-    REQ("mf");
-    { unsigned char dec[512]; int n = b64_decode(v, dec, sizeof dec);
-      if (n < 0) goto err;
-      sig->mf = malloc((size_t)n + 1); memcpy(sig->mf, dec, (size_t)n); sig->mf[n] = '\0'; }
-    REQ("rt");
-    { int nrt = 0; sig->rt = parse_rt(v, &nrt); if (!sig->rt) goto err; }
+    /* draft-04 §8: either nd= or both mf=+rt=, never both forms. */
+    {   const char *nd = tag_get(tl, "nd");
+        const char *mf = tag_get(tl, "mf");
+        const char *rt = tag_get(tl, "rt");
+        if (nd && (mf || rt)) goto err;      /* nd= excludes mf=/rt= */
+        if (!nd && !(mf && rt)) goto err;    /* need nd= or both mf=+rt= */
+        if (nd) sig->nd = strdup(nd);
+        if (mf) {
+            unsigned char dec[512]; int n = b64_decode(mf, dec, sizeof dec);
+            if (n < 0) goto err;
+            sig->mf = malloc((size_t)n + 1); memcpy(sig->mf, dec, (size_t)n); sig->mf[n] = '\0';
+        }
+        if (rt) { int nrt = 0; sig->rt = parse_rt(rt, &nrt); if (!sig->rt) goto err; }
+    }
     REQ("s");
     if (parse_ssets(v, &sig->ssets, &sig->n_ssets) < 0) goto err;
 #undef REQ
-    v = tag_get(tl, "n"); if (v) sig->n = strdup(v);
+    v = tag_get(tl, "n");
+    if (v) {
+        if (strlen(v) > 64) goto err;  /* §8.3: n= must not exceed 64 chars */
+        sig->n = strdup(v);
+    }
+    v = tag_get(tl, "f");
+    if (v) {
+        int nf = 0;
+        sig->flags = parse_flags(v, &nf);
+        if (!sig->flags) goto err;
+    }
     sig->raw_value = strdup(value);
     taglist_free(tl);
     return sig;
@@ -173,7 +220,7 @@ void dkim2_sig_free(dkim2_sig_t *sig) {
     if (!sig) return;
     dkim2_sig_free(sig->next);
     sig->next = NULL;
-    free(sig->n); free(sig->mf); free(sig->d); free(sig->raw_value);
+    free(sig->n); free(sig->mf); free(sig->d); free(sig->nd); free(sig->raw_value);
     if (sig->rt) { for (int i = 0; sig->rt[i]; i++) free(sig->rt[i]); free(sig->rt); }
     for (int i = 0; i < sig->n_ssets; i++) {
         free(sig->ssets[i].selector);
@@ -204,17 +251,22 @@ char *dkim2_mi_format(const dkim2_mi_t *mi) {
 char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     char *buf = malloc(8192);
     if (!buf) return NULL;
-    char mf_b64[512];
-    b64_encode((const unsigned char *)sig->mf, strlen(sig->mf), mf_b64, sizeof mf_b64);
-    int pos = snprintf(buf, 8192, "i=%d; m=%d; t=%llu; d=%s; mf=%s",
-        sig->i, sig->m, (unsigned long long)sig->t, sig->d, mf_b64);
-    /* rt= */
-    pos += snprintf(buf + pos, 8192 - pos, "; rt=");
-    for (int i = 0; sig->rt && sig->rt[i]; i++) {
-        if (i) buf[pos++] = ',';
-        char rt_b64[512];
-        b64_encode((const unsigned char *)sig->rt[i], strlen(sig->rt[i]), rt_b64, sizeof rt_b64);
-        pos += snprintf(buf + pos, 8192 - pos, "%s", rt_b64);
+    int pos = snprintf(buf, 8192, "i=%d; m=%d; t=%llu; d=%s",
+        sig->i, sig->m, (unsigned long long)sig->t, sig->d);
+    if (sig->nd) {
+        /* draft-04 §9.3: imaginary hop carries nd= instead of mf=/rt= */
+        pos += snprintf(buf + pos, 8192 - pos, "; nd=%s", sig->nd);
+    } else {
+        char mf_b64[512];
+        b64_encode((const unsigned char *)sig->mf, strlen(sig->mf), mf_b64, sizeof mf_b64);
+        pos += snprintf(buf + pos, 8192 - pos, "; mf=%s", mf_b64);
+        pos += snprintf(buf + pos, 8192 - pos, "; rt=");
+        for (int i = 0; sig->rt && sig->rt[i]; i++) {
+            if (i) buf[pos++] = ',';
+            char rt_b64[512];
+            b64_encode((const unsigned char *)sig->rt[i], strlen(sig->rt[i]), rt_b64, sizeof rt_b64);
+            pos += snprintf(buf + pos, 8192 - pos, "%s", rt_b64);
+        }
     }
     /* s= */
     pos += snprintf(buf + pos, 8192 - pos, "; s=");
@@ -226,5 +278,13 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     }
     if (sig->n)
         pos += snprintf(buf + pos, 8192 - pos, "; n=%s", sig->n);
+    /* f= flags (draft-04 §8.10), e.g. feedback, feedhere — preserved verbatim */
+    if (sig->flags && sig->flags[0]) {
+        pos += snprintf(buf + pos, 8192 - pos, "; f=");
+        for (int i = 0; sig->flags[i]; i++) {
+            if (i) buf[pos++] = ',';
+            pos += snprintf(buf + pos, 8192 - pos, "%s", sig->flags[i]);
+        }
+    }
     return buf;
 }

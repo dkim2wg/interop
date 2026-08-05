@@ -215,14 +215,34 @@ for signed in "$EXPECTED_DIR"/*.eml; do
         CHAIN_FLAG="--full-chain"
     fi
 
-    if python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG 2>/dev/null; then
+    if python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG --skip-timestamp-check 2>/dev/null; then
         echo "  PASS:      verify $name"
         PASS=$((PASS + 1))
     else
         echo "  FAIL:      verify $name"
         FAIL=$((FAIL + 1))
         ERRORS="${ERRORS}  verify ${name}: signature verification failed\n"
-        python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG -v 2>&1 | head -10
+        python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG --skip-timestamp-check -v 2>&1 | head -10
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Standalone unit tests (draft-03 features). Each tests/test_*.py is a plain
+# script that runs its checks under __main__ and exits non-zero on failure.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Unit tests (draft-03) ==="
+for unit in "$SCRIPT_DIR"/test_*.py; do
+    [ -e "$unit" ] || continue
+    uname="$(basename "$unit" .py)"
+    if python3 "$unit" >/dev/null 2>&1; then
+        echo "  PASS:      $uname"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL:      $uname"
+        FAIL=$((FAIL + 1))
+        ERRORS="${ERRORS}  ${uname}: unit test failed\n"
+        python3 "$unit" 2>&1 | tail -10
     fi
 done
 

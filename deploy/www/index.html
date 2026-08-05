@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DKIM2 — verifiable email handling</title>
+  <meta name="description" content="DKIM2 makes every domain that handles a message accountable for it — binding each signature to the path the message actually took, so recipients can verify who it was for, where it came from, and what changed along the way. A work in progress in the IETF DKIM working group.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hero">
+    <h1>DKIM2</h1>
+    <p class="tagline">DKIM2 makes every domain that handles a message
+      accountable for it — binding each signature to the path the message
+      actually took, so recipients can verify who it was for, where it came
+      from, and what changed along the way.</p>
+    <a class="badge" href="https://datatracker.ietf.org/wg/dkim/documents/">Work in progress · IETF Internet-Draft</a>
+  </header>
+
+  <main>
+    <section>
+      <h2>Status: a work in progress</h2>
+      <p>DKIM2 is being developed in the IETF
+        <a href="https://datatracker.ietf.org/wg/dkim/about/">DKIM working
+        group</a>. It is an active Internet-Draft, not yet a finished
+        standard — details may still change.</p>
+    </section>
+
+    <section>
+      <h2>What DKIM can't tell you today</h2>
+      <p>A DKIM signature proves a domain signed <em>some</em> version of a
+        message. Even layered with DMARC and ARC, it still can't establish
+        three things:</p>
+      <ul>
+        <li><strong>Who the message was for.</strong> A valid signature carries
+          no proof you were an intended recipient — so a correctly signed
+          message can be captured and
+          <a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-replay-problem/">replayed
+          to millions of other addresses</a>, still passing authentication,
+          riding on the original signer's reputation.</li>
+        <li><strong>Where the bounces go.</strong> A message's return path can
+          name a domain that never handled it, so bounces, abuse reports, and
+          delivery notifications can't be trusted or traced back.</li>
+        <li><strong>What changed in transit.</strong> When a forwarder or
+          mailing list edits a message, the signature simply breaks — with no
+          way to tell an innocuous subject or footer tweak from wholesale
+          replacement by a bad actor.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>How DKIM2 fixes it</h2>
+      <p>DKIM2 makes every hop on the delivery path accountable. Each hop:</p>
+      <ul>
+        <li><strong>Binds the message to where it's going</strong> — the next
+          hop and recipient are inside the hop's own signature, so a signed
+          message can't be replayed somewhere else. <em>(who it was for)</em></li>
+        <li><strong>Records what it changed</strong>, as a reversible recipe, so
+          the next hop can undo the change and re-check every earlier signature.
+          <em>(what changed)</em></li>
+        <li><strong>Promises to carry control messages back</strong> to the
+          previous hop for a reasonable time, giving bounces and abuse reports a
+          trustworthy return channel. <em>(where the bounces go)</em></li>
+      </ul>
+      <p>Two mechanisms make this work:
+        <strong>Message-Instance (MI) headers</strong> — a hash snapshot of the
+        message at each hop — and <strong>chained DKIM2-Signature headers</strong>,
+        where each hop signs the current snapshot <em>and</em> every prior
+        signature, forming a tamper-evident chain from author to recipient.</p>
+      <p>The rationale is set out in the
+        <a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-motivation/">DKIM2
+        motivation draft</a>.</p>
+    </section>
+
+    <section>
+      <h2>Implementations &amp; demo</h2>
+      <p>This host runs a live DKIM2 demonstration server. Four independent
+        implementations — in Python, Perl, Go, and C — interoperate in the
+        project repository. Two mailing-list managers on this host sign with
+        DKIM2 as they forward:</p>
+      <ul>
+        <li><a href="https://mailman.dkim2.com/">Mailman</a> (this host)</li>
+        <li><a href="https://sympa.dkim2.com/sympa">Sympa</a> (this host)</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Try it: reflector addresses</h2>
+      <p>Addresses on this host let you watch DKIM2 behaviour end-to-end, in
+        three flavours: six that <strong>reflect</strong> the message you send
+        back to you after a defined transformation (below), three that
+        <strong>originate</strong> a brand-new message for you
+        (<a href="#originate">Originate a new message</a>), and two that
+        demonstrate <strong>bounces</strong> and delivery notifications
+        (<a href="#bounces">Bounces &amp; delivery notifications</a>).</p>
+      <p>Send a <strong>DKIM2-signed</strong> message — for example from one of
+        the reference implementations — to a <code>reflector-*@dkim2.com</code>
+        address. You'll get a reply, transformed per the mode below. Whether the
+        reply is signed depends on how it was authenticated (see
+        <a href="#reflector-signing">When the reply is signed</a>); either way it
+        includes <code>Authentication-Results</code> and
+        <code>X-DKIM2-Reflector</code> headers explaining what happened. Paste the
+        reply into <a href="/validate/">the validator</a> to see the result.</p>
+      <table>
+        <thead>
+          <tr><th>Address</th><th>What it does</th><th>What to expect</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="mailto:reflector-raw@dkim2.com"><code>reflector-raw@dkim2.com</code></a></td>
+            <td>Re-signs the unchanged message</td>
+            <td>Chain verifies cleanly</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-subject@dkim2.com"><code>reflector-subject@dkim2.com</code></a></td>
+            <td>Prefixes the subject with <code>[DKIM2]&nbsp;</code></td>
+            <td>Verifies; the change reverses to restore the original subject</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-body@dkim2.com"><code>reflector-body@dkim2.com</code></a></td>
+            <td>Appends a footer line to the body</td>
+            <td>Verifies; the change reverses to restore the original body</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-both@dkim2.com"><code>reflector-both@dkim2.com</code></a></td>
+            <td>Subject prefix <em>and</em> body footer</td>
+            <td>Verifies; both changes reverse</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-redacted@dkim2.com"><code>reflector-redacted@dkim2.com</code></a></td>
+            <td>Changes the body, recording it as non-reversible
+              (<code>r={"b":null}</code>)</td>
+            <td>Verifies, but the body <strong>cannot</strong> be
+              reconstructed</td>
+          </tr>
+          <tr>
+            <td><a href="mailto:reflector-damage@dkim2.com"><code>reflector-damage@dkim2.com</code></a></td>
+            <td>Mutates the body <em>after</em> signing</td>
+            <td>Body-hash verification <strong>fails</strong> — tamper
+              detection at work</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><small>Note: the <code>body</code>/<code>both</code> footer is appended
+        to the raw message body. On a <code>multipart/*</code> message that
+        lands in the MIME epilogue (after the closing boundary), so most mail
+        clients won't render it — but it is present in the raw bytes, covered by
+        the body hash, and recorded in the <code>Message-Instance</code> recipe
+        (so the change still verifies and reverses). On a simple
+        <code>text/plain</code> message the footer is visible.</small></p>
+      <h3 id="reflector-signing">When the reply is signed</h3>
+      <p>The reflector adds its own <code>dkim2.com</code> chain link only when
+        it can vouch for your message:</p>
+      <ul>
+        <li>your message already had a <strong>verified DKIM2 chain</strong> —
+          the reply continues the chain;</li>
+        <li>your message had <strong>no DKIM2 chain but a valid DKIM1
+          signature</strong> aligned with your <code>From:</code> domain — the
+          reply is signed as a <strong>DKIM1&nbsp;&rarr;&nbsp;DKIM2 bridge</strong>;</li>
+        <li>neither — the reply comes back <strong>unsigned</strong> (the
+          mode's transformation is still applied).</li>
+      </ul>
+      <p>A change-recording <code>Message-Instance</code> is added for every
+        mode that alters the message (subject, body, both, redacted), whether
+        or not the reply is signed.</p>
+
+      <h3>Headers to look at in the reflected message</h3>
+      <table>
+        <thead>
+          <tr><th>Header</th><th>What it tells you</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>X-DKIM2-Reflector</code></td>
+            <td>The reflector's summary: <code>mode</code>, the verdicts it saw
+              (<code>auth</code> = DKIM2, <code>dkim1</code>), what it signed on
+              (<code>basis</code> = <code>dkim2</code>/<code>dkim1</code>/<code>none</code>),
+              and <code>signed</code>.</td>
+          </tr>
+          <tr>
+            <td><code>Authentication-Results</code></td>
+            <td>The <code>dkim2=</code> and (when a bridge applied)
+              <code>dkim=pass header.d=</code> results the reflector relied on.</td>
+          </tr>
+          <tr>
+            <td><code>DKIM2-Signature</code></td>
+            <td>Present only when the reply is signed — the reflector's link in
+              the chain.</td>
+          </tr>
+          <tr>
+            <td><code>Message-Instance</code></td>
+            <td>The <code>m=</code> snapshot recording the reflector's change
+              (present for the changing modes).</td>
+          </tr>
+          <tr>
+            <td><code>DKIM-Signature</code> (classic DKIM1)</td>
+            <td>Every reply also carries an ordinary DKIM1 signature
+              (<code>d=dkim2.com</code>; the brand address adds a second,
+              <code>d=&lt;your-domain&gt;</code>), so the demo mail looks like
+              real-world mail.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="originate">
+      <h2>Originate a new message</h2>
+      <p>Three addresses don't reflect your message at all — they
+        <strong>originate a brand-new DKIM2 message</strong> and send it to you.
+        Because they send from a <code>dkim2.com</code>-aligned identity, the
+        replies pass DMARC and land in your <strong>inbox</strong>.</p>
+
+      <h3><a href="mailto:reflector-fresh@dkim2.com"><code>reflector-fresh@dkim2.com</code></a></h3>
+      <p>Generates the simplest valid DKIM2 message: a single
+        <code>Message-Instance</code> (<code>m=1</code>) and one
+        <code>dkim2.com</code> DKIM2-Signature — no forwarding chain — plus a
+        matching <code>dkim2.com</code> DKIM1 signature. From
+        <code>&lt;fresh@dkim2.com&gt;</code> to you. Paste it into
+        <a href="/validate/">the validator</a> to see one clean signature and
+        one instance.</p>
+
+      <h3 id="reflector-brand"><a href="mailto:reflector-brand@dkim2.com"><code>reflector-brand@dkim2.com</code></a> — brand delegation</h3>
+      <p>Models an <strong>email sending platform (ESP)</strong> that sends on a
+        brand's behalf without showing its own identity. With one DNS record you
+        delegate a signing key to <code>dkim2.com</code>, and it returns a
+        brand-new message that is <strong>signed as your domain</strong>:</p>
+      <ul>
+        <li><strong>Two DKIM2-Signatures on one Message-Instance</strong> —
+          <code>i=1</code> as <em>your</em> domain (the delegated key) and
+          <code>i=2</code> as <code>dkim2.com</code>, forming a chain of
+          custody.</li>
+        <li><strong>Two classic DKIM1 signatures</strong> —
+          <code>d=&lt;your-domain&gt;</code> (the same delegated key) and
+          <code>d=dkim2.com</code> — exactly how a real ESP signs.</li>
+        <li>The visible <code>From:</code> is
+          <code>dkim2demo@&lt;your-domain&gt;</code> and <code>To:</code> is you;
+          <code>dkim2.com</code> never appears in the headers a reader sees — it
+          is only in the signatures and the envelope.</li>
+      </ul>
+      <p>Because the delegated <code>d=&lt;your-domain&gt;</code> DKIM1 aligns
+        with the <code>From:</code> domain, the message passes DMARC and lands in
+        the inbox — the same way Mailchimp, SendGrid and similar platforms send
+        for a brand today.</p>
+      <p><strong>Setup — publish one CNAME</strong> in your domain's DNS:</p>
+      <pre class="cname">dkim2test._domainkey.&lt;your-domain&gt;.  CNAME  dkim2test._domainkey.dkim2.com.</pre>
+      <p>This single delegation serves <em>both</em> the DKIM2 chain signature
+        and the DKIM1 signature — one key, held by <code>dkim2.com</code>, that
+        your domain authorises it to use. Then email
+        <a href="mailto:reflector-brand@dkim2.com"><code>reflector-brand@dkim2.com</code></a>
+        from an address at that domain and paste the reply into
+        <a href="/validate/">the validator</a> to watch both DKIM2 signatures
+        verify.</p>
+      <p><small>Until the CNAME is in place (and has propagated), the address
+        replies with a plain <code>reflector-fresh</code>-style message
+        explaining how to set up the delegation.</small></p>
+
+      <h3 id="reflector-brand-nd"><a href="mailto:reflector-brand-nd@dkim2.com"><code>reflector-brand-nd@dkim2.com</code></a> — brand delegation via <code>nd=</code></h3>
+      <p>The same brand delegation as
+        <a href="#reflector-brand"><code>reflector-brand</code></a>, but the
+        <code>i=1</code> brand hop uses the <code>nd=</code> <em>"next domain"</em>
+        encoding (the imaginary-hop form, draft §9.3) instead of
+        <code>mf=</code>/<code>rt=</code>: the first link names the domain that
+        will sign next rather than an envelope path. The chain still verifies —
+        the <code>nd=</code> of <code>i=1</code> matches the <code>d=</code> of
+        <code>i=2</code> (<code>dkim2.com</code>). Same one-CNAME setup as
+        <code>reflector-brand</code>; paste the reply into
+        <a href="/validate/">the validator</a> to see the <code>nd=</code> link
+        verify.</p>
+    </section>
+
+    <section id="bounces">
+      <h2>Bounces &amp; delivery notifications</h2>
+      <p>Two addresses show how DKIM2 handles <strong>Delivery Status
+        Notifications (DSNs)</strong> — the bounces an MTA sends when a message
+        can't be delivered. Per the spec a DKIM2 DSN is itself an ordinary DKIM2
+        message: envelope <code>MAIL&nbsp;FROM&nbsp;&lt;&gt;</code>, its own
+        <code>Message-Instance</code> and <code>DKIM2-Signature</code> on the top
+        message, addressed back to the return path the failed message recorded.</p>
+
+      <h3><a href="mailto:reflector-dsn@dkim2.com"><code>reflector-dsn@dkim2.com</code></a> — a DKIM2-signed DSN</h3>
+      <p>Accepts your message and returns a freshly-signed DSN for it: a
+        <code>multipart/report</code> that embeds your original as a
+        <code>message/rfc822</code> part and carries one
+        <code>Message-Instance</code> and one <code>dkim2.com</code>
+        <code>DKIM2-Signature</code> of its own — a clean one-hop DKIM2 message
+        (not a continuation of your chain). It bounces every message, whether or
+        not it arrived DKIM2-signed. Paste the reply into
+        <a href="/validate/">the validator</a> to watch the DSN verify as a new
+        one-hop message.</p>
+
+      <h3><a href="mailto:reflector-delayedbounce@dkim2.com"><code>reflector-delayedbounce@dkim2.com</code></a> — an MTA-originated bounce</h3>
+      <p>Unlike every address above, this is <strong>not</strong> a reflector
+        transform. The address is <strong>accepted</strong> at the SMTP prompt
+        (a <code>250</code>, so the sending session completes normally), and only
+        <strong>then fails at delivery</strong> — so the bounce is a genuine
+        <em>delayed</em> bounce, generated <strong>asynchronously</strong> by
+        <strong>Postfix's own bounce generator</strong> (<code>bounce(8)</code>)
+        after the session is gone, exactly as a real deferred failure would be.
+        The outbound DKIM2 milter signs that bounce on the way out as a fresh
+        DKIM2 message (its own <code>Message-Instance</code> and
+        <code>DKIM2-Signature</code>, <code>MAIL&nbsp;FROM&nbsp;&lt;&gt;</code>).
+        The signed bounce is itself a valid DKIM2 message and verifies,
+        demonstrating that a mail server's <em>own</em> bounces — generated by
+        the MTA, not by our reflector code — can be DKIM2-signed.
+        <small>(One operational requirement: the MTA must not re-encode the
+        message after the milter signs it. We set
+        <code>disable_mime_output_conversion</code> to prevent the 8bit&rarr;7bit
+        rewrite that would otherwise break the signature — see the spec's
+        "Preventing Transport Conversions".)</small></p>
+    </section>
+
+    <section>
+      <h2>Learn more</h2>
+      <ul>
+        <li><a href="/validate/">Validate a DKIM2 message</a> — paste an email
+          for a per-level breakdown</li>
+        <li><a href="/verify/">Verify a DKIM2 message in your browser</a> — a
+          standalone client-side verifier (no server round-trip)</li>
+        <li><a href="https://datatracker.ietf.org/wg/dkim/about/">IETF DKIM
+          working group</a></li>
+        <li><a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-spec/">DKIM2
+          specification (Internet-Draft)</a></li>
+        <li><a href="https://github.com/dkim2wg/interop">Source &amp;
+          reference implementations on GitHub</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <p>DKIM2 · developed in the IETF DKIM working group · 2026</p>
+  </footer>
+</body>
+</html>

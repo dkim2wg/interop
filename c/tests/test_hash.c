@@ -53,6 +53,16 @@ int main(void) {
     assert(dkim2_header_hash(hdrs_b, 2, hb, sizeof hb) == 0);
     assert(strcmp(ha, hb) == 0);
 
+    /* §4.1 (draft-03): Delivered-To is ignored in the header hash */
+    const char *hdrs_dt[] = {
+        "From: sender@example.com\r\n",
+        "Subject: Test\r\n",
+        "Delivered-To: someone@example.com\r\n", /* ignored */
+    };
+    char hdt[64];
+    assert(dkim2_header_hash(hdrs_dt, 3, hdt, sizeof hdt) == 0);
+    assert(strcmp(hdt, hb) == 0);
+
     /* Header name case doesn't matter for hash */
     const char *hdrs_c[] = { "FROM: sender@example.com\r\n" };
     const char *hdrs_d[] = { "from: sender@example.com\r\n" };
@@ -68,6 +78,22 @@ int main(void) {
     assert(dkim2_header_hash(hdrs_e, 1, he, sizeof he) == 0);
     assert(dkim2_header_hash(hdrs_f, 1, hf, sizeof hf) == 0);
     assert(strcmp(he, hf) == 0);
+
+    /* §6.2 steps 3+6: a header folded IMMEDIATELY after the colon must
+       canonicalize identically to the unfolded form. The leading WSP has to be
+       deleted AFTER unfolding — the space that opens the continuation line
+       becomes leading WSP of the value only once the CRLF is removed. Mailman
+       and gmail both emit "Message-ID:\r\n <...>" headers like this. */
+    const char *hdrs_g[] = { "Message-ID:\r\n <abc@example.com>\r\n" };
+    const char *hdrs_h[] = { "Message-ID: <abc@example.com>\r\n" };
+    /* ...and with a trailing space left before the fold, as gmail emits it. */
+    const char *hdrs_i[] = { "Message-ID: \r\n <abc@example.com>\r\n" };
+    char hg[64], hh[64], hi[64];
+    assert(dkim2_header_hash(hdrs_g, 1, hg, sizeof hg) == 0);
+    assert(dkim2_header_hash(hdrs_h, 1, hh, sizeof hh) == 0);
+    assert(dkim2_header_hash(hdrs_i, 1, hi, sizeof hi) == 0);
+    assert(strcmp(hg, hh) == 0);
+    assert(strcmp(hi, hh) == 0);
 
     puts("hash: all tests passed");
     return 0;

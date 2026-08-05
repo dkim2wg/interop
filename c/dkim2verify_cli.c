@@ -1,11 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "dkim2_internal.h"
-#include "dkim2_header.h"
-#include "dkim2_verify.h"
+#include "dkim2_message.h"
 #include "dkim2_dns.h"
-#include "eml_parse.h"
 #include "cjson/cJSON.h"
 
 static cJSON *g_dns_json = NULL;
@@ -48,7 +45,7 @@ static char *dns_json_lookup(const char *qname) {
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s <email.eml> --dns-json <path> [--mailfrom <addr>] "
-        "[--rcptto <addr>]... [-v]\n", prog);
+        "[--rcptto <addr>]... [--ignore-timestamps] [-v]\n", prog);
     exit(1);
 }
 
@@ -72,10 +69,11 @@ int main(int argc, char *argv[]) {
             if (n_rcpt < 63) rcptto[n_rcpt++] = argv[++i];
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0)
             verbose = 1;
-        else if (strcmp(argv[i], "--no-timestamp-check") == 0)
+        else if (strcmp(argv[i], "--no-timestamp-check") == 0 ||
+                 strcmp(argv[i], "--ignore-timestamps") == 0)
             no_timestamp = 1;
         else if (strcmp(argv[i], "--full-chain") == 0)
-            ; /* accepted but ignored for now — we verify the highest sig */
+            ; /* body bytes are always kept; full-chain MI hash walk is automatic */
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); usage(argv[0]); }
     }
 
@@ -95,75 +93,13 @@ int main(int argc, char *argv[]) {
     if (!g_dns_json) { fprintf(stderr, "Failed to parse %s\n", dns_json_path); return 1; }
     dkim2_dns_override = dns_json_lookup;
 
-    /* Parse the email */
-    char **headers = NULL;
-    int n_headers = 0;
-    dkim2_ctx_t ctx;
-    memset(&ctx, 0, sizeof ctx);
-    if (eml_parse(eml_path, &headers, &n_headers, ctx.body_digest) < 0) {
-        perror(eml_path); cJSON_Delete(g_dns_json); return 1;
-    }
-
-    /* Build verify context */
-    ctx.headers              = headers;
-    ctx.n_headers            = n_headers;
-    ctx.skip_timestamp_check = no_timestamp;
-
-    /* Set MAIL FROM and RCPT TO from command line (or skip check if not provided) */
-    ctx.mail_from = mailfrom ? (char *)mailfrom : NULL;
     rcptto[n_rcpt] = NULL;
-    ctx.rcpt_to = n_rcpt > 0 ? rcptto : NULL;
-
-    /* Parse DKIM2 headers */
-    for (int i = 0; i < n_headers; i++) {
-        const char *hdr = headers[i];
-        /* Find colon to split name from value */
-        const char *colon = strchr(hdr, ':');
-        if (!colon) continue;
-        size_t namelen = (size_t)(colon - hdr);
-        char name[128];
-        if (namelen >= sizeof name) continue;
-        memcpy(name, hdr, namelen);
-        name[namelen] = '\0';
-
-        const char *val = colon + 1;
-        while (*val == ' ' || *val == '\t') val++;
-        /* Strip trailing \r\n */
-        size_t vlen = strlen(val);
-        while (vlen > 0 && (val[vlen-1] == '\r' || val[vlen-1] == '\n')) vlen--;
-        char *valdup = malloc(vlen + 1);
-        memcpy(valdup, val, vlen);
-        valdup[vlen] = '\0';
-
-        if (strcasecmp(name, "Message-Instance") == 0) {
-            dkim2_mi_t *mi = dkim2_mi_parse(valdup);
-            if (mi) {
-                dkim2_mi_t **tail = &ctx.mi_list;
-                while (*tail) tail = &(*tail)->next;
-                *tail = mi;
-            }
-        } else if (strcasecmp(name, "DKIM2-Signature") == 0) {
-            dkim2_sig_t *sig = dkim2_sig_parse(valdup);
-            if (sig) {
-                dkim2_sig_t **tail = &ctx.sig_list;
-                while (*tail) tail = &(*tail)->next;
-                *tail = sig;
-            }
-        }
-        free(valdup);
-    }
-
-    /* Verify */
-    dkim2_verify_result_t result;
-    dkim2_do_verify(&ctx, &result);
+    dkim2_verify_result_t result = dkim2_verify_message(
+        eml_path, mailfrom, n_rcpt > 0 ? rcptto : NULL, no_timestamp);
 
     if (verbose || result.status != DKIM2_OK)
         fprintf(stderr, "%s\n", result.message);
 
-    dkim2_mi_free(ctx.mi_list);
-    dkim2_sig_free(ctx.sig_list);
-    eml_free(headers, n_headers);
     cJSON_Delete(g_dns_json);
-
     return (result.status == DKIM2_OK) ? 0 : 1;
 }

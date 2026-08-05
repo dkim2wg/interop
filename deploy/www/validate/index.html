@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DKIM2 validator</title>
+  <meta name="description" content="Paste an email and see a per-level DKIM2 and Message-Instance validation breakdown.">
+  <link rel="stylesheet" href="validate.css?v=__VER__">
+</head>
+<body>
+  <header>
+    <h1>DKIM2 validator</h1>
+    <p>Paste a complete email below. Each DKIM2-Signature and Message-Instance
+       level is checked, including undo of each instance.
+       <a href="/">About DKIM2</a> · <a href="/verify/">browser verifier</a></p>
+  </header>
+  <main class="cols">
+    <section class="pane">
+      <label for="msg">Email source</label>
+      <textarea id="msg" spellcheck="false" placeholder="Paste the full message, including headers..."></textarea>
+      <div class="actions">
+        <button id="go">Validate</button>
+        <a href="#" id="example">load example</a>
+      </div>
+    </section>
+    <section class="pane">
+      <p class="colhead">Results</p>
+      <div id="out" class="out"><p class="muted">Results appear here.</p></div>
+    </section>
+  </main>
+  <script src="validate.js?v=__VER__"></script>
+</body>
+</html>

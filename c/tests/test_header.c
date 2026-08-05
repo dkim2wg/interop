@@ -55,6 +55,37 @@ int main(void) {
     assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
     dkim2_sig_free(sig);
 
+    /* Folding whitespace inside tag values (spec-04 §2.12): FWS may appear
+       inside a base64 string and around the colons of an s= item, and MUST be
+       ignored when the value is used.  A fold between the selector colon and
+       the algorithm token used to leave CRLF+TAB glued to the algorithm name. */
+    sig = dkim2_sig_parse(
+        "i=1; m=1; t=1745798400; "
+        "mf=PHVzZXJAZXh\r\n\thbXBsZS5jb20+; "
+        "rt=PHJjcHRAZXh\r\n\thbXBsZS5vcmc+; "
+        "d=example.com; "
+        "s=sel1:\r\n\trsa-sha256:\r\n\tAA\r\n\tAA");
+    assert(sig != NULL);
+    assert(strcmp(sig->mf, "<user@example.com>") == 0);
+    assert(sig->rt != NULL && sig->rt[0] != NULL);
+    assert(strcmp(sig->rt[0], "<rcpt@example.org>") == 0);
+    assert(sig->n_ssets == 1);
+    assert(strcmp(sig->ssets[0].selector, "sel1") == 0);
+    assert(strcmp(sig->ssets[0].alg, "rsa-sha256") == 0);
+    assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
+    dkim2_sig_free(sig);
+
+    /* Same, folded with space-continuation rather than tab */
+    sig = dkim2_sig_parse(
+        "i=1; m=1; t=1745798400; "
+        "mf=PHVzZXJAZXhhbXBsZS5jb20+; "
+        "rt=PHJjcHRAZXhhbXBsZS5vcmc+; "
+        "d=example.com; "
+        "s=sel1:\r\n rsa-sha256:AAAA");
+    assert(sig != NULL);
+    assert(strcmp(sig->ssets[0].alg, "rsa-sha256") == 0);
+    dkim2_sig_free(sig);
+
     /* Multiple rt= values */
     /* base64("<a@example.com>") = "PGFAZXhhbXBsZS5jb20+" */
     /* base64("<b@example.com>") = "PGJAZXhhbXBsZS5jb20+" */
@@ -70,7 +101,50 @@ int main(void) {
 
     /* Missing required tag → NULL */
     sig = dkim2_sig_parse("i=1; m=1; t=123; d=example.com; s=sel:rsa-sha256:XXX");
-    assert(sig == NULL); /* mf= missing */
+    assert(sig == NULL); /* neither nd= nor mf=+rt= present */
+
+    /* draft-03 §8.7: nd= parsed, mf=/rt= absent */
+    sig = dkim2_sig_parse(
+        "i=2; m=2; t=1745798400; d=fwd.example; nd=mx.dest.example; "
+        "s=sel1:rsa-sha256:AAAA");
+    assert(sig != NULL);
+    assert(sig->nd != NULL && strcmp(sig->nd, "mx.dest.example") == 0);
+    assert(sig->mf == NULL && sig->rt == NULL);
+    /* Format round-trip: nd= emitted, mf=/rt= omitted */
+    {
+        char *out = dkim2_sig_format(sig, 1);
+        assert(out != NULL);
+        assert(strstr(out, "nd=mx.dest.example") != NULL);
+        assert(strstr(out, "mf=") == NULL);
+        assert(strstr(out, "rt=") == NULL);
+        free(out);
+    }
+    dkim2_sig_free(sig);
+
+    /* draft-03 §8: nd= together with mf=/rt= → NULL (mutually exclusive) */
+    sig = dkim2_sig_parse(
+        "i=2; m=2; t=1; d=fwd.example; nd=mx.dest.example; "
+        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
+        "s=sel1:rsa-sha256:AAAA");
+    assert(sig == NULL);
+
+    /* draft-03 §8.10: f= flags parsed and round-tripped (incl. feedhere) */
+    sig = dkim2_sig_parse(
+        "i=1; m=1; t=1; d=ex.example; "
+        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
+        "f=donotmodify,feedhere; s=sel1:rsa-sha256:AAAA");
+    assert(sig != NULL);
+    assert(sig->flags != NULL);
+    assert(sig->flags[0] && strcmp(sig->flags[0], "donotmodify") == 0);
+    assert(sig->flags[1] && strcmp(sig->flags[1], "feedhere") == 0);
+    assert(sig->flags[2] == NULL);
+    {
+        char *out = dkim2_sig_format(sig, 1);
+        assert(out != NULL);
+        assert(strstr(out, "f=donotmodify,feedhere") != NULL);
+        free(out);
+    }
+    dkim2_sig_free(sig);
 
     puts("header: all tests passed");
     return 0;

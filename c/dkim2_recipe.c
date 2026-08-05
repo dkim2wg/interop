@@ -103,8 +103,12 @@ char *dkim2_apply_body_recipe(const char *r_json,
 
 static char **headers_for_name(char **headers, int n, const char *lname,
                                 int *n_out) {
+    /* `headers` is the caller's working array, which carries NULL holes where
+       an earlier recipe field was removed (they are only compacted away once
+       every field has been processed), so both passes must skip them. */
     int cnt = 0;
     for (int i = 0; i < n; i++) {
+        if (!headers[i]) continue;
         const char *colon = strchr(headers[i], ':');
         if (!colon) continue;
         size_t nl = (size_t)(colon - headers[i]);
@@ -118,6 +122,7 @@ static char **headers_for_name(char **headers, int n, const char *lname,
     if (!out) { *n_out = 0; return NULL; }
     int idx = 0;
     for (int i = n - 1; i >= 0; i--) {
+        if (!headers[i]) continue;
         const char *colon = strchr(headers[i], ':');
         if (!colon) continue;
         size_t nl = (size_t)(colon - headers[i]);
@@ -138,6 +143,11 @@ char **dkim2_apply_header_recipe(const char *r_json,
     if (!root) return NULL;
 
     cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
+    if (h && cJSON_IsNull(h)) {
+        /* draft-04 §5.1: a null header recipe is no longer permitted. */
+        cJSON_Delete(root);
+        return NULL;
+    }
     if (!h || !cJSON_IsObject(h)) {
         cJSON_Delete(root);
         char **out = malloc((size_t)(n + 1) * sizeof(char *));

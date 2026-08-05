@@ -1,0 +1,3 @@
+[submodule "dkim2tests"]
+	path = dkim2tests
+	url = https://forge.turscar.ie/turscar/dkim2tests

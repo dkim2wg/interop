@@ -1,0 +1,255 @@
+#
+# Postfix master process configuration file.  For details on the format
+# of the file, see the master(5) manual page (command: "man 5 master" or
+# on-line: http://www.postfix.org/master.5.html).
+#
+# Do not forget to execute "postfix reload" after editing this file.
+#
+# ==========================================================================
+# service type  private unpriv  chroot  wakeup  maxproc command + args
+#               (yes)   (yes)   (no)    (never) (100)
+# ==========================================================================
+smtp      inet  n       -       y       -       -       smtpd
+#smtp      inet  n       -       y       -       1       postscreen
+#smtpd     pass  -       -       y       -       -       smtpd
+#dnsblog   unix  -       -       y       -       0       dnsblog
+#tlsproxy  unix  -       -       y       -       0       tlsproxy
+# Choose one: enable submission for loopback clients only, or for any client.
+#127.0.0.1:submission inet n -   y       -       -       smtpd
+#submission inet n       -       y       -       -       smtpd
+#  -o syslog_name=postfix/submission
+#  -o smtpd_tls_security_level=encrypt
+#  -o smtpd_sasl_auth_enable=yes
+#  -o smtpd_tls_auth_only=yes
+#  -o local_header_rewrite_clients=static:all
+#  -o smtpd_reject_unlisted_recipient=no
+#     Instead of specifying complex smtpd_<xxx>_restrictions here,
+#     specify "smtpd_<xxx>_restrictions=$mua_<xxx>_restrictions"
+#     here, and specify mua_<xxx>_restrictions in main.cf (where
+#     "<xxx>" is "client", "helo", "sender", "relay", or "recipient").
+#  -o smtpd_client_restrictions=
+#  -o smtpd_helo_restrictions=
+#  -o smtpd_sender_restrictions=
+#  -o smtpd_relay_restrictions=
+#  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+#  -o milter_macro_daemon_name=ORIGINATING
+# Choose one: enable submissions for loopback clients only, or for any client.
+#127.0.0.1:submissions inet n  -       y       -       -       smtpd
+#submissions     inet  n       -       y       -       -       smtpd
+#  -o syslog_name=postfix/submissions
+#  -o smtpd_tls_wrappermode=yes
+#  -o smtpd_sasl_auth_enable=yes
+#  -o local_header_rewrite_clients=static:all
+#  -o smtpd_reject_unlisted_recipient=no
+#     Instead of specifying complex smtpd_<xxx>_restrictions here,
+#     specify "smtpd_<xxx>_restrictions=$mua_<xxx>_restrictions"
+#     here, and specify mua_<xxx>_restrictions in main.cf (where
+#     "<xxx>" is "client", "helo", "sender", "relay", or "recipient").
+#  -o smtpd_client_restrictions=
+#  -o smtpd_helo_restrictions=
+#  -o smtpd_sender_restrictions=
+#  -o smtpd_relay_restrictions=
+#  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+#  -o milter_macro_daemon_name=ORIGINATING
+#628       inet  n       -       y       -       -       qmqpd
+pickup    unix  n       -       y       60      1       pickup
+cleanup   unix  n       -       y       -       0       cleanup
+qmgr      unix  n       -       n       300     1       qmgr
+#qmgr     unix  n       -       n       300     1       oqmgr
+tlsmgr    unix  -       -       y       1000?   1       tlsmgr
+rewrite   unix  -       -       y       -       -       trivial-rewrite
+bounce    unix  -       -       y       -       0       bounce
+defer     unix  -       -       y       -       0       bounce
+trace     unix  -       -       y       -       0       bounce
+verify    unix  -       -       y       -       1       verify
+flush     unix  n       -       y       1000?   0       flush
+proxymap  unix  -       -       n       -       -       proxymap
+proxywrite unix -       -       n       -       1       proxymap
+smtp      unix  -       -       y       -       -       smtp
+relay     unix  -       -       y       -       -       smtp
+        -o syslog_name=postfix/$service_name
+#       -o smtp_helo_timeout=5 -o smtp_connect_timeout=5
+showq     unix  n       -       y       -       -       showq
+error     unix  -       -       y       -       -       error
+retry     unix  -       -       y       -       -       error
+discard   unix  -       -       y       -       -       discard
+local     unix  -       n       n       -       -       local
+virtual   unix  -       n       n       -       -       virtual
+lmtp      unix  -       -       y       -       -       lmtp
+anvil     unix  -       -       y       -       1       anvil
+scache    unix  -       -       y       -       1       scache
+postlog   unix-dgram n  -       n       -       1       postlogd
+#
+# ====================================================================
+# Interfaces to non-Postfix software. Be sure to examine the manual
+# pages of the non-Postfix software to find out what options it wants.
+#
+# Many of the following services use the Postfix pipe(8) delivery
+# agent.  See the pipe(8) man page for information about ${recipient}
+# and other message envelope options.
+# ====================================================================
+#
+# maildrop. See the Postfix MAILDROP_README file for details.
+# Also specify in main.cf: maildrop_destination_recipient_limit=1
+#
+#maildrop  unix  -       n       n       -       -       pipe
+#  flags=DRXhu user=vmail argv=/usr/bin/maildrop -d ${recipient}
+#
+# ====================================================================
+#
+# Recent Cyrus versions can use the existing "lmtp" master.cf entry.
+#
+# Specify in cyrus.conf:
+#   lmtp    cmd="lmtpd -a" listen="localhost:lmtp" proto=tcp4
+#
+# Specify in main.cf one or more of the following:
+#  mailbox_transport = lmtp:inet:localhost
+#  virtual_transport = lmtp:inet:localhost
+#
+# ====================================================================
+#
+# Cyrus 2.1.5 (Amos Gouaux)
+# Also specify in main.cf: cyrus_destination_recipient_limit=1
+#
+#cyrus     unix  -       n       n       -       -       pipe
+#  flags=DRX user=cyrus argv=/cyrus/bin/deliver -e -r ${sender} -m ${extension} ${user}
+#
+# ====================================================================
+#
+# Old example of delivery via Cyrus.
+#
+#old-cyrus unix  -       n       n       -       -       pipe
+#  flags=R user=cyrus argv=/cyrus/bin/deliver -e -m ${extension} ${user}
+#
+# ====================================================================
+#
+# See the Postfix UUCP_README file for configuration details.
+#
+uucp      unix  -       n       n       -       -       pipe
+  flags=Fqhu user=uucp argv=uux -r -n -z -a$sender - $nexthop!rmail ($recipient)
+#
+# Other external delivery methods.
+#
+#ifmail    unix  -       n       n       -       -       pipe
+#  flags=F user=ftn argv=/usr/lib/ifmail/ifmail -r $nexthop ($recipient)
+#bsmtp     unix  -       n       n       -       -       pipe
+#  flags=Fq. user=bsmtp argv=/usr/lib/bsmtp/bsmtp -t$nexthop -f$sender $recipient
+#scalemail-backend unix -       n       n       -       2       pipe
+#  flags=R user=scalemail argv=/usr/lib/scalemail/bin/scalemail-store ${nexthop} ${user} ${extension}
+#mailman   unix  -       n       n       -       -       pipe
+#  flags=FRX user=list argv=/usr/lib/mailman/bin/postfix-to-mailman.py ${nexthop} ${user}
+
+
+# DKIM2 reflector injection: no milters (the reflector signs itself).
+127.0.0.1:10588 inet n  -  y  -  -  smtpd
+  -o syslog_name=postfix/reflector-inject
+  -o smtpd_milters=
+  -o non_smtpd_milters=
+  -o smtpd_client_restrictions=permit_mynetworks,reject
+  -o smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination
+
+# DKIM2 reflector pipe(8) transport. Append this service to /etc/postfix/master.cf.
+#
+# WHY A PIPE TRANSPORT, NOT A local(8) "|command" ALIAS:
+# local(8) prepends a Delivered-To: header to the message before running the
+# alias command. Delivered-To is NOT an IANA trace header (only Received and
+# Return-Path are; Delivered-To is only provisionally registered, RFC 9228), so
+# DKIM2 §5.2 does not exclude it from the header-field hash. The reflector would
+# therefore hash that Delivered-To into its Message-Instance — but the header is
+# renamed (X-Remote-Delivered-To) or dropped before the reply is delivered, so
+# the m= header hash could never be verified by the recipient. pipe(8) does not
+# add Delivered-To. See docs/dkim2-implementer-guide.md ("Postfix Delivered-To").
+#
+# pipe(8) also does not export $SENDER the way local(8) does, so the envelope
+# sender is passed as the ${sender} argv macro (the wrapper also still honours
+# $ENV{SENDER} for legacy/manual use). ${user} is the recipient localpart
+# (e.g. "reflector-both"); the wrapper maps it to the reflect mode.
+#
+# Recipients are routed here by transport_maps and accepted at RCPT via
+# local_recipient_maps — both pointing at hash:/etc/postfix/dkim2-transport.
+# Set "dkim2-reflect_destination_recipient_limit = 1" in main.cf so each
+# recipient gets its own invocation (keeps ${user} unambiguous).
+dkim2-reflect unix  -       n       n       -       -       pipe
+  flags=q user=nobody:nogroup
+  argv=/usr/local/bin/dkim2-reflect ${user} ${sender}
+
+# dkim2-delayedbounce: delivery transport for reflector-delayedbounce@dkim2.com.
+# The address is a valid recipient (accepted at RCPT, 250); this pipe's agent
+# always exits with a permanent failure, so Postfix's bounce(8) originates a
+# DSN that the outbound milter DKIM2-signs. This is what makes the bounce a
+# genuine *delayed* (async) bounce rather than a synchronous RCPT 550.
+dkim2-delayedbounce unix  -     n       n       -       -       pipe
+  flags= user=nobody:nogroup
+  argv=/usr/local/bin/dkim2-delayedbounce-fail
+
+# DKIM2 split outbound gateway: ALL originated mail is fanned out per recipient
+# BEFORE it is signed, so a DKIM2-Signature rt= never names anyone but that
+# copy's own recipient(s).
+#
+# Why: the outbound milter signs a queued message ONCE, recording every RCPT TO
+# of the SMTP transaction in one rt= (Postfix's milter protocol cannot fan a
+# message out into separately-signed copies). A Mailman post therefore published
+# the whole subscriber list to every subscriber. Spec-04 §8.6 permits one rt=
+# naming every recipient, so this is a privacy failure rather than a conformance
+# one -- but list subscribers are not named in To:/Cc:, so disclosing them is the
+# same leak as a leaked Bcc.
+#
+# Flow (everything below is loopback-only; this box has no public submission and
+# mynetworks is localhost, so there is no open-relay exposure):
+#
+#   Mailman / Sympa / swaks --server 127.0.0.1:10587
+#        |
+#        v
+#   10587  split entry: NO milter, content_filter -> the LMTP splitter
+#        |
+#        v
+#   10590  dkim2-split-lmtp (systemd, deploy/dkim2-split.service):
+#          one copy per disclosed group, one per undisclosed recipient
+#        |
+#        v
+#   10589  signing re-injection: outbound milter signs each copy separately
+#        |
+#        v
+#   normal delivery
+#
+# 10587 was chosen as the entry deliberately: it is the port Mailman's
+# smtp_port, /usr/local/bin/sympa-sendmail and every documented swaks recipe
+# ALREADY talk to, so nothing needed reconfiguring and no sender can bypass the
+# split by using the old port -- there is no old port. A separate entry (this
+# file previously used 10586) left two outbound paths, and anything not migrated
+# kept leaking.
+#
+# NOT routed through here, on purpose:
+#   - the reflector (10588): signs itself and would be double-signed; one
+#     recipient per message anyway.
+#   - Postfix-generated bounces/DSNs: signed by non_smtpd_milters in cleanup,
+#     never through an smtpd listener, and always single-recipient.
+#
+# TRADE-OFF: dkim2-split.service is now load-bearing for all list mail. If it is
+# down Postfix defers with 451 -- delayed, never delivered unsigned or with a
+# leaking rt=. The unit has Restart=on-failure.
+#
+# See deploy/SERVER.md "Split outbound gateway".
+
+# 1. Split entry. REPLACES the previous signing definition of 10587 (which had
+#    smtpd_milters=dkim2-milter-out.sock and syslog_name=postfix/listserv):
+#    signing now happens on 10589, after the split, so this listener must NOT
+#    sign. receive_override_options matters -- without no_address_mappings,
+#    alias/virtual expansion runs here AND again after re-injection.
+127.0.0.1:10587 inet n  -       y       -       -       smtpd
+  -o syslog_name=postfix/dkim2-split-in
+  -o content_filter=lmtp:[127.0.0.1]:10590
+  -o smtpd_milters=
+  -o smtpd_client_restrictions=permit_mynetworks,reject
+  -o local_recipient_maps=
+  -o smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination
+  -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks
+
+# 2. Signing re-injection: run the outbound DKIM2 milter; do NOT re-filter
+#    (the empty content_filter is the loop guard, or copies would be re-split).
+127.0.0.1:10589 inet n - n - - smtpd
+  -o syslog_name=postfix/dkim2-sign-out
+  -o content_filter=
+  -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
+  -o smtpd_relay_restrictions=permit_mynetworks,reject
+  -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks

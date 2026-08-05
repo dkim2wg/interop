@@ -4,6 +4,19 @@ This repository is a place to share materials and examples for the IETF 124 hack
 
 Please feel free to clone and make pull requests, or ask for direct commit privileges on this repo.
 
-# Additional reading
+## Conformance vectors
 
-A Deployment Profile for DKIM2 via Milter Interface (IETF Datatracker):  [https://datatracker.ietf.org/doc/draft-moccia-dkim2-deployment-profile/](https://datatracker.ietf.org/doc/draft-moccia-dkim2-deployment-profile/)
+Steve Atkins' test vectors (<https://forge.turscar.ie/turscar/dkim2tests>) are a
+git submodule at `dkim2tests/`. To run all of them against every verifier here
+(Python, Perl, Go, C, browser JS):
+
+    git submodule update --init
+    ./util/turscar-all.sh
+
+Each language's runner is also runnable on its own — see the comment at the top
+of `util/turscar-all.sh`.
+
+# An Alternative Proposal
+
+A Deployment Profile for DKIM2 via Milter Interface (IETF Datatracker):
+[https://datatracker.ietf.org/doc/draft-moccia-dkim2-deployment-profile/](https://datatracker.ietf.org/doc/draft-moccia-dkim2-deployment-profile/)

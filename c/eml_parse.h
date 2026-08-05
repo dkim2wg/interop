@@ -14,6 +14,13 @@ int eml_parse(const char *path,
               char ***headers_out, int *n_headers_out,
               unsigned char body_digest_out[DKIM2_HASH_LEN]);
 
+/* Like eml_parse but also returns the CRLF-normalised body bytes.
+   *body_out is malloc'd; caller frees. body_len_out is the byte count. */
+int eml_parse_with_body(const char *path,
+                        char ***headers_out, int *n_headers_out,
+                        unsigned char body_digest_out[DKIM2_HASH_LEN],
+                        char **body_out, size_t *body_len_out);
+
 /* Stream the body portion of path (CRLF-normalised) to out.
    Used by the signer after signing to re-emit the original body without
    ever holding the body bytes in memory alongside the signature data.

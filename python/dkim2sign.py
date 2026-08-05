@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 signer - draft-ietf-dkim-dkim2-spec-01
+DKIM2 signer - draft-ietf-dkim-dkim2-spec-04
 
 Takes a raw email, selector, domain, and keyfile and produces a signed
 message with Message-Instance and DKIM2-Signature headers on stdout.
@@ -9,14 +9,29 @@ message with Message-Instance and DKIM2-Signature headers on stdout.
 import argparse
 import base64
 import hashlib
+import io
 import json
 import re
 import sys
 import time
 from pathlib import Path
+from typing import IO, Union
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, utils
+
+
+# Source can be raw bytes, a file path (str/Path), or any binary-mode file-like object.
+Source = Union[bytes, str, "Path", "IO[bytes]"]
+
+
+def _to_bytes(source: "Source") -> bytes:
+    """Normalize any message source to bytes."""
+    if isinstance(source, bytes):
+        return source
+    if isinstance(source, (str, Path)):
+        return Path(source).read_bytes()
+    return source.read()
 
 
 # ---------------------------------------------------------------------------
@@ -33,17 +48,28 @@ def b64json(obj) -> str:
     return b64(json.dumps(obj, separators=(",", ":")).encode("utf-8"))
 
 
+def to_rfc5321_path(addr: str) -> str:
+    """Wrap an address as an RFC5321 path for mf=/rt= (spec 7.5/7.6): angle
+    brackets MUST be present. Empty -> '<>'; already-bracketed unchanged."""
+    if not addr:
+        return "<>"
+    if addr.startswith("<") and addr.endswith(">"):
+        return addr
+    return f"<{addr}>"
+
+
 # ---------------------------------------------------------------------------
 # Parse raw message into (header_lines, body)
 # ---------------------------------------------------------------------------
 
-def parse_message(raw: bytes) -> tuple[list[bytes], bytes]:
+def parse_message(source: "Source") -> tuple[list[bytes], bytes]:
     """Split a raw RFC 5322 message into header lines and body.
 
     Returns (headers, body) where headers is a list of complete header
     fields (including continuation lines) as raw bytes, and body is the
     raw body bytes (everything after the blank line separator).
     """
+    raw = _to_bytes(source)
     # Normalise line endings to CRLF
     raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").replace(b"\n", b"\r\n")
 
@@ -76,8 +102,10 @@ def parse_message(raw: bytes) -> tuple[list[bytes], bytes]:
 
 # Headers to exclude from the header hash
 _EXCLUDED_PREFIXES = (b"x-", b"arc-")
-_EXCLUDED_NAMES = {b"received", b"return-path", b"message-instance",
-                   b"dkim2-signature", b"dkim-signature"}
+_EXCLUDED_NAMES = {b"received", b"return-path", b"delivered-to",
+                   b"message-instance",
+                   b"dkim2-signature", b"dkim-signature",
+                   b"authentication-results"}
 
 
 def _header_name(hdr: bytes) -> bytes:
@@ -203,9 +231,24 @@ def build_message_instance(headers: list[bytes], body: bytes,
     b_hash = compute_body_hash(body)
     value = f"m={version}; h=sha256:{b64(h_hash)}:{b64(b_hash)}"
     if recipe is not None:
-        value += f"; r={b64json(recipe)}"
+        value += f"; r={b64json(_lowercase_recipe_keys(recipe))}"
     value += ";"
     return f"Message-Instance: {value}"
+
+
+def _lowercase_recipe_keys(recipe: dict) -> dict:
+    """Force the header-recipe (h) keys to lowercase on output.
+
+    Header field names are case-insensitive; emitting recipe keys in a
+    canonical lowercase form keeps them stable and unambiguous.  (Not yet
+    mandated by the draft, but we always do it.)
+    """
+    h = recipe.get("h")
+    if not isinstance(h, dict):
+        return recipe
+    out = dict(recipe)
+    out["h"] = {k.lower(): v for k, v in h.items()}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -239,13 +282,29 @@ def canonicalize_sig_header(raw_hdr: str) -> bytes:
 
 
 def _extract_tag(header_value: str, tag: str) -> str | None:
-    """Extract a tag value from a DKIM2-style tag-list header value."""
-    # header_value is the part after "HeaderName: "
+    """Extract a tag value from a DKIM2-style tag-list header value.
+
+    Per spec-04 §8, tag identifiers are case-insensitive, may appear in any
+    order, and FWS is permitted around the '=' and ';' separators.
+    """
+    tl = tag.lower()
     for part in header_value.split(";"):
-        part = part.strip()
-        if part.startswith(tag + "="):
-            return part[len(tag) + 1:].strip()
+        if "=" not in part:
+            continue
+        name, val = part.split("=", 1)
+        if name.strip().lower() == tl:
+            return val.strip()
     return None
+
+
+def _tag_names(header_value: str) -> list[str]:
+    """Lowercased tag names in a tag-list value, in order (for duplicate
+    detection per spec-04 §8: 'there MUST be only one of each kind')."""
+    names = []
+    for part in header_value.split(";"):
+        if "=" in part:
+            names.append(part.split("=", 1)[0].strip().lower())
+    return names
 
 
 def _get_version_from_mi(hdr: str) -> int:
@@ -255,6 +314,20 @@ def _get_version_from_mi(hdr: str) -> int:
     value = hdr[colon + 1:] if colon != -1 else hdr
     m = _extract_tag(value, "m")
     return int(m) if m else 0
+
+
+def _mi_hashes(hdr: str) -> str | None:
+    """Extract the h= hash set of a Message-Instance header, FWS removed.
+
+    Folding whitespace may appear inside the base64 hashes (spec-04 §2.12), so
+    strip it before comparing two instances' hashes.
+    """
+    colon = hdr.find(":")
+    value = hdr[colon + 1:] if colon != -1 else hdr
+    h = _extract_tag(value, "h")
+    if h is None:
+        return None
+    return "".join(h.split())
 
 
 def _get_seq_from_sig(hdr: str) -> int:
@@ -279,7 +352,7 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Per draft-ietf-dkim-dkim2-spec-01 Section 9.5:
+    # Per draft-ietf-dkim-dkim2-spec-04 Section 9.5:
     # 1. All MI headers in ascending v= order
     # 2. All prior DKIM2-Signature headers in ascending i= order
     # 3. The incomplete DKIM2-Signature being created
@@ -315,33 +388,47 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
 # ---------------------------------------------------------------------------
 
 def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
-                          new_mi: str, domain: str, selector: str,
+                          new_mi: str | None, domain: str, selector: str,
                           private_key, algorithm: str,
                           mailfrom: str = "<>",
                           rcptto: list[str] | None = None,
                           seq: int = 1, mi_version: int = 1,
-                          timestamp: int | None = None) -> str:
+                          timestamp: int | None = None,
+                          next_domain: str | None = None,
+                          flags: list[str] | None = None) -> str:
     """Build a complete DKIM2-Signature header.
+
+    If next_domain is given, the signature carries an nd= tag for an imaginary
+    forwarding hop (draft-04 §9.3) and omits mf=/rt=. Otherwise it carries
+    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-04 §8.10).
 
     Returns the full header string including field name.
     """
     if timestamp is None:
         timestamp = int(time.time())
 
-    # mf= and rt= tags: base64-encoded SMTP addresses
-    mf_b64 = b64(mailfrom.encode("utf-8"))
-    rt_list = rcptto or ["unknown@example.com"]
-    rt_b64 = ",".join(b64(r.encode("utf-8")) for r in rt_list)
+    # draft-04 §9.3: an nd= hop carries nd= instead of mf=/rt=.
+    if next_domain:
+        chain = f"nd={next_domain}"
+    else:
+        mf_b64 = b64(to_rfc5321_path(mailfrom).encode("utf-8"))
+        rt_list = rcptto or ["unknown@example.com"]
+        rt_b64 = ",".join(b64(to_rfc5321_path(r).encode("utf-8")) for r in rt_list)
+        chain = f"mf={mf_b64}; rt={rt_b64}"
 
-    # Build the incomplete signature header with sel:alg: (null/empty string per spec §8.5).
+    f_tag = f" f={','.join(flags)};" if flags else ""
+
+    # Build the incomplete signature header with sel:alg: (null/empty string per spec §9.6).
     # Trailing semicolon included per spec ABNF (tag-list grammar).
     incomplete = (
         f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
-        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={selector}:{algorithm}:;"
+        f"d={domain}; {chain}; s={selector}:{algorithm}:;{f_tag}"
     )
 
-    # Collect all MI headers including the new one
-    all_mi = mi_headers + [new_mi]
+    # Collect all MI headers, including the new one if this hop created one
+    # (new_mi is None when the hop changed nothing and reuses the existing top
+    # instance — see sign_message).
+    all_mi = mi_headers + ([new_mi] if new_mi is not None else [])
 
     # Compute signature
     sig_bytes = compute_signature(all_mi, sig_headers, incomplete,
@@ -353,7 +440,7 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     # Build the final header with the actual signature value
     return (
         f"DKIM2-Signature: i={seq}; m={mi_version}; t={timestamp}; "
-        f"d={domain}; mf={mf_b64}; rt={rt_b64}; s={s_complete};"
+        f"d={domain}; {chain}; s={s_complete};{f_tag}"
     )
 
 
@@ -382,14 +469,17 @@ def load_private_key(keyfile: str) -> tuple:
 # Main
 # ---------------------------------------------------------------------------
 
-def sign_message(raw: bytes, selector: str, domain: str, keyfile: str,
+def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  mailfrom: str = "<>", rcptto: list[str] | None = None,
-                 timestamp: int | None = None) -> bytes:
+                 timestamp: int | None = None,
+                 next_domain: str | None = None,
+                 flags: list[str] | None = None) -> bytes:
     """Sign a raw email message with DKIM2.
 
     Returns the complete message with Message-Instance and DKIM2-Signature
     headers prepended.
     """
+    raw = _to_bytes(source)
     private_key, algorithm = load_private_key(keyfile)
 
     headers, body = parse_message(raw)
@@ -405,9 +495,11 @@ def sign_message(raw: bytes, selector: str, domain: str, keyfile: str,
             existing_sig.append(hdr.decode("utf-8", errors="surrogateescape"))
 
     # Determine version numbers
+    top_mi = None
     mi_version = 1
     if existing_mi:
-        mi_version = max(_get_version_from_mi(h) for h in existing_mi) + 1
+        top_mi = max(existing_mi, key=_get_version_from_mi)
+        mi_version = _get_version_from_mi(top_mi) + 1
 
     sig_seq = 1
     if existing_sig:
@@ -416,6 +508,14 @@ def sign_message(raw: bytes, selector: str, domain: str, keyfile: str,
     # Build Message-Instance header
     mi_hdr = build_message_instance(headers, body, version=mi_version)
 
+    # draft-04 §9.1/§9.2.5: a hop that leaves both hashes unchanged adds no new
+    # Message-Instance at all — it signs against the existing top instance and
+    # reuses its m=.  Emitting an instance with identical hashes and no recipe
+    # is pure waste; verifiers must tolerate one, but nothing should produce it.
+    if top_mi is not None and _mi_hashes(top_mi) == _mi_hashes(mi_hdr):
+        mi_version = _get_version_from_mi(top_mi)
+        mi_hdr = None
+
     # Build DKIM2-Signature header
     sig_hdr = build_dkim2_signature(
         existing_mi, existing_sig, mi_hdr,
@@ -423,6 +523,7 @@ def sign_message(raw: bytes, selector: str, domain: str, keyfile: str,
         mailfrom=mailfrom, rcptto=rcptto,
         seq=sig_seq, mi_version=mi_version,
         timestamp=timestamp,
+        next_domain=next_domain, flags=flags,
     )
 
     # Reassemble the message with new headers prepended
@@ -430,7 +531,8 @@ def sign_message(raw: bytes, selector: str, domain: str, keyfile: str,
     raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").replace(b"\n", b"\r\n")
 
     output = sig_hdr.encode("utf-8") + b"\r\n"
-    output += mi_hdr.encode("utf-8") + b"\r\n"
+    if mi_hdr is not None:
+        output += mi_hdr.encode("utf-8") + b"\r\n"
     output += raw
 
     return output
@@ -438,7 +540,7 @@ def sign_message(raw: bytes, selector: str, domain: str, keyfile: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-01)")
+        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-04)")
     parser.add_argument("message", help="Path to raw email file (- for stdin)")
     parser.add_argument("-s", "--selector", required=True,
                         help="DKIM2 selector name")
@@ -452,6 +554,11 @@ def main():
                         help="RCPT TO value(s) (repeatable)")
     parser.add_argument("--timestamp", type=int, default=None,
                         help="Unix timestamp (default: current time)")
+    parser.add_argument("--next-domain",
+                        help="Next-hop domain (nd=); emits an nd= chain "
+                             "tag instead of mf=/rt=")
+    parser.add_argument("--flag", action="append", dest="flags",
+                        help="Signature flag (f=); repeatable")
     args = parser.parse_args()
 
     if args.message == "-":
@@ -463,7 +570,8 @@ def main():
 
     result = sign_message(raw, args.selector, args.domain, args.keyfile,
                           mailfrom=args.mailfrom, rcptto=rcptto,
-                          timestamp=args.timestamp)
+                          timestamp=args.timestamp,
+                          next_domain=args.next_domain, flags=args.flags)
 
     sys.stdout.buffer.write(result)
 

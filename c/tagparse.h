@@ -6,7 +6,10 @@ typedef struct tag_entry {
     struct tag_entry *next;
 } tag_entry_t;
 
-typedef struct { tag_entry_t *head; } taglist_t;
+typedef struct {
+    tag_entry_t *head;
+    int duplicate; /* nonzero if a tag name appeared more than once (spec-04 §8) */
+} taglist_t;
 
 /* Parse "name=value; name=value; ..." tag list.
    Tag names are lowercased. Values have leading/trailing whitespace stripped.

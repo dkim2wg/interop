@@ -1,0 +1,29 @@
+# DKIM2 delayed-bounce demo address.
+#
+# reflector-delayedbounce@dkim2.com is accepted at RCPT (250), then deliberately
+# fails at DELIVERY, so that Postfix's own bounce(8) originates a real DSN. That
+# DSN is then DKIM2-signed by the outbound milter (see main.cf:
+# internal_mail_filter_classes = bounce). This demonstrates draft §11/§12 with a
+# genuinely Postfix-generated bounce — NOT the hand-built reflector-dsn path.
+#
+# It routes to the "dkim2-delayedbounce" pipe(8) transport (see
+# postfix-dkim2-reflect.master.cf), whose delivery agent always exits with a
+# permanent failure. It deliberately does NOT use the "error:" transport:
+# error: rejects the recipient at RCPT time for SMTP clients (a synchronous
+# 550), which is not a *delayed* bounce. Accepting at RCPT and failing at
+# delivery is what produces the asynchronous, MTA-originated DSN.
+#
+# This map is referenced by BOTH:
+#   transport_maps       - route the recipient to the failing pipe transport
+#                          so a permanent delivery failure (and thus a
+#                          Postfix-generated bounce) results.
+#   local_recipient_maps - so the address is accepted at RCPT TO (the value's
+#                          key is all that matters for acceptance).
+#
+# Install:
+#   cp deploy/postfix-dkim2-delayedbounce /etc/postfix/dkim2-delayedbounce
+#   postmap /etc/postfix/dkim2-delayedbounce
+# Append "hash:/etc/postfix/dkim2-delayedbounce" to BOTH transport_maps and
+# local_recipient_maps in main.cf; add the dkim2-delayedbounce pipe service to
+# master.cf (see postfix-dkim2-reflect.master.cf); then: postfix reload
+reflector-delayedbounce@dkim2.com  dkim2-delayedbounce:

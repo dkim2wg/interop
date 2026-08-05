@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DKIM2 browser verifier</title>
+  <meta name="description" content="Paste an email and verify its DKIM2 chain entirely in your browser — no server involved.">
+  <link rel="stylesheet" href="verify.css">
+</head>
+<body>
+  <header>
+    <h1>DKIM2 browser verifier</h1>
+    <p>Paste a complete email below. Every DKIM2-Signature and Message-Instance
+       level is verified <strong>entirely in your browser</strong> — parsing,
+       hashing, and signature cryptography all run locally.
+       <a href="/">About DKIM2</a> · <a href="/validate/">server validator</a></p>
+    <p class="privacy">Public keys are fetched over DNS-over-HTTPS from Cloudflare
+       (<code>cloudflare-dns.com</code>), so the signing domains and selectors in
+       your message are sent to Cloudflare. The message body never leaves your browser.</p>
+    <p id="caps" class="caps"></p>
+  </header>
+  <main class="cols">
+    <section class="pane">
+      <label for="msg">Email source</label>
+      <textarea id="msg" spellcheck="false" placeholder="Paste the full message, including headers..."></textarea>
+      <div class="actions">
+        <button id="go">Verify</button>
+        <a href="#" id="example">load example</a>
+      </div>
+    </section>
+    <section class="pane">
+      <p class="colhead">Results</p>
+      <div id="out" class="out"><p class="muted">Results appear here.</p></div>
+    </section>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+# DKIM2 reflector pipe(8) transport. Append this service to /etc/postfix/master.cf.
+#
+# WHY A PIPE TRANSPORT, NOT A local(8) "|command" ALIAS:
+# local(8) prepends a Delivered-To: header to the message before running the
+# alias command. Delivered-To is NOT an IANA trace header (only Received and
+# Return-Path are; Delivered-To is only provisionally registered, RFC 9228), so
+# DKIM2 §5.2 does not exclude it from the header-field hash. The reflector would
+# therefore hash that Delivered-To into its Message-Instance — but the header is
+# renamed (X-Remote-Delivered-To) or dropped before the reply is delivered, so
+# the m= header hash could never be verified by the recipient. pipe(8) does not
+# add Delivered-To. See docs/dkim2-implementer-guide.md ("Postfix Delivered-To").
+#
+# pipe(8) also does not export $SENDER the way local(8) does, so the envelope
+# sender is passed as the ${sender} argv macro (the wrapper also still honours
+# $ENV{SENDER} for legacy/manual use). ${user} is the recipient localpart
+# (e.g. "reflector-both"); the wrapper maps it to the reflect mode.
+#
+# Recipients are routed here by transport_maps and accepted at RCPT via
+# local_recipient_maps — both pointing at hash:/etc/postfix/dkim2-transport.
+# Set "dkim2-reflect_destination_recipient_limit = 1" in main.cf so each
+# recipient gets its own invocation (keeps ${user} unambiguous).
+dkim2-reflect unix  -       n       n       -       -       pipe
+  flags=q user=nobody:nogroup
+  argv=/usr/local/bin/dkim2-reflect ${user} ${sender}
+
+# dkim2-delayedbounce: delivery transport for reflector-delayedbounce@dkim2.com
+# (routed here by deploy/postfix-dkim2-transport... i.e. the dkim2-delayedbounce
+# map). The address is a valid recipient, so Postfix accepts it at RCPT (250);
+# this pipe's delivery agent then always exits with a permanent failure, so
+# Postfix's own bounce(8) originates a DSN, which the outbound milter DKIM2-signs
+# (main.cf: internal_mail_filter_classes = bounce). This is what makes the bounce
+# genuinely *delayed* (async, MTA-generated) rather than a synchronous RCPT 550.
+# Set "dkim2-delayedbounce_destination_recipient_limit = 1" in main.cf.
+dkim2-delayedbounce unix  -     n       n       -       -       pipe
+  flags= user=nobody:nogroup
+  argv=/usr/local/bin/dkim2-delayedbounce-fail

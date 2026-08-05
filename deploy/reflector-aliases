@@ -1,0 +1,34 @@
+# DKIM2 reflector aliases for dkim2.com.
+# Append to /etc/aliases on the server, then run `newaliases`.
+#
+# NOTE: the reflector-{raw,subject,body,both,redacted,damage} addresses are NO
+# LONGER aliases. They are delivered by the dkim2-reflect pipe(8) transport
+# (deploy/postfix-dkim2-reflect.master.cf + deploy/postfix-dkim2-transport),
+# because a local(8) "|command" alias makes Postfix prepend a Delivered-To:
+# header that the reflector would hash into its Message-Instance, breaking
+# verification. See docs/dkim2-implementer-guide.md.
+#
+# reflector-delayedbounce@dkim2.com is a DIFFERENT mechanism again: it is
+# NOT delivered by the dkim2-reflect pipe(8) transport, and it is NOT an
+# alias either. It is routed by the dkim2-delayedbounce map
+# (deploy/postfix-dkim2-delayedbounce) via transport_maps/local_recipient_maps
+# to Postfix's built-in error: transport, which accepts the message at RCPT
+# and then permanently fails it, so Postfix's own bounce(8) originates a real
+# DSN. That DSN is signed on the way out by the outbound DKIM2 milter (see
+# deploy/SERVER.md, "Signing Postfix-generated (delayed) DKIM2 bounces").
+#
+# Only the bounce sink remains an alias. reflector-bounces@dkim2.com is the
+# envelope MAIL FROM on every reflected message; bounces/DSNs for undeliverable
+# replies come back here and are captured to the mbox below.
+
+# Envelope sender of every reflected message. Bounces/DSNs for undeliverable
+# replies come back here; dump them to an mbox so failures are captured for
+# inspection instead of double-bouncing as "unknown user". Postfix delivers to
+# the file as its default_privs user (nobody) and dotlocks it, so the mbox must
+# live in a nobody-writable directory under a world-traversable parent (NOT
+# /var/mail, which nobody can't lock in, and NOT /var/spool/dkim2, which nobody
+# can't traverse). Create it once:
+#   install -d -o nobody -g mail -m 2750 /var/spool/reflector-bounces
+#   install -o nobody -g mail -m 660 /dev/null /var/spool/reflector-bounces/mbox
+# Read it with e.g. `mutt -f /var/spool/reflector-bounces/mbox`.
+reflector-bounces:  /var/spool/reflector-bounces/mbox

@@ -184,8 +184,15 @@ of this automatically — prefer using it over manual compilation.
 The `mf=` tag stores the base64 encoding of whatever was passed. Both `addr_domain()`
 and the local-part comparison must handle both formats.
 
-**Recommendation:** Normalise MAIL FROM to include angle brackets at the point
-of entry (envelope receipt), so the stored form is consistent.
+**Resolution (2026-07):** Per spec §7.5/§7.6, `mf=`/`rt=` MUST carry the bracketed
+RFC5321 path. The C signer now normalizes at encode time — `dkim2_sign.c`'s
+`to_rfc5321_path()` wraps a bare address in `<...>` before base64-encoding
+`mf=` and each `rt=` entry (NULL/empty mail_from becomes `<>`; an already-bracketed
+value passes through unchanged). This makes bare CLI input (e.g. Python-style
+`--mailfrom sender@example.com`) conformant too, so the historical bare-vs-bracketed
+divergence between implementations is closed: all implementations (C, Perl, Python)
+now emit and require bracketed `mf=`/`rt=`. The verifier hard-fails (PERMERROR)
+any present `mf=` or `rt=` entry that isn't bracketed — see note 9 below.
 
 ---
 
@@ -205,6 +212,14 @@ Options:
 
 Python's verifier appears to skip envelope matching entirely when verifying
 stored test emails, as the check is not in the verify path for the test suite.
+
+**Resolution (2026-07):** Independent of the envelope-matching question above,
+`dkim2_verify.c` now enforces the bracketing format of `mf=`/`rt=` themselves
+(spec §7.5/§7.6) regardless of whether envelope data is available to cross-check
+against: in the per-signature loop, a present `mf=` that isn't `<...>`-bracketed,
+or any `rt=` entry that isn't `<...>`-bracketed, is a PERMERROR citing the
+relevant spec section. `<>` (null reverse-path) passes. `nd=` hops carry no
+mf=/rt= and are unaffected.
 
 ---
 
@@ -319,11 +334,122 @@ fully buffered (for hash computation), but the body can be hashed on the fly.
 
 ---
 
+## 15. 8bit DSNs + transport 8→7 conversion break DKIM2 signatures (spec §12)
+
+**Impact:** A DKIM2-signed Delivery Status Notification verifies at the signer
+but FAILS at a receiver reached across a non-8BITMIME hop.
+
+**Detail:** Postfix's `bounce(8)` composes DSNs as **8bit** — the human-readable
+`text/plain` part is `charset=utf-8; Content-Transfer-Encoding: 8bit` by default
+(so the notice can carry non-ASCII addresses/subjects), and that `8bit`
+propagates to the `multipart/report` container and the enclosed `message/rfc822`
+part. This is independent of body content: a pure-ASCII bounce is still declared
+8bit.
+
+When a signer (here, our outbound milter) signs the 8bit DSN and it is then
+relayed to a next hop that does **not** advertise `8BITMIME`, the MTA performs
+an 8bit→7bit MIME conversion, rewriting `Content-Transfer-Encoding: 8bit` →
+`7bit` (and re-encoding the body). That rewrite happens **after** signing, so the
+DKIM2 Message-Instance header hash (which covers `Content-Transfer-Encoding`) no
+longer matches → PERMFAIL header-hash mismatch. Confirmed empirically: delivered
+to an 8BITMIME-advertising sink the DSN verifies `pass`; to a plain sink it
+fails, differing only in that one header.
+
+This is precisely spec **§12 "Preventing Transport Conversions"**: DKIM2 is
+predicated on network-normal input and a transport conversion invalidates the
+signature. It is a general interoperability hazard for *any* DKIM2 signer of
+8bit content, not specific to bounces or to Postfix.
+
+**Resolutions:**
+- **Deployed mitigation (operational):** `disable_mime_output_conversion = yes`
+  in Postfix `main.cf` — stops the 8→7 output conversion so the signed 8bit form
+  survives to any hop. Trade-off: 8bit body sent as-is to non-8BITMIME servers
+  (universally tolerated in practice). See `deploy/postfix-main.cf.patch` /
+  `deploy/SERVER.md`.
+- **Ideal (not readily achievable):** have the DSN generated as **7bit/us-ascii**
+  in the first place, so there is nothing to downgrade. Postfix's `bounce(8)`
+  does not expose a knob to force 7bit DSN notices, so this cannot be done by
+  configuration alone — it would require patching the bounce templates / DSN
+  generation. Recorded as an open interop issue: **a spec-conformant DKIM2
+  signer should either ensure 7bit content or guarantee no downstream transport
+  conversion**, and MTAs that auto-downgrade 8bit are hostile to DKIM2 integrity.
+
+---
+
+## 16. Leading WSP stripped before unfolding, not after (C-specific)
+
+**Symptom:** a real Mailman list message verified in Perl, Python, Go and the
+browser JS verifier but failed `Message-Instance m=2 header hash mismatch` in C.
+
+`canon_header_for_hash()` applied §6.2 step 6 ("delete WSP at the start of the
+value") to the *raw* header bytes, before the unfolding step had run:
+
+```c
+size_t vi = 0;
+while (vi < vl && (v[vi] == ' ' || v[vi] == '\t')) vi++;   /* too early */
+int in_wsp = 0;
+for (size_t i = vi; i < vl; i++) { ... }                   /* unfolds here */
+```
+
+For a header folded *immediately after the colon* — which Gmail and Mailman both
+emit — the value's raw bytes start with CRLF, so the pre-pass finds no leading
+WSP to delete. The collapse loop then skips the CRLF, hits the space that opens
+the continuation line, and emits it, leaving a stray leading SP:
+
+```
+Message-ID:\r\n <x@y>   ->  "message-id: <x@y>"   (wrong)
+                            "message-id:<x@y>"     (Perl/Python/Go/JS)
+```
+
+The message that surfaced it had three such headers (`Message-ID:`,
+`Archived-At:`, `List-Archive:`) of the 17 signed fields, so the hash was wrong
+while every individual field *looked* right in a diff.
+
+**Fix:** start the collapse loop already inside a WSP run (`int in_wsp = 1`), so
+a leading WSP run is swallowed whichever side of the fold it sits on. The
+separate pre-pass is then redundant and was removed. Covered by `test_hash.c`
+(folded-after-colon, with and without a trailing space before the fold).
+
+**Lesson:** ordering matters in the §6.2 step list, and the spec's step order is
+not the only order that "looks" correct — see spec issue **S4**. Any step
+phrased "at the start of the value" must run *after* unfolding, because
+unfolding is what determines where the value starts.
+
+---
+
+## 17. NULL holes in the working header array crash the recipe undo (C-specific)
+
+**Symptom:** SIGSEGV in `strchr` via `headers_for_name()` while undoing a
+Mailman `Message-Instance` recipe. Latent until issue #16 was fixed — the header
+hash mismatch had been short-circuiting before the recipe was ever applied.
+
+`dkim2_apply_header_recipe()` processes each field named in the recipe's `h`
+object in turn. Removing a field's existing instances blanks the slots rather
+than compacting the array (compaction happens once, at the end):
+
+```c
+if (strcmp(tmp, fname) == 0) { free(working[i]); working[i] = NULL; }
+```
+
+The removal loop guards with `if (!working[i]) continue;`, but
+`headers_for_name()` — called for the *next* field in the recipe — did not, and
+dereferenced the hole. So any recipe naming **two or more** header fields, where
+the first-processed one was present in the message, crashed. Single-field
+recipes (all the existing tests) never hit it; Mailman recipes name a dozen
+fields, so real list mail hit it every time.
+
+**Fix:** skip NULL entries in both passes of `headers_for_name()`. Covered by a
+multi-field-recipe case in `test_recipe.c`.
+
+**Lesson:** a sentinel-holes-then-compact array is fine, but *every* reader of
+the array has to know about the holes. Prefer compacting eagerly, or wrap the
+array in an accessor that hides them.
+
 ---
 
 ## Spec Quality Issues
 
-These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-01 that caused
+These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
 implementation mistakes. Recorded here as input for future spec revisions.
 The ratio of genuine spec issues to implementation sloppiness is roughly 4:3 —
 worse than expected for a new protocol seeking broad adoption.
@@ -492,6 +618,9 @@ message, fixed timestamp, known key, showing every intermediate value.
 | 12 | eml_parse whole-file buffering | TODO | Low (performance) |
 | 13 | Perl test keys were ephemeral random | Fixed (static keys from keys/) | Critical for interop |
 | 14 | Folded base64 hash compared as string | Fixed (compare decoded bytes) | High (correctness) |
+| 15 | 8bit DSN downgraded 8→7 breaks signatures | Mitigated (Postfix config) | High (correctness) |
+| 16 | Leading WSP stripped before unfolding | Fixed (`in_wsp = 1`) | Critical for interop |
+| 17 | NULL holes crash multi-field recipe undo | Fixed (skip holes) | Critical (crash) |
 | S1 | Trailing `;` should be normative | Spec issue | Critical for interop |
 | S2 | `ed25519-sha256` prehash semantics unstated | Spec issue | Critical for interop |
 | S3 | §5.2 vs §8.5 WSP rules not cross-referenced | Spec issue | High |

@@ -44,6 +44,7 @@ typedef struct dkim2_sig {
     char *mf;               /* mf= decoded MAIL FROM e.g. "<user@example.com>" */
     char **rt;              /* rt= decoded RCPT TO values (NULL-terminated) */
     char *d;                /* d= signing domain */
+    char *nd;               /* nd= next-domain (draft-04 §8.7); NULL if absent */
     dkim2_sigset_t *ssets;  /* s= signature sets */
     int n_ssets;
     char **flags;           /* f= flags (NULL-terminated) */
@@ -65,6 +66,11 @@ typedef struct dkim2_ctx {
     /* Body hash — computed incrementally, never buffered */
     unsigned char body_digest[DKIM2_HASH_LEN]; /* valid once body_hasher is NULL */
     dkim2_body_hasher_t *body_hasher;           /* non-NULL during body accumulation */
+
+    /* Optional: CRLF-normalised body bytes for full-chain MI hash verification.
+       If NULL, only the topmost MI's body hash is checked (via body_digest). */
+    char *body;
+    size_t body_len;
 
     /* SMTP envelope */
     char *mail_from;        /* "<addr>" with angle brackets */

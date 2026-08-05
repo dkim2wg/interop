@@ -1,0 +1,25 @@
+# /etc/logrotate.d/mailman3 on the dkim2.com server.
+#
+# IMPORTANT: the Mailman 3 core service runs as user `mailman` (see
+# mailman3.service), so the log MUST be created owned by mailman:mailman.
+# The distro default shipped `create 640 list list`, which made mailman.log
+# owned by `list` after the first rotation; the mailman-user service then
+# could not write its log and crash-looped on next start
+# ("PermissionError: /var/log/mailman3/mailman.log"). A second stanza in
+# /etc/logrotate.d/mailman3-fix was ignored as a "duplicate log entry", so the
+# bad default won. Fix: a single correct stanza (this file), and remove
+# mailman3-fix. `su mailman mailman` rotates as the service user; `mailman
+# reopen` makes the running runners reopen the freshly-created log.
+/var/log/mailman3/mailman.log {
+	daily
+	rotate 5
+	compress
+	delaycompress
+	missingok
+	notifempty
+	su mailman mailman
+	create 640 mailman mailman
+	postrotate
+		/opt/mailman/venv/bin/mailman reopen >/dev/null 2>&1 || true
+	endscript
+}

@@ -45,6 +45,9 @@ taglist_t *tagparse(const char *input, const char **errp) {
         if (!e->name || !e->value) { free(e->name); free(e->value); free(e); taglist_free(tl); return NULL; }
         /* Lowercase name in-place */
         for (char *c = e->name; *c; c++) *c = (char)tolower((unsigned char)*c);
+        /* §8: "there MUST be only one of each kind" — flag any repeat. */
+        for (tag_entry_t *o = tl->head; o; o = o->next)
+            if (strcmp(o->name, e->name) == 0) { tl->duplicate = 1; break; }
         *tail = e;
         tail = &e->next;
     }

@@ -1,5 +1,5 @@
 CC      = cc
-CFLAGS  = -std=c11 -Wall -Wextra -g \
+CFLAGS  = -std=c11 -Wall -Wextra -g -MMD -MP \
           $(shell pkg-config --cflags openssl) \
           $(shell PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig pkg-config --cflags libcjson)
 LDFLAGS = $(shell pkg-config --libs openssl) \
@@ -13,10 +13,20 @@ MILTER_DEFS = -DDARWIN=250000 -DBIND_8_COMPAT -DNETINET6
 
 CORE_SRCS = base64.c tagparse.c dkim2_hash.c dkim2_header.c \
             dkim2_recipe.c dkim2_dns.c dkim2_crypto.c \
-            dkim2_sign.c dkim2_verify.c
+            dkim2_sign.c dkim2_verify.c dkim2_message.c
 CORE_OBJS = $(CORE_SRCS:.c=.o)
 
 all: dkim2-milter dkim2sign dkim2verify
+
+# CLIs only (no milter — avoids the libmilter dependency that is usually absent
+# in dev). NOTE: `make test` builds the tests/ binaries but NOT these CLIs, so
+# always run `make tools` (or `make check`) before cross-impl interop testing,
+# otherwise dkim2sign/dkim2verify may be stale relative to the library sources.
+tools: dkim2sign dkim2verify
+
+# Rebuild the CLIs and run the unit tests together — the safe target to use
+# before relying on dkim2sign/dkim2verify for interop checks.
+check: tools test
 
 dkim2-milter: dkim2_milter.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -pthread -o $@ $^ $(MILTER_LIB) $(LDFLAGS)
@@ -52,7 +62,7 @@ tests/test_recipe: tests/test_recipe.c dkim2_recipe.o
 tests/test_crypto: tests/test_crypto.c dkim2_crypto.o base64.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-tests/test_verify: tests/test_verify.c $(CORE_OBJS)
+tests/test_verify: tests/test_verify.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 dkim2sign: dkim2sign_cli.o eml_parse.o $(CORE_OBJS)
@@ -61,5 +71,7 @@ dkim2sign: dkim2sign_cli.o eml_parse.o $(CORE_OBJS)
 dkim2verify: dkim2verify_cli.o eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+-include $(CORE_SRCS:.c=.d) dkim2_milter.d dkim2sign_cli.d dkim2verify_cli.d eml_parse.d
+
 clean:
-	rm -f *.o dkim2-milter dkim2sign dkim2verify $(TESTS)
+	rm -f *.o *.d dkim2-milter dkim2sign dkim2verify $(TESTS)
