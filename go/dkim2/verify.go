@@ -55,7 +55,13 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 	maxMIVersion := 0
 	for _, raw := range miHeaders {
 		mi, err := parseMI(raw)
-		if err == nil && mi.Version > maxMIVersion {
+		if err != nil {
+			// Report the parse failure rather than skipping the header. Skipping
+			// silently lowers the apparent topmost version, which turns the real
+			// defect into a bogus "does not cover topmost MI" complaint below.
+			return nil, fmt.Errorf("Message-Instance: %w", err)
+		}
+		if mi.Version > maxMIVersion {
 			maxMIVersion = mi.Version
 		}
 	}
