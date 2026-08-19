@@ -350,7 +350,7 @@ sub reflect {
     }
 
     # 1. DKIM2 verdict (computed here) + DKIM1 verdict (read from A-R).
-    my $auth = _verify($incoming, $a{pubkey_cb}, $a{skip_timestamp_check});
+    my ($auth, $auth_detail) = _verify($incoming, $a{pubkey_cb}, $a{skip_timestamp_check});
     my $from_domain = _from_domain($incoming);
     my $dkim1_d = _dkim1_aligned($incoming, $from_domain, $a{authserv_id});
     my $dkim1   = $dkim1_d ? 'pass' : 'none';
@@ -387,6 +387,14 @@ sub reflect {
     # 6. Explanation headers (excluded from the DKIM2 header hash by
     #    should_skip(): ^x- and authentication-results). Safe to prepend last.
     my $ar = "Authentication-Results: $a{domain}; dkim2=$auth";
+    if ($auth ne 'pass' && defined $auth_detail && length $auth_detail) {
+        # RFC 8601 lets the result carry a comment.  Flatten to one line and
+        # drop parens/backslashes so the comment stays balanced and parseable.
+        (my $why = $auth_detail) =~ s/[()\\\r\n]+/ /g;
+        $why =~ s/\s+/ /g;
+        $why =~ s/\A\s+|\s+\z//g;
+        $ar .= " ($why)" if length $why;
+    }
     $ar .= "; dkim=pass header.d=$dkim1_d" if $dkim1_d;
     $ar .= "\r\n";
     my $xr = "X-DKIM2-Reflector: mode=$mode; auth=$auth; dkim1=$dkim1; "
@@ -414,6 +422,9 @@ sub reflect {
     };
 }
 
+# Returns ($result, $detail).  The detail explains a non-pass result and is
+# echoed to the sender in Authentication-Results -- for a temperror that is the
+# only way they can tell an unfetchable key from a bad signature.
 sub _verify {
     my ($text, $cb, $skip_ts) = @_;
     my $v = Mail::DKIM2::Verifier->new;
@@ -427,7 +438,7 @@ sub _verify {
         });
     }
     $v->PRINT($text); $v->CLOSE;
-    return $v->result // 'none';
+    return ($v->result // 'none', $v->details);
 }
 
 # Split a message into (headers-without-trailing-CRLF, body).

@@ -443,4 +443,42 @@ for my $m (qw(both subject body)) {
     is(reflected_verifies($ndmsg), 'pass', 'brand-nd: nd= chain verifies');
 }
 
+# --- key fetch temperrors -> reflect UNSIGNED, never drop the message ---------
+#
+# A sender whose chain we cannot verify because of a transient DNS failure must
+# still get their mail back, unsigned.  Previously the croak from the pubkey
+# fetch escaped the verifier and aborted reflect() outright, so every
+# reflector-* address went silent for that sender -- no reply, no bounce.
+#
+# The DKIM1 bridge deliberately does NOT apply here: it is reserved for
+# auth='none' (no DKIM2 chain at all).  A chain we failed to check is not a
+# chain we should vouch for, so basis stays 'none'.
+{
+    my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-raw\@dkim2.com\r\nSubject: hi\r\n\r\noriginal body\r\n");
+
+    my $r = eval {
+        Mail::DKIM2::Reflector::reflect(
+            %common, mode => 'raw', message => $in,
+            pubkey_cb => sub { die "TEMPERROR: DNS lookup failed: SERVFAIL\n" },
+        );
+    };
+    my $err = $@;
+
+    ok($r, 'temperror: reflect() returns a message instead of dying')
+        or diag("reflect died: $err");
+
+  SKIP: {
+        skip 'reflect() died', 6 unless $r;
+        is($r->{auth},   'temperror', 'temperror: auth reported as temperror');
+        is($r->{basis},  'none',      'temperror: no signing basis (DKIM1 bridge not used)');
+        is($r->{signed}, 0,           'temperror: reflected unsigned');
+        like($r->{message}, qr/^X-DKIM2-Reflector:.*auth=temperror.*signed=no/m,
+            'temperror: X-DKIM2-Reflector reports auth=temperror, signed=no');
+        like($r->{message}, qr/^Authentication-Results:.*dkim2=temperror/m,
+            'temperror: A-R reports dkim2=temperror');
+        like($r->{message}, qr/^Authentication-Results:.*dkim2=temperror \([^()]*SERVFAIL[^()]*\)/m,
+            'temperror: A-R carries the reason, with no unbalanced parens');
+    }
+}
+
 done_testing;

@@ -403,24 +403,33 @@ sub _verify_signature {
         my $sig_b64 = $signature->signature_value($idx);
         next unless $sig_b64;
 
-        # Get the public key for this signature item
+        # Get the public key for this signature item.  The fetch is eval'd
+        # whichever way the key is sourced: every real caller (milter,
+        # reflector, validator, CLIs) installs a pubkey callback, and the stock
+        # callbacks end in fetch_public_key(), which dies on transient DNS.
+        # Guarding only the no-callback branch let that croak escape the
+        # verifier and take the caller down with it -- the reflector dropped
+        # the message outright instead of reflecting it unsigned.
         my $pubkey;
-        if ($self->{_pubkey_callback}) {
-            $pubkey = $self->{_pubkey_callback}->($signature, $idx);
-        } else {
-            eval {
-                $pubkey = $signature->fetch_public_key($idx);
-                1;
-            } or do {
-                # A transient DNS failure (fetch_public_key dies) is a
-                # TEMPERROR per spec-04 §10 — retryable, not a permanent
-                # "no verifiable signature items".
-                my $sel = $signature->selector($idx) // '?';
-                (my $why = $@) =~ s/\s+\z//;
-                $self->{result}  = 'temperror';
-                $self->{details} = "DKIM2-Signature i=$i public key $sel could not be fetched ($why)";
-                return 0;
-            };
+        my $fetched = eval {
+            $pubkey = $self->{_pubkey_callback}
+                ? $self->{_pubkey_callback}->($signature, $idx)
+                : $signature->fetch_public_key($idx);
+            1;
+        };
+        unless ($fetched) {
+            # A transient DNS failure is a TEMPERROR per spec-04 §10 —
+            # retryable, not a permanent "no verifiable signature items", and
+            # emphatically not a 'fail', which reads as a forged signature.
+            my $sel = $signature->selector($idx) // '?';
+            # Drop croak's " at FILE line N." tail: this reason is reported in
+            # Authentication-Results on mail we send out, and our source paths
+            # are nobody else's business.
+            (my $why = $@) =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*\z//;
+            $why =~ s/\s+\z//;
+            $self->{result}  = 'temperror';
+            $self->{details} = "DKIM2-Signature i=$i public key $sel could not be fetched ($why)";
+            return 0;
         }
 
         unless ($pubkey) {
@@ -554,6 +563,15 @@ sub result_detail {
     return $result;
 }
 
+# The bare reason for the result, with no result word wrapped around it.
+# result_detail() is the display form ("temperror (...)"); callers that embed
+# the reason in a report of their own -- an Authentication-Results comment, say
+# -- want this one, or they end up saying the result twice.
+sub details {
+    my $self = shift;
+    return $self->{details};
+}
+
 1;
 
 __END__
@@ -630,6 +648,13 @@ Returns the verification result string:
 
 Returns the result with additional detail, e.g.
 C<"pass (i=1..3 verified)">.
+
+=head2 details()
+
+Returns just the reason, without the result wrapped around it, e.g.
+C<"i=1..3 verified"> — or undef when there is no further detail.  Use this
+rather than C<result_detail()> when embedding the reason in a report that
+already states the result, such as an C<Authentication-Results> comment.
 
 =head1 VERIFICATION PROCESS
 
