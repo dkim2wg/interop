@@ -112,11 +112,24 @@ sub nonce {
     return $self->get_tag('n');
 }
 
+# spec-04 §2.12: folding whitespace may appear anywhere inside a tag value and
+# "MUST be ignored when the value is used".  DKIM2 tag values are base64,
+# tokens, digits or domains and never carry significant internal whitespace, so
+# any WSP present came from a fold.  TagValueList::parse only trims the ends of
+# the whole value, which leaves a fold inside a comma-separated list glued to
+# the item that follows it -- so strip per item, before splitting on ':'.
+sub _strip_fws {
+    my ($v) = @_;
+    return $v unless defined $v;
+    $v =~ s/[ \t\r\n]//g;
+    return $v;
+}
+
 sub flags {
     my $self = shift;
     my $f = $self->get_tag('f');
     return unless defined $f;
-    return [split /,/, $f];
+    return [grep { length } map { _strip_fws($_) } split /,/, $f];
 }
 
 sub signatures_data {
@@ -124,9 +137,15 @@ sub signatures_data {
     my $s = $self->get_tag('s');
     return unless defined $s && length $s;
     # Parse sel:alg:sig,sel2:alg2:sig2,...
+    #
+    # Strip FWS from each item *before* splitting on ':'.  A fold landing right
+    # after the comma would otherwise become part of the next item's selector,
+    # sending the public-key lookup out for "\tsel2._domainkey.example.com"
+    # (SERVFAIL).  Folds inside the base64 signature value and around the item's
+    # colons are handled by the same strip.
     my @items;
     for my $part (split /,/, $s) {
-        push @items, [split(/:/, $part, 3)];
+        push @items, [split(/:/, _strip_fws($part), 3)];
     }
     return \@items;
 }
