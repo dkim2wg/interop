@@ -19,6 +19,7 @@ use lib 't/lib';
 
 use Mail::DKIM2::Common qw(fold_header);
 use Mail::DKIM2::MessageInstance;
+use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 use DKIM2TestKeys;
@@ -118,5 +119,44 @@ for my $case (@cases) {
 
 my ($ra, $da) = verify_result($all);
 is($ra, 'pass', "every fold point at once still verifies ($da)");
+
+# --- Multi-item lists folded at the comma (spec-04 §2.12) -------------------
+#
+# The cases above all use a single-key s=, so the value never contains a comma
+# and a fold can only land inside an item.  A signer with two keys emits
+# "sel1:alg1:sig1,sel2:alg2:sig2", and folding at 72 characters readily puts
+# the CRLF+WSP immediately after the comma -- observed in the wild from
+# roessner.email.  Splitting on ',' without stripping FWS then glues the fold
+# onto the *next* item's selector, and the public-key DNS lookup goes out for
+# "\te01465a...._domainkey.roessner.email", which SERVFAILs.
+#
+# Only the first item is safe, because it directly follows "s=".
+my $vis = sub {
+    my $s = shift // '(undef)';
+    $s =~ s/([^\x20-\x7e])/sprintf('<%02X>', ord $1)/ge;
+    return $s;
+};
+
+{
+    my $sig = Mail::DKIM2::Signature->parse(
+        "DKIM2-Signature: i=1;\r\n\tm=1;\r\n\td=example.com;\r\n"
+      . "\ts=sel1:rsa-sha256:AAAA,\r\n\tsel2:ed25519-sha256:BBBB;\r\n");
+
+    my $items = $sig->signatures_data;
+    is(scalar @$items, 2, 's= with two items parses as two items');
+
+    is($vis->($items->[0][0]), 'sel1', 'item 0 selector has no FWS');
+    is($vis->($items->[1][0]), 'sel2', 'item 1 selector has no FWS (fold after comma)');
+    is($vis->($items->[1][1]), 'ed25519-sha256', 'item 1 algorithm has no FWS');
+    is($vis->($items->[1][2]), 'BBBB', 'item 1 signature value has no FWS');
+}
+
+{
+    my $sig = Mail::DKIM2::Signature->parse(
+        "DKIM2-Signature: i=1;\r\n\tf=aaa,\r\n\tbbb;\r\n");
+    my $flags = $sig->flags;
+    is($vis->($flags->[0]), 'aaa', 'f= flag 0 has no FWS');
+    is($vis->($flags->[1]), 'bbb', 'f= flag 1 has no FWS (fold after comma)');
+}
 
 done_testing();
