@@ -84,6 +84,64 @@
       </ul>
     </section>
 
+    <section id="other-implementations">
+      <h2>Other DKIM2 implementations</h2>
+      <p>DKIM2 is being built independently in several places. These are the
+        efforts we know of beyond this host:</p>
+      <table>
+        <thead>
+          <tr><th>Implementation</th><th>By</th><th>Language</th><th>What it does</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/croessner/dkim2">croessner/dkim2</a></td>
+            <td>Christian R&ouml;&szlig;ner</td>
+            <td>Go</td>
+            <td>A <code>dkim2d</code> daemon, a milter, and an Exim
+              <code>local_scan</code>; signs and verifies. Apache-2.0</td>
+          </tr>
+          <tr>
+            <td><a href="https://forge.turscar.ie/turscar/dkim2">go.turscar.ie/dkim2</a></td>
+            <td>Steve Atkins</td>
+            <td>Go</td>
+            <td>A library, plus <code>dkim2sign</code>, <code>dkim2verify</code> and
+              <code>dkim2explain</code> command-line tools. BSD-2-Clause</td>
+          </tr>
+          <tr>
+            <td><a href="https://forge.turscar.ie/turscar/dkim2tests">turscar/dkim2tests</a></td>
+            <td>Steve Atkins</td>
+            <td>&mdash;</td>
+            <td>Conformance test vectors &mdash; the set every verifier in this
+              project is run against. BSD-2-Clause</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/stalwartlabs/mail-auth">mail-auth</a></td>
+            <td>Stalwart Labs</td>
+            <td>Rust</td>
+            <td>A library: Ed25519 and RSA signing with chain verification, and
+              several selectors in one signature. Apache-2.0 or MIT</td>
+          </tr>
+          <tr>
+            <td><a href="https://tools.socketlabs.com/dkim2/verify">SocketLabs DKIM2 verify</a></td>
+            <td>SocketLabs</td>
+            <td>hosted</td>
+            <td>A verifier, in the browser and over a JSON API. Also reachable
+              as <code>dkim2.net</code></td>
+          </tr>
+          <tr>
+            <td><a href="https://dkim2.eu/">dkim2.eu</a></td>
+            <td>operator not stated</td>
+            <td>hosted</td>
+            <td>A validator and explainer, with its own list of
+              implementations</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><small>As observed in August 2026. Working on a DKIM2 implementation
+        that belongs here, or spotted something wrong about yours? Please
+        <a href="https://github.com/dkim2wg/interop">let us know</a>.</small></p>
+    </section>
+
     <section>
       <h2>Try it: reflector addresses</h2>
       <p>Addresses on this host let you watch DKIM2 behaviour end-to-end, in
