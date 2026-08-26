@@ -26,6 +26,9 @@ Writes:
   positive-control-two-selectors.eml -- s= has one algorithm twice with
                                          DISTINCT selectors (sel1, sel2);
                                          §8.9 explicitly permits this
+  positive-control-bottom-recipe.eml -- m=1 (bottom) Message-Instance
+                                         carries a VALID r= Recipe; §9.1
+                                         explicitly permits this
 """
 import base64
 import os
@@ -183,12 +186,38 @@ def build_positive_control():
     return assemble(sig_hdr, mi_hdr, headers, body)
 
 
+def build_positive_bottom_recipe():
+    """POSITIVE CONTROL: the m=1 (bottom) Message-Instance carries a VALID
+    r= Recipe. spec-05 §9.1 explicitly permits this ("if it is wished to
+    record any changes made to a message as it enters the DKIM2 ecosystem"),
+    e.g. an origin MSA stripping a header before the message ever entered
+    the DKIM2 chain. This never gets "undone" -- there is no earlier state
+    for the bottom instance to reconstruct -- but its r= MUST still parse as
+    valid base64 + valid JSON like any other instance's (Task 18 widened the
+    C and JS verifiers to check the bottom MI's r= too, since it used to be
+    skipped entirely, gated the same as the -- inapplicable here -- undo
+    step). A verifier that got that widening wrong (e.g. by requiring an
+    undo that cannot exist at m=1) would newly reject this otherwise
+    completely conformant message. MUST be accepted."""
+    headers, body = load_base()
+    recipe = {"h": {"x-original-to": []}}
+    mi_hdr = ds.build_message_instance(
+        headers, body, version=1, algs=["sha256"], recipe=recipe)
+    priv, alg = ds.load_private_key(key("sel1"))
+    sig_hdr = ds.build_dkim2_signature(
+        [], [], mi_hdr, DOM, "sel1", priv, alg,
+        mailfrom=MF, rcptto=RT, seq=1, mi_version=1, timestamp=TS,
+    )
+    return assemble(sig_hdr, mi_hdr, headers, body)
+
+
 FIXTURES = {
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
     "too-many-signatures.eml": build_too_many,
     "malformed-json-r.eml": build_malformed_json,
     "positive-control-two-selectors.eml": build_positive_control,
+    "positive-control-bottom-recipe.eml": build_positive_bottom_recipe,
 }
 
 

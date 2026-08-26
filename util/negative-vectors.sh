@@ -32,7 +32,7 @@ cd "$root"
 # dropped -- a runner that quietly covers less than it claims is worse than
 # no runner, because it still reads as proof.
 NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml"
-POS_VECTORS="positive-control-two-selectors.eml"
+POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml"
 VERIFIERS="python go c perl js"
 n_vectors=0;   for _f in $NEG_VECTORS $POS_VECTORS; do n_vectors=$((n_vectors + 1));     done
 n_verifiers=0; for _v in $VERIFIERS;                 do n_verifiers=$((n_verifiers + 1)); done
