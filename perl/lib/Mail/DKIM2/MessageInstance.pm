@@ -280,9 +280,9 @@ sub parse {
                 }
                 $self->{bits}{rh} = \%rh;
             } else {
-                # draft-04 §5.1 removed the null header Recipe: a present "h"
+                # spec-05 §5.1 disallows the null header Recipe: a present "h"
                 # MUST be a non-empty object. Reject anything else.
-                die "header recipe is null: not permitted under draft-04 \xA75.1\n";
+                die "header recipe is null: not permitted under draft-05 §5.1\n";
             }
         }
     }

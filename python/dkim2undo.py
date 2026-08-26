@@ -319,13 +319,13 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
             print(f"  v={version}: applying recipes", file=sys.stderr)
 
         # Apply header Recipes
-        # draft-04 §5.1 removed the null header Recipe: a present "h" that is
-        # null is now a syntax error (distinct from an absent "h", which means
+        # spec-05 §5.1 disallows the null header Recipe: a present "h" that is
+        # null is a syntax error (distinct from an absent "h", which means
         # the header fields were unchanged).
         if "h" in recipes and recipes["h"] is None:
             raise ValueError(
                 f"v={version}: header recipes are null — "
-                f"not permitted under draft-04 §5.1"
+                f"not permitted under draft-05 §5.1"
             )
         h_recipes = recipes.get("h")
         if h_recipes is not None:
