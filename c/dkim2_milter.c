@@ -126,8 +126,9 @@ static sfsistat cb_eom(SMFICTX *ctx) {
     dkim2_ctx_t *c = &s->ctx;
     char ar_value[1024];
 
-    /* Finalise body digest — no body buffer needed beyond this point */
-    if (dkim2_body_hasher_final(c->body_hasher, c->body_digest) < 0)
+    /* Finalise body digests (every implemented algorithm) — no body buffer
+       needed beyond this point */
+    if (dkim2_body_hasher_final_all(c->body_hasher, &c->body_digests) < 0)
         return SMFIS_TEMPFAIL;
     dkim2_body_hasher_free(c->body_hasher);
     c->body_hasher = NULL;

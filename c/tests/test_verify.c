@@ -52,7 +52,7 @@ static int sign_test_message(
     memset(&ctx, 0, sizeof ctx);
     ctx.headers = (char **)raw_hdrs;
     ctx.n_headers = n_hdrs;
-    dkim2_body_hash_raw(body, strlen(body), ctx.body_digest);
+    dkim2_body_hash_raw(body, strlen(body), ctx.body_digests.d[0]);
     ctx.mail_from = (char *)mail_from;
     ctx.rcpt_to = rcpts;
     dkim2_sign_config_t cfg = {
@@ -85,7 +85,7 @@ static void verify_test_message_full(
 
     vctx.headers = all_hdrs;
     vctx.n_headers = n_raw_hdrs + 2;
-    dkim2_body_hash_raw(body, strlen(body), vctx.body_digest);
+    dkim2_body_hash_raw(body, strlen(body), vctx.body_digests.d[0]);
     vctx.mail_from = (char *)mail_from;
     vctx.rcpt_to = rcpts;
     vctx.mi_list = dkim2_mi_parse(mi_val);
@@ -211,7 +211,7 @@ int main(void) {
     dkim2_ctx_t ctx2;
     memset(&ctx2, 0, sizeof ctx2);
     ctx2.headers = (char **)raw_headers; ctx2.n_headers = 3;
-    dkim2_body_hash_raw(body, strlen(body), ctx2.body_digest);
+    dkim2_body_hash_raw(body, strlen(body), ctx2.body_digests.d[0]);
     ctx2.mail_from = (char *)mail_from; ctx2.rcpt_to = rcpts;
     dkim2_do_sign(&ctx2, &cfg2, &mi2, &sig2);
     g_dns_txt = orig_dns;
@@ -231,7 +231,7 @@ int main(void) {
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
         vctx.headers = (char **)raw_headers; vctx.n_headers = 3;
-        dkim2_body_hash_raw(body, strlen(body), vctx.body_digest);
+        dkim2_body_hash_raw(body, strlen(body), vctx.body_digests.d[0]);
         vctx.mail_from = (char *)mail_from; vctx.rcpt_to = rcpts;
         vctx.mi_list = NULL; vctx.sig_list = NULL;
         dkim2_verify_result_t res;
@@ -244,7 +244,7 @@ int main(void) {
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
         vctx.headers = (char **)raw_headers; vctx.n_headers = 3;
-        dkim2_body_hash_raw(body, strlen(body), vctx.body_digest);
+        dkim2_body_hash_raw(body, strlen(body), vctx.body_digests.d[0]);
         vctx.mail_from = (char *)mail_from; vctx.rcpt_to = rcpts;
         vctx.mi_list = NULL; /* no MI */
         vctx.sig_list = dkim2_sig_parse(sig_val);
@@ -306,7 +306,7 @@ int main(void) {
         all_hdrs[4] = sig_hdr;
         vctx.headers = all_hdrs;
         vctx.n_headers = 5;
-        dkim2_body_hash_raw(body, strlen(body), vctx.body_digest);
+        dkim2_body_hash_raw(body, strlen(body), vctx.body_digests.d[0]);
         vctx.mail_from = (char *)mail_from;
         vctx.rcpt_to = rcpts;
         vctx.mi_list = dkim2_mi_parse(mi_val);
@@ -443,7 +443,7 @@ int main(void) {
         memset(&ctx2, 0, sizeof ctx2);
         ctx2.headers = (char **)raw_headers;
         ctx2.n_headers = 3;
-        dkim2_body_hash_raw(body, strlen(body), ctx2.body_digest);
+        dkim2_body_hash_raw(body, strlen(body), ctx2.body_digests.d[0]);
         char *hop2_mail_from = "<recipient@example.com>";
         char *hop2_rcpts[] = { "<dest@example.com>", NULL };
         ctx2.mail_from = hop2_mail_from;
@@ -507,7 +507,7 @@ int main(void) {
         memset(&ctx2, 0, sizeof ctx2);
         ctx2.headers = (char **)raw_headers;
         ctx2.n_headers = 3;
-        dkim2_body_hash_raw(body, strlen(body), ctx2.body_digest);
+        dkim2_body_hash_raw(body, strlen(body), ctx2.body_digests.d[0]);
         char *hop2_mail_from = "<attacker@example.com>"; /* not covered by hop1's sub.example.com rt= */
         char *hop2_rcpts[] = { "<final@example.com>", NULL };
         ctx2.mail_from = hop2_mail_from;

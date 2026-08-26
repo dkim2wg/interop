@@ -63,12 +63,13 @@ typedef struct dkim2_ctx {
     dkim2_mi_t  *mi_list;   /* ascending m= order */
     dkim2_sig_t *sig_list;  /* ascending i= order */
 
-    /* Body hash — computed incrementally, never buffered */
-    unsigned char body_digest[DKIM2_HASH_LEN]; /* valid once body_hasher is NULL */
+    /* Body hash — computed incrementally, never buffered.
+       Holds every implemented algorithm's digest (spec-05 §3.1). */
+    dkim2_digests_t body_digests;               /* valid once body_hasher is NULL */
     dkim2_body_hasher_t *body_hasher;           /* non-NULL during body accumulation */
 
     /* Optional: CRLF-normalised body bytes for full-chain MI hash verification.
-       If NULL, only the topmost MI's body hash is checked (via body_digest). */
+       If NULL, only the topmost MI's body hash is checked (via body_digests). */
     char *body;
     size_t body_len;
 

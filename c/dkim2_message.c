@@ -57,7 +57,7 @@ int dkim2_sign_message(const char *eml_path, FILE *out,
     int n_headers = 0;
     dkim2_ctx_t ctx = {0};
 
-    if (eml_parse(eml_path, &headers, &n_headers, ctx.body_digest) < 0) {
+    if (eml_parse(eml_path, &headers, &n_headers, &ctx.body_digests) < 0) {
         snprintf(errbuf, errbufsz, "failed to parse %s", eml_path);
         return -1;
     }
@@ -107,7 +107,7 @@ dkim2_verify_result_t dkim2_verify_message(const char *eml_path,
     dkim2_ctx_t ctx = {0};
 
     if (eml_parse_with_body(eml_path, &headers, &n_headers,
-                             ctx.body_digest, &ctx.body, &ctx.body_len) < 0)
+                             &ctx.body_digests, &ctx.body, &ctx.body_len) < 0)
         return result;
 
     ctx.headers              = headers;

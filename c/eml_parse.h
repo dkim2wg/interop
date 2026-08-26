@@ -8,17 +8,18 @@
 
    *headers_out: array of malloc'd "Name: value\r\n" logical header strings.
    *n_headers_out: number of entries.
-   body_digest_out: SHA-256 body digest per §5.1 (written on return).
+   body_digests_out: body digest per §5.1 for every implemented algorithm
+   (spec-05 §3.1), written on return.
    Returns 0 on success, -1 on error. Caller frees headers with eml_free(). */
 int eml_parse(const char *path,
               char ***headers_out, int *n_headers_out,
-              unsigned char body_digest_out[DKIM2_HASH_LEN]);
+              dkim2_digests_t *body_digests_out);
 
 /* Like eml_parse but also returns the CRLF-normalised body bytes.
    *body_out is malloc'd; caller frees. body_len_out is the byte count. */
 int eml_parse_with_body(const char *path,
                         char ***headers_out, int *n_headers_out,
-                        unsigned char body_digest_out[DKIM2_HASH_LEN],
+                        dkim2_digests_t *body_digests_out,
                         char **body_out, size_t *body_len_out);
 
 /* Stream the body portion of path (CRLF-normalised) to out.

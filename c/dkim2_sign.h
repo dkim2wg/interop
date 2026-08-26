@@ -7,6 +7,7 @@ typedef struct {
     char *privkey_path;     /* path to PEM private key file */
     char *alg;              /* "rsa-sha256" or "ed25519-sha256"; NULL = auto-detect from key */
     uint64_t timestamp;     /* t= unix timestamp; 0 = use current time */
+    const char *hash;       /* spec-05 §3.1: "sha256" (default when NULL), "sha512", or "both" */
 } dkim2_sign_config_t;
 
 /* Sign the message in ctx.

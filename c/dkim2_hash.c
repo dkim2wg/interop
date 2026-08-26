@@ -1,16 +1,40 @@
 #include "dkim2_hash.h"
 #include "base64.h"
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <openssl/evp.h>
 
-#define SHA256_DIGEST_LEN DKIM2_HASH_LEN
+/* spec-05 §3.1: implemented hash algorithms, in wire/index order. */
+static const struct {
+    const char *name;
+    const EVP_MD *(*md)(void);
+    size_t len;
+} HASH_ALGS[DKIM2_N_HASH_ALGS] = {
+    { "sha256", EVP_sha256, 32 },
+    { "sha512", EVP_sha512, 64 },
+};
+
+int dkim2_hash_alg_index(const char *name) {
+    if (!name) return -1;
+    for (int i = 0; i < DKIM2_N_HASH_ALGS; i++)
+        if (strcasecmp(name, HASH_ALGS[i].name) == 0) return i;
+    return -1;
+}
+
+const char *dkim2_hash_alg_name(int idx) {
+    return (idx >= 0 && idx < DKIM2_N_HASH_ALGS) ? HASH_ALGS[idx].name : NULL;
+}
+
+size_t dkim2_hash_alg_len(int idx) {
+    return (idx >= 0 && idx < DKIM2_N_HASH_ALGS) ? HASH_ALGS[idx].len : 0;
+}
 
 /* ── Streaming body hasher ──────────────────────────────────────────────── */
 
 struct dkim2_body_hasher {
-    EVP_MD_CTX *md_ctx;
+    EVP_MD_CTX *md_ctx[DKIM2_N_HASH_ALGS];
     int pending_crlfs;  /* trailing \r\n pairs held back (not yet hashed) */
     int prev_was_cr;    /* last byte fed was a bare \r (cross-chunk state) */
 };
@@ -18,17 +42,21 @@ struct dkim2_body_hasher {
 dkim2_body_hasher_t *dkim2_body_hasher_new(void) {
     dkim2_body_hasher_t *bh = calloc(1, sizeof *bh);
     if (!bh) return NULL;
-    bh->md_ctx = EVP_MD_CTX_new();
-    if (!bh->md_ctx) { free(bh); return NULL; }
-    if (EVP_DigestInit_ex(bh->md_ctx, EVP_sha256(), NULL) != 1) {
-        EVP_MD_CTX_free(bh->md_ctx); free(bh); return NULL;
+    for (int i = 0; i < DKIM2_N_HASH_ALGS; i++) {
+        bh->md_ctx[i] = EVP_MD_CTX_new();
+        if (!bh->md_ctx[i] || EVP_DigestInit_ex(bh->md_ctx[i], HASH_ALGS[i].md(), NULL) != 1) {
+            for (int j = 0; j <= i; j++) EVP_MD_CTX_free(bh->md_ctx[j]);
+            free(bh);
+            return NULL;
+        }
     }
     return bh;
 }
 
 static void flush_pending(dkim2_body_hasher_t *bh) {
     while (bh->pending_crlfs > 0) {
-        EVP_DigestUpdate(bh->md_ctx, "\r\n", 2);
+        for (int i = 0; i < DKIM2_N_HASH_ALGS; i++)
+            EVP_DigestUpdate(bh->md_ctx[i], "\r\n", 2);
         bh->pending_crlfs--;
     }
 }
@@ -47,7 +75,8 @@ int dkim2_body_hasher_update(dkim2_body_hasher_t *bh,
             }
             /* Bare \r: normalise to \r\n, emit as a line terminator */
             flush_pending(bh);
-            EVP_DigestUpdate(bh->md_ctx, "\r\n", 2);
+            for (int k = 0; k < DKIM2_N_HASH_ALGS; k++)
+                EVP_DigestUpdate(bh->md_ctx[k], "\r\n", 2);
             /* data[i] is unprocessed non-\n; fall through */
         }
 
@@ -58,7 +87,8 @@ int dkim2_body_hasher_update(dkim2_body_hasher_t *bh,
         if (j > i) {
             /* Real content: flush held-back CRLFs then emit content */
             flush_pending(bh);
-            EVP_DigestUpdate(bh->md_ctx, data + i, j - i);
+            for (int k = 0; k < DKIM2_N_HASH_ALGS; k++)
+                EVP_DigestUpdate(bh->md_ctx[k], data + i, j - i);
             i = j;
         } else if (data[i] == '\r') {
             bh->prev_was_cr = 1;
@@ -71,38 +101,50 @@ int dkim2_body_hasher_update(dkim2_body_hasher_t *bh,
     return 0;
 }
 
-int dkim2_body_hasher_final(dkim2_body_hasher_t *bh,
-                            unsigned char digest[DKIM2_HASH_LEN]) {
+int dkim2_body_hasher_final_all(dkim2_body_hasher_t *bh, dkim2_digests_t *out) {
     /* A trailing bare \r counts as one empty line (normalised to \r\n) */
     if (bh->prev_was_cr) bh->pending_crlfs++;
     /* Discard all trailing empty lines; add exactly one canonical CRLF */
-    EVP_DigestUpdate(bh->md_ctx, "\r\n", 2);
-    unsigned int dlen = DKIM2_HASH_LEN;
-    return EVP_DigestFinal_ex(bh->md_ctx, digest, &dlen) == 1 ? 0 : -1;
+    for (int i = 0; i < DKIM2_N_HASH_ALGS; i++) {
+        EVP_DigestUpdate(bh->md_ctx[i], "\r\n", 2);
+        unsigned int dlen = (unsigned int)HASH_ALGS[i].len;
+        if (EVP_DigestFinal_ex(bh->md_ctx[i], out->d[i], &dlen) != 1) return -1;
+    }
+    return 0;
+}
+
+int dkim2_body_hasher_final(dkim2_body_hasher_t *bh,
+                            unsigned char digest[DKIM2_HASH_LEN]) {
+    dkim2_digests_t all;
+    if (dkim2_body_hasher_final_all(bh, &all) < 0) return -1;
+    memcpy(digest, all.d[0], DKIM2_HASH_LEN);
+    return 0;
 }
 
 void dkim2_body_hasher_free(dkim2_body_hasher_t *bh) {
     if (!bh) return;
-    EVP_MD_CTX_free(bh->md_ctx);
+    for (int i = 0; i < DKIM2_N_HASH_ALGS; i++)
+        EVP_MD_CTX_free(bh->md_ctx[i]);
     free(bh);
 }
 
-static int sha256_buf(const void **parts, const size_t *lens, int nparts,
-                      unsigned char digest[SHA256_DIGEST_LEN]) {
+static int digest_buf(const void **parts, const size_t *lens, int nparts, int alg,
+                      unsigned char *digest) {
+    if (alg < 0 || alg >= DKIM2_N_HASH_ALGS) return -1;
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     if (!ctx) return -1;
-    int ok = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
+    int ok = EVP_DigestInit_ex(ctx, HASH_ALGS[alg].md(), NULL);
     for (int i = 0; i < nparts && ok; i++)
         ok = EVP_DigestUpdate(ctx, parts[i], lens[i]);
-    unsigned int dlen = SHA256_DIGEST_LEN;
+    unsigned int dlen = (unsigned int)HASH_ALGS[alg].len;
     if (ok) ok = EVP_DigestFinal_ex(ctx, digest, &dlen);
     EVP_MD_CTX_free(ctx);
     return ok ? 0 : -1;
 }
 
-/* §5.1: strip all trailing empty lines (\r\n), ensure one trailing \r\n, SHA256 */
-int dkim2_body_hash_raw(const char *body, size_t bodylen,
-                        unsigned char digest[DKIM2_HASH_LEN]) {
+/* §5.1: strip all trailing empty lines (\r\n), ensure one trailing \r\n, then hash */
+int dkim2_body_hash_raw_alg(const char *body, size_t bodylen, int alg,
+                            unsigned char *digest) {
     const char *end = body + bodylen;
     while (end >= body + 2 && end[-2] == '\r' && end[-1] == '\n')
         end -= 2;
@@ -111,7 +153,12 @@ int dkim2_body_hash_raw(const char *body, size_t bodylen,
     const void *parts[2] = { body, "\r\n" };
     size_t  lens[2]      = { clen,    2   };
     int start = clen > 0 ? 0 : 1;
-    return sha256_buf(parts + start, lens + start, 2 - start, digest);
+    return digest_buf(parts + start, lens + start, 2 - start, alg, digest);
+}
+
+int dkim2_body_hash_raw(const char *body, size_t bodylen,
+                        unsigned char digest[DKIM2_HASH_LEN]) {
+    return dkim2_body_hash_raw_alg(body, bodylen, 0, digest);
 }
 
 int dkim2_body_hash(const char *body, size_t bodylen, char *out, size_t outlen) {
@@ -213,8 +260,10 @@ static char *canon_header_for_hash(const char *hdr) {
 }
 
 /* §5.2 header hash — raw digest */
-int dkim2_header_hash_raw(const char **headers, int n_headers,
-                          unsigned char digest[DKIM2_HASH_LEN]) {
+int dkim2_header_hash_raw_alg(const char **headers, int n_headers, int alg,
+                              unsigned char *digest) {
+    if (alg < 0 || alg >= DKIM2_N_HASH_ALGS) return -1;
+
     /* Process in reverse order (bottom-up per §5.2), then stable-sort alphabetically.
        Reversing first ensures same-name headers appear in bottom-up order after sort. */
     char **canon = calloc((size_t)n_headers, sizeof(char *));
@@ -250,17 +299,22 @@ int dkim2_header_hash_raw(const char **headers, int n_headers,
 
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (!mdctx) { for (int i = 0; i < nc; i++) free(canon[i]); free(canon); return -1; }
-    EVP_DigestInit_ex(mdctx, EVP_sha256(), NULL);
+    EVP_DigestInit_ex(mdctx, HASH_ALGS[alg].md(), NULL);
     for (int i = 0; i < nc; i++) {
         EVP_DigestUpdate(mdctx, canon[i], strlen(canon[i]));
         free(canon[i]);
     }
     free(canon);
 
-    unsigned int dlen = DKIM2_HASH_LEN;
+    unsigned int dlen = (unsigned int)HASH_ALGS[alg].len;
     EVP_DigestFinal_ex(mdctx, digest, &dlen);
     EVP_MD_CTX_free(mdctx);
     return 0;
+}
+
+int dkim2_header_hash_raw(const char **headers, int n_headers,
+                          unsigned char digest[DKIM2_HASH_LEN]) {
+    return dkim2_header_hash_raw_alg(headers, n_headers, 0, digest);
 }
 
 int dkim2_header_hash(const char **headers, int n_headers, char *out, size_t outlen) {

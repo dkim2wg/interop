@@ -7,7 +7,8 @@
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s <email.eml> -s SELECTOR -d DOMAIN -k KEYFILE\n"
-        "       [--mailfrom ADDR] [--rcptto ADDR]... [--timestamp N]\n",
+        "       [--mailfrom ADDR] [--rcptto ADDR]... [--timestamp N]\n"
+        "       [--hash sha256|sha512|both]\n",
         prog);
     exit(1);
 }
@@ -23,6 +24,7 @@ int main(int argc, char *argv[]) {
     char *rcptto[64];
     int n_rcpt = 0;
     long long timestamp = -1;
+    const char *hash = NULL;
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc)
@@ -37,7 +39,14 @@ int main(int argc, char *argv[]) {
             if (n_rcpt < 63) rcptto[n_rcpt++] = argv[++i];
         } else if (strcmp(argv[i], "--timestamp") == 0 && i + 1 < argc)
             timestamp = atoll(argv[++i]);
-        else { fprintf(stderr, "Unknown option: %s\n", argv[i]); usage(argv[0]); }
+        else if (strcmp(argv[i], "--hash") == 0 && i + 1 < argc) {
+            hash = argv[++i];
+            if (strcmp(hash, "sha256") != 0 && strcmp(hash, "sha512") != 0 &&
+                strcmp(hash, "both") != 0) {
+                fprintf(stderr, "--hash must be sha256, sha512, or both\n");
+                usage(argv[0]);
+            }
+        } else { fprintf(stderr, "Unknown option: %s\n", argv[i]); usage(argv[0]); }
     }
 
     if (!selector || !domain || !keyfile) {
@@ -51,6 +60,7 @@ int main(int argc, char *argv[]) {
         .privkey_path = (char *)keyfile,
         .alg          = NULL,
         .timestamp    = (timestamp >= 0) ? (uint64_t)timestamp : 0,
+        .hash         = hash,
     };
     rcptto[n_rcpt] = NULL;
 
