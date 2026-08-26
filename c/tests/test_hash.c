@@ -95,6 +95,47 @@ int main(void) {
     assert(strcmp(hg, hh) == 0);
     assert(strcmp(hi, hh) == 0);
 
+    /* spec-05 §4: HDRMAINT-survey names are unsigned */
+    const char *hdrs_05[] = {
+        "From: sender@example.com\r\n",
+        "Subject: Test\r\n",
+        "Apparently-To: a@example.com\r\n",
+        "Auto-Submitted: auto-replied\r\n",
+        "DL-Expansion-History: x\r\n",
+        "Original-Recipient: rfc822;a@example.com\r\n",
+        "SIO-Label-History: x\r\n",
+        "VBR-Info: md=example.com\r\n",
+        "X400-Received: x\r\n",
+        "X400-Trace: x\r\n",
+        "Received-SPF: pass\r\n",
+        "Received-Anything: x\r\n",
+    };
+    char h05[64];
+    assert(dkim2_header_hash(hdrs_05, 12, h05, sizeof h05) == 0);
+    assert(strcmp(h05, hb) == 0);
+
+    /* spec-05 §4: the ARC- prefix narrowed to three exact names */
+    const char *hdrs_arc[] = {
+        "From: sender@example.com\r\n",
+        "Subject: Test\r\n",
+        "ARC-Seal: i=1\r\n",
+        "ARC-Message-Signature: i=1\r\n",
+        "ARC-Authentication-Results: i=1\r\n",
+    };
+    char harc[64];
+    assert(dkim2_header_hash(hdrs_arc, 5, harc, sizeof harc) == 0);
+    assert(strcmp(harc, hb) == 0);
+
+    /* ...but a non-RFC8617 ARC- field is now SIGNED, so the hash must differ */
+    const char *hdrs_arcx[] = {
+        "From: sender@example.com\r\n",
+        "Subject: Test\r\n",
+        "ARC-Something-Else: x\r\n",
+    };
+    char harcx[64];
+    assert(dkim2_header_hash(hdrs_arcx, 3, harcx, sizeof harcx) == 0);
+    assert(strcmp(harcx, hb) != 0);
+
     puts("hash: all tests passed");
     return 0;
 }

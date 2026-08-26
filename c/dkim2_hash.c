@@ -120,21 +120,35 @@ int dkim2_body_hash(const char *body, size_t bodylen, char *out, size_t outlen) 
     return b64_encode(digest, DKIM2_HASH_LEN, out, outlen) >= 0 ? 0 : -1;
 }
 
-/* Returns 1 if this lowercase header name should be ignored per §5.2 */
+/* Returns 1 if this lowercase header name is unsigned per spec-05 §4.
+   spec-05 narrowed the old "arc-" prefix to the three RFC 8617 names and
+   added a "received-" prefix rule. Note x400-received / x400-trace match
+   neither the "x-" nor the "received-" prefix and need their own entries. */
 static int hdr_ignore(const char *lname, size_t nlen) {
     static const struct { const char *s; size_t l; } skip[] = {
-        {"received",               8},
-        {"return-path",           11},
-        {"message-instance",      16},
-        {"dkim2-signature",       15},
-        {"delivered-to",          12},
-        {"dkim-signature",        14},
-        {"authentication-results", 22},
+        {"apparently-to",              13},
+        {"arc-authentication-results", 26},
+        {"arc-message-signature",      21},
+        {"arc-seal",                    8},
+        {"authentication-results",     22},
+        {"auto-submitted",             14},
+        {"delivered-to",               12},
+        {"dkim-signature",             14},
+        {"dkim2-signature",            15},
+        {"dl-expansion-history",       20},
+        {"message-instance",           16},
+        {"original-recipient",         18},
+        {"received",                    8},
+        {"return-path",                11},
+        {"sio-label-history",          17},
+        {"vbr-info",                    8},
+        {"x400-received",              13},
+        {"x400-trace",                 10},
     };
     for (size_t i = 0; i < sizeof skip / sizeof skip[0]; i++)
         if (nlen == skip[i].l && memcmp(lname, skip[i].s, nlen) == 0) return 1;
-    if (nlen >= 2 && lname[0] == 'x' && lname[1] == '-') return 1;
-    if (nlen >= 4 && memcmp(lname, "arc-", 4) == 0) return 1;
+    if (nlen >= 2 && memcmp(lname, "x-", 2) == 0) return 1;
+    if (nlen >= 9 && memcmp(lname, "received-", 9) == 0) return 1;
     return 0;
 }
 
