@@ -48,12 +48,21 @@ func hashBody(r io.Reader) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
+// Unsigned header fields per spec-05 §4, §4.1.
 var excludedHeaderNames = map[string]bool{
-	"received": true, "return-path": true, "message-instance": true,
-	"dkim2-signature": true, "dkim-signature": true,
-	"authentication-results": true, "delivered-to": true,
+	"apparently-to": true, "arc-authentication-results": true,
+	"arc-message-signature": true, "arc-seal": true,
+	"authentication-results": true, "auto-submitted": true,
+	"delivered-to": true, "dkim-signature": true,
+	"dkim2-signature": true, "dl-expansion-history": true,
+	"message-instance": true, "original-recipient": true,
+	"received": true, "return-path": true, "sio-label-history": true,
+	"vbr-info": true, "x400-received": true, "x400-trace": true,
 }
-var excludedHeaderPrefixes = []string{"x-", "arc-"}
+
+// spec-05 §4 narrowed the ARC- prefix to three exact names (above) and added
+// a Received-* prefix rule so future trace fields of that form need no change.
+var excludedHeaderPrefixes = []string{"x-", "received-"}
 
 func shouldExcludeHeader(name string) bool {
 	lower := strings.ToLower(name)
