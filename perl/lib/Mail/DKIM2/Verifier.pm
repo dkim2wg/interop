@@ -240,7 +240,20 @@ sub finish_body {
     # verify the top instance against the current content, then undo each
     # instance and verify the reconstructed content against the next one down,
     # until m=1 or an instance that declares the previous state unrecoverable.
-    return unless $self->_verify_mi_chain();
+    #
+    # MessageInstance::parse() dies (rather than returning an error) on a
+    # malformed r= payload -- e.g. the §11.2 invalid-JSON PERMERROR -- so
+    # this must run under eval or that die would propagate uncaught out of
+    # finish_body() and crash the caller instead of yielding a clean
+    # permerror result.
+    my $mi_chain_ok = eval { $self->_verify_mi_chain() };
+    if (my $err = $@) {
+        chomp $err;
+        $self->{result}  = ($err =~ /^PERMERROR/) ? 'permerror' : 'fail';
+        $self->{details} = $err;
+        return;
+    }
+    return unless $mi_chain_ok;
 
     $self->{result} = 'pass';
     $self->{details} = "i=1..$max_i verified";

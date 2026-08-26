@@ -172,12 +172,23 @@ async function verifyOnce(raw, opts = {}) {
   const states = {};
   states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(body) };
   let undoBroken = null; // m at which undo became impossible
-  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'broken'
+  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'invalid-json' | 'broken'
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
     if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
     let recipe;
-    try { recipe = decodeRecipe(mi.map.r); } catch (e) { undoBroken = m; undoBrokenReason = 'broken'; break; }
+    try {
+      recipe = decodeRecipe(mi.map.r);
+    } catch (e) {
+      // spec-05 §11.2: "errors in a JSON object specifying Recipes should be
+      // called out specifically" -- a malformed r= payload (JSON.parse
+      // throws SyntaxError) is reported distinctly from other undo failures
+      // (a bad base64 r= value, or a structurally-invalid-but-parseable
+      // recipe caught below), which stay lumped as a generic 'broken' undo.
+      undoBroken = m;
+      undoBrokenReason = e instanceof SyntaxError ? 'invalid-json' : 'broken';
+      break;
+    }
     if (recipe.b === null) { undoBroken = m; undoBrokenReason = 'redacted'; break; } // §5.2 intentional redaction
     const cur = states[m];
     let fields = cur.fields;
@@ -207,6 +218,15 @@ async function verifyOnce(raw, opts = {}) {
       if (undoBrokenReason === 'redacted') {
         level.undo = 'unrecoverable';
         level.detail = `state unavailable (redaction at m=${undoBroken})`;
+      } else if (undoBrokenReason === 'invalid-json') {
+        // spec-05 §11.2: report the specific invalid-JSON PERMERROR, not the
+        // generic "undo broke" fail below -- and every level whose state is
+        // unreachable because of it must bump 'permerror' too (not 'fail',
+        // which outranks 'permerror' in the overall verdict), so the final
+        // verdict is permerror rather than being clobbered by a downstream fail.
+        level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
+        level.detail = `PERMERROR Message-Instance m=${undoBroken} contains invalid JSON`;
+        bump('permerror');
       } else {
         level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
         level.detail = `state unavailable (undo broke at m=${undoBroken})`;

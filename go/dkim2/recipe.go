@@ -34,8 +34,8 @@ func parseRecipe(data []byte) (*Recipe, error) {
 }
 
 func encodeRecipe(r *Recipe) ([]byte, error) {
-	// Header field names are case-insensitive; always emit recipe (h) keys in
-	// canonical lowercase form (not yet mandated by the draft, but we do it).
+	// spec-05 §5.1: header field names in the JSON Recipes MUST be lower
+	// case (matching against the message stays case-insensitive).
 	if len(r.Headers) > 0 {
 		lower := make(map[string][]RecipeStep, len(r.Headers))
 		for k, v := range r.Headers {

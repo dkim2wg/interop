@@ -619,6 +619,114 @@ int main(void) {
         remove(path);
     }
 
+    /* --- spec-05 §11.2 end-to-end: a malformed r= JSON payload on a real,
+       validly-signed two-hop message must be reported as the specific
+       "contains invalid JSON" PERMERROR by dkim2_do_verify() -- the same
+       function dkim2_verify_message() (the CLI/milter entry point) calls --
+       not silently dropped. Before this fix, dkim2_apply_body_recipe() and
+       dkim2_apply_header_recipe() (dkim2_recipe.c) both returned NULL on a
+       cJSON_Parse() failure with no way to tell that apart from their other
+       NULL cases, and their two call sites in verify_mi_hashes()
+       (dkim2_verify.c) just silently kept the prior body/headers rather than
+       reporting anything -- so a malformed r= payload never surfaced as an
+       error at all, it just silently failed to undo.
+       The C signer has no way to emit an r= tag itself (dkim2_do_sign()
+       never attaches a recipe), so -- exactly like the hand-built nd= hop
+       above -- hop i=2 is hand-signed: a real signing input is built with
+       test_canon_append() (matching build_verify_input()'s canonicalization)
+       over both Message-Instance headers (m=1 unmodified, m=2 carrying the
+       malformed r=) and both DKIM2-Signature headers, then signed directly
+       with the test keypair already registered in the DNS override. This
+       drives the complete real §10.6 crypto verification and §10.7 MI-hash/
+       undo logic in dkim2_do_verify(), not just dkim2_apply_*_recipe() or
+       cJSON_Parse() in isolation. */
+    {
+        uint64_t now = (uint64_t)time(NULL);
+
+        char *mi1_out = NULL, *sig1_out = NULL;
+        char *hop1_rcpts[] = { "<mid@example.com>", NULL };
+        int r1 = sign_test_message("<sender@example.com>", hop1_rcpts,
+            "/tmp/dkim2_test_sign.pem", "example.com", "test",
+            raw_headers, 3, body, &mi1_out, &sig1_out);
+        assert(r1 == 0 && mi1_out != NULL && sig1_out != NULL);
+
+        /* m=2 carries the SAME (genuinely correct) header/body hashes as
+           m=1 -- content is unmodified between hops, which is legal (a
+           recipe-less/identical MI asserting "no change" is accepted by
+           every implementation here) -- plus a malformed r= tag. "eyJoIjog"
+           is base64 of `{"h": `, truncated so it decodes to invalid
+           (incomplete) JSON, not merely a semantic rejection like a null
+           header recipe. */
+        dkim2_mi_t *mi1_parsed = dkim2_mi_parse(mi1_out);
+        assert(mi1_parsed && mi1_parsed->n_hsets >= 1);
+        char mi2_val[512];
+        snprintf(mi2_val, sizeof mi2_val, "m=2; h=%s:%s:%s; r=eyJoIjog;",
+            mi1_parsed->hsets[0].alg,
+            mi1_parsed->hsets[0].hdr_hash,
+            mi1_parsed->hsets[0].body_hash);
+        dkim2_mi_free(mi1_parsed);
+
+        char mf2_b64[128], rt2_b64[128];
+        b64_encode((const unsigned char *)"<mid@example.com>",
+            strlen("<mid@example.com>"), mf2_b64, sizeof mf2_b64);
+        b64_encode((const unsigned char *)"<final@example.com>",
+            strlen("<final@example.com>"), rt2_b64, sizeof rt2_b64);
+
+        char sig2_incomplete[512];
+        snprintf(sig2_incomplete, sizeof sig2_incomplete,
+            "i=2;m=2;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:;",
+            (unsigned long long)now, mf2_b64, rt2_b64);
+
+        char sign_input_buf[4096];
+        size_t pos = 0;
+        test_canon_append(sign_input_buf, &pos, "message-instance", mi1_out);
+        test_canon_append(sign_input_buf, &pos, "message-instance", mi2_val);
+        test_canon_append(sign_input_buf, &pos, "dkim2-signature", sig1_out);
+        test_canon_append(sign_input_buf, &pos, "dkim2-signature", sig2_incomplete);
+
+        EVP_PKEY *sign_privkey = dkim2_load_privkey("/tmp/dkim2_test_sign.pem");
+        assert(sign_privkey != NULL);
+        char *sig2_b64 = dkim2_sign(sign_privkey, "ed25519-sha256",
+            (unsigned char *)sign_input_buf, pos);
+        EVP_PKEY_free(sign_privkey);
+        assert(sig2_b64 != NULL);
+
+        char sig2_final[600];
+        snprintf(sig2_final, sizeof sig2_final,
+            "i=2;m=2;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:%s;",
+            (unsigned long long)now, mf2_b64, rt2_b64, sig2_b64);
+        free(sig2_b64);
+
+        dkim2_sig_t *sig1_parsed = dkim2_sig_parse(sig1_out);
+        dkim2_sig_t *sig2_parsed = dkim2_sig_parse(sig2_final);
+        assert(sig1_parsed && sig2_parsed);
+        sig1_parsed->next = sig2_parsed;
+
+        dkim2_mi_t *mi1p = dkim2_mi_parse(mi1_out);
+        dkim2_mi_t *mi2p = dkim2_mi_parse(mi2_val);
+        assert(mi1p && mi2p);
+        mi1p->next = mi2p;
+
+        dkim2_ctx_t vctx;
+        memset(&vctx, 0, sizeof vctx);
+        vctx.headers = (char **)raw_headers;
+        vctx.n_headers = 3;
+        dkim2_body_hash_raw(body, strlen(body), vctx.body_digests.d[0]);
+        vctx.mi_list = mi1p;
+        vctx.sig_list = sig1_parsed;
+
+        dkim2_verify_result_t res;
+        dkim2_do_verify(&vctx, &res);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strcmp(res.message,
+            "PERMERROR Message-Instance m=2 contains invalid JSON") == 0);
+
+        dkim2_mi_free(vctx.mi_list);
+        dkim2_sig_free(vctx.sig_list); /* frees sig1_parsed + chained sig2_parsed */
+        free(mi1_out);
+        free(sig1_out);
+    }
+
     free(mi_val);
     free(sig_val);
     puts("sign+verify: all tests passed");

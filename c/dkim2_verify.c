@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <openssl/evp.h>
+#include <cjson/cJSON.h>
 
 #define SETSTATUS(s, fmt, ...) do { \
     result->status = (s); \
@@ -388,6 +389,25 @@ static int verify_mi_hashes(
             if (r_json_len <= 0) { free(r_json_bytes); continue; }
             r_json_bytes[r_json_len] = '\0';
             const char *rj = (const char *)r_json_bytes;
+
+            /* spec-05 §11.2: "errors in a JSON object specifying Recipes
+               should be called out specifically". dkim2_apply_body_recipe()
+               and dkim2_apply_header_recipe() both return NULL on a
+               cJSON_Parse() failure with no way to distinguish that from
+               their other NULL cases, and their call sites below used to
+               just silently no-op (keep the old body / keep the old
+               headers) rather than report anything -- so a malformed r=
+               payload never surfaced as an error at all. Probe the decoded
+               JSON directly here, before either apply_*_recipe() call, so
+               that failure is reported specifically instead of vanishing. */
+            cJSON *probe = cJSON_Parse(rj);
+            if (!probe) {
+                free(r_json_bytes);
+                snprintf(errbuf, errbufsz,
+                    "PERMERROR Message-Instance m=%d contains invalid JSON", mi->m);
+                ret = -1; goto done;
+            }
+            cJSON_Delete(probe);
 
             /* Apply body recipe */
             if (cur_body) {

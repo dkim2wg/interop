@@ -3,6 +3,8 @@ package dkim2
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -165,6 +167,17 @@ func parseMI(raw string) (*MessageInstance, error) {
 		}
 		recipe, err := parseRecipe(rJSON)
 		if err != nil {
+			// spec-05 §11.2: "errors in a JSON object specifying Recipes
+			// should be called out specifically" -- a malformed r= payload
+			// is reported distinctly from a generic syntax error. This
+			// covers actual JSON syntax/type errors; other parseRecipe
+			// failures (e.g. the §5.1 null-header-recipe rejection) already
+			// carry their own specific message and are left as-is.
+			var syntaxErr *json.SyntaxError
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
+				return nil, fmt.Errorf("PERMERROR Message-Instance m=%d contains invalid JSON", m)
+			}
 			return nil, fmt.Errorf("invalid recipe JSON: %w", err)
 		}
 		mi.Recipe = recipe

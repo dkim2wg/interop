@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { verifyMessage, relaxedDomainMatch, domainOf } from '../verify.js';
 import { parseKeyRecord } from '../doh.js';
+import { parseMessage, collectLevels } from '../parse.js';
+import { canonHeaderHash, canonBody, signingInput } from '../canon.js';
+import { hashB64, sha256Bytes } from '../crypto.js';
+import { stringToBytes, bytesToB64 } from '../b64.js';
 
 // A real, single-hop signed sample (mailfrom_case vector) whose Message-Instance
 // sha256 hashes and RSA signature genuinely verify against the shared dns.json
@@ -299,4 +303,88 @@ test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly'
     + SIGNED_SAMPLE.replace(/\r\n/g, '\n');
   const rep = await verifyMessage(polluted, { fetchKey: realFetchKey, now: FRESH_NOW });
   assert.equal(rep.overall, 'pass');
+});
+
+// --- spec-05 §11.2: malformed r= JSON is a specific PERMERROR ------------
+//
+// This builds a REAL, validly Ed25519-signed two-hop message (genuine
+// crypto over the actual canonicalized signing input, using this module's
+// own signingInput()/canon*() helpers, exactly as the real verifier would
+// compute it) whose m=2 Message-Instance carries an r= tag that
+// base64-decodes to truncated/malformed JSON. It is fed through
+// verifyMessage(), the same real entry point the /verify/ page itself
+// calls -- not decodeRecipe()/JSON.parse() in isolation -- so this proves
+// the PERMERROR is actually reachable end to end, not just detectable by
+// the parser. Before this fix, the catch around decodeRecipe() in the
+// state-reconstruction loop lumped a JSON syntax error in with every other
+// "undo broke" cause, producing a generic "state unavailable" fail instead
+// of the specific §11.2 PERMERROR text.
+test('spec-05 §11.2: malformed r= JSON is reported as the specific PERMERROR through the real verifier entry point', async () => {
+  const { subtle } = globalThis.crypto;
+  const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
+  const stubEd25519Key = async () => ({ k: 'ed25519', p: pubB64 });
+
+  // Content is identical between hops (a legal, recipe-less/unchanged MI is
+  // accepted everywhere), so m=1 and m=2 share the same genuinely correct
+  // header/body hashes; only m=2 additionally carries the malformed r=.
+  const contentFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' hi' }];
+  const body = 'hello\r\n';
+  const hh = await hashB64(stringToBytes(canonHeaderHash(contentFields)), 'sha256');
+  const bh = await hashB64(stringToBytes(canonBody(body)), 'sha256');
+
+  // "eyJoIjog" is base64 of `{"h": `, truncated so it decodes to invalid
+  // (incomplete) JSON, not merely a semantic rejection like a null header
+  // recipe.
+  const badR = 'eyJoIjog';
+  const t = 1740000000;
+  const mf1 = bytesToB64(stringToBytes('<sender@example.com>'));
+  const rt1 = bytesToB64(stringToBytes('<mid@example.com>'));
+  const mf2 = bytesToB64(stringToBytes('<mid@example.com>')); // matches hop1's rt= domain
+  const rt2 = bytesToB64(stringToBytes('<final@example.com>'));
+
+  // Hop 1 is signed first, on its own (only m=1 / i=1 exist yet) -- exactly
+  // as a real signer would produce it before hop 2 ever sees the message.
+  const draft1 =
+    `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:;\r\n` +
+    `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
+    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+  const { headers: headers1 } = parseMessage(draft1);
+  const { instances: mi1map, signatures: sig1map } = collectLevels(headers1);
+  const input1 = stringToBytes(signingInput(
+    [mi1map[1].field, sig1map[1].field], sig1map[1].field));
+  const sig1 = bytesToB64(new Uint8Array(
+    await subtle.sign({ name: 'Ed25519' }, kp.privateKey, await sha256Bytes(input1))));
+
+  // Hop 2 signs with hop 1's REAL (already-finalized) signature already in
+  // place, plus a still-blank i=2 target -- matching what every real signer
+  // covers: existing DKIM2-Signature headers at their true, complete value.
+  const draft2 =
+    `DKIM2-Signature: i=2; m=2; t=${t}; d=example.com; mf=${mf2}; rt=${rt2}; s=sel:ed25519-sha256:;\r\n` +
+    `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
+    `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
+    `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
+    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+  const { headers: headers2 } = parseMessage(draft2);
+  const { instances, signatures } = collectLevels(headers2);
+  const input2 = stringToBytes(signingInput(
+    [instances[1].field, instances[2].field, signatures[1].field, signatures[2].field],
+    signatures[2].field));
+  const sig2 = bytesToB64(new Uint8Array(
+    await subtle.sign({ name: 'Ed25519' }, kp.privateKey, await sha256Bytes(input2))));
+
+  const raw =
+    `DKIM2-Signature: i=2; m=2; t=${t}; d=example.com; mf=${mf2}; rt=${rt2}; s=sel:ed25519-sha256:${sig2};\r\n` +
+    `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
+    `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
+    `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
+    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+
+  const rep = await verifyMessage(raw, { now: t + 10, fetchKey: stubEd25519Key });
+
+  assert.equal(rep.overall, 'permerror');
+  assert.match(rep.summary, /PERMERROR Message-Instance m=2 contains invalid JSON/);
+  const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
+  assert.ok(mi1, 'm=1 instance level present');
+  assert.match(mi1.detail, /PERMERROR Message-Instance m=2 contains invalid JSON/);
 });

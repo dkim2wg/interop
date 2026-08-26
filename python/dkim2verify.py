@@ -344,28 +344,41 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
     """
     errors = []
     value = _get_header_value(mi_hdr)
+    m_val = _extract_tag(value, "m")
+
+    # §11.2: "errors in a JSON object specifying Recipes should be called
+    # out specifically" -- a malformed r= payload is reported distinctly
+    # from a generic syntax error, regardless of what else is wrong with
+    # this Message-Instance header.
+    r_tag = _extract_tag(value, "r")
+    if r_tag:
+        try:
+            json.loads(base64.b64decode(r_tag))
+        except Exception:
+            errors.append(
+                f"PERMERROR Message-Instance m={m_val} contains invalid JSON"
+            )
+
     h_tag = _extract_tag(value, "h")
     if not h_tag:
-        return ["Message-Instance: missing h= tag"]
-
-    m_val = _extract_tag(value, "m")
+        return errors + ["Message-Instance: missing h= tag"]
 
     sets = parse_hash_sets(h_tag)
     if not sets:
-        return [f"Message-Instance: invalid h= format (got {h_tag!r})"]
+        return errors + [f"Message-Instance: invalid h= format (got {h_tag!r})"]
 
     # spec-05 §7.3: an algorithm MUST NOT be present more than once.
     seen = set()
     for alg, _, _ in sets:
         if alg in seen:
-            return [f"PERMERROR Message-Instance m={m_val} has a duplicate hash algorithm"]
+            return errors + [f"PERMERROR Message-Instance m={m_val} has a duplicate hash algorithm"]
         seen.add(alg)
 
     # §3.4: ignore hash-sets naming algorithms we do not implement, but an MI
     # with no implemented hash-set cannot be verified and must fail closed.
     usable = [s for s in sets if s[0] in HASH_ALGS]
     if not usable:
-        return [f"Message-Instance m={m_val} no supported hash algorithm"]
+        return errors + [f"Message-Instance m={m_val} no supported hash algorithm"]
 
     # All implemented hash-sets must pass (mirrors §11.6 for signatures). A
     # malformed base64 value in one hash-set is itself a PERMERROR (§11.2:
@@ -831,7 +844,14 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
         # If there's a lower version, undo recipes to reconstruct previous state
         if version > versions[-1]:
-            recipes = decode_recipes(mi_hdr)
+            # A malformed r= is already reported (as the specific §11.2
+            # invalid-JSON PERMERROR) by the verify_message_instance() call
+            # above; don't let the same failure crash decode_recipes() here
+            # with an uncaught exception.
+            try:
+                recipes = decode_recipes(mi_hdr)
+            except (ValueError, TypeError):
+                recipes = None
             if recipes is not None:
                 # draft-04 §5.1: a present "h" that is JSON null is a syntax
                 # error (distinct from an absent "h", which means headers

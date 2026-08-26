@@ -267,8 +267,9 @@ def _lowercase_recipe_keys(recipe: dict) -> dict:
     """Force the header-recipe (h) keys to lowercase on output.
 
     Header field names are case-insensitive; emitting recipe keys in a
-    canonical lowercase form keeps them stable and unambiguous.  (Not yet
-    mandated by the draft, but we always do it.)
+    canonical lowercase form keeps them stable and unambiguous.  spec-05
+    §5.1: header field names in the JSON Recipes MUST be lower case
+    (matching against the message stays case-insensitive).
     """
     h = recipe.get("h")
     if not isinstance(h, dict):

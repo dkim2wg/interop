@@ -156,8 +156,8 @@ sub as_string {
     if (exists $data{rh}) {
         my $rh = delete $data{rh};
         my %encoded;
-        # Header field names are case-insensitive; always emit recipe keys in
-        # canonical lowercase form (not yet mandated by the draft, but we do it).
+        # spec-05 §5.1: header field names in the JSON Recipes MUST be lower
+        # case (matching against the message stays case-insensitive).
         for my $h (sort keys %$rh) {
             $encoded{lc $h} = _encode_recipe_list($rh->{$h});
         }
@@ -247,7 +247,13 @@ sub parse {
     }
 
     if (exists $tags{r}) {
-        my $recipe_data = decode_tag_json($tags{r});
+        # spec-05 §11.2: "errors in a JSON object specifying Recipes should
+        # be called out specifically" -- a malformed r= payload is reported
+        # distinctly from a generic syntax error.
+        my $recipe_data = eval { decode_tag_json($tags{r}) };
+        if ($@) {
+            die "PERMERROR Message-Instance m=$tags{m} contains invalid JSON\n";
+        }
         # A present-but-null "b"/"h" (spec §4.1/§4.2) means the previous state
         # cannot be recreated — distinct from an absent field (no change).
         if (exists $recipe_data->{b}) {
