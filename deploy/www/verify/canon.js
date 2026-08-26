@@ -1,15 +1,23 @@
-// Canonicalization per draft-ietf-dkim-dkim2-spec-04 §6.1, §6.2, §9.6.
+// Canonicalization per draft-ietf-dkim-dkim2-spec-05 §6.1, §6.2, §9.6.
 
+// Unsigned header fields per §4, §4.1. message-instance and dkim2-signature
+// are also filtered upstream in signedFields(); they are listed here so this
+// set matches the other five implementations.
 const UNSIGNED_EXACT = new Set([
-  'received', 'return-path', 'delivered-to', 'dkim-signature',
-  'authentication-results',
+  'apparently-to', 'arc-authentication-results', 'arc-message-signature',
+  'arc-seal', 'authentication-results', 'auto-submitted', 'delivered-to',
+  'dkim-signature', 'dkim2-signature', 'dl-expansion-history',
+  'message-instance', 'original-recipient', 'received', 'return-path',
+  'sio-label-history', 'vbr-info', 'x400-received', 'x400-trace',
 ]);
 
 export function isUnsignedHeader(name) {
   const n = name.toLowerCase();
   if (UNSIGNED_EXACT.has(n)) return true;
-  if (n.startsWith('arc-')) return true;
+  // §4 narrowed the ARC- prefix to the three exact names above and added the
+  // Received-* rule for future trace fields of that form.
   if (n.startsWith('x-')) return true;
+  if (n.startsWith('received-')) return true;
   return false;
 }
 

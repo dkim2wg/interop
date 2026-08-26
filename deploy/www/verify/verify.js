@@ -92,12 +92,13 @@ function stripHeader(raw, name) {
 const OVERALL_RANK = { pass: 0, warn: 1, none: 2, temperror: 3, permerror: 4, fail: 5 };
 const rankOf = (o) => (o in OVERALL_RANK ? OVERALL_RANK[o] : OVERALL_RANK.fail);
 
-// Received-SPF is NOT in the spec-04 §4.1 list of unsigned header fields, so
-// unlike Received/ARC-*/Authentication-Results it IS covered by the
-// Message-Instance header hash. A receiving MTA that prepends one (Fastmail
-// does) therefore breaks verification at every level. When a message that
-// carries one fails, retry once with it removed; if that verifies, return the
-// better result and say so. Mirrors Mail::DKIM2::Validate::report().
+// spec-05 §4 excludes Received-SPF from the Message-Instance header hash via
+// the "Received-*" prefix rule, so a receiving MTA that prepends one
+// (Fastmail does) no longer breaks verification and this retry is dead for
+// it in practice. It remains as a safety net: if some other trace header not
+// yet covered by §4 causes a failure, retry once with it removed and, if that
+// verifies, return the better result and say so. Mirrors
+// Mail::DKIM2::Validate::report().
 export async function verifyMessage(raw, opts = {}) {
   const rep = await verifyOnce(raw, opts);
   if (rep.overall === 'pass') return rep;

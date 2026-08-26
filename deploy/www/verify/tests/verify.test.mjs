@@ -267,10 +267,13 @@ test('an instance with no r= recipe has no recipe_json', async () => {
 });
 
 // --- Received-SPF added by the receiving MTA ----------------------------
-// Received-SPF is NOT in the spec-04 §4.1 list of unsigned header fields, so a
-// receiving MTA that prepends one (Fastmail does) pollutes the Message-Instance
-// header hash at every level. Mirrors Mail::DKIM2::Validate's strip-and-retry.
-test('a Received-SPF prepended by the receiver is stripped and the message verifies', async () => {
+// spec-05 §4 added a "Received-*" prefix rule, so Received-SPF is now excluded
+// from the Message-Instance header hash directly (via isUnsignedHeader) and no
+// longer pollutes verification at all. The strip-and-retry below (mirrors
+// Mail::DKIM2::Validate's) therefore never fires for it any more; it remains
+// as a safety net for any trace header a future spec adds without a matching
+// exclusion rule.
+test('a Received-SPF prepended by the receiver verifies cleanly, no retry needed (spec-05 §4)', async () => {
   const polluted = 'Received-SPF: pass\r\n (test.example: 1.2.3.4 authorized)\r\n' + SIGNED_SAMPLE;
   const rep = await verifyMessage(polluted, {
     fetchKey: realFetchKey,
@@ -279,13 +282,12 @@ test('a Received-SPF prepended by the receiver is stripped and the message verif
     now: FRESH_NOW,
   });
   assert.equal(rep.overall, 'pass');
-  assert.deepEqual(rep.stripped_headers, ['Received-SPF']);
-  assert.match(rep.summary, /Received-SPF/);
+  assert.equal(rep.stripped_headers, undefined);
 });
 
-test('stripping Received-SPF does not rescue a genuinely broken message', async () => {
-  // Body tampering survives the retry: the verdict stays fail and no
-  // stripped_headers claim is made.
+test('a genuinely broken message with Received-SPF present still fails', async () => {
+  // Body tampering is unaffected by the header exclusion: the verdict stays
+  // fail and no stripped_headers claim is made.
   const broken = 'Received-SPF: pass\r\n' + SIGNED_SAMPLE.replace(/\r\n\r\n/, '\r\n\r\ntampered\r\n');
   const rep = await verifyMessage(broken, { fetchKey: realFetchKey, now: FRESH_NOW });
   assert.equal(rep.overall, 'fail');
@@ -298,13 +300,12 @@ test('a clean message is not retried and reports no stripped headers', async () 
   assert.equal(rep.stripped_headers, undefined);
 });
 
-test('the Received-SPF retry also works on an LF-only paste (browser textarea)', async () => {
-  // A <textarea> hands us bare LF line endings; parseMessage normalizes to CRLF
-  // internally, so the strip must tolerate either form or the retry silently
-  // never fires in the actual UI.
+test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly', async () => {
+  // A <textarea> hands us bare LF line endings; parseMessage normalizes to
+  // CRLF internally, so the exclusion must tolerate either form.
   const polluted = 'Received-SPF: pass\n (test.example: 1.2.3.4 authorized)\n'
     + SIGNED_SAMPLE.replace(/\r\n/g, '\n');
   const rep = await verifyMessage(polluted, { fetchKey: realFetchKey, now: FRESH_NOW });
   assert.equal(rep.overall, 'pass');
-  assert.deepEqual(rep.stripped_headers, ['Received-SPF']);
+  assert.equal(rep.stripped_headers, undefined);
 });

@@ -9,10 +9,14 @@ test('canonBody reduces trailing empty lines to one CRLF', () => {
 });
 
 test('isUnsignedHeader matches the §4 list', () => {
+  // Message-Instance and DKIM2-Signature are unsigned here for parity with
+  // the other five implementations (see the comment in canon.js); the
+  // verifier also filters them upstream in signedFields().
   for (const n of ['Received', 'Return-Path', 'Delivered-To', 'DKIM-Signature',
-    'ARC-Seal', 'Authentication-Results', 'X-Spam'])
+    'ARC-Seal', 'Authentication-Results', 'X-Spam', 'Message-Instance',
+    'DKIM2-Signature'])
     assert.equal(isUnsignedHeader(n), true, n);
-  for (const n of ['From', 'Subject', 'To', 'Message-Instance', 'DKIM2-Signature'])
+  for (const n of ['From', 'Subject', 'To'])
     assert.equal(isUnsignedHeader(n), false, n);
 });
 
@@ -76,4 +80,29 @@ test('canonHeaderHash orders duplicates bottom-up by document index, not array a
   ];
   assert.equal(canonHeaderHash(fields),
     'from:c\r\nfrom:b\r\nfrom:a\r\nto:x\r\n');
+});
+
+test('spec-05 §4: HDRMAINT-survey names are unsigned', () => {
+  for (const n of ['Apparently-To', 'Auto-Submitted', 'DL-Expansion-History',
+                   'Original-Recipient', 'SIO-Label-History', 'VBR-Info',
+                   'X400-Received', 'X400-Trace']) {
+    assert.ok(isUnsignedHeader(n), `${n} must be unsigned`);
+  }
+});
+
+test('spec-05 §4: any Received-* is unsigned', () => {
+  assert.ok(isUnsignedHeader('Received-SPF'));
+  assert.ok(isUnsignedHeader('Received-Anything'));
+});
+
+test('spec-05 §4: the ARC- prefix narrowed to three names', () => {
+  assert.ok(isUnsignedHeader('ARC-Seal'));
+  assert.ok(isUnsignedHeader('ARC-Message-Signature'));
+  assert.ok(isUnsignedHeader('ARC-Authentication-Results'));
+  assert.ok(!isUnsignedHeader('ARC-Something-Else'));
+});
+
+test('MI and DKIM2-Signature are in the list for parity with the other five impls', () => {
+  assert.ok(isUnsignedHeader('Message-Instance'));
+  assert.ok(isUnsignedHeader('DKIM2-Signature'));
 });
