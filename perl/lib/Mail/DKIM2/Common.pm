@@ -29,6 +29,7 @@ our @EXPORT_OK = qw(
     relaxed_domain_match
     parse_dkim_pubkey
     load_private_key
+    load_private_key_data
     DKIM2_DRAFT
     DKIM2_REPO
     DKIM2_DATE
@@ -378,6 +379,32 @@ sub load_private_key {
     my $key = eval { Crypt::PK::RSA->new($file) };
     return $key if $key;
     return Crypt::PK::Ed25519->new($file);
+}
+
+# Load a private key from key MATERIAL rather than a filename, for callers whose
+# keys live in a database rather than on disk.
+#
+# Accepts PEM as stored, and also bare base64 with the armor stripped, which is
+# how some key stores keep it. Returns a Crypt::PK::RSA or Crypt::PK::Ed25519
+# object, or undef -- never dies, so a caller signing live mail can log and
+# carry on rather than losing the message.
+sub load_private_key_data {
+    my ($data) = @_;
+    return unless defined $data && length $data;
+
+    if ($data =~ /-----BEGIN/) {
+        my $key = eval { Crypt::PK::RSA->new(\$data) };
+        return $key if $key;
+        return eval { Crypt::PK::Ed25519->new(\$data) };
+    }
+
+    (my $b64 = $data) =~ s/\s+//g;
+    return unless length $b64;
+    my $der = eval { decode_base64($b64) };
+    return unless defined $der && length $der;
+    my $key = eval { Crypt::PK::RSA->new(\$der) };
+    return $key if $key;
+    return eval { Crypt::PK::Ed25519->new(\$der) };
 }
 
 1;
