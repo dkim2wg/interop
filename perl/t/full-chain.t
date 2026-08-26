@@ -61,6 +61,20 @@ my @hops = (
         rcptto   => ['user@test5.dkim2.com'],
     },
     {
+        # brong-final.eml differs from brong-mm3.eml by a pile of prepended
+        # MTA trace/spam headers (Received, ARC-*, Authentication-Results,
+        # Received-SPF, X-*) plus a "[test5] " tag hand-added to the front
+        # of the Subject header's value. Under spec-05 §4, every one of
+        # those prepended headers is unsigned (the last holdout,
+        # Received-SPF, moved to unsigned when the `received-` prefix rule
+        # landed) -- without the Subject tag, this hop's header+body hash
+        # would be bit-identical to hop 4's, add_mi() would correctly
+        # decline to add a new Message-Instance (see MI.pm's verify()
+        # short-circuit, exercised deliberately by hop 6 below), and this
+        # "final delivery" hop would silently collapse into a duplicate of
+        # hop 6's "unchanged re-sign" scenario. The Subject tag keeps this
+        # hop exercising a genuinely CHANGED (not added/removed) header --
+        # coverage no other hop in this chain provides. Do not remove it.
         name     => 'final delivery',
         file     => 'tests/emails/brong-final.eml',
         domain   => 'test5.dkim2.com',
