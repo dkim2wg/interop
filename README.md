@@ -46,6 +46,37 @@ verify path — the exact bug class found more than once during this
 upgrade — shows up as a false accept rather than being masked by an
 unrelated signature failure.
 
+## Cross-testing against croessner/dkim2
+
+<https://github.com/croessner/dkim2> is the other actively developed DKIM2
+implementation (Go, tracking `draft-ietf-dkim-dkim2-spec-05`). To feed his
+verifier everything this repo can produce:
+
+    ./util/croessner-verify.sh
+
+It signs one message with each of our four signers at each of the three hash
+algorithms, then runs the whole negative-vector set, and gates on his verdict —
+18 cells. His implementation has no file-based CLI, so the runner builds his
+`dkim2d` daemon, mints a capability, boots it on a loopback port and POSTs each
+message to `/v1/process`.
+
+Two consequences worth knowing:
+
+- **It needs the network.** `dkim2d` resolves DNS live and has no offline
+  records file, so this runner depends on the published `test1.dkim2.com` keys
+  rather than `dns.json`. That's why it's a separate script: `hash-matrix.sh`
+  and the other runners stay offline-clean.
+- **It skips instead of failing.** His repository is not vendored here. Point
+  the runner at a checkout with `DKIM2_GO_PEER=/path/to/dkim2`, or put one
+  beside this repo as `../mailde-dkim2`; with no checkout, no Go toolchain, or
+  no DNS it prints `SKIPPED` and exits 0.
+
+Signing in the other direction — his signer against our five verifiers — isn't
+covered yet. `/v1/sign` returns an append-only action plan rather than a signed
+message, and enabling it requires a full protected generation (datasource,
+private-key manifest with SPKI digests, PKCS#8 children), so that direction is
+waiting on a command-line signer.
+
 # An Alternative Proposal
 
 A Deployment Profile for DKIM2 via Milter Interface (IETF Datatracker):

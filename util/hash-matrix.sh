@@ -11,32 +11,17 @@ set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 
-# Verified against the actual CLIs on 2026-08-26 -- note each one spells its
-# flags differently.
-#
-# Two invocations below differ from a first draft that looked plausible but
-# hung/broke in practice, so they're spelled out here:
-#   - Go's dkim2verify reads the message ONLY on stdin -- it never looks at a
-#     positional filename arg -- so it must be invoked with `< "$file"`, not
-#     `dkim2verify ... "$file"` (the latter silently blocks forever on the
-#     inherited stdin).
-#   - Perl's validate.pl resolves the message path AS GIVEN (its `../dns.json`
-#     load is relative to its own cwd, `perl/`, not to the message argument),
-#     so an absolute message path must be passed through unmodified rather
-#     than prefixed with `../`.
-SRC=perl/tests/emails/brong-orig.eml
-KEY=keys/sel1._domainkey.test1.dkim2.com.pem
-DOM=test1.dkim2.com
-SEL=sel1
-MF='<brong@test1.dkim2.com>'
-RT='<user@test2.dkim2.com>'
+# The signer invocations and the message/key/envelope fixtures live in
+# util/lib-sign.sh, shared with util/croessner-verify.sh -- see the notes there
+# on Go's stdin-only input and Perl's cwd-relative path handling, both of which
+# broke a plausible-looking first draft. $SIGNERS comes from there too.
+. "$root/util/lib-sign.sh"
 
 # Single source of truth for the matrix shape: the expected cell count is
 # DERIVED from these lists (not hardcoded), so it stays correct if someone
 # adds a signer/algorithm/verifier, and so it CATCHES someone silently
 # dropping one -- a runner that quietly covers less than it claims is worse
 # than no runner, because it still reads as proof.
-SIGNERS="python go c perl"
 ALGS="sha256 sha512 both"
 VERIFIERS="python go c perl js"
 n_signers=0;   for _s in $SIGNERS;   do n_signers=$((n_signers + 1));   done
@@ -48,20 +33,6 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 rc=0
 cells=0
-
-sign() { # sign <impl> <alg> <out>
-    case $1 in
-    python) python3 python/dkim2sign.py "$SRC" -s "$SEL" -d "$DOM" -k "$KEY" \
-                --mailfrom "$MF" --rcptto "$RT" --hash "$2" > "$3" 2>"$tmp/err" ;;
-    go)     ./go/dkim2sign -selector "$SEL" -domain "$DOM" -key "$KEY" \
-                -mail-from "$MF" -rcpt-to "$RT" -hash "$2" < "$SRC" > "$3" 2>"$tmp/err" ;;
-    c)      ./c/dkim2sign "$SRC" -s "$SEL" -d "$DOM" -k "$KEY" \
-                --mailfrom "$MF" --rcptto "$RT" --hash "$2" > "$3" 2>"$tmp/err" ;;
-    perl)   (cd perl && perl -Ilib bin/dkim2sign.pl "../$SRC" -s "$SEL" -d "$DOM" \
-                -k "../$KEY" --mailfrom "$MF" --rcptto "$RT" --hash "$2") > "$3" 2>"$tmp/err" ;;
-    *)      echo "sign: unknown implementation '$1'" >&2; return 1 ;;
-    esac
-}
 
 # All four native verifiers load DNS from the repo-root dns.json (the Perl
 # tools resolve '../dns.json' relative to their own cwd, perl/), so the
