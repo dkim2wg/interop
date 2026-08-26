@@ -26,9 +26,22 @@ set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 
+# Single source of truth for the vector set: the expected cell count is
+# DERIVED from these lists (not hardcoded), so it stays correct if a vector
+# or verifier is deliberately added, and so it CATCHES one being silently
+# dropped -- a runner that quietly covers less than it claims is worse than
+# no runner, because it still reads as proof.
+NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml"
+POS_VECTORS="positive-control-two-selectors.eml"
+VERIFIERS="python go c perl js"
+n_vectors=0;   for _f in $NEG_VECTORS $POS_VECTORS; do n_vectors=$((n_vectors + 1));     done
+n_verifiers=0; for _v in $VERIFIERS;                 do n_verifiers=$((n_verifiers + 1)); done
+expected=$((n_vectors * n_verifiers))
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 rc=0
+cells=0
 
 python3 util/build-negative-vectors.py "$tmp" || { echo "fixture build FAILED"; exit 1; }
 
@@ -53,6 +66,7 @@ verify() {
     c)      ./c/dkim2verify "$2" --dns-json dns.json --ignore-timestamps ;;
     perl)   (cd perl && perl -Ilib bin/validate.pl --ignore-timestamps "$2") ;;
     js)     (cd deploy/www/verify && node tests/verify-file.mjs "$2") ;;
+    *)      echo "verify: unknown implementation '$1'" >&2; return 1 ;;
     esac
 }
 
@@ -61,7 +75,8 @@ run_vector() { # run_vector <file> <want: reject|accept>
     path="$tmp/$file"
     printf '%s (must %s)\n' "$file" "$want"
     [ "$want" = reject ] && printf '  expected text: %s\n' "$(want_text "$file")"
-    for impl in python go c perl js; do
+    for impl in $VERIFIERS; do
+        cells=$((cells + 1))
         out=$(verify "$impl" "$path" 2>&1)
         status=$?
         if [ "$want" = reject ]; then
@@ -83,12 +98,15 @@ run_vector() { # run_vector <file> <want: reject|accept>
     echo
 }
 
-run_vector dup-hash-algorithm.eml  reject
-run_vector dup-selector.eml        reject
-run_vector too-many-signatures.eml reject
-run_vector malformed-json-r.eml    reject
-run_vector positive-control-two-selectors.eml accept
+for f in $NEG_VECTORS; do run_vector "$f" reject; done
+for f in $POS_VECTORS; do run_vector "$f" accept; done
 
+if [ "$cells" -ne "$expected" ]; then
+    echo "Ran $cells of $expected expected combinations -- coverage shortfall, not just a pass/fail count."
+    rc=1
+else
+    echo "Ran all $expected expected combinations."
+fi
 [ "$rc" -eq 0 ] && echo "All verifiers agree: every negative vector rejected, positive control accepted." \
-                || echo "At least one verifier disagreed -- see BUG! lines above."
+                || echo "At least one verifier disagreed, or coverage was short -- see above."
 exit "$rc"

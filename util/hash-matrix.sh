@@ -31,9 +31,23 @@ SEL=sel1
 MF='<brong@test1.dkim2.com>'
 RT='<user@test2.dkim2.com>'
 
+# Single source of truth for the matrix shape: the expected cell count is
+# DERIVED from these lists (not hardcoded), so it stays correct if someone
+# adds a signer/algorithm/verifier, and so it CATCHES someone silently
+# dropping one -- a runner that quietly covers less than it claims is worse
+# than no runner, because it still reads as proof.
+SIGNERS="python go c perl"
+ALGS="sha256 sha512 both"
+VERIFIERS="python go c perl js"
+n_signers=0;   for _s in $SIGNERS;   do n_signers=$((n_signers + 1));   done
+n_algs=0;      for _a in $ALGS;      do n_algs=$((n_algs + 1));         done
+n_verifiers=0; for _v in $VERIFIERS; do n_verifiers=$((n_verifiers + 1)); done
+expected=$((n_signers * n_algs * n_verifiers))
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 rc=0
+cells=0
 
 sign() { # sign <impl> <alg> <out>
     case $1 in
@@ -45,6 +59,7 @@ sign() { # sign <impl> <alg> <out>
                 --mailfrom "$MF" --rcptto "$RT" --hash "$2" > "$3" 2>"$tmp/err" ;;
     perl)   (cd perl && perl -Ilib bin/dkim2sign.pl "../$SRC" -s "$SEL" -d "$DOM" \
                 -k "../$KEY" --mailfrom "$MF" --rcptto "$RT" --hash "$2") > "$3" 2>"$tmp/err" ;;
+    *)      echo "sign: unknown implementation '$1'" >&2; return 1 ;;
     esac
 }
 
@@ -59,16 +74,18 @@ verify() { # verify <impl> <file>
     c)      ./c/dkim2verify "$2" --dns-json dns.json --ignore-timestamps ;;
     perl)   (cd perl && perl -Ilib bin/validate.pl --ignore-timestamps "$2") ;;
     js)     (cd deploy/www/verify && node tests/verify-file.mjs "$2") ;;
+    *)      echo "verify: unknown implementation '$1'" >&2; return 1 ;;
     esac
 }
 
-for signer in python go c perl; do
-    for alg in sha256 sha512 both; do
+for signer in $SIGNERS; do
+    for alg in $ALGS; do
         out="$tmp/$signer-$alg.eml"
         if ! sign "$signer" "$alg" "$out"; then
             printf '  %-7s %-7s SIGN FAILED\n' "$signer" "$alg"; rc=1; continue
         fi
-        for verifier in python go c perl js; do
+        for verifier in $VERIFIERS; do
+            cells=$((cells + 1))
             if verify "$verifier" "$out" >"$tmp/v.log" 2>&1; then
                 printf '  %-7s %-7s -> %-7s ok\n' "$signer" "$alg" "$verifier"
             else
@@ -81,6 +98,12 @@ for signer in python go c perl; do
 done
 
 echo
+if [ "$cells" -ne "$expected" ]; then
+    echo "Ran $cells of $expected expected combinations -- coverage shortfall, not just a pass/fail count."
+    rc=1
+else
+    echo "Ran all $expected expected combinations."
+fi
 [ "$rc" -eq 0 ] && echo "All signer/algorithm/verifier combinations agree." \
-                || echo "At least one combination disagrees."
+                || echo "At least one combination disagrees or coverage was short."
 exit "$rc"
