@@ -77,7 +77,7 @@ ALGS="sha256 sha512 both"
 # util/negative-vectors.sh feeds our own five verifiers. Each is otherwise
 # cryptographically valid and breaks exactly one spec-05 rule, so a verifier
 # that never reaches the check ACCEPTS it rather than failing on the signature.
-NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml"
+NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml"
 POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml"
 
 # Expected cell count is DERIVED, never hardcoded, so that adding a signer or

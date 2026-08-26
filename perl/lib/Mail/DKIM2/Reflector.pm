@@ -429,6 +429,15 @@ sub _verify {
     my ($text, $cb, $skip_ts) = @_;
     my $v = Mail::DKIM2::Verifier->new;
     $v->skip_timestamp_check(1) if $skip_ts;
+    # The inbound milter stamps a Message-Instance on non-DKIM2 mail, so a
+    # message reaching us can legitimately carry an MI with no signature over
+    # it. Verified mail from outside would make that spec-05 §11's "is not
+    # signed" PERMERROR, but here it is our own header on our own side of the
+    # trust boundary, and the whole point of this path is to then bridge-sign
+    # it -- which is what makes the instance legal on the wire again. Without
+    # this the result would be permerror instead of 'none' and we would refuse
+    # to sign the very mail we are here to sign.
+    $v->allow_unsigned_mi(1);
     if ($cb) {
         $v->set_pubkey_callback($cb);
     } else {

@@ -211,11 +211,37 @@ def build_positive_bottom_recipe():
     return assemble(sig_hdr, mi_hdr, headers, body)
 
 
+def build_unsigned_mi():
+    """An extra Message-Instance above a fully valid chain, covered by no
+    signature: spec-05 §11's "there MUST NOT be a Message-Instance field with
+    a higher m= value than occurs in any DKIM2-Signature field", reported as
+    "PERMERROR Message-Instance m=<x> is not signed".
+
+    The i=1/m=1 signature and its MI are genuinely correct, so a verifier that
+    never compares the topmost MI against the signatures accepts this and
+    reports a clean pass -- which is what Perl's validate.pl did, walking the
+    unsigned instance and printing "OK Message-Instance". The hashes in the
+    extra m=2 header are deliberately bogus: nothing signs them, so nothing can
+    tell whether they describe the message, which is precisely the
+    accountability gap being tested."""
+    headers, body = load_base()
+    mi_hdr = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
+    priv, alg = ds.load_private_key(key("sel1"))
+    sig_hdr = ds.build_dkim2_signature(
+        [], [], mi_hdr, DOM, "sel1", priv, alg,
+        mailfrom=MF, rcptto=RT, seq=1, mi_version=1, timestamp=TS,
+    )
+    valid = assemble(sig_hdr, mi_hdr, headers, body)
+    unsigned = "Message-Instance: m=2; h=sha256:%s:%s" % ("A" * 64, "B" * 64)
+    return unsigned.encode() + b"\r\n" + valid
+
+
 FIXTURES = {
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
     "too-many-signatures.eml": build_too_many,
     "malformed-json-r.eml": build_malformed_json,
+    "unsigned-mi.eml": build_unsigned_mi,
     "positive-control-two-selectors.eml": build_positive_control,
     "positive-control-bottom-recipe.eml": build_positive_bottom_recipe,
 }

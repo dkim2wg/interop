@@ -150,6 +150,20 @@ sub _report_once {
     my @sig_hdrs = $msg->header('DKIM2-Signature');
     my @mi_hdrs  = $msg->header('Message-Instance');
     $res{counts} = { signatures => scalar @sig_hdrs, instances => scalar @mi_hdrs };
+    # A Message-Instance with no signature anywhere is spec-05 §11's
+    # "PERMERROR Message-Instance m=<x> is not signed", not an absence of
+    # DKIM2. Reporting it as 'none' is exactly the answer someone pasting such
+    # a message here does not need: it says "nothing to see" about a message
+    # that a conforming receiver will reject.
+    if (!@sig_hdrs && @mi_hdrs) {
+        my ($top_mi) = sort { $b <=> $a }
+                       grep { defined }
+                       map  { extract_mi_version($_) } @mi_hdrs;
+        $top_mi //= '?';
+        return { %res, overall => 'fail',
+                 summary => "PERMERROR Message-Instance m=$top_mi is not signed" };
+    }
+
     return { %res, overall => 'none', summary => 'no DKIM2-Signature headers found' }
         unless @sig_hdrs;
 

@@ -87,8 +87,40 @@ sign_msg($msg,
     );
 
     my $v = verify_msg($tampered);
-    is($v->result, 'fail', 'uncovered MI m=2 prepended without new signature must fail');
-    like($v->result_detail, qr/not cover|cover/i, 'result_detail mentions coverage gap');
+    # spec-05 §11 classes this as PERMERROR, not fail, and gives the wording:
+    # "PERMERROR Message-Instance m=<x> is not signed".
+    is($v->result, 'permerror', 'uncovered MI m=2 prepended without new signature must be permerror');
+    like($v->result_detail, qr/m=2 is not signed/, 'result_detail uses the spec wording');
+}
+
+# spec-05 §11 again, the case the coverage check above could never reach: a
+# message carrying a Message-Instance and NO DKIM2-Signature at all. This read
+# as 'none' ("no DKIM2 here") until the check moved ahead of that return, which
+# meant an unsigned instance was silently accepted. croessner/dkim2 rejects such
+# a message outright (PERMERROR/missing_protocol).
+{
+    my $stripped = Email::MIME->new($msg->as_string());
+    $stripped->header_raw_set('DKIM2-Signature');
+
+    my $v = verify_msg($stripped);
+    is($v->result, 'permerror', 'MI with no DKIM2-Signature at all must be permerror, not none');
+    like($v->result_detail, qr/m=1 is not signed/, 'result_detail names the unsigned instance');
+}
+
+# The outbound path holds a new Message-Instance before the signature covering
+# it exists, so a Signer verifying its own in-progress state must be able to
+# opt out of the rule above.
+{
+    my $stripped = Email::MIME->new($msg->as_string());
+    $stripped->header_raw_set('DKIM2-Signature');
+
+    my $v = Mail::DKIM2::Verifier->new();
+    $v->allow_unsigned_mi(1);
+    $v->skip_timestamp_check(1);
+    $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+    $v->PRINT($stripped->as_string());
+    $v->CLOSE;
+    isnt($v->result, 'permerror', 'allow_unsigned_mi suppresses the unsigned-MI permerror');
 }
 
 done_testing;

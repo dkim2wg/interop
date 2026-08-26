@@ -28,6 +28,19 @@ my $num = %map ? max(keys %map) : 0;
 my %mimap = map { extract_mi_version($_) => $_ } $msg1->header('Message-Instance');
 my $instance = %mimap ? max(keys %mimap) : 0;
 
+# spec-05 §11: "there MUST NOT be a Message-Instance field with a higher m=
+# value than occurs in any DKIM2-Signature field" -- reported as "PERMERROR
+# Message-Instance m=<x> is not signed". Checked up front because the walk
+# below happily verifies and reports "OK Message-Instance" for an instance
+# above every signature, which is precisely the unaccountable instance the
+# rule exists to reject. This tool is a conformance checker, so it is strict
+# even though our own inbound path stamps an unsigned MI internally.
+if ($instance) {
+  my $top_signed = %map ? max(map { _getv($_) } values %map) : 0;
+  die "PERMERROR Message-Instance m=$instance is not signed\n"
+    if $instance > $top_signed;
+}
+
 while (1) {
   my $hi = $num ? _getv($map{$num}) : 0;
   while ($instance > $hi) {

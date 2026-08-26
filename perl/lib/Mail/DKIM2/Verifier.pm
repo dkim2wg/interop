@@ -38,12 +38,32 @@ sub init {
     $self->{details}             = undef;
     $self->{skip_timestamp_check} = 0;
     $self->{mid_process}         = 0;
+    $self->{allow_unsigned_mi}   = 0;
 }
 
 sub skip_timestamp_check {
     my ($self, $val) = @_;
     $self->{skip_timestamp_check} = $val if defined $val;
     return $self->{skip_timestamp_check};
+}
+
+# allow_unsigned_mi: permit a Message-Instance whose m= is higher than any
+# DKIM2-Signature's m=, which spec-05 §11 otherwise makes a PERMERROR (see
+# finish_body).
+#
+# Set this on an OUTBOUND path. A Signer legitimately holds the new
+# Message-Instance before the signature covering it exists, so a verify run
+# over that in-progress state must not reject it. Do NOT set it when
+# verifying mail that arrived from elsewhere: there the unsigned instance is
+# exactly the accountability gap the spec is closing.
+#
+# mid_process implies it, because a partial chain view always looks like this:
+# Validate.pm strips higher-numbered DKIM2-Signature headers for its top-down
+# walk while keeping every Message-Instance.
+sub allow_unsigned_mi {
+    my ($self, $val) = @_;
+    $self->{allow_unsigned_mi} = $val if defined $val;
+    return $self->{allow_unsigned_mi};
 }
 
 # mid_process: set when this Verifier is being run against a partial view of
@@ -99,6 +119,34 @@ sub finish_body {
 
     my %mi_map  = %{$self->{_mi_headers}};
     my %dk2_map = %{$self->{_dk2_headers}};
+
+    # spec-05 §11: "As a special case, there MUST NOT be a Message-Instance
+    # field with a higher m= value than occurs in any DKIM2-Signature field",
+    # reported as "PERMERROR Message-Instance m=<x> is not signed".
+    #
+    # An unsigned Message-Instance records hashes that nothing vouches for, so
+    # accepting one lets a hop assert an instance with no accountability --
+    # which is the whole thing DKIM2 exists to prevent. This must run BEFORE
+    # the no-signatures 'none' return below, or a message carrying only an MI
+    # reads as "no DKIM2 here" instead of as malformed.
+    #
+    # Suppressed by allow_unsigned_mi (an outbound signer holds the new MI
+    # before its signature exists) and by mid_process (a partial chain view
+    # keeps every MI while higher signatures are stripped).
+    unless ($self->{allow_unsigned_mi} || $self->{mid_process}) {
+        if (keys %mi_map) {
+            my ($top_mi) = sort { $b <=> $a } keys %mi_map;
+            my ($top_signed) = sort { $b <=> $a }
+                               grep { defined }
+                               map  { $_->{sig} ? $_->{sig}->version : undef }
+                               values %dk2_map;
+            if (!defined $top_signed || $top_mi > $top_signed) {
+                $self->{result}  = 'permerror';
+                $self->{details} = "PERMERROR Message-Instance m=$top_mi is not signed";
+                return;
+            }
+        }
+    }
 
     unless (keys %dk2_map) {
         $self->{result} = 'none';
@@ -164,13 +212,19 @@ sub finish_body {
                 return;
             }
         }
-        # Verify the top signature covers the topmost MI
+        # The other direction: a signature claiming to cover an instance that
+        # is not present. The completeness loop above only walks up to the
+        # topmost MI that EXISTS, so it cannot see this.
+        #
+        # The reverse case -- an MI above the top signature -- is spec-05 §11's
+        # "is not signed" PERMERROR, checked at the top of finish_body, because
+        # it must also fire when there are no signatures at all.
         my $top_sig = $dk2_map{$max_i}{sig};
         my $top_m   = $top_sig->version || 0;
-        if ($top_m != $max_v) {
+        if ($top_m > $max_v) {
             $self->{result} = 'fail';
             $self->{details} =
-                "top signature i=$max_i m=$top_m does not cover topmost MI m=$max_v";
+                "top signature i=$max_i covers m=$top_m but no Message-Instance m=$top_m exists";
             return;
         }
     }
