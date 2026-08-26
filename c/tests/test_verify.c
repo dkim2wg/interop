@@ -897,6 +897,243 @@ int main(void) {
         free(sig1_out);
     }
 
+    /* --- Regression (fix round: item 1, spec-05-upgrade final review): the
+       BOTTOM (m=1) Message-Instance fails to parse with -1 (a malformed h=
+       hash-set entry -- not the already-fixed -2 duplicate-hash case), while
+       a real, otherwise-fully-valid m=2 hop sits on top with its own valid
+       signature chain (i=1 covering m=1, i=2 covering m=2). i=1's signature
+       is hand-signed over exactly the broken wire bytes of mi1, modeling a
+       signer that faithfully signs whatever it emitted (e.g. a malloc
+       failure while serializing h=, followed by signing the corrupted
+       result anyway) -- the realistic construction for this bug.
+
+       Before the item-1 fix: collect_dkim2_headers() dropped mi1 from
+       ctx->mi_list with mi_error left empty (dkim2_mi_parse_err() only
+       populated errbuf for -2), so the ctx->mi_error check at the top of
+       dkim2_do_verify() never fired. Empirically (see PROBE result recorded
+       below), this construction still ended up FAIL "DKIM2-Signature i=1
+       signature verification failed" -- not because anything noticed the
+       broken bottom MI, but only incidentally: build_verify_input() can only
+       include a Message-Instance's raw_value from ctx->mi_list, and since
+       every signature's target m is >= 1, mi1's content is always part of
+       every covering signature's input, so dropping it always desyncs the
+       reconstructed signing input from whatever a real signer produced. That
+       is NOT a real protection -- see the second block below, which proves
+       it fails OPEN (DKIM2_OK) once that incidental crypto correlation is
+       removed. After the fix, ctx->mi_error is set for -1 too and fires
+       unconditionally before any crypto is attempted, so both constructions
+       now report the same explicit PERMERROR. */
+    {
+        uint64_t now = (uint64_t)time(NULL);
+        char mi1_broken[128];
+        snprintf(mi1_broken, sizeof mi1_broken, "m=1; h=NOTAHASHSET;");
+
+        char *mi1_out = NULL, *sig1_out = NULL;
+        char *hop1_rcpts[] = { "<mid@example.com>", NULL };
+        int r1 = sign_test_message("<sender@example.com>", hop1_rcpts,
+            "/tmp/dkim2_test_sign.pem", "example.com", "test",
+            raw_headers, 3, body, &mi1_out, &sig1_out);
+        assert(r1 == 0 && mi1_out != NULL && sig1_out != NULL);
+
+        dkim2_mi_t *mi1_parsed = dkim2_mi_parse(mi1_out);
+        assert(mi1_parsed && mi1_parsed->n_hsets >= 1);
+        char mi2_val[512];
+        snprintf(mi2_val, sizeof mi2_val, "m=2; h=%s:%s:%s;",
+            mi1_parsed->hsets[0].alg,
+            mi1_parsed->hsets[0].hdr_hash,
+            mi1_parsed->hsets[0].body_hash);
+        dkim2_mi_free(mi1_parsed);
+
+        char mf1_b64[128], rt1_b64[128];
+        b64_encode((const unsigned char *)"<sender@example.com>",
+            strlen("<sender@example.com>"), mf1_b64, sizeof mf1_b64);
+        b64_encode((const unsigned char *)"<mid@example.com>",
+            strlen("<mid@example.com>"), rt1_b64, sizeof rt1_b64);
+        char sig1_incomplete[512];
+        snprintf(sig1_incomplete, sizeof sig1_incomplete,
+            "i=1;m=1;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:;",
+            (unsigned long long)now, mf1_b64, rt1_b64);
+
+        char mf2_b64[128], rt2_b64[128];
+        b64_encode((const unsigned char *)"<mid@example.com>",
+            strlen("<mid@example.com>"), mf2_b64, sizeof mf2_b64);
+        b64_encode((const unsigned char *)"<final@example.com>",
+            strlen("<final@example.com>"), rt2_b64, sizeof rt2_b64);
+        char sig2_incomplete[512];
+        snprintf(sig2_incomplete, sizeof sig2_incomplete,
+            "i=2;m=2;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:;",
+            (unsigned long long)now, mf2_b64, rt2_b64);
+
+        EVP_PKEY *sign_privkey = dkim2_load_privkey("/tmp/dkim2_test_sign.pem");
+        assert(sign_privkey != NULL);
+
+        char sign_input1[4096]; size_t pos1 = 0;
+        test_canon_append(sign_input1, &pos1, "message-instance", mi1_broken);
+        test_canon_append(sign_input1, &pos1, "dkim2-signature", sig1_incomplete);
+        char *sig1_b64 = dkim2_sign(sign_privkey, "ed25519-sha256",
+            (unsigned char *)sign_input1, pos1);
+        assert(sig1_b64 != NULL);
+        char sig1_final[600];
+        snprintf(sig1_final, sizeof sig1_final,
+            "i=1;m=1;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:%s;",
+            (unsigned long long)now, mf1_b64, rt1_b64, sig1_b64);
+        free(sig1_b64);
+
+        char sign_input2[4096]; size_t pos2 = 0;
+        test_canon_append(sign_input2, &pos2, "message-instance", mi1_broken);
+        test_canon_append(sign_input2, &pos2, "message-instance", mi2_val);
+        test_canon_append(sign_input2, &pos2, "dkim2-signature", sig1_final);
+        test_canon_append(sign_input2, &pos2, "dkim2-signature", sig2_incomplete);
+        char *sig2_b64 = dkim2_sign(sign_privkey, "ed25519-sha256",
+            (unsigned char *)sign_input2, pos2);
+        assert(sig2_b64 != NULL);
+        EVP_PKEY_free(sign_privkey);
+        char sig2_final[600];
+        snprintf(sig2_final, sizeof sig2_final,
+            "i=2;m=2;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:%s;",
+            (unsigned long long)now, mf2_b64, rt2_b64, sig2_b64);
+        free(sig2_b64);
+
+        const char *path = "/tmp/dkim2_test_bottom_mi_dash1_probe.eml";
+        FILE *ef = fopen(path, "w");
+        assert(ef != NULL);
+        fprintf(ef,
+            "From: sender@example.com\r\n"
+            "To: recipient@example.org\r\n"
+            "Subject: Test DKIM2 message\r\n"
+            "Message-Instance: %s\r\n"
+            "Message-Instance: %s\r\n"
+            "DKIM2-Signature: %s\r\n"
+            "DKIM2-Signature: %s\r\n"
+            "\r\n"
+            "%s",
+            mi1_broken, mi2_val, sig1_final, sig2_final, body);
+        fclose(ef);
+
+        dkim2_verify_result_t res = dkim2_verify_message(path, NULL, NULL, 1);
+        remove(path);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strcmp(res.message,
+            "PERMERROR Message-Instance m=1 syntax error") == 0);
+
+        free(mi1_out);
+        free(sig1_out);
+    }
+
+    /* --- Regression, second construction: what if the signatures were
+       already consistent with the verifier's post-drop reconstruction (i.e.
+       computed as though mi1 were never part of the signing input at all --
+       matching exactly what build_verify_input() sees once mi1 is dropped
+       from ctx->mi_list)? This isolates whether ANYTHING other than the
+       incidental crypto correlation above would have caught the dropped
+       bottom MI. It does not model a realistic external attacker (nothing
+       in this codebase's signer produces this shape today), but it
+       definitively answers item 1(a): before the fix, this construction
+       verified as DKIM2_OK ("PASS: DKIM2-Signature i=2 verified") -- proving
+       the bottom-MI -1 case fails OPEN once its only incidental protection
+       (crypto happening to include mi1's bytes) is removed. The
+       unconditional ctx->mi_error check added by the fix closes this
+       regardless of construction. */
+    {
+        uint64_t now = (uint64_t)time(NULL);
+        char mi1_broken[128];
+        snprintf(mi1_broken, sizeof mi1_broken, "m=1; h=NOTAHASHSET;");
+
+        char *mi1_out = NULL, *sig1_out = NULL;
+        char *hop1_rcpts[] = { "<mid@example.com>", NULL };
+        int r1 = sign_test_message("<sender@example.com>", hop1_rcpts,
+            "/tmp/dkim2_test_sign.pem", "example.com", "test",
+            raw_headers, 3, body, &mi1_out, &sig1_out);
+        assert(r1 == 0 && mi1_out != NULL && sig1_out != NULL);
+
+        dkim2_mi_t *mi1_parsed = dkim2_mi_parse(mi1_out);
+        assert(mi1_parsed && mi1_parsed->n_hsets >= 1);
+        char mi2_val[512];
+        snprintf(mi2_val, sizeof mi2_val, "m=2; h=%s:%s:%s;",
+            mi1_parsed->hsets[0].alg,
+            mi1_parsed->hsets[0].hdr_hash,
+            mi1_parsed->hsets[0].body_hash);
+        dkim2_mi_free(mi1_parsed);
+
+        char mf1_b64[128], rt1_b64[128];
+        b64_encode((const unsigned char *)"<sender@example.com>",
+            strlen("<sender@example.com>"), mf1_b64, sizeof mf1_b64);
+        b64_encode((const unsigned char *)"<mid@example.com>",
+            strlen("<mid@example.com>"), rt1_b64, sizeof rt1_b64);
+        char sig1_incomplete[512];
+        snprintf(sig1_incomplete, sizeof sig1_incomplete,
+            "i=1;m=1;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:;",
+            (unsigned long long)now, mf1_b64, rt1_b64);
+
+        char mf2_b64[128], rt2_b64[128];
+        b64_encode((const unsigned char *)"<mid@example.com>",
+            strlen("<mid@example.com>"), mf2_b64, sizeof mf2_b64);
+        b64_encode((const unsigned char *)"<final@example.com>",
+            strlen("<final@example.com>"), rt2_b64, sizeof rt2_b64);
+        char sig2_incomplete[512];
+        snprintf(sig2_incomplete, sizeof sig2_incomplete,
+            "i=2;m=2;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:;",
+            (unsigned long long)now, mf2_b64, rt2_b64);
+
+        EVP_PKEY *sign_privkey = dkim2_load_privkey("/tmp/dkim2_test_sign.pem");
+        assert(sign_privkey != NULL);
+
+        /* sig1 signs ONLY its own (blanked) header -- exactly what
+           build_verify_input() reconstructs once mi1 is missing from
+           ctx->mi_list. */
+        char sign_input1[4096]; size_t pos1 = 0;
+        test_canon_append(sign_input1, &pos1, "dkim2-signature", sig1_incomplete);
+        char *sig1_b64 = dkim2_sign(sign_privkey, "ed25519-sha256",
+            (unsigned char *)sign_input1, pos1);
+        assert(sig1_b64 != NULL);
+        char sig1_final[600];
+        snprintf(sig1_final, sizeof sig1_final,
+            "i=1;m=1;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:%s;",
+            (unsigned long long)now, mf1_b64, rt1_b64, sig1_b64);
+        free(sig1_b64);
+
+        /* sig2 signs mi2 + sig1(final) + sig2(blanked) -- again, exactly
+           what build_verify_input() reconstructs (mi1 absent). */
+        char sign_input2[4096]; size_t pos2 = 0;
+        test_canon_append(sign_input2, &pos2, "message-instance", mi2_val);
+        test_canon_append(sign_input2, &pos2, "dkim2-signature", sig1_final);
+        test_canon_append(sign_input2, &pos2, "dkim2-signature", sig2_incomplete);
+        char *sig2_b64 = dkim2_sign(sign_privkey, "ed25519-sha256",
+            (unsigned char *)sign_input2, pos2);
+        assert(sig2_b64 != NULL);
+        EVP_PKEY_free(sign_privkey);
+        char sig2_final[600];
+        snprintf(sig2_final, sizeof sig2_final,
+            "i=2;m=2;t=%llu;d=example.com;mf=%s;rt=%s;s=test:ed25519-sha256:%s;",
+            (unsigned long long)now, mf2_b64, rt2_b64, sig2_b64);
+        free(sig2_b64);
+
+        const char *path = "/tmp/dkim2_test_bottom_mi_dash1_probe2.eml";
+        FILE *ef = fopen(path, "w");
+        assert(ef != NULL);
+        fprintf(ef,
+            "From: sender@example.com\r\n"
+            "To: recipient@example.org\r\n"
+            "Subject: Test DKIM2 message\r\n"
+            "Message-Instance: %s\r\n"
+            "Message-Instance: %s\r\n"
+            "DKIM2-Signature: %s\r\n"
+            "DKIM2-Signature: %s\r\n"
+            "\r\n"
+            "%s",
+            mi1_broken, mi2_val, sig1_final, sig2_final, body);
+        fclose(ef);
+
+        dkim2_verify_result_t res = dkim2_verify_message(path, NULL, NULL, 1);
+        remove(path);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strcmp(res.message,
+            "PERMERROR Message-Instance m=1 syntax error") == 0);
+
+        free(mi1_out);
+        free(sig1_out);
+    }
+
     free(mi_val);
     free(sig_val);
     puts("sign+verify: all tests passed");

@@ -472,16 +472,31 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = 0;
     result->domain[0] = '\0';
 
-    /* spec-05 §7.3: a Message-Instance header that failed to parse with a
-       specific, reportable cause (currently: duplicate hash algorithm in h=)
-       never made it into ctx->mi_list -- the header-collection path
+    /* spec-05 §7.3: a Message-Instance header that failed to parse --
+       whether with a specific reportable cause (duplicate hash algorithm in
+       h=, the -2 case) or a plain syntax/malloc failure (-1: a missing
+       required tag, a malformed h= entry, or an allocation failure) -- never
+       made it into ctx->mi_list. The header-collection path
        (dkim2_message.c/dkim2_milter.c) dropped it and recorded the reason
-       here instead. Report it immediately, before any other check
-       (including DNS/crypto), and regardless of whether the affected m=
-       would have been the topmost, signature-covered instance or not: it
-       must never simply vanish, and must never be misreported as "no
-       Message-Instance for m=N" (the wrong error, describing the wrong
-       problem). */
+       here instead via dkim2_mi_parse_err()'s errbuf. Report it immediately,
+       before any other check (including DNS/crypto), and regardless of
+       whether the affected m= would have been the topmost, signature-covered
+       instance or the bottom (m=1) one: it must never simply vanish, and
+       must never be misreported as "no Message-Instance for m=N" (the wrong
+       error, describing the wrong problem).
+
+       The bottom-MI case matters in its own right: nothing else in this
+       function or in verify_mi_hashes() (§10.7, below) independently checks
+       for a dropped m=1 -- the only thing that happens to catch it today is
+       that m=1's raw bytes are always part of every covering signature's
+       §10.6 crypto input (mi->m is always <= any sig's target m), so a drop
+       usually surfaces as an incidental "signature verification failed"
+       instead. A hand-built message whose signatures were computed to match
+       the verifier's already-missing-m=1 reconstruction (see
+       c/tests/test_verify.c) passes with no error at all if this mi_error
+       check doesn't run first -- i.e. without this check, the bottom-MI case
+       fails OPEN in that construction. This check must fire unconditionally,
+       before that crypto path is ever reached. */
     if (ctx->mi_error[0])
         SETSTATUS(DKIM2_PERMERROR, "%s", ctx->mi_error);
 

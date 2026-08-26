@@ -49,9 +49,27 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
         }
         if (dup) break;
 
-        (*out)[*n].alg       = strdup(tok);
-        (*out)[*n].hdr_hash  = strdup(c1);
+        /* Each strdup() must be checked: under OOM a NULL here would
+           otherwise flow straight into the next hash-set's
+           strcasecmp((*out)[i].alg, tok) comparison above and crash. The
+           entries already stored at indices 0..*n-1 are freed by the
+           caller (dkim2_mi_free() walks mi->hsets up to mi->n_hsets, which
+           is this *n) once *out is attached to the mi struct on the error
+           path; only this partially-built entry -- not yet counted in *n --
+           needs cleaning up here. */
+        (*out)[*n].alg = strdup(tok);
+        if (!(*out)[*n].alg) { free(copy); return -1; }
+        (*out)[*n].hdr_hash = strdup(c1);
+        if (!(*out)[*n].hdr_hash) {
+            free((*out)[*n].alg); (*out)[*n].alg = NULL;
+            free(copy); return -1;
+        }
         (*out)[*n].body_hash = strdup(c2);
+        if (!(*out)[*n].body_hash) {
+            free((*out)[*n].alg); (*out)[*n].alg = NULL;
+            free((*out)[*n].hdr_hash); (*out)[*n].hdr_hash = NULL;
+            free(copy); return -1;
+        }
         (*n)++;
         tok = strtok_r(NULL, ",", &saveptr);
     }
@@ -62,15 +80,46 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
 dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz) {
     if (errbuf && errbufsz) errbuf[0] = '\0';
     taglist_t *tl = tagparse(value, NULL);
-    if (!tl) return NULL;
+    if (!tl) {
+        /* Malloc failure or syntax error inside tagparse() itself -- no
+           tag, including m=, was ever read, so the instance number is
+           genuinely unknowable. This is the surviving sibling of the
+           silent-drop bug already fixed for the §7.3 duplicate-hash (-2)
+           case: before this, a -1 failure here vanished with no error at
+           all. Report the same generic wording used below for the other
+           unattributable case, without an m=N -- there is nothing more
+           specific to name (compare dkim2_verify.c's own unattributable
+           "PERMERROR: No DKIM2-Signature header"). */
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+        return NULL;
+    }
     dkim2_mi_t *mi = calloc(1, sizeof *mi);
-    if (!mi) { taglist_free(tl); return NULL; }
+    if (!mi) {
+        /* OOM allocating the MI struct itself -- same unattributable case. */
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+        taglist_free(tl);
+        return NULL;
+    }
     const char *v;
     v = tag_get(tl, "m");
-    if (!v) goto err;
+    if (!v) {
+        /* No m= tag at all -- still unattributable. */
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+        goto err;
+    }
     mi->m = atoi(v);
     v = tag_get(tl, "h");
-    if (!v) goto err;
+    if (!v) {
+        /* mi->m is known from here on, so every remaining failure can
+           name it. */
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz,
+                "PERMERROR Message-Instance m=%d syntax error", mi->m);
+        goto err;
+    }
     {
         int hr = parse_hsets(v, &mi->hsets, &mi->n_hsets);
         if (hr == -2) {
@@ -83,7 +132,19 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
                     mi->m);
             goto err;
         }
-        if (hr < 0) goto err;
+        if (hr < 0) {
+            /* -1: either a malformed hash-set entry or a malloc/strdup
+               failure inside parse_hsets(). Both are folded into the same
+               "syntax error" wording (the §11.2 precedent used for a bad
+               r= payload elsewhere in this file/dkim2_verify.c) -- a
+               permanent parse failure isn't usefully distinguished from an
+               allocation failure to the remote party either way, and this
+               is what "vanished with no error at all" must become. */
+            if (errbuf && errbufsz)
+                snprintf(errbuf, errbufsz,
+                    "PERMERROR Message-Instance m=%d syntax error", mi->m);
+            goto err;
+        }
     }
     v = tag_get(tl, "r");
     if (v) mi->r_raw = strdup(v);
