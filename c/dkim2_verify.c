@@ -105,6 +105,40 @@ static int relaxed_domain_match(const char *d, const char *mf_domain) {
     return 0;
 }
 
+/* spec-05 §8.9: a Selector MUST NOT appear more than once within a single
+   s= tag; the same signing algorithm MAY appear a second time, but only
+   with a distinct Selector -- three or more occurrences of the same
+   algorithm is "too many signatures". The two checks are independent: two
+   items sharing both algorithm and Selector are a duplicate-selector error,
+   not too-many-signatures (the count is 2, not 3+). Matching is
+   case-insensitive for both: algorithm names are RFC 5234 ABNF quoted
+   strings, and a Selector is a Domain (§3.5) -- DNS names are
+   case-insensitive. Returns 0 if clean, -1 with errbuf filled otherwise. */
+int dkim2_sig_check_duplicates(const dkim2_sig_t *sig, char *errbuf, size_t errbufsz) {
+    for (int i = 0; i < sig->n_ssets; i++) {
+        for (int j = i + 1; j < sig->n_ssets; j++) {
+            if (strcasecmp(sig->ssets[i].selector, sig->ssets[j].selector) == 0) {
+                snprintf(errbuf, errbufsz,
+                    "PERMERROR DKIM2-Signature i=%d has a duplicate selector", sig->i);
+                return -1;
+            }
+        }
+    }
+
+    for (int i = 0; i < sig->n_ssets; i++) {
+        int cnt = 0;
+        for (int j = 0; j < sig->n_ssets; j++)
+            if (strcasecmp(sig->ssets[i].alg, sig->ssets[j].alg) == 0) cnt++;
+        if (cnt > 2) {
+            snprintf(errbuf, errbufsz,
+                "PERMERROR DKIM2-Signature i=%d has too many signatures", sig->i);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 /* Build signing input for the verifier — same structure as §8.5 signing,
    but for the signature being verified, substitute empty string for its sig value.
    The sig_value_to_empty is the sig_b64 we want to blank out.
@@ -509,6 +543,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 SETSTATUS(DKIM2_PERMERROR,
                     "DKIM2-Signature i=%d MAIL FROM and d= do not match",
                     sig->i);
+        }
+
+        /* spec-05 §8.9: reject duplicate/limit violations before any DNS or
+           crypto work. */
+        {
+            char dup_errbuf[256];
+            if (dkim2_sig_check_duplicates(sig, dup_errbuf, sizeof dup_errbuf) < 0)
+                SETSTATUS(DKIM2_PERMERROR, "%s", dup_errbuf);
         }
 
         /* Verify all s= items for this signature */
