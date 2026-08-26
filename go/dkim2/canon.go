@@ -25,16 +25,15 @@ func HashAlg(name string) (func() hash.Hash, bool) {
 	return f, ok
 }
 
-// hashBody computes the hash (per alg) of the canonicalised message body per §5.1.
-// Canonicalisation: strip all trailing empty lines, ensure exactly one trailing CRLF.
-// The pending-CRLF counter accumulates consecutive empty lines and flushes them
+// writeCanonicalBody streams the §5.1 body canonicalisation of r into w:
+// strip all trailing empty lines, ensure exactly one trailing CRLF. The
+// pending-CRLF counter accumulates consecutive empty lines and flushes them
 // only when a non-empty line follows, so trailing empty lines are discarded.
-func hashBody(r io.Reader, alg string) ([]byte, error) {
-	newHash, ok := HashAlg(alg)
-	if !ok {
-		return nil, fmt.Errorf("unsupported hash algorithm: %q", alg)
-	}
-	h := newHash()
+// w is written to exactly once per canonical line/CRLF; hash.Hash.Write never
+// returns an error, so callers passing a hash (directly, or via io.MultiWriter
+// fanning out to several) can ignore Write's return value the same way this
+// function does.
+func writeCanonicalBody(w io.Writer, r io.Reader) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1 MiB max line
 	pendingCRLFs := 0
@@ -49,24 +48,67 @@ func hashBody(r io.Reader, alg string) ([]byte, error) {
 		} else {
 			// Flush any accumulated empty lines before this non-empty line
 			for i := 0; i < pendingCRLFs; i++ {
-				h.Write([]byte("\r\n"))
+				w.Write([]byte("\r\n"))
 			}
 			pendingCRLFs = 0
-			h.Write([]byte(line))
-			h.Write([]byte("\r\n"))
+			w.Write([]byte(line))
+			w.Write([]byte("\r\n"))
 			hasContent = true
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Trailing empty lines (and an all-blank body) are discarded.
 	// The canonical form always ends with exactly one CRLF.
 	if !hasContent {
-		h.Write([]byte("\r\n"))
+		w.Write([]byte("\r\n"))
+	}
+	return nil
+}
+
+// hashBody computes the hash (per alg) of the canonicalised message body per §5.1.
+func hashBody(r io.Reader, alg string) ([]byte, error) {
+	newHash, ok := HashAlg(alg)
+	if !ok {
+		return nil, fmt.Errorf("unsupported hash algorithm: %q", alg)
+	}
+	h := newHash()
+	if err := writeCanonicalBody(h, r); err != nil {
+		return nil, err
 	}
 	return h.Sum(nil), nil
+}
+
+// hashBodyMulti computes the body hash for every algorithm in algs in a
+// single streaming pass over r — the body is canonicalised once and fanned
+// out to one hash.Hash per (deduplicated) algorithm via io.MultiWriter, so r
+// is never buffered regardless of how many algorithms are requested. algs
+// may be empty (r is still drained; an empty map is returned).
+func hashBodyMulti(r io.Reader, algs []string) (map[string][]byte, error) {
+	hashers := make(map[string]hash.Hash, len(algs))
+	writers := make([]io.Writer, 0, len(algs))
+	for _, alg := range algs {
+		if _, exists := hashers[alg]; exists {
+			continue
+		}
+		newHash, ok := HashAlg(alg)
+		if !ok {
+			return nil, fmt.Errorf("unsupported hash algorithm: %q", alg)
+		}
+		h := newHash()
+		hashers[alg] = h
+		writers = append(writers, h)
+	}
+	if err := writeCanonicalBody(io.MultiWriter(writers...), r); err != nil {
+		return nil, err
+	}
+	out := make(map[string][]byte, len(hashers))
+	for alg, h := range hashers {
+		out[alg] = h.Sum(nil)
+	}
+	return out, nil
 }
 
 // Unsigned header fields per spec-05 §4, §4.1.

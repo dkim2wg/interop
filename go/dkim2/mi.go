@@ -57,11 +57,27 @@ func hashSetsEqual(a, b []HashSet) bool {
 	return true
 }
 
-// verifyMIHashes checks every implemented hash-set in mi against freshly
-// computed hashes of headers/body. All implemented hash-sets MUST match;
-// unimplemented algorithms are skipped per §3.4. Fails closed with the
-// spec-05 message when none of the hash-sets name an implemented algorithm.
-func verifyMIHashes(mi *MessageInstance, headers []Header, body []byte) error {
+// implementedAlgs returns the algorithms in hashes that this build implements
+// (per §3.4, i.e. resolve via HashAlg), in the order they appear.
+func implementedAlgs(hashes []HashSet) []string {
+	var algs []string
+	for _, hs := range hashes {
+		if _, ok := HashAlg(hs.Alg); ok {
+			algs = append(algs, hs.Alg)
+		}
+	}
+	return algs
+}
+
+// verifyMIHashesPrecomputed checks every implemented hash-set in mi against
+// a freshly computed header hash (per algorithm; headers is an in-memory
+// slice, so recomputing per algorithm is cheap) and the already-computed
+// bodyHashes (one streaming pass over the body — see hashBodyMulti — must
+// have produced an entry for every algorithm implementedAlgs(mi.Hashes)
+// names). All implemented hash-sets MUST match; unimplemented algorithms are
+// skipped per §3.4. Fails closed with the spec-05 message when none of the
+// hash-sets name an implemented algorithm.
+func verifyMIHashesPrecomputed(mi *MessageInstance, headers []Header, bodyHashes map[string][]byte) error {
 	usable := 0
 	for _, hs := range mi.Hashes {
 		if _, ok := HashAlg(hs.Alg); !ok {
@@ -78,10 +94,7 @@ func verifyMIHashes(mi *MessageInstance, headers []Header, body []byte) error {
 			return fmt.Errorf("m=%d: %s header hash mismatch", mi.Version, hs.Alg)
 		}
 
-		gotB, err := hashBody(bytes.NewReader(body), hs.Alg)
-		if err != nil {
-			return err
-		}
+		gotB := bodyHashes[hs.Alg]
 		wantB, err := base64.StdEncoding.DecodeString(hs.BodyHash)
 		if err != nil || !bytes.Equal(gotB, wantB) {
 			return fmt.Errorf("m=%d: %s body hash mismatch", mi.Version, hs.Alg)
@@ -91,6 +104,19 @@ func verifyMIHashes(mi *MessageInstance, headers []Header, body []byte) error {
 		return fmt.Errorf("Message-Instance m=%d no supported hash algorithm", mi.Version)
 	}
 	return nil
+}
+
+// verifyMIHashes is the buffered-body convenience form of
+// verifyMIHashesPrecomputed, for callers (Undo) that already hold the whole
+// body in memory. It still hashes the body in a single streaming pass across
+// all implemented algorithms (hashBodyMulti), it just reads that pass from a
+// bytes.Reader over the already-buffered body rather than from a live stream.
+func verifyMIHashes(mi *MessageInstance, headers []Header, body []byte) error {
+	bodyHashes, err := hashBodyMulti(bytes.NewReader(body), implementedAlgs(mi.Hashes))
+	if err != nil {
+		return err
+	}
+	return verifyMIHashesPrecomputed(mi, headers, bodyHashes)
 }
 
 // parseMI parses a Message-Instance header (with or without the field name prefix).

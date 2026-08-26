@@ -13,19 +13,15 @@ import (
 )
 
 // Verify reads r and verifies all DKIM2-Signature headers.
-// Returns one VerifyResult per signature. Body is never buffered.
+// Returns one VerifyResult per signature. Body is never buffered: it is
+// canonicalised in a single streaming pass, fanned out to one hash.Hash per
+// implemented algorithm the topmost Message-Instance's h= tag names (see
+// hashBodyMulti), even when that names more than one algorithm.
 // An optional VerifyOptions may be passed to enable §10.4 envelope matching.
 func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 	headers, bodyReader, err := parseHeaders(r)
 	if err != nil {
 		return nil, fmt.Errorf("parsing headers: %w", err)
-	}
-
-	// Buffer body: an MI's h= tag may name multiple hash algorithms, each
-	// requiring its own canonicalisation pass over the body.
-	bodyBytes, err := io.ReadAll(bodyReader)
-	if err != nil {
-		return nil, fmt.Errorf("reading body: %w", err)
 	}
 
 	// Separate MI, sig, and content headers; preserve original Raw for signing input
@@ -51,8 +47,11 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		return nil, fmt.Errorf("no Message-Instance headers found")
 	}
 
-	// Spec review note #3: top sig's m= must equal the count of MI headers
+	// Spec review note #3: top sig's m= must equal the count of MI headers.
+	// Also track the topmost MI object itself: its hash-sets name the
+	// algorithm(s) the body must be hashed with below.
 	maxMIVersion := 0
+	var topMI *MessageInstance
 	for _, raw := range miHeaders {
 		mi, err := parseMI(raw)
 		if err != nil {
@@ -63,7 +62,22 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 		if mi.Version > maxMIVersion {
 			maxMIVersion = mi.Version
+			topMI = mi
 		}
+	}
+
+	// Body is never buffered: hash it in a single streaming pass, fanned out
+	// to every algorithm the topmost MI's h= tag names (that this build
+	// implements — see hashBodyMulti/HashAlg, §3.4). Only the topmost MI's
+	// hashes are ever checked against the body (see the per-signature loop
+	// below), so that is the only hash-set that needs consulting here.
+	var neededAlgs []string
+	if topMI != nil {
+		neededAlgs = implementedAlgs(topMI.Hashes)
+	}
+	bodyHashes, err := hashBodyMulti(bodyReader, neededAlgs)
+	if err != nil {
+		return nil, fmt.Errorf("body hash: %w", err)
 	}
 
 	var topSig *DKIM2Signature
@@ -319,7 +333,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		// Earlier MI versions recorded hashes from a prior message state;
 		// an intermediary may have modified headers/body since then.
 		if sig.MIVersion == maxMIVersion {
-			if err := verifyMIHashes(thisMI, contentHeaders, bodyBytes); err != nil {
+			if err := verifyMIHashesPrecomputed(thisMI, contentHeaders, bodyHashes); err != nil {
 				res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, err)
 				results = append(results, res)
 				continue
