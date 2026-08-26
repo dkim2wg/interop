@@ -109,50 +109,22 @@ sub _default_cb {
     };
 }
 
-# Numeric rank of an overall verdict, best to worst, so the retry wrapper can
-# tell whether stripping a header actually improved things.
-my %_RANK = (pass => 3, warn => 2, none => 1, fail => 0);
-sub _rank { $_RANK{ $_[0] // 'fail' } // 0 }
-
-# Remove a header (and its folded continuation lines) from raw message text
-# with a line-based regex. We deliberately do NOT round-trip through
-# Email::MIME: reserialising can refold other headers and change their
-# canonical bytes, which would corrupt the very hashes we are verifying.
-sub _strip_header {
-    my ($text, $name) = @_;
-    $text =~ s/\r?\n/\r\n/g;
-    $text =~ s/^\Q$name\E:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*\r\n//mig;
-    return $text;
-}
-
 # report($text, %opts) — verify a DKIM2 message and return a structured report.
 #
-# spec-05 §4 excludes Received-SPF from the Message-Instance header hash via
-# the "received-" prefix rule (should_skip()), so a receiving MTA that
-# prepends one (Fastmail does) no longer breaks verification and this retry
-# is dead for it in practice. It remains as a safety net: if some other trace
-# header not yet covered by §4 causes a failure, retry once with it removed
-# and, if that verifies, return the better result and say so in the summary.
-# Mirrored in deploy/www/verify/verify.js's verifyMessage().
+# Prior to spec-05, a receiving MTA's Received-SPF header (Fastmail adds one)
+# was covered by the Message-Instance header hash and could break
+# verification; this used to retry once with it stripped. spec-05 §4 excludes
+# Received-SPF from the hash via the "received-" prefix rule (should_skip()),
+# so stripping it can no longer change h_digest()/b_digest() or any verdict —
+# the retry was provably a no-op. Removed rather than kept as a "safety net":
+# it was hardcoded to the literal name Received-SPF, not a general mechanism,
+# so it covered nothing else anyway. Mirrored removal in
+# deploy/www/verify/verify.js's verifyMessage().
 sub report {
     my ($text, %opts) = @_;
     $text //= '';
 
-    my $rep = _report_once($text, %opts);
-    return $rep if ($rep->{overall} // '') eq 'pass';
-
-    # Only worth retrying when the message actually carries a Received-SPF header.
-    return $rep unless $text =~ /^Received-SPF:/mi;
-
-    my $rep2 = _report_once(_strip_header($text, 'Received-SPF'), %opts);
-    return $rep if _rank($rep2->{overall}) <= _rank($rep->{overall});
-
-    $rep2->{stripped_headers} = ['Received-SPF'];
-    $rep2->{summary} = ($rep2->{summary} ? "$rep2->{summary}; " : '')
-        . 'verified only after removing Received-SPF (a trace header added by '
-        . 'the receiving MTA that is not excluded from the Message-Instance '
-        . 'header hash)';
-    return $rep2;
+    return _report_once($text, %opts);
 }
 
 sub _report_once {
