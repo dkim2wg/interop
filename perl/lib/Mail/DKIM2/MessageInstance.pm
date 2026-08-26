@@ -222,6 +222,21 @@ sub parse {
     # spec-05 §7.3: h= is a list of hash-sets
     if (exists $tags{h}) {
         my $sets = parse_hash_sets($tags{h});
+
+        # §7.3: an algorithm MUST NOT be present more than once. Check the
+        # LIST returned by parse_hash_sets, not a hash keyed by algorithm --
+        # a hash would let the second occurrence silently overwrite the
+        # first, hiding the duplicate. Hash names are already lowercased by
+        # parse_hash_sets (RFC 5234 makes ABNF quoted strings
+        # case-insensitive), so this comparison is case-insensitive too.
+        # This must run before any hash is computed or compared.
+        my %seen;
+        for my $s (@$sets) {
+            if ($seen{$s->[0]}++) {
+                die "PERMERROR Message-Instance m=$tags{m} has a duplicate hash algorithm\n";
+            }
+        }
+
         for my $s (@$sets) {
             $self->{bits}{hashes}{$s->[0]} = [$s->[1], $s->[2]];
         }

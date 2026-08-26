@@ -106,6 +106,24 @@ sub finish_body {
         return;
     }
 
+    # spec-05 §7.3: reject a Message-Instance whose h= names the same
+    # algorithm twice, before any DNS lookup or crypto work. Checked against
+    # the LIST of hash-sets (via _extract_mi_hash_sets/parse_hash_sets), not
+    # a hash keyed by algorithm, since a hash would let a later occurrence
+    # silently overwrite an earlier one and hide the duplicate. Matching is
+    # case-insensitive (parse_hash_sets already lowercases algorithm names).
+    for my $v (sort keys %mi_map) {
+        my $sets = _extract_mi_hash_sets($mi_map{$v});
+        my %seen;
+        for my $s (@$sets) {
+            if ($seen{$s->[0]}++) {
+                $self->{result}  = 'permerror';
+                $self->{details} = "PERMERROR Message-Instance m=$v has a duplicate hash algorithm";
+                return;
+            }
+        }
+    }
+
     my $max_i = (sort { $b <=> $a } keys %dk2_map)[0];
     my $dk2_entry = $dk2_map{$max_i};
     my $signature = $dk2_entry->{sig};
@@ -331,6 +349,15 @@ sub _verify_signature {
             $self->{details} = "DKIM2-Signature i=$i tag=$t missing";
             return 0;
         }
+    }
+
+    # spec-05 §8.9: reject a duplicate Selector, or the same algorithm 3+
+    # times, within this signature's s= tag -- before any DNS lookup or
+    # crypto work.
+    if (my @dup_errors = $signature->check_duplicates) {
+        $self->{result}  = 'permerror';
+        $self->{details} = $dup_errors[0];
+        return 0;
     }
 
     # draft-04 §8: a signature carries either nd= or both mf= and rt=, never
