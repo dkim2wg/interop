@@ -378,60 +378,84 @@ static int verify_mi_hashes(
             ret = -1; goto done;
         }
 
-        /* Undo this MI's recipe to reconstruct the previous hop's state */
-        if (vi > 0 && mi->r_raw) {
+        /* spec-05 §9.1: even the bottom (m=1) instance MAY carry Recipes
+           ("if it is wished to record any changes made to a message as it
+           enters the DKIM2 ecosystem"), so a malformed r= there must be
+           reported exactly like on any other instance -- this check is NOT
+           gated on vi > 0. Only the UNDO step below (reconstructing the
+           prior hop's state) is skipped at vi == 0: there is no earlier
+           state to undo to. */
+        if (mi->r_raw) {
             size_t rraw_len = strlen(mi->r_raw);
             size_t decoded_max = rraw_len * 3 / 4 + 4;
             unsigned char *r_json_bytes = malloc(decoded_max + 1);
-            if (!r_json_bytes) continue; /* OOM — skip undo, inner hash unverified */
-
-            int r_json_len = (int)b64_decode(mi->r_raw, r_json_bytes, decoded_max);
-            if (r_json_len <= 0) { free(r_json_bytes); continue; }
-            r_json_bytes[r_json_len] = '\0';
-            const char *rj = (const char *)r_json_bytes;
-
-            /* spec-05 §11.2: "errors in a JSON object specifying Recipes
-               should be called out specifically". dkim2_apply_body_recipe()
-               and dkim2_apply_header_recipe() both return NULL on a
-               cJSON_Parse() failure with no way to distinguish that from
-               their other NULL cases, and their call sites below used to
-               just silently no-op (keep the old body / keep the old
-               headers) rather than report anything -- so a malformed r=
-               payload never surfaced as an error at all. Probe the decoded
-               JSON directly here, before either apply_*_recipe() call, so
-               that failure is reported specifically instead of vanishing. */
-            cJSON *probe = cJSON_Parse(rj);
-            if (!probe) {
-                free(r_json_bytes);
-                snprintf(errbuf, errbufsz,
-                    "PERMERROR Message-Instance m=%d contains invalid JSON", mi->m);
-                ret = -1; goto done;
-            }
-            cJSON_Delete(probe);
-
-            /* Apply body recipe */
-            if (cur_body) {
-                size_t new_len;
-                char *new_body = dkim2_apply_body_recipe(rj, cur_body, cur_body_len, &new_len);
-                free(cur_body);
-                cur_body = new_body;
-                cur_body_len = new_body ? new_len : 0;
-            }
-
-            /* Apply header recipe — result is always a new owned array */
-            int new_n = 0;
-            char **new_content = dkim2_apply_header_recipe(rj, content, n_content, &new_n);
-            if (new_content) {
-                if (content_owned) {
-                    for (int i = 0; i < n_content; i++) free(content[i]);
+            if (!r_json_bytes) {
+                if (vi > 0) continue; /* OOM — skip undo, inner hash unverified */
+            } else {
+                int r_json_len = (int)b64_decode(mi->r_raw, r_json_bytes, decoded_max);
+                if (r_json_len <= 0) {
+                    /* spec-05 §11.2: a malformed r= base64 payload is a
+                       syntax error -- distinct from, and reported before,
+                       a post-decode JSON parse failure. This used to
+                       silently `continue`, the same silent-drop shape as
+                       the JSON-parse case above it (and the duplicate-h=
+                       case fixed in commit 66bd3e6): nothing was ever
+                       reported for a malformed r= base64 value. */
+                    free(r_json_bytes);
+                    snprintf(errbuf, errbufsz,
+                        "PERMERROR Message-Instance m=%d syntax error", mi->m);
+                    ret = -1; goto done;
                 }
-                free(content);
-                content = new_content;
-                n_content = new_n;
-                content_owned = 1;
-            }
+                r_json_bytes[r_json_len] = '\0';
+                const char *rj = (const char *)r_json_bytes;
 
-            free(r_json_bytes);
+                /* spec-05 §11.2: "errors in a JSON object specifying Recipes
+                   should be called out specifically". dkim2_apply_body_recipe()
+                   and dkim2_apply_header_recipe() both return NULL on a
+                   cJSON_Parse() failure with no way to distinguish that from
+                   their other NULL cases, and their call sites below used to
+                   just silently no-op (keep the old body / keep the old
+                   headers) rather than report anything -- so a malformed r=
+                   payload never surfaced as an error at all. Probe the decoded
+                   JSON directly here, before either apply_*_recipe() call, so
+                   that failure is reported specifically instead of vanishing. */
+                cJSON *probe = cJSON_Parse(rj);
+                if (!probe) {
+                    free(r_json_bytes);
+                    snprintf(errbuf, errbufsz,
+                        "PERMERROR Message-Instance m=%d contains invalid JSON", mi->m);
+                    ret = -1; goto done;
+                }
+                cJSON_Delete(probe);
+
+                /* Undo this MI's recipe to reconstruct the previous hop's
+                   state -- only meaningful when there IS a previous hop. */
+                if (vi > 0) {
+                    /* Apply body recipe */
+                    if (cur_body) {
+                        size_t new_len;
+                        char *new_body = dkim2_apply_body_recipe(rj, cur_body, cur_body_len, &new_len);
+                        free(cur_body);
+                        cur_body = new_body;
+                        cur_body_len = new_body ? new_len : 0;
+                    }
+
+                    /* Apply header recipe — result is always a new owned array */
+                    int new_n = 0;
+                    char **new_content = dkim2_apply_header_recipe(rj, content, n_content, &new_n);
+                    if (new_content) {
+                        if (content_owned) {
+                            for (int i = 0; i < n_content; i++) free(content[i]);
+                        }
+                        free(content);
+                        content = new_content;
+                        n_content = new_n;
+                        content_owned = 1;
+                    }
+                }
+
+                free(r_json_bytes);
+            }
         }
     }
 

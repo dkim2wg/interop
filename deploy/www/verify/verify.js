@@ -63,6 +63,21 @@ export function checkSignatureDuplicates(items, i) {
   return errors;
 }
 
+// spec-05 §11.2: classify a decodeRecipe() failure so the two error kinds
+// stay distinct, per the ruling that base64 and JSON failures are different
+// errors:
+//  - a bad base64 r= value (atob throws, typically DOMException) is a
+//    syntax error (§11.2 lists this explicitly for malformed field
+//    content) -- the payload never even reached JSON parsing.
+//  - a JSON.parse failure (SyntaxError) on the successfully-decoded bytes
+//    is the more specific "contains invalid JSON" case.
+// Anything else is a generic, non-specific recipe-decode failure.
+function classifyRecipeDecodeError(e) {
+  if (e instanceof SyntaxError) return 'invalid-json';
+  if (e instanceof DOMException) return 'syntax-error';
+  return 'broken';
+}
+
 // All (unfolded, WSP-trimmed) values of a header field name, in document order.
 function headerValues(fields, name) {
   const n = name.toLowerCase();
@@ -172,7 +187,7 @@ async function verifyOnce(raw, opts = {}) {
   const states = {};
   states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(body) };
   let undoBroken = null; // m at which undo became impossible
-  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'invalid-json' | 'broken'
+  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'invalid-json' | 'syntax-error' | 'broken'
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
     if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
@@ -180,13 +195,8 @@ async function verifyOnce(raw, opts = {}) {
     try {
       recipe = decodeRecipe(mi.map.r);
     } catch (e) {
-      // spec-05 §11.2: "errors in a JSON object specifying Recipes should be
-      // called out specifically" -- a malformed r= payload (JSON.parse
-      // throws SyntaxError) is reported distinctly from other undo failures
-      // (a bad base64 r= value, or a structurally-invalid-but-parseable
-      // recipe caught below), which stay lumped as a generic 'broken' undo.
       undoBroken = m;
-      undoBrokenReason = e instanceof SyntaxError ? 'invalid-json' : 'broken';
+      undoBrokenReason = classifyRecipeDecodeError(e);
       break;
     }
     if (recipe.b === null) { undoBroken = m; undoBrokenReason = 'redacted'; break; } // §5.2 intentional redaction
@@ -218,14 +228,17 @@ async function verifyOnce(raw, opts = {}) {
       if (undoBrokenReason === 'redacted') {
         level.undo = 'unrecoverable';
         level.detail = `state unavailable (redaction at m=${undoBroken})`;
-      } else if (undoBrokenReason === 'invalid-json') {
-        // spec-05 §11.2: report the specific invalid-JSON PERMERROR, not the
-        // generic "undo broke" fail below -- and every level whose state is
-        // unreachable because of it must bump 'permerror' too (not 'fail',
-        // which outranks 'permerror' in the overall verdict), so the final
-        // verdict is permerror rather than being clobbered by a downstream fail.
+      } else if (undoBrokenReason === 'invalid-json' || undoBrokenReason === 'syntax-error') {
+        // spec-05 §11.2: report the specific PERMERROR (JSON parse failure
+        // vs. base64 syntax error are distinct, per the ruling that they are
+        // different errors), not the generic "undo broke" fail below -- and
+        // every level whose state is unreachable because of it must bump
+        // 'permerror' too (not 'fail', which outranks 'permerror' in the
+        // overall verdict), so the final verdict is permerror rather than
+        // being clobbered by a downstream fail.
+        const suffix = undoBrokenReason === 'invalid-json' ? 'contains invalid JSON' : 'syntax error';
         level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
-        level.detail = `PERMERROR Message-Instance m=${undoBroken} contains invalid JSON`;
+        level.detail = `PERMERROR Message-Instance m=${undoBroken} ${suffix}`;
         bump('permerror');
       } else {
         level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
@@ -234,6 +247,27 @@ async function verifyOnce(raw, opts = {}) {
       }
       levels.push(level);
       continue;
+    }
+    if (m === 1 && 'r' in mi.map) {
+      // spec-05 §9.1: the bottom instance MAY carry Recipes too ("if it is
+      // wished to record any changes made to a message as it enters the
+      // DKIM2 ecosystem"); it never participates in the reconstruction loop
+      // above (there is no earlier state to undo to, so a malformed r=
+      // there was previously never even looked at), so it needs its own
+      // check here.
+      try {
+        decodeRecipe(mi.map.r);
+      } catch (e) {
+        const reason = classifyRecipeDecodeError(e);
+        if (reason === 'invalid-json' || reason === 'syntax-error') {
+          const suffix = reason === 'invalid-json' ? 'contains invalid JSON' : 'syntax error';
+          level.result = 'fail';
+          level.detail = `PERMERROR Message-Instance m=1 ${suffix}`;
+          bump('permerror');
+          levels.push(level);
+          continue;
+        }
+      }
     }
     try {
       const sets = parseHashSets(mi.map.h);

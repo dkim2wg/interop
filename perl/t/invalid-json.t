@@ -33,6 +33,19 @@ ok(eval {
     1;
 }, 'valid (empty) recipe JSON still parses cleanly');
 
+# spec-05 §11.2 ruling: a bad base64 r= value is a DIFFERENT error from a
+# JSON parse failure -- "syntax error", not "contains invalid JSON". "!!!!"
+# is not valid base64 (decode_base64() is lenient and would otherwise just
+# drop the invalid characters and decode to garbage that happens to also
+# fail JSON parsing, mislabelling the error as JSON).
+eval {
+    Mail::DKIM2::MessageInstance->parse('m=5; h=sha256:AAA:BBB; r=!!!!;');
+};
+is($@, "PERMERROR Message-Instance m=5 syntax error\n",
+   'spec-05 §11.2: bad base64 r= is a syntax error, exact string, distinct from invalid JSON');
+unlike($@, qr/invalid JSON/,
+   'bad base64 is never mislabelled as invalid JSON');
+
 # --- end to end: feed a complete, validly-signed two-hop message with a  --
 # --- corrupted r= payload through the REAL verifier entry point          --
 # --- (Mail::DKIM2::Verifier's PRINT/CLOSE streaming API -- what every    --
@@ -119,7 +132,55 @@ $v->CLOSE;
 is($v->result, 'permerror',
    'end-to-end: a malformed r= JSON payload is rejected as permerror by the real Verifier')
     or diag($v->result_detail);
-like($v->details // '', qr/^PERMERROR Message-Instance m=2 contains invalid JSON/,
+# Exact match at the outer boundary (not just a leading-anchor regex): proves
+# the text reaching the real caller is the verbatim §11.2 string with no
+# extra wrapping/decoration, which a Contains/like-only assertion would not
+# have caught.
+is($v->details, 'PERMERROR Message-Instance m=2 contains invalid JSON',
      'end-to-end: the specific §11.2 invalid-JSON message reaches the caller, verbatim');
+
+# --- spec-05 §9.1: the BOTTOM (m=1) instance may carry Recipes too, and    --
+# --- never participates in the undo/reconstruction that a non-bottom      --
+# --- instance's r= is used for -- so it needs its own, separate check.    --
+# --- A single-instance (m=1 only) message, hand-signed the same way as    --
+# --- hop 1 above, with a malformed r= tag added to its own MI header      --
+# --- before signing (so the signature legitimately covers the corrupted   --
+# --- bytes). Fed through the same real Verifier PRINT/CLOSE entry point.  --
+{
+    my $bottom_orig = "From: sender\@test1.dkim2.com\r\n"
+                     . "To: rcpt\@test2.dkim2.com\r\n"
+                     . "Subject: bottom MI test\r\n\r\n"
+                     . "body line\r\n";
+    my $bmsg = Email::MIME->new($bottom_orig);
+    my $bmi  = Mail::DKIM2::MessageInstance->calculate($bmsg);
+    (my $bmi_corrupted = $bmi->as_string) =~ s/;$/; r=eyJoIjog;/
+        or die "failed to append r= to bottom MI: " . $bmi->as_string;
+    $bmsg->header_raw_prepend('Message-Instance', $bmi_corrupted);
+
+    my $bsigner = Mail::DKIM2::Signer->new(
+        Selector  => 'sel1',
+        Domain    => 'test1.dkim2.com',
+        KeyFile   => $keyfile1,
+        MailFrom  => '<sender@test1.dkim2.com>',
+        RcptTo    => ['<rcpt@test2.dkim2.com>'],
+        Timestamp => 1740000000,
+    );
+    $bsigner->PRINT($bmsg->as_string);
+    $bsigner->CLOSE;
+    is($bsigner->result // '', 'signed', 'bottom-MI test message signs cleanly');
+    (my $bsig = $bsigner->as_string) =~ s/^DKIM2-Signature:\s*//;
+    $bmsg->header_raw_prepend('DKIM2-Signature', $bsig);
+
+    my $bv = Mail::DKIM2::Verifier->new;
+    $bv->skip_timestamp_check(1);
+    $bv->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+    $bv->PRINT($bmsg->as_string);
+    $bv->CLOSE;
+    is($bv->result, 'permerror',
+       'a malformed r= on the BOTTOM (m=1) instance is rejected too, not silently ignored')
+        or diag($bv->result_detail);
+    is($bv->details, 'PERMERROR Message-Instance m=1 contains invalid JSON',
+       'bottom-MI malformed r= produces the exact verbatim §11.2 PERMERROR');
+}
 
 done_testing();

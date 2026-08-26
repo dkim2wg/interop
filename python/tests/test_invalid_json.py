@@ -19,10 +19,21 @@ def _mi_with_r(raw_json: bytes) -> str:
 
 def test_malformed_recipe_json_is_reported_specifically():
     # spec-05 §11.2: JSON errors are called out specifically, not as a
-    # generic syntax error
+    # generic syntax error. Exact match (not just Contains): proves the
+    # emitted text really is the verbatim §11.2 string.
     errs = verify_message_instance(_mi_with_r(b'{"h": '), [b"From: a@b\r\n"], b"x\r\n")
-    assert any("contains invalid JSON" in e for e in errs)
-    assert any("m=2" in e for e in errs)
+    assert "PERMERROR Message-Instance m=2 contains invalid JSON" in errs, errs
+
+
+def test_bad_base64_recipe_is_syntax_error_not_invalid_json():
+    # spec-05 §11.2 ruling: base64 decode failure and JSON parse failure are
+    # DIFFERENT errors and must stay distinct. "!!!!" is not valid base64
+    # (never even reaches JSON parsing), so this must be the "syntax error"
+    # PERMERROR, never mislabelled as "contains invalid JSON".
+    mi_hdr = "Message-Instance: m=2; h=sha256:AAA:BBB; r=!!!!;"
+    errs = verify_message_instance(mi_hdr, [b"From: a@b\r\n"], b"x\r\n")
+    assert "PERMERROR Message-Instance m=2 syntax error" in errs, errs
+    assert not any("invalid JSON" in e for e in errs), errs
 
 
 # ---------------------------------------------------------------------------
@@ -126,12 +137,48 @@ def test_end_to_end_malformed_recipe_json_rejected_by_verify_message():
 
     res = dkim2verify.verify_message(corrupted, dns_data, skip_timestamp_check=True)
     assert not res.ok
-    assert any("contains invalid JSON" in e for e in res.errors), res.errors
-    assert any("m=2" in e for e in res.errors), res.errors
+    want = "PERMERROR Message-Instance m=2 contains invalid JSON"
+    # Exact membership (not just Contains): simple mode never adds any
+    # prefix, so this was already exact.
+    assert want in res.errors, res.errors
 
-    # Also exercise the --full-chain code path, which separately decodes the
-    # r= payload to undo recipes; it must not crash on the same bad input.
+    # Also exercise the --full-chain code path (the CLI's actual default),
+    # which separately decodes the r= payload to undo recipes; it must not
+    # crash on the same bad input. This path used to prefix every MI error
+    # with "v=<version>: ", which would have doubled up the m= already
+    # embedded in a self-describing PERMERROR and stopped it from being the
+    # verbatim §11.2 string -- assert the exact, unprefixed text here too.
     res_full = dkim2verify.verify_message(
         corrupted, dns_data, full_chain=True, skip_timestamp_check=True)
     assert not res_full.ok
-    assert any("contains invalid JSON" in e for e in res_full.errors), res_full.errors
+    assert want in res_full.errors, res_full.errors
+
+
+def _build_single_hop_message() -> bytes:
+    """A real, validly-signed single-instance (m=1 only) DKIM2 message, so
+    m=1 is both the topmost AND the bottom instance."""
+    raw = open(os.path.join(EMAILS_DIR, "simple.eml"), "rb").read()
+    return sign_message(
+        raw, "ed25519", "test1.dkim2.com",
+        _key_path("ed25519._domainkey.test1.dkim2.com.pem"),
+        mailfrom="sender@test1.dkim2.com", rcptto=["rcpt@test2.dkim2.com"],
+        timestamp=1740000000)
+
+
+def test_end_to_end_malformed_recipe_json_on_bottom_mi_rejected():
+    # spec-05 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it
+    # is wished to record any changes made to a message as it enters the
+    # DKIM2 ecosystem") -- confirm it is checked like any other instance,
+    # not just non-bottom ones that participate in the undo walk.
+    dns_data = dkim2verify.load_dns_json(DNS_JSON_PATH)
+    msg = _build_single_hop_message()
+    bad_r = base64.b64encode(b'{"h": ').decode()
+    pattern = re.compile(rb"(Message-Instance: m=1;[^\r\n]*?h=[^;\r\n]+;)")
+    corrupted, count = pattern.subn(
+        lambda m: m.group(1) + b" r=" + bad_r.encode() + b";", msg, count=1)
+    assert count == 1, "expected to find the m=1 Message-Instance header"
+    assert corrupted != msg
+
+    res = dkim2verify.verify_message(corrupted, dns_data, skip_timestamp_check=True)
+    assert not res.ok
+    assert "PERMERROR Message-Instance m=1 contains invalid JSON" in res.errors, res.errors

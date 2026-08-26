@@ -43,9 +43,16 @@ func TestVerifyReportsInvalidRecipeJSON(t *testing.T) {
 		t.Fatal("expected a failure for malformed recipe JSON, got a pass")
 	}
 
+	// Exact match at the outer boundary: Verify() used to re-wrap parseMI's
+	// already-self-describing PERMERROR as
+	// "Message-Instance: PERMERROR Message-Instance m=1 contains invalid
+	// JSON" (a doubled prefix), which a Contains-only assertion would have
+	// hidden. The injected r= is on m=1, the ONLY (bottom) Message-Instance
+	// in buildSignedMsg's fixture, so this also confirms Go already flags a
+	// malformed r= on the bottom instance, not just non-bottom ones.
 	want := "PERMERROR Message-Instance m=1 contains invalid JSON"
-	if !strings.Contains(got, want) {
-		t.Errorf("got %q, want it to contain %q", got, want)
+	if got != want {
+		t.Errorf("got %q, want exactly %q", got, want)
 	}
 
 	// Also exercise VerifyFull, the entry point cmd/dkim2verify actually
@@ -63,7 +70,38 @@ func TestVerifyReportsInvalidRecipeJSON(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(got2, want) {
-		t.Errorf("VerifyFull: got %q, want it to contain %q", got2, want)
+	if got2 != want {
+		t.Errorf("VerifyFull: got %q, want exactly %q", got2, want)
+	}
+}
+
+// TestVerifyReportsBadBase64RecipeAsSyntaxError asserts the §11.2 ruling
+// that a bad-base64 r= value and a post-decode JSON parse failure are
+// different errors: base64 failure -> "syntax error" (§11.2 lists this
+// explicitly for malformed field content), never mislabelled as "contains
+// invalid JSON" -- the payload never even reached JSON parsing.
+func TestVerifyReportsBadBase64RecipeAsSyntaxError(t *testing.T) {
+	msg := string(buildSignedMsg(t))
+
+	// "!!!!" is not valid standard base64.
+	tampered := strings.Replace(msg,
+		"Message-Instance: m=1; ",
+		"Message-Instance: m=1; r=!!!!; ", 1)
+	if tampered == msg {
+		t.Fatal("failed to inject r= into the Message-Instance header")
+	}
+
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	_, err := Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})
+	if err == nil {
+		t.Fatal("expected a failure for a bad-base64 recipe, got a pass")
+	}
+
+	want := "PERMERROR Message-Instance m=1 syntax error"
+	if err.Error() != want {
+		t.Errorf("got %q, want exactly %q", err.Error(), want)
+	}
+	if strings.Contains(err.Error(), "invalid JSON") {
+		t.Errorf("bad base64 wrongly reported as invalid JSON: %v", err)
 	}
 }

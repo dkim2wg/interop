@@ -346,18 +346,26 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
     value = _get_header_value(mi_hdr)
     m_val = _extract_tag(value, "m")
 
-    # §11.2: "errors in a JSON object specifying Recipes should be called
-    # out specifically" -- a malformed r= payload is reported distinctly
-    # from a generic syntax error, regardless of what else is wrong with
-    # this Message-Instance header.
+    # §11.2: a malformed r= payload is reported specifically, regardless of
+    # what else is wrong with this Message-Instance header. Two distinct
+    # failure kinds, kept distinct rather than both being called "invalid
+    # JSON": a bad base64 r= value never even reaches JSON parsing -- §11.2
+    # lists this as a plain syntax error -- while a JSON parse failure is
+    # the more specific "contains invalid JSON" case.
     r_tag = _extract_tag(value, "r")
     if r_tag:
-        try:
-            json.loads(base64.b64decode(r_tag))
-        except Exception:
+        r_bytes = _b64decode_strict(r_tag)
+        if r_bytes is None:
             errors.append(
-                f"PERMERROR Message-Instance m={m_val} contains invalid JSON"
+                f"PERMERROR Message-Instance m={m_val} syntax error"
             )
+        else:
+            try:
+                json.loads(r_bytes)
+            except json.JSONDecodeError:
+                errors.append(
+                    f"PERMERROR Message-Instance m={m_val} contains invalid JSON"
+                )
 
     h_tag = _extract_tag(value, "h")
     if not h_tag:
@@ -819,7 +827,17 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         errs = verify_message_instance(mi_hdr, current_content_headers, current_body)
         if errs:
             for e in errs:
-                all_errors.append(f"v={version}: {e}")
+                # A self-describing PERMERROR already names its own m=
+                # (e.g. "PERMERROR Message-Instance m=2 contains invalid
+                # JSON"); prefixing "v=2: " on top of that would double up
+                # the same information and stop the text from being the
+                # verbatim §11.2 string. Only non-PERMERROR errors (which
+                # don't otherwise say which version they're about) get the
+                # v= prefix.
+                if e.startswith("PERMERROR"):
+                    all_errors.append(e)
+                else:
+                    all_errors.append(f"v={version}: {e}")
         elif verbose:
             print(f"  MI v={version} hashes: OK", file=sys.stderr)
 

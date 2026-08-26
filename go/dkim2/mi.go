@@ -163,7 +163,10 @@ func parseMI(raw string) (*MessageInstance, error) {
 	if rB64 := stripB64WSP(tvl.get("r")); rB64 != "" {
 		rJSON, err := base64.StdEncoding.DecodeString(rB64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid r= tag: %w", err)
+			// §11.2: a bad base64 r= value is a syntax error -- distinct
+			// from, and reported before, a post-decode JSON parse failure
+			// (below): the payload never even reached JSON parsing.
+			return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
 		}
 		recipe, err := parseRecipe(rJSON)
 		if err != nil {

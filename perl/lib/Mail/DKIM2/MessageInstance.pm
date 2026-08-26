@@ -247,9 +247,18 @@ sub parse {
     }
 
     if (exists $tags{r}) {
-        # spec-05 §11.2: "errors in a JSON object specifying Recipes should
-        # be called out specifically" -- a malformed r= payload is reported
-        # distinctly from a generic syntax error.
+        # spec-05 §11.2: a bad base64 r= value and a post-decode JSON parse
+        # failure are different errors and must stay distinct: base64
+        # failure -> "syntax error" (§11.2 lists this explicitly for
+        # malformed field content); JSON failure -> "contains invalid JSON".
+        # decode_base64() is lenient (silently drops non-alphabet
+        # characters rather than failing), so a strict format check is
+        # needed here to actually catch malformed base64 -- otherwise it
+        # would just decode to garbage bytes that happen to also fail JSON
+        # parsing, mislabelling the error.
+        if ($tags{r} !~ m{\A(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?\z}) {
+            die "PERMERROR Message-Instance m=$tags{m} syntax error\n";
+        }
         my $recipe_data = eval { decode_tag_json($tags{r}) };
         if ($@) {
             die "PERMERROR Message-Instance m=$tags{m} contains invalid JSON\n";

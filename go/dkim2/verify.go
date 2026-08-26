@@ -58,6 +58,16 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			// Report the parse failure rather than skipping the header. Skipping
 			// silently lowers the apparent topmost version, which turns the real
 			// defect into a bogus "does not cover topmost MI" complaint below.
+			//
+			// A self-describing PERMERROR (e.g. "PERMERROR Message-Instance
+			// m=2 contains invalid JSON") already names itself as being
+			// about a Message-Instance; wrapping it again here would double
+			// up "Message-Instance" and stop it from being the verbatim
+			// §11.2 string. Only non-self-describing errors get the added
+			// context prefix.
+			if strings.HasPrefix(err.Error(), "PERMERROR") {
+				return nil, err
+			}
 			return nil, fmt.Errorf("Message-Instance: %w", err)
 		}
 		if mi.Version > maxMIVersion {
