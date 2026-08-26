@@ -1001,8 +1001,9 @@ ssh dkim2 journalctl -fu sympa
 
 ## DKIM2 list smoke test (Mailman + Sympa, no-spam local capture)
 
-Confirm both list managers stamp `draft-ietf-dkim-dkim2-spec-04` end-to-end and
-produce chains that verify, **without emailing real subscribers**. Run on the box:
+Confirm both list managers stamp the current spec draft (`Mail::DKIM2::Common`'s
+`DKIM2_DRAFT`, currently `ietf-dkim-dkim2-spec-05`) end-to-end and produce
+chains that verify, **without emailing real subscribers**. Run on the box:
 
 ```bash
 ssh dkim2 'cd /root/interop && deploy/dkim2-list-smoke.sh'
