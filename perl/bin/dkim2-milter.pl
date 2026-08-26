@@ -355,7 +355,7 @@ sub cb_eom {
 
         # Always run the full undo check on the existing Message-Instance chain
         # before signing — not just the top MI.  An upstream that emitted a
-        # non-reversible recipe (e.g. a mailing list) produces a chain whose top
+        # non-reversible Recipe (e.g. a mailing list) produces a chain whose top
         # instance matches the current content but cannot be undone back to m=1;
         # signing it would mint a signature over a chain that fails at every
         # recipient.  Refuse, exactly as we refuse a broken DKIM2-Signature chain.
@@ -728,7 +728,7 @@ auto-detected from the key type (RSA or Ed25519).
 
 =back
 
-B<EXPERIMENTAL> — This tool implements draft-ietf-dkim-dkim2-spec-04, an
+B<EXPERIMENTAL> — This tool implements draft-ietf-dkim-dkim2-spec-05, an
 Internet-Draft that has not yet been published as an RFC.  Do not use in
 production.
 

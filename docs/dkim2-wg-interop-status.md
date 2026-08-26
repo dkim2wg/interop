@@ -1,6 +1,6 @@
 # DKIM2 Interop Status Report
 
-**Spec:** draft-ietf-dkim-dkim2-spec-04  
+**Spec:** draft-ietf-dkim-dkim2-spec-05  
 **Date:** 2026-05-01  
 **Audience:** DKIM2 Working Group participants, hackathon attendees
 
@@ -30,7 +30,7 @@ implementation.
 | §5.1 | Body hash (SHA-256, simple canon) | ✅ | ✅ | ✅ | ✅ |
 | §5.2 | Header hash (sorted, canonicalized) | ✅ | ✅ | ✅ | ✅ |
 | §6 | Message-Instance header format | ✅ | ✅ | ✅ | ✅ |
-| §6 | MI recipe field (`r=`) — undo support | ✅ | ✅ | ✅ | ✅ |
+| §6 | MI Recipe field (`r=`) — undo support | ✅ | ✅ | ✅ | ✅ |
 | §7 | DKIM2-Signature header format | ✅ | ✅ | ✅ | ✅ |
 | §7.1 | i= and m= sequence contiguity check | ✅ | ✅ | ✅ | ✅ |
 | §7.3 | n= nonce ≤ 64 characters | ✅ | ✅ | ✅ | ✅ |
@@ -42,7 +42,7 @@ implementation.
 | §10.4 | Envelope exact-match (MAIL FROM / RCPT TO) | ✅ | ✅ | ✅ | ✅ |
 | §10.6 | Verify all s= items (algorithm agility) | ✅ | ✅ | ✅ | ✅ |
 | §10.7 | Verify MI body + header hashes | ✅ | ✅ | ✅ | ✅ |
-| §10 | Full chain walk with recipe undo | ✅ | ✅ | ✅ | ✅ |
+| §10 | Full chain walk with Recipe undo | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -57,7 +57,7 @@ All four implementations verify all 16 emails.
 | `simple-ed25519.eml` | Single-hop Ed25519 signing |
 | `simple-rsa1024.eml` | Single-hop RSA-1024 |
 | `simple-rsa2048.eml` | Single-hop RSA-2048 |
-| `simple-sel2.eml`, `simple-sel3.eml` | Multiple selectors |
+| `simple-sel2.eml`, `simple-sel3.eml` | Multiple Selectors |
 | `emptybody-ed25519.eml` | Empty message body |
 | `multiheader-ed25519.eml` | Multiple same-name headers |
 | `multirecipient-ed25519.eml` | Multiple RCPT TO |
@@ -218,11 +218,11 @@ These have not been resolved and should be addressed in a future draft revision:
 dns.json       DNS TXT records for all test domains (test1..test5.dkim2.com)
 keys/          Private key files for all selectors, all test domains
                Format: <selector>._domainkey.<domain>.pem  (PKCS#8 PEM)
-spec/          draft-ietf-dkim-dkim2-spec-04.txt
+spec/          draft-ietf-dkim-dkim2-spec-05.txt
 ```
 
 Test domains: `test1.dkim2.com` through `test5.dkim2.com`  
-Test selectors per domain: `ed25519`, `rsa1024`, `sel1`, `sel2`, `sel3`
+Test Selectors per domain: `ed25519`, `rsa1024`, `sel1`, `sel2`, `sel3`
 
 Key format: PKCS#8 PEM (Go, Python, C) and Crypt::PK objects (Perl).  The
 `DKIM2TestKeys` Perl module loads keys from the shared `keys/` directory.

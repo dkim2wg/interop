@@ -21,14 +21,12 @@ use Email::MIME;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 
-sub _extract_mi_hashes {
+sub _extract_mi_hash_sets {
     my ($raw) = @_;
     $raw =~ s/^[^:]+://;        # strip "Message-Instance:" field name
     $raw =~ s/\r?\n[ \t]/ /g;   # unfold continuation lines
-    if ($raw =~ /\bh=sha256:([A-Za-z0-9+\/=]+):([A-Za-z0-9+\/=]+)/) {
-        return ($1, $2);         # (header_hash, body_hash)
-    }
-    return (undef, undef);
+    return [] unless $raw =~ /\bh=([^;]*)/;
+    return Mail::DKIM2::MessageInstance::parse_hash_sets($1);
 }
 
 sub init {
@@ -108,11 +106,29 @@ sub finish_body {
         return;
     }
 
+    # spec-05 §7.3: reject a Message-Instance whose h= names the same
+    # algorithm twice, before any DNS lookup or crypto work. Checked against
+    # the LIST of hash-sets (via _extract_mi_hash_sets/parse_hash_sets), not
+    # a hash keyed by algorithm, since a hash would let a later occurrence
+    # silently overwrite an earlier one and hide the duplicate. Matching is
+    # case-insensitive (parse_hash_sets already lowercases algorithm names).
+    for my $v (sort keys %mi_map) {
+        my $sets = _extract_mi_hash_sets($mi_map{$v});
+        my %seen;
+        for my $s (@$sets) {
+            if ($seen{$s->[0]}++) {
+                $self->{result}  = 'permerror';
+                $self->{details} = "PERMERROR Message-Instance m=$v has a duplicate hash algorithm";
+                return;
+            }
+        }
+    }
+
     my $max_i = (sort { $b <=> $a } keys %dk2_map)[0];
     my $dk2_entry = $dk2_map{$max_i};
     my $signature = $dk2_entry->{sig};
 
-    # Local policy (stricter than spec-04 §"Check the Chain-of-Custody"): the
+    # Local policy (stricter than spec-05 §"Check the Chain of Custody"): the
     # highest-numbered DKIM2-Signature MUST NOT carry nd=. The only legitimate
     # nd= producer is reflector-brand-nd, which always emits the matching
     # higher-i= signature too, so nd= never appears on top.
@@ -165,7 +181,7 @@ sub finish_body {
         return unless $result;
     }
 
-    # Check chain of custody between consecutive signatures
+    # Check Chain of Custody between consecutive signatures
     if ($max_i > 1) {
         my $chain_result = $self->_verify_chain();
         return unless $chain_result;
@@ -179,14 +195,30 @@ sub finish_body {
         if (grep { $_ eq 'donotmodify' } @$flags) {
             my $m = $sig->version || 0;
             if ($m >= 1 && $mi_map{$m} && $mi_map{$m + 1}) {
-                my ($hh_m,  $bh_m)  = _extract_mi_hashes($mi_map{$m});
-                my ($hh_m1, $bh_m1) = _extract_mi_hashes($mi_map{$m + 1});
-                if (   (defined $bh_m  && defined $bh_m1  && $bh_m  ne $bh_m1)
-                    || (defined $hh_m  && defined $hh_m1  && $hh_m  ne $hh_m1))
-                {
-                    $self->{result}  = 'fail';
-                    $self->{details} = 'Message modified despite donotmodify request at i=' . $i;
+                # spec-05 §3.4/§7.3: an MI may carry several hash-sets. Only
+                # compare hash-sets whose algorithm we implement; if the two
+                # instances share none, we cannot tell whether the message
+                # changed and fail closed rather than silently accept.
+                my %by_alg_m  = map { $_->[0] => $_ } @{ _extract_mi_hash_sets($mi_map{$m}) };
+                my %by_alg_m1 = map { $_->[0] => $_ } @{ _extract_mi_hash_sets($mi_map{$m + 1}) };
+                my $impl = Mail::DKIM2::MessageInstance::hash_algs();
+                my @common = grep { $by_alg_m{$_} && $by_alg_m1{$_} && $impl->{$_} }
+                             keys %by_alg_m;
+
+                unless (@common) {
+                    $self->{result}  = 'permerror';
+                    $self->{details} = "Message-Instance m=$m no supported hash algorithm";
                     return;
+                }
+
+                for my $alg (@common) {
+                    my (undef, $hh_m,  $bh_m)  = @{ $by_alg_m{$alg}  };
+                    my (undef, $hh_m1, $bh_m1) = @{ $by_alg_m1{$alg} };
+                    if ($hh_m ne $hh_m1 || $bh_m ne $bh_m1) {
+                        $self->{result}  = 'fail';
+                        $self->{details} = 'Message modified despite donotmodify request at i=' . $i;
+                        return;
+                    }
                 }
             }
         }
@@ -208,7 +240,20 @@ sub finish_body {
     # verify the top instance against the current content, then undo each
     # instance and verify the reconstructed content against the next one down,
     # until m=1 or an instance that declares the previous state unrecoverable.
-    return unless $self->_verify_mi_chain();
+    #
+    # MessageInstance::parse() dies (rather than returning an error) on a
+    # malformed r= payload -- e.g. the §11.2 invalid-JSON PERMERROR -- so
+    # this must run under eval or that die would propagate uncaught out of
+    # finish_body() and crash the caller instead of yielding a clean
+    # permerror result.
+    my $mi_chain_ok = eval { $self->_verify_mi_chain() };
+    if (my $err = $@) {
+        chomp $err;
+        $self->{result}  = ($err =~ /^PERMERROR/) ? 'permerror' : 'fail';
+        $self->{details} = $err;
+        return;
+    }
+    return unless $mi_chain_ok;
 
     $self->{result} = 'pass';
     $self->{details} = "i=1..$max_i verified";
@@ -299,7 +344,7 @@ sub _verify_signature {
         signing_header => $sig_hdr_for_input,
     );
 
-    # draft-04: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
+    # draft-05: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
     # via get_tag() (not the sequence/version/timestamp/domain accessors)
     # because those accessors just proxy get_tag() and would themselves
     # return undef for an absent tag anyway -- get_tag() is used directly
@@ -319,7 +364,16 @@ sub _verify_signature {
         }
     }
 
-    # draft-04 §8: a signature carries either nd= or both mf= and rt=, never
+    # spec-05 §8.9: reject a duplicate Selector, or the same algorithm 3+
+    # times, within this signature's s= tag -- before any DNS lookup or
+    # crypto work.
+    if (my @dup_errors = $signature->check_duplicates) {
+        $self->{result}  = 'permerror';
+        $self->{details} = $dup_errors[0];
+        return 0;
+    }
+
+    # draft-05 §8: a signature carries either nd= or both mf= and rt=, never
     # both forms. nd= together with mf=/rt= is a PERMERROR.
     my $nd_tag = $signature->get_tag('nd');
     my $mf_tag = $signature->get_tag('mf');
@@ -418,7 +472,7 @@ sub _verify_signature {
             1;
         };
         unless ($fetched) {
-            # A transient DNS failure is a TEMPERROR per spec-04 §10 —
+            # A transient DNS failure is a TEMPERROR per spec-05 §10 —
             # retryable, not a permanent "no verifiable signature items", and
             # emphatically not a 'fail', which reads as a forged signature.
             my $sel = $signature->selector($idx) // '?';
@@ -495,7 +549,7 @@ sub _verify_chain {
         my $cur_sig = $dk2_map{$cur_i}{sig};
         my $prev_sig = $dk2_map{$prev_i}{sig};
 
-        # draft-04 §11.4: an nd= hop declares the domain that signs the next
+        # draft-05 §11.4: an nd= hop declares the domain that signs the next
         # signature; nd= MUST exactly match that signature's d=.
         my $prev_nd = $prev_sig->next_domain;
         if (defined $prev_nd && length $prev_nd) {
@@ -511,7 +565,7 @@ sub _verify_chain {
         my $cur_mf = $cur_sig->mail_from;
         my $prev_rt = $prev_sig->rcpt_to;
 
-        # Chain of custody: mf of N must relaxed-domain-match an rt of N-1
+        # Chain of Custody: mf of N must relaxed-domain-match an rt of N-1
         unless ($cur_mf) {
             $self->{result} = 'fail';
             $self->{details} = "DKIM2-Signature i=$cur_i MAIL FROM <> did not match";
@@ -603,12 +657,12 @@ Mail::DKIM2::Verifier - Verify DKIM2-Signature chains on email messages
 
 Streaming DKIM2 chain verifier.  Verifies B<all> DKIM2-Signature headers in
 the chain (not just the outermost), checks chain completeness, validates
-cryptographic signatures, and performs chain-of-custody domain matching
+cryptographic signatures, and performs Chain of Custody domain matching
 between consecutive hops.
 
 Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-04, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-05, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 
@@ -676,7 +730,7 @@ was created.
 
 =item 3.
 
-B<Chain of custody>: For consecutive signatures, the MAIL FROM domain of
+B<Chain of Custody>: For consecutive signatures, the MAIL FROM domain of
 signature C<i=K> must relaxed-domain-match a RCPT TO domain of signature
 C<i=K-1>.
 

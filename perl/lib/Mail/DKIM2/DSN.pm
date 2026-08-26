@@ -11,7 +11,7 @@ use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
 
 # Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 3462 DSN
-# structure; DKIM2 draft-04 §12.1.1 propagation procedure).
+# structure; DKIM2 draft-05 §12.1.1 propagation procedure).
 #
 # When a Forwarder receives a Delivery Status Notification for a message it
 # forwarded, it may propagate that DSN back towards the original sender. The
@@ -70,7 +70,7 @@ sub _sign_as_new {
 
 # Build a text/rfc822-headers embedded-original part: the headers only (no
 # body) of $orig, an Email::MIME. Used by propagate() when the original body
-# is unrecoverable (a "null recipe" upstream) and so must not be carried.
+# is unrecoverable (a "null Recipe" upstream) and so must not be carried.
 sub _headers_only_part {
     my ($orig) = @_;
     return Email::MIME->create(
@@ -91,7 +91,7 @@ sub _set_report_type {
 
 # Generate a fresh DKIM2-signed DSN for an inbound message, sent back to the
 # original sender (RFC 3462 three-part multipart/report structure; DKIM2
-# draft-04 §12.1). Used by the reflector-dsn address, which
+# draft-05 §12.1). Used by the reflector-dsn address, which
 # bounces every message regardless of whether it arrived DKIM2-signed.
 #
 # Args: raw (inbound message), signer (MailFrom => '<>'), to (envelope sender
@@ -270,7 +270,7 @@ __END__
 =head1 NAME
 
 Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 3462 DSN
-structure; DKIM2 draft-04 §12.1.1 propagation procedure)
+structure; DKIM2 draft-05 §12.1.1 propagation procedure)
 
 =head1 SYNOPSIS
 

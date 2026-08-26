@@ -1,4 +1,4 @@
-// Recipe application (undo) per spec-04 §5 and §7.2.
+// Recipe application (undo) per spec-05 §5 and §7.2.
 import { b64ToString } from './b64.js';
 
 export function decodeRecipe(rB64) {
@@ -40,7 +40,7 @@ export function applyHeaderRecipe(fields, hObj) {
     byName.get(n).push(f);
   }
 
-  // Normalize recipe keys to lowercase.
+  // Normalize Recipe keys to lowercase.
   const recipe = {};
   for (const k of Object.keys(hObj)) recipe[k.toLowerCase()] = hObj[k];
 
@@ -55,7 +55,7 @@ export function applyHeaderRecipe(fields, hObj) {
         for (let num = s; num <= e; num++) emitted.push(bottomUp[num - 1]);
       } else if ('d' in step) {
         for (const val of step.d) {
-          // `name` here is the lowercased recipe key; `raw` is a synthesized,
+          // `name` here is the lowercased Recipe key; `raw` is a synthesized,
           // space-less approximation. Both are harmless: canon/parse always
           // lowercase name and never read raw.
           emitted.push({ name, value: val, raw: name + ':' + val + '\r\n' });
@@ -68,7 +68,7 @@ export function applyHeaderRecipe(fields, hObj) {
 
   // Flatten back to a doc-order list. Inter-name position is irrelevant to the
   // header hash (which sorts), so preserve first-seen name order; append names
-  // introduced by the recipe.
+  // introduced by the Recipe.
   const seen = [];
   for (const f of fields) {
     const n = f.name.toLowerCase();

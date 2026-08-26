@@ -121,7 +121,7 @@ func TestHashHeaders(t *testing.T) {
 		{Name: "Date", Value: "Sat, 01 Mar 2026 12:00:00 +0000", Raw: "Date: Sat, 01 Mar 2026 12:00:00 +0000\r\n"},
 		{Name: "Message-ID", Value: "<test-simple@test1.dkim2.com>", Raw: "Message-ID: <test-simple@test1.dkim2.com>\r\n"},
 	}
-	got, err := hashHeaders(headers)
+	got, err := hashHeaders(headers, "sha256")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,10 +140,10 @@ func TestHashHeadersExclusion(t *testing.T) {
 		{Name: "X-Custom", Value: "val", Raw: "X-Custom: val\r\n"},
 		{Name: "ARC-Seal", Value: "val", Raw: "ARC-Seal: val\r\n"},
 	}
-	withExcluded, _ := hashHeaders(headers)
+	withExcluded, _ := hashHeaders(headers, "sha256")
 
 	headersOnly := []Header{headers[0]}
-	withoutExcluded, _ := hashHeaders(headersOnly)
+	withoutExcluded, _ := hashHeaders(headersOnly, "sha256")
 
 	if string(withExcluded) != string(withoutExcluded) {
 		t.Error("excluded headers changed the hash")
@@ -158,7 +158,7 @@ func TestHashHeadersDuplicateBottomUp(t *testing.T) {
 		{Name: "From", Value: "a@b.com", Raw: "From: a@b.com\r\n"},
 		{Name: "From", Value: "z@y.com", Raw: "From: z@y.com\r\n"},
 	}
-	got, err := hashHeaders(headers)
+	got, err := hashHeaders(headers, "sha256")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,10 +221,13 @@ func TestMessageInstanceRoundTrip(t *testing.T) {
 	if mi.Version != 1 {
 		t.Errorf("Version got %d want 1", mi.Version)
 	}
-	if base64.StdEncoding.EncodeToString(mi.HeaderHash) != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
+	if len(mi.Hashes) != 1 || mi.Hashes[0].Alg != "sha256" {
+		t.Fatalf("Hashes mismatch: %+v", mi.Hashes)
+	}
+	if mi.Hashes[0].HeaderHash != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
 		t.Errorf("HeaderHash mismatch")
 	}
-	if base64.StdEncoding.EncodeToString(mi.BodyHash) != "SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=" {
+	if mi.Hashes[0].BodyHash != "SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=" {
 		t.Errorf("BodyHash mismatch")
 	}
 	if mi.Recipe != nil {
@@ -262,7 +265,7 @@ func TestMessageInstanceBareTags(t *testing.T) {
 	if mi.Version != 1 {
 		t.Errorf("Version got %d want 1", mi.Version)
 	}
-	if base64.StdEncoding.EncodeToString(mi.HeaderHash) != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
+	if len(mi.Hashes) != 1 || mi.Hashes[0].HeaderHash != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
 		t.Errorf("HeaderHash mismatch")
 	}
 }
@@ -398,7 +401,7 @@ func TestHashBody(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := hashBody(strings.NewReader(tc.body))
+			got, err := hashBody(strings.NewReader(tc.body), "sha256")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -653,10 +656,10 @@ func TestSignAllCases(t *testing.T) {
 	}
 }
 
-// TestUndoNoRecipe: a recipe-less Message-Instance means "no change asserted",
+// TestUndoNoRecipe: a Recipe-less Message-Instance means "no change asserted",
 // so undoing across one must leave the content untouched.
 //
-// Our signer no longer *produces* a recipe-less instance (an unmodified hop
+// Our signer no longer *produces* a Recipe-less instance (an unmodified hop
 // reuses the existing m= instead — see Sign), but we must still accept one from
 // an upstream that does, so the fixture is built by hand rather than by
 // double-signing.
@@ -687,7 +690,7 @@ func TestUndoNoRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Graft on a second hop that added a recipe-less m=2 carrying the same
+	// Graft on a second hop that added a Recipe-less m=2 carrying the same
 	// hashes -- what an upstream that does emit one on a transparent re-sign
 	// puts on the wire.
 	mi1 := firstHeaderLine(t, signed1.String(), "Message-Instance:")
@@ -699,7 +702,7 @@ func TestUndoNoRecipe(t *testing.T) {
 	}
 	signed2 := sig2 + mi2 + signed1.String()
 
-	// Undo back to v=1: the recipe-less m=2 asserts no change, so this must
+	// Undo back to v=1: the Recipe-less m=2 asserts no change, so this must
 	// reproduce the single-signed message byte for byte.
 	var undone bytes.Buffer
 	if err := Undo(strings.NewReader(signed2), &undone, -1); err != nil {
@@ -735,7 +738,7 @@ func firstHeaderLine(t *testing.T, msg, prefix string) string {
 }
 
 // TestUndoHeaderRecipesRoundTrip verifies that undoHeaderRecipes correctly
-// reconstructs the "before" state using a recipe computed by ComputeDiff.
+// reconstructs the "before" state using a Recipe computed by ComputeDiff.
 func TestUndoHeaderRecipesRoundTrip(t *testing.T) {
 	before := []Header{
 		{Name: "Subject", Value: "Hello World", Raw: "Subject: Hello World\r\n"},
@@ -1018,7 +1021,7 @@ func TestVerifyMultipleSigsAllChecked(t *testing.T) {
 // the result is a failure (not a silent pass).
 func TestVerifyMultipleSigsNoVerifiable(t *testing.T) {
 	msg := buildSignedMsg(t)
-	// Replace the selector with one that doesn't exist in dns.json
+	// Replace the Selector with one that doesn't exist in dns.json
 	tampered := strings.ReplaceAll(string(msg), "s=ed25519:ed25519-sha256:", "s=nonexistent:ed25519-sha256:")
 	verifyExpectFail(t, tampered, "no verifiable sig items (unknown selector)")
 }

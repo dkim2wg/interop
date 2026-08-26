@@ -36,10 +36,11 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		return fmt.Errorf("reading body: %w", err)
 	}
 
-	// 2. Body hash (over canonicalised body).
-	bodyHash, err := hashBody(bytes.NewReader(bodyBuf.Bytes()))
-	if err != nil {
-		return fmt.Errorf("body hash: %w", err)
+	// 2. Determine the hash algorithm(s) to sign with (spec-05 §3.1). Default
+	// stays sha256-only: the signer default MUST NOT change.
+	algs := opts.HashAlgs
+	if len(algs) == 0 {
+		algs = []string{"sha256"}
 	}
 
 	// 3. Collect existing MI / signature headers, find next m= and i= values.
@@ -72,22 +73,35 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		}
 	}
 
-	// 4. Header hash (excludes MI/DKIM2-Sig/etc per §5.2).
-	headerHash, err := hashHeaders(headers)
-	if err != nil {
-		return fmt.Errorf("header hash: %w", err)
+	// 4. Header/body hashes for every requested algorithm (excludes
+	// MI/DKIM2-Sig/etc per §5.2; body per §5.1), in the requested order.
+	var newHashes []HashSet
+	for _, alg := range algs {
+		hHash, err := hashHeaders(headers, alg)
+		if err != nil {
+			return fmt.Errorf("header hash: %w", err)
+		}
+		bHash, err := hashBody(bytes.NewReader(bodyBuf.Bytes()), alg)
+		if err != nil {
+			return fmt.Errorf("body hash: %w", err)
+		}
+		newHashes = append(newHashes, HashSet{
+			Alg:        alg,
+			HeaderHash: base64.StdEncoding.EncodeToString(hHash),
+			BodyHash:   base64.StdEncoding.EncodeToString(bHash),
+		})
 	}
 
 	// 5. Build new MI header — unless this hop changed nothing.
 	//
-	// draft-04 §9.1/§9.2.5: a forwarder that leaves both hashes unchanged adds
+	// draft-05 §9.1/§9.2.5: a forwarder that leaves both hashes unchanged adds
 	// no new Message-Instance; it signs against the existing top instance and
-	// reuses its m=.  An instance with identical hashes and no recipe is pure
-	// waste — verifiers must tolerate one, but nothing should produce it.
+	// reuses its m=.  An instance with identical hashes and no Recipe is not
+	// forbidden, but §9.1 still calls it "most likely to be pointless and a
+	// waste of time and energy"; this implementation avoids it by default,
+	// and verifiers must still tolerate one from elsewhere.
 	addMI := true
-	if topMI != nil &&
-		bytes.Equal(topMI.HeaderHash, headerHash) &&
-		bytes.Equal(topMI.BodyHash, bodyHash) {
+	if topMI != nil && hashSetsEqual(topMI.Hashes, newHashes) {
 		addMI = false
 		miVersion = topMI.Version
 	}
@@ -95,9 +109,8 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 	var newMIStr string
 	if addMI {
 		newMI := &MessageInstance{
-			Version:    miVersion,
-			HeaderHash: headerHash,
-			BodyHash:   bodyHash,
+			Version: miVersion,
+			Hashes:  newHashes,
 		}
 		newMIStr = newMI.String()
 	}

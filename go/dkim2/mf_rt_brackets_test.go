@@ -10,7 +10,7 @@ import (
 )
 
 // signTestMessage signs the shared simple.eml fixture with the given
-// SignOptions (selector/domain/key follow the existing ed25519 test1.dkim2.com
+// SignOptions (Selector/domain/key follow the existing ed25519 test1.dkim2.com
 // fixtures used throughout dkim2_test.go) and returns the full signed message.
 func signTestMessage(t *testing.T, opts SignOptions) string {
 	t.Helper()

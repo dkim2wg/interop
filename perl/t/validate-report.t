@@ -100,7 +100,7 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
 }
 
 # 1b) nd= imaginary-hop chain: i=1 carries nd= instead of mf=/rt=. The report's
-# per-signature chain-of-custody must recognise nd= and report ok (regression:
+# per-signature Chain of Custody must recognise nd= and report ok (regression:
 # it previously did only the mf/rt check and wrongly showed FAIL on i=2 while
 # the overall verdict was pass).
 {
@@ -140,7 +140,7 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
 }
 
 # 1c) top-level nd=: the highest-numbered DKIM2-Signature carries nd= instead
-# of mf=/rt=. Local policy (spec-04, stricter than the letter of the draft;
+# of mf=/rt=. Local policy (spec-05, stricter than the letter of the draft;
 # matches the Verifier.pm permerror added for Task 2.1) rejects this: the
 # report must surface a failing level whose detail matches the same message
 # as the Verifier's permerror.
@@ -181,7 +181,7 @@ sub signed_input_nd {
 # and only ever sub-verifies one signature at a time against a partial
 # message view, so it never sees both i=1 and i=2 together the way
 # Verifier.pm's whole-chain _verify_chain() does). It must use the exact
-# same canonical spec-04 wording as Task 3.1's Verifier.pm permerror
+# same canonical spec-05 wording as Task 3.1's Verifier.pm permerror
 # (verbatim "MAIL nd=" typo preserved), keyed on the *previous* hop's i=.
 {
     my $msg = build_chain(
@@ -194,12 +194,12 @@ sub signed_input_nd {
     ok($sig2, 'nd= mismatch: i=2 level present');
     ok(!$sig2->{custody}{ok}, 'nd= mismatch: custody flagged not ok');
     is($sig2->{custody}{detail}, 'DKIM2-Signature i=1 MAIL nd= does not match',
-       'nd= adjacency custody detail matches the canonical spec-04 wording');
+       'nd= adjacency custody detail matches the canonical spec-05 wording');
 }
 
-# 1e) chain of custody break: i=2's mf= domain does not relaxed-match any rt=
+# 1e) Chain of Custody break: i=2's mf= domain does not relaxed-match any rt=
 # of i=1. Also Validate.pm's OWN custody logic (see 1d above). Must match the
-# same canonical wording as the Verifier.pm chain-of-custody permerror.
+# same canonical wording as the Verifier.pm Chain of Custody permerror.
 {
     my $msg = build_chain(
         { domain => 'test1.dkim2.com', mailfrom => 'sender@test1.dkim2.com',
@@ -212,7 +212,7 @@ sub signed_input_nd {
     ok($sig2, 'custody break: i=2 level present');
     ok(!$sig2->{custody}{ok}, 'custody break: custody flagged not ok');
     is($sig2->{custody}{detail}, 'DKIM2-Signature i=2 MAIL FROM <sender@test2.dkim2.com> did not match',
-       'custody-break detail matches the canonical spec-04 wording');
+       'custody-break detail matches the canonical spec-05 wording');
 }
 
 # 2) Post-sign body tamper (damage)
@@ -225,7 +225,7 @@ sub signed_input_nd {
     is($top->{body_hash}, 'mismatch', 'top MI body hash mismatch on damage');
 }
 
-# 3) redacted null recipe
+# 3) redacted null Recipe
 {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-redacted\@test2.dkim2.com\r\nSubject: hi\r\n\r\nsecret\r\n");
     my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'redacted', message=>$in);
@@ -265,8 +265,14 @@ sub signed_input_nd {
     is($sig1->{items}[0]{result}, 'pass', 'the crypto item still passes');
 }
 
-# 7) Received-SPF added by a receiving MTA breaks the hash; report() should
-#    strip it and retry, recovering the verdict and saying so.
+# 7) Received-SPF added by a receiving MTA.
+#    spec-05 §4 added a "received-" prefix rule, so Received-SPF is excluded
+#    from the Message-Instance header hash directly (via should_skip) and
+#    never pollutes verification. report() no longer has any strip-and-retry
+#    mechanism for this (removed: it was hardcoded to the literal name
+#    Received-SPF, and stripping a header excluded from the hash cannot
+#    change the hash, so it was provably a no-op once §4 landed; same removal
+#    in deploy/www/verify/verify.js's verifyMessage()).
 {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-body\@test2.dkim2.com\r\nSubject: hi\r\n\r\norig body\r\n");
     my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'body', message=>$in);
@@ -275,18 +281,17 @@ sub signed_input_nd {
     # sanity: clean message verifies
     is(Mail::DKIM2::Validate::report($good, %ropt)->{overall}, 'pass', 'clean reflected verifies');
 
-    # a folded Received-SPF prepended by the receiver pollutes the header hash
+    # a folded Received-SPF prepended by the receiver does not pollute the
+    # header hash at all: it verifies cleanly (spec-05 §4).
     my $polluted = "Received-SPF: pass\r\n (test.example: 1.2.3.4 authorized)\r\n" . $good;
     my $rep = Mail::DKIM2::Validate::report($polluted, %ropt);
-    is($rep->{overall}, 'pass', 'recovered after stripping Received-SPF');
-    is_deeply($rep->{stripped_headers}, ['Received-SPF'], 'reports which header was stripped');
-    like($rep->{summary}, qr/Received-SPF/, 'summary explains the Received-SPF removal');
+    is($rep->{overall}, 'pass', 'a Received-SPF prepended by the receiver verifies cleanly (spec-05 §4)');
 
-    # a genuinely broken message must NOT be rescued just by stripping Received-SPF
+    # a genuinely broken message must still fail even with Received-SPF present
     my $broken = $good; $broken =~ s/orig body/evil body/;
     $broken = "Received-SPF: pass\r\n" . $broken;
-    is(Mail::DKIM2::Validate::report($broken, %ropt)->{overall}, 'fail',
-       'tampered body still fails even with Received-SPF stripped');
+    my $rep_broken = Mail::DKIM2::Validate::report($broken, %ropt);
+    is($rep_broken->{overall}, 'fail', 'a genuinely broken message with Received-SPF present still fails');
 }
 
 # 9) mf= decoding to a BARE address (missing RFC5321 angle brackets) must be
@@ -307,7 +312,7 @@ sub signed_input_nd {
     like($lvl->{detail}, qr/mf=.*7\.5|bracket/i, 'detail names the mf= bracket rule');
 }
 
-# 8) per-hop details: signature From/To + recovered MI recipe values
+# 8) per-hop details: signature From/To + recovered MI Recipe values
 {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-both\@test2.dkim2.com\r\nSubject: hi\r\n\r\norig body\r\n");
     my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'both', message=>$in);

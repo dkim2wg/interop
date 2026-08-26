@@ -1,6 +1,6 @@
 # DKIM2 Operator Guide
 
-**Spec:** draft-ietf-dkim-dkim2-spec-04  
+**Spec:** draft-ietf-dkim-dkim2-spec-05  
 **Audience:** MTA operators and postmasters deploying DKIM2
 
 ---
@@ -18,7 +18,7 @@ DKIM2:
 - **Verifiers** check the complete chain — not just the outermost signature.
 
 The result: a verifier can tell exactly which relays handled the message, whether
-anyone modified it in transit, and whether the chain of custody (MAIL FROM → RCPT TO
+anyone modified it in transit, and whether the Chain of Custody (MAIL FROM → RCPT TO
 → next MAIL FROM) is intact.
 
 ---
@@ -32,7 +32,7 @@ selector._domainkey.yourdomain.com. IN TXT "v=DKIM1; k=ed25519; p=<pubkey>"
 ```
 
 No new record type is required.  If you already publish DKIM1 records, you can reuse
-the same selectors (or create new ones — the keys are independent).
+the same Selectors (or create new ones — the keys are independent).
 
 ### Generating keys
 
@@ -71,8 +71,8 @@ sel1-rsa._domainkey.yourdomain.com. IN TXT "v=DKIM1; k=rsa; p=<output>"
 
 ### Key rotation
 
-Add a new selector with the new key.  Configure your MTA to sign with the new
-selector.  Keep the old selector record live for at least 14 days (the maximum
+Add a new Selector with the new key.  Configure your MTA to sign with the new
+Selector.  Keep the old Selector record live for at least 14 days (the maximum
 signature validity window) so in-flight messages still verify.  Then delete the old
 DNS record and private key.
 
@@ -108,7 +108,7 @@ them all.
 The `mf=` and `rt=` fields are base64 encodings of the SMTP envelope values
 (including angle brackets, e.g. `<sender@sender.example>`).
 
-The optional `r=` field in the MI header carries a base64-encoded JSON "recipe"
+The optional `r=` field in the MI header carries a base64-encoded JSON "Recipe"
 describing modifications the relay made to the message, so upstream verifiers can
 reconstruct the message state at each hop.
 
@@ -122,7 +122,7 @@ the DKIM2 module needs:
 | Parameter | Where it comes from |
 |-----------|---------------------|
 | `d=` domain | Your MTA's domain (the domain you control the key for) |
-| Selector | The selector for your signing key |
+| Selector | The Selector for your signing key |
 | MAIL FROM | The `MAIL FROM` command from the SMTP session |
 | RCPT TO | The `RCPT TO` command(s) from the SMTP session |
 | Private key | Your signing key file |
@@ -156,7 +156,7 @@ The verifier checks:
 2. The top signature covers the topmost MI
 3. Every signature in the chain verifies cryptographically
 4. Each signature's timestamp is within 14 days
-5. The chain of custody is intact (each relay's MAIL FROM domain matches a RCPT TO
+5. The Chain of Custody is intact (each relay's MAIL FROM domain matches a RCPT TO
    domain from the previous relay)
 6. If MAIL FROM / RCPT TO are available: the top signature's `mf=` and `rt=` exactly
    match the envelope values
@@ -195,7 +195,7 @@ want the chain to remain valid downstream.  The process:
 
 1. Accept the message (verify the incoming chain if desired)
 2. Make any modifications (add list footer, change subject, etc.)
-3. Compute a new MI header that hashes the modified message and includes a recipe
+3. Compute a new MI header that hashes the modified message and includes a Recipe
    describing what was changed
 4. Sign the new MI and all previous signatures with the list's key
 

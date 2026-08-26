@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 # Recipe header keys are always emitted lowercase (canonical form).
-# Header field names are case-insensitive; we always lowercase the recipe (h)
+# Header field names are case-insensitive; we always lowercase the Recipe (h)
 # keys on output, regardless of the case they were computed/supplied with.
 use 5.020;
 use strict;

@@ -95,6 +95,72 @@ int main(void) {
     assert(strcmp(hg, hh) == 0);
     assert(strcmp(hi, hh) == 0);
 
+    /* spec-05 §4: HDRMAINT-survey names are unsigned */
+    const char *hdrs_05[] = {
+        "From: sender@example.com\r\n",
+        "Subject: Test\r\n",
+        "Apparently-To: a@example.com\r\n",
+        "Auto-Submitted: auto-replied\r\n",
+        "DL-Expansion-History: x\r\n",
+        "Original-Recipient: rfc822;a@example.com\r\n",
+        "SIO-Label-History: x\r\n",
+        "VBR-Info: md=example.com\r\n",
+        "X400-Received: x\r\n",
+        "X400-Trace: x\r\n",
+        "Received-SPF: pass\r\n",
+        "Received-Anything: x\r\n",
+    };
+    char h05[64];
+    assert(dkim2_header_hash(hdrs_05, 12, h05, sizeof h05) == 0);
+    assert(strcmp(h05, hb) == 0);
+
+    /* spec-05 §4: the ARC- prefix narrowed to three exact names */
+    const char *hdrs_arc[] = {
+        "From: sender@example.com\r\n",
+        "Subject: Test\r\n",
+        "ARC-Seal: i=1\r\n",
+        "ARC-Message-Signature: i=1\r\n",
+        "ARC-Authentication-Results: i=1\r\n",
+    };
+    char harc[64];
+    assert(dkim2_header_hash(hdrs_arc, 5, harc, sizeof harc) == 0);
+    assert(strcmp(harc, hb) == 0);
+
+    /* ...but a non-RFC8617 ARC- field is now SIGNED, so the hash must differ */
+    const char *hdrs_arcx[] = {
+        "From: sender@example.com\r\n",
+        "Subject: Test\r\n",
+        "ARC-Something-Else: x\r\n",
+    };
+    char harcx[64];
+    assert(dkim2_header_hash(hdrs_arcx, 3, harcx, sizeof harcx) == 0);
+    assert(strcmp(harcx, hb) != 0);
+
+    /* spec-05 §3: both hashing algorithms are implemented */
+    assert(dkim2_hash_alg_index("sha256") == 0);
+    assert(dkim2_hash_alg_index("sha512") == 1);
+    assert(dkim2_hash_alg_index("SHA512") == 1);   /* RFC 5234: case-insensitive */
+    assert(dkim2_hash_alg_index("x-whirlpool") < 0);
+    assert(dkim2_hash_alg_len(0) == 32);
+    assert(dkim2_hash_alg_len(1) == 64);
+    assert(strcmp(dkim2_hash_alg_name(1), "sha512") == 0);
+
+    /* sha512 body hash is 64 bytes and differs from sha256 */
+    unsigned char d256[DKIM2_MAX_HASH_LEN], d512[DKIM2_MAX_HASH_LEN];
+    assert(dkim2_body_hash_raw_alg("Hello\r\n", 7, 0, d256) == 0);
+    assert(dkim2_body_hash_raw_alg("Hello\r\n", 7, 1, d512) == 0);
+    assert(memcmp(d256, d512, 32) != 0);
+
+    /* the streaming hasher finalises every algorithm in one pass */
+    dkim2_body_hasher_t *bh = dkim2_body_hasher_new();
+    assert(bh != NULL);
+    assert(dkim2_body_hasher_update(bh, "Hello\r\n", 7) == 0);
+    dkim2_digests_t all;
+    assert(dkim2_body_hasher_final_all(bh, &all) == 0);
+    dkim2_body_hasher_free(bh);
+    assert(memcmp(all.d[0], d256, 32) == 0);
+    assert(memcmp(all.d[1], d512, 64) == 0);
+
     puts("hash: all tests passed");
     return 0;
 }

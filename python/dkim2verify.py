@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 verifier - draft-ietf-dkim-dkim2-spec-04
+DKIM2 verifier - draft-ietf-dkim-dkim2-spec-05
 
 Takes a signed email and verifies its DKIM2 signatures using public keys
 from a dns.json file or DNS TXT records.
@@ -10,6 +10,7 @@ Exits 0 if all signatures verify, non-zero otherwise.
 
 import argparse
 import base64
+import binascii
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -34,6 +35,7 @@ from dkim2sign import (
     canonicalize_header_field,
     compute_header_hash,
     compute_body_hash,
+    HASH_ALGS,
     canonicalize_sig_header,
     _extract_tag,
     _tag_names,
@@ -85,7 +87,7 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
             tags = parse_dkim1_txt(rec_value)
             key_type = tags.get("k", "rsa")
             pub_b64 = tags.get("p", "")
-            # h= (hash algorithm list) MUST be ignored per spec-04 Section 10.3
+            # h= (hash algorithm list) MUST be ignored per spec-05 Section 10.3
             pub_bytes = base64.b64decode(pub_b64)
 
             if key_type == "ed25519":
@@ -128,7 +130,7 @@ def _relaxed_domain_match(d1: str, d2: str) -> bool:
 
 
 def _envelope_addr_equal(a: str, b: str) -> bool:
-    """Exact envelope-address match per spec "Check the Chain-of-Custody":
+    """Exact envelope-address match per spec "Check the Chain of Custody":
     domains are compared case-insensitively, local-parts case-sensitively.
     Surrounding angle brackets are ignored so bracketed and bare forms
     compare equal; the null sender (<>) matches only the null sender."""
@@ -166,7 +168,7 @@ def _bracket_errors(sig_headers: list[str]) -> list[str]:
 
 
 def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
-    """Validate §8.2/§11.4 chain-of-custody across consecutive signatures.
+    """Validate §8.2/§11.4 Chain of Custody across consecutive signatures.
 
     For each adjacent pair (ascending i=), either the lower signature carries
     nd= (which MUST exactly match the higher signature's d=), or the higher
@@ -180,7 +182,7 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
         prev_i = _extract_tag(prev_val, "i")
         prev_nd = _extract_tag(prev_val, "nd")
         if prev_nd:
-            # draft-04 §11.4: nd= MUST exactly match the next sig's d=.
+            # draft-05 §11.4: nd= MUST exactly match the next sig's d=.
             cur_d = _extract_tag(cur_val, "d") or ""
             if prev_nd.lower() != cur_d.lower():
                 errors.append(
@@ -216,7 +218,7 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
 def _strip_fws(s: str) -> str:
     """Remove folding whitespace from a tag value.
 
-    Per spec-04 §2.12 folding whitespace may appear inside a base64 string or
+    Per spec-05 §2.12 folding whitespace may appear inside a base64 string or
     around the colons of an s= item, and MUST be ignored when the value is
     used.  Selectors, algorithm names and base64 never contain significant
     whitespace, so removing all of it is safe.
@@ -228,13 +230,13 @@ _FWS_TABLE = {ord(c): None for c in " \t\r\n"}
 
 
 def _sig_flags(sig_hdr: str) -> list[str]:
-    """Return the f= flag list of a DKIM2-Signature header (draft-04 §8.10)."""
+    """Return the f= flag list of a DKIM2-Signature header (draft-05 §8.10)."""
     f = _extract_tag(_get_header_value(sig_hdr), "f")
     return [x.strip() for x in f.split(",") if x.strip()] if f else []
 
 
 def _flag_enforcement_errors(sig_by_seq: list[str], mi_headers: list[str]) -> list[str]:
-    """Enforce the donotmodify/donotexplode flags (draft-04 §11.8).
+    """Enforce the donotmodify/donotexplode flags (draft-05 §11.8).
 
     feedback/feedhere are recognised but carry no verifier enforcement.
     """
@@ -303,6 +305,38 @@ def _get_header_value(hdr: str) -> str:
     return hdr[colon + 1:].strip() if colon != -1 else hdr
 
 
+def _b64decode_strict(val: str) -> bytes | None:
+    """Decode a base64 value, returning None (never raising) if malformed.
+
+    Uses validate=True so stray non-alphabet characters are rejected instead
+    of silently discarded (the default base64.b64decode behaviour, which
+    would otherwise turn a corrupt hash value into a wrong-but-decodable one).
+    """
+    try:
+        return base64.b64decode(val, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
+    """Parse a spec-05 §7.3 h= value into (alg, header_hash, body_hash) triples.
+
+    Hash names are lowercased: RFC 5234 makes ABNF quoted strings
+    case-insensitive, so "SHA256" is a syntactically valid hash-name.
+
+    Per spec-05 §2.12, folding whitespace may appear inside a base64 string
+    (or around the colons) and MUST be ignored when the value is used, so
+    every field is run through _strip_fws rather than a bare .strip().
+    """
+    sets = []
+    for item in h_tag.split(","):
+        parts = _strip_fws(item).split(":")
+        if len(parts) != 3:
+            continue
+        sets.append((parts[0].lower(), parts[1], parts[2]))
+    return sets
+
+
 def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> list[str]:
     """Verify the hashes in a Message-Instance header against the message.
 
@@ -310,40 +344,105 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
     """
     errors = []
     value = _get_header_value(mi_hdr)
+    m_val = _extract_tag(value, "m")
+
+    # §11.2: a malformed r= payload is reported specifically, regardless of
+    # what else is wrong with this Message-Instance header. Two distinct
+    # failure kinds, kept distinct rather than both being called "invalid
+    # JSON": a bad base64 r= value never even reaches JSON parsing -- §11.2
+    # lists this as a plain syntax error -- while a JSON parse failure is
+    # the more specific "contains invalid JSON" case.
+    r_tag = _extract_tag(value, "r")
+    if r_tag:
+        r_bytes = _b64decode_strict(r_tag)
+        if r_bytes is None:
+            errors.append(
+                f"PERMERROR Message-Instance m={m_val} syntax error"
+            )
+        else:
+            try:
+                json.loads(r_bytes)
+            except json.JSONDecodeError:
+                errors.append(
+                    f"PERMERROR Message-Instance m={m_val} contains invalid JSON"
+                )
+
     h_tag = _extract_tag(value, "h")
     if not h_tag:
-        return ["Message-Instance: missing h= tag"]
+        return errors + ["Message-Instance: missing h= tag"]
 
-    # Parse h= tag: sha256:header_hash:body_hash
-    parts = h_tag.split(":")
-    if len(parts) != 3:
-        return [f"Message-Instance: invalid h= format (expected alg:h_hash:b_hash, got {h_tag!r})"]
+    sets = parse_hash_sets(h_tag)
+    if not sets:
+        return errors + [f"Message-Instance: invalid h= format (got {h_tag!r})"]
 
-    h_alg, h_val, b_val = parts
+    # spec-05 §7.3: an algorithm MUST NOT be present more than once.
+    seen = set()
+    for alg, _, _ in sets:
+        if alg in seen:
+            return errors + [f"PERMERROR Message-Instance m={m_val} has a duplicate hash algorithm"]
+        seen.add(alg)
 
-    if h_alg != "sha256":
-        errors.append(f"Message-Instance: unsupported hash algorithm: {h_alg}")
-    else:
-        # Verify header hash
-        expected = compute_header_hash(headers)
-        actual = base64.b64decode(h_val)
-        if expected != actual:
+    # §3.4: ignore hash-sets naming algorithms we do not implement, but an MI
+    # with no implemented hash-set cannot be verified and must fail closed.
+    usable = [s for s in sets if s[0] in HASH_ALGS]
+    if not usable:
+        return errors + [f"Message-Instance m={m_val} no supported hash algorithm"]
+
+    # All implemented hash-sets must pass (mirrors §11.6 for signatures). A
+    # malformed base64 value in one hash-set is itself a PERMERROR (§11.2:
+    # verifiers MUST meticulously validate format and values); it does not
+    # abort the whole MI check, mirroring the non-short-circuit "all usable
+    # hash-sets are checked" behaviour of a hash mismatch below.
+    for alg, h_val, b_val in usable:
+        h_actual = _b64decode_strict(h_val)
+        if h_actual is None:
             errors.append(
-                f"Message-Instance: header hash mismatch\n"
-                f"  expected: {b64(expected)}\n"
-                f"  got:      {h_val}"
+                f"PERMERROR Message-Instance m={m_val} {alg} header hash is "
+                f"not valid base64 (got {h_val!r})"
             )
+        else:
+            expected = compute_header_hash(headers, alg)
+            if expected != h_actual:
+                errors.append(
+                    f"Message-Instance: {alg} header hash mismatch\n"
+                    f"  expected: {b64(expected)}\n"
+                    f"  got:      {h_val}"
+                )
 
-        # Verify body hash
-        expected = compute_body_hash(body)
-        actual = base64.b64decode(b_val)
-        if expected != actual:
+        b_actual = _b64decode_strict(b_val)
+        if b_actual is None:
             errors.append(
-                f"Message-Instance: body hash mismatch\n"
-                f"  expected: {b64(expected)}\n"
-                f"  got:      {b_val}"
+                f"PERMERROR Message-Instance m={m_val} {alg} body hash is "
+                f"not valid base64 (got {b_val!r})"
             )
+        else:
+            expected = compute_body_hash(body, alg)
+            if expected != b_actual:
+                errors.append(
+                    f"Message-Instance: {alg} body hash mismatch\n"
+                    f"  expected: {b64(expected)}\n"
+                    f"  got:      {b_val}"
+                )
 
+    return errors
+
+
+def _check_signature_duplicates(sig_items, i_val) -> list[str]:
+    """spec-05 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag.
+
+    A Selector MUST NOT appear more than once. The same signing algorithm may
+    appear at most twice, and only with distinct Selectors. Selector matching is
+    case-insensitive (a Selector is a Domain, §3.5).
+    """
+    errors = []
+    selectors = [sel.lower() for sel, _, _ in sig_items]
+    if len(set(selectors)) != len(selectors):
+        errors.append(f"PERMERROR DKIM2-Signature i={i_val} has a duplicate selector")
+    counts = {}
+    for _, alg, _ in sig_items:
+        counts[alg.lower()] = counts.get(alg.lower(), 0) + 1
+    if any(n > 2 for n in counts.values()):
+        errors.append(f"PERMERROR DKIM2-Signature i={i_val} has too many signatures")
     return errors
 
 
@@ -381,7 +480,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     mf_val = _extract_tag(value, "mf")
     rt_val = _extract_tag(value, "rt")
 
-    # draft-04 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+    # draft-05 §8: i= m= t= d= s= MUST be present; plus either nd= or both
     # mf= and rt= (and nd= excludes mf=/rt=).
     if not all([i_val, m_val, t_val0, d_val, s_tag]):
         for tag_name, tag_val in (
@@ -429,8 +528,8 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     # folding whitespace the producer inserted, and are what we blank out of
     # the raw header below.  The *semantic* fields have FWS removed per §2.12
     # ("folding whitespace ... MUST be ignored when the value is used"), so a
-    # fold anywhere inside the item -- including between the selector colon
-    # and the algorithm token -- doesn't corrupt the selector, the algorithm
+    # fold anywhere inside the item -- including between the Selector colon
+    # and the algorithm token -- doesn't corrupt the Selector, the algorithm
     # name or the base64 signature.
     sig_items_raw = []
     sig_items = []
@@ -440,6 +539,12 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             return [f"DKIM2-Signature i={i_val}: invalid s= item format: {part!r}"]
         sig_items_raw.append(fields)
         sig_items.append([_strip_fws(f) for f in fields])
+
+    # spec-05 §8.9: duplicate-selector and too-many-signatures checks must run
+    # before any DNS lookup or crypto work.
+    dup_errors = _check_signature_duplicates(sig_items, i_val)
+    if dup_errors:
+        return dup_errors
 
     # Build the incomplete signature (the signed form) by blanking each s=
     # item's signature value in place.  This is independent of tag order and
@@ -630,7 +735,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                             domain=_extract_tag(top_sig_value, 'd') or '',
                             message=msg, errors=[msg])
 
-    # Envelope MAIL FROM / RCPT TO checks (spec §"Check the Chain-of-Custody"):
+    # Envelope MAIL FROM / RCPT TO checks (spec §"Check the Chain of Custody"):
     # exact match against the top signature's declared mf=/rt=, domains
     # lowercased, local-part case-sensitive. Applies regardless of
     # full_chain/simple mode. rt= MAY carry extra recipients beyond what was
@@ -722,7 +827,17 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         errs = verify_message_instance(mi_hdr, current_content_headers, current_body)
         if errs:
             for e in errs:
-                all_errors.append(f"v={version}: {e}")
+                # A self-describing PERMERROR already names its own m=
+                # (e.g. "PERMERROR Message-Instance m=2 contains invalid
+                # JSON"); prefixing "v=2: " on top of that would double up
+                # the same information and stop the text from being the
+                # verbatim §11.2 string. Only non-PERMERROR errors (which
+                # don't otherwise say which version they're about) get the
+                # v= prefix.
+                if e.startswith("PERMERROR"):
+                    all_errors.append(e)
+                else:
+                    all_errors.append(f"v={version}: {e}")
         elif verbose:
             print(f"  MI v={version} hashes: OK", file=sys.stderr)
 
@@ -745,11 +860,18 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                 elif verbose:
                     print(f"  DKIM2-Signature i={i_val}: OK", file=sys.stderr)
 
-        # If there's a lower version, undo recipes to reconstruct previous state
+        # If there's a lower version, undo Recipes to reconstruct previous state
         if version > versions[-1]:
-            recipes = decode_recipes(mi_hdr)
+            # A malformed r= is already reported (as the specific §11.2
+            # invalid-JSON PERMERROR) by the verify_message_instance() call
+            # above; don't let the same failure crash decode_recipes() here
+            # with an uncaught exception.
+            try:
+                recipes = decode_recipes(mi_hdr)
+            except (ValueError, TypeError):
+                recipes = None
             if recipes is not None:
-                # draft-04 §5.1: a present "h" that is JSON null is a syntax
+                # draft-05 §5.1: a present "h" that is JSON null is a syntax
                 # error (distinct from an absent "h", which means headers
                 # were unchanged); mirrors dkim2undo.py's rejection.
                 if "h" in recipes and recipes["h"] is None:
@@ -795,7 +917,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-04)")
+        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-05)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--dns-json", required=True,
                         help="Path to dns.json with public keys")

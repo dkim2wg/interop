@@ -2,7 +2,7 @@ package Mail::DKIM2::TagValueList;
 use strict;
 use warnings;
 
-# Simple tag=value list as defined in draft-ietf-dkim-dkim2-spec-04 Sections 6 and 7.
+# Simple tag=value list as defined in draft-ietf-dkim-dkim2-spec-05 Sections 6 and 7.
 # Preserves insertion order for serialization.
 
 sub new {
@@ -21,7 +21,7 @@ sub parse {
     my %seen;
     # Tag names keep their ORIGINAL case and order so the header can be
     # re-serialized byte-for-byte for signing-input reconstruction; get_tag()
-    # does the case-insensitive lookup required by spec-04 §8.
+    # does the case-insensitive lookup required by spec-05 §8.
     for my $part (split /\s*;\s*/, $string) {
         next unless $part =~ /^(\w+)\s*=\s*(.*)/s;
         my ($name, $val) = ($1, $2);
@@ -47,7 +47,7 @@ sub get_tag {
     return undef;
 }
 
-# The lowercased tag name that appeared more than once, if any (spec-04 §8).
+# The lowercased tag name that appeared more than once, if any (spec-05 §8).
 sub duplicate_tag { return $_[0]->{_duplicate} }
 
 sub set_tag {
@@ -84,7 +84,7 @@ Mail::DKIM2::TagValueList - Parse and serialize DKIM2 tag=value lists
 =head1 DESCRIPTION
 
 Base class for tag=value list parsing and serialization as used in
-DKIM2-Signature and Message-Instance headers (draft-ietf-dkim-dkim2-spec-04
+DKIM2-Signature and Message-Instance headers (draft-ietf-dkim-dkim2-spec-05
 Sections 6 and 7).  Preserves insertion order for deterministic output.
 
 B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet

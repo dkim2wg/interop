@@ -1,4 +1,4 @@
-// Command dkim2dsn propagates a received DKIM2 DSN upstream (draft-04 §12.1.1).
+// Command dkim2dsn propagates a received DKIM2 DSN upstream (draft-05 §12.1.1).
 package main
 
 import (

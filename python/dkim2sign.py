@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 signer - draft-ietf-dkim-dkim2-spec-04
+DKIM2 signer - draft-ietf-dkim-dkim2-spec-05
 
 Takes a raw email, selector, domain, and keyfile and produces a signed
 message with Message-Instance and DKIM2-Signature headers on stdout.
@@ -100,12 +100,16 @@ def parse_message(source: "Source") -> tuple[list[bytes], bytes]:
 # Canonicalization for header hash (Section 5.2)
 # ---------------------------------------------------------------------------
 
-# Headers to exclude from the header hash
-_EXCLUDED_PREFIXES = (b"x-", b"arc-")
-_EXCLUDED_NAMES = {b"received", b"return-path", b"delivered-to",
-                   b"message-instance",
-                   b"dkim2-signature", b"dkim-signature",
-                   b"authentication-results"}
+# Headers to exclude from the header hash (spec-05 §4, §4.1)
+_EXCLUDED_PREFIXES = (b"x-", b"received-")
+_EXCLUDED_NAMES = {
+    b"apparently-to", b"arc-authentication-results",
+    b"arc-message-signature", b"arc-seal", b"authentication-results",
+    b"auto-submitted", b"delivered-to", b"dkim-signature",
+    b"dkim2-signature", b"dl-expansion-history", b"message-instance",
+    b"original-recipient", b"received", b"return-path",
+    b"sio-label-history", b"vbr-info", b"x400-received", b"x400-trace",
+}
 
 
 def _header_name(hdr: bytes) -> bytes:
@@ -164,8 +168,23 @@ def canonicalize_header_field(raw_hdr: bytes) -> bytes:
     return (name + ":" + value).encode("utf-8", errors="surrogateescape")
 
 
-def compute_header_hash(headers: list[bytes]) -> bytes:
-    """Compute the SHA-256 hash of canonicalized, sorted headers (Section 5.2).
+# spec-05 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# both; Signers MAY implement either or both (we default to sha256).
+HASH_ALGS = {
+    "sha256": lambda data: hashlib.sha256(data).digest(),
+    "sha512": lambda data: hashlib.sha512(data).digest(),
+}
+
+
+def _digest(data: bytes, alg: str = "sha256") -> bytes:
+    try:
+        return HASH_ALGS[alg](data)
+    except KeyError:
+        raise ValueError(f"unsupported hash algorithm: {alg}")
+
+
+def compute_header_hash(headers: list[bytes], alg: str = "sha256") -> bytes:
+    """Compute the hash of canonicalized, sorted headers (Section 5.2).
 
     Excludes headers listed in the spec. Returns raw digest bytes.
     """
@@ -179,7 +198,7 @@ def compute_header_hash(headers: list[bytes]) -> bytes:
         canon_headers.append((name, canon))
 
     # Step 7-8: Sort alphabetically by name; duplicate names are ordered
-    # bottom-up (last occurrence first), matching recipe numbering.
+    # bottom-up (last occurrence first), matching Recipe numbering.
     # Reverse before sorting so Python's stable sort preserves bottom-up order.
     canon_headers.reverse()
     canon_headers.sort(key=lambda x: x[0])
@@ -189,15 +208,15 @@ def compute_header_hash(headers: list[bytes]) -> bytes:
     if data:
         data += b"\r\n"
 
-    return hashlib.sha256(data).digest()
+    return _digest(data, alg)
 
 
 # ---------------------------------------------------------------------------
 # Canonicalization for body hash (Section 5.1)
 # ---------------------------------------------------------------------------
 
-def compute_body_hash(body: bytes) -> bytes:
-    """Compute the SHA-256 hash of the canonicalized body (Section 5.1).
+def compute_body_hash(body: bytes, alg: str = "sha256") -> bytes:
+    """Compute the hash of the canonicalized body (Section 5.1).
 
     Simple canonicalization:
     - Strip all trailing empty lines
@@ -213,7 +232,7 @@ def compute_body_hash(body: bytes) -> bytes:
     # Add exactly one trailing CRLF (even if body was empty)
     body += b"\r\n"
 
-    return hashlib.sha256(body).digest()
+    return _digest(body, alg)
 
 
 # ---------------------------------------------------------------------------
@@ -221,15 +240,23 @@ def compute_body_hash(body: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 def build_message_instance(headers: list[bytes], body: bytes,
-                           version: int = 1, recipe: dict | None = None) -> str:
+                           version: int = 1, recipe: dict | None = None,
+                           algs: list[str] | None = None) -> str:
     """Build a Message-Instance header field value.
 
     Returns the complete header as a string (including field name).
     Trailing semicolon is included per spec ABNF (tag-list grammar).
     """
-    h_hash = compute_header_hash(headers)
-    b_hash = compute_body_hash(body)
-    value = f"m={version}; h=sha256:{b64(h_hash)}:{b64(b_hash)}"
+    if algs is None:
+        algs = ["sha256"]
+    # spec-05 §7.3: one hash-set per algorithm, comma separated. An algorithm
+    # MUST NOT appear more than once, so `algs` must be de-duplicated by the
+    # caller (the CLI does this).
+    sets = ",".join(
+        f"{alg}:{b64(compute_header_hash(headers, alg))}:{b64(compute_body_hash(body, alg))}"
+        for alg in algs
+    )
+    value = f"m={version}; h={sets}"
     if recipe is not None:
         value += f"; r={b64json(_lowercase_recipe_keys(recipe))}"
     value += ";"
@@ -240,8 +267,9 @@ def _lowercase_recipe_keys(recipe: dict) -> dict:
     """Force the header-recipe (h) keys to lowercase on output.
 
     Header field names are case-insensitive; emitting recipe keys in a
-    canonical lowercase form keeps them stable and unambiguous.  (Not yet
-    mandated by the draft, but we always do it.)
+    canonical lowercase form keeps them stable and unambiguous.  spec-05
+    §5.1: header field names in the JSON Recipes MUST be lower case
+    (matching against the message stays case-insensitive).
     """
     h = recipe.get("h")
     if not isinstance(h, dict):
@@ -284,7 +312,7 @@ def canonicalize_sig_header(raw_hdr: str) -> bytes:
 def _extract_tag(header_value: str, tag: str) -> str | None:
     """Extract a tag value from a DKIM2-style tag-list header value.
 
-    Per spec-04 §8, tag identifiers are case-insensitive, may appear in any
+    Per spec-05 §8, tag identifiers are case-insensitive, may appear in any
     order, and FWS is permitted around the '=' and ';' separators.
     """
     tl = tag.lower()
@@ -299,7 +327,7 @@ def _extract_tag(header_value: str, tag: str) -> str | None:
 
 def _tag_names(header_value: str) -> list[str]:
     """Lowercased tag names in a tag-list value, in order (for duplicate
-    detection per spec-04 §8: 'there MUST be only one of each kind')."""
+    detection per spec-05 §8: 'there MUST be only one of each kind')."""
     names = []
     for part in header_value.split(";"):
         if "=" in part:
@@ -319,7 +347,7 @@ def _get_version_from_mi(hdr: str) -> int:
 def _mi_hashes(hdr: str) -> str | None:
     """Extract the h= hash set of a Message-Instance header, FWS removed.
 
-    Folding whitespace may appear inside the base64 hashes (spec-04 §2.12), so
+    Folding whitespace may appear inside the base64 hashes (spec-05 §2.12), so
     strip it before comparing two instances' hashes.
     """
     colon = hdr.find(":")
@@ -352,7 +380,7 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Per draft-ietf-dkim-dkim2-spec-04 Section 9.5:
+    # Per draft-ietf-dkim-dkim2-spec-05 Section 9.5:
     # 1. All MI headers in ascending v= order
     # 2. All prior DKIM2-Signature headers in ascending i= order
     # 3. The incomplete DKIM2-Signature being created
@@ -399,15 +427,15 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     """Build a complete DKIM2-Signature header.
 
     If next_domain is given, the signature carries an nd= tag for an imaginary
-    forwarding hop (draft-04 §9.3) and omits mf=/rt=. Otherwise it carries
-    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-04 §8.10).
+    forwarding hop (draft-05 §9.3) and omits mf=/rt=. Otherwise it carries
+    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-05 §8.10).
 
     Returns the full header string including field name.
     """
     if timestamp is None:
         timestamp = int(time.time())
 
-    # draft-04 §9.3: an nd= hop carries nd= instead of mf=/rt=.
+    # draft-05 §9.3: an nd= hop carries nd= instead of mf=/rt=.
     if next_domain:
         chain = f"nd={next_domain}"
     else:
@@ -473,7 +501,8 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  mailfrom: str = "<>", rcptto: list[str] | None = None,
                  timestamp: int | None = None,
                  next_domain: str | None = None,
-                 flags: list[str] | None = None) -> bytes:
+                 flags: list[str] | None = None,
+                 algs: list[str] | None = None) -> bytes:
     """Sign a raw email message with DKIM2.
 
     Returns the complete message with Message-Instance and DKIM2-Signature
@@ -506,12 +535,14 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
         sig_seq = max(_get_seq_from_sig(h) for h in existing_sig) + 1
 
     # Build Message-Instance header
-    mi_hdr = build_message_instance(headers, body, version=mi_version)
+    mi_hdr = build_message_instance(headers, body, version=mi_version, algs=algs)
 
-    # draft-04 §9.1/§9.2.5: a hop that leaves both hashes unchanged adds no new
+    # draft-05 §9.1/§9.2.5: a hop that leaves both hashes unchanged adds no new
     # Message-Instance at all — it signs against the existing top instance and
-    # reuses its m=.  Emitting an instance with identical hashes and no recipe
-    # is pure waste; verifiers must tolerate one, but nothing should produce it.
+    # reuses its m=.  Emitting an instance with identical hashes and no Recipe
+    # is not forbidden, but §9.1 still calls it "most likely to be pointless
+    # and a waste of time and energy"; this implementation avoids it by
+    # default, and verifiers must still tolerate one from elsewhere.
     if top_mi is not None and _mi_hashes(top_mi) == _mi_hashes(mi_hdr):
         mi_version = _get_version_from_mi(top_mi)
         mi_hdr = None
@@ -540,7 +571,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-04)")
+        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-05)")
     parser.add_argument("message", help="Path to raw email file (- for stdin)")
     parser.add_argument("-s", "--selector", required=True,
                         help="DKIM2 selector name")
@@ -559,6 +590,10 @@ def main():
                              "tag instead of mf=/rt=")
     parser.add_argument("--flag", action="append", dest="flags",
                         help="Signature flag (f=); repeatable")
+    parser.add_argument("--hash", dest="hash_algs", default="sha256",
+                        choices=["sha256", "sha512", "both"],
+                        help="hash algorithm(s) for the Message-Instance h= tag "
+                             "(spec-05 §3.1; default sha256)")
     args = parser.parse_args()
 
     if args.message == "-":
@@ -568,10 +603,13 @@ def main():
 
     rcptto = args.rcptto or ["unknown@example.com"]
 
+    algs = ["sha256", "sha512"] if args.hash_algs == "both" else [args.hash_algs]
+
     result = sign_message(raw, args.selector, args.domain, args.keyfile,
                           mailfrom=args.mailfrom, rcptto=rcptto,
                           timestamp=args.timestamp,
-                          next_domain=args.next_domain, flags=args.flags)
+                          next_domain=args.next_domain, flags=args.flags,
+                          algs=algs)
 
     sys.stdout.buffer.write(result)
 

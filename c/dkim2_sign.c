@@ -131,19 +131,46 @@ static unsigned char *build_sign_input(
 
 int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     char **mi_out, char **sig_out) {
-    /* §8.3: Body hash — already computed incrementally, just base64-encode */
-    char body_hash[64];
-    if (b64_encode(ctx->body_digest, DKIM2_HASH_LEN, body_hash, sizeof body_hash) < 0) {
-        snprintf(ctx->errmsg, sizeof ctx->errmsg, "body hash encode failed");
-        return -1;
+    /* spec-05 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
+       NULL) is sha256 only, so default output stays byte-identical to before
+       hash agility existed. "--hash both" emits sha256 first, then sha512. */
+    int sel_algs[DKIM2_N_HASH_ALGS];
+    int n_sel = 0;
+    const char *want = cfg->hash ? cfg->hash : "sha256";
+    if (strcmp(want, "both") == 0) {
+        sel_algs[n_sel++] = 0;
+        sel_algs[n_sel++] = 1;
+    } else {
+        int a = dkim2_hash_alg_index(want);
+        if (a < 0) a = 0;
+        sel_algs[n_sel++] = a;
     }
 
-    /* §8.4: Compute header hash */
-    char hdr_hash[64];
-    if (dkim2_header_hash((const char **)ctx->headers, ctx->n_headers,
-            hdr_hash, sizeof hdr_hash) < 0) {
-        snprintf(ctx->errmsg, sizeof ctx->errmsg, "header hash failed");
-        return -1;
+    /* §8.3/§8.4: body hash already computed incrementally (both algorithms);
+       header hash computed here per selected algorithm. */
+    dkim2_hashset_t hs[DKIM2_N_HASH_ALGS];
+    char hh_b64[DKIM2_N_HASH_ALGS][DKIM2_MAX_HASH_LEN * 2];
+    char bh_b64[DKIM2_N_HASH_ALGS][DKIM2_MAX_HASH_LEN * 2];
+    for (int k = 0; k < n_sel; k++) {
+        int a = sel_algs[k];
+        size_t alen = dkim2_hash_alg_len(a);
+
+        unsigned char hd[DKIM2_MAX_HASH_LEN];
+        if (dkim2_header_hash_raw_alg((const char **)ctx->headers, ctx->n_headers, a, hd) < 0) {
+            snprintf(ctx->errmsg, sizeof ctx->errmsg, "header hash failed");
+            return -1;
+        }
+        if (b64_encode(hd, alen, hh_b64[k], sizeof hh_b64[k]) < 0) {
+            snprintf(ctx->errmsg, sizeof ctx->errmsg, "header hash encode failed");
+            return -1;
+        }
+        if (b64_encode(ctx->body_digests.d[a], alen, bh_b64[k], sizeof bh_b64[k]) < 0) {
+            snprintf(ctx->errmsg, sizeof ctx->errmsg, "body hash encode failed");
+            return -1;
+        }
+        hs[k].alg       = (char *)dkim2_hash_alg_name(a);
+        hs[k].hdr_hash  = hh_b64[k];
+        hs[k].body_hash = bh_b64[k];
     }
 
     /* Determine m= for new Message-Instance */
@@ -151,22 +178,24 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     for (dkim2_mi_t *mi = ctx->mi_list; mi; mi = mi->next)
         if (mi->m >= new_m) new_m = mi->m + 1;
 
-    /* Check if highest existing MI already has these exact hashes */
+    /* Check if highest existing MI already has these exact hashes. Only
+       applies to the legacy single-sha256 path so --hash semantics stay
+       simple: a multi-hash sign always adds a new MI. */
     dkim2_mi_t *latest_mi = NULL;
     for (dkim2_mi_t *mi = ctx->mi_list; mi; mi = mi->next) latest_mi = mi;
-    if (latest_mi && latest_mi->n_hsets > 0 &&
-        strcmp(latest_mi->hsets[0].hdr_hash, hdr_hash) == 0 &&
-        strcmp(latest_mi->hsets[0].body_hash, body_hash) == 0) {
+    if (n_sel == 1 && sel_algs[0] == 0 &&
+        latest_mi && latest_mi->n_hsets > 0 &&
+        strcmp(latest_mi->hsets[0].hdr_hash, hh_b64[0]) == 0 &&
+        strcmp(latest_mi->hsets[0].body_hash, bh_b64[0]) == 0) {
         /* Reuse existing MI — sign against it */
         new_m = latest_mi->m;
     }
 
     /* Build the new MI struct for signing input */
-    dkim2_hashset_t hs = { "sha256", hdr_hash, body_hash };
     dkim2_mi_t new_mi = {0};
     new_mi.m = new_m;
-    new_mi.hsets = &hs;
-    new_mi.n_hsets = 1;
+    new_mi.hsets = hs;
+    new_mi.n_hsets = n_sel;
     new_mi.next = NULL;
 
     /* Determine i= for new DKIM2-Signature */
@@ -298,11 +327,11 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
         cfg->selector, alg, sig_b64);
     free(sig_b64);
 
-    /* Format MI value (only if new MI was created) */
+    /* Format MI value (only if new MI was created). dkim2_mi_format joins
+       every hash-set with commas, e.g. "sha256:hh:bh,sha512:hh:bh" for
+       --hash both — deterministic sha256-then-sha512 order. */
     if (!already_in_list) {
-        char mi_val[512];
-        snprintf(mi_val, sizeof mi_val, "m=%d; h=sha256:%s:%s;", new_m, hdr_hash, body_hash);
-        *mi_out = strdup(mi_val);
+        *mi_out = dkim2_mi_format(&new_mi);
     } else {
         *mi_out = NULL; /* no new MI header needed */
     }

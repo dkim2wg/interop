@@ -6,7 +6,7 @@
 #
 # The vectors target draft-02, but the tag rules (case-insensitive identifiers,
 # any order, single occurrence, FWS) and the >=1024-bit key requirement (§3.2)
-# are unchanged in draft-04, so they apply to us directly.
+# are unchanged in draft-05, so they apply to us directly.
 #
 # Exact status-code differences (we may say 'fail' where a vector says
 # 'permerror') are reported as diagnostics but do not fail the gate; the

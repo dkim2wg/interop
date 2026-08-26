@@ -1,14 +1,28 @@
-// WebCrypto wrappers for DKIM2. Built from spec-04 §3.
+// WebCrypto wrappers for DKIM2. Built from spec-05 §3.
 import { b64ToBytes, bytesToB64 } from './b64.js';
 
 const subtle = globalThis.crypto.subtle;
 
+// spec-05 §3.1: two hashing algorithms are defined; Verifiers MUST implement
+// both. Values are WebCrypto SubtleCrypto digest names.
+export const HASH_ALGS = { sha256: 'SHA-256', sha512: 'SHA-512' };
+
+export async function hashBytes(bytes, alg) {
+  const name = HASH_ALGS[alg.toLowerCase()];
+  if (!name) throw new Error(`unsupported hash algorithm: ${alg}`);
+  return new Uint8Array(await subtle.digest(name, bytes));
+}
+
+export async function hashB64(bytes, alg) {
+  return bytesToB64(await hashBytes(bytes, alg));
+}
+
 export async function sha256Bytes(bytes) {
-  return new Uint8Array(await subtle.digest('SHA-256', bytes));
+  return hashBytes(bytes, 'sha256');
 }
 
 export async function sha256B64(bytes) {
-  return bytesToB64(await sha256Bytes(bytes));
+  return hashB64(bytes, 'sha256');
 }
 
 export async function verifyRsa(keyB64, sigBytes, msgBytes) {

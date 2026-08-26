@@ -4,6 +4,7 @@ use warnings;
 
 
 use Crypt::Digest::SHA256;
+use Crypt::Digest::SHA512 qw(sha512 sha512_b64);
 use Email::MIME;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Algorithm::Diff;
@@ -20,6 +21,31 @@ use Mail::DKIM2::Common qw(
 );
 
 our $DEBUG = 0;
+
+# spec-05 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# both; Signers MAY implement either or both (we default to sha256).
+my %HASH_ALGS = (
+    sha256 => \&Crypt::Digest::SHA256::sha256,
+    sha512 => \&Crypt::Digest::SHA512::sha512,
+);
+
+sub hash_algs { return { %HASH_ALGS } }
+
+# spec-05 §7.3: h= is hash-set *("," hash-set), hash-set = alg ":" hh ":" bh.
+# Hash names are lowercased -- RFC 5234 makes ABNF quoted strings
+# case-insensitive. All FWS is stripped (§2.12): it may appear anywhere
+# inside a base64 value (e.g. a folded header), not just at either end.
+sub parse_hash_sets {
+    my ($h_tag) = @_;
+    my @sets;
+    for my $item (split /,/, $h_tag) {
+        $item =~ s/[\s\r\n]//g;
+        my @parts = split /:/, $item;
+        next unless @parts == 3;
+        push @sets, [lc $parts[0], $parts[1], $parts[2]];
+    }
+    return \@sets;
+}
 
 # FILTHY PATCHING (needed for undo to work with Email::Simple)
 BEGIN {
@@ -75,7 +101,7 @@ sub get_tag {
 # The header-hash component (base64) of this Message-Instance's h= tag.
 sub header_hash { return $_[0]->{bits}{h1} }
 
-# Mark the body recipe as null per spec-04 §4.2: the body changed but the
+# Mark the body Recipe as null per spec-05 §4.2: the body changed but the
 # previous state cannot be recreated. as_string() then emits "b": null.
 sub set_null_body_recipe {
     my ($self) = @_;
@@ -83,9 +109,9 @@ sub set_null_body_recipe {
 }
 
 # True if this instance declares the previous state non-recreatable (a null
-# "b" recipe). Such an instance cannot be undone to a prior version. Under
-# draft-04 §5.1 a header recipe can no longer be null, so only the body
-# recipe can render an instance unrecoverable.
+# "b" Recipe). Such an instance cannot be undone to a prior version. Under
+# draft-05 §5.1 a header Recipe can no longer be null, so only the body
+# Recipe can render an instance unrecoverable.
 sub unrecoverable {
     my ($self) = @_;
     return $self->{bits}{rb_null} ? 1 : 0;
@@ -97,13 +123,27 @@ sub as_string {
     my ($self) = @_;
     my %data = %{$self->{bits}};
     my $m = delete $data{m};
+    my $h1 = delete $data{h1};
+    my $b1 = delete $data{b1};
+    my $hashes = delete $data{hashes};
+    unless ($hashes && %$hashes) {
+        # Back-compat: bits built directly with bare h1/b1 and no hashes map
+        # (e.g. hand-constructed objects in tests) still emit a sha256 set.
+        $hashes = (defined $h1 || defined $b1) ? { sha256 => [ $h1 // '', $b1 // '' ] } : {};
+    }
 
-    # Build h= tag: sha256:header_hash:body_hash
-    my $h1 = delete $data{h1} // '';
-    my $b1 = delete $data{b1} // '';
-    my $result = "m=$m; h=sha256:$h1:$b1";
+    # spec-05 §7.3: h= is hash-set *("," hash-set) -- one hash-set per
+    # configured algorithm, emitted in the signer's chosen order (default:
+    # sha256 only; the signer default MUST NOT change).
+    my @algs = @{ $self->{algs} || ['sha256'] };
+    my @sets;
+    for my $alg (@algs) {
+        my $pair = $hashes->{$alg} or next;
+        push @sets, "$alg:$pair->[0]:$pair->[1]";
+    }
+    my $result = "m=$m; h=" . join(',', @sets);
 
-    # Build r= tag JSON if there are recipes
+    # Build r= tag JSON if there are Recipes
     my %recipe_json;
     if (exists $data{rb}) {
         if (ref $data{rb} eq 'SCALAR' && ${$data{rb}} eq 'null') {
@@ -116,8 +156,8 @@ sub as_string {
     if (exists $data{rh}) {
         my $rh = delete $data{rh};
         my %encoded;
-        # Header field names are case-insensitive; always emit recipe keys in
-        # canonical lowercase form (not yet mandated by the draft, but we do it).
+        # spec-05 §5.1: header field names in the JSON Recipes MUST be lower
+        # case (matching against the message stays case-insensitive).
         for my $h (sort keys %$rh) {
             $encoded{lc $h} = _encode_recipe_list($rh->{$h});
         }
@@ -132,7 +172,7 @@ sub as_string {
     return $result;
 }
 
-# Convert internal recipe list to wire format
+# Convert internal Recipe list to wire format
 # Internal: [from,to] arrays for copy ranges, strings for literal content
 # Wire: {"c": [from,to]} for copy, {"d": ["val1",...]} for data
 sub _encode_recipe_list {
@@ -179,16 +219,50 @@ sub parse {
         unless exists $tags{m};
     $self->{bits}{m} = $tags{m};
 
-    # Parse h= tag: sha256:header_hash:body_hash
+    # spec-05 §7.3: h= is a list of hash-sets
     if (exists $tags{h}) {
-        my @parts = split(/:/, $tags{h});
-        # algorithm:header_hash:body_hash
-        $self->{bits}{h1} = $parts[1];
-        $self->{bits}{b1} = $parts[2];
+        my $sets = parse_hash_sets($tags{h});
+
+        # §7.3: an algorithm MUST NOT be present more than once. Check the
+        # LIST returned by parse_hash_sets, not a hash keyed by algorithm --
+        # a hash would let the second occurrence silently overwrite the
+        # first, hiding the duplicate. Hash names are already lowercased by
+        # parse_hash_sets (RFC 5234 makes ABNF quoted strings
+        # case-insensitive), so this comparison is case-insensitive too.
+        # This must run before any hash is computed or compared.
+        my %seen;
+        for my $s (@$sets) {
+            if ($seen{$s->[0]}++) {
+                die "PERMERROR Message-Instance m=$tags{m} has a duplicate hash algorithm\n";
+            }
+        }
+
+        for my $s (@$sets) {
+            $self->{bits}{hashes}{$s->[0]} = [$s->[1], $s->[2]];
+        }
+        # Back-compatible aliases for the sha256 hash-set
+        if (my $sha256 = $self->{bits}{hashes}{sha256}) {
+            @{$self->{bits}}{qw(h1 b1)} = @$sha256;
+        }
     }
 
     if (exists $tags{r}) {
-        my $recipe_data = decode_tag_json($tags{r});
+        # spec-05 §11.2: a bad base64 r= value and a post-decode JSON parse
+        # failure are different errors and must stay distinct: base64
+        # failure -> "syntax error" (§11.2 lists this explicitly for
+        # malformed field content); JSON failure -> "contains invalid JSON".
+        # decode_base64() is lenient (silently drops non-alphabet
+        # characters rather than failing), so a strict format check is
+        # needed here to actually catch malformed base64 -- otherwise it
+        # would just decode to garbage bytes that happen to also fail JSON
+        # parsing, mislabelling the error.
+        if ($tags{r} !~ m{\A(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?\z}) {
+            die "PERMERROR Message-Instance m=$tags{m} syntax error\n";
+        }
+        my $recipe_data = eval { decode_tag_json($tags{r}) };
+        if ($@) {
+            die "PERMERROR Message-Instance m=$tags{m} contains invalid JSON\n";
+        }
         # A present-but-null "b"/"h" (spec §4.1/§4.2) means the previous state
         # cannot be recreated — distinct from an absent field (no change).
         if (exists $recipe_data->{b}) {
@@ -206,9 +280,9 @@ sub parse {
                 }
                 $self->{bits}{rh} = \%rh;
             } else {
-                # draft-04 §5.1 removed the null header recipe: a present "h"
+                # spec-05 §5.1 disallows the null header Recipe: a present "h"
                 # MUST be a non-empty object. Reject anything else.
-                die "header recipe is null: not permitted under draft-04 \xA75.1\n";
+                die "header recipe is null: not permitted under draft-05 §5.1\n";
             }
         }
     }
@@ -216,7 +290,7 @@ sub parse {
     return $self;
 }
 
-# Convert wire format recipe list to internal format
+# Convert wire format Recipe list to internal format
 # Wire: {"c": [from,to]} for copy, {"d": ["val1",...]} for data
 # Internal: [from,to] arrays for copy ranges, strings for literal content
 sub _decode_recipe_list {
@@ -246,23 +320,25 @@ sub _decode_recipe_list {
 # --- Digests ---
 
 sub h_digest {
-    my ($msg) = @_;
+    my ($msg, $alg) = @_;
+    $alg = lc($alg // 'sha256');
 
-    my $digest = Crypt::Digest::SHA256->new();
+    my $data = '';
     for my $header (sort { lc($a) cmp lc($b) } $msg->header_names) {
         next if should_skip($header);
         for my $item (reverse $msg->header_raw($header)) {
             my $chead = dkim2_canonicalize_header("$header: $item\r\n");
             warn "cdigest: $chead" if $DEBUG;
-            $digest->add($chead);
+            $data .= $chead;
         }
     }
 
-    return digest64($digest);
+    return _hash_data_b64($alg, $data);
 }
 
 sub b_digest {
-    my ($msg) = @_;
+    my ($msg, $alg) = @_;
+    $alg = lc($alg // 'sha256');
 
     # DKIM simple body canonicalization: strip trailing empty lines,
     # ensure exactly one trailing CRLF
@@ -270,12 +346,20 @@ sub b_digest {
     $body =~ s/(\r\n)+\z//;
     $body .= "\r\n";
 
-    my $digest = Crypt::Digest::SHA256->new();
-    $digest->add($body);
-    return digest64($digest);
+    return _hash_data_b64($alg, $body);
 }
 
-# --- Body recipe computation ---
+# spec-05 §3.1/§3.4: hash $data with the named (implemented) algorithm and
+# base64-encode the result. Equivalent to the historic digest64($digest)
+# path for sha256 (verified byte-identical), generalised to any algorithm
+# in %HASH_ALGS.
+sub _hash_data_b64 {
+    my ($alg, $data) = @_;
+    my $fn = $HASH_ALGS{$alg} or croak "unsupported hash algorithm: $alg";
+    return encode_base64($fn->($data), '');
+}
+
+# --- Body Recipe computation ---
 
 # Straight line-level diff using Algorithm::Diff.
 sub _body_recipe_linediff {
@@ -318,7 +402,7 @@ sub _flat_to_line {
     return $#$offsets - 1;
 }
 
-# Build recipe entries for a region, using line-level matching.
+# Build Recipe entries for a region, using line-level matching.
 sub _recipe_for_region {
     my ($cur_lines, $cur_start, $cur_end,
         $prev_lines, $prev_start, $prev_end) = @_;
@@ -356,7 +440,7 @@ sub _recipe_for_region {
     return @recipe;
 }
 
-# Estimate the wire cost of a recipe.
+# Estimate the wire cost of a Recipe.
 sub _recipe_cost {
     my ($recipe) = @_;
     return 999999 unless $recipe;
@@ -453,7 +537,7 @@ sub _body_recipe_flat {
     $prev_suffix_start = $prev_prefix_end
         if $prev_suffix_start < $prev_prefix_end;
 
-    # Build recipe: prefix region + middle region + suffix region.
+    # Build Recipe: prefix region + middle region + suffix region.
     my @recipe;
     push @recipe, _recipe_for_region(
         $l1, 0, $cur_prefix_end,
@@ -477,7 +561,7 @@ sub _random_boundary {
 
 # Add $old_body into the MIME epilogue of $msg (an Email::MIME object),
 # modifying it in place.  Returns the number of body lines that precede
-# the epilogue, so the caller can build a line-range rb recipe.
+# the epilogue, so the caller can build a line-range rb Recipe.
 #
 # If $msg is already multipart, the old body is appended after the final
 # MIME boundary (--BOUNDARY--).  If it is not multipart, the current
@@ -535,7 +619,7 @@ sub _add_epilogue {
     }
 
     # Return number of lines before the epilogue so the caller can build
-    # a line-range recipe.  The old body occupies the last N lines of the
+    # a line-range Recipe.  The old body occupies the last N lines of the
     # modified body, where N = lines in $old_body.
     my @all_lines = split /\r?\n/, $msg->body_raw;
     my @old_lines = split /\r?\n/, $old_body;
@@ -544,7 +628,7 @@ sub _add_epilogue {
 
 # --- Calculate helpers ---
 
-# Count literal string items in a recipe (non-array items = lines not in current body).
+# Count literal string items in a Recipe (non-array items = lines not in current body).
 sub _recipe_literal_lines {
     my ($recipe) = @_;
     return 0 unless $recipe;
@@ -552,7 +636,7 @@ sub _recipe_literal_lines {
 }
 
 # Return the cheaper of the two diff strategies for two raw body strings.
-# Returns undef if bodies are identical (no recipe needed).
+# Returns undef if bodies are identical (no Recipe needed).
 sub _best_body_diff {
     my ($cur_raw, $prev_raw) = @_;
     (my $s1 = $cur_raw)  =~ s/[\r\n]+$//;
@@ -569,7 +653,7 @@ sub _best_body_diff {
 }
 
 # Store $old_body in the MIME epilogue of $current (modifying it in place),
-# then return a rb line-range recipe pointing at those lines.
+# then return a rb line-range Recipe pointing at those lines.
 sub _epilogue_recipe {
     my ($current, $old_body) = @_;
     my @old_lines  = split /\r?\n/, $old_body;
@@ -585,6 +669,10 @@ sub calculate {
     croak "need a message" unless $current;
 
     my $self = bless {}, $class;
+
+    # spec-05 §3.1: the signer chooses one or more hash algorithms; default
+    # is sha256 only (the signer default MUST NOT change).
+    $self->{algs} = ($opts{Algs} && @{$opts{Algs}}) ? [ @{$opts{Algs}} ] : ['sha256'];
 
     unless (ref($current) && $current->isa('Email::MIME')) {
         $current = Email::MIME->new($current);
@@ -629,7 +717,7 @@ sub calculate {
             }
         }
         else {
-            # Default: compute diff recipe (does not modify $current).
+            # Default: compute diff Recipe (does not modify $current).
             $rb_recipe = _best_body_diff($current->body_raw, $previous->body_raw);
         }
     }
@@ -639,9 +727,14 @@ sub calculate {
     }
 
     # Hashes are always of the current (newest) version of the message,
-    # computed after any epilogue modification.
-    $self->set_tag('h1', h_digest($current));
-    $self->set_tag('b1', b_digest($current));
+    # computed after any epilogue modification, for every configured
+    # algorithm (spec-05 §7.3).
+    for my $alg (@{$self->{algs}}) {
+        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg), b_digest($current, $alg) ];
+    }
+    if (my $sha256 = $self->{bits}{hashes}{sha256}) {
+        @{$self->{bits}}{qw(h1 b1)} = @$sha256;
+    }
 
     # nothing more to calculate without a previous version
     return $self unless $previous;
@@ -702,19 +795,30 @@ sub verify {
     return 0 unless $num;
 
     my $self = $class->parse($map{$num});
-    my $h1 = $self->get_tag('h1');
-    my $b1 = $self->get_tag('b1');
-    my $hd = h_digest($msg);
-    my $bd = b_digest($msg);
 
-    unless (defined $h1 && defined $b1) {
-        return wantarray ? (0, "Message-Instance m=$num has no hash") : 0;
+    # spec-05 §3.4: verify every hash-set whose algorithm we implement; ALL
+    # of them must match. If none names an implemented algorithm, fail
+    # closed rather than treating it as "no hash" -- an MI signed with only
+    # sha512 (say) is perfectly valid and must verify via its sha512 set,
+    # not be rejected just because h1/b1 (the sha256 alias) are undef.
+    my $hashes = $self->get_tag('hashes') || {};
+    my $impl = hash_algs();
+    my @usable = sort grep { $impl->{$_} } keys %$hashes;
+
+    unless (@usable) {
+        return wantarray ? (0, "Message-Instance m=$num no supported hash algorithm") : 0;
     }
-    if ($h1 ne $hd) {
-        return wantarray ? (0, "header hash mismatch ($h1 != $hd)") : 0;
-    }
-    if ($b1 ne $bd) {
-        return wantarray ? (0, "body hash mismatch ($b1 != $bd)") : 0;
+
+    for my $alg (@usable) {
+        my ($h1, $b1) = @{ $hashes->{$alg} };
+        my $hd = h_digest($msg, $alg);
+        my $bd = b_digest($msg, $alg);
+        if ($h1 ne $hd) {
+            return wantarray ? (0, "$alg header hash mismatch ($h1 != $hd)") : 0;
+        }
+        if ($b1 ne $bd) {
+            return wantarray ? (0, "$alg body hash mismatch ($b1 != $bd)") : 0;
+        }
     }
 
     return $num;
@@ -780,7 +884,7 @@ sub undo {
 # instance against the current content, then undo it and check the next one
 # down, until m=1 or an instance that declares the previous state
 # unrecoverable. This is the undo check a recipient performs — running it
-# before signing catches an upstream that emitted a non-reversible recipe.
+# before signing catches an upstream that emitted a non-reversible Recipe.
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
     my ($class, $msg) = @_;
@@ -826,7 +930,7 @@ Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance head
     my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
     print "Message-Instance: " . $mi->as_string . "\n";
 
-    # Calculate MI with diff recipes between two versions
+    # Calculate MI with diff Recipes between two versions
     my $mi = Mail::DKIM2::MessageInstance->calculate($msg_current, $msg_prev);
 
     # Verify the highest MI header matches the message
@@ -840,7 +944,7 @@ Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance head
 =head1 DESCRIPTION
 
 This module implements Message-Instance header computation as defined in
-draft-ietf-dkim-dkim2-spec-04.  A Message-Instance header records cryptographic
+draft-ietf-dkim-dkim2-spec-05.  A Message-Instance header records cryptographic
 hashes of the message headers and body at a point in the delivery chain, along
 with optional diff recipes that allow undoing changes made at each hop.
 
@@ -871,7 +975,7 @@ version number.  The hashes recorded are of C<$msg_current>.
 With C<UseEpilogue =E<gt> 1>, the previous message body is always stored in the
 MIME epilogue rather than encoded as a diff in the MI header.
 
-With C<EpilogueThreshold =E<gt> N>, the best diff recipe is computed first.  If
+With C<EpilogueThreshold =E<gt> N>, the best diff Recipe is computed first.  If
 it contains more than C<N> literal (non-range) lines, the epilogue strategy is
 used instead; otherwise the diff is used.  C<N = 5> is a reasonable value
 that keeps MI headers small while avoiding the epilogue overhead for small
@@ -882,7 +986,7 @@ previous body is appended after the final MIME boundary (C<--BOUNDARY--\r\n>).
 If it is not multipart, the current content is wrapped in a C<multipart/mixed>
 single-part container and the previous body follows the new final boundary.
 
-The returned MI uses the standard C<rb> line-range recipe (the old body
+The returned MI uses the standard C<rb> line-range Recipe (the old body
 occupies specific numbered lines of the modified body), so C<undo()> works
 without any special-case logic.  The header diff (C<rh>) automatically
 captures the C<Content-Type> change when wrapping occurs.

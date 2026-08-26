@@ -1,7 +1,6 @@
 package dkim2
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
@@ -14,18 +13,15 @@ import (
 )
 
 // Verify reads r and verifies all DKIM2-Signature headers.
-// Returns one VerifyResult per signature. Body is never buffered.
+// Returns one VerifyResult per signature. Body is never buffered: it is
+// canonicalised in a single streaming pass, fanned out to one hash.Hash per
+// implemented algorithm the topmost Message-Instance's h= tag names (see
+// hashBodyMulti), even when that names more than one algorithm.
 // An optional VerifyOptions may be passed to enable §10.4 envelope matching.
 func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 	headers, bodyReader, err := parseHeaders(r)
 	if err != nil {
 		return nil, fmt.Errorf("parsing headers: %w", err)
-	}
-
-	// Stream body for hash — never buffer
-	bodyHash, err := hashBody(bodyReader)
-	if err != nil {
-		return nil, fmt.Errorf("body hash: %w", err)
 	}
 
 	// Separate MI, sig, and content headers; preserve original Raw for signing input
@@ -51,19 +47,47 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		return nil, fmt.Errorf("no Message-Instance headers found")
 	}
 
-	// Spec review note #3: top sig's m= must equal the count of MI headers
+	// Spec review note #3: top sig's m= must equal the count of MI headers.
+	// Also track the topmost MI object itself: its hash-sets name the
+	// algorithm(s) the body must be hashed with below.
 	maxMIVersion := 0
+	var topMI *MessageInstance
 	for _, raw := range miHeaders {
 		mi, err := parseMI(raw)
 		if err != nil {
 			// Report the parse failure rather than skipping the header. Skipping
 			// silently lowers the apparent topmost version, which turns the real
 			// defect into a bogus "does not cover topmost MI" complaint below.
+			//
+			// A self-describing PERMERROR (e.g. "PERMERROR Message-Instance
+			// m=2 contains invalid JSON") already names itself as being
+			// about a Message-Instance; wrapping it again here would double
+			// up "Message-Instance" and stop it from being the verbatim
+			// §11.2 string. Only non-self-describing errors get the added
+			// context prefix.
+			if strings.HasPrefix(err.Error(), "PERMERROR") {
+				return nil, err
+			}
 			return nil, fmt.Errorf("Message-Instance: %w", err)
 		}
 		if mi.Version > maxMIVersion {
 			maxMIVersion = mi.Version
+			topMI = mi
 		}
+	}
+
+	// Body is never buffered: hash it in a single streaming pass, fanned out
+	// to every algorithm the topmost MI's h= tag names (that this build
+	// implements — see hashBodyMulti/HashAlg, §3.4). Only the topmost MI's
+	// hashes are ever checked against the body (see the per-signature loop
+	// below), so that is the only hash-set that needs consulting here.
+	var neededAlgs []string
+	if topMI != nil {
+		neededAlgs = implementedAlgs(topMI.Hashes)
+	}
+	bodyHashes, err := hashBodyMulti(bodyReader, neededAlgs)
+	if err != nil {
+		return nil, fmt.Errorf("body hash: %w", err)
 	}
 
 	var topSig *DKIM2Signature
@@ -76,7 +100,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	// Local policy (stricter than spec-04): the top (highest i=) signature
+	// Local policy (stricter than spec-05): the top (highest i=) signature
 	// MUST NOT carry nd=. The only legitimate nd= producer emits the nd=
 	// signature together with the matching higher-i= signature at the same
 	// time, so nd= should never appear alone on the top signature. This is
@@ -119,12 +143,6 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 				}
 			}
 		}
-	}
-
-	// Compute content header hash for MI hash verification
-	contentHeaderHash, err := hashHeaders(contentHeaders)
-	if err != nil {
-		return nil, err
 	}
 
 	// Sort sigs ascending by sequence
@@ -189,7 +207,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	// §8.2/§11.4 MUST: chain-of-custody between consecutive signatures.
+	// §8.2/§11.4 MUST: Chain of Custody between consecutive signatures.
 	if len(sigHeaders) > 1 {
 		parsedSigs := make([]*DKIM2Signature, len(sigHeaders))
 		for i, raw := range sigHeaders {
@@ -221,7 +239,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 					cur, hasCur := miByVersion[m]
 					next, hasNext := miByVersion[m+1]
 					if hasCur && hasNext {
-						if !bytes.Equal(cur.BodyHash, next.BodyHash) || !bytes.Equal(cur.HeaderHash, next.HeaderHash) {
+						if !hashSetsEqual(cur.Hashes, next.Hashes) {
 							return nil, fmt.Errorf("i=%d: message modified despite donotmodify request", sig.Sequence)
 						}
 					}
@@ -294,6 +312,14 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			continue
 		}
 
+		// spec-05 §8.9: duplicate-selector and too-many-signatures checks must
+		// run before any DNS lookup or crypto work.
+		if dupErrs := checkSignatureDuplicates(sig.Sigs, sig.Sequence); len(dupErrs) > 0 {
+			res.Error = fmt.Errorf("%s", strings.Join(dupErrs, "; "))
+			results = append(results, res)
+			continue
+		}
+
 		// §7.7 MUST: d= must be a suffix of (i.e. relaxed match against) the mf= domain
 		if sig.MailFrom != "" && sig.MailFrom != "<>" {
 			if mfDomain := domainFromAddr(sig.MailFrom); mfDomain != "" {
@@ -325,13 +351,8 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		// Earlier MI versions recorded hashes from a prior message state;
 		// an intermediary may have modified headers/body since then.
 		if sig.MIVersion == maxMIVersion {
-			if string(thisMI.HeaderHash) != string(contentHeaderHash) {
-				res.Error = fmt.Errorf("i=%d: header hash mismatch", sig.Sequence)
-				results = append(results, res)
-				continue
-			}
-			if string(thisMI.BodyHash) != string(bodyHash) {
-				res.Error = fmt.Errorf("i=%d: body hash mismatch", sig.Sequence)
+			if err := verifyMIHashesPrecomputed(thisMI, contentHeaders, bodyHashes); err != nil {
+				res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, err)
 				results = append(results, res)
 				continue
 			}
@@ -411,6 +432,41 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 	return results, nil
 }
 
+// checkSignatureDuplicates enforces spec-05 §8.9 duplicate/limit rules for
+// one DKIM2-Signature s= tag: a Selector MUST NOT appear more than once, and
+// the same signing algorithm may appear at most twice, and only with
+// distinct Selectors. Both comparisons are case-insensitive (a Selector is a
+// Domain, §3.5; algorithm names are ABNF quoted strings, RFC 5234).
+func checkSignatureDuplicates(items []SigItem, i int) []string {
+	var errs []string
+
+	seenSelectors := map[string]bool{}
+	dupSelector := false
+	for _, it := range items {
+		sel := strings.ToLower(it.Selector)
+		if seenSelectors[sel] {
+			dupSelector = true
+		}
+		seenSelectors[sel] = true
+	}
+	if dupSelector {
+		errs = append(errs, fmt.Sprintf("PERMERROR DKIM2-Signature i=%d has a duplicate selector", i))
+	}
+
+	counts := map[string]int{}
+	for _, it := range items {
+		counts[strings.ToLower(it.Algorithm)]++
+	}
+	for _, n := range counts {
+		if n > 2 {
+			errs = append(errs, fmt.Sprintf("PERMERROR DKIM2-Signature i=%d has too many signatures", i))
+			break
+		}
+	}
+
+	return errs
+}
+
 // normAddr normalises an email address for §10.4 exact-match comparison:
 // surrounding RFC5321 angle brackets (if any) are stripped, domain part is
 // lowercased, local-part case is preserved. VerifyOptions.MailFrom/RcptTo are
@@ -448,7 +504,7 @@ func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
 			continue
 		}
 		if prev.NextDomain != "" {
-			// draft-04 §11.4: nd= MUST exactly match the next sig's d=.
+			// draft-05 §11.4: nd= MUST exactly match the next sig's d=.
 			if !strings.EqualFold(prev.NextDomain, cur.Domain) {
 				return fmt.Errorf("DKIM2-Signature i=%d MAIL nd= does not match",
 					prev.Sequence)

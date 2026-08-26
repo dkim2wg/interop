@@ -1,7 +1,7 @@
-// DKIM2 verification orchestrator per spec-04 §10/§11. Built from spec.
-import { parseMessage, collectLevels, parseTagList } from './parse.js';
+// DKIM2 verification orchestrator per spec-05 §10/§11. Built from spec.
+import { parseMessage, collectLevels, parseTagList, parseHashSets } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
-import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519 } from './crypto.js';
+import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
 import { fetchKey as dohFetchKey } from './doh.js';
 import { decodeRecipe, bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe } from './recipes.js';
 import { stringToBytes, b64ToBytes, b64ToString } from './b64.js';
@@ -30,14 +30,6 @@ function signedFields(fields) {
   return fields.filter((f) => !isUnsignedHeader(f.name) && !SIG_MI_NAMES.has(f.name.toLowerCase()));
 }
 
-// Parse the h= hash-set list into [{alg, headerHash, bodyHash}].
-function parseHashSets(hValue) {
-  return (hValue || '').split(',').map((set) => {
-    const [alg, headerHash, bodyHash] = set.split(':');
-    return { alg: (alg || '').trim(), headerHash, bodyHash };
-  });
-}
-
 // Parse the s= sig-set list into [{selector, alg, sig}].
 function parseSigSets(sValue) {
   return (sValue || '').split(',').map((set) => {
@@ -48,13 +40,51 @@ function parseSigSets(sValue) {
 
 const SUPPORTED_ALGS = new Set(['rsa-sha256', 'ed25519-sha256']);
 
+// spec-05 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag: a
+// Selector MUST NOT appear more than once, and the same signing algorithm may
+// appear at most twice, and only with distinct Selectors. Both comparisons
+// are case-insensitive (a Selector is a Domain, §3.5; algorithm names are
+// ABNF quoted strings, RFC 5234). items is the parsed LIST of {selector, alg}
+// sig-sets (never a deduplicated map — a second occurrence must stay visible).
+export function checkSignatureDuplicates(items, i) {
+  const errors = [];
+  const selectors = items.map((it) => (it.selector || '').toLowerCase());
+  if (new Set(selectors).size !== selectors.length) {
+    errors.push(`PERMERROR DKIM2-Signature i=${i} has a duplicate selector`);
+  }
+  const counts = new Map();
+  for (const it of items) {
+    const alg = (it.alg || '').toLowerCase();
+    counts.set(alg, (counts.get(alg) || 0) + 1);
+  }
+  if ([...counts.values()].some((n) => n > 2)) {
+    errors.push(`PERMERROR DKIM2-Signature i=${i} has too many signatures`);
+  }
+  return errors;
+}
+
+// spec-05 §11.2: classify a decodeRecipe() failure so the two error kinds
+// stay distinct, per the ruling that base64 and JSON failures are different
+// errors:
+//  - a bad base64 r= value (atob throws, typically DOMException) is a
+//    syntax error (§11.2 lists this explicitly for malformed field
+//    content) -- the payload never even reached JSON parsing.
+//  - a JSON.parse failure (SyntaxError) on the successfully-decoded bytes
+//    is the more specific "contains invalid JSON" case.
+// Anything else is a generic, non-specific Recipe-decode failure.
+function classifyRecipeDecodeError(e) {
+  if (e instanceof SyntaxError) return 'invalid-json';
+  if (e instanceof DOMException) return 'syntax-error';
+  return 'broken';
+}
+
 // All (unfolded, WSP-trimmed) values of a header field name, in document order.
 function headerValues(fields, name) {
   const n = name.toLowerCase();
   return fields.filter((f) => f.name.toLowerCase() === n).map((f) => f.value.trim());
 }
 
-// A short human-readable summary of a decoded recipe (§5), e.g.
+// A short human-readable summary of a decoded Recipe (§5), e.g.
 // "headers: subject; body: 1 step" — mirrors the /validate/ r= tag display.
 function recipeSummary(rec) {
   if (rec == null) return 'null (previous state not recoverable)';
@@ -77,40 +107,20 @@ function duplicateTag(tags) {
   return null;
 }
 
-// Remove a header field (and its folded continuation lines) from raw message
-// text. Line-based on purpose: re-parsing and re-serialising the message could
-// refold other headers and change the very bytes whose hashes we check.
-// Line endings are tolerated in either form: a <textarea> paste arrives as bare
-// LF and is only normalized to CRLF later, inside parseMessage.
-function stripHeader(raw, name) {
-  const re = new RegExp(`^${name}:[^\\r\\n]*(?:\\r?\\n[ \\t][^\\r\\n]*)*\\r?\\n`, 'gim');
-  return raw.replace(re, '');
-}
-
-// Verdicts ordered best to worst, so the retry below can tell whether stripping
-// a header actually improved the outcome.
-const OVERALL_RANK = { pass: 0, warn: 1, none: 2, temperror: 3, permerror: 4, fail: 5 };
-const rankOf = (o) => (o in OVERALL_RANK ? OVERALL_RANK[o] : OVERALL_RANK.fail);
-
-// Received-SPF is NOT in the spec-04 §4.1 list of unsigned header fields, so
-// unlike Received/ARC-*/Authentication-Results it IS covered by the
-// Message-Instance header hash. A receiving MTA that prepends one (Fastmail
-// does) therefore breaks verification at every level. When a message that
-// carries one fails, retry once with it removed; if that verifies, return the
-// better result and say so. Mirrors Mail::DKIM2::Validate::report().
+// verifyMessage(raw, opts) — verify a DKIM2 message and return a structured
+// report.
+//
+// Prior to spec-05, a receiving MTA's Received-SPF header (Fastmail adds one)
+// was covered by the Message-Instance header hash and could break
+// verification; this used to retry once with it stripped. spec-05 §4
+// excludes Received-SPF from the hash via the "Received-*" prefix rule, so
+// stripping it can no longer change any hash or verdict -- the retry was
+// provably a no-op. Removed rather than kept as a "safety net": it was
+// hardcoded to the literal name Received-SPF, not a general mechanism, so it
+// covered nothing else anyway. Mirrored removal in
+// Mail::DKIM2::Validate::report().
 export async function verifyMessage(raw, opts = {}) {
-  const rep = await verifyOnce(raw, opts);
-  if (rep.overall === 'pass') return rep;
-  if (!/^Received-SPF:/im.test(raw || '')) return rep;
-
-  const rep2 = await verifyOnce(stripHeader(raw, 'Received-SPF'), opts);
-  if (rankOf(rep2.overall) >= rankOf(rep.overall)) return rep;
-
-  rep2.stripped_headers = ['Received-SPF'];
-  rep2.summary = (rep2.summary ? rep2.summary + '; ' : '')
-    + 'verified only after removing Received-SPF (a trace header added by the '
-    + 'receiving MTA that is not excluded from the Message-Instance header hash)';
-  return rep2;
+  return verifyOnce(raw, opts);
 }
 
 async function verifyOnce(raw, opts = {}) {
@@ -177,12 +187,18 @@ async function verifyOnce(raw, opts = {}) {
   const states = {};
   states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(body) };
   let undoBroken = null; // m at which undo became impossible
-  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'broken'
+  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'invalid-json' | 'syntax-error' | 'broken'
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
     if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
     let recipe;
-    try { recipe = decodeRecipe(mi.map.r); } catch (e) { undoBroken = m; undoBrokenReason = 'broken'; break; }
+    try {
+      recipe = decodeRecipe(mi.map.r);
+    } catch (e) {
+      undoBroken = m;
+      undoBrokenReason = classifyRecipeDecodeError(e);
+      break;
+    }
     if (recipe.b === null) { undoBroken = m; undoBrokenReason = 'redacted'; break; } // §5.2 intentional redaction
     const cur = states[m];
     let fields = cur.fields;
@@ -212,6 +228,18 @@ async function verifyOnce(raw, opts = {}) {
       if (undoBrokenReason === 'redacted') {
         level.undo = 'unrecoverable';
         level.detail = `state unavailable (redaction at m=${undoBroken})`;
+      } else if (undoBrokenReason === 'invalid-json' || undoBrokenReason === 'syntax-error') {
+        // spec-05 §11.2: report the specific PERMERROR (JSON parse failure
+        // vs. base64 syntax error are distinct, per the ruling that they are
+        // different errors), not the generic "undo broke" fail below -- and
+        // every level whose state is unreachable because of it must bump
+        // 'permerror' too (not 'fail', which outranks 'permerror' in the
+        // overall verdict), so the final verdict is permerror rather than
+        // being clobbered by a downstream fail.
+        const suffix = undoBrokenReason === 'invalid-json' ? 'contains invalid JSON' : 'syntax error';
+        level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
+        level.detail = `PERMERROR Message-Instance m=${undoBroken} ${suffix}`;
+        bump('permerror');
       } else {
         level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
         level.detail = `state unavailable (undo broke at m=${undoBroken})`;
@@ -220,26 +248,70 @@ async function verifyOnce(raw, opts = {}) {
       levels.push(level);
       continue;
     }
+    if (m === 1 && 'r' in mi.map) {
+      // spec-05 §9.1: the bottom instance MAY carry Recipes too ("if it is
+      // wished to record any changes made to a message as it enters the
+      // DKIM2 ecosystem"); it never participates in the reconstruction loop
+      // above (there is no earlier state to undo to, so a malformed r=
+      // there was previously never even looked at), so it needs its own
+      // check here.
+      try {
+        decodeRecipe(mi.map.r);
+      } catch (e) {
+        const reason = classifyRecipeDecodeError(e);
+        if (reason === 'invalid-json' || reason === 'syntax-error') {
+          const suffix = reason === 'invalid-json' ? 'contains invalid JSON' : 'syntax error';
+          level.result = 'fail';
+          level.detail = `PERMERROR Message-Instance m=1 ${suffix}`;
+          bump('permerror');
+          levels.push(level);
+          continue;
+        }
+      }
+    }
     try {
       const sets = parseHashSets(mi.map.h);
+      // spec-05 §7.3: an algorithm MUST NOT be present more than once. This
+      // must run before any hash is computed or compared, over the parsed
+      // LIST (never a deduplicated map, or a second occurrence would be
+      // silently overwritten and go undetected).
+      const algSeen = new Set();
+      const dupAlg = sets.some((s) => (algSeen.has(s.alg) ? true : (algSeen.add(s.alg), false)));
+      if (dupAlg) {
+        level.result = 'fail';
+        level.detail = `PERMERROR Message-Instance m=${m} has a duplicate hash algorithm`;
+        bump('fail');
+        levels.push(level);
+        continue;
+      }
       const hdrBytes = stringToBytes(canonHeaderHash(signedFields(state.fields)));
       const bodyBytes = stringToBytes(canonBody(linesToBody(state.bodyLines)));
-      const hdrHash = await sha256B64(hdrBytes);
-      const bodyHash = await sha256B64(bodyBytes);
-      // Compare against the sha256 hash-set (ignore unknown algs, §3.4).
-      const sha = sets.find((s) => s.alg === 'sha256');
-      if (sha) {
-        level.header_hash = hdrHash === sha.headerHash ? 'match' : 'mismatch';
-        level.body_hash = bodyHash === sha.bodyHash ? 'match' : 'mismatch';
-        if (level.header_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} header hash mismatch`; bump('fail'); }
-        else if (level.body_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} body hash mismatch`; bump('fail'); }
-      } else {
-        // Fail closed: an MI whose h= names no supported (sha256) hash algorithm
-        // cannot be verified and MUST NOT be left at pass (mirrors the signature
-        // path's no-supported-algorithm handling).
+      // §3.4: ignore hash-sets naming algorithms we do not implement; all the
+      // ones we do implement must match (mirrors §11.6 for signatures).
+      const usable = sets.filter((s) => s.alg in HASH_ALGS);
+      if (usable.length === 0) {
         level.result = 'fail';
         level.detail = `Message Instance m=${m} no supported hash algorithm`;
         bump('fail');
+      } else {
+        level.header_hash = 'match';
+        level.body_hash = 'match';
+        for (const s of usable) {
+          if (await hashB64(hdrBytes, s.alg) !== s.headerHash) {
+            level.header_hash = 'mismatch';
+            level.result = 'fail';
+            level.detail = `Message Instance m=${m} ${s.alg} header hash mismatch`;
+            bump('fail');
+            break;
+          }
+          if (await hashB64(bodyBytes, s.alg) !== s.bodyHash) {
+            level.body_hash = 'mismatch';
+            level.result = 'fail';
+            level.detail = `Message Instance m=${m} ${s.alg} body hash mismatch`;
+            bump('fail');
+            break;
+          }
+        }
       }
     } catch (e) {
       level.result = 'fail';
@@ -249,7 +321,7 @@ async function verifyOnce(raw, opts = {}) {
     if (m >= 2 && undoBroken === m) level.undo = recipeUndoLabel(instances[m]);
 
     // Recipe breakdown (§5/§7.2): decode r= and show what it changed — a
-    // readable summary in the r= tag, the decoded recipe JSON, and per-header
+    // readable summary in the r= tag, the decoded Recipe JSON, and per-header
     // current<-previous values (matching the /validate/ display).
     if ('r' in mi.map) {
       let rec;
@@ -308,7 +380,7 @@ async function verifyOnce(raw, opts = {}) {
       }
     }
 
-    // §11.4 chain-of-custody (inter-signature + d=/mf=), plus the top-hop
+    // §11.4 Chain of Custody (inter-signature + d=/mf=), plus the top-hop
     // envelope exact-match against the actual delivery MAIL FROM / RCPT TO.
     try {
       custodyCheck(level, signatures, i, maxI, opts);
@@ -319,7 +391,7 @@ async function verifyOnce(raw, opts = {}) {
       level.custodyState = 'permerror';
     }
     if (!level.custody.ok) {
-      // A chain-of-custody / envelope failure (§11.4) is a permanent error for
+      // A Chain of Custody / envelope failure (§11.4) is a permanent error for
       // this signature; short-circuit before the crypto check so a subsequent
       // key-not-found does not mask the permerror as a plain 'fail'.
       level.result = level.custodyState || 'permerror';
@@ -361,7 +433,7 @@ async function verifyOnce(raw, opts = {}) {
     }
 
     const sigSets = parseSigSets(sig.map.s);
-    // §8.9 syntax: the s= value must contain sig-sets, each with a selector and
+    // §8.9 syntax: the s= value must contain sig-sets, each with a Selector and
     // an algorithm name. An empty/malformed s= is a syntax error (permerror),
     // distinct from a well-formed sig-set naming an unsupported algorithm
     // (algorithm_only_future), which is a plain 'fail' below.
@@ -369,6 +441,17 @@ async function verifyOnce(raw, opts = {}) {
     if (!sSyntaxOk) {
       level.result = 'permerror';
       level.detail = `DKIM2-Signature i=${i} syntax error`;
+      bump('permerror');
+      levels.push(level);
+      continue;
+    }
+
+    // spec-05 §8.9: duplicate-selector and too-many-signatures checks must
+    // run before any DNS lookup or crypto work.
+    const dupErrors = checkSignatureDuplicates(sigSets, i);
+    if (dupErrors.length) {
+      level.result = 'permerror';
+      level.detail = dupErrors.join('; ');
       bump('permerror');
       levels.push(level);
       continue;

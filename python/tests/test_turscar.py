@@ -7,7 +7,7 @@ vector's ExpectedState.
 
 The vectors are written against draft-02; the tag rules (case-insensitive
 identifiers, any order, single occurrence, FWS) and the >=1024-bit key
-requirement are unchanged in draft-04, so they apply to us directly.
+requirement are unchanged in draft-05, so they apply to us directly.
 
 Run:  python3 tests/test_turscar.py     (exit 0 = all match)
 Skips cleanly if the submodule is not checked out.

@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <openssl/evp.h>
+#include <cjson/cJSON.h>
 
 #define SETSTATUS(s, fmt, ...) do { \
     result->status = (s); \
@@ -105,6 +106,40 @@ static int relaxed_domain_match(const char *d, const char *mf_domain) {
     return 0;
 }
 
+/* spec-05 §8.9: a Selector MUST NOT appear more than once within a single
+   s= tag; the same signing algorithm MAY appear a second time, but only
+   with a distinct Selector -- three or more occurrences of the same
+   algorithm is "too many signatures". The two checks are independent: two
+   items sharing both algorithm and Selector are a duplicate-selector error,
+   not too-many-signatures (the count is 2, not 3+). Matching is
+   case-insensitive for both: algorithm names are RFC 5234 ABNF quoted
+   strings, and a Selector is a Domain (§3.5) -- DNS names are
+   case-insensitive. Returns 0 if clean, -1 with errbuf filled otherwise. */
+int dkim2_sig_check_duplicates(const dkim2_sig_t *sig, char *errbuf, size_t errbufsz) {
+    for (int i = 0; i < sig->n_ssets; i++) {
+        for (int j = i + 1; j < sig->n_ssets; j++) {
+            if (strcasecmp(sig->ssets[i].selector, sig->ssets[j].selector) == 0) {
+                snprintf(errbuf, errbufsz,
+                    "PERMERROR DKIM2-Signature i=%d has a duplicate selector", sig->i);
+                return -1;
+            }
+        }
+    }
+
+    for (int i = 0; i < sig->n_ssets; i++) {
+        int cnt = 0;
+        for (int j = 0; j < sig->n_ssets; j++)
+            if (strcasecmp(sig->ssets[i].alg, sig->ssets[j].alg) == 0) cnt++;
+        if (cnt > 2) {
+            snprintf(errbuf, errbufsz,
+                "PERMERROR DKIM2-Signature i=%d has too many signatures", sig->i);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 /* Build signing input for the verifier — same structure as §8.5 signing,
    but for the signature being verified, substitute empty string for its sig value.
    The sig_value_to_empty is the sig_b64 we want to blank out.
@@ -116,7 +151,7 @@ static char *blank_sig_values(const char *raw_val) {
     size_t rlen = strlen(raw_val);
 
     /* Find the s= tag at a tag boundary (start, or after ';'/WSP), matching
-       the tag name case-insensitively per spec-04 §8. */
+       the tag name case-insensitively per spec-05 §8. */
     const char *s_tag = NULL;
     for (const char *p = raw_val; *p; p++) {
         if ((p[0] == 's' || p[0] == 'S') && p[1] == '=') {
@@ -251,13 +286,13 @@ static unsigned char *build_verify_input(
 }
 
 /* Verify all MI body+header hashes, walking from highest to lowest version
-   and applying recipes to reconstruct earlier message states.
+   and applying Recipes to reconstruct earlier message states.
    Returns 0 on success, sets errbuf on failure. */
 static int verify_mi_hashes(
     dkim2_mi_t **mi_arr, int n_mi,
     char **all_hdrs, int n_all_hdrs,
     const char *initial_body, size_t initial_body_len,
-    const unsigned char *top_body_digest,
+    const dkim2_ctx_t *ctx,
     char *errbuf, size_t errbufsz)
 {
     /* Build content-headers array (exclude Message-Instance and DKIM2-Signature). */
@@ -296,78 +331,131 @@ static int verify_mi_hashes(
     for (int vi = n_mi - 1; vi >= 0; vi--) {
         dkim2_mi_t *mi = mi_arr[vi];
 
+        int n_checked = 0;
         for (int hi = 0; hi < mi->n_hsets; hi++) {
-            /* Verify body hash */
-            unsigned char stored_bh[DKIM2_HASH_LEN];
+            int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
+            if (alg < 0) continue;          /* §3.4: ignore what we don't implement */
+            size_t alen = dkim2_hash_alg_len(alg);
+            n_checked++;
+
+            unsigned char stored_bh[DKIM2_MAX_HASH_LEN];
             int bh_len = (int)b64_decode(mi->hsets[hi].body_hash, stored_bh, sizeof stored_bh);
-            if (bh_len != DKIM2_HASH_LEN) {
+            if (bh_len != (int)alen) {
                 snprintf(errbuf, errbufsz, "PERMERROR: bad body hash in MI m=%d", mi->m);
                 ret = -1; goto done;
             }
-            unsigned char computed_bh[DKIM2_HASH_LEN];
+            unsigned char computed_bh[DKIM2_MAX_HASH_LEN];
             if (cur_body) {
-                dkim2_body_hash_raw(cur_body, cur_body_len, computed_bh);
-            } else if (vi == n_mi - 1 && top_body_digest) {
-                memcpy(computed_bh, top_body_digest, DKIM2_HASH_LEN);
+                dkim2_body_hash_raw_alg(cur_body, cur_body_len, alg, computed_bh);
+            } else if (vi == n_mi - 1) {
+                memcpy(computed_bh, ctx->body_digests.d[alg], alen);
             } else {
-                continue; /* no body bytes for inner MIs; skip */
+                continue;                    /* no body bytes for inner MIs */
             }
-            if (memcmp(computed_bh, stored_bh, DKIM2_HASH_LEN) != 0) {
+            if (memcmp(computed_bh, stored_bh, alen) != 0) {
                 snprintf(errbuf, errbufsz,
                     "FAIL: Message-Instance m=%d body hash mismatch", mi->m);
                 ret = -1; goto done;
             }
 
-            /* Verify header hash */
-            unsigned char computed_hh[DKIM2_HASH_LEN];
-            if (dkim2_header_hash_raw((const char **)content, n_content, computed_hh) < 0) {
+            unsigned char computed_hh[DKIM2_MAX_HASH_LEN];
+            if (dkim2_header_hash_raw_alg((const char **)content, n_content, alg, computed_hh) < 0) {
                 snprintf(errbuf, errbufsz, "PERMERROR: header hash computation failed");
                 ret = -1; goto done;
             }
-            unsigned char stored_hh[DKIM2_HASH_LEN];
+            unsigned char stored_hh[DKIM2_MAX_HASH_LEN];
             int hh_len = (int)b64_decode(mi->hsets[hi].hdr_hash, stored_hh, sizeof stored_hh);
-            if (hh_len != DKIM2_HASH_LEN || memcmp(computed_hh, stored_hh, DKIM2_HASH_LEN) != 0) {
+            if (hh_len != (int)alen || memcmp(computed_hh, stored_hh, alen) != 0) {
                 snprintf(errbuf, errbufsz,
                     "FAIL: Message-Instance m=%d header hash mismatch", mi->m);
                 ret = -1; goto done;
             }
         }
+        /* Fail closed: an MI naming no implemented algorithm is unverifiable. */
+        if (n_checked == 0) {
+            snprintf(errbuf, errbufsz,
+                "FAIL: Message-Instance m=%d no supported hash algorithm", mi->m);
+            ret = -1; goto done;
+        }
 
-        /* Undo this MI's recipe to reconstruct the previous hop's state */
-        if (vi > 0 && mi->r_raw) {
+        /* spec-05 §9.1: even the bottom (m=1) instance MAY carry Recipes
+           ("if it is wished to record any changes made to a message as it
+           enters the DKIM2 ecosystem"), so a malformed r= there must be
+           reported exactly like on any other instance -- this check is NOT
+           gated on vi > 0. Only the UNDO step below (reconstructing the
+           prior hop's state) is skipped at vi == 0: there is no earlier
+           state to undo to. */
+        if (mi->r_raw) {
             size_t rraw_len = strlen(mi->r_raw);
             size_t decoded_max = rraw_len * 3 / 4 + 4;
             unsigned char *r_json_bytes = malloc(decoded_max + 1);
-            if (!r_json_bytes) continue; /* OOM — skip undo, inner hash unverified */
-
-            int r_json_len = (int)b64_decode(mi->r_raw, r_json_bytes, decoded_max);
-            if (r_json_len <= 0) { free(r_json_bytes); continue; }
-            r_json_bytes[r_json_len] = '\0';
-            const char *rj = (const char *)r_json_bytes;
-
-            /* Apply body recipe */
-            if (cur_body) {
-                size_t new_len;
-                char *new_body = dkim2_apply_body_recipe(rj, cur_body, cur_body_len, &new_len);
-                free(cur_body);
-                cur_body = new_body;
-                cur_body_len = new_body ? new_len : 0;
-            }
-
-            /* Apply header recipe — result is always a new owned array */
-            int new_n = 0;
-            char **new_content = dkim2_apply_header_recipe(rj, content, n_content, &new_n);
-            if (new_content) {
-                if (content_owned) {
-                    for (int i = 0; i < n_content; i++) free(content[i]);
+            if (!r_json_bytes) {
+                if (vi > 0) continue; /* OOM — skip undo, inner hash unverified */
+            } else {
+                int r_json_len = (int)b64_decode(mi->r_raw, r_json_bytes, decoded_max);
+                if (r_json_len <= 0) {
+                    /* spec-05 §11.2: a malformed r= base64 payload is a
+                       syntax error -- distinct from, and reported before,
+                       a post-decode JSON parse failure. This used to
+                       silently `continue`, the same silent-drop shape as
+                       the JSON-parse case above it (and the duplicate-h=
+                       case fixed in commit 66bd3e6): nothing was ever
+                       reported for a malformed r= base64 value. */
+                    free(r_json_bytes);
+                    snprintf(errbuf, errbufsz,
+                        "PERMERROR Message-Instance m=%d syntax error", mi->m);
+                    ret = -1; goto done;
                 }
-                free(content);
-                content = new_content;
-                n_content = new_n;
-                content_owned = 1;
-            }
+                r_json_bytes[r_json_len] = '\0';
+                const char *rj = (const char *)r_json_bytes;
 
-            free(r_json_bytes);
+                /* spec-05 §11.2: "errors in a JSON object specifying Recipes
+                   should be called out specifically". dkim2_apply_body_recipe()
+                   and dkim2_apply_header_recipe() both return NULL on a
+                   cJSON_Parse() failure with no way to distinguish that from
+                   their other NULL cases, and their call sites below used to
+                   just silently no-op (keep the old body / keep the old
+                   headers) rather than report anything -- so a malformed r=
+                   payload never surfaced as an error at all. Probe the decoded
+                   JSON directly here, before either apply_*_recipe() call, so
+                   that failure is reported specifically instead of vanishing. */
+                cJSON *probe = cJSON_Parse(rj);
+                if (!probe) {
+                    free(r_json_bytes);
+                    snprintf(errbuf, errbufsz,
+                        "PERMERROR Message-Instance m=%d contains invalid JSON", mi->m);
+                    ret = -1; goto done;
+                }
+                cJSON_Delete(probe);
+
+                /* Undo this MI's Recipe to reconstruct the previous hop's
+                   state -- only meaningful when there IS a previous hop. */
+                if (vi > 0) {
+                    /* Apply body Recipe */
+                    if (cur_body) {
+                        size_t new_len;
+                        char *new_body = dkim2_apply_body_recipe(rj, cur_body, cur_body_len, &new_len);
+                        free(cur_body);
+                        cur_body = new_body;
+                        cur_body_len = new_body ? new_len : 0;
+                    }
+
+                    /* Apply header Recipe — result is always a new owned array */
+                    int new_n = 0;
+                    char **new_content = dkim2_apply_header_recipe(rj, content, n_content, &new_n);
+                    if (new_content) {
+                        if (content_owned) {
+                            for (int i = 0; i < n_content; i++) free(content[i]);
+                        }
+                        free(content);
+                        content = new_content;
+                        n_content = new_n;
+                        content_owned = 1;
+                    }
+                }
+
+                free(r_json_bytes);
+            }
         }
     }
 
@@ -383,6 +471,34 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->message[0] = '\0';
     result->sig_i = 0;
     result->domain[0] = '\0';
+
+    /* spec-05 §7.3: a Message-Instance header that failed to parse --
+       whether with a specific reportable cause (duplicate hash algorithm in
+       h=, the -2 case) or a plain syntax/malloc failure (-1: a missing
+       required tag, a malformed h= entry, or an allocation failure) -- never
+       made it into ctx->mi_list. The header-collection path
+       (dkim2_message.c/dkim2_milter.c) dropped it and recorded the reason
+       here instead via dkim2_mi_parse_err()'s errbuf. Report it immediately,
+       before any other check (including DNS/crypto), and regardless of
+       whether the affected m= would have been the topmost, signature-covered
+       instance or the bottom (m=1) one: it must never simply vanish, and
+       must never be misreported as "no Message-Instance for m=N" (the wrong
+       error, describing the wrong problem).
+
+       The bottom-MI case matters in its own right: nothing else in this
+       function or in verify_mi_hashes() (§10.7, below) independently checks
+       for a dropped m=1 -- the only thing that happens to catch it today is
+       that m=1's raw bytes are always part of every covering signature's
+       §10.6 crypto input (mi->m is always <= any sig's target m), so a drop
+       usually surfaces as an incidental "signature verification failed"
+       instead. A hand-built message whose signatures were computed to match
+       the verifier's already-missing-m=1 reconstruction (see
+       c/tests/test_verify.c) passes with no error at all if this mi_error
+       check doesn't run first -- i.e. without this check, the bottom-MI case
+       fails OPEN in that construction. This check must fire unconditionally,
+       before that crypto path is ever reached. */
+    if (ctx->mi_error[0])
+        SETSTATUS(DKIM2_PERMERROR, "%s", ctx->mi_error);
 
     /* §10.2: Require at least one DKIM2-Signature */
     if (!ctx->sig_list)
@@ -403,7 +519,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = latest->i;
     snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
 
-    /* Local policy (stricter than spec-04): the topmost (highest i=)
+    /* Local policy (stricter than spec-05): the topmost (highest i=)
        DKIM2-Signature MUST NOT carry nd=. The only legitimate nd= producer
        emits the nd= hop together with a matching higher-i= signature, so
        nd= should never appear on the top signature. Non-top nd= adjacency
@@ -501,6 +617,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                     sig->i);
         }
 
+        /* spec-05 §8.9: reject duplicate/limit violations before any DNS or
+           crypto work. */
+        {
+            char dup_errbuf[256];
+            if (dkim2_sig_check_duplicates(sig, dup_errbuf, sizeof dup_errbuf) < 0)
+                SETSTATUS(DKIM2_PERMERROR, "%s", dup_errbuf);
+        }
+
         /* Verify all s= items for this signature */
         int any_pass = 0;
         for (int j = 0; j < sig->n_ssets; j++) {
@@ -560,13 +684,13 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "FAIL: DKIM2-Signature i=%d signature verification failed", sig->i);
     }
 
-    /* §8.2: Inter-sig chain of custody — mf= domain of sig[N] must relaxed-match
+    /* §8.2: Inter-sig Chain of Custody — mf= domain of sig[N] must relaxed-match
        at least one rt= domain of sig[N-1] */
     for (int k = 1; k < n_sigs; k++) {
         dkim2_sig_t *cur  = sig_arr[k];
         dkim2_sig_t *prev = sig_arr[k - 1];
 
-        /* draft-04 §11.4: an nd= hop declares the next sig's signing domain;
+        /* draft-05 §11.4: an nd= hop declares the next sig's signing domain;
            nd= MUST exactly match that signature's d=. */
         if (prev->nd) {
             if (!cur->d || strcasecmp(prev->nd, cur->d) != 0)
@@ -597,7 +721,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "DKIM2-Signature i=%d MAIL FROM %s did not match", cur->i, cur->mf);
     }
 
-    /* §10.7: Verify all MI body+header hashes, undoing recipes for inner hops. */
+    /* §10.7: Verify all MI body+header hashes, undoing Recipes for inner hops. */
     {
         const int MAX_MI = 64;
         dkim2_mi_t *mi_sorted[MAX_MI]; int n_mi = 0;
@@ -612,7 +736,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         if (verify_mi_hashes(mi_sorted, n_mi,
                              ctx->headers, ctx->n_headers,
                              ctx->body, ctx->body_len,
-                             ctx->body_digest,
+                             ctx,
                              mi_errbuf, sizeof mi_errbuf) < 0) {
             SETSTATUS(
                 (mi_errbuf[0] == 'F') ? DKIM2_FAIL : DKIM2_PERMERROR,

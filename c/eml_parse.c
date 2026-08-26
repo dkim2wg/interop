@@ -6,7 +6,7 @@
 
 static int eml_parse_internal(const char *path,
     char ***headers_out, int *n_headers_out,
-    unsigned char body_digest_out[DKIM2_HASH_LEN],
+    dkim2_digests_t *body_digests_out,
     char **body_out, size_t *body_len_out)
 {
     FILE *f = fopen(path, "rb");
@@ -82,7 +82,9 @@ static int eml_parse_internal(const char *path,
     }
 
     size_t body_data_len = (body_start < blen) ? (blen - body_start) : 0;
-    dkim2_body_hash_raw((const char *)(buf + body_start), body_data_len, body_digest_out);
+    for (int alg = 0; alg < DKIM2_N_HASH_ALGS; alg++)
+        dkim2_body_hash_raw_alg((const char *)(buf + body_start), body_data_len, alg,
+                                body_digests_out->d[alg]);
 
     if (body_out && body_len_out) {
         *body_out = malloc(body_data_len + 1);
@@ -100,15 +102,15 @@ static int eml_parse_internal(const char *path,
 
 int eml_parse(const char *path,
               char ***headers_out, int *n_headers_out,
-              unsigned char body_digest_out[DKIM2_HASH_LEN]) {
-    return eml_parse_internal(path, headers_out, n_headers_out, body_digest_out, NULL, NULL);
+              dkim2_digests_t *body_digests_out) {
+    return eml_parse_internal(path, headers_out, n_headers_out, body_digests_out, NULL, NULL);
 }
 
 int eml_parse_with_body(const char *path,
                         char ***headers_out, int *n_headers_out,
-                        unsigned char body_digest_out[DKIM2_HASH_LEN],
+                        dkim2_digests_t *body_digests_out,
                         char **body_out, size_t *body_len_out) {
-    return eml_parse_internal(path, headers_out, n_headers_out, body_digest_out,
+    return eml_parse_internal(path, headers_out, n_headers_out, body_digests_out,
                               body_out, body_len_out);
 }
 

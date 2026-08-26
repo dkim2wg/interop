@@ -242,7 +242,7 @@ sub addheader_callback {
 
         # Full-chain undo check before signing: refuse to sign a
         # Message-Instance chain that does not reverse cleanly (e.g. an upstream
-        # that emitted a non-reversible recipe) — the same guard the standalone
+        # that emitted a non-reversible Recipe) — the same guard the standalone
         # dkim2-milter.pl applies. Checking the current chain, not just the top
         # MI, stops us minting a signature over a chain that fails at recipients.
         my ($mi_chain_ok, $mi_chain_why) =
@@ -306,7 +306,7 @@ sub close_callback {
 # 2. If a snapshot directory is configured, search all MI headers
 #    (highest version first) for one that has a stored snapshot.
 #    If found, compute a diff MI between the snapshot and current message.
-# 3. Otherwise, fall back to a hash-only MI (no recipes).
+# 3. Otherwise, fall back to a hash-only MI (no Recipes).
 sub _compute_message_instance {
     my ( $self, $message_data, $config ) = @_;
 
@@ -362,7 +362,7 @@ sub _compute_message_instance {
 
         # No snapshot available.
         if ( @mi_headers ) {
-            # Message has been modified but we can't compute recipes
+            # Message has been modified but we can't compute Recipes
             # without the previous state.  Log a warning.
             $self->dbgout( 'DKIM2MI', 'Message modified but no snapshot available, cannot compute MI', LOG_INFO );
             return undef;
@@ -478,13 +478,13 @@ Mail::Milter::Authentication::Handler::DKIM2Sign - Handler class for DKIM2 signi
 =head1 DESCRIPTION
 
 Signs outbound email with DKIM2-Signature headers and adds Message-Instance
-headers for chain-of-custody tracking.  Runs in the addheader_callback phase
+headers for Chain of Custody tracking.  Runs in the addheader_callback phase
 so the signature covers all headers including those added by other handlers.
 
 Signing keys can be configured statically per domain, or looked up dynamically
 via an HTTP REST endpoint.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-04, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-05, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 
@@ -502,7 +502,7 @@ origination and each copy carries a disclosed recipient set.  But at
 B<origination / submission>, a message with undisclosed (Bcc) recipients —
 envelope recipients that do not appear in the C<To:>/C<Cc:> headers — will have
 those Bcc addresses recorded in C<rt=>, visible to every recipient.  That
-B<leaks the Bcc>, contrary to draft-ietf-dkim-dkim2-spec-04, whose C<rt=>
+B<leaks the Bcc>, contrary to draft-ietf-dkim-dkim2-spec-05, whose C<rt=>
 description requires that Bcc recipients not be revealed to other recipients.
 
 The milter cannot fix this itself: the Postfix milter protocol modifies a

@@ -3,6 +3,7 @@
 #include "base64.h"
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 #include <stdint.h>
 
@@ -16,7 +17,10 @@ static void strip_fws(char *s) {
     *w = '\0';
 }
 
-/* Parse h= value: "sha256:hhash:bhash,sha256:hhash:bhash,..." */
+/* Parse h= value: "sha256:hhash:bhash,sha256:hhash:bhash,..."
+   Returns 0 on success, -1 on malloc/syntax failure, -2 if an algorithm
+   name is present more than once (spec-05 §7.3; case-insensitive per
+   RFC 5234, since ABNF quoted strings are case-insensitive). */
 static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
     int cnt = 1;
     for (const char *p = h; *p; p++) if (*p == ',') cnt++;
@@ -28,6 +32,7 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
     /* Strip all FWS from the copy so folded hashes parse correctly */
     strip_fws(copy);
     char *saveptr = NULL, *tok = strtok_r(copy, ",", &saveptr);
+    int dup = 0;
     while (tok) {
         char *c1 = strchr(tok, ':');
         if (!c1) { free(copy); return -1; }
@@ -35,28 +40,112 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
         char *c2 = strchr(c1, ':');
         if (!c2) { free(copy); return -1; }
         *c2++ = '\0';
-        (*out)[*n].alg       = strdup(tok);
-        (*out)[*n].hdr_hash  = strdup(c1);
+
+        /* §7.3: an algorithm MUST NOT be present more than once. Check
+           against every entry already stored -- this must run before any
+           hash is computed or compared. */
+        for (int i = 0; i < *n; i++) {
+            if (strcasecmp((*out)[i].alg, tok) == 0) { dup = 1; break; }
+        }
+        if (dup) break;
+
+        /* Each strdup() must be checked: under OOM a NULL here would
+           otherwise flow straight into the next hash-set's
+           strcasecmp((*out)[i].alg, tok) comparison above and crash. The
+           entries already stored at indices 0..*n-1 are freed by the
+           caller (dkim2_mi_free() walks mi->hsets up to mi->n_hsets, which
+           is this *n) once *out is attached to the mi struct on the error
+           path; only this partially-built entry -- not yet counted in *n --
+           needs cleaning up here. */
+        (*out)[*n].alg = strdup(tok);
+        if (!(*out)[*n].alg) { free(copy); return -1; }
+        (*out)[*n].hdr_hash = strdup(c1);
+        if (!(*out)[*n].hdr_hash) {
+            free((*out)[*n].alg); (*out)[*n].alg = NULL;
+            free(copy); return -1;
+        }
         (*out)[*n].body_hash = strdup(c2);
+        if (!(*out)[*n].body_hash) {
+            free((*out)[*n].alg); (*out)[*n].alg = NULL;
+            free((*out)[*n].hdr_hash); (*out)[*n].hdr_hash = NULL;
+            free(copy); return -1;
+        }
         (*n)++;
         tok = strtok_r(NULL, ",", &saveptr);
     }
     free(copy);
-    return 0;
+    return dup ? -2 : 0;
 }
 
-dkim2_mi_t *dkim2_mi_parse(const char *value) {
+dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz) {
+    if (errbuf && errbufsz) errbuf[0] = '\0';
     taglist_t *tl = tagparse(value, NULL);
-    if (!tl) return NULL;
+    if (!tl) {
+        /* Malloc failure or syntax error inside tagparse() itself -- no
+           tag, including m=, was ever read, so the instance number is
+           genuinely unknowable. This is the surviving sibling of the
+           silent-drop bug already fixed for the §7.3 duplicate-hash (-2)
+           case: before this, a -1 failure here vanished with no error at
+           all. Report the same generic wording used below for the other
+           unattributable case, without an m=N -- there is nothing more
+           specific to name (compare dkim2_verify.c's own unattributable
+           "PERMERROR: No DKIM2-Signature header"). */
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+        return NULL;
+    }
     dkim2_mi_t *mi = calloc(1, sizeof *mi);
-    if (!mi) { taglist_free(tl); return NULL; }
+    if (!mi) {
+        /* OOM allocating the MI struct itself -- same unattributable case. */
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+        taglist_free(tl);
+        return NULL;
+    }
     const char *v;
     v = tag_get(tl, "m");
-    if (!v) goto err;
+    if (!v) {
+        /* No m= tag at all -- still unattributable. */
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+        goto err;
+    }
     mi->m = atoi(v);
     v = tag_get(tl, "h");
-    if (!v) goto err;
-    if (parse_hsets(v, &mi->hsets, &mi->n_hsets) < 0) goto err;
+    if (!v) {
+        /* mi->m is known from here on, so every remaining failure can
+           name it. */
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz,
+                "PERMERROR Message-Instance m=%d syntax error", mi->m);
+        goto err;
+    }
+    {
+        int hr = parse_hsets(v, &mi->hsets, &mi->n_hsets);
+        if (hr == -2) {
+            /* spec-05 §7.3: duplicate hash algorithm -- a specific,
+               reportable parse failure, not a plain "MI absent". mi->m is
+               already populated at this point, so the message can name it. */
+            if (errbuf && errbufsz)
+                snprintf(errbuf, errbufsz,
+                    "PERMERROR Message-Instance m=%d has a duplicate hash algorithm",
+                    mi->m);
+            goto err;
+        }
+        if (hr < 0) {
+            /* -1: either a malformed hash-set entry or a malloc/strdup
+               failure inside parse_hsets(). Both are folded into the same
+               "syntax error" wording (the §11.2 precedent used for a bad
+               r= payload elsewhere in this file/dkim2_verify.c) -- a
+               permanent parse failure isn't usefully distinguished from an
+               allocation failure to the remote party either way, and this
+               is what "vanished with no error at all" must become. */
+            if (errbuf && errbufsz)
+                snprintf(errbuf, errbufsz,
+                    "PERMERROR Message-Instance m=%d syntax error", mi->m);
+            goto err;
+        }
+    }
     v = tag_get(tl, "r");
     if (v) mi->r_raw = strdup(v);
     mi->raw_value = strdup(value);
@@ -66,6 +155,10 @@ err:
     taglist_free(tl);
     dkim2_mi_free(mi);
     return NULL;
+}
+
+dkim2_mi_t *dkim2_mi_parse(const char *value) {
+    return dkim2_mi_parse_err(value, NULL, 0);
 }
 
 void dkim2_mi_free(dkim2_mi_t *mi) {
@@ -111,7 +204,7 @@ static char **parse_rt(const char *rt_val, int *n_out) {
     return out;
 }
 
-/* Parse f= value: comma-separated plain flag tokens (draft-04 §8.10).
+/* Parse f= value: comma-separated plain flag tokens (draft-05 §8.10).
    Flags are an open list; tokens are stored verbatim with WSP trimmed. */
 static char **parse_flags(const char *f_val, int *n_out) {
     int cnt = 1;
@@ -146,7 +239,7 @@ static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
     if (!copy) { free(*out); *out = NULL; return -1; }
     tok = strtok_r(copy, ",", &saveptr);
     while (tok) {
-        /* Strip FWS before splitting: a fold may land between the selector
+        /* Strip FWS before splitting: a fold may land between the Selector
            colon and the algorithm token, which would otherwise leave CRLF+WSP
            attached to the algorithm name. */
         strip_fws(tok);
@@ -179,7 +272,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     REQ("m"); sig->m = atoi(v);
     REQ("t"); sig->t = (uint64_t)strtoull(v, NULL, 10);
     REQ("d"); sig->d = strdup(v);
-    /* draft-04 §8: either nd= or both mf=+rt=, never both forms. */
+    /* draft-05 §8: either nd= or both mf=+rt=, never both forms. */
     {   const char *nd = tag_get(tl, "nd");
         const char *mf = tag_get(tl, "mf");
         const char *rt = tag_get(tl, "rt");
@@ -254,7 +347,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     int pos = snprintf(buf, 8192, "i=%d; m=%d; t=%llu; d=%s",
         sig->i, sig->m, (unsigned long long)sig->t, sig->d);
     if (sig->nd) {
-        /* draft-04 §9.3: imaginary hop carries nd= instead of mf=/rt= */
+        /* draft-05 §9.3: imaginary hop carries nd= instead of mf=/rt= */
         pos += snprintf(buf + pos, 8192 - pos, "; nd=%s", sig->nd);
     } else {
         char mf_b64[512];
@@ -278,7 +371,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     }
     if (sig->n)
         pos += snprintf(buf + pos, 8192 - pos, "; n=%s", sig->n);
-    /* f= flags (draft-04 §8.10), e.g. feedback, feedhere — preserved verbatim */
+    /* f= flags (draft-05 §8.10), e.g. feedback, feedhere — preserved verbatim */
     if (sig->flags && sig->flags[0]) {
         pos += snprintf(buf + pos, 8192 - pos, "; f=");
         for (int i = 0; sig->flags[i]; i++) {

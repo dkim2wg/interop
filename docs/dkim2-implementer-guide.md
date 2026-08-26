@@ -1,6 +1,6 @@
 # DKIM2 Implementer Guide
 
-**Spec:** draft-ietf-dkim-dkim2-spec-04  
+**Spec:** draft-ietf-dkim-dkim2-spec-05  
 **Audience:** Authors writing a DKIM2 library or integrating DKIM2 into an MTA
 
 ---
@@ -195,7 +195,7 @@ verify_dkim2_signature(sig_hdr, mi_headers, other_sig_headers, dns_data,
 ```
 
 Key lookup is via a `dns_data` dict loaded from `dns.json`, or live DNS.  The
-`full_chain` flag enables walking backwards through MI versions and undoing recipes at
+`full_chain` flag enables walking backwards through MI versions and undoing Recipes at
 each step before verifying that hop's hashes.
 
 ### Perl (`perl/lib/Mail/DKIM2/`)
@@ -397,12 +397,12 @@ Recipe structure:
 }
 ```
 
-`h` recipes operate on headers; `b` recipes operate on body lines.  Operations are
+`h` Recipes operate on headers; `b` Recipes operate on body lines.  Operations are
 `set` (add/replace), `del` (remove), and `ins` (insert).  Apply in reverse order to
 undo.
 
 Implementations that only verify the final delivery state do not need to implement
-recipe decoding — they can verify the topmost MI's hashes directly against the live
+Recipe decoding — they can verify the topmost MI's hashes directly against the live
 message.
 
 ---

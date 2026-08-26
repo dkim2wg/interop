@@ -30,11 +30,16 @@ static void collect_dkim2_headers(dkim2_ctx_t *ctx) {
         valdup[vlen] = '\0';
 
         if (strcmp(name, "message-instance") == 0) {
-            dkim2_mi_t *mi = dkim2_mi_parse(valdup);
+            char errbuf[256];
+            dkim2_mi_t *mi = dkim2_mi_parse_err(valdup, errbuf, sizeof errbuf);
             if (mi) {
                 dkim2_mi_t **tail = &ctx->mi_list;
                 while (*tail) tail = &(*tail)->next;
                 *tail = mi;
+            } else if (errbuf[0] && !ctx->mi_error[0]) {
+                /* Keep the first specific parse error; a later MI header
+                   failing for an unrelated reason shouldn't overwrite it. */
+                snprintf(ctx->mi_error, sizeof ctx->mi_error, "%s", errbuf);
             }
         } else if (strcmp(name, "dkim2-signature") == 0) {
             dkim2_sig_t *sig = dkim2_sig_parse(valdup);
@@ -57,7 +62,7 @@ int dkim2_sign_message(const char *eml_path, FILE *out,
     int n_headers = 0;
     dkim2_ctx_t ctx = {0};
 
-    if (eml_parse(eml_path, &headers, &n_headers, ctx.body_digest) < 0) {
+    if (eml_parse(eml_path, &headers, &n_headers, &ctx.body_digests) < 0) {
         snprintf(errbuf, errbufsz, "failed to parse %s", eml_path);
         return -1;
     }
@@ -107,7 +112,7 @@ dkim2_verify_result_t dkim2_verify_message(const char *eml_path,
     dkim2_ctx_t ctx = {0};
 
     if (eml_parse_with_body(eml_path, &headers, &n_headers,
-                             ctx.body_digest, &ctx.body, &ctx.body_len) < 0)
+                             &ctx.body_digests, &ctx.body, &ctx.body_len) < 0)
         return result;
 
     ctx.headers              = headers;

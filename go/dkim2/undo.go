@@ -1,7 +1,6 @@
 package dkim2
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"sort"
@@ -9,7 +8,7 @@ import (
 )
 
 // Undo reconstructs a message to a previous Message-Instance version by
-// applying header and body recipes backward. targetVersion=-1 means
+// applying header and body Recipes backward. targetVersion=-1 means
 // highestVersion-1. targetVersion=0 reconstructs the original pre-signing state.
 func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 	headers, bodyReader, err := parseHeaders(r)
@@ -109,19 +108,8 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 			return fmt.Errorf("Message-Instance v=%d not found for verification", targetVersion)
 		}
 		{
-			gotHHash, err := hashHeaders(currentContent)
-			if err != nil {
-				return fmt.Errorf("computing header hash: %w", err)
-			}
-			if !bytes.Equal(gotHHash, targetMI.parsed.HeaderHash) {
-				return fmt.Errorf("header hash mismatch after reconstruction (target v=%d)", targetVersion)
-			}
-			gotBHash, err := hashBody(bytes.NewReader(currentBody))
-			if err != nil {
-				return fmt.Errorf("computing body hash: %w", err)
-			}
-			if !bytes.Equal(gotBHash, targetMI.parsed.BodyHash) {
-				return fmt.Errorf("body hash mismatch after reconstruction (target v=%d)", targetVersion)
+			if err := verifyMIHashes(targetMI.parsed, currentContent, currentBody); err != nil {
+				return fmt.Errorf("hash mismatch after reconstruction (target v=%d): %w", targetVersion, err)
 			}
 		}
 	}
@@ -163,7 +151,7 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 	return nil
 }
 
-// undoHeaderRecipes applies header recipes to reconstruct the previous header
+// undoHeaderRecipes applies header Recipes to reconstruct the previous header
 // state. recipes keys are lowercase field names.
 func undoHeaderRecipes(headers []Header, recipes map[string][]RecipeStep) []Header {
 	lcRecipes := make(map[string][]RecipeStep, len(recipes))
@@ -244,7 +232,7 @@ func applyHeaderRecipe(current []Header, fieldName string, steps []RecipeStep) [
 	return emitted
 }
 
-// undoBodyRecipe reconstructs the previous body using body recipe steps.
+// undoBodyRecipe reconstructs the previous body using body Recipe steps.
 // Body is in CRLF format; returned value is also CRLF.
 func undoBodyRecipe(body []byte, steps []RecipeStep) []byte {
 	lines := splitLines(body)

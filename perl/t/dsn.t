@@ -99,7 +99,7 @@ sub forwarded_twohop {
 # Build a 2-hop message where the second hop forwards UNCHANGED: no new
 # Message-Instance is recorded (body/headers untouched), just a second
 # DKIM2-Signature (i=2) stacked on top of the origin's (i=1). Unlike
-# forwarded_twohop(), this carries no body-diff ('rb') recipe, so undo() is a
+# forwarded_twohop(), this carries no body-diff ('rb') Recipe, so undo() is a
 # clean no-op -- useful for exercising propagate() without also touching the
 # unrelated undo/rebuild machinery.
 sub forwarded_unchanged {

@@ -104,7 +104,7 @@ char *dkim2_apply_body_recipe(const char *r_json,
 static char **headers_for_name(char **headers, int n, const char *lname,
                                 int *n_out) {
     /* `headers` is the caller's working array, which carries NULL holes where
-       an earlier recipe field was removed (they are only compacted away once
+       an earlier Recipe field was removed (they are only compacted away once
        every field has been processed), so both passes must skip them. */
     int cnt = 0;
     for (int i = 0; i < n; i++) {
@@ -144,7 +144,7 @@ char **dkim2_apply_header_recipe(const char *r_json,
 
     cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
     if (h && cJSON_IsNull(h)) {
-        /* draft-04 §5.1: a null header recipe is no longer permitted. */
+        /* draft-05 §5.1: a null header Recipe is no longer permitted. */
         cJSON_Delete(root);
         return NULL;
     }

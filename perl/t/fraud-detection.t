@@ -1,10 +1,10 @@
 #!/usr/bin/perl -w
-# Chain-of-custody forgery detection.
+# Chain of Custody forgery detection.
 #
 # A conformant DKIM2 verifier MUST reconstruct each lower Message-Instance from
-# the higher instance's recipe and re-check its hashes (spec-04 §5, §10-11).
+# the higher instance's Recipe and re-check its hashes (spec-05 §5, §10-11).
 # These vectors each have a TOP instance (m=2) whose hashes are correct AND
-# whose signature is valid, but a recipe that does NOT reconstruct the signed
+# whose signature is valid, but a Recipe that does NOT reconstruct the signed
 # m=1 state.  A verifier that only trusts the top instance accepts them; a
 # correct one rejects them at m=1 reconstruction.
 #
@@ -12,7 +12,7 @@
 #
 # Interop note (2026-07-08): the hosted socketlabs (/api/v1/dkim2/verify) and
 # dkim2.eu (/validate) verifiers accept ALL THREE forgeries below — they do not
-# verify lower instances against their recipes.  Both of our implementations
+# verify lower instances against their Recipes.  Both of our implementations
 # (bin/validate.pl and ../python/dkim2verify.py) reject them.
 use 5.020;
 use strict;

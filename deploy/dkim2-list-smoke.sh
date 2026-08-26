@@ -2,7 +2,9 @@
 #
 # DKIM2 list smoke test — inject a message through the Mailman and Sympa DKIM2
 # test lists, capture the outbound (list-modified + milter-signed) copy locally,
-# and confirm it (a) advertises draft-ietf-dkim-dkim2-spec-04 and (b) verifies.
+# and confirm it (a) advertises the current spec draft (Mail::DKIM2::Common's
+# DKIM2_DRAFT, currently ietf-dkim-dkim2-spec-05) in its X-DKIM2-Info header,
+# and (b) verifies.
 #
 # Run ON the demo server (mail.dkim2.com):
 #   deploy/dkim2-list-smoke.sh
@@ -34,8 +36,8 @@ rm -f "$CAP"/* 2>/dev/null
 for L in "$MAILMAN_LIST" "$SYMPA_LIST"; do
   echo ">> injecting to $L (from $FROM)"
   swaks --server 127.0.0.1:25 --from "$FROM" --to "$L" \
-        --h-Subject "DKIM2 -04 smoke $(hostname)" \
-        --body "DKIM2 draft-04 list smoke test." >/dev/null 2>&1 \
+        --h-Subject "DKIM2 smoke $(hostname)" \
+        --body "DKIM2 list smoke test." >/dev/null 2>&1 \
     || { echo "   FAIL: injection rejected"; rc=1; }
 done
 
@@ -47,15 +49,18 @@ for f in "$CAP"/*; do
   [ -e "$f" ] || continue
   n=$((n+1))
   perl -e '
-    use lib $ENV{LIB}; use Mail::DKIM2::Verifier;
+    use lib $ENV{LIB}; use Mail::DKIM2::Verifier; use Mail::DKIM2::Common qw(DKIM2_DRAFT);
     my $raw = do { local $/; open my $h,"<",$ARGV[0] or die $!; <$h> };  # scoped $/
     $raw =~ s/\r\n/\n/g; $raw =~ s/\n/\r\n/g;                            # normalise to CRLF
     my ($subj) = $raw =~ /^Subject:\s*(.*)/mi;
-    my $has04 = $raw =~ /draft=ietf-dkim-dkim2-spec-04/ ? "yes" : "NO";
+    # Derived from the library'"'"'s own DKIM2_DRAFT constant (not hardcoded) so
+    # this check never goes stale on the next spec-version bump.
+    my $draft = DKIM2_DRAFT;
+    my $has_draft = $raw =~ /\Qdraft=$draft\E/ ? "yes" : "NO";
     my $v = Mail::DKIM2::Verifier->new; $v->skip_timestamp_check(1);
     $v->PRINT($raw); $v->CLOSE;
-    my $ok = ($v->result eq "pass" && $has04 eq "yes");
-    printf "   %s  [-04=%s verify=%s]  %s\n", ($ok?"PASS":"FAIL"), $has04, $v->result, ($subj//"");
+    my $ok = ($v->result eq "pass" && $has_draft eq "yes");
+    printf "   %s  [draft=%s:%s verify=%s]  %s\n", ($ok?"PASS":"FAIL"), $draft, $has_draft, $v->result, ($subj//"");
     exit($ok?0:1);
   ' "$f" || rc=1
 done

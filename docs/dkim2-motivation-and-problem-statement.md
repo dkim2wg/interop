@@ -191,13 +191,13 @@ Decisions / consensus:
 - **Imaginary hops** extended to arbitrary domains via a **`nextd` override**;
   spec to be updated. *(action: Richard)* — extends recipient binding across
   multiple signing domains (brand + enterprise use cases).
-- **Remove the NULL recipe for headers.** Bounces should instead contain the
+- **Remove the NULL Recipe for headers.** Bounces should instead contain the
   **full received headers** so replay protection holds across multiple bounces
   (full header preservation lets you detect multiple passes through the same
   systems; distinguishes synthetic-hop creation from header hiding).
   > Relevant to us: we implemented `rh_null`/`rb_null` ("unrecoverable") in
-  > `MessageInstance`. The **body** null recipe (`b:null`, §4.2) stands; the
-  > **header** null recipe is being removed. Revisit `set_null_body_recipe` /
+  > `MessageInstance`. The **body** null Recipe (`b:null`, §4.2) stands; the
+  > **header** null Recipe is being removed. Revisit `set_null_body_recipe` /
   > `unrecoverable()` and the reflector "redacted" mode when the spec updates.
 - **Do NOT sign X-headers.** Poll **9 opposed / 2 in favour** — signing
   X-headers adds complexity for negligible benefit. Bron: *"making everybody

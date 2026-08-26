@@ -11,7 +11,7 @@ use Mail::DKIM2::Verifier;
 use DKIM2TestKeys;
 
 # A transient DNS failure (timeout / SERVFAIL / network unreachable) MUST be
-# reported as TEMPERROR (retryable), per draft-ietf-dkim-dkim2-spec-04 §10 —
+# reported as TEMPERROR (retryable), per draft-ietf-dkim-dkim2-spec-05 §10 —
 # NOT as a permanent "no verifiable signature items". A genuine NXDOMAIN /
 # no-record IS permanent and returns undef (no key). fetch_public_key signals
 # the transient case by dying, which the verifier's eval maps to temperror.

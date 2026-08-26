@@ -18,6 +18,8 @@ func main() {
 	keyFile := flag.String("key", "", "Path to PKCS#8 PEM private key file (required)")
 	timestamp := flag.Int64("timestamp", 0, "Signature timestamp (0 = now)")
 	nextDomain := flag.String("nd", "", "nd= next-domain for an imaginary forwarding hop (draft-03 §9.3); omits mf=/rt=")
+	hashAlgs := flag.String("hash", "sha256",
+		"hash algorithm(s) for the Message-Instance h= tag: sha256, sha512 or both (spec-05 §3.1)")
 	flag.Parse()
 
 	if *selector == "" || *domain == "" || *keyFile == "" {
@@ -52,6 +54,17 @@ func main() {
 		}
 	}
 
+	var algs []string
+	switch *hashAlgs {
+	case "sha256", "sha512":
+		algs = []string{*hashAlgs}
+	case "both":
+		algs = []string{"sha256", "sha512"}
+	default:
+		fmt.Fprintf(os.Stderr, "invalid -hash %q: want sha256, sha512 or both\n", *hashAlgs)
+		os.Exit(2)
+	}
+
 	opts := dkim2.SignOptions{
 		Selector:   *selector,
 		Domain:     *domain,
@@ -59,6 +72,7 @@ func main() {
 		RcptTo:     rcptTo,
 		NextDomain: *nextDomain,
 		Timestamp:  ts,
+		HashAlgs:   algs,
 	}
 
 	if err := dkim2.Sign(os.Stdin, os.Stdout, key, opts); err != nil {

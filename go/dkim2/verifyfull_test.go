@@ -8,7 +8,7 @@ import (
 )
 
 // A 5-instance chain exercises the full walk across many levels.
-const fullChainVector = "../../brong/tests/expected/chain-hop5-final-delivery.eml"
+const fullChainVector = "../../perl/tests/expected/chain-hop5-final-delivery.eml"
 
 func TestVerifyFullValidMultiHop(t *testing.T) {
 	raw, err := os.ReadFile(fullChainVector)

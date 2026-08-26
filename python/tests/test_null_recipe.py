@@ -33,7 +33,7 @@ def test_null_header_recipe_rejected():
 
 
 def test_null_body_recipe_still_allowed():
-    # A null body recipe is still valid; undo should not raise a *parse* error
+    # A null body Recipe is still valid; undo should not raise a *parse* error
     # for it (it may still fail later for unrelated reasons, but not on "h").
     try:
         undo_message_instance(_msg(_b64({"b": None})))

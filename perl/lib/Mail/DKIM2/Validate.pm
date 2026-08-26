@@ -70,8 +70,14 @@ sub _mi_tags {
     return [] unless $mi;
     my @t;
     push @t, { tag => 'm', label => 'instance', value => ($mi->get_tag('m') // '') };
-    push @t, { tag => 'h', label => 'header hash', value => 'sha256:' . ($mi->get_tag('h1') // '') };
-    push @t, { tag => 'h', label => 'body hash',   value => 'sha256:' . ($mi->get_tag('b1') // '') };
+    # spec-05 §7.3: h= may carry a hash-set per algorithm -- show each one
+    # under its own name rather than assuming sha256.
+    my $hashes = $mi->get_tag('hashes') || {};
+    for my $alg (sort keys %$hashes) {
+        my ($hh, $bh) = @{ $hashes->{$alg} };
+        push @t, { tag => 'h', label => 'header hash', value => "$alg:" . ($hh // '') };
+        push @t, { tag => 'h', label => 'body hash',   value => "$alg:" . ($bh // '') };
+    }
     my $rh = $mi->get_tag('rh');
     my $rb = $mi->get_tag('rb');
     if ($mi->unrecoverable) {
@@ -109,48 +115,22 @@ sub _default_cb {
     };
 }
 
-# Numeric rank of an overall verdict, best to worst, so the retry wrapper can
-# tell whether stripping a header actually improved things.
-my %_RANK = (pass => 3, warn => 2, none => 1, fail => 0);
-sub _rank { $_RANK{ $_[0] // 'fail' } // 0 }
-
-# Remove a header (and its folded continuation lines) from raw message text
-# with a line-based regex. We deliberately do NOT round-trip through
-# Email::MIME: reserialising can refold other headers and change their
-# canonical bytes, which would corrupt the very hashes we are verifying.
-sub _strip_header {
-    my ($text, $name) = @_;
-    $text =~ s/\r?\n/\r\n/g;
-    $text =~ s/^\Q$name\E:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*\r\n//mig;
-    return $text;
-}
-
 # report($text, %opts) — verify a DKIM2 message and return a structured report.
 #
-# Some receiving MTAs (e.g. Fastmail) add a Received-SPF: trace header on
-# inbound. Unlike Received/ARC/Authentication-Results it is NOT in should_skip(),
-# so it is covered by the Message-Instance header hash and breaks verification at
-# every level. When the message fails, retry once with Received-SPF removed; if
-# that verifies, return the better result and say so in the summary.
+# Prior to spec-05, a receiving MTA's Received-SPF header (Fastmail adds one)
+# was covered by the Message-Instance header hash and could break
+# verification; this used to retry once with it stripped. spec-05 §4 excludes
+# Received-SPF from the hash via the "received-" prefix rule (should_skip()),
+# so stripping it can no longer change h_digest()/b_digest() or any verdict —
+# the retry was provably a no-op. Removed rather than kept as a "safety net":
+# it was hardcoded to the literal name Received-SPF, not a general mechanism,
+# so it covered nothing else anyway. Mirrored removal in
+# deploy/www/verify/verify.js's verifyMessage().
 sub report {
     my ($text, %opts) = @_;
     $text //= '';
 
-    my $rep = _report_once($text, %opts);
-    return $rep if ($rep->{overall} // '') eq 'pass';
-
-    # Only worth retrying when the message actually carries a Received-SPF header.
-    return $rep unless $text =~ /^Received-SPF:/mi;
-
-    my $rep2 = _report_once(_strip_header($text, 'Received-SPF'), %opts);
-    return $rep if _rank($rep2->{overall}) <= _rank($rep->{overall});
-
-    $rep2->{stripped_headers} = ['Received-SPF'];
-    $rep2->{summary} = ($rep2->{summary} ? "$rep2->{summary}; " : '')
-        . 'verified only after removing Received-SPF (a trace header added by '
-        . 'the receiving MTA that is not excluded from the Message-Instance '
-        . 'header hash)';
-    return $rep2;
+    return _report_once($text, %opts);
 }
 
 sub _report_once {
@@ -249,11 +229,27 @@ sub _mi_level {
     unless ($mi) { $lvl{detail} = 'unparseable Message-Instance'; return \%lvl; }
 
     $lvl{tags} = _mi_tags($mi);
-    my $h1 = $mi->get_tag('h1'); my $b1 = $mi->get_tag('b1');
-    my $hd = Mail::DKIM2::MessageInstance::h_digest($msg);
-    my $bd = Mail::DKIM2::MessageInstance::b_digest($msg);
-    $lvl{header_hash} = (defined $h1 && $h1 eq $hd) ? 'match' : 'mismatch';
-    $lvl{body_hash}   = (defined $b1 && $b1 eq $bd) ? 'match' : 'mismatch';
+
+    # spec-05 §3.4/§7.3: mirror MessageInstance::verify()'s semantics here --
+    # every implemented hash-set must match; an MI naming no implemented
+    # algorithm displays as a mismatch (fail-closed), not silently as a
+    # sha256-only "no hash".
+    my $hashes = $mi->get_tag('hashes') || {};
+    my $impl   = Mail::DKIM2::MessageInstance::hash_algs();
+    my @usable = sort grep { $impl->{$_} } keys %$hashes;
+    my ($h_match, $b_match) = (0, 0);
+    if (@usable) {
+        $h_match = $b_match = 1;
+        for my $alg (@usable) {
+            my ($h1, $b1) = @{ $hashes->{$alg} };
+            my $hd = Mail::DKIM2::MessageInstance::h_digest($msg, $alg);
+            my $bd = Mail::DKIM2::MessageInstance::b_digest($msg, $alg);
+            $h_match = 0 unless defined $h1 && $h1 eq $hd;
+            $b_match = 0 unless defined $b1 && $b1 eq $bd;
+        }
+    }
+    $lvl{header_hash} = $h_match ? 'match' : 'mismatch';
+    $lvl{body_hash}   = $b_match ? 'match' : 'mismatch';
     my $rh = $mi->get_tag('rh');
     my $rb = $mi->get_tag('rb');
     $lvl{recipe} = $mi->unrecoverable ? 'null' : ($rb || $rh) ? 'diff' : 'none';
@@ -321,12 +317,12 @@ sub _sig_level {
             if ($prev) {
                 my $prev_nd = $prev->next_domain;
                 if (defined $prev_nd && length $prev_nd) {
-                    # draft-04 §11.4: an nd= "imaginary hop" must name the domain
+                    # draft-05 §11.4: an nd= "imaginary hop" must name the domain
                     # that signs the next signature; nd= MUST exactly match its d=.
                     my $cur_d = $sig->domain // '';
                     $lvl{custody} = (lc($prev_nd) eq lc($cur_d))
                         ? { ok => 1, detail => "nd=$prev_nd matches d= of i=$num" }
-                        # Canonical spec-04 wording (Task 3.1), verbatim "MAIL nd="
+                        # Canonical spec-05 wording (Task 3.1), verbatim "MAIL nd="
                         # typo preserved, keyed on the *previous* hop's i=.
                         : { ok => 0, detail => "DKIM2-Signature i=" . ($num - 1) . " MAIL nd= does not match" };
                 } else {
@@ -336,8 +332,8 @@ sub _sig_level {
                         my @rts = do { my $rt = $prev->rcpt_to; ref $rt eq 'ARRAY' ? @$rt : ($rt // ()) };
                         my $ok = grep { relaxed_domain_match($mfd // '', extract_domain($_) // '') } @rts;
                         $lvl{custody} = $ok ? { ok => 1, detail => '' }
-                                            # Canonical spec-04 wording (Task 3.1), same
-                                            # form as Verifier.pm's chain-of-custody permerror.
+                                            # Canonical spec-05 wording (Task 3.1), same
+                                            # form as Verifier.pm's Chain of Custody permerror.
                                             : { ok => 0, detail => "DKIM2-Signature i=$num MAIL FROM $mf did not match" };
                     }
                 }
@@ -366,7 +362,7 @@ sub _sig_level {
     $lvl{result} = 'warn' if $crypto eq 'pass' && !$lvl{timestamp}{ok};
     $_->{result} = $crypto for @{$lvl{items}};
 
-    # Local policy (spec-04 §"Check the Chain-of-Custody"): the
+    # Local policy (spec-05 §"Check the Chain of Custody"): the
     # highest-numbered DKIM2-Signature in the *whole* chain MUST NOT carry
     # nd= (mirrors the Verifier.pm permerror from Task 2.1). $sig_by_i is the
     # original, unmodified full signature set for every call in this walk,
@@ -401,6 +397,6 @@ structured breakdown of each DKIM2-Signature and Message-Instance level
 (including MI undo), for display by the web validator. Never dies. See
 C<docs/superpowers/specs/2026-06-18-dkim2-web-validator-design.md>.
 
-B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-04.
+B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-05.
 
 =cut

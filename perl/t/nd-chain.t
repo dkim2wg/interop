@@ -14,12 +14,12 @@ use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 use DKIM2TestKeys;
 
-# Local policy (spec-04): the highest-numbered DKIM2-Signature MUST NOT carry
+# Local policy (spec-05): the highest-numbered DKIM2-Signature MUST NOT carry
 # nd=, and every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. The only
 # legitimate nd= producer is reflector-brand-nd, which always emits the nd=
 # signature together with the matching higher-i= signature, so nd= never
 # ends up on top. Non-top (including consecutive) nd= hops must still
-# verify+undo per the existing chain-of-custody adjacency logic.
+# verify+undo per the existing Chain of Custody adjacency logic.
 
 my $TS = 1740000000;
 

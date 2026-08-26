@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// A hop that changes nothing adds no Message-Instance (spec-04 §9.1/§9.2.5); it
+// A hop that changes nothing adds no Message-Instance (spec-05 §9.1/§9.2.5); it
 // signs against the existing top instance and reuses its m=.
 //
 // Regression: a transparent re-sign used to emit a fresh instance carrying
-// hashes identical to the one below it and no recipe at all.  A recipe-less
+// hashes identical to the one below it and no Recipe at all.  A Recipe-less
 // instance is legal to receive — it asserts no change — but nothing should
 // produce one.
 
@@ -115,7 +115,7 @@ func TestRecipeLessInstanceFromUpstreamIsAccepted(t *testing.T) {
 		"rsa1024", "test1.dkim2.com", "sender@test1.dkim2.com",
 		[]string{"user@test2.dkim2.com"}, 1740000000)
 
-	// Graft on a recipe-less m=2 with the same hashes, then re-sign so a
+	// Graft on a Recipe-less m=2 with the same hashes, then re-sign so a
 	// signature covers it.
 	mi1 := logicalHeaders(string(hop1), "Message-Instance")[0]
 	mi2 := strings.Replace(mi1, "m=1;", "m=2;", 1)

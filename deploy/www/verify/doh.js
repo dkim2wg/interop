@@ -1,5 +1,5 @@
 // Public-key retrieval over DNS-over-HTTPS (Cloudflare) + key-record parsing.
-// Built from spec-04 §3.6 / §11.5.
+// Built from spec-05 §3.6 / §11.5.
 
 const DEFAULT_DOH = 'https://cloudflare-dns.com/dns-query';
 
