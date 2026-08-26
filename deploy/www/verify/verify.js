@@ -1,7 +1,7 @@
 // DKIM2 verification orchestrator per spec-04 §10/§11. Built from spec.
-import { parseMessage, collectLevels, parseTagList } from './parse.js';
+import { parseMessage, collectLevels, parseTagList, parseHashSets } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
-import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519 } from './crypto.js';
+import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
 import { fetchKey as dohFetchKey } from './doh.js';
 import { decodeRecipe, bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe } from './recipes.js';
 import { stringToBytes, b64ToBytes, b64ToString } from './b64.js';
@@ -28,14 +28,6 @@ export function relaxedDomainMatch(fromDomain, targetDomain) {
 // Signed header fields (for the §6.2 header hash) at a given message state.
 function signedFields(fields) {
   return fields.filter((f) => !isUnsignedHeader(f.name) && !SIG_MI_NAMES.has(f.name.toLowerCase()));
-}
-
-// Parse the h= hash-set list into [{alg, headerHash, bodyHash}].
-function parseHashSets(hValue) {
-  return (hValue || '').split(',').map((set) => {
-    const [alg, headerHash, bodyHash] = set.split(':');
-    return { alg: (alg || '').trim(), headerHash, bodyHash };
-  });
 }
 
 // Parse the s= sig-set list into [{selector, alg, sig}].
@@ -204,22 +196,32 @@ async function verifyOnce(raw, opts = {}) {
       const sets = parseHashSets(mi.map.h);
       const hdrBytes = stringToBytes(canonHeaderHash(signedFields(state.fields)));
       const bodyBytes = stringToBytes(canonBody(linesToBody(state.bodyLines)));
-      const hdrHash = await sha256B64(hdrBytes);
-      const bodyHash = await sha256B64(bodyBytes);
-      // Compare against the sha256 hash-set (ignore unknown algs, §3.4).
-      const sha = sets.find((s) => s.alg === 'sha256');
-      if (sha) {
-        level.header_hash = hdrHash === sha.headerHash ? 'match' : 'mismatch';
-        level.body_hash = bodyHash === sha.bodyHash ? 'match' : 'mismatch';
-        if (level.header_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} header hash mismatch`; bump('fail'); }
-        else if (level.body_hash === 'mismatch') { level.result = 'fail'; level.detail = `Message Instance m=${m} body hash mismatch`; bump('fail'); }
-      } else {
-        // Fail closed: an MI whose h= names no supported (sha256) hash algorithm
-        // cannot be verified and MUST NOT be left at pass (mirrors the signature
-        // path's no-supported-algorithm handling).
+      // §3.4: ignore hash-sets naming algorithms we do not implement; all the
+      // ones we do implement must match (mirrors §11.6 for signatures).
+      const usable = sets.filter((s) => s.alg in HASH_ALGS);
+      if (usable.length === 0) {
         level.result = 'fail';
         level.detail = `Message Instance m=${m} no supported hash algorithm`;
         bump('fail');
+      } else {
+        level.header_hash = 'match';
+        level.body_hash = 'match';
+        for (const s of usable) {
+          if (await hashB64(hdrBytes, s.alg) !== s.headerHash) {
+            level.header_hash = 'mismatch';
+            level.result = 'fail';
+            level.detail = `Message Instance m=${m} ${s.alg} header hash mismatch`;
+            bump('fail');
+            break;
+          }
+          if (await hashB64(bodyBytes, s.alg) !== s.bodyHash) {
+            level.body_hash = 'mismatch';
+            level.result = 'fail';
+            level.detail = `Message Instance m=${m} ${s.alg} body hash mismatch`;
+            bump('fail');
+            break;
+          }
+        }
       }
     } catch (e) {
       level.result = 'fail';

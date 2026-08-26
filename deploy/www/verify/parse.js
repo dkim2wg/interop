@@ -61,6 +61,19 @@ export function parseTagList(value) {
   return { tags, map };
 }
 
+// spec-05 §7.3: h= is hash-set *("," hash-set). Hash names are lowercased —
+// RFC 5234 makes ABNF quoted strings case-insensitive. parseTagList has
+// already stripped all FWS from the value.
+export function parseHashSets(h) {
+  const out = [];
+  for (const item of (h || '').split(',')) {
+    const parts = item.trim().split(':');
+    if (parts.length !== 3) continue;
+    out.push({ alg: parts[0].trim().toLowerCase(), headerHash: parts[1], bodyHash: parts[2] });
+  }
+  return out;
+}
+
 function isName(field, name) {
   return field.name.toLowerCase() === name;
 }
