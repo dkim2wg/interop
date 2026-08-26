@@ -1,10 +1,10 @@
 #!/usr/bin/perl -w
 #
-# Folding whitespace inside DKIM2 tag values (spec-04 §2.12): FWS may appear
+# Folding whitespace inside DKIM2 tag values (spec-05 §2.12): FWS may appear
 # inside a base64 string and around the colons of an s= item, and "MUST be
 # ignored when the value is used".
 #
-# A fold landing between the selector colon and the algorithm token is the
+# A fold landing between the Selector colon and the algorithm token is the
 # awkward case: splitting the s= item on ':' before stripping FWS leaves
 # CRLF+TAB glued to the algorithm name.  Folded output from a conformant signer
 # must verify.
@@ -120,14 +120,14 @@ for my $case (@cases) {
 my ($ra, $da) = verify_result($all);
 is($ra, 'pass', "every fold point at once still verifies ($da)");
 
-# --- Multi-item lists folded at the comma (spec-04 §2.12) -------------------
+# --- Multi-item lists folded at the comma (spec-05 §2.12) -------------------
 #
 # The cases above all use a single-key s=, so the value never contains a comma
 # and a fold can only land inside an item.  A signer with two keys emits
 # "sel1:alg1:sig1,sel2:alg2:sig2", and folding at 72 characters readily puts
 # the CRLF+WSP immediately after the comma -- observed in the wild from
 # roessner.email.  Splitting on ',' without stripping FWS then glues the fold
-# onto the *next* item's selector, and the public-key DNS lookup goes out for
+# onto the *next* item's Selector, and the public-key DNS lookup goes out for
 # "\te01465a...._domainkey.roessner.email", which SERVFAILs.
 #
 # Only the first item is safe, because it directly follows "s=".

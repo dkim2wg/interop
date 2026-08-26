@@ -163,7 +163,7 @@ int main(void) {
         "TAMPERED body!\r\n", mi_val, sig_val);
     assert(st == DKIM2_FAIL);
 
-    /* --- Error: wrong MAIL FROM → PERMERROR, canonical spec-04 message --- */
+    /* --- Error: wrong MAIL FROM → PERMERROR, canonical spec-05 message --- */
     {
         dkim2_verify_result_t res;
         verify_test_message_full("<wrong@example.com>", rcpts,
@@ -174,7 +174,7 @@ int main(void) {
         st = res.status;
     }
 
-    /* --- Error: wrong RCPT TO → PERMERROR, canonical spec-04 message --- */
+    /* --- Error: wrong RCPT TO → PERMERROR, canonical spec-05 message --- */
     char *wrong_rcpts[] = { "<wrong@example.org>", NULL };
     {
         dkim2_verify_result_t res;
@@ -198,13 +198,13 @@ int main(void) {
         raw_headers, 3, body, mi_val, tampered_sig);
     assert(st == DKIM2_FAIL);
 
-    /* --- Error: DNS lookup fails (unknown selector) → FAIL (no passing ssets) --- */
+    /* --- Error: DNS lookup fails (unknown Selector) → FAIL (no passing ssets) --- */
     char *orig_dns = g_dns_txt;
     g_dns_txt = NULL; /* DNS override returns NULL → live DNS would fail */
-    /* Replace selector with one that won't match the override */
-    /* Build a sig with a different selector */
+    /* Replace Selector with one that won't match the override */
+    /* Build a sig with a different Selector */
     char *mi2 = NULL, *sig2 = NULL;
-    /* Use a different selector (won't be in DNS override) */
+    /* Use a different Selector (won't be in DNS override) */
     dkim2_sign_config_t cfg2 = {
         .domain="example.com", .selector="badsel",
         .privkey_path="/tmp/dkim2_test_sign.pem", .alg="ed25519-sha256"
@@ -216,7 +216,7 @@ int main(void) {
     ctx2.mail_from = (char *)mail_from; ctx2.rcpt_to = rcpts;
     dkim2_do_sign(&ctx2, &cfg2, &mi2, &sig2);
     g_dns_txt = orig_dns;
-    /* DNS for "badsel" selector not in override → fail */
+    /* DNS for "badsel" Selector not in override → fail */
     if (mi2 && sig2) {
         /* Temporarily null the override to force DNS miss */
         char *saved_txt = g_dns_txt;
@@ -321,7 +321,7 @@ int main(void) {
     }
 
     /* --- Error: d= does not relaxed-match mf= domain → PERMERROR,
-       canonical spec-04 message (§7.7 check fires before crypto, so
+       canonical spec-05 message (§7.7 check fires before crypto, so
        tampering d= post-signature doesn't need to preserve validity). --- */
     {
         char *d_tag = strstr(sig_val, "d=example.com");
@@ -339,7 +339,7 @@ int main(void) {
             "DKIM2-Signature i=1 MAIL FROM and d= do not match") != NULL);
     }
 
-    /* --- Error: top-level nd= (spec-04 local policy) → PERMERROR ---
+    /* --- Error: top-level nd= (spec-05 local policy) → PERMERROR ---
        The only legitimate nd= producer emits an nd= hop together with a
        matching higher-i= signature, so nd= must never appear on the
        topmost (highest i=) DKIM2-Signature. */
@@ -393,8 +393,8 @@ int main(void) {
         dkim2_sig_free(vctx.sig_list);
     }
 
-    /* --- Error: chain-of-custody nd= adjacency mismatch (§11.4) → PERMERROR,
-       canonical spec-04 message (verbatim "MAIL nd=" typo, per spec-04).
+    /* --- Error: Chain of Custody nd= adjacency mismatch (§11.4) → PERMERROR,
+       canonical spec-05 message (verbatim "MAIL nd=" typo, per spec-05).
        The C signer cannot emit nd= itself, so hop i=1 is hand-signed here:
        its own DKIM2-Signature header (with a genuine nd= tag) is covered by
        its own signature, so tampering it after the fact would invalidate the
@@ -480,8 +480,8 @@ int main(void) {
         free(sig2_out);
     }
 
-    /* --- Error: inter-signature chain-of-custody break (§8.2) → FAIL,
-       canonical spec-04 message (matches Perl Verifier.pm's _verify_chain:
+    /* --- Error: inter-signature Chain of Custody break (§8.2) → FAIL,
+       canonical spec-05 message (matches Perl Verifier.pm's _verify_chain:
        "DKIM2-Signature i=%d MAIL FROM %s did not match"). Both hops are
        produced by the normal signer (no nd= involved this time), chained
        via ctx2.sig_list so hop i=2 gets a real, independently-verifiable
@@ -631,7 +631,7 @@ int main(void) {
        reporting anything -- so a malformed r= payload never surfaced as an
        error at all, it just silently failed to undo.
        The C signer has no way to emit an r= tag itself (dkim2_do_sign()
-       never attaches a recipe), so -- exactly like the hand-built nd= hop
+       never attaches a Recipe), so -- exactly like the hand-built nd= hop
        above -- hop i=2 is hand-signed: a real signing input is built with
        test_canon_append() (matching build_verify_input()'s canonicalization)
        over both Message-Instance headers (m=1 unmodified, m=2 carrying the
@@ -652,11 +652,11 @@ int main(void) {
 
         /* m=2 carries the SAME (genuinely correct) header/body hashes as
            m=1 -- content is unmodified between hops, which is legal (a
-           recipe-less/identical MI asserting "no change" is accepted by
+           Recipe-less/identical MI asserting "no change" is accepted by
            every implementation here) -- plus a malformed r= tag. "eyJoIjog"
            is base64 of `{"h": `, truncated so it decodes to invalid
            (incomplete) JSON, not merely a semantic rejection like a null
-           header recipe. */
+           header Recipe. */
         dkim2_mi_t *mi1_parsed = dkim2_mi_parse(mi1_out);
         assert(mi1_parsed && mi1_parsed->n_hsets >= 1);
         char mi2_val[512];

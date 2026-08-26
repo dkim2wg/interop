@@ -126,7 +126,7 @@ the stored version and the (possibly modified) current version.
 Keys are derived by SHA-256 hashing the MI header value, stored under
 2-character prefix subdirectories to avoid filesystem crowding.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-04, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-05, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

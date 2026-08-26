@@ -1,4 +1,4 @@
-// WebCrypto wrappers for DKIM2. Built from spec-04 §3.
+// WebCrypto wrappers for DKIM2. Built from spec-05 §3.
 import { b64ToBytes, bytesToB64 } from './b64.js';
 
 const subtle = globalThis.crypto.subtle;

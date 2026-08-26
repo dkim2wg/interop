@@ -14,7 +14,7 @@ my $with1 = "Message-Instance: " . $mi1->as_string . "\r\n" . $orig;
 my $cur = Email::MIME->new($with1);
 $cur->body_set($cur->body_raw . "footer line\r\n");
 
-# --- good chain: m=2 carries a diff recipe that reverses to m=1 ---
+# --- good chain: m=2 carries a diff Recipe that reverses to m=1 ---
 {
     my $good = Email::MIME->new($cur->as_string);
     my $mi2  = Mail::DKIM2::MessageInstance->calculate($good, Email::MIME->new($with1));
@@ -35,11 +35,11 @@ $cur->body_set($cur->body_raw . "footer line\r\n");
     ok($ok, 'message with no MI passes (nothing to undo)');
 }
 
-# --- broken chain: m=2 records NO recipe, so undo cannot rebuild the body and
+# --- broken chain: m=2 records NO Recipe, so undo cannot rebuild the body and
 #     the reconstruction no longer matches m=1 ---
 {
     my $bad = Email::MIME->new($cur->as_string);
-    # Hand-build m=2 with the modified content's hashes but no r= recipe.
+    # Hand-build m=2 with the modified content's hashes but no r= Recipe.
     my $hh = Mail::DKIM2::MessageInstance::h_digest($bad);
     my $bh = Mail::DKIM2::MessageInstance::b_digest($bad);
     $bad->header_raw_prepend('Message-Instance', "m=2; h=sha256:$hh:$bh;");
@@ -48,7 +48,7 @@ $cur->body_set($cur->body_raw . "footer line\r\n");
     like($why, qr/m=1 does not match|did not undo/, 'failure names the broken instance');
 }
 
-# --- recipe-less m=2 over UNCHANGED content: legal, and must be accepted ---
+# --- Recipe-less m=2 over UNCHANGED content: legal, and must be accepted ---
 #     An instance with no r= asserts no change.  We never emit one (an
 #     unmodified hop reuses the existing m= per §9.1/§9.2.5), but an upstream
 #     may, and rejecting it would break the chain for no reason.

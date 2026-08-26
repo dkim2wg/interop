@@ -147,7 +147,7 @@ bounce, this produces a clean origin signature: `Message-Instance m=1` +
 - **Embedded-original verification (§11.1.2) is receiver-side.** We preserve
   the embedded original's headers verbatim, but if Postfix truncates the
   original body (`bounce_size_limit`), the enclosed message's own body-MI may
-  not verify — draft-02 removed the `z` body recipe that §11 had relied on
+  not verify — draft-02 removed the `z` body Recipe that §11 had relied on
   for truncated bodies. Acceptable for a demo, and documented rather than
   worked around; the enclosed message in the demo is usually not itself
   DKIM2-signed anyway.
@@ -630,10 +630,10 @@ incoming DKIM2 chain verified. For interop testing of chain behaviour.
 | Address | Behaviour at the sender |
 |---------|-------------------------|
 | `reflector-raw@dkim2.com` | re-signed, unchanged (new sig, same `m=`) — verifies |
-| `reflector-subject@dkim2.com` | `Subject:` prefixed `[DKIM2] `; new MI `rh` recipe |
-| `reflector-body@dkim2.com` | footer appended; new MI `rb` recipe |
+| `reflector-subject@dkim2.com` | `Subject:` prefixed `[DKIM2] `; new MI `rh` Recipe |
+| `reflector-body@dkim2.com` | footer appended; new MI `rb` Recipe |
 | `reflector-both@dkim2.com` | subject + footer |
-| `reflector-redacted@dkim2.com` | footer appended; MI body recipe `"b":null` (not undoable) |
+| `reflector-redacted@dkim2.com` | footer appended; MI body Recipe `"b":null` (not undoable) |
 | `reflector-damage@dkim2.com` | a line appended *after* signing — fails body-hash verification |
 | `reflector-dsn@dkim2.com` | returns a fresh DKIM2-signed DSN (`multipart/report`) for the message, regardless of whether it arrived signed (draft-03 §12.1) — verifies as a new one-hop message |
 | `reflector-brand-nd@dkim2.com` | like `reflector-brand`, but the i=1 brand hop uses the `nd=` "imaginary hop" encoding (draft-03 §9.3) instead of `mf=`/`rt=`; the chain still verifies (nd= matches i=2's d=) |

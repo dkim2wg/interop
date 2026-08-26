@@ -100,7 +100,7 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
 }
 
 # 1b) nd= imaginary-hop chain: i=1 carries nd= instead of mf=/rt=. The report's
-# per-signature chain-of-custody must recognise nd= and report ok (regression:
+# per-signature Chain of Custody must recognise nd= and report ok (regression:
 # it previously did only the mf/rt check and wrongly showed FAIL on i=2 while
 # the overall verdict was pass).
 {
@@ -140,7 +140,7 @@ my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
 }
 
 # 1c) top-level nd=: the highest-numbered DKIM2-Signature carries nd= instead
-# of mf=/rt=. Local policy (spec-04, stricter than the letter of the draft;
+# of mf=/rt=. Local policy (spec-05, stricter than the letter of the draft;
 # matches the Verifier.pm permerror added for Task 2.1) rejects this: the
 # report must surface a failing level whose detail matches the same message
 # as the Verifier's permerror.
@@ -181,7 +181,7 @@ sub signed_input_nd {
 # and only ever sub-verifies one signature at a time against a partial
 # message view, so it never sees both i=1 and i=2 together the way
 # Verifier.pm's whole-chain _verify_chain() does). It must use the exact
-# same canonical spec-04 wording as Task 3.1's Verifier.pm permerror
+# same canonical spec-05 wording as Task 3.1's Verifier.pm permerror
 # (verbatim "MAIL nd=" typo preserved), keyed on the *previous* hop's i=.
 {
     my $msg = build_chain(
@@ -194,12 +194,12 @@ sub signed_input_nd {
     ok($sig2, 'nd= mismatch: i=2 level present');
     ok(!$sig2->{custody}{ok}, 'nd= mismatch: custody flagged not ok');
     is($sig2->{custody}{detail}, 'DKIM2-Signature i=1 MAIL nd= does not match',
-       'nd= adjacency custody detail matches the canonical spec-04 wording');
+       'nd= adjacency custody detail matches the canonical spec-05 wording');
 }
 
-# 1e) chain of custody break: i=2's mf= domain does not relaxed-match any rt=
+# 1e) Chain of Custody break: i=2's mf= domain does not relaxed-match any rt=
 # of i=1. Also Validate.pm's OWN custody logic (see 1d above). Must match the
-# same canonical wording as the Verifier.pm chain-of-custody permerror.
+# same canonical wording as the Verifier.pm Chain of Custody permerror.
 {
     my $msg = build_chain(
         { domain => 'test1.dkim2.com', mailfrom => 'sender@test1.dkim2.com',
@@ -212,7 +212,7 @@ sub signed_input_nd {
     ok($sig2, 'custody break: i=2 level present');
     ok(!$sig2->{custody}{ok}, 'custody break: custody flagged not ok');
     is($sig2->{custody}{detail}, 'DKIM2-Signature i=2 MAIL FROM <sender@test2.dkim2.com> did not match',
-       'custody-break detail matches the canonical spec-04 wording');
+       'custody-break detail matches the canonical spec-05 wording');
 }
 
 # 2) Post-sign body tamper (damage)
@@ -225,7 +225,7 @@ sub signed_input_nd {
     is($top->{body_hash}, 'mismatch', 'top MI body hash mismatch on damage');
 }
 
-# 3) redacted null recipe
+# 3) redacted null Recipe
 {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-redacted\@test2.dkim2.com\r\nSubject: hi\r\n\r\nsecret\r\n");
     my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'redacted', message=>$in);
@@ -312,7 +312,7 @@ sub signed_input_nd {
     like($lvl->{detail}, qr/mf=.*7\.5|bracket/i, 'detail names the mf= bracket rule');
 }
 
-# 8) per-hop details: signature From/To + recovered MI recipe values
+# 8) per-hop details: signature From/To + recovered MI Recipe values
 {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-both\@test2.dkim2.com\r\nSubject: hi\r\n\r\norig body\r\n");
     my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'both', message=>$in);

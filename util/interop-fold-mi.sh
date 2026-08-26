@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Cross-implementation interop matrix for two spec-04 behaviours that only show
+# Cross-implementation interop matrix for two spec-05 behaviours that only show
 # up when implementations meet each other:
 #
 #   1. Folding whitespace in tag values (§2.12).  FWS may appear inside a base64

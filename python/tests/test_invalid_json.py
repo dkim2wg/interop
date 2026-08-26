@@ -39,7 +39,7 @@ def test_bad_base64_recipe_is_syntax_error_not_invalid_json():
 # ---------------------------------------------------------------------------
 # End-to-end: feed a complete, multi-hop message with a corrupted r= payload
 # through the real verifier entry point (dkim2verify.verify_message), not
-# just the recipe-parsing helper.
+# just the Recipe-parsing helper.
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -127,7 +127,7 @@ def _corrupt_r_tag(msg: bytes) -> bytes:
 def test_end_to_end_malformed_recipe_json_rejected_by_verify_message():
     # This drives the real production entry point (dkim2verify.verify_message,
     # the same one the CLI and API callers use) on a complete signed message,
-    # not just the recipe-parsing helper -- guards against the error being
+    # not just the Recipe-parsing helper -- guards against the error being
     # raised deep in a parse path but silently dropped before it reaches the
     # caller (cf. the C duplicate-h= lesson in commit 66bd3e6).
     dns_data = dkim2verify.load_dns_json(DNS_JSON_PATH)
@@ -143,7 +143,7 @@ def test_end_to_end_malformed_recipe_json_rejected_by_verify_message():
     assert want in res.errors, res.errors
 
     # Also exercise the --full-chain code path (the CLI's actual default),
-    # which separately decodes the r= payload to undo recipes; it must not
+    # which separately decodes the r= payload to undo Recipes; it must not
     # crash on the same bad input. This path used to prefix every MI error
     # with "v=<version>: ", which would have doubled up the m= already
     # embedded in a self-describing PERMERROR and stopped it from being the

@@ -94,10 +94,12 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 
 	// 5. Build new MI header — unless this hop changed nothing.
 	//
-	// draft-04 §9.1/§9.2.5: a forwarder that leaves both hashes unchanged adds
+	// draft-05 §9.1/§9.2.5: a forwarder that leaves both hashes unchanged adds
 	// no new Message-Instance; it signs against the existing top instance and
-	// reuses its m=.  An instance with identical hashes and no recipe is pure
-	// waste — verifiers must tolerate one, but nothing should produce it.
+	// reuses its m=.  An instance with identical hashes and no Recipe is not
+	// forbidden, but §9.1 still calls it "most likely to be pointless and a
+	// waste of time and energy"; this implementation avoids it by default,
+	// and verifiers must still tolerate one from elsewhere.
 	addMI := true
 	if topMI != nil && hashSetsEqual(topMI.Hashes, newHashes) {
 		addMI = false

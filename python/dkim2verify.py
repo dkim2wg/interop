@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 verifier - draft-ietf-dkim-dkim2-spec-04
+DKIM2 verifier - draft-ietf-dkim-dkim2-spec-05
 
 Takes a signed email and verifies its DKIM2 signatures using public keys
 from a dns.json file or DNS TXT records.
@@ -87,7 +87,7 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
             tags = parse_dkim1_txt(rec_value)
             key_type = tags.get("k", "rsa")
             pub_b64 = tags.get("p", "")
-            # h= (hash algorithm list) MUST be ignored per spec-04 Section 10.3
+            # h= (hash algorithm list) MUST be ignored per spec-05 Section 10.3
             pub_bytes = base64.b64decode(pub_b64)
 
             if key_type == "ed25519":
@@ -130,7 +130,7 @@ def _relaxed_domain_match(d1: str, d2: str) -> bool:
 
 
 def _envelope_addr_equal(a: str, b: str) -> bool:
-    """Exact envelope-address match per spec "Check the Chain-of-Custody":
+    """Exact envelope-address match per spec "Check the Chain of Custody":
     domains are compared case-insensitively, local-parts case-sensitively.
     Surrounding angle brackets are ignored so bracketed and bare forms
     compare equal; the null sender (<>) matches only the null sender."""
@@ -168,7 +168,7 @@ def _bracket_errors(sig_headers: list[str]) -> list[str]:
 
 
 def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
-    """Validate §8.2/§11.4 chain-of-custody across consecutive signatures.
+    """Validate §8.2/§11.4 Chain of Custody across consecutive signatures.
 
     For each adjacent pair (ascending i=), either the lower signature carries
     nd= (which MUST exactly match the higher signature's d=), or the higher
@@ -182,7 +182,7 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
         prev_i = _extract_tag(prev_val, "i")
         prev_nd = _extract_tag(prev_val, "nd")
         if prev_nd:
-            # draft-04 §11.4: nd= MUST exactly match the next sig's d=.
+            # draft-05 §11.4: nd= MUST exactly match the next sig's d=.
             cur_d = _extract_tag(cur_val, "d") or ""
             if prev_nd.lower() != cur_d.lower():
                 errors.append(
@@ -218,7 +218,7 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
 def _strip_fws(s: str) -> str:
     """Remove folding whitespace from a tag value.
 
-    Per spec-04 §2.12 folding whitespace may appear inside a base64 string or
+    Per spec-05 §2.12 folding whitespace may appear inside a base64 string or
     around the colons of an s= item, and MUST be ignored when the value is
     used.  Selectors, algorithm names and base64 never contain significant
     whitespace, so removing all of it is safe.
@@ -230,13 +230,13 @@ _FWS_TABLE = {ord(c): None for c in " \t\r\n"}
 
 
 def _sig_flags(sig_hdr: str) -> list[str]:
-    """Return the f= flag list of a DKIM2-Signature header (draft-04 §8.10)."""
+    """Return the f= flag list of a DKIM2-Signature header (draft-05 §8.10)."""
     f = _extract_tag(_get_header_value(sig_hdr), "f")
     return [x.strip() for x in f.split(",") if x.strip()] if f else []
 
 
 def _flag_enforcement_errors(sig_by_seq: list[str], mi_headers: list[str]) -> list[str]:
-    """Enforce the donotmodify/donotexplode flags (draft-04 §11.8).
+    """Enforce the donotmodify/donotexplode flags (draft-05 §11.8).
 
     feedback/feedhere are recognised but carry no verifier enforcement.
     """
@@ -324,7 +324,7 @@ def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
     Hash names are lowercased: RFC 5234 makes ABNF quoted strings
     case-insensitive, so "SHA256" is a syntactically valid hash-name.
 
-    Per spec-04 §2.12, folding whitespace may appear inside a base64 string
+    Per spec-05 §2.12, folding whitespace may appear inside a base64 string
     (or around the colons) and MUST be ignored when the value is used, so
     every field is run through _strip_fws rather than a bare .strip().
     """
@@ -480,7 +480,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     mf_val = _extract_tag(value, "mf")
     rt_val = _extract_tag(value, "rt")
 
-    # draft-04 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+    # draft-05 §8: i= m= t= d= s= MUST be present; plus either nd= or both
     # mf= and rt= (and nd= excludes mf=/rt=).
     if not all([i_val, m_val, t_val0, d_val, s_tag]):
         for tag_name, tag_val in (
@@ -528,8 +528,8 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     # folding whitespace the producer inserted, and are what we blank out of
     # the raw header below.  The *semantic* fields have FWS removed per §2.12
     # ("folding whitespace ... MUST be ignored when the value is used"), so a
-    # fold anywhere inside the item -- including between the selector colon
-    # and the algorithm token -- doesn't corrupt the selector, the algorithm
+    # fold anywhere inside the item -- including between the Selector colon
+    # and the algorithm token -- doesn't corrupt the Selector, the algorithm
     # name or the base64 signature.
     sig_items_raw = []
     sig_items = []
@@ -735,7 +735,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                             domain=_extract_tag(top_sig_value, 'd') or '',
                             message=msg, errors=[msg])
 
-    # Envelope MAIL FROM / RCPT TO checks (spec §"Check the Chain-of-Custody"):
+    # Envelope MAIL FROM / RCPT TO checks (spec §"Check the Chain of Custody"):
     # exact match against the top signature's declared mf=/rt=, domains
     # lowercased, local-part case-sensitive. Applies regardless of
     # full_chain/simple mode. rt= MAY carry extra recipients beyond what was
@@ -860,7 +860,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                 elif verbose:
                     print(f"  DKIM2-Signature i={i_val}: OK", file=sys.stderr)
 
-        # If there's a lower version, undo recipes to reconstruct previous state
+        # If there's a lower version, undo Recipes to reconstruct previous state
         if version > versions[-1]:
             # A malformed r= is already reported (as the specific §11.2
             # invalid-JSON PERMERROR) by the verify_message_instance() call
@@ -871,7 +871,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
             except (ValueError, TypeError):
                 recipes = None
             if recipes is not None:
-                # draft-04 §5.1: a present "h" that is JSON null is a syntax
+                # draft-05 §5.1: a present "h" that is JSON null is a syntax
                 # error (distinct from an absent "h", which means headers
                 # were unchanged); mirrors dkim2undo.py's rejection.
                 if "h" in recipes and recipes["h"] is None:
@@ -917,7 +917,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-04)")
+        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-05)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--dns-json", required=True,
                         help="Path to dns.json with public keys")

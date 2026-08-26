@@ -91,7 +91,7 @@ sub reflected_verifies {
     like($r->{message}, qr/^X-DKIM2-Reflector:.*signed=no/m, 'X- header shows signed=no');
 }
 
-# --- subject / body / both: new MI with recipes; verifies; undo restores ---
+# --- subject / body / both: new MI with Recipes; verifies; undo restores ---
 for my $case (
     { mode => 'subject', restores_subject => 1, restores_body => 0 },
     { mode => 'body',    restores_subject => 0, restores_body => 1 },
@@ -129,14 +129,14 @@ for my $case (
         if $case->{restores_body};
 }
 
-# --- redacted: footer added, MI body recipe null, verifies, but undo can't recover ---
+# --- redacted: footer added, MI body Recipe null, verifies, but undo can't recover ---
 {
     my $in = signed_input(
         "From: a\@test1.dkim2.com\r\nTo: reflector-redacted\@test2.dkim2.com\r\nSubject: hi\r\n\r\nsecret body\r\n");
     my $r = Mail::DKIM2::Reflector::reflect(%common, mode => 'redacted', message => $in);
     is($r->{signed}, 1, 'redacted: signed');
 
-    # Find the highest-m MI and check its recipe is b:null (base64 JSON).
+    # Find the highest-m MI and check its Recipe is b:null (base64 JSON).
     my @mi = (Email::MIME->new($r->{message}))->header_raw('Message-Instance');
     my ($top) = sort {
         Mail::DKIM2::MessageInstance->parse($b)->get_tag('m')

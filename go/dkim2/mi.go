@@ -174,7 +174,7 @@ func parseMI(raw string) (*MessageInstance, error) {
 			// should be called out specifically" -- a malformed r= payload
 			// is reported distinctly from a generic syntax error. This
 			// covers actual JSON syntax/type errors; other parseRecipe
-			// failures (e.g. the §5.1 null-header-recipe rejection) already
+			// failures (e.g. the §5.1 null-header-Recipe rejection) already
 			// carry their own specific message and are left as-is.
 			var syntaxErr *json.SyntaxError
 			var typeErr *json.UnmarshalTypeError

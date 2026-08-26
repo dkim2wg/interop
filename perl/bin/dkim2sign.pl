@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# Standalone DKIM2 signer CLI (draft-ietf-dkim-dkim2-spec-04).
+# Standalone DKIM2 signer CLI (draft-ietf-dkim-dkim2-spec-05).
 #
 # Reads a message, computes a Message-Instance when the content has changed
 # since the top instance, signs, and writes the result to stdout. The Perl

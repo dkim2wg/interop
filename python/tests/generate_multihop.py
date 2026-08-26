@@ -60,7 +60,7 @@ def split_headers(headers):
 def generate_multihop_header_add():
     """Intermediary adds a List-Unsubscribe header. Recipe removes it."""
     raw = open(os.path.join(EMAILS_DIR, 'simple.eml'), 'rb').read()
-    # Hop 1 sends to relay at test2 (chain of custody: rt must match next hop's mf domain)
+    # Hop 1 sends to relay at test2 (Chain of Custody: rt must match next hop's mf domain)
     signed1 = sign_message(raw, 'ed25519', 'test1.dkim2.com',
                            key_path('ed25519._domainkey.test1.dkim2.com.pem'),
                            mailfrom='sender@test1.dkim2.com',

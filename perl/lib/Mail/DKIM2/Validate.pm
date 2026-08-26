@@ -317,12 +317,12 @@ sub _sig_level {
             if ($prev) {
                 my $prev_nd = $prev->next_domain;
                 if (defined $prev_nd && length $prev_nd) {
-                    # draft-04 §11.4: an nd= "imaginary hop" must name the domain
+                    # draft-05 §11.4: an nd= "imaginary hop" must name the domain
                     # that signs the next signature; nd= MUST exactly match its d=.
                     my $cur_d = $sig->domain // '';
                     $lvl{custody} = (lc($prev_nd) eq lc($cur_d))
                         ? { ok => 1, detail => "nd=$prev_nd matches d= of i=$num" }
-                        # Canonical spec-04 wording (Task 3.1), verbatim "MAIL nd="
+                        # Canonical spec-05 wording (Task 3.1), verbatim "MAIL nd="
                         # typo preserved, keyed on the *previous* hop's i=.
                         : { ok => 0, detail => "DKIM2-Signature i=" . ($num - 1) . " MAIL nd= does not match" };
                 } else {
@@ -332,8 +332,8 @@ sub _sig_level {
                         my @rts = do { my $rt = $prev->rcpt_to; ref $rt eq 'ARRAY' ? @$rt : ($rt // ()) };
                         my $ok = grep { relaxed_domain_match($mfd // '', extract_domain($_) // '') } @rts;
                         $lvl{custody} = $ok ? { ok => 1, detail => '' }
-                                            # Canonical spec-04 wording (Task 3.1), same
-                                            # form as Verifier.pm's chain-of-custody permerror.
+                                            # Canonical spec-05 wording (Task 3.1), same
+                                            # form as Verifier.pm's Chain of Custody permerror.
                                             : { ok => 0, detail => "DKIM2-Signature i=$num MAIL FROM $mf did not match" };
                     }
                 }
@@ -362,7 +362,7 @@ sub _sig_level {
     $lvl{result} = 'warn' if $crypto eq 'pass' && !$lvl{timestamp}{ok};
     $_->{result} = $crypto for @{$lvl{items}};
 
-    # Local policy (spec-04 §"Check the Chain-of-Custody"): the
+    # Local policy (spec-05 §"Check the Chain of Custody"): the
     # highest-numbered DKIM2-Signature in the *whole* chain MUST NOT carry
     # nd= (mirrors the Verifier.pm permerror from Task 2.1). $sig_by_i is the
     # original, unmodified full signature set for every call in this walk,
@@ -397,6 +397,6 @@ structured breakdown of each DKIM2-Signature and Message-Instance level
 (including MI undo), for display by the web validator. Never dies. See
 C<docs/superpowers/specs/2026-06-18-dkim2-web-validator-design.md>.
 
-B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-04.
+B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-05.
 
 =cut

@@ -436,7 +436,7 @@ diag("=== Forwarding flow tests ===");
 #   2. If add_message_instance is on, checks if topmost MI matches content
 #   3. If MI matches → no new MI needed (Case 1 and 3)
 #      If MI doesn't match → looks up snapshot for any MI, computes diff
-#      MI v=2 with recipes (Case 2)
+#      MI v=2 with Recipes (Case 2)
 #   4. Creates DKIM2-Signature i=2
 
 # Helper: create a signed originator message for forwarding tests
@@ -577,13 +577,13 @@ my $expected_dir = path("tests/expected");
 # Email arrives, local processing adds a List-Id header, but the code
 # that added it did not add a Message-Instance header.  The outbound
 # sign handler detects the change, finds the snapshot from inbound,
-# computes a diff MI v=2 with recipes, and signs.
+# computes a diff MI v=2 with Recipes, and signs.
 #
 # Flow:
 #   Inbound:  verify pass → snapshot stored keyed by MI v=1
 #   Processing: List-Id header added (changes header hash)
 #   Outbound: MI v=1 doesn't match → finds snapshot for MI v=1 →
-#             computes diff MI v=2 with header recipe → signs with i=2
+#             computes diff MI v=2 with header Recipe → signs with i=2
 {
     my $snapshot_dir = tempdir(CLEANUP => 1);
     my $signed_msg = make_originator_message();
@@ -623,7 +623,7 @@ my $expected_dir = path("tests/expected");
 #
 # Flow:
 #   Inbound:  verify pass → snapshot stored keyed by MI v=1
-#   Processing: List-Id added + MI v=2 (with recipes) added by app code
+#   Processing: List-Id added + MI v=2 (with Recipes) added by app code
 #   Outbound: MI v=2 matches → no new MI → signs with i=2
 {
     my $snapshot_dir = tempdir(CLEANUP => 1);

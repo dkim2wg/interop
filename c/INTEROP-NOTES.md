@@ -200,7 +200,7 @@ any present `mf=` or `rt=` entry that isn't bracketed — see note 9 below.
 
 **Impact:** The CLI verifier has no way to provide envelope data.
 
-**Detail:** DKIM2 chain-of-custody verification requires matching the MAIL FROM
+**Detail:** DKIM2 Chain of Custody verification requires matching the MAIL FROM
 and RCPT TO from the SMTP envelope against the `mf=` and `rt=` tags in the
 signature. A CLI tool verifying a stored `.eml` file has no access to the
 original SMTP envelope.

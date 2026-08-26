@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-04
+DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-05
 
 Takes a signed email with Message-Instance headers containing recipes
 and reconstructs the message as it was at a previous version.
@@ -99,7 +99,7 @@ def apply_header_recipe(current_instances: list[bytes], field_name: str,
     # current_instances is in top-to-bottom order, so reverse for bottom-up numbering
     bottom_up = list(reversed(current_instances))
 
-    # Process recipes in order; each recipe emits header(s)
+    # Process Recipes in order; each Recipe emits header(s)
     # Results are collected so that later entries appear above earlier ones
     # i.e. we build the output top-to-bottom by reversing at the end
     emitted: list[bytes] = []
@@ -146,11 +146,11 @@ def reconstruct_headers(headers: list[bytes], header_recipes: dict) -> list[byte
     # Group current headers by name
     by_name = get_headers_by_name(headers)
 
-    # Track which names have recipes
+    # Track which names have Recipes
     recipe_names = {k.lower() for k in header_recipes}
 
     # Build output: walk through original header order, replacing
-    # headers that have recipes and keeping others
+    # headers that have Recipes and keeping others
     result: list[bytes] = []
     processed_names: set[str] = set()
 
@@ -160,7 +160,7 @@ def reconstruct_headers(headers: list[bytes], header_recipes: dict) -> list[byte
         if name in recipe_names:
             if name not in processed_names:
                 processed_names.add(name)
-                # Find the recipe for this name (case-insensitive)
+                # Find the Recipe for this name (case-insensitive)
                 recipe_key = None
                 for k in header_recipes:
                     if k.lower() == name:
@@ -172,18 +172,18 @@ def reconstruct_headers(headers: list[bytes], header_recipes: dict) -> list[byte
                         by_name.get(name, []), name, recipes
                     )
                     result.extend(reconstructed)
-                # else: empty recipes array = remove all instances
+                # else: empty Recipes array = remove all instances
         else:
-            # No recipe for this name: retain as-is
+            # No Recipe for this name: retain as-is
             result.append(hdr)
 
-    # Check for recipe names that weren't in the original headers
+    # Check for Recipe names that weren't in the original headers
     # (these are headers that were removed and need to be re-added)
     for k in header_recipes:
         name = k.lower()
         if name not in processed_names and header_recipes[k]:
             processed_names.add(name)
-            # These are new headers to insert; apply recipe with empty current list
+            # These are new headers to insert; apply Recipe with empty current list
             reconstructed = apply_header_recipe([], name, header_recipes[k])
             # Insert at the top (they were removed, so they were originally present)
             result = reconstructed + result
@@ -216,7 +216,7 @@ def reconstruct_body(body: bytes, body_recipes: list[str]) -> bytes:
         lines.pop()
 
     # Lines are numbered top-down: first line = 1
-    # Process recipes in order; results emitted so later lines appear below earlier
+    # Process Recipes in order; results emitted so later lines appear below earlier
     result_lines: list[bytes] = []
 
     for recipe in body_recipes:
@@ -318,8 +318,8 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
         if verbose:
             print(f"  v={version}: applying recipes", file=sys.stderr)
 
-        # Apply header recipes
-        # draft-04 §5.1 removed the null header recipe: a present "h" that is
+        # Apply header Recipes
+        # draft-04 §5.1 removed the null header Recipe: a present "h" that is
         # null is now a syntax error (distinct from an absent "h", which means
         # the header fields were unchanged).
         if "h" in recipes and recipes["h"] is None:
@@ -340,7 +340,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
                     current_content_headers, h_recipes
                 )
 
-        # Apply body recipes
+        # Apply body Recipes
         b_recipes = recipes.get("b")
         if b_recipes is not None:
             if isinstance(b_recipes, dict) and len(b_recipes) == 0:
@@ -437,7 +437,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-04)")
+        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-05)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--target-version", type=int, default=None,
                         help="MI version to reconstruct back to (default: highest - 1)")

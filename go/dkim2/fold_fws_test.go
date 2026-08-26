@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// Folding whitespace inside DKIM2 tag values (spec-04 §2.12): FWS may appear
+// Folding whitespace inside DKIM2 tag values (spec-05 §2.12): FWS may appear
 // inside a base64 string and around the colons of an s= item, and "MUST be
 // ignored when the value is used".
 //
 // Regression: we split the s= item on ':' before stripping FWS, so a fold
-// landing between the selector colon and the algorithm token left CRLF+TAB
+// landing between the Selector colon and the algorithm token left CRLF+TAB
 // glued to the algorithm name.  Folded output from a conformant signer must
 // verify.
 var foldPoints = []struct {

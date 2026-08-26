@@ -34,7 +34,7 @@ def test_missing_t_tag():
     assert any("tag=t missing" in e for e in errs), errs
 
 
-# --- chain-of-custody (draft-03 §11.4) ---
+# --- Chain of Custody (draft-03 §11.4) ---
 
 def test_chain_nd_match():
     sigs = [

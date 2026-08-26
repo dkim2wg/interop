@@ -101,7 +101,7 @@ sub get_tag {
 # The header-hash component (base64) of this Message-Instance's h= tag.
 sub header_hash { return $_[0]->{bits}{h1} }
 
-# Mark the body recipe as null per spec-04 §4.2: the body changed but the
+# Mark the body Recipe as null per spec-05 §4.2: the body changed but the
 # previous state cannot be recreated. as_string() then emits "b": null.
 sub set_null_body_recipe {
     my ($self) = @_;
@@ -109,9 +109,9 @@ sub set_null_body_recipe {
 }
 
 # True if this instance declares the previous state non-recreatable (a null
-# "b" recipe). Such an instance cannot be undone to a prior version. Under
-# draft-04 §5.1 a header recipe can no longer be null, so only the body
-# recipe can render an instance unrecoverable.
+# "b" Recipe). Such an instance cannot be undone to a prior version. Under
+# draft-05 §5.1 a header Recipe can no longer be null, so only the body
+# Recipe can render an instance unrecoverable.
 sub unrecoverable {
     my ($self) = @_;
     return $self->{bits}{rb_null} ? 1 : 0;
@@ -143,7 +143,7 @@ sub as_string {
     }
     my $result = "m=$m; h=" . join(',', @sets);
 
-    # Build r= tag JSON if there are recipes
+    # Build r= tag JSON if there are Recipes
     my %recipe_json;
     if (exists $data{rb}) {
         if (ref $data{rb} eq 'SCALAR' && ${$data{rb}} eq 'null') {
@@ -172,7 +172,7 @@ sub as_string {
     return $result;
 }
 
-# Convert internal recipe list to wire format
+# Convert internal Recipe list to wire format
 # Internal: [from,to] arrays for copy ranges, strings for literal content
 # Wire: {"c": [from,to]} for copy, {"d": ["val1",...]} for data
 sub _encode_recipe_list {
@@ -280,7 +280,7 @@ sub parse {
                 }
                 $self->{bits}{rh} = \%rh;
             } else {
-                # draft-04 §5.1 removed the null header recipe: a present "h"
+                # draft-04 §5.1 removed the null header Recipe: a present "h"
                 # MUST be a non-empty object. Reject anything else.
                 die "header recipe is null: not permitted under draft-04 \xA75.1\n";
             }
@@ -290,7 +290,7 @@ sub parse {
     return $self;
 }
 
-# Convert wire format recipe list to internal format
+# Convert wire format Recipe list to internal format
 # Wire: {"c": [from,to]} for copy, {"d": ["val1",...]} for data
 # Internal: [from,to] arrays for copy ranges, strings for literal content
 sub _decode_recipe_list {
@@ -359,7 +359,7 @@ sub _hash_data_b64 {
     return encode_base64($fn->($data), '');
 }
 
-# --- Body recipe computation ---
+# --- Body Recipe computation ---
 
 # Straight line-level diff using Algorithm::Diff.
 sub _body_recipe_linediff {
@@ -402,7 +402,7 @@ sub _flat_to_line {
     return $#$offsets - 1;
 }
 
-# Build recipe entries for a region, using line-level matching.
+# Build Recipe entries for a region, using line-level matching.
 sub _recipe_for_region {
     my ($cur_lines, $cur_start, $cur_end,
         $prev_lines, $prev_start, $prev_end) = @_;
@@ -440,7 +440,7 @@ sub _recipe_for_region {
     return @recipe;
 }
 
-# Estimate the wire cost of a recipe.
+# Estimate the wire cost of a Recipe.
 sub _recipe_cost {
     my ($recipe) = @_;
     return 999999 unless $recipe;
@@ -537,7 +537,7 @@ sub _body_recipe_flat {
     $prev_suffix_start = $prev_prefix_end
         if $prev_suffix_start < $prev_prefix_end;
 
-    # Build recipe: prefix region + middle region + suffix region.
+    # Build Recipe: prefix region + middle region + suffix region.
     my @recipe;
     push @recipe, _recipe_for_region(
         $l1, 0, $cur_prefix_end,
@@ -561,7 +561,7 @@ sub _random_boundary {
 
 # Add $old_body into the MIME epilogue of $msg (an Email::MIME object),
 # modifying it in place.  Returns the number of body lines that precede
-# the epilogue, so the caller can build a line-range rb recipe.
+# the epilogue, so the caller can build a line-range rb Recipe.
 #
 # If $msg is already multipart, the old body is appended after the final
 # MIME boundary (--BOUNDARY--).  If it is not multipart, the current
@@ -619,7 +619,7 @@ sub _add_epilogue {
     }
 
     # Return number of lines before the epilogue so the caller can build
-    # a line-range recipe.  The old body occupies the last N lines of the
+    # a line-range Recipe.  The old body occupies the last N lines of the
     # modified body, where N = lines in $old_body.
     my @all_lines = split /\r?\n/, $msg->body_raw;
     my @old_lines = split /\r?\n/, $old_body;
@@ -628,7 +628,7 @@ sub _add_epilogue {
 
 # --- Calculate helpers ---
 
-# Count literal string items in a recipe (non-array items = lines not in current body).
+# Count literal string items in a Recipe (non-array items = lines not in current body).
 sub _recipe_literal_lines {
     my ($recipe) = @_;
     return 0 unless $recipe;
@@ -636,7 +636,7 @@ sub _recipe_literal_lines {
 }
 
 # Return the cheaper of the two diff strategies for two raw body strings.
-# Returns undef if bodies are identical (no recipe needed).
+# Returns undef if bodies are identical (no Recipe needed).
 sub _best_body_diff {
     my ($cur_raw, $prev_raw) = @_;
     (my $s1 = $cur_raw)  =~ s/[\r\n]+$//;
@@ -653,7 +653,7 @@ sub _best_body_diff {
 }
 
 # Store $old_body in the MIME epilogue of $current (modifying it in place),
-# then return a rb line-range recipe pointing at those lines.
+# then return a rb line-range Recipe pointing at those lines.
 sub _epilogue_recipe {
     my ($current, $old_body) = @_;
     my @old_lines  = split /\r?\n/, $old_body;
@@ -717,7 +717,7 @@ sub calculate {
             }
         }
         else {
-            # Default: compute diff recipe (does not modify $current).
+            # Default: compute diff Recipe (does not modify $current).
             $rb_recipe = _best_body_diff($current->body_raw, $previous->body_raw);
         }
     }
@@ -884,7 +884,7 @@ sub undo {
 # instance against the current content, then undo it and check the next one
 # down, until m=1 or an instance that declares the previous state
 # unrecoverable. This is the undo check a recipient performs — running it
-# before signing catches an upstream that emitted a non-reversible recipe.
+# before signing catches an upstream that emitted a non-reversible Recipe.
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
     my ($class, $msg) = @_;
@@ -930,7 +930,7 @@ Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance head
     my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
     print "Message-Instance: " . $mi->as_string . "\n";
 
-    # Calculate MI with diff recipes between two versions
+    # Calculate MI with diff Recipes between two versions
     my $mi = Mail::DKIM2::MessageInstance->calculate($msg_current, $msg_prev);
 
     # Verify the highest MI header matches the message
@@ -944,7 +944,7 @@ Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance head
 =head1 DESCRIPTION
 
 This module implements Message-Instance header computation as defined in
-draft-ietf-dkim-dkim2-spec-04.  A Message-Instance header records cryptographic
+draft-ietf-dkim-dkim2-spec-05.  A Message-Instance header records cryptographic
 hashes of the message headers and body at a point in the delivery chain, along
 with optional diff recipes that allow undoing changes made at each hop.
 
@@ -975,7 +975,7 @@ version number.  The hashes recorded are of C<$msg_current>.
 With C<UseEpilogue =E<gt> 1>, the previous message body is always stored in the
 MIME epilogue rather than encoded as a diff in the MI header.
 
-With C<EpilogueThreshold =E<gt> N>, the best diff recipe is computed first.  If
+With C<EpilogueThreshold =E<gt> N>, the best diff Recipe is computed first.  If
 it contains more than C<N> literal (non-range) lines, the epilogue strategy is
 used instead; otherwise the diff is used.  C<N = 5> is a reasonable value
 that keeps MI headers small while avoiding the epilogue overhead for small
@@ -986,7 +986,7 @@ previous body is appended after the final MIME boundary (C<--BOUNDARY--\r\n>).
 If it is not multipart, the current content is wrapped in a C<multipart/mixed>
 single-part container and the previous body follows the new final boundary.
 
-The returned MI uses the standard C<rb> line-range recipe (the old body
+The returned MI uses the standard C<rb> line-range Recipe (the old body
 occupies specific numbered lines of the modified body), so C<undo()> works
 without any special-case logic.  The header diff (C<rh>) automatically
 captures the C<Content-Type> change when wrapping occurs.

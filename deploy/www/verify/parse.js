@@ -1,4 +1,4 @@
-// RFC5322 message parsing and DKIM2 tag-value parsing. Built from spec-04.
+// RFC5322 message parsing and DKIM2 tag-value parsing. Built from spec-05.
 
 function toCRLF(raw) {
   return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 signer - draft-ietf-dkim-dkim2-spec-04
+DKIM2 signer - draft-ietf-dkim-dkim2-spec-05
 
 Takes a raw email, selector, domain, and keyfile and produces a signed
 message with Message-Instance and DKIM2-Signature headers on stdout.
@@ -198,7 +198,7 @@ def compute_header_hash(headers: list[bytes], alg: str = "sha256") -> bytes:
         canon_headers.append((name, canon))
 
     # Step 7-8: Sort alphabetically by name; duplicate names are ordered
-    # bottom-up (last occurrence first), matching recipe numbering.
+    # bottom-up (last occurrence first), matching Recipe numbering.
     # Reverse before sorting so Python's stable sort preserves bottom-up order.
     canon_headers.reverse()
     canon_headers.sort(key=lambda x: x[0])
@@ -312,7 +312,7 @@ def canonicalize_sig_header(raw_hdr: str) -> bytes:
 def _extract_tag(header_value: str, tag: str) -> str | None:
     """Extract a tag value from a DKIM2-style tag-list header value.
 
-    Per spec-04 §8, tag identifiers are case-insensitive, may appear in any
+    Per spec-05 §8, tag identifiers are case-insensitive, may appear in any
     order, and FWS is permitted around the '=' and ';' separators.
     """
     tl = tag.lower()
@@ -327,7 +327,7 @@ def _extract_tag(header_value: str, tag: str) -> str | None:
 
 def _tag_names(header_value: str) -> list[str]:
     """Lowercased tag names in a tag-list value, in order (for duplicate
-    detection per spec-04 §8: 'there MUST be only one of each kind')."""
+    detection per spec-05 §8: 'there MUST be only one of each kind')."""
     names = []
     for part in header_value.split(";"):
         if "=" in part:
@@ -347,7 +347,7 @@ def _get_version_from_mi(hdr: str) -> int:
 def _mi_hashes(hdr: str) -> str | None:
     """Extract the h= hash set of a Message-Instance header, FWS removed.
 
-    Folding whitespace may appear inside the base64 hashes (spec-04 §2.12), so
+    Folding whitespace may appear inside the base64 hashes (spec-05 §2.12), so
     strip it before comparing two instances' hashes.
     """
     colon = hdr.find(":")
@@ -380,7 +380,7 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Per draft-ietf-dkim-dkim2-spec-04 Section 9.5:
+    # Per draft-ietf-dkim-dkim2-spec-05 Section 9.5:
     # 1. All MI headers in ascending v= order
     # 2. All prior DKIM2-Signature headers in ascending i= order
     # 3. The incomplete DKIM2-Signature being created
@@ -427,15 +427,15 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     """Build a complete DKIM2-Signature header.
 
     If next_domain is given, the signature carries an nd= tag for an imaginary
-    forwarding hop (draft-04 §9.3) and omits mf=/rt=. Otherwise it carries
-    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-04 §8.10).
+    forwarding hop (draft-05 §9.3) and omits mf=/rt=. Otherwise it carries
+    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-05 §8.10).
 
     Returns the full header string including field name.
     """
     if timestamp is None:
         timestamp = int(time.time())
 
-    # draft-04 §9.3: an nd= hop carries nd= instead of mf=/rt=.
+    # draft-05 §9.3: an nd= hop carries nd= instead of mf=/rt=.
     if next_domain:
         chain = f"nd={next_domain}"
     else:
@@ -537,10 +537,12 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     # Build Message-Instance header
     mi_hdr = build_message_instance(headers, body, version=mi_version, algs=algs)
 
-    # draft-04 §9.1/§9.2.5: a hop that leaves both hashes unchanged adds no new
+    # draft-05 §9.1/§9.2.5: a hop that leaves both hashes unchanged adds no new
     # Message-Instance at all — it signs against the existing top instance and
-    # reuses its m=.  Emitting an instance with identical hashes and no recipe
-    # is pure waste; verifiers must tolerate one, but nothing should produce it.
+    # reuses its m=.  Emitting an instance with identical hashes and no Recipe
+    # is not forbidden, but §9.1 still calls it "most likely to be pointless
+    # and a waste of time and energy"; this implementation avoids it by
+    # default, and verifiers must still tolerate one from elsewhere.
     if top_mi is not None and _mi_hashes(top_mi) == _mi_hashes(mi_hdr):
         mi_version = _get_version_from_mi(top_mi)
         mi_hdr = None
@@ -569,7 +571,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-04)")
+        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-05)")
     parser.add_argument("message", help="Path to raw email file (- for stdin)")
     parser.add_argument("-s", "--selector", required=True,
                         help="DKIM2 selector name")

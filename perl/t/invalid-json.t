@@ -50,7 +50,7 @@ unlike($@, qr/invalid JSON/,
 # --- corrupted r= payload through the REAL verifier entry point          --
 # --- (Mail::DKIM2::Verifier's PRINT/CLOSE streaming API -- what every    --
 # --- production caller, the CLI and the milter, actually uses), not just --
-# --- the recipe-parsing helper. Guards against the error being raised    --
+# --- the Recipe-parsing helper. Guards against the error being raised    --
 # --- deep in parse() but never reaching the caller (cf. the C            --
 # --- duplicate-h= lesson in commit 66bd3e6).                             --
 
@@ -84,7 +84,7 @@ $msg1->header_raw_prepend('DKIM2-Signature', $sig1);
 
 my $with1 = $msg1->as_string;
 
-# Hop 2: relay adds a List-Unsubscribe header; the recipe records how to
+# Hop 2: relay adds a List-Unsubscribe header; the Recipe records how to
 # undo that. This is exactly the case that puts a real r= tag on the wire.
 my $current = Email::MIME->new($with1);
 $current->header_raw_prepend('List-Unsubscribe', '<mailto:unsub@relay.example.com>');

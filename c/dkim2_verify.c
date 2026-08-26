@@ -151,7 +151,7 @@ static char *blank_sig_values(const char *raw_val) {
     size_t rlen = strlen(raw_val);
 
     /* Find the s= tag at a tag boundary (start, or after ';'/WSP), matching
-       the tag name case-insensitively per spec-04 §8. */
+       the tag name case-insensitively per spec-05 §8. */
     const char *s_tag = NULL;
     for (const char *p = raw_val; *p; p++) {
         if ((p[0] == 's' || p[0] == 'S') && p[1] == '=') {
@@ -286,7 +286,7 @@ static unsigned char *build_verify_input(
 }
 
 /* Verify all MI body+header hashes, walking from highest to lowest version
-   and applying recipes to reconstruct earlier message states.
+   and applying Recipes to reconstruct earlier message states.
    Returns 0 on success, sets errbuf on failure. */
 static int verify_mi_hashes(
     dkim2_mi_t **mi_arr, int n_mi,
@@ -428,10 +428,10 @@ static int verify_mi_hashes(
                 }
                 cJSON_Delete(probe);
 
-                /* Undo this MI's recipe to reconstruct the previous hop's
+                /* Undo this MI's Recipe to reconstruct the previous hop's
                    state -- only meaningful when there IS a previous hop. */
                 if (vi > 0) {
-                    /* Apply body recipe */
+                    /* Apply body Recipe */
                     if (cur_body) {
                         size_t new_len;
                         char *new_body = dkim2_apply_body_recipe(rj, cur_body, cur_body_len, &new_len);
@@ -440,7 +440,7 @@ static int verify_mi_hashes(
                         cur_body_len = new_body ? new_len : 0;
                     }
 
-                    /* Apply header recipe — result is always a new owned array */
+                    /* Apply header Recipe — result is always a new owned array */
                     int new_n = 0;
                     char **new_content = dkim2_apply_header_recipe(rj, content, n_content, &new_n);
                     if (new_content) {
@@ -504,7 +504,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = latest->i;
     snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
 
-    /* Local policy (stricter than spec-04): the topmost (highest i=)
+    /* Local policy (stricter than spec-05): the topmost (highest i=)
        DKIM2-Signature MUST NOT carry nd=. The only legitimate nd= producer
        emits the nd= hop together with a matching higher-i= signature, so
        nd= should never appear on the top signature. Non-top nd= adjacency
@@ -669,13 +669,13 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "FAIL: DKIM2-Signature i=%d signature verification failed", sig->i);
     }
 
-    /* §8.2: Inter-sig chain of custody — mf= domain of sig[N] must relaxed-match
+    /* §8.2: Inter-sig Chain of Custody — mf= domain of sig[N] must relaxed-match
        at least one rt= domain of sig[N-1] */
     for (int k = 1; k < n_sigs; k++) {
         dkim2_sig_t *cur  = sig_arr[k];
         dkim2_sig_t *prev = sig_arr[k - 1];
 
-        /* draft-04 §11.4: an nd= hop declares the next sig's signing domain;
+        /* draft-05 §11.4: an nd= hop declares the next sig's signing domain;
            nd= MUST exactly match that signature's d=. */
         if (prev->nd) {
             if (!cur->d || strcasecmp(prev->nd, cur->d) != 0)
@@ -706,7 +706,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "DKIM2-Signature i=%d MAIL FROM %s did not match", cur->i, cur->mf);
     }
 
-    /* §10.7: Verify all MI body+header hashes, undoing recipes for inner hops. */
+    /* §10.7: Verify all MI body+header hashes, undoing Recipes for inner hops. */
     {
         const int MAX_MI = 64;
         dkim2_mi_t *mi_sorted[MAX_MI]; int n_mi = 0;

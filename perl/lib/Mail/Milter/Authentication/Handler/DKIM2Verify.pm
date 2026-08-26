@@ -233,7 +233,7 @@ sub _add_mi_and_store {
         }
 
         # Store snapshot keyed by the MI value so the outbound signer can
-        # compute diff recipes if the message is modified during local processing
+        # compute diff Recipes if the message is modified during local processing
         if ( $config->{'snapshot_directory'} && $mi_value ) {
             my $store = Mail::DKIM2::MessageStore->new(
                 directory => $config->{'snapshot_directory'},
@@ -343,10 +343,10 @@ Mail::Milter::Authentication::Handler::DKIM2Verify - Handler class for DKIM2 sig
 
 =head1 DESCRIPTION
 
-Verifies DKIM2 signatures and chain of custody on inbound email, adding
+Verifies DKIM2 signatures and Chain of Custody on inbound email, adding
 Authentication-Results headers with the verification outcome.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-04, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-05, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

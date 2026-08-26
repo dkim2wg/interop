@@ -26,7 +26,7 @@ sub new {
     $self->set_tag('m', $args{Version})   if defined $args{Version};
     $self->set_tag('t', $args{Timestamp}) if defined $args{Timestamp};
     $self->set_tag('d', $args{Domain})    if defined $args{Domain};
-    # nd= (draft-04 §8.7) replaces mf=/rt= for an imaginary forwarding hop.
+    # nd= (draft-05 §8.7) replaces mf=/rt= for an imaginary forwarding hop.
     $self->set_tag('nd', $args{NextDomain}) if defined $args{NextDomain};
     $self->set_tag('n', $args{Nonce})     if defined $args{Nonce};
 
@@ -94,7 +94,7 @@ sub domain {
     return $self->get_tag('d');
 }
 
-# nd= the domain that signs the next DKIM2-Signature (draft-04 §8.7). Present
+# nd= the domain that signs the next DKIM2-Signature (draft-05 §8.7). Present
 # only for an imaginary forwarding hop, where it replaces mf=/rt=.
 sub next_domain {
     my $self = shift;
@@ -112,7 +112,7 @@ sub nonce {
     return $self->get_tag('n');
 }
 
-# spec-04 §2.12: folding whitespace may appear anywhere inside a tag value and
+# spec-05 §2.12: folding whitespace may appear anywhere inside a tag value and
 # "MUST be ignored when the value is used".  DKIM2 tag values are base64,
 # tokens, digits or domains and never carry significant internal whitespace, so
 # any WSP present came from a fold.  TagValueList::parse only trims the ends of
@@ -139,7 +139,7 @@ sub signatures_data {
     # Parse sel:alg:sig,sel2:alg2:sig2,...
     #
     # Strip FWS from each item *before* splitting on ':'.  A fold landing right
-    # after the comma would otherwise become part of the next item's selector,
+    # after the comma would otherwise become part of the next item's Selector,
     # sending the public-key lookup out for "\tsel2._domainkey.example.com"
     # (SERVFAIL).  Folds inside the base64 signature value and around the item's
     # colons are handled by the same strip.
@@ -330,7 +330,7 @@ sub fetch_public_key {
     unless ($reply) {
         # Distinguish a TRANSIENT DNS failure (timeout, SERVFAIL, network
         # unreachable) from a genuine no-record answer. Per
-        # draft-ietf-dkim-dkim2-spec-04 §10, DNS timeouts MUST be reported as
+        # draft-ietf-dkim-dkim2-spec-05 §10, DNS timeouts MUST be reported as
         # TEMPERROR (retryable) — not as a permanent "no verifiable signature
         # items". We signal the transient case by dying; the verifier's eval
         # maps that to temperror. NXDOMAIN / NOERROR-with-no-record is permanent
@@ -379,7 +379,7 @@ Mail::DKIM2::Signature - Parse and construct DKIM2-Signature headers
 
 =head1 DESCRIPTION
 
-Represents a DKIM2-Signature header as defined in draft-ietf-dkim-dkim2-spec-04.
+Represents a DKIM2-Signature header as defined in draft-ietf-dkim-dkim2-spec-05.
 Extends L<Mail::DKIM2::TagValueList> for tag-value parsing and serialization.
 
 B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet

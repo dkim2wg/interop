@@ -1,4 +1,4 @@
-// DKIM2 verification orchestrator per spec-04 §10/§11. Built from spec.
+// DKIM2 verification orchestrator per spec-05 §10/§11. Built from spec.
 import { parseMessage, collectLevels, parseTagList, parseHashSets } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
@@ -71,7 +71,7 @@ export function checkSignatureDuplicates(items, i) {
 //    content) -- the payload never even reached JSON parsing.
 //  - a JSON.parse failure (SyntaxError) on the successfully-decoded bytes
 //    is the more specific "contains invalid JSON" case.
-// Anything else is a generic, non-specific recipe-decode failure.
+// Anything else is a generic, non-specific Recipe-decode failure.
 function classifyRecipeDecodeError(e) {
   if (e instanceof SyntaxError) return 'invalid-json';
   if (e instanceof DOMException) return 'syntax-error';
@@ -84,7 +84,7 @@ function headerValues(fields, name) {
   return fields.filter((f) => f.name.toLowerCase() === n).map((f) => f.value.trim());
 }
 
-// A short human-readable summary of a decoded recipe (§5), e.g.
+// A short human-readable summary of a decoded Recipe (§5), e.g.
 // "headers: subject; body: 1 step" — mirrors the /validate/ r= tag display.
 function recipeSummary(rec) {
   if (rec == null) return 'null (previous state not recoverable)';
@@ -321,7 +321,7 @@ async function verifyOnce(raw, opts = {}) {
     if (m >= 2 && undoBroken === m) level.undo = recipeUndoLabel(instances[m]);
 
     // Recipe breakdown (§5/§7.2): decode r= and show what it changed — a
-    // readable summary in the r= tag, the decoded recipe JSON, and per-header
+    // readable summary in the r= tag, the decoded Recipe JSON, and per-header
     // current<-previous values (matching the /validate/ display).
     if ('r' in mi.map) {
       let rec;
@@ -380,7 +380,7 @@ async function verifyOnce(raw, opts = {}) {
       }
     }
 
-    // §11.4 chain-of-custody (inter-signature + d=/mf=), plus the top-hop
+    // §11.4 Chain of Custody (inter-signature + d=/mf=), plus the top-hop
     // envelope exact-match against the actual delivery MAIL FROM / RCPT TO.
     try {
       custodyCheck(level, signatures, i, maxI, opts);
@@ -391,7 +391,7 @@ async function verifyOnce(raw, opts = {}) {
       level.custodyState = 'permerror';
     }
     if (!level.custody.ok) {
-      // A chain-of-custody / envelope failure (§11.4) is a permanent error for
+      // A Chain of Custody / envelope failure (§11.4) is a permanent error for
       // this signature; short-circuit before the crypto check so a subsequent
       // key-not-found does not mask the permerror as a plain 'fail'.
       level.result = level.custodyState || 'permerror';
@@ -433,7 +433,7 @@ async function verifyOnce(raw, opts = {}) {
     }
 
     const sigSets = parseSigSets(sig.map.s);
-    // §8.9 syntax: the s= value must contain sig-sets, each with a selector and
+    // §8.9 syntax: the s= value must contain sig-sets, each with a Selector and
     // an algorithm name. An empty/malformed s= is a syntax error (permerror),
     // distinct from a well-formed sig-set naming an unsupported algorithm
     // (algorithm_only_future), which is a plain 'fail' below.

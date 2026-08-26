@@ -56,7 +56,7 @@ func TestThreeSameAlgorithmIsTooMany(t *testing.T) {
 }
 
 func TestDuplicateSelectorAndTooManyAreIndependent(t *testing.T) {
-	// two sigs sharing an algorithm AND a selector is a duplicate-selector
+	// two sigs sharing an algorithm AND a Selector is a duplicate-selector
 	// error but NOT too-many-signatures (the count is 2, not 3+)
 	errs := checkSignatureDuplicates([]SigItem{
 		{Selector: "sel1", Algorithm: "rsa-sha256"},

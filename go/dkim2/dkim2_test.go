@@ -656,10 +656,10 @@ func TestSignAllCases(t *testing.T) {
 	}
 }
 
-// TestUndoNoRecipe: a recipe-less Message-Instance means "no change asserted",
+// TestUndoNoRecipe: a Recipe-less Message-Instance means "no change asserted",
 // so undoing across one must leave the content untouched.
 //
-// Our signer no longer *produces* a recipe-less instance (an unmodified hop
+// Our signer no longer *produces* a Recipe-less instance (an unmodified hop
 // reuses the existing m= instead — see Sign), but we must still accept one from
 // an upstream that does, so the fixture is built by hand rather than by
 // double-signing.
@@ -690,7 +690,7 @@ func TestUndoNoRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Graft on a second hop that added a recipe-less m=2 carrying the same
+	// Graft on a second hop that added a Recipe-less m=2 carrying the same
 	// hashes -- what an upstream that does emit one on a transparent re-sign
 	// puts on the wire.
 	mi1 := firstHeaderLine(t, signed1.String(), "Message-Instance:")
@@ -702,7 +702,7 @@ func TestUndoNoRecipe(t *testing.T) {
 	}
 	signed2 := sig2 + mi2 + signed1.String()
 
-	// Undo back to v=1: the recipe-less m=2 asserts no change, so this must
+	// Undo back to v=1: the Recipe-less m=2 asserts no change, so this must
 	// reproduce the single-signed message byte for byte.
 	var undone bytes.Buffer
 	if err := Undo(strings.NewReader(signed2), &undone, -1); err != nil {
@@ -738,7 +738,7 @@ func firstHeaderLine(t *testing.T, msg, prefix string) string {
 }
 
 // TestUndoHeaderRecipesRoundTrip verifies that undoHeaderRecipes correctly
-// reconstructs the "before" state using a recipe computed by ComputeDiff.
+// reconstructs the "before" state using a Recipe computed by ComputeDiff.
 func TestUndoHeaderRecipesRoundTrip(t *testing.T) {
 	before := []Header{
 		{Name: "Subject", Value: "Hello World", Raw: "Subject: Hello World\r\n"},
@@ -1021,7 +1021,7 @@ func TestVerifyMultipleSigsAllChecked(t *testing.T) {
 // the result is a failure (not a silent pass).
 func TestVerifyMultipleSigsNoVerifiable(t *testing.T) {
 	msg := buildSignedMsg(t)
-	// Replace the selector with one that doesn't exist in dns.json
+	// Replace the Selector with one that doesn't exist in dns.json
 	tampered := strings.ReplaceAll(string(msg), "s=ed25519:ed25519-sha256:", "s=nonexistent:ed25519-sha256:")
 	verifyExpectFail(t, tampered, "no verifiable sig items (unknown selector)")
 }

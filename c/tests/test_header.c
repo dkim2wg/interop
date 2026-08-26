@@ -17,7 +17,7 @@ int main(void) {
     assert(mi->r_raw == NULL);
     dkim2_mi_free(mi);
 
-    /* MI with recipe */
+    /* MI with Recipe */
     mi = dkim2_mi_parse("m=2; h=sha256:aaa:bbb; r=e30=");
     assert(mi != NULL);
     assert(mi->m == 2);
@@ -66,9 +66,9 @@ int main(void) {
     assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
     dkim2_sig_free(sig);
 
-    /* Folding whitespace inside tag values (spec-04 §2.12): FWS may appear
+    /* Folding whitespace inside tag values (spec-05 §2.12): FWS may appear
        inside a base64 string and around the colons of an s= item, and MUST be
-       ignored when the value is used.  A fold between the selector colon and
+       ignored when the value is used.  A fold between the Selector colon and
        the algorithm token used to leave CRLF+TAB glued to the algorithm name. */
     sig = dkim2_sig_parse(
         "i=1; m=1; t=1745798400; "

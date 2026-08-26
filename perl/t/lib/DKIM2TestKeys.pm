@@ -13,7 +13,7 @@ my $DNS_JSON = path(__FILE__)->absolute->parent->parent->parent->parent->child('
 
 my %_key_cache;
 
-# Returns the private key object for a given domain and selector.
+# Returns the private key object for a given domain and Selector.
 sub private_key {
     my ($domain, $selector) = @_;
     my $cache_key = "$selector/$domain";
@@ -26,7 +26,7 @@ sub private_key {
     return $_key_cache{$cache_key};
 }
 
-# Returns PEM-encoded private key string for the given selector.
+# Returns PEM-encoded private key string for the given Selector.
 sub private_key_pem {
     my ($domain, $selector) = @_;
     my $pem = $KEYS_DIR->child("${selector}._domainkey.${domain}.pem");

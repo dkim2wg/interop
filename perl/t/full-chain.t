@@ -18,7 +18,7 @@ use Mail::DKIM2::Verifier;
 use DKIM2TestKeys;
 
 # ============================================================
-# The progression: 5 hops, each with a different domain/selector
+# The progression: 5 hops, each with a different domain/Selector
 #
 #   brong-orig.eml  -- originator at test1.dkim2.com (sel1)
 #   brong-mm.eml    -- mailing list at test2.dkim2.com (sel2)
@@ -384,7 +384,7 @@ sub make_v1_msg {
 }
 
 # For each hop pair where the body actually changes, verify that:
-#   1. calculate(..., UseEpilogue => 1) sets an rb recipe
+#   1. calculate(..., UseEpilogue => 1) sets an rb Recipe
 #   2. MI verifies on the modified (epilogue-carrying) message
 #   3. undo() restores the exact previous body
 for my $i (1..$#hops) {

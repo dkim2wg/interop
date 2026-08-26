@@ -100,7 +100,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	// Local policy (stricter than spec-04): the top (highest i=) signature
+	// Local policy (stricter than spec-05): the top (highest i=) signature
 	// MUST NOT carry nd=. The only legitimate nd= producer emits the nd=
 	// signature together with the matching higher-i= signature at the same
 	// time, so nd= should never appear alone on the top signature. This is
@@ -207,7 +207,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	// §8.2/§11.4 MUST: chain-of-custody between consecutive signatures.
+	// §8.2/§11.4 MUST: Chain of Custody between consecutive signatures.
 	if len(sigHeaders) > 1 {
 		parsedSigs := make([]*DKIM2Signature, len(sigHeaders))
 		for i, raw := range sigHeaders {
@@ -504,7 +504,7 @@ func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
 			continue
 		}
 		if prev.NextDomain != "" {
-			// draft-04 §11.4: nd= MUST exactly match the next sig's d=.
+			// draft-05 §11.4: nd= MUST exactly match the next sig's d=.
 			if !strings.EqualFold(prev.NextDomain, cur.Domain) {
 				return fmt.Errorf("DKIM2-Signature i=%d MAIL nd= does not match",
 					prev.Sequence)

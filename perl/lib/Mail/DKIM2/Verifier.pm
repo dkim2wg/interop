@@ -128,7 +128,7 @@ sub finish_body {
     my $dk2_entry = $dk2_map{$max_i};
     my $signature = $dk2_entry->{sig};
 
-    # Local policy (stricter than spec-04 §"Check the Chain-of-Custody"): the
+    # Local policy (stricter than spec-05 §"Check the Chain of Custody"): the
     # highest-numbered DKIM2-Signature MUST NOT carry nd=. The only legitimate
     # nd= producer is reflector-brand-nd, which always emits the matching
     # higher-i= signature too, so nd= never appears on top.
@@ -181,7 +181,7 @@ sub finish_body {
         return unless $result;
     }
 
-    # Check chain of custody between consecutive signatures
+    # Check Chain of Custody between consecutive signatures
     if ($max_i > 1) {
         my $chain_result = $self->_verify_chain();
         return unless $chain_result;
@@ -344,7 +344,7 @@ sub _verify_signature {
         signing_header => $sig_hdr_for_input,
     );
 
-    # draft-04: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
+    # draft-05: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
     # via get_tag() (not the sequence/version/timestamp/domain accessors)
     # because those accessors just proxy get_tag() and would themselves
     # return undef for an absent tag anyway -- get_tag() is used directly
@@ -373,7 +373,7 @@ sub _verify_signature {
         return 0;
     }
 
-    # draft-04 §8: a signature carries either nd= or both mf= and rt=, never
+    # draft-05 §8: a signature carries either nd= or both mf= and rt=, never
     # both forms. nd= together with mf=/rt= is a PERMERROR.
     my $nd_tag = $signature->get_tag('nd');
     my $mf_tag = $signature->get_tag('mf');
@@ -472,7 +472,7 @@ sub _verify_signature {
             1;
         };
         unless ($fetched) {
-            # A transient DNS failure is a TEMPERROR per spec-04 §10 —
+            # A transient DNS failure is a TEMPERROR per spec-05 §10 —
             # retryable, not a permanent "no verifiable signature items", and
             # emphatically not a 'fail', which reads as a forged signature.
             my $sel = $signature->selector($idx) // '?';
@@ -549,7 +549,7 @@ sub _verify_chain {
         my $cur_sig = $dk2_map{$cur_i}{sig};
         my $prev_sig = $dk2_map{$prev_i}{sig};
 
-        # draft-04 §11.4: an nd= hop declares the domain that signs the next
+        # draft-05 §11.4: an nd= hop declares the domain that signs the next
         # signature; nd= MUST exactly match that signature's d=.
         my $prev_nd = $prev_sig->next_domain;
         if (defined $prev_nd && length $prev_nd) {
@@ -565,7 +565,7 @@ sub _verify_chain {
         my $cur_mf = $cur_sig->mail_from;
         my $prev_rt = $prev_sig->rcpt_to;
 
-        # Chain of custody: mf of N must relaxed-domain-match an rt of N-1
+        # Chain of Custody: mf of N must relaxed-domain-match an rt of N-1
         unless ($cur_mf) {
             $self->{result} = 'fail';
             $self->{details} = "DKIM2-Signature i=$cur_i MAIL FROM <> did not match";
@@ -657,12 +657,12 @@ Mail::DKIM2::Verifier - Verify DKIM2-Signature chains on email messages
 
 Streaming DKIM2 chain verifier.  Verifies B<all> DKIM2-Signature headers in
 the chain (not just the outermost), checks chain completeness, validates
-cryptographic signatures, and performs chain-of-custody domain matching
+cryptographic signatures, and performs Chain of Custody domain matching
 between consecutive hops.
 
 Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-04, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-05, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 
@@ -730,7 +730,7 @@ was created.
 
 =item 3.
 
-B<Chain of custody>: For consecutive signatures, the MAIL FROM domain of
+B<Chain of Custody>: For consecutive signatures, the MAIL FROM domain of
 signature C<i=K> must relaxed-domain-match a RCPT TO domain of signature
 C<i=K-1>.
 

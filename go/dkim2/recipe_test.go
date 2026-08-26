@@ -29,14 +29,14 @@ func TestRecipeKeysLowercased(t *testing.T) {
 }
 
 func TestNullHeaderRecipeRejected(t *testing.T) {
-	// draft-04 §5.1: "h": null is no longer permitted.
+	// draft-05 §5.1: "h": null is no longer permitted.
 	if _, err := parseRecipe([]byte(`{"h":null,"b":[{"c":[1,1]}]}`)); err == nil {
-		t.Fatal("null header recipe must be rejected (draft-04 §5.1)")
+		t.Fatal("null header recipe must be rejected (draft-05 §5.1)")
 	}
 }
 
 func TestNullBodyRecipeAllowed(t *testing.T) {
-	// A null body recipe is still permitted.
+	// A null body Recipe is still permitted.
 	if _, err := parseRecipe([]byte(`{"b":null}`)); err != nil {
 		t.Fatalf("null body recipe must still parse: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestMalformedRecipeJSONIsSpecificPermerror(t *testing.T) {
 }
 
 func TestNullHeaderRecipeStaysDistinctFromInvalidJSON(t *testing.T) {
-	// The §5.1 null-header-recipe rejection is valid JSON with an invalid
+	// The §5.1 null-header-Recipe rejection is valid JSON with an invalid
 	// value; it must keep its own message, not be relabeled as the §11.2
 	// invalid-JSON PERMERROR.
 	_, err := parseMI(`Message-Instance: m=3; h=sha256:AAA:BBB; r=eyJoIjpudWxsfQ==;`)
