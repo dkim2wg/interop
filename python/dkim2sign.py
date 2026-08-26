@@ -100,12 +100,16 @@ def parse_message(source: "Source") -> tuple[list[bytes], bytes]:
 # Canonicalization for header hash (Section 5.2)
 # ---------------------------------------------------------------------------
 
-# Headers to exclude from the header hash
-_EXCLUDED_PREFIXES = (b"x-", b"arc-")
-_EXCLUDED_NAMES = {b"received", b"return-path", b"delivered-to",
-                   b"message-instance",
-                   b"dkim2-signature", b"dkim-signature",
-                   b"authentication-results"}
+# Headers to exclude from the header hash (spec-05 §4, §4.1)
+_EXCLUDED_PREFIXES = (b"x-", b"received-")
+_EXCLUDED_NAMES = {
+    b"apparently-to", b"arc-authentication-results",
+    b"arc-message-signature", b"arc-seal", b"authentication-results",
+    b"auto-submitted", b"delivered-to", b"dkim-signature",
+    b"dkim2-signature", b"dl-expansion-history", b"message-instance",
+    b"original-recipient", b"received", b"return-path",
+    b"sio-label-history", b"vbr-info", b"x400-received", b"x400-trace",
+}
 
 
 def _header_name(hdr: bytes) -> bytes:
