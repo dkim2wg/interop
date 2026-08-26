@@ -14,6 +14,8 @@ use File::Spec;
 use lib 'lib', 't/lib';
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
+use Mail::DKIM2::Signer;
+use Mail::DKIM2::Common qw(fold_header);
 use DKIM2TestKeys;
 
 # spec-05 §3: both hashing algorithms must be implemented
@@ -55,6 +57,37 @@ is($folded_mid->[0][2], 'BBB', 'FWS stripped from the middle of a body hash');
     my $died = !eval { ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg); 1 };
     ok(!$died, 'malformed base64 in h= does not crash verify()') or diag $@;
     ok(!$ok, 'malformed base64 in h= fails verification cleanly');
+}
+
+# CRITICAL fix-round-1 regression: MessageInstance::verify() (the §10.7
+# top-MI content check underlying _verify_mi_chain, chain_verifies(), and
+# dkim2sign.pl's unmodified-hop check) must be hash-set aware, not just
+# read the sha256 h1/b1 alias. It must distinguish:
+#   - an MI naming only sha512 (an algorithm we implement)   -> verifies
+#     normally using sha512, NOT rejected as "no hash".
+#   - an MI naming only an algorithm we do NOT implement      -> fails
+#     closed with "no supported hash algorithm", a different and
+#     deliberate outcome from the sha512-only case above.
+{
+    my $body = "Hello verify() test.\r\n";
+    my $headers = join('', "Subject: verify() hash-set test\r\n");
+
+    my $msg_for_hash = Email::MIME->new("$headers\r\n$body");
+    my $h512 = Mail::DKIM2::MessageInstance::h_digest($msg_for_hash, 'sha512');
+    my $b512 = Mail::DKIM2::MessageInstance::b_digest($msg_for_hash, 'sha512');
+
+    my $sha512_only_msg = Email::MIME->new(
+        "Message-Instance: m=1; h=sha512:$h512:$b512;\r\n$headers\r\n$body");
+    my ($ok1, $err1) = Mail::DKIM2::MessageInstance->verify($sha512_only_msg);
+    ok($ok1, 'MI naming only sha512 (an implemented algorithm) verifies normally')
+        or diag($err1 // 'no error message');
+
+    my $unimplemented_only_msg = Email::MIME->new(
+        "Message-Instance: m=1; h=unknownalg:AAAA:BBBB;\r\n$headers\r\n$body");
+    my ($ok2, $err2) = Mail::DKIM2::MessageInstance->verify($unimplemented_only_msg);
+    ok(!$ok2, 'MI naming only an unimplemented algorithm fails');
+    like($err2, qr/no supported hash algorithm/,
+        'MI naming only an unimplemented algorithm fails CLOSED, distinct from the sha512-only case');
 }
 
 # §3.4/§7.3 (Verifier.pm donotmodify enforcement): the guard used there --
@@ -182,6 +215,138 @@ sub _unfolded_mi {
         '-s' => 'sel1', '-d' => 'test1.dkim2.com', '-k' => $keyfile,
         '--hash' => 'md5');
     isnt($rc, 0, 'invalid --hash value is an error');
+}
+
+# CRITICAL fix-round-1 regression, end to end: --hash sha512 (the signer
+# added in this same task) must produce a message that actually verifies,
+# and must not crash when re-signed unmodified at a second hop.
+my $keyfile2 = '../keys/sel1._domainkey.test2.dkim2.com.pem';
+unless (-e $keyfile2) {
+    ok(1, 'shared ../keys/...test2... not available -- sha512/donotmodify e2e checks skipped');
+    done_testing();
+    exit 0;
+}
+
+my $hop1_512;
+{
+    my ($signed, $rc) = sign($src,
+        '-s' => 'sel1', '-d' => 'test1.dkim2.com', '-k' => $keyfile,
+        '--mailfrom' => '<sender@test1.dkim2.com>',
+        '--rcptto'   => '<rcpt@test2.dkim2.com>',
+        '--timestamp' => 1740000000,
+        '--hash'     => 'sha512');
+    is($rc, 0, '--hash sha512 signer exits 0');
+
+    my $mi = _unfolded_mi($signed);
+    like($mi, qr/^m=1;h=sha512:[A-Za-z0-9+\/]{86}==:[A-Za-z0-9+\/]{86}==;$/,
+        '--hash sha512 emits a single sha512 hash-set (no sha256 alias leaks onto the wire)');
+
+    my $v = Mail::DKIM2::Verifier->new;
+    $v->skip_timestamp_check(1);
+    $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+    $v->PRINT($signed);
+    $v->CLOSE;
+    is($v->result, 'pass', 'a sha512-only signed message verifies (was: fail, "has no hash")')
+        or diag $v->result_detail;
+
+    $hop1_512 = $signed;
+}
+
+{
+    # Re-sign the sha512-only message, unmodified, at a second hop. Before
+    # the fix this crashed: verify() returned false (wrongly, "no hash"), so
+    # dkim2sign.pl treated the hop as "modified" and called calculate() on a
+    # message that already has Message-Instance headers, which dies.
+    my $dir2 = tempdir(CLEANUP => 1);
+    my $hop1_file = path($dir2)->child('hop1.eml');
+    $hop1_file->spew_raw($hop1_512);
+
+    my ($resigned, $rc) = sign($hop1_file,
+        '-s' => 'sel1', '-d' => 'test2.dkim2.com', '-k' => $keyfile2,
+        '--mailfrom' => '<sender@test2.dkim2.com>',
+        '--rcptto'   => '<final@test3.dkim2.com>',
+        '--timestamp' => 1740000100,
+        '--hash'     => 'sha512');
+    is($rc, 0, 're-signing a sha512-only message exits 0 (no crash)')
+        or diag $resigned;
+    is(scalar(() = $resigned =~ /^Message-Instance:/mg), 1,
+        'an unmodified sha512-only hop still adds no new Message-Instance');
+    is(scalar(() = $resigned =~ /^DKIM2-Signature:/mg), 2,
+        'but does add a second DKIM2-Signature');
+
+    my $v = Mail::DKIM2::Verifier->new;
+    $v->skip_timestamp_check(1);
+    $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+    $v->PRINT($resigned);
+    $v->CLOSE;
+    is($v->result, 'pass', 'the two-hop sha512-only chain verifies')
+        or diag $v->result_detail;
+}
+
+# Minor gap the reviewer also flagged: the REAL donotmodify path (through
+# Mail::DKIM2::Verifier, not a white-box internal call), with both
+# algorithms present and only ONE of them mismatching. This is exactly the
+# attack donotmodify exists to catch: a hop copies the old sha256 hash-set
+# forward unchanged (so an sha256-only verifier sees "no change") while the
+# body genuinely changed, so the true sha512 hash-set differs. The check
+# must not stop at the first (matching) algorithm.
+{
+    my ($hop1, $rc1) = sign($src,
+        '-s' => 'sel1', '-d' => 'test1.dkim2.com', '-k' => $keyfile,
+        '--mailfrom' => '<sender@test1.dkim2.com>',
+        '--rcptto'   => '<rcpt@test2.dkim2.com>',
+        '--timestamp' => 1740000000,
+        '--hash'     => 'both',
+        '--flag'     => 'donotmodify');
+    is($rc1, 0, 'donotmodify hop1 (both hashes) signs ok');
+
+    my ($mi1_raw) = Email::MIME->new($hop1)->header_raw('Message-Instance');
+    my $mi1 = Mail::DKIM2::MessageInstance->parse($mi1_raw);
+    my $sha256_m1 = $mi1->get_tag('hashes')->{sha256};
+
+    # Genuinely modify the body, then compute the true hashes of the new
+    # content for both algorithms.
+    my $msg2 = Email::MIME->new($hop1);
+    $msg2->body_set("This body was genuinely changed at hop 2.\r\n");
+    my $real_h256 = Mail::DKIM2::MessageInstance::h_digest($msg2, 'sha256');
+    my $real_b256 = Mail::DKIM2::MessageInstance::b_digest($msg2, 'sha256');
+    my $real_h512 = Mail::DKIM2::MessageInstance::h_digest($msg2, 'sha512');
+    my $real_b512 = Mail::DKIM2::MessageInstance::b_digest($msg2, 'sha512');
+
+    isnt("$sha256_m1->[0]:$sha256_m1->[1]", "$real_h256:$real_b256",
+        'sanity: the real sha256 pair genuinely differs from m=1 (body really changed)');
+
+    # Tamper: the sha256 hash-set is copied forward unchanged from m=1 (lies
+    # about sha256), but the sha512 hash-set is the true, differing value.
+    my $tampered_h = "sha256:$sha256_m1->[0]:$sha256_m1->[1],sha512:$real_h512:$real_b512";
+    (my $mi2_line = fold_header("Message-Instance: m=2; h=$tampered_h;"))
+        =~ s/^Message-Instance:\s*//;
+    $msg2->header_raw_prepend('Message-Instance', $mi2_line);
+
+    my $signer = Mail::DKIM2::Signer->new(
+        Selector  => 'sel1',
+        Domain    => 'test2.dkim2.com',
+        KeyFile   => $keyfile2,
+        MailFrom  => '<sender@test2.dkim2.com>',
+        RcptTo    => ['<final@test3.dkim2.com>'],
+        Timestamp => 1740000100,
+    );
+    $signer->PRINT($msg2->as_string);
+    $signer->CLOSE;
+    is($signer->result // '', 'signed', 'hop2 signs the tampered-but-real content (genuine crypto, not forged)');
+    (my $sig2 = $signer->as_string) =~ s/^DKIM2-Signature:\s*//;
+    $msg2->header_raw_prepend('DKIM2-Signature', $sig2);
+
+    my $v = Mail::DKIM2::Verifier->new;
+    $v->skip_timestamp_check(1);
+    $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+    $v->PRINT($msg2->as_string);
+    $v->CLOSE;
+    is($v->result, 'fail',
+        'donotmodify: sha256 tampered to match m=1 but sha512 genuinely differs -> still fails')
+        or diag $v->result_detail;
+    like($v->result_detail, qr/donotmodify/i,
+        'failure is attributed to the donotmodify enforcement, not something else');
 }
 
 done_testing();

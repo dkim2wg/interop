@@ -765,19 +765,30 @@ sub verify {
     return 0 unless $num;
 
     my $self = $class->parse($map{$num});
-    my $h1 = $self->get_tag('h1');
-    my $b1 = $self->get_tag('b1');
-    my $hd = h_digest($msg);
-    my $bd = b_digest($msg);
 
-    unless (defined $h1 && defined $b1) {
-        return wantarray ? (0, "Message-Instance m=$num has no hash") : 0;
+    # spec-05 §3.4: verify every hash-set whose algorithm we implement; ALL
+    # of them must match. If none names an implemented algorithm, fail
+    # closed rather than treating it as "no hash" -- an MI signed with only
+    # sha512 (say) is perfectly valid and must verify via its sha512 set,
+    # not be rejected just because h1/b1 (the sha256 alias) are undef.
+    my $hashes = $self->get_tag('hashes') || {};
+    my $impl = hash_algs();
+    my @usable = sort grep { $impl->{$_} } keys %$hashes;
+
+    unless (@usable) {
+        return wantarray ? (0, "Message-Instance m=$num no supported hash algorithm") : 0;
     }
-    if ($h1 ne $hd) {
-        return wantarray ? (0, "header hash mismatch ($h1 != $hd)") : 0;
-    }
-    if ($b1 ne $bd) {
-        return wantarray ? (0, "body hash mismatch ($b1 != $bd)") : 0;
+
+    for my $alg (@usable) {
+        my ($h1, $b1) = @{ $hashes->{$alg} };
+        my $hd = h_digest($msg, $alg);
+        my $bd = b_digest($msg, $alg);
+        if ($h1 ne $hd) {
+            return wantarray ? (0, "$alg header hash mismatch ($h1 != $hd)") : 0;
+        }
+        if ($b1 ne $bd) {
+            return wantarray ? (0, "$alg body hash mismatch ($b1 != $bd)") : 0;
+        }
     }
 
     return $num;

@@ -229,11 +229,27 @@ sub _mi_level {
     unless ($mi) { $lvl{detail} = 'unparseable Message-Instance'; return \%lvl; }
 
     $lvl{tags} = _mi_tags($mi);
-    my $h1 = $mi->get_tag('h1'); my $b1 = $mi->get_tag('b1');
-    my $hd = Mail::DKIM2::MessageInstance::h_digest($msg);
-    my $bd = Mail::DKIM2::MessageInstance::b_digest($msg);
-    $lvl{header_hash} = (defined $h1 && $h1 eq $hd) ? 'match' : 'mismatch';
-    $lvl{body_hash}   = (defined $b1 && $b1 eq $bd) ? 'match' : 'mismatch';
+
+    # spec-05 §3.4/§7.3: mirror MessageInstance::verify()'s semantics here --
+    # every implemented hash-set must match; an MI naming no implemented
+    # algorithm displays as a mismatch (fail-closed), not silently as a
+    # sha256-only "no hash".
+    my $hashes = $mi->get_tag('hashes') || {};
+    my $impl   = Mail::DKIM2::MessageInstance::hash_algs();
+    my @usable = sort grep { $impl->{$_} } keys %$hashes;
+    my ($h_match, $b_match) = (0, 0);
+    if (@usable) {
+        $h_match = $b_match = 1;
+        for my $alg (@usable) {
+            my ($h1, $b1) = @{ $hashes->{$alg} };
+            my $hd = Mail::DKIM2::MessageInstance::h_digest($msg, $alg);
+            my $bd = Mail::DKIM2::MessageInstance::b_digest($msg, $alg);
+            $h_match = 0 unless defined $h1 && $h1 eq $hd;
+            $b_match = 0 unless defined $b1 && $b1 eq $bd;
+        }
+    }
+    $lvl{header_hash} = $h_match ? 'match' : 'mismatch';
+    $lvl{body_hash}   = $b_match ? 'match' : 'mismatch';
     my $rh = $mi->get_tag('rh');
     my $rb = $mi->get_tag('rb');
     $lvl{recipe} = $mi->unrecoverable ? 'null' : ($rb || $rh) ? 'diff' : 'none';
