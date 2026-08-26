@@ -10,6 +10,7 @@ Exits 0 if all signatures verify, non-zero otherwise.
 
 import argparse
 import base64
+import binascii
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -304,18 +305,35 @@ def _get_header_value(hdr: str) -> str:
     return hdr[colon + 1:].strip() if colon != -1 else hdr
 
 
+def _b64decode_strict(val: str) -> bytes | None:
+    """Decode a base64 value, returning None (never raising) if malformed.
+
+    Uses validate=True so stray non-alphabet characters are rejected instead
+    of silently discarded (the default base64.b64decode behaviour, which
+    would otherwise turn a corrupt hash value into a wrong-but-decodable one).
+    """
+    try:
+        return base64.b64decode(val, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
 def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
     """Parse a spec-05 §7.3 h= value into (alg, header_hash, body_hash) triples.
 
     Hash names are lowercased: RFC 5234 makes ABNF quoted strings
     case-insensitive, so "SHA256" is a syntactically valid hash-name.
+
+    Per spec-04 §2.12, folding whitespace may appear inside a base64 string
+    (or around the colons) and MUST be ignored when the value is used, so
+    every field is run through _strip_fws rather than a bare .strip().
     """
     sets = []
     for item in h_tag.split(","):
-        parts = item.strip().split(":")
+        parts = _strip_fws(item).split(":")
         if len(parts) != 3:
             continue
-        sets.append((parts[0].strip().lower(), parts[1].strip(), parts[2].strip()))
+        sets.append((parts[0].lower(), parts[1], parts[2]))
     return sets
 
 
@@ -349,22 +367,41 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
     if not usable:
         return [f"Message-Instance m={m_val} no supported hash algorithm"]
 
-    # All implemented hash-sets must pass (mirrors §11.6 for signatures).
+    # All implemented hash-sets must pass (mirrors §11.6 for signatures). A
+    # malformed base64 value in one hash-set is itself a PERMERROR (§11.2:
+    # verifiers MUST meticulously validate format and values); it does not
+    # abort the whole MI check, mirroring the non-short-circuit "all usable
+    # hash-sets are checked" behaviour of a hash mismatch below.
     for alg, h_val, b_val in usable:
-        expected = compute_header_hash(headers, alg)
-        if expected != base64.b64decode(h_val):
+        h_actual = _b64decode_strict(h_val)
+        if h_actual is None:
             errors.append(
-                f"Message-Instance: {alg} header hash mismatch\n"
-                f"  expected: {b64(expected)}\n"
-                f"  got:      {h_val}"
+                f"PERMERROR Message-Instance m={m_val} {alg} header hash is "
+                f"not valid base64 (got {h_val!r})"
             )
-        expected = compute_body_hash(body, alg)
-        if expected != base64.b64decode(b_val):
+        else:
+            expected = compute_header_hash(headers, alg)
+            if expected != h_actual:
+                errors.append(
+                    f"Message-Instance: {alg} header hash mismatch\n"
+                    f"  expected: {b64(expected)}\n"
+                    f"  got:      {h_val}"
+                )
+
+        b_actual = _b64decode_strict(b_val)
+        if b_actual is None:
             errors.append(
-                f"Message-Instance: {alg} body hash mismatch\n"
-                f"  expected: {b64(expected)}\n"
-                f"  got:      {b_val}"
+                f"PERMERROR Message-Instance m={m_val} {alg} body hash is "
+                f"not valid base64 (got {b_val!r})"
             )
+        else:
+            expected = compute_body_hash(body, alg)
+            if expected != b_actual:
+                errors.append(
+                    f"Message-Instance: {alg} body hash mismatch\n"
+                    f"  expected: {b64(expected)}\n"
+                    f"  got:      {b_val}"
+                )
 
     return errors
 
