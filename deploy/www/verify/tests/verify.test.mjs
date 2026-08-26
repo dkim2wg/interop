@@ -267,13 +267,14 @@ test('an instance with no r= recipe has no recipe_json', async () => {
 });
 
 // --- Received-SPF added by the receiving MTA ----------------------------
-// spec-05 §4 added a "Received-*" prefix rule, so Received-SPF is now excluded
-// from the Message-Instance header hash directly (via isUnsignedHeader) and no
-// longer pollutes verification at all. The strip-and-retry below (mirrors
-// Mail::DKIM2::Validate's) therefore never fires for it any more; it remains
-// as a safety net for any trace header a future spec adds without a matching
-// exclusion rule.
-test('a Received-SPF prepended by the receiver verifies cleanly, no retry needed (spec-05 §4)', async () => {
+// spec-05 §4 added a "Received-*" prefix rule, so Received-SPF is excluded
+// from the Message-Instance header hash directly (via isUnsignedHeader) and
+// never pollutes verification. verifyMessage() no longer has any
+// strip-and-retry mechanism for this (removed: it was hardcoded to the
+// literal name Received-SPF, and stripping a header excluded from the hash
+// cannot change the hash, so it was provably a no-op once §4 landed; same
+// removal in Mail::DKIM2::Validate::report()).
+test('a Received-SPF prepended by the receiver verifies cleanly (spec-05 §4)', async () => {
   const polluted = 'Received-SPF: pass\r\n (test.example: 1.2.3.4 authorized)\r\n' + SIGNED_SAMPLE;
   const rep = await verifyMessage(polluted, {
     fetchKey: realFetchKey,
@@ -282,22 +283,13 @@ test('a Received-SPF prepended by the receiver verifies cleanly, no retry needed
     now: FRESH_NOW,
   });
   assert.equal(rep.overall, 'pass');
-  assert.equal(rep.stripped_headers, undefined);
 });
 
 test('a genuinely broken message with Received-SPF present still fails', async () => {
-  // Body tampering is unaffected by the header exclusion: the verdict stays
-  // fail and no stripped_headers claim is made.
+  // Body tampering is unaffected by the header exclusion: the verdict stays fail.
   const broken = 'Received-SPF: pass\r\n' + SIGNED_SAMPLE.replace(/\r\n\r\n/, '\r\n\r\ntampered\r\n');
   const rep = await verifyMessage(broken, { fetchKey: realFetchKey, now: FRESH_NOW });
   assert.equal(rep.overall, 'fail');
-  assert.equal(rep.stripped_headers, undefined);
-});
-
-test('a clean message is not retried and reports no stripped headers', async () => {
-  const rep = await verifyMessage(SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
-  assert.equal(rep.overall, 'pass');
-  assert.equal(rep.stripped_headers, undefined);
 });
 
 test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly', async () => {
@@ -307,5 +299,4 @@ test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly'
     + SIGNED_SAMPLE.replace(/\r\n/g, '\n');
   const rep = await verifyMessage(polluted, { fetchKey: realFetchKey, now: FRESH_NOW });
   assert.equal(rep.overall, 'pass');
-  assert.equal(rep.stripped_headers, undefined);
 });
