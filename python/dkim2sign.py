@@ -168,8 +168,23 @@ def canonicalize_header_field(raw_hdr: bytes) -> bytes:
     return (name + ":" + value).encode("utf-8", errors="surrogateescape")
 
 
-def compute_header_hash(headers: list[bytes]) -> bytes:
-    """Compute the SHA-256 hash of canonicalized, sorted headers (Section 5.2).
+# spec-05 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# both; Signers MAY implement either or both (we default to sha256).
+HASH_ALGS = {
+    "sha256": lambda data: hashlib.sha256(data).digest(),
+    "sha512": lambda data: hashlib.sha512(data).digest(),
+}
+
+
+def _digest(data: bytes, alg: str = "sha256") -> bytes:
+    try:
+        return HASH_ALGS[alg](data)
+    except KeyError:
+        raise ValueError(f"unsupported hash algorithm: {alg}")
+
+
+def compute_header_hash(headers: list[bytes], alg: str = "sha256") -> bytes:
+    """Compute the hash of canonicalized, sorted headers (Section 5.2).
 
     Excludes headers listed in the spec. Returns raw digest bytes.
     """
@@ -193,15 +208,15 @@ def compute_header_hash(headers: list[bytes]) -> bytes:
     if data:
         data += b"\r\n"
 
-    return hashlib.sha256(data).digest()
+    return _digest(data, alg)
 
 
 # ---------------------------------------------------------------------------
 # Canonicalization for body hash (Section 5.1)
 # ---------------------------------------------------------------------------
 
-def compute_body_hash(body: bytes) -> bytes:
-    """Compute the SHA-256 hash of the canonicalized body (Section 5.1).
+def compute_body_hash(body: bytes, alg: str = "sha256") -> bytes:
+    """Compute the hash of the canonicalized body (Section 5.1).
 
     Simple canonicalization:
     - Strip all trailing empty lines
@@ -217,7 +232,7 @@ def compute_body_hash(body: bytes) -> bytes:
     # Add exactly one trailing CRLF (even if body was empty)
     body += b"\r\n"
 
-    return hashlib.sha256(body).digest()
+    return _digest(body, alg)
 
 
 # ---------------------------------------------------------------------------
@@ -225,15 +240,23 @@ def compute_body_hash(body: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 def build_message_instance(headers: list[bytes], body: bytes,
-                           version: int = 1, recipe: dict | None = None) -> str:
+                           version: int = 1, recipe: dict | None = None,
+                           algs: list[str] | None = None) -> str:
     """Build a Message-Instance header field value.
 
     Returns the complete header as a string (including field name).
     Trailing semicolon is included per spec ABNF (tag-list grammar).
     """
-    h_hash = compute_header_hash(headers)
-    b_hash = compute_body_hash(body)
-    value = f"m={version}; h=sha256:{b64(h_hash)}:{b64(b_hash)}"
+    if algs is None:
+        algs = ["sha256"]
+    # spec-05 §7.3: one hash-set per algorithm, comma separated. An algorithm
+    # MUST NOT appear more than once, so `algs` must be de-duplicated by the
+    # caller (the CLI does this).
+    sets = ",".join(
+        f"{alg}:{b64(compute_header_hash(headers, alg))}:{b64(compute_body_hash(body, alg))}"
+        for alg in algs
+    )
+    value = f"m={version}; h={sets}"
     if recipe is not None:
         value += f"; r={b64json(_lowercase_recipe_keys(recipe))}"
     value += ";"
@@ -477,7 +500,8 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  mailfrom: str = "<>", rcptto: list[str] | None = None,
                  timestamp: int | None = None,
                  next_domain: str | None = None,
-                 flags: list[str] | None = None) -> bytes:
+                 flags: list[str] | None = None,
+                 algs: list[str] | None = None) -> bytes:
     """Sign a raw email message with DKIM2.
 
     Returns the complete message with Message-Instance and DKIM2-Signature
@@ -510,7 +534,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
         sig_seq = max(_get_seq_from_sig(h) for h in existing_sig) + 1
 
     # Build Message-Instance header
-    mi_hdr = build_message_instance(headers, body, version=mi_version)
+    mi_hdr = build_message_instance(headers, body, version=mi_version, algs=algs)
 
     # draft-04 §9.1/§9.2.5: a hop that leaves both hashes unchanged adds no new
     # Message-Instance at all — it signs against the existing top instance and
@@ -563,6 +587,10 @@ def main():
                              "tag instead of mf=/rt=")
     parser.add_argument("--flag", action="append", dest="flags",
                         help="Signature flag (f=); repeatable")
+    parser.add_argument("--hash", dest="hash_algs", default="sha256",
+                        choices=["sha256", "sha512", "both"],
+                        help="hash algorithm(s) for the Message-Instance h= tag "
+                             "(spec-05 §3.1; default sha256)")
     args = parser.parse_args()
 
     if args.message == "-":
@@ -572,10 +600,13 @@ def main():
 
     rcptto = args.rcptto or ["unknown@example.com"]
 
+    algs = ["sha256", "sha512"] if args.hash_algs == "both" else [args.hash_algs]
+
     result = sign_message(raw, args.selector, args.domain, args.keyfile,
                           mailfrom=args.mailfrom, rcptto=rcptto,
                           timestamp=args.timestamp,
-                          next_domain=args.next_domain, flags=args.flags)
+                          next_domain=args.next_domain, flags=args.flags,
+                          algs=algs)
 
     sys.stdout.buffer.write(result)
 

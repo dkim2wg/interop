@@ -34,6 +34,7 @@ from dkim2sign import (
     canonicalize_header_field,
     compute_header_hash,
     compute_body_hash,
+    HASH_ALGS,
     canonicalize_sig_header,
     _extract_tag,
     _tag_names,
@@ -303,6 +304,21 @@ def _get_header_value(hdr: str) -> str:
     return hdr[colon + 1:].strip() if colon != -1 else hdr
 
 
+def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
+    """Parse a spec-05 §7.3 h= value into (alg, header_hash, body_hash) triples.
+
+    Hash names are lowercased: RFC 5234 makes ABNF quoted strings
+    case-insensitive, so "SHA256" is a syntactically valid hash-name.
+    """
+    sets = []
+    for item in h_tag.split(","):
+        parts = item.strip().split(":")
+        if len(parts) != 3:
+            continue
+        sets.append((parts[0].strip().lower(), parts[1].strip(), parts[2].strip()))
+    return sets
+
+
 def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> list[str]:
     """Verify the hashes in a Message-Instance header against the message.
 
@@ -314,32 +330,38 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
     if not h_tag:
         return ["Message-Instance: missing h= tag"]
 
-    # Parse h= tag: sha256:header_hash:body_hash
-    parts = h_tag.split(":")
-    if len(parts) != 3:
-        return [f"Message-Instance: invalid h= format (expected alg:h_hash:b_hash, got {h_tag!r})"]
+    m_val = _extract_tag(value, "m")
 
-    h_alg, h_val, b_val = parts
+    sets = parse_hash_sets(h_tag)
+    if not sets:
+        return [f"Message-Instance: invalid h= format (got {h_tag!r})"]
 
-    if h_alg != "sha256":
-        errors.append(f"Message-Instance: unsupported hash algorithm: {h_alg}")
-    else:
-        # Verify header hash
-        expected = compute_header_hash(headers)
-        actual = base64.b64decode(h_val)
-        if expected != actual:
+    # spec-05 §7.3: an algorithm MUST NOT be present more than once.
+    seen = set()
+    for alg, _, _ in sets:
+        if alg in seen:
+            return [f"PERMERROR Message-Instance m={m_val} has a duplicate hash algorithm"]
+        seen.add(alg)
+
+    # §3.4: ignore hash-sets naming algorithms we do not implement, but an MI
+    # with no implemented hash-set cannot be verified and must fail closed.
+    usable = [s for s in sets if s[0] in HASH_ALGS]
+    if not usable:
+        return [f"Message-Instance m={m_val} no supported hash algorithm"]
+
+    # All implemented hash-sets must pass (mirrors §11.6 for signatures).
+    for alg, h_val, b_val in usable:
+        expected = compute_header_hash(headers, alg)
+        if expected != base64.b64decode(h_val):
             errors.append(
-                f"Message-Instance: header hash mismatch\n"
+                f"Message-Instance: {alg} header hash mismatch\n"
                 f"  expected: {b64(expected)}\n"
                 f"  got:      {h_val}"
             )
-
-        # Verify body hash
-        expected = compute_body_hash(body)
-        actual = base64.b64decode(b_val)
-        if expected != actual:
+        expected = compute_body_hash(body, alg)
+        if expected != base64.b64decode(b_val):
             errors.append(
-                f"Message-Instance: body hash mismatch\n"
+                f"Message-Instance: {alg} body hash mismatch\n"
                 f"  expected: {b64(expected)}\n"
                 f"  got:      {b_val}"
             )
