@@ -889,12 +889,39 @@ ssh dkim2 'MAILMAN_CONFIG_FILE=/etc/mailman3/mailman.cfg \
 
 ### Sympa Message.pm (Perl, brong/sympa repo)
 
-From your local `~/src/sympa` working directory:
+`Message.pm` does **not** stand alone — it does `use Sympa::HTML::URIFind`, which in
+turn does `use base qw(URI::Find::Schemeless)`. Copying `Message.pm` on its own takes
+Sympa down with `Can't locate Sympa/HTML/URIFind.pm in @INC`; every Sympa service then
+sits in `activating` and restarts in a loop. This happened on 2026-08-26 because this
+section only listed `Message.pm` — the companion module was added to the source tree
+after the previous deploy, and nothing here said to carry it.
+
+One-time, if `perl -MURI::Find::Schemeless -e1` fails on the box:
+```bash
+ssh dkim2 'DEBIAN_FRONTEND=noninteractive apt-get install -y liburi-find-perl'
+```
+
+Then, from your local `~/src/sympa` working directory — **both** files:
 ```bash
 scp src/lib/Sympa/Message.pm \
     root@dkim2.com:/usr/share/sympa/lib/Sympa/Message.pm
-ssh dkim2 systemctl restart sympa sympa-bulk sympa-archived sympa-bounced
+ssh dkim2 mkdir -p /usr/share/sympa/lib/Sympa/HTML
+scp src/lib/Sympa/HTML/URIFind.pm \
+    root@dkim2.com:/usr/share/sympa/lib/Sympa/HTML/URIFind.pm
 ```
+
+**Compile-check before restarting** — a load failure here is a full outage, and
+`perl -c` catches it in a second:
+```bash
+ssh dkim2 'perl -I/usr/share/sympa/lib -c /usr/share/sympa/lib/Sympa/Message.pm'
+ssh dkim2 systemctl restart sympa sympa-bulk sympa-archived sympa-bounced \
+    sympa-task_manager wwsympa
+ssh dkim2 systemctl is-active sympa sympa-bulk sympa-archived sympa-bounced
+```
+
+Note `/opt/sympa-dkim2` on the box is a checkout of `brong/sympa`, but it is **not**
+the deploy source and has been observed sitting on an abandoned, force-pushed lineage.
+The live files are the overlay above; treat the checkout as a convenience only.
 
 ---
 
