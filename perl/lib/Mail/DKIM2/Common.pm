@@ -38,9 +38,9 @@ our @EXPORT_OK = qw(
 # reflector, and the mailman/sympa handlers. This is the single source of truth
 # for the Perl implementation; bump on a spec change (see the dkim2-spec-version
 # memory for the full cross-repo list).
-use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-04';
+use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-05';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE  => '2026-07-05';
+use constant DKIM2_DATE  => '2026-08-25';
 
 # Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-05 Section 4.
 # spec-05 narrowed the old /^arc-/ prefix to the three RFC 8617 field names and
