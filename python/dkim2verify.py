@@ -406,6 +406,25 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
     return errors
 
 
+def _check_signature_duplicates(sig_items, i_val) -> list[str]:
+    """spec-05 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag.
+
+    A Selector MUST NOT appear more than once. The same signing algorithm may
+    appear at most twice, and only with distinct Selectors. Selector matching is
+    case-insensitive (a Selector is a Domain, §3.5).
+    """
+    errors = []
+    selectors = [sel.lower() for sel, _, _ in sig_items]
+    if len(set(selectors)) != len(selectors):
+        errors.append(f"PERMERROR DKIM2-Signature i={i_val} has a duplicate selector")
+    counts = {}
+    for _, alg, _ in sig_items:
+        counts[alg.lower()] = counts.get(alg.lower(), 0) + 1
+    if any(n > 2 for n in counts.values()):
+        errors.append(f"PERMERROR DKIM2-Signature i={i_val} has too many signatures")
+    return errors
+
+
 def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
                            other_sig_headers: list[str],
                            dns_data: dict,
@@ -499,6 +518,12 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             return [f"DKIM2-Signature i={i_val}: invalid s= item format: {part!r}"]
         sig_items_raw.append(fields)
         sig_items.append([_strip_fws(f) for f in fields])
+
+    # spec-05 §8.9: duplicate-selector and too-many-signatures checks must run
+    # before any DNS lookup or crypto work.
+    dup_errors = _check_signature_duplicates(sig_items, i_val)
+    if dup_errors:
+        return dup_errors
 
     # Build the incomplete signature (the signed form) by blanking each s=
     # item's signature value in place.  This is independent of tag order and
