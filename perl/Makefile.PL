@@ -20,7 +20,6 @@ WriteMakefile(
     },
 
     PREREQ_PM => {
-        'Algorithm::Diff'                        => '0',
         'Carp'                                   => '0',
         'CryptX'                                 => '0.060',
         'Email::MIME'                            => '0',
@@ -31,6 +30,10 @@ WriteMakefile(
     },
 
     TEST_REQUIRES => {
+        # Only recipe COMPUTATION needs this; signing and verifying do not.
+        # See Mail::DKIM2::MessageInstance. Kept out of PREREQ_PM so that
+        # sign/verify-only deployments need not install it.
+        'Algorithm::Diff' => '0',
         'Email::MIME'  => '0',
         'Path::Tiny'   => '0',
         'Test::More'   => '0.96',

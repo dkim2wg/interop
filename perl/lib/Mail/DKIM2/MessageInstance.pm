@@ -7,7 +7,12 @@ use Crypt::Digest::SHA256;
 use Crypt::Digest::SHA512 qw(sha512 sha512_b64);
 use Email::MIME;
 use MIME::Base64 qw(encode_base64 decode_base64);
-use Algorithm::Diff;
+# Algorithm::Diff is loaded lazily by the two body-recipe builders below.
+# Recipes are only ever COMPUTED by a hop that modifies an already-signed
+# message; signing an originating message and verifying any message both
+# apply recipes without diffing. Keeping the load lazy means deployments
+# that only sign and verify -- which is all three Fastmail paths -- need
+# not install it at all.
 use List::Util qw(max);
 use Carp;
 
@@ -363,6 +368,7 @@ sub _hash_data_b64 {
 
 # Straight line-level diff using Algorithm::Diff.
 sub _body_recipe_linediff {
+    require Algorithm::Diff;
     my ($l1, $l2) = @_;
 
     my $diff = Algorithm::Diff->new($l1, $l2);
@@ -404,6 +410,7 @@ sub _flat_to_line {
 
 # Build Recipe entries for a region, using line-level matching.
 sub _recipe_for_region {
+    require Algorithm::Diff;
     my ($cur_lines, $cur_start, $cur_end,
         $prev_lines, $prev_start, $prev_end) = @_;
 
