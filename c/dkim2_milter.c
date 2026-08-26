@@ -88,11 +88,16 @@ static sfsistat cb_header(SMFICTX *ctx, char *name, char *value) {
 
     /* Parse DKIM2 headers as they arrive */
     if (strcasecmp(name, "Message-Instance") == 0) {
-        dkim2_mi_t *mi = dkim2_mi_parse(value);
+        char errbuf[256];
+        dkim2_mi_t *mi = dkim2_mi_parse_err(value, errbuf, sizeof errbuf);
         if (mi) {
             dkim2_mi_t **tail = &c->mi_list;
             while (*tail) tail = &(*tail)->next;
             *tail = mi;
+        } else if (errbuf[0] && !c->mi_error[0]) {
+            /* Keep the first specific parse error; a later MI header
+               failing for an unrelated reason shouldn't overwrite it. */
+            snprintf(c->mi_error, sizeof c->mi_error, "%s", errbuf);
         }
     } else if (strcasecmp(name, "DKIM2-Signature") == 0) {
         dkim2_sig_t *sig = dkim2_sig_parse(value);

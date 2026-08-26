@@ -428,6 +428,19 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = 0;
     result->domain[0] = '\0';
 
+    /* spec-05 §7.3: a Message-Instance header that failed to parse with a
+       specific, reportable cause (currently: duplicate hash algorithm in h=)
+       never made it into ctx->mi_list -- the header-collection path
+       (dkim2_message.c/dkim2_milter.c) dropped it and recorded the reason
+       here instead. Report it immediately, before any other check
+       (including DNS/crypto), and regardless of whether the affected m=
+       would have been the topmost, signature-covered instance or not: it
+       must never simply vanish, and must never be misreported as "no
+       Message-Instance for m=N" (the wrong error, describing the wrong
+       problem). */
+    if (ctx->mi_error[0])
+        SETSTATUS(DKIM2_PERMERROR, "%s", ctx->mi_error);
+
     /* §10.2: Require at least one DKIM2-Signature */
     if (!ctx->sig_list)
         SETSTATUS(DKIM2_PERMERROR, "PERMERROR: No DKIM2-Signature header");

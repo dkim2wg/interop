@@ -63,6 +63,15 @@ typedef struct dkim2_ctx {
     dkim2_mi_t  *mi_list;   /* ascending m= order */
     dkim2_sig_t *sig_list;  /* ascending i= order */
 
+    /* Set by the header-collection path (dkim2_message.c/dkim2_milter.c) when
+       a Message-Instance header fails to parse with a specific, reportable
+       cause (currently: spec-05 §7.3 duplicate hash algorithm in h=) rather
+       than simply being malformed/absent. Such a header never makes it into
+       mi_list, so nothing downstream would otherwise ever see the problem --
+       dkim2_do_verify() checks this first, before any DNS/crypto work, and
+       reports it verbatim. Empty string means no such error occurred. */
+    char mi_error[256];
+
     /* Body hash — computed incrementally, never buffered.
        Holds every implemented algorithm's digest (spec-05 §3.1). */
     dkim2_digests_t body_digests;               /* valid once body_hasher is NULL */

@@ -12,6 +12,7 @@
 #include "../dkim2_header.h"
 #include "../dkim2_dns.h"
 #include "../dkim2_crypto.h"
+#include "../dkim2_message.h"
 #include "../base64.h"
 
 /* Mirror of the production §8.5 canonicalization used by both the signer
@@ -543,6 +544,79 @@ int main(void) {
         free(sig1_out);
         free(mi2_out);
         free(sig2_out);
+    }
+
+    /* --- Regression (fix round 1): a duplicate hash algorithm in a
+       Message-Instance h= must be reported as the exact spec-05 §7.3
+       PERMERROR through the REAL ingestion path, not just detected by
+       dkim2_mi_parse() in isolation. Before this fix, dkim2_message.c's
+       collect_dkim2_headers() (and dkim2_milter.c's cb_header(), same
+       pattern) silently dropped a Message-Instance header whenever
+       dkim2_mi_parse() returned NULL, so the duplicate never reached
+       dkim2_do_verify() at all -- the exact PERMERROR string existed only
+       in a comment and in a unit test that called the parser directly.
+       This drives a complete on-disk message through dkim2_verify_message(),
+       the same entry point the CLI and milter use, to prove the fix reaches
+       production, not just the parser. */
+    {
+        const char *path = "/tmp/dkim2_test_dup_mi_top.eml";
+        FILE *ef = fopen(path, "w");
+        assert(ef != NULL);
+        /* Single MI (m=1, duplicate sha256 hash-set) covered by the one
+           (syntactically valid, cryptographically irrelevant here) signature.
+           mf=/rt= are the well-known base64 encodings of
+           "<user@example.com>" / "<rcpt@example.org>" used elsewhere in this
+           file; the envelope isn't checked (mail_from/rcpt_to passed as NULL
+           below) since the mi_error check must fire first, before that. */
+        fprintf(ef,
+            "From: sender@example.com\n"
+            "To: recipient@example.org\n"
+            "Subject: Test DKIM2 message\n"
+            "Message-Instance: m=1; h=sha256:AAA:BBB,sha256:CCC:DDD;\n"
+            "DKIM2-Signature: i=1; m=1; t=1; d=example.com; "
+            "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PHJjcHRAZXhhbXBsZS5vcmc+; "
+            "s=test:ed25519-sha256:AAAA;\n"
+            "\n"
+            "Hello, world!\n");
+        fclose(ef);
+
+        dkim2_verify_result_t res = dkim2_verify_message(path, NULL, NULL, 1);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strcmp(res.message,
+            "PERMERROR Message-Instance m=1 has a duplicate hash algorithm") == 0);
+        remove(path);
+    }
+
+    /* --- Same regression, but the duplicate-h= MI is NOT the top-covered
+       instance (m=1 is bad; the top signature covers m=2, which is clean).
+       This is the specific case the reviewer called out: with no MI-gap/
+       contiguity check in dkim2_do_verify(), a non-top malformed MI that
+       collect_dkim2_headers() drops has nothing else to catch it and simply
+       vanishes -- no error at all, rather than the wrong error. The
+       ctx->mi_error check runs unconditionally, before the signature loop
+       even looks at which m= is topmost, so it must still fire here. --- */
+    {
+        const char *path = "/tmp/dkim2_test_dup_mi_nontop.eml";
+        FILE *ef = fopen(path, "w");
+        assert(ef != NULL);
+        fprintf(ef,
+            "From: sender@example.com\n"
+            "To: recipient@example.org\n"
+            "Subject: Test DKIM2 message\n"
+            "Message-Instance: m=1; h=sha256:AAA:BBB,sha256:CCC:DDD;\n"
+            "Message-Instance: m=2; h=sha256:EEE:FFF;\n"
+            "DKIM2-Signature: i=1; m=2; t=1; d=example.com; "
+            "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PHJjcHRAZXhhbXBsZS5vcmc+; "
+            "s=test:ed25519-sha256:AAAA;\n"
+            "\n"
+            "Hello, world!\n");
+        fclose(ef);
+
+        dkim2_verify_result_t res = dkim2_verify_message(path, NULL, NULL, 1);
+        assert(res.status == DKIM2_PERMERROR);
+        assert(strcmp(res.message,
+            "PERMERROR Message-Instance m=1 has a duplicate hash algorithm") == 0);
+        remove(path);
     }
 
     free(mi_val);

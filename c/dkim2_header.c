@@ -59,7 +59,8 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
     return dup ? -2 : 0;
 }
 
-dkim2_mi_t *dkim2_mi_parse(const char *value) {
+dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz) {
+    if (errbuf && errbufsz) errbuf[0] = '\0';
     taglist_t *tl = tagparse(value, NULL);
     if (!tl) return NULL;
     dkim2_mi_t *mi = calloc(1, sizeof *mi);
@@ -70,7 +71,20 @@ dkim2_mi_t *dkim2_mi_parse(const char *value) {
     mi->m = atoi(v);
     v = tag_get(tl, "h");
     if (!v) goto err;
-    if (parse_hsets(v, &mi->hsets, &mi->n_hsets) < 0) goto err;
+    {
+        int hr = parse_hsets(v, &mi->hsets, &mi->n_hsets);
+        if (hr == -2) {
+            /* spec-05 §7.3: duplicate hash algorithm -- a specific,
+               reportable parse failure, not a plain "MI absent". mi->m is
+               already populated at this point, so the message can name it. */
+            if (errbuf && errbufsz)
+                snprintf(errbuf, errbufsz,
+                    "PERMERROR Message-Instance m=%d has a duplicate hash algorithm",
+                    mi->m);
+            goto err;
+        }
+        if (hr < 0) goto err;
+    }
     v = tag_get(tl, "r");
     if (v) mi->r_raw = strdup(v);
     mi->raw_value = strdup(value);
@@ -80,6 +94,10 @@ err:
     taglist_free(tl);
     dkim2_mi_free(mi);
     return NULL;
+}
+
+dkim2_mi_t *dkim2_mi_parse(const char *value) {
+    return dkim2_mi_parse_err(value, NULL, 0);
 }
 
 void dkim2_mi_free(dkim2_mi_t *mi) {
