@@ -127,11 +127,13 @@ sub _strip_header {
 
 # report($text, %opts) — verify a DKIM2 message and return a structured report.
 #
-# Some receiving MTAs (e.g. Fastmail) add a Received-SPF: trace header on
-# inbound. Unlike Received/ARC/Authentication-Results it is NOT in should_skip(),
-# so it is covered by the Message-Instance header hash and breaks verification at
-# every level. When the message fails, retry once with Received-SPF removed; if
-# that verifies, return the better result and say so in the summary.
+# spec-05 §4 excludes Received-SPF from the Message-Instance header hash via
+# the "received-" prefix rule (should_skip()), so a receiving MTA that
+# prepends one (Fastmail does) no longer breaks verification and this retry
+# is dead for it in practice. It remains as a safety net: if some other trace
+# header not yet covered by §4 causes a failure, retry once with it removed
+# and, if that verifies, return the better result and say so in the summary.
+# Mirrored in deploy/www/verify/verify.js's verifyMessage().
 sub report {
     my ($text, %opts) = @_;
     $text //= '';

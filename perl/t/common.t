@@ -28,4 +28,21 @@ my $ok = eval { $bad = parse_dkim_pubkey('v=DKIM1; k=ed25519; p=bm90YWtleQ=='); 
 ok($ok, 'malformed ed25519 key does not die');
 is($bad, undef, 'malformed ed25519 key returns undef');
 
+# spec-05 §4: names added by the HDRMAINT survey
+for my $h (qw(Apparently-To Auto-Submitted DL-Expansion-History
+              Original-Recipient SIO-Label-History VBR-Info
+              X400-Received X400-Trace)) {
+    ok(Mail::DKIM2::Common::should_skip($h), "spec-05 §4: $h is unsigned");
+}
+
+# spec-05 §4: any Received-* field is a trace field
+ok(Mail::DKIM2::Common::should_skip('Received-SPF'), 'spec-05 §4: Received-SPF is unsigned');
+ok(Mail::DKIM2::Common::should_skip('Received-Anything'), 'spec-05 §4: Received-* is unsigned');
+
+# spec-05 §4: the ARC- prefix narrowed to exactly three names
+ok(Mail::DKIM2::Common::should_skip('ARC-Seal'), 'spec-05 §4: ARC-Seal is unsigned');
+ok(Mail::DKIM2::Common::should_skip('ARC-Message-Signature'), 'spec-05 §4: ARC-Message-Signature is unsigned');
+ok(Mail::DKIM2::Common::should_skip('ARC-Authentication-Results'), 'spec-05 §4: ARC-Authentication-Results is unsigned');
+ok(!Mail::DKIM2::Common::should_skip('ARC-Something-Else'), 'spec-05 §4: the ARC- prefix match is gone');
+
 done_testing;

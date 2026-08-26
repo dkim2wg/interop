@@ -42,18 +42,22 @@ use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-04';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
 use constant DKIM2_DATE  => '2026-07-05';
 
-# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-04 Section 4
+# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-05 Section 4.
+# spec-05 narrowed the old /^arc-/ prefix to the three RFC 8617 field names and
+# added a /^received-/ prefix rule so future trace fields of that form need no
+# change here.
+my %SKIP_EXACT = map { $_ => 1 } qw(
+    apparently-to arc-authentication-results arc-message-signature arc-seal
+    authentication-results auto-submitted delivered-to dkim-signature
+    dkim2-signature dl-expansion-history message-instance original-recipient
+    received return-path sio-label-history vbr-info x400-received x400-trace
+);
+
 sub should_skip {
     my $hname = lc(shift);
-    return 1 if $hname eq 'received';
-    return 1 if $hname eq 'return-path';
-    return 1 if $hname eq 'delivered-to';
-    return 1 if $hname eq 'message-instance';
-    return 1 if $hname eq 'dkim2-signature';
+    return 1 if $SKIP_EXACT{$hname};
     return 1 if $hname =~ m/^x-/;
-    return 1 if $hname eq 'dkim-signature';
-    return 1 if $hname =~ m/^arc-/;
-    return 1 if $hname eq 'authentication-results';
+    return 1 if $hname =~ m/^received-/;
     return 0;
 }
 
