@@ -40,6 +40,29 @@ function parseSigSets(sValue) {
 
 const SUPPORTED_ALGS = new Set(['rsa-sha256', 'ed25519-sha256']);
 
+// spec-05 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag: a
+// Selector MUST NOT appear more than once, and the same signing algorithm may
+// appear at most twice, and only with distinct Selectors. Both comparisons
+// are case-insensitive (a Selector is a Domain, §3.5; algorithm names are
+// ABNF quoted strings, RFC 5234). items is the parsed LIST of {selector, alg}
+// sig-sets (never a deduplicated map — a second occurrence must stay visible).
+export function checkSignatureDuplicates(items, i) {
+  const errors = [];
+  const selectors = items.map((it) => (it.selector || '').toLowerCase());
+  if (new Set(selectors).size !== selectors.length) {
+    errors.push(`PERMERROR DKIM2-Signature i=${i} has a duplicate selector`);
+  }
+  const counts = new Map();
+  for (const it of items) {
+    const alg = (it.alg || '').toLowerCase();
+    counts.set(alg, (counts.get(alg) || 0) + 1);
+  }
+  if ([...counts.values()].some((n) => n > 2)) {
+    errors.push(`PERMERROR DKIM2-Signature i=${i} has too many signatures`);
+  }
+  return errors;
+}
+
 // All (unfolded, WSP-trimmed) values of a header field name, in document order.
 function headerValues(fields, name) {
   const n = name.toLowerCase();
@@ -194,6 +217,19 @@ async function verifyOnce(raw, opts = {}) {
     }
     try {
       const sets = parseHashSets(mi.map.h);
+      // spec-05 §7.3: an algorithm MUST NOT be present more than once. This
+      // must run before any hash is computed or compared, over the parsed
+      // LIST (never a deduplicated map, or a second occurrence would be
+      // silently overwritten and go undetected).
+      const algSeen = new Set();
+      const dupAlg = sets.some((s) => (algSeen.has(s.alg) ? true : (algSeen.add(s.alg), false)));
+      if (dupAlg) {
+        level.result = 'fail';
+        level.detail = `PERMERROR Message-Instance m=${m} has a duplicate hash algorithm`;
+        bump('fail');
+        levels.push(level);
+        continue;
+      }
       const hdrBytes = stringToBytes(canonHeaderHash(signedFields(state.fields)));
       const bodyBytes = stringToBytes(canonBody(linesToBody(state.bodyLines)));
       // §3.4: ignore hash-sets naming algorithms we do not implement; all the
@@ -351,6 +387,17 @@ async function verifyOnce(raw, opts = {}) {
     if (!sSyntaxOk) {
       level.result = 'permerror';
       level.detail = `DKIM2-Signature i=${i} syntax error`;
+      bump('permerror');
+      levels.push(level);
+      continue;
+    }
+
+    // spec-05 §8.9: duplicate-selector and too-many-signatures checks must
+    // run before any DNS lookup or crypto work.
+    const dupErrors = checkSignatureDuplicates(sigSets, i);
+    if (dupErrors.length) {
+      level.result = 'permerror';
+      level.detail = dupErrors.join('; ');
       bump('permerror');
       levels.push(level);
       continue;
