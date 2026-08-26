@@ -95,10 +95,51 @@ sub finish_header {
 
 sub finish_body {
     my $self = shift;
+    $self->_compute_signature;
+    $self->{result} = 'signed';
+}
+
+# Re-sign the same message for a different envelope recipient, returning the
+# folded DKIM2-Signature header to prepend for that recipient.
+#
+# This is the cheap half of signing. §9.6 signs solely the Message-Instance and
+# DKIM2-Signature header fields, so everything expensive -- the body hash and
+# the hash of every other header field -- lives in the Message-Instance and is
+# identical for every recipient. Only rt= changes, so an additional recipient
+# costs one signature over a few hundred bytes rather than another pass over
+# the message.
+#
+# Feed the message through PRINT/CLOSE once, then call this per recipient:
+#
+#     $signer->PRINT($message); $signer->CLOSE;   # once
+#     for my $rcpt (@rcpts) {
+#         my $header = $signer->sign_for_recipient($rcpt);
+#     }
+#
+# Takes one address or an arrayref of them. Not usable on a signature carrying
+# nd=, which excludes rt= by §8.7; set_rcpt_to croaks in that case.
+sub sign_for_recipient {
+    my ($self, $rcpt) = @_;
+    croak "sign_for_recipient requires CLOSE to have run first"
+        unless $self->{_signature};
+    $self->{_signature}->set_rcpt_to($rcpt);
+    $self->_compute_signature;
+    $self->{result} = 'signed';
+    return $self->as_string;
+}
+
+sub _compute_signature {
+    my $self = shift;
 
     my $signature    = $self->{_signature};
     my @mi_headers   = @{$self->{_mi_headers}};
     my @dk2_headers  = @{$self->{_dk2_headers}};
+
+    # Reset s= to the empty placeholder before building the signing input.
+    # Without this a second call would sign an input containing the FIRST
+    # call's signature bytes, which no verifier can reproduce -- the signing
+    # input must always carry an empty s= value (§9.6).
+    $signature->set_tag('s', join(':', $self->{Selector}, $self->{Algorithm}, ''));
 
     # Include the new signature as the signing_i entry
     my $next_i = $self->{_next_i};
@@ -133,8 +174,6 @@ sub finish_body {
     # Update the signature object with the actual signature
     # Format: sel:alg:sig
     $signature->set_tag('s', join(':', $self->{Selector}, $self->{Algorithm}, $signb64));
-
-    $self->{result} = 'signed';
 }
 
 sub signature {

@@ -166,6 +166,22 @@ sub rcpt_to {
     return [map { decode_base64($_) } split /,/, $rt];
 }
 
+# rt= is the only tag that differs between recipients of the same message.
+# §9.6 signs solely the Message-Instance and DKIM2-Signature header fields, so
+# the body hash, the header-fields hash and the Message-Instance are all
+# recipient-invariant: re-signing for another recipient means changing this tag
+# and nothing else. See Mail::DKIM2::Signer::sign_for_recipient.
+sub set_rcpt_to {
+    my ($self, $rcpt) = @_;
+    croak "cannot set rt= on a signature carrying nd= (spec-05 §8.7)"
+        if defined $self->get_tag('nd');
+    my @list = ref $rcpt eq 'ARRAY' ? @$rcpt : ($rcpt);
+    croak "set_rcpt_to requires at least one recipient" unless @list;
+    $self->set_tag('rt',
+        join(',', map { encode_base64(to_rfc5321_path($_), '') } @list));
+    return $self;
+}
+
 # --- Convenience methods for signature items ---
 
 sub _sig_items {
