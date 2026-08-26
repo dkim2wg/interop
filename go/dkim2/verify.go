@@ -1,7 +1,6 @@
 package dkim2
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
@@ -22,10 +21,11 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		return nil, fmt.Errorf("parsing headers: %w", err)
 	}
 
-	// Stream body for hash — never buffer
-	bodyHash, err := hashBody(bodyReader)
+	// Buffer body: an MI's h= tag may name multiple hash algorithms, each
+	// requiring its own canonicalisation pass over the body.
+	bodyBytes, err := io.ReadAll(bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("body hash: %w", err)
+		return nil, fmt.Errorf("reading body: %w", err)
 	}
 
 	// Separate MI, sig, and content headers; preserve original Raw for signing input
@@ -119,12 +119,6 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 				}
 			}
 		}
-	}
-
-	// Compute content header hash for MI hash verification
-	contentHeaderHash, err := hashHeaders(contentHeaders)
-	if err != nil {
-		return nil, err
 	}
 
 	// Sort sigs ascending by sequence
@@ -221,7 +215,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 					cur, hasCur := miByVersion[m]
 					next, hasNext := miByVersion[m+1]
 					if hasCur && hasNext {
-						if !bytes.Equal(cur.BodyHash, next.BodyHash) || !bytes.Equal(cur.HeaderHash, next.HeaderHash) {
+						if !hashSetsEqual(cur.Hashes, next.Hashes) {
 							return nil, fmt.Errorf("i=%d: message modified despite donotmodify request", sig.Sequence)
 						}
 					}
@@ -325,13 +319,8 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		// Earlier MI versions recorded hashes from a prior message state;
 		// an intermediary may have modified headers/body since then.
 		if sig.MIVersion == maxMIVersion {
-			if string(thisMI.HeaderHash) != string(contentHeaderHash) {
-				res.Error = fmt.Errorf("i=%d: header hash mismatch", sig.Sequence)
-				results = append(results, res)
-				continue
-			}
-			if string(thisMI.BodyHash) != string(bodyHash) {
-				res.Error = fmt.Errorf("i=%d: body hash mismatch", sig.Sequence)
+			if err := verifyMIHashes(thisMI, contentHeaders, bodyBytes); err != nil {
+				res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, err)
 				results = append(results, res)
 				continue
 			}

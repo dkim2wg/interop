@@ -121,7 +121,7 @@ func TestHashHeaders(t *testing.T) {
 		{Name: "Date", Value: "Sat, 01 Mar 2026 12:00:00 +0000", Raw: "Date: Sat, 01 Mar 2026 12:00:00 +0000\r\n"},
 		{Name: "Message-ID", Value: "<test-simple@test1.dkim2.com>", Raw: "Message-ID: <test-simple@test1.dkim2.com>\r\n"},
 	}
-	got, err := hashHeaders(headers)
+	got, err := hashHeaders(headers, "sha256")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,10 +140,10 @@ func TestHashHeadersExclusion(t *testing.T) {
 		{Name: "X-Custom", Value: "val", Raw: "X-Custom: val\r\n"},
 		{Name: "ARC-Seal", Value: "val", Raw: "ARC-Seal: val\r\n"},
 	}
-	withExcluded, _ := hashHeaders(headers)
+	withExcluded, _ := hashHeaders(headers, "sha256")
 
 	headersOnly := []Header{headers[0]}
-	withoutExcluded, _ := hashHeaders(headersOnly)
+	withoutExcluded, _ := hashHeaders(headersOnly, "sha256")
 
 	if string(withExcluded) != string(withoutExcluded) {
 		t.Error("excluded headers changed the hash")
@@ -158,7 +158,7 @@ func TestHashHeadersDuplicateBottomUp(t *testing.T) {
 		{Name: "From", Value: "a@b.com", Raw: "From: a@b.com\r\n"},
 		{Name: "From", Value: "z@y.com", Raw: "From: z@y.com\r\n"},
 	}
-	got, err := hashHeaders(headers)
+	got, err := hashHeaders(headers, "sha256")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,10 +221,13 @@ func TestMessageInstanceRoundTrip(t *testing.T) {
 	if mi.Version != 1 {
 		t.Errorf("Version got %d want 1", mi.Version)
 	}
-	if base64.StdEncoding.EncodeToString(mi.HeaderHash) != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
+	if len(mi.Hashes) != 1 || mi.Hashes[0].Alg != "sha256" {
+		t.Fatalf("Hashes mismatch: %+v", mi.Hashes)
+	}
+	if mi.Hashes[0].HeaderHash != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
 		t.Errorf("HeaderHash mismatch")
 	}
-	if base64.StdEncoding.EncodeToString(mi.BodyHash) != "SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=" {
+	if mi.Hashes[0].BodyHash != "SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=" {
 		t.Errorf("BodyHash mismatch")
 	}
 	if mi.Recipe != nil {
@@ -262,7 +265,7 @@ func TestMessageInstanceBareTags(t *testing.T) {
 	if mi.Version != 1 {
 		t.Errorf("Version got %d want 1", mi.Version)
 	}
-	if base64.StdEncoding.EncodeToString(mi.HeaderHash) != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
+	if len(mi.Hashes) != 1 || mi.Hashes[0].HeaderHash != "SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=" {
 		t.Errorf("HeaderHash mismatch")
 	}
 }
@@ -398,7 +401,7 @@ func TestHashBody(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := hashBody(strings.NewReader(tc.body))
+			got, err := hashBody(strings.NewReader(tc.body), "sha256")
 			if err != nil {
 				t.Fatal(err)
 			}

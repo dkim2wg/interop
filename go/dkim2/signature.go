@@ -50,6 +50,10 @@ type SignOptions struct {
 	RcptTo     []string
 	NextDomain string // nd= (draft-04 §9.3); when set, emit nd= instead of mf=/rt=
 	Timestamp  int64  // 0 = use time.Now()
+	// HashAlgs selects the algorithm(s) used for the new Message-Instance's
+	// h= tag (spec-05 §3.1/§7.3), in emission order. nil/empty means
+	// []string{"sha256"} — the signer default, which MUST NOT change.
+	HashAlgs []string
 }
 
 // VerifyResult is the outcome for one DKIM2-Signature in the message.

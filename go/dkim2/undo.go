@@ -1,7 +1,6 @@
 package dkim2
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"sort"
@@ -109,19 +108,8 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 			return fmt.Errorf("Message-Instance v=%d not found for verification", targetVersion)
 		}
 		{
-			gotHHash, err := hashHeaders(currentContent)
-			if err != nil {
-				return fmt.Errorf("computing header hash: %w", err)
-			}
-			if !bytes.Equal(gotHHash, targetMI.parsed.HeaderHash) {
-				return fmt.Errorf("header hash mismatch after reconstruction (target v=%d)", targetVersion)
-			}
-			gotBHash, err := hashBody(bytes.NewReader(currentBody))
-			if err != nil {
-				return fmt.Errorf("computing body hash: %w", err)
-			}
-			if !bytes.Equal(gotBHash, targetMI.parsed.BodyHash) {
-				return fmt.Errorf("body hash mismatch after reconstruction (target v=%d)", targetVersion)
+			if err := verifyMIHashes(targetMI.parsed, currentContent, currentBody); err != nil {
+				return fmt.Errorf("hash mismatch after reconstruction (target v=%d): %w", targetVersion, err)
 			}
 		}
 	}
