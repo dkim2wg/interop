@@ -21,14 +21,12 @@ use Email::MIME;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 
-sub _extract_mi_hashes {
+sub _extract_mi_hash_sets {
     my ($raw) = @_;
     $raw =~ s/^[^:]+://;        # strip "Message-Instance:" field name
     $raw =~ s/\r?\n[ \t]/ /g;   # unfold continuation lines
-    if ($raw =~ /\bh=sha256:([A-Za-z0-9+\/=]+):([A-Za-z0-9+\/=]+)/) {
-        return ($1, $2);         # (header_hash, body_hash)
-    }
-    return (undef, undef);
+    return [] unless $raw =~ /\bh=([^;]*)/;
+    return Mail::DKIM2::MessageInstance::parse_hash_sets($1);
 }
 
 sub init {
@@ -179,14 +177,30 @@ sub finish_body {
         if (grep { $_ eq 'donotmodify' } @$flags) {
             my $m = $sig->version || 0;
             if ($m >= 1 && $mi_map{$m} && $mi_map{$m + 1}) {
-                my ($hh_m,  $bh_m)  = _extract_mi_hashes($mi_map{$m});
-                my ($hh_m1, $bh_m1) = _extract_mi_hashes($mi_map{$m + 1});
-                if (   (defined $bh_m  && defined $bh_m1  && $bh_m  ne $bh_m1)
-                    || (defined $hh_m  && defined $hh_m1  && $hh_m  ne $hh_m1))
-                {
-                    $self->{result}  = 'fail';
-                    $self->{details} = 'Message modified despite donotmodify request at i=' . $i;
+                # spec-05 §3.4/§7.3: an MI may carry several hash-sets. Only
+                # compare hash-sets whose algorithm we implement; if the two
+                # instances share none, we cannot tell whether the message
+                # changed and fail closed rather than silently accept.
+                my %by_alg_m  = map { $_->[0] => $_ } @{ _extract_mi_hash_sets($mi_map{$m}) };
+                my %by_alg_m1 = map { $_->[0] => $_ } @{ _extract_mi_hash_sets($mi_map{$m + 1}) };
+                my $impl = Mail::DKIM2::MessageInstance::hash_algs();
+                my @common = grep { $by_alg_m{$_} && $by_alg_m1{$_} && $impl->{$_} }
+                             keys %by_alg_m;
+
+                unless (@common) {
+                    $self->{result}  = 'permerror';
+                    $self->{details} = "Message-Instance m=$m no supported hash algorithm";
                     return;
+                }
+
+                for my $alg (@common) {
+                    my (undef, $hh_m,  $bh_m)  = @{ $by_alg_m{$alg}  };
+                    my (undef, $hh_m1, $bh_m1) = @{ $by_alg_m1{$alg} };
+                    if ($hh_m ne $hh_m1 || $bh_m ne $bh_m1) {
+                        $self->{result}  = 'fail';
+                        $self->{details} = 'Message modified despite donotmodify request at i=' . $i;
+                        return;
+                    }
                 }
             }
         }

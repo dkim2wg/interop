@@ -4,6 +4,7 @@ use warnings;
 
 
 use Crypt::Digest::SHA256;
+use Crypt::Digest::SHA512 qw(sha512 sha512_b64);
 use Email::MIME;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Algorithm::Diff;
@@ -20,6 +21,31 @@ use Mail::DKIM2::Common qw(
 );
 
 our $DEBUG = 0;
+
+# spec-05 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# both; Signers MAY implement either or both (we default to sha256).
+my %HASH_ALGS = (
+    sha256 => \&Crypt::Digest::SHA256::sha256,
+    sha512 => \&Crypt::Digest::SHA512::sha512,
+);
+
+sub hash_algs { return { %HASH_ALGS } }
+
+# spec-05 §7.3: h= is hash-set *("," hash-set), hash-set = alg ":" hh ":" bh.
+# Hash names are lowercased -- RFC 5234 makes ABNF quoted strings
+# case-insensitive. All FWS is stripped (§2.12): it may appear anywhere
+# inside a base64 value (e.g. a folded header), not just at either end.
+sub parse_hash_sets {
+    my ($h_tag) = @_;
+    my @sets;
+    for my $item (split /,/, $h_tag) {
+        $item =~ s/[\s\r\n]//g;
+        my @parts = split /:/, $item;
+        next unless @parts == 3;
+        push @sets, [lc $parts[0], $parts[1], $parts[2]];
+    }
+    return \@sets;
+}
 
 # FILTHY PATCHING (needed for undo to work with Email::Simple)
 BEGIN {
@@ -97,11 +123,25 @@ sub as_string {
     my ($self) = @_;
     my %data = %{$self->{bits}};
     my $m = delete $data{m};
+    my $h1 = delete $data{h1};
+    my $b1 = delete $data{b1};
+    my $hashes = delete $data{hashes};
+    unless ($hashes && %$hashes) {
+        # Back-compat: bits built directly with bare h1/b1 and no hashes map
+        # (e.g. hand-constructed objects in tests) still emit a sha256 set.
+        $hashes = (defined $h1 || defined $b1) ? { sha256 => [ $h1 // '', $b1 // '' ] } : {};
+    }
 
-    # Build h= tag: sha256:header_hash:body_hash
-    my $h1 = delete $data{h1} // '';
-    my $b1 = delete $data{b1} // '';
-    my $result = "m=$m; h=sha256:$h1:$b1";
+    # spec-05 §7.3: h= is hash-set *("," hash-set) -- one hash-set per
+    # configured algorithm, emitted in the signer's chosen order (default:
+    # sha256 only; the signer default MUST NOT change).
+    my @algs = @{ $self->{algs} || ['sha256'] };
+    my @sets;
+    for my $alg (@algs) {
+        my $pair = $hashes->{$alg} or next;
+        push @sets, "$alg:$pair->[0]:$pair->[1]";
+    }
+    my $result = "m=$m; h=" . join(',', @sets);
 
     # Build r= tag JSON if there are recipes
     my %recipe_json;
@@ -179,12 +219,16 @@ sub parse {
         unless exists $tags{m};
     $self->{bits}{m} = $tags{m};
 
-    # Parse h= tag: sha256:header_hash:body_hash
+    # spec-05 §7.3: h= is a list of hash-sets
     if (exists $tags{h}) {
-        my @parts = split(/:/, $tags{h});
-        # algorithm:header_hash:body_hash
-        $self->{bits}{h1} = $parts[1];
-        $self->{bits}{b1} = $parts[2];
+        my $sets = parse_hash_sets($tags{h});
+        for my $s (@$sets) {
+            $self->{bits}{hashes}{$s->[0]} = [$s->[1], $s->[2]];
+        }
+        # Back-compatible aliases for the sha256 hash-set
+        if (my $sha256 = $self->{bits}{hashes}{sha256}) {
+            @{$self->{bits}}{qw(h1 b1)} = @$sha256;
+        }
     }
 
     if (exists $tags{r}) {
@@ -246,23 +290,25 @@ sub _decode_recipe_list {
 # --- Digests ---
 
 sub h_digest {
-    my ($msg) = @_;
+    my ($msg, $alg) = @_;
+    $alg = lc($alg // 'sha256');
 
-    my $digest = Crypt::Digest::SHA256->new();
+    my $data = '';
     for my $header (sort { lc($a) cmp lc($b) } $msg->header_names) {
         next if should_skip($header);
         for my $item (reverse $msg->header_raw($header)) {
             my $chead = dkim2_canonicalize_header("$header: $item\r\n");
             warn "cdigest: $chead" if $DEBUG;
-            $digest->add($chead);
+            $data .= $chead;
         }
     }
 
-    return digest64($digest);
+    return _hash_data_b64($alg, $data);
 }
 
 sub b_digest {
-    my ($msg) = @_;
+    my ($msg, $alg) = @_;
+    $alg = lc($alg // 'sha256');
 
     # DKIM simple body canonicalization: strip trailing empty lines,
     # ensure exactly one trailing CRLF
@@ -270,9 +316,17 @@ sub b_digest {
     $body =~ s/(\r\n)+\z//;
     $body .= "\r\n";
 
-    my $digest = Crypt::Digest::SHA256->new();
-    $digest->add($body);
-    return digest64($digest);
+    return _hash_data_b64($alg, $body);
+}
+
+# spec-05 §3.1/§3.4: hash $data with the named (implemented) algorithm and
+# base64-encode the result. Equivalent to the historic digest64($digest)
+# path for sha256 (verified byte-identical), generalised to any algorithm
+# in %HASH_ALGS.
+sub _hash_data_b64 {
+    my ($alg, $data) = @_;
+    my $fn = $HASH_ALGS{$alg} or croak "unsupported hash algorithm: $alg";
+    return encode_base64($fn->($data), '');
 }
 
 # --- Body recipe computation ---
@@ -586,6 +640,10 @@ sub calculate {
 
     my $self = bless {}, $class;
 
+    # spec-05 §3.1: the signer chooses one or more hash algorithms; default
+    # is sha256 only (the signer default MUST NOT change).
+    $self->{algs} = ($opts{Algs} && @{$opts{Algs}}) ? [ @{$opts{Algs}} ] : ['sha256'];
+
     unless (ref($current) && $current->isa('Email::MIME')) {
         $current = Email::MIME->new($current);
     }
@@ -639,9 +697,14 @@ sub calculate {
     }
 
     # Hashes are always of the current (newest) version of the message,
-    # computed after any epilogue modification.
-    $self->set_tag('h1', h_digest($current));
-    $self->set_tag('b1', b_digest($current));
+    # computed after any epilogue modification, for every configured
+    # algorithm (spec-05 §7.3).
+    for my $alg (@{$self->{algs}}) {
+        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg), b_digest($current, $alg) ];
+    }
+    if (my $sha256 = $self->{bits}{hashes}{sha256}) {
+        @{$self->{bits}}{qw(h1 b1)} = @$sha256;
+    }
 
     # nothing more to calculate without a previous version
     return $self unless $previous;

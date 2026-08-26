@@ -68,18 +68,20 @@ is($v->result, 'pass', 'baseline chain-hop2 verifies ok');
     # Directly call the §10.8 check portion of finish_body by invoking
     # _verify_chain (which will fail because domains don't chain).
     # Instead, just test the check in isolation by calling the private helper.
-    my ($hh1, $bh1) = Mail::DKIM2::Verifier::_extract_mi_hashes($v2->{_mi_headers}{1});
-    my ($hh2, $bh2) = Mail::DKIM2::Verifier::_extract_mi_hashes($v2->{_mi_headers}{2});
-    is($hh1, 'AAAA', '_extract_mi_hashes: header hash m=1');
-    is($bh1, 'BBBB', '_extract_mi_hashes: body hash m=1');
-    is($hh2, 'AAAA', '_extract_mi_hashes: header hash m=2');
-    is($bh2, 'CCCC', '_extract_mi_hashes: body hash m=2');
+    my $sets1 = Mail::DKIM2::Verifier::_extract_mi_hash_sets($v2->{_mi_headers}{1});
+    my $sets2 = Mail::DKIM2::Verifier::_extract_mi_hash_sets($v2->{_mi_headers}{2});
+    my ($hh1, $bh1) = ($sets1->[0][1], $sets1->[0][2]);
+    my ($hh2, $bh2) = ($sets2->[0][1], $sets2->[0][2]);
+    is($hh1, 'AAAA', '_extract_mi_hash_sets: header hash m=1');
+    is($bh1, 'BBBB', '_extract_mi_hash_sets: body hash m=1');
+    is($hh2, 'AAAA', '_extract_mi_hash_sets: header hash m=2');
+    is($bh2, 'CCCC', '_extract_mi_hash_sets: body hash m=2');
     isnt($bh1, $bh2, 'body hashes differ (modification detected)');
 }
 
 # §10.8 donotexplode: single-hop with f=donotexplode and no exploded later sig → no fail
 {
-    my $flags1 = Mail::DKIM2::Verifier::_extract_mi_hashes(
+    my $sets = Mail::DKIM2::Verifier::_extract_mi_hash_sets(
         'Message-Instance: m=1; h=sha256:XXXX:YYYY;'
     );
     ok(1, 'donotexplode single-hop: no exploded sig, check would not fire');

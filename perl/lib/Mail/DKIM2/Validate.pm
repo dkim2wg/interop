@@ -70,8 +70,14 @@ sub _mi_tags {
     return [] unless $mi;
     my @t;
     push @t, { tag => 'm', label => 'instance', value => ($mi->get_tag('m') // '') };
-    push @t, { tag => 'h', label => 'header hash', value => 'sha256:' . ($mi->get_tag('h1') // '') };
-    push @t, { tag => 'h', label => 'body hash',   value => 'sha256:' . ($mi->get_tag('b1') // '') };
+    # spec-05 §7.3: h= may carry a hash-set per algorithm -- show each one
+    # under its own name rather than assuming sha256.
+    my $hashes = $mi->get_tag('hashes') || {};
+    for my $alg (sort keys %$hashes) {
+        my ($hh, $bh) = @{ $hashes->{$alg} };
+        push @t, { tag => 'h', label => 'header hash', value => "$alg:" . ($hh // '') };
+        push @t, { tag => 'h', label => 'body hash',   value => "$alg:" . ($bh // '') };
+    }
     my $rh = $mi->get_tag('rh');
     my $rb = $mi->get_tag('rb');
     if ($mi->unrecoverable) {

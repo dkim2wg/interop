@@ -34,6 +34,7 @@ use Mail::DKIM2::Signer;
 
 my ($selector, $domain, $keyfile, $timestamp, $next_domain);
 my $mailfrom = '<>';
+my $hash_algs = 'sha256';
 my (@rcptto, @flags);
 
 GetOptions(
@@ -45,9 +46,21 @@ GetOptions(
     'timestamp=i'     => \$timestamp,
     'next-domain=s'   => \$next_domain,
     'flag=s'          => \@flags,
+    'hash=s'          => \$hash_algs,
 ) or die _usage();
 
 die _usage() unless defined $selector && defined $domain && defined $keyfile;
+
+# spec-05 §3.1: signer chooses one or both hash algorithms for the
+# Message-Instance h= tag. Default MUST remain sha256 (byte-identical to
+# pre-spec-05 output).
+my %HASH_ALG_SETS = (
+    sha256 => ['sha256'],
+    sha512 => ['sha512'],
+    both   => ['sha256', 'sha512'],
+);
+my $algs = $HASH_ALG_SETS{$hash_algs}
+    or die _usage("invalid --hash value '$hash_algs' (expected sha256|sha512|both)");
 
 my $file = shift // '-';
 my $raw = $file eq '-'
@@ -67,7 +80,7 @@ my $msg = Email::MIME->new($raw);
 # the top instance still describes the message and must be reused.
 my $mi_header;
 unless (Mail::DKIM2::MessageInstance->verify($msg)) {
-    my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+    my $mi = Mail::DKIM2::MessageInstance->calculate($msg, undef, Algs => $algs);
     ($mi_header = fold_header('Message-Instance: ' . $mi->as_string))
         =~ s/^Message-Instance:\s*//;
     $msg->header_raw_prepend('Message-Instance', $mi_header);
@@ -98,7 +111,8 @@ binmode STDOUT;
 print $out;
 
 sub _usage {
-    return <<"USAGE";
+    my ($err) = @_;
+    my $usage = <<"USAGE";
 usage: $0 -s SELECTOR -d DOMAIN -k KEYFILE [options] [MESSAGE|-]
 
   -s, --selector S   DKIM2 selector
@@ -109,5 +123,7 @@ usage: $0 -s SELECTOR -d DOMAIN -k KEYFILE [options] [MESSAGE|-]
       --timestamp N  fixed t= (default: now)
       --next-domain D  emit nd= for an imaginary forwarding hop, omitting mf=/rt=
       --flag F       f= flag; repeatable
+      --hash A       hash algorithm(s) for Message-Instance h=: sha256|sha512|both (default sha256)
 USAGE
+    return $err ? "$err\n$usage" : $usage;
 }
