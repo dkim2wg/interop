@@ -6,7 +6,7 @@ use warnings;
 our $VERSION = '0.01';
 
 use MIME::Base64 qw(encode_base64 decode_base64);
-use JSON::XS;
+use JSON;
 use Crypt::PK::RSA;
 use Crypt::PK::Ed25519;
 use Crypt::Digest::SHA256 qw(sha256 sha256_b64 sha256_hex);
@@ -112,13 +112,13 @@ sub digest64 {
 # Encode data as base64 JSON for a tag value
 sub encode_tag_json {
     my ($data) = @_;
-    return encode_base64(JSON::XS->new->canonical(1)->encode($data), '');
+    return encode_base64(JSON->new->canonical(1)->encode($data), '');
 }
 
 # Decode a base64 JSON tag value
 sub decode_tag_json {
     my ($b64) = @_;
-    return JSON::XS->new->decode(decode_base64($b64));
+    return JSON->new->decode(decode_base64($b64));
 }
 
 # Fold a header line at 72 characters.

@@ -25,14 +25,13 @@ WriteMakefile(
         'CryptX'                                 => '0.060',
         'Email::MIME'                            => '0',
         'Exporter'                               => '0',
-        'JSON::XS'                               => '0',
+        'JSON'                                   => '0',
         'List::Util'                             => '0',
         'MIME::Base64'                           => '0',
     },
 
     TEST_REQUIRES => {
         'Email::MIME'  => '0',
-        'JSON'         => '0',
         'Path::Tiny'   => '0',
         'Test::More'   => '0.96',
     },

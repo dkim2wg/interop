@@ -273,7 +273,7 @@ sub _setup_pubkey_callback {
 
     # If dns_overrides is set (testing), load keys from that JSON file
     if ( $config->{'dns_overrides'} ) {
-        my $dns_data = JSON::XS::decode_json( File::Slurp::read_file($config->{'dns_overrides'}) );
+        my $dns_data = JSON::decode_json( File::Slurp::read_file($config->{'dns_overrides'}) );
         $verifier->set_pubkey_callback(sub {
             my ($signature, $idx) = @_;
             $idx //= 0;

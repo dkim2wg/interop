@@ -441,7 +441,7 @@ sub _fetch_sign_config {
         my $response = $http->get($url);
 
         if ( $response->{success} ) {
-            my $data = JSON::XS::decode_json( $response->{content} );
+            my $data = JSON::decode_json( $response->{content} );
             if ( $data->{selector} && ( $data->{key} || $data->{keyfile} ) ) {
                 $self->dbgout( 'DKIM2SignKeyLookup',
                     "Got config for $domain: selector=$data->{selector}", LOG_DEBUG );

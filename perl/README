@@ -27,7 +27,7 @@ DEPENDENCIES
     Perl 5.20 or later
     Mail::DKIM 1.20200824 or later
     Email::MIME
-    JSON::XS
+    JSON
     Algorithm::Diff
     Digest::SHA
     MIME::Base64

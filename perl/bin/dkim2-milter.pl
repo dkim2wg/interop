@@ -126,11 +126,11 @@ warn "dkim2-milter: mode=$opts{mode}\n";
 # Preload DNS overrides if specified
 my $dns_data;
 if ($opts{'dns-json'}) {
-    require JSON::XS;
+    require JSON;
     open my $fh, '<', $opts{'dns-json'}
         or die "Cannot read $opts{'dns-json'}: $!\n";
     local $/;
-    $dns_data = JSON::XS::decode_json(<$fh>);
+    $dns_data = JSON::decode_json(<$fh>);
     close $fh;
     warn "dkim2-milter: using DNS overrides from $opts{'dns-json'}\n";
 }
