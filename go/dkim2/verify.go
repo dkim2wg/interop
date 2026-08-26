@@ -302,6 +302,14 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			continue
 		}
 
+		// spec-05 §8.9: duplicate-selector and too-many-signatures checks must
+		// run before any DNS lookup or crypto work.
+		if dupErrs := checkSignatureDuplicates(sig.Sigs, sig.Sequence); len(dupErrs) > 0 {
+			res.Error = fmt.Errorf("%s", strings.Join(dupErrs, "; "))
+			results = append(results, res)
+			continue
+		}
+
 		// §7.7 MUST: d= must be a suffix of (i.e. relaxed match against) the mf= domain
 		if sig.MailFrom != "" && sig.MailFrom != "<>" {
 			if mfDomain := domainFromAddr(sig.MailFrom); mfDomain != "" {
@@ -412,6 +420,41 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 	}
 
 	return results, nil
+}
+
+// checkSignatureDuplicates enforces spec-05 §8.9 duplicate/limit rules for
+// one DKIM2-Signature s= tag: a Selector MUST NOT appear more than once, and
+// the same signing algorithm may appear at most twice, and only with
+// distinct Selectors. Both comparisons are case-insensitive (a Selector is a
+// Domain, §3.5; algorithm names are ABNF quoted strings, RFC 5234).
+func checkSignatureDuplicates(items []SigItem, i int) []string {
+	var errs []string
+
+	seenSelectors := map[string]bool{}
+	dupSelector := false
+	for _, it := range items {
+		sel := strings.ToLower(it.Selector)
+		if seenSelectors[sel] {
+			dupSelector = true
+		}
+		seenSelectors[sel] = true
+	}
+	if dupSelector {
+		errs = append(errs, fmt.Sprintf("PERMERROR DKIM2-Signature i=%d has a duplicate selector", i))
+	}
+
+	counts := map[string]int{}
+	for _, it := range items {
+		counts[strings.ToLower(it.Algorithm)]++
+	}
+	for _, n := range counts {
+		if n > 2 {
+			errs = append(errs, fmt.Sprintf("PERMERROR DKIM2-Signature i=%d has too many signatures", i))
+			break
+		}
+	}
+
+	return errs
 }
 
 // normAddr normalises an email address for §10.4 exact-match comparison:

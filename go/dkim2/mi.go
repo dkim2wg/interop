@@ -146,6 +146,16 @@ func parseMI(raw string) (*MessageInstance, error) {
 	if len(hashes) == 0 {
 		return nil, fmt.Errorf("invalid h= tag: %q", h)
 	}
+
+	// spec-05 §7.3: an algorithm MUST NOT be present more than once.
+	seen := map[string]bool{}
+	for _, hs := range hashes {
+		if seen[hs.Alg] {
+			return nil, fmt.Errorf("PERMERROR Message-Instance m=%d has a duplicate hash algorithm", m)
+		}
+		seen[hs.Alg] = true
+	}
+
 	mi := &MessageInstance{Version: m, Hashes: hashes}
 
 	if rB64 := stripB64WSP(tvl.get("r")); rB64 != "" {
