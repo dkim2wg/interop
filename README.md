@@ -77,6 +77,24 @@ message, and enabling it requires a full protected generation (datasource,
 private-key manifest with SPKI digests, PKCS#8 children), so that direction is
 waiting on a command-line signer.
 
+## Licence
+
+BSD 3-Clause — see [`LICENSE`](LICENSE). This work was contributed under the
+IETF Note Well ([BCP 78](https://www.rfc-editor.org/info/bcp78)), whose Trust
+Legal Provisions license code components under the Revised BSD licence, so that
+is what applies here. Copyright is held by the DKIM2 interop contributors; by
+sending a pull request you licence your contribution under the same terms.
+
+Two things in this tree are not covered by that licence:
+
+- `dkim2tests/` is a git submodule pointing at Steve Atkins'
+  <https://forge.turscar.ie/turscar/dkim2tests>, which carries its own
+  BSD-2-Clause licence (`Copyright (c) 2026 Turscar`). Nothing here relicenses
+  it.
+- `deploy/patches/pmilter-null-sender-envfrom.patch` is a diff against
+  `Sendmail::PMilter`, and its context lines remain under that distribution's
+  own terms.
+
 # An Alternative Proposal
 
 A Deployment Profile for DKIM2 via Milter Interface (IETF Datatracker):
