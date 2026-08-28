@@ -447,6 +447,41 @@ array in an accessor that hides them.
 
 ---
 
+## 18. §11.9 replay detection is deliberately not implemented
+
+draft-06 added §11.9: a Verifier receiving multiple copies of a message that
+carries no `exploded` flag SHOULD reject all of them. **No implementation here
+does this, and that is a decision rather than an oversight.**
+
+It is the only DKIM2 rule that requires a verifier to remember anything between
+messages, so it needs a persistent cross-message store, a retention policy, and
+somewhere to put the write. That machinery earns its keep at the volume where
+DKIM replay is an actual abuse vector — Yahoo's scale, where the attack is
+worth mounting. It does not pay for itself at ours, and none of these
+implementations is the production path for mail at that volume anyway.
+
+It is a SHOULD, not a MUST, so declining it is conformant. Two things worth
+knowing if it is ever revisited:
+
+**§11.9's suggested key is wrong.** It offers the m=1 Message-Instance hash
+values as the message identity. Those identify the original *content*, so a
+message reaching a recipient by two legitimate paths — a mailing list copy plus
+a direct Cc, or two forwarding routes — has identical m=1 hashes but two
+entirely different signature chains, and one of the two would be rejected as a
+replay. The topmost DKIM2-Signature is the correct key: it matches only when
+the same fully-signed bytes are re-injected, which is the attack itself. It
+also makes the `exploded` skip exact — a list that signs once and sends
+identical bytes to every subscriber is precisely the case the flag excuses,
+while a list signing per-recipient (differing `rt=`) has distinct topmost
+signatures and never needs it.
+
+**Checking and recording must be separated.** An SMTP retry after a 4xx is
+byte-identical to the original, so recording at verify time would make every
+legitimate retry flag itself as a replay on the next attempt. Only the accept
+path may write.
+
+---
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
@@ -621,6 +656,7 @@ message, fixed timestamp, known key, showing every intermediate value.
 | 15 | 8bit DSN downgraded 8→7 breaks signatures | Mitigated (Postfix config) | High (correctness) |
 | 16 | Leading WSP stripped before unfolding | Fixed (`in_wsp = 1`) | Critical for interop |
 | 17 | NULL holes crash multi-field recipe undo | Fixed (skip holes) | Critical (crash) |
+| 18 | §11.9 replay detection unimplemented | Won't do (scale) | Conformant (SHOULD) |
 | S1 | Trailing `;` should be normative | Spec issue | Critical for interop |
 | S2 | `ed25519-sha256` prehash semantics unstated | Spec issue | Critical for interop |
 | S3 | §5.2 vs §8.5 WSP rules not cross-referenced | Spec issue | High |
