@@ -463,17 +463,21 @@ implementations is the production path for mail at that volume anyway.
 It is a SHOULD, not a MUST, so declining it is conformant. Two things worth
 knowing if it is ever revisited:
 
-**§11.9's suggested key is wrong.** It offers the m=1 Message-Instance hash
-values as the message identity. Those identify the original *content*, so a
-message reaching a recipient by two legitimate paths — a mailing list copy plus
-a direct Cc, or two forwarding routes — has identical m=1 hashes but two
-entirely different signature chains, and one of the two would be rejected as a
-replay. The topmost DKIM2-Signature is the correct key: it matches only when
-the same fully-signed bytes are re-injected, which is the attack itself. It
-also makes the `exploded` skip exact — a list that signs once and sends
-identical bytes to every subscriber is precisely the case the flag excuses,
-while a list signing per-recipient (differing `rt=`) has distinct topmost
-signatures and never needs it.
+**§11.9's suggested key over-detects.** It offers the m=1 Message-Instance
+hash values as the message identity, and on its own terms that is right: those
+hashes do identify one original message. The catch is that a message reaching a
+recipient by two legitimate paths — a mailing list copy plus a direct Cc, or
+two forwarding routes — genuinely *is* that same original message, arriving
+twice because it was supposed to. It has identical m=1 hashes and two entirely
+different signature chains, and keying on m=1 would reject one of the copies.
+
+So the choice is about how tight the identity should be, not about correctness.
+The topmost DKIM2-Signature is the tighter key: it matches only when the same
+fully-signed bytes are re-injected, which is the attack itself, and it leaves
+legitimate multi-path delivery alone. It also makes the `exploded` skip exact —
+a list that signs once and sends identical bytes to every subscriber is
+precisely the case the flag excuses, while a list signing per-recipient
+(differing `rt=`) has distinct topmost signatures and never needs it.
 
 **Checking and recording must be separated.** An SMTP retry after a 4xx is
 byte-identical to the original, so recording at verify time would make every
