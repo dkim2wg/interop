@@ -1037,8 +1037,9 @@ ssh dkim2 'cd /root/interop && deploy/dkim2-list-smoke.sh'
 ```
 
 It injects a message (from the capture address) through each test list, captures
-the outbound list-modified + milter-signed copy locally, and asserts `-04` +
-`verify=pass` for each. Expected output: two `PASS` lines.
+the outbound list-modified + milter-signed copy locally, and asserts the
+current draft (read from `DKIM2_DRAFT`, not hardcoded) + `verify=pass` for
+each. Expected output: three `PASS` lines — Mailman stamps one and Sympa two.
 
 ### One-time infra (already set up 2026-07-06)
 
