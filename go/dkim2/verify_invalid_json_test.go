@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestVerifyReportsInvalidRecipeJSON asserts that spec-05 §11.2 ("errors in
+// TestVerifyReportsInvalidRecipeJSON asserts that spec-06 §11.2 ("errors in
 // a JSON object specifying Recipes should be called out specifically") is
 // honoured end to end: feeding a complete, validly-signed message whose r=
 // payload decodes to malformed JSON through the real verifier entry point

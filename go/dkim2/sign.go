@@ -36,7 +36,7 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		return fmt.Errorf("reading body: %w", err)
 	}
 
-	// 2. Determine the hash algorithm(s) to sign with (spec-05 §3.1). Default
+	// 2. Determine the hash algorithm(s) to sign with (spec-06 §3.1). Default
 	// stays sha256-only: the signer default MUST NOT change.
 	algs := opts.HashAlgs
 	if len(algs) == 0 {
@@ -94,7 +94,7 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 
 	// 5. Build new MI header — unless this hop changed nothing.
 	//
-	// draft-05 §9.1/§9.2.5: a forwarder that leaves both hashes unchanged adds
+	// draft-06 §9.1/§9.2.5: a forwarder that leaves both hashes unchanged adds
 	// no new Message-Instance; it signs against the existing top instance and
 	// reuses its m=.  An instance with identical hashes and no Recipe is not
 	// forbidden, but §9.1 still calls it "most likely to be pointless and a

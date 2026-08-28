@@ -140,7 +140,7 @@ sub generate {
 # generate_dsn(%args) — return a Delivery Status Notification for the incoming
 # message, addressed back to the sender. Used by the reflector-dsn address,
 # which bounces every message regardless of whether it arrived DKIM2-signed
-# (draft-05 §12.1). The DSN is a fresh DKIM2 message signed as new: MAIL FROM
+# (draft-06 §12.1). The DSN is a fresh DKIM2 message signed as new: MAIL FROM
 # <>, one Message-Instance and one DKIM2-Signature on the top message,
 # embedding the original as a message/rfc822 part.
 sub generate_dsn {
@@ -258,7 +258,7 @@ sub generate_brand {
     my $i1_desc = $a{nd}
       ? "  i=1  d=$bd  (the brand hop; instead of mf=/rt= it carries\r\n"
       . "       nd=$a{domain}, naming the domain that signs the next hop --\r\n"
-      . "       the \"imaginary hop\" encoding from draft-05 Section 9.3)\r\n"
+      . "       the \"imaginary hop\" encoding from draft-06 Section 9.3)\r\n"
       : "  i=1  d=$bd  (signed with the key you delegated via the\r\n"
       . "       dkim2test._domainkey.$bd CNAME to dkim2test._domainkey.$a{domain})\r\n";
     my $body =
@@ -282,7 +282,7 @@ sub generate_brand {
 
     # i=1: sign AS the brand using the delegated key. With nd=>1 this hop uses
     # the nd= "imaginary hop" encoding (nd=<platform domain>) instead of mf=/rt=
-    # (draft-05 §9.3); the chain still validates because nd= must equal the d=
+    # (draft-06 §9.3); the chain still validates because nd= must equal the d=
     # of the next signature (i=2).
     my %b = (Domain => $bd, Selector => $a{brand_selector}, Timestamp => $now);
     if ($a{nd}) {
@@ -431,7 +431,7 @@ sub _verify {
     $v->skip_timestamp_check(1) if $skip_ts;
     # The inbound milter stamps a Message-Instance on non-DKIM2 mail, so a
     # message reaching us can legitimately carry an MI with no signature over
-    # it. Verified mail from outside would make that spec-05 §11's "is not
+    # it. Verified mail from outside would make that spec-06 §11's "is not
     # signed" PERMERROR, but here it is our own header on our own side of the
     # trust boundary, and the whole point of this path is to then bridge-sign
     # it -- which is what makes the instance legal on the wire again. Without
@@ -563,6 +563,6 @@ the message to send back to the sender. A reflector DKIM2-Signature is added
 only when the incoming chain verified. See
 C<docs/superpowers/specs/2026-06-18-dkim2-reflector-design.md>.
 
-B<EXPERIMENTAL> — implements draft-ietf-dkim-dkim2-spec-05.
+B<EXPERIMENTAL> — implements draft-ietf-dkim-dkim2-spec-06.
 
 =cut

@@ -44,7 +44,7 @@ typedef struct dkim2_sig {
     char *mf;               /* mf= decoded MAIL FROM e.g. "<user@example.com>" */
     char **rt;              /* rt= decoded RCPT TO values (NULL-terminated) */
     char *d;                /* d= signing domain */
-    char *nd;               /* nd= next-domain (draft-05 §8.7); NULL if absent */
+    char *nd;               /* nd= next-domain (draft-06 §8.7); NULL if absent */
     dkim2_sigset_t *ssets;  /* s= signature sets */
     int n_ssets;
     char **flags;           /* f= flags (NULL-terminated) */
@@ -65,7 +65,7 @@ typedef struct dkim2_ctx {
 
     /* Set by the header-collection path (dkim2_message.c/dkim2_milter.c) when
        a Message-Instance header fails to parse with a specific, reportable
-       cause (currently: spec-05 §7.3 duplicate hash algorithm in h=) rather
+       cause (currently: spec-06 §7.3 duplicate hash algorithm in h=) rather
        than simply being malformed/absent. Such a header never makes it into
        mi_list, so nothing downstream would otherwise ever see the problem --
        dkim2_do_verify() checks this first, before any DNS/crypto work, and
@@ -73,7 +73,7 @@ typedef struct dkim2_ctx {
     char mi_error[256];
 
     /* Body hash — computed incrementally, never buffered.
-       Holds every implemented algorithm's digest (spec-05 §3.1). */
+       Holds every implemented algorithm's digest (spec-06 §3.1). */
     dkim2_digests_t body_digests;               /* valid once body_hasher is NULL */
     dkim2_body_hasher_t *body_hasher;           /* non-NULL during body accumulation */
 

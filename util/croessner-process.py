@@ -24,7 +24,7 @@ import urllib.request
 # draft it does not implement, and a silent downgrade would make this runner
 # report agreement about a different protocol than the one under test.
 API_VERSION = "v1"
-DRAFT = "draft-ietf-dkim-dkim2-spec-05"
+DRAFT = "draft-ietf-dkim-dkim2-spec-06"
 
 # The capability is 32 opaque bytes on disk, presented as unpadded base64url.
 # Encoding it any other way earns a bare 403 with no diagnostic (his daemon is

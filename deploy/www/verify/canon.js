@@ -1,4 +1,4 @@
-// Canonicalization per draft-ietf-dkim-dkim2-spec-05 §6.1, §6.2, §9.6.
+// Canonicalization per draft-ietf-dkim-dkim2-spec-06 §6.1, §6.2, §9.6.
 
 // Unsigned header fields per §4, §4.1. message-instance and dkim2-signature
 // are also filtered upstream in signedFields(); they are listed here so this

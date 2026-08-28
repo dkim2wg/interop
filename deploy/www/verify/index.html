@@ -14,6 +14,9 @@
        level is verified <strong>entirely in your browser</strong> — parsing,
        hashing, and signature cryptography all run locally.
        <a href="/">About DKIM2</a> · <a href="/validate/">server validator</a></p>
+    <p class="caveat">A result reports only whether the message travelled here
+       unmodified and unreplayed (§11.1). It says nothing about whether the
+       message is wanted, or whether any declared modification was benign.</p>
     <p class="privacy">Public keys are fetched over DNS-over-HTTPS from Cloudflare
        (<code>cloudflare-dns.com</code>), so the signing domains and selectors in
        your message are sent to Cloudflare. The message body never leaves your browser.</p>

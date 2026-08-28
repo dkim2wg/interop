@@ -70,7 +70,7 @@ sub _mi_tags {
     return [] unless $mi;
     my @t;
     push @t, { tag => 'm', label => 'instance', value => ($mi->get_tag('m') // '') };
-    # spec-05 §7.3: h= may carry a hash-set per algorithm -- show each one
+    # spec-06 §7.3: h= may carry a hash-set per algorithm -- show each one
     # under its own name rather than assuming sha256.
     my $hashes = $mi->get_tag('hashes') || {};
     for my $alg (sort keys %$hashes) {
@@ -117,9 +117,9 @@ sub _default_cb {
 
 # report($text, %opts) — verify a DKIM2 message and return a structured report.
 #
-# Prior to spec-05, a receiving MTA's Received-SPF header (Fastmail adds one)
+# Prior to spec-06, a receiving MTA's Received-SPF header (Fastmail adds one)
 # was covered by the Message-Instance header hash and could break
-# verification; this used to retry once with it stripped. spec-05 §4 excludes
+# verification; this used to retry once with it stripped. spec-06 §4 excludes
 # Received-SPF from the hash via the "received-" prefix rule (should_skip()),
 # so stripping it can no longer change h_digest()/b_digest() or any verdict —
 # the retry was provably a no-op. Removed rather than kept as a "safety net":
@@ -150,7 +150,7 @@ sub _report_once {
     my @sig_hdrs = $msg->header('DKIM2-Signature');
     my @mi_hdrs  = $msg->header('Message-Instance');
     $res{counts} = { signatures => scalar @sig_hdrs, instances => scalar @mi_hdrs };
-    # A Message-Instance with no signature anywhere is spec-05 §11's
+    # A Message-Instance with no signature anywhere is spec-06 §11's
     # "PERMERROR Message-Instance m=<x> is not signed", not an absence of
     # DKIM2. Reporting it as 'none' is exactly the answer someone pasting such
     # a message here does not need: it says "nothing to see" about a message
@@ -244,7 +244,7 @@ sub _mi_level {
 
     $lvl{tags} = _mi_tags($mi);
 
-    # spec-05 §3.4/§7.3: mirror MessageInstance::verify()'s semantics here --
+    # spec-06 §3.4/§7.3: mirror MessageInstance::verify()'s semantics here --
     # every implemented hash-set must match; an MI naming no implemented
     # algorithm displays as a mismatch (fail-closed), not silently as a
     # sha256-only "no hash".
@@ -331,12 +331,12 @@ sub _sig_level {
             if ($prev) {
                 my $prev_nd = $prev->next_domain;
                 if (defined $prev_nd && length $prev_nd) {
-                    # draft-05 §11.4: an nd= "imaginary hop" must name the domain
+                    # draft-06 §11.4: an nd= "imaginary hop" must name the domain
                     # that signs the next signature; nd= MUST exactly match its d=.
                     my $cur_d = $sig->domain // '';
                     $lvl{custody} = (lc($prev_nd) eq lc($cur_d))
                         ? { ok => 1, detail => "nd=$prev_nd matches d= of i=$num" }
-                        # Canonical spec-05 wording (Task 3.1), verbatim "MAIL nd="
+                        # Canonical spec-06 wording (Task 3.1), verbatim "MAIL nd="
                         # typo preserved, keyed on the *previous* hop's i=.
                         : { ok => 0, detail => "DKIM2-Signature i=" . ($num - 1) . " MAIL nd= does not match" };
                 } else {
@@ -346,7 +346,7 @@ sub _sig_level {
                         my @rts = do { my $rt = $prev->rcpt_to; ref $rt eq 'ARRAY' ? @$rt : ($rt // ()) };
                         my $ok = grep { relaxed_domain_match($mfd // '', extract_domain($_) // '') } @rts;
                         $lvl{custody} = $ok ? { ok => 1, detail => '' }
-                                            # Canonical spec-05 wording (Task 3.1), same
+                                            # Canonical spec-06 wording (Task 3.1), same
                                             # form as Verifier.pm's Chain of Custody permerror.
                                             : { ok => 0, detail => "DKIM2-Signature i=$num MAIL FROM $mf did not match" };
                     }
@@ -376,7 +376,7 @@ sub _sig_level {
     $lvl{result} = 'warn' if $crypto eq 'pass' && !$lvl{timestamp}{ok};
     $_->{result} = $crypto for @{$lvl{items}};
 
-    # Local policy (spec-05 §"Check the Chain of Custody"): the
+    # Local policy (spec-06 §"Check the Chain of Custody"): the
     # highest-numbered DKIM2-Signature in the *whole* chain MUST NOT carry
     # nd= (mirrors the Verifier.pm permerror from Task 2.1). $sig_by_i is the
     # original, unmodified full signature set for every call in this walk,
@@ -411,6 +411,6 @@ structured breakdown of each DKIM2-Signature and Message-Instance level
 (including MI undo), for display by the web validator. Never dies. See
 C<docs/superpowers/specs/2026-06-18-dkim2-web-validator-design.md>.
 
-B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-05.
+B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-06.
 
 =cut

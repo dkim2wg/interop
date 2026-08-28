@@ -9,7 +9,7 @@
    *headers_out: array of malloc'd "Name: value\r\n" logical header strings.
    *n_headers_out: number of entries.
    body_digests_out: body digest per §5.1 for every implemented algorithm
-   (spec-05 §3.1), written on return.
+   (spec-06 §3.1), written on return.
    Returns 0 on success, -1 on error. Caller frees headers with eml_free(). */
 int eml_parse(const char *path,
               char ***headers_out, int *n_headers_out,

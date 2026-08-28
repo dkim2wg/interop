@@ -163,7 +163,7 @@ int main(void) {
         "TAMPERED body!\r\n", mi_val, sig_val);
     assert(st == DKIM2_FAIL);
 
-    /* --- Error: wrong MAIL FROM → PERMERROR, canonical spec-05 message --- */
+    /* --- Error: wrong MAIL FROM → PERMERROR, canonical spec-06 message --- */
     {
         dkim2_verify_result_t res;
         verify_test_message_full("<wrong@example.com>", rcpts,
@@ -174,7 +174,7 @@ int main(void) {
         st = res.status;
     }
 
-    /* --- Error: wrong RCPT TO → PERMERROR, canonical spec-05 message --- */
+    /* --- Error: wrong RCPT TO → PERMERROR, canonical spec-06 message --- */
     char *wrong_rcpts[] = { "<wrong@example.org>", NULL };
     {
         dkim2_verify_result_t res;
@@ -321,7 +321,7 @@ int main(void) {
     }
 
     /* --- Error: d= does not relaxed-match mf= domain → PERMERROR,
-       canonical spec-05 message (§7.7 check fires before crypto, so
+       canonical spec-06 message (§7.7 check fires before crypto, so
        tampering d= post-signature doesn't need to preserve validity). --- */
     {
         char *d_tag = strstr(sig_val, "d=example.com");
@@ -339,7 +339,7 @@ int main(void) {
             "DKIM2-Signature i=1 MAIL FROM and d= do not match") != NULL);
     }
 
-    /* --- Error: top-level nd= (spec-05 local policy) → PERMERROR ---
+    /* --- Error: top-level nd= (spec-06 local policy) → PERMERROR ---
        The only legitimate nd= producer emits an nd= hop together with a
        matching higher-i= signature, so nd= must never appear on the
        topmost (highest i=) DKIM2-Signature. */
@@ -394,7 +394,7 @@ int main(void) {
     }
 
     /* --- Error: Chain of Custody nd= adjacency mismatch (§11.4) → PERMERROR,
-       canonical spec-05 message (verbatim "MAIL nd=" typo, per spec-05).
+       canonical spec-06 message (verbatim "MAIL nd=" typo, per spec-06).
        The C signer cannot emit nd= itself, so hop i=1 is hand-signed here:
        its own DKIM2-Signature header (with a genuine nd= tag) is covered by
        its own signature, so tampering it after the fact would invalidate the
@@ -481,7 +481,7 @@ int main(void) {
     }
 
     /* --- Error: inter-signature Chain of Custody break (§8.2) → FAIL,
-       canonical spec-05 message (matches Perl Verifier.pm's _verify_chain:
+       canonical spec-06 message (matches Perl Verifier.pm's _verify_chain:
        "DKIM2-Signature i=%d MAIL FROM %s did not match"). Both hops are
        produced by the normal signer (no nd= involved this time), chained
        via ctx2.sig_list so hop i=2 gets a real, independently-verifiable
@@ -547,7 +547,7 @@ int main(void) {
     }
 
     /* --- Regression (fix round 1): a duplicate hash algorithm in a
-       Message-Instance h= must be reported as the exact spec-05 §7.3
+       Message-Instance h= must be reported as the exact spec-06 §7.3
        PERMERROR through the REAL ingestion path, not just detected by
        dkim2_mi_parse() in isolation. Before this fix, dkim2_message.c's
        collect_dkim2_headers() (and dkim2_milter.c's cb_header(), same
@@ -619,7 +619,7 @@ int main(void) {
         remove(path);
     }
 
-    /* --- spec-05 §11.2 end-to-end: a malformed r= JSON payload on a real,
+    /* --- spec-06 §11.2 end-to-end: a malformed r= JSON payload on a real,
        validly-signed two-hop message must be reported as the specific
        "contains invalid JSON" PERMERROR by dkim2_do_verify() -- the same
        function dkim2_verify_message() (the CLI/milter entry point) calls --
@@ -727,7 +727,7 @@ int main(void) {
         free(sig1_out);
     }
 
-    /* --- spec-05 §11.2 ruling: a bad-base64 r= value is a DIFFERENT error
+    /* --- spec-06 §11.2 ruling: a bad-base64 r= value is a DIFFERENT error
        from a post-decode JSON parse failure, and must stay distinct:
        "PERMERROR ... syntax error" (§11.2 lists this explicitly for
        malformed field content), never "contains invalid JSON" -- the
@@ -818,7 +818,7 @@ int main(void) {
         free(sig1_out);
     }
 
-    /* --- spec-05 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too
+    /* --- spec-06 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too
        ("if it is wished to record any changes made to a message as it
        enters the DKIM2 ecosystem"). It never participates in the undo walk
        (there is no earlier state to reconstruct), so before this fix the
@@ -897,7 +897,7 @@ int main(void) {
         free(sig1_out);
     }
 
-    /* --- Regression (fix round: item 1, spec-05-upgrade final review): the
+    /* --- Regression (fix round: item 1, spec-06-upgrade final review): the
        BOTTOM (m=1) Message-Instance fails to parse with -1 (a malformed h=
        hash-set entry -- not the already-fixed -2 duplicate-hash case), while
        a real, otherwise-fully-valid m=2 hop sits on top with its own valid

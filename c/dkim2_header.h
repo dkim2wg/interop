@@ -6,7 +6,7 @@
 dkim2_mi_t *dkim2_mi_parse(const char *value);
 
 /* Same as dkim2_mi_parse, but on failure (NULL) writes a specific,
-   reportable reason to errbuf when one applies (currently: spec-05 §7.3
+   reportable reason to errbuf when one applies (currently: spec-06 §7.3
    duplicate hash algorithm in h=, formatted as the full PERMERROR string).
    errbuf is left as an empty string for any other failure (malloc/syntax) --
    those remain indistinguishable from "no Message-Instance present" to the

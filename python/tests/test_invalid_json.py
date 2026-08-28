@@ -18,7 +18,7 @@ def _mi_with_r(raw_json: bytes) -> str:
 
 
 def test_malformed_recipe_json_is_reported_specifically():
-    # spec-05 §11.2: JSON errors are called out specifically, not as a
+    # spec-06 §11.2: JSON errors are called out specifically, not as a
     # generic syntax error. Exact match (not just Contains): proves the
     # emitted text really is the verbatim §11.2 string.
     errs = verify_message_instance(_mi_with_r(b'{"h": '), [b"From: a@b\r\n"], b"x\r\n")
@@ -26,7 +26,7 @@ def test_malformed_recipe_json_is_reported_specifically():
 
 
 def test_bad_base64_recipe_is_syntax_error_not_invalid_json():
-    # spec-05 §11.2 ruling: base64 decode failure and JSON parse failure are
+    # spec-06 §11.2 ruling: base64 decode failure and JSON parse failure are
     # DIFFERENT errors and must stay distinct. "!!!!" is not valid base64
     # (never even reaches JSON parsing), so this must be the "syntax error"
     # PERMERROR, never mislabelled as "contains invalid JSON".
@@ -166,7 +166,7 @@ def _build_single_hop_message() -> bytes:
 
 
 def test_end_to_end_malformed_recipe_json_on_bottom_mi_rejected():
-    # spec-05 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it
+    # spec-06 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it
     # is wished to record any changes made to a message as it enters the
     # DKIM2 ecosystem") -- confirm it is checked like any other instance,
     # not just non-bottom ones that participate in the undo walk.

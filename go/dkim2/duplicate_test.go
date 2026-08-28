@@ -40,39 +40,39 @@ func TestSameAlgorithmTwiceAllowed(t *testing.T) {
 		{Selector: "sel2", Algorithm: "rsa-sha256"},
 	}, 1)
 	if len(errs) != 0 {
-		t.Errorf("spec-05 §8.9 allows one additional same-algorithm signature with a distinct Selector; got %v", errs)
+		t.Errorf("spec-06 §8.9 allows one additional same-algorithm signature with a distinct Selector; got %v", errs)
 	}
 }
 
-func TestThreeSameAlgorithmIsTooMany(t *testing.T) {
+func TestThreeSameAlgorithmHasExcessSelectors(t *testing.T) {
 	errs := checkSignatureDuplicates([]SigItem{
 		{Selector: "sel1", Algorithm: "rsa-sha256"},
 		{Selector: "sel2", Algorithm: "rsa-sha256"},
 		{Selector: "sel3", Algorithm: "rsa-sha256"},
 	}, 2)
-	if len(errs) != 1 || !strings.Contains(errs[0], "has too many signatures") {
-		t.Errorf("got %v, want a too-many-signatures PERMERROR", errs)
+	if len(errs) != 1 || !strings.Contains(errs[0], "has more selectors than allowed") {
+		t.Errorf("got %v, want an excess-selector PERMERROR", errs)
 	}
 }
 
-func TestDuplicateSelectorAndTooManyAreIndependent(t *testing.T) {
+func TestDuplicateSelectorAndExcessSelectorAreIndependent(t *testing.T) {
 	// two sigs sharing an algorithm AND a Selector is a duplicate-selector
-	// error but NOT too-many-signatures (the count is 2, not 3+)
+	// error but NOT an excess-selector error (the count is 2, not 3+)
 	errs := checkSignatureDuplicates([]SigItem{
 		{Selector: "sel1", Algorithm: "rsa-sha256"},
 		{Selector: "sel1", Algorithm: "rsa-sha256"},
 	}, 1)
 	foundDup := false
-	foundTooMany := false
+	foundExcess := false
 	for _, e := range errs {
 		if strings.Contains(e, "duplicate selector") {
 			foundDup = true
 		}
-		if strings.Contains(e, "too many signatures") {
-			foundTooMany = true
+		if strings.Contains(e, "more selectors than allowed") {
+			foundExcess = true
 		}
 	}
-	if !foundDup || foundTooMany {
+	if !foundDup || foundExcess {
 		t.Errorf("got %v, want only duplicate-selector error", errs)
 	}
 }
@@ -80,6 +80,6 @@ func TestDuplicateSelectorAndTooManyAreIndependent(t *testing.T) {
 func TestDuplicateHashAlgorithmIsPermerror(t *testing.T) {
 	_, err := parseMI("Message-Instance: m=4; h=sha256:AAA:BBB,sha256:CCC:DDD;")
 	if err == nil || !strings.Contains(err.Error(), "has a duplicate hash algorithm") {
-		t.Errorf("got %v, want a duplicate-hash-algorithm PERMERROR (spec-05 §7.3)", err)
+		t.Errorf("got %v, want a duplicate-hash-algorithm PERMERROR (spec-06 §7.3)", err)
 	}
 }

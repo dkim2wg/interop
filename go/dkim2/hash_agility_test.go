@@ -10,7 +10,7 @@ import (
 func TestHashAlgRegistry(t *testing.T) {
 	for _, n := range []string{"sha256", "sha512", "SHA256", "SHA512"} {
 		if _, ok := HashAlg(n); !ok {
-			t.Errorf("HashAlg(%q) must be supported (spec-05 §3)", n)
+			t.Errorf("HashAlg(%q) must be supported (spec-06 §3)", n)
 		}
 	}
 	if _, ok := HashAlg("x-whirlpool"); ok {
@@ -53,7 +53,7 @@ func TestParseMIWithBothAlgorithms(t *testing.T) {
 
 // TestVerifyMIHashesFailsClosedOnUnimplementedAlgorithm covers the §3.4
 // fail-closed path: an h= tag naming only an algorithm this build does not
-// implement must be rejected with the exact spec-05 message, not silently
+// implement must be rejected with the exact spec-06 message, not silently
 // accepted (which is what happens if the "usable == 0" check is ever lost).
 func TestVerifyMIHashesFailsClosedOnUnimplementedAlgorithm(t *testing.T) {
 	mi := &MessageInstance{

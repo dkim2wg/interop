@@ -9,7 +9,7 @@ import (
 // cannot be parsed, the verifier reports *that* failure rather than silently
 // dropping the header and inferring a bogus MI-numbering complaint.
 //
-// The MI here carries r={"h":null}, which parseRecipe rejects per draft-05
+// The MI here carries r={"h":null}, which parseRecipe rejects per draft-06
 // §5.1. Skipping it while computing the topmost MI version leaves the top
 // signature (m=1) apparently covering "MI m=0", which is a misleading
 // diagnostic for a message whose real defect is the null header Recipe.

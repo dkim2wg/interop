@@ -106,12 +106,13 @@ static int relaxed_domain_match(const char *d, const char *mf_domain) {
     return 0;
 }
 
-/* spec-05 §8.9: a Selector MUST NOT appear more than once within a single
+/* spec-06 §8.9: a Selector MUST NOT appear more than once within a single
    s= tag; the same signing algorithm MAY appear a second time, but only
    with a distinct Selector -- three or more occurrences of the same
-   algorithm is "too many signatures". The two checks are independent: two
-   items sharing both algorithm and Selector are a duplicate-selector error,
-   not too-many-signatures (the count is 2, not 3+). Matching is
+   algorithm means "more selectors than allowed". The two checks are
+   independent: two items sharing both algorithm and Selector are a
+   duplicate-selector error, not a selector-count error (the count is 2,
+   not 3+). Matching is
    case-insensitive for both: algorithm names are RFC 5234 ABNF quoted
    strings, and a Selector is a Domain (§3.5) -- DNS names are
    case-insensitive. Returns 0 if clean, -1 with errbuf filled otherwise. */
@@ -132,7 +133,7 @@ int dkim2_sig_check_duplicates(const dkim2_sig_t *sig, char *errbuf, size_t errb
             if (strcasecmp(sig->ssets[i].alg, sig->ssets[j].alg) == 0) cnt++;
         if (cnt > 2) {
             snprintf(errbuf, errbufsz,
-                "PERMERROR DKIM2-Signature i=%d has too many signatures", sig->i);
+                "PERMERROR DKIM2-Signature i=%d has more selectors than allowed", sig->i);
             return -1;
         }
     }
@@ -151,7 +152,7 @@ static char *blank_sig_values(const char *raw_val) {
     size_t rlen = strlen(raw_val);
 
     /* Find the s= tag at a tag boundary (start, or after ';'/WSP), matching
-       the tag name case-insensitively per spec-05 §8. */
+       the tag name case-insensitively per spec-06 §8. */
     const char *s_tag = NULL;
     for (const char *p = raw_val; *p; p++) {
         if ((p[0] == 's' || p[0] == 'S') && p[1] == '=') {
@@ -378,7 +379,7 @@ static int verify_mi_hashes(
             ret = -1; goto done;
         }
 
-        /* spec-05 §9.1: even the bottom (m=1) instance MAY carry Recipes
+        /* spec-06 §9.1: even the bottom (m=1) instance MAY carry Recipes
            ("if it is wished to record any changes made to a message as it
            enters the DKIM2 ecosystem"), so a malformed r= there must be
            reported exactly like on any other instance -- this check is NOT
@@ -394,7 +395,7 @@ static int verify_mi_hashes(
             } else {
                 int r_json_len = (int)b64_decode(mi->r_raw, r_json_bytes, decoded_max);
                 if (r_json_len <= 0) {
-                    /* spec-05 §11.2: a malformed r= base64 payload is a
+                    /* spec-06 §11.2: a malformed r= base64 payload is a
                        syntax error -- distinct from, and reported before,
                        a post-decode JSON parse failure. This used to
                        silently `continue`, the same silent-drop shape as
@@ -409,7 +410,7 @@ static int verify_mi_hashes(
                 r_json_bytes[r_json_len] = '\0';
                 const char *rj = (const char *)r_json_bytes;
 
-                /* spec-05 §11.2: "errors in a JSON object specifying Recipes
+                /* spec-06 §11.2: "errors in a JSON object specifying Recipes
                    should be called out specifically". dkim2_apply_body_recipe()
                    and dkim2_apply_header_recipe() both return NULL on a
                    cJSON_Parse() failure with no way to distinguish that from
@@ -472,7 +473,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = 0;
     result->domain[0] = '\0';
 
-    /* spec-05 §7.3: a Message-Instance header that failed to parse --
+    /* spec-06 §7.3: a Message-Instance header that failed to parse --
        whether with a specific reportable cause (duplicate hash algorithm in
        h=, the -2 case) or a plain syntax/malloc failure (-1: a missing
        required tag, a malformed h= entry, or an allocation failure) -- never
@@ -519,7 +520,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = latest->i;
     snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
 
-    /* Local policy (stricter than spec-05): the topmost (highest i=)
+    /* Local policy (stricter than spec-06): the topmost (highest i=)
        DKIM2-Signature MUST NOT carry nd=. The only legitimate nd= producer
        emits the nd= hop together with a matching higher-i= signature, so
        nd= should never appear on the top signature. Non-top nd= adjacency
@@ -617,7 +618,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                     sig->i);
         }
 
-        /* spec-05 §8.9: reject duplicate/limit violations before any DNS or
+        /* spec-06 §8.9: reject duplicate/limit violations before any DNS or
            crypto work. */
         {
             char dup_errbuf[256];
@@ -690,7 +691,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         dkim2_sig_t *cur  = sig_arr[k];
         dkim2_sig_t *prev = sig_arr[k - 1];
 
-        /* draft-05 §11.4: an nd= hop declares the next sig's signing domain;
+        /* draft-06 §11.4: an nd= hop declares the next sig's signing domain;
            nd= MUST exactly match that signature's d=. */
         if (prev->nd) {
             if (!cur->d || strcasecmp(prev->nd, cur->d) != 0)

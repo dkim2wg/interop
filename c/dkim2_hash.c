@@ -6,7 +6,7 @@
 #include <ctype.h>
 #include <openssl/evp.h>
 
-/* spec-05 §3.1: implemented hash algorithms, in wire/index order. */
+/* spec-06 §3.1: implemented hash algorithms, in wire/index order. */
 static const struct {
     const char *name;
     const EVP_MD *(*md)(void);
@@ -167,7 +167,7 @@ int dkim2_body_hash(const char *body, size_t bodylen, char *out, size_t outlen) 
     return b64_encode(digest, DKIM2_HASH_LEN, out, outlen) >= 0 ? 0 : -1;
 }
 
-/* Returns 1 if this lowercase header name is unsigned per spec-05 §4.
+/* Returns 1 if this lowercase header name is unsigned per spec-06 §4.
    spec-05 narrowed the old "arc-" prefix to the three RFC 8617 names and
    added a "received-" prefix rule. Note x400-received / x400-trace match
    neither the "x-" nor the "received-" prefix and need their own entries. */

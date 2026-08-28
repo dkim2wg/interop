@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# spec-05 hash agility: sha512 alongside sha256, multi-hash-set h= parsing,
+# spec-06 hash agility: sha512 alongside sha256, multi-hash-set h= parsing,
 # and the --hash signer flag (sha256|sha512|both, default sha256).
 
 use 5.020;
@@ -18,11 +18,11 @@ use Mail::DKIM2::Signer;
 use Mail::DKIM2::Common qw(fold_header);
 use DKIM2TestKeys;
 
-# spec-05 §3: both hashing algorithms must be implemented
+# spec-06 §3: both hashing algorithms must be implemented
 my $algs = Mail::DKIM2::MessageInstance::hash_algs();
-is_deeply([sort keys %$algs], ['sha256', 'sha512'], 'spec-05 §3: both hash algorithms present');
+is_deeply([sort keys %$algs], ['sha256', 'sha512'], 'spec-06 §3: both hash algorithms present');
 
-# spec-05 §7.3: h= is a comma-separated list of hash-sets
+# spec-06 §7.3: h= is a comma-separated list of hash-sets
 my $sets = Mail::DKIM2::MessageInstance::parse_hash_sets('sha256:AAA:BBB,sha512:CCC:DDD');
 is(scalar @$sets, 2, 'two hash-sets parsed');
 is_deeply($sets->[0], ['sha256', 'AAA', 'BBB'], 'first hash-set');
@@ -166,7 +166,7 @@ sub _unfolded_mi {
 }
 
 # Default: --hash unset MUST behave exactly as before -- a single sha256
-# hash-set, byte-identical to the pre-spec-05 wire form.
+# hash-set, byte-identical to the pre-spec-06 wire form.
 {
     my ($signed, $rc) = sign($src,
         '-s' => 'sel1', '-d' => 'test1.dkim2.com', '-k' => $keyfile,

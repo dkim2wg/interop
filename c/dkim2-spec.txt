@@ -5,14 +5,14 @@
 Network Working Group                                         R. Clayton
 Internet-Draft                                                     Yahoo
 Intended status: Standards Track                               W. Chuang
-Expires: 26 February 2027                                         Google
+Expires: 1 March 2027                                             Google
                                                              B. Gondwana
                                                         Fastmail Pty Ltd
-                                                          25 August 2026
+                                                          28 August 2026
 
 
             DomainKeys Identified Mail Signatures v2 (DKIM2)
-                     draft-ietf-dkim-dkim2-spec-05
+                     draft-ietf-dkim-dkim2-spec-06
 
 Abstract
 
@@ -53,12 +53,12 @@ Status of This Memo
 
 
 
-Clayton, et al.         Expires 26 February 2027                [Page 1]
+Clayton, et al.           Expires 1 March 2027                  [Page 1]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
 
-   This Internet-Draft will expire on 26 February 2027.
+   This Internet-Draft will expire on 1 March 2027.
 
 Copyright Notice
 
@@ -109,7 +109,7 @@ Table of Contents
 
 
 
-Clayton, et al.         Expires 26 February 2027                [Page 2]
+Clayton, et al.           Expires 1 March 2027                  [Page 2]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -151,35 +151,36 @@ Internet-Draft              DKIM2 Signatures                 August 2026
      10.4.  Interpret results/Apply local policy . . . . . . . . . .  31
    11. Verifier actions  . . . . . . . . . . . . . . . . . . . . . .  32
      11.1.  Output states  . . . . . . . . . . . . . . . . . . . . .  32
-     11.2.  Ensure that the DKIM2 header fields are valid  . . . . .  33
+     11.2.  Ensure that the DKIM2 header fields are valid  . . . . .  34
      11.3.  Check the timestamps . . . . . . . . . . . . . . . . . .  34
-     11.4.  Check the Chain of Custody . . . . . . . . . . . . . . .  34
+     11.4.  Check the Chain of Custody . . . . . . . . . . . . . . .  35
      11.5.  Fetch the public key . . . . . . . . . . . . . . . . . .  35
-     11.6.  Perform the signature verification calculation . . . . .  35
-     11.7.  Validating body and header hashes  . . . . . . . . . . .  36
+     11.6.  Perform the signature verification calculation . . . . .  36
+     11.7.  Validating body and header hashes  . . . . . . . . . . .  37
      11.8.  Check if donotmodify and donotexplode requests were
             honored  . . . . . . . . . . . . . . . . . . . . . . . .  37
-   12. Delivery Status Notifications in the DKIM2 ecosystem  . . . .  37
-     12.1.  DSN contents . . . . . . . . . . . . . . . . . . . . . .  37
-       12.1.1.  DSN propagation  . . . . . . . . . . . . . . . . . .  38
+     11.9.  Check for unexpected replay  . . . . . . . . . . . . . .  38
+   12. Delivery Status Notifications in the DKIM2 ecosystem  . . . .  38
+     12.1.  DSN contents . . . . . . . . . . . . . . . . . . . . . .  38
 
 
 
-Clayton, et al.         Expires 26 February 2027                [Page 3]
+Clayton, et al.           Expires 1 March 2027                  [Page 3]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
 
-       12.1.2.  Authentication of inbound DSNs . . . . . . . . . . .  38
-   13. Preventing transport conversions  . . . . . . . . . . . . . .  39
-   14. EAI (RFC6530) considerations for DKIM2  . . . . . . . . . . .  40
-   15. IANA considerations . . . . . . . . . . . . . . . . . . . . .  40
-   16. Security considerations . . . . . . . . . . . . . . . . . . .  40
-   17. Changes from Earlier Versions . . . . . . . . . . . . . . . .  40
-   18. References  . . . . . . . . . . . . . . . . . . . . . . . . .  42
-     18.1.  Normative References . . . . . . . . . . . . . . . . . .  42
-     18.2.  Informative References . . . . . . . . . . . . . . . . .  43
-   Authors' Addresses  . . . . . . . . . . . . . . . . . . . . . . .  44
+       12.1.1.  DSN propagation  . . . . . . . . . . . . . . . . . .  39
+       12.1.2.  Authentication of inbound DSNs . . . . . . . . . . .  39
+   13. Preventing transport conversions  . . . . . . . . . . . . . .  40
+   14. EAI (RFC6530) considerations for DKIM2  . . . . . . . . . . .  41
+   15. IANA considerations . . . . . . . . . . . . . . . . . . . . .  41
+   16. Security considerations . . . . . . . . . . . . . . . . . . .  41
+   17. Changes from Earlier Versions . . . . . . . . . . . . . . . .  41
+   18. References  . . . . . . . . . . . . . . . . . . . . . . . . .  43
+     18.1.  Normative References . . . . . . . . . . . . . . . . . .  43
+     18.2.  Informative References . . . . . . . . . . . . . . . . .  45
+   Authors' Addresses  . . . . . . . . . . . . . . . . . . . . . . .  46
 
 1.  Introduction
 
@@ -220,8 +221,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-
-Clayton, et al.         Expires 26 February 2027                [Page 4]
+Clayton, et al.           Expires 1 March 2027                  [Page 4]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -277,7 +277,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027                [Page 5]
+Clayton, et al.           Expires 1 March 2027                  [Page 5]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -333,7 +333,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027                [Page 6]
+Clayton, et al.           Expires 1 March 2027                  [Page 6]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -389,7 +389,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027                [Page 7]
+Clayton, et al.           Expires 1 March 2027                  [Page 7]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -445,7 +445,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027                [Page 8]
+Clayton, et al.           Expires 1 March 2027                  [Page 8]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -501,7 +501,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027                [Page 9]
+Clayton, et al.           Expires 1 March 2027                  [Page 9]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -557,7 +557,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 10]
+Clayton, et al.           Expires 1 March 2027                 [Page 10]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -613,7 +613,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 11]
+Clayton, et al.           Expires 1 March 2027                 [Page 11]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -669,7 +669,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 12]
+Clayton, et al.           Expires 1 March 2027                 [Page 12]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -725,7 +725,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 13]
+Clayton, et al.           Expires 1 March 2027                 [Page 13]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -781,7 +781,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 14]
+Clayton, et al.           Expires 1 March 2027                 [Page 14]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -837,7 +837,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 15]
+Clayton, et al.           Expires 1 March 2027                 [Page 15]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -893,7 +893,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 16]
+Clayton, et al.           Expires 1 March 2027                 [Page 16]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -949,7 +949,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 17]
+Clayton, et al.           Expires 1 March 2027                 [Page 17]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1005,7 +1005,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 18]
+Clayton, et al.           Expires 1 March 2027                 [Page 18]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1061,7 +1061,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 19]
+Clayton, et al.           Expires 1 March 2027                 [Page 19]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1117,7 +1117,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 20]
+Clayton, et al.           Expires 1 March 2027                 [Page 20]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1173,7 +1173,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 21]
+Clayton, et al.           Expires 1 March 2027                 [Page 21]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1229,7 +1229,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 22]
+Clayton, et al.           Expires 1 March 2027                 [Page 22]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1285,7 +1285,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 23]
+Clayton, et al.           Expires 1 March 2027                 [Page 23]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1331,8 +1331,8 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
    To provide for algorithmic dexterity more than one signature, using
    different algorithms, MAY be supplied.  One additional signature
-   using the same algorithm MAY be present provided that a different
-   Selector is used.
+   using the same algorithm (perhaps with a different key length) MAY be
+   present provided that a different Selector is used.
 
    A Selector MUST NOT be present more than once in a single
    DKIM2-Signature header field; if the signature values were the same
@@ -1341,7 +1341,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 24]
+Clayton, et al.           Expires 1 March 2027                 [Page 24]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1397,7 +1397,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 25]
+Clayton, et al.           Expires 1 March 2027                 [Page 25]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1453,7 +1453,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 26]
+Clayton, et al.           Expires 1 March 2027                 [Page 26]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1509,7 +1509,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 27]
+Clayton, et al.           Expires 1 March 2027                 [Page 27]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1565,7 +1565,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 28]
+Clayton, et al.           Expires 1 March 2027                 [Page 28]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1621,7 +1621,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 29]
+Clayton, et al.           Expires 1 March 2027                 [Page 29]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1677,7 +1677,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 30]
+Clayton, et al.           Expires 1 March 2027                 [Page 30]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1733,7 +1733,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 31]
+Clayton, et al.           Expires 1 March 2027                 [Page 31]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
@@ -1770,12 +1770,29 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
    For compatibility with the Authentication-Results header field
    defined in [RFC8601] a verification will result in one of four
-   states:
+   states.
+
+   The states report whether or not the message has travelled to the
+   destination without being modified or replayed in a manner consistent
+   with this specification.  They do not attest in any way as to whether
+   the message will be of value to the recipient or whether any
+   modifications that have been made are or are not benign.
+
+   The four states are:
 
    PASS: The message was successfully verified.
 
    FAIL: The message could be verified but a hash or signature was not
    correct.
+
+
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 32]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
 
    PERMERROR: The message could not be verified due to some error that
    is unrecoverable, such as a required header field being absent or
@@ -1785,14 +1802,9 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    inability to retrieve a public key.  A later attempt may produce a
    different.
 
+   Thse states
+
    A Verifier MAY cease verifying once a single failure is detected.
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 32]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
 
    Verifiers wishing to communicate the results of verification to other
    parts of the mail system may do so in whatever manner they see fit.
@@ -1810,7 +1822,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    4xx response string.
 
    If the results of the verification are being communicated in a
-   Delivery Status Notification message ([RFC3462]) the human-readable
+   Delivery Status Notification message ([RFC6522]) the human-readable
    string should be included.
 
    If, by local policy, a system wishes to accept a message which has
@@ -1823,6 +1835,20 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    that any "Authentication-Results" header field does not count as a
    modification to the email if any further DKIM2-Signature header
    fields are to be generated.
+
+
+
+
+
+
+
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 33]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
 
 11.2.  Ensure that the DKIM2 header fields are valid
 
@@ -1842,14 +1868,6 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    To assist debugging, errors in a JSON object specifying Recipes
    should be called out specifically.
 
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 33]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
-
    Possible errors:
 
    PERMERROR Message-Instance m=<x> missing
@@ -1863,7 +1881,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    PERMERROR DKIM2-Signature i=<x> tag=<y> missing
    PERMERROR DKIM2-Signature i=<x> tag=<y> was unexpected
    PERMERROR DKIM2-Signature i=<x> has a duplicate selector
-   PERMERROR DKIM2-Signature i=<x> has too many signatures
+   PERMERROR DKIM2-Signature i=<x> has more selectors than allowed
 
 11.3.  Check the timestamps
 
@@ -1874,6 +1892,19 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    Possible errors:
 
    PERMERROR DKIM2-Signature i=<x> signature expired
+
+
+
+
+
+
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 34]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
 
 11.4.  Check the Chain of Custody
 
@@ -1898,14 +1929,6 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    Verifier MUST ensure that there is an exact match with the d= value
    in the next DKIM2-Signature field in sequence number order.
 
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 34]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
-
    Verifiers SHOULD ensure that there are out-of-band arrangements in
    place to assess message validity when the highest numbered
    DKIM2-Signature header field contains an nd= tag.
@@ -1920,11 +1943,24 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 11.5.  Fetch the public key
 
-   The public keys of all the signatures in DKIM2-Signature fields are
+   The public keys of the signatures in DKIM2-Signature fields are
    needed to complete the verification process.  Details of key
    management and representation are described in Section 3.6 and
    [DKIMKEYS].  The Verifier MUST validate the key record and MUST NOT
    use any public key records that are malformed.
+
+
+
+
+
+
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 35]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
 
    Note that DNS timeouts MUST be reported as TEMPERROR but a DNS result
    that indicates the key is absent MUST be reported as a PERMERROR.
@@ -1950,18 +1986,6 @@ PERMERROR: DKIM2-Signature i=<x> public key <value> has been revoked
    Verifying a signature consists of actions semantically equivalent to
    the following steps:
 
-
-
-
-
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 35]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
-
    1.  Prepare a canonicalized version of the Message-Instance and
        DKIM2-Signature header fields as described in Section 9.6.  The
        signature value(s) themselves will need to be removed to
@@ -1974,11 +1998,11 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    3.  If there is more than one signature provided then they MUST all
        be checked if the Verifier is able to do so.  If any signature
        fails then an error SHOULD be reported.  If all signatures that
-       can be checked fail then PERMFAIL MUST be reported.
+       can be checked fail then FAIL MUST be reported.
 
    4.  If some signatures fail and other pass then any error that is
-       reported should provide that information (e.g. PERMFAIL "rsa-
-       sha256 signature passed, ed25519-sha256 signature failed").
+       reported should provide that information by specifying the
+       relevant Selector values.
 
    The reasoning for requiring that all signatures pass is that if a
    signature scheme has recently become deprecated because it is known
@@ -1986,13 +2010,27 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    (unbroken) signature scheme.  However, such a Signer may still
    provide the other signature for the benefit of Verifiers that have
    yet to upgrade -- reasoning perhaps that attacks are too expensive to
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 36]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
+
    be a very significant security issue.  A Verifier that determines
    that one signature passes whilst the other fails may well be in a
    position to prevent an attack.
 
+   It will of course be extremely helpful for any error message
+   reporting a signature failure to indicate the selector involved, and
+   if some signatures appear correct and others not then reporting the
+   full details may well be of much value.
+
    Possible errors:
 
-   FAIL: DKIM2-Signature i=<x> public key <value> incorrect signature
+FAIL: DKIM2-Signature i=<x> <selector> incorrect signature
+FAIL: DKIM2-Signature i=<x> <s1> signature passed, <s2> signature failed
 
 11.7.  Validating body and header hashes
 
@@ -2000,27 +2038,21 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    calculation performed by the Signer as set out in Section 6.1 and
    Section 6.1.  The values can then be directly compared.
 
-   Since there may be more than one hash algorithm given the human-
+   Since there may be more than one hash algorithm given, the human-
    readable error message SHOULD indicate which algorithm's result
    failed to match.
+
+   If one hash value passes and another does not then this SHOULD be
+   treated as a failure.
 
    Possible errors:
 
    FAIL: Message Instance m=<x> header hash <value> mismatch
    FAIL: Message Instance m=<x> body hash <value> mismatch
 
-
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 36]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
-
 11.8.  Check if donotmodify and donotexplode requests were honored
 
-   If a Verifier receives a message with a nonotmodify request and a
+   If a Verifier receives a message with a donotmodify request and a
    later hop has altered the message body or removed or altered header
    fields then the message SHOULD be rejected.
 
@@ -2033,12 +2065,39 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    FAIL: Message has been modified despite a donotmodify request
    FAIL: Message has been exploded despite a donotexplode request
 
+
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 37]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
+
+11.9.  Check for unexpected replay
+
+   If a Verifier receives multiple copies of the same message and there
+   is no indication that the message has been exploded then all of the
+   messages SHOULD be rejected.  Although, as [RFC1047] explains this
+   could be a protocol level issue, these are rare on today's Internet
+   -- it is most likely that a malicious replay attack has been
+   detected.
+
+   The hash values from the m=1 Message-Instance header field MAY be
+   used to identify whether messages are the same.  Of course, it may
+   not be practical to reject the first copy of a group of identical
+   messages or those that arrive some time after the first one.
+
+   Possible errors:
+
+   FAIL: Duplicate message with no exploded flag
+
 12.  Delivery Status Notifications in the DKIM2 ecosystem
 
    In the DKIM2 ecosystem, when a message cannot be delivered then this
    is reported to the sending machine by means of an [RFC5321] return
    code or, if the SMTP session has completed, by generating a Delivery
-   Status Notification (DSN), as defined in [RFC3462].
+   Status Notification (DSN), as defined in [RFC6522].
 
    A DSN MUST be addressed to the MTA that sent the message.  This
    prevents "backscatter" by passing failures back along the chain of
@@ -2049,7 +2108,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 12.1.  DSN contents
 
-   As set out in [RFC3462], a DSN has a top-level MIME part of type
+   As set out in [RFC6522], a DSN has a top-level MIME part of type
    multipart/report.
 
    A valid DSN generated by a DKIM2 system MUST always contain three
@@ -2062,17 +2121,18 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    All relevant DKIM2-Signature header fields (and Message-Instance
    header fields if the message body is supplied) MUST verify.
 
-   The DSN itself MUST have appropriate Message-Instance and
-   DKIM2-Signature fields, noting that the MAIL FROM to be used will be
-   null ("<>").
 
 
 
 
-Clayton, et al.         Expires 26 February 2027               [Page 37]
+Clayton, et al.           Expires 1 March 2027                 [Page 38]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
+
+   The DSN itself MUST have appropriate Message-Instance and
+   DKIM2-Signature fields, noting that the MAIL FROM to be used will be
+   null ("<>").
 
 12.1.1.  DSN propagation
 
@@ -2116,19 +2176,20 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
    This means:
 
+
+
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 39]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
+
    1.  The DSN's DKIM2-Signature will have a signing domain that is
        aligned with the recipient of the message that is being returned.
        The recipient's address is located in the rt= tag of the last
        (highest i= tag) DKIM2-Signature in the returned message.
-
-
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 38]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
 
    2.  The last (highest i= tag) DKIM2-Signature header field of the
        returned message will be one that was generated by the system
@@ -2174,18 +2235,17 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    beginning with a "." to avoid confusion with the SMTP end-of-message
    marker, as specified in [RFC5321]).
 
-   Further, if the message contains local encoding that will be modified
-   before transmission, that modification to canonical [RFC5322] form
-   MUST be done before signing.  In particular, bare CR or LF characters
-   (used by some systems as a local line separator convention) MUST be
 
 
-
-Clayton, et al.         Expires 26 February 2027               [Page 39]
+Clayton, et al.           Expires 1 March 2027                 [Page 40]
 
 Internet-Draft              DKIM2 Signatures                 August 2026
 
 
+   Further, if the message contains local encoding that will be modified
+   before transmission, that modification to canonical [RFC5322] form
+   MUST be done before signing.  In particular, bare CR or LF characters
+   (used by some systems as a local line separator convention) MUST be
    converted to the SMTP-standard CRLF sequence before the message is
    signed.  Any conversion of this sort SHOULD be applied to the message
    actually sent to the recipient(s), not just to the version presented
@@ -2209,6 +2269,18 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 17.  Changes from Earlier Versions
 
+   draft-ietf-dkim-dkim2-spec-06
+
+   Corrected mentions of non-existent PERMFAIL.
+
+   Clarified that PASS (etc) does not mean a message is valuable or that
+   modifications are benign.
+
+   Added instructions for Verifiers to check for DKIM replay.
+
+   Tweaks to text and errors relating to too many algorithms or
+   selectors; or for when signatures/hashes fail.
+
    draft-ietf-dkim-dkim2-spec-05
 
    Updated list of unsigned header fields to align with [HDRMAINT].
@@ -2217,6 +2289,14 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
    Removed SHOULD NOT for speciously added Message-Instance fields, we
    now just point out they are pointless.
+
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 41]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
 
    Added text to forbid repetition of the same hash algorithm or the
    same Selector in any given header field.  Provided messages for
@@ -2233,14 +2313,6 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
    Added text for situation when the highest DKIM2-Signature field of a
    message has an nd= tag.
-
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 40]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
 
    Added text to clarify checking of Message-Instance in a DSN.
 
@@ -2274,6 +2346,14 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    Added Authentication-Results to the list of headers that are excluded
    from being signed.
 
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 42]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
+
    Added text about what donotmodify means and added text to the
    verification section about this and the donotexplode flag.
 
@@ -2286,17 +2366,6 @@ Internet-Draft              DKIM2 Signatures                 August 2026
    strings to generate for errors.
 
    draft-ietf-dkim-dkim2-spec-00
-
-
-
-
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 41]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
 
    Removed JSON for hashes, signatures and SMTP parameters.  Provided
    valid JSON for Recipes and added "z" for truncated body.  Changed
@@ -2332,27 +2401,23 @@ Internet-Draft              DKIM2 Signatures                 August 2026
               RFC 2047, DOI 10.17487/RFC2047, November 1996,
               <https://www.rfc-editor.org/rfc/rfc2047>.
 
+
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 43]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
+
    [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
               Requirement Levels", BCP 14, RFC 2119,
               DOI 10.17487/RFC2119, March 1997,
               <https://www.rfc-editor.org/rfc/rfc2119>.
 
-   [RFC3462]  Vaudreuil, G., "The Multipart/Report Content Type for the
-              Reporting of Mail System Administrative Messages",
-              RFC 3462, DOI 10.17487/RFC3462, January 2003,
-              <https://www.rfc-editor.org/rfc/rfc3462>.
-
    [RFC4648]  Josefsson, S., "The Base16, Base32, and Base64 Data
               Encodings", RFC 4648, DOI 10.17487/RFC4648, October 2006,
               <https://www.rfc-editor.org/rfc/rfc4648>.
-
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 42]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
 
    [RFC5234]  Crocker, D., Ed. and P. Overell, "Augmented BNF for Syntax
               Specifications: ABNF", STD 68, RFC 5234,
@@ -2376,6 +2441,11 @@ Internet-Draft              DKIM2 Signatures                 August 2026
               STD 72, RFC 6409, DOI 10.17487/RFC6409, November 2011,
               <https://www.rfc-editor.org/rfc/rfc6409>.
 
+   [RFC6522]  Kucherawy, M., Ed., "The Multipart/Report Media Type for
+              the Reporting of Mail System Administrative Messages",
+              STD 73, RFC 6522, DOI 10.17487/RFC6522, January 2012,
+              <https://www.rfc-editor.org/rfc/rfc6522>.
+
    [RFC6530]  Klensin, J. and Y. Ko, "Overview and Framework for
               Internationalized Email", RFC 6530, DOI 10.17487/RFC6530,
               February 2012, <https://www.rfc-editor.org/rfc/rfc6530>.
@@ -2385,6 +2455,16 @@ Internet-Draft              DKIM2 Signatures                 August 2026
               Application Protocols", BCP 178, RFC 6648,
               DOI 10.17487/RFC6648, June 2012,
               <https://www.rfc-editor.org/rfc/rfc6648>.
+
+
+
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 44]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
 
    [RFC8259]  Bray, T., Ed., "The JavaScript Object Notation (JSON) Data
               Interchange Format", STD 90, RFC 8259,
@@ -2396,19 +2476,7 @@ Internet-Draft              DKIM2 Signatures                 August 2026
               DOI 10.17487/RFC8601, May 2019,
               <https://www.rfc-editor.org/rfc/rfc8601>.
 
-   [RFC9228]  Crocker, D., Ed., "Delivered-To Email Header Field",
-              RFC 9228, DOI 10.17487/RFC9228, April 2022,
-              <https://www.rfc-editor.org/rfc/rfc9228>.
-
 18.2.  Informative References
-
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 43]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
-
 
    [CONCLUDEARC]
               Adams, J. T. and J. R. Levine, "Concluding the ARC
@@ -2422,6 +2490,10 @@ Internet-Draft              DKIM2 Signatures                 August 2026
               draft-gondwana-email-header-maintenance-02, 29 July 2026,
               <https://datatracker.ietf.org/doc/html/draft-gondwana-
               email-header-maintenance-02>.
+
+   [RFC1047]  Partridge, C., "Duplicate messages and SMTP", RFC 1047,
+              DOI 10.17487/RFC1047, February 1988,
+              <https://www.rfc-editor.org/rfc/rfc1047>.
 
    [RFC5598]  Crocker, D., "Internet Mail Architecture", RFC 5598,
               DOI 10.17487/RFC5598, July 2009,
@@ -2442,10 +2514,22 @@ Internet-Draft              DKIM2 Signatures                 August 2026
               DOI 10.17487/RFC8032, January 2017,
               <https://www.rfc-editor.org/rfc/rfc8032>.
 
+
+
+
+Clayton, et al.           Expires 1 March 2027                 [Page 45]
+
+Internet-Draft              DKIM2 Signatures                 August 2026
+
+
    [RFC8617]  Andersen, K., Long, B., Ed., Blank, S., Ed., and M.
               Kucherawy, Ed., "The Authenticated Received Chain (ARC)
               Protocol", RFC 8617, DOI 10.17487/RFC8617, July 2019,
               <https://www.rfc-editor.org/rfc/rfc8617>.
+
+   [RFC9228]  Crocker, D., Ed., "Delivered-To Email Header Field",
+              RFC 9228, DOI 10.17487/RFC9228, April 2022,
+              <https://www.rfc-editor.org/rfc/rfc9228>.
 
 Authors' Addresses
 
@@ -2457,13 +2541,6 @@ Authors' Addresses
    Wei Chuang
    Google
    Email: weihaw@google.com
-
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 44]
-
-Internet-Draft              DKIM2 Signatures                 August 2026
 
 
    Bron Gondwana
@@ -2496,25 +2573,4 @@ Internet-Draft              DKIM2 Signatures                 August 2026
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Clayton, et al.         Expires 26 February 2027               [Page 45]
+Clayton, et al.           Expires 1 March 2027                 [Page 46]

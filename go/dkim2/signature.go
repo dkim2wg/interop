@@ -14,7 +14,7 @@ type DKIM2Signature struct {
 	MIVersion int
 	Timestamp int64
 	Domain     string
-	NextDomain string // nd= tag (draft-05 §8.7); empty if absent
+	NextDomain string // nd= tag (draft-06 §8.7); empty if absent
 	MailFrom   string
 	RcptTo     []string
 	Nonce      string   // n= tag (optional); max 64 ASCII chars per §8.3
@@ -48,10 +48,10 @@ type SignOptions struct {
 	Domain     string
 	MailFrom   string
 	RcptTo     []string
-	NextDomain string // nd= (draft-05 §9.3); when set, emit nd= instead of mf=/rt=
+	NextDomain string // nd= (draft-06 §9.3); when set, emit nd= instead of mf=/rt=
 	Timestamp  int64  // 0 = use time.Now()
 	// HashAlgs selects the algorithm(s) used for the new Message-Instance's
-	// h= tag (spec-05 §3.1/§7.3), in emission order. nil/empty means
+	// h= tag (spec-06 §3.1/§7.3), in emission order. nil/empty means
 	// []string{"sha256"} — the signer default, which MUST NOT change.
 	HashAlgs []string
 }
@@ -157,7 +157,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 			}
 		}
 	}
-	// draft-05 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+	// draft-06 §8: i= m= t= d= s= MUST be present; plus either nd= or both
 	// mf= and rt=. nd= and mf=/rt= are mutually exclusive.
 	if !tvl.has("i") || !tvl.has("m") || !tvl.has("t") {
 		return nil, fmt.Errorf("DKIM2-Signature i=%d: missing required i=/m=/t= tag", sig.Sequence)
@@ -197,7 +197,7 @@ func (sig *DKIM2Signature) String() string {
 	}
 	s := strings.Join(sParts, ",")
 
-	// draft-05 §8: an nd= signature carries nd= instead of mf=/rt=.
+	// draft-06 §8: an nd= signature carries nd= instead of mf=/rt=.
 	var chain string
 	if sig.NextDomain != "" {
 		chain = fmt.Sprintf("nd=%s", sig.NextDomain)
@@ -209,7 +209,7 @@ func (sig *DKIM2Signature) String() string {
 		"DKIM2-Signature: i=%d; m=%d; t=%d; d=%s; %s; s=%s;",
 		sig.Sequence, sig.MIVersion, sig.Timestamp, sig.Domain, chain, s,
 	)
-	// f= flags (draft-05 §8.10), e.g. feedback, feedhere — preserved verbatim.
+	// f= flags (draft-06 §8.10), e.g. feedback, feedhere — preserved verbatim.
 	if len(sig.Flags) > 0 {
 		out += " f=" + strings.Join(sig.Flags, ",") + ";"
 	}
@@ -218,7 +218,7 @@ func (sig *DKIM2Signature) String() string {
 
 // reSTag matches the s= tag at a tag boundary — the start of the header value
 // or after a ";" — case-insensitively and tolerating FWS around "=". This is
-// independent of tag order (s= may be first) and case (S=), per spec-05 §8.
+// independent of tag order (s= may be first) and case (S=), per spec-06 §8.
 // Base64 cannot contain ";" so the value runs to the next ";".
 var reSTag = regexp.MustCompile(`(?i)(^|;)\s*s\s*=`)
 
@@ -265,7 +265,7 @@ func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
 // are empty per §8.5), for use as the signing input when creating a new sig.
 func buildIncomplete(seq, miVer int, ts int64, domain, mailFrom string,
 	rcptTo []string, nextDomain, selector, algorithm string) string {
-	// draft-05 §9.3: an imaginary-hop signature carries nd= instead of mf=/rt=.
+	// draft-06 §9.3: an imaginary-hop signature carries nd= instead of mf=/rt=.
 	var chain string
 	if nextDomain != "" {
 		chain = fmt.Sprintf("nd=%s", nextDomain)

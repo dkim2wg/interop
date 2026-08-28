@@ -27,7 +27,7 @@ use Mail::DKIM2::Common qw(
 
 our $DEBUG = 0;
 
-# spec-05 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# spec-06 §3.1: two hashing algorithms are defined. Verifiers MUST implement
 # both; Signers MAY implement either or both (we default to sha256).
 my %HASH_ALGS = (
     sha256 => \&Crypt::Digest::SHA256::sha256,
@@ -36,7 +36,7 @@ my %HASH_ALGS = (
 
 sub hash_algs { return { %HASH_ALGS } }
 
-# spec-05 §7.3: h= is hash-set *("," hash-set), hash-set = alg ":" hh ":" bh.
+# spec-06 §7.3: h= is hash-set *("," hash-set), hash-set = alg ":" hh ":" bh.
 # Hash names are lowercased -- RFC 5234 makes ABNF quoted strings
 # case-insensitive. All FWS is stripped (§2.12): it may appear anywhere
 # inside a base64 value (e.g. a folded header), not just at either end.
@@ -106,7 +106,7 @@ sub get_tag {
 # The header-hash component (base64) of this Message-Instance's h= tag.
 sub header_hash { return $_[0]->{bits}{h1} }
 
-# Mark the body Recipe as null per spec-05 §4.2: the body changed but the
+# Mark the body Recipe as null per spec-06 §4.2: the body changed but the
 # previous state cannot be recreated. as_string() then emits "b": null.
 sub set_null_body_recipe {
     my ($self) = @_;
@@ -115,7 +115,7 @@ sub set_null_body_recipe {
 
 # True if this instance declares the previous state non-recreatable (a null
 # "b" Recipe). Such an instance cannot be undone to a prior version. Under
-# draft-05 §5.1 a header Recipe can no longer be null, so only the body
+# draft-06 §5.1 a header Recipe can no longer be null, so only the body
 # Recipe can render an instance unrecoverable.
 sub unrecoverable {
     my ($self) = @_;
@@ -137,7 +137,7 @@ sub as_string {
         $hashes = (defined $h1 || defined $b1) ? { sha256 => [ $h1 // '', $b1 // '' ] } : {};
     }
 
-    # spec-05 §7.3: h= is hash-set *("," hash-set) -- one hash-set per
+    # spec-06 §7.3: h= is hash-set *("," hash-set) -- one hash-set per
     # configured algorithm, emitted in the signer's chosen order (default:
     # sha256 only; the signer default MUST NOT change).
     my @algs = @{ $self->{algs} || ['sha256'] };
@@ -161,7 +161,7 @@ sub as_string {
     if (exists $data{rh}) {
         my $rh = delete $data{rh};
         my %encoded;
-        # spec-05 §5.1: header field names in the JSON Recipes MUST be lower
+        # spec-06 §5.1: header field names in the JSON Recipes MUST be lower
         # case (matching against the message stays case-insensitive).
         for my $h (sort keys %$rh) {
             $encoded{lc $h} = _encode_recipe_list($rh->{$h});
@@ -224,7 +224,7 @@ sub parse {
         unless exists $tags{m};
     $self->{bits}{m} = $tags{m};
 
-    # spec-05 §7.3: h= is a list of hash-sets
+    # spec-06 §7.3: h= is a list of hash-sets
     if (exists $tags{h}) {
         my $sets = parse_hash_sets($tags{h});
 
@@ -252,7 +252,7 @@ sub parse {
     }
 
     if (exists $tags{r}) {
-        # spec-05 §11.2: a bad base64 r= value and a post-decode JSON parse
+        # spec-06 §11.2: a bad base64 r= value and a post-decode JSON parse
         # failure are different errors and must stay distinct: base64
         # failure -> "syntax error" (§11.2 lists this explicitly for
         # malformed field content); JSON failure -> "contains invalid JSON".
@@ -285,9 +285,9 @@ sub parse {
                 }
                 $self->{bits}{rh} = \%rh;
             } else {
-                # spec-05 §5.1 disallows the null header Recipe: a present "h"
+                # spec-06 §5.1 disallows the null header Recipe: a present "h"
                 # MUST be a non-empty object. Reject anything else.
-                die "header recipe is null: not permitted under draft-05 §5.1\n";
+                die "header recipe is null: not permitted under draft-06 §5.1\n";
             }
         }
     }
@@ -354,7 +354,7 @@ sub b_digest {
     return _hash_data_b64($alg, $body);
 }
 
-# spec-05 §3.1/§3.4: hash $data with the named (implemented) algorithm and
+# spec-06 §3.1/§3.4: hash $data with the named (implemented) algorithm and
 # base64-encode the result. Equivalent to the historic digest64($digest)
 # path for sha256 (verified byte-identical), generalised to any algorithm
 # in %HASH_ALGS.
@@ -677,7 +677,7 @@ sub calculate {
 
     my $self = bless {}, $class;
 
-    # spec-05 §3.1: the signer chooses one or more hash algorithms; default
+    # spec-06 §3.1: the signer chooses one or more hash algorithms; default
     # is sha256 only (the signer default MUST NOT change).
     $self->{algs} = ($opts{Algs} && @{$opts{Algs}}) ? [ @{$opts{Algs}} ] : ['sha256'];
 
@@ -735,7 +735,7 @@ sub calculate {
 
     # Hashes are always of the current (newest) version of the message,
     # computed after any epilogue modification, for every configured
-    # algorithm (spec-05 §7.3).
+    # algorithm (spec-06 §7.3).
     for my $alg (@{$self->{algs}}) {
         $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg), b_digest($current, $alg) ];
     }
@@ -803,7 +803,7 @@ sub verify {
 
     my $self = $class->parse($map{$num});
 
-    # spec-05 §3.4: verify every hash-set whose algorithm we implement; ALL
+    # spec-06 §3.4: verify every hash-set whose algorithm we implement; ALL
     # of them must match. If none names an implemented algorithm, fail
     # closed rather than treating it as "no hash" -- an MI signed with only
     # sha512 (say) is perfectly valid and must verify via its sha512 set,
@@ -951,7 +951,7 @@ Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance head
 =head1 DESCRIPTION
 
 This module implements Message-Instance header computation as defined in
-draft-ietf-dkim-dkim2-spec-05.  A Message-Instance header records cryptographic
+draft-ietf-dkim-dkim2-spec-06.  A Message-Instance header records cryptographic
 hashes of the message headers and body at a point in the delivery chain, along
 with optional diff recipes that allow undoing changes made at each hop.
 

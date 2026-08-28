@@ -9,7 +9,7 @@ use 5.020; use strict; use warnings;
 # so Postfix's own bounce(8) originates a real Delivery Status Notification.
 # That DSN is DKIM2-signed on the way out by the outbound milter (main.cf:
 # internal_mail_filter_classes = bounce), demonstrating a genuinely
-# MTA-generated, DKIM2-signed delayed bounce (RFC 3462 DSN structure; DKIM2
+# MTA-generated, DKIM2-signed delayed bounce (RFC 6522 DSN structure; DKIM2
 # draft §11/§12).
 #
 # This is deliberately NOT the "error:" transport: error: rejects the

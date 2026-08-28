@@ -5,7 +5,7 @@
 #define DKIM2_MAX_HASH_LEN 64  /* SHA-512 output bytes — sizes every buffer */
 #define DKIM2_N_HASH_ALGS   2
 
-/* spec-05 §3.1: sha256 (index 0) and sha512 (index 1). Verifiers MUST
+/* spec-06 §3.1: sha256 (index 0) and sha512 (index 1). Verifiers MUST
    implement both. Lookup is case-insensitive per RFC 5234. */
 int         dkim2_hash_alg_index(const char *name); /* -1 if unimplemented */
 const char *dkim2_hash_alg_name(int idx);

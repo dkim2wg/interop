@@ -57,7 +57,7 @@ def build_multi_sig(mi_headers_full, sig_headers, seq, mi_version, timestamp,
     the signing input for a multi-entry s= tag by blanking ALL entries'
     signature bytes simultaneously into ONE incomplete header, then checking
     each entry's signature against that same blob -- so build that blob once
-    and sign it separately with each selector's own key (spec-05 §8.9
+    and sign it separately with each selector's own key (spec-06 §8.9
     multi-signature dexterity: e.g. overlapping old/new selector during a
     key rotation)."""
     mf_b64 = ds.b64(ds.to_rfc5321_path(mailfrom).encode("utf-8"))
@@ -188,7 +188,7 @@ def build_positive_control():
 
 def build_positive_bottom_recipe():
     """POSITIVE CONTROL: the m=1 (bottom) Message-Instance carries a VALID
-    r= Recipe. spec-05 §9.1 explicitly permits this ("if it is wished to
+    r= Recipe. spec-06 §9.1 explicitly permits this ("if it is wished to
     record any changes made to a message as it enters the DKIM2 ecosystem"),
     e.g. an origin MSA stripping a header before the message ever entered
     the DKIM2 chain. This never gets "undone" -- there is no earlier state
@@ -213,7 +213,7 @@ def build_positive_bottom_recipe():
 
 def build_unsigned_mi():
     """An extra Message-Instance above a fully valid chain, covered by no
-    signature: spec-05 §11's "there MUST NOT be a Message-Instance field with
+    signature: spec-06 §11's "there MUST NOT be a Message-Instance field with
     a higher m= value than occurs in any DKIM2-Signature field", reported as
     "PERMERROR Message-Instance m=<x> is not signed".
 

@@ -31,8 +31,8 @@ combinations in total.
 ## Negative vectors
 
 `util/negative-vectors.sh` hand-builds one cryptographically valid message
-per new spec-05 PERMERROR — a duplicate hash algorithm, a duplicate
-Selector, too many same-algorithm signatures, and malformed Recipe JSON —
+per spec-06 PERMERROR — a duplicate hash algorithm, a duplicate
+Selector, more selectors than allowed, and malformed Recipe JSON —
 plus one positive control (the same algorithm signed twice under distinct
 Selectors, which §8.9 explicitly permits) and feeds all five through every
 verifier's real CLI entry point, asserting each negative vector is REJECTED
@@ -49,7 +49,7 @@ unrelated signature failure.
 ## Cross-testing against croessner/dkim2
 
 <https://github.com/croessner/dkim2> is the other actively developed DKIM2
-implementation (Go, tracking `draft-ietf-dkim-dkim2-spec-05`). To feed his
+implementation (Go, tracking `draft-ietf-dkim-dkim2-spec-06`). To feed his
 verifier everything this repo can produce:
 
     ./util/croessner-verify.sh

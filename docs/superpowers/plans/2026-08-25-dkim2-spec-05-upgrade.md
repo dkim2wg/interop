@@ -1,4 +1,4 @@
-# DKIM2 draft-05 Spec Upgrade Implementation Plan
+# DKIM2 draft-06 Spec Upgrade Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

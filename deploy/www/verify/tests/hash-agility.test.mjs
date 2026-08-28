@@ -3,11 +3,11 @@ import assert from 'node:assert';
 import { HASH_ALGS, hashB64 } from '../crypto.js';
 import { parseHashSets } from '../parse.js';
 
-test('spec-05 §3: both hashing algorithms are implemented', () => {
+test('spec-06 §3: both hashing algorithms are implemented', () => {
   assert.deepEqual(Object.keys(HASH_ALGS).sort(), ['sha256', 'sha512']);
 });
 
-test('spec-05 §7.3: h= parses as a list of hash-sets', () => {
+test('spec-06 §7.3: h= parses as a list of hash-sets', () => {
   const sets = parseHashSets('sha256:AAA:BBB,sha512:CCC:DDD');
   assert.equal(sets.length, 2);
   assert.deepEqual(sets[0], { alg: 'sha256', headerHash: 'AAA', bodyHash: 'BBB' });

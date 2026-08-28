@@ -87,13 +87,13 @@ sign_msg($msg,
     );
 
     my $v = verify_msg($tampered);
-    # spec-05 §11 classes this as PERMERROR, not fail, and gives the wording:
+    # spec-06 §11 classes this as PERMERROR, not fail, and gives the wording:
     # "PERMERROR Message-Instance m=<x> is not signed".
     is($v->result, 'permerror', 'uncovered MI m=2 prepended without new signature must be permerror');
     like($v->result_detail, qr/m=2 is not signed/, 'result_detail uses the spec wording');
 }
 
-# spec-05 §11 again, the case the coverage check above could never reach: a
+# spec-06 §11 again, the case the coverage check above could never reach: a
 # message carrying a Message-Instance and NO DKIM2-Signature at all. This read
 # as 'none' ("no DKIM2 here") until the check moved ahead of that return, which
 # meant an unsigned instance was silently accepted. croessner/dkim2 rejects such

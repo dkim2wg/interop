@@ -10,8 +10,8 @@ use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
 
-# Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 3462 DSN
-# structure; DKIM2 draft-05 §12.1.1 propagation procedure).
+# Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 6522 DSN
+# structure; DKIM2 draft-06 §12.1.1 propagation procedure).
 #
 # When a Forwarder receives a Delivery Status Notification for a message it
 # forwarded, it may propagate that DSN back towards the original sender. The
@@ -90,8 +90,8 @@ sub _set_report_type {
 }
 
 # Generate a fresh DKIM2-signed DSN for an inbound message, sent back to the
-# original sender (RFC 3462 three-part multipart/report structure; DKIM2
-# draft-05 §12.1). Used by the reflector-dsn address, which
+# original sender (RFC 6522 three-part multipart/report structure; DKIM2
+# draft-06 §12.1). Used by the reflector-dsn address, which
 # bounces every message regardless of whether it arrived DKIM2-signed.
 #
 # Args: raw (inbound message), signer (MailFrom => '<>'), to (envelope sender
@@ -181,7 +181,7 @@ sub propagate {
     my @parts = $dsn->subparts;
     croak "propagate: DSN must have at least three parts" unless @parts >= 3;
 
-    # Validate the RFC 3462 three-part multipart/report structure: part[0] is
+    # Validate the RFC 6522 three-part multipart/report structure: part[0] is
     # human-readable text, one part is machine-readable delivery-status, and
     # one part is the returned original (message/rfc822 or, when the body is
     # unrecoverable, text/rfc822-headers). A bare part count is not enough --
@@ -269,8 +269,8 @@ __END__
 
 =head1 NAME
 
-Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 3462 DSN
-structure; DKIM2 draft-05 §12.1.1 propagation procedure)
+Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 6522 DSN
+structure; DKIM2 draft-06 §12.1.1 propagation procedure)
 
 =head1 SYNOPSIS
 

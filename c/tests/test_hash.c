@@ -95,7 +95,7 @@ int main(void) {
     assert(strcmp(hg, hh) == 0);
     assert(strcmp(hi, hh) == 0);
 
-    /* spec-05 §4: HDRMAINT-survey names are unsigned */
+    /* spec-06 §4: HDRMAINT-survey names are unsigned */
     const char *hdrs_05[] = {
         "From: sender@example.com\r\n",
         "Subject: Test\r\n",
@@ -136,7 +136,7 @@ int main(void) {
     assert(dkim2_header_hash(hdrs_arcx, 3, harcx, sizeof harcx) == 0);
     assert(strcmp(harcx, hb) != 0);
 
-    /* spec-05 §3: both hashing algorithms are implemented */
+    /* spec-06 §3: both hashing algorithms are implemented */
     assert(dkim2_hash_alg_index("sha256") == 0);
     assert(dkim2_hash_alg_index("sha512") == 1);
     assert(dkim2_hash_alg_index("SHA512") == 1);   /* RFC 5234: case-insensitive */

@@ -39,11 +39,11 @@ our @EXPORT_OK = qw(
 # reflector, and the mailman/sympa handlers. This is the single source of truth
 # for the Perl implementation; bump on a spec change (see the dkim2-spec-version
 # memory for the full cross-repo list).
-use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-05';
+use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-06';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE  => '2026-08-25';
+use constant DKIM2_DATE  => '2026-08-28';
 
-# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-05 Section 4.
+# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-06 Section 4.
 # spec-05 narrowed the old /^arc-/ prefix to the three RFC 8617 field names and
 # added a /^received-/ prefix rule so future trace fields of that form need no
 # change here.
@@ -62,7 +62,7 @@ sub should_skip {
     return 0;
 }
 
-# DKIM2 header canonicalization for HEADER HASH per spec-05 Section 5.2:
+# DKIM2 header canonicalization for HEADER HASH per spec-06 Section 5.2:
 # 1. Lowercase header name
 # 2. Unfold continuation lines (remove CRLF before WSP)
 # 3. Collapse runs of WSP to single SP
@@ -85,7 +85,7 @@ sub dkim2_canonicalize_header {
     return "$name:$value\r\n";
 }
 
-# DKIM2 header canonicalization for SIGNATURE INPUT per spec-05 Section 8.5:
+# DKIM2 header canonicalization for SIGNATURE INPUT per spec-06 Section 8.5:
 # Same as header hash canonicalization except step 3 deletes ALL WSP
 # characters rather than collapsing to single SP.
 sub dkim2_canonicalize_sig_header {
@@ -303,7 +303,7 @@ sub relaxed_domain_match {
 #   signature   => the Signature object for the entry being signed/verified
 #   signing_header => optional folded header string (signer path)
 #
-# Per draft-ietf-dkim-dkim2-spec-05 Section 8.5:
+# Per draft-ietf-dkim-dkim2-spec-06 Section 8.5:
 #   1. All Message-Instance headers in ascending v= order
 #   2. All prior DKIM2-Signature headers in ascending i= order
 #   3. The incomplete DKIM2-Signature (with empty s=) being signed/verified
@@ -345,7 +345,7 @@ sub parse_dkim_pubkey {
     return unless $key_txt;
     my ($k) = $key_txt =~ /\bk=([^;\s]+)/;
     $k //= 'rsa';  # default per RFC 6376
-    # h= (hash algorithm list) MUST be ignored per spec-05 Section 10.3
+    # h= (hash algorithm list) MUST be ignored per spec-06 Section 10.3
     my ($p) = $key_txt =~ /\bp=([A-Za-z0-9+\/=]+)/;
     return unless $p;
     if ($k eq 'ed25519') {
@@ -444,7 +444,7 @@ This module provides utility functions shared between L<Mail::DKIM2::Signer>,
 L<Mail::DKIM2::Verifier>, and L<Mail::DKIM2::MessageInstance>.  It also holds
 the distribution-wide C<$VERSION>.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-05, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-06, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

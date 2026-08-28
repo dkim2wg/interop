@@ -1,6 +1,6 @@
 #!/bin/sh
 # Hand-built §8.9/§11.2 negative vectors, fed through every verifier's REAL
-# entry point (spec-05 upgrade Task 21, CONTROLLER RULING).
+# entry point (spec-06 upgrade Task 21, CONTROLLER RULING).
 #
 #   ./util/negative-vectors.sh
 #
@@ -51,7 +51,7 @@ want_text() {
     case $1 in
     dup-hash-algorithm.eml)  echo "Message-Instance m=<x> has a duplicate hash algorithm" ;;
     dup-selector.eml)        echo "DKIM2-Signature i=<x> has a duplicate selector" ;;
-    too-many-signatures.eml) echo "DKIM2-Signature i=<x> has too many signatures" ;;
+    too-many-signatures.eml) echo "DKIM2-Signature i=<x> has more selectors than allowed" ;;
     malformed-json-r.eml)    echo "Message-Instance m=<x> contains invalid JSON" ;;
     unsigned-mi.eml)         echo "Message-Instance m=<x> is not signed" ;;
     esac

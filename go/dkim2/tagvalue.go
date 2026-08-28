@@ -16,7 +16,7 @@ func stripB64WSP(s string) string {
 type tagValueList struct {
 	order     []string
 	vals      map[string]string
-	duplicate string // lowercased tag name seen more than once (spec-05 §8), if any
+	duplicate string // lowercased tag name seen more than once (spec-06 §8), if any
 }
 
 func parseTagValueList(s string) *tagValueList {
@@ -24,7 +24,7 @@ func parseTagValueList(s string) *tagValueList {
 	seen := make(map[string]bool)
 	// Tag names keep their ORIGINAL case and order so the header can be
 	// re-serialized byte-for-byte for signing-input reconstruction; get/has
-	// below do the case-insensitive lookup required by spec-05 §8.
+	// below do the case-insensitive lookup required by spec-06 §8.
 	for _, part := range strings.Split(s, ";") {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -49,7 +49,7 @@ func parseTagValueList(s string) *tagValueList {
 	return tvl
 }
 
-// get and has treat tag identifiers case-insensitively (spec-05 §8): exact
+// get and has treat tag identifiers case-insensitively (spec-06 §8): exact
 // match first (the common case), then a case-insensitive scan.
 func (t *tagValueList) get(key string) string {
 	if v, ok := t.vals[key]; ok {

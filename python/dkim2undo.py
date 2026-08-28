@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-05
+DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-06
 
 Takes a signed email with Message-Instance headers containing recipes
 and reconstructs the message as it was at a previous version.
@@ -319,13 +319,13 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
             print(f"  v={version}: applying recipes", file=sys.stderr)
 
         # Apply header Recipes
-        # spec-05 §5.1 disallows the null header Recipe: a present "h" that is
+        # spec-06 §5.1 disallows the null header Recipe: a present "h" that is
         # null is a syntax error (distinct from an absent "h", which means
         # the header fields were unchanged).
         if "h" in recipes and recipes["h"] is None:
             raise ValueError(
                 f"v={version}: header recipes are null — "
-                f"not permitted under draft-05 §5.1"
+                f"not permitted under draft-06 §5.1"
             )
         h_recipes = recipes.get("h")
         if h_recipes is not None:
@@ -437,7 +437,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-05)")
+        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-06)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--target-version", type=int, default=None,
                         help="MI version to reconstruct back to (default: highest - 1)")

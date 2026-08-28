@@ -1,4 +1,4 @@
-"""A hop that changes nothing adds no Message-Instance (spec-05 §9.1/§9.2.5).
+"""A hop that changes nothing adds no Message-Instance (spec-06 §9.1/§9.2.5).
 
 Regression: on a transparent re-sign the signer used to emit a fresh
 Message-Instance carrying hashes identical to the one below it and no recipe at

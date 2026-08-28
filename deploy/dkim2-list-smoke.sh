@@ -3,7 +3,7 @@
 # DKIM2 list smoke test — inject a message through the Mailman and Sympa DKIM2
 # test lists, capture the outbound (list-modified + milter-signed) copy locally,
 # and confirm it (a) advertises the current spec draft (Mail::DKIM2::Common's
-# DKIM2_DRAFT, currently ietf-dkim-dkim2-spec-05) in its X-DKIM2-Info header,
+# DKIM2_DRAFT, currently ietf-dkim-dkim2-spec-06) in its X-DKIM2-Info header,
 # and (b) verifies.
 #
 # Run ON the demo server (mail.dkim2.com):

@@ -19,7 +19,7 @@ static void strip_fws(char *s) {
 
 /* Parse h= value: "sha256:hhash:bhash,sha256:hhash:bhash,..."
    Returns 0 on success, -1 on malloc/syntax failure, -2 if an algorithm
-   name is present more than once (spec-05 §7.3; case-insensitive per
+   name is present more than once (spec-06 §7.3; case-insensitive per
    RFC 5234, since ABNF quoted strings are case-insensitive). */
 static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
     int cnt = 1;
@@ -123,7 +123,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
     {
         int hr = parse_hsets(v, &mi->hsets, &mi->n_hsets);
         if (hr == -2) {
-            /* spec-05 §7.3: duplicate hash algorithm -- a specific,
+            /* spec-06 §7.3: duplicate hash algorithm -- a specific,
                reportable parse failure, not a plain "MI absent". mi->m is
                already populated at this point, so the message can name it. */
             if (errbuf && errbufsz)
@@ -204,7 +204,7 @@ static char **parse_rt(const char *rt_val, int *n_out) {
     return out;
 }
 
-/* Parse f= value: comma-separated plain flag tokens (draft-05 §8.10).
+/* Parse f= value: comma-separated plain flag tokens (draft-06 §8.10).
    Flags are an open list; tokens are stored verbatim with WSP trimmed. */
 static char **parse_flags(const char *f_val, int *n_out) {
     int cnt = 1;
@@ -272,7 +272,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     REQ("m"); sig->m = atoi(v);
     REQ("t"); sig->t = (uint64_t)strtoull(v, NULL, 10);
     REQ("d"); sig->d = strdup(v);
-    /* draft-05 §8: either nd= or both mf=+rt=, never both forms. */
+    /* draft-06 §8: either nd= or both mf=+rt=, never both forms. */
     {   const char *nd = tag_get(tl, "nd");
         const char *mf = tag_get(tl, "mf");
         const char *rt = tag_get(tl, "rt");
@@ -347,7 +347,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     int pos = snprintf(buf, 8192, "i=%d; m=%d; t=%llu; d=%s",
         sig->i, sig->m, (unsigned long long)sig->t, sig->d);
     if (sig->nd) {
-        /* draft-05 §9.3: imaginary hop carries nd= instead of mf=/rt= */
+        /* draft-06 §9.3: imaginary hop carries nd= instead of mf=/rt= */
         pos += snprintf(buf + pos, 8192 - pos, "; nd=%s", sig->nd);
     } else {
         char mf_b64[512];
@@ -371,7 +371,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     }
     if (sig->n)
         pos += snprintf(buf + pos, 8192 - pos, "; n=%s", sig->n);
-    /* f= flags (draft-05 §8.10), e.g. feedback, feedhere — preserved verbatim */
+    /* f= flags (draft-06 §8.10), e.g. feedback, feedhere — preserved verbatim */
     if (sig->flags && sig->flags[0]) {
         pos += snprintf(buf + pos, 8192 - pos, "; f=");
         for (int i = 0; sig->flags[i]; i++) {

@@ -1,4 +1,4 @@
-// Recipe application (undo) per spec-05 §5 and §7.2.
+// Recipe application (undo) per spec-06 §5 and §7.2.
 import { b64ToString } from './b64.js';
 
 export function decodeRecipe(rB64) {

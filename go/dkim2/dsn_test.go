@@ -105,7 +105,7 @@ func TestPropagate(t *testing.T) {
 }
 
 // TestPropagateRejectsMissingDeliveryStatus verifies that Propagate enforces
-// the RFC 3462 three-part multipart/report structure: a multipart/report DSN
+// the RFC 6522 three-part multipart/report structure: a multipart/report DSN
 // with three (or more) parts but no message/delivery-status part must be
 // rejected, even though it still has a leading text part and a trailing
 // message/rfc822 part.

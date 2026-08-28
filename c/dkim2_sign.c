@@ -131,7 +131,7 @@ static unsigned char *build_sign_input(
 
 int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     char **mi_out, char **sig_out) {
-    /* spec-05 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
+    /* spec-06 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
        NULL) is sha256 only, so default output stays byte-identical to before
        hash agility existed. "--hash both" emits sha256 first, then sha512. */
     int sel_algs[DKIM2_N_HASH_ALGS];

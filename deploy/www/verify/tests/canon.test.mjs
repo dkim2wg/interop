@@ -82,7 +82,7 @@ test('canonHeaderHash orders duplicates bottom-up by document index, not array a
     'from:c\r\nfrom:b\r\nfrom:a\r\nto:x\r\n');
 });
 
-test('spec-05 §4: HDRMAINT-survey names are unsigned', () => {
+test('spec-06 §4: HDRMAINT-survey names are unsigned', () => {
   for (const n of ['Apparently-To', 'Auto-Submitted', 'DL-Expansion-History',
                    'Original-Recipient', 'SIO-Label-History', 'VBR-Info',
                    'X400-Received', 'X400-Trace']) {
@@ -90,7 +90,7 @@ test('spec-05 §4: HDRMAINT-survey names are unsigned', () => {
   }
 });
 
-test('spec-05 §4: any Received-* is unsigned', () => {
+test('spec-06 §4: any Received-* is unsigned', () => {
   assert.ok(isUnsignedHeader('Received-SPF'));
   assert.ok(isUnsignedHeader('Received-Anything'));
 });

@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# Standalone DKIM2 signer CLI (draft-ietf-dkim-dkim2-spec-05).
+# Standalone DKIM2 signer CLI (draft-ietf-dkim-dkim2-spec-06).
 #
 # Reads a message, computes a Message-Instance when the content has changed
 # since the top instance, signs, and writes the result to stdout. The Perl
@@ -51,9 +51,9 @@ GetOptions(
 
 die _usage() unless defined $selector && defined $domain && defined $keyfile;
 
-# spec-05 §3.1: signer chooses one or both hash algorithms for the
+# spec-06 §3.1: signer chooses one or both hash algorithms for the
 # Message-Instance h= tag. Default MUST remain sha256 (byte-identical to
-# pre-spec-05 output).
+# pre-spec-06 output).
 my %HASH_ALG_SETS = (
     sha256 => ['sha256'],
     sha512 => ['sha512'],

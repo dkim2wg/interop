@@ -152,7 +152,7 @@ Semantics to preserve:
   spec typo (copy-paste artifact from the `MAIL FROM and d=` line above; the check has
   nothing to do with MAIL FROM). **Decision: match the spec byte-for-byte**, including the
   `MAIL` token, so our output/interop tests stay literally spec-conformant. Correct it
-  when draft-05 fixes the typo. Do not file a nit now.
+  when draft-06 fixes the typo. Do not file a nit now.
 - Where verifiers already emit the Message-Instance (`Message-Instance m=<x> …`) and
   public-key (`public key <value> …`) error families, align those to spec-04 wording too
   as encountered; the primary target is the custody/`nd=` set above.

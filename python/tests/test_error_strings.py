@@ -1,4 +1,4 @@
-"""Task 3.4: canonical spec-05 verifier error strings.
+"""Task 3.4: canonical spec-06 verifier error strings.
 
 Each test asserts the exact byte-for-byte canonical error message per the
 current->target mapping in .superpowers/sdd/task-3.4-brief.md.

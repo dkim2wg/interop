@@ -28,7 +28,7 @@ my $num = %map ? max(keys %map) : 0;
 my %mimap = map { extract_mi_version($_) => $_ } $msg1->header('Message-Instance');
 my $instance = %mimap ? max(keys %mimap) : 0;
 
-# spec-05 §11: "there MUST NOT be a Message-Instance field with a higher m=
+# spec-06 §11: "there MUST NOT be a Message-Instance field with a higher m=
 # value than occurs in any DKIM2-Signature field" -- reported as "PERMERROR
 # Message-Instance m=<x> is not signed". Checked up front because the walk
 # below happily verifies and reports "OK Message-Instance" for an instance

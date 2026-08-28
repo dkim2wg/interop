@@ -1,4 +1,4 @@
-// DKIM2 verification orchestrator per spec-05 §10/§11. Built from spec.
+// DKIM2 verification orchestrator per spec-06 §10/§11. Built from spec.
 import { parseMessage, collectLevels, parseTagList, parseHashSets } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
@@ -40,7 +40,7 @@ function parseSigSets(sValue) {
 
 const SUPPORTED_ALGS = new Set(['rsa-sha256', 'ed25519-sha256']);
 
-// spec-05 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag: a
+// spec-06 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag: a
 // Selector MUST NOT appear more than once, and the same signing algorithm may
 // appear at most twice, and only with distinct Selectors. Both comparisons
 // are case-insensitive (a Selector is a Domain, §3.5; algorithm names are
@@ -58,12 +58,12 @@ export function checkSignatureDuplicates(items, i) {
     counts.set(alg, (counts.get(alg) || 0) + 1);
   }
   if ([...counts.values()].some((n) => n > 2)) {
-    errors.push(`PERMERROR DKIM2-Signature i=${i} has too many signatures`);
+    errors.push(`PERMERROR DKIM2-Signature i=${i} has more selectors than allowed`);
   }
   return errors;
 }
 
-// spec-05 §11.2: classify a decodeRecipe() failure so the two error kinds
+// spec-06 §11.2: classify a decodeRecipe() failure so the two error kinds
 // stay distinct, per the ruling that base64 and JSON failures are different
 // errors:
 //  - a bad base64 r= value (atob throws, typically DOMException) is a
@@ -110,9 +110,9 @@ function duplicateTag(tags) {
 // verifyMessage(raw, opts) — verify a DKIM2 message and return a structured
 // report.
 //
-// Prior to spec-05, a receiving MTA's Received-SPF header (Fastmail adds one)
+// Prior to spec-06, a receiving MTA's Received-SPF header (Fastmail adds one)
 // was covered by the Message-Instance header hash and could break
-// verification; this used to retry once with it stripped. spec-05 §4
+// verification; this used to retry once with it stripped. spec-06 §4
 // excludes Received-SPF from the hash via the "Received-*" prefix rule, so
 // stripping it can no longer change any hash or verdict -- the retry was
 // provably a no-op. Removed rather than kept as a "safety net": it was
@@ -229,7 +229,7 @@ async function verifyOnce(raw, opts = {}) {
         level.undo = 'unrecoverable';
         level.detail = `state unavailable (redaction at m=${undoBroken})`;
       } else if (undoBrokenReason === 'invalid-json' || undoBrokenReason === 'syntax-error') {
-        // spec-05 §11.2: report the specific PERMERROR (JSON parse failure
+        // spec-06 §11.2: report the specific PERMERROR (JSON parse failure
         // vs. base64 syntax error are distinct, per the ruling that they are
         // different errors), not the generic "undo broke" fail below -- and
         // every level whose state is unreachable because of it must bump
@@ -249,7 +249,7 @@ async function verifyOnce(raw, opts = {}) {
       continue;
     }
     if (m === 1 && 'r' in mi.map) {
-      // spec-05 §9.1: the bottom instance MAY carry Recipes too ("if it is
+      // spec-06 §9.1: the bottom instance MAY carry Recipes too ("if it is
       // wished to record any changes made to a message as it enters the
       // DKIM2 ecosystem"); it never participates in the reconstruction loop
       // above (there is no earlier state to undo to, so a malformed r=
@@ -271,7 +271,7 @@ async function verifyOnce(raw, opts = {}) {
     }
     try {
       const sets = parseHashSets(mi.map.h);
-      // spec-05 §7.3: an algorithm MUST NOT be present more than once. This
+      // spec-06 §7.3: an algorithm MUST NOT be present more than once. This
       // must run before any hash is computed or compared, over the parsed
       // LIST (never a deduplicated map, or a second occurrence would be
       // silently overwritten and go undetected).
@@ -446,7 +446,7 @@ async function verifyOnce(raw, opts = {}) {
       continue;
     }
 
-    // spec-05 §8.9: duplicate-selector and too-many-signatures checks must
+    // spec-06 §8.9: duplicate-selector and excess-selector checks must
     // run before any DNS lookup or crypto work.
     const dupErrors = checkSignatureDuplicates(sigSets, i);
     if (dupErrors.length) {
@@ -494,7 +494,18 @@ async function verifyOnce(raw, opts = {}) {
     } else if (!allPass) {
       if (level.itemPerm) { level.result = 'permerror'; level.detail = `DKIM2-Signature i=${i} public key ${level.items.map((it) => it.result).find((r) => r !== 'pass') || 'error'}`; bump('permerror'); }
       else if (level.itemTemp) { level.result = 'temperror'; level.detail = `DKIM2-Signature i=${i} ${(level.items.find((it) => it.result !== 'pass') || {}).result || 'public key could not be fetched'}`; bump('temperror'); }
-      else { level.result = 'fail'; level.detail = `DKIM2-Signature i=${i} incorrect signature`; bump('fail'); }
+      else {
+        // §11.6: report the Selector(s) involved rather than the algorithm. When
+        // some signatures pass and others fail, name both sides — a Verifier that
+        // can see the split is well placed to spot an attack on the weaker one.
+        const passed = level.items.filter((it) => it.result === 'pass').map((it) => it.selector);
+        const failed = level.items.filter((it) => it.result !== 'pass').map((it) => it.selector);
+        level.result = 'fail';
+        level.detail = passed.length
+          ? `DKIM2-Signature i=${i} ${passed.join(', ')} signature passed, ${failed.join(', ')} signature failed`
+          : `DKIM2-Signature i=${i} ${failed.join(', ')} incorrect signature`;
+        bump('fail');
+      }
     }
     // A valid but old signature is a soft warning, not a failure (§11.3/§8.4).
     // Only downgrade a level that otherwise passed — a real failure outranks it.

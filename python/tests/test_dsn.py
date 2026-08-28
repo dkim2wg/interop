@@ -58,7 +58,7 @@ def _wrap_dsn(embedded: bytes) -> bytes:
 
 def _wrap_dsn_no_delivery_status(embedded: bytes) -> bytes:
     """A multipart/report with >=3 parts but no message/delivery-status part
-    (violates the RFC 3462 3-part structure)."""
+    (violates the RFC 6522 3-part structure)."""
     report = MIMEMultipart("report", report_type="delivery-status")
     report["From"] = "postmaster@test3.dkim2.com"
     report["To"] = "user@test2.dkim2.com"

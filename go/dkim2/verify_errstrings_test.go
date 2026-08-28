@@ -7,7 +7,7 @@ import (
 )
 
 // TestVerifyCanonicalErrorStrings asserts that verify.go's custody/mismatch
-// messages fire in the exact byte-for-byte spec-05 canonical forms (see
+// messages fire in the exact byte-for-byte spec-06 canonical forms (see
 // docs/superpowers/plans/2026-07-05-dkim2-spec-04-upgrade.md, Task 3.3).
 func TestVerifyCanonicalErrorStrings(t *testing.T) {
 	t.Run("MAIL FROM mismatch", func(t *testing.T) {
@@ -68,7 +68,7 @@ func TestVerifyCanonicalErrorStrings(t *testing.T) {
 		_, err := Verify(bytes.NewReader(top), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
 		want := "DKIM2-Signature i=1 MAIL nd= does not match"
 		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("want error containing %q (verbatim spec-05 typo), got %v", want, err)
+			t.Fatalf("want error containing %q (verbatim spec-06 typo), got %v", want, err)
 		}
 	})
 }

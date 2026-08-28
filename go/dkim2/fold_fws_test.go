@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Folding whitespace inside DKIM2 tag values (spec-05 §2.12): FWS may appear
+// Folding whitespace inside DKIM2 tag values (spec-06 §2.12): FWS may appear
 // inside a base64 string and around the colons of an s= item, and "MUST be
 // ignored when the value is used".
 //

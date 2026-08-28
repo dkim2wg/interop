@@ -10,7 +10,7 @@ import (
 // ndSignHop signs `in` (the message produced by the previous hop, or the raw
 // fixture for the first hop) with the given key/Selector/domain, producing
 // the next i=/m= layer. Exactly one of (mf/rt) or nd should be set per
-// draft-05 §8 (nd= excludes mf=/rt=), matching the real Sign() constraint.
+// draft-06 §8 (nd= excludes mf=/rt=), matching the real Sign() constraint.
 func ndSignHop(t *testing.T, in []byte, keyFile, sel, dom, mf string, rt []string, nd string) []byte {
 	t.Helper()
 	keyPEM, err := os.ReadFile("../../keys/" + keyFile)
@@ -46,7 +46,7 @@ func ndTestRaw(t *testing.T) []byte {
 }
 
 // TestTopNdRejected builds a 2-hop chain whose HIGHEST (top) DKIM2-Signature
-// carries nd= instead of mf=/rt=. Per local policy (stricter than spec-05),
+// carries nd= instead of mf=/rt=. Per local policy (stricter than spec-06),
 // the only legitimate nd= producer emits the nd= signature together with the
 // matching higher-i= signature at the same time, so nd= must never appear on
 // the top signature. Verify must reject it.

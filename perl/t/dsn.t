@@ -116,7 +116,7 @@ sub forwarded_unchanged {
 }
 
 # === propagate: rejects a multipart/report with >=3 parts but no
-# message/delivery-status part (RFC 3462 structural validation, not just a
+# message/delivery-status part (RFC 6522 structural validation, not just a
 # bare part count) ===
 {
     my $embedded = forwarded_twohop();
@@ -129,7 +129,7 @@ sub forwarded_unchanged {
             Email::MIME->create(attributes => { content_type => 'text/plain', charset=>'UTF-8', encoding=>'7bit' },
                                 body_str => "delivery failed\n"),
             # No message/delivery-status part here -- just a second text/plain,
-            # so @parts >= 3 but the RFC 3462 structure is not satisfied.
+            # so @parts >= 3 but the RFC 6522 structure is not satisfied.
             Email::MIME->create(attributes => { content_type => 'text/plain', charset=>'UTF-8', encoding=>'7bit' },
                                 body_str => "not a delivery-status part\n"),
             Email::MIME->create(attributes => { content_type => 'message/rfc822' },

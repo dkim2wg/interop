@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 signer - draft-ietf-dkim-dkim2-spec-05
+DKIM2 signer - draft-ietf-dkim-dkim2-spec-06
 
 Takes a raw email, selector, domain, and keyfile and produces a signed
 message with Message-Instance and DKIM2-Signature headers on stdout.
@@ -100,7 +100,7 @@ def parse_message(source: "Source") -> tuple[list[bytes], bytes]:
 # Canonicalization for header hash (Section 5.2)
 # ---------------------------------------------------------------------------
 
-# Headers to exclude from the header hash (spec-05 §4, §4.1)
+# Headers to exclude from the header hash (spec-06 §4, §4.1)
 _EXCLUDED_PREFIXES = (b"x-", b"received-")
 _EXCLUDED_NAMES = {
     b"apparently-to", b"arc-authentication-results",
@@ -168,7 +168,7 @@ def canonicalize_header_field(raw_hdr: bytes) -> bytes:
     return (name + ":" + value).encode("utf-8", errors="surrogateescape")
 
 
-# spec-05 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# spec-06 §3.1: two hashing algorithms are defined. Verifiers MUST implement
 # both; Signers MAY implement either or both (we default to sha256).
 HASH_ALGS = {
     "sha256": lambda data: hashlib.sha256(data).digest(),
@@ -249,7 +249,7 @@ def build_message_instance(headers: list[bytes], body: bytes,
     """
     if algs is None:
         algs = ["sha256"]
-    # spec-05 §7.3: one hash-set per algorithm, comma separated. An algorithm
+    # spec-06 §7.3: one hash-set per algorithm, comma separated. An algorithm
     # MUST NOT appear more than once, so `algs` must be de-duplicated by the
     # caller (the CLI does this).
     sets = ",".join(
@@ -267,7 +267,7 @@ def _lowercase_recipe_keys(recipe: dict) -> dict:
     """Force the header-recipe (h) keys to lowercase on output.
 
     Header field names are case-insensitive; emitting recipe keys in a
-    canonical lowercase form keeps them stable and unambiguous.  spec-05
+    canonical lowercase form keeps them stable and unambiguous.  spec-06
     §5.1: header field names in the JSON Recipes MUST be lower case
     (matching against the message stays case-insensitive).
     """
@@ -312,7 +312,7 @@ def canonicalize_sig_header(raw_hdr: str) -> bytes:
 def _extract_tag(header_value: str, tag: str) -> str | None:
     """Extract a tag value from a DKIM2-style tag-list header value.
 
-    Per spec-05 §8, tag identifiers are case-insensitive, may appear in any
+    Per spec-06 §8, tag identifiers are case-insensitive, may appear in any
     order, and FWS is permitted around the '=' and ';' separators.
     """
     tl = tag.lower()
@@ -327,7 +327,7 @@ def _extract_tag(header_value: str, tag: str) -> str | None:
 
 def _tag_names(header_value: str) -> list[str]:
     """Lowercased tag names in a tag-list value, in order (for duplicate
-    detection per spec-05 §8: 'there MUST be only one of each kind')."""
+    detection per spec-06 §8: 'there MUST be only one of each kind')."""
     names = []
     for part in header_value.split(";"):
         if "=" in part:
@@ -347,7 +347,7 @@ def _get_version_from_mi(hdr: str) -> int:
 def _mi_hashes(hdr: str) -> str | None:
     """Extract the h= hash set of a Message-Instance header, FWS removed.
 
-    Folding whitespace may appear inside the base64 hashes (spec-05 §2.12), so
+    Folding whitespace may appear inside the base64 hashes (spec-06 §2.12), so
     strip it before comparing two instances' hashes.
     """
     colon = hdr.find(":")
@@ -380,7 +380,7 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Per draft-ietf-dkim-dkim2-spec-05 Section 9.5:
+    # Per draft-ietf-dkim-dkim2-spec-06 Section 9.5:
     # 1. All MI headers in ascending v= order
     # 2. All prior DKIM2-Signature headers in ascending i= order
     # 3. The incomplete DKIM2-Signature being created
@@ -427,15 +427,15 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     """Build a complete DKIM2-Signature header.
 
     If next_domain is given, the signature carries an nd= tag for an imaginary
-    forwarding hop (draft-05 §9.3) and omits mf=/rt=. Otherwise it carries
-    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-05 §8.10).
+    forwarding hop (draft-06 §9.3) and omits mf=/rt=. Otherwise it carries
+    mf=/rt= as usual. Any flags are emitted as an f= tag (draft-06 §8.10).
 
     Returns the full header string including field name.
     """
     if timestamp is None:
         timestamp = int(time.time())
 
-    # draft-05 §9.3: an nd= hop carries nd= instead of mf=/rt=.
+    # draft-06 §9.3: an nd= hop carries nd= instead of mf=/rt=.
     if next_domain:
         chain = f"nd={next_domain}"
     else:
@@ -537,7 +537,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     # Build Message-Instance header
     mi_hdr = build_message_instance(headers, body, version=mi_version, algs=algs)
 
-    # draft-05 §9.1/§9.2.5: a hop that leaves both hashes unchanged adds no new
+    # draft-06 §9.1/§9.2.5: a hop that leaves both hashes unchanged adds no new
     # Message-Instance at all — it signs against the existing top instance and
     # reuses its m=.  Emitting an instance with identical hashes and no Recipe
     # is not forbidden, but §9.1 still calls it "most likely to be pointless
@@ -571,7 +571,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-05)")
+        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-06)")
     parser.add_argument("message", help="Path to raw email file (- for stdin)")
     parser.add_argument("-s", "--selector", required=True,
                         help="DKIM2 selector name")
@@ -593,7 +593,7 @@ def main():
     parser.add_argument("--hash", dest="hash_algs", default="sha256",
                         choices=["sha256", "sha512", "both"],
                         help="hash algorithm(s) for the Message-Instance h= tag "
-                             "(spec-05 §3.1; default sha256)")
+                             "(spec-06 §3.1; default sha256)")
     args = parser.parse_args()
 
     if args.message == "-":

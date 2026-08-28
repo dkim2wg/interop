@@ -100,7 +100,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	// Local policy (stricter than spec-05): the top (highest i=) signature
+	// Local policy (stricter than spec-06): the top (highest i=) signature
 	// MUST NOT carry nd=. The only legitimate nd= producer emits the nd=
 	// signature together with the matching higher-i= signature at the same
 	// time, so nd= should never appear alone on the top signature. This is
@@ -312,7 +312,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			continue
 		}
 
-		// spec-05 §8.9: duplicate-selector and too-many-signatures checks must
+		// spec-06 §8.9: duplicate-selector and excess-selector checks must
 		// run before any DNS lookup or crypto work.
 		if dupErrs := checkSignatureDuplicates(sig.Sigs, sig.Sequence); len(dupErrs) > 0 {
 			res.Error = fmt.Errorf("%s", strings.Join(dupErrs, "; "))
@@ -432,7 +432,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 	return results, nil
 }
 
-// checkSignatureDuplicates enforces spec-05 §8.9 duplicate/limit rules for
+// checkSignatureDuplicates enforces spec-06 §8.9 duplicate/limit rules for
 // one DKIM2-Signature s= tag: a Selector MUST NOT appear more than once, and
 // the same signing algorithm may appear at most twice, and only with
 // distinct Selectors. Both comparisons are case-insensitive (a Selector is a
@@ -459,7 +459,7 @@ func checkSignatureDuplicates(items []SigItem, i int) []string {
 	}
 	for _, n := range counts {
 		if n > 2 {
-			errs = append(errs, fmt.Sprintf("PERMERROR DKIM2-Signature i=%d has too many signatures", i))
+			errs = append(errs, fmt.Sprintf("PERMERROR DKIM2-Signature i=%d has more selectors than allowed", i))
 			break
 		}
 	}
@@ -504,7 +504,7 @@ func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
 			continue
 		}
 		if prev.NextDomain != "" {
-			// draft-05 §11.4: nd= MUST exactly match the next sig's d=.
+			// draft-06 §11.4: nd= MUST exactly match the next sig's d=.
 			if !strings.EqualFold(prev.NextDomain, cur.Domain) {
 				return fmt.Errorf("DKIM2-Signature i=%d MAIL nd= does not match",
 					prev.Sequence)

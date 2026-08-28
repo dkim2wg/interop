@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// A hop that changes nothing adds no Message-Instance (spec-05 §9.1/§9.2.5); it
+// A hop that changes nothing adds no Message-Instance (spec-06 §9.1/§9.2.5); it
 // signs against the existing top instance and reuses its m=.
 //
 // Regression: a transparent re-sign used to emit a fresh instance carrying

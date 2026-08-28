@@ -17,7 +17,7 @@ def test_received_still_excluded():
 import pytest
 
 
-# spec-05 §4: names added by the HDRMAINT survey
+# spec-06 §4: names added by the HDRMAINT survey
 @pytest.mark.parametrize("name", [
     b"apparently-to", b"auto-submitted", b"dl-expansion-history",
     b"original-recipient", b"sio-label-history", b"vbr-info",
@@ -27,7 +27,7 @@ def test_spec05_names_excluded(name):
     assert _should_exclude_header(name)
 
 
-# spec-05 §4: any Received-* field is a trace field
+# spec-06 §4: any Received-* field is a trace field
 def test_received_prefix_excluded():
     assert _should_exclude_header(b"received-spf")
     assert _should_exclude_header(b"received-anything")

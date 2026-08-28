@@ -271,14 +271,14 @@ test('an instance with no r= recipe has no recipe_json', async () => {
 });
 
 // --- Received-SPF added by the receiving MTA ----------------------------
-// spec-05 §4 added a "Received-*" prefix rule, so Received-SPF is excluded
+// spec-06 §4 added a "Received-*" prefix rule, so Received-SPF is excluded
 // from the Message-Instance header hash directly (via isUnsignedHeader) and
 // never pollutes verification. verifyMessage() no longer has any
 // strip-and-retry mechanism for this (removed: it was hardcoded to the
 // literal name Received-SPF, and stripping a header excluded from the hash
 // cannot change the hash, so it was provably a no-op once §4 landed; same
 // removal in Mail::DKIM2::Validate::report()).
-test('a Received-SPF prepended by the receiver verifies cleanly (spec-05 §4)', async () => {
+test('a Received-SPF prepended by the receiver verifies cleanly (spec-06 §4)', async () => {
   const polluted = 'Received-SPF: pass\r\n (test.example: 1.2.3.4 authorized)\r\n' + SIGNED_SAMPLE;
   const rep = await verifyMessage(polluted, {
     fetchKey: realFetchKey,
@@ -305,7 +305,7 @@ test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly'
   assert.equal(rep.overall, 'pass');
 });
 
-// --- spec-05 §11.2: malformed r= JSON is a specific PERMERROR ------------
+// --- spec-06 §11.2: malformed r= JSON is a specific PERMERROR ------------
 //
 // This builds a REAL, validly Ed25519-signed two-hop message (genuine
 // crypto over the actual canonicalized signing input, using this module's
@@ -319,7 +319,7 @@ test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly'
 // state-reconstruction loop lumped a JSON syntax error in with every other
 // "undo broke" cause, producing a generic "state unavailable" fail instead
 // of the specific §11.2 PERMERROR text.
-test('spec-05 §11.2: malformed r= JSON is reported as the specific PERMERROR through the real verifier entry point', async () => {
+test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR through the real verifier entry point', async () => {
   const { subtle } = globalThis.crypto;
   const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
@@ -391,13 +391,13 @@ test('spec-05 §11.2: malformed r= JSON is reported as the specific PERMERROR th
   assert.equal(mi1.detail, 'PERMERROR Message-Instance m=2 contains invalid JSON');
 });
 
-// spec-05 §11.2 ruling: a bad-base64 r= value is a DIFFERENT error from a
+// spec-06 §11.2 ruling: a bad-base64 r= value is a DIFFERENT error from a
 // post-decode JSON parse failure, and must stay distinct: base64 failure ->
 // "syntax error" (§11.2 lists this explicitly for malformed field content),
 // never "contains invalid JSON" (the payload here never even reaches JSON
 // parsing). Same real two-hop construction as the test above, "!!!!" (not
 // valid base64) in place of the truncated-JSON r= value.
-test('spec-05 §11.2: a bad-base64 r= value is reported as "syntax error", distinct from "contains invalid JSON"', async () => {
+test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", distinct from "contains invalid JSON"', async () => {
   const { subtle } = globalThis.crypto;
   const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
@@ -456,14 +456,14 @@ test('spec-05 §11.2: a bad-base64 r= value is reported as "syntax error", disti
   assert.doesNotMatch(mi1.detail, /invalid JSON/);
 });
 
-// spec-05 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it is
+// spec-06 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it is
 // wished to record any changes made to a message as it enters the DKIM2
 // ecosystem"). It never participates in the reconstruction loop (there is
 // no earlier state to undo to), so before this fix it was never checked at
 // all -- a single-instance (m=1 only) message, so m=1 is both the topmost
 // AND the bottom instance, hand-signed so its own signature legitimately
 // covers the malformed r=.
-test('spec-05 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejected too, not silently ignored', async () => {
+test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejected too, not silently ignored', async () => {
   const { subtle } = globalThis.crypto;
   const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
@@ -501,4 +501,28 @@ test('spec-05 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejec
   const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi1, 'm=1 instance level present');
   assert.equal(mi1.detail, 'PERMERROR Message-Instance m=1 contains invalid JSON');
+});
+
+// --- §11.6 signature-failure strings name the Selector -------------------
+// draft-06 replaced the algorithm-based failure text with Selector-based
+// wording: "<selector> incorrect signature", and a two-Selector variant for
+// when some signatures pass and others fail.
+test('spec-06 §11.6: a broken signature names the failing Selector', async () => {
+  // Corrupt one base64 character inside the s= signature value. The value stays
+  // valid base64, so RSA verification returns false rather than throwing — that
+  // is the plain-FAIL branch, not the key-permerror branch.
+  const broken = SIGNED_SAMPLE.replace(
+    /(s=rsa2048:rsa-sha256:)(.)/,
+    (_m, pre, c) => pre + (c === 'A' ? 'B' : 'A'),
+  );
+  assert.notEqual(broken, SIGNED_SAMPLE, 'sample was actually corrupted');
+  const rep = await verifyMessage(broken, {
+    fetchKey: realFetchKey,
+    mailFrom: '<sender@test.dkim2.eu>',
+    rcptTo: ['<recipient@example.com>'],
+    now: FRESH_NOW,
+  });
+  const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
+  assert.equal(sig.result, 'fail');
+  assert.equal(sig.detail, 'DKIM2-Signature i=1 rsa2048 incorrect signature');
 });

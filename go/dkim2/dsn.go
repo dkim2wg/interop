@@ -20,7 +20,7 @@ type PropagateOptions struct {
 
 var reBoundary = regexp.MustCompile(`(?i)boundary="?([^";]+)"?`)
 
-// Propagate returns a DKIM2 DSN propagated upstream (RFC 3462 / draft-05
+// Propagate returns a DKIM2 DSN propagated upstream (RFC 6522 / draft-06
 // §12.1.1): the Forwarder rebuilds the enclosed original to its
 // forwarded-outward state (undoing its Message-Instance modification, which
 // also drops the DKIM2-Signature it added), then re-signs the whole DSN as a
@@ -57,7 +57,7 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	segments := strings.Split(body.String(), delim)
 	// segments[0] is the preamble; the last is the closing "--\r\n" epilogue.
 	//
-	// RFC 3462 requires a multipart/report DSN to have (at least) three
+	// RFC 6522 requires a multipart/report DSN to have (at least) three
 	// component parts: a human-readable text part first, a
 	// message/delivery-status part, and a part carrying the returned
 	// message (message/rfc822 or, if only headers are echoed back,
@@ -81,10 +81,10 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 		}
 	}
 	if !hasTextPart {
-		return nil, "", fmt.Errorf("DSN first part is not human-readable text/plain (RFC 3462)")
+		return nil, "", fmt.Errorf("DSN first part is not human-readable text/plain (RFC 6522)")
 	}
 	if !hasDeliveryStatus {
-		return nil, "", fmt.Errorf("DSN missing message/delivery-status part (RFC 3462)")
+		return nil, "", fmt.Errorf("DSN missing message/delivery-status part (RFC 6522)")
 	}
 	if embeddedSeg < 0 {
 		return nil, "", fmt.Errorf("no embedded original message part")

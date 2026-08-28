@@ -7,7 +7,7 @@ package dkim2
 //
 // The vectors target spec-02, but the tag rules (case-insensitive identifiers,
 // any order, single occurrence, FWS) and the >=1024-bit key requirement (§3.2)
-// are unchanged in spec-05, so they apply directly. A tiny hand-rolled reader
+// are unchanged in spec-06, so they apply directly. A tiny hand-rolled reader
 // pulls the few fields we need so the test needs no external TOML dependency.
 
 import (

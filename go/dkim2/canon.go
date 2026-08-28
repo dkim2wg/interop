@@ -11,14 +11,14 @@ import (
 	"strings"
 )
 
-// spec-05 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+// spec-06 §3.1: two hashing algorithms are defined. Verifiers MUST implement
 // both; Signers MAY implement either or both (we default to sha256).
 var hashAlgs = map[string]func() hash.Hash{
 	"sha256": sha256.New,
 	"sha512": sha512.New,
 }
 
-// HashAlg resolves a spec-05 §7.3 hash-name to its constructor. Matching is
+// HashAlg resolves a spec-06 §7.3 hash-name to its constructor. Matching is
 // case-insensitive: RFC 5234 makes ABNF quoted strings case-insensitive.
 func HashAlg(name string) (func() hash.Hash, bool) {
 	f, ok := hashAlgs[strings.ToLower(name)]
@@ -111,7 +111,7 @@ func hashBodyMulti(r io.Reader, algs []string) (map[string][]byte, error) {
 	return out, nil
 }
 
-// Unsigned header fields per spec-05 §4, §4.1.
+// Unsigned header fields per spec-06 §4, §4.1.
 var excludedHeaderNames = map[string]bool{
 	"apparently-to": true, "arc-authentication-results": true,
 	"arc-message-signature": true, "arc-seal": true,

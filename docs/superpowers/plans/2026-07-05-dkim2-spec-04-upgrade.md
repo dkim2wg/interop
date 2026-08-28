@@ -17,7 +17,7 @@
 - **Hash/crypto unchanged:** SHA256 only; RSA-SHA256 (pubexp 65537) and Ed25519-SHA256.
 - **Already conformant everywhere (do NOT touch behavior):** `delivered-to` in the ignore list; null header recipe rejected (body `b:null` still allowed); `feedhere`/`f=` flags round-trip with no enforcement; Authentication-Results excluded from the hash (not a modification). These are verified done in all codebases; only their version comments change.
 - **`nd=` local policy (stricter than spec-04):** our verifiers MUST **reject** a message whose highest-`i=` DKIM2-Signature carries `nd=` (spec-04 SHOULD-tolerates it via out-of-band arrangements; we do not). The only legitimate `nd=` producer is our reflector-brand-nd path, which always emits the `nd=` signature together with its matching higher-`i=` signature. Verifiers MUST still correctly verify/undo **across** one or more consecutive `nd=` imaginary hops.
-- **Error strings are matched to spec-04 byte-for-byte**, including the spec typo `DKIM2-Signature i=<x> MAIL nd= does not match` (the leading `MAIL` is a copy-paste artifact; reproduce it verbatim, fix when draft-05 does). Canonical set (from spec-04 §"Ensure … Valid" and §"Check the Chain-of-Custody"):
+- **Error strings are matched to spec-04 byte-for-byte**, including the spec typo `DKIM2-Signature i=<x> MAIL nd= does not match` (the leading `MAIL` is a copy-paste artifact; reproduce it verbatim, fix when draft-06 does). Canonical set (from spec-04 §"Ensure … Valid" and §"Check the Chain-of-Custody"):
   ```
   DKIM2-Signature i=<x> tag=<y> missing
   DKIM2-Signature i=<x> tag=<y> was unexpected

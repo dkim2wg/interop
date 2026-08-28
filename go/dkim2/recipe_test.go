@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// spec-05 §5.1: header field names in the JSON Recipes MUST be lower case
+// spec-06 §5.1: header field names in the JSON Recipes MUST be lower case
 // (matching against the message stays case-insensitive).
 func TestRecipeKeysLowercased(t *testing.T) {
 	r := &Recipe{Headers: map[string][]RecipeStep{
@@ -29,9 +29,9 @@ func TestRecipeKeysLowercased(t *testing.T) {
 }
 
 func TestNullHeaderRecipeRejected(t *testing.T) {
-	// draft-05 §5.1: "h": null is no longer permitted.
+	// draft-06 §5.1: "h": null is no longer permitted.
 	if _, err := parseRecipe([]byte(`{"h":null,"b":[{"c":[1,1]}]}`)); err == nil {
-		t.Fatal("null header recipe must be rejected (draft-05 §5.1)")
+		t.Fatal("null header recipe must be rejected (draft-06 §5.1)")
 	}
 }
 
@@ -49,7 +49,7 @@ func TestAbsentHeaderRecipeAllowed(t *testing.T) {
 }
 
 func TestMalformedRecipeJSONIsSpecificPermerror(t *testing.T) {
-	// spec-05 §11.2: JSON errors are called out specifically, not as a
+	// spec-06 §11.2: JSON errors are called out specifically, not as a
 	// generic syntax error.
 	_, err := parseMI(`Message-Instance: m=2; h=sha256:AAA:BBB; r=eyJoIjog;`)
 	if err == nil {

@@ -32,7 +32,7 @@ int main(void) {
     assert(strcmp(mi->hsets[1].hdr_hash, "hh2") == 0);
     dkim2_mi_free(mi);
 
-    /* spec-05 §7.3: an algorithm MUST NOT be present more than once */
+    /* spec-06 §7.3: an algorithm MUST NOT be present more than once */
     assert(dkim2_mi_parse("m=1; h=sha256:AAA:BBB,sha256:CCC:DDD;") == NULL);
     /* ...detected case-insensitively (RFC 5234) */
     assert(dkim2_mi_parse("m=1; h=sha256:AAA:BBB,SHA256:CCC:DDD;") == NULL);
@@ -66,7 +66,7 @@ int main(void) {
     assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
     dkim2_sig_free(sig);
 
-    /* Folding whitespace inside tag values (spec-05 §2.12): FWS may appear
+    /* Folding whitespace inside tag values (spec-06 §2.12): FWS may appear
        inside a base64 string and around the colons of an s= item, and MUST be
        ignored when the value is used.  A fold between the Selector colon and
        the algorithm token used to leave CRLF+TAB glued to the algorithm name. */
@@ -157,7 +157,7 @@ int main(void) {
     }
     dkim2_sig_free(sig);
 
-    /* --- spec-05 §8.9: DKIM2-Signature s= duplicate/limit checks --- */
+    /* --- spec-06 §8.9: DKIM2-Signature s= duplicate/limit checks --- */
     char errbuf[256];
 
     /* clean signature list has no errors */
@@ -198,19 +198,19 @@ int main(void) {
     assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == 0);
     dkim2_sig_free(sig);
 
-    /* three same-algorithm signatures is too many */
+    /* three same-algorithm signatures exceed the selector limit */
     sig = dkim2_sig_parse(
         "i=2; m=1; t=1; d=ex.example; "
         "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
         "s=sel1:rsa-sha256:AAA,sel2:rsa-sha256:BBB,sel3:rsa-sha256:CCC");
     assert(sig != NULL);
     assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == -1);
-    assert(strcmp(errbuf, "PERMERROR DKIM2-Signature i=2 has too many signatures") == 0);
+    assert(strcmp(errbuf, "PERMERROR DKIM2-Signature i=2 has more selectors than allowed") == 0);
     dkim2_sig_free(sig);
 
-    /* duplicate-selector and too-many-signatures are independent: two sigs
+    /* duplicate-selector and excess-selector are independent: two sigs
        sharing algorithm AND selector is a duplicate-selector error, not
-       too-many-signatures (the count is 2, not 3+) */
+       an excess-selector error (the count is 2, not 3+) */
     sig = dkim2_sig_parse(
         "i=1; m=1; t=1; d=ex.example; "
         "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
@@ -218,7 +218,7 @@ int main(void) {
     assert(sig != NULL);
     assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == -1);
     assert(strstr(errbuf, "duplicate selector") != NULL);
-    assert(strstr(errbuf, "too many signatures") == NULL);
+    assert(strstr(errbuf, "more selectors than allowed") == NULL);
     dkim2_sig_free(sig);
 
     puts("header: all tests passed");

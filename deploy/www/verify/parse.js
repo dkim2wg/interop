@@ -1,4 +1,4 @@
-// RFC5322 message parsing and DKIM2 tag-value parsing. Built from spec-05.
+// RFC5322 message parsing and DKIM2 tag-value parsing. Built from spec-06.
 
 function toCRLF(raw) {
   return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');
@@ -61,7 +61,7 @@ export function parseTagList(value) {
   return { tags, map };
 }
 
-// spec-05 §7.3: h= is hash-set *("," hash-set). Hash names are lowercased —
+// spec-06 §7.3: h= is hash-set *("," hash-set). Hash names are lowercased —
 // RFC 5234 makes ABNF quoted strings case-insensitive. parseTagList has
 // already stripped all FWS from the value.
 export function parseHashSets(h) {

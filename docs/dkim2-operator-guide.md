@@ -1,6 +1,6 @@
 # DKIM2 Operator Guide
 
-**Spec:** draft-ietf-dkim-dkim2-spec-05  
+**Spec:** draft-ietf-dkim-dkim2-spec-06  
 **Audience:** MTA operators and postmasters deploying DKIM2
 
 ---
@@ -170,6 +170,17 @@ Possible verification outcomes:
 | `none` | No DKIM2-Signature headers present |
 | `permerror` | Structural problem (missing headers, bad format, no usable key) |
 | `temperror` | Transient failure (DNS lookup error) |
+
+### What a result does not tell you
+
+Per §11.1, these states report only whether the message reached you without
+being modified or replayed in a way the specification disallows.  They say
+nothing about whether the message is wanted, whether it is spam, or whether
+any modification a relay declared in its Recipe was benign.
+
+A `pass` means the chain of custody is intact and every hop that changed the
+message owned up to it.  It does not mean the message is safe to deliver, and
+DKIM2 is not a substitute for content filtering or reputation.
 
 ---
 

@@ -75,7 +75,7 @@ ALGS="sha256 sha512 both"
 
 # Negative fixtures from util/build-negative-vectors.py, the same set
 # util/negative-vectors.sh feeds our own five verifiers. Each is otherwise
-# cryptographically valid and breaks exactly one spec-05 rule, so a verifier
+# cryptographically valid and breaks exactly one spec-06 rule, so a verifier
 # that never reaches the check ACCEPTS it rather than failing on the signature.
 NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml"
 POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml"
@@ -214,7 +214,7 @@ python3 util/build-negative-vectors.py "$tmp" >/dev/null || {
 # Envelopes are derived from each fixture's top Message-Instance rather than
 # fixed, because malformed-json-r.eml is a two-hop chain travelling under the
 # forwarder's envelope, not the originator's.
-echo "spec-05 negative vectors -> his verifier (must REJECT):"
+echo "spec-06 negative vectors -> his verifier (must REJECT):"
 for f in $NEG_VECTORS; do
     cells=$((cells + 1))
     if verdict=$(process "$tmp/$f" 2>&1); then

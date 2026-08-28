@@ -14,7 +14,7 @@ use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 use DKIM2TestKeys;
 
-# spec-05 canonical error-string forms (Task 3.1). Each case below builds a
+# spec-06 canonical error-string forms (Task 3.1). Each case below builds a
 # purpose-built failing message and asserts the verifier's result_detail
 # matches the exact canonical wording, byte-for-byte (including the
 # deliberate "MAIL nd=" spec typo for the nd= adjacency case).

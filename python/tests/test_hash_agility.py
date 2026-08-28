@@ -11,7 +11,7 @@ from dkim2verify import parse_hash_sets, verify_message_instance  # noqa: E402
 
 
 def test_registry_has_both_algorithms():
-    # spec-05 §3: Verifiers MUST implement all four algorithms
+    # spec-06 §3: Verifiers MUST implement all four algorithms
     assert set(HASH_ALGS) == {"sha256", "sha512"}
 
 

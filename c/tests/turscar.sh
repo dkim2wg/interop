@@ -6,7 +6,7 @@
 #
 # The vectors target spec-02, but the tag rules (case-insensitive identifiers,
 # any order, single occurrence, FWS) and the >=1024-bit key requirement (§3.2)
-# are unchanged in spec-05, so they apply directly.
+# are unchanged in spec-06, so they apply directly.
 #
 # Exact status-code differences (permerror vs fail) are not distinguished: the
 # CLI exits 0 (pass) or non-zero (reject), which is the gated invariant.

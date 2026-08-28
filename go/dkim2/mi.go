@@ -17,7 +17,7 @@ type MessageInstance struct {
 	Recipe  *Recipe // nil if no r= tag
 }
 
-// HashSet is one spec-05 §7.3 hash-set: alg:header-hash:body-hash.
+// HashSet is one spec-06 §7.3 hash-set: alg:header-hash:body-hash.
 type HashSet struct {
 	Alg        string // lowercased
 	HeaderHash string // base64, FWS already stripped
@@ -77,7 +77,7 @@ func implementedAlgs(hashes []HashSet) []string {
 // bodyHashes (one streaming pass over the body — see hashBodyMulti — must
 // have produced an entry for every algorithm implementedAlgs(mi.Hashes)
 // names). All implemented hash-sets MUST match; unimplemented algorithms are
-// skipped per §3.4. Fails closed with the spec-05 message when none of the
+// skipped per §3.4. Fails closed with the spec-06 message when none of the
 // hash-sets name an implemented algorithm.
 func verifyMIHashesPrecomputed(mi *MessageInstance, headers []Header, bodyHashes map[string][]byte) error {
 	usable := 0
@@ -149,7 +149,7 @@ func parseMI(raw string) (*MessageInstance, error) {
 		return nil, fmt.Errorf("invalid h= tag: %q", h)
 	}
 
-	// spec-05 §7.3: an algorithm MUST NOT be present more than once.
+	// spec-06 §7.3: an algorithm MUST NOT be present more than once.
 	seen := map[string]bool{}
 	for _, hs := range hashes {
 		if seen[hs.Alg] {
@@ -170,7 +170,7 @@ func parseMI(raw string) (*MessageInstance, error) {
 		}
 		recipe, err := parseRecipe(rJSON)
 		if err != nil {
-			// spec-05 §11.2: "errors in a JSON object specifying Recipes
+			// spec-06 §11.2: "errors in a JSON object specifying Recipes
 			// should be called out specifically" -- a malformed r= payload
 			// is reported distinctly from a generic syntax error. This
 			// covers actual JSON syntax/type errors; other parseRecipe

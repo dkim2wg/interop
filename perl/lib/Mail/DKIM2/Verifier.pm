@@ -48,7 +48,7 @@ sub skip_timestamp_check {
 }
 
 # allow_unsigned_mi: permit a Message-Instance whose m= is higher than any
-# DKIM2-Signature's m=, which spec-05 §11 otherwise makes a PERMERROR (see
+# DKIM2-Signature's m=, which spec-06 §11 otherwise makes a PERMERROR (see
 # finish_body).
 #
 # Set this on an OUTBOUND path. A Signer legitimately holds the new
@@ -120,7 +120,7 @@ sub finish_body {
     my %mi_map  = %{$self->{_mi_headers}};
     my %dk2_map = %{$self->{_dk2_headers}};
 
-    # spec-05 §11: "As a special case, there MUST NOT be a Message-Instance
+    # spec-06 §11: "As a special case, there MUST NOT be a Message-Instance
     # field with a higher m= value than occurs in any DKIM2-Signature field",
     # reported as "PERMERROR Message-Instance m=<x> is not signed".
     #
@@ -154,7 +154,7 @@ sub finish_body {
         return;
     }
 
-    # spec-05 §7.3: reject a Message-Instance whose h= names the same
+    # spec-06 §7.3: reject a Message-Instance whose h= names the same
     # algorithm twice, before any DNS lookup or crypto work. Checked against
     # the LIST of hash-sets (via _extract_mi_hash_sets/parse_hash_sets), not
     # a hash keyed by algorithm, since a hash would let a later occurrence
@@ -176,7 +176,7 @@ sub finish_body {
     my $dk2_entry = $dk2_map{$max_i};
     my $signature = $dk2_entry->{sig};
 
-    # Local policy (stricter than spec-05 §"Check the Chain of Custody"): the
+    # Local policy (stricter than spec-06 §"Check the Chain of Custody"): the
     # highest-numbered DKIM2-Signature MUST NOT carry nd=. The only legitimate
     # nd= producer is reflector-brand-nd, which always emits the matching
     # higher-i= signature too, so nd= never appears on top.
@@ -216,7 +216,7 @@ sub finish_body {
         # is not present. The completeness loop above only walks up to the
         # topmost MI that EXISTS, so it cannot see this.
         #
-        # The reverse case -- an MI above the top signature -- is spec-05 §11's
+        # The reverse case -- an MI above the top signature -- is spec-06 §11's
         # "is not signed" PERMERROR, checked at the top of finish_body, because
         # it must also fire when there are no signatures at all.
         my $top_sig = $dk2_map{$max_i}{sig};
@@ -249,7 +249,7 @@ sub finish_body {
         if (grep { $_ eq 'donotmodify' } @$flags) {
             my $m = $sig->version || 0;
             if ($m >= 1 && $mi_map{$m} && $mi_map{$m + 1}) {
-                # spec-05 §3.4/§7.3: an MI may carry several hash-sets. Only
+                # spec-06 §3.4/§7.3: an MI may carry several hash-sets. Only
                 # compare hash-sets whose algorithm we implement; if the two
                 # instances share none, we cannot tell whether the message
                 # changed and fail closed rather than silently accept.
@@ -398,7 +398,7 @@ sub _verify_signature {
         signing_header => $sig_hdr_for_input,
     );
 
-    # draft-05: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
+    # draft-06: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
     # via get_tag() (not the sequence/version/timestamp/domain accessors)
     # because those accessors just proxy get_tag() and would themselves
     # return undef for an absent tag anyway -- get_tag() is used directly
@@ -418,7 +418,7 @@ sub _verify_signature {
         }
     }
 
-    # spec-05 §8.9: reject a duplicate Selector, or the same algorithm 3+
+    # spec-06 §8.9: reject a duplicate Selector, or the same algorithm 3+
     # times, within this signature's s= tag -- before any DNS lookup or
     # crypto work.
     if (my @dup_errors = $signature->check_duplicates) {
@@ -427,7 +427,7 @@ sub _verify_signature {
         return 0;
     }
 
-    # draft-05 §8: a signature carries either nd= or both mf= and rt=, never
+    # draft-06 §8: a signature carries either nd= or both mf= and rt=, never
     # both forms. nd= together with mf=/rt= is a PERMERROR.
     my $nd_tag = $signature->get_tag('nd');
     my $mf_tag = $signature->get_tag('mf');
@@ -526,7 +526,7 @@ sub _verify_signature {
             1;
         };
         unless ($fetched) {
-            # A transient DNS failure is a TEMPERROR per spec-05 §10 —
+            # A transient DNS failure is a TEMPERROR per spec-06 §10 —
             # retryable, not a permanent "no verifiable signature items", and
             # emphatically not a 'fail', which reads as a forged signature.
             my $sel = $signature->selector($idx) // '?';
@@ -603,7 +603,7 @@ sub _verify_chain {
         my $cur_sig = $dk2_map{$cur_i}{sig};
         my $prev_sig = $dk2_map{$prev_i}{sig};
 
-        # draft-05 §11.4: an nd= hop declares the domain that signs the next
+        # draft-06 §11.4: an nd= hop declares the domain that signs the next
         # signature; nd= MUST exactly match that signature's d=.
         my $prev_nd = $prev_sig->next_domain;
         if (defined $prev_nd && length $prev_nd) {
@@ -716,7 +716,7 @@ between consecutive hops.
 
 Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-05, an
+B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-06, an
 Internet-Draft that has not yet been published as an RFC.  The API and wire
 format are subject to change.  Do not use in production.
 

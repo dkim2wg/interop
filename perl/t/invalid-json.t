@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# spec-05 §11.2: "errors in a JSON object specifying Recipes should be
+# spec-06 §11.2: "errors in a JSON object specifying Recipes should be
 # called out specifically" -- a malformed r= payload must produce
 #   PERMERROR Message-Instance m=<x> contains invalid JSON
 # distinct from a generic syntax error.
@@ -24,7 +24,7 @@ eval {
     Mail::DKIM2::MessageInstance->parse("m=2; h=sha256:AAA:BBB; r=$bad_r;");
 };
 like($@, qr/^PERMERROR Message-Instance m=2 contains invalid JSON/,
-     'spec-05 §11.2: MessageInstance::parse dies with the exact PERMERROR string on malformed r= JSON');
+     'spec-06 §11.2: MessageInstance::parse dies with the exact PERMERROR string on malformed r= JSON');
 
 # A well-formed-but-empty JSON object is not a JSON error at all.
 ok(eval {
@@ -33,7 +33,7 @@ ok(eval {
     1;
 }, 'valid (empty) recipe JSON still parses cleanly');
 
-# spec-05 §11.2 ruling: a bad base64 r= value is a DIFFERENT error from a
+# spec-06 §11.2 ruling: a bad base64 r= value is a DIFFERENT error from a
 # JSON parse failure -- "syntax error", not "contains invalid JSON". "!!!!"
 # is not valid base64 (decode_base64() is lenient and would otherwise just
 # drop the invalid characters and decode to garbage that happens to also
@@ -42,7 +42,7 @@ eval {
     Mail::DKIM2::MessageInstance->parse('m=5; h=sha256:AAA:BBB; r=!!!!;');
 };
 is($@, "PERMERROR Message-Instance m=5 syntax error\n",
-   'spec-05 §11.2: bad base64 r= is a syntax error, exact string, distinct from invalid JSON');
+   'spec-06 §11.2: bad base64 r= is a syntax error, exact string, distinct from invalid JSON');
 unlike($@, qr/invalid JSON/,
    'bad base64 is never mislabelled as invalid JSON');
 
@@ -139,7 +139,7 @@ is($v->result, 'permerror',
 is($v->details, 'PERMERROR Message-Instance m=2 contains invalid JSON',
      'end-to-end: the specific §11.2 invalid-JSON message reaches the caller, verbatim');
 
-# --- spec-05 §9.1: the BOTTOM (m=1) instance may carry Recipes too, and    --
+# --- spec-06 §9.1: the BOTTOM (m=1) instance may carry Recipes too, and    --
 # --- never participates in the undo/reconstruction that a non-bottom      --
 # --- instance's r= is used for -- so it needs its own, separate check.    --
 # --- A single-instance (m=1 only) message, hand-signed the same way as    --

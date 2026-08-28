@@ -1,4 +1,4 @@
-# DKIM2 draft-05 Spec Upgrade — Design
+# DKIM2 draft-06 Spec Upgrade — Design
 
 **Date:** 2026-08-25
 **Status:** Approved (design); implementation plan to follow

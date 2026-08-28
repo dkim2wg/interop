@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 verifier - draft-ietf-dkim-dkim2-spec-05
+DKIM2 verifier - draft-ietf-dkim-dkim2-spec-06
 
 Takes a signed email and verifies its DKIM2 signatures using public keys
 from a dns.json file or DNS TXT records.
@@ -87,7 +87,7 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
             tags = parse_dkim1_txt(rec_value)
             key_type = tags.get("k", "rsa")
             pub_b64 = tags.get("p", "")
-            # h= (hash algorithm list) MUST be ignored per spec-05 Section 10.3
+            # h= (hash algorithm list) MUST be ignored per spec-06 Section 10.3
             pub_bytes = base64.b64decode(pub_b64)
 
             if key_type == "ed25519":
@@ -182,7 +182,7 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
         prev_i = _extract_tag(prev_val, "i")
         prev_nd = _extract_tag(prev_val, "nd")
         if prev_nd:
-            # draft-05 §11.4: nd= MUST exactly match the next sig's d=.
+            # draft-06 §11.4: nd= MUST exactly match the next sig's d=.
             cur_d = _extract_tag(cur_val, "d") or ""
             if prev_nd.lower() != cur_d.lower():
                 errors.append(
@@ -218,7 +218,7 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
 def _strip_fws(s: str) -> str:
     """Remove folding whitespace from a tag value.
 
-    Per spec-05 §2.12 folding whitespace may appear inside a base64 string or
+    Per spec-06 §2.12 folding whitespace may appear inside a base64 string or
     around the colons of an s= item, and MUST be ignored when the value is
     used.  Selectors, algorithm names and base64 never contain significant
     whitespace, so removing all of it is safe.
@@ -230,13 +230,13 @@ _FWS_TABLE = {ord(c): None for c in " \t\r\n"}
 
 
 def _sig_flags(sig_hdr: str) -> list[str]:
-    """Return the f= flag list of a DKIM2-Signature header (draft-05 §8.10)."""
+    """Return the f= flag list of a DKIM2-Signature header (draft-06 §8.10)."""
     f = _extract_tag(_get_header_value(sig_hdr), "f")
     return [x.strip() for x in f.split(",") if x.strip()] if f else []
 
 
 def _flag_enforcement_errors(sig_by_seq: list[str], mi_headers: list[str]) -> list[str]:
-    """Enforce the donotmodify/donotexplode flags (draft-05 §11.8).
+    """Enforce the donotmodify/donotexplode flags (draft-06 §11.8).
 
     feedback/feedhere are recognised but carry no verifier enforcement.
     """
@@ -319,12 +319,12 @@ def _b64decode_strict(val: str) -> bytes | None:
 
 
 def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
-    """Parse a spec-05 §7.3 h= value into (alg, header_hash, body_hash) triples.
+    """Parse a spec-06 §7.3 h= value into (alg, header_hash, body_hash) triples.
 
     Hash names are lowercased: RFC 5234 makes ABNF quoted strings
     case-insensitive, so "SHA256" is a syntactically valid hash-name.
 
-    Per spec-05 §2.12, folding whitespace may appear inside a base64 string
+    Per spec-06 §2.12, folding whitespace may appear inside a base64 string
     (or around the colons) and MUST be ignored when the value is used, so
     every field is run through _strip_fws rather than a bare .strip().
     """
@@ -375,7 +375,7 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
     if not sets:
         return errors + [f"Message-Instance: invalid h= format (got {h_tag!r})"]
 
-    # spec-05 §7.3: an algorithm MUST NOT be present more than once.
+    # spec-06 §7.3: an algorithm MUST NOT be present more than once.
     seen = set()
     for alg, _, _ in sets:
         if alg in seen:
@@ -428,7 +428,7 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
 
 
 def _check_signature_duplicates(sig_items, i_val) -> list[str]:
-    """spec-05 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag.
+    """spec-06 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag.
 
     A Selector MUST NOT appear more than once. The same signing algorithm may
     appear at most twice, and only with distinct Selectors. Selector matching is
@@ -442,7 +442,7 @@ def _check_signature_duplicates(sig_items, i_val) -> list[str]:
     for _, alg, _ in sig_items:
         counts[alg.lower()] = counts.get(alg.lower(), 0) + 1
     if any(n > 2 for n in counts.values()):
-        errors.append(f"PERMERROR DKIM2-Signature i={i_val} has too many signatures")
+        errors.append(f"PERMERROR DKIM2-Signature i={i_val} has more selectors than allowed")
     return errors
 
 
@@ -480,7 +480,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     mf_val = _extract_tag(value, "mf")
     rt_val = _extract_tag(value, "rt")
 
-    # draft-05 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+    # draft-06 §8: i= m= t= d= s= MUST be present; plus either nd= or both
     # mf= and rt= (and nd= excludes mf=/rt=).
     if not all([i_val, m_val, t_val0, d_val, s_tag]):
         for tag_name, tag_val in (
@@ -540,7 +540,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         sig_items_raw.append(fields)
         sig_items.append([_strip_fws(f) for f in fields])
 
-    # spec-05 §8.9: duplicate-selector and too-many-signatures checks must run
+    # spec-06 §8.9: duplicate-selector and excess-selector checks must run
     # before any DNS lookup or crypto work.
     dup_errors = _check_signature_duplicates(sig_items, i_val)
     if dup_errors:
@@ -871,7 +871,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
             except (ValueError, TypeError):
                 recipes = None
             if recipes is not None:
-                # draft-05 §5.1: a present "h" that is JSON null is a syntax
+                # draft-06 §5.1: a present "h" that is JSON null is a syntax
                 # error (distinct from an absent "h", which means headers
                 # were unchanged); mirrors dkim2undo.py's rejection.
                 if "h" in recipes and recipes["h"] is None:
@@ -917,7 +917,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-05)")
+        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-06)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--dns-json", required=True,
                         help="Path to dns.json with public keys")
