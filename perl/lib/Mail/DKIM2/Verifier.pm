@@ -90,6 +90,7 @@ sub handle_header {
             }
             1;
         } or do {
+            die $@ if ref $@;
             $self->{_mi_parse_error} = $@;
         };
     }
@@ -104,6 +105,7 @@ sub handle_header {
             }
             1;
         } or do {
+            die $@ if ref $@;
             $self->{_dk2_parse_error} = $@;
         };
     }
@@ -302,6 +304,7 @@ sub finish_body {
     # permerror result.
     my $mi_chain_ok = eval { $self->_verify_mi_chain() };
     if (my $err = $@) {
+        die $err if ref $err;
         chomp $err;
         $self->{result}  = ($err =~ /^PERMERROR/) ? 'permerror' : 'fail';
         $self->{details} = $err;
@@ -341,6 +344,7 @@ sub _verify_mi_chain {
         last if $mi_obj->unrecoverable;
 
         my $prev = eval { Mail::DKIM2::MessageInstance->undo($msg) };
+        die $@ if ref $@;
         if ($@ || !$prev) {
             $self->{result}  = 'fail';
             $self->{details} = "Message-Instance m=$num did not undo cleanly"
@@ -526,6 +530,7 @@ sub _verify_signature {
             1;
         };
         unless ($fetched) {
+            die $@ if ref $@;
             # A transient DNS failure is a TEMPERROR per spec-06 §10 —
             # retryable, not a permanent "no verifiable signature items", and
             # emphatically not a 'fail', which reads as a forged signature.
@@ -570,6 +575,7 @@ sub _verify_signature {
             }
         };
         if ($@) {
+            die $@ if ref $@;
             $self->{result} = 'fail';
             $self->{details} = "signature verification error for sig item $idx ($alg): $@";
             return 0;
@@ -733,6 +739,11 @@ Creates a new Verifier.  No required arguments.
 Sets a callback for public key lookup.  The callback receives a
 L<Mail::DKIM2::Signature> object and should return a L<Crypt::PK::RSA> or L<Crypt::PK::Ed25519>
 object.  If not set, keys are fetched via DNS.
+
+A callback that dies with a string makes the result C<temperror>. A callback
+that dies with a reference (an object) is not caught: the exception propagates
+out of C<PRINT>/C<CLOSE> untouched, so a host's timeout exception reaches the
+host. The same holds for every other eval a Signer or Verifier can reach.
 
 =head2 result()
 

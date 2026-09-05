@@ -48,6 +48,7 @@ sub finish_header {
             my ($val) = $header =~ /^DKIM2-Signature:\s*(.*)/is;
             $val =~ s/\r\n$//;
             my $sig = eval { Mail::DKIM2::Signature->parse($val) };
+            die $@ if ref $@;
             if ($sig && $sig->sequence) {
                 push @dk2_headers, { i => $sig->sequence, raw => $header, sig => $sig };
             }

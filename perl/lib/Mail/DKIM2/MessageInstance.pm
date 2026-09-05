@@ -266,6 +266,7 @@ sub parse {
         }
         my $recipe_data = eval { decode_tag_json($tags{r}) };
         if ($@) {
+            die $@ if ref $@;
             die "PERMERROR Message-Instance m=$tags{m} contains invalid JSON\n";
         }
         # A present-but-null "b"/"h" (spec §4.1/§4.2) means the previous state
@@ -913,6 +914,7 @@ sub chain_verifies {
         last if $self->unrecoverable;
 
         my $prev = eval { $class->undo($msg) };
+        die $@ if ref $@;
         return (0, "Message-Instance m=$num did not undo cleanly"
                  . ($@ ? ": $@" : '')) if $@ || !$prev;
         $msg = $prev;

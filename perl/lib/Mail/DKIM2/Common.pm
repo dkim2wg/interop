@@ -336,6 +336,12 @@ sub build_signing_input {
     return $signing_input;
 }
 
+# Every eval a Signer or Verifier can reach rethrows a reference: the library
+# only ever dies with strings, so an object is the host's, typically a milter
+# or MTA signalling a timeout, and swallowing it would let the caller run on
+# past its deadline. Reflector, Split and Validate are outside the rule --
+# they run the demo server and the web validator, never inside a host.
+
 # Parse a DKIM TXT record and return the appropriate key object.
 # For RSA keys: returns a Crypt::PK::RSA object.
 # For ed25519 keys: returns a Crypt::PK::Ed25519 object.
@@ -355,7 +361,7 @@ sub parse_dkim_pubkey {
         # reports a clean fail/temperror instead of aborting the whole operation
         # (the RSA branch below is likewise eval-wrapped).
         my $raw = decode_base64($p);
-        return eval {
+        my $key = eval {
             my $pk = Crypt::PK::Ed25519->new();
             if (length($raw) == 32) {
                 $pk->import_key_raw($raw, 'public');
@@ -364,10 +370,13 @@ sub parse_dkim_pubkey {
             }
             $pk;
         };
+        die $@ if ref $@;
+        return $key;
     }
     # RSA: p= is base64-encoded SubjectPublicKeyInfo DER
     my $der = decode_base64($p);
     my $rsa = eval { Crypt::PK::RSA->new(\$der) };
+    die $@ if ref $@;
     return $rsa;
 }
 
@@ -377,6 +386,7 @@ sub load_private_key {
     my ($file) = @_;
     # Try RSA first, then Ed25519
     my $key = eval { Crypt::PK::RSA->new($file) };
+    die $@ if ref $@;
     return $key if $key;
     return Crypt::PK::Ed25519->new($file);
 }
@@ -394,17 +404,24 @@ sub load_private_key_data {
 
     if ($data =~ /-----BEGIN/) {
         my $key = eval { Crypt::PK::RSA->new(\$data) };
+        die $@ if ref $@;
         return $key if $key;
-        return eval { Crypt::PK::Ed25519->new(\$data) };
+        $key = eval { Crypt::PK::Ed25519->new(\$data) };
+        die $@ if ref $@;
+        return $key;
     }
 
     (my $b64 = $data) =~ s/\s+//g;
     return unless length $b64;
     my $der = eval { decode_base64($b64) };
+    die $@ if ref $@;
     return unless defined $der && length $der;
     my $key = eval { Crypt::PK::RSA->new(\$der) };
+    die $@ if ref $@;
     return $key if $key;
-    return eval { Crypt::PK::Ed25519->new(\$der) };
+    $key = eval { Crypt::PK::Ed25519->new(\$der) };
+    die $@ if ref $@;
+    return $key;
 }
 
 1;
