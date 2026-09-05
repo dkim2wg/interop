@@ -337,10 +337,15 @@ def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
     return sets
 
 
-def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> list[str]:
+def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
+                            headers_only: bool = False) -> list[str]:
     """Verify the hashes in a Message-Instance header against the message.
 
     Returns a list of errors (empty = success).
+
+    With headers_only set, the message being checked has no body -- as with the
+    returned original in a DSN's text/rfc822-headers part (spec-06 §12.1.2) --
+    so only the header hash is compared and body is ignored.
     """
     errors = []
     value = _get_header_value(mi_hdr)
@@ -408,6 +413,9 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes) -> l
                     f"  expected: {b64(expected)}\n"
                     f"  got:      {h_val}"
                 )
+
+        if headers_only:
+            continue
 
         b_actual = _b64decode_strict(b_val)
         if b_actual is None:
@@ -683,13 +691,21 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                    verbose: bool = False,
                    skip_timestamp_check: bool = False,
                    mail_from: str | None = None,
-                   rcpt_to: list[str] | None = None) -> "VerifyResult":
+                   rcpt_to: list[str] | None = None,
+                   headers_only: bool = False) -> "VerifyResult":
     """Verify all DKIM2 signatures in a message.
 
     If full_chain is True, walks backwards through MI versions, undoing
     recipes at each step and verifying that each MI's hashes match the
     reconstructed message state, and each DKIM2-Signature verifies against
     the MI/sig headers that existed at that point.
+
+    If headers_only is True the message has no body, as with the returned
+    original in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures
+    and the chain are checked as usual, but of the Message-Instance content
+    check only the top instance's header hash can be, so only that is --
+    nothing further down the chain can be undone without a body to undo into,
+    which is why headers_only overrides full_chain.
 
     Returns a VerifyResult (ok=True on success).
     """
@@ -769,11 +785,16 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         if name not in (b"message-instance", b"dkim2-signature"):
             content_headers.append(hdr)
 
-    if not full_chain:
+    if not full_chain or headers_only:
         # Simple mode: verify highest MI against current message, verify all sigs
-        for mi_hdr in mi_headers:
-            errs = verify_message_instance(mi_hdr, content_headers, body)
-            all_errors.extend(errs)
+        if headers_only:
+            top_mi = max(mi_headers, key=_get_version_from_mi)
+            all_errors.extend(verify_message_instance(
+                top_mi, content_headers, b"", headers_only=True))
+        else:
+            for mi_hdr in mi_headers:
+                errs = verify_message_instance(mi_hdr, content_headers, body)
+                all_errors.extend(errs)
 
         sig_by_seq = sorted(sig_headers, key=_get_seq_from_sig)
 

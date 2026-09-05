@@ -20,21 +20,31 @@ type PropagateOptions struct {
 
 var reBoundary = regexp.MustCompile(`(?i)boundary="?([^";]+)"?`)
 
-// Propagate returns a DKIM2 DSN propagated upstream (RFC 6522 / draft-06
-// §12.1.1): the Forwarder rebuilds the enclosed original to its
-// forwarded-outward state (undoing its Message-Instance modification, which
-// also drops the DKIM2-Signature it added), then re-signs the whole DSN as a
-// new message (MAIL FROM <>, one Message-Instance, one DKIM2-Signature).
-// Returns the propagated DSN bytes and the upstream MAIL FROM it should be
-// sent to.
-func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
+// dsnReport is a parsed RFC 6522 multipart/report: the DSN's own headers, and
+// its body split into MIME segments with the returned-original part located.
+type dsnReport struct {
+	headers     []Header
+	delim       string   // the boundary delimiter the segments were split on
+	segments    []string // body split on delim; [0] is the preamble
+	embeddedSeg int      // index in segments of the returned original
+	headersOnly bool     // the returned original is text/rfc822-headers
+}
+
+// parseReport parses a raw DSN and validates its RFC 6522 structure: a
+// multipart/report with (at least) three component parts — a human-readable
+// text part first, a message/delivery-status part, and a part carrying the
+// returned message (message/rfc822 or, if only headers are echoed back,
+// text/rfc822-headers). A bare part count is not enough: a report with two
+// text/plain parts and an embedded original would pass a ">= 3" check without
+// being a valid DSN.
+func parseReport(raw []byte) (*dsnReport, error) {
 	headers, bodyReader, err := parseHeaders(bytes.NewReader(raw))
 	if err != nil {
-		return nil, "", fmt.Errorf("parsing DSN headers: %w", err)
+		return nil, fmt.Errorf("parsing DSN headers: %w", err)
 	}
 	body := new(bytes.Buffer)
 	if _, err := body.ReadFrom(bodyReader); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	var ct string
@@ -44,28 +54,22 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 		}
 	}
 	if !strings.Contains(strings.ToLower(ct), "multipart/report") {
-		return nil, "", fmt.Errorf("not a multipart/report DSN")
+		return nil, fmt.Errorf("not a multipart/report DSN")
 	}
 	m := reBoundary.FindStringSubmatch(ct)
 	if m == nil {
-		return nil, "", fmt.Errorf("no MIME boundary in Content-Type")
+		return nil, fmt.Errorf("no MIME boundary in Content-Type")
 	}
-	boundary := m[1]
 
 	// Split the body into MIME parts on the boundary delimiter.
-	delim := "--" + boundary
-	segments := strings.Split(body.String(), delim)
 	// segments[0] is the preamble; the last is the closing "--\r\n" epilogue.
-	//
-	// RFC 6522 requires a multipart/report DSN to have (at least) three
-	// component parts: a human-readable text part first, a
-	// message/delivery-status part, and a part carrying the returned
-	// message (message/rfc822 or, if only headers are echoed back,
-	// text/rfc822-headers). Validate all three are present before trusting
-	// the structure enough to rebuild and re-sign it.
+	delim := "--" + m[1]
+	segments := strings.Split(body.String(), delim)
+
 	hasTextPart := false
 	hasDeliveryStatus := false
 	embeddedSeg := -1
+	headersOnly := false
 	for i := 1; i < len(segments)-1; i++ {
 		hdr, _ := splitPartHeaders(segments[i])
 		lhdr := strings.ToLower(hdr)
@@ -78,19 +82,101 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 		if embeddedSeg < 0 && (strings.Contains(lhdr, "message/rfc822") ||
 			strings.Contains(lhdr, "text/rfc822-headers")) {
 			embeddedSeg = i
+			headersOnly = strings.Contains(lhdr, "text/rfc822-headers")
 		}
 	}
 	if !hasTextPart {
-		return nil, "", fmt.Errorf("DSN first part is not human-readable text/plain (RFC 6522)")
+		return nil, fmt.Errorf("DSN first part is not human-readable text/plain (RFC 6522)")
 	}
 	if !hasDeliveryStatus {
-		return nil, "", fmt.Errorf("DSN missing message/delivery-status part (RFC 6522)")
+		return nil, fmt.Errorf("DSN missing message/delivery-status part (RFC 6522)")
 	}
 	if embeddedSeg < 0 {
-		return nil, "", fmt.Errorf("no embedded original message part")
+		return nil, fmt.Errorf("no embedded original message part")
 	}
 
-	partHdr, partBody := splitPartHeaders(segments[embeddedSeg])
+	return &dsnReport{
+		headers:     headers,
+		delim:       delim,
+		segments:    segments,
+		embeddedSeg: embeddedSeg,
+		headersOnly: headersOnly,
+	}, nil
+}
+
+// AuthResult is what Authenticate found out about an inbound DSN.
+type AuthResult struct {
+	OK          bool            // the returned original's chain verified
+	Reason      error           // why it did not, when OK is false
+	Top         *DKIM2Signature // highest-i signature of the returned original, nil if unsigned
+	HeadersOnly bool            // the DSN carried header fields only
+	Embedded    []byte          // the returned original as it arrived
+	Results     []VerifyResult  // per-signature detail from Verify
+}
+
+// Authenticate authenticates an inbound DSN before it is propagated (spec-06
+// §12.1.2): the returned original's DKIM2 chain must verify, from its header
+// fields alone when the DSN carries only headers. Deciding whether Top is a
+// signature the caller itself made (d= and mf=, §12.1.2 point 2) is left to
+// the caller, since only it knows its own domains.
+//
+// The returned error means this is not an RFC 6522 DSN at all (as for
+// Propagate); a DSN that simply fails to authenticate comes back with
+// OK false and Reason set.
+func Authenticate(raw []byte, fetcher KeyFetcher, opts ...VerifyOptions) (*AuthResult, error) {
+	rep, err := parseReport(raw)
+	if err != nil {
+		return nil, err
+	}
+	_, partBody := splitPartHeaders(rep.segments[rep.embeddedSeg])
+	embedded := []byte(partBody)
+
+	res := &AuthResult{HeadersOnly: rep.headersOnly, Embedded: embedded}
+	if top, terr := topSig(embedded); terr == nil {
+		res.Top = top
+	}
+
+	vopts := VerifyOptions{}
+	if len(opts) > 0 {
+		vopts = opts[0]
+	}
+	vopts.HeadersOnly = rep.headersOnly
+
+	results, verr := Verify(bytes.NewReader(embedded), fetcher, vopts)
+	res.Results = results
+	if verr != nil {
+		res.Reason = verr
+		return res, nil
+	}
+	if len(results) == 0 {
+		res.Reason = fmt.Errorf("no DKIM2-Signature headers found")
+		return res, nil
+	}
+	for _, r := range results {
+		if r.Error != nil {
+			res.Reason = r.Error
+			return res, nil
+		}
+	}
+	res.OK = true
+	return res, nil
+}
+
+// Propagate returns a DKIM2 DSN propagated upstream (RFC 6522 / draft-06
+// §12.1.1): the Forwarder rebuilds the enclosed original to its
+// forwarded-outward state (undoing its Message-Instance modification, which
+// also drops the DKIM2-Signature it added), then re-signs the whole DSN as a
+// new message (MAIL FROM <>, one Message-Instance, one DKIM2-Signature).
+// Returns the propagated DSN bytes and the upstream MAIL FROM it should be
+// sent to.
+func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
+	rep, err := parseReport(raw)
+	if err != nil {
+		return nil, "", err
+	}
+	headers, delim, segments := rep.headers, rep.delim, rep.segments
+
+	partHdr, partBody := splitPartHeaders(segments[rep.embeddedSeg])
 	embedded := []byte(partBody)
 
 	// 1. Undo the Forwarder's outward modification, so what remains is the
@@ -129,7 +215,7 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	}
 
 	// 3. Splice the rebuilt original back into the part and reassemble the body.
-	segments[embeddedSeg] = partHdr + "\r\n" + string(embeddedFinal)
+	segments[rep.embeddedSeg] = partHdr + "\r\n" + string(embeddedFinal)
 	newBody := strings.Join(segments, delim)
 
 	// 4. Reassemble the DSN (unchanged outer headers + new body) and re-sign it
@@ -220,11 +306,11 @@ func stripTopSig(raw []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// topSigMailFrom returns the MAIL FROM of the highest-sequence DKIM2-Signature.
-func topSigMailFrom(raw []byte) (string, error) {
+// topSig returns the highest-sequence DKIM2-Signature of a raw message.
+func topSig(raw []byte) (*DKIM2Signature, error) {
 	headers, _, err := parseHeaders(bytes.NewReader(raw))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var top *DKIM2Signature
 	for _, h := range headers {
@@ -237,6 +323,15 @@ func topSigMailFrom(raw []byte) (string, error) {
 		}
 	}
 	if top == nil {
+		return nil, fmt.Errorf("no DKIM2-Signature found")
+	}
+	return top, nil
+}
+
+// topSigMailFrom returns the MAIL FROM of the highest-sequence DKIM2-Signature.
+func topSigMailFrom(raw []byte) (string, error) {
+	top, err := topSig(raw)
+	if err != nil {
 		return "", fmt.Errorf("no DKIM2-Signature to derive upstream MAIL FROM")
 	}
 	return top.MailFrom, nil

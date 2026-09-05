@@ -22,6 +22,12 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 		return results, err
 	}
 
+	// §12.1.2: with no body there is nothing to undo a lower instance into, so
+	// Verify's top-instance header-hash check is as far as the chain walk goes.
+	if len(opts) > 0 && opts[0].HeadersOnly {
+		return results, nil
+	}
+
 	// Highest MI version present.
 	headers, _, perr := parseHeaders(bytes.NewReader(buf))
 	if perr != nil {

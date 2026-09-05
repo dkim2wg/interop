@@ -80,6 +80,28 @@ func implementedAlgs(hashes []HashSet) []string {
 // skipped per §3.4. Fails closed with the spec-06 message when none of the
 // hash-sets name an implemented algorithm.
 func verifyMIHashesPrecomputed(mi *MessageInstance, headers []Header, bodyHashes map[string][]byte) error {
+	if err := verifyMIHeaderHashes(mi, headers); err != nil {
+		return err
+	}
+	for _, hs := range mi.Hashes {
+		if _, ok := HashAlg(hs.Alg); !ok {
+			continue // §3.4: skip unimplemented algorithms
+		}
+		gotB := bodyHashes[hs.Alg]
+		wantB, err := base64.StdEncoding.DecodeString(hs.BodyHash)
+		if err != nil || !bytes.Equal(gotB, wantB) {
+			return fmt.Errorf("m=%d: %s body hash mismatch", mi.Version, hs.Alg)
+		}
+	}
+	return nil
+}
+
+// verifyMIHeaderHashes is the header half of verifyMIHashesPrecomputed, and
+// all of it that can run against a message with no body — the returned
+// original in a DSN's text/rfc822-headers part (spec-06 §12.1.2). The
+// fails-closed "no supported hash algorithm" check lives here because it is
+// about the hash-sets themselves, not about which content is available.
+func verifyMIHeaderHashes(mi *MessageInstance, headers []Header) error {
 	usable := 0
 	for _, hs := range mi.Hashes {
 		if _, ok := HashAlg(hs.Alg); !ok {
@@ -94,12 +116,6 @@ func verifyMIHashesPrecomputed(mi *MessageInstance, headers []Header, bodyHashes
 		wantH, err := base64.StdEncoding.DecodeString(hs.HeaderHash)
 		if err != nil || !bytes.Equal(gotH, wantH) {
 			return fmt.Errorf("m=%d: %s header hash mismatch", mi.Version, hs.Alg)
-		}
-
-		gotB := bodyHashes[hs.Alg]
-		wantB, err := base64.StdEncoding.DecodeString(hs.BodyHash)
-		if err != nil || !bytes.Equal(gotB, wantB) {
-			return fmt.Errorf("m=%d: %s body hash mismatch", mi.Version, hs.Alg)
 		}
 	}
 	if usable == 0 {

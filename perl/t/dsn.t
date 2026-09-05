@@ -285,4 +285,102 @@ sub forwarded_unchanged {
     is($v->result, 'pass', 'reflector-dsn DSN verifies (pass)');
 }
 
+# === authenticate: §12.1.2, the returned original's chain must verify ===
+
+# The fixtures above never verify (signed_inbound signs d=test1 over a
+# sender@origin.example envelope, which the d=/mf= rule rejects), which the
+# propagate tests never needed. authenticate does, so build a chain that
+# holds: test1 originates to a user at test2, who forwards to test3.
+sub verifiable_twohop {
+    my $raw = "From: Sender <sender\@test1.dkim2.com>\r\n"
+            . "To: user\@test2.dkim2.com\r\n"
+            . "Subject: hello\r\n"
+            . "\r\n"
+            . "body line\r\n";
+    my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($raw));
+    my $msg = "Message-Instance: " . $mi->as_string . "\r\n" . $raw;
+    for my $hop ([ 'test1.dkim2.com', 'sender@test1.dkim2.com', 'user@test2.dkim2.com' ],
+                 [ 'test2.dkim2.com', 'user@test2.dkim2.com',   'dest@test3.dkim2.com' ]) {
+        my ($domain, $mf, $rt) = @$hop;
+        my $signer = mk_signer(domain => $domain, mailfrom => $mf, rcptto => [$rt]);
+        $signer->PRINT($msg); $signer->CLOSE;
+        (my $sig = $signer->as_string) =~ s/\r?\n$//;
+        $msg = "$sig\r\n$msg";
+    }
+    return $msg;
+}
+
+sub dsn_around {
+    my ($embedded, %o) = @_;
+    my $orig = $o{headers_only}
+        ? Email::MIME->create(attributes => { content_type => 'text/rfc822-headers' },
+                              body => Email::MIME->new($embedded)->header_obj->as_string)
+        : Email::MIME->create(attributes => { content_type => 'message/rfc822' },
+                              body => $embedded);
+    return Email::MIME->create(
+        attributes => { content_type => 'multipart/report', encoding => '7bit' },
+        header_str => [ From => 'postmaster@test3.dkim2.com',
+                        To => 'user@test2.dkim2.com',
+                        Subject => 'failure' ],
+        parts => [
+            Email::MIME->create(attributes => { content_type => 'text/plain', charset=>'UTF-8', encoding=>'7bit' },
+                                body_str => "delivery failed\n"),
+            Email::MIME->create(attributes => { content_type => 'message/delivery-status' },
+                                body => "Reporting-MTA: dns; test3.dkim2.com\r\n\r\n"
+                                      . "Final-Recipient: rfc822; dest\@test3.dkim2.com\r\n"
+                                      . "Action: failed\r\nStatus: 5.1.1\r\n"),
+            $orig,
+        ],
+    )->as_string;
+}
+
+{
+    my $auth = Mail::DKIM2::DSN->authenticate({
+        raw => dsn_around(verifiable_twohop()),
+        pubkey_callback => DKIM2TestKeys::pubkey_callback(),
+        skip_timestamp_check => 1,
+    });
+    ok($auth->{ok}, 'a DSN returning an intact two-hop message authenticates')
+        or diag($auth->{details});
+    is($auth->{top}->sequence, 2, '  ... top is the forwarder\'s i=2');
+    is($auth->{top}->domain, 'test2.dkim2.com', '  ... which the forwarder can recognise as its own by d=');
+    is($auth->{headers_only}, 0, '  ... and the body was there to check');
+}
+
+{
+    my $auth = Mail::DKIM2::DSN->authenticate({
+        raw => dsn_around(verifiable_twohop(), headers_only => 1),
+        pubkey_callback => DKIM2TestKeys::pubkey_callback(),
+        skip_timestamp_check => 1,
+    });
+    ok($auth->{ok}, 'a headers-only DSN authenticates from the headers alone')
+        or diag($auth->{details});
+    is($auth->{headers_only}, 1, '  ... and says so');
+}
+
+{
+    # A returned original whose headers were changed after signing: the top
+    # instance's header hash no longer matches, with or without a body.
+    (my $tampered = verifiable_twohop()) =~ s/^Subject: hello/Subject: hullo/m;
+    for my $headers_only (0, 1) {
+        my $auth = Mail::DKIM2::DSN->authenticate({
+            raw => dsn_around($tampered, headers_only => $headers_only),
+            pubkey_callback => DKIM2TestKeys::pubkey_callback(),
+            skip_timestamp_check => 1,
+        });
+        ok(!$auth->{ok}, "a tampered returned message does not authenticate (headers_only=$headers_only)");
+        like($auth->{details} // '', qr/header hash mismatch/, '  ... because the header hash differs');
+    }
+}
+
+{
+    my $auth = Mail::DKIM2::DSN->authenticate({
+        raw => dsn_around("From: a\@b.example\r\nTo: c\@d.example\r\nSubject: plain\r\n\r\nhi\r\n"),
+        pubkey_callback => DKIM2TestKeys::pubkey_callback(),
+    });
+    ok(!$auth->{ok}, 'a DSN returning an unsigned message does not authenticate');
+    is($auth->{result}, 'none', '  ... and reports none, so a caller can fall back to legacy handling');
+    ok(!$auth->{top}, '  ... with no top signature');
+}
+
 done_testing;

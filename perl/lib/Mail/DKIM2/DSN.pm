@@ -9,6 +9,7 @@ use List::Util qw(max);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
+use Mail::DKIM2::Verifier;
 
 # Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 6522 DSN
 # structure; DKIM2 draft-06 §12.1.1 propagation procedure).
@@ -168,34 +169,30 @@ sub generate {
     return { raw => _sign_as_new($signer, $dsn), send_to => $to };
 }
 
-sub propagate {
-    my ($class, $args) = @_;
-    my $raw = $args->{raw}              or croak "propagate: need raw DSN";
-    my $fwd = $args->{forwarder_domain} or croak "propagate: need forwarder_domain";
-    my $signer = $args->{signer}        or croak "propagate: need signer";
-
+# Parse a raw DSN and validate the RFC 6522 three-part multipart/report
+# structure: part[0] is human-readable text, one part is machine-readable
+# delivery-status, and one part is the returned original (message/rfc822 or,
+# when the body is unrecoverable, text/rfc822-headers). A bare part count is
+# not enough -- e.g. a report with two text/plain parts and an embedded
+# original would pass a ">=3" check without being a valid DSN.
+# Returns ($dsn, $orig_idx, $orig_part); croaks with $who as the prefix.
+sub _parse_report {
+    my ($raw, $who) = @_;
     my $dsn = Email::MIME->new($raw);
     my $ct = $dsn->content_type // '';
-    croak "propagate: not a multipart/report DSN" unless $ct =~ m{multipart/report}i;
+    croak "$who: not a multipart/report DSN" unless $ct =~ m{multipart/report}i;
 
     my @parts = $dsn->subparts;
-    croak "propagate: DSN must have at least three parts" unless @parts >= 3;
+    croak "$who: DSN must have at least three parts" unless @parts >= 3;
 
-    # Validate the RFC 6522 three-part multipart/report structure: part[0] is
-    # human-readable text, one part is machine-readable delivery-status, and
-    # one part is the returned original (message/rfc822 or, when the body is
-    # unrecoverable, text/rfc822-headers). A bare part count is not enough --
-    # e.g. a report with two text/plain parts and an embedded original would
-    # pass a ">=3" check without being a valid DSN.
     my $part0_ct = $parts[0]->content_type // '';
-    croak "propagate: DSN part 1 is not human-readable text (text/plain)"
+    croak "$who: DSN part 1 is not human-readable text (text/plain)"
         unless $part0_ct =~ m{^text/plain}i;
 
     my $has_delivery_status = grep { ($_->content_type // '') =~ m{^message/delivery-status}i } @parts;
-    croak "propagate: DSN has no message/delivery-status part"
+    croak "$who: DSN has no message/delivery-status part"
         unless $has_delivery_status;
 
-    # Locate the embedded original (message/rfc822 or text/rfc822-headers).
     my ($orig_idx, $orig_part);
     for my $i (0 .. $#parts) {
         my $pct = $parts[$i]->content_type // '';
@@ -203,7 +200,56 @@ sub propagate {
             $orig_idx = $i; $orig_part = $parts[$i]; last;
         }
     }
-    croak "propagate: no embedded original message part" unless defined $orig_idx;
+    croak "$who: no embedded original message part" unless defined $orig_idx;
+    return ($dsn, $orig_idx, $orig_part);
+}
+
+# Authenticate an inbound DSN before propagating it (spec-06 §12.1.2): the
+# returned original's DKIM2 chain must verify, from its headers alone when
+# the DSN carries only headers. Deciding whether the top signature is one the
+# caller made (d= and mf=) is the caller's, since only it knows its domains.
+#
+# Args: raw (the DSN), pubkey_callback (as for Verifier), and optionally
+# skip_timestamp_check. Returns a hashref: ok, result and details from the
+# Verifier, top (the parsed highest DKIM2-Signature, when there is one),
+# headers_only, and embedded (the returned original as Email::MIME).
+# Croaks, as propagate does, when the message is not an RFC 6522 DSN.
+sub authenticate {
+    my ($class, $args) = @_;
+    my $raw = $args->{raw} or croak "authenticate: need raw DSN";
+    my $cb  = $args->{pubkey_callback} or croak "authenticate: need pubkey_callback";
+
+    my (undef, undef, $orig_part) = _parse_report($raw, 'authenticate');
+    my $headers_only = ($orig_part->content_type // '') =~ m{text/rfc822-headers}i;
+    my $embedded = _embedded($orig_part);
+    my $top = _top_sig($embedded);
+
+    my $v = Mail::DKIM2::Verifier->new;
+    $v->set_pubkey_callback($cb);
+    $v->headers_only(1) if $headers_only;
+    $v->skip_timestamp_check(1) if $args->{skip_timestamp_check};
+    (my $text = $embedded->as_string) =~ s/\r?\n/\r\n/g;
+    $v->PRINT($text);
+    $v->CLOSE;
+
+    return {
+        ok           => (($v->result // '') eq 'pass' ? 1 : 0),
+        result       => $v->result,
+        details      => $v->result_detail,
+        top          => $top,
+        headers_only => $headers_only ? 1 : 0,
+        embedded     => $embedded,
+    };
+}
+
+sub propagate {
+    my ($class, $args) = @_;
+    my $raw = $args->{raw}              or croak "propagate: need raw DSN";
+    my $fwd = $args->{forwarder_domain} or croak "propagate: need forwarder_domain";
+    my $signer = $args->{signer}        or croak "propagate: need signer";
+
+    my ($dsn, $orig_idx, $orig_part) = _parse_report($raw, 'propagate');
+    my @parts = $dsn->subparts;
 
     my $headers_only = ($orig_part->content_type // '') =~ m{text/rfc822-headers}i;
     my $embedded = _embedded($orig_part);
@@ -213,9 +259,6 @@ sub propagate {
     #    regenerated, fall back to headers-only.
     my $body_recoverable = 1;
     {
-        my $top_mi;
-        my %map = map { Mail::DKIM2::MessageInstance->parse($_) ? ($_) : () }
-                  $embedded->header_raw('Message-Instance');
         # Determine whether the top MI declares an unrecoverable body.
         my @mis = $embedded->header_raw('Message-Instance');
         if (@mis) {
@@ -281,5 +324,13 @@ structure; DKIM2 draft-06 §12.1.1 propagation procedure)
     });
     # $out->{raw}               — the propagated DSN (one MI, one DKIM2-Signature)
     # $out->{upstream_mailfrom} — address to send it to
+
+    my $auth = Mail::DKIM2::DSN->authenticate({
+        raw             => $dsn_bytes,
+        pubkey_callback => \&lookup,
+    });
+    # $auth->{ok}: the returned original's chain verifies (from its headers
+    # alone if that is all the DSN carries); $auth->{top} is its highest
+    # signature, for the caller to recognise as its own.
 
 =cut

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DKIM2 DSN propagation (draft-ietf-dkim-dkim2-spec-06 §12.1.1, RFC 6522).
+"""DKIM2 DSN handling (draft-ietf-dkim-dkim2-spec-06 §12.1, RFC 6522).
 
 When a Forwarder receives a DKIM2-signed Delivery Status Notification for a
 message it forwarded, it may propagate that DSN back towards the original
@@ -7,7 +7,11 @@ sender. The propagated DSN is a *new* message: the Forwarder rebuilds the
 enclosed original to the state it was in when forwarded outward (undoing its
 own Message-Instance modification and removing the DKIM2-Signature and
 Message-Instance it added), then re-signs the whole DSN with MAIL FROM <> so
-that it carries exactly one Message-Instance and one DKIM2-Signature.
+that it carries exactly one Message-Instance and one DKIM2-Signature (§12.1.1).
+
+Before propagating, a Forwarder should authenticate the DSN: the returned
+original must be one it sent and unaltered, checked from the header fields
+alone when that is all the DSN carries (§12.1.2).
 """
 
 import base64
@@ -17,6 +21,7 @@ from email import policy
 
 import dkim2sign
 import dkim2undo
+import dkim2verify
 
 
 def _hval(hdr_str: str) -> str:
@@ -61,9 +66,17 @@ def _embedded_bytes(part) -> bytes:
     return part.get_payload(decode=True) or payload.encode("utf-8", "surrogateescape")
 
 
-def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
-              selector: str, domain: str, timestamp: int = None) -> dict:
-    """Propagate a received DSN upstream. Returns {raw, upstream_mailfrom}."""
+def _parse_report(raw: bytes):
+    """Parse a raw DSN and validate its RFC 6522 multipart/report structure.
+
+    RFC 6522 defines the structure as exactly three parts: (1) a human-readable
+    text part, (2) a message/delivery-status part, and (3) the returned message
+    or its headers. Validate all three are present rather than just counting
+    parts -- a report with two text/plain parts and an embedded original would
+    pass a ">= 3" check without being a valid DSN.
+
+    Returns (dsn, parts, orig_idx); raises ValueError on anything else.
+    """
     if isinstance(raw, str):
         raw = raw.encode("utf-8", "surrogateescape")
     dsn = email.message_from_bytes(raw, policy=policy.compat32)
@@ -75,10 +88,6 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
     if not isinstance(parts, list) or len(parts) < 3:
         raise ValueError("DSN must have at least three parts")
 
-    # RFC 6522 defines the multipart/report structure as exactly three parts:
-    # (1) a human-readable text part, (2) a message/delivery-status part, and
-    # (3) the returned message or its headers. Validate all three are present
-    # rather than just counting parts.
     if parts[0].get_content_type() != "text/plain":
         raise ValueError("DSN part 1 must be human-readable text/plain")
 
@@ -92,6 +101,71 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
             break
     if orig_idx is None:
         raise ValueError("no embedded original message part")
+
+    return dsn, parts, orig_idx
+
+
+def _top_sig_tags(raw: bytes) -> dict | None:
+    """Return the decoded tags of the highest-i DKIM2-Signature in raw.
+
+    {"i": int, "d": str, "mf": str|None, "rt": [str]} -- enough for a caller to
+    apply spec-06 §12.1.2 point 2 and decide whether the signature is one of
+    its own. None when the message carries no DKIM2-Signature.
+    """
+    headers, _ = dkim2sign.parse_message(raw)
+    sigs = [h.decode("utf-8", errors="surrogateescape") for h in headers
+            if dkim2sign._header_name(h) == b"dkim2-signature"]
+    if not sigs:
+        return None
+    top = _hval(max(sigs, key=dkim2sign._get_seq_from_sig))
+
+    def _b64(val):
+        return base64.b64decode(val).decode("utf-8", "surrogateescape") if val else None
+
+    rt_raw = dkim2sign._extract_tag(top, "rt") or ""
+    return {
+        "i": int(dkim2sign._extract_tag(top, "i") or 0),
+        "d": dkim2sign._extract_tag(top, "d") or "",
+        "mf": _b64(dkim2sign._extract_tag(top, "mf")),
+        "rt": [_b64(r.strip()) for r in rt_raw.split(",") if r.strip()],
+    }
+
+
+def authenticate(raw: bytes, dns_data: dict,
+                 skip_timestamp_check: bool = False) -> dict:
+    """Authenticate an inbound DSN before propagating it (spec-06 §12.1.2).
+
+    The returned original's DKIM2 chain must verify, from its headers alone
+    when the DSN carries only headers. Deciding whether the top signature is
+    one the caller made (d= and mf=) is the caller's, since only it knows its
+    own domains; `top` is reported for exactly that.
+
+    Returns {ok, status, message, errors, top, headers_only, embedded}.
+    Raises ValueError, as propagate does, when this is not an RFC 6522 DSN.
+    """
+    _, parts, orig_idx = _parse_report(raw)
+    headers_only = parts[orig_idx].get_content_type() == "text/rfc822-headers"
+    embedded = _embedded_bytes(parts[orig_idx])
+
+    res = dkim2verify.verify_message(
+        embedded, dns_data, headers_only=headers_only,
+        skip_timestamp_check=skip_timestamp_check)
+
+    return {
+        "ok": res.ok,
+        "status": res.status,
+        "message": res.message,
+        "errors": res.errors,
+        "top": _top_sig_tags(embedded),
+        "headers_only": headers_only,
+        "embedded": embedded,
+    }
+
+
+def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
+              selector: str, domain: str, timestamp: int = None) -> dict:
+    """Propagate a received DSN upstream. Returns {raw, upstream_mailfrom}."""
+    dsn, parts, orig_idx = _parse_report(raw)
 
     headers_only = parts[orig_idx].get_content_type() == "text/rfc822-headers"
     embedded = _embedded_bytes(parts[orig_idx])
@@ -148,11 +222,39 @@ def _count_mi(raw: bytes):
 def main():
     import argparse
     ap = argparse.ArgumentParser(description="Propagate a DKIM2 DSN upstream")
-    ap.add_argument("--forwarder-domain", required=True)
-    ap.add_argument("--domain", required=True)
-    ap.add_argument("--selector", required=True)
-    ap.add_argument("--key", required=True)
+    ap.add_argument("--forwarder-domain")
+    ap.add_argument("--domain")
+    ap.add_argument("--selector")
+    ap.add_argument("--key")
+    ap.add_argument("--authenticate", action="store_true",
+                    help="§12.1.2: check the returned original instead of propagating")
+    ap.add_argument("--dns", help="path to dns.json key file (required with --authenticate)")
+    ap.add_argument("--ignore-timestamps", action="store_true",
+                    help="disable the §10.3 timestamp (14-day/future) check")
     args = ap.parse_args()
+
+    if args.authenticate:
+        if not args.dns:
+            ap.error("--authenticate requires --dns")
+        # Report the top signature's d= and mf= so the caller can apply
+        # §12.1.2 point 2 -- deciding whether that signature is one of its own
+        # -- which only the system receiving the DSN can do.
+        auth = authenticate(sys.stdin.buffer.read(),
+                            dkim2verify.load_dns_json(args.dns),
+                            skip_timestamp_check=args.ignore_timestamps)
+        if auth["headers_only"]:
+            sys.stderr.write("returned original: header fields only\n")
+        if auth["top"]:
+            sys.stderr.write("top signature: i={i} d={d} mf={mf}\n".format(**auth["top"]))
+        if not auth["ok"]:
+            sys.stderr.write(f"FAIL: {auth['message']}\n")
+            sys.exit(1)
+        print("PASS: returned original verified")
+        return
+
+    for req in ("forwarder_domain", "domain", "selector", "key"):
+        if not getattr(args, req):
+            ap.error(f"--{req.replace('_', '-')} is required when propagating")
     out = propagate(sys.stdin.buffer.read(), args.forwarder_domain,
                     args.key, args.selector, args.domain)
     sys.stderr.write(f"upstream: {out['upstream_mailfrom']}\n")

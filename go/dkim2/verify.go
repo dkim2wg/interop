@@ -76,18 +76,26 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
+	// §12.1.2: with HeadersOnly there is no body to hash — the caller handed us
+	// the header fields alone, as echoed back in a DSN's text/rfc822-headers
+	// part — so the body pass is skipped and only header hashes are checked.
+	headersOnly := len(opts) > 0 && opts[0].HeadersOnly
+
 	// Body is never buffered: hash it in a single streaming pass, fanned out
 	// to every algorithm the topmost MI's h= tag names (that this build
 	// implements — see hashBodyMulti/HashAlg, §3.4). Only the topmost MI's
 	// hashes are ever checked against the body (see the per-signature loop
 	// below), so that is the only hash-set that needs consulting here.
-	var neededAlgs []string
-	if topMI != nil {
-		neededAlgs = implementedAlgs(topMI.Hashes)
-	}
-	bodyHashes, err := hashBodyMulti(bodyReader, neededAlgs)
-	if err != nil {
-		return nil, fmt.Errorf("body hash: %w", err)
+	var bodyHashes map[string][]byte
+	if !headersOnly {
+		var neededAlgs []string
+		if topMI != nil {
+			neededAlgs = implementedAlgs(topMI.Hashes)
+		}
+		bodyHashes, err = hashBodyMulti(bodyReader, neededAlgs)
+		if err != nil {
+			return nil, fmt.Errorf("body hash: %w", err)
+		}
 	}
 
 	var topSig *DKIM2Signature
@@ -351,8 +359,14 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		// Earlier MI versions recorded hashes from a prior message state;
 		// an intermediary may have modified headers/body since then.
 		if sig.MIVersion == maxMIVersion {
-			if err := verifyMIHashesPrecomputed(thisMI, contentHeaders, bodyHashes); err != nil {
-				res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, err)
+			var mierr error
+			if headersOnly {
+				mierr = verifyMIHeaderHashes(thisMI, contentHeaders)
+			} else {
+				mierr = verifyMIHashesPrecomputed(thisMI, contentHeaders, bodyHashes)
+			}
+			if mierr != nil {
+				res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, mierr)
 				results = append(results, res)
 				continue
 			}

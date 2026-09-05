@@ -8,8 +8,11 @@ from email.mime.text import MIMEText
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import dkim2sign  # noqa: E402
 import dkim2dsn  # noqa: E402
+import dkim2verify  # noqa: E402
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 KEYS = os.path.join(os.path.dirname(__file__), "..", "..", "keys")
+DNS_DATA = dkim2verify.load_dns_json(os.path.join(REPO_ROOT, "dns.json"))
 
 
 def _key(sel, dom):
@@ -121,8 +124,107 @@ def test_propagate_basic():
     assert len(sigs) == 1, f"{len(sigs)} sigs (want 1, new message)"
 
 
+# --- authenticate: §12.1.2, the returned original's chain must verify -------
+
+# The fixture above never verifies (hop 1 signs d=test1.dkim2.com over a
+# sender@origin.example envelope, which the d=/mf= rule rejects), which the
+# propagate tests never needed. authenticate does, so build a chain that
+# holds: test1 originates to a user at test2, who forwards to test3.
+def _verifiable_twohop() -> bytes:
+    raw = (b"From: Sender <sender@test1.dkim2.com>\r\n"
+           b"To: user@test2.dkim2.com\r\n"
+           b"Subject: hello\r\n\r\nbody line\r\n")
+    hop1 = dkim2sign.sign_message(
+        raw, "rsa1024", "test1.dkim2.com", _key("rsa1024", "test1.dkim2.com"),
+        mailfrom="sender@test1.dkim2.com", rcptto=["user@test2.dkim2.com"],
+        timestamp=1740000000)
+    return dkim2sign.sign_message(
+        hop1, "rsa1024", "test2.dkim2.com", _key("rsa1024", "test2.dkim2.com"),
+        mailfrom="user@test2.dkim2.com", rcptto=["dest@test3.dkim2.com"],
+        timestamp=1740000000)
+
+
+def _wrap_dsn_headers_only(embedded: bytes) -> bytes:
+    """A DSN whose returned original is text/rfc822-headers (no body)."""
+    headers, _ = dkim2sign.parse_message(embedded)
+    hdr_text = b"".join(h + b"\r\n" for h in headers)
+
+    report = MIMEMultipart("report", report_type="delivery-status")
+    report["From"] = "postmaster@test3.dkim2.com"
+    report["To"] = "user@test2.dkim2.com"
+    report["Subject"] = "Delivery failure"
+    report.attach(MIMEText("delivery failed\n"))
+    ds = Message()
+    ds.set_type("message/delivery-status")
+    per_msg = Message()
+    per_msg["Reporting-MTA"] = "dns; test3.dkim2.com"
+    per_rcpt = Message()
+    per_rcpt["Final-Recipient"] = "rfc822; dest@test3.dkim2.com"
+    per_rcpt["Action"] = "failed"
+    per_rcpt["Status"] = "5.1.1"
+    ds.set_payload([per_msg, per_rcpt])
+    report.attach(ds)
+    hdrs = Message()
+    hdrs.set_type("text/rfc822-headers")
+    hdrs.set_payload(hdr_text.decode("utf-8", "surrogateescape"))
+    report.attach(hdrs)
+    return report.as_bytes()
+
+
+def test_authenticate_intact_two_hop():
+    auth = dkim2dsn.authenticate(_wrap_dsn(_verifiable_twohop()), DNS_DATA,
+                                 skip_timestamp_check=True)
+    assert auth["ok"], auth["message"]
+    assert auth["headers_only"] is False
+    # The forwarder recognises i=2 as its own by d= (§12.1.2 point 2).
+    assert auth["top"]["i"] == 2, auth["top"]
+    assert auth["top"]["d"] == "test2.dkim2.com", auth["top"]
+    assert auth["top"]["mf"] == "<user@test2.dkim2.com>", auth["top"]
+
+
+def test_authenticate_headers_only():
+    auth = dkim2dsn.authenticate(
+        _wrap_dsn_headers_only(_verifiable_twohop()), DNS_DATA,
+        skip_timestamp_check=True)
+    assert auth["ok"], auth["message"]
+    assert auth["headers_only"] is True
+    assert auth["top"]["i"] == 2, auth["top"]
+
+
+def test_authenticate_rejects_tampered_headers():
+    tampered = _verifiable_twohop().replace(b"Subject: hello",
+                                            b"Subject: hullo")
+    for wrap in (_wrap_dsn, _wrap_dsn_headers_only):
+        auth = dkim2dsn.authenticate(wrap(tampered), DNS_DATA,
+                                     skip_timestamp_check=True)
+        assert not auth["ok"], f"{wrap.__name__} should not authenticate"
+        assert any("header hash mismatch" in e for e in auth["errors"]), auth["errors"]
+
+
+def test_authenticate_unsigned_original_reports_none():
+    plain = b"From: a@b.example\r\nTo: c@d.example\r\nSubject: plain\r\n\r\nhi\r\n"
+    auth = dkim2dsn.authenticate(_wrap_dsn(plain), DNS_DATA)
+    assert not auth["ok"]
+    # 'none', so a caller can fall back to legacy DSN handling.
+    assert auth["status"] == "none", auth["status"]
+    assert auth["top"] is None
+
+
+def test_authenticate_rejects_non_dsn():
+    try:
+        dkim2dsn.authenticate(b"From: a@b.example\r\n\r\nnot a DSN\r\n", DNS_DATA)
+        assert False, "authenticate should reject a message that is not a DSN"
+    except ValueError as e:
+        assert "multipart/report" in str(e), str(e)
+
+
 if __name__ == "__main__":
     test_propagate_rejects_missing_delivery_status()
     test_propagate_accepts_wellformed_three_part_dsn()
     test_propagate_basic()
+    test_authenticate_intact_two_hop()
+    test_authenticate_headers_only()
+    test_authenticate_rejects_tampered_headers()
+    test_authenticate_unsigned_original_reports_none()
+    test_authenticate_rejects_non_dsn()
     print("python dsn tests OK")

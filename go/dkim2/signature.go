@@ -10,9 +10,9 @@ import (
 
 // DKIM2Signature is a parsed or constructed DKIM2-Signature header.
 type DKIM2Signature struct {
-	Sequence  int
-	MIVersion int
-	Timestamp int64
+	Sequence   int
+	MIVersion  int
+	Timestamp  int64
 	Domain     string
 	NextDomain string // nd= tag (draft-06 §8.7); empty if absent
 	MailFrom   string
@@ -69,6 +69,12 @@ type VerifyOptions struct {
 	MailFrom           string   // SMTP MAIL FROM; empty = skip check
 	RcptTo             []string // SMTP RCPT TO values; nil = skip check
 	SkipTimestampCheck bool     // disable §10.3 14-day expiry check (for testing)
+
+	// HeadersOnly says the message has no body, as with the returned original
+	// in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures and the
+	// chain are checked as usual; of the Message-Instance content check, only
+	// the topmost instance's header hash can be, so only that is.
+	HeadersOnly bool
 }
 
 func parseSig(raw string) (*DKIM2Signature, error) {

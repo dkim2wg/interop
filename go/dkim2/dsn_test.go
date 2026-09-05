@@ -151,3 +151,154 @@ func TestPropagateRejectsMissingDeliveryStatus(t *testing.T) {
 		t.Fatalf("Propagate error = %v, want mention of delivery-status", err)
 	}
 }
+
+// --- Authenticate: §12.1.2, the returned original's chain must verify -------
+
+// The fixtures above never verify (hop 1 signs d=test1.dkim2.com over a
+// sender@origin.example envelope, which the d=/mf= rule rejects), which the
+// Propagate tests never needed. Authenticate does, so build a chain that
+// holds: test1 originates to a user at test2, who forwards to test3.
+func verifiableTwoHop(t *testing.T) []byte {
+	t.Helper()
+	const keys = "../../keys/"
+	raw := []byte("From: Sender <sender@test1.dkim2.com>\r\n" +
+		"To: user@test2.dkim2.com\r\n" +
+		"Subject: hello\r\n\r\nbody line\r\n")
+	hop1 := signOnce(t, raw, keys+"rsa1024._domainkey.test1.dkim2.com.pem",
+		"rsa1024", "test1.dkim2.com", "sender@test1.dkim2.com",
+		[]string{"user@test2.dkim2.com"})
+	return signOnce(t, hop1, keys+"rsa1024._domainkey.test2.dkim2.com.pem",
+		"rsa1024", "test2.dkim2.com", "user@test2.dkim2.com",
+		[]string{"dest@test3.dkim2.com"})
+}
+
+// dsnAround wraps a returned original in a three-part multipart/report, as
+// either a message/rfc822 part or (headersOnly) a text/rfc822-headers part
+// carrying the header block alone.
+func dsnAround(t *testing.T, embedded []byte, headersOnly bool) []byte {
+	t.Helper()
+	part := "Content-Type: message/rfc822\r\n\r\n"
+	payload := embedded
+	if headersOnly {
+		part = "Content-Type: text/rfc822-headers\r\n\r\n"
+		headers, _, err := parseHeaders(bytes.NewReader(embedded))
+		if err != nil {
+			t.Fatalf("parse embedded headers: %v", err)
+		}
+		var hdrs bytes.Buffer
+		for _, h := range headers {
+			hdrs.WriteString(h.Raw)
+		}
+		payload = hdrs.Bytes()
+	}
+
+	boundary := "BOUNDARY44"
+	var dsn bytes.Buffer
+	dsn.WriteString("From: postmaster@test3.dkim2.com\r\n")
+	dsn.WriteString("To: user@test2.dkim2.com\r\n")
+	dsn.WriteString("Subject: failure\r\n")
+	dsn.WriteString("Content-Type: multipart/report; report-type=delivery-status; boundary=\"" + boundary + "\"\r\n")
+	dsn.WriteString("\r\n")
+	dsn.WriteString("--" + boundary + "\r\n")
+	dsn.WriteString("Content-Type: text/plain\r\n\r\ndelivery failed\r\n")
+	dsn.WriteString("--" + boundary + "\r\n")
+	dsn.WriteString("Content-Type: message/delivery-status\r\n\r\n")
+	dsn.WriteString("Reporting-MTA: dns; test3.dkim2.com\r\n\r\nFinal-Recipient: rfc822; dest@test3.dkim2.com\r\nAction: failed\r\nStatus: 5.1.1\r\n")
+	dsn.WriteString("--" + boundary + "\r\n")
+	dsn.WriteString(part)
+	dsn.Write(payload)
+	dsn.WriteString("\r\n--" + boundary + "--\r\n")
+	return dsn.Bytes()
+}
+
+func TestAuthenticateIntactTwoHop(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	res, err := Authenticate(dsnAround(t, verifiableTwoHop(t), false), f,
+		VerifyOptions{SkipTimestampCheck: true})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("intact two-hop DSN did not authenticate: %v", res.Reason)
+	}
+	if res.HeadersOnly {
+		t.Fatal("HeadersOnly set for a message/rfc822 DSN")
+	}
+	// The forwarder recognises i=2 as its own by d= (§12.1.2 point 2).
+	if res.Top == nil || res.Top.Sequence != 2 || res.Top.Domain != "test2.dkim2.com" {
+		t.Fatalf("Top = %+v, want i=2 d=test2.dkim2.com", res.Top)
+	}
+	if res.Top.MailFrom != "<user@test2.dkim2.com>" {
+		t.Fatalf("Top.MailFrom = %q, want <user@test2.dkim2.com>", res.Top.MailFrom)
+	}
+}
+
+func TestAuthenticateHeadersOnly(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	res, err := Authenticate(dsnAround(t, verifiableTwoHop(t), true), f,
+		VerifyOptions{SkipTimestampCheck: true})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("headers-only DSN did not authenticate from the headers alone: %v", res.Reason)
+	}
+	if !res.HeadersOnly {
+		t.Fatal("HeadersOnly not set for a text/rfc822-headers DSN")
+	}
+	if res.Top == nil || res.Top.Sequence != 2 {
+		t.Fatalf("Top = %+v, want i=2", res.Top)
+	}
+}
+
+// A returned original whose headers were changed after signing: the top
+// instance's header hash no longer matches, with or without a body.
+func TestAuthenticateRejectsTamperedHeaders(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	tampered := bytes.Replace(verifiableTwoHop(t),
+		[]byte("Subject: hello"), []byte("Subject: hullo"), 1)
+	for _, headersOnly := range []bool{false, true} {
+		res, err := Authenticate(dsnAround(t, tampered, headersOnly), f,
+			VerifyOptions{SkipTimestampCheck: true})
+		if err != nil {
+			t.Fatalf("headersOnly=%v: Authenticate: %v", headersOnly, err)
+		}
+		if res.OK {
+			t.Fatalf("headersOnly=%v: tampered returned message authenticated", headersOnly)
+		}
+		if res.Reason == nil || !strings.Contains(res.Reason.Error(), "header hash mismatch") {
+			t.Fatalf("headersOnly=%v: Reason = %v, want header hash mismatch", headersOnly, res.Reason)
+		}
+	}
+}
+
+func TestAuthenticateUnsignedOriginal(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	plain := []byte("From: a@b.example\r\nTo: c@d.example\r\nSubject: plain\r\n\r\nhi\r\n")
+	res, err := Authenticate(dsnAround(t, plain, false), f)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if res.OK {
+		t.Fatal("a DSN returning an unsigned message authenticated")
+	}
+	if res.Top != nil {
+		t.Fatalf("Top = %+v, want nil for an unsigned original", res.Top)
+	}
+	// Reported as "no DKIM2-Signature", so a caller can tell an unsigned
+	// original (fall back to legacy DSN handling) from a broken one.
+	if res.Reason == nil || !strings.Contains(res.Reason.Error(), "no DKIM2-Signature") {
+		t.Fatalf("Reason = %v, want no DKIM2-Signature", res.Reason)
+	}
+}
+
+func TestAuthenticateRejectsNonDSN(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	_, err := Authenticate([]byte("From: a@b.example\r\n\r\nnot a DSN\r\n"), f)
+	if err == nil {
+		t.Fatal("Authenticate accepted a message that is not a DSN")
+	}
+	if !strings.Contains(err.Error(), "multipart/report") {
+		t.Fatalf("err = %v, want mention of multipart/report", err)
+	}
+}

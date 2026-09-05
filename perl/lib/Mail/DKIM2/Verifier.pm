@@ -39,6 +39,7 @@ sub init {
     $self->{skip_timestamp_check} = 0;
     $self->{mid_process}         = 0;
     $self->{allow_unsigned_mi}   = 0;
+    $self->{headers_only}        = 0;
 }
 
 sub skip_timestamp_check {
@@ -77,6 +78,16 @@ sub mid_process {
     my ($self, $val) = @_;
     $self->{mid_process} = $val if defined $val;
     return $self->{mid_process};
+}
+
+# headers_only: the message being verified has no body, as with the returned
+# original in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures
+# and the chain are checked as usual; of the Message-Instance content check,
+# only the header hash of the top instance can be, so only that is.
+sub headers_only {
+    my ($self, $val) = @_;
+    $self->{headers_only} = $val if defined $val;
+    return $self->{headers_only};
 }
 
 sub handle_header {
@@ -302,7 +313,9 @@ sub finish_body {
     # this must run under eval or that die would propagate uncaught out of
     # finish_body() and crash the caller instead of yielding a clean
     # permerror result.
-    my $mi_chain_ok = eval { $self->_verify_mi_chain() };
+    my $mi_chain_ok = eval {
+        $self->{headers_only} ? $self->_verify_top_mi_headers() : $self->_verify_mi_chain()
+    };
     if (my $err = $@) {
         die $err if ref $err;
         chomp $err;
@@ -314,6 +327,38 @@ sub finish_body {
 
     $self->{result} = 'pass';
     $self->{details} = "i=1..$max_i verified";
+}
+
+# The headers-only half of _verify_mi_chain: the top instance's header hash
+# against the headers we were given. Nothing further down the chain can be
+# checked without a body to undo into.
+sub _verify_top_mi_headers {
+    my ($self) = @_;
+
+    my $raw = join('', @{$self->{headers}}) . "\r\n";
+    my $msg = Email::MIME->new($raw);
+    my %by_v = map { (extract_mi_version($_) // 0) => $_ } $msg->header_raw('Message-Instance');
+    return 1 unless %by_v;
+    my $num = (sort { $b <=> $a } keys %by_v)[0];
+    my $mi  = Mail::DKIM2::MessageInstance->parse($by_v{$num});
+
+    my $hashes = $mi->get_tag('hashes') || {};
+    my $impl   = Mail::DKIM2::MessageInstance::hash_algs();
+    my @usable = sort grep { $impl->{$_} } keys %$hashes;
+    unless (@usable) {
+        $self->{result}  = 'permerror';
+        $self->{details} = "Message-Instance m=$num no supported hash algorithm";
+        return 0;
+    }
+    for my $alg (@usable) {
+        my $want = $hashes->{$alg}[0];
+        my $have = Mail::DKIM2::MessageInstance::h_digest($msg, $alg);
+        next if $want eq $have;
+        $self->{result}  = 'fail';
+        $self->{details} = "Message-Instance m=$num header hash mismatch ($alg)";
+        return 0;
+    }
+    return 1;
 }
 
 sub _verify_mi_chain {
