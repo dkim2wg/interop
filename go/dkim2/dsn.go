@@ -3,6 +3,7 @@ package dkim2
 import (
 	"bytes"
 	"crypto"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -138,13 +139,12 @@ type AuthResult struct {
 // verified — anyone can write d=. Authenticate therefore verifies the DSN as
 // well, and only compares the d= it has proved.
 //
-// Alignment is tested in BOTH directions: the spec's §9.4 relaxed match strips
-// labels from the envelope-address domain (so d= may be a parent of it, e.g. a
-// DSN signed by the org domain for mail delivered to a subdomain), while a
-// receiving system that bounces from a dedicated subdomain has the opposite
-// shape (d=bounces.example.com for rt=<user@example.com>). Both are the same
-// organization by the only test DKIM2 has, and rejecting either would reject
-// conformant mail; an unrelated domain still fails.
+// The direction is §9.4's: labels come off the left of the ADDRESS domain, so
+// d= may be equal to or a parent of the rt= domain, never a child of it. A
+// system with a dedicated bounce domain signs as its organizational domain
+// (d=example.com) and puts the bounce address on the subdomain
+// (<...@bounces.example.com>) — the subdomain belongs in the address, not in
+// the signing domain — so nothing legitimate needs the other direction.
 func checkAlignment(dsnSig, origTop *DKIM2Signature) (string, string) {
 	if dsnSig == nil {
 		return "none", "DSN carries no DKIM2-Signature of its own"
@@ -161,7 +161,7 @@ func checkAlignment(dsnSig, origTop *DKIM2Signature) (string, string) {
 		if rd == "" {
 			continue
 		}
-		if relaxedDomainMatch(rd, d) || relaxedDomainMatch(d, rd) {
+		if relaxedDomainMatch(rd, d) {
 			return "pass", fmt.Sprintf("DSN d=%s is aligned with rt= %s", d, r)
 		}
 	}
@@ -314,23 +314,50 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	//    In that case we only drop the forwarder's signature.
 	target, haveTarget := upstreamSigMIVersion(embedded)
 
-	var rebuilt bytes.Buffer
+	embeddedFinal := embedded
+	headersOnly := rep.headersOnly
 	undone := false
-	if haveTarget {
-		if err := Undo(bytes.NewReader(embedded), &rebuilt, target); err == nil {
+	// Only unwind when there is actually an instance above the target. A
+	// forwarder that changed nothing reuses the upstream's m=, so the two are
+	// equal and there is nothing to undo — that is the ordinary case below,
+	// not a failure, and it must not be reached through Undo's error path.
+	topV, haveTopV := topMIVersion(embedded)
+	if haveTarget && haveTopV && topV > target {
+		var rebuilt bytes.Buffer
+		err := Undo(bytes.NewReader(embedded), &rebuilt, target)
+		switch {
+		case err == nil:
+			embeddedFinal = rebuilt.Bytes()
 			undone = true
+		case errors.Is(err, ErrUnrecoverable):
+			// §12.1.1: the upstream declared the previous body unrecoverable,
+			// so the returned original goes back as header fields only. Our
+			// own instance goes with our hop — leaving it would put an
+			// instance above the top remaining signature (§11 "is not
+			// signed") for whoever receives this.
+			headersOnly = true
+			stripped, serr := stripTopMI(embedded)
+			if serr != nil {
+				return nil, "", fmt.Errorf("rebuild embedded original: %w", serr)
+			}
+			embeddedFinal = stripped
+		default:
+			// Any OTHER reconstruction failure means we cannot rebuild what we
+			// forwarded, so there is nothing truthful to return. Swallowing it
+			// here (as this did) shipped a returned message whose body does
+			// not match the signature above it.
+			return nil, "", fmt.Errorf("rebuild embedded original: %w", err)
 		}
 	}
 	if !undone {
-		// Nothing to unwind (or unrecoverable) — strip the Forwarder's signature.
-		stripped, serr := stripTopSig(embedded)
+		// Nothing to unwind, or the body was declared unrecoverable — either
+		// way the Forwarder's own signature comes off by hand.
+		stripped, serr := stripTopSig(embeddedFinal)
 		if serr != nil {
 			return nil, "", fmt.Errorf("rebuild embedded original: %v", serr)
 		}
-		rebuilt.Reset()
-		rebuilt.Write(stripped)
+		embeddedFinal = stripped
 	}
-	embeddedFinal := rebuilt.Bytes()
 
 	// 2. Upstream = MAIL FROM of the now-highest DKIM2-Signature.
 	upstream, err := topSigMailFrom(embeddedFinal)
@@ -339,11 +366,25 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	}
 
 	// 3. Splice the rebuilt original back into the part and reassemble the body.
-	//    splitPartHeaders strips the blank line that ends the part's own header
-	//    block, so both CRLFs have to go back: one to end the last part header,
-	//    one for the separator. With only one, the returned message's headers
-	//    are absorbed into the part's header block and it has no body at all.
-	segments[rep.embeddedSeg] = partHdr + "\r\n\r\n" + string(embeddedFinal)
+	//    splitPartHeaders trims the CRLF that ends the boundary DELIMITER line
+	//    as well as the blank line that ends the part's own header block, so
+	//    all three CRLFs have to go back: without the leading one the part
+	//    headers are glued onto the "--boundary" line and no MIME parser sees
+	//    a part at all, and with only one of the other two the returned
+	//    message's headers are absorbed into the part's header block.
+	if headersOnly {
+		hdrs, _, herr := parseHeaders(bytes.NewReader(embeddedFinal))
+		if herr != nil {
+			return nil, "", fmt.Errorf("reading returned message headers: %w", herr)
+		}
+		var hb bytes.Buffer
+		for _, h := range hdrs {
+			hb.WriteString(h.Raw)
+		}
+		segments[rep.embeddedSeg] = "\r\nContent-Type: text/rfc822-headers\r\n\r\n" + hb.String()
+	} else {
+		segments[rep.embeddedSeg] = "\r\n" + partHdr + "\r\n\r\n" + string(embeddedFinal)
+	}
 	newBody := strings.Join(segments, delim)
 
 	// 4. Reassemble the DSN and re-sign it as a NEW message with MAIL FROM <>.
@@ -406,6 +447,61 @@ func upstreamSigMIVersion(raw []byte) (int, bool) {
 	}
 	sort.Slice(sigs, func(i, j int) bool { return sigs[i].Sequence < sigs[j].Sequence })
 	return sigs[len(sigs)-2].MIVersion, true
+}
+
+// topMIVersion returns the highest Message-Instance m= of a raw message.
+func topMIVersion(raw []byte) (int, bool) {
+	headers, _, err := parseHeaders(bytes.NewReader(raw))
+	if err != nil {
+		return 0, false
+	}
+	top, found := 0, false
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "message-instance") {
+			if mi, err := parseMI(h.Raw); err == nil && mi.Version > top {
+				top, found = mi.Version, true
+			}
+		}
+	}
+	return top, found
+}
+
+// stripTopMI removes the highest-version Message-Instance header from a raw
+// message. Used with stripTopSig when the Forwarder's whole hop comes off but
+// undo could not run: the instance goes with the signature that covered it, or
+// the returned message carries an instance above its own top signature, which
+// is the spec-06 §11 "is not signed" PERMERROR for whoever receives it.
+func stripTopMI(raw []byte) ([]byte, error) {
+	headers, bodyReader, err := parseHeaders(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	body := new(bytes.Buffer)
+	body.ReadFrom(bodyReader)
+
+	maxV, found := -1, false
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "message-instance") {
+			if mi, err := parseMI(h.Raw); err == nil && mi.Version > maxV {
+				maxV, found = mi.Version, true
+			}
+		}
+	}
+	if !found {
+		return raw, nil
+	}
+	var out bytes.Buffer
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "message-instance") {
+			if mi, err := parseMI(h.Raw); err == nil && mi.Version == maxV {
+				continue
+			}
+		}
+		out.WriteString(h.Raw)
+	}
+	out.WriteString("\r\n")
+	out.Write(body.Bytes())
+	return out.Bytes(), nil
 }
 
 func stripTopSig(raw []byte) ([]byte, error) {

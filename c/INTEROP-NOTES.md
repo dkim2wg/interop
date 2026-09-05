@@ -486,35 +486,78 @@ path may write.
 
 ---
 
-## 19. §12.1.2 point 1 does not say which way "aligned" relaxes
+## 19. §12.1.2 point 1 leaves two things unsaid
 
 §12.1.2 point 1 requires the DSN's own signing domain to be "aligned with the
 recipient of the message that is being returned", the recipient being the `rt=`
-of the returned message's highest `i=` signature. It does not say what aligned
-means here, and the relaxed match §9.4 defines is directional: labels are
-stripped from the left of the **MAIL FROM** domain, so `d=` may be a parent of
-the envelope domain but not a child of it.
+of the returned message's highest `i=` signature. Two things it does not say.
 
-Applied to point 1 that reading admits a DSN signed by the org domain for mail
-delivered to a subdomain (`d=example.com`, `rt=<user@mail.example.com>`) and
-rejects the opposite shape (`d=bounces.example.com`, `rt=<user@example.com>`) —
-which is exactly how a receiving system with a dedicated bounce subdomain would
-sign, and is the shape §9.4's relaxation exists to accommodate everywhere else.
+**Which way the relaxed match runs.** §9.4 is directional — labels come off the
+left of the *address* domain — but §12.1.2 does not name §9.4 or say which of
+the two values being compared here is the address. Perl, Python and Go take the
+§9.4 direction, treating `rt=` as the address: `d=` may equal the delivery
+domain or be a parent of it (`d=example.com` for `rt=<user@mail.example.com>`),
+never a child of it. Nothing legitimate needs the other direction — a system
+with a dedicated bounce domain signs as its organizational domain and puts the
+bounce *address* on the subdomain, so the subdomain shows up in `mf=`, not in
+`d=`.
 
-Perl, Python and Go here accept **either** direction: one of the two domains
-must be equal to, or a parent of, the other. An unrelated domain still fails,
-which is the whole value of the check. This is a deliberate choice, recorded
-because a different implementation could reasonably read it the other way and
-reject conformant bounces.
+**That `d=` has to have been verified first.** Point 1 compares a signing
+domain, and anyone can write `d=`; on an unverified signature the comparison
+proves nothing. §12.1.2 opens with "When a system receives a DKIM2 signed DSN",
+which implies the DSN has already been verified as a DKIM2 message by the
+normal inbound path, but the section never says so where it matters. These
+implementations verify the DSN's own signature as part of §12.1.2 and compare
+only a `d=` they have proved. A DSN carrying no DKIM2-Signature at all is
+reported as such rather than failed, since the section scopes itself to signed
+DSNs and a receiver still handling legacy bounces has to be able to tell.
 
-Note also that point 1 is only worth checking on a `d=` that has been
-*verified* — anyone can write `d=`. These implementations therefore verify the
-DSN's own signature as part of §12.1.2, not just the returned message's chain.
-A DSN carrying no DKIM2-Signature at all is reported as such rather than
-failed, since §12.1.2 scopes itself to "a DKIM2 signed DSN".
+**Recommendation to spec:** state that the point 1 comparison uses the §9.4
+relaxed match with `rt=` as the address domain, and that it applies to the
+signing domain of a DSN signature that has itself been verified.
 
-**Recommendation to spec:** say which side of the point 1 comparison the
-relaxed match strips labels from, or state that either direction satisfies it.
+---
+
+## 20. A failed undo has to be an error, not a warning
+
+Python's `undo_message_instance` checked the reconstructed state against the
+target instance's hashes and, on a mismatch, printed `WARNING: Body hash
+mismatch after undo!` to stderr and returned the message anyway. Go's `Undo`
+already errored on the same condition, and Perl checks it in the Verifier
+rather than in `undo`, so this was Python-only — and it is the same fail-open
+shape as the C duplicate-algorithm check in note 14: the code noticed, and the
+caller carried on regardless.
+
+What it cost: `dkim2dsn.propagate` catches a reconstruction failure to fall
+back to returning header fields only. Because the mismatch never raised, that
+fallback never fired, and propagation shipped a returned message whose body did
+not match the signature above it. The warning had been printing on every test
+run for months.
+
+Two things fell out of fixing it.
+
+**The two failure modes are not the same.** §12.1.1's "null Recipe" — a present
+`"b"` that is JSON null — is a hop *declaring* that the previous body cannot be
+put back, and the right answer is to return the header fields alone. A
+reconstruction that simply came out wrong is a defect, and the right answer is
+to refuse: there is nothing truthful to send. Both surfaced as one
+`ValueError` in Python and as one error in Go, so both now have their own
+signal (`dkim2undo.Unrecoverable`, `dkim2.ErrUnrecoverable`) and propagation
+answers only the first with headers-only.
+
+**Dropping the body is not enough — the instance goes too.** When the
+Forwarder's hop comes off without being undone, its Message-Instance has to go
+with the signature that covered it. Leaving it puts an instance above the top
+remaining signature, which is §11's "is not signed" PERMERROR for whoever
+receives the propagated DSN. Perl got this for free (its `undo` removes the top
+instance before applying Recipes); Python and Go both needed it added.
+
+Worth noting for anyone building test vectors: Python's signer cannot emit a
+Recipe at all (`sign_message` computes an instance from one message state, with
+no previous state to diff against — Perl has `calculate($cur, $prev)` and Go
+has `ComputeDiff`). So a Python-built "forwarder modified the body" fixture is
+not reconstructable by anyone, which is exactly what the warning had been
+reporting all along.
 
 ---
 

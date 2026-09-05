@@ -73,6 +73,25 @@ def _strip_top_sig(raw: bytes) -> bytes:
     return b"\r\n".join(kept) + b"\r\n\r\n" + body
 
 
+def _strip_top_mi(raw: bytes) -> bytes:
+    """Remove the highest-version Message-Instance header from raw.
+
+    Used with _strip_top_sig when the Forwarder's whole hop comes off but undo
+    could not run: the instance goes with the signature that covered it, or the
+    returned message carries an instance above its own top signature, which is
+    the spec-06 §11 "is not signed" PERMERROR upstream.
+    """
+    headers, body = dkim2sign.parse_message(raw)
+    mi_idx = [i for i, h in enumerate(headers)
+              if dkim2sign._header_name(h) == b"message-instance"]
+    if not mi_idx:
+        return raw
+    top_i = max(mi_idx, key=lambda i: dkim2sign._get_version_from_mi(
+        headers[i].decode("utf-8", "surrogateescape")))
+    kept = [h for j, h in enumerate(headers) if j != top_i]
+    return b"\r\n".join(kept) + b"\r\n\r\n" + body
+
+
 def _embedded_bytes(part) -> bytes:
     payload = part.get_payload()
     if isinstance(payload, list) and payload:
@@ -175,14 +194,12 @@ def _check_alignment(dsn_sig: dict | None, orig_top: dict | None):
     been verified -- anyone can write d=. authenticate() therefore verifies
     the DSN as well, and only compares the d= it has proved.
 
-    Alignment is tested in BOTH directions: the spec's §9.4 relaxed match
-    strips labels from the envelope-address domain (so d= may be a parent of
-    it, e.g. a DSN signed by the org domain for mail delivered to a
-    subdomain), while a receiving system that bounces from a dedicated
-    subdomain has the opposite shape (d=bounces.example.com for
-    rt=<user@example.com>). Both are the same organization by the only test
-    DKIM2 has, and rejecting either would reject conformant mail; an
-    unrelated domain still fails.
+    The direction is §9.4's: labels come off the left of the ADDRESS domain,
+    so d= may be equal to or a parent of the rt= domain, never a child of it.
+    A system with a dedicated bounce domain signs as its organizational domain
+    (d=example.com) and puts the bounce address on the subdomain
+    (<...@bounces.example.com>) -- the subdomain belongs in the address, not in
+    the signing domain -- so nothing legitimate needs the other direction.
 
     Returns (state, detail) with state 'pass', 'fail' or 'none'.
     """
@@ -198,8 +215,7 @@ def _check_alignment(dsn_sig: dict | None, orig_top: dict | None):
         rd = dkim2verify._domain_from_addr(r)
         if not rd:
             continue
-        if (dkim2verify._relaxed_domain_match(rd, d)
-                or dkim2verify._relaxed_domain_match(d, rd)):
+        if dkim2verify._relaxed_domain_match(rd, d):
             return "pass", f"DSN d={d} is aligned with rt= {r}"
     return "fail", (f"DSN d={d} is not aligned with the returned message's rt= "
                     f"({', '.join(rts)})")
@@ -305,15 +321,21 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
     #    removed MI (m > target) — i.e. it already removes the DKIM2-Signature
     #    the Forwarder added. Only when there is no MI to undo do we strip the
     #    Forwarder's signature by hand.
+    #
+    #    Only a body the upstream declared unrecoverable (§12.1.1's null
+    #    Recipe) falls back to headers-only. Any OTHER reconstruction failure
+    #    means we cannot rebuild what we forwarded, so there is nothing
+    #    truthful to return and the error propagates to the caller rather than
+    #    being answered with a message we cannot vouch for.
     mi_count, _ = _count_mi(embedded)
     stripped_by_undo = False
     if mi_count >= 2:
         try:
             embedded = dkim2undo.undo_message_instance(embedded)
             stripped_by_undo = True
-        except ValueError:
-            # body could not be regenerated — fall back to headers-only
+        except dkim2undo.Unrecoverable:
             headers_only = True
+            embedded = _strip_top_mi(embedded)
     if not stripped_by_undo:
         embedded = _strip_top_sig(embedded)
 

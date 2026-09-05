@@ -4,7 +4,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from dkim2undo import undo_message_instance  # noqa: E402
+from dkim2undo import undo_message_instance, Unrecoverable  # noqa: E402
 
 
 def _b64(obj):
@@ -32,16 +32,36 @@ def test_null_header_recipe_rejected():
     assert raised, "expected ValueError for null header recipe"
 
 
-def test_null_body_recipe_still_allowed():
-    # A null body Recipe is still valid; undo should not raise a *parse* error
-    # for it (it may still fail later for unrelated reasons, but not on "h").
+def test_null_body_recipe_is_unrecoverable_not_a_defect():
+    # A null body Recipe is valid: it is the upstream declaring that the
+    # previous body cannot be put back. That must be distinguishable from a
+    # reconstruction that went wrong, because DSN propagation answers the
+    # first by returning header fields alone and MUST NOT answer the second
+    # that way -- so it has its own exception type.
+    raised = False
     try:
         undo_message_instance(_msg(_b64({"b": None})))
-    except ValueError as e:
+    except Unrecoverable as e:
+        raised = True
+        assert "body recipe is null" in str(e).lower(), str(e)
         assert "header recipes are null" not in str(e).lower()
+    assert raised, "expected Unrecoverable for a null body recipe"
+
+
+def test_null_header_recipe_is_not_unrecoverable():
+    # §5.1 makes a null "h" a syntax error, not a declaration -- it must not
+    # come back as Unrecoverable, or propagation would paper over it.
+    try:
+        undo_message_instance(_msg(_b64({"h": None})))
+        assert False, "expected ValueError for null header recipe"
+    except Unrecoverable:
+        assert False, "a null header recipe is a syntax error, not Unrecoverable"
+    except ValueError:
+        pass
 
 
 if __name__ == "__main__":
     test_null_header_recipe_rejected()
-    test_null_body_recipe_still_allowed()
+    test_null_body_recipe_is_unrecoverable_not_a_defect()
+    test_null_header_recipe_is_not_unrecoverable()
     print("python null-recipe tests OK")

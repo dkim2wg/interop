@@ -2,6 +2,10 @@ package dkim2
 
 import (
 	"bytes"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -151,6 +155,194 @@ func TestPropagateRejectsMissingDeliveryStatus(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "delivery-status") {
 		t.Fatalf("Propagate error = %v, want mention of delivery-status", err)
+	}
+}
+
+// TestPropagateEmitsAWellFormedReport checks the MIME the splice produces: the
+// boundary delimiter line has to be terminated and the rebuilt part needs its
+// own blank line, or the returned message is not a part at all — its headers
+// end up glued onto the "--boundary" line, which no MIME parser will read.
+func TestPropagateEmitsAWellFormedReport(t *testing.T) {
+	const keys = "../../keys/"
+	out, _, err := Propagate(dsnAround(t, verifiableTwoHop(t), false), PropagateOptions{
+		ForwarderDomain: "test2.dkim2.com",
+		Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
+		Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
+		SkipAuthentication: true,
+	})
+	if err != nil {
+		t.Fatalf("Propagate: %v", err)
+	}
+	rep, err := parseReport(out)
+	if err != nil {
+		t.Fatalf("parse propagated DSN: %v", err)
+	}
+	for i := 1; i < len(rep.segments)-1; i++ {
+		if !strings.HasPrefix(rep.segments[i], "\r\n") {
+			t.Fatalf("part %d does not start on its own line: %.60q", i, rep.segments[i])
+		}
+	}
+	if !strings.Contains(string(out), "\r\n\r\nDKIM2-Signature: i=1;") {
+		t.Fatal("the returned message does not begin after a blank line")
+	}
+}
+
+// --- §12.1.1's null Recipe: an upstream that declares the previous body
+// unrecoverable gets the header fields back, not a body we cannot rebuild. ---
+
+// nullRecipeChain builds a two-hop message whose m=2 carries "b": null.
+// buildMI has no way to emit one (ComputeDiff only ever produces a real,
+// reversible Recipe), so the instance is assembled here from the digest
+// primitives, then genuinely signed.
+func nullRecipeChain(t *testing.T) []byte {
+	t.Helper()
+	const keys = "../../keys/"
+	raw := []byte("From: Sender <sender@test1.dkim2.com>\r\n" +
+		"To: user@test2.dkim2.com\r\n" +
+		"Subject: hello\r\n\r\nbody line\r\n")
+	hop1 := signOnce(t, raw, keys+"sel1._domainkey.test1.dkim2.com.pem",
+		"sel1", "test1.dkim2.com", "sender@test1.dkim2.com",
+		[]string{"user@test2.dkim2.com"})
+
+	headers, bodyReader, err := parseHeaders(bytes.NewReader(hop1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(bodyReader); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("replaced entirely\r\n")
+
+	var content []Header
+	var miRaws, sigRaws []string
+	for _, h := range headers {
+		switch strings.ToLower(h.Name) {
+		case "message-instance":
+			miRaws = append(miRaws, h.Raw)
+		case "dkim2-signature":
+			sigRaws = append(sigRaws, h.Raw)
+		default:
+			content = append(content, h)
+		}
+	}
+
+	hh, err := hashHeaders(content, "sha256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyHashes, err := hashBodyMulti(bytes.NewReader(body), []string{"sha256"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mi2 := fmt.Sprintf("Message-Instance: m=2; h=sha256:%s:%s; r=%s;\r\n",
+		base64.StdEncoding.EncodeToString(hh),
+		base64.StdEncoding.EncodeToString(bodyHashes["sha256"]),
+		base64.StdEncoding.EncodeToString([]byte(`{"b":null}`)))
+
+	var assembled bytes.Buffer
+	for _, s := range sigRaws {
+		assembled.WriteString(s)
+	}
+	assembled.WriteString(mi2)
+	for _, m := range miRaws {
+		assembled.WriteString(m)
+	}
+	for _, h := range content {
+		assembled.WriteString(h.Raw)
+	}
+	assembled.WriteString("\r\n")
+	assembled.Write(body)
+
+	// Sign i=2 over that state, so every signature in the chain is genuine.
+	return signOnce(t, assembled.Bytes(), keys+"sel1._domainkey.test2.dkim2.com.pem",
+		"sel1", "test2.dkim2.com", "user@test2.dkim2.com",
+		[]string{"dest@test3.dkim2.com"})
+}
+
+func TestUndoReportsANullRecipeAsUnrecoverable(t *testing.T) {
+	err := Undo(bytes.NewReader(nullRecipeChain(t)), io.Discard, 1)
+	if !errors.Is(err, ErrUnrecoverable) {
+		t.Fatalf("err = %v, want it to wrap ErrUnrecoverable", err)
+	}
+}
+
+func TestPropagateNullRecipeReturnsHeadersOnly(t *testing.T) {
+	const keys = "../../keys/"
+	out, upstream, err := Propagate(dsnAround(t, nullRecipeChain(t), false),
+		PropagateOptions{
+			ForwarderDomain: "test2.dkim2.com",
+			Key:             loadKey(t, keys+"sel1._domainkey.test3.dkim2.com.pem"),
+			Selector:        "sel1", Domain: "test3.dkim2.com", Timestamp: 1740000000,
+			SkipAuthentication: true,
+		})
+	if err != nil {
+		t.Fatalf("Propagate: %v", err)
+	}
+	if upstream != "<sender@test1.dkim2.com>" {
+		t.Fatalf("upstream = %q, want <sender@test1.dkim2.com>", upstream)
+	}
+	if strings.Contains(string(out), "message/rfc822") {
+		t.Fatal("propagated a body it could not reconstruct")
+	}
+	if !strings.Contains(string(out), "text/rfc822-headers") {
+		t.Fatal("the returned original is not text/rfc822-headers")
+	}
+
+	// The forwarder's whole hop comes off: its instance goes with the
+	// signature that covered it, or the returned message carries an instance
+	// above its own top signature (§11 "is not signed") upstream.
+	rep, err := parseReport(out)
+	if err != nil {
+		t.Fatalf("parse propagated DSN: %v", err)
+	}
+	_, inner := splitPartHeaders(rep.segments[rep.embeddedSeg])
+	hdrs, _, err := parseHeaders(strings.NewReader(inner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mis, sigs int
+	for _, h := range hdrs {
+		switch strings.ToLower(h.Name) {
+		case "message-instance":
+			mis++
+			if mi, _ := parseMI(h.Raw); mi != nil && mi.Version != 1 {
+				t.Errorf("returned message keeps m=%d", mi.Version)
+			}
+		case "dkim2-signature":
+			sigs++
+			if sig, _ := parseSig(h.Raw); sig != nil && sig.Sequence != 1 {
+				t.Errorf("returned message keeps i=%d", sig.Sequence)
+			}
+		}
+	}
+	if mis != 1 || sigs != 1 {
+		t.Fatalf("returned message has %d MI / %d sig, want 1/1", mis, sigs)
+	}
+}
+
+func TestPropagateRefusesWhenUndoSimplyFails(t *testing.T) {
+	const keys = "../../keys/"
+	// A body that changed with no Recipe describing it: undo cannot get back
+	// to the m=1 body and does not claim to. That is a defect, not a
+	// declaration, so there is nothing truthful to return.
+	chain := nullRecipeChain(t)
+	broken := bytes.Replace(chain,
+		[]byte(base64.StdEncoding.EncodeToString([]byte(`{"b":null}`))),
+		[]byte(base64.StdEncoding.EncodeToString([]byte(`{}`))), 1)
+	if bytes.Equal(chain, broken) {
+		t.Fatal("fixture: the null Recipe was not replaced")
+	}
+	_, _, err := Propagate(dsnAround(t, broken, false), PropagateOptions{
+		ForwarderDomain: "test2.dkim2.com",
+		Key:             loadKey(t, keys+"sel1._domainkey.test3.dkim2.com.pem"),
+		Selector:        "sel1", Domain: "test3.dkim2.com", Timestamp: 1740000000,
+		SkipAuthentication: true,
+	})
+	if err == nil {
+		t.Fatal("propagated a message it could not reconstruct")
+	}
+	if !strings.Contains(err.Error(), "hash mismatch after reconstruction") {
+		t.Fatalf("err = %v, want the reconstruction mismatch", err)
 	}
 }
 
@@ -445,13 +637,19 @@ func TestAuthenticateMisalignedDSN(t *testing.T) {
 // above.
 func TestCheckAlignmentDomainRelationships(t *testing.T) {
 	rtTest3 := &DKIM2Signature{RcptTo: []string{"<dest@test3.dkim2.com>"}}
-	for _, d := range []string{"bounce.test3.dkim2.com", "dkim2.com", "test3.dkim2.com"} {
+	// §9.4's direction: labels come off the ADDRESS domain, so d= may be the
+	// delivery domain or a parent of it.
+	for _, d := range []string{"test3.dkim2.com", "dkim2.com"} {
 		state, detail := checkAlignment(&DKIM2Signature{Domain: d}, rtTest3)
 		if state != "pass" {
 			t.Errorf("d=%s: state = %q (%s), want pass", d, state, detail)
 		}
 	}
-	for _, d := range []string{"test4.dkim2.com", "test3.dkim2.com.evil.example", "evil.example"} {
+	// Never a child of it: a system with a dedicated bounce domain signs as
+	// its org domain and puts the bounce address on the subdomain, so this
+	// shape has no legitimate producer.
+	for _, d := range []string{"bounce.test3.dkim2.com", "test4.dkim2.com",
+		"test3.dkim2.com.evil.example", "evil.example"} {
 		if state, _ := checkAlignment(&DKIM2Signature{Domain: d}, rtTest3); state != "fail" {
 			t.Errorf("d=%s: state = %q, want fail", d, state)
 		}

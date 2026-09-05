@@ -15,18 +15,28 @@ type RecipeStep struct {
 type Recipe struct {
 	Headers map[string][]RecipeStep `json:"h,omitempty"`
 	Body    []RecipeStep            `json:"b,omitempty"`
+
+	// BodyNull records that "b" was present and JSON null: §12.1.1's "null
+	// Recipe", the hop declaring that the previous body cannot be put back.
+	// It is deliberately distinct from an absent "b" (the body was not
+	// modified), which unmarshals to a nil Body just the same. Not encoded —
+	// nothing here signs a null Recipe, it is only ever read.
+	BodyNull bool `json:"-"`
 }
 
 func parseRecipe(data []byte) (*Recipe, error) {
 	// draft-06 §5.1: an explicit JSON null for "h" is no longer permitted
 	// (distinct from an absent "h", which means the headers were unchanged).
+	var r Recipe
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(data, &probe); err == nil {
 		if v, ok := probe["h"]; ok && string(v) == "null" {
 			return nil, errors.New("null header recipe not permitted (draft-06 §5.1)")
 		}
+		if v, ok := probe["b"]; ok && string(v) == "null" {
+			r.BodyNull = true
+		}
 	}
-	var r Recipe
 	if err := json.Unmarshal(data, &r); err != nil {
 		return nil, err
 	}

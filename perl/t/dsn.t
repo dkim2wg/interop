@@ -188,6 +188,53 @@ sub forwarded_unchanged {
        'propagated DSN (headers-only variant) addressed to upstream MAIL FROM');
 }
 
+# === propagate: §12.1.1's null Recipe — an upstream that declares the
+# previous body unrecoverable gets the header fields back, not a body we
+# cannot reconstruct. The forwarder's whole hop comes off: its instance goes
+# with the signature that covered it, or the returned message carries an
+# instance above its own top signature (§11 "is not signed") upstream. ===
+{
+    my $h1 = signed_inbound();                 # MI v=1 + sig i=1
+    my $cur = Email::MIME->new($h1);
+    $cur->body_set("replaced entirely\r\n");
+    # A null "b" Recipe: the previous body cannot be put back. Built by hand
+    # from the digest primitives -- calculate() has no way to emit one, and
+    # its diff form would compute a real (reversible) body Recipe instead.
+    my $hh = Mail::DKIM2::MessageInstance::h_digest($cur, 'sha256');
+    my $bh = Mail::DKIM2::MessageInstance::b_digest($cur, 'sha256');
+    my $r  = Mail::DKIM2::Common::encode_tag_json({ b => undef });
+    $cur->header_raw_prepend('Message-Instance', "m=2; h=sha256:$hh:$bh; r=$r;");
+    my $signer = mk_signer(domain => 'test2.dkim2.com',
+                           mailfrom => 'user@test2.dkim2.com',
+                           rcptto => ['dest@test3.dkim2.com']);
+    $signer->PRINT($cur->as_string); $signer->CLOSE;
+    (my $sig = $signer->as_string) =~ s/\r?\n$//;
+    $sig =~ s{^DKIM2-Signature:\s*}{};
+    $cur->header_raw_prepend('DKIM2-Signature', $sig);
+
+    my $out = Mail::DKIM2::DSN->propagate({
+        raw => dsn_around($cur->as_string), forwarder_domain => 'test2.dkim2.com',
+        signer => mk_signer(domain => 'test2.dkim2.com'), %NO_AUTH,
+    });
+    is($out->{upstream_mailfrom}, '<sender@origin.example>',
+       'a null-Recipe DSN still propagates to the upstream MAIL FROM');
+
+    my $m = Email::MIME->new($out->{raw});
+    my @types = map { ($_->content_type // '') =~ m{^([^;]+)} ? $1 : '' } $m->subparts;
+    ok((grep { m{^text/rfc822-headers} } @types),
+       '  ... returning the header fields alone') or diag("@types");
+    ok(!(grep { m{^message/rfc822} } @types),
+       '  ... and not a body it could not reconstruct');
+
+    my ($part) = grep { ($_->content_type // '') =~ m{^text/rfc822-headers} } $m->subparts;
+    my $inner = Email::MIME->new($part->body);
+    is(scalar(() = $inner->header_raw('Message-Instance')), 1,
+       '  ... with the forwarder\'s instance stripped along with its hop');
+    my @isigs = map { Mail::DKIM2::Signature->parse($_) } $inner->header_raw('DKIM2-Signature');
+    is(scalar @isigs, 1, '  ... and one signature left');
+    is($isigs[0]->sequence, 1, '  ... the upstream\'s i=1');
+}
+
 # === generate: reflector-dsn behaviour ===
 {
     my $inbound = signed_inbound();
@@ -502,16 +549,19 @@ sub signed_dsn_around {
             "i=1; m=1; t=1; d=$_[0]; mf=PD4=; rt=PHVzZXJAdGVzdDIuZGtpbTIuY29tPg==; "
           . 's=sel1:rsa-sha256:AAAA;');
     };
-    # A receiving org that bounces from a dedicated subdomain, and one that
-    # signs with its org domain for mail delivered to a subdomain: both are
-    # the same organization by the only test DKIM2 has.
-    for my $d ('bounce.test3.dkim2.com', 'dkim2.com', 'test3.dkim2.com') {
+    # §9.4's direction: labels come off the ADDRESS domain, so d= may be the
+    # delivery domain or a parent of it.
+    for my $d ('test3.dkim2.com', 'dkim2.com') {
         my ($state, $detail) =
             Mail::DKIM2::DSN::_check_alignment($sig_of->($d), $rt_test3);
         is($state, 'pass', "d=$d counts as aligned with rt=<dest\@test3.dkim2.com>")
             or diag($detail);
     }
-    for my $d ('test4.dkim2.com', 'test3.dkim2.com.evil.example', 'evil.example') {
+    # Never a child of it: a system with a dedicated bounce domain signs as its
+    # org domain and puts the bounce address on the subdomain, so this shape
+    # has no legitimate producer.
+    for my $d ('bounce.test3.dkim2.com', 'test4.dkim2.com',
+               'test3.dkim2.com.evil.example', 'evil.example') {
         my ($state) = Mail::DKIM2::DSN::_check_alignment($sig_of->($d), $rt_test3);
         is($state, 'fail', "d=$d does not count as aligned");
     }

@@ -236,13 +236,12 @@ sub _origin_sig {
 # verified -- anyone can write d=. authenticate() therefore verifies the DSN
 # as well, and only compares the d= it has proved.
 #
-# Alignment is tested in BOTH directions: the spec's §9.4 relaxed match strips
-# labels from the envelope-address domain (so d= may be a parent of it, e.g. a
-# DSN signed by the org domain for mail delivered to a subdomain), while a
-# receiving system that bounces from a dedicated subdomain has the opposite
-# shape (d=bounces.example.com for rt=<user@example.com>). Both are the same
-# organization by the only test DKIM2 has, and rejecting either would reject
-# conformant mail; an unrelated domain still fails.
+# The direction is §9.4's: labels come off the left of the ADDRESS domain, so
+# d= may be equal to or a parent of the rt= domain, never a child of it. A
+# system with a dedicated bounce domain signs as its organizational domain
+# (d=example.com) and puts the bounce address on the subdomain
+# (<...@bounces.example.com>) -- the subdomain belongs in the address, not in
+# the signing domain -- so nothing legitimate needs the other direction.
 #
 # Returns ('pass'|'fail'|'none', $detail).
 sub _check_alignment {
@@ -261,7 +260,7 @@ sub _check_alignment {
         my $rd = extract_domain($r) // '';
         next unless length $rd;
         return ('pass', "DSN d=$d is aligned with rt= $r")
-            if relaxed_domain_match($rd, $d) || relaxed_domain_match($d, $rd);
+            if relaxed_domain_match($rd, $d);
     }
     return ('fail', "DSN d=$d is not aligned with the returned message's rt= ("
                   . join(', ', @rts) . ')');

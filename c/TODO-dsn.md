@@ -29,10 +29,18 @@ embedded `message/rfc822` part.
   spell this `headers_only` / `HeadersOnly` on the verifier;
 - a second verify pass over the DSN itself, since point 1 compares the DSN's
   own `d=` against the returned message's top `rt=` and an unverified `d=` is
-  whatever the sender typed (see INTEROP-NOTES §19 for which way "aligned"
-  relaxes — the spec does not say);
+  whatever the sender typed. The comparison is §9.4's relaxed match with `rt=`
+  as the address domain (`d=` may be a parent of the delivery domain, never a
+  child); see INTEROP-NOTES §19, as the spec says neither of those;
 - the propagation entry point must refuse to propagate a DSN that fails any of
   this: §12.1.2 says such a DSN "MUST NOT be propagated any further".
+
+Propagation itself must distinguish the two ways an undo can fail (see
+INTEROP-NOTES §20): §12.1.1's "null Recipe" (a present `"b"` that is JSON
+null) is the upstream declaring the previous body unrecoverable, and gets
+`text/rfc822-headers` back with the Forwarder's Message-Instance stripped
+along with its signature; any other reconstruction failure means refusing to
+propagate at all.
 
 See `lib/Mail/DKIM2/DSN.pm` (Perl, deployed) for the reference algorithm and
 `go/dkim2/dsn.go` / `python/dkim2dsn.py` for the other reference implementations.

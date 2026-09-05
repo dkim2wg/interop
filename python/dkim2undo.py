@@ -27,6 +27,18 @@ from dkim2sign import (
 # Recipe parsing
 # ---------------------------------------------------------------------------
 
+class Unrecoverable(ValueError):
+    """The previous body cannot be reconstructed *by design*.
+
+    spec-06 §5.1/§12.1.1: a present "b" that is JSON null is the upstream
+    saying the previous body cannot be put back (a "null Recipe") -- distinct
+    from an absent "b", which means the body was not modified. That is not a
+    defect in the message, so it gets its own type: DSN propagation answers it
+    by returning the header fields alone, while every other reconstruction
+    failure stays a plain ValueError and must not be papered over.
+    """
+
+
 def decode_recipes(mi_hdr: str) -> dict | None:
     """Decode the r= tag from a Message-Instance header.
 
@@ -340,24 +352,33 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
                     current_content_headers, h_recipes
                 )
 
-        # Apply body Recipes
+        # Apply body Recipes. A present "b" that is null declares the previous
+        # body unrecoverable by design; an ABSENT "b" means it was not
+        # modified. (The old `elif b_recipes is None` inside the `is not None`
+        # branch below could never run, so the null case fell through to the
+        # hash check at the end and was reported as a plain mismatch.)
+        if "b" in recipes and recipes["b"] is None:
+            raise Unrecoverable(
+                f"v={version}: body recipe is null, the previous body cannot "
+                f"be reconstructed")
         b_recipes = recipes.get("b")
         if b_recipes is not None:
             if isinstance(b_recipes, dict) and len(b_recipes) == 0:
                 if verbose:
                     print(f"    body: unmodified", file=sys.stderr)
-            elif b_recipes is None:
-                raise ValueError(
-                    f"v={version}: body recipes are null, "
-                    f"cannot reconstruct"
-                )
             else:
                 if verbose:
                     print(f"    body: {len(b_recipes)} recipe(s)",
                           file=sys.stderr)
                 current_body = reconstruct_body(current_body, b_recipes)
 
-    # Verify against target version's MI hashes if available
+    # Verify against target version's MI hashes if available.
+    #
+    # A mismatch here is an ERROR, not a warning: the reconstruction did not
+    # produce the message the target instance recorded, so what we are about to
+    # return is not that message. Returning it with a note on stderr means
+    # every caller has to notice the note -- and none did. Mail::DKIM2's
+    # Verifier and Go's Undo both fail here; this is the same rule.
     if target_version >= 1:
         target_mi = None
         for v, hdr_str, hdr_raw in mi_headers:
@@ -377,27 +398,23 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
 
                     expected_h = base64.b64decode(h_b64)
                     actual_h = compute_header_hash(current_content_headers)
-                    if expected_h == actual_h:
-                        if verbose:
-                            print(f"  Header hash matches v={target_version}",
-                                  file=sys.stderr)
-                    else:
-                        print(f"WARNING: Header hash mismatch after undo!",
+                    if expected_h != actual_h:
+                        raise ValueError(
+                            f"header hash mismatch after undo to v={target_version} "
+                            f"(expected {h_b64}, got {b64(actual_h)})")
+                    if verbose:
+                        print(f"  Header hash matches v={target_version}",
                               file=sys.stderr)
-                        print(f"  expected: {h_b64}", file=sys.stderr)
-                        print(f"  got:      {b64(actual_h)}", file=sys.stderr)
 
                     expected_b = base64.b64decode(b_b64)
                     actual_b = compute_body_hash(current_body)
-                    if expected_b == actual_b:
-                        if verbose:
-                            print(f"  Body hash matches v={target_version}",
-                                  file=sys.stderr)
-                    else:
-                        print(f"WARNING: Body hash mismatch after undo!",
+                    if expected_b != actual_b:
+                        raise ValueError(
+                            f"body hash mismatch after undo to v={target_version} "
+                            f"(expected {b_b64}, got {b64(actual_b)})")
+                    if verbose:
+                        print(f"  Body hash matches v={target_version}",
                               file=sys.stderr)
-                        print(f"  expected: {b_b64}", file=sys.stderr)
-                        print(f"  got:      {b64(actual_b)}", file=sys.stderr)
 
     # Reassemble the message
     # Include MI and sig headers up to the target version

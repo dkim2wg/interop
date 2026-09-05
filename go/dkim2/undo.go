@@ -1,15 +1,27 @@
 package dkim2
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 )
 
+// ErrUnrecoverable reports that the previous body cannot be reconstructed *by
+// design*: §12.1.1's "null Recipe", a hop declaring that it cannot be put
+// back (see Recipe.BodyNull). Distinct from every other Undo failure, which
+// means the reconstruction itself went wrong — DSN propagation answers the
+// first by returning the header fields alone and must not answer the second
+// that way. Test with errors.Is.
+var ErrUnrecoverable = errors.New("previous body declared unrecoverable (null Recipe)")
+
 // Undo reconstructs a message to a previous Message-Instance version by
 // applying header and body Recipes backward. targetVersion=-1 means
 // highestVersion-1. targetVersion=0 reconstructs the original pre-signing state.
+//
+// Returns an error wrapping ErrUnrecoverable when a Recipe on the way down
+// declares the previous body unrecoverable.
 func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 	headers, bodyReader, err := parseHeaders(r)
 	if err != nil {
@@ -86,6 +98,9 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 		}
 
 		recipe := entry.parsed.Recipe
+		if recipe.BodyNull {
+			return fmt.Errorf("v=%d: %w", version, ErrUnrecoverable)
+		}
 		if recipe.Headers != nil {
 			currentContent = undoHeaderRecipes(currentContent, recipe.Headers)
 		}

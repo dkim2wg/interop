@@ -20,6 +20,15 @@ def _key(sel, dom):
 
 
 def _two_hop_embedded():
+    """A forwarder that appends a footer and records a Recipe for it.
+
+    The m=2 instance is hand-built from the signer's own primitives because
+    sign_message() has no way to emit a Recipe -- it computes an instance from
+    one message state, with no previous state to diff against. Without the
+    Recipe this fixture is not reconstructable at all: undo has nothing that
+    says the footer was added, so it cannot get back to the m=1 body, which is
+    exactly what every implementation's undo now reports as an error.
+    """
     raw = (b"From: sender@origin.example\r\n"
            b"To: user@test1.dkim2.com\r\n"
            b"Subject: hello\r\n\r\nbody line\r\n")
@@ -27,13 +36,30 @@ def _two_hop_embedded():
         raw, "rsa1024", "test1.dkim2.com", _key("rsa1024", "test1.dkim2.com"),
         mailfrom="sender@origin.example", rcptto=["user@test2.dkim2.com"],
         timestamp=1740000000)
-    # forwarder modifies the body, then signs i=2 / m=2
-    hop1_mod = hop1.replace(b"body line\r\n", b"body line\r\nforwarder footer\r\n")
-    hop2 = dkim2sign.sign_message(
-        hop1_mod, "rsa1024", "test2.dkim2.com", _key("rsa1024", "test2.dkim2.com"),
+
+    # The forwarder appends a footer, then records m=2 over the NEW content
+    # with the Recipe that takes the body back to the m=1 state: keep line 1.
+    headers, body = dkim2sign.parse_message(hop1)
+    body += b"forwarder footer\r\n"
+    content = [h for h in headers
+               if dkim2sign._header_name(h) not in (b"message-instance",
+                                                    b"dkim2-signature")]
+    existing_mi = [h.decode("utf-8", "surrogateescape") for h in headers
+                   if dkim2sign._header_name(h) == b"message-instance"]
+    existing_sig = [h.decode("utf-8", "surrogateescape") for h in headers
+                    if dkim2sign._header_name(h) == b"dkim2-signature"]
+    mi2 = dkim2sign.build_message_instance(content, body, version=2,
+                                           recipe={"b": [{"c": [1, 1]}]})
+    priv, alg = dkim2sign.load_private_key(_key("rsa1024", "test2.dkim2.com"))
+    sig2 = dkim2sign.build_dkim2_signature(
+        existing_mi, existing_sig, mi2, "test2.dkim2.com", "rsa1024", priv, alg,
         mailfrom="user@test2.dkim2.com", rcptto=["dest@test3.dkim2.com"],
-        timestamp=1740000000)
-    return hop2
+        seq=2, mi_version=2, timestamp=1740000000)
+
+    out = b"".join(h.encode("utf-8", "surrogateescape") + b"\r\n"
+                   for h in [sig2] + existing_sig + [mi2] + existing_mi)
+    out += b"".join(h + b"\r\n" for h in content)
+    return out + b"\r\n" + body
 
 
 def _wrap_dsn(embedded: bytes) -> bytes:
@@ -130,6 +156,110 @@ def test_propagate_basic():
     sigs = [h for h in headers if dkim2sign._header_name(h) == b"dkim2-signature"]
     assert len(mis) == 1, f"{len(mis)} MIs (want 1, new message)"
     assert len(sigs) == 1, f"{len(sigs)} sigs (want 1, new message)"
+
+
+def _null_recipe_embedded():
+    """A two-hop message whose m=2 declares the previous body unrecoverable.
+
+    §12.1.1's "null Recipe": the forwarder says the m=1 body cannot be put
+    back, so propagate must return the header fields alone rather than a body
+    it cannot reconstruct.
+    """
+    raw = (b"From: sender@origin.example\r\n"
+           b"To: user@test1.dkim2.com\r\n"
+           b"Subject: hello\r\n\r\nbody line\r\n")
+    hop1 = dkim2sign.sign_message(
+        raw, "rsa1024", "test1.dkim2.com", _key("rsa1024", "test1.dkim2.com"),
+        mailfrom="sender@origin.example", rcptto=["user@test2.dkim2.com"],
+        timestamp=1740000000)
+
+    headers, body = dkim2sign.parse_message(hop1)
+    body = b"replaced entirely\r\n"
+    content = [h for h in headers
+               if dkim2sign._header_name(h) not in (b"message-instance",
+                                                    b"dkim2-signature")]
+    existing_mi = [h.decode("utf-8", "surrogateescape") for h in headers
+                   if dkim2sign._header_name(h) == b"message-instance"]
+    existing_sig = [h.decode("utf-8", "surrogateescape") for h in headers
+                    if dkim2sign._header_name(h) == b"dkim2-signature"]
+    mi2 = dkim2sign.build_message_instance(content, body, version=2,
+                                           recipe={"b": None})
+    priv, alg = dkim2sign.load_private_key(_key("rsa1024", "test2.dkim2.com"))
+    sig2 = dkim2sign.build_dkim2_signature(
+        existing_mi, existing_sig, mi2, "test2.dkim2.com", "rsa1024", priv, alg,
+        mailfrom="user@test2.dkim2.com", rcptto=["dest@test3.dkim2.com"],
+        seq=2, mi_version=2, timestamp=1740000000)
+
+    out = b"".join(h.encode("utf-8", "surrogateescape") + b"\r\n"
+                   for h in [sig2] + existing_sig + [mi2] + existing_mi)
+    out += b"".join(h + b"\r\n" for h in content)
+    return out + b"\r\n" + body
+
+
+def test_propagate_null_recipe_returns_headers_only():
+    out = dkim2dsn.propagate(
+        _wrap_dsn(_null_recipe_embedded()), forwarder_domain="test2.dkim2.com",
+        keyfile=_key("ed25519", "test3.dkim2.com"),
+        selector="ed25519", domain="test3.dkim2.com", timestamp=1740000000,
+        skip_authentication=True)
+    assert out["upstream_mailfrom"] == "<sender@origin.example>", out["upstream_mailfrom"]
+
+    msg = email.message_from_bytes(out["raw"])
+    parts = msg.get_payload()
+    types = [p.get_content_type() for p in parts]
+    assert "text/rfc822-headers" in types, types
+    assert "message/rfc822" not in types, types
+
+    # The forwarder's whole hop comes off: its instance goes with the
+    # signature that covered it, or the returned message carries an instance
+    # above its own top signature (§11 "is not signed") upstream.
+    inner = [p for p in parts if p.get_content_type() == "text/rfc822-headers"][0]
+    hdrs, _ = dkim2sign.parse_message(dkim2dsn._embedded_bytes(inner))
+    mis = [h.decode() for h in hdrs if dkim2sign._header_name(h) == b"message-instance"]
+    sigs = [h.decode() for h in hdrs if dkim2sign._header_name(h) == b"dkim2-signature"]
+    assert len(mis) == 1 and "m=1" in mis[0], mis
+    assert len(sigs) == 1 and "i=1" in sigs[0], sigs
+
+
+def test_propagate_refuses_when_undo_simply_fails():
+    # No Recipe at all for a body that did change: undo cannot get back to the
+    # m=1 body and does not claim to. That is a defect, not a declaration, so
+    # there is nothing truthful to return and propagate must not invent one.
+    raw = (b"From: sender@origin.example\r\n"
+           b"To: user@test1.dkim2.com\r\n"
+           b"Subject: hello\r\n\r\nbody line\r\n")
+    hop1 = dkim2sign.sign_message(
+        raw, "rsa1024", "test1.dkim2.com", _key("rsa1024", "test1.dkim2.com"),
+        mailfrom="sender@origin.example", rcptto=["user@test2.dkim2.com"],
+        timestamp=1740000000)
+    headers, body = dkim2sign.parse_message(hop1)
+    body += b"forwarder footer\r\n"
+    content = [h for h in headers
+               if dkim2sign._header_name(h) not in (b"message-instance",
+                                                    b"dkim2-signature")]
+    existing_mi = [h.decode("utf-8", "surrogateescape") for h in headers
+                   if dkim2sign._header_name(h) == b"message-instance"]
+    existing_sig = [h.decode("utf-8", "surrogateescape") for h in headers
+                    if dkim2sign._header_name(h) == b"dkim2-signature"]
+    mi2 = dkim2sign.build_message_instance(content, body, version=2)
+    priv, alg = dkim2sign.load_private_key(_key("rsa1024", "test2.dkim2.com"))
+    sig2 = dkim2sign.build_dkim2_signature(
+        existing_mi, existing_sig, mi2, "test2.dkim2.com", "rsa1024", priv, alg,
+        mailfrom="user@test2.dkim2.com", rcptto=["dest@test3.dkim2.com"],
+        seq=2, mi_version=2, timestamp=1740000000)
+    broken = b"".join(h.encode("utf-8", "surrogateescape") + b"\r\n"
+                      for h in [sig2] + existing_sig + [mi2] + existing_mi)
+    broken += b"".join(h + b"\r\n" for h in content) + b"\r\n" + body
+
+    try:
+        dkim2dsn.propagate(
+            _wrap_dsn(broken), forwarder_domain="test2.dkim2.com",
+            keyfile=_key("ed25519", "test3.dkim2.com"),
+            selector="ed25519", domain="test3.dkim2.com", timestamp=1740000000,
+            skip_authentication=True)
+        assert False, "propagate should not answer an unreconstructable message"
+    except ValueError as e:
+        assert "hash mismatch after undo" in str(e), str(e)
 
 
 # --- authenticate: §12.1.2, the returned original's chain must verify -------
@@ -325,10 +455,16 @@ def test_check_alignment_domain_relationships():
     # reject behaviour through the real entry point is covered above; this
     # pins the direction question, which is what would otherwise be guessed.
     rt_test3 = {"rt": ["<dest@test3.dkim2.com>"]}
-    for d in ("bounce.test3.dkim2.com", "dkim2.com", "test3.dkim2.com"):
+    # §9.4's direction: labels come off the ADDRESS domain, so d= may be the
+    # delivery domain or a parent of it.
+    for d in ("test3.dkim2.com", "dkim2.com"):
         state, detail = dkim2dsn._check_alignment({"d": d}, rt_test3)
         assert state == "pass", (d, detail)
-    for d in ("test4.dkim2.com", "test3.dkim2.com.evil.example", "evil.example"):
+    # Never a child of it: a system with a dedicated bounce domain signs as its
+    # org domain and puts the bounce address on the subdomain, so this shape
+    # has no legitimate producer.
+    for d in ("bounce.test3.dkim2.com", "test4.dkim2.com",
+              "test3.dkim2.com.evil.example", "evil.example"):
         state, _ = dkim2dsn._check_alignment({"d": d}, rt_test3)
         assert state == "fail", d
     # An nd= top signature on the returned message has no rt= to align with.
@@ -425,6 +561,8 @@ if __name__ == "__main__":
     test_propagate_rejects_missing_delivery_status()
     test_propagate_accepts_wellformed_three_part_dsn()
     test_propagate_basic()
+    test_propagate_null_recipe_returns_headers_only()
+    test_propagate_refuses_when_undo_simply_fails()
     test_authenticate_intact_two_hop()
     test_authenticate_headers_only()
     test_authenticate_rejects_tampered_headers()
