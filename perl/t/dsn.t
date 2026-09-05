@@ -383,4 +383,44 @@ sub dsn_around {
     ok(!$auth->{top}, '  ... with no top signature');
 }
 
+# === propagate: a Forwarder's §9.3 bridge goes with its hop ===
+{
+    # test1 -> user@test2; test2 bridges with nd= and sends from test3 to test5.
+    my $raw = "From: Sender <sender\@test1.dkim2.com>\r\nTo: user\@test2.dkim2.com\r\n"
+            . "Subject: bridged\r\n\r\nbody line\r\n";
+    my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($raw));
+    my $msg = "Message-Instance: " . $mi->as_string . "\r\n" . $raw;
+    for my $hop (
+        [ 'test1.dkim2.com', MailFrom => 'sender@test1.dkim2.com', RcptTo => ['user@test2.dkim2.com'] ],
+        [ 'test2.dkim2.com', NextDomain => 'test3.dkim2.com' ],
+        [ 'test3.dkim2.com', MailFrom => 'srs0=x@bounce.test3.dkim2.com', RcptTo => ['dest@test5.dkim2.com'] ],
+    ) {
+        my ($domain, %env) = @$hop;
+        my $signer = Mail::DKIM2::Signer->new(
+            Domain => $domain, Selector => 'sel1',
+            Key => DKIM2TestKeys::private_key($domain, 'sel1'), Timestamp => $TS, %env,
+        );
+        $signer->PRINT($msg); $signer->CLOSE;
+        (my $sig = $signer->as_string) =~ s/\r?\n$//;
+        $msg = "$sig\r\n$msg";
+    }
+
+    my $auth = Mail::DKIM2::DSN->authenticate({
+        raw => dsn_around($msg), pubkey_callback => DKIM2TestKeys::pubkey_callback(), skip_timestamp_check => 1,
+    });
+    ok($auth->{ok}, 'a DSN returning a bridged chain authenticates') or diag($auth->{details});
+
+    my $out = Mail::DKIM2::DSN->propagate({
+        raw => dsn_around($msg), forwarder_domain => 'test3.dkim2.com',
+        signer => mk_signer(domain => 'test2.dkim2.com'),
+    });
+    is($out->{upstream_mailfrom}, '<sender@test1.dkim2.com>',
+       'the bridge is stripped with the hop: the report goes to the hop before both');
+    my $m = Email::MIME->new($out->{raw});
+    my ($orig) = grep { ($_->content_type // '') =~ m{^message/rfc822} } $m->subparts;
+    my @inner = map { Mail::DKIM2::Signature->parse($_) } Email::MIME->new($orig->body)->header_raw('DKIM2-Signature');
+    is(scalar @inner, 1, 'one signature left on the returned message');
+    ok(!defined $inner[0]->next_domain, '  ... and it is not the nd= bridge');
+}
+
 done_testing;

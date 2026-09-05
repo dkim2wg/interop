@@ -28,6 +28,11 @@ my $num = %map ? max(keys %map) : 0;
 my %mimap = map { extract_mi_version($_) => $_ } $msg1->header('Message-Instance');
 my $instance = %mimap ? max(keys %mimap) : 0;
 
+# The true top of the chain, remembered before the walk below starts stripping
+# signatures off $msg1. Every step after the first verifies a PARTIAL view, in
+# which the locally-highest i= is not the real top -- see mid_process below.
+my $top_i = $num;
+
 # spec-06 §11: "there MUST NOT be a Message-Instance field with a higher m=
 # value than occurs in any DKIM2-Signature field" -- reported as "PERMERROR
 # Message-Instance m=<x> is not signed". Checked up front because the walk
@@ -68,6 +73,12 @@ while (1) {
   # Create a verifier for this specific signature
   my $verifier = Mail::DKIM2::Verifier->new();
   $verifier->skip_timestamp_check(1) if $ignore_ts;
+  # After the first step this is a partial view (higher DKIM2-Signature
+  # headers have been stripped), so its locally-highest i= is not the real
+  # top of the chain and Verifier.pm's top-nd= rejection must not fire: a
+  # legitimate §9.3 nd= bridge below the top looks locally topmost here.
+  # The first step still sees the whole chain, so a true top nd= is caught.
+  $verifier->mid_process(1) if $num < $top_i;
   $verifier->set_pubkey_callback(sub { find_key(@_) });
   $verifier->PRINT($msg1->as_string());
   $verifier->CLOSE;

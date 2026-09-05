@@ -151,6 +151,43 @@ test('MI with no supported hash algorithm fails closed (§11.7)', async () => {
   assert.match(mi.detail, /no supported hash algorithm/);
 });
 
+// --- §9.3 a Forwarder's nd= bridge after a real hop ---------------------
+//
+// The message arrives at test2 (i=1 rt=); test2 sends it on from test3, and
+// bridges the gap with an nd= hop before signing the real hop as test3. Only
+// custody is under test here, so the crypto is left as a stub — custodyCheck
+// runs regardless of whether the signature bytes verify, and the assertions
+// are on the per-level custody fields rather than the overall verdict.
+const bridgedRaw = (bridgeDomain) =>
+  'From: a@b\r\n' +
+  'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+  'DKIM2-Signature: i=1; m=1; t=1000000; d=test1.dkim2.com; s=sel:rsa-sha256:AAA; ' +
+    'mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+; rt=PHVzZXJAdGVzdDIuZGtpbTIuY29tPg==\r\n' +
+  `DKIM2-Signature: i=2; m=1; t=1000000; d=${bridgeDomain}; s=sel:rsa-sha256:AAA; ` +
+    'nd=test3.dkim2.com\r\n' +
+  'DKIM2-Signature: i=3; m=1; t=1000000; d=test3.dkim2.com; s=sel:rsa-sha256:AAA; ' +
+    'mf=PHNyczA9eEBib3VuY2UudGVzdDMuZGtpbTIuY29tPg==; rt=PGRlc3RAdGVzdDUuZGtpbTIuY29tPg==\r\n' +
+  '\r\nhi\r\n';
+
+test('a §9.3 bridge made with a key for the receiving domain keeps custody', async () => {
+  const rep = await verifyMessage(bridgedRaw('test2.dkim2.com'),
+    { now: 1000000, fetchKey: stubKey });
+  const sig2 = rep.levels.find((l) => l.kind === 'signature' && l.i === 2);
+  const sig3 = rep.levels.find((l) => l.kind === 'signature' && l.i === 3);
+  assert.equal(sig2.custody.ok, true, sig2.custody.detail);
+  // i=3's mf= must NOT be compared against the bridge's (absent) rt= — that
+  // pair is governed by the nd=/d= adjacency, or every bridged forward fails.
+  assert.equal(sig3.custody.ok, true, sig3.custody.detail);
+});
+
+test('a §9.3 bridge from a domain the mail never reached fails custody', async () => {
+  const rep = await verifyMessage(bridgedRaw('test4.dkim2.com'),
+    { now: 1000000, fetchKey: stubKey });
+  const sig2 = rep.levels.find((l) => l.kind === 'signature' && l.i === 2);
+  assert.equal(sig2.custody.ok, false);
+  assert.match(sig2.custody.detail, /i=2 nd= hop d=test4\.dkim2\.com did not match i=1 rt=/);
+});
+
 // --- §11.4 top-hop envelope exact-match ---------------------------------
 test('envelope match with differing domain case is not a permerror (§11.4)', async () => {
   // mf/rt domains are lower-cased before comparison, so an upper-case delivery

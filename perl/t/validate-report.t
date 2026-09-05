@@ -197,6 +197,55 @@ sub signed_input_nd {
        'nd= adjacency custody detail matches the canonical spec-06 wording');
 }
 
+# 1d-bis) A Forwarder's §9.3 bridge after a real hop: the message arrived at
+# test2 (i=1 rt=), test2 bridges with an nd= hop made with its own key and
+# then signs the real hop as test3. The bridge carries no mf=, so what
+# Validate.pm's per-signature custody must check is its d= against i=1's rt=
+# -- the same rule Verifier.pm applies, or the report and the verdict disagree.
+{
+    my $msg = build_chain(
+        { domain => 'test1.dkim2.com', mailfrom => 'sender@test1.dkim2.com',
+          rcptto => ['user@test2.dkim2.com'] },
+        { domain => 'test2.dkim2.com', next_domain => 'test3.dkim2.com' },
+        { domain => 'test3.dkim2.com', mailfrom => 'srs0=x@bounce.test3.dkim2.com',
+          rcptto => ['dest@test5.dkim2.com'] },
+    );
+    my $rep = Mail::DKIM2::Validate::report($msg, %ropt);
+    is($rep->{overall}, 'pass', 'a bridged forward validates overall pass');
+    my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i} == 2 } @{$rep->{levels}};
+    ok($sig2->{custody}{ok}, 'bridge: i=2 custody ok');
+    like($sig2->{custody}{detail}, qr/nd= hop d=test2\.dkim2\.com matches rt= of i=1/,
+        'custody detail explains which rule the bridge satisfied');
+    # Not just custody: the LEVEL must pass too. The per-level sub-verify runs
+    # against a partial view with i=3 stripped, in which the bridge looks
+    # locally topmost -- the top-nd= rejection must not fire there. Asserting
+    # only $rep->{overall} would miss it (bin/validate.pl, which does the same
+    # top-down walk, really did reject this while overall still read 'pass').
+    is($sig2->{result}, 'pass', '  ... and the level itself passes, not just overall')
+        or diag($sig2->{detail});
+    is_deeply([map { $_->{result} } grep { $_->{kind} eq 'signature' } @{$rep->{levels}}],
+              ['pass','pass','pass'], '  ... as do all three levels');
+}
+
+# 1d-ter) The same shape with a bridge made with a key for a domain the mail
+# never arrived at (§9.3 requires a key for a domain in the RCPT TO it came
+# in on), so the report must flag i=2's custody.
+{
+    my $msg = build_chain(
+        { domain => 'test1.dkim2.com', mailfrom => 'sender@test1.dkim2.com',
+          rcptto => ['user@test2.dkim2.com'] },
+        { domain => 'test4.dkim2.com', next_domain => 'test3.dkim2.com' },
+        { domain => 'test3.dkim2.com', mailfrom => 'srs0=x@bounce.test3.dkim2.com',
+          rcptto => ['dest@test5.dkim2.com'] },
+    );
+    my $rep = Mail::DKIM2::Validate::report($msg, %ropt);
+    my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i} == 2 } @{$rep->{levels}};
+    ok(!$sig2->{custody}{ok}, 'a bridge from a domain the mail never reached is flagged');
+    is($sig2->{custody}{detail},
+       'DKIM2-Signature i=2 nd= hop d=test4.dkim2.com did not match RCPT TO',
+       'and the detail is the same wording Verifier.pm reports');
+}
+
 # 1e) Chain of Custody break: i=2's mf= domain does not relaxed-match any rt=
 # of i=1. Also Validate.pm's OWN custody logic (see 1d above). Must match the
 # same canonical wording as the Verifier.pm Chain of Custody permerror.

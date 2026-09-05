@@ -292,6 +292,84 @@ func TestAuthenticateUnsignedOriginal(t *testing.T) {
 	}
 }
 
+// --- Propagate: a Forwarder's §9.3 bridge goes with its hop ----------------
+
+// bridgedChain: test1 -> user@test2; test2 bridges with nd= and sends the real
+// hop from test3.
+func bridgedChain(t *testing.T) []byte {
+	t.Helper()
+	const keys = "../../keys/"
+	raw := []byte("From: Sender <sender@test1.dkim2.com>\r\n" +
+		"To: user@test2.dkim2.com\r\n" +
+		"Subject: bridged\r\n\r\nbody line\r\n")
+	hop1 := signOnce(t, raw, keys+"sel1._domainkey.test1.dkim2.com.pem",
+		"sel1", "test1.dkim2.com", "sender@test1.dkim2.com",
+		[]string{"user@test2.dkim2.com"})
+	hop2 := ndSignHop(t, hop1, "sel1._domainkey.test2.dkim2.com.pem", "sel1",
+		"test2.dkim2.com", "", nil, "test3.dkim2.com")
+	return signOnce(t, hop2, keys+"sel1._domainkey.test3.dkim2.com.pem",
+		"sel1", "test3.dkim2.com", "srs0=x@bounce.test3.dkim2.com",
+		[]string{"dest@test5.dkim2.com"})
+}
+
+func TestAuthenticateBridgedChain(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	res, err := Authenticate(dsnAround(t, bridgedChain(t), false), f,
+		VerifyOptions{SkipTimestampCheck: true})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("a DSN returning a bridged chain did not authenticate: %v", res.Reason)
+	}
+	if res.Top == nil || res.Top.Sequence != 3 {
+		t.Fatalf("Top = %+v, want i=3", res.Top)
+	}
+}
+
+func TestPropagateStripsTheBridgeWithItsHop(t *testing.T) {
+	const keys = "../../keys/"
+	out, upstream, err := Propagate(dsnAround(t, bridgedChain(t), false), PropagateOptions{
+		ForwarderDomain: "test3.dkim2.com",
+		Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
+		Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
+	})
+	if err != nil {
+		t.Fatalf("Propagate: %v", err)
+	}
+	// The report goes to the hop before both: the bridge is not a hop of its
+	// own, and an nd= signature is never valid as the top of a chain.
+	if upstream != "<sender@test1.dkim2.com>" {
+		t.Fatalf("upstream = %q, want <sender@test1.dkim2.com>", upstream)
+	}
+
+	rep, err := parseReport(out)
+	if err != nil {
+		t.Fatalf("parse propagated DSN: %v", err)
+	}
+	_, inner := splitPartHeaders(rep.segments[rep.embeddedSeg])
+	headers, _, err := parseHeaders(strings.NewReader(inner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sigs []*DKIM2Signature
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "dkim2-signature") {
+			sig, perr := parseSig(h.Raw)
+			if perr != nil {
+				t.Fatalf("parse returned-message signature: %v", perr)
+			}
+			sigs = append(sigs, sig)
+		}
+	}
+	if len(sigs) != 1 {
+		t.Fatalf("%d signatures left on the returned message, want 1", len(sigs))
+	}
+	if sigs[0].NextDomain != "" {
+		t.Fatalf("the signature left is the nd= bridge (nd=%s)", sigs[0].NextDomain)
+	}
+}
+
 func TestAuthenticateRejectsNonDSN(t *testing.T) {
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	_, err := Authenticate([]byte("From: a@b.example\r\n\r\nnot a DSN\r\n"), f)

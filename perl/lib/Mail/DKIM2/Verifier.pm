@@ -667,8 +667,31 @@ sub _verify_chain {
             next;
         }
 
-        my $cur_mf = $cur_sig->mail_from;
         my $prev_rt = $prev_sig->rcpt_to;
+        unless ($prev_rt) {
+            $self->{result} = 'fail';
+            $self->{details} = "DKIM2-Signature i=$prev_i RCPT TO <> did not match";
+            return 0;
+        }
+        my @prev_rts = ref($prev_rt) eq 'ARRAY' ? @$prev_rt : ($prev_rt);
+
+        # draft-06 §9.3: an nd= hop after a real one is a Forwarder bridging
+        # the gap between the domain it received the message at and the
+        # domain it sends from, and it has to be made with a key for a
+        # domain in the RCPT TO the message arrived with. So what has to
+        # match the previous rt= here is the hop's d=, since it has no mf=.
+        my $cur_nd = $cur_sig->next_domain;
+        if (defined $cur_nd && length $cur_nd) {
+            my $cur_d = $cur_sig->domain // '';
+            unless (grep { relaxed_domain_match($cur_d, extract_domain($_)) } @prev_rts) {
+                $self->{result} = 'fail';
+                $self->{details} = "DKIM2-Signature i=$cur_i nd= hop d=$cur_d did not match RCPT TO";
+                return 0;
+            }
+            next;
+        }
+
+        my $cur_mf = $cur_sig->mail_from;
 
         # Chain of Custody: mf of N must relaxed-domain-match an rt of N-1
         unless ($cur_mf) {
@@ -676,15 +699,9 @@ sub _verify_chain {
             $self->{details} = "DKIM2-Signature i=$cur_i MAIL FROM <> did not match";
             return 0;
         }
-        unless ($prev_rt) {
-            $self->{result} = 'fail';
-            $self->{details} = "DKIM2-Signature i=$prev_i RCPT TO <> did not match";
-            return 0;
-        }
 
         my $cur_mf_domain = extract_domain($cur_mf);
         my $match = 0;
-        my @prev_rts = ref($prev_rt) eq 'ARRAY' ? @$prev_rt : ($prev_rt);
         for my $rt (@prev_rts) {
             my $rt_domain = extract_domain($rt);
             if (relaxed_domain_match($cur_mf_domain, $rt_domain)) {

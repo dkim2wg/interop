@@ -210,6 +210,53 @@ def test_authenticate_unsigned_original_reports_none():
     assert auth["top"] is None
 
 
+# --- propagate: a Forwarder's §9.3 bridge goes with its hop ----------------
+
+def _bridged_twohop() -> bytes:
+    """test1 -> user@test2; test2 bridges with nd= and sends from test3."""
+    raw = (b"From: Sender <sender@test1.dkim2.com>\r\n"
+           b"To: user@test2.dkim2.com\r\n"
+           b"Subject: bridged\r\n\r\nbody line\r\n")
+    msg = dkim2sign.sign_message(
+        raw, "sel1", "test1.dkim2.com", _key("sel1", "test1.dkim2.com"),
+        mailfrom="sender@test1.dkim2.com", rcptto=["user@test2.dkim2.com"],
+        timestamp=1740000000)
+    msg = dkim2sign.sign_message(
+        msg, "sel1", "test2.dkim2.com", _key("sel1", "test2.dkim2.com"),
+        next_domain="test3.dkim2.com", timestamp=1740000000)
+    return dkim2sign.sign_message(
+        msg, "sel1", "test3.dkim2.com", _key("sel1", "test3.dkim2.com"),
+        mailfrom="srs0=x@bounce.test3.dkim2.com", rcptto=["dest@test5.dkim2.com"],
+        timestamp=1740000000)
+
+
+def test_authenticate_bridged_chain():
+    auth = dkim2dsn.authenticate(_wrap_dsn(_bridged_twohop()), DNS_DATA,
+                                 skip_timestamp_check=True)
+    assert auth["ok"], auth["message"]
+    assert auth["top"]["i"] == 3, auth["top"]
+
+
+def test_propagate_strips_the_bridge_with_its_hop():
+    out = dkim2dsn.propagate(
+        _wrap_dsn(_bridged_twohop()), forwarder_domain="test3.dkim2.com",
+        keyfile=_key("sel1", "test2.dkim2.com"),
+        selector="sel1", domain="test2.dkim2.com", timestamp=1740000000)
+    # The report goes to the hop before both: the bridge is not a hop of its
+    # own, and an nd= signature is never valid as the top of a chain.
+    assert out["upstream_mailfrom"] == "<sender@test1.dkim2.com>", out["upstream_mailfrom"]
+
+    msg = email.message_from_bytes(out["raw"])
+    orig = [p for p in msg.get_payload()
+            if p.get_content_type() == "message/rfc822"][0]
+    inner = dkim2dsn._embedded_bytes(orig)
+    headers, _ = dkim2sign.parse_message(inner)
+    sigs = [h.decode() for h in headers
+            if dkim2sign._header_name(h) == b"dkim2-signature"]
+    assert len(sigs) == 1, sigs
+    assert not dkim2sign._extract_tag(dkim2dsn._hval(sigs[0]), "nd"), sigs[0]
+
+
 def test_authenticate_rejects_non_dsn():
     try:
         dkim2dsn.authenticate(b"From: a@b.example\r\n\r\nnot a DSN\r\n", DNS_DATA)
@@ -226,5 +273,7 @@ if __name__ == "__main__":
     test_authenticate_headers_only()
     test_authenticate_rejects_tampered_headers()
     test_authenticate_unsigned_original_reports_none()
+    test_authenticate_bridged_chain()
+    test_propagate_strips_the_bridge_with_its_hop()
     test_authenticate_rejects_non_dsn()
     print("python dsn tests OK")

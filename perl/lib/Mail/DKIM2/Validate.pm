@@ -340,10 +340,22 @@ sub _sig_level {
                         # typo preserved, keyed on the *previous* hop's i=.
                         : { ok => 0, detail => "DKIM2-Signature i=" . ($num - 1) . " MAIL nd= does not match" };
                 } else {
+                    my @rts = do { my $rt = $prev->rcpt_to; ref $rt eq 'ARRAY' ? @$rt : ($rt // ()) };
+                    my $cur_nd = $sig->next_domain;
                     my $mf = $sig->mail_from;
-                    if ($mf && $mf ne '<>') {
+                    if (defined $cur_nd && length $cur_nd) {
+                        # draft-06 §9.3: a bridge after a real hop has no mf=, so
+                        # what must match the previous rt= is its d= — the key it
+                        # has to be made with. Mirrors Verifier.pm's check so the
+                        # report and the verdict cannot disagree.
+                        my $cur_d = $sig->domain // '';
+                        my $ok = grep { relaxed_domain_match($cur_d, extract_domain($_) // '') } @rts;
+                        $lvl{custody} = $ok
+                            ? { ok => 1, detail => "nd= hop d=$cur_d matches rt= of i=" . ($num - 1) }
+                            : { ok => 0, detail => "DKIM2-Signature i=$num nd= hop d=$cur_d did not match RCPT TO" };
+                    }
+                    elsif ($mf && $mf ne '<>') {
                         my $mfd = extract_domain($mf);
-                        my @rts = do { my $rt = $prev->rcpt_to; ref $rt eq 'ARRAY' ? @$rt : ($rt // ()) };
                         my $ok = grep { relaxed_domain_match($mfd // '', extract_domain($_) // '') } @rts;
                         $lvl{custody} = $ok ? { ok => 1, detail => '' }
                                             # Canonical spec-06 wording (Task 3.1), same

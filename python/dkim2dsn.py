@@ -46,17 +46,31 @@ def _highest_sig_mailfrom(raw: bytes):
 
 
 def _strip_top_sig(raw: bytes) -> bytes:
-    """Remove the single highest-sequence DKIM2-Signature header from raw."""
+    """Remove the Forwarder's hop from raw: the highest-sequence
+    DKIM2-Signature, and then any nd= signature left on top, since a §9.3
+    bridge belongs to the hop it was made for and an nd= signature is never
+    valid as the top of a chain."""
     headers, body = dkim2sign.parse_message(raw)
     sig_idx = [i for i, h in enumerate(headers)
                if dkim2sign._header_name(h) == b"dkim2-signature"]
     if not sig_idx:
         return raw
-    top_i = max(sig_idx,
-                key=lambda i: dkim2sign._get_seq_from_sig(
-                    headers[i].decode("utf-8", "surrogateescape")))
-    kept = [h for j, h in enumerate(headers) if j != top_i]
-    return b"".join(kept) + b"\r\n" + body
+    ordered = sorted(sig_idx,
+                     key=lambda i: dkim2sign._get_seq_from_sig(
+                         headers[i].decode("utf-8", "surrogateescape")))
+    drop = {ordered.pop()}
+    while ordered:
+        val = _hval(headers[ordered[-1]].decode("utf-8", "surrogateescape"))
+        if not dkim2sign._extract_tag(val, "nd"):
+            break
+        drop.add(ordered.pop())
+    kept = [h for j, h in enumerate(headers) if j not in drop]
+    # parse_message() returns each field WITHOUT its trailing CRLF, so the
+    # fields have to be rejoined with one and the header block terminated with
+    # the blank line. (Reachable for the first time via a §9.3 bridge: until
+    # then every message that got here had two Message-Instances and was
+    # rebuilt by undo_message_instance instead.)
+    return b"\r\n".join(kept) + b"\r\n\r\n" + body
 
 
 def _embedded_bytes(part) -> bytes:

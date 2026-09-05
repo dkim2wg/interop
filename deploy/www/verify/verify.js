@@ -558,9 +558,24 @@ function custodyCheck(level, signatures, i, maxI, opts) {
     if ((next.map.d || '').toLowerCase() !== sig.map.nd.toLowerCase()) {
       level.custody = { ok: false, detail: `nd= does not match i=${i + 1} d=` };
       level.custodyState = 'permerror';
-    } else {
-      level.custody = { ok: true, detail: `nd=${sig.map.nd} matches i=${i + 1} d=` };
+      return;
     }
+    // §9.3: an nd= hop after a real one is a Forwarder bridging the gap
+    // between the domain it received the message at and the domain it sends
+    // from, and it has to be made with a key for a domain in the RCPT TO the
+    // message arrived with. It has no mf=, so what must match the previous
+    // hop's rt= is its own d=.
+    if (i > 1) {
+      const lower = signatures[i - 1];
+      const ndD = (sig.map.d || '').toLowerCase();
+      const rtDomains = (lower.map.rt || '').split(',').map((r) => domainOf(b64ToString(r)));
+      if (!rtDomains.some((rt) => relaxedDomainMatch(ndD, rt))) {
+        level.custody = { ok: false, detail: `i=${i} nd= hop d=${ndD} did not match i=${i - 1} rt=` };
+        level.custodyState = 'permerror';
+        return;
+      }
+    }
+    level.custody = { ok: true, detail: `nd=${sig.map.nd} matches i=${i + 1} d=` };
     return;
   }
 
@@ -582,7 +597,11 @@ function custodyCheck(level, signatures, i, maxI, opts) {
   }
 
   // Inter-signature: mf= of this hop matches an rt= of the next-lower hop.
-  if (i > 1) {
+  // Unless the lower hop is an nd= one: it carries no rt= at all, and that
+  // pair is governed by the nd=/d= adjacency checked on the lower level
+  // instead (§9.3/§11.4). Comparing against its absent rt= here would fail
+  // every legitimately bridged forward.
+  if (i > 1 && !('nd' in signatures[i - 1].map)) {
     const lower = signatures[i - 1];
     const rtDomains = (lower.map.rt || '').split(',').map((r) => domainOf(b64ToString(r)));
     const matched = rtDomains.some((rt) => relaxedDomainMatch(mfDomain, rt));

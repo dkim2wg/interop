@@ -215,7 +215,11 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	}
 
 	// 3. Splice the rebuilt original back into the part and reassemble the body.
-	segments[rep.embeddedSeg] = partHdr + "\r\n" + string(embeddedFinal)
+	//    splitPartHeaders strips the blank line that ends the part's own header
+	//    block, so both CRLFs have to go back: one to end the last part header,
+	//    one for the separator. With only one, the returned message's headers
+	//    are absorbed into the part's header block and it has no body at all.
+	segments[rep.embeddedSeg] = partHdr + "\r\n\r\n" + string(embeddedFinal)
 	newBody := strings.Join(segments, delim)
 
 	// 4. Reassemble the DSN (unchanged outer headers + new body) and re-sign it
@@ -281,21 +285,36 @@ func stripTopSig(raw []byte) ([]byte, error) {
 	body := new(bytes.Buffer)
 	body.ReadFrom(bodyReader)
 
-	maxSeq, found := -1, false
+	// Collect the sequence numbers present, then decide which to drop: the
+	// highest, and then any nd= signature left on top, since a §9.3 bridge
+	// belongs to the hop it was made for and an nd= signature is never valid
+	// as the top of a chain.
+	bySeq := map[int]*DKIM2Signature{}
+	var seqs []int
 	for _, h := range headers {
 		if strings.EqualFold(h.Name, "dkim2-signature") {
-			if sig, err := parseSig(h.Raw); err == nil && sig.Sequence > maxSeq {
-				maxSeq, found = sig.Sequence, true
+			if sig, err := parseSig(h.Raw); err == nil {
+				bySeq[sig.Sequence] = sig
+				seqs = append(seqs, sig.Sequence)
 			}
 		}
 	}
-	if !found {
+	if len(seqs) == 0 {
 		return nil, fmt.Errorf("no DKIM2-Signature to strip")
 	}
+	sort.Ints(seqs)
+	drop := map[int]bool{seqs[len(seqs)-1]: true}
+	for i := len(seqs) - 2; i >= 0; i-- {
+		if bySeq[seqs[i]].NextDomain == "" {
+			break
+		}
+		drop[seqs[i]] = true
+	}
+
 	var out bytes.Buffer
 	for _, h := range headers {
 		if strings.EqualFold(h.Name, "dkim2-signature") {
-			if sig, err := parseSig(h.Raw); err == nil && sig.Sequence == maxSeq {
+			if sig, err := parseSig(h.Raw); err == nil && drop[sig.Sequence] {
 				continue
 			}
 		}

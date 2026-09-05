@@ -97,6 +97,52 @@ func TestNonTopNdChainVerifies(t *testing.T) {
 	}
 }
 
+// TestBridgeFromUnrelatedDomainRejected is the §9.3 requirement behind the
+// case above: the extra DKIM2-Signature has to be made with a key for a domain
+// in the RCPT TO the message arrived with. Here the bridge is signed by
+// test4.dkim2.com, which the message never reached, so the chain must fail.
+func TestBridgeFromUnrelatedDomainRejected(t *testing.T) {
+	raw := ndTestRaw(t)
+
+	hop1 := ndSignHop(t, raw, "ed25519._domainkey.test1.dkim2.com.pem", "ed25519",
+		"test1.dkim2.com", "sender@test1.dkim2.com", []string{"relay@test2.dkim2.com"}, "")
+
+	hop2 := ndSignHop(t, hop1, "ed25519._domainkey.test4.dkim2.com.pem", "ed25519",
+		"test4.dkim2.com", "", nil, "test3.dkim2.com")
+
+	hop3 := ndSignHop(t, hop2, "ed25519._domainkey.test3.dkim2.com.pem", "ed25519",
+		"test3.dkim2.com", "recipient@test3.dkim2.com", []string{"final@test3.dkim2.com"}, "")
+
+	_, err := Verify(bytes.NewReader(hop3), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
+	if err == nil {
+		t.Fatal("a bridge from a domain the mail never reached was accepted")
+	}
+	if !strings.Contains(err.Error(), "i=2 nd= hop d=test4.dkim2.com did not match RCPT TO") {
+		t.Fatalf("err = %v, want the nd= hop d= mismatch", err)
+	}
+}
+
+// TestUnbridgedForwardBreaksCustody: without the bridge, the same forward from
+// a different domain breaks the chain of custody — which is what the bridge is
+// for.
+func TestUnbridgedForwardBreaksCustody(t *testing.T) {
+	raw := ndTestRaw(t)
+
+	hop1 := ndSignHop(t, raw, "ed25519._domainkey.test1.dkim2.com.pem", "ed25519",
+		"test1.dkim2.com", "sender@test1.dkim2.com", []string{"relay@test2.dkim2.com"}, "")
+
+	hop2 := ndSignHop(t, hop1, "ed25519._domainkey.test3.dkim2.com.pem", "ed25519",
+		"test3.dkim2.com", "recipient@test3.dkim2.com", []string{"final@test3.dkim2.com"}, "")
+
+	_, err := Verify(bytes.NewReader(hop2), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
+	if err == nil {
+		t.Fatal("an unbridged forward from another domain kept custody")
+	}
+	if !strings.Contains(err.Error(), "did not match") {
+		t.Fatalf("err = %v, want a chain-of-custody failure", err)
+	}
+}
+
 // TestDoubledNonTopNdChainVerifies extends the above to a doubled run of
 // consecutive non-top nd= hops (i=2 and i=3), still topped by a normal (i=4)
 // signature. Must still verify with no error.

@@ -31,16 +31,25 @@ sub _top_sig {
     return $top;
 }
 
-# Remove the single highest-sequence DKIM2-Signature header from an Email::MIME.
-# (header_filter mishandles long folded values, so filter on header_raw and
-# re-set the survivors.)
+# Remove the Forwarder's hop from an Email::MIME: the highest-sequence
+# DKIM2-Signature, and then any nd= signature left on top, since a §9.3
+# bridge belongs to the hop it was made for and an nd= signature is never
+# valid as the top of a chain. (header_filter mishandles long folded values,
+# so filter on header_raw and re-set the survivors.)
 sub _strip_top_sig {
     my ($msg) = @_;
     my @sigs = $msg->header_raw('DKIM2-Signature');
     return unless @sigs;
-    my $maxi = max(map { Mail::DKIM2::Signature->parse($_)->sequence } @sigs);
-    my @keep = grep { Mail::DKIM2::Signature->parse($_)->sequence < $maxi } @sigs;
-    $msg->header_raw_set('DKIM2-Signature', @keep);
+    my @parsed = sort { $a->[1]->sequence <=> $b->[1]->sequence }
+                 map  { [ $_, Mail::DKIM2::Signature->parse($_) ] } @sigs;
+    my $maxi = $parsed[-1][1]->sequence;
+    pop @parsed;
+    while (@parsed) {
+        my $nd = $parsed[-1][1]->next_domain;
+        last unless defined $nd && length $nd;
+        pop @parsed;
+    }
+    $msg->header_raw_set('DKIM2-Signature', map { $_->[0] } @parsed);
     return $maxi;
 }
 

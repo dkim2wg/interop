@@ -173,6 +173,11 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
     For each adjacent pair (ascending i=), either the lower signature carries
     nd= (which MUST exactly match the higher signature's d=), or the higher
     signature's mf= domain MUST relaxed-match an rt= domain of the lower one.
+
+    A §9.3 bridge -- an nd= signature after a real hop, made by a Forwarder to
+    span the gap between the domain it received the message at and the domain
+    it sends from -- has no mf=, so for it the value that MUST relaxed-match
+    the lower hop's rt= is its d=: the key §9.3 requires it to be made with.
     """
     errors = []
     for k in range(1, len(sig_by_seq)):
@@ -191,21 +196,32 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
             continue
         cur_mf_b64 = _extract_tag(cur_val, "mf")
         prev_rt_raw = _extract_tag(prev_val, "rt")
-        if not cur_mf_b64:
-            errors.append(
-                f"DKIM2-Signature i={cur_i} MAIL FROM <> did not match"
-            )
-            continue
         if not prev_rt_raw:
             errors.append(
                 f"DKIM2-Signature i={prev_i} RCPT TO <> did not match"
             )
             continue
-        cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
         prev_rts = [
             base64.b64decode(rt.strip()).decode("utf-8", errors="surrogateescape")
             for rt in prev_rt_raw.split(",") if rt.strip()
         ]
+
+        cur_nd = _extract_tag(cur_val, "nd")
+        if cur_nd:
+            cur_d = _extract_tag(cur_val, "d") or ""
+            if not any(_relaxed_domain_match(cur_d, _domain_from_addr(rt))
+                       for rt in prev_rts):
+                errors.append(
+                    f"DKIM2-Signature i={cur_i} nd= hop d={cur_d} did not match RCPT TO"
+                )
+            continue
+
+        if not cur_mf_b64:
+            errors.append(
+                f"DKIM2-Signature i={cur_i} MAIL FROM <> did not match"
+            )
+            continue
+        cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
         cur_mf_domain = _domain_from_addr(cur_mf)
         if not any(_relaxed_domain_match(cur_mf_domain, _domain_from_addr(rt))
                    for rt in prev_rts):

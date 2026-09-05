@@ -23,12 +23,16 @@ Writes:
   dup-selector.eml                 -- s= repeats a Selector (sel1 twice)
   too-many-signatures.eml          -- s= has one algorithm 3+ times
   malformed-json-r.eml             -- r= decodes to malformed JSON
+  nd-bridge-wrong-domain.eml       -- a §9.3 nd= bridge made with a key for a
+                                         domain the message never arrived at
   positive-control-two-selectors.eml -- s= has one algorithm twice with
                                          DISTINCT selectors (sel1, sel2);
                                          §8.9 explicitly permits this
   positive-control-bottom-recipe.eml -- m=1 (bottom) Message-Instance
                                          carries a VALID r= Recipe; §9.1
                                          explicitly permits this
+  positive-control-nd-bridge.eml   -- the same §9.3 bridge made with a key for
+                                         the domain the message DID arrive at
 """
 import base64
 import os
@@ -236,14 +240,57 @@ def build_unsigned_mi():
     return unsigned.encode() + b"\r\n" + valid
 
 
+def _bridged_chain(bridge_domain):
+    """A Forwarder's §9.3 bridge after a real hop.
+
+    The message arrives at test2 (i=1 rt=); test2 sends it on from test3, and
+    bridges the gap with an nd= hop before signing the real hop as test3.
+    §9.3 requires that extra header to be made with a key for a domain in the
+    RCPT TO the message arrived with, so `bridge_domain` is what decides
+    whether the chain holds.
+    """
+    raw = open(SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    msg = ds.sign_message(raw, "sel1", "test1.dkim2.com", key("sel1", "test1.dkim2.com"),
+                          mailfrom="sender@test1.dkim2.com",
+                          rcptto=["user@test2.dkim2.com"], timestamp=TS)
+    msg = ds.sign_message(msg, "sel1", bridge_domain, key("sel1", bridge_domain),
+                          next_domain="test3.dkim2.com", timestamp=TS)
+    return ds.sign_message(msg, "sel1", "test3.dkim2.com", key("sel1", "test3.dkim2.com"),
+                           mailfrom="srs0=x@bounce.test3.dkim2.com",
+                           rcptto=["dest@test5.dkim2.com"], timestamp=TS)
+
+
+def build_nd_bridge_wrong_domain():
+    """A §9.3 bridge made with a key for a domain the message never arrived
+    at: the nd= hop is signed by test4.dkim2.com while i=1's rt= says the
+    message went to test2.dkim2.com.
+
+    Every signature here is cryptographically valid and the nd=/d= adjacency
+    with the hop above it matches, so a verifier that treats an nd= hop as
+    "no mf=, nothing to check" accepts it -- and with it accepts a chain of
+    custody bridged by a domain that was never in the path, which is the one
+    thing the bridge is supposed to attest."""
+    return _bridged_chain("test4.dkim2.com")
+
+
+def build_positive_nd_bridge():
+    """The same shape with the bridge made by test2.dkim2.com, the domain the
+    message actually arrived at. §9.3 explicitly provides for this, so it MUST
+    be accepted: a verifier that demands an mf= from an nd= hop rejects every
+    legitimately bridged forward."""
+    return _bridged_chain("test2.dkim2.com")
+
+
 FIXTURES = {
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
     "too-many-signatures.eml": build_too_many,
     "malformed-json-r.eml": build_malformed_json,
     "unsigned-mi.eml": build_unsigned_mi,
+    "nd-bridge-wrong-domain.eml": build_nd_bridge_wrong_domain,
     "positive-control-two-selectors.eml": build_positive_control,
     "positive-control-bottom-recipe.eml": build_positive_bottom_recipe,
+    "positive-control-nd-bridge.eml": build_positive_nd_bridge,
 }
 
 

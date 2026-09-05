@@ -145,4 +145,50 @@ sub _strip_t {
     return $header;
 }
 
+# ------------------------------------------------------------------
+# Case 5: a Forwarder's §9.3 bridge. The message arrived at test2 (i=1
+# rt=), test2 sends it on from a different domain (test3) and bridges the gap
+# with an nd= hop made with test2's key, then signs the real hop as test3.
+# ------------------------------------------------------------------
+{
+    my $msg = build_chain(
+        { domain => 'test1.dkim2.com', mailfrom => 'sender@test1.dkim2.com', rcptto => ['user@test2.dkim2.com'] },
+        { domain => 'test2.dkim2.com', next_domain => 'test3.dkim2.com' },
+        { domain => 'test3.dkim2.com', mailfrom => 'srs0=x@bounce.test3.dkim2.com', rcptto => ['dest@test5.dkim2.com'] },
+    );
+    my $v = verify_text($msg->as_string);
+    is($v->result, 'pass', 'a bridged forward keeps the chain of custody')
+        or diag($v->result_detail);
+}
+
+# ------------------------------------------------------------------
+# Case 6: the same shape with a bridge made with a key for a domain the
+# message never arrived at: the nd= hop's d= must belong to the previous
+# hop's RCPT TO.
+# ------------------------------------------------------------------
+{
+    my $msg = build_chain(
+        { domain => 'test1.dkim2.com', mailfrom => 'sender@test1.dkim2.com', rcptto => ['user@test2.dkim2.com'] },
+        { domain => 'test4.dkim2.com', next_domain => 'test3.dkim2.com' },
+        { domain => 'test3.dkim2.com', mailfrom => 'srs0=x@bounce.test3.dkim2.com', rcptto => ['dest@test5.dkim2.com'] },
+    );
+    my $v = verify_text($msg->as_string);
+    is($v->result, 'fail', 'a bridge from a domain the mail never reached fails');
+    like($v->result_detail, qr/i=2 nd= hop d=test4\.dkim2\.com did not match RCPT TO/,
+        'correct detail for a mismatched bridge');
+}
+
+# ------------------------------------------------------------------
+# Case 7: without the bridge, the same forward breaks custody, which is
+# what the bridge is for.
+# ------------------------------------------------------------------
+{
+    my $msg = build_chain(
+        { domain => 'test1.dkim2.com', mailfrom => 'sender@test1.dkim2.com', rcptto => ['user@test2.dkim2.com'] },
+        { domain => 'test3.dkim2.com', mailfrom => 'srs0=x@bounce.test3.dkim2.com', rcptto => ['dest@test5.dkim2.com'] },
+    );
+    my $v = verify_text($msg->as_string);
+    is($v->result, 'fail', 'an unbridged forward from another domain fails custody');
+}
+
 done_testing;

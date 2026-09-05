@@ -510,6 +510,11 @@ func domainFromAddr(addr string) string {
 // signature carries nd= (which MUST exactly match the higher signature's d=),
 // or the higher signature's mf= domain MUST relaxed-match an rt= domain of the
 // lower one. A null-sender (DSN) hop skips the mf=/rt= check.
+//
+// A §9.3 bridge — an nd= signature after a real hop, made by a Forwarder to
+// span the gap between the domain it received the message at and the domain it
+// sends from — has no mf=, so for it the value that MUST relaxed-match the
+// lower hop's rt= is its d=: the key §9.3 requires it to be made with.
 func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
 	for idx := 1; idx < len(parsedSigs); idx++ {
 		cur := parsedSigs[idx]
@@ -522,6 +527,23 @@ func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
 			if !strings.EqualFold(prev.NextDomain, cur.Domain) {
 				return fmt.Errorf("DKIM2-Signature i=%d MAIL nd= does not match",
 					prev.Sequence)
+			}
+			continue
+		}
+		if cur.NextDomain != "" {
+			curD := strings.ToLower(cur.Domain)
+			matched := false
+			for _, rt := range prev.RcptTo {
+				if rtDomain := domainFromAddr(rt); rtDomain != "" {
+					if relaxedDomainMatch(curD, rtDomain) {
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
+				return fmt.Errorf("DKIM2-Signature i=%d nd= hop d=%s did not match RCPT TO",
+					cur.Sequence, curD)
 			}
 			continue
 		}

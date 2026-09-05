@@ -701,12 +701,34 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
             continue;
         }
 
-        if (!cur->mf)
-            SETSTATUS(DKIM2_PERMERROR,
-                "DKIM2-Signature i=%d MAIL FROM <> did not match", cur->i);
         if (!prev->rt)
             SETSTATUS(DKIM2_PERMERROR,
                 "DKIM2-Signature i=%d RCPT TO <> did not match", prev->i);
+
+        /* draft-06 §9.3: an nd= hop after a real one is a Forwarder bridging
+           the gap between the domain it received the message at and the
+           domain it sends from, and §9.3 requires it to be made with a key
+           for a domain in the RCPT TO the message arrived with. So what has
+           to match the previous rt= here is the hop's d=, since it has no
+           mf=. */
+        if (cur->nd) {
+            int nd_match = 0;
+            for (int j = 0; prev->rt[j] && !nd_match; j++) {
+                char *rt_d = addr_domain(prev->rt[j]);
+                if (rt_d && cur->d && relaxed_domain_match(rt_d, cur->d))
+                    nd_match = 1;
+                free(rt_d);
+            }
+            if (!nd_match)
+                SETSTATUS(DKIM2_FAIL,
+                    "DKIM2-Signature i=%d nd= hop d=%s did not match RCPT TO",
+                    cur->i, cur->d ? cur->d : "");
+            continue;
+        }
+
+        if (!cur->mf)
+            SETSTATUS(DKIM2_PERMERROR,
+                "DKIM2-Signature i=%d MAIL FROM <> did not match", cur->i);
 
         char *cur_mf_d = addr_domain(cur->mf);
         int match = 0;

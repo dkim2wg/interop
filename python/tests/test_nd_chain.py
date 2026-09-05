@@ -92,6 +92,67 @@ def test_legit_nd_chain_still_passes():
     assert result.status == 'pass', result.message
 
 
+def _bridged_chain(bridge_domain: str) -> bytes:
+    """A Forwarder's §9.3 bridge after a real hop.
+
+    The message arrives at test2 (i=1 rt=); test2 sends it on from test3, and
+    bridges the gap with an nd= hop made with a key for `bridge_domain` before
+    signing the real hop as test3. §9.3 requires that key to belong to a
+    domain in the RCPT TO the message arrived with, so a bridge_domain other
+    than test2.dkim2.com must be rejected.
+    """
+    def _key(dom):
+        return dkim2sign.load_private_key(
+            key_path(f"sel1._domainkey.{dom}.pem"))
+
+    raw = (b"From: Sender <sender@test1.dkim2.com>\r\n"
+           b"To: user@test2.dkim2.com\r\n"
+           b"Subject: bridged\r\n\r\nbody line\r\n")
+    msg = dkim2sign.sign_message(
+        raw, "sel1", "test1.dkim2.com", key_path("sel1._domainkey.test1.dkim2.com.pem"),
+        mailfrom="sender@test1.dkim2.com", rcptto=["user@test2.dkim2.com"],
+        timestamp=1740000000)
+    msg = dkim2sign.sign_message(
+        msg, "sel1", bridge_domain, key_path(f"sel1._domainkey.{bridge_domain}.pem"),
+        next_domain="test3.dkim2.com", timestamp=1740000000)
+    return dkim2sign.sign_message(
+        msg, "sel1", "test3.dkim2.com", key_path("sel1._domainkey.test3.dkim2.com.pem"),
+        mailfrom="srs0=x@bounce.test3.dkim2.com", rcptto=["dest@test5.dkim2.com"],
+        timestamp=1740000000)
+
+
+def test_bridge_after_a_real_hop_keeps_custody():
+    raw = _bridged_chain("test2.dkim2.com")
+    result = dkim2verify.verify_message(raw, DNS_DATA, skip_timestamp_check=True)
+    assert result.status == 'pass', result.message
+
+
+def test_bridge_from_a_domain_the_mail_never_reached_fails():
+    raw = _bridged_chain("test4.dkim2.com")
+    result = dkim2verify.verify_message(raw, DNS_DATA, skip_timestamp_check=True)
+    assert result.status == 'fail', result
+    assert 'i=2 nd= hop d=test4.dkim2.com did not match RCPT TO' in result.message, \
+        result.message
+
+
+def test_unbridged_forward_from_another_domain_fails_custody():
+    """Without the bridge the same forward breaks custody, which is what the
+    bridge is for."""
+    raw = dkim2sign.sign_message(
+        (b"From: Sender <sender@test1.dkim2.com>\r\n"
+         b"To: user@test2.dkim2.com\r\n"
+         b"Subject: bridged\r\n\r\nbody line\r\n"),
+        "sel1", "test1.dkim2.com", key_path("sel1._domainkey.test1.dkim2.com.pem"),
+        mailfrom="sender@test1.dkim2.com", rcptto=["user@test2.dkim2.com"],
+        timestamp=1740000000)
+    raw = dkim2sign.sign_message(
+        raw, "sel1", "test3.dkim2.com", key_path("sel1._domainkey.test3.dkim2.com.pem"),
+        mailfrom="srs0=x@bounce.test3.dkim2.com", rcptto=["dest@test5.dkim2.com"],
+        timestamp=1740000000)
+    result = dkim2verify.verify_message(raw, DNS_DATA, skip_timestamp_check=True)
+    assert result.status == 'fail', result
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
