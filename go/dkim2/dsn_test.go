@@ -71,6 +71,7 @@ func TestPropagate(t *testing.T) {
 		ForwarderDomain: "test2.dkim2.com",
 		Key:             loadKey(t, keys+"ed25519._domainkey.test3.dkim2.com.pem"),
 		Selector:        "ed25519", Domain: "test3.dkim2.com", Timestamp: 1740000000,
+		SkipAuthentication: true,
 	})
 	if err != nil {
 		t.Fatalf("Propagate: %v", err)
@@ -143,6 +144,7 @@ func TestPropagateRejectsMissingDeliveryStatus(t *testing.T) {
 		ForwarderDomain: "test2.dkim2.com",
 		Key:             loadKey(t, keys+"ed25519._domainkey.test3.dkim2.com.pem"),
 		Selector:        "ed25519", Domain: "test3.dkim2.com", Timestamp: 1740000000,
+		SkipAuthentication: true,
 	})
 	if err == nil {
 		t.Fatalf("Propagate: expected error for missing message/delivery-status part, got success")
@@ -333,6 +335,8 @@ func TestPropagateStripsTheBridgeWithItsHop(t *testing.T) {
 		ForwarderDomain: "test3.dkim2.com",
 		Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
 		Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
+		Fetcher:            &JSONKeyFetcher{Path: "../../dns.json"},
+		SkipTimestampCheck: true,
 	})
 	if err != nil {
 		t.Fatalf("Propagate: %v", err)
@@ -367,6 +371,214 @@ func TestPropagateStripsTheBridgeWithItsHop(t *testing.T) {
 	}
 	if sigs[0].NextDomain != "" {
 		t.Fatalf("the signature left is the nd= bridge (nd=%s)", sigs[0].NextDomain)
+	}
+}
+
+// --- §12.1.2 point 1: the DSN's own signing domain must be aligned with the
+// rt= of the returned message's top signature — i.e. the bounce came from the
+// system we handed the message to. Checked only on a d= we have verified: an
+// unverified d= is whatever the forger typed. -------------------------------
+
+// signedDSNAround wraps embedded in a DSN and signs the DSN as a new message
+// (as §12.1.1 makes it: MAIL FROM <>, one Message-Instance, one signature).
+func signedDSNAround(t *testing.T, embedded []byte, domain string) []byte {
+	t.Helper()
+	return signOnce(t, dsnAround(t, embedded, false),
+		"../../keys/sel1._domainkey."+domain+".pem", "sel1", domain,
+		"", []string{"user@test2.dkim2.com"})
+}
+
+func TestAuthenticateAlignedDSN(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	// verifiableTwoHop's top signature is i=2 rt=<dest@test3.dkim2.com>, so a
+	// DSN for it must be signed by test3.dkim2.com.
+	res, err := Authenticate(signedDSNAround(t, verifiableTwoHop(t), "test3.dkim2.com"), f,
+		VerifyOptions{SkipTimestampCheck: true})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("an aligned, fully-signed DSN did not authenticate: %v", res.Reason)
+	}
+	if res.DSNError != nil {
+		t.Fatalf("the DSN's own chain did not verify: %v", res.DSNError)
+	}
+	if res.DSNSig == nil || res.DSNSig.Domain != "test3.dkim2.com" {
+		t.Fatalf("DSNSig = %+v, want d=test3.dkim2.com", res.DSNSig)
+	}
+	if res.Alignment != "pass" {
+		t.Fatalf("Alignment = %q (%s), want pass", res.Alignment, res.AlignDetail)
+	}
+	if !strings.Contains(res.AlignDetail, "dest@test3.dkim2.com") {
+		t.Fatalf("AlignDetail = %q, want it to name the recipient", res.AlignDetail)
+	}
+}
+
+func TestAuthenticateMisalignedDSN(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	// Every signature verifies and the returned message is intact, so nothing
+	// but point 1 can tell this is not a bounce from where we sent the mail.
+	res, err := Authenticate(signedDSNAround(t, verifiableTwoHop(t), "test4.dkim2.com"), f,
+		VerifyOptions{SkipTimestampCheck: true})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if res.DSNError != nil {
+		t.Fatalf("the DSN's own chain should still verify: %v", res.DSNError)
+	}
+	if res.Alignment != "fail" {
+		t.Fatalf("Alignment = %q (%s), want fail", res.Alignment, res.AlignDetail)
+	}
+	if res.OK {
+		t.Fatal("a DSN from a domain the message was never sent to authenticated")
+	}
+	if !strings.Contains(res.AlignDetail, "d=test4.dkim2.com is not aligned") {
+		t.Fatalf("AlignDetail = %q, want it to name the signing domain", res.AlignDetail)
+	}
+}
+
+// TestCheckAlignmentDomainRelationships pins the direction question. Which
+// domain relationships count as "aligned" is a decision about relaxed matching
+// on its own, and the shared test DNS has keys for test1..test5.dkim2.com only
+// — no subdomain and no parent — so there is no way to build a real signed DSN
+// for either shape. Accept and reject through the real entry point are covered
+// above.
+func TestCheckAlignmentDomainRelationships(t *testing.T) {
+	rtTest3 := &DKIM2Signature{RcptTo: []string{"<dest@test3.dkim2.com>"}}
+	for _, d := range []string{"bounce.test3.dkim2.com", "dkim2.com", "test3.dkim2.com"} {
+		state, detail := checkAlignment(&DKIM2Signature{Domain: d}, rtTest3)
+		if state != "pass" {
+			t.Errorf("d=%s: state = %q (%s), want pass", d, state, detail)
+		}
+	}
+	for _, d := range []string{"test4.dkim2.com", "test3.dkim2.com.evil.example", "evil.example"} {
+		if state, _ := checkAlignment(&DKIM2Signature{Domain: d}, rtTest3); state != "fail" {
+			t.Errorf("d=%s: state = %q, want fail", d, state)
+		}
+	}
+	// An nd= top signature on the returned message has no rt= to align with.
+	ndTop := &DKIM2Signature{Domain: "test2.dkim2.com", NextDomain: "test3.dkim2.com"}
+	state, detail := checkAlignment(&DKIM2Signature{Domain: "test3.dkim2.com"}, ndTop)
+	if state != "none" || !strings.Contains(detail, "no rt=") {
+		t.Fatalf("state = %q (%s), want none/no rt=", state, detail)
+	}
+}
+
+func TestAuthenticateBrokenDSNSignature(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	// A DSN whose own signature is broken claims DKIM2 and lies, so it must
+	// not be propagated, and point 1 cannot be applied to a d= we cannot trust.
+	tampered := bytes.Replace(signedDSNAround(t, verifiableTwoHop(t), "test3.dkim2.com"),
+		[]byte("Subject: failure"), []byte("Subject: FAILURE"), 1)
+	res, err := Authenticate(tampered, f, VerifyOptions{SkipTimestampCheck: true})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if res.DSNError == nil {
+		t.Fatal("a tampered DSN's own signature still verified")
+	}
+	if res.Alignment != "none" {
+		t.Fatalf("Alignment = %q, want none — an unverified d= must not be used", res.Alignment)
+	}
+	if res.OK {
+		t.Fatal("a DSN whose own signature is broken authenticated")
+	}
+}
+
+func TestAuthenticateUnsignedDSNIsReportedNotFailed(t *testing.T) {
+	f := &JSONKeyFetcher{Path: "../../dns.json"}
+	// An unsigned DSN is not what §12.1.2 is about ("when a system receives a
+	// DKIM2 signed DSN"), so it is reported, not failed.
+	res, err := Authenticate(dsnAround(t, verifiableTwoHop(t), false), f,
+		VerifyOptions{SkipTimestampCheck: true})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if res.DSNSig != nil {
+		t.Fatalf("DSNSig = %+v, want nil for an unsigned DSN", res.DSNSig)
+	}
+	if res.Alignment != "none" {
+		t.Fatalf("Alignment = %q, want none", res.Alignment)
+	}
+	if !res.OK {
+		t.Fatalf("an unsigned DSN with an intact returned message did not authenticate: %v", res.Reason)
+	}
+}
+
+// --- §12.1.2: "If the verification fails then the DSN MUST NOT be propagated
+// any further" — Propagate enforces that itself. ---------------------------
+
+func TestPropagateNeedsTheMeansToAuthenticate(t *testing.T) {
+	const keys = "../../keys/"
+	_, _, err := Propagate(dsnAround(t, verifiableTwoHop(t), false), PropagateOptions{
+		ForwarderDomain: "test2.dkim2.com",
+		Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
+		Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
+	})
+	if err == nil || !strings.Contains(err.Error(), "need a Fetcher to authenticate") {
+		t.Fatalf("err = %v, want a refusal to propagate unauthenticated", err)
+	}
+}
+
+func TestPropagateRefusesAMisalignedDSN(t *testing.T) {
+	const keys = "../../keys/"
+	_, _, err := Propagate(signedDSNAround(t, verifiableTwoHop(t), "test4.dkim2.com"),
+		PropagateOptions{
+			ForwarderDomain: "test2.dkim2.com",
+			Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
+			Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
+			Fetcher:            &JSONKeyFetcher{Path: "../../dns.json"},
+			SkipTimestampCheck: true,
+		})
+	if err == nil || !strings.Contains(err.Error(), "not aligned") {
+		t.Fatalf("err = %v, want a refusal for a misaligned DSN", err)
+	}
+}
+
+func TestPropagateAFullyAuthenticatedDSN(t *testing.T) {
+	const keys = "../../keys/"
+	out, upstream, err := Propagate(
+		signedDSNAround(t, verifiableTwoHop(t), "test3.dkim2.com"),
+		PropagateOptions{
+			ForwarderDomain: "test2.dkim2.com",
+			Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
+			Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
+			Fetcher:            &JSONKeyFetcher{Path: "../../dns.json"},
+			SkipTimestampCheck: true,
+		})
+	if err != nil {
+		t.Fatalf("Propagate: %v", err)
+	}
+	if upstream != "<sender@test1.dkim2.com>" {
+		t.Fatalf("upstream = %q, want <sender@test1.dkim2.com>", upstream)
+	}
+
+	// The inbound DSN was itself signed — the only kind §12.1.2 is about — so
+	// its own instance and signature must not survive into ours.
+	headers, _, err := parseHeaders(bytes.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nMI int
+	var sigs []*DKIM2Signature
+	for _, h := range headers {
+		switch strings.ToLower(h.Name) {
+		case "message-instance":
+			nMI++
+		case "dkim2-signature":
+			sig, perr := parseSig(h.Raw)
+			if perr != nil {
+				t.Fatalf("parse propagated signature: %v", perr)
+			}
+			sigs = append(sigs, sig)
+		}
+	}
+	if nMI != 1 || len(sigs) != 1 {
+		t.Fatalf("propagated DSN has %d MI / %d sig, want 1/1", nMI, len(sigs))
+	}
+	if sigs[0].Domain != "test2.dkim2.com" || sigs[0].MIVersion != 1 {
+		t.Fatalf("propagated signature = d=%s m=%d, want d=test2.dkim2.com m=1",
+			sigs[0].Domain, sigs[0].MIVersion)
 	}
 }
 

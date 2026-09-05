@@ -21,10 +21,18 @@ To implement later, build on the existing primitives:
 plus a minimal `multipart/report` boundary splitter to extract and replace the
 embedded `message/rfc822` part.
 
-§12.1.2 additionally needs a headers-only verify mode: with the returned
-original echoed back as `text/rfc822-headers` there is no body, so of the
-Message-Instance content check only the top instance's header hash can run.
-The other three trees spell this `headers_only` / `HeadersOnly` on the verifier.
+§12.1.2 additionally needs:
+
+- a headers-only verify mode: with the returned original echoed back as
+  `text/rfc822-headers` there is no body, so of the Message-Instance content
+  check only the top instance's header hash can run. The other three trees
+  spell this `headers_only` / `HeadersOnly` on the verifier;
+- a second verify pass over the DSN itself, since point 1 compares the DSN's
+  own `d=` against the returned message's top `rt=` and an unverified `d=` is
+  whatever the sender typed (see INTEROP-NOTES §19 for which way "aligned"
+  relaxes — the spec does not say);
+- the propagation entry point must refuse to propagate a DSN that fails any of
+  this: §12.1.2 says such a DSN "MUST NOT be propagated any further".
 
 See `lib/Mail/DKIM2/DSN.pm` (Perl, deployed) for the reference algorithm and
 `go/dkim2/dsn.go` / `python/dkim2dsn.py` for the other reference implementations.

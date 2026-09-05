@@ -17,7 +17,9 @@ func main() {
 	selector := flag.String("selector", "", "DKIM2 selector (required)")
 	keyFile := flag.String("key", "", "PKCS#8 PEM private key (required)")
 	auth := flag.Bool("authenticate", false, "§12.1.2: check the returned original instead of propagating")
-	dnsFile := flag.String("dns", "", "Path to dns.json key file (required with -authenticate)")
+	dnsFile := flag.String("dns", "", "Path to dns.json key file (required to authenticate)")
+	skipAuth := flag.Bool("skip-authentication", false,
+		"Propagate without the §12.1.2 check (already done by the caller)")
 	ignoreTS := flag.Bool("ignore-timestamps", false, "Disable the §10.3 timestamp (14-day/future) check")
 	flag.Parse()
 
@@ -27,8 +29,13 @@ func main() {
 	}
 
 	if *domain == "" || *selector == "" || *keyFile == "" {
-		fmt.Fprintln(os.Stderr, "usage: dkim2dsn -domain DOM -selector SEL -key KEY.pem [-forwarder-domain FWD] < dsn")
+		fmt.Fprintln(os.Stderr, "usage: dkim2dsn -domain DOM -selector SEL -key KEY.pem -dns DNS.json [-forwarder-domain FWD] < dsn")
 		fmt.Fprintln(os.Stderr, "       dkim2dsn -authenticate -dns DNS.json [-ignore-timestamps] < dsn")
+		os.Exit(1)
+	}
+	if *dnsFile == "" && !*skipAuth {
+		fmt.Fprintln(os.Stderr, "ERROR: propagating requires -dns to authenticate the DSN "+
+			"(§12.1.2), or -skip-authentication")
 		os.Exit(1)
 	}
 	pem, err := os.ReadFile(*keyFile)
@@ -46,8 +53,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ERROR: reading stdin: %v\n", err)
 		os.Exit(1)
 	}
+	var fetcher dkim2.KeyFetcher
+	if *dnsFile != "" {
+		fetcher = &dkim2.JSONKeyFetcher{Path: *dnsFile}
+	}
 	out, upstream, err := dkim2.Propagate(raw, dkim2.PropagateOptions{
 		ForwarderDomain: *fwd, Key: key, Selector: *selector, Domain: *domain,
+		Fetcher:            fetcher,
+		SkipAuthentication: *skipAuth,
+		SkipTimestampCheck: *ignoreTS,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
@@ -84,6 +98,17 @@ func authenticate(dnsFile string, ignoreTS bool) {
 		fmt.Fprintf(os.Stderr, "top signature: i=%d d=%s mf=%s\n",
 			res.Top.Sequence, res.Top.Domain, res.Top.MailFrom)
 	}
+	switch {
+	case res.DSNSig == nil:
+		fmt.Fprintln(os.Stderr, "DSN's own signature: none")
+	case res.DSNError != nil:
+		fmt.Fprintf(os.Stderr, "DSN's own signature: fail (i=%d d=%s): %v\n",
+			res.DSNSig.Sequence, res.DSNSig.Domain, res.DSNError)
+	default:
+		fmt.Fprintf(os.Stderr, "DSN's own signature: pass (i=%d d=%s)\n",
+			res.DSNSig.Sequence, res.DSNSig.Domain)
+	}
+	fmt.Fprintf(os.Stderr, "alignment: %s - %s\n", res.Alignment, res.AlignDetail)
 	if !res.OK {
 		fmt.Fprintf(os.Stderr, "FAIL: %v\n", res.Reason)
 		os.Exit(1)

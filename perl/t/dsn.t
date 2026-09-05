@@ -15,15 +15,25 @@ my $TS = 1740000000;
 
 sub mk_signer {
     my (%o) = @_;
+    my $sel = $o{selector} // 'rsa1024';
     return Mail::DKIM2::Signer->new(
         Domain    => $o{domain},
-        Selector  => 'rsa1024',
-        Key       => DKIM2TestKeys::private_key($o{domain}, 'rsa1024'),
+        Selector  => $sel,
+        Key       => DKIM2TestKeys::private_key($o{domain}, $sel),
         MailFrom  => $o{mailfrom} // '<>',
         RcptTo    => $o{rcptto}   // ['x@example.com'],
         Timestamp => $TS,
     );
 }
+
+my $CB = DKIM2TestKeys::pubkey_callback();
+
+# propagate() authenticates the DSN first (§12.1.2) unless told it has been
+# done already. The fixtures below deliberately do NOT verify (signed_inbound
+# signs d=test1 over a sender@origin.example envelope, which the d=/mf= rule
+# rejects), because they exist to exercise the rebuild machinery -- so they
+# pass skip_authentication and the authentication itself is tested separately.
+my %NO_AUTH = (skip_authentication => 1);
 
 # Build a v=1 signed inbound message from a sender.
 sub signed_inbound {
@@ -83,7 +93,7 @@ sub forwarded_twohop {
 
     my $signer = mk_signer(domain => 'test2.dkim2.com');
     my $out = Mail::DKIM2::DSN->propagate({
-        raw => $dsn->as_string, forwarder_domain => 'test2.dkim2.com', signer => $signer,
+        raw => $dsn->as_string, forwarder_domain => 'test2.dkim2.com', signer => $signer, %NO_AUTH,
     });
     ok($out->{raw}, 'propagate returned a DSN');
     # After stripping the forwarder hop (i=2), the now-top sig is i=1 with
@@ -140,7 +150,7 @@ sub forwarded_unchanged {
     my $signer = mk_signer(domain => 'test2.dkim2.com');
     eval {
         Mail::DKIM2::DSN->propagate({
-            raw => $dsn->as_string, forwarder_domain => 'test2.dkim2.com', signer => $signer,
+            raw => $dsn->as_string, forwarder_domain => 'test2.dkim2.com', signer => $signer, %NO_AUTH,
         });
     };
     like($@, qr/propagate/i,
@@ -171,7 +181,7 @@ sub forwarded_unchanged {
 
     my $signer = mk_signer(domain => 'test2.dkim2.com');
     my $out = Mail::DKIM2::DSN->propagate({
-        raw => $dsn->as_string, forwarder_domain => 'test2.dkim2.com', signer => $signer,
+        raw => $dsn->as_string, forwarder_domain => 'test2.dkim2.com', signer => $signer, %NO_AUTH,
     });
     ok($out->{raw}, 'propagate accepts a valid 3-part DSN (text/rfc822-headers variant)');
     is($out->{upstream_mailfrom}, '<sender@origin.example>',
@@ -410,9 +420,12 @@ sub dsn_around {
     });
     ok($auth->{ok}, 'a DSN returning a bridged chain authenticates') or diag($auth->{details});
 
+    # This chain verifies, so propagate can do its own §12.1.2 authentication
+    # rather than being told to skip it.
     my $out = Mail::DKIM2::DSN->propagate({
         raw => dsn_around($msg), forwarder_domain => 'test3.dkim2.com',
         signer => mk_signer(domain => 'test2.dkim2.com'),
+        pubkey_callback => $CB, skip_timestamp_check => 1,
     });
     is($out->{upstream_mailfrom}, '<sender@test1.dkim2.com>',
        'the bridge is stripped with the hop: the report goes to the hop before both');
@@ -421,6 +434,185 @@ sub dsn_around {
     my @inner = map { Mail::DKIM2::Signature->parse($_) } Email::MIME->new($orig->body)->header_raw('DKIM2-Signature');
     is(scalar @inner, 1, 'one signature left on the returned message');
     ok(!defined $inner[0]->next_domain, '  ... and it is not the nd= bridge');
+}
+
+# === §12.1.2 point 1: the DSN's own signing domain must be aligned with the
+# rt= of the returned message's top signature -- i.e. the bounce came from the
+# system we handed the message to. Checked only on a d= we have verified: an
+# unverified d= is whatever the forger typed. ===
+
+# Wrap $embedded in a DSN and sign the DSN as a new message (as §12.1.1 makes
+# it: MAIL FROM <>, one Message-Instance, one DKIM2-Signature).
+sub signed_dsn_around {
+    my ($embedded, %o) = @_;
+    (my $text = dsn_around($embedded, %o)) =~ s/\r?\n/\r\n/g;
+    my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($text));
+    my $with_mi = "Message-Instance: " . $mi->as_string . "\r\n" . $text;
+    my $signer = mk_signer(domain => $o{domain}, selector => 'sel1',
+                           mailfrom => '<>', rcptto => ['user@test2.dkim2.com']);
+    $signer->PRINT($with_mi); $signer->CLOSE;
+    (my $sig = $signer->as_string) =~ s/\r?\n$//;
+    return "$sig\r\n$with_mi";
+}
+
+{
+    # verifiable_twohop()'s top signature is i=2 rt=<dest@test3.dkim2.com>, so
+    # a DSN for it must be signed by test3.dkim2.com.
+    my $auth = Mail::DKIM2::DSN->authenticate({
+        raw => signed_dsn_around(verifiable_twohop(), domain => 'test3.dkim2.com'),
+        pubkey_callback => $CB, skip_timestamp_check => 1,
+    });
+    ok($auth->{ok}, 'a DSN signed by the domain the message was delivered to authenticates')
+        or diag("$auth->{details} / $auth->{dsn_details} / $auth->{alignment_detail}");
+    is($auth->{dsn_result}, 'pass', '  ... the DSN itself verifies');
+    is($auth->{dsn_sig}->domain, 'test3.dkim2.com', '  ... and it is the DSN we checked d= of');
+    is($auth->{alignment}, 'pass', '  ... alignment with the returned rt= passes');
+    like($auth->{alignment_detail}, qr/aligned with rt= <dest\@test3\.dkim2\.com>/,
+        '  ... naming the recipient it aligned with');
+}
+
+{
+    # The same DSN signed by a domain the message was never sent to: every
+    # signature verifies and the returned message is intact, so nothing but
+    # point 1 can tell this is not a bounce from where we sent the mail.
+    my $auth = Mail::DKIM2::DSN->authenticate({
+        raw => signed_dsn_around(verifiable_twohop(), domain => 'test4.dkim2.com'),
+        pubkey_callback => $CB, skip_timestamp_check => 1,
+    });
+    is($auth->{result}, 'pass', 'the returned message still verifies on its own');
+    is($auth->{dsn_result}, 'pass', '  ... and so does the DSN');
+    is($auth->{alignment}, 'fail', '  ... but the DSN is not aligned with the rt=');
+    ok(!$auth->{ok}, '  ... so the DSN does not authenticate');
+    like($auth->{alignment_detail}, qr/d=test4\.dkim2\.com is not aligned/,
+        '  ... naming the domain that signed it');
+}
+
+{
+    # Which domain relationships count as "aligned" is a decision about
+    # relaxed matching on its own, and the shared test DNS has keys for
+    # test1..test5.dkim2.com only -- no subdomain and no parent -- so there is
+    # no way to build a real signed DSN for either shape. The accept and
+    # reject behaviour through the real entry point is covered above; this
+    # pins the direction question, which is what would otherwise be guessed.
+    my $rt_test3 = Mail::DKIM2::Signature->parse(
+        'i=2; m=1; t=1; d=test2.dkim2.com; mf=PHVzZXJAdGVzdDIuZGtpbTIuY29tPg==; '
+      . 'rt=PGRlc3RAdGVzdDMuZGtpbTIuY29tPg==; s=sel1:rsa-sha256:AAAA;');
+    my $sig_of = sub {
+        Mail::DKIM2::Signature->parse(
+            "i=1; m=1; t=1; d=$_[0]; mf=PD4=; rt=PHVzZXJAdGVzdDIuZGtpbTIuY29tPg==; "
+          . 's=sel1:rsa-sha256:AAAA;');
+    };
+    # A receiving org that bounces from a dedicated subdomain, and one that
+    # signs with its org domain for mail delivered to a subdomain: both are
+    # the same organization by the only test DKIM2 has.
+    for my $d ('bounce.test3.dkim2.com', 'dkim2.com', 'test3.dkim2.com') {
+        my ($state, $detail) =
+            Mail::DKIM2::DSN::_check_alignment($sig_of->($d), $rt_test3);
+        is($state, 'pass', "d=$d counts as aligned with rt=<dest\@test3.dkim2.com>")
+            or diag($detail);
+    }
+    for my $d ('test4.dkim2.com', 'test3.dkim2.com.evil.example', 'evil.example') {
+        my ($state) = Mail::DKIM2::DSN::_check_alignment($sig_of->($d), $rt_test3);
+        is($state, 'fail', "d=$d does not count as aligned");
+    }
+    # An nd= top signature on the returned message has no rt= to align with.
+    my $nd_top = Mail::DKIM2::Signature->parse(
+        'i=2; m=1; t=1; d=test2.dkim2.com; nd=test3.dkim2.com; s=sel1:rsa-sha256:AAAA;');
+    my ($state, $detail) =
+        Mail::DKIM2::DSN::_check_alignment($sig_of->('test3.dkim2.com'), $nd_top);
+    is($state, 'none', 'no rt= on the returned top signature means alignment is not checkable');
+    like($detail, qr/no rt=/, '  ... and says so');
+}
+
+{
+    # A DSN whose own signature is broken: it claims DKIM2 and lies, so it must
+    # not be propagated, and point 1 cannot be applied to a d= we cannot trust.
+    (my $tampered = signed_dsn_around(verifiable_twohop(), domain => 'test3.dkim2.com'))
+        =~ s/^Subject: failure/Subject: FAILURE/m;
+    my $auth = Mail::DKIM2::DSN->authenticate({
+        raw => $tampered, pubkey_callback => $CB, skip_timestamp_check => 1,
+    });
+    isnt($auth->{dsn_result}, 'pass', "a DSN whose own signature is broken does not verify");
+    is($auth->{alignment}, 'none', '  ... and its d= is not used for alignment');
+    ok(!$auth->{ok}, '  ... so it does not authenticate');
+}
+
+{
+    # An unsigned DSN is not what §12.1.2 is about ("when a system receives a
+    # DKIM2 signed DSN"), so it is reported, not failed: a caller can require
+    # a signed DSN, or keep handling legacy bounces.
+    my $auth = Mail::DKIM2::DSN->authenticate({
+        raw => dsn_around(verifiable_twohop()),
+        pubkey_callback => $CB, skip_timestamp_check => 1,
+    });
+    is($auth->{dsn_result}, 'none', 'an unsigned DSN reports dsn_result none');
+    is($auth->{alignment}, 'none', '  ... with no alignment to check');
+    ok(!$auth->{dsn_sig}, '  ... and no DSN signature');
+    ok($auth->{ok}, '  ... and still authenticates on the returned message alone');
+}
+
+# === §12.1.2: "If the verification fails then the DSN MUST NOT be propagated
+# any further" -- propagate enforces that itself. ===
+{
+    my $signer = mk_signer(domain => 'test2.dkim2.com');
+    eval {
+        Mail::DKIM2::DSN->propagate({
+            raw => dsn_around(verifiable_twohop()),
+            forwarder_domain => 'test2.dkim2.com', signer => $signer,
+        });
+    };
+    like($@, qr/need pubkey_callback to authenticate/,
+        'propagate will not propagate without the means to authenticate');
+}
+
+{
+    # The returned message does not verify (signed_inbound's d=/mf= mismatch).
+    my $signer = mk_signer(domain => 'test2.dkim2.com');
+    eval {
+        Mail::DKIM2::DSN->propagate({
+            raw => dsn_around(forwarded_unchanged()),
+            forwarder_domain => 'test2.dkim2.com', signer => $signer,
+            pubkey_callback => $CB, skip_timestamp_check => 1,
+        });
+    };
+    like($@, qr/did not authenticate/,
+        'propagate refuses a DSN whose returned message does not verify');
+}
+
+{
+    # Everything verifies, but the DSN came from a domain the message was
+    # never sent to -- the forged-bounce case point 1 exists for.
+    my $signer = mk_signer(domain => 'test2.dkim2.com');
+    eval {
+        Mail::DKIM2::DSN->propagate({
+            raw => signed_dsn_around(verifiable_twohop(), domain => 'test4.dkim2.com'),
+            forwarder_domain => 'test2.dkim2.com', signer => $signer,
+            pubkey_callback => $CB, skip_timestamp_check => 1,
+        });
+    };
+    like($@, qr/not aligned/,
+        'propagate refuses a DSN that is not aligned with the returned rt=');
+}
+
+{
+    # ... and propagates the one that authenticates in full.
+    my $out = Mail::DKIM2::DSN->propagate({
+        raw => signed_dsn_around(verifiable_twohop(), domain => 'test3.dkim2.com'),
+        forwarder_domain => 'test2.dkim2.com',
+        signer => mk_signer(domain => 'test2.dkim2.com'),
+        pubkey_callback => $CB, skip_timestamp_check => 1,
+    });
+    is($out->{upstream_mailfrom}, '<sender@test1.dkim2.com>',
+        'propagate does propagate a DSN that authenticates in full');
+    # The inbound DSN was itself signed -- the only kind §12.1.2 is about --
+    # so its own instance and signature must not survive into ours.
+    my $m = Email::MIME->new($out->{raw});
+    is(scalar(() = $m->header_raw('Message-Instance')), 1,
+        '  ... carrying exactly one Message-Instance, not the sender\'s as well');
+    my @sigs = map { Mail::DKIM2::Signature->parse($_) } $m->header_raw('DKIM2-Signature');
+    is(scalar @sigs, 1, '  ... and exactly one DKIM2-Signature');
+    is($sigs[0]->domain, 'test2.dkim2.com', '  ... ours');
+    is($sigs[0]->version, 1, '  ... covering m=1, not m=2 of somebody else\'s chain');
 }
 
 done_testing;

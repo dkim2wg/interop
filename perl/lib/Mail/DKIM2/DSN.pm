@@ -6,6 +6,7 @@ use Email::MIME;
 use Carp;
 use List::Util qw(max);
 
+use Mail::DKIM2::Common qw(extract_domain relaxed_domain_match);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
@@ -213,15 +214,87 @@ sub _parse_report {
     return ($dsn, $orig_idx, $orig_part);
 }
 
-# Authenticate an inbound DSN before propagating it (spec-06 §12.1.2): the
-# returned original's DKIM2 chain must verify, from its headers alone when
-# the DSN carries only headers. Deciding whether the top signature is one the
-# caller made (d= and mf=) is the caller's, since only it knows its domains.
+# Return the LOWEST-sequence DKIM2-Signature (parsed) of an Email::MIME msg.
+# For a DSN that is the signature of the system that generated it: §12.1.1
+# makes a DSN a new message with exactly one signature, and if that DSN is
+# itself forwarded onwards, i=1 is still its originator.
+sub _origin_sig {
+    my ($msg) = @_;
+    my @sigs = map { Mail::DKIM2::Signature->parse($_) } $msg->header_raw('DKIM2-Signature');
+    return unless @sigs;
+    my ($bottom) = sort { $a->sequence <=> $b->sequence } @sigs;
+    return $bottom;
+}
+
+# spec-06 §12.1.2 point 1: "The DSN's DKIM2-Signature will have a signing
+# domain that is aligned with the recipient of the message that is being
+# returned. The recipient's address is located in the rt= tag of the last
+# (highest i= tag) DKIM2-Signature in the returned message."
+#
+# This is the check that says the bounce came from the place we handed the
+# message to, and it is worth nothing unless the DSN's own signature has been
+# verified -- anyone can write d=. authenticate() therefore verifies the DSN
+# as well, and only compares the d= it has proved.
+#
+# Alignment is tested in BOTH directions: the spec's §9.4 relaxed match strips
+# labels from the envelope-address domain (so d= may be a parent of it, e.g. a
+# DSN signed by the org domain for mail delivered to a subdomain), while a
+# receiving system that bounces from a dedicated subdomain has the opposite
+# shape (d=bounces.example.com for rt=<user@example.com>). Both are the same
+# organization by the only test DKIM2 has, and rejecting either would reject
+# conformant mail; an unrelated domain still fails.
+#
+# Returns ('pass'|'fail'|'none', $detail).
+sub _check_alignment {
+    my ($dsn_sig, $orig_top) = @_;
+    return ('none', 'DSN carries no DKIM2-Signature of its own') unless $dsn_sig;
+
+    my $d = $dsn_sig->domain // '';
+    return ('none', 'DSN signature has no d=') unless length $d;
+
+    my $rt = $orig_top ? $orig_top->rcpt_to : undef;
+    my @rts = ref($rt) eq 'ARRAY' ? @$rt : (defined $rt ? ($rt) : ());
+    return ('none', "returned message's top signature has no rt= to align with")
+        unless @rts;
+
+    for my $r (@rts) {
+        my $rd = extract_domain($r) // '';
+        next unless length $rd;
+        return ('pass', "DSN d=$d is aligned with rt= $r")
+            if relaxed_domain_match($rd, $d) || relaxed_domain_match($d, $rd);
+    }
+    return ('fail', "DSN d=$d is not aligned with the returned message's rt= ("
+                  . join(', ', @rts) . ')');
+}
+
+# Authenticate an inbound DSN before propagating it (spec-06 §12.1.2):
+#
+#   * the returned original's DKIM2 chain must verify, from its headers alone
+#     when the DSN carries only headers (point 3);
+#   * the DSN's own signature must verify, and its d= must be aligned with the
+#     rt= of the returned original's top signature -- i.e. the bounce came
+#     from the system the message was handed to (point 1);
+#   * deciding whether that top signature is one the CALLER made (d= and mf=)
+#     is left to the caller (point 2), since only it knows its own domains.
+#
+# A DSN that carries no DKIM2-Signature at all is not what §12.1.2 is about
+# ("When a system receives a DKIM2 signed DSN"), so it is reported as
+# dsn_result 'none' with alignment 'none' rather than failed: a caller that
+# wants to insist on a signed DSN can require them, and one still handling
+# legacy bounces can see that this was one.
 #
 # Args: raw (the DSN), pubkey_callback (as for Verifier), and optionally
-# skip_timestamp_check. Returns a hashref: ok, result and details from the
-# Verifier, top (the parsed highest DKIM2-Signature, when there is one),
-# headers_only, and embedded (the returned original as Email::MIME).
+# skip_timestamp_check. Returns a hashref:
+#   ok               1 iff every check above that could run did pass
+#   result, details  the returned original's Verifier verdict
+#   top              the returned original's highest DKIM2-Signature, if any
+#   dsn_result,
+#   dsn_details      the DSN's own Verifier verdict ('none' if unsigned)
+#   dsn_sig          the DSN's originating (i=1) DKIM2-Signature, if any
+#   alignment,
+#   alignment_detail point 1: 'pass', 'fail' or 'none' (not checkable)
+#   headers_only     the DSN carried header fields only
+#   embedded         the returned original as an Email::MIME
 # Croaks, as propagate does, when the message is not an RFC 6522 DSN.
 sub authenticate {
     my ($class, $args) = @_;
@@ -241,21 +314,70 @@ sub authenticate {
     $v->PRINT($text);
     $v->CLOSE;
 
+    # The DSN itself, from the bytes as they arrived: re-serializing the
+    # Email::MIME we parsed could move a byte the body hash covers.
+    my $dv = Mail::DKIM2::Verifier->new;
+    $dv->set_pubkey_callback($cb);
+    $dv->skip_timestamp_check(1) if $args->{skip_timestamp_check};
+    (my $dsn_text = $raw) =~ s/\r?\n/\r\n/g;
+    $dv->PRINT($dsn_text);
+    $dv->CLOSE;
+    my $dsn_result = $dv->result;
+
+    my $dsn_sig = _origin_sig(Email::MIME->new($dsn_text));
+    my ($alignment, $alignment_detail) =
+        ($dsn_result eq 'pass') ? _check_alignment($dsn_sig, $top)
+      : ($dsn_result eq 'none') ? ('none', 'DSN carries no DKIM2-Signature of its own')
+      :                           ('none', "DSN's own signature did not verify");
+
+    my $ok = (($v->result // '') eq 'pass')
+          && ($dsn_result eq 'pass' || $dsn_result eq 'none')
+          && ($alignment ne 'fail');
+
     return {
-        ok           => (($v->result // '') eq 'pass' ? 1 : 0),
-        result       => $v->result,
-        details      => $v->result_detail,
-        top          => $top,
-        headers_only => $headers_only ? 1 : 0,
-        embedded     => $embedded,
+        ok               => $ok ? 1 : 0,
+        result           => $v->result,
+        details          => $v->result_detail,
+        top              => $top,
+        dsn_result       => $dsn_result,
+        dsn_details      => $dv->result_detail,
+        dsn_sig          => $dsn_sig,
+        alignment        => $alignment,
+        alignment_detail => $alignment_detail,
+        headers_only     => $headers_only ? 1 : 0,
+        embedded         => $embedded,
     };
 }
 
+# Propagate a received DSN upstream (spec-06 §12.1.1).
+#
+# §12.1.2 is not optional here: "If the verification fails then the DSN MUST
+# NOT be propagated any further", so propagate authenticates first and croaks
+# rather than re-signing a DSN it could not authenticate as ours. That needs a
+# pubkey_callback; a caller that has authenticated already (or is exercising
+# the rebuild machinery on a fixture, as t/dsn.t does) passes
+# skip_authentication => 1 to say so.
 sub propagate {
     my ($class, $args) = @_;
     my $raw = $args->{raw}              or croak "propagate: need raw DSN";
     my $fwd = $args->{forwarder_domain} or croak "propagate: need forwarder_domain";
     my $signer = $args->{signer}        or croak "propagate: need signer";
+
+    unless ($args->{skip_authentication}) {
+        croak "propagate: need pubkey_callback to authenticate the DSN (§12.1.2), "
+            . "or skip_authentication if it has been authenticated already"
+            unless $args->{pubkey_callback};
+        my $auth = $class->authenticate({
+            raw                  => $raw,
+            pubkey_callback      => $args->{pubkey_callback},
+            skip_timestamp_check => $args->{skip_timestamp_check},
+        });
+        unless ($auth->{ok}) {
+            croak "propagate: DSN did not authenticate (§12.1.2), not propagating: "
+                . ($auth->{alignment} eq 'fail' ? $auth->{alignment_detail}
+                                                : ($auth->{details} // $auth->{result}));
+        }
+    }
 
     my ($dsn, $orig_idx, $orig_part) = _parse_report($raw, 'propagate');
     my @parts = $dsn->subparts;
@@ -309,7 +431,14 @@ sub propagate {
     $dsn->parts_set(\@parts);
 
     # 6. The propagated DSN is a NEW message: one Message-Instance (v=1) and one
-    #    DKIM2-Signature, signed by the Forwarder with MAIL FROM <>.
+    #    DKIM2-Signature, signed by the Forwarder with MAIL FROM <>. So the
+    #    inbound DSN's OWN instance and signature go: they belong to the DSN we
+    #    received, which we have already authenticated (§12.1.2) and are not
+    #    continuing. Leaving them makes the new instance m=2 on a chain whose
+    #    i=1 is somebody else's, which is not a chain at all.
+    $dsn->header_raw_set('Message-Instance');
+    $dsn->header_raw_set('DKIM2-Signature');
+
     $signer->{MailFrom} = '<>';
     $signer->{RcptTo}   = [$upstream];
     return { raw => _sign_as_new($signer, $dsn), upstream_mailfrom => $upstream };
@@ -326,20 +455,29 @@ structure; DKIM2 draft-06 §12.1.1 propagation procedure)
 
 =head1 SYNOPSIS
 
-    my $out = Mail::DKIM2::DSN->propagate({
-        raw              => $dsn_bytes,
-        forwarder_domain => 'fwd.example',
-        signer           => $mail_dkim2_signer,   # configured with MailFrom => '<>'
-    });
-    # $out->{raw}               — the propagated DSN (one MI, one DKIM2-Signature)
-    # $out->{upstream_mailfrom} — address to send it to
-
     my $auth = Mail::DKIM2::DSN->authenticate({
         raw             => $dsn_bytes,
         pubkey_callback => \&lookup,
     });
-    # $auth->{ok}: the returned original's chain verifies (from its headers
-    # alone if that is all the DSN carries); $auth->{top} is its highest
-    # signature, for the caller to recognise as its own.
+    # $auth->{ok}         — the returned original's chain verifies (from its
+    #                       headers alone if that is all the DSN carries), the
+    #                       DSN's own signature verifies, and its d= is aligned
+    #                       with the returned original's top rt= (§12.1.2 1+3)
+    # $auth->{top}        — the returned original's highest signature, for the
+    #                       caller to recognise as its own by d= and mf= (point 2)
+    # $auth->{alignment}  — 'pass', 'fail', or 'none' (not checkable)
+    # $auth->{dsn_result} — the DSN's own verdict ('none' if it is unsigned)
+
+    my $out = Mail::DKIM2::DSN->propagate({
+        raw              => $dsn_bytes,
+        forwarder_domain => 'fwd.example',
+        signer           => $mail_dkim2_signer,   # configured with MailFrom => '<>'
+        pubkey_callback  => \&lookup,             # §12.1.2, or skip_authentication => 1
+    });
+    # $out->{raw}               — the propagated DSN (one MI, one DKIM2-Signature)
+    # $out->{upstream_mailfrom} — address to send it to
+    #
+    # Croaks rather than propagating a DSN it cannot authenticate: §12.1.2 says
+    # a DSN that fails verification MUST NOT be propagated any further.
 
 =cut

@@ -486,6 +486,38 @@ path may write.
 
 ---
 
+## 19. §12.1.2 point 1 does not say which way "aligned" relaxes
+
+§12.1.2 point 1 requires the DSN's own signing domain to be "aligned with the
+recipient of the message that is being returned", the recipient being the `rt=`
+of the returned message's highest `i=` signature. It does not say what aligned
+means here, and the relaxed match §9.4 defines is directional: labels are
+stripped from the left of the **MAIL FROM** domain, so `d=` may be a parent of
+the envelope domain but not a child of it.
+
+Applied to point 1 that reading admits a DSN signed by the org domain for mail
+delivered to a subdomain (`d=example.com`, `rt=<user@mail.example.com>`) and
+rejects the opposite shape (`d=bounces.example.com`, `rt=<user@example.com>`) —
+which is exactly how a receiving system with a dedicated bounce subdomain would
+sign, and is the shape §9.4's relaxation exists to accommodate everywhere else.
+
+Perl, Python and Go here accept **either** direction: one of the two domains
+must be equal to, or a parent of, the other. An unrelated domain still fails,
+which is the whole value of the check. This is a deliberate choice, recorded
+because a different implementation could reasonably read it the other way and
+reject conformant bounces.
+
+Note also that point 1 is only worth checking on a `d=` that has been
+*verified* — anyone can write `d=`. These implementations therefore verify the
+DSN's own signature as part of §12.1.2, not just the returned message's chain.
+A DSN carrying no DKIM2-Signature at all is reported as such rather than
+failed, since §12.1.2 scopes itself to "a DKIM2 signed DSN".
+
+**Recommendation to spec:** say which side of the point 1 comparison the
+relaxed match strips labels from, or state that either direction satisfies it.
+
+---
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
