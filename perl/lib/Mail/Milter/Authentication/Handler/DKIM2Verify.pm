@@ -20,7 +20,17 @@ sub default_config {
         'dns_overrides'        => undef,  # path to dns.json for testing
         'add_message_instance' => 1,      # compute and add MI header on inbound
         'snapshot_directory'   => undef,  # store message snapshots for egress diffing
+        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end
     };
+}
+
+# The library's list is process-wide and shared with any other handler that
+# sets it, so only a handler with something to say touches it.
+sub setup_callback {
+    my ($self) = @_;
+    my $prefixes = $self->handler_config()->{'ignore_header_prefixes'} || [];
+    Mail::DKIM2::Common::ignore_header_prefixes(@$prefixes) if @$prefixes;
+    return;
 }
 
 sub register_metrics {

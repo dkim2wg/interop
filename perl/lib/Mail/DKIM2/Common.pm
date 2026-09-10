@@ -14,6 +14,7 @@ use Crypt::Digest::SHA256 qw(sha256 sha256_b64 sha256_hex);
 use Exporter 'import';
 our @EXPORT_OK = qw(
     should_skip
+    ignore_header_prefixes
     dkim2_canonicalize_header
     dkim2_canonicalize_sig_header
     digest64
@@ -54,11 +55,26 @@ my %SKIP_EXACT = map { $_ => 1 } qw(
     received return-path sio-label-history vbr-info x400-received x400-trace
 );
 
+# Header field names an operator's own systems put on the wrong side of the
+# signature: added at its border on the way in, stripped at its border on the
+# way out. A signer that hashed one would sign a message no recipient ever
+# sees; a verifier that hashed one would fail the operator's own forwards.
+# The operator sets these; the spec knows nothing of them, and neither does a
+# remote verifier, so the operator also has to make sure no field with one of
+# these names ever leaves its network.
+my @IGNORE_PREFIXES;
+
+sub ignore_header_prefixes {
+    @IGNORE_PREFIXES = map { lc } @_;
+    return;
+}
+
 sub should_skip {
     my $hname = lc(shift);
     return 1 if $SKIP_EXACT{$hname};
     return 1 if $hname =~ m/^x-/;
     return 1 if $hname =~ m/^received-/;
+    return 1 if grep { index($hname, $_) == 0 } @IGNORE_PREFIXES;
     return 0;
 }
 
@@ -474,7 +490,18 @@ All functions are exportable on request.
 Returns true if the named header should be excluded from DKIM2 hashing.
 Excluded headers include C<Received>, C<Return-Path>, C<Message-Instance>,
 C<DKIM2-Signature>, C<DKIM-Signature>, C<Authentication-Results>, ARC
-headers, and any C<X-*> header.
+headers, and any C<X-*> header, plus any header whose name starts with a
+prefix given to C<ignore_header_prefixes>.
+
+=head2 ignore_header_prefixes(@prefixes)
+
+Names, by case-insensitive prefix, the header fields the operator's own
+systems add after mail is signed and remove before it leaves, which its
+signers and verifiers then hash as if absent. Replaces any list set before;
+call with no arguments to clear it. This is local policy, not protocol: a
+remote verifier hashes these fields like any other, so the operator has to
+strip them at its border, and both ends of its own infrastructure have to
+agree on the list.
 
 =head2 dkim2_canonicalize_header($line)
 

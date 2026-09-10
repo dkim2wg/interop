@@ -32,7 +32,17 @@ sub default_config {
         'record_smtp_params'   => 1,
         # Directory for message snapshots (shared with DKIM2Verify)
         'snapshot_directory'   => undef,
+        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end
     };
+}
+
+# The library's list is process-wide and shared with any other handler that
+# sets it, so only a handler with something to say touches it.
+sub setup_callback {
+    my ($self) = @_;
+    my $prefixes = $self->handler_config()->{'ignore_header_prefixes'} || [];
+    Mail::DKIM2::Common::ignore_header_prefixes(@$prefixes) if @$prefixes;
+    return;
 }
 
 sub register_metrics {
