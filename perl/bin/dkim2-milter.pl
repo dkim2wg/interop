@@ -348,9 +348,20 @@ sub cb_eom {
         # If there are upstream DKIM2-Signature headers we must verify the
         # chain before extending it.  In mode=both the verify block already
         # ran; in mode=outbound we run it now on demand.
+        #
+        # allow_unsigned_mi: the message may carry a Message-Instance above the
+        # top signature that is OURS to sign. A list manager on this host
+        # (Mailman, Sympa) records its changes as a new m= and hands the
+        # message to us unsigned; the milter is the step that signs it. spec-06
+        # §11's "Message-Instance m=<x> is not signed" PERMERROR is a receiver's
+        # rule about mail on the wire, and applying it here refused to sign
+        # every list post whose upstream chain was signed. The opt-out does not
+        # loosen the chain gate: i=1..n still have to verify, and
+        # chain_verifies() below still requires the unsigned instance to match
+        # the content and undo cleanly.
         my $has_dk2 = grep { lc($_->[0]) eq 'dkim2-signature' } @{$priv->{headers}};
         if ($has_dk2 && !$do_verify) {
-            $verify_result = _do_verify($message);
+            $verify_result = _do_verify($message, allow_unsigned_mi => 1);
         }
 
         # Always run the full undo check on the existing Message-Instance chain
@@ -500,10 +511,15 @@ sub _get_sign_config {
 
 # --- Verification ---
 
+# _do_verify($message, %opts): run the Verifier over a reconstructed message.
+#   allow_unsigned_mi => 1   permit a Message-Instance above the top signature
+#                            (outbound only: it is the instance we are about to
+#                            sign -- see the sign block in cb_eom).
 sub _do_verify {
-    my ($message) = @_;
+    my ($message, %o) = @_;
 
     my $verifier = Mail::DKIM2::Verifier->new();
+    $verifier->allow_unsigned_mi(1) if $o{allow_unsigned_mi};
 
     if ($dns_data) {
         $verifier->set_pubkey_callback(sub {

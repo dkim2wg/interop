@@ -1036,10 +1036,27 @@ chains that verify, **without emailing real subscribers**. Run on the box:
 ssh dkim2 'cd /root/interop && deploy/dkim2-list-smoke.sh'
 ```
 
-It injects a message (from the capture address) through each test list, captures
-the outbound list-modified + milter-signed copy locally, and asserts the
-current draft (read from `DKIM2_DRAFT`, not hardcoded) + `verify=pass` for
-each. Expected output: three `PASS` lines — Mailman stamps one and Sympa two.
+It runs two rounds through each test list, captures the outbound list-modified +
+milter-signed copies locally, and asserts the current draft (read from
+`DKIM2_DRAFT`, not hardcoded) + `verify=pass` + the expected chain for each:
+
+1. **Unsigned upstream** — a plain message from the capture address. The
+   inbound milter stamps `m=1`, the list records `m=2`, the outbound milter
+   originates `i=1`. Expected chain `i=1..1`.
+2. **DKIM2-signed upstream** — the same message first signed as
+   `dkim2.com`/`sel1` (`/etc/dkim2/reflector/sel1.key`) and delivered over raw
+   SMTP, as a post from a signing sender arrives. The list records `m=2`
+   **unsigned** and hands it to the outbound milter, which must verify `i=1`,
+   accept the unsigned `m=2` as the instance it is about to sign, and add
+   `i=2`. Expected chain `i=1..2`.
+
+Round 2 exists because round 1 passed for weeks while that path was broken:
+from 2026-08-26 the milter's pre-sign verify applied spec-06 §11's
+"Message-Instance m=<x> is not signed" PERMERROR to the list's own `m=2` and
+refused to sign, so every list post with a signed upstream left unsigned. It
+only showed on 2026-09-10, the first day Fastmail signed
+(`perl/t/milter-script.t` is the in-repo guard). Expected output: at least four
+`PASS` lines — Mailman one per round, Sympa two per round.
 
 ### One-time infra (already set up 2026-07-06)
 

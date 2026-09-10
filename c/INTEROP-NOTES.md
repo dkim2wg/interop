@@ -561,6 +561,52 @@ reporting all along.
 
 ---
 
+## 21. An outbound signer must exempt the instance it is about to sign from §11
+
+spec-06 §11: "there MUST NOT be a Message-Instance field with a higher m= value
+than occurs in any DKIM2-Signature field" — `PERMERROR Message-Instance m=<x>
+is not signed`. The Perl Verifier gained that check on 2026-08-26 (note: all
+five verifiers already rejected the case; only the wording changed), with an
+opt-out for the one party that legitimately holds such a message: the signer,
+before its signature exists. The opt-out was wired into `Signer.pm` and
+`Reflector.pm`. It was not wired into `bin/dkim2-milter.pl`, the daemon that
+actually signs list mail on mail.dkim2.com, which verifies the upstream chain
+before extending it.
+
+The failure was invisible for two weeks because it needs a *signed* upstream.
+A list post from a non-DKIM2 sender arrives with no DKIM2-Signature at all, so
+the milter skips the pre-sign verify and originates `i=1` — and every smoke test
+injected exactly that. On 2026-09-10 Fastmail began signing, and the first
+Fastmail post to `test@mailman.dkim2.com` left the box with Mailman's
+`Message-Instance: m=2` and no `i=2`:
+
+```
+dkim2-milter: not signing <74512c17-...@app.fastmail.com>: upstream DKIM2 chain
+  result=permerror (PERMERROR Message-Instance m=2 is not signed)
+```
+
+The receiver then reported the same PERMERROR, correctly — the message on the
+wire really was malformed. Two things worth carrying forward:
+
+**The §11 check is a receiver's rule, and a signer's input is not on the wire
+yet.** Any design where the party that *records* a change (here Mailman and
+Sympa, which compute their own `m=2` with a Recipe) is separate from the party
+that *signs* it (the MTA's milter) hands the signer an unsigned top instance by
+construction. A signer that pre-verifies the chain has to accept `top_mi ==
+top_signed + 1` as its own work item, while still requiring every existing
+signature to verify and the unsigned instance to match the content and undo
+cleanly — the opt-out must not become a way to launder a broken chain.
+
+**Test the signed-upstream path explicitly.** A list pipeline has two distinct
+outbound paths — originate (`i=1`, no upstream) and extend (`i=n+1`, upstream
+verified) — and only the second exercises the pre-sign verify. The deployed
+script had no automated test at all; `perl/t/milter-script.t` now drives it over
+a real milter socket for both paths plus a corrupted-upstream refusal, and
+`deploy/dkim2-list-smoke.sh` injects a DKIM2-signed message through each live
+list and requires `i=1..2`.
+
+---
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
@@ -736,6 +782,8 @@ message, fixed timestamp, known key, showing every intermediate value.
 | 16 | Leading WSP stripped before unfolding | Fixed (`in_wsp = 1`) | Critical for interop |
 | 17 | NULL holes crash multi-field recipe undo | Fixed (skip holes) | Critical (crash) |
 | 18 | §11.9 replay detection unimplemented | Won't do (scale) | Conformant (SHOULD) |
+| 20 | Failed undo returned the message with a warning | Fixed (Python raises) | High (fail-open) |
+| 21 | Outbound milter applied §11 PERMERROR to its own unsigned m= | Fixed (`allow_unsigned_mi`) | Critical (list mail left unsigned) |
 | S1 | Trailing `;` should be normative | Spec issue | Critical for interop |
 | S2 | `ed25519-sha256` prehash semantics unstated | Spec issue | Critical for interop |
 | S3 | §5.2 vs §8.5 WSP rules not cross-referenced | Spec issue | High |
