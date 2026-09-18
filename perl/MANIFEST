@@ -40,6 +40,7 @@ t/dsn.t
 t/duplicate-checks.t
 t/error-strings.t
 t/fold-fws.t
+t/fold-info.t
 t/foreign-exception.t
 t/fraud-detection.t
 t/full-chain.t

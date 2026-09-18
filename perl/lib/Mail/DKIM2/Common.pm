@@ -191,6 +191,16 @@ sub fold_header {
             }
         }
 
+        # A list-valued tag (the hn= header-name list in X-DKIM2-Info) has
+        # no spaces at all, so break after a comma rather than in the middle
+        # of a name: "lis" + "t-help" is not a header field that exists.
+        # Base64 tag values contain no commas, so signed headers still fall
+        # through to the hard break below, which their parsers tolerate.
+        if ($break < 0) {
+            $pos = rindex($search, ',');
+            $break = $pos + 1 if $pos > 0;
+        }
+
         # Last resort: hard break at limit
         $break = $limit if $break < 0;
 
@@ -543,10 +553,11 @@ Comparison is case-insensitive.
 =head2 fold_header($line, $margin)
 
 Folds a header line at C<$margin> characters (default 72) for insertion into
-a message.  First tries to break at C<; > tag boundaries, then breaks any
-remaining long segments at character positions.  Extends past trailing C<=>
-padding, C<;> delimiters, and single remaining characters to avoid orphaning
-them on the next line.
+a message.  Tries, in order, to break at a C<; > tag boundary, at a space,
+after a C<,> in a list-valued tag (so a header name in an X-DKIM2-Info
+C<hn=> list is never split), and only then at an arbitrary character
+position.  Extends past trailing C<=> padding, C<;> delimiters, and single
+remaining characters to avoid orphaning them on the next line.
 
 Only for headers we are creating — never for headers read from elsewhere.
 
