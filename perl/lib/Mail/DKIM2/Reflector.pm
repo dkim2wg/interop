@@ -15,22 +15,40 @@ our $SUBJECT_PREFIX = '[DKIM2] ';
 our $FOOTER         = "-- \r\nReflected and signed by the DKIM2 reflector at dkim2.com\r\n";
 our $DAMAGE_LINE    = "damage line, breaks the signature\r\n";
 
-# X-DKIM2-Info provenance, in the same format dkim2-milter.pl emits. The spec
-# version constants come from Mail::DKIM2::Common (single source of truth).
+# X-DKIM2-Info provenance, per ../spec/draft-gondwana-dkim2-debug-header: one
+# field per action (verify, mi-m<N>, sign), each directly above the header it
+# describes. The spec version constants come from Mail::DKIM2::Common.
 use constant DKIM2_SOFTWARE => 'dkim2-reflector.pl';
 
 sub _dkim2_info {
     my ($action, %extra) = @_;
+    # ";" separates tags and has no escape, so it may not appear in a value.
+    (my $act = $action) =~ s/;/,/g;
     my $val = "draft=" . DKIM2_DRAFT
             . "; repo=" . DKIM2_REPO
             . "; date=" . DKIM2_DATE
             . "; sw=" . DKIM2_SOFTWARE
-            . "; action=$action";
+            . "; action=$act";
     for my $key (sort keys %extra) {
         next unless defined $extra{$key};
-        $val .= "; $key=$extra{$key}";
+        (my $v = $extra{$key}) =~ s/;/,/g;
+        $val .= "; $key=$v";
     }
     return $val;
+}
+
+# A complete, folded "X-DKIM2-Info: ..." line with trailing CRLF, ready to
+# prepend directly above the header field the action added.
+sub _info_line {
+    my ($action, %extra) = @_;
+    (my $xi = fold_header("X-DKIM2-Info: " . _dkim2_info($action, %extra))) =~ s/\r?\n\z//;
+    return "$xi\r\n";
+}
+
+# "sign d=<domain> a=<algorithm>" for a DKIM2-Signature made with %sa.
+sub _sign_info_line {
+    my (%sa) = @_;
+    return _info_line("sign d=$sa{Domain} a=" . ($sa{Algorithm} // 'rsa-sha256'));
 }
 
 # (count, comma-separated-names) of the headers a Message-Instance hash covers,
@@ -81,7 +99,9 @@ sub _fresh_message_text {
       . $a{body};
     my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($text));
     (my $miv = fold_header("Message-Instance: " . $mi->as_string)) =~ s/^Message-Instance:\s*//;
-    return "Message-Instance: $miv\r\n" . $text;
+    my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($text));
+    return _info_line('mi-m1', hc => $hc, hn => $hn)
+         . "Message-Instance: $miv\r\n" . $text;
 }
 
 # Default explainer body for the fresh generator.
@@ -130,11 +150,7 @@ sub generate {
     $sa{Key} = $a{key} if $a{key};
     $sa{KeyFile} = $a{keyfile} if $a{keyfile} && !$a{key};
     $text = _sign_with($text, %sa) . "\r\n" . $text;
-
-    # X-DKIM2-Info provenance (action=generate), same format as the milter.
-    my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($text));
-    (my $xi = fold_header("X-DKIM2-Info: " . _dkim2_info('generate', hc => $hc, hn => $hn))) =~ s/\r?\n\z//;
-    return "$xi\r\n" . $text;
+    return _sign_info_line(%sa) . $text;
 }
 
 # generate_dsn(%args) — return a Delivery Status Notification for the incoming
@@ -293,19 +309,14 @@ sub generate_brand {
     }
     $b{Key} = $a{brand_key} if $a{brand_key};
     $b{KeyFile} = $a{brand_keyfile} if $a{brand_keyfile} && !$a{brand_key};
-    $text = _sign_with($text, %b) . "\r\n" . $text;
+    $text = _sign_info_line(%b) . _sign_with($text, %b) . "\r\n" . $text;
 
     # i=2: the dkim2.com hop out to the sender.
     my %d = (Domain => $a{domain}, Selector => $a{selector},
              MailFrom => $a{mailfrom}, RcptTo => [ $a{sender} ], Timestamp => $now);
     $d{Key} = $a{key} if $a{key};
     $d{KeyFile} = $a{keyfile} if $a{keyfile} && !$a{key};
-    $text = _sign_with($text, %d) . "\r\n" . $text;
-
-    my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($text));
-    my $action = $a{nd} ? 'brand-nd' : 'brand';
-    (my $xi = fold_header("X-DKIM2-Info: " . _dkim2_info($action, hc => $hc, hn => $hn))) =~ s/\r?\n\z//;
-    return "$xi\r\n" . $text;
+    return _sign_info_line(%d) . _sign_with($text, %d) . "\r\n" . $text;
 }
 
 my %VALID = map { $_ => 1 } qw(raw subject body both redacted damage);
@@ -372,49 +383,44 @@ sub reflect {
     if ($mi) {
         my $val = fold_header("Message-Instance: " . $mi->as_string);
         $val =~ s/^Message-Instance:\s*//;
-        $cur_text = "Message-Instance: $val\r\n" . $cur_text;
+        my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($cur_text));
+        $cur_text = _info_line("mi-m" . $mi->get_tag('m'), hc => $hc, hn => $hn)
+                  . "Message-Instance: $val\r\n" . $cur_text;
     }
 
     # 5. Sign when we have a basis; for damage, break the body AFTER signing.
     my $signed = 0;
     if ($will_sign) {
         my $sig = _sign($cur_text, %a);
-        $cur_text = "$sig\r\n" . $cur_text;
+        $cur_text = _sign_info_line(Domain => $a{domain}) . "$sig\r\n" . $cur_text;
         $signed = 1;
         $cur_text .= $DAMAGE_LINE if $mode eq 'damage';
     }
 
     # 6. Explanation headers (excluded from the DKIM2 header hash by
     #    should_skip(): ^x- and authentication-results). Safe to prepend last.
-    my $ar = "Authentication-Results: $a{domain}; dkim2=$auth";
-    if ($auth ne 'pass' && defined $auth_detail && length $auth_detail) {
-        # RFC 8601 lets the result carry a comment.  Flatten to one line and
-        # drop parens/backslashes so the comment stays balanced and parseable.
-        (my $why = $auth_detail) =~ s/[()\\\r\n]+/ /g;
+    # Flatten the verifier's explanation to one line with no parens or
+    # backslashes, so it can sit in an RFC 8601 comment and in X-DKIM2-Info.
+    my $why = '';
+    if (defined $auth_detail && length $auth_detail) {
+        ($why = $auth_detail) =~ s/[()\\\r\n]+/ /g;
         $why =~ s/\s+/ /g;
         $why =~ s/\A\s+|\s+\z//g;
-        $ar .= " ($why)" if length $why;
     }
+    my $ar = "Authentication-Results: $a{domain}; dkim2=$auth";
+    $ar .= " ($why)" if $auth ne 'pass' && length $why;
     $ar .= "; dkim=pass header.d=$dkim1_d" if $dkim1_d;
     $ar .= "\r\n";
     my $xr = "X-DKIM2-Reflector: mode=$mode; auth=$auth; dkim1=$dkim1; "
            . "basis=$basis; signed=" . ($signed ? 'yes' : 'no')
            . "; note=reflected-to-sender\r\n";
 
-    # X-DKIM2-Info: provenance in dkim2-milter.pl's format. When we recorded a
-    # new Message-Instance, report it as mi-m<N> with the hashed-header list,
-    # exactly as the milter does; otherwise note the verify-only reflect.
-    my $info;
-    if ($mi) {
-        my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($cur_text));
-        $info = _dkim2_info("mi-m" . $mi->get_tag('m'), hc => $hc, hn => $hn);
-    } else {
-        $info = _dkim2_info("reflect-$mode", verify => $auth);
-    }
-    (my $xi = fold_header("X-DKIM2-Info: $info")) =~ s/\r?\n\z//;
-    $xi .= "\r\n";
+    # X-DKIM2-Info for the verification, directly above Authentication-Results.
+    # The mi-m<N> and sign fields were added above their own headers in steps
+    # 4 and 5.
+    my $xi = _info_line("verify=$auth" . (length $why ? " ($why)" : ''));
 
-    $cur_text = $ar . $xr . $xi . $cur_text;
+    $cur_text = $xi . $ar . $xr . $cur_text;
 
     return {
         message => $cur_text, auth => $auth, dkim1 => $dkim1,
