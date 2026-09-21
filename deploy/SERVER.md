@@ -602,6 +602,15 @@ only for this) includes `snippets/acme-challenge.conf`, which maps
 `/.well-known/acme-challenge/` to that webroot. Auto-renewal runs from
 the system `certbot.timer`.
 
+**Reload after renewal (deploy hook):** nginx and Postfix only read the
+cert files at (re)start, so a renewed cert on disk does nothing until
+they are reloaded. `/etc/letsencrypt/renewal-hooks/deploy/reload-services.sh`
+(snapshot: `deploy/config/letsencrypt/renewal-hooks/deploy/reload-services.sh`)
+runs `systemctl reload nginx` and `systemctl reload postfix` after every
+successful renewal. Every port-80 vhost MUST keep
+`include snippets/acme-challenge.conf;` — a plain `return 301` block
+sends the ACME probe to the HTTPS app instead and renewal fails.
+
 > History: certs were originally issued with the `standalone`
 > authenticator, which binds port 80 itself and so conflicted with
 > nginx — every auto-renewal failed and the certs expired 2026-06-17.
@@ -609,6 +618,13 @@ the system `certbot.timer`.
 > delay of up to ~8 min before renewing (anti-thundering-herd); this is
 > normal, not a hang. Add `--no-random-sleep-on-renew` for an immediate
 > manual renew.
+>
+> 2026-09-16: certs expired a second time. certbot HAD renewed
+> dkim2.com/mail/mailman on 2026-08-17, but there was no deploy hook so
+> nginx kept serving the old files; and the live `sympa.dkim2.com` vhost
+> had been rewritten (css alias change) from a pre-webroot copy without
+> the acme snippet, so that cert never renewed at all. Fixed 2026-09-21:
+> hook added, sympa vhost re-includes the snippet.
 
 ```bash
 # Manual renew / force:

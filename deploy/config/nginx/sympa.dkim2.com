@@ -1,7 +1,8 @@
 server {
     listen 80;
     server_name sympa.dkim2.com;
-    return 301 https://$host$request_uri;
+    include snippets/acme-challenge.conf;
+    location / { return 301 https://$host$request_uri; }
 }
 
 server {
