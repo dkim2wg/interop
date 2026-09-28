@@ -76,6 +76,7 @@ t/validate-cgi.t
 t/validate-cli.t
 t/validate-report.t
 t/verifier-mi-coverage.t
+t/verifier-streaming.t
 t/verifier_flags.t
 t/verify-mi-hash.t
 t/version.t

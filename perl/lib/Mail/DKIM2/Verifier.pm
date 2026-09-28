@@ -133,8 +133,8 @@ sub handle_header {
     }
 }
 
-# Verification happens in finish_body, unless the chain's fields are already
-# enough to refuse it.
+# Verification happens in finish_body, unless the header fields alone already
+# decide the result.
 sub finish_header {
     my $self = shift;
     my $numbers = $self->{_numbers};
@@ -146,6 +146,17 @@ sub finish_header {
     if ($error) {
         $self->{result}  = 'permerror';
         $self->{details} = $error;
+        $self->stop;
+        return;
+    }
+
+    # With no signature the verdict is already known -- 'none', or the
+    # unsigned-instance PERMERROR -- and finish_body reaches it before it
+    # looks at the body, so do not keep one. Most mail carries no DKIM2 at
+    # all, and a verifier run on every message would otherwise hold a copy
+    # of each.
+    unless (%{$self->{_dk2_headers}}) {
+        $self->finish_body;
         $self->stop;
     }
 }

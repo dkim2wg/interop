@@ -27,12 +27,22 @@ sub PRINT {
     $self->{_buf} .= $data;
 
     if ($self->{_in_header}) {
-        # Look for end-of-headers (blank line)
-        if ($self->{_buf} =~ s/\A(.*?\r?\n)\r?\n//s) {
-            my $header_block = $1;
+        # Look for end-of-headers (blank line), resuming where the last chunk's
+        # search stopped: rescanning from the start each time costs the square
+        # of the header size when they arrive in small pieces. Two bytes back,
+        # in case the line ending was split across chunks.
+        pos($self->{_buf}) = $self->{_header_scan} // 0;
+        if ($self->{_buf} =~ /\n\r?\n/g) {
+            my $end = pos($self->{_buf});
+            my $header_block = substr($self->{_buf}, 0, $end, '');
+            $header_block =~ s/\r?\n\z//;
             $self->_parse_headers($header_block);
             $self->{_in_header} = 0;
             $self->finish_header();
+        }
+        else {
+            my $scanned = length($self->{_buf}) - 2;
+            $self->{_header_scan} = $scanned > 0 ? $scanned : 0;
         }
     }
     # Body data accumulates in buffer until CLOSE
