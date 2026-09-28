@@ -18,6 +18,7 @@ use Mail::DKIM2::Common qw(
     relaxed_domain_match
     MAX_CHAIN_LENGTH
     chain_length_error
+    duplicate_number_error
 );
 use Email::MIME;
 use Mail::DKIM2::Signature;
@@ -105,6 +106,7 @@ sub handle_header {
         eval {
             my $v = extract_mi_version($contents);
             if ($v) {
+                push @{$self->{_numbers}{'message-instance'}}, $v;
                 $self->{_mi_headers}{$v} = $line || "$field_name:$contents";
             }
             1;
@@ -117,6 +119,7 @@ sub handle_header {
         eval {
             my $sig = Mail::DKIM2::Signature->parse($contents);
             if ($sig && $sig->sequence) {
+                push @{$self->{_numbers}{'dkim2-signature'}}, $sig->sequence;
                 $self->{_dk2_headers}{$sig->sequence + 0} = {
                     raw => $line || "$field_name:$contents",
                     sig => $sig,
@@ -130,11 +133,17 @@ sub handle_header {
     }
 }
 
-# Verification happens in finish_body, unless the chain is too long to be
-# worth reading any further.
+# Verification happens in finish_body, unless the chain's fields are already
+# enough to refuse it.
 sub finish_header {
     my $self = shift;
-    if (my $error = chain_length_error($self->{_chain_counts})) {
+    my $numbers = $self->{_numbers};
+    my $error = chain_length_error($self->{_chain_counts})
+        // duplicate_number_error('Message-Instance', 'm',
+               @{$numbers->{'message-instance'} || []})
+        // duplicate_number_error('DKIM2-Signature', 'i',
+               @{$numbers->{'dkim2-signature'} || []});
+    if ($error) {
         $self->{result}  = 'permerror';
         $self->{details} = $error;
         $self->stop;

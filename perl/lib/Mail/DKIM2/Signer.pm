@@ -14,6 +14,7 @@ use Mail::DKIM2::Common qw(
     load_private_key
     MAX_CHAIN_LENGTH
     chain_length_error
+    duplicate_number_error
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -70,7 +71,12 @@ sub finish_header {
         'message-instance' => scalar @mi_headers,
         'dkim2-signature'  => $next_i,
     );
-    if (my $error = chain_length_error(\%counts)) {
+    my $error = chain_length_error(\%counts)
+        // duplicate_number_error('Message-Instance', 'm',
+               map { $_->{v} } @mi_headers)
+        // duplicate_number_error('DKIM2-Signature', 'i',
+               map { $_->{i} } @dk2_headers);
+    if ($error) {
         die "cannot sign: $error\n";
     }
     # Determine highest MI version

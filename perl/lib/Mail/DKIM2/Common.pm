@@ -36,6 +36,7 @@ our @EXPORT_OK = qw(
     DKIM2_DATE
     MAX_CHAIN_LENGTH
     chain_length_error
+    duplicate_number_error
 );
 
 # Provenance emitted in X-DKIM2-Info headers by the milter, the reflector, and
@@ -100,6 +101,20 @@ sub chain_length_error {
                   : scalar(my @values = $msg->header_raw($field));
         return "PERMERROR more than " . MAX_CHAIN_LENGTH . " $field fields"
             if $count > MAX_CHAIN_LENGTH;
+    }
+    return;
+}
+
+# The PERMERROR for the first number that appears twice among a field's
+# m= or i= values, or undef. Each number names one hop, so a second field
+# with the same number is never a valid chain, and taking either one would
+# let the other go unchecked.
+sub duplicate_number_error {
+    my ($field, $tag, @numbers) = @_;
+    my %seen;
+    for my $n (grep { defined } @numbers) {
+        return "PERMERROR $field $tag=$n appears more than once"
+            if $seen{$n + 0}++;
     }
     return;
 }

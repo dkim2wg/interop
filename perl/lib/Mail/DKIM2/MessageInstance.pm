@@ -25,9 +25,19 @@ use Mail::DKIM2::Common qw(
     extract_mi_version
     MAX_CHAIN_LENGTH
     chain_length_error
+    duplicate_number_error
 );
 
 our $DEBUG = 0;
+
+# The PERMERROR for a message whose Message-Instance fields cannot form a
+# chain, or undef.
+sub _chain_error {
+    my ($msg) = @_;
+    return chain_length_error($msg)
+        // duplicate_number_error('Message-Instance', 'm',
+               map { extract_mi_version($_) } $msg->header_raw('Message-Instance'));
+}
 
 # spec-06 §3.1: two hashing algorithms are defined. Verifiers MUST implement
 # both; Signers MAY implement either or both (we default to sha256).
@@ -702,6 +712,9 @@ sub calculate {
         my @mi_prev = $previous->header_raw('Message-Instance');
         die "Message already has " . MAX_CHAIN_LENGTH . " instances\n"
             if @mi_cur >= MAX_CHAIN_LENGTH;
+        if (my $error = _chain_error($current)) {
+            die "$error\n";
+        }
         die "Previous message has no existing instances" unless @mi_prev;
         # Verify same message by checking MI headers match
         # header_raw returns values only, so prepend the name for canonicalization
@@ -802,7 +815,7 @@ sub verify {
         $msg = Email::MIME->new($msg);
     }
 
-    if (my $error = chain_length_error($msg)) {
+    if (my $error = _chain_error($msg)) {
         return wantarray ? (0, $error) : 0;
     }
 
@@ -850,7 +863,7 @@ sub undo {
         $msg = Email::MIME->new($msg);
     }
 
-    if (my $error = chain_length_error($msg)) {
+    if (my $error = _chain_error($msg)) {
         die "$error\n";
     }
 
@@ -911,7 +924,7 @@ sub chain_verifies {
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = Email::MIME->new("$msg");
     }
-    if (my $error = chain_length_error($msg)) {
+    if (my $error = _chain_error($msg)) {
         return (0, $error);
     }
     while (1) {

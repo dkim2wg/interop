@@ -57,24 +57,30 @@ sub verify {
 
 # Every hop adds a body line, a Message-Instance recording how to undo it, and
 # a signature.
-my $text = join("\r\n",
-    'From: sender@test1.dkim2.com',
-    'To: hop@test1.dkim2.com',
-    'Subject: a long chain',
-    '',
-    'original body',
-    '',
-);
-my $mi = Mail::DKIM2::MessageInstance->calculate($text);
-$text = sign_hop("Message-Instance: " . $mi->as_string . "\r\n$text");
-for my $hop (2 .. MAX_CHAIN_LENGTH) {
-    my $previous = Email::MIME->new($text);
-    my $current  = Email::MIME->new($text);
-    $current->body_set($current->body_raw . "hop $hop\r\n");
-    my $next = Mail::DKIM2::MessageInstance->calculate($current, $previous);
-    $current->header_raw_prepend('Message-Instance', $next->as_string);
-    $text = sign_hop($current->as_string);
+sub build_chain {
+    my ($hops) = @_;
+    my $text = join("\r\n",
+        'From: sender@test1.dkim2.com',
+        'To: hop@test1.dkim2.com',
+        'Subject: a long chain',
+        '',
+        'original body',
+        '',
+    );
+    my $mi = Mail::DKIM2::MessageInstance->calculate($text);
+    $text = sign_hop("Message-Instance: " . $mi->as_string . "\r\n$text");
+    for my $hop (2 .. $hops) {
+        my $previous = Email::MIME->new($text);
+        my $current  = Email::MIME->new($text);
+        $current->body_set($current->body_raw . "hop $hop\r\n");
+        my $next = Mail::DKIM2::MessageInstance->calculate($current, $previous);
+        $current->header_raw_prepend('Message-Instance', $next->as_string);
+        $text = sign_hop($current->as_string);
+    }
+    return $text;
 }
+
+my $text = build_chain(MAX_CHAIN_LENGTH);
 
 {
     my ($v) = verify($text);
@@ -136,6 +142,50 @@ my ($top_mi)  = $text =~ /^(Message-Instance:.*?\r\n)(?=\S)/ms;
     is($v->details, 'PERMERROR more than 32 DKIM2-Signature fields',
         'a thousand signatures are refused the same way');
     is($lookups, 0, '... with no key fetched');
+}
+
+# Each number names one hop, so a second field with the same i= or m= is an
+# error however short the chain: whichever copy a verifier took, the other
+# would go unchecked.
+{
+    my $short = build_chain(2);
+    my ($sig) = $short =~ /\A(DKIM2-Signature:.*?\r\n)(?=\S)/s;
+    my ($mi)  = $short =~ /^(Message-Instance:.*?\r\n)(?=\S)/ms;
+
+    my ($v) = verify($short);
+    is($v->result, 'pass', 'the two-hop chain verifies') or diag($v->details);
+
+    my $lookups;
+    ($v, $lookups) = verify($sig . $short);
+    is($v->result, 'permerror', 'a repeated i= is a permerror');
+    is($v->details, 'PERMERROR DKIM2-Signature i=2 appears more than once',
+        '... naming the number');
+    is($lookups, 0, '... with no key fetched');
+
+    my $signer = signer();
+    ok(!eval { $signer->PRINT($sig . $short); $signer->CLOSE; 1 },
+        'the signer will not extend a chain with a repeated i=');
+    like($@, qr/^cannot sign: PERMERROR DKIM2-Signature i=2 appears more than once/,
+        '... and says why');
+
+    my $twice = $mi . $short;
+    ($v, $lookups) = verify($twice);
+    is($v->details, 'PERMERROR Message-Instance m=2 appears more than once',
+        'a repeated m= is a permerror');
+    is($lookups, 0, '... with no key fetched');
+
+    my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($twice);
+    is($why, 'PERMERROR Message-Instance m=2 appears more than once',
+        'chain_verifies refuses it');
+    ok(!Mail::DKIM2::MessageInstance->verify($twice), 'verify refuses it');
+    ok(!eval { Mail::DKIM2::MessageInstance->undo($twice); 1 },
+        'undo refuses it');
+
+    # The same number with different content is no better.
+    (my $other = $mi) =~ s/\bm=2\b/m=1/;
+    ($v) = verify($other . $short);
+    is($v->details, 'PERMERROR Message-Instance m=1 appears more than once',
+        'a second m=1 with other content is refused too');
 }
 
 done_testing;
