@@ -23,6 +23,8 @@ use Mail::DKIM2::Common qw(
     encode_tag_json
     decode_tag_json
     extract_mi_version
+    MAX_CHAIN_LENGTH
+    chain_length_error
 );
 
 our $DEBUG = 0;
@@ -698,6 +700,8 @@ sub calculate {
 
         my @mi_cur = $current->header_raw('Message-Instance');
         my @mi_prev = $previous->header_raw('Message-Instance');
+        die "Message already has " . MAX_CHAIN_LENGTH . " instances\n"
+            if @mi_cur >= MAX_CHAIN_LENGTH;
         die "Previous message has no existing instances" unless @mi_prev;
         # Verify same message by checking MI headers match
         # header_raw returns values only, so prepend the name for canonicalization
@@ -798,6 +802,10 @@ sub verify {
         $msg = Email::MIME->new($msg);
     }
 
+    if (my $error = chain_length_error($msg)) {
+        return wantarray ? (0, $error) : 0;
+    }
+
     my %map = map { extract_mi_version($_) => $_ } $msg->header_raw('Message-Instance');
     my $num = keys %map ? max(keys %map) : 0;
     return 0 unless $num;
@@ -840,6 +848,10 @@ sub undo {
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = Email::MIME->new($msg);
+    }
+
+    if (my $error = chain_length_error($msg)) {
+        die "$error\n";
     }
 
     my %map = map { extract_mi_version($_) => $_ } $msg->header_raw('Message-Instance');
@@ -898,6 +910,9 @@ sub chain_verifies {
     my ($class, $msg) = @_;
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = Email::MIME->new("$msg");
+    }
+    if (my $error = chain_length_error($msg)) {
+        return (0, $error);
     }
     while (1) {
         my @mi = $msg->header_raw('Message-Instance');

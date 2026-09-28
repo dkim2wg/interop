@@ -12,6 +12,8 @@ use Mail::DKIM2::Common qw(
     build_signing_input
     extract_mi_version
     load_private_key
+    MAX_CHAIN_LENGTH
+    chain_length_error
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -61,6 +63,16 @@ sub finish_header {
 
     # Determine next i= value
     my $next_i = @dk2_headers ? $dk2_headers[-1]{i} + 1 : 1;
+
+    # A signature that would take the chain past the limit is one every
+    # verifier refuses, so do not make it.
+    my %counts = (
+        'message-instance' => scalar @mi_headers,
+        'dkim2-signature'  => $next_i,
+    );
+    if (my $error = chain_length_error(\%counts)) {
+        die "cannot sign: $error\n";
+    }
     # Determine highest MI version
     my $mi_version = @mi_headers ? $mi_headers[-1]{v} : 0;
 

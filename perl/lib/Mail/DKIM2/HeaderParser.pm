@@ -23,6 +23,7 @@ sub init {
 # Streaming interface: feed message data in chunks
 sub PRINT {
     my ($self, $data) = @_;
+    return 1 if $self->{_stopped};
     $self->{_buf} .= $data;
 
     if ($self->{_in_header}) {
@@ -40,6 +41,7 @@ sub PRINT {
 
 sub CLOSE {
     my $self = shift;
+    return 1 if $self->{_stopped};
 
     # If we never saw end-of-headers, parse what we have as headers
     if ($self->{_in_header}) {
@@ -49,9 +51,21 @@ sub CLOSE {
         $self->finish_header();
     }
 
-    $self->finish_body();
+    $self->finish_body() unless $self->{_stopped};
     return 1;
 }
+
+# A subclass that has reached its result from the headers alone calls this
+# from finish_header: the rest of the message is discarded unread, and CLOSE
+# does not call finish_body.
+sub stop {
+    my $self = shift;
+    $self->{_stopped} = 1;
+    $self->{_buf} = '';
+    return;
+}
+
+sub stopped { return $_[0]->{_stopped} }
 
 # Parse a block of header text into individual headers (handling continuation lines)
 sub _parse_headers {

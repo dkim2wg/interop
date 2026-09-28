@@ -34,6 +34,7 @@ README
 README.md
 spec-review-notes.md
 t/body-canon.t
+t/chain-length.t
 t/common.t
 t/dns-temperror.t
 t/dsn.t

@@ -16,6 +16,8 @@ use Mail::DKIM2::Common qw(
     extract_mi_version
     extract_domain
     relaxed_domain_match
+    MAX_CHAIN_LENGTH
+    chain_length_error
 );
 use Email::MIME;
 use Mail::DKIM2::Signature;
@@ -34,6 +36,7 @@ sub init {
     $self->SUPER::init;
     $self->{_mi_headers}         = {};
     $self->{_dk2_headers}        = {};
+    $self->{_chain_counts}       = {};
     $self->{result}              = undef;
     $self->{details}             = undef;
     $self->{skip_timestamp_check} = 0;
@@ -93,7 +96,12 @@ sub headers_only {
 sub handle_header {
     my ($self, $field_name, $contents, $line) = @_;
 
-    if (lc($field_name) eq 'message-instance') {
+    my $lc_name = lc $field_name;
+    if ($lc_name eq 'message-instance' || $lc_name eq 'dkim2-signature') {
+        return if ++$self->{_chain_counts}{$lc_name} > MAX_CHAIN_LENGTH;
+    }
+
+    if ($lc_name eq 'message-instance') {
         eval {
             my $v = extract_mi_version($contents);
             if ($v) {
@@ -105,7 +113,7 @@ sub handle_header {
             $self->{_mi_parse_error} = $@;
         };
     }
-    elsif (lc($field_name) eq 'dkim2-signature') {
+    elsif ($lc_name eq 'dkim2-signature') {
         eval {
             my $sig = Mail::DKIM2::Signature->parse($contents);
             if ($sig && $sig->sequence) {
@@ -122,9 +130,15 @@ sub handle_header {
     }
 }
 
+# Verification happens in finish_body, unless the chain is too long to be
+# worth reading any further.
 sub finish_header {
     my $self = shift;
-    # Nothing special needed here; verification happens in finish_body
+    if (my $error = chain_length_error($self->{_chain_counts})) {
+        $self->{result}  = 'permerror';
+        $self->{details} = $error;
+        $self->stop;
+    }
 }
 
 sub finish_body {

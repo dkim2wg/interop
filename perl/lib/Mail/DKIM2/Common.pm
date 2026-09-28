@@ -34,6 +34,8 @@ our @EXPORT_OK = qw(
     DKIM2_DRAFT
     DKIM2_REPO
     DKIM2_DATE
+    MAX_CHAIN_LENGTH
+    chain_length_error
 );
 
 # Provenance emitted in X-DKIM2-Info headers by the milter, the reflector, and
@@ -44,7 +46,14 @@ our @EXPORT_OK = qw(
 # emit, not only on a spec bump. See ../spec/draft-gondwana-dkim2-debug-header.
 use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-06';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE  => '2026-09-18';
+use constant DKIM2_DATE  => '2026-09-28';
+
+# Local policy, not spec-06: a message carrying more Message-Instance or
+# DKIM2-Signature fields than this is a PERMERROR, found before any key is
+# fetched, signature checked or recipe applied. Every hop costs a verifier a
+# DNS lookup, a signature check and an undo of the whole message, and the
+# sender chooses how many hops there are.
+use constant MAX_CHAIN_LENGTH => 32;
 
 # Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-06 Section 4.
 # spec-05 narrowed the old /^arc-/ prefix to the three RFC 8617 field names and
@@ -78,6 +87,21 @@ sub should_skip {
     return 1 if $hname =~ m/^received-/;
     return 1 if grep { index($hname, $_) == 0 } @IGNORE_PREFIXES;
     return 0;
+}
+
+# The PERMERROR for a message over MAX_CHAIN_LENGTH, or undef. Takes an
+# Email::MIME, or a hashref of field counts keyed by lower-cased name for a
+# caller counting as it parses.
+sub chain_length_error {
+    my ($msg) = @_;
+    for my $field ('Message-Instance', 'DKIM2-Signature') {
+        my $count = ref($msg) eq 'HASH'
+                  ? ($msg->{lc $field} // 0)
+                  : scalar(my @values = $msg->header_raw($field));
+        return "PERMERROR more than " . MAX_CHAIN_LENGTH . " $field fields"
+            if $count > MAX_CHAIN_LENGTH;
+    }
+    return;
 }
 
 # DKIM2 header canonicalization for HEADER HASH per spec-06 Section 5.2:

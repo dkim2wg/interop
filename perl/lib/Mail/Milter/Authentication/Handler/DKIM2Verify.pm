@@ -117,6 +117,9 @@ sub body_callback {
     my ( $self, $body_chunk ) = @_;
     return if $self->{'failmode'};
     return unless $self->{'has_dkim2'};
+    # The verifier may already have its result from the headers.
+    my $verifier = $self->get_object('dkim2_verifier');
+    return if $verifier->stopped;
     my $EOL = "\015\012";
 
     my $chunk;
@@ -137,7 +140,6 @@ sub body_callback {
 
     push @{$self->{'body'}}, $chunk;
 
-    my $verifier = $self->get_object('dkim2_verifier');
     eval {
         $verifier->PRINT( $chunk );
     };
