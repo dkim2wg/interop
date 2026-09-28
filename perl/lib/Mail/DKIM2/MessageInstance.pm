@@ -778,11 +778,13 @@ sub calculate {
         my %known = map {
             dkim2_canonicalize_header($cur[$_]) => $_ + 1
         } reverse 0..$#cur;
-        # Recipe: reconstruct @prev from @cur
+        # Recipe: reconstruct @prev from @cur. Copy ranges may not overlap,
+        # so each line of @cur is copied at most once; a repeat goes in
+        # literally.
+        my %used;
         my @res = map {
-            $known{dkim2_canonicalize_header($_)}
-                ? [$known{dkim2_canonicalize_header($_)}, $known{dkim2_canonicalize_header($_)}]
-                : $_
+            my $idx = $known{dkim2_canonicalize_header($_)};
+            ($idx && !$used{$idx}++) ? [$idx, $idx] : $_
         } @prev;
         # combine adjacent ranges
         for (1..$#res) {
@@ -855,6 +857,38 @@ sub verify {
 
 # --- Undo ---
 
+# Rebuild the previous lines from @$old by a Recipe of [from, to] copy ranges
+# (1-based, inclusive) and literal lines. Each range must lie within @$old,
+# and no two may overlap: the previous version is rebuilt from this one, and
+# a hop's change never needs a line of it twice. Without the check a few bytes
+# of header could name a copy of billions of lines. Everything is checked
+# before anything is copied.
+sub _apply_recipe {
+    my ($what, $recipe, $old) = @_;
+    my $lines = @$old;
+    my @ranges;
+    for my $cmd (grep { ref($_) eq 'ARRAY' } @$recipe) {
+        my ($from, $to) = @$cmd;
+        die "$what Recipe has a malformed copy range\n"
+            unless @$cmd == 2
+                && defined $from && $from =~ /\A[0-9]+\z/
+                && defined $to   && $to   =~ /\A[0-9]+\z/;
+        die "$what Recipe copies lines $from-$to of $lines\n"
+            unless 1 <= $from && $from <= $to && $to <= $lines;
+        push @ranges, [$from, $to];
+    }
+    my @sorted = sort { $a->[0] <=> $b->[0] } @ranges;
+    for my $i (1 .. $#sorted) {
+        my ($prev, $this) = @sorted[$i - 1, $i];
+        die "$what Recipe copies lines $this->[0]-$prev->[1] twice\n"
+            if $this->[0] <= $prev->[1];
+    }
+
+    return map {
+        ref($_) eq 'ARRAY' ? @$old[$_->[0] - 1 .. $_->[1] - 1] : $_
+    } @$recipe;
+}
+
 sub undo {
     my ($class, $msg) = @_;
     croak "need a message" unless $msg;
@@ -880,15 +914,7 @@ sub undo {
 
     if ($rb) {
         my @old = split /\r?\n/, $msg->body_raw;
-        my @new;
-        for my $cmd (@$rb) {
-            if (ref($cmd) eq 'ARRAY') {
-                my ($from, $to) = ($cmd->[0] - 1, $cmd->[1] - 1);
-                push @new, @old[$from..$to];
-            } else {
-                push @new, $cmd;
-            }
-        }
+        my @new = _apply_recipe('body', $rb, \@old);
         $msg->body_set(join("\r\n", @new, ''));
     }
 
@@ -897,15 +923,7 @@ sub undo {
             my $v = $rh->{$h};
             next unless defined $v;
             my @old = reverse $msg->header_raw($h);
-            my @new;
-            for my $cmd (@$v) {
-                if (ref($cmd) eq 'ARRAY') {
-                    my ($from, $to) = ($cmd->[0] - 1, $cmd->[1] - 1);
-                    push @new, @old[$from..$to];
-                } else {
-                    push @new, $cmd;
-                }
-            }
+            my @new = _apply_recipe("$h header", $v, \@old);
             $msg->header_obj->header_set_reverse($h, @new);
         }
     }

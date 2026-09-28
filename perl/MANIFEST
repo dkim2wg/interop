@@ -71,6 +71,7 @@ t/signature-nonce.t
 t/split-lmtp.t
 t/split.t
 t/turscar.t
+t/undo-bounds.t
 t/validate-cgi.t
 t/validate-cli.t
 t/validate-report.t
