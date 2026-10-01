@@ -78,9 +78,9 @@ sub reflected_verifies {
     is(scalar @mi, 1, 'raw: no NEW MI added (still just m=1)');
     is(reflected_verifies($r->{message}), 'pass', 'raw: reflected message verifies');
     like($r->{message}, qr/^X-DKIM2-Info:.*sw=dkim2-reflector\.pl/ms, 'raw: X-DKIM2-Info present');
-    like($r->{message}, qr/^X-DKIM2-Info:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*action=verify=pass \(i=1\.\.1 verified\)\r\nAuthentication-Results:/m,
+    like($r->{message}, qr/^X-DKIM2-Info:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*action=verify=pass \(i=1\.\.1 verified\);\r\nAuthentication-Results:/m,
          'raw: X-DKIM2-Info action=verify=pass directly above Authentication-Results');
-    like($r->{message}, qr/^X-DKIM2-Info:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*action=sign d=test2\.dkim2\.com a=rsa-sha256\r\nDKIM2-Signature:/m,
+    like($r->{message}, qr/^X-DKIM2-Info:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*action=sign d=test2\.dkim2\.com a=rsa-sha256;\r\nDKIM2-Signature:/m,
          'raw: X-DKIM2-Info action=sign directly above the signature');
     unlike($r->{message}, qr/action=mi-m/, 'raw: no mi-m action (no new MI)');
 }
@@ -118,11 +118,11 @@ for my $case (
 
     is(reflected_verifies($r->{message}), 'pass', "$m: reflected verifies");
 
-    # X-DKIM2-Info records the new MI as mi-m<N> with the hashed-header list,
+    # X-DKIM2-Info records the new MI as mi-m=<N> with the hashed-header list,
     # same format as dkim2-milter.pl.
     my $info = join '', grep { /^X-DKIM2-Info:/ } split /(?<=\r\n)(?=\S)/, ($r->{message} =~ s/\r\n[ \t]/ /gr);
     like($info, qr/sw=dkim2-reflector\.pl/, "$m: X-DKIM2-Info present");
-    like($info, qr/action=mi-m2\b/, "$m: X-DKIM2-Info action=mi-m2");
+    like($info, qr/action=mi-m=2;/, "$m: X-DKIM2-Info action=mi-m=2");
     like($info, qr/\bhc=\d+\b/, "$m: X-DKIM2-Info has header count");
     like($info, qr/\bhn=\S*subject\S*/, "$m: X-DKIM2-Info header list includes subject");
 
@@ -380,10 +380,10 @@ for my $m (qw(both subject body)) {
     my @mis  = $em->header_raw('Message-Instance');
     is(scalar @sigs, 1, 'fresh: exactly one signature (no chain)');
     is(scalar @mis, 1, 'fresh: exactly one Message-Instance');
-    like($msg, qr/^X-DKIM2-Info:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*action=sign d=test2\.dkim2\.com a=rsa-sha256\r\nDKIM2-Signature:/m,
+    like($msg, qr/^X-DKIM2-Info:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*action=sign d=test2\.dkim2\.com a=rsa-sha256;\r\nDKIM2-Signature:/m,
          'fresh: X-DKIM2-Info action=sign directly above the signature');
-    like($msg, qr/^X-DKIM2-Info:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*action=mi-m1;(?:[^\r\n]|\r\n[ \t])*\r\nMessage-Instance:/m,
-         'fresh: X-DKIM2-Info action=mi-m1 directly above the Message-Instance');
+    like($msg, qr/^X-DKIM2-Info:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*action=mi-m=1;(?:[^\r\n]|\r\n[ \t])*\r\nMessage-Instance:/m,
+         'fresh: X-DKIM2-Info action=mi-m=1 directly above the Message-Instance');
     unlike($msg, qr/action=generate/, 'fresh: no emitter-specific action');
     unlike($msg, qr/^X-DKIM2-Reflector:/mi, 'fresh: no X-DKIM2-Reflector on the originated message');
     is(Mail::DKIM2::MessageInstance->verify(Email::MIME->new($msg)), 1, 'fresh: MI m=1 verifies');
@@ -423,10 +423,10 @@ for my $m (qw(both subject body)) {
     my @mis  = $em->header_raw('Message-Instance');
     is(scalar @sigs, 2, 'brand: two signatures');
     is(scalar @mis, 1, 'brand: one Message-Instance');
-    my @sign_info = ($msg =~ /action=sign d=([\w.-]+) a=rsa-sha256/g);
+    my @sign_info = ($msg =~ /action=sign d=([\w.-]+) a=rsa-sha256;/g);
     is_deeply(\@sign_info, ['test2.dkim2.com', 'test1.dkim2.com'],
               'brand: a sign field per signature, platform above brand');
-    like($msg, qr/action=mi-m1;/, 'brand: mi-m1 recorded');
+    like($msg, qr/action=mi-m=1;/, 'brand: mi-m=1 recorded');
     unlike($msg, qr/action=brand/, 'brand: no emitter-specific action');
     like("@sigs", qr/\bd=test1\.dkim2\.com\b/, 'brand: i=1 signs as the brand domain');
     like("@sigs", qr/\bd=test2\.dkim2\.com\b/, 'brand: i=2 signs as dkim2.com role');

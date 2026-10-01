@@ -15,33 +15,29 @@ our $SUBJECT_PREFIX = '[DKIM2] ';
 our $FOOTER         = "-- \r\nReflected and signed by the DKIM2 reflector at dkim2.com\r\n";
 our $DAMAGE_LINE    = "damage line, breaks the signature\r\n";
 
-# X-DKIM2-Info provenance, per ../spec/draft-gondwana-dkim2-debug-header: one
-# field per action (verify, mi-m<N>, sign), each directly above the header it
-# describes. The spec version constants come from Mail::DKIM2::Common.
+# X-DKIM2-Info provenance, per ../spec/draft-gondwana-dkim2-debug-header-01:
+# one field per action (verify, mi-m=<N>, sign), each directly above the
+# header it describes. The spec version constants come from Mail::DKIM2::Common.
 use constant DKIM2_SOFTWARE => 'dkim2-reflector.pl';
 
+# The value is a tag-list in the DKIM2 syntax: every tag, the last included,
+# is followed by ";". A ";" has no escape and ends a tag, so one inside a
+# value becomes ",".
 sub _dkim2_info {
     my ($action, %extra) = @_;
-    # ";" separates tags and has no escape, so it may not appear in a value.
-    (my $act = $action) =~ s/;/,/g;
-    my $val = "draft=" . DKIM2_DRAFT
-            . "; repo=" . DKIM2_REPO
-            . "; date=" . DKIM2_DATE
-            . "; sw=" . DKIM2_SOFTWARE
-            . "; action=$act";
-    for my $key (sort keys %extra) {
-        next unless defined $extra{$key};
-        (my $v = $extra{$key}) =~ s/;/,/g;
-        $val .= "; $key=$v";
-    }
-    return $val;
+    my @tags = ("draft=" . DKIM2_DRAFT, "repo=" . DKIM2_REPO,
+                "date=" . DKIM2_DATE, "sw=" . DKIM2_SOFTWARE, "action=$action");
+    push @tags, "$_=$extra{$_}" for grep { defined $extra{$_} } sort keys %extra;
+    return join ' ', map { (my $t = $_) =~ s/;/,/g; "$t;" } @tags;
 }
 
 # A complete, folded "X-DKIM2-Info: ..." line with trailing CRLF, ready to
-# prepend directly above the header field the action added.
+# prepend directly above the header field the action added. Folded only after
+# a ";" or a "," (Section 5), never inside a token.
 sub _info_line {
     my ($action, %extra) = @_;
-    (my $xi = fold_header("X-DKIM2-Info: " . _dkim2_info($action, %extra))) =~ s/\r?\n\z//;
+    (my $xi = fold_header("X-DKIM2-Info: " . _dkim2_info($action, %extra), undef, delimiters_only => 1))
+        =~ s/\r?\n\z//;
     return "$xi\r\n";
 }
 
@@ -100,7 +96,7 @@ sub _fresh_message_text {
     my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($text));
     (my $miv = fold_header("Message-Instance: " . $mi->as_string)) =~ s/^Message-Instance:\s*//;
     my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($text));
-    return _info_line('mi-m1', hc => $hc, hn => $hn)
+    return _info_line('mi-m=1', hc => $hc, hn => $hn)
          . "Message-Instance: $miv\r\n" . $text;
 }
 
@@ -384,7 +380,7 @@ sub reflect {
         my $val = fold_header("Message-Instance: " . $mi->as_string);
         $val =~ s/^Message-Instance:\s*//;
         my ($hc, $hn) = _header_list_for_hash(Email::MIME->new($cur_text));
-        $cur_text = _info_line("mi-m" . $mi->get_tag('m'), hc => $hc, hn => $hn)
+        $cur_text = _info_line("mi-m=" . $mi->get_tag('m'), hc => $hc, hn => $hn)
                   . "Message-Instance: $val\r\n" . $cur_text;
     }
 
@@ -416,7 +412,7 @@ sub reflect {
            . "; note=reflected-to-sender\r\n";
 
     # X-DKIM2-Info for the verification, directly above Authentication-Results.
-    # The mi-m<N> and sign fields were added above their own headers in steps
+    # The mi-m=<N> and sign fields were added above their own headers in steps
     # 4 and 5.
     my $xi = _info_line("verify=$auth" . (length $why ? " ($why)" : ''));
 

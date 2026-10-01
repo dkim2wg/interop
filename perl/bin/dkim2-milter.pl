@@ -15,27 +15,25 @@ use Mail::DKIM2::Common qw(
 );
 use constant DKIM2_SOFTWARE => 'dkim2-milter.pl';
 
+# X-DKIM2-Info value per draft-gondwana-dkim2-debug-header-01: a tag-list in
+# the DKIM2 syntax, every tag (the last included) followed by ";". A ";" has
+# no escape and ends a tag, so one inside a value becomes ",".
 sub _dkim2_info {
     my ($action, %extra) = @_;
-    my $val = "draft=" . DKIM2_DRAFT
-            . "; repo=" . DKIM2_REPO
-            . "; date=" . DKIM2_DATE
-            . "; sw=" . DKIM2_SOFTWARE
-            . "; action=$action";
-    for my $key (sort keys %extra) {
-        next unless defined $extra{$key};
-        $val .= "; $key=$extra{$key}";
-    }
-    # Fold at tag boundaries.  Previously only the first three tags were folded
-    # and everything after action= ran onto one line, which a long hn= list or a
-    # snaps= digest pushed well past the RFC 5322 recommendation of 78 (200+
-    # characters in practice).  X-DKIM2-Info is excluded from the header hash by
-    # the x-* rule, so how it is folded can never affect a signature.
+    my @tags = ("draft=" . DKIM2_DRAFT, "repo=" . DKIM2_REPO,
+                "date=" . DKIM2_DATE, "sw=" . DKIM2_SOFTWARE, "action=$action");
+    push @tags, "$_=$extra{$_}" for grep { defined $extra{$_} } sort keys %extra;
+    my $val = join ' ', map { (my $t = $_) =~ s/;/,/g; "$t;" } @tags;
+    # Fold only after a ";" or a ","  (Section 5): never inside a token, so a
+    # long hn= list breaks between names and a snaps= digest stays whole.
+    # X-DKIM2-Info is excluded from the header hash by the x-* rule, so how it
+    # is folded can never affect a signature.
     #
     # fold_header() budgets for the field name, so fold with it attached and
     # then strip it -- insheader() takes the value alone, in LF form for the
     # milter protocol.
-    (my $folded = fold_header("X-DKIM2-Info: $val")) =~ s/^X-DKIM2-Info:\s*//;
+    (my $folded = fold_header("X-DKIM2-Info: $val", undef, delimiters_only => 1))
+        =~ s/^X-DKIM2-Info:\s*//;
     $folded =~ s/\r\n/\n/g;
     return $folded;
 }
@@ -336,7 +334,7 @@ sub cb_eom {
         if ($mi_header) {
             $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
             my ($mi_ver) = $mi_header =~ /m=(\d+)/;
-            $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver",
+            $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$mi_ver",
                 hc => $mi_info{hc}, hn => $mi_info{hn},
                 snaps => $mi_info{snaps}), 0);
             warn "dkim2-milter: added MI header for $msgid\n";
@@ -392,7 +390,7 @@ sub cb_eom {
                     warn "dkim2-milter: computed MI for $msgid\n";
                     $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
                     my ($mi_ver) = $mi_header =~ /m=(\d+)/;
-                    $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m$mi_ver",
+                    $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$mi_ver",
                         hc => $mi_info{hc}, hn => $mi_info{hn},
                         snapf => $mi_info{snapf}, snaps => $mi_info{snaps}), 0);
                     warn "dkim2-milter: added MI header for $msgid\n";

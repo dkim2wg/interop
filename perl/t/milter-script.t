@@ -236,6 +236,16 @@ sub list_modified {
     is(scalar @sig, 1, 'plain: one DKIM2-Signature inserted');
     like($sig[0]{value}, qr/\bi=1;/, 'plain: signature is i=1');
     is(scalar(inserted($mods, 'Message-Instance')), 1, 'plain: Message-Instance m=1 added');
+    # draft-gondwana-dkim2-debug-header-01: every tag ends in ";", and the
+    # instance action is mi-m=<N>.
+    # Unfold, then drop the whitespace a consumer is told to ignore next to
+    # ";" and ",".
+    my @info = map { $_->{value} =~ s/\n[ \t]/ /gr =~ s/([;,])[ \t]+/$1 /gr =~ s/,[ \t]+/,/gr } inserted($mods, 'X-DKIM2-Info');
+    is(scalar @info, 2, 'plain: one X-DKIM2-Info per action (mi-m=1, sign)');
+    like($_, qr/^draft=\S+; repo=\S+; date=\d{4}-\d\d-\d\d; sw=dkim2-milter\.pl; action=/, 'plain: provenance tags lead') for @info;
+    like($_, qr/;\z/, 'plain: the last tag is followed by ";"') for @info;
+    like("@info", qr/action=mi-m=1; hc=\d+; hn=\S+;/, 'plain: action=mi-m=1 with hc= and hn=');
+    like("@info", qr/action=sign d=test2\.dkim2\.com a=rsa-sha256;/, 'plain: action=sign names d= and a=');
     my $v = verify(assemble($PLAIN, $mods));
     is($v->result, 'pass', 'plain: signed output verifies') or diag($v->result_detail);
 }

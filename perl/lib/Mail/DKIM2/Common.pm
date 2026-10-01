@@ -47,7 +47,7 @@ our @EXPORT_OK = qw(
 # emit, not only on a spec bump. See ../spec/draft-gondwana-dkim2-debug-header.
 use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-06';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE  => '2026-09-28';
+use constant DKIM2_DATE  => '2026-09-30';
 
 # Local policy, not spec-06: a message carrying more Message-Instance or
 # DKIM2-Signature fields than this is a PERMERROR, found before any key is
@@ -189,8 +189,15 @@ sub decode_tag_json {
 # Tab = 8 chars visually, so continuation lines get 64 chars of content.
 # First line target: 72 chars.  Continuation: 64 content + 8 tab = 72.
 sub fold_header {
-    my ($line, $margin) = @_;
+    my ($line, $margin, %opts) = @_;
     $margin //= 72;
+    # delimiters_only: break only after a ";" or a "," -- never at a space,
+    # never mid-token. For X-DKIM2-Info (draft-gondwana-dkim2-debug-header-01
+    # Section 5): a consumer ignores whitespace next to ";" and ",", and an
+    # emitter MUST NOT fold inside a token, so a hex digest or a quoted detail
+    # that will not fit stays whole on an over-long line (RFC 5322's 78 is a
+    # SHOULD; its 998 is the MUST, and nothing here approaches it).
+    my $delimiters_only = $opts{delimiters_only};
     my $cont_margin = $margin - 8;  # content chars on continuation lines
 
     return $line if length($line) <= $margin;
@@ -213,7 +220,7 @@ sub fold_header {
         }
 
         # If no tag boundary, try breaking at any space
-        if ($break < 0) {
+        if ($break < 0 && !$delimiters_only) {
             $pos = rindex($search, ' ');
             $break = $pos if $pos > 0;
         }
@@ -221,7 +228,7 @@ sub fold_header {
         # If a space occurs within 2 chars before the limit, fold at
         # the space rather than leaving a 1-2 char orphan before the
         # next forced break.
-        if ($break < 0 || $limit - $break <= 2) {
+        if (!$delimiters_only && ($break < 0 || $limit - $break <= 2)) {
             # Check for a space near the limit
             for my $i (reverse ($limit - 3)..($limit - 1)) {
                 next if $i < 0 || $i >= length($remaining);
@@ -240,6 +247,15 @@ sub fold_header {
         if ($break < 0) {
             $pos = rindex($search, ',');
             $break = $pos + 1 if $pos > 0;
+        }
+
+        # Delimiters only and none before the limit: take the first one
+        # after it, or give up and leave the rest whole.
+        if ($break < 0 && $delimiters_only) {
+            my ($semi, $comma) = (index($remaining, ';', $limit), index($remaining, ',', $limit));
+            my @after = sort { $a <=> $b } grep { $_ >= 0 } $semi, $comma;
+            last unless @after && $after[0] < length($remaining) - 1;
+            $break = $after[0] + 1;
         }
 
         # Last resort: hard break at limit
@@ -591,7 +607,7 @@ C<user@domain> and angle-bracket C<< <user@domain> >> forms.
 Returns true if C<$domain1> is equal to or a subdomain of C<$domain2>.
 Comparison is case-insensitive.
 
-=head2 fold_header($line, $margin)
+=head2 fold_header($line, $margin, %opts)
 
 Folds a header line at C<$margin> characters (default 72) for insertion into
 a message.  Tries, in order, to break at a C<; > tag boundary, at a space,
@@ -599,6 +615,11 @@ after a C<,> in a list-valued tag (so a header name in an X-DKIM2-Info
 C<hn=> list is never split), and only then at an arbitrary character
 position.  Extends past trailing C<=> padding, C<;> delimiters, and single
 remaining characters to avoid orphaning them on the next line.
+
+With C<< delimiters_only => 1 >> it breaks only after a C<;> or a C<,>,
+never at a space and never inside a token: a value that fits nowhere is left
+whole on an over-long line.  This is the folding rule of
+draft-gondwana-dkim2-debug-header-01 Section 5 for X-DKIM2-Info.
 
 Only for headers we are creating — never for headers read from elsewhere.
 
