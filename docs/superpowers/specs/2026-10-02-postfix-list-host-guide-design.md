@@ -85,10 +85,9 @@ with a check the reader can run. Sections:
    message_instance: yes`, `smtp_port` pointing at the signing listener,
    `max_recipients: 1`); the per-list `dkim2_message_instance` flag through
    the REST API; where the handler logs; the `mi-cache` directory.
-8. **Sympa.** Apply the patch series from `sympa/` to a 6.2.78 source tree,
-   or overlay the listed files onto the distro package (with the
-   `URIFind.pm` and `liburi-find-perl` dependency called out, since
-   copying `Message.pm` alone has caused an outage); `sympa.conf`
+8. **Sympa.** Requires Sympa 6.2.78. Apply the patch series from `sympa/`
+   to a 6.2.78 source tree and build, or overlay the patched files onto an
+   installed 6.2.78 (the file list is in the series README); `sympa.conf`
    (`sendmail` pointing at a wrapper that submits to the signing listener,
    `nrcpt 1`); the services to restart.
 9. **Check it works.** Post to a test list; read the headers
@@ -160,9 +159,8 @@ Each directory in the interop repository then holds:
 and `~/src/sympa` (paths overridable) and, with `--check`, verifies with
 `git apply --check` that each series still applies to its stated base. For
 Mailman it also tries the series against the latest release tag (`v3.3.10`)
-and the README records the result. For Sympa the README notes that the
-6.2.76 distro package also needs `src/lib/Sympa/HTML/URIFind.pm` (present
-upstream from 6.2.78) and the `liburi-find-perl` package.
+and the README records the result. Sympa 6.2.78 is the only supported
+base; older packages are not documented.
 
 ### 4. Operator templates: `deploy/examples/`
 
