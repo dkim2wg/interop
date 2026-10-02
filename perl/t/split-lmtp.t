@@ -5,7 +5,7 @@ use IO::Socket::INET;
 use File::Temp qw(tempdir);
 use POSIX ':sys_wait_h';
 
-# Integration test for bin/dkim2-split-lmtp.pl: drive the real LMTP daemon,
+# Integration test for bin/dkim2-split-lmtp: drive the real LMTP daemon,
 # point its re-injection at a capture sink, and confirm it fans a message with
 # a Bcc into per-copy re-injections (disclosed grouped, Bcc alone) and answers
 # one LMTP status per recipient. Network test -> SKIP cleanly if it can't set up.
@@ -53,7 +53,7 @@ my $daemon = fork;
 if (defined $daemon && $daemon == 0) {
     $ENV{DKIM2_SPLIT_HOST}  = '127.0.0.1'; $ENV{DKIM2_SPLIT_PORT}  = $LMTP_PORT;
     $ENV{DKIM2_INJECT_HOST} = '127.0.0.1'; $ENV{DKIM2_INJECT_PORT} = $CAP_PORT;
-    exec($^X, '-Ilib', 'bin/dkim2-split-lmtp.pl');
+    exec($^X, '-Ilib', 'bin/dkim2-split-lmtp');
     exit 1;
 }
 push @pids, $daemon if $daemon;

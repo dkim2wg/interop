@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# bin/dkim2-milter.pl -- the standalone Sendmail::PMilter daemon that is the
+# bin/dkim2-milter -- the standalone Sendmail::PMilter daemon that is the
 # LIVE outbound signer on mail.dkim2.com.
 #
 # t/milter.t covers the Mail::Milter::Authentication handlers; nothing covered
@@ -32,7 +32,7 @@ use DKIM2TestKeys;
 plan skip_all => 'Sendmail::PMilter not installed'
     unless eval { require Sendmail::PMilter; 1 };
 
-my $SCRIPT   = "$FindBin::Bin/../bin/dkim2-milter.pl";
+my $SCRIPT   = "$FindBin::Bin/../bin/dkim2-milter";
 my $LIB      = "$FindBin::Bin/../lib";
 my $DNS_JSON = path("$FindBin::Bin/../../dns.json");
 my $KEYS     = path("$FindBin::Bin/../../keys");
@@ -242,7 +242,7 @@ sub list_modified {
     # ";" and ",".
     my @info = map { $_->{value} =~ s/\n[ \t]/ /gr =~ s/([;,])[ \t]+/$1 /gr =~ s/,[ \t]+/,/gr } inserted($mods, 'X-DKIM2-Info');
     is(scalar @info, 2, 'plain: one X-DKIM2-Info per action (mi-m=1, sign)');
-    like($_, qr/^draft=\S+; repo=\S+; date=\d{4}-\d\d-\d\d; sw=dkim2-milter\.pl; action=/, 'plain: provenance tags lead') for @info;
+    like($_, qr/^draft=\S+; repo=\S+; date=\d{4}-\d\d-\d\d; sw=dkim2-milter; action=/, 'plain: provenance tags lead') for @info;
     like($_, qr/;\z/, 'plain: the last tag is followed by ";"') for @info;
     like("@info", qr/action=mi-m=1; hc=\d+; hn=\S+;/, 'plain: action=mi-m=1 with hc= and hn=');
     like("@info", qr/action=sign d=test2\.dkim2\.com a=rsa-sha256;/, 'plain: action=sign names d= and a=');

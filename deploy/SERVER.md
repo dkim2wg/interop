@@ -130,7 +130,7 @@ FROM <>`) message by falling back to the `From:` header domain (e.g.
 `MAILER-DAEMON@mail.dkim2.com` → `dkim2.com`, via the existing keydir
 parent-walk) when that domain resolves to a held key, and emit `mf=<>` on the
 resulting `DKIM2-Signature`. This is already implemented in the stock
-`perl/bin/dkim2-milter.pl`, so any operator running it gets bounce-signing
+`perl/bin/dkim2-milter`, so any operator running it gets bounce-signing
 "for free" once the two `main.cf` settings above are in place — no code
 changes needed on the operator side. With no existing DKIM2 chain on a fresh
 bounce, this produces a clean origin signature: `Message-Instance m=1` +
@@ -159,12 +159,12 @@ hop's `mf=`), and does not attempt bounce *propagation* through a forwarder
 
 ---
 
-### 2. DKIM2 Milter (dkim2-milter.pl)
+### 2. DKIM2 Milter (dkim2-milter)
 
 **Role:** DKIM2 signing and verification + Message-Instance header computation.
 
 **Source:** `/root/interop/` — this git repository (`github.com/dkim2wg/interop`).
-The milter code is in `perl/bin/dkim2-milter.pl` and `perl/lib/Mail/DKIM2/`.
+The milter code is in `perl/bin/dkim2-milter` (installed as `/usr/local/bin/dkim2-milter` by `make install`) and `perl/lib/Mail/DKIM2/`.
 
 **Two instances run:**
 
@@ -280,7 +280,7 @@ Notes:
 
 **Cleaner variant — an LMTP content filter (implemented).** Instead of the
 per-recipient `pipe(8)` fan-out, run the filter as a persistent **LMTP**
-daemon. This repo ships one: `perl/bin/dkim2-split-lmtp.pl` (grouping logic in
+daemon. This repo ships one: `perl/bin/dkim2-split-lmtp` (grouping logic in
 `Mail::DKIM2::Split`, tested by `t/split.t` + `t/split-lmtp.t`). It listens on
 `127.0.0.1:10590`, and for each message re-injects one copy per disclosed group
 / per Bcc recipient to the signing listener (`10589`), answering one LMTP status

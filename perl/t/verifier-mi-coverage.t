@@ -131,7 +131,7 @@ sign_msg($msg,
 # UNSIGNED Message-Instance m=2 -- exactly what the outbound milter is handed
 # to sign. Captured 2026-09-10, the first day Fastmail signed: the milter's
 # pre-sign verify ran WITHOUT the opt-out, reported this PERMERROR, and every
-# list post with a signed upstream left unsigned (bin/dkim2-milter.pl; see
+# list post with a signed upstream left unsigned (bin/dkim2-milter; see
 # t/milter-script.t for the end-to-end guard). unstable.email's fm3 key is
 # pinned here so the fixture does not depend on live DNS or key rotation.
 {

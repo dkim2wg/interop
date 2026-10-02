@@ -119,7 +119,7 @@ for my $case (
     is(reflected_verifies($r->{message}), 'pass', "$m: reflected verifies");
 
     # X-DKIM2-Info records the new MI as mi-m=<N> with the hashed-header list,
-    # same format as dkim2-milter.pl.
+    # same format as dkim2-milter.
     my $info = join '', grep { /^X-DKIM2-Info:/ } split /(?<=\r\n)(?=\S)/, ($r->{message} =~ s/\r\n[ \t]/ /gr);
     like($info, qr/sw=dkim2-reflector\.pl/, "$m: X-DKIM2-Info present");
     like($info, qr/action=mi-m=2;/, "$m: X-DKIM2-Info action=mi-m=2");
