@@ -776,6 +776,21 @@ sub result_detail {
     return $result;
 }
 
+# The DKIM2-Signature fields the message carried, parsed, in ascending i=
+# order. Valid once the header block has been read. A host building an
+# Authentication-Results field takes header.d and header.i from the top one.
+sub signatures {
+    my $self = shift;
+    my $map = $self->{_dk2_headers} || {};
+    return map { $map->{$_}{sig} } sort { $a <=> $b } keys %$map;
+}
+
+sub top_signature {
+    my $self = shift;
+    my @sigs = $self->signatures;
+    return @sigs ? $sigs[-1] : undef;
+}
+
 # The bare reason for the result, with no result word wrapped around it.
 # result_detail() is the display form ("temperror (...)"); callers that embed
 # the reason in a report of their own -- an Authentication-Results comment, say

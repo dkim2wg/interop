@@ -173,19 +173,14 @@ sub eom_callback {
         $self->dbgout( 'DKIM2Result', $detail, LOG_DEBUG );
 
         my $header = Mail::AuthenticationResults::Header::Entry->new()->set_key( 'dkim2' )->safe_set_value( $result );
-        if ( $verifier->{details} ) {
-            $header->add_child( Mail::AuthenticationResults::Header::Comment->new()->safe_set_value( $verifier->{details} ) );
+        if ( my $details = $verifier->details ) {
+            $header->add_child( Mail::AuthenticationResults::Header::Comment->new()->safe_set_value( $details ) );
         }
 
         # Add domain info from the highest-i signature
-        my %dk2_map = %{$verifier->{_dk2_headers} || {}};
-        if ( keys %dk2_map ) {
-            my $max_i = (sort { $b <=> $a } keys %dk2_map)[0];
-            my $sig = $dk2_map{$max_i}{sig};
-            if ( $sig ) {
-                $header->add_child( Mail::AuthenticationResults::Header::SubEntry->new()->set_key( 'header.d' )->safe_set_value( $sig->domain || '' ) );
-                $header->add_child( Mail::AuthenticationResults::Header::SubEntry->new()->set_key( 'header.i' )->safe_set_value( $max_i ) );
-            }
+        if ( my $sig = $verifier->top_signature ) {
+            $header->add_child( Mail::AuthenticationResults::Header::SubEntry->new()->set_key( 'header.d' )->safe_set_value( $sig->domain || '' ) );
+            $header->add_child( Mail::AuthenticationResults::Header::SubEntry->new()->set_key( 'header.i' )->safe_set_value( $sig->sequence ) );
         }
 
         $self->add_auth_header( $header );
