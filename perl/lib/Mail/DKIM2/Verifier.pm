@@ -2,6 +2,8 @@ package Mail::DKIM2::Verifier;
 use strict;
 use warnings;
 
+our $VERSION = '0.10';
+
 use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -16,6 +18,7 @@ use Mail::DKIM2::Common qw(
     extract_mi_version
     extract_domain
     relaxed_domain_match
+    check_ignore_prefixes
     MAX_CHAIN_LENGTH
     chain_length_error
     duplicate_number_error
@@ -32,6 +35,11 @@ sub _extract_mi_hash_sets {
     return Mail::DKIM2::MessageInstance::parse_hash_sets($1);
 }
 
+sub known_options {
+    return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
+              PubkeyCallback Resolver IgnorePrefixes);
+}
+
 sub init {
     my $self = shift;
     $self->SUPER::init;
@@ -40,16 +48,15 @@ sub init {
     $self->{_chain_counts}       = {};
     $self->{result}              = undef;
     $self->{details}             = undef;
-    $self->{skip_timestamp_check} = 0;
-    $self->{mid_process}         = 0;
-    $self->{allow_unsigned_mi}   = 0;
-    $self->{headers_only}        = 0;
+    # Options the constructor was given stay; the rest get their defaults.
+    $self->{$_} //= 0 for qw(SkipTimestampCheck MidProcess AllowUnsignedMI HeadersOnly);
+    check_ignore_prefixes($self->{IgnorePrefixes});
 }
 
 sub skip_timestamp_check {
     my ($self, $val) = @_;
-    $self->{skip_timestamp_check} = $val if defined $val;
-    return $self->{skip_timestamp_check};
+    $self->{SkipTimestampCheck} = $val if defined $val;
+    return $self->{SkipTimestampCheck};
 }
 
 # allow_unsigned_mi: permit a Message-Instance whose m= is higher than any
@@ -67,8 +74,8 @@ sub skip_timestamp_check {
 # walk while keeping every Message-Instance.
 sub allow_unsigned_mi {
     my ($self, $val) = @_;
-    $self->{allow_unsigned_mi} = $val if defined $val;
-    return $self->{allow_unsigned_mi};
+    $self->{AllowUnsignedMI} = $val if defined $val;
+    return $self->{AllowUnsignedMI};
 }
 
 # mid_process: set when this Verifier is being run against a partial view of
@@ -80,8 +87,8 @@ sub allow_unsigned_mi {
 # rejects a true top nd=.
 sub mid_process {
     my ($self, $val) = @_;
-    $self->{mid_process} = $val if defined $val;
-    return $self->{mid_process};
+    $self->{MidProcess} = $val if defined $val;
+    return $self->{MidProcess};
 }
 
 # headers_only: the message being verified has no body, as with the returned
@@ -90,8 +97,8 @@ sub mid_process {
 # only the header hash of the top instance can be, so only that is.
 sub headers_only {
     my ($self, $val) = @_;
-    $self->{headers_only} = $val if defined $val;
-    return $self->{headers_only};
+    $self->{HeadersOnly} = $val if defined $val;
+    return $self->{HeadersOnly};
 }
 
 sub handle_header {
@@ -180,7 +187,7 @@ sub finish_body {
     # Suppressed by allow_unsigned_mi (an outbound signer holds the new MI
     # before its signature exists) and by mid_process (a partial chain view
     # keeps every MI while higher signatures are stripped).
-    unless ($self->{allow_unsigned_mi} || $self->{mid_process}) {
+    unless ($self->{AllowUnsignedMI} || $self->{MidProcess}) {
         if (keys %mi_map) {
             my ($top_mi) = sort { $b <=> $a } keys %mi_map;
             my ($top_signed) = sort { $b <=> $a }
@@ -233,7 +240,7 @@ sub finish_body {
     # mid-chain verify (mid_process set, e.g. by Validate.pm's per-level
     # sub-verify after stripping higher signatures) that "top" is not the
     # real top of the chain, so this rejection must be suppressed.
-    if (!$self->{mid_process}
+    if (!$self->{MidProcess}
         && defined $signature->next_domain && length $signature->next_domain) {
         $self->{result}  = 'permerror';
         $self->{details} = "DKIM2-Signature i=$max_i unexpected nd= tag";
@@ -348,7 +355,7 @@ sub finish_body {
     # finish_body() and crash the caller instead of yielding a clean
     # permerror result.
     my $mi_chain_ok = eval {
-        $self->{headers_only} ? $self->_verify_top_mi_headers() : $self->_verify_mi_chain()
+        $self->{HeadersOnly} ? $self->_verify_top_mi_headers() : $self->_verify_mi_chain()
     };
     if (my $err = $@) {
         die $err if ref $err;
@@ -386,7 +393,7 @@ sub _verify_top_mi_headers {
     }
     for my $alg (@usable) {
         my $want = $hashes->{$alg}[0];
-        my $have = Mail::DKIM2::MessageInstance::h_digest($msg, $alg);
+        my $have = Mail::DKIM2::MessageInstance::h_digest($msg, $alg, $self->{IgnorePrefixes});
         next if $want eq $have;
         $self->{result}  = 'fail';
         $self->{details} = "Message-Instance m=$num header hash mismatch ($alg)";
@@ -407,8 +414,16 @@ sub _verify_mi_chain {
         my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
         last unless $num;
 
-        my ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg);
+        my ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg,
+            IgnorePrefixes => $self->{IgnorePrefixes});
         unless ($ok) {
+            # A malformed instance is a PERMERROR in its own words (§11.2
+            # names the strings); a hash that does not match is a fail.
+            if (($err // '') =~ /^PERMERROR/) {
+                $self->{result}  = 'permerror';
+                $self->{details} = $err;
+                return 0;
+            }
             $self->{result}  = 'fail';
             $self->{details} = "Message-Instance m=$num does not match content"
                              . ($err ? " ($err)" : '');
@@ -535,7 +550,7 @@ sub _verify_signature {
     }
 
     # §10.3 SHOULD: reject signatures more than 14 days old or in the future
-    unless ($self->{skip_timestamp_check}) {
+    unless ($self->{SkipTimestampCheck}) {
         my $ts = $signature->timestamp;
         if (defined $ts && $ts > 0) {
             my $now = time();
@@ -595,17 +610,16 @@ sub _verify_signature {
         next unless $sig_b64;
 
         # Get the public key for this signature item.  The fetch is eval'd
-        # whichever way the key is sourced: every real caller (milter,
-        # reflector, validator, CLIs) installs a pubkey callback, and the stock
-        # callbacks end in fetch_public_key(), which dies on transient DNS.
-        # Guarding only the no-callback branch let that croak escape the
-        # verifier and take the caller down with it -- the reflector dropped
-        # the message outright instead of reflecting it unsigned.
+        # whichever way the key is sourced: a pubkey callback may end in
+        # fetch_public_key(), which dies on transient DNS. Guarding only the
+        # no-callback branch once let that croak escape the verifier and take
+        # the caller down with it -- the reflector dropped the message outright
+        # instead of reflecting it unsigned.
         my $pubkey;
         my $fetched = eval {
-            $pubkey = $self->{_pubkey_callback}
-                ? $self->{_pubkey_callback}->($signature, $idx)
-                : $signature->fetch_public_key($idx);
+            $pubkey = $self->{PubkeyCallback}
+                ? $self->{PubkeyCallback}->($signature, $idx, $self)
+                : $self->fetch_public_key($signature, $idx);
             1;
         };
         unless ($fetched) {
@@ -753,10 +767,55 @@ sub _verify_chain {
     return 1;
 }
 
-# Allow setting a callback for public key lookup (for testing with dns.json)
+# --- Public key lookup ---
+
+# fetch_public_key($signature, $idx): the default key source, a TXT lookup of
+# <selector>._domainkey.<d=> through the Resolver option (a Net::DNS::Resolver
+# or anything with the same query/errorstring interface; one is made if none
+# was given). Returns a Crypt::PK object, or undef when the answer positively
+# says there is no such record. Anything else -- a timeout, SERVFAIL, REFUSED,
+# a network error, or an errorstring this code has never seen -- dies with a
+# TEMPERROR: spec-06 §10 makes a DNS failure retryable, never a permanent "no
+# verifiable signature items", and emphatically never a 'fail', which reads as
+# a forged signature. _verify_signature's eval maps the die to temperror.
+#
+# A PubkeyCallback replaces this; it is called as ($signature, $idx, $verifier)
+# so a callback that only overrides some keys can fall back to
+# $verifier->fetch_public_key($signature, $idx) and keep the classification.
+sub fetch_public_key {
+    my ($self, $signature, $idx) = @_;
+    $idx //= 0;
+    my $sel = $signature->selector($idx);
+    my $dom = $signature->domain;
+    croak "missing selector or domain" unless $sel && $dom;
+
+    my $resolver = $self->{Resolver} //= do {
+        require Net::DNS::Resolver;
+        Net::DNS::Resolver->new;
+    };
+    my $fqdn = "$sel._domainkey.$dom";
+    my $reply = $resolver->query($fqdn, 'TXT');
+    unless ($reply) {
+        my $err = $resolver->errorstring // '';
+        return if $err =~ /^(?:NXDOMAIN|NOERROR|NODATA)\s*$/i;
+        croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
+    }
+    for my $rr ($reply->answer) {
+        next unless $rr->type eq 'TXT';
+        return Mail::DKIM2::Common::parse_dkim_pubkey(join('', $rr->txtdata));
+    }
+    return;
+}
+
+sub resolver {
+    my ($self, $val) = @_;
+    $self->{Resolver} = $val if defined $val;
+    return $self->{Resolver};
+}
+
 sub set_pubkey_callback {
     my ($self, $cb) = @_;
-    $self->{_pubkey_callback} = $cb;
+    $self->{PubkeyCallback} = $cb;
 }
 
 sub result {
@@ -773,6 +832,21 @@ sub result_detail {
     return $result;
 }
 
+# The DKIM2-Signature fields the message carried, parsed, in ascending i=
+# order. Valid once the header block has been read. A host building an
+# Authentication-Results field takes header.d and header.i from the top one.
+sub signatures {
+    my $self = shift;
+    my $map = $self->{_dk2_headers} || {};
+    return map { $map->{$_}{sig} } sort { $a <=> $b } keys %$map;
+}
+
+sub top_signature {
+    my $self = shift;
+    my @sigs = $self->signatures;
+    return @sigs ? $sigs[-1] : undef;
+}
+
 # The bare reason for the result, with no result word wrapped around it.
 # result_detail() is the display form ("temperror (...)"); callers that embed
 # the reason in a report of their own -- an Authentication-Results comment, say
@@ -786,114 +860,232 @@ sub details {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::Verifier - Verify DKIM2-Signature chains on email messages
+Mail::DKIM2::Verifier - Verify the DKIM2-Signature chain on a message
 
 =head1 SYNOPSIS
 
     use Mail::DKIM2::Verifier;
 
-    my $verifier = Mail::DKIM2::Verifier->new();
+    my $verifier = Mail::DKIM2::Verifier->new->load($message);
+    print $verifier->result, "\n";          # pass, fail, none, permerror, temperror
+    print $verifier->result_detail, "\n";   # pass (i=1..3 verified)
 
-    # Optional: provide a custom public key lookup
-    $verifier->set_pubkey_callback(sub {
-        my ($signature) = @_;
-        # return a Crypt::PK::RSA or Crypt::PK::Ed25519 object
-    });
+    # Streaming, with CRLF line endings:
+    my $v = Mail::DKIM2::Verifier->new(Resolver => $net_dns_resolver);
+    $v->PRINT($chunk) for @chunks;
+    $v->CLOSE;
 
-    # Feed the message
-    $verifier->PRINT($message_text);
-    $verifier->CLOSE;
-
-    print $verifier->result(), "\n";         # pass, fail, none, etc.
-    print $verifier->result_detail(), "\n";  # pass (i=1..3 verified)
+    # For Authentication-Results:
+    if (my $top = $v->top_signature) {
+        printf "dkim2=%s header.d=%s header.i=%d\n",
+            $v->result, $top->domain, $top->sequence;
+    }
 
 =head1 DESCRIPTION
 
-Streaming DKIM2 chain verifier.  Verifies B<all> DKIM2-Signature headers in
-the chain (not just the outermost), checks chain completeness, validates
-cryptographic signatures, and performs Chain of Custody domain matching
-between consecutive hops.
+Verifies every DKIM2-Signature on a message, not only the outermost: the
+chain must be complete (C<i=1> to C<i=N> with no gaps), each signature must
+verify over the headers that existed when it was made, consecutive hops must
+satisfy the chain-of-custody rules of spec-06 section 11.4, and the
+Message-Instance chain must undo cleanly back to the first instance, each
+one matching the content it describes. The outcome is a result and a reason,
+never an exception; see C<result> below.
 
-Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
+Extends L<Mail::DKIM2::HeaderParser>, which provides C<PRINT>, C<CLOSE>,
+C<load> and the tie interface. A message with no DKIM2-Signature is decided
+from its headers alone and its body is not kept.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-06, an
-Internet-Draft that has not yet been published as an RFC.  The API and wire
-format are subject to change.  Do not use in production.
+This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+for what that means for the wire format and the API, and
+L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
+module here follows.
 
 =head1 CONSTRUCTOR
 
-=head2 new(%args)
+=head2 new(%options)
 
-Creates a new Verifier.  No required arguments.
-
-=head1 METHODS
-
-=head2 set_pubkey_callback(\&callback)
-
-Sets a callback for public key lookup.  The callback receives a
-L<Mail::DKIM2::Signature> object and should return a L<Crypt::PK::RSA> or L<Crypt::PK::Ed25519>
-object.  If not set, keys are fetched via DNS.
-
-A callback that dies with a string makes the result C<temperror>. A callback
-that dies with a reference (an object) is not caught: the exception propagates
-out of C<PRINT>/C<CLOSE> untouched, so a host's timeout exception reaches the
-host. The same holds for every other eval a Signer or Verifier can reach.
-
-=head2 result()
-
-Returns the verification result string:
+All options are optional. The boolean ones and C<Resolver> also have a
+snake_case method of the same name that gets or sets them after
+construction; C<PubkeyCallback> has C<set_pubkey_callback>.
 
 =over 4
 
-=item C<pass> - All signatures verified and chain is valid.
+=item Resolver
 
-=item C<fail> - A signature failed, chain is incomplete, or custody break.
+A L<Net::DNS::Resolver> (or anything with the same C<query> and
+C<errorstring> methods) for the default public-key lookup. Created on
+demand if not given. A milter host passes its own so its timeouts apply.
 
-=item C<none> - No DKIM2-Signature headers found.
+=item PubkeyCallback
 
-=item C<permerror> - Permanent failure (e.g. missing public key).
+A code reference that replaces the DNS lookup. Called as
+C<< ($signature, $index, $verifier) >> for each item of each signature's
+C<s=> tag; returns a L<Crypt::PK::RSA> or L<Crypt::PK::Ed25519> object,
+undef for "no such key", or dies with a string to report a transient
+failure. It can fall back to C<< $verifier->fetch_public_key($signature,
+$index) >> for keys it does not know.
 
-=item C<temperror> - Temporary failure (e.g. DNS lookup error).
+=item SkipTimestampCheck
+
+Do not fail a signature for the age of its C<t=>. For test fixtures.
+
+=item IgnorePrefixes
+
+An arrayref of header-field-name prefixes an operator's own border adds
+and strips, excluded from the header hash. Anything but undef or an
+arrayref croaks. See L<Mail::DKIM2/Operator-local header fields>.
+
+=item AllowUnsignedMI
+
+Permit a Message-Instance with a higher C<m=> than any signature covers,
+which spec-06 section 11 otherwise makes a permerror. For an outbound path
+that verifies the message it is about to sign, where the new instance
+legitimately exists before its signature does. Never set it on inbound
+mail.
+
+=item MidProcess
+
+The verifier is looking at a partial view of the chain, with higher
+signatures stripped (as the validator does walking the chain top-down), so
+the highest remaining signature is not the true top and the checks that
+apply only to the top are suppressed. Implies C<AllowUnsignedMI>.
+
+=item HeadersOnly
+
+The message has no body, as with the returned original in a DSN's
+C<text/rfc822-headers> part (spec-06 section 12.1.2). Signatures and the
+chain are checked as usual; of the Message-Instance content check, only
+the top instance's header hash can be, so only that is.
 
 =back
 
-=head2 result_detail()
+An option not listed here croaks.
 
-Returns the result with additional detail, e.g.
-C<"pass (i=1..3 verified)">.
+=head1 METHODS
+
+=head2 PRINT($bytes), CLOSE(), load($input)
+
+Feed the message; see L<Mail::DKIM2::HeaderParser>.
+
+=head2 result()
+
+One of:
+
+=over 4
+
+=item C<pass>
+
+Every signature verified, the chain is complete and consistent, and the
+Message-Instance chain undoes cleanly.
+
+=item C<fail>
+
+A signature did not verify, the chain has a gap or a chain-of-custody
+mismatch, a Message-Instance does not match the content, or a Recipe did
+not undo.
+
+=item C<none>
+
+No DKIM2-Signature headers.
+
+=item C<permerror>
+
+The message is malformed in a way no retry will fix: too many fields, a
+repeated number, a duplicate tag, an unsigned Message-Instance, a
+required tag missing, a Message-Instance whose hash sets do not parse, a
+key too short.
+
+=item C<temperror>
+
+A public key could not be fetched for a transient reason. Retry later.
+
+=back
+
+Before C<CLOSE> this is C<none>.
 
 =head2 details()
 
-Returns just the reason, without the result wrapped around it, e.g.
-C<"i=1..3 verified"> — or undef when there is no further detail.  Use this
-rather than C<result_detail()> when embedding the reason in a report that
-already states the result, such as an C<Authentication-Results> comment.
+The reason, with no result word wrapped around it, e.g. C<"i=1..3
+verified"> or C<"missing DKIM2-Signature i=2">; undef when there is none.
+Use this when embedding the reason in something that already states the
+result, such as an Authentication-Results comment.
+
+=head2 result_detail()
+
+C<result> and C<details> together, e.g. C<"pass (i=1..3 verified)">.
+
+=head2 signatures()
+
+The DKIM2-Signature headers the message carried, as
+L<Mail::DKIM2::Signature> objects in ascending C<i=> order.
+
+=head2 top_signature()
+
+The highest-C<i=> signature, or undef. Its C<domain> and C<sequence> are
+C<header.d> and C<header.i> for Authentication-Results.
+
+=head2 fetch_public_key($signature, $index)
+
+The default key source: a TXT lookup of
+C<< <selector>._domainkey.<d=> >> through the C<Resolver>. Returns a key
+object, undef when the answer positively says there is no such record
+(NXDOMAIN, NOERROR or NODATA), and dies with a C<TEMPERROR:> message for
+anything else, including a resolver error string it has never seen. The
+verifier maps that die to C<temperror>: spec-06 section 10 makes a DNS
+failure retryable, never a C<fail>, which would read as a forged
+signature.
+
+=head2 resolver([$resolver]), set_pubkey_callback(\&cb), skip_timestamp_check([$bool]), allow_unsigned_mi([$bool]), mid_process([$bool]), headers_only([$bool])
+
+Get or set the constructor options of the same names.
 
 =head1 VERIFICATION PROCESS
-
-The verifier performs these checks:
 
 =over 4
 
 =item 1.
 
-B<Chain completeness>: All C<i=1> through C<i=N> signatures must be present
-with no gaps.  Message-Instance headers (if any) must also be complete.
+B<Shape.> At most 32 Message-Instance and 32 DKIM2-Signature fields, no
+C<i=> or C<m=> twice, and no Message-Instance above the highest signed
+C<m=>. Any of these is a C<permerror> decided from the headers alone,
+before any key is fetched. A tag repeated within one signature is a
+C<permerror> found when that signature is checked.
 
 =item 2.
 
-B<Cryptographic verification>: Each signature C<i=1..N> is independently
-verified.  The signing input for signature C<i=K> includes only
-Message-Instance and DKIM2-Signature headers that existed when that signature
-was created.
+B<Chain completeness.> C<i=1> to C<i=N> with no gaps; likewise C<m=1> to
+the highest instance.
 
 =item 3.
 
-B<Chain of Custody>: For consecutive signatures, the MAIL FROM domain of
-signature C<i=K> must relaxed-domain-match a RCPT TO domain of signature
-C<i=K-1>.
+B<Each signature.> The signing input for C<i=K> is the canonicalized
+Message-Instance headers up to the C<m=> it names, the DKIM2-Signature
+headers below it, and itself with an empty C<s=> value, in that order
+(spec-06 section 8.5). Every item in C<s=> whose algorithm is known and
+whose key can be fetched must verify; an item whose key is absent is
+skipped if another item verifies.
+
+=item 4.
+
+B<Chain of custody.> For consecutive hops, the C<mf=> domain of C<i=K>
+must be the same as or below a C<rt=> domain of C<i=K-1>; an C<nd=> hop
+instead names the C<d=> of the hop that follows (spec-06 sections 9.3 and
+11.4).
+
+=item 5.
+
+B<Flags.> A hop that changed the message after a C<donotmodify>, or
+exploded it after a C<donotexplode>, is a C<fail>.
+
+=item 6.
+
+B<Content.> The top Message-Instance must match the message; its Recipe
+is applied and the next instance down checked against the result, back to
+C<m=1> or an instance that declares the previous state unrecoverable.
 
 =back
 
@@ -903,7 +1095,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

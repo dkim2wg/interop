@@ -41,7 +41,7 @@ sign() { # sign <impl> <alg> <out>
                 -mail-from "$MF" -rcpt-to "$RT" -hash "$2" < "$SRC" > "$3" 2>"$tmp/err" ;;
     c)      ./c/dkim2sign "$SRC" -s "$SEL" -d "$DOM" -k "$KEY" \
                 --mailfrom "$MF" --rcptto "$RT" --hash "$2" > "$3" 2>"$tmp/err" ;;
-    perl)   (cd perl && perl -Ilib bin/dkim2sign.pl "../$SRC" -s "$SEL" -d "$DOM" \
+    perl)   (cd perl && perl -Ilib bin/dkim2sign "../$SRC" -s "$SEL" -d "$DOM" \
                 -k "../$KEY" --mailfrom "$MF" --rcptto "$RT" --hash "$2") > "$3" 2>"$tmp/err" ;;
     *)      echo "sign: unknown implementation '$1'" >&2; return 1 ;;
     esac

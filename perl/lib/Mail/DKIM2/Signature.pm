@@ -2,6 +2,8 @@ package Mail::DKIM2::Signature;
 use strict;
 use warnings;
 
+our $VERSION = '0.10';
+
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 
@@ -125,8 +127,14 @@ sub _strip_fws {
     return $v;
 }
 
+# f= is a comma-separated list of flags (§8.6). Get as an arrayref, or set
+# from one.
 sub flags {
     my $self = shift;
+    if (@_) {
+        my $list = shift;
+        $self->set_tag('f', join(',', ref $list eq 'ARRAY' ? @$list : ($list)));
+    }
     my $f = $self->get_tag('f');
     return unless defined $f;
     return [grep { length } map { _strip_fws($_) } split /,/, $f];
@@ -150,36 +158,47 @@ sub signatures_data {
     return \@items;
 }
 
-# --- SMTP parameter accessors (mf= and rt= tags) ---
+# --- Envelope accessors (mf= and rt= tags) ---
+
+# mf= and rt= are base64-encoded RFC 5321 paths; both are excluded by nd=
+# (§8.7), which marks an imaginary forwarding hop with no envelope of its
+# own. Setting either on an nd= signature is therefore a caller error.
+sub _croak_if_nd {
+    my ($self, $tag) = @_;
+    croak "cannot set $tag= on a signature carrying nd= (spec-06 §8.7)"
+        if defined $self->get_tag('nd');
+}
 
 sub mail_from {
     my $self = shift;
+    if (@_) {
+        $self->_croak_if_nd('mf');
+        $self->set_tag('mf', encode_base64(to_rfc5321_path(shift), ''));
+    }
     my $mf = $self->get_tag('mf');
     return unless defined $mf;
     return decode_base64($mf);
-}
-
-sub rcpt_to {
-    my $self = shift;
-    my $rt = $self->get_tag('rt');
-    return unless defined $rt;
-    return [map { decode_base64($_) } split /,/, $rt];
 }
 
 # rt= is the only tag that differs between recipients of the same message.
 # §9.6 signs solely the Message-Instance and DKIM2-Signature header fields, so
 # the body hash, the header-fields hash and the Message-Instance are all
 # recipient-invariant: re-signing for another recipient means changing this tag
-# and nothing else. See Mail::DKIM2::Signer::sign_for_recipient.
-sub set_rcpt_to {
-    my ($self, $rcpt) = @_;
-    croak "cannot set rt= on a signature carrying nd= (spec-06 §8.7)"
-        if defined $self->get_tag('nd');
-    my @list = ref $rcpt eq 'ARRAY' ? @$rcpt : ($rcpt);
-    croak "set_rcpt_to requires at least one recipient" unless @list;
-    $self->set_tag('rt',
-        join(',', map { encode_base64(to_rfc5321_path($_), '') } @list));
-    return $self;
+# and nothing else. See Mail::DKIM2::Signer::sign_for_recipient. Takes one
+# address or an arrayref of them; always returns an arrayref.
+sub rcpt_to {
+    my $self = shift;
+    if (@_) {
+        $self->_croak_if_nd('rt');
+        my $rcpt = shift;
+        my @list = ref $rcpt eq 'ARRAY' ? @$rcpt : ($rcpt);
+        croak "rcpt_to requires at least one recipient" unless @list;
+        $self->set_tag('rt',
+            join(',', map { encode_base64(to_rfc5321_path($_), '') } @list));
+    }
+    my $rt = $self->get_tag('rt');
+    return unless defined $rt;
+    return [map { decode_base64($_) } split /,/, $rt];
 }
 
 # --- Convenience methods for signature items ---
@@ -326,209 +345,180 @@ sub check_duplicates {
     return @errors;
 }
 
-# --- DNS key lookup ---
-
-sub fetch_public_key {
-    my ($self, $idx) = @_;
-    $idx //= 0;
-    my $sel = $self->selector($idx);
-    my $dom = $self->domain;
-    croak "missing selector or domain" unless $sel && $dom;
-
-    # Fetch TXT record from DNS. Resolver is injectable for testing.
-    my $resolver = $self->{_resolver};
-    unless ($resolver) {
-        require Net::DNS::Resolver;
-        $resolver = Net::DNS::Resolver->new;
-    }
-    my $fqdn = "$sel._domainkey.$dom";
-    my $reply = $resolver->query($fqdn, 'TXT');
-    unless ($reply) {
-        # Distinguish a TRANSIENT DNS failure (timeout, SERVFAIL, network
-        # unreachable) from a genuine no-record answer. Per
-        # draft-ietf-dkim-dkim2-spec-06 §10, DNS timeouts MUST be reported as
-        # TEMPERROR (retryable) — not as a permanent "no verifiable signature
-        # items". We signal the transient case by dying; the verifier's eval
-        # maps that to temperror. NXDOMAIN / NOERROR-with-no-record is permanent
-        # (the key really is absent), so we return undef.
-        my $err = $resolver->errorstring // '';
-        if ($err =~ /timeout|timed out|SERVFAIL|REFUSED|network|unreachable|connection|no reply/i) {
-            croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
-        }
-        return;
-    }
-    for my $rr ($reply->answer) {
-        next unless $rr->type eq 'TXT';
-        my $txt = join('', $rr->txtdata);
-        require Mail::DKIM2::Common;
-        return Mail::DKIM2::Common::parse_dkim_pubkey($txt);
-    }
-    return;
-}
-
 1;
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::Signature - Parse and construct DKIM2-Signature headers
+Mail::DKIM2::Signature - One DKIM2-Signature header, parsed or under construction
 
 =head1 SYNOPSIS
 
     use Mail::DKIM2::Signature;
 
-    # Parse an existing header
+    # Parse a header read from a message
     my $sig = Mail::DKIM2::Signature->parse($header_value);
-    say $sig->sequence;    # i= tag
-    say $sig->domain;      # d= tag
-    say $sig->selector;    # s= from first signature item
+    say $sig->sequence;      # i=
+    say $sig->domain;        # d=
+    say $sig->mail_from;     # mf=, decoded: "<sender@example.com>"
+    say @{ $sig->rcpt_to };  # rt=, decoded
+    say $sig->selector(0);   # first s= item's selector
 
-    # Construct a new signature
+    # Build one (the Signer does this for you)
     my $sig = Mail::DKIM2::Signature->new(
         Sequence   => 1,
+        Version    => 1,
+        Timestamp  => time,
         Domain     => 'example.com',
-        Timestamp  => time(),
-        SmtpParams => { mf => 'sender@example.com' },
+        MailFrom   => '<sender@example.com>',
+        RcptTo     => ['<rcpt@example.net>'],
         Signatures => [['sel1', 'rsa-sha256', '']],
     );
 
 =head1 DESCRIPTION
 
-Represents a DKIM2-Signature header as defined in draft-ietf-dkim-dkim2-spec-06.
-Extends L<Mail::DKIM2::TagValueList> for tag-value parsing and serialization.
-
-B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet
-been published as an RFC.  The API and wire format are subject to change.
-Do not use in production.
-
-The DKIM2-Signature header uses these tags:
+A DKIM2-Signature header as defined in spec-06 section 8, as a
+L<Mail::DKIM2::TagValueList>. The tags:
 
 =over 4
 
-=item C<i=> - Sequence number (position in the signature chain)
+=item C<i=>
 
-=item C<v=> - Message-Instance version this signature covers
+Sequence number: this signature's position in the chain, from 1.
 
-=item C<t=> - Timestamp (Unix epoch)
+=item C<m=>
 
-=item C<d=> - Signing domain
+The Message-Instance C<m=> this signature covers; absent when the message
+has no Message-Instance.
 
-=item C<n=> - Nonce
+=item C<t=>
 
-=item C<f=> - Flags (comma-separated)
+Unix timestamp of signing.
 
-=item C<m=> - SMTP parameters (base64-encoded JSON)
+=item C<d=>
 
-=item C<s=> - Signature items (base64-encoded JSON array)
+Signing domain.
+
+=item C<mf=>, C<rt=>
+
+The envelope of this hop: MAIL FROM, and a comma-separated list of RCPT TO,
+each a base64-encoded RFC 5321 path with angle brackets (section 7.5 and
+7.6). C<< <> >> is the null sender.
+
+=item C<nd=>
+
+For an imaginary forwarding hop (section 9.3), the C<d=> of the hop that
+signs next. Replaces C<mf=> and C<rt=>.
+
+=item C<n=>
+
+A nonce of at most 64 characters.
+
+=item C<f=>
+
+Comma-separated flags: C<donotmodify>, C<donotexplode>, C<feedback>,
+C<feedhere>.
+
+=item C<s=>
+
+The signature items, C<selector:algorithm:base64signature>, comma-separated.
+A selector may appear once; an algorithm at most twice.
 
 =back
+
+This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+for what that means for the wire format and the API, and
+L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
+module here follows.
 
 =head1 CONSTRUCTORS
 
 =head2 new(%args)
 
-Creates a new Signature object.  Accepted arguments: C<Sequence>, C<Version>,
-C<Timestamp>, C<Domain>, C<Nonce>, C<Flags> (arrayref), C<SmtpParams>
-(hashref), C<Signatures> (arrayref of hashrefs).
+Builds a signature from C<Sequence>, C<Version>, C<Timestamp>, C<Domain>,
+C<MailFrom>, C<RcptTo> (arrayref), C<NextDomain>, C<Nonce>, C<Flags>
+(arrayref) and C<Signatures>, an arrayref of C<[selector, algorithm,
+value]> arrayrefs. Each sets the tag described above when given;
+C<NextDomain> suppresses C<MailFrom> and C<RcptTo>.
 
 =head2 parse($header_value)
 
-Parses a DKIM2-Signature header value string (with or without the
-C<DKIM2-Signature:> prefix) into a Signature object.
+Parses a header value, with or without the leading C<DKIM2-Signature:>.
+Tag names keep their case and order so the header can be re-serialised
+byte for byte; lookups are case-insensitive.
 
 =head1 TAG ACCESSORS
 
-=head2 sequence([$value])
+Each gets the tag, or sets it when given an argument and returns the new
+value. Envelope paths are bracketed on the way in and decoded on the way
+out.
 
-Get/set the C<i=> tag (sequence number).
+=head2 sequence([$i]), version([$m]), timestamp([$t]), domain([$d]), next_domain([$nd])
 
-=head2 version([$value])
+The plain tags.
 
-Get/set the C<v=> tag (Message-Instance version).
+=head2 nonce([$n])
 
-=head2 timestamp([$value])
+Croaks on a value over 64 characters.
 
-Get/set the C<t=> tag (Unix timestamp).
+=head2 mail_from([$path])
 
-=head2 domain([$value])
+The decoded C<mf=>, e.g. C<< "<sender@example.com>" >>, or undef.
 
-Get/set the C<d=> tag (signing domain).
+=head2 rcpt_to([$path_or_arrayref])
 
-=head2 nonce([$value])
+An arrayref of decoded C<rt=> paths, or undef. Setting accepts one address
+or an arrayref and requires at least one.
 
-Get/set the C<n=> tag.
+Setting C<mail_from> or C<rcpt_to> on a signature carrying C<nd=> croaks.
 
-=head2 flags()
+=head2 flags([\@flags])
 
-Returns the C<f=> tag as an arrayref of flag strings, or undef.
+An arrayref of flags, or undef.
 
-=head1 JSON TAG ACCESSORS
-
-=head2 smtp_params()
-
-Decodes and returns the C<m=> tag as a hashref.  Keys include C<mf>
-(MAIL FROM) and C<rt> (RCPT TO).
+=head1 SIGNATURE ITEMS
 
 =head2 signatures_data()
 
-Decodes and returns the C<s=> tag as an arrayref of signature item hashrefs.
-Each item has keys C<a> (algorithm), C<s> (selector), and C<b> (signature
-value).
+An arrayref of C<[selector, algorithm, value]> arrayrefs, one per C<s=>
+item, with folding whitespace stripped.
 
-=head2 mail_from()
+=head2 selector([$index]), algorithm([$index]), signature_value([$index])
 
-Convenience method: returns the C<mf> value from SMTP params.
+The parts of the item at C<$index> (default 0).
 
-=head2 rcpt_to()
+=head2 sig_count()
 
-Convenience method: returns the C<rt> value from SMTP params.
+The number of items.
 
-=head2 selector([$index])
+=head2 check_duplicates()
 
-Returns the selector from the signature item at C<$index> (default 0).
-
-=head2 algorithm([$index])
-
-Returns the algorithm from the signature item at C<$index> (default 0).
-
-=head2 signature_value([$index])
-
-Returns the base64 signature value from the item at C<$index> (default 0).
+A list of PERMERROR strings for the section 8.9 rules: a selector used
+twice, or an algorithm used more than twice. Empty if clean.
 
 =head1 SERIALIZATION
 
 =head2 as_string()
 
-Returns the full header line: C<< DKIM2-Signature: <tags> >>.
+The complete header line, unfolded.
 
 =head2 as_string_without_data()
 
-Returns the header with empty signature values in all C<s=> items, unfolded.
-Used by the verifier to reconstruct the signing input from a header read
-from the message.
+The header with every C<s=> value emptied, unfolded: the last element of
+the signing input as the Verifier reconstructs it.
 
 =head2 as_folded_string_without_data()
 
-Returns the header with empty signature values, folded at 72 characters.
-Used by the signer as the signing input — fold positions become part of
-what gets canonicalized and signed.
+The same, folded at 72 characters: the last element of the signing input
+as the Signer produces it. Where the folds land is part of what is signed.
 
 =head2 as_folded_string()
 
-Returns the complete header (with real signature values) folded at 72
-characters, ready for insertion into a message.
-
-=head2 sig_count()
-
-Returns the number of signature items in the C<s=> tag.
-
-=head1 DNS
-
-=head2 fetch_public_key([$index])
-
-Fetches the public key via DNS for the signature item at C<$index>
-(default 0), using the selector and domain from this signature.
+The complete header folded at 72 characters, ready to insert into the
+message. Never refold it afterwards.
 
 =head1 AUTHOR
 
@@ -536,7 +526,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

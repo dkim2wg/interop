@@ -75,7 +75,7 @@ my %common = (
     key=>DKIM2TestKeys::private_key('test2.dkim2.com','sel1'),
     mailfrom=>'reflector-bounces@test2.dkim2.com',
     pubkey_cb=>$cb, skip_timestamp_check=>1);
-my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
+my %ropt = (PubkeyCallback=>$cb, SkipTimestampCheck=>1);
 
 # 1) Valid 2-hop chain (reflect 'body' -> i=2 + new MI m=2)
 {
@@ -297,7 +297,7 @@ sub signed_input_nd {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-raw\@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n");
     my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'raw', message=>$in);
     my $nokey = sub { return undef };   # no key for anyone
-    my $rep = Mail::DKIM2::Validate::report($r2->{message}, pubkey_cb=>$nokey, skip_timestamp_check=>1);
+    my $rep = Mail::DKIM2::Validate::report($r2->{message}, PubkeyCallback=>$nokey, SkipTimestampCheck=>1);
     is($rep->{overall}, 'fail', 'no key -> fail');
     ok((grep { $_->{kind} eq 'signature' && $_->{result} eq 'fail' } @{$rep->{levels}}), 'a signature level failed');
 }
@@ -306,7 +306,7 @@ sub signed_input_nd {
 {
     # signed_input uses Timestamp=1740000000 (well over 14 days ago).
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: x\@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n");
-    my $rep = Mail::DKIM2::Validate::report($in, pubkey_cb => $cb);  # NO skip_timestamp_check
+    my $rep = Mail::DKIM2::Validate::report($in, PubkeyCallback => $cb);  # NO SkipTimestampCheck
     is($rep->{overall}, 'warn', 'old signature -> overall warn (not fail)');
     my ($sig1) = grep { $_->{kind} eq 'signature' && $_->{i} == 1 } @{$rep->{levels}};
     is($sig1->{result}, 'warn', 'old signature level is warn');
@@ -385,22 +385,26 @@ sub signed_input_nd {
 # (never dns.json), so a broken/stale key record is surfaced rather than masked.
 {
     package FakeSig;
-    sub new { bless { called => 0, sel => $_[1], dom => $_[2] }, $_[0] }
+    sub new { bless { sel => $_[1], dom => $_[2] }, $_[0] }
     sub selector { $_[0]{sel} }
     sub domain   { $_[0]{dom} }
+    package FakeVerifier;   # stands in for the Verifier's real-DNS fetch
+    sub new { bless { called => 0 }, $_[0] }
     sub fetch_public_key { $_[0]{called}++; return 'REAL_DNS_KEY'; }
 }
 
 my $live = FakeSig->new('sel1', 'test1.dkim2.com');
+my $live_v = FakeVerifier->new;
 my $cb_live = Mail::DKIM2::Validate::_default_cb(undef);
-my $r_live = $cb_live->($live, 0);
-is($live->{called}, 1, '_default_cb with no dns_path calls fetch_public_key (real DNS)');
+my $r_live = $cb_live->($live, 0, $live_v);
+is($live_v->{called}, 1, '_default_cb with no DnsPath calls the verifier\'s fetch_public_key (real DNS)');
 is($r_live, 'REAL_DNS_KEY', '... and returns the real-DNS key, not a dns.json value');
 
 my $ovr = FakeSig->new('sel1', 'test1.dkim2.com');   # a domain present in dns.json
+my $ovr_v = FakeVerifier->new;
 my $cb_ovr = Mail::DKIM2::Validate::_default_cb('../dns.json');
-my $r_ovr = $cb_ovr->($ovr, 0);
-is($ovr->{called}, 0, 'dns.json override (explicit path) short-circuits real DNS — test-only affordance');
+my $r_ovr = $cb_ovr->($ovr, 0, $ovr_v);
+is($ovr_v->{called}, 0, 'dns.json override (explicit path) short-circuits real DNS — test-only affordance');
 ok(defined $r_ovr, '... and returns a parsed key from the override');
 
 done_testing;

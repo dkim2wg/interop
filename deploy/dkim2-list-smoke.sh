@@ -68,7 +68,7 @@ for L in "$MAILMAN_LIST" "$SYMPA_LIST"; do
   src="$work/signed-src.eml"; signed="$work/signed.eml"
   printf 'From: %s\r\nTo: %s\r\nSubject: DKIM2 smoke signed %s\r\nDate: %s\r\nMessage-ID: <smoke-signed-%s-%s@dkim2.com>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nDKIM2 list smoke test, signed upstream.\r\n' \
     "$FROM" "$L" "$(hostname)" "$(date -R)" "$(date +%s)" "$$" > "$src"
-  if ! perl -I"$LIB" "$REPO/perl/bin/dkim2sign.pl" -s sel1 -d dkim2.com -k "$SIGN_KEY" \
+  if ! perl -I"$LIB" "$REPO/perl/bin/dkim2sign" -s sel1 -d dkim2.com -k "$SIGN_KEY" \
         --mailfrom "<$FROM>" --rcptto "<$L>" "$src" > "$signed"; then
     echo "   FAIL: could not sign the injected message"; rc=1; continue
   fi

@@ -3,8 +3,9 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.10';
 
+use Carp ();
 use MIME::Base64 qw(encode_base64 decode_base64);
 use JSON;
 use Crypt::PK::RSA;
@@ -14,7 +15,7 @@ use Crypt::Digest::SHA256 qw(sha256 sha256_b64 sha256_hex);
 use Exporter 'import';
 our @EXPORT_OK = qw(
     should_skip
-    ignore_header_prefixes
+    check_ignore_prefixes
     dkim2_canonicalize_header
     dkim2_canonicalize_sig_header
     digest64
@@ -67,26 +68,36 @@ my %SKIP_EXACT = map { $_ => 1 } qw(
     received return-path sio-label-history vbr-info x400-received x400-trace
 );
 
-# Header field names an operator's own systems put on the wrong side of the
-# signature: added at its border on the way in, stripped at its border on the
-# way out. A signer that hashed one would sign a message no recipient ever
-# sees; a verifier that hashed one would fail the operator's own forwards.
-# The operator sets these; the spec knows nothing of them, and neither does a
-# remote verifier, so the operator also has to make sure no field with one of
-# these names ever leaves its network.
-my @IGNORE_PREFIXES;
-
-sub ignore_header_prefixes {
-    @IGNORE_PREFIXES = map { lc } @_;
-    return;
+# should_skip($name, \@prefixes)
+#
+# True when the field is excluded from the header hash: by the spec's list
+# above, or by one of the caller's prefixes. The prefixes are an operator's
+# own field names, put on the wrong side of the signature by its own systems:
+# added at its border on the way in, stripped at its border on the way out.
+# A signer that hashed one would sign a message no recipient ever sees; a
+# verifier that hashed one would fail the operator's own forwards. The spec
+# knows nothing of them and neither does a remote verifier, so the operator
+# also has to make sure no field with one of these names ever leaves its
+# network. They are local policy, so they travel as an argument -- never as
+# state shared by every Signer and Verifier in the process.
+# The IgnorePrefixes option as every entry point validates it: undef, or an
+# array reference. A bare string is a configuration mistake and croaks, so it
+# does not surface later as a 'fail' on every message.
+sub check_ignore_prefixes {
+    my ($prefixes) = @_;
+    return unless defined $prefixes;
+    Carp::croak("IgnorePrefixes must be an array reference of header-name prefixes")
+        unless ref $prefixes eq 'ARRAY';
+    return $prefixes;
 }
 
 sub should_skip {
-    my $hname = lc(shift);
+    my ($name, $prefixes) = @_;
+    my $hname = lc $name;
     return 1 if $SKIP_EXACT{$hname};
     return 1 if $hname =~ m/^x-/;
     return 1 if $hname =~ m/^received-/;
-    return 1 if grep { index($hname, $_) == 0 } @IGNORE_PREFIXES;
+    return 1 if $prefixes && grep { index($hname, lc $_) == 0 } @$prefixes;
     return 0;
 }
 
@@ -511,161 +522,180 @@ sub load_private_key_data {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::Common - Shared utilities for DKIM2 signing and verification
+Mail::DKIM2::Common - Canonicalization, hashing, folding and key handling for DKIM2
 
 =head1 SYNOPSIS
 
     use Mail::DKIM2::Common qw(
-        should_skip
-        dkim2_canonicalize_header
-        digest64
-        encode_tag_json
-        decode_tag_json
-        build_signing_input
-        extract_mi_version
-        extract_domain
-        relaxed_domain_match
+        should_skip dkim2_canonicalize_header fold_header
+        load_private_key parse_dkim_pubkey
+        extract_domain relaxed_domain_match
+        DKIM2_DRAFT MAX_CHAIN_LENGTH
     );
 
-    # Check if a header should be excluded from hashing
-    my $skip = should_skip('Received');  # returns 1
+    my $key = load_private_key('/etc/dkim2/sel1.pem');
+    my $pub = parse_dkim_pubkey('v=DKIM1; k=rsa; p=MIIB...');
 
-    # Canonicalize a header line per DKIM2 rules
-    my $canon = dkim2_canonicalize_header("Subject: Hello World\r\n");
-
-    # Extract version from a Message-Instance header value
-    my $v = extract_mi_version("v=3; h=...");  # returns 3
+    my $folded = fold_header("Message-Instance: " . $mi->as_string);
 
 =head1 DESCRIPTION
 
-This module provides utility functions shared between L<Mail::DKIM2::Signer>,
-L<Mail::DKIM2::Verifier>, and L<Mail::DKIM2::MessageInstance>.  It also holds
-the distribution-wide C<$VERSION>.
+The functions the other modules share. Nothing is exported by default.
+Those under L</CANONICALIZATION> and L</SIGNING INPUT> define bytes the
+spec defines and are of interest to anyone checking this implementation
+against another; the rest are conveniences.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-06, an
-Internet-Draft that has not yet been published as an RFC.  The API and wire
-format are subject to change.  Do not use in production.
+This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+for what that means for the wire format and the API, and
+L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
+module here follows.
 
-=head1 FUNCTIONS
+=head1 CONSTANTS
 
-All functions are exportable on request.
+=head2 DKIM2_DRAFT, DKIM2_REPO, DKIM2_DATE
 
-=head2 should_skip($header_name)
+The spec revision implemented (C<ietf-dkim-dkim2-spec-06>), where the
+code lives, and the date this implementation's DKIM2 behaviour last
+changed. Emitted in X-DKIM2-Info debug headers
+(draft-gondwana-dkim2-debug-header).
 
-Returns true if the named header should be excluded from DKIM2 hashing.
-Excluded headers include C<Received>, C<Return-Path>, C<Message-Instance>,
-C<DKIM2-Signature>, C<DKIM-Signature>, C<Authentication-Results>, ARC
-headers, and any C<X-*> header, plus any header whose name starts with a
-prefix given to C<ignore_header_prefixes>.
+=head2 MAX_CHAIN_LENGTH
 
-=head2 ignore_header_prefixes(@prefixes)
+32: a message carrying more Message-Instance or DKIM2-Signature fields
+than this is a PERMERROR, found before any key is fetched. Local policy,
+not spec.
 
-Names, by case-insensitive prefix, the header fields the operator's own
-systems add after mail is signed and remove before it leaves, which its
-signers and verifiers then hash as if absent. Replaces any list set before;
-call with no arguments to clear it. This is local policy, not protocol: a
-remote verifier hashes these fields like any other, so the operator has to
-strip them at its border, and both ends of its own infrastructure have to
-agree on the list.
+=head1 CANONICALIZATION
+
+=head2 should_skip($header_name, [\@prefixes])
+
+True if the field is excluded from the header hash: the spec-06 section 4
+list (C<Received>, C<Return-Path>, C<Message-Instance>,
+C<DKIM2-Signature>, C<DKIM-Signature>, C<Authentication-Results>, the ARC
+fields and others), any C<X-*> or C<Received-*> field, or a field whose
+name starts with one of the caller's prefixes, case-insensitively. The
+prefixes are an operator's local policy; pass them as C<IgnorePrefixes> to
+L<Mail::DKIM2::Verifier> and the L<Mail::DKIM2::MessageInstance> class
+methods.
+
+=head2 check_ignore_prefixes($value)
+
+Croaks unless C<$value> is undef or an array reference; returns it. Every
+entry point that takes C<IgnorePrefixes> calls this.
 
 =head2 dkim2_canonicalize_header($line)
 
-Applies DKIM2 header canonicalization to a raw header line (including trailing
-CRLF).  This is DKIM relaxed canonicalization plus removal of whitespace
-around the colon separating the header name from its value.
+Header-hash canonicalization (section 5.2) of one complete header line
+including its CRLF: unfold, lowercase the name, collapse whitespace runs to
+one space, trim whitespace around the colon and at the end. Returns
+C<name:value\r\n>.
 
-=head2 digest64($sha)
+=head2 dkim2_canonicalize_sig_header($line)
 
-Takes a L<Crypt::Digest::SHA256> object and returns the base64-encoded
-digest value.
+Signing-input canonicalization (section 8.5): as above, but all whitespace
+in the value is removed rather than collapsed.
 
-=head2 encode_tag_json($data)
+=head2 extract_mi_version($header_value)
 
-Encodes a Perl data structure as canonical JSON, then base64-encodes it.
-Used for the JSON-in-base64 tag values in DKIM2-Signature and
-Message-Instance headers.
+The C<m=> number of a Message-Instance value, or undef. Accepts a string,
+a scalar ref, or an arrayref (first element).
 
-=head2 decode_tag_json($base64)
+=head2 strip_mi_versions($message, @m)
 
-Decodes a base64-encoded JSON string back to a Perl data structure.
+Removes the Message-Instance fields with the given C<m=> numbers from a
+CRLF message string and returns the result.
 
-=head2 extract_mi_version($header)
-
-Extracts the version number from a Message-Instance header value string.
-Accepts a plain string, a scalar ref, or an arrayref (uses first element).
-Returns the version number or undef if not found.
-
-=head2 extract_domain($address)
-
-Extracts the domain part from an email address.  Handles both bare
-C<user@domain> and angle-bracket C<< <user@domain> >> forms.
-
-=head2 relaxed_domain_match($domain1, $domain2)
-
-Returns true if C<$domain1> is equal to or a subdomain of C<$domain2>.
-Comparison is case-insensitive.
-
-=head2 fold_header($line, $margin, %opts)
-
-Folds a header line at C<$margin> characters (default 72) for insertion into
-a message.  Tries, in order, to break at a C<; > tag boundary, at a space,
-after a C<,> in a list-valued tag (so a header name in an X-DKIM2-Info
-C<hn=> list is never split), and only then at an arbitrary character
-position.  Extends past trailing C<=> padding, C<;> delimiters, and single
-remaining characters to avoid orphaning them on the next line.
-
-With C<< delimiters_only => 1 >> it breaks only after a C<;> or a C<,>,
-never at a space and never inside a token: a value that fits nowhere is left
-whole on an over-long line.  This is the folding rule of
-draft-gondwana-dkim2-debug-header-01 Section 5 for X-DKIM2-Info.
-
-Only for headers we are creating — never for headers read from elsewhere.
-
-=head2 fold_value($line, $margin)
-
-Folds a string at arbitrary character positions.  C<$margin> defaults to 71
-(accounting for the leading continuation space).  Only safe for content that
-has not been signed.
+=head1 SIGNING INPUT
 
 =head2 build_signing_input(%args)
 
-Constructs the signing input string for DKIM2 signature creation or
-verification.  This is the canonicalized concatenation of Message-Instance
-and DKIM2-Signature headers in the correct interleaved order.
+The bytes a DKIM2-Signature signs (section 8.5): the canonicalized
+Message-Instance headers in ascending C<m=> order, the DKIM2-Signature
+headers below the one being signed in ascending C<i=> order, and that one
+with empty C<s=> values. Arguments: C<mi_headers>, an arrayref of C<< { v
+=> N, raw => $line } >> sorted by C<v>; C<dk2_headers>, an arrayref of C<<
+{ i => N, raw => $line, sig => $signature } >> sorted by C<i>;
+C<signing_i>, the C<i=> being signed or verified; C<signature>, its
+L<Mail::DKIM2::Signature>; and optionally C<signing_header>, the exact
+folded text to use for it, which the Signer passes so that the folds it
+chose are signed.
 
-Arguments:
+=head2 chain_length_error($msg_or_counts)
 
-=over 4
+The PERMERROR string for a message over L</MAX_CHAIN_LENGTH>, or undef.
+Takes an L<Email::MIME> or a hashref of field counts keyed by lowercased
+name.
 
-=item mi_headers
+=head2 duplicate_number_error($field, $tag, @numbers)
 
-Arrayref of C<< { v => N, raw => "..." } >> hashes, sorted by version.
+The PERMERROR string for the first number that appears twice, or undef.
 
-=item dk2_headers
+=head1 ADDRESSES
 
-Arrayref of C<< { i => N, raw => "...", sig => $sig_obj } >> hashes, sorted
-by sequence number.
+=head2 extract_domain($address)
 
-=item signing_i
+The domain of C<user@domain> or C<< <user@domain> >>, or undef.
 
-The C<i=> value of the signature being signed or verified.
+=head2 to_rfc5321_path($address)
 
-=item signature
+Wraps an address in angle brackets if it has none; undef or empty becomes
+C<< <> >>. The form C<mf=> and C<rt=> carry.
 
-The L<Mail::DKIM2::Signature> object for the entry being signed/verified.
+=head2 relaxed_domain_match($domain, $parent)
 
-=item signing_header
+True if C<$domain> is C<$parent> or a subdomain of it, case-insensitively.
 
-Optional.  When provided, this string is used as the DKIM2-Signature header
-in the signing input instead of calling C<as_string_without_data()> on the
-signature object.  The Signer passes the folded form
-(C<as_folded_string_without_data()>) so that fold positions are part of what
-gets signed.  The Verifier omits this parameter, using the default unfolded
-path.
+=head1 FOLDING
 
-=back
+Only for a header this code is creating. A header read from anywhere else
+is never refolded: a fold where there was no whitespace changes its
+canonical form and breaks every signature over it.
+
+=head2 fold_header($line, [$margin], %opts)
+
+Folds a complete header line at C<$margin> characters (default 72) with
+CRLF-tab continuations, breaking at C<; > first, then at a space, then
+after a C<,>, then anywhere. With C<< delimiters_only => 1 >> it breaks
+only after C<;> or C<,>, never inside a token, leaving a value that fits
+nowhere whole on an over-long line (the rule for X-DKIM2-Info).
+
+=head2 fold_value($string, [$margin])
+
+Folds a string at arbitrary positions, C<$margin> content characters per
+line (default 64).
+
+=head1 KEYS
+
+=head2 load_private_key($pem_file)
+
+A L<Crypt::PK::RSA> or L<Crypt::PK::Ed25519> from a PEM file, whichever
+it holds. Dies if the file is neither.
+
+=head2 load_private_key_data($data)
+
+The same from key material in memory: PEM, or bare base64 DER as some key
+stores keep it. Returns undef rather than dying, so a signer of live mail
+can log and carry on.
+
+=head2 parse_dkim_pubkey($txt_record)
+
+The public key object from a DKIM TXT record (C<k=> and C<p=>; C<h=> is
+ignored per section 10.3). Ed25519 keys are accepted as the raw 32 bytes
+of RFC 8463 or as DER. Returns undef for a record it cannot parse.
+
+=head1 TAG ENCODING
+
+=head2 encode_tag_json($data), decode_tag_json($base64)
+
+Canonical JSON in base64, the encoding of the C<r=> Recipe tag.
+
+=head2 digest64($digest_object)
+
+The base64 of a CryptX digest object's result.
 
 =head1 AUTHOR
 
@@ -673,7 +703,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

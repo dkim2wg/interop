@@ -2,14 +2,67 @@ package Mail::DKIM2::HeaderParser;
 use strict;
 use warnings;
 
+our $VERSION = '0.10';
+
 # Thin base class for streaming message parsing.
 # Replaces the deep Mail::DKIM::Common → Mail::DKIM::MessageParser
 # inheritance chain with just what DKIM2 Signer/Verifier need.
 
+use Carp;
+
+# The constructor options a subclass accepts, as a list of CamelCase names.
+# new() refuses anything else, so a misspelt option is an error at the call
+# site and not a silently-ignored one.
+sub known_options { return () }
+
 sub new {
     my ($class, %args) = @_;
+    my %known = map { $_ => 1 } $class->known_options;
+    for my $k (sort keys %args) {
+        croak "unknown option $k for $class" unless $known{$k};
+    }
     my $self = bless \%args, $class;
     $self->init;
+    return $self;
+}
+
+# tie *FH, 'Mail::DKIM2::Signer', %options;   -- constructs
+# tie *FH, 'Mail::DKIM2::Signer', $signer;    -- wraps an existing object
+sub TIEHANDLE {
+    my ($class, @args) = @_;
+    return $args[0] if @args == 1 && ref $args[0] && $args[0]->isa(__PACKAGE__);
+    return $class->new(@args);
+}
+
+# One-shot: feed a whole message and finish. Takes the message as a string,
+# a reference to one, a filehandle, or an Email::MIME. Line endings are
+# normalised to CRLF, which is what every DKIM2 hash is defined over; PRINT
+# itself never alters what it is given, since a streaming host has already
+# got CRLF and may split a line ending across chunks.
+sub load {
+    my ($self, $input) = @_;
+    my $text;
+    if (ref $input eq 'SCALAR') {
+        $text = $$input;
+    }
+    elsif (ref $input && eval { $input->can('as_string') }) {
+        $text = $input->as_string;
+    }
+    elsif (ref $input eq 'GLOB' || ref \$input eq 'GLOB'
+           || (ref $input && eval { $input->can('getline') })) {
+        local $/;
+        $text = readline($input);
+    }
+    elsif (ref $input) {
+        croak "load: cannot read a message from a " . ref($input) . " reference";
+    }
+    else {
+        $text = $input;
+    }
+    croak "load requires a message" unless defined $text;
+    $text =~ s/\r?\n/\r\n/g;
+    $self->PRINT($text);
+    $self->CLOSE;
     return $self;
 }
 
@@ -22,8 +75,10 @@ sub init {
 
 # Streaming interface: feed message data in chunks
 sub PRINT {
-    my ($self, $data) = @_;
+    my $self = shift;
     return 1 if $self->{_stopped};
+    # print FH LIST hands every item over; so does a direct PRINT($a, $b).
+    my $data = @_ > 1 ? join('', map { $_ // '' } @_) : ($_[0] // '');
     $self->{_buf} .= $data;
 
     if ($self->{_in_header}) {
@@ -47,6 +102,21 @@ sub PRINT {
     }
     # Body data accumulates in buffer until CLOSE
     return 1;
+}
+
+# The rest of the tied-handle output interface, so printf FH and syswrite FH
+# feed the parser too.
+sub PRINTF {
+    my ($self, $fmt, @args) = @_;
+    return $self->PRINT(sprintf($fmt, @args));
+}
+
+sub WRITE {
+    my ($self, $buf, $len, $offset) = @_;
+    $len    //= length($buf);
+    $offset //= 0;
+    $self->PRINT(substr($buf, $offset, $len));
+    return $len;
 }
 
 sub CLOSE {
@@ -117,81 +187,109 @@ sub finish_body   { }
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::HeaderParser - Thin streaming message parser base class
+Mail::DKIM2::HeaderParser - Streaming message parser base for Signer and Verifier
 
 =head1 SYNOPSIS
 
+    # As a user of a Signer or Verifier:
+    $obj->PRINT($chunk) for @chunks;    # CRLF line endings
+    $obj->CLOSE;
+
+    $obj->load($message);               # one shot; LF is normalised
+
+    tie *FH, 'Mail::DKIM2::Verifier', SkipTimestampCheck => 1;
+    print FH $message;
+    close FH;
+    my $verifier = tied *FH;
+
+    # As a subclass:
     package My::Parser;
-    use base 'Mail::DKIM2::HeaderParser';
-
-    sub handle_header {
-        my ($self, $field_name, $contents, $raw_line) = @_;
-        # called for each header
-    }
-
-    sub finish_header {
-        my $self = shift;
-        # called after all headers are parsed
-    }
-
-    sub finish_body {
-        my $self = shift;
-        # called when CLOSE is invoked
-    }
+    use parent 'Mail::DKIM2::HeaderParser';
+    sub known_options { qw(Thing) }
+    sub handle_header { my ($self, $name, $value, $raw) = @_; ... }
+    sub finish_header { my $self = shift; ... }
+    sub finish_body   { my $self = shift; ... }
 
 =head1 DESCRIPTION
 
-A minimal base class that provides the streaming C<PRINT>/C<CLOSE> interface
-for feeding RFC 5322 message data.  It splits input into headers and body,
-handles continuation (folded) lines, and invokes callbacks for subclasses.
+Collects a message fed in pieces, splits it into header fields and body,
+and calls the subclass at each stage. L<Mail::DKIM2::Signer> and
+L<Mail::DKIM2::Verifier> are built on it; the conventions it implements are
+described in L<Mail::DKIM2/CONVENTIONS>.
 
-This replaces the deep C<Mail::DKIM::Common> inheritance chain with a focused
-implementation containing only what the DKIM2 Signer and Verifier need.
+=head1 CONSTRUCTOR
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-06, an
-Internet-Draft that has not yet been published as an RFC.  The API and wire
-format are subject to change.  Do not use in production.
+=head2 new(%options)
+
+Croaks on an option the class's C<known_options> does not list, then calls
+C<init>.
+
+=head2 TIEHANDLE
+
+C<< tie *FH, $class, %options >> constructs an object; C<< tie *FH,
+$class, $object >> uses an existing one. C<print FH>, C<printf FH>,
+C<syswrite FH> and C<close FH> then call C<PRINT>, C<PRINTF>, C<WRITE> and
+C<CLOSE>.
 
 =head1 METHODS
 
-=head2 new(%args)
+=head2 PRINT(@bytes)
 
-Constructor.  Calls C<init()> after blessing.
-
-=head2 init()
-
-Initialises internal state: input buffer, header-parsing flag, and the
-C<< $self->{headers} >> arrayref that collects raw header lines.  Subclasses
-should call C<< $self->SUPER::init >> if they override this.
-
-=head2 PRINT($data)
-
-Feeds message data (may be called multiple times with arbitrary chunks).
-Once the blank line separating headers from body is seen, headers are parsed
-and C<finish_header()> is called.
+Feeds message data, in chunks of any size, with CRLF line endings exactly
+as the message has them; several arguments are concatenated. When the blank line ending the headers has been
+seen, the header fields are parsed and C<finish_header> is called. Body
+data is kept until C<CLOSE> unless the subclass has called C<stop>.
 
 =head2 CLOSE()
 
-Signals end of message.  If headers have not yet been finalised (e.g. a
-header-only message), they are parsed now.  Then C<finish_body()> is called.
+Ends the message. Parses the headers if no blank line was seen, then calls
+C<finish_body> unless C<stop> was called.
 
-=head2 handle_header($field_name, $contents, $raw_line)
+=head2 load($input)
 
-Callback invoked for each parsed header.  C<$field_name> is the header name,
-C<$contents> is the value (without trailing newline), and C<$raw_line> is the
-original text including any continuation lines.  Default implementation is a
-no-op.
+C<PRINT> and C<CLOSE> in one call. C<$input> is the message as a string,
+a reference to one, a filehandle (read to the end), or an L<Email::MIME>;
+any other reference croaks. Bare LF line endings are normalised to CRLF
+first, since every DKIM2 hash is defined over CRLF. Returns the object.
+
+=head2 stop()
+
+For a subclass that has reached its result from the headers alone, called
+from C<finish_header>: the rest of the message is discarded unread and
+C<CLOSE> does not call C<finish_body>.
+
+=head2 stopped()
+
+True after C<stop>.
+
+=head1 SUBCLASS INTERFACE
+
+=head2 known_options()
+
+The list of CamelCase option names C<new> accepts. Default none.
+
+=head2 init()
+
+Called by C<new> after the options are stored in the object hash. Sets up
+the buffer and C<< $self->{headers} >>, the arrayref of raw header lines
+in message order. A subclass that overrides it calls C<< $self->SUPER::init >>.
+
+=head2 handle_header($name, $value, $raw)
+
+Called for each header field: its name, its value without the trailing
+line ending, and its complete raw text including any continuation lines.
 
 =head2 finish_header()
 
-Callback invoked after all headers have been parsed.  Default is a no-op.
+Called once all header fields have been parsed.
 
 =head2 finish_body()
 
-Callback invoked from C<CLOSE()> after all data has been received.  Default
-is a no-op.
+Called from C<CLOSE>, with the body in C<< $self->{_buf} >>.
 
 =head1 AUTHOR
 
@@ -199,7 +297,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

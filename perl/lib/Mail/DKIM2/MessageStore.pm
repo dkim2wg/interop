@@ -3,6 +3,8 @@ use 5.20.0;
 use strict;
 use warnings;
 
+our $VERSION = '0.10';
+
 use Crypt::Digest::SHA256 qw(sha256_hex);
 use File::Path qw(make_path);
 use Carp;
@@ -94,9 +96,11 @@ sub remove {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::MessageStore - Store and retrieve message snapshots by Message-Instance
+Mail::DKIM2::MessageStore - Keep message snapshots keyed by Message-Instance
 
 =head1 SYNOPSIS
 
@@ -105,52 +109,40 @@ Mail::DKIM2::MessageStore - Store and retrieve message snapshots by Message-Inst
     my $store = Mail::DKIM2::MessageStore->new(
         directory => '/var/spool/dkim2/snapshots',
     );
-
-    # Store a message snapshot keyed by its MI header value
-    $store->store($mi_value, $message_data);
-
-    # Retrieve the snapshot later (e.g. on egress)
-    my $snapshot = $store->fetch($mi_value);
-
-    # Clean up
+    $store->store($mi_value, $message_data);     # on the way in
+    my $snapshot = $store->fetch($mi_value);     # on the way out
     $store->remove($mi_value);
 
 =head1 DESCRIPTION
 
-Provides a simple filesystem-backed store for message snapshots.  On inbound
-delivery, the message is stored keyed by its topmost Message-Instance header
-value.  On outbound (forwarding, mailing list redistribution), the snapshot
-is retrieved so that a diff-based Message-Instance can be computed between
-the stored version and the (possibly modified) current version.
-
-Keys are derived by SHA-256 hashing the MI header value, stored under
-2-character prefix subdirectories to avoid filesystem crowding.
-
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-06, an
-Internet-Draft that has not yet been published as an RFC.  The API and wire
-format are subject to change.  Do not use in production.
+A filesystem store used by the C<authentication_milter> handlers. The
+inbound handler stores each message under its top Message-Instance value;
+when the message leaves again, modified by a list or a forwarder, the
+outbound handler fetches the snapshot and has
+L<Mail::DKIM2::MessageInstance> compute a Recipe between the two. Keys are
+the SHA-256 of the unfolded value, under two-character prefix directories.
 
 =head1 METHODS
 
 =head2 new(directory => $path)
 
-Creates a new MessageStore.  The C<directory> argument is required and
-specifies where snapshots are stored on disk.
+C<directory> is required.
 
 =head2 store($mi_value, $message_data)
 
-Stores C<$message_data> keyed by the given Message-Instance header value.
-Creates subdirectories as needed.  Returns the hex digest key.
+Writes the snapshot, creating directories as needed. Returns the key.
 
 =head2 fetch($mi_value)
 
-Retrieves the stored message data for the given MI header value.  Returns
-the message data string, or undef if not found.
+The stored data, or undef.
 
 =head2 remove($mi_value)
 
-Removes the stored snapshot for the given MI value.  Returns true on
-success, undef if the file did not exist.
+Deletes the snapshot. True if it existed.
+
+=head2 rel_path_for_mi($mi_value)
+
+The path of the snapshot relative to the directory.
 
 =head1 AUTHOR
 
@@ -158,7 +150,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

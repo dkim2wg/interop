@@ -3,15 +3,11 @@
 # Standalone DKIM2 signer CLI (draft-ietf-dkim-dkim2-spec-06).
 #
 # Reads a message, computes a Message-Instance when the content has changed
-# since the top instance, signs, and writes the result to stdout. The Perl
-# library's signing path otherwise only exists behind the milter and the
-# reflector, which makes it awkward to drive from a cross-implementation matrix
-# where every other implementation ships a sign CLI.
+# since the top instance, signs, and writes the result to stdout. The
+# counterpart of dkim2verify, and of python/dkim2sign.py and c/dkim2sign, so a
+# cross-implementation harness can treat them all the same way.
 #
-# Interface deliberately mirrors python/dkim2sign.py and c/dkim2sign so a
-# harness can treat the four the same way.
-#
-#   dkim2sign.pl -s SELECTOR -d DOMAIN -k KEYFILE [--mailfrom '<a@b>']
+#   dkim2sign -s SELECTOR -d DOMAIN -k KEYFILE [--mailfrom '<a@b>']
 #                [--rcptto '<c@d>']... [--timestamp N] [--next-domain D]
 #                [--flag F]... [MESSAGE|-]
 #
@@ -22,7 +18,6 @@
 use 5.020;
 use strict;
 use warnings;
-use Path::Tiny;
 use Email::MIME;
 use Getopt::Long qw(GetOptions);
 use FindBin;
@@ -65,7 +60,7 @@ my $algs = $HASH_ALG_SETS{$hash_algs}
 my $file = shift // '-';
 my $raw = $file eq '-'
     ? do { local $/; binmode STDIN; <STDIN> }
-    : path($file)->slurp_raw;
+    : do { open my $fh, '<:raw', $file or die "$file: $!\n"; local $/; <$fh> };
 die "empty message\n" unless defined $raw && length $raw;
 
 # Normalise to CRLF: the hashes are defined over CRLF line endings.
@@ -99,7 +94,8 @@ my $signer = Mail::DKIM2::Signer->new(
 $signer->PRINT($msg->as_string);
 $signer->CLOSE;
 
-die "signing failed\n" unless ($signer->result // '') eq 'signed';
+die "signing failed: " . ($signer->result_detail // 'no result') . "\n"
+    unless ($signer->result // '') eq 'signed';
 
 (my $sig_header = $signer->as_string) =~ s/^DKIM2-Signature:\s*//;
 $msg->header_raw_prepend('DKIM2-Signature', $sig_header);

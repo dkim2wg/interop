@@ -2,6 +2,8 @@ package Mail::DKIM2::TagValueList;
 use strict;
 use warnings;
 
+our $VERSION = '0.10';
+
 # Simple tag=value list as defined in draft-ietf-dkim-dkim2-spec-06 Sections 6 and 7.
 # Preserves insertion order for serialization.
 
@@ -67,56 +69,58 @@ sub as_string {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::TagValueList - Parse and serialize DKIM2 tag=value lists
+Mail::DKIM2::TagValueList - The tag=value list a DKIM2 header is made of
 
 =head1 SYNOPSIS
 
     use Mail::DKIM2::TagValueList;
 
-    my $tvl = Mail::DKIM2::TagValueList->parse("v=1; d=example.com");
+    my $tvl = Mail::DKIM2::TagValueList->parse("i=1; d=example.com");
     say $tvl->get_tag('d');   # "example.com"
 
-    $tvl->set_tag('t', time());
-    say $tvl->as_string();    # "v=1; d=example.com; t=1740000000"
+    $tvl->set_tag('t', time);
+    say $tvl->as_string;      # "i=1; d=example.com; t=1740000000"
 
 =head1 DESCRIPTION
 
-Base class for tag=value list parsing and serialization as used in
-DKIM2-Signature and Message-Instance headers (draft-ietf-dkim-dkim2-spec-06
-Sections 6 and 7).  Preserves insertion order for deterministic output.
-
-B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet
-been published as an RFC.  The API and wire format are subject to change.
-Do not use in production.
+A semicolon-separated list of C<tag=value> pairs (spec-06 section 2.12 and
+8). Tag names keep their original case and order so a parsed header can be
+re-serialised byte for byte for the signing input; lookups are
+case-insensitive. L<Mail::DKIM2::Signature> is a subclass.
 
 =head1 CONSTRUCTORS
 
 =head2 new()
 
-Creates a new empty TagValueList.
+An empty list.
 
 =head2 parse($string)
 
-Parses a semicolon-delimited tag=value string into a TagValueList object.
-Whitespace around tags and values is stripped.
+Parses a list, trimming whitespace around names and values.
 
 =head1 METHODS
 
 =head2 get_tag($name)
 
-Returns the value of the named tag, or undef if not present.
+The value of the tag, matched case-insensitively, or undef.
 
 =head2 set_tag($name, $value)
 
-Sets the value of the named tag.  If the tag does not already exist, it is
-appended to the end of the tag order.
+Sets a tag, appending it to the order if new.
+
+=head2 duplicate_tag()
+
+The lowercased name of a tag that appeared more than once in the parsed
+input, or undef. Section 8 allows one of each; the Verifier reports a
+repeat as a permerror.
 
 =head2 as_string()
 
-Serializes the tag-value list as a semicolon-delimited string, preserving
-the original insertion order.
+The list serialised in its original order, C<"; "> between pairs.
 
 =head1 AUTHOR
 
@@ -124,7 +128,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

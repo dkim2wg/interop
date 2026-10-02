@@ -6,7 +6,7 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     NAME             => 'Mail::DKIM2',
     AUTHOR           => 'Bron Gondwana <brong@fastmailteam.com>',
-    VERSION_FROM     => 'lib/Mail/DKIM2/Common.pm',
+    VERSION_FROM     => 'lib/Mail/DKIM2.pm',
     ABSTRACT         => 'DKIM2 signing and verification for email',
     LICENSE          => 'perl_5',
     MIN_PERL_VERSION => '5.20.0',
@@ -20,27 +20,39 @@ WriteMakefile(
     },
 
     PREREQ_PM => {
+        'Algorithm::Diff'                        => '0',
         'Carp'                                   => '0',
         'CryptX'                                 => '0.060',
         'Email::MIME'                            => '0',
         'Exporter'                               => '0',
+        'File::Path'                             => '0',
         'JSON'                                   => '0',
         'List::Util'                             => '0',
         'MIME::Base64'                           => '0',
+        'Net::DNS'                               => '0',
     },
 
     TEST_REQUIRES => {
-        # Only recipe COMPUTATION needs this; signing and verifying do not.
-        # See Mail::DKIM2::MessageInstance. Kept out of PREREQ_PM so that
-        # sign/verify-only deployments need not install it.
-        'Algorithm::Diff' => '0',
-        'Email::MIME'  => '0',
-        'Path::Tiny'   => '0',
-        'Test::More'   => '0.96',
+        'Path::Tiny'      => '0',
+        'Test::More'      => '0.96',
     },
 
     META_MERGE => {
         'meta-spec' => { version => 2 },
+        prereqs => {
+            runtime => {
+                recommends => {
+                },
+            },
+            test => {
+                recommends => {
+                    'Test::Pod'           => '1.22',
+                    'Test::Pod::Coverage' => '1.08',
+                    # t/turscar.t, when the dkim2tests submodule is present.
+                    'TOML::Parser'        => '0',
+                },
+            },
+        },
         resources   => {
             repository => {
                 type => 'git',
@@ -54,12 +66,8 @@ WriteMakefile(
     },
 
     EXE_FILES => [
-        'bin/calculate-dkim2.pl',
-        'bin/calculate-mailversion.pl',
-        'bin/reverse-mailversion.pl',
-        'bin/validate-mailversion.pl',
-        'bin/validate.pl',
-        'bin/verify-sig.pl',
+        'bin/dkim2sign',
+        'bin/dkim2verify',
     ],
 
     dist  => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },

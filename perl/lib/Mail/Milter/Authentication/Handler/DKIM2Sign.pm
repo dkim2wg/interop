@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Mail::Milter::Authentication::Pragmas;
 # ABSTRACT: Handler class for DKIM2 signing
-our $VERSION = '0.01';
+our $VERSION = '0.10';
 use base 'Mail::Milter::Authentication::Handler';
 
 use Mail::DKIM2::Common qw(extract_mi_version strip_mi_versions load_private_key fold_header);
@@ -32,17 +32,8 @@ sub default_config {
         'record_smtp_params'   => 1,
         # Directory for message snapshots (shared with DKIM2Verify)
         'snapshot_directory'   => undef,
-        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end
+        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end (IgnorePrefixes)
     };
-}
-
-# The library's list is process-wide and shared with any other handler that
-# sets it, so only a handler with something to say touches it.
-sub setup_callback {
-    my ($self) = @_;
-    my $prefixes = $self->handler_config()->{'ignore_header_prefixes'} || [];
-    Mail::DKIM2::Common::ignore_header_prefixes(@$prefixes) if @$prefixes;
-    return;
 }
 
 sub register_metrics {
@@ -256,7 +247,8 @@ sub addheader_callback {
         # dkim2-milter.pl applies. Checking the current chain, not just the top
         # MI, stops us minting a signature over a chain that fails at recipients.
         my ($mi_chain_ok, $mi_chain_why) =
-            Mail::DKIM2::MessageInstance->chain_verifies($message_data);
+            Mail::DKIM2::MessageInstance->chain_verifies($message_data,
+                IgnorePrefixes => $config->{'ignore_header_prefixes'});
         unless ($mi_chain_ok) {
             $self->metric_count( 'dkim2_sign_total', { 'result' => 'broken-mi-chain' } );
             $self->log_error( "DKIM2 not signing for $sign_domain: "
@@ -270,8 +262,8 @@ sub addheader_callback {
         $signer->CLOSE();
         $self->check_timeout();
 
-        my $sig_result = $signer->result;
-        $self->dbgout( 'DKIM2SignResult', $sig_result, LOG_DEBUG );
+        my $sig_result = $signer->result // 'none';
+        $self->dbgout( 'DKIM2SignResult', $signer->result_detail // 'none', LOG_DEBUG );
 
         if ( $sig_result eq 'signed' ) {
             # Extract the DKIM2-Signature header
@@ -289,7 +281,7 @@ sub addheader_callback {
         }
         else {
             $self->metric_count( 'dkim2_sign_total', { 'result' => 'error' } );
-            $self->log_error( "DKIM2 signing failed: $sig_result" );
+            $self->log_error( "DKIM2 signing failed: " . ($signer->result_detail // 'no result') );
         }
     };
     if ( my $error = $@ ) {
@@ -324,7 +316,8 @@ sub _compute_message_instance {
         my $msg = Email::MIME->new($message_data);
 
         # Skip if the topmost MI already matches current content
-        if ( Mail::DKIM2::MessageInstance->verify($msg) ) {
+        my @ignore = ( IgnorePrefixes => $config->{'ignore_header_prefixes'} );
+        if ( Mail::DKIM2::MessageInstance->verify($msg, @ignore) ) {
             $self->dbgout( 'DKIM2MI', 'Message unchanged, skipping MI', LOG_DEBUG );
             return undef;
         }
@@ -365,7 +358,7 @@ sub _compute_message_instance {
                     }
 
                     $self->{'_clean_message_data'} = $work_data;
-                    return Mail::DKIM2::MessageInstance->calculate($work_msg, $snapshot_msg);
+                    return Mail::DKIM2::MessageInstance->calculate($work_msg, $snapshot_msg, @ignore);
                 }
             }
         }
@@ -379,7 +372,7 @@ sub _compute_message_instance {
         }
 
         # No existing MI headers — first-time signing, compute MI m=1
-        Mail::DKIM2::MessageInstance->calculate($msg);
+        Mail::DKIM2::MessageInstance->calculate($msg, undef, @ignore);
     };
     if ( my $error = $@ ) {
         $self->handle_exception( $error );
@@ -494,9 +487,10 @@ so the signature covers all headers including those added by other handlers.
 Signing keys can be configured statically per domain, or looked up dynamically
 via an HTTP REST endpoint.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-06, an
-Internet-Draft that has not yet been published as an RFC.  The API and wire
-format are subject to change.  Do not use in production.
+This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+for what that means for the wire format and the API, and
+L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
+module here follows.
 
 =head1 LIMITATIONS
 
@@ -630,7 +624,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

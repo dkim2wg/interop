@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Mail::Milter::Authentication::Pragmas;
 # ABSTRACT: Handler class for DKIM2 signature verification
-our $VERSION = '0.01';
+our $VERSION = '0.10';
 use base 'Mail::Milter::Authentication::Handler';
 
 use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey fold_header);
@@ -20,17 +20,8 @@ sub default_config {
         'dns_overrides'        => undef,  # path to dns.json for testing
         'add_message_instance' => 1,      # compute and add MI header on inbound
         'snapshot_directory'   => undef,  # store message snapshots for egress diffing
-        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end
+        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end (IgnorePrefixes)
     };
-}
-
-# The library's list is process-wide and shared with any other handler that
-# sets it, so only a handler with something to say touches it.
-sub setup_callback {
-    my ($self) = @_;
-    my $prefixes = $self->handler_config()->{'ignore_header_prefixes'} || [];
-    Mail::DKIM2::Common::ignore_header_prefixes(@$prefixes) if @$prefixes;
-    return;
 }
 
 sub register_metrics {
@@ -82,7 +73,9 @@ sub eoh_callback {
 
     my $verifier;
     eval {
-        $verifier = Mail::DKIM2::Verifier->new();
+        $verifier = Mail::DKIM2::Verifier->new(
+            IgnorePrefixes => $self->handler_config()->{'ignore_header_prefixes'},
+        );
         $self->_setup_pubkey_callback($verifier);
         $self->set_object('dkim2_verifier', $verifier, 1);
     };
@@ -173,19 +166,14 @@ sub eom_callback {
         $self->dbgout( 'DKIM2Result', $detail, LOG_DEBUG );
 
         my $header = Mail::AuthenticationResults::Header::Entry->new()->set_key( 'dkim2' )->safe_set_value( $result );
-        if ( $verifier->{details} ) {
-            $header->add_child( Mail::AuthenticationResults::Header::Comment->new()->safe_set_value( $verifier->{details} ) );
+        if ( my $details = $verifier->details ) {
+            $header->add_child( Mail::AuthenticationResults::Header::Comment->new()->safe_set_value( $details ) );
         }
 
         # Add domain info from the highest-i signature
-        my %dk2_map = %{$verifier->{_dk2_headers} || {}};
-        if ( keys %dk2_map ) {
-            my $max_i = (sort { $b <=> $a } keys %dk2_map)[0];
-            my $sig = $dk2_map{$max_i}{sig};
-            if ( $sig ) {
-                $header->add_child( Mail::AuthenticationResults::Header::SubEntry->new()->set_key( 'header.d' )->safe_set_value( $sig->domain || '' ) );
-                $header->add_child( Mail::AuthenticationResults::Header::SubEntry->new()->set_key( 'header.i' )->safe_set_value( $max_i ) );
-            }
+        if ( my $sig = $verifier->top_signature ) {
+            $header->add_child( Mail::AuthenticationResults::Header::SubEntry->new()->set_key( 'header.d' )->safe_set_value( $sig->domain || '' ) );
+            $header->add_child( Mail::AuthenticationResults::Header::SubEntry->new()->set_key( 'header.i' )->safe_set_value( $sig->sequence ) );
         }
 
         $self->add_auth_header( $header );
@@ -223,7 +211,8 @@ sub _add_mi_and_store {
             # Case 2: Message has existing MI header(s).
             # The topmost MI must match current content (already verified
             # by the DKIM2 chain check).  Use it as the snapshot key.
-            my $mi_ver = Mail::DKIM2::MessageInstance->verify($msg);
+            my $mi_ver = Mail::DKIM2::MessageInstance->verify($msg,
+                IgnorePrefixes => $config->{'ignore_header_prefixes'});
             unless ( $mi_ver ) {
                 # This shouldn't happen after successful DKIM2 verification
                 $self->log_error( 'DKIM2MI: MI headers present but none match current content' );
@@ -237,7 +226,8 @@ sub _add_mi_and_store {
         else {
             # Case 1: No MI headers — first entry into DKIM2 ecosystem.
             # Compute MI m=1 and prepend it.
-            my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+            my $mi = Mail::DKIM2::MessageInstance->calculate($msg, undef,
+                IgnorePrefixes => $config->{'ignore_header_prefixes'});
             $mi_value = $self->_format_mi($mi);
             $self->prepend_header( 'Message-Instance', $mi_value );
             $snapshot = "Message-Instance: $mi_value$EOL" . $message_data;
@@ -296,25 +286,10 @@ sub _setup_pubkey_callback {
         });
     }
     else {
-        # Use real DNS via the milter's resolver
-        $verifier->set_pubkey_callback(sub {
-            my ($signature, $idx) = @_;
-            $idx //= 0;
-            my $sel = $signature->selector($idx);
-            my $dom = $signature->domain;
-            return unless $sel && $dom;
-            my $resolver = $self->get_object('resolver');
-            my $lookup = "$sel._domainkey.$dom";
-            $self->dbgout( 'DKIM2DNSLookup', "$lookup TXT", LOG_DEBUG );
-            my $reply = $resolver->query( $lookup, 'TXT' );
-            return unless $reply;
-            foreach my $rr ( $reply->answer ) {
-                next unless $rr->type eq 'TXT';
-                my $txt = $rr->txtdata;
-                return parse_dkim_pubkey($txt);
-            }
-            return;
-        });
+        # Real DNS through the milter's own resolver (so its timeouts and
+        # caching apply). The library classifies the answer: no record is
+        # permerror, anything transient is temperror.
+        $verifier->resolver( $self->get_object('resolver') );
     }
 }
 
@@ -358,9 +333,10 @@ Mail::Milter::Authentication::Handler::DKIM2Verify - Handler class for DKIM2 sig
 Verifies DKIM2 signatures and Chain of Custody on inbound email, adding
 Authentication-Results headers with the verification outcome.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-06, an
-Internet-Draft that has not yet been published as an RFC.  The API and wire
-format are subject to change.  Do not use in production.
+This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+for what that means for the wire format and the API, and
+L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
+module here follows.
 
 =head1 CONFIGURATION
 
@@ -427,7 +403,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

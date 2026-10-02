@@ -200,7 +200,9 @@ each step before verifying that hop's hashes.
 
 ### Perl (`perl/lib/Mail/DKIM2/`)
 
-Streaming object API modelled on `Mail::DKIM`:
+Streaming object API modelled on `Mail::DKIM`, with a one-shot `load()`. The
+conventions (CamelCase options, snake_case methods, results vs. croaks) are in
+the `Mail::DKIM2` module's POD.
 
 ```perl
 # Signing
@@ -208,26 +210,30 @@ my $signer = Mail::DKIM2::Signer->new(
     Domain    => 'example.com',
     Selector  => 'sel1',
     Key       => $privkey_object,   # Crypt::PK::RSA or Crypt::PK::Ed25519
-    MailFrom  => 'sender@example.com',
-    RcptTo    => ['rcpt@example.com'],
+    MailFrom  => '<sender@example.com>',
+    RcptTo    => ['<rcpt@example.com>'],
     Timestamp => $unix_ts,          # optional
-);
-$signer->PRINT($message_text);
-$signer->CLOSE;
+)->load($message_text);             # or PRINT($chunk)... CLOSE for streaming
+die $signer->result_detail unless $signer->result eq 'signed';
 my $header = $signer->as_string();  # "DKIM2-Signature: ..."
 
 # Verification
-my $v = Mail::DKIM2::Verifier->new();
-$v->set_pubkey_callback(sub { my ($sig, $idx) = @_; return $pubkey_obj; });
-$v->skip_timestamp_check(1);       # for testing
-$v->PRINT($message_text);
-$v->CLOSE;
+my $v = Mail::DKIM2::Verifier->new(
+    SkipTimestampCheck => 1,        # for testing
+    PubkeyCallback     => sub { my ($sig, $idx, $verifier) = @_; return $pubkey_obj; },
+)->load($message_text);
 print $v->result();         # 'pass', 'fail', 'none', 'permerror', 'temperror'
 print $v->result_detail();  # human-readable detail
+my $top = $v->top_signature;  # for Authentication-Results header.d / header.i
 ```
 
-The `set_pubkey_callback` receives a `Mail::DKIM2::Signature` object and the s= item
-index; return a `Crypt::PK::RSA` or `Crypt::PK::Ed25519` object, or undef to skip.
+Without `PubkeyCallback` the Verifier looks keys up in DNS through a
+`Net::DNS::Resolver` (the `Resolver` option). The callback receives the
+`Mail::DKIM2::Signature`, the s= item index, and the verifier; return a
+`Crypt::PK::RSA` or `Crypt::PK::Ed25519` object, undef to skip, or fall back to
+`$verifier->fetch_public_key($sig, $idx)`.
+
+CLI: `perl/bin/dkim2sign` and `perl/bin/dkim2verify --dns-json dns.json`.
 
 ### C (`c/dkim2_sign.h`, `c/dkim2_verify.h`)
 

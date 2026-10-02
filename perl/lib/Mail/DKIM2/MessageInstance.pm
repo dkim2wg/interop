@@ -2,6 +2,8 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
+our $VERSION = '0.10';
+
 
 use Crypt::Digest::SHA256;
 use Crypt::Digest::SHA512 qw(sha512 sha512_b64);
@@ -23,6 +25,7 @@ use Mail::DKIM2::Common qw(
     encode_tag_json
     decode_tag_json
     extract_mi_version
+    check_ignore_prefixes
     MAX_CHAIN_LENGTH
     chain_length_error
     duplicate_number_error
@@ -34,9 +37,11 @@ our $DEBUG = 0;
 # chain, or undef.
 sub _chain_error {
     my ($msg) = @_;
+    my @mi = $msg->header_raw('Message-Instance');
     return chain_length_error($msg)
-        // duplicate_number_error('Message-Instance', 'm',
-               map { extract_mi_version($_) } $msg->header_raw('Message-Instance'));
+        // ((grep { !defined extract_mi_version($_) } @mi)
+               ? 'PERMERROR Message-Instance without m= tag' : undef)
+        // duplicate_number_error('Message-Instance', 'm', map { extract_mi_version($_) } @mi);
 }
 
 # spec-06 §3.1: two hashing algorithms are defined. Verifiers MUST implement
@@ -338,12 +343,12 @@ sub _decode_recipe_list {
 # --- Digests ---
 
 sub h_digest {
-    my ($msg, $alg) = @_;
+    my ($msg, $alg, $prefixes) = @_;
     $alg = lc($alg // 'sha256');
 
     my $data = '';
     for my $header (sort { lc($a) cmp lc($b) } $msg->header_names) {
-        next if should_skip($header);
+        next if should_skip($header, $prefixes);
         for my $item (reverse $msg->header_raw($header)) {
             my $chead = dkim2_canonicalize_header("$header: $item\r\n");
             warn "cdigest: $chead" if $DEBUG;
@@ -689,6 +694,7 @@ sub calculate {
     croak "need a message" unless $current;
 
     my $self = bless {}, $class;
+    my $prefixes = check_ignore_prefixes($opts{IgnorePrefixes});
 
     # spec-06 §3.1: the signer chooses one or more hash algorithms; default
     # is sha256 only (the signer default MUST NOT change).
@@ -755,7 +761,7 @@ sub calculate {
     # computed after any epilogue modification, for every configured
     # algorithm (spec-06 §7.3).
     for my $alg (@{$self->{algs}}) {
-        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg), b_digest($current, $alg) ];
+        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg, $prefixes), b_digest($current, $alg) ];
     }
     if (my $sha256 = $self->{bits}{hashes}{sha256}) {
         @{$self->{bits}}{qw(h1 b1)} = @$sha256;
@@ -769,7 +775,7 @@ sub calculate {
     my %all = map { lc($_) => 1 } ($current->header_names, $previous->header_names);
     my %hdiff;
     for my $h (sort keys %all) {
-        next if should_skip($h);
+        next if should_skip($h, $prefixes);
         my @cur  = reverse $current->header_raw($h);
         my @prev = reverse $previous->header_raw($h);
         next if join("\n", map { dkim2_canonicalize_header($_) } @cur)
@@ -810,8 +816,9 @@ sub calculate {
 # --- Verify ---
 
 sub verify {
-    my ($class, $msg) = @_;
+    my ($class, $msg, %opts) = @_;
     croak "need a message" unless $msg;
+    check_ignore_prefixes($opts{IgnorePrefixes});
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = Email::MIME->new($msg);
@@ -825,7 +832,16 @@ sub verify {
     my $num = keys %map ? max(keys %map) : 0;
     return 0 unless $num;
 
-    my $self = $class->parse($map{$num});
+    # A crafted instance (duplicate algorithm, bad hash set, unparseable
+    # Recipe) is a verdict, not an exception: this is the status-returning
+    # half of the contract, and a host must not have to eval it.
+    my $self = eval { $class->parse($map{$num}) };
+    unless ($self) {
+        die $@ if ref $@;
+        (my $err = $@) =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*\z//;
+        $err =~ s/\s+\z//;
+        return wantarray ? (0, $err) : 0;
+    }
 
     # spec-06 §3.4: verify every hash-set whose algorithm we implement; ALL
     # of them must match. If none names an implemented algorithm, fail
@@ -842,7 +858,7 @@ sub verify {
 
     for my $alg (@usable) {
         my ($h1, $b1) = @{ $hashes->{$alg} };
-        my $hd = h_digest($msg, $alg);
+        my $hd = h_digest($msg, $alg, $opts{IgnorePrefixes});
         my $bd = b_digest($msg, $alg);
         if ($h1 ne $hd) {
             return wantarray ? (0, "$alg header hash mismatch ($h1 != $hd)") : 0;
@@ -938,7 +954,8 @@ sub undo {
 # before signing catches an upstream that emitted a non-reversible Recipe.
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
-    my ($class, $msg) = @_;
+    my ($class, $msg, %opts) = @_;
+    check_ignore_prefixes($opts{IgnorePrefixes});
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = Email::MIME->new("$msg");
     }
@@ -951,7 +968,7 @@ sub chain_verifies {
         my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
         last unless $num;
 
-        my ($ok, $err) = $class->verify($msg);
+        my ($ok, $err) = $class->verify($msg, %opts);
         return (0, "Message-Instance m=$num does not match content"
                  . ($err ? " ($err)" : '')) unless $ok;
 
@@ -973,133 +990,179 @@ sub chain_verifies {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::MessageInstance - Calculate, verify, and undo Message-Instance headers
+Mail::DKIM2::MessageInstance - Compute, verify and undo Message-Instance headers
 
 =head1 SYNOPSIS
 
     use Mail::DKIM2::MessageInstance;
 
-    # Calculate MI for the initial message (v=1)
+    # First hop: record the message as it is.
     my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
     print "Message-Instance: " . $mi->as_string . "\n";
 
-    # Calculate MI with diff Recipes between two versions
-    my $mi = Mail::DKIM2::MessageInstance->calculate($msg_current, $msg_prev);
+    # A later hop that changed the message: record the new state and a
+    # Recipe for getting back to the state it received.
+    my $mi = Mail::DKIM2::MessageInstance->calculate($modified, $received);
 
-    # Verify the highest MI header matches the message
-    my $version = Mail::DKIM2::MessageInstance->verify($msg);
-    # or in list context:
-    my ($version, $error) = Mail::DKIM2::MessageInstance->verify($msg);
+    # Does the top instance describe this message?
+    my $m = Mail::DKIM2::MessageInstance->verify($msg);
+    my ($m, $why) = Mail::DKIM2::MessageInstance->verify($msg);
 
-    # Undo the highest MI to recover the previous message version
-    my $prev_msg = Mail::DKIM2::MessageInstance->undo($msg);
+    # Does the whole chain undo cleanly, each instance matching?
+    my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($msg);
+
+    # Apply the top Recipe: the message as the previous hop sent it.
+    my $previous = Mail::DKIM2::MessageInstance->undo($msg);
 
 =head1 DESCRIPTION
 
-This module implements Message-Instance header computation as defined in
-draft-ietf-dkim-dkim2-spec-06.  A Message-Instance header records cryptographic
-hashes of the message headers and body at a point in the delivery chain, along
-with optional diff recipes that allow undoing changes made at each hop.
+A Message-Instance header (spec-06 sections 4 to 7) records the message at
+one point in its journey: a hash of its header fields and a hash of its
+body, and, from the second instance on, a Recipe for turning this instance
+back into the previous one. The wire format is
 
-The wire format is: C<< v=N; h=<base64json>; r=<base64json> >>
+    m=N; h=<alg>:<header-hash>:<body-hash>[,<alg>:...]; r=<base64 JSON>;
 
-B<EXPERIMENTAL> — This module implements an Internet-Draft that has not yet
-been published as an RFC.  The API and wire format are subject to change.
-Do not use in production.
+where C<m=> numbers the instance from 1, C<h=> carries one hash set per
+algorithm the signer chose (section 7.3: C<sha256>, C<sha512>, or both;
+this module emits C<sha256> unless told otherwise and verifies every set it
+implements), and C<r=> is the Recipe: C<"b"> for the body and C<"h"> for
+header fields, each a list of copy ranges and literal lines (section 5).
+
+Messages are accepted as L<Email::MIME> objects or as strings, which are
+parsed. C<verify>, C<undo> and C<chain_verifies> look at the highest
+numbered Message-Instance the message carries.
+
+This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+for what that means for the wire format and the API, and
+L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
+module here follows.
+
+=head1 OPTIONS
+
+The class methods below take these options after their positional
+arguments:
+
+=over 4
+
+=item IgnorePrefixes
+
+An arrayref of header-field-name prefixes to leave out of the header hash
+and header Recipes; see L<Mail::DKIM2/Operator-local header fields>.
+
+=item Algs
+
+C<calculate> only: an arrayref of hash algorithm names for C<h=>, from
+C<sha256> and C<sha512>. Default C<['sha256']>.
+
+=item UseEpilogue, EpilogueThreshold
+
+C<calculate> with a previous message only; see below.
+
+=back
 
 =head1 CLASS METHODS
 
-=head2 calculate($msg)
+=head2 calculate($msg, [$previous], %options)
 
-=head2 calculate($msg_current, $msg_previous)
+Returns a new instance describing C<$msg>. With no C<$previous>, C<$msg>
+must carry no Message-Instance and the result is C<m=1>. With
+C<$previous>, both messages must carry the same existing instances; the
+result is the next C<m=>, with hashes of C<$msg> and Recipes that rebuild
+C<$previous> from it. Dies if the message cannot be processed: it already
+has 32 instances, its instances do not form a chain, or C<$previous> is
+not an earlier form of the same message.
 
-=head2 calculate($msg_current, $msg_previous, UseEpilogue => 1)
+The body Recipe is a line diff by default. With C<< UseEpilogue => 1 >>,
+the previous body is instead appended after the final MIME boundary (the
+message is wrapped in a C<multipart/mixed> container if it is not already
+multipart) and the Recipe copies it from there; with C<< EpilogueThreshold
+=> N >>, that happens only when the diff would carry more than C<N>
+literal lines. Both epilogue forms modify C<$msg> in place, and the hashes
+cover the modified message. Recipe computation uses L<Algorithm::Diff>,
+loaded on first use.
 
-=head2 calculate($msg_current, $msg_previous, EpilogueThreshold => N)
+=head2 verify($msg, %options)
 
-Creates a new MessageInstance object by computing hashes of the current message
-(an L<Email::MIME> object or raw message string).  If a single message is given,
-it must not already have Message-Instance headers and produces a C<v=1> entry.
-
-With two messages, computes diff recipes (header and body) that allow
-reconstruction of C<$msg_previous> from C<$msg_current>, producing the next
-version number.  The hashes recorded are of C<$msg_current>.
-
-With C<UseEpilogue =E<gt> 1>, the previous message body is always stored in the
-MIME epilogue rather than encoded as a diff in the MI header.
-
-With C<EpilogueThreshold =E<gt> N>, the best diff Recipe is computed first.  If
-it contains more than C<N> literal (non-range) lines, the epilogue strategy is
-used instead; otherwise the diff is used.  C<N = 5> is a reasonable value
-that keeps MI headers small while avoiding the epilogue overhead for small
-changes.  To always use the diff, simply omit both options (the default).
-
-For both epilogue options: if C<$msg_current> is already C<multipart/*>, the
-previous body is appended after the final MIME boundary (C<--BOUNDARY--\r\n>).
-If it is not multipart, the current content is wrapped in a C<multipart/mixed>
-single-part container and the previous body follows the new final boundary.
-
-The returned MI uses the standard C<rb> line-range Recipe (the old body
-occupies specific numbered lines of the modified body), so C<undo()> works
-without any special-case logic.  The header diff (C<rh>) automatically
-captures the C<Content-Type> change when wrapping occurs.
-
-B<Note:> C<UseEpilogue> and C<EpilogueThreshold> (when epilogue is chosen)
-modify C<$msg_current> in place.  Hashes are computed after modification and
-cover the complete transmitted message.
-
-=head2 verify($msg)
-
-Verifies that the highest-versioned Message-Instance header on C<$msg> matches
-the current message content.  Returns the version number on success.  In list
-context, returns C<(0, $error_message)> on failure; in scalar context returns
-0 on failure.
+Checks the top instance against the message. Returns its C<m=> on success.
+On failure, including an instance that does not parse, returns C<0> in
+scalar context and C<(0, $reason)> in list context. Never dies.
 
 =head2 undo($msg)
 
-Applies the recipes from the highest Message-Instance header to reverse the
-message to its previous version.  Returns the modified L<Email::MIME> object,
-or undef if no MI headers exist.
+Applies the top instance's Recipes and removes that instance, returning
+the L<Email::MIME> of the previous form of the message; undef if there is
+no instance. Dies if the Recipe is malformed (a copy range outside the
+message, or overlapping another) or the instances do not form a chain.
 
-Handles both diff-based and epilogue-based recipes.  Epilogue-based MIs use
-the same C<rb> line-range format: the old body occupies the tail lines of the
-modified body, so C<undo()> extracts them via the standard range mechanism and
-C<rh> restores any header changes (such as C<Content-Type> when wrapping was
-used).
+=head2 chain_verifies($msg, %options)
+
+Runs C<verify> and C<undo> down the whole chain to C<m=1> or to an
+instance that declares the previous state unrecoverable. Returns C<(1,
+undef)>, or C<(0, $reason)> at the first instance that does not match or
+does not undo. Never dies. A forwarder runs this before signing so it does
+not put its name to a chain its recipients will reject.
 
 =head2 parse($header_value)
 
-Parses a Message-Instance header value string into an object.  Handles both
-the current C<-08> format (C<h=> and C<r=> tags) and the legacy C<-06> format
-(C<j=> tag).
+Parses a Message-Instance header value into an object. Dies with a
+C<PERMERROR> string on a missing C<m=>, a hash set that is not
+C<alg:hash:hash>, or an algorithm named twice.
+
+=head2 hash_algs()
+
+A hashref of the hash algorithms this module implements, name to
+function.
+
+=head2 parse_hash_sets($h_value)
+
+Splits an C<h=> value into an arrayref of C<[alg, header_hash, body_hash]>,
+lowercasing the names and stripping folding whitespace.
 
 =head1 INSTANCE METHODS
 
 =head2 as_string()
 
-Serializes the MessageInstance to its wire format string.
+The header value in wire format, unfolded. Fold it with
+L<Mail::DKIM2::Common/fold_header> before inserting it.
 
-=head2 set_tag($key, $value)
+=head2 header_hash()
 
-=head2 get_tag($key)
+The base64 sha256 header hash, or undef if the instance carries no sha256
+set.
 
-Low-level accessors for the internal tag store.  Common tags: C<v> (version),
-C<h1> (header hash), C<b1> (body hash), C<rh> (header recipes), C<rb> (body
-recipes).
+=head2 unrecoverable()
+
+True if the body Recipe is C<null>: the body changed and the previous
+state cannot be recreated (section 4.2), so the chain cannot be undone
+past this instance.
+
+=head2 set_null_body_recipe()
+
+Marks the body Recipe C<null>.
+
+=head2 get_tag($name), set_tag($name, $value)
+
+The parsed fields: C<m>, C<hashes> (a hashref of algorithm to
+C<[header_hash, body_hash]>), C<rb> and C<rh> (the body and header
+Recipes in internal form), and C<h1>/C<b1>, the sha256 pair.
 
 =head1 FUNCTIONS
 
-=head2 h_digest($email_mime)
+=head2 h_digest($email_mime, [$alg], [\@prefixes])
 
-Computes the SHA-256 header digest of an L<Email::MIME> message, using DKIM2
-canonicalization and sorted header order.  Returns a base64-encoded string.
+The base64 header hash of a message: every field not excluded by
+L<Mail::DKIM2::Common/should_skip>, canonicalized, sorted by name,
+repeated fields in bottom-up order.
 
-=head2 b_digest($email_mime)
+=head2 b_digest($email_mime, [$alg])
 
-Computes the SHA-256 body digest of an L<Email::MIME> message using DKIM
-simple body canonicalization.  Returns a base64-encoded string.
+The base64 body hash, over the body with trailing empty lines removed and
+one CRLF added.
 
 =head1 AUTHOR
 
@@ -1107,7 +1170,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

@@ -1,6 +1,8 @@
 package Mail::DKIM2::Validate;
 use strict; use warnings; use 5.020;
 
+our $VERSION = '0.10';
+
 use Email::MIME;
 use List::Util qw(max);
 use Mail::DKIM2::Common qw(extract_mi_version extract_domain relaxed_domain_match parse_dkim_pubkey);
@@ -105,13 +107,15 @@ sub _default_cb {
         }
     }
     return sub {
-        my ($sig, $idx) = @_; $idx //= 0;
+        my ($sig, $idx, $verifier) = @_; $idx //= 0;
         my $sel = $sig->selector($idx); my $dom = $sig->domain;
         if ($dns && $dom && $sel) {
             my $t = $dns->{$dom}{"$sel._domainkey"}[0][1];
             return parse_dkim_pubkey($t) if $t;
         }
-        return eval { $sig->fetch_public_key($idx) };
+        # Real DNS. Not eval'd: a transient failure must stay a TEMPERROR,
+        # which the verifier classifies; swallowing it here read as "no key".
+        return $verifier->fetch_public_key($sig, $idx);
     };
 }
 
@@ -137,8 +141,8 @@ sub _report_once {
     my ($text, %opts) = @_;
     $text //= '';
     $text =~ s/\r?\n/\r\n/g;
-    my $cb = $opts{pubkey_cb} || _default_cb($opts{dns_path});
-    my $skip_ts = $opts{skip_timestamp_check} ? 1 : 0;
+    my $cb = $opts{PubkeyCallback} || _default_cb($opts{DnsPath});
+    my $skip_ts = $opts{SkipTimestampCheck} ? 1 : 0;
 
     my %res = (overall => 'none', summary => '',
                counts => { signatures => 0, instances => 0 }, levels => []);
@@ -412,17 +416,43 @@ sub _sig_level {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::Validate - structured per-level DKIM2 + Message-Instance report
+Mail::DKIM2::Validate - structured per-level DKIM2 and Message-Instance report
+
+=head1 SYNOPSIS
+
+    my $report = Mail::DKIM2::Validate::report($message_text,
+        PubkeyCallback     => \&lookup,   # optional; default DNS
+        DnsPath            => $dns_json,  # optional interop override
+        SkipTimestampCheck => 1,
+    );
+    # $report->{overall}, $report->{summary}, $report->{counts},
+    # $report->{levels}: one hashref per DKIM2-Signature and Message-Instance
 
 =head1 DESCRIPTION
 
-C<report($message_text, %opts)> walks a DKIM2 message top-down and returns a
-structured breakdown of each DKIM2-Signature and Message-Instance level
-(including MI undo), for display by the web validator. Never dies. See
-C<docs/superpowers/specs/2026-06-18-dkim2-web-validator-design.md>.
+Walks a DKIM2 message top-down and returns a breakdown of every
+DKIM2-Signature and Message-Instance level, including each undo step, for
+the dkim2.com web validator and the C<validate.pl> tool to display. Never
+dies. See C<docs/superpowers/specs/2026-06-18-dkim2-web-validator-design.md>.
 
-B<EXPERIMENTAL> - implements draft-ietf-dkim-dkim2-spec-06.
+=head1 FUNCTIONS
+
+=head2 report($message_text, %options)
+
+Options C<PubkeyCallback>, C<DnsPath> and C<SkipTimestampCheck> as above.
+Returns the report hashref.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

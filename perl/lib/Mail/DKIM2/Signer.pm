@@ -2,6 +2,8 @@ package Mail::DKIM2::Signer;
 use strict;
 use warnings;
 
+our $VERSION = '0.10';
+
 use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -18,6 +20,11 @@ use Mail::DKIM2::Common qw(
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
+
+sub known_options {
+    return qw(Domain Selector KeyFile Key Algorithm MailFrom RcptTo
+              Nonce Flags Timestamp NextDomain);
+}
 
 sub init {
     my $self = shift;
@@ -76,8 +83,18 @@ sub finish_header {
                map { $_->{v} } @mi_headers)
         // duplicate_number_error('DKIM2-Signature', 'i',
                map { $_->{i} } @dk2_headers);
+    # A signature names the Message-Instance it covers in m=, and a verifier
+    # rejects one that names none (tag=m missing), so a message with no
+    # instance cannot be signed: compute one first (dkim2sign does).
+    $error //= 'no Message-Instance field to sign over' unless @mi_headers;
     if ($error) {
-        die "cannot sign: $error\n";
+        # A protocol outcome, not a programming error: reported through
+        # result/details like the Verifier's, so a streaming host is not
+        # handed an exception from inside PRINT. The body is discarded.
+        $self->{result}  = 'fail';
+        $self->{details} = $error;
+        $self->stop;
+        return;
     }
     # Determine highest MI version
     my $mi_version = @mi_headers ? $mi_headers[-1]{v} : 0;
@@ -136,12 +153,12 @@ sub finish_body {
 #     }
 #
 # Takes one address or an arrayref of them. Not usable on a signature carrying
-# nd=, which excludes rt= by §8.7; set_rcpt_to croaks in that case.
+# nd=, which excludes rt= by §8.7; Signature::rcpt_to croaks in that case.
 sub sign_for_recipient {
     my ($self, $rcpt) = @_;
-    croak "sign_for_recipient requires CLOSE to have run first"
+    croak "sign_for_recipient: no signature: " . ($self->{details} // 'CLOSE has not run')
         unless $self->{_signature};
-    $self->{_signature}->set_rcpt_to($rcpt);
+    $self->{_signature}->rcpt_to($rcpt);
     $self->_compute_signature;
     $self->{result} = 'signed';
     return $self->as_string;
@@ -206,118 +223,191 @@ sub as_string {
     return $self->{_signature}->as_folded_string();
 }
 
+# undef until CLOSE; then 'signed', or 'fail' with the reason in details().
 sub result {
     my $self = shift;
-    return $self->{result} || '?';
+    return $self->{result};
+}
+
+sub details {
+    my $self = shift;
+    return $self->{details};
+}
+
+sub result_detail {
+    my $self = shift;
+    my $result = $self->result // return;
+    return $self->{details} ? "$result ($self->{details})" : $result;
 }
 
 1;
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::Signer - Sign email messages with DKIM2-Signature headers
+Mail::DKIM2::Signer - Sign a message with a DKIM2-Signature header
 
 =head1 SYNOPSIS
 
     use Mail::DKIM2::Signer;
 
+    # A signature covers a Message-Instance, so a message that has none yet
+    # gets one first (an originating hop: m=1).
+    use Mail::DKIM2::MessageInstance;
+    use Mail::DKIM2::Common qw(fold_header);
+    unless ($message =~ /^Message-Instance:/mi) {
+        my $mi = Mail::DKIM2::MessageInstance->calculate($message);
+        $message = fold_header('Message-Instance: ' . $mi->as_string) . "\r\n" . $message;
+    }
+
     my $signer = Mail::DKIM2::Signer->new(
         Domain   => 'example.com',
         Selector => 'sel1',
-        KeyFile  => '/path/to/private.pem',
-        MailFrom => 'sender@example.com',
-        RcptTo   => ['recipient@example.com'],
+        KeyFile  => '/etc/dkim2/sel1.pem',
+        MailFrom => '<sender@example.com>',
+        RcptTo   => ['<recipient@example.net>'],
     );
 
-    # Feed the message (with CRLF line endings)
-    $signer->PRINT($message_text);
+    # One shot ...
+    $signer->load($message);
+    # ... or streaming, with CRLF line endings
+    $signer->PRINT($chunk) for @chunks;
     $signer->CLOSE;
 
-    # Get the generated DKIM2-Signature header
-    print $signer->as_string(), "\n";
-    print "Result: ", $signer->result(), "\n";
+    die $signer->result_detail unless $signer->result eq 'signed';
+    my $header = $signer->as_string;    # "DKIM2-Signature: i=1; ..." (folded)
+
+    # The same message to several envelope recipients: one pass, one cheap
+    # signature per recipient.
+    for my $rcpt (@rcpts) {
+        my $header = $signer->sign_for_recipient($rcpt);
+    }
 
 =head1 DESCRIPTION
 
-Streaming DKIM2 message signer.  Feed an RFC 5322 message via the
-C<PRINT>/C<CLOSE> interface and retrieve the generated DKIM2-Signature
-header.  Automatically determines the next sequence number by examining
-existing DKIM2-Signature headers on the message.
+Adds a DKIM2-Signature header for this hop. The message must already carry
+the Message-Instance header this hop wants to sign over (see
+L<Mail::DKIM2::MessageInstance>; a message with none is a C<fail>); the
+Signer reads the existing
+Message-Instance and DKIM2-Signature headers, chooses the next C<i=>, builds
+the signing input of spec-06 section 8.5, and signs it. It does not alter
+the message: the caller prepends the header C<as_string> returns.
 
-Extends L<Mail::DKIM2::HeaderParser> for the streaming message parser.
+Extends L<Mail::DKIM2::HeaderParser>, which provides C<PRINT>, C<CLOSE>,
+C<load> and the tie interface.
 
-B<EXPERIMENTAL> — This module implements draft-ietf-dkim-dkim2-spec-06, an
-Internet-Draft that has not yet been published as an RFC.  The API and wire
-format are subject to change.  Do not use in production.
+This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+for what that means for the wire format and the API, and
+L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
+module here follows.
 
 =head1 CONSTRUCTOR
 
-=head2 new(%args)
+=head2 new(%options)
 
-Creates a new Signer.  Required arguments:
+Required:
 
 =over 4
 
 =item Domain
 
-The signing domain (C<d=> tag).
+The signing domain, the C<d=> tag.
 
 =item Selector
 
-The DNS selector (C<s=> tag in the signature item).
+The selector of the key, published at C<< <Selector>._domainkey.<Domain> >>.
 
-=item KeyFile
+=item Key or KeyFile
 
-Path to a PEM-encoded private key file.  Either C<KeyFile> or C<Key> is
-required.
-
-=item Key
-
-A L<Crypt::PK::RSA> or L<Crypt::PK::Ed25519> object.  Alternative to C<KeyFile>.
+The private key as a L<Crypt::PK::RSA> or L<Crypt::PK::Ed25519> object, or
+the path of a PEM file holding one (loaded with
+L<Mail::DKIM2::Common/load_private_key>).
 
 =back
 
-Optional arguments:
+Optional:
 
 =over 4
 
 =item Algorithm
 
-Signing algorithm (default: C<rsa-sha256>).
+C<rsa-sha256> (the default) or C<ed25519-sha256>.
 
 =item MailFrom
 
-SMTP MAIL FROM address, recorded in the C<m=> tag.
+The envelope sender of this hop, recorded in C<mf=>. Bare addresses are
+bracketed; C<< '<>' >> or undef records the null sender.
 
 =item RcptTo
 
-SMTP RCPT TO address(es), recorded in the C<m=> tag.
+An arrayref of this hop's envelope recipients, recorded in C<rt=>.
+
+=item NextDomain
+
+The C<d=> of the hop that will sign next, recorded in C<nd=> for an
+imaginary forwarding hop (spec-06 section 9.3). Excludes C<MailFrom> and
+C<RcptTo>.
+
+=item Timestamp
+
+The C<t=> value; defaults to now. Fix it for reproducible test output.
 
 =item Nonce
 
-A nonce value for the C<n=> tag.
+The C<n=> value, at most 64 characters.
 
 =item Flags
 
-An arrayref of flag strings for the C<f=> tag.
+An arrayref of C<f=> flags, such as C<donotmodify>.
 
 =back
 
+An option not listed here croaks.
+
 =head1 METHODS
 
-=head2 signature()
+=head2 PRINT($bytes), CLOSE(), load($input)
 
-Returns the L<Mail::DKIM2::Signature> object (available after C<CLOSE>).
-
-=head2 as_string()
-
-Returns the complete C<DKIM2-Signature: ...> header line.
+Feed the message; see L<Mail::DKIM2::HeaderParser>.
 
 =head2 result()
 
-Returns C<'signed'> on success, C<'?'> if not yet complete.
+Undef until C<CLOSE>; then C<'signed'>, or C<'fail'> when the message
+cannot be signed (no Message-Instance to sign over, a chain already at the
+length limit, or a repeated C<i=> or C<m=>). A failure is a result, not an exception: C<PRINT> and
+C<CLOSE> return normally.
+
+=head2 details()
+
+The reason for a C<'fail'> result, or undef.
+
+=head2 result_detail()
+
+C<result> and C<details> together, e.g. C<"fail (PERMERROR ...)">.
+
+=head2 as_string()
+
+The complete C<DKIM2-Signature: ...> header, folded for insertion, or the
+empty string if there is no signature. The folding is part of what was
+signed and must not be changed.
+
+=head2 signature()
+
+The L<Mail::DKIM2::Signature> object, available after C<CLOSE>.
+
+=head2 sign_for_recipient($rcpt)
+
+Re-signs for a different envelope recipient (one address or an arrayref of
+them) and returns the folded header. Spec-06 section 9.6 signs only the
+Message-Instance and DKIM2-Signature fields, so the body and header hashes
+in the Message-Instance are the same for every recipient and only C<rt=>
+changes; an extra recipient costs one signature over a few hundred bytes,
+not another pass over the message. Feed the message once, then call this
+per recipient. Croaks on a signature carrying C<nd=>, which excludes
+C<rt=>.
 
 =head1 AUTHOR
 
@@ -325,7 +415,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut
