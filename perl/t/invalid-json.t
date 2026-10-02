@@ -121,7 +121,7 @@ $current->header_raw_prepend('DKIM2-Signature', $sig2);
 my $final = $current->as_string;
 
 # This is the real production entry point: stream the complete message
-# through Mail::DKIM2::Verifier exactly as bin/verify-sig.pl and the milter
+# through Mail::DKIM2::Verifier exactly as bin/dkim2verify and the milter
 # handler do.
 my $v = Mail::DKIM2::Verifier->new;
 $v->skip_timestamp_check(1);

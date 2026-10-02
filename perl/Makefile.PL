@@ -54,12 +54,8 @@ WriteMakefile(
     },
 
     EXE_FILES => [
-        'bin/calculate-dkim2.pl',
-        'bin/calculate-mailversion.pl',
-        'bin/reverse-mailversion.pl',
-        'bin/validate-mailversion.pl',
-        'bin/validate.pl',
-        'bin/verify-sig.pl',
+        'bin/dkim2sign',
+        'bin/dkim2verify',
     ],
 
     dist  => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },

@@ -3,15 +3,11 @@
 # Standalone DKIM2 signer CLI (draft-ietf-dkim-dkim2-spec-06).
 #
 # Reads a message, computes a Message-Instance when the content has changed
-# since the top instance, signs, and writes the result to stdout. The Perl
-# library's signing path otherwise only exists behind the milter and the
-# reflector, which makes it awkward to drive from a cross-implementation matrix
-# where every other implementation ships a sign CLI.
+# since the top instance, signs, and writes the result to stdout. The
+# counterpart of dkim2verify, and of python/dkim2sign.py and c/dkim2sign, so a
+# cross-implementation harness can treat them all the same way.
 #
-# Interface deliberately mirrors python/dkim2sign.py and c/dkim2sign so a
-# harness can treat the four the same way.
-#
-#   dkim2sign.pl -s SELECTOR -d DOMAIN -k KEYFILE [--mailfrom '<a@b>']
+#   dkim2sign -s SELECTOR -d DOMAIN -k KEYFILE [--mailfrom '<a@b>']
 #                [--rcptto '<c@d>']... [--timestamp N] [--next-domain D]
 #                [--flag F]... [MESSAGE|-]
 #

@@ -273,7 +273,7 @@ persisted:
 
 - The Perl test suite verified its own output within a single run (sign and
   verify use the same ephemeral keys).
-- `verify-sig.pl` (which reads `dns.json` with static public keys) always
+- `dkim2verify --dns-json` (then `verify-sig.pl`, reading `dns.json` with static public keys) always
   failed on these emails.
 - The C verifier (also reading `dns.json`) always failed on these emails.
 

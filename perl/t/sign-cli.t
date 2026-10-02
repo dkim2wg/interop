@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# bin/dkim2sign.pl -- the standalone signer CLI.
+# bin/dkim2sign -- the standalone signer CLI.
 #
 # The library's signing path otherwise only exists behind the milter and the
 # reflector; this CLI exists so a cross-implementation matrix can drive Perl the
@@ -33,7 +33,7 @@ $src->spew_raw(join('',
 
 sub sign {
     my ($in, @args) = @_;
-    my @cmd = ($^X, '-Ilib', 'bin/dkim2sign.pl', @args, "$in");
+    my @cmd = ($^X, '-Ilib', 'bin/dkim2sign', @args, "$in");
     open my $fh, '-|', @cmd or die "cannot run signer: $!";
     binmode $fh;
     my $data = do { local $/; <$fh> };

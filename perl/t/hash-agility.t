@@ -61,7 +61,7 @@ is($folded_mid->[0][2], 'BBB', 'FWS stripped from the middle of a body hash');
 
 # CRITICAL fix-round-1 regression: MessageInstance::verify() (the §10.7
 # top-MI content check underlying _verify_mi_chain, chain_verifies(), and
-# dkim2sign.pl's unmodified-hop check) must be hash-set aware, not just
+# dkim2sign's unmodified-hop check) must be hash-set aware, not just
 # read the sha256 h1/b1 alias. It must distinguish:
 #   - an MI naming only sha512 (an algorithm we implement)   -> verifies
 #     normally using sha512, NOT rejected as "no hash".
@@ -116,7 +116,7 @@ is($folded_mid->[0][2], 'BBB', 'FWS stripped from the middle of a body hash');
         'sha256 present in only one of the two instances is still not a common algorithm');
 }
 
-# --- CLI: bin/dkim2sign.pl --hash ------------------------------------------
+# --- CLI: bin/dkim2sign --hash ------------------------------------------
 
 my $keyfile  = '../keys/sel1._domainkey.test1.dkim2.com.pem';
 plan skip_all => 'shared ../keys not available' unless -e $keyfile;
@@ -135,7 +135,7 @@ $src->spew_raw(join('',
 
 sub sign {
     my ($in, @args) = @_;
-    my @cmd = ($^X, '-Ilib', 'bin/dkim2sign.pl', @args, "$in");
+    my @cmd = ($^X, '-Ilib', 'bin/dkim2sign', @args, "$in");
     open my $fh, '-|', @cmd or die "cannot run signer: $!";
     binmode $fh;
     my $data = do { local $/; <$fh> };
@@ -255,7 +255,7 @@ my $hop1_512;
 {
     # Re-sign the sha512-only message, unmodified, at a second hop. Before
     # the fix this crashed: verify() returned false (wrongly, "no hash"), so
-    # dkim2sign.pl treated the hop as "modified" and called calculate() on a
+    # dkim2sign treated the hop as "modified" and called calculate() on a
     # message that already has Message-Instance headers, which dies.
     my $dir2 = tempdir(CLEANUP => 1);
     my $hop1_file = path($dir2)->child('hop1.eml');

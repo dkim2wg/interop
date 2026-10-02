@@ -167,7 +167,7 @@ resign_c() {
         --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) > "$2"
 }
 resign_perl() {
-    perl "$ROOT/perl/bin/dkim2sign.pl" -s sel1 -d test2.dkim2.com \
+    perl "$ROOT/perl/bin/dkim2sign" -s sel1 -d test2.dkim2.com \
         -k "$(key test2.dkim2.com)" --mailfrom '<sender@test2.dkim2.com>' \
         --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) "$1" > "$2"
 }
