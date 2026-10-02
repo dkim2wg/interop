@@ -32,6 +32,11 @@ sub _extract_mi_hash_sets {
     return Mail::DKIM2::MessageInstance::parse_hash_sets($1);
 }
 
+sub known_options {
+    return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
+              PubkeyCallback);
+}
+
 sub init {
     my $self = shift;
     $self->SUPER::init;
@@ -40,16 +45,14 @@ sub init {
     $self->{_chain_counts}       = {};
     $self->{result}              = undef;
     $self->{details}             = undef;
-    $self->{skip_timestamp_check} = 0;
-    $self->{mid_process}         = 0;
-    $self->{allow_unsigned_mi}   = 0;
-    $self->{headers_only}        = 0;
+    # Options the constructor was given stay; the rest get their defaults.
+    $self->{$_} //= 0 for qw(SkipTimestampCheck MidProcess AllowUnsignedMI HeadersOnly);
 }
 
 sub skip_timestamp_check {
     my ($self, $val) = @_;
-    $self->{skip_timestamp_check} = $val if defined $val;
-    return $self->{skip_timestamp_check};
+    $self->{SkipTimestampCheck} = $val if defined $val;
+    return $self->{SkipTimestampCheck};
 }
 
 # allow_unsigned_mi: permit a Message-Instance whose m= is higher than any
@@ -67,8 +70,8 @@ sub skip_timestamp_check {
 # walk while keeping every Message-Instance.
 sub allow_unsigned_mi {
     my ($self, $val) = @_;
-    $self->{allow_unsigned_mi} = $val if defined $val;
-    return $self->{allow_unsigned_mi};
+    $self->{AllowUnsignedMI} = $val if defined $val;
+    return $self->{AllowUnsignedMI};
 }
 
 # mid_process: set when this Verifier is being run against a partial view of
@@ -80,8 +83,8 @@ sub allow_unsigned_mi {
 # rejects a true top nd=.
 sub mid_process {
     my ($self, $val) = @_;
-    $self->{mid_process} = $val if defined $val;
-    return $self->{mid_process};
+    $self->{MidProcess} = $val if defined $val;
+    return $self->{MidProcess};
 }
 
 # headers_only: the message being verified has no body, as with the returned
@@ -90,8 +93,8 @@ sub mid_process {
 # only the header hash of the top instance can be, so only that is.
 sub headers_only {
     my ($self, $val) = @_;
-    $self->{headers_only} = $val if defined $val;
-    return $self->{headers_only};
+    $self->{HeadersOnly} = $val if defined $val;
+    return $self->{HeadersOnly};
 }
 
 sub handle_header {
@@ -180,7 +183,7 @@ sub finish_body {
     # Suppressed by allow_unsigned_mi (an outbound signer holds the new MI
     # before its signature exists) and by mid_process (a partial chain view
     # keeps every MI while higher signatures are stripped).
-    unless ($self->{allow_unsigned_mi} || $self->{mid_process}) {
+    unless ($self->{AllowUnsignedMI} || $self->{MidProcess}) {
         if (keys %mi_map) {
             my ($top_mi) = sort { $b <=> $a } keys %mi_map;
             my ($top_signed) = sort { $b <=> $a }
@@ -233,7 +236,7 @@ sub finish_body {
     # mid-chain verify (mid_process set, e.g. by Validate.pm's per-level
     # sub-verify after stripping higher signatures) that "top" is not the
     # real top of the chain, so this rejection must be suppressed.
-    if (!$self->{mid_process}
+    if (!$self->{MidProcess}
         && defined $signature->next_domain && length $signature->next_domain) {
         $self->{result}  = 'permerror';
         $self->{details} = "DKIM2-Signature i=$max_i unexpected nd= tag";
@@ -348,7 +351,7 @@ sub finish_body {
     # finish_body() and crash the caller instead of yielding a clean
     # permerror result.
     my $mi_chain_ok = eval {
-        $self->{headers_only} ? $self->_verify_top_mi_headers() : $self->_verify_mi_chain()
+        $self->{HeadersOnly} ? $self->_verify_top_mi_headers() : $self->_verify_mi_chain()
     };
     if (my $err = $@) {
         die $err if ref $err;
@@ -535,7 +538,7 @@ sub _verify_signature {
     }
 
     # §10.3 SHOULD: reject signatures more than 14 days old or in the future
-    unless ($self->{skip_timestamp_check}) {
+    unless ($self->{SkipTimestampCheck}) {
         my $ts = $signature->timestamp;
         if (defined $ts && $ts > 0) {
             my $now = time();
@@ -603,8 +606,8 @@ sub _verify_signature {
         # the message outright instead of reflecting it unsigned.
         my $pubkey;
         my $fetched = eval {
-            $pubkey = $self->{_pubkey_callback}
-                ? $self->{_pubkey_callback}->($signature, $idx)
+            $pubkey = $self->{PubkeyCallback}
+                ? $self->{PubkeyCallback}->($signature, $idx)
                 : $signature->fetch_public_key($idx);
             1;
         };
@@ -756,7 +759,7 @@ sub _verify_chain {
 # Allow setting a callback for public key lookup (for testing with dns.json)
 sub set_pubkey_callback {
     my ($self, $cb) = @_;
-    $self->{_pubkey_callback} = $cb;
+    $self->{PubkeyCallback} = $cb;
 }
 
 sub result {

@@ -19,6 +19,11 @@ use Mail::DKIM2::Common qw(
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 
+sub known_options {
+    return qw(Domain Selector KeyFile Key Algorithm MailFrom RcptTo
+              Nonce Flags Timestamp NextDomain);
+}
+
 sub init {
     my $self = shift;
     $self->SUPER::init;

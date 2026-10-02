@@ -6,10 +6,58 @@ use warnings;
 # Replaces the deep Mail::DKIM::Common → Mail::DKIM::MessageParser
 # inheritance chain with just what DKIM2 Signer/Verifier need.
 
+use Carp;
+
+# The constructor options a subclass accepts, as a list of CamelCase names.
+# new() refuses anything else, so a misspelt option is an error at the call
+# site and not a silently-ignored one.
+sub known_options { return () }
+
 sub new {
     my ($class, %args) = @_;
+    my %known = map { $_ => 1 } $class->known_options;
+    for my $k (sort keys %args) {
+        croak "unknown option $k for $class" unless $known{$k};
+    }
     my $self = bless \%args, $class;
     $self->init;
+    return $self;
+}
+
+# tie *FH, 'Mail::DKIM2::Signer', %options;   -- constructs
+# tie *FH, 'Mail::DKIM2::Signer', $signer;    -- wraps an existing object
+sub TIEHANDLE {
+    my ($class, @args) = @_;
+    return $args[0] if @args == 1 && ref $args[0] && $args[0]->isa(__PACKAGE__);
+    return $class->new(@args);
+}
+
+# One-shot: feed a whole message and finish. Takes the message as a string,
+# a reference to one, a filehandle, or an Email::MIME. Line endings are
+# normalised to CRLF, which is what every DKIM2 hash is defined over; PRINT
+# itself never alters what it is given, since a streaming host has already
+# got CRLF and may split a line ending across chunks.
+sub load {
+    my ($self, $input) = @_;
+    my $text;
+    if (ref $input eq 'SCALAR') {
+        $text = $$input;
+    }
+    elsif (ref $input && eval { $input->can('as_string') }) {
+        $text = $input->as_string;
+    }
+    elsif (ref $input eq 'GLOB' || ref \$input eq 'GLOB'
+           || (ref $input && eval { $input->can('getline') })) {
+        local $/;
+        $text = readline($input);
+    }
+    else {
+        $text = $input;
+    }
+    croak "load requires a message" unless defined $text;
+    $text =~ s/\r?\n/\r\n/g;
+    $self->PRINT($text);
+    $self->CLOSE;
     return $self;
 }
 
