@@ -75,7 +75,7 @@ my %common = (
     key=>DKIM2TestKeys::private_key('test2.dkim2.com','sel1'),
     mailfrom=>'reflector-bounces@test2.dkim2.com',
     pubkey_cb=>$cb, skip_timestamp_check=>1);
-my %ropt = (pubkey_cb=>$cb, skip_timestamp_check=>1);
+my %ropt = (PubkeyCallback=>$cb, SkipTimestampCheck=>1);
 
 # 1) Valid 2-hop chain (reflect 'body' -> i=2 + new MI m=2)
 {
@@ -297,7 +297,7 @@ sub signed_input_nd {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-raw\@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n");
     my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'raw', message=>$in);
     my $nokey = sub { return undef };   # no key for anyone
-    my $rep = Mail::DKIM2::Validate::report($r2->{message}, pubkey_cb=>$nokey, skip_timestamp_check=>1);
+    my $rep = Mail::DKIM2::Validate::report($r2->{message}, PubkeyCallback=>$nokey, SkipTimestampCheck=>1);
     is($rep->{overall}, 'fail', 'no key -> fail');
     ok((grep { $_->{kind} eq 'signature' && $_->{result} eq 'fail' } @{$rep->{levels}}), 'a signature level failed');
 }
@@ -306,7 +306,7 @@ sub signed_input_nd {
 {
     # signed_input uses Timestamp=1740000000 (well over 14 days ago).
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: x\@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n");
-    my $rep = Mail::DKIM2::Validate::report($in, pubkey_cb => $cb);  # NO skip_timestamp_check
+    my $rep = Mail::DKIM2::Validate::report($in, PubkeyCallback => $cb);  # NO SkipTimestampCheck
     is($rep->{overall}, 'warn', 'old signature -> overall warn (not fail)');
     my ($sig1) = grep { $_->{kind} eq 'signature' && $_->{i} == 1 } @{$rep->{levels}};
     is($sig1->{result}, 'warn', 'old signature level is warn');
@@ -397,7 +397,7 @@ my $live = FakeSig->new('sel1', 'test1.dkim2.com');
 my $live_v = FakeVerifier->new;
 my $cb_live = Mail::DKIM2::Validate::_default_cb(undef);
 my $r_live = $cb_live->($live, 0, $live_v);
-is($live_v->{called}, 1, '_default_cb with no dns_path calls the verifier\'s fetch_public_key (real DNS)');
+is($live_v->{called}, 1, '_default_cb with no DnsPath calls the verifier\'s fetch_public_key (real DNS)');
 is($r_live, 'REAL_DNS_KEY', '... and returns the real-DNS key, not a dns.json value');
 
 my $ovr = FakeSig->new('sel1', 'test1.dkim2.com');   # a domain present in dns.json

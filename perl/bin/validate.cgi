@@ -26,7 +26,7 @@ if ($len) {
     local $/; $body = <STDIN> // '';
 }
 
-my $rep = eval { Mail::DKIM2::Validate::report($body, dns_path => $dns_path) };
+my $rep = eval { Mail::DKIM2::Validate::report($body, DnsPath => $dns_path) };
 if (my $err = $@) {
     $rep = { overall => 'fail', summary => "internal error: $err", counts => {}, levels => [] };
 }

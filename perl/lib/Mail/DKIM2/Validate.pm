@@ -139,8 +139,8 @@ sub _report_once {
     my ($text, %opts) = @_;
     $text //= '';
     $text =~ s/\r?\n/\r\n/g;
-    my $cb = $opts{pubkey_cb} || _default_cb($opts{dns_path});
-    my $skip_ts = $opts{skip_timestamp_check} ? 1 : 0;
+    my $cb = $opts{PubkeyCallback} || _default_cb($opts{DnsPath});
+    my $skip_ts = $opts{SkipTimestampCheck} ? 1 : 0;
 
     my %res = (overall => 'none', summary => '',
                counts => { signatures => 0, instances => 0 }, levels => []);

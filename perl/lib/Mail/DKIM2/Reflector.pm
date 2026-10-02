@@ -170,14 +170,14 @@ sub generate_dsn {
     $sa{KeyFile} = $a{keyfile} if $a{keyfile} && !$a{key};
     my $signer = Mail::DKIM2::Signer->new(%sa);
 
-    my $out = Mail::DKIM2::DSN->generate({
-        raw           => $a{message},
-        signer        => $signer,
-        to            => $a{sender},
-        reporting_mta => $a{domain},
-        reason        => $a{reason}
+    my $out = Mail::DKIM2::DSN->generate(
+        Message      => $a{message},
+        Signer       => $signer,
+        To           => $a{sender},
+        ReportingMTA => $a{domain},
+        Reason       => $a{reason}
             // 'message accepted then returned by the reflector-dsn demo address',
-    });
+    );
     return $out->{raw};
 }
 

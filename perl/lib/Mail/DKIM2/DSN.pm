@@ -105,22 +105,22 @@ sub _set_report_type {
 # draft-06 §12.1). Used by the reflector-dsn address, which
 # bounces every message regardless of whether it arrived DKIM2-signed.
 #
-# Args: raw (inbound message), signer (MailFrom => '<>'), to (envelope sender
-# to bounce to; if omitted, derived from the top DKIM2-Signature mf= or From:),
-# reporting_mta, status, reason.
+# Args: Message (inbound message), Signer (MailFrom => '<>'), To (envelope
+# sender to bounce to; if omitted, derived from the top DKIM2-Signature mf= or
+# From:), ReportingMTA, Status, Reason.
 sub generate {
-    my ($class, $args) = @_;
-    my $raw    = $args->{raw}    or croak "generate: need raw message";
-    my $signer = $args->{signer} or croak "generate: need signer";
-    my $mta    = $args->{reporting_mta} // 'dkim2.com';
-    my $status = $args->{status}        // '5.7.1';
-    my $reason = $args->{reason}        // 'message rejected by reflector-dsn (demo bounce)';
+    my ($class, %args) = @_;
+    my $raw    = $args{Message}    or croak "generate: need Message";
+    my $signer = $args{Signer} or croak "generate: need Signer";
+    my $mta    = $args{ReportingMTA} // 'dkim2.com';
+    my $status = $args{Status}        // '5.7.1';
+    my $reason = $args{Reason}        // 'message rejected by reflector-dsn (demo bounce)';
 
     my $orig = Email::MIME->new($raw);
 
     # Where to send the bounce: explicit envelope sender, else top sig mf=,
     # else the From: header.
-    my $to = $args->{to};
+    my $to = $args{To};
     if (!defined $to || !length $to || $to eq '<>') {
         my $top = _top_sig($orig);
         $to = $top->mail_from if $top;
@@ -130,7 +130,7 @@ sub generate {
     }
     croak "generate: cannot determine bounce destination" unless defined $to && length $to;
 
-    my $final_rcpt = $args->{final_recipient} // $orig->header('To') // $to;
+    my $final_rcpt = $args{FinalRecipient} // $orig->header('To') // $to;
 
     # Part 1: human-readable explanation.
     my $human = Email::MIME->create(
@@ -296,9 +296,9 @@ sub _check_alignment {
 #   embedded         the returned original as an Email::MIME
 # Croaks, as propagate does, when the message is not an RFC 6522 DSN.
 sub authenticate {
-    my ($class, $args) = @_;
-    my $raw = $args->{raw} or croak "authenticate: need raw DSN";
-    my $cb  = $args->{pubkey_callback} or croak "authenticate: need pubkey_callback";
+    my ($class, %args) = @_;
+    my $raw = $args{Message} or croak "authenticate: need Message";
+    my $cb  = $args{PubkeyCallback} or croak "authenticate: need PubkeyCallback";
 
     my (undef, undef, $orig_part) = _parse_report($raw, 'authenticate');
     my $headers_only = ($orig_part->content_type // '') =~ m{text/rfc822-headers}i;
@@ -308,7 +308,7 @@ sub authenticate {
     my $v = Mail::DKIM2::Verifier->new;
     $v->set_pubkey_callback($cb);
     $v->headers_only(1) if $headers_only;
-    $v->skip_timestamp_check(1) if $args->{skip_timestamp_check};
+    $v->skip_timestamp_check(1) if $args{SkipTimestampCheck};
     (my $text = $embedded->as_string) =~ s/\r?\n/\r\n/g;
     $v->PRINT($text);
     $v->CLOSE;
@@ -317,7 +317,7 @@ sub authenticate {
     # Email::MIME we parsed could move a byte the body hash covers.
     my $dv = Mail::DKIM2::Verifier->new;
     $dv->set_pubkey_callback($cb);
-    $dv->skip_timestamp_check(1) if $args->{skip_timestamp_check};
+    $dv->skip_timestamp_check(1) if $args{SkipTimestampCheck};
     (my $dsn_text = $raw) =~ s/\r?\n/\r\n/g;
     $dv->PRINT($dsn_text);
     $dv->CLOSE;
@@ -353,24 +353,24 @@ sub authenticate {
 # §12.1.2 is not optional here: "If the verification fails then the DSN MUST
 # NOT be propagated any further", so propagate authenticates first and croaks
 # rather than re-signing a DSN it could not authenticate as ours. That needs a
-# pubkey_callback; a caller that has authenticated already (or is exercising
+# PubkeyCallback; a caller that has authenticated already (or is exercising
 # the rebuild machinery on a fixture, as t/dsn.t does) passes
-# skip_authentication => 1 to say so.
+# SkipAuthentication => 1 to say so.
 sub propagate {
-    my ($class, $args) = @_;
-    my $raw = $args->{raw}              or croak "propagate: need raw DSN";
-    my $fwd = $args->{forwarder_domain} or croak "propagate: need forwarder_domain";
-    my $signer = $args->{signer}        or croak "propagate: need signer";
+    my ($class, %args) = @_;
+    my $raw = $args{Message}              or croak "propagate: need Message";
+    my $fwd = $args{ForwarderDomain} or croak "propagate: need ForwarderDomain";
+    my $signer = $args{Signer}        or croak "propagate: need Signer";
 
-    unless ($args->{skip_authentication}) {
-        croak "propagate: need pubkey_callback to authenticate the DSN (§12.1.2), "
-            . "or skip_authentication if it has been authenticated already"
-            unless $args->{pubkey_callback};
-        my $auth = $class->authenticate({
-            raw                  => $raw,
-            pubkey_callback      => $args->{pubkey_callback},
-            skip_timestamp_check => $args->{skip_timestamp_check},
-        });
+    unless ($args{SkipAuthentication}) {
+        croak "propagate: need PubkeyCallback to authenticate the DSN (§12.1.2), "
+            . "or SkipAuthentication if it has been authenticated already"
+            unless $args{PubkeyCallback};
+        my $auth = $class->authenticate(
+            Message            => $raw,
+            PubkeyCallback     => $args{PubkeyCallback},
+            SkipTimestampCheck => $args{SkipTimestampCheck},
+        );
         unless ($auth->{ok}) {
             croak "propagate: DSN did not authenticate (§12.1.2), not propagating: "
                 . ($auth->{alignment} eq 'fail' ? $auth->{alignment_detail}
@@ -454,10 +454,10 @@ structure; DKIM2 draft-06 §12.1.1 propagation procedure)
 
 =head1 SYNOPSIS
 
-    my $auth = Mail::DKIM2::DSN->authenticate({
-        raw             => $dsn_bytes,
-        pubkey_callback => \&lookup,
-    });
+    my $auth = Mail::DKIM2::DSN->authenticate(
+        Message             => $dsn_bytes,
+        PubkeyCallback => \&lookup,
+    );
     # $auth->{ok}         — the returned original's chain verifies (from its
     #                       headers alone if that is all the DSN carries), the
     #                       DSN's own signature verifies, and its d= is aligned
@@ -467,12 +467,12 @@ structure; DKIM2 draft-06 §12.1.1 propagation procedure)
     # $auth->{alignment}  — 'pass', 'fail', or 'none' (not checkable)
     # $auth->{dsn_result} — the DSN's own verdict ('none' if it is unsigned)
 
-    my $out = Mail::DKIM2::DSN->propagate({
-        raw              => $dsn_bytes,
-        forwarder_domain => 'fwd.example',
-        signer           => $mail_dkim2_signer,   # configured with MailFrom => '<>'
-        pubkey_callback  => \&lookup,             # §12.1.2, or skip_authentication => 1
-    });
+    my $out = Mail::DKIM2::DSN->propagate(
+        Message              => $dsn_bytes,
+        ForwarderDomain => 'fwd.example',
+        Signer           => $mail_dkim2_signer,   # configured with MailFrom => '<>'
+        PubkeyCallback  => \&lookup,             # §12.1.2, or SkipAuthentication => 1
+    );
     # $out->{raw}               — the propagated DSN (one MI, one DKIM2-Signature)
     # $out->{upstream_mailfrom} — address to send it to
     #
