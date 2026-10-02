@@ -10,14 +10,18 @@ use DKIM2TestKeys;
 # message it cannot sign is a result, not an exception thrown from inside
 # PRINT, where a streaming host has no sensible place to catch it.
 
+use Mail::DKIM2::MessageInstance;
+
 my $CRLF = "\r\n";
-my $body = join($CRLF,
+my $bare = join($CRLF,
     'From: sender@test1.dkim2.com',
     'To: rcpt@test2.dkim2.com',
     'Subject: result contract',
     'Date: Fri, 02 Oct 2026 12:00:00 +0000',
     'Message-ID: <sr@test1.dkim2.com>',
     '', 'Body.', '');
+my $body = 'Message-Instance: ' . Mail::DKIM2::MessageInstance->calculate($bare)->as_string
+         . $CRLF . $bare;
 
 sub signer {
     return Mail::DKIM2::Signer->new(
@@ -53,6 +57,16 @@ like($@, qr/Domain required/, '  ... naming the option');
         '  ... with the reason in details');
     is($s->as_string, '', '  ... and there is no header to add');
     like($s->result_detail, qr/^fail \(PERMERROR/, '  ... result_detail wraps both');
+}
+
+{
+    # A message with no Message-Instance has nothing for the signature's m=
+    # to name, and every verifier rejects a signature without one.
+    my $s = signer()->load($bare);
+    is($s->result, 'fail', 'no Message-Instance is a fail');
+    like($s->details, qr/no Message-Instance/, '  ... that says why');
+    ok(!eval { $s->sign_for_recipient('<x@y>'); 1 }, 'sign_for_recipient after a fail croaks');
+    like($@, qr/no signature: .*no Message-Instance/, '  ... with the real reason, not a claim CLOSE never ran');
 }
 
 {

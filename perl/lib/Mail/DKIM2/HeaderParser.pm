@@ -53,6 +53,9 @@ sub load {
         local $/;
         $text = readline($input);
     }
+    elsif (ref $input) {
+        croak "load: cannot read a message from a " . ref($input) . " reference";
+    }
     else {
         $text = $input;
     }
@@ -72,8 +75,10 @@ sub init {
 
 # Streaming interface: feed message data in chunks
 sub PRINT {
-    my ($self, $data) = @_;
+    my $self = shift;
     return 1 if $self->{_stopped};
+    # print FH LIST hands every item over; so does a direct PRINT($a, $b).
+    my $data = @_ > 1 ? join('', map { $_ // '' } @_) : ($_[0] // '');
     $self->{_buf} .= $data;
 
     if ($self->{_in_header}) {
@@ -97,6 +102,21 @@ sub PRINT {
     }
     # Body data accumulates in buffer until CLOSE
     return 1;
+}
+
+# The rest of the tied-handle output interface, so printf FH and syswrite FH
+# feed the parser too.
+sub PRINTF {
+    my ($self, $fmt, @args) = @_;
+    return $self->PRINT(sprintf($fmt, @args));
+}
+
+sub WRITE {
+    my ($self, $buf, $len, $offset) = @_;
+    $len    //= length($buf);
+    $offset //= 0;
+    $self->PRINT(substr($buf, $offset, $len));
+    return $len;
 }
 
 sub CLOSE {
@@ -211,15 +231,16 @@ C<init>.
 =head2 TIEHANDLE
 
 C<< tie *FH, $class, %options >> constructs an object; C<< tie *FH,
-$class, $object >> uses an existing one. C<print FH> and C<close FH> then
-call C<PRINT> and C<CLOSE>.
+$class, $object >> uses an existing one. C<print FH>, C<printf FH>,
+C<syswrite FH> and C<close FH> then call C<PRINT>, C<PRINTF>, C<WRITE> and
+C<CLOSE>.
 
 =head1 METHODS
 
-=head2 PRINT($bytes)
+=head2 PRINT(@bytes)
 
 Feeds message data, in chunks of any size, with CRLF line endings exactly
-as the message has them. When the blank line ending the headers has been
+as the message has them; several arguments are concatenated. When the blank line ending the headers has been
 seen, the header fields are parsed and C<finish_header> is called. Body
 data is kept until C<CLOSE> unless the subclass has called C<stop>.
 
@@ -231,9 +252,9 @@ C<finish_body> unless C<stop> was called.
 =head2 load($input)
 
 C<PRINT> and C<CLOSE> in one call. C<$input> is the message as a string,
-a reference to one, a filehandle (read to the end), or an L<Email::MIME>.
-Bare LF line endings are normalised to CRLF first, since every DKIM2 hash
-is defined over CRLF. Returns the object.
+a reference to one, a filehandle (read to the end), or an L<Email::MIME>;
+any other reference croaks. Bare LF line endings are normalised to CRLF
+first, since every DKIM2 hash is defined over CRLF. Returns the object.
 
 =head2 stop()
 

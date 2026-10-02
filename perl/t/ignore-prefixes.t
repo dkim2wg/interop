@@ -116,4 +116,15 @@ subtest 'MessageInstance class methods take the list too' => sub {
     ok(!$nok, '  ... and not without');
 };
 
+subtest 'the option must be a list' => sub {
+    ok(!eval { Mail::DKIM2::Verifier->new(IgnorePrefixes => 'fastmail-'); 1 },
+        'Verifier->new refuses a bare string');
+    like($@, qr/IgnorePrefixes must be an array reference/, '  ... and says what it wants');
+    ok(!eval { Mail::DKIM2::MessageInstance->verify($MESSAGE, IgnorePrefixes => 'x-'); 1 },
+        'MessageInstance->verify refuses one too');
+    ok(!eval { Mail::DKIM2::MessageInstance->calculate($MESSAGE, undef, IgnorePrefixes => {}); 1 },
+        '  ... as does calculate');
+    ok(eval { Mail::DKIM2::Verifier->new(IgnorePrefixes => undef); 1 }, 'undef is fine');
+};
+
 done_testing;

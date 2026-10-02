@@ -100,12 +100,17 @@ subtest 'load() is PRINT+CLOSE with line-ending normalisation' => sub {
     my $v5 = new_verifier()->load($fh);
     is($v5->result, 'pass', 'filehandle');
 
+    (my $unsigned_lf = $SIGNED) =~ s/^DKIM2-Signature:.*?\r\n(?=\S)//ms;
+    $unsigned_lf =~ s/\r\n/\n/g;
     my $s = Mail::DKIM2::Signer->new(
         Domain => 'test1.dkim2.com', Selector => 'sel1',
         Key => DKIM2TestKeys::private_key('test1.dkim2.com', 'sel1'),
         MailFrom => '<sender@test1.dkim2.com>', RcptTo => ['<rcpt@test2.dkim2.com>'],
-    )->load($lf);
+    )->load($unsigned_lf);
     is($s->result, 'signed', 'Signer->load signs');
+
+    ok(!eval { new_verifier()->load({}); 1 }, 'load() refuses a reference it does not understand');
+    like($@, qr/load: cannot read a message from a HASH/, '  ... and says so');
 };
 
 subtest 'tie' => sub {
@@ -114,6 +119,20 @@ subtest 'tie' => sub {
     print FH $SIGNED;
     close FH;
     is($v->result, 'pass', 'an existing object can be tied and printed to');
+
+    # print with a list, and printf, feed every argument.
+    my ($head, $body) = split /\r\n\r\n/, $SIGNED, 2;
+    my $multi = new_verifier();
+    tie *FH3, 'Mail::DKIM2::Verifier', $multi;
+    print FH3 $head, "\r\n\r\n", $body;
+    close FH3;
+    is($multi->result, 'pass', 'print FH LIST keeps every argument');
+
+    my $pf = new_verifier();
+    tie *FH4, 'Mail::DKIM2::Verifier', $pf;
+    printf FH4 "%s\r\n\r\n%s", $head, $body;
+    close FH4;
+    is($pf->result, 'pass', 'printf FH works');
 
     tie *FH2, 'Mail::DKIM2::Verifier', SkipTimestampCheck => 1, PubkeyCallback => $CB;
     my $obj = tied *FH2;

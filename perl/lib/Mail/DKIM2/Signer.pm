@@ -83,6 +83,10 @@ sub finish_header {
                map { $_->{v} } @mi_headers)
         // duplicate_number_error('DKIM2-Signature', 'i',
                map { $_->{i} } @dk2_headers);
+    # A signature names the Message-Instance it covers in m=, and a verifier
+    # rejects one that names none (tag=m missing), so a message with no
+    # instance cannot be signed: compute one first (dkim2sign does).
+    $error //= 'no Message-Instance field to sign over' unless @mi_headers;
     if ($error) {
         # A protocol outcome, not a programming error: reported through
         # result/details like the Verifier's, so a streaming host is not
@@ -152,7 +156,7 @@ sub finish_body {
 # nd=, which excludes rt= by §8.7; Signature::rcpt_to croaks in that case.
 sub sign_for_recipient {
     my ($self, $rcpt) = @_;
-    croak "sign_for_recipient requires CLOSE to have run first"
+    croak "sign_for_recipient: no signature: " . ($self->{details} // 'CLOSE has not run')
         unless $self->{_signature};
     $self->{_signature}->rcpt_to($rcpt);
     $self->_compute_signature;
@@ -250,6 +254,15 @@ Mail::DKIM2::Signer - Sign a message with a DKIM2-Signature header
 
     use Mail::DKIM2::Signer;
 
+    # A signature covers a Message-Instance, so a message that has none yet
+    # gets one first (an originating hop: m=1).
+    use Mail::DKIM2::MessageInstance;
+    use Mail::DKIM2::Common qw(fold_header);
+    unless ($message =~ /^Message-Instance:/mi) {
+        my $mi = Mail::DKIM2::MessageInstance->calculate($message);
+        $message = fold_header('Message-Instance: ' . $mi->as_string) . "\r\n" . $message;
+    }
+
     my $signer = Mail::DKIM2::Signer->new(
         Domain   => 'example.com',
         Selector => 'sel1',
@@ -277,7 +290,8 @@ Mail::DKIM2::Signer - Sign a message with a DKIM2-Signature header
 
 Adds a DKIM2-Signature header for this hop. The message must already carry
 the Message-Instance header this hop wants to sign over (see
-L<Mail::DKIM2::MessageInstance>); the Signer reads the existing
+L<Mail::DKIM2::MessageInstance>; a message with none is a C<fail>); the
+Signer reads the existing
 Message-Instance and DKIM2-Signature headers, chooses the next C<i=>, builds
 the signing input of spec-06 section 8.5, and signs it. It does not alter
 the message: the caller prepends the header C<as_string> returns.
@@ -362,8 +376,8 @@ Feed the message; see L<Mail::DKIM2::HeaderParser>.
 =head2 result()
 
 Undef until C<CLOSE>; then C<'signed'>, or C<'fail'> when the message
-cannot be signed (a chain already at the length limit, or with a repeated
-C<i=> or C<m=>). A failure is a result, not an exception: C<PRINT> and
+cannot be signed (no Message-Instance to sign over, a chain already at the
+length limit, or a repeated C<i=> or C<m=>). A failure is a result, not an exception: C<PRINT> and
 C<CLOSE> return normally.
 
 =head2 details()

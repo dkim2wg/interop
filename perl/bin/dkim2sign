@@ -18,7 +18,6 @@
 use 5.020;
 use strict;
 use warnings;
-use Path::Tiny;
 use Email::MIME;
 use Getopt::Long qw(GetOptions);
 use FindBin;
@@ -61,7 +60,7 @@ my $algs = $HASH_ALG_SETS{$hash_algs}
 my $file = shift // '-';
 my $raw = $file eq '-'
     ? do { local $/; binmode STDIN; <STDIN> }
-    : path($file)->slurp_raw;
+    : do { open my $fh, '<:raw', $file or die "$file: $!\n"; local $/; <$fh> };
 die "empty message\n" unless defined $raw && length $raw;
 
 # Normalise to CRLF: the hashes are defined over CRLF line endings.

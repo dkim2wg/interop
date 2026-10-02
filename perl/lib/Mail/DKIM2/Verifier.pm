@@ -18,6 +18,7 @@ use Mail::DKIM2::Common qw(
     extract_mi_version
     extract_domain
     relaxed_domain_match
+    check_ignore_prefixes
     MAX_CHAIN_LENGTH
     chain_length_error
     duplicate_number_error
@@ -49,6 +50,7 @@ sub init {
     $self->{details}             = undef;
     # Options the constructor was given stay; the rest get their defaults.
     $self->{$_} //= 0 for qw(SkipTimestampCheck MidProcess AllowUnsignedMI HeadersOnly);
+    check_ignore_prefixes($self->{IgnorePrefixes});
 }
 
 sub skip_timestamp_check {
@@ -415,6 +417,13 @@ sub _verify_mi_chain {
         my ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg,
             IgnorePrefixes => $self->{IgnorePrefixes});
         unless ($ok) {
+            # A malformed instance is a PERMERROR in its own words (§11.2
+            # names the strings); a hash that does not match is a fail.
+            if (($err // '') =~ /^PERMERROR/) {
+                $self->{result}  = 'permerror';
+                $self->{details} = $err;
+                return 0;
+            }
             $self->{result}  = 'fail';
             $self->{details} = "Message-Instance m=$num does not match content"
                              . ($err ? " ($err)" : '');
@@ -899,8 +908,9 @@ module here follows.
 
 =head2 new(%options)
 
-All options are optional; each also has a snake_case method of the same
-name that gets or sets it after construction.
+All options are optional. The boolean ones and C<Resolver> also have a
+snake_case method of the same name that gets or sets them after
+construction; C<PubkeyCallback> has C<set_pubkey_callback>.
 
 =over 4
 
@@ -926,8 +936,8 @@ Do not fail a signature for the age of its C<t=>. For test fixtures.
 =item IgnorePrefixes
 
 An arrayref of header-field-name prefixes an operator's own border adds
-and strips, excluded from the header hash. See
-L<Mail::DKIM2/Operator-local header fields>.
+and strips, excluded from the header hash. Anything but undef or an
+arrayref croaks. See L<Mail::DKIM2/Operator-local header fields>.
 
 =item AllowUnsignedMI
 
@@ -985,8 +995,9 @@ No DKIM2-Signature headers.
 =item C<permerror>
 
 The message is malformed in a way no retry will fix: too many fields, a
-repeated number, a duplicate tag, an unsigned Message-Instance, an
-unparseable header, a key too short.
+repeated number, a duplicate tag, an unsigned Message-Instance, a
+required tag missing, a Message-Instance whose hash sets do not parse, a
+key too short.
 
 =item C<temperror>
 
@@ -1039,9 +1050,10 @@ Get or set the constructor options of the same names.
 =item 1.
 
 B<Shape.> At most 32 Message-Instance and 32 DKIM2-Signature fields, no
-C<i=> or C<m=> twice, no tag twice within a field, and no Message-Instance
-above the highest signed C<m=>. Any of these is a C<permerror> decided from
-the headers alone, before any key is fetched.
+C<i=> or C<m=> twice, and no Message-Instance above the highest signed
+C<m=>. Any of these is a C<permerror> decided from the headers alone,
+before any key is fetched. A tag repeated within one signature is a
+C<permerror> found when that signature is checked.
 
 =item 2.
 

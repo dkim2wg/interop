@@ -5,6 +5,7 @@ use warnings;
 
 our $VERSION = '0.10';
 
+use Carp ();
 use MIME::Base64 qw(encode_base64 decode_base64);
 use JSON;
 use Crypt::PK::RSA;
@@ -14,6 +15,7 @@ use Crypt::Digest::SHA256 qw(sha256 sha256_b64 sha256_hex);
 use Exporter 'import';
 our @EXPORT_OK = qw(
     should_skip
+    check_ignore_prefixes
     dkim2_canonicalize_header
     dkim2_canonicalize_sig_header
     digest64
@@ -78,6 +80,17 @@ my %SKIP_EXACT = map { $_ => 1 } qw(
 # also has to make sure no field with one of these names ever leaves its
 # network. They are local policy, so they travel as an argument -- never as
 # state shared by every Signer and Verifier in the process.
+# The IgnorePrefixes option as every entry point validates it: undef, or an
+# array reference. A bare string is a configuration mistake and croaks, so it
+# does not surface later as a 'fail' on every message.
+sub check_ignore_prefixes {
+    my ($prefixes) = @_;
+    return unless defined $prefixes;
+    Carp::croak("IgnorePrefixes must be an array reference of header-name prefixes")
+        unless ref $prefixes eq 'ARRAY';
+    return $prefixes;
+}
+
 sub should_skip {
     my ($name, $prefixes) = @_;
     my $hname = lc $name;
@@ -568,6 +581,11 @@ name starts with one of the caller's prefixes, case-insensitively. The
 prefixes are an operator's local policy; pass them as C<IgnorePrefixes> to
 L<Mail::DKIM2::Verifier> and the L<Mail::DKIM2::MessageInstance> class
 methods.
+
+=head2 check_ignore_prefixes($value)
+
+Croaks unless C<$value> is undef or an array reference; returns it. Every
+entry point that takes C<IgnorePrefixes> calls this.
 
 =head2 dkim2_canonicalize_header($line)
 

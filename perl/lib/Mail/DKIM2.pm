@@ -5,6 +5,8 @@ use warnings;
 
 our $VERSION = '0.10';
 
+use Mail::DKIM2::Common ();
+use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 
@@ -22,7 +24,12 @@ Mail::DKIM2 - DKIM2 signing and verification for email
 
     use Mail::DKIM2;
 
-    # Sign: add a DKIM2-Signature for this hop.
+    # Sign: record the message in a Message-Instance (an originating hop
+    # adds m=1; a hop that changed a message adds the next m= with a Recipe,
+    # see Mail::DKIM2::MessageInstance), then add a DKIM2-Signature over it.
+    my $mi = Mail::DKIM2::MessageInstance->calculate($message);
+    $message = Mail::DKIM2::Common::fold_header('Message-Instance: ' . $mi->as_string)
+             . "\r\n" . $message;
     my $signer = Mail::DKIM2::Signer->new(
         Domain   => 'example.com',
         Selector => 'sel1',
@@ -39,9 +46,10 @@ Mail::DKIM2 - DKIM2 signing and verification for email
     print $verifier->result_detail, "\n";   # pass (i=1..2 verified)
 
     # Streaming, for a milter or other filter that sees the message in
-    # pieces (CRLF line endings):
-    $verifier->PRINT($chunk) for @chunks;
-    $verifier->CLOSE;
+    # pieces (CRLF line endings); one object per message:
+    my $v = Mail::DKIM2::Verifier->new;
+    $v->PRINT($chunk) for @chunks;
+    $v->CLOSE;
 
 =head1 DESCRIPTION
 
@@ -112,7 +120,8 @@ Constructor options and the options of class methods are C<CamelCase>
 (C<SkipTimestampCheck>, C<IgnorePrefixes>). Methods are C<snake_case>
 (C<skip_timestamp_check>). Where an option can also be set after
 construction, the method has the same name as the option in snake_case
-and acts as a getter with an optional setter argument. A constructor
+and acts as a getter with an optional setter argument (a code-reference
+option has a C<set_> method instead). A constructor
 refuses an option it does not know, so a misspelling is an error rather
 than a silently ignored setting.
 

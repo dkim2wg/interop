@@ -25,6 +25,7 @@ use Mail::DKIM2::Common qw(
     encode_tag_json
     decode_tag_json
     extract_mi_version
+    check_ignore_prefixes
     MAX_CHAIN_LENGTH
     chain_length_error
     duplicate_number_error
@@ -36,9 +37,11 @@ our $DEBUG = 0;
 # chain, or undef.
 sub _chain_error {
     my ($msg) = @_;
+    my @mi = $msg->header_raw('Message-Instance');
     return chain_length_error($msg)
-        // duplicate_number_error('Message-Instance', 'm',
-               map { extract_mi_version($_) } $msg->header_raw('Message-Instance'));
+        // ((grep { !defined extract_mi_version($_) } @mi)
+               ? 'PERMERROR Message-Instance without m= tag' : undef)
+        // duplicate_number_error('Message-Instance', 'm', map { extract_mi_version($_) } @mi);
 }
 
 # spec-06 §3.1: two hashing algorithms are defined. Verifiers MUST implement
@@ -691,7 +694,7 @@ sub calculate {
     croak "need a message" unless $current;
 
     my $self = bless {}, $class;
-    my $prefixes = $opts{IgnorePrefixes};
+    my $prefixes = check_ignore_prefixes($opts{IgnorePrefixes});
 
     # spec-06 §3.1: the signer chooses one or more hash algorithms; default
     # is sha256 only (the signer default MUST NOT change).
@@ -815,6 +818,7 @@ sub calculate {
 sub verify {
     my ($class, $msg, %opts) = @_;
     croak "need a message" unless $msg;
+    check_ignore_prefixes($opts{IgnorePrefixes});
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = Email::MIME->new($msg);
@@ -828,7 +832,16 @@ sub verify {
     my $num = keys %map ? max(keys %map) : 0;
     return 0 unless $num;
 
-    my $self = $class->parse($map{$num});
+    # A crafted instance (duplicate algorithm, bad hash set, unparseable
+    # Recipe) is a verdict, not an exception: this is the status-returning
+    # half of the contract, and a host must not have to eval it.
+    my $self = eval { $class->parse($map{$num}) };
+    unless ($self) {
+        die $@ if ref $@;
+        (my $err = $@) =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*\z//;
+        $err =~ s/\s+\z//;
+        return wantarray ? (0, $err) : 0;
+    }
 
     # spec-06 §3.4: verify every hash-set whose algorithm we implement; ALL
     # of them must match. If none names an implemented algorithm, fail
@@ -942,6 +955,7 @@ sub undo {
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
     my ($class, $msg, %opts) = @_;
+    check_ignore_prefixes($opts{IgnorePrefixes});
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = Email::MIME->new("$msg");
     }
@@ -1075,10 +1089,10 @@ loaded on first use.
 =head2 verify($msg, %options)
 
 Checks the top instance against the message. Returns its C<m=> on success.
-On failure returns C<0> in scalar context and C<(0, $reason)> in list
-context. Never dies.
+On failure, including an instance that does not parse, returns C<0> in
+scalar context and C<(0, $reason)> in list context. Never dies.
 
-=head2 undo($msg, %options)
+=head2 undo($msg)
 
 Applies the top instance's Recipes and removes that instance, returning
 the L<Email::MIME> of the previous form of the message; undef if there is
