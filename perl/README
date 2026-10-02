@@ -2,18 +2,19 @@ Mail::DKIM2 - DKIM2 signing and verification for email
 
 DESCRIPTION
 
-Mail::DKIM2 implements the DKIM2 email authentication protocol as specified
-in draft-clayton-dkim2-spec-08.  DKIM2 extends DKIM with chain-of-custody
-tracking, allowing each hop in the delivery path to add a cryptographic
-signature that covers all previous signatures and Message-Instance headers.
+Mail::DKIM2 implements DKIM2 (draft-ietf-dkim-dkim2-spec-06), in which every
+hop that handles a message signs it, each signature covers the ones before
+it, and a Message-Instance header records hashes of the message at each hop
+together with a Recipe for undoing that hop's changes.
 
-Features:
+  - Sign a message with a DKIM2-Signature for this hop
+  - Verify every signature in the chain and the Message-Instance chain
+  - Compute, verify and undo Message-Instance headers and their Recipes
+  - Generate, authenticate and propagate DKIM2-signed DSNs
+  - Streaming interface for milters; one-shot load() for everything else
+  - dkim2sign and dkim2verify command-line tools
 
-  - Sign outbound messages with DKIM2-Signature headers
-  - Verify all signatures in the DKIM2 chain (not just the outermost)
-  - Calculate, verify, and undo Message-Instance headers with diff recipes
-  - Chain-of-custody validation via SMTP envelope domain matching
-  - Streaming interface compatible with milter and other filter architectures
+See the Mail::DKIM2 module documentation for the conventions and STATUS.
 
 INSTALLATION
 
@@ -25,45 +26,39 @@ INSTALLATION
 DEPENDENCIES
 
     Perl 5.20 or later
-    Mail::DKIM 1.20200824 or later
+    Algorithm::Diff
+    CryptX
     Email::MIME
     JSON
-    Algorithm::Diff
-    Digest::SHA
-    MIME::Base64
+    Net::DNS
 
-For running the test suite:
+Recommended: Sendmail::PMilter for dkim2-milter, Mail::Milter::Authentication
+for the DKIM2Sign/DKIM2Verify handlers.
 
-    Path::Tiny
-    Test keys and DNS data from https://github.com/dkim2wg/interop
+The test suite needs Path::Tiny and the keys/ and dns.json fixtures from
+https://github.com/dkim2wg/interop.
 
 SYNOPSIS
 
-    # Sign a message
-    use Mail::DKIM2::Signer;
+    use Mail::DKIM2;
 
     my $signer = Mail::DKIM2::Signer->new(
         Domain   => 'example.com',
         Selector => 'sel1',
-        KeyFile  => '/path/to/private.pem',
-    );
-    $signer->PRINT($message_text);
-    $signer->CLOSE;
-    print $signer->as_string();
+        KeyFile  => '/etc/dkim2/sel1.pem',
+        MailFrom => '<sender@example.com>',
+        RcptTo   => ['<recipient@example.net>'],
+    )->load($message);
+    print $signer->as_string if $signer->result eq 'signed';
 
-    # Verify a message
-    use Mail::DKIM2::Verifier;
-
-    my $verifier = Mail::DKIM2::Verifier->new();
-    $verifier->set_pubkey_callback(\&find_key);
-    $verifier->PRINT($message_text);
-    $verifier->CLOSE;
-    print $verifier->result_detail();
+    my $verifier = Mail::DKIM2::Verifier->new->load($message);
+    print $verifier->result_detail, "\n";
 
 SEE ALSO
 
-    https://datatracker.ietf.org/doc/draft-clayton-dkim2-spec/
+    https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-spec/
     https://github.com/dkim2wg/interop
+    https://dkim2.com/
 
 AUTHOR
 
@@ -71,7 +66,7 @@ AUTHOR
 
 COPYRIGHT AND LICENSE
 
-This software is copyright (c) 2025 by Fastmail Pty Ltd.
+This software is copyright (c) 2025-2026 by Fastmail Pty Ltd.
 
 This is free software; you can redistribute it and/or modify it under
 the same terms as the Perl 5 programming language system itself.

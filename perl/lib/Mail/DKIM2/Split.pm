@@ -2,6 +2,8 @@ package Mail::DKIM2::Split;
 use strict;
 use warnings;
 
+our $VERSION = '0.10';
+
 use Email::MIME;
 use Exporter 'import';
 our @EXPORT_OK = qw(plan_copies disclosed_addresses);
@@ -74,9 +76,11 @@ sub plan_copies {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::Split - Bcc-safe recipient grouping for DKIM2 origination
+Mail::DKIM2::Split - Bcc-safe recipient grouping before DKIM2 signing
 
 =head1 SYNOPSIS
 
@@ -88,12 +92,26 @@ Mail::DKIM2::Split - Bcc-safe recipient grouping for DKIM2 origination
 
 =head1 DESCRIPTION
 
-B<EXPERIMENTAL>. Splits the envelope recipients of a message into copies such
-that, once each copy is DKIM2-signed (the signer records that copy's envelope
-recipients in C<rt=>), no Bcc recipient is ever revealed to another recipient.
-Disclosed recipients (named in C<To:>/C<Cc:>) share one copy; each undisclosed
-recipient gets its own. This is the network-free core used by the LMTP split
-content filter; see C<deploy/SERVER.md> ("Bcc-safe origination").
+A DKIM2-Signature records the hop's RCPT TO in C<rt=>. Signing one copy of
+a message to every recipient would put the Bcc recipients in every copy's
+C<rt=>, where every other recipient can read them. The message has to be
+split before signing: recipients named in C<To:> or C<Cc:> can share one
+copy, and each undisclosed recipient gets a copy of their own. This is the
+grouping logic, with no network in it; the LMTP daemon in the dkim2.com
+deployment uses it to fan a submission out into per-copy re-injections.
+
+=head1 FUNCTIONS
+
+=head2 plan_copies($message_bytes, \@envelope_rcpts)
+
+An arrayref of C<< { rcpts => [...] } >>: one entry for all the disclosed
+recipients, then one per undisclosed recipient, preserving the envelope
+strings as given. A recipient not found in C<To:>/C<Cc:> is undisclosed,
+so a message with neither header yields one copy per recipient.
+
+=head2 disclosed_addresses($message_bytes)
+
+A hashref of lowercased addresses named in C<To:> and C<Cc:>.
 
 =head1 AUTHOR
 
@@ -101,7 +119,7 @@ Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2025 Fastmail Pty Ltd.  This is free software; you can
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

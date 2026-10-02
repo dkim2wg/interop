@@ -2,6 +2,8 @@ package Mail::DKIM2::DSN;
 use strict;
 use warnings;
 
+our $VERSION = '0.10';
+
 use Email::MIME;
 use Carp;
 use List::Util qw(max);
@@ -447,36 +449,100 @@ sub propagate {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 6522 DSN
-structure; DKIM2 draft-06 §12.1.1 propagation procedure)
+Mail::DKIM2::DSN - DKIM2-signed Delivery Status Notifications
 
 =head1 SYNOPSIS
 
-    my $auth = Mail::DKIM2::DSN->authenticate(
-        Message             => $dsn_bytes,
-        PubkeyCallback => \&lookup,
-    );
-    # $auth->{ok}         — the returned original's chain verifies (from its
-    #                       headers alone if that is all the DSN carries), the
-    #                       DSN's own signature verifies, and its d= is aligned
-    #                       with the returned original's top rt= (§12.1.2 1+3)
-    # $auth->{top}        — the returned original's highest signature, for the
-    #                       caller to recognise as its own by d= and mf= (point 2)
-    # $auth->{alignment}  — 'pass', 'fail', or 'none' (not checkable)
-    # $auth->{dsn_result} — the DSN's own verdict ('none' if it is unsigned)
+    use Mail::DKIM2::DSN;
 
-    my $out = Mail::DKIM2::DSN->propagate(
-        Message              => $dsn_bytes,
-        ForwarderDomain => 'fwd.example',
-        Signer           => $mail_dkim2_signer,   # configured with MailFrom => '<>'
-        PubkeyCallback  => \&lookup,             # §12.1.2, or SkipAuthentication => 1
+    # A DSN for a message we are bouncing, signed with MAIL FROM <>.
+    my $out = Mail::DKIM2::DSN->generate(
+        Message      => $inbound_bytes,
+        Signer       => Mail::DKIM2::Signer->new(..., MailFrom => '<>'),
+        ReportingMTA => 'mx.example.com',
+        Status       => '5.7.1',
+        Reason       => 'rejected by policy',
     );
-    # $out->{raw}               — the propagated DSN (one MI, one DKIM2-Signature)
-    # $out->{upstream_mailfrom} — address to send it to
-    #
-    # Croaks rather than propagating a DSN it cannot authenticate: §12.1.2 says
-    # a DSN that fails verification MUST NOT be propagated any further.
+    # $out->{raw}, $out->{to}
+
+    # Is this DSN about a message we forwarded, and genuine?
+    my $auth = Mail::DKIM2::DSN->authenticate(
+        Message        => $dsn_bytes,
+        PubkeyCallback => \&lookup,      # or omit to use DNS
+    );
+    # $auth->{ok}, $auth->{top} (our signature), $auth->{alignment}
+
+    # Send it on towards the original sender.
+    my $out = Mail::DKIM2::DSN->propagate(
+        Message         => $dsn_bytes,
+        ForwarderDomain => 'fwd.example',
+        Signer          => $signer,       # MailFrom => '<>'
+        PubkeyCallback  => \&lookup,
+    );
+    # $out->{raw}, $out->{upstream_mailfrom}
+
+=head1 DESCRIPTION
+
+Spec-06 section 12 describes how a DSN (RFC 3464, structured per RFC 6522)
+is signed, checked and passed back along the chain. A forwarder that
+receives a DSN for a message it forwarded rebuilds the enclosed original
+to the state it was in when it went out (undoing its own Message-Instance
+and removing the signature and instance it added), then re-signs the whole
+DSN as a new message with MAIL FROM C<< <> >>, so it carries exactly one
+Message-Instance and one DKIM2-Signature.
+
+This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+for what that means for the wire format and the API, and
+L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
+module here follows.
+
+=head1 CLASS METHODS
+
+Each takes named arguments and returns a hashref. Each croaks on a
+message that is not an RFC 6522 DSN or on a missing required argument.
+
+=head2 generate(%args)
+
+Builds a three-part C<multipart/report> DSN returning C<Message>, signed
+by C<Signer> (which must have C<< MailFrom => '<>' >>). C<To> is the
+envelope sender to bounce to; if omitted it is taken from the top
+DKIM2-Signature's C<mf=>, failing that from C<From:>. C<ReportingMTA>,
+C<Status> (default C<5.7.1>) and C<Reason> fill the delivery-status part.
+Returns C<< { raw => $bytes, to => $address } >>.
+
+=head2 authenticate(%args)
+
+Checks C<Message>, a DSN, per section 12.1.2: the returned original's
+chain verifies (from its headers alone if that is all the DSN carries),
+the DSN's own signature verifies, and the DSN's C<d=> is aligned with the
+returned original's top C<rt=>. C<PubkeyCallback>, C<Resolver> and
+C<SkipTimestampCheck> are passed to the verifiers. Returns a hashref with
+C<ok>; C<top>, the returned original's highest signature, for the caller
+to recognise as its own by C<d=> and C<mf=>; C<result>, C<details>,
+C<dsn_result>, C<dsn_details>, C<dsn_sig>; C<alignment> (C<pass>, C<fail>
+or C<none>) and C<alignment_detail>; C<headers_only>; and C<embedded>,
+the returned original as an L<Email::MIME>.
+
+=head2 propagate(%args)
+
+Authenticates C<Message> as above (pass C<< SkipAuthentication => 1 >> if
+the caller already has), then rebuilds and re-signs it as described. Croaks
+rather than propagate a DSN that does not authenticate: section 12.1.2
+says such a DSN MUST NOT be propagated. C<ForwarderDomain> is the C<d=>
+of the hop to strip. Returns C<< { raw => $bytes, upstream_mailfrom =>
+$address } >>.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

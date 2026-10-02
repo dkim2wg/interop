@@ -1,5 +1,7 @@
 package Mail::DKIM2::Reflector;
 use strict; use warnings;
+
+our $VERSION = '0.10';
 use 5.020;
 
 use Email::MIME;
@@ -548,18 +550,53 @@ sub _sign {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
-Mail::DKIM2::Reflector - verify-and-reflect DKIM2 demonstration logic
+Mail::DKIM2::Reflector - verify-and-reflect DKIM2 demonstration logic for dkim2.com
 
 =head1 DESCRIPTION
 
-Core logic for the dkim2.com reflector addresses. C<reflect(%args)> verifies an
-incoming message's DKIM2 chain, applies a per-mode transformation, and returns
-the message to send back to the sender. A reflector DKIM2-Signature is added
-only when the incoming chain verified. See
-C<docs/superpowers/specs/2026-06-18-dkim2-reflector-design.md>.
+The logic behind the dkim2.com reflector addresses: verify an incoming
+message's DKIM2 chain, apply a per-mode transformation, and return the
+message to send back to the sender. A reflector DKIM2-Signature is added
+only when the incoming chain verified. This is demonstration glue, not part
+of the library API, and its functions take lowercase named arguments.
+See C<docs/superpowers/specs/2026-06-18-dkim2-reflector-design.md>.
 
-B<EXPERIMENTAL> — implements draft-ietf-dkim-dkim2-spec-06.
+=head1 FUNCTIONS
+
+=head2 reflect(%args)
+
+Verifies and transforms C<message> per C<mode>, signing as C<domain> /
+C<selector> with C<key> or C<keyfile>. Returns a hashref with C<message>,
+C<auth>, C<dkim1>, C<basis>, C<signed> and C<mode>.
+
+=head2 generate(%args)
+
+A fresh signed message to C<sender>.
+
+=head2 generate_dsn(%args)
+
+A signed DSN returning C<message> to C<sender>, via L<Mail::DKIM2::DSN>.
+
+=head2 generate_brand(%args)
+
+A two-signature brand demonstration message, or an explanatory one when
+the sender's domain has not delegated a key.
+
+=head2 sign_dkim1($text, @specs)
+
+Adds classic DKIM signatures, one per C<< { domain, selector, key } >>.
+
+=head1 AUTHOR
+
+Bron Gondwana E<lt>brong@fastmailteam.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2025-2026 Fastmail Pty Ltd.  This is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut

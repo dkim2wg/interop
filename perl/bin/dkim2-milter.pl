@@ -678,6 +678,8 @@ sub _do_sign {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
 dkim2-milter.pl - Standalone DKIM2 milter for Postfix
