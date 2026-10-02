@@ -40,6 +40,14 @@ rm -f /usr/local/bin/calculate-dkim2.pl /usr/local/bin/calculate-mailversion.pl 
       /usr/local/bin/reverse-mailversion.pl /usr/local/bin/validate-mailversion.pl \
       /usr/local/bin/verify-sig.pl /usr/local/bin/validate.pl /usr/local/bin/dkim2sign.pl
 
+# 1b. systemd units and the Sympa sendmail wrapper are the generic ones every
+#     operator gets (deploy/examples/); the box runs exactly those.
+install -m 644 "$REPO"/deploy/examples/dkim2-milter-inbound.service \
+               "$REPO"/deploy/examples/dkim2-milter-outbound.service \
+               "$REPO"/deploy/examples/dkim2-split.service /etc/systemd/system/
+systemctl daemon-reload
+install -m 755 "$REPO/deploy/examples/sympa-sendmail" /usr/local/bin/sympa-sendmail
+
 # 2. Binaries that embed the library (reflector wrapper + validator CGI) plus
 #    the delayed-bounce demo's failing delivery agent. dkim2-milter and
 #    dkim2-split-lmtp are installed by make install above.

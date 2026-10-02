@@ -1,10 +1,15 @@
 #!/usr/bin/perl
-# Relay mail via SMTP to the listserv port (10587) so only the
-# outbound milter processes it.
+# sympa-sendmail: a sendmail(1) replacement for Sympa that submits each
+# outbound message over SMTP to the MTA's DKIM2 signing listener on
+# localhost (port DKIM2_SIGN_PORT, default 10587) instead of the local
+# sendmail command, so list mail is signed by the outbound milter only.
+# Point sympa.conf's "sendmail" at this script; set nrcpt 1 so each copy's
+# rt= names one recipient. See docs/dkim2-postfix-list-host-guide.md.
 use strict;
 use warnings;
 use IO::Socket::INET;
 
+my $port = $ENV{DKIM2_SIGN_PORT} // 10587;
 my $sender;
 my @recips;
 my $i = 0;
@@ -25,10 +30,10 @@ my $msg = do { local $/; <STDIN> };
 
 my $sock = IO::Socket::INET->new(
     PeerAddr => "127.0.0.1",
-    PeerPort => 10587,
+    PeerPort => $port,
     Proto    => "tcp",
     Timeout  => 30,
-) or die "Cannot connect to localhost:10587: $!\n";
+) or die "Cannot connect to localhost:$port: $!\n";
 
 sub smtp_read {
     my $line = <$sock>;

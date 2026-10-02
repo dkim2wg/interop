@@ -173,9 +173,10 @@ The milter code is in `perl/bin/dkim2-milter` (installed as `/usr/local/bin/dkim
 | `dkim2-milter-inbound` | inbound | `dkim2-milter-in.sock` | Verify DKIM2, add Auth-Results, add MI v=1 |
 | `dkim2-milter-outbound` | outbound | `dkim2-milter-out.sock` | Compute MI diff, sign with DKIM2 |
 
-**Service files:** `/etc/systemd/system/dkim2-milter-{inbound,outbound}.service`
-(also committed to `deploy/` in this repo — but on server `ProtectHome=no`
-since repo is under `/root/`)
+**Service files:** `/etc/systemd/system/dkim2-milter-{inbound,outbound}.service`,
+installed by `deploy.sh` from `deploy/examples/` (the generic units every
+operator gets; they run `/usr/local/bin/dkim2-milter`, so nothing under
+`/root/` is needed at runtime)
 
 **Keys:** `/etc/dkim2/keys/{domain}/{selector}.key` (RSA PKCS#8 PEM format)
 - `dkim2.com/sel1.key`, `dkim2.com/ed25519.key`
@@ -345,7 +346,7 @@ swaks --server ...:10587    ─┘         │
                                    delivery
 ```
 
-- **Daemon:** `dkim2-split.service` (`deploy/dkim2-split.service`) runs
+- **Daemon:** `dkim2-split.service` (`deploy/examples/dkim2-split.service`) runs
   `/usr/local/bin/dkim2-split-lmtp` on `127.0.0.1:10590`, re-injecting to `10589`.
 - **Postfix listeners:** `deploy/postfix-dkim2-split.master.cf` defines both
   `10587` (split entry) and `10589` (signing re-injection, `content_filter=`
@@ -524,7 +525,7 @@ sendmail /usr/local/bin/sympa-sendmail
 **`/usr/local/bin/sympa-sendmail`:** Custom sendmail wrapper that submits
 outbound mail via SMTP to localhost:10587 — the DKIM2 split gateway — so the
 message is fanned out per recipient and then signed by the outbound milter only
-(never the inbound one). Tracked as `deploy/sympa-sendmail`; it existed nowhere
+(never the inbound one). Tracked as `deploy/examples/sympa-sendmail`; it existed nowhere
 but the box until 2026-07-29.
 
 **Services:**
@@ -955,7 +956,7 @@ deploy/config/mailman3/{mailman.cfg,mailman-hyperkitty.cfg,web-settings.py}
 deploy/config/sympa/{sympa.conf,aliases}
 deploy/config/postfix/{main.cf.live,master.cf.live}
 deploy/config/aliases
-deploy/sympa-sendmail
+deploy/examples/sympa-sendmail
 ```
 
 `postfix/main.cf.live` is `postconf -n` output, which records the real
@@ -1014,7 +1015,7 @@ the packages and one-time setup, then:
    `postalias /etc/sympa/sympa/aliases`.
 5. Restore `master.cf` from `deploy/config/postfix/master.cf.live`, apply
    `main.cf.live` with `postconf -e`, then `postfix check`.
-6. `install -m755 deploy/sympa-sendmail /usr/local/bin/sympa-sendmail`.
+6. `install -m755 deploy/examples/sympa-sendmail /usr/local/bin/sympa-sendmail`.
 7. `deploy/deploy.sh` for the library, milters, reflector, validator and web
    assets, then `deploy/check-server-config.sh` to confirm no drift.
 

@@ -61,7 +61,7 @@ if ! diff -q <(postconf -n) "$SRC/postfix/main.cf.live" >/dev/null; then
 fi
 
 # Installed code, not config, so it lives at deploy/ top level.
-compare /usr/local/bin/sympa-sendmail "../sympa-sendmail"
+compare /usr/local/bin/sympa-sendmail "../examples/sympa-sendmail"
 
 if [ "$drift" -eq 0 ]; then
     echo ">> server config matches deploy/config/"

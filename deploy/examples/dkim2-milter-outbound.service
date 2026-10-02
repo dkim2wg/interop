@@ -1,6 +1,7 @@
 [Unit]
-Description=DKIM2 Milter Daemon
+Description=DKIM2 Milter Daemon (outbound: MI diff + sign)
 After=network.target
+Documentation=https://github.com/dkim2wg/interop/blob/master/docs/dkim2-postfix-list-host-guide.md
 Before=postfix.service
 
 [Service]
@@ -9,13 +10,11 @@ User=dkim2
 Group=postfix
 ExecStartPre=/bin/mkdir -p /var/spool/postfix/var/run
 ExecStartPre=/bin/mkdir -p /var/spool/dkim2/snapshots
-ExecStart=/usr/bin/perl -I/opt/dkim2/interop/perl/lib \
-    /opt/dkim2/interop/perl/bin/dkim2-milter.pl \
-    --socket unix:/var/spool/postfix/var/run/dkim2-milter.sock \
+ExecStart=/usr/local/bin/dkim2-milter \
+    --mode outbound \
+    --socket unix:/var/spool/postfix/var/run/dkim2-milter-out.sock \
     --keydir /etc/dkim2/keys \
-    --snapshot-dir /var/spool/dkim2/snapshots \
-    --dns-json /opt/dkim2/interop/dns.json \
-    --verify --sign
+    --snapshot-dir /var/spool/dkim2/snapshots
 Restart=on-failure
 RestartSec=5
 UMask=0007

@@ -1,0 +1,17 @@
+# DKIM2 for a mailing-list host: main.cf settings. See
+# docs/dkim2-postfix-list-host-guide.md ("Postfix"). Apply with postconf -e.
+
+# Verify inbound mail and stamp a Message-Instance (inbound milter); sign
+# anything Postfix generates itself, such as bounces (outbound milter).
+# The sockets live inside the Postfix chroot, so the paths are relative.
+smtpd_milters = unix:var/run/dkim2-milter-in.sock
+non_smtpd_milters = unix:var/run/dkim2-milter-out.sock
+milter_default_action = accept
+milter_protocol = 6
+
+# Run non_smtpd_milters on Postfix-generated bounces so they are signed.
+internal_mail_filter_classes = bounce
+
+# Never rewrite a signed body on the way out: an 8bit->7bit conversion after
+# signing changes Content-Transfer-Encoding and breaks the header hash.
+disable_mime_output_conversion = yes

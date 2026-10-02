@@ -1,6 +1,7 @@
 [Unit]
 Description=DKIM2 Milter Daemon (inbound: verify + MI)
 After=network.target
+Documentation=https://github.com/dkim2wg/interop/blob/master/docs/dkim2-postfix-list-host-guide.md
 Before=postfix.service
 
 [Service]
@@ -9,8 +10,7 @@ User=dkim2
 Group=postfix
 ExecStartPre=/bin/mkdir -p /var/spool/postfix/var/run
 ExecStartPre=/bin/mkdir -p /var/spool/dkim2/snapshots
-ExecStart=/usr/bin/perl -I/opt/dkim2/interop/perl/lib \
-    /opt/dkim2/interop/perl/bin/dkim2-milter.pl \
+ExecStart=/usr/local/bin/dkim2-milter \
     --mode inbound \
     --socket unix:/var/spool/postfix/var/run/dkim2-milter-in.sock \
     --snapshot-dir /var/spool/dkim2/snapshots

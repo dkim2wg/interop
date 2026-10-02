@@ -1,0 +1,31 @@
+# DKIM2 for a mailing-list host: master.cf listeners. See
+# docs/dkim2-postfix-list-host-guide.md ("Postfix").
+#
+# 1. List submission. Mailman's smtp_port and Sympa's sendmail wrapper deliver
+#    here. Only the signing milter runs; the inbound milter must not, or the
+#    list's own copy would get an Authentication-Results and a second
+#    Message-Instance before it is signed. Loopback only.
+127.0.0.1:10587 inet n  -       y       -       -       smtpd
+  -o syslog_name=postfix/dkim2-list
+  -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
+  -o smtpd_client_restrictions=permit_mynetworks,reject
+  -o smtpd_relay_restrictions=permit_mynetworks,reject
+  -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
+
+# 2. Split gateway: only if software you cannot set to one recipient per
+#    transaction submits here (see the guide, "Recipient privacy"). Replace
+#    listener 1 with these two and run dkim2-split.service on 10590.
+#
+# 127.0.0.1:10587 inet n  -       y       -       -       smtpd
+#   -o syslog_name=postfix/dkim2-split-in
+#   -o content_filter=lmtp:[127.0.0.1]:10590
+#   -o smtpd_milters=
+#   -o smtpd_client_restrictions=permit_mynetworks,reject
+#   -o smtpd_relay_restrictions=permit_mynetworks,reject
+#   -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks
+# 127.0.0.1:10589 inet n  -       n       -       -       smtpd
+#   -o syslog_name=postfix/dkim2-sign-out
+#   -o content_filter=
+#   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
+#   -o smtpd_relay_restrictions=permit_mynetworks,reject
+#   -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks
