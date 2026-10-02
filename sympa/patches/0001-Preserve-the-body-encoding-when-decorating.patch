@@ -1,0 +1,342 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Sat, 14 Mar 2026 18:24:39 +0800
+Subject: [PATCH 1/3] Preserve the body encoding when decorating
+
+A DKIM2 Message-Instance Recipe is compact only when the lines of the
+original body survive decoration byte for byte. Four changes to
+Sympa::Message keep them that way:
+
+- Skip the decode/re-encode cycle when personalize_text() substituted
+  nothing: base64 and quoted-printable are not canonical, and re-encoding
+  unchanged content changes bytes for no reason.
+- Prefer the original charset when re-encoding a personalized or
+  decorated body, falling back to UTF-8 only when the new content cannot
+  be represented in it, so the Content-Transfer-Encoding stays put.
+- When an inline footer append fails, add the footer as a separate MIME
+  part instead of dropping it, leaving the original body part untouched.
+- Quoted-printable bodies get the footer appended at the encoded level
+  so only the footer lines are new; base64 bodies are re-wrapped at the
+  sender's original line length by diffing the flat base64 with
+  Algorithm::Diff, so only the last line and the footer change.
+
+These apply whether or not Message-Instance headers are enabled; they
+also make classic DKIM signatures over the body more likely to survive.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ src/lib/Sympa/Message.pm | 243 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 234 insertions(+), 9 deletions(-)
+
+diff --git a/src/lib/Sympa/Message.pm b/src/lib/Sympa/Message.pm
+index f832e13c3..822606d5b 100644
+--- a/src/lib/Sympa/Message.pm
++++ b/src/lib/Sympa/Message.pm
+@@ -39,6 +39,7 @@ use MIME::EncWords;
+ use MIME::Entity;
+ use MIME::Field::ParamVal;
+ use MIME::Parser;
++use MIME::QuotedPrint;
+ use MIME::Tools;
+ use Scalar::Util qw();
+ use Text::LineFold;
+@@ -877,9 +878,25 @@ sub set_entity {
+     my $new  = $entity->as_string;
+ 
+     if ($orig ne $new) {
++        my $old_body = $self->{_body};
+         $self->{_head} = $entity->head;
+         $self->{_body} = $entity->body_as_string;
+         $self->{_entity_cache} = $entity;    # Also update entity cache.
++
++        # For single-part base64 messages, restore original line
++        # wrapping for unchanged base64 characters.  MIME::Entity
++        # re-encodes at 76-char lines, which changes every line if
++        # the sender used a different length.  The original wrapping
++        # survives only in the old _body string.
++        if (defined $old_body
++            and !$entity->is_multipart
++            and ($entity->head->mime_encoding || '') =~ /^base64$/i) {
++            my $fixed = _restore_b64_wrapping($old_body, $self->{_body});
++            if (defined $fixed) {
++                $self->{_body} = $fixed;
++                delete $self->{_entity_cache};
++            }
++        }
+     }
+ 
+     return $entity;
+@@ -1613,14 +1630,34 @@ sub _merge_msg {
+             return $entity;
+         }
+ 
++        my $orig_utf8_body = $utf8_body;
+         $utf8_body = personalize_text($utf8_body, $list, $rcpt, $data);
+         return $entity unless defined $utf8_body;
+ 
+-        ## Data not encodable by original charset will fallback to UTF-8.
++        # If personalization didn't change anything, skip re-encoding
++        # to preserve original wire bytes (important for DKIM/DKIM2
++        # signature stability and avoiding non-deterministic re-encoding
++        # of base64/quoted-printable content).
++        if ($utf8_body eq $orig_utf8_body) {
++            return $entity;
++        }
++
++        # Try encoding in original charset first, to avoid unnecessary
++        # charset/CTE changes that would alter wire bytes.
+         my ($newcharset, $newenc);
+-        ($body, $newcharset, $newenc) =
+-            $in_cset->body_encode(Encode::decode_utf8($utf8_body),
+-            Replacement => 'FALLBACK');
++        my $decoded_utf8 = Encode::decode_utf8($utf8_body);
++        eval {
++            ($body, $newcharset, $newenc) =
++                $in_cset->body_encode($decoded_utf8);
++        };
++        if ($EVAL_ERROR or !$newcharset
++            or $newcharset ne $in_cset->as_string) {
++            # Original charset can't represent the new content;
++            # fall back to UTF-8.
++            ($body, $newcharset, $newenc) =
++                $in_cset->body_encode($decoded_utf8,
++                Replacement => 'FALLBACK');
++        }
+         unless ($newcharset) {    # bug in MIME::Charset?
+             $log->syslog('err', 'Can\'t determine output charset');
+             return undef;
+@@ -1840,6 +1877,37 @@ sub decorate {
+             ) {
+                 $entity->sync_headers(Length => 'COMPUTE')
+                     if $entity->head->get('Content-Length');
++            } else {
++                # Inline append failed (e.g. charset can't represent
++                # the combined content, or non-decodable encoding).
++                # Fall back to adding footers as separate MIME parts,
++                # converting single-part to multipart/mixed.  This
++                # preserves the original body bytes untouched.
++                $log->syslog('info',
++                    'Inline footer append failed, falling back to MIME parts'
++                );
++                if ($header and -s $header) {
++                    _add_footer_part(
++                        $entity, $header, $list, $rcpt, $data,
++                        mode    => $mode,
++                        type    => 'header',
++                        prepend => 1
++                    );
++                }
++                if ($footer and -s $footer) {
++                    _add_footer_part(
++                        $entity, $footer, $list, $rcpt, $data,
++                        mode => $mode,
++                        type => 'footer'
++                    );
++                }
++                if ($global_footer and -s $global_footer) {
++                    _add_footer_part(
++                        $entity, $global_footer, $list, $rcpt, $data,
++                        mode => $mode,
++                        type => 'global footer'
++                    );
++                }
+             }
+         }
+     } else {
+@@ -2002,6 +2070,89 @@ sub _append_parts {
+     return undef;
+ }
+ 
++# Restore original base64 line wrapping after MIME::Entity re-encodes.
++#
++# Takes the original raw base64 body (with sender's line wrapping) and
++# the new raw base64 body (re-encoded at standard 76-char lines).
++# Diffs the flat (whitespace-stripped) base64 strings and reconstructs
++# the output preserving original line breaks for unchanged regions.
++#
++# This handles prepended headers, appended footers, and inline
++# substitutions — any change anywhere in the decoded content.
++sub _restore_b64_wrapping {
++    my ($orig_raw, $new_raw) = @_;
++
++    # Strip whitespace to get flat base64 strings.
++    (my $orig_flat = $orig_raw) =~ s/\s+//g;
++    (my $new_flat  = $new_raw)  =~ s/\s+//g;
++
++    return undef if $orig_flat eq $new_flat;    # Nothing to do.
++
++    # Detect original line length from the first complete line.
++    my $orig_line_len = 76;
++    if ($orig_raw =~ /^([^\r\n]+)\r?\n/) {
++        $orig_line_len = length($1);
++    }
++
++    # Build a map from flat-position to raw-position in the original,
++    # so we can emit original bytes (including line breaks) for
++    # unchanged regions.
++    my @orig_raw_chars = split //, $orig_raw;
++    my @flat_to_raw;    # flat_pos -> raw_pos
++    for my $i (0 .. $#orig_raw_chars) {
++        next if $orig_raw_chars[$i] =~ /\s/;
++        push @flat_to_raw, $i;
++    }
++
++    # Diff the flat base64 strings character-by-character using
++    # Algorithm::Diff to find matching blocks.
++    my @orig_chars = split //, $orig_flat;
++    my @new_chars  = split //, $new_flat;
++
++    require Algorithm::Diff;
++    my $diff = Algorithm::Diff->new(\@orig_chars, \@new_chars);
++    $diff->Base(0);
++
++    my $result = '';
++    my $col = 0;    # Current column for wrapping new content.
++
++    while ($diff->Next()) {
++        if ($diff->Same()) {
++            # Unchanged region: emit from original raw, preserving
++            # line breaks.
++            my $min1 = $diff->Min(1);
++            my $max1 = $diff->Max(1);
++            # Map flat positions back to raw positions.
++            my $raw_start = $flat_to_raw[$min1];
++            my $raw_end   = $flat_to_raw[$max1];
++            my $chunk = substr($orig_raw,
++                $raw_start, $raw_end - $raw_start + 1);
++            $result .= $chunk;
++            # Track column position after emitting.
++            if ($chunk =~ /([^\r\n]*)\z/) {
++                $col = length($1);
++            }
++        } else {
++            # Changed region: emit new base64 chars with consistent
++            # line wrapping.
++            my @items = $diff->Items(2);
++            for my $ch (@items) {
++                if ($col >= $orig_line_len) {
++                    $result .= "\n";
++                    $col = 0;
++                }
++                $result .= $ch;
++                $col++;
++            }
++        }
++    }
++
++    # Ensure trailing newline.
++    $result .= "\n" unless $result =~ /\n\z/;
++
++    return $result;
++}
++
+ sub _add_footer_part {
+     my $entity  = shift;
+     my $footer  = shift;
+@@ -2096,6 +2247,71 @@ sub _append_footer_header_to_part {
+     }
+     $in_cset->encoder($in_cset);    # no charset conversion
+ 
++    my $cte = uc($entity->head->mime_attr('Content-Transfer-Encoding') || '');
++
++    # For quoted-printable text/plain, concatenate at the raw QP-encoded
++    # level.  Only the header/footer text is freshly QP-encoded; the
++    # original body lines remain byte-identical.  This preserves the
++    # original sender's QP choices (e.g. unnecessarily-quoted characters,
++    # non-standard soft line break positions) and produces compact
++    # Message-Instance body recipes (a single copy range for the
++    # original body).
++    if ($eff_type eq 'text/plain' and $cte eq 'QUOTED-PRINTABLE') {
++        my $raw_qp = $entity->body_as_string;
++
++        # Encode header/footer as QP in the message's charset.
++        my @parts;
++        for my $text ($header_msg, $footer_msg, $global_footer_msg) {
++            next unless defined $text and length $text;
++            # Encode text to message charset bytes, then QP-encode.
++            my $bytes = eval {
++                Encode::encode($in_cset->as_string,
++                    Encode::decode_utf8($text, 1));
++            };
++            if ($EVAL_ERROR) {
++                # Charset can't represent the footer text — fall through
++                # to the standard decode-concatenate-reencode path below.
++                undef @parts;
++                last;
++            }
++            push @parts, MIME::QuotedPrint::encode_qp($bytes);
++        }
++
++        if (@parts or (!length($header_msg // '')
++                    and !length($footer_msg // '')
++                    and !length($global_footer_msg // ''))) {
++            # Build the concatenated QP body.
++            my $qp_header = shift @parts // '';
++            my $qp_footer = shift @parts // '';
++            my $qp_global_footer = shift @parts // '';
++
++            # Ensure newlines between parts.
++            if (length $qp_header and $qp_header !~ /\n\z/) {
++                $qp_header .= "\n";
++            }
++            if (length $qp_footer and $raw_qp !~ /\n\z/) {
++                $raw_qp .= "\n";
++            }
++            if (length $qp_global_footer) {
++                my $prev = length $qp_footer ? $qp_footer : $raw_qp;
++                if ($prev !~ /\n\z/) {
++                    $qp_footer .= "\n" if length $qp_footer;
++                }
++            }
++            if (length $qp_footer and $qp_footer !~ /\n\z/) {
++                $qp_footer .= "\n";
++            }
++            if (length $qp_global_footer
++                and $qp_global_footer !~ /\n\z/) {
++                $qp_global_footer .= "\n";
++            }
++
++            return $qp_header . $raw_qp . $qp_footer . $qp_global_footer;
++        }
++        # If QP encoding of footer failed (charset mismatch), fall
++        # through to the standard path below.
++    }
++
+     # Decode body to Unicode, since Sympa::Tools::Text::encode_html() and
+     # newline normalization will break texts with several character sets
+     # (UTF-16/32, ISO-2022-JP, ...).
+@@ -2128,8 +2344,7 @@ sub _append_footer_header_to_part {
+         if (length $global_footer_msg) {
+             $global_footer_msg .= "\n" unless $global_footer_msg =~ /\n\z/;
+         }
+-        if (uc($entity->head->mime_attr('Content-Transfer-Encoding') || '')
+-            eq 'BASE64') {
++        if ($cte eq 'BASE64') {
+             $header_msg =~ s/\r\n|\r|\n/\r\n/g;
+             $body =~ s/(\r\n|\r|\n)\z/\r\n/;    # only at end
+             $footer_msg =~ s/\r\n|\r|\n/\r\n/g;
+@@ -2138,10 +2353,20 @@ sub _append_footer_header_to_part {
+ 
+         $new_body = $header_msg . $body . $footer_msg . $global_footer_msg;
+ 
+-        ## Data not encodable by original charset will fallback to UTF-8.
++        # Try encoding in original charset first, to avoid unnecessary
++        # charset/CTE changes that would alter wire bytes.
+         my ($newcharset, $newenc);
+-        ($body, $newcharset, $newenc) =
+-            $in_cset->body_encode($new_body, Replacement => 'FALLBACK');
++        eval {
++            ($body, $newcharset, $newenc) =
++                $in_cset->body_encode($new_body);
++        };
++        if ($EVAL_ERROR or !$newcharset
++            or $newcharset ne $in_cset->as_string) {
++            # Original charset can't represent the new content;
++            # fall back to UTF-8.
++            ($body, $newcharset, $newenc) =
++                $in_cset->body_encode($new_body, Replacement => 'FALLBACK');
++        }
+         unless ($newcharset) {                  # bug in MIME::Charset?
+             $log->syslog('err', 'Can\'t determine output charset');
+             return undef;

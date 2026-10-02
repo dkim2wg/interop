@@ -1,0 +1,268 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Wed, 23 Sep 2026 13:34:30 -0400
+Subject: [PATCH 1/3] Preserve the original Content-Transfer-Encoding when
+ decorating
+
+When a header or footer is added to a single-part text message, keep the
+body's existing encoding instead of letting the email library choose a
+new one and silently re-encode every line:
+
+- 7bit/8bit: concatenate the decoded text and store the result with the
+  same CTE, upgrading 7bit to 8bit only if the result contains high
+  bytes.
+
+- quoted-printable: concatenate at the raw QP level.  Only the header
+  and footer text is freshly QP-encoded; the original body lines remain
+  byte-identical, including unnecessarily quoted characters (=48 for
+  'H') and non-standard soft line break positions.
+
+- base64: decode, concatenate, and re-encode at the line width the
+  original used.  Base64 is deterministic, so every complete line before
+  the original's last line is unchanged; only that last line (its
+  padding disappears) and the appended footer lines differ.  The message
+  stays single-part instead of being MIME-wrapped into multipart/mixed.
+
+Any other CTE, or a failure in one of these paths, falls through to MIME
+wrapping as before.  The decorate.rst doctest for mixed-charset messages
+is updated for the QP-preserving behaviour.
+
+This is groundwork for DKIM2 Message-Instance support: the Recipe that
+lets a verifier undo Mailman's changes describes untouched lines as copy
+ranges, so keeping the original body bytes intact keeps the Recipe
+compact and lets the originator's signature re-verify after undo.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ src/mailman/handlers/decorate.py       | 165 +++++++++++++++++++++----
+ src/mailman/handlers/docs/decorate.rst |  14 ++-
+ 2 files changed, 150 insertions(+), 29 deletions(-)
+
+diff --git a/src/mailman/handlers/decorate.py b/src/mailman/handlers/decorate.py
+index 4bf83475b..95c6e6d8d 100644
+--- a/src/mailman/handlers/decorate.py
++++ b/src/mailman/handlers/decorate.py
+@@ -17,10 +17,13 @@
+ 
+ """Decorate a message by sticking the header and footer around it."""
+ 
++import base64
+ import re
+ import copy
+ import logging
++import quopri
+ 
++from io import BytesIO
+ from email.mime.text import MIMEText
+ from email.utils import formataddr
+ from mailman.core.i18n import _
+@@ -114,38 +117,150 @@ def process(mlist, msg, msgdata):
+         format_param = msg.get_param('format')
+         delsp = msg.get_param('delsp')
+         # Save 'Content-Transfer-Encoding' header in case decoration fails.
+-        cte = msg.get('content-transfer-encoding')
+-        # header/footer is now in unicode.
+-        try:
+-            oldpayload = msg.get_payload(decode=True).decode(mcset)
+-            del msg['content-transfer-encoding']
+-            frontsep = endsep = ''
+-            if len(header) > 0 and not header.endswith('\n'):
+-                frontsep = '\n'
+-            if len(footer) > 0 and not oldpayload.endswith('\n'):
+-                endsep = '\n'
+-            payload = header + frontsep + oldpayload + endsep + footer
+-            # When setting the payload for the message, try various charset
+-            # encodings until one does not produce a UnicodeError.  We'll try
+-            # charsets in this order: the list's charset, the message's
+-            # charset, then utf-8.  It's okay if some of these are duplicates.
+-            for cset in (lcset, mcset, 'utf-8'):
+-                try:
+-                    msg.set_payload(payload.encode(cset), cset)
+-                except UnicodeError:
+-                    pass
++        cte_header = msg.get('content-transfer-encoding')
++        cte = (cte_header or '7bit').strip().lower()
++        if cte in ('7bit', '8bit'):
++            # Direct concatenation preserving CTE.  The old code called
++            # msg.set_payload(bytes, charset) which lets Python's email
++            # library choose the CTE — it picks base64 for utf-8 and
++            # quoted-printable for iso-8859-1.  This silently re-encodes
++            # the entire body, changing every line.  Instead, we encode
++            # the concatenated text ourselves and set the payload as a
++            # string, preserving the original CTE.
++            try:
++                oldpayload = msg.get_payload(decode=True).decode(mcset)
++                frontsep = endsep = ''
++                if len(header) > 0 and not header.endswith('\n'):
++                    frontsep = '\n'
++                if len(footer) > 0 and not oldpayload.endswith('\n'):
++                    endsep = '\n'
++                payload = header + frontsep + oldpayload + endsep + footer
++                for cset in (lcset, mcset, 'utf-8'):
++                    try:
++                        payload_bytes = payload.encode(cset)
++                    except (UnicodeError, LookupError):
++                        continue
++                    # For 7bit, verify all bytes are ASCII; if not, use 8bit.
++                    has_high = any(b > 127 for b in payload_bytes)
++                    actual_cte = (
++                        '8bit' if (cte == '7bit' and has_high) else cte)
++                    # Store as string using surrogateescape so
++                    # BytesGenerator reproduces the original bytes.
++                    del msg['content-transfer-encoding']
++                    msg.set_payload(
++                        payload_bytes.decode('ascii', 'surrogateescape'))
++                    msg['Content-Transfer-Encoding'] = actual_cte
++                    msg.set_param('charset', cset)
++                    if format_param:
++                        msg.set_param('format', format_param)
++                    if delsp:
++                        msg.set_param('delsp', delsp)
++                    wrap = False
++                    break
++            except (LookupError, UnicodeError):
++                pass
++        elif cte == 'quoted-printable':
++            # Preserve original QP encoding of the body by concatenating
++            # at the raw (QP-encoded) level.  Only the header/footer text
++            # is freshly QP-encoded; the original body lines remain
++            # byte-identical.  This preserves the original sender's QP
++            # choices, including unnecessarily-quoted characters (e.g.
++            # =48 for 'H') and non-standard soft line break positions.
++            try:
++                # Normalize to \n — the generator will convert to
++                # \r\n on output.  This ensures consistent line endings
++                # when concatenating with quopri.encode() output.
++                raw_qp = msg.get_payload().replace('\r\n', '\n')
++                oldpayload = msg.get_payload(decode=True).decode(mcset)
++                frontsep = endsep = ''
++                if len(header) > 0 and not header.endswith('\n'):
++                    frontsep = '\n'
++                if len(footer) > 0 and not oldpayload.endswith('\n'):
++                    endsep = '\n'
++                for cset in (lcset, mcset, 'utf-8'):
++                    try:
++                        parts = []
++                        header_text = header + frontsep
++                        if header_text:
++                            hdr_bytes = header_text.encode(cset)
++                            inp, out = BytesIO(hdr_bytes), BytesIO()
++                            quopri.encode(inp, out, quotetabs=False)
++                            parts.append(out.getvalue().decode('ascii'))
++                        parts.append(raw_qp)
++                        footer_text = endsep + footer
++                        if footer_text:
++                            # Ensure a newline before the footer
++                            if parts[-1] and not parts[-1].endswith('\n'):
++                                parts.append('\n')
++                            ftr_bytes = footer_text.encode(cset)
++                            inp, out = BytesIO(ftr_bytes), BytesIO()
++                            quopri.encode(inp, out, quotetabs=False)
++                            parts.append(out.getvalue().decode('ascii'))
++                        new_payload = ''.join(parts)
++                        del msg['content-transfer-encoding']
++                        msg.set_payload(new_payload)
++                        msg['Content-Transfer-Encoding'] = 'quoted-printable'
++                        msg.set_param('charset', cset)
++                        if format_param:
++                            msg.set_param('format', format_param)
++                        if delsp:
++                            msg.set_param('delsp', delsp)
++                        wrap = False
++                        break
++                    except (UnicodeError, LookupError):
++                        continue
++            except (LookupError, UnicodeError):
++                pass
++        elif cte == 'base64':
++            # Re-encode the concatenated text as base64 using the same
++            # line width as the original.  Base64 is deterministic, so
++            # all complete lines before the original's last line will be
++            # byte-identical.  Only the last original line changes
++            # (its padding disappears) and new lines appear for the
++            # footer.  This produces a compact MI recipe: one range
++            # for the matching lines plus one literal for the original
++            # last line.
++            #
++            # Falls through to MIME wrapping if re-encoding fails.
++            try:
++                raw_b64 = msg.get_payload().replace('\r\n', '\n')
++                # Detect original line width from first complete line.
++                first_nl = raw_b64.find('\n')
++                if first_nl > 0:
++                    line_width = first_nl
+                 else:
++                    line_width = 76
++                oldpayload = msg.get_payload(decode=True).decode(mcset)
++                frontsep = endsep = ''
++                if len(header) > 0 and not header.endswith('\n'):
++                    frontsep = '\n'
++                if len(footer) > 0 and not oldpayload.endswith('\n'):
++                    endsep = '\n'
++                payload = header + frontsep + oldpayload + endsep + footer
++                for cset in (lcset, mcset, 'utf-8'):
++                    try:
++                        payload_bytes = payload.encode(cset)
++                    except (UnicodeError, LookupError):
++                        continue
++                    b64_flat = base64.b64encode(payload_bytes).decode('ascii')
++                    b64_wrapped = '\n'.join(
++                        b64_flat[i:i+line_width]
++                        for i in range(0, len(b64_flat), line_width))
++                    b64_wrapped += '\n'
++                    del msg['content-transfer-encoding']
++                    msg.set_payload(b64_wrapped)
++                    msg['Content-Transfer-Encoding'] = 'base64'
++                    msg.set_param('charset', cset)
+                     if format_param:
+                         msg.set_param('format', format_param)
+                     if delsp:
+                         msg.set_param('delsp', delsp)
+                     wrap = False
+                     break
+-        except (LookupError, UnicodeError):
+-            if cte:
+-                # Restore the original c-t-e.
+-                del msg['content-transfer-encoding']
+-                msg['Content-Transfer-Encoding'] = cte
++            except (LookupError, UnicodeError):
++                pass
++        # For any other CTE, or if the above paths failed,
++        # fall through to MIME wrapping below (wrap remains True).
+     elif msg.get_content_type() == 'multipart/mixed':
+         # The next easiest thing to do is just prepend the header and append
+         # the footer as additional subparts
+diff --git a/src/mailman/handlers/docs/decorate.rst b/src/mailman/handlers/docs/decorate.rst
+index 333474a98..0847229cd 100644
+--- a/src/mailman/handlers/docs/decorate.rst
++++ b/src/mailman/handlers/docs/decorate.rst
+@@ -188,8 +188,10 @@ Decorating mixed-charset messages
+ 
+ When a message has no explicit character set, it is assumed to be ASCII.
+ However, if the mailing list's preferred language has a different character
+-set, Mailman will still try to concatenate the header and footer, but it will
+-convert the text to utf-8 and base-64 encode the message payload.
++set, Mailman will still try to concatenate the header and footer.  When the
++message is quoted-printable encoded, Mailman preserves the original QP
++encoding and QP-encodes only the added header and footer text, using the
++list's preferred charset.
+ ::
+ 
+     # 'ja' = Japanese; charset = 'UTF-8'
+@@ -213,10 +215,14 @@ convert the text to utf-8 and base-64 encode the message payload.
+     >>> process(mlist, msg, {})
+     >>> print(msg.as_string())
+     MIME-Version: 1.0
++    Content-Transfer-Encoding: quoted-printable
+     Content-Type: text/plain; charset="utf-8"
+-    Content-Transfer-Encoding: base64
+     <BLANKLINE>
+-    5pel5pys6KqeIGhlYWRlcgpGcmFuw6dhaXNlCuaXpeacrOiqniBmb290ZXIK
++    =E6=97=A5=E6=9C=AC=E8=AA=9E header
++    Fran=E7aise
++    <BLANKLINE>
++    =E6=97=A5=E6=9C=AC=E8=AA=9E footer
++    <BLANKLINE>
+ 
+ Sometimes the message even has an unknown character set.  In this case,
+ Mailman has no choice but to decorate the original message with MIME
