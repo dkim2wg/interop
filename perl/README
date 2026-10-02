@@ -56,6 +56,9 @@ SYNOPSIS
 
 SEE ALSO
 
+    Running a Postfix mailing-list host with DKIM2 (Mailman 3 or Sympa):
+    https://github.com/dkim2wg/interop/blob/master/docs/dkim2-postfix-list-host-guide.md
+
     https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-spec/
     https://github.com/dkim2wg/interop
     https://dkim2.com/

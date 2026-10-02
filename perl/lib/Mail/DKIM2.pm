@@ -187,6 +187,10 @@ C<Changes> file records every such change.
 
 =head1 SEE ALSO
 
+L<https://github.com/dkim2wg/interop/blob/master/docs/dkim2-postfix-list-host-guide.md>,
+the guide to running a Postfix mailing-list host with this distribution,
+Mailman 3 or Sympa.
+
 L<https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-spec/>,
 L<https://github.com/dkim2wg/interop>, L<https://dkim2.com/>,
 L<Mail::DKIM>.

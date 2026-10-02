@@ -36,11 +36,13 @@ t/dns-temperror.t
 t/dsn.t
 t/duplicate-checks.t
 t/error-strings.t
+t/examples.t
 t/fold-fws.t
 t/fold-info.t
 t/foreign-exception.t
 t/fraud-detection.t
 t/full-chain.t
+t/guide-links.t
 t/hash-agility.t
 t/headerparser.t
 t/ignore-prefixes.t
