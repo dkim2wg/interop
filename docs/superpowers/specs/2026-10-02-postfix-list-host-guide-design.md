@@ -127,7 +127,28 @@ example. The guide names the spec revision it was written against.
 
 ### 3. Patch series: `mailman/` and `sympa/`
 
-Each directory holds:
+The fork branches are first rewritten into minimal series, so the branch an
+operator installs from and the patches they read are the same thing:
+
+- `brong/mailman` `dkim2` (4 commits on upstream master `687b9e4dc`,
+  v3.3.10+466) becomes 3: encoding-preserving decoration; Message-Instance
+  handlers, mixin, config, tests and docs, with the debug-header-01
+  `X-DKIM2-Info` form folded in; the per-list `dkim2_message_instance`
+  flag.
+- `brong/sympa` `dkim2` (18 commits on tag `6.2.78`) becomes 3:
+  encoding-preserving decoration (the four body-stability commits);
+  Message-Instance support with `t/Message_DKIM2.t` and
+  `DKIM2-MESSAGE-INSTANCE.md`; the `X-DKIM2-Info` header in its final form.
+  The version-bump commits disappear into the commits they amended.
+
+Before each rewrite the old history is tagged `dkim2-history-2026-10-02`
+and the tag pushed; the rewritten branch is force-pushed to the `brong`
+remote. Each series is checked with `git apply --check` against its base
+and the net diff against the old branch tip must be empty (the rewrite
+changes history, not content). The dkim2.com deploy procedure for both is
+unchanged (rsync of the same files from the branch checkout).
+
+Each directory in the interop repository then holds:
 
 - `README.md`: what the patches do, the upstream base they apply to (commit
   and tag), how to apply (`git am` to a checkout; for Mailman also `pip
@@ -139,7 +160,9 @@ Each directory holds:
 and `~/src/sympa` (paths overridable) and, with `--check`, verifies with
 `git apply --check` that each series still applies to its stated base. For
 Mailman it also tries the series against the latest release tag (`v3.3.10`)
-and the README records the result.
+and the README records the result. For Sympa the README notes that the
+6.2.76 distro package also needs `src/lib/Sympa/HTML/URIFind.pm` (present
+upstream from 6.2.78) and the `liburi-find-perl` package.
 
 ### 4. Operator templates: `deploy/examples/`
 
@@ -181,6 +204,7 @@ Generic versions of what the dkim2.com box runs, free of its paths:
 
 - A CPAN upload itself (the dist is ready for one; uploading is a separate
   step for Bron).
-- Upstreaming the Mailman or Sympa changes.
+- Upstreaming the Mailman or Sympa changes (the squashed series is the
+  natural starting point for that, but it is a separate conversation).
 - Rewriting the dkim2.com `SERVER.md`.
 - Debian or RPM packaging.
