@@ -32,17 +32,8 @@ sub default_config {
         'record_smtp_params'   => 1,
         # Directory for message snapshots (shared with DKIM2Verify)
         'snapshot_directory'   => undef,
-        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end
+        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end (IgnorePrefixes)
     };
-}
-
-# The library's list is process-wide and shared with any other handler that
-# sets it, so only a handler with something to say touches it.
-sub setup_callback {
-    my ($self) = @_;
-    my $prefixes = $self->handler_config()->{'ignore_header_prefixes'} || [];
-    Mail::DKIM2::Common::ignore_header_prefixes(@$prefixes) if @$prefixes;
-    return;
 }
 
 sub register_metrics {
@@ -256,7 +247,8 @@ sub addheader_callback {
         # dkim2-milter.pl applies. Checking the current chain, not just the top
         # MI, stops us minting a signature over a chain that fails at recipients.
         my ($mi_chain_ok, $mi_chain_why) =
-            Mail::DKIM2::MessageInstance->chain_verifies($message_data);
+            Mail::DKIM2::MessageInstance->chain_verifies($message_data,
+                IgnorePrefixes => $config->{'ignore_header_prefixes'});
         unless ($mi_chain_ok) {
             $self->metric_count( 'dkim2_sign_total', { 'result' => 'broken-mi-chain' } );
             $self->log_error( "DKIM2 not signing for $sign_domain: "
@@ -324,7 +316,8 @@ sub _compute_message_instance {
         my $msg = Email::MIME->new($message_data);
 
         # Skip if the topmost MI already matches current content
-        if ( Mail::DKIM2::MessageInstance->verify($msg) ) {
+        my @ignore = ( IgnorePrefixes => $config->{'ignore_header_prefixes'} );
+        if ( Mail::DKIM2::MessageInstance->verify($msg, @ignore) ) {
             $self->dbgout( 'DKIM2MI', 'Message unchanged, skipping MI', LOG_DEBUG );
             return undef;
         }
@@ -365,7 +358,7 @@ sub _compute_message_instance {
                     }
 
                     $self->{'_clean_message_data'} = $work_data;
-                    return Mail::DKIM2::MessageInstance->calculate($work_msg, $snapshot_msg);
+                    return Mail::DKIM2::MessageInstance->calculate($work_msg, $snapshot_msg, @ignore);
                 }
             }
         }
@@ -379,7 +372,7 @@ sub _compute_message_instance {
         }
 
         # No existing MI headers — first-time signing, compute MI m=1
-        Mail::DKIM2::MessageInstance->calculate($msg);
+        Mail::DKIM2::MessageInstance->calculate($msg, undef, @ignore);
     };
     if ( my $error = $@ ) {
         $self->handle_exception( $error );

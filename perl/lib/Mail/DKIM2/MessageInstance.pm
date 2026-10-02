@@ -338,12 +338,12 @@ sub _decode_recipe_list {
 # --- Digests ---
 
 sub h_digest {
-    my ($msg, $alg) = @_;
+    my ($msg, $alg, $prefixes) = @_;
     $alg = lc($alg // 'sha256');
 
     my $data = '';
     for my $header (sort { lc($a) cmp lc($b) } $msg->header_names) {
-        next if should_skip($header);
+        next if should_skip($header, $prefixes);
         for my $item (reverse $msg->header_raw($header)) {
             my $chead = dkim2_canonicalize_header("$header: $item\r\n");
             warn "cdigest: $chead" if $DEBUG;
@@ -689,6 +689,7 @@ sub calculate {
     croak "need a message" unless $current;
 
     my $self = bless {}, $class;
+    my $prefixes = $opts{IgnorePrefixes};
 
     # spec-06 §3.1: the signer chooses one or more hash algorithms; default
     # is sha256 only (the signer default MUST NOT change).
@@ -755,7 +756,7 @@ sub calculate {
     # computed after any epilogue modification, for every configured
     # algorithm (spec-06 §7.3).
     for my $alg (@{$self->{algs}}) {
-        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg), b_digest($current, $alg) ];
+        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg, $prefixes), b_digest($current, $alg) ];
     }
     if (my $sha256 = $self->{bits}{hashes}{sha256}) {
         @{$self->{bits}}{qw(h1 b1)} = @$sha256;
@@ -769,7 +770,7 @@ sub calculate {
     my %all = map { lc($_) => 1 } ($current->header_names, $previous->header_names);
     my %hdiff;
     for my $h (sort keys %all) {
-        next if should_skip($h);
+        next if should_skip($h, $prefixes);
         my @cur  = reverse $current->header_raw($h);
         my @prev = reverse $previous->header_raw($h);
         next if join("\n", map { dkim2_canonicalize_header($_) } @cur)
@@ -810,7 +811,7 @@ sub calculate {
 # --- Verify ---
 
 sub verify {
-    my ($class, $msg) = @_;
+    my ($class, $msg, %opts) = @_;
     croak "need a message" unless $msg;
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
@@ -842,7 +843,7 @@ sub verify {
 
     for my $alg (@usable) {
         my ($h1, $b1) = @{ $hashes->{$alg} };
-        my $hd = h_digest($msg, $alg);
+        my $hd = h_digest($msg, $alg, $opts{IgnorePrefixes});
         my $bd = b_digest($msg, $alg);
         if ($h1 ne $hd) {
             return wantarray ? (0, "$alg header hash mismatch ($h1 != $hd)") : 0;
@@ -938,7 +939,7 @@ sub undo {
 # before signing catches an upstream that emitted a non-reversible Recipe.
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
-    my ($class, $msg) = @_;
+    my ($class, $msg, %opts) = @_;
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = Email::MIME->new("$msg");
     }
@@ -951,7 +952,7 @@ sub chain_verifies {
         my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
         last unless $num;
 
-        my ($ok, $err) = $class->verify($msg);
+        my ($ok, $err) = $class->verify($msg, %opts);
         return (0, "Message-Instance m=$num does not match content"
                  . ($err ? " ($err)" : '')) unless $ok;
 

@@ -20,17 +20,8 @@ sub default_config {
         'dns_overrides'        => undef,  # path to dns.json for testing
         'add_message_instance' => 1,      # compute and add MI header on inbound
         'snapshot_directory'   => undef,  # store message snapshots for egress diffing
-        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end
+        'ignore_header_prefixes' => [],   # our own fields, hashed by neither end (IgnorePrefixes)
     };
-}
-
-# The library's list is process-wide and shared with any other handler that
-# sets it, so only a handler with something to say touches it.
-sub setup_callback {
-    my ($self) = @_;
-    my $prefixes = $self->handler_config()->{'ignore_header_prefixes'} || [];
-    Mail::DKIM2::Common::ignore_header_prefixes(@$prefixes) if @$prefixes;
-    return;
 }
 
 sub register_metrics {
@@ -82,7 +73,9 @@ sub eoh_callback {
 
     my $verifier;
     eval {
-        $verifier = Mail::DKIM2::Verifier->new();
+        $verifier = Mail::DKIM2::Verifier->new(
+            IgnorePrefixes => $self->handler_config()->{'ignore_header_prefixes'},
+        );
         $self->_setup_pubkey_callback($verifier);
         $self->set_object('dkim2_verifier', $verifier, 1);
     };
@@ -218,7 +211,8 @@ sub _add_mi_and_store {
             # Case 2: Message has existing MI header(s).
             # The topmost MI must match current content (already verified
             # by the DKIM2 chain check).  Use it as the snapshot key.
-            my $mi_ver = Mail::DKIM2::MessageInstance->verify($msg);
+            my $mi_ver = Mail::DKIM2::MessageInstance->verify($msg,
+                IgnorePrefixes => $config->{'ignore_header_prefixes'});
             unless ( $mi_ver ) {
                 # This shouldn't happen after successful DKIM2 verification
                 $self->log_error( 'DKIM2MI: MI headers present but none match current content' );
@@ -232,7 +226,8 @@ sub _add_mi_and_store {
         else {
             # Case 1: No MI headers — first entry into DKIM2 ecosystem.
             # Compute MI m=1 and prepend it.
-            my $mi = Mail::DKIM2::MessageInstance->calculate($msg);
+            my $mi = Mail::DKIM2::MessageInstance->calculate($msg, undef,
+                IgnorePrefixes => $config->{'ignore_header_prefixes'});
             $mi_value = $self->_format_mi($mi);
             $self->prepend_header( 'Message-Instance', $mi_value );
             $snapshot = "Message-Instance: $mi_value$EOL" . $message_data;

@@ -34,7 +34,7 @@ sub _extract_mi_hash_sets {
 
 sub known_options {
     return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
-              PubkeyCallback);
+              PubkeyCallback IgnorePrefixes);
 }
 
 sub init {
@@ -389,7 +389,7 @@ sub _verify_top_mi_headers {
     }
     for my $alg (@usable) {
         my $want = $hashes->{$alg}[0];
-        my $have = Mail::DKIM2::MessageInstance::h_digest($msg, $alg);
+        my $have = Mail::DKIM2::MessageInstance::h_digest($msg, $alg, $self->{IgnorePrefixes});
         next if $want eq $have;
         $self->{result}  = 'fail';
         $self->{details} = "Message-Instance m=$num header hash mismatch ($alg)";
@@ -410,7 +410,8 @@ sub _verify_mi_chain {
         my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
         last unless $num;
 
-        my ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg);
+        my ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg,
+            IgnorePrefixes => $self->{IgnorePrefixes});
         unless ($ok) {
             $self->{result}  = 'fail';
             $self->{details} = "Message-Instance m=$num does not match content"

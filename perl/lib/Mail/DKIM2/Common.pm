@@ -14,7 +14,6 @@ use Crypt::Digest::SHA256 qw(sha256 sha256_b64 sha256_hex);
 use Exporter 'import';
 our @EXPORT_OK = qw(
     should_skip
-    ignore_header_prefixes
     dkim2_canonicalize_header
     dkim2_canonicalize_sig_header
     digest64
@@ -67,26 +66,25 @@ my %SKIP_EXACT = map { $_ => 1 } qw(
     received return-path sio-label-history vbr-info x400-received x400-trace
 );
 
-# Header field names an operator's own systems put on the wrong side of the
-# signature: added at its border on the way in, stripped at its border on the
-# way out. A signer that hashed one would sign a message no recipient ever
-# sees; a verifier that hashed one would fail the operator's own forwards.
-# The operator sets these; the spec knows nothing of them, and neither does a
-# remote verifier, so the operator also has to make sure no field with one of
-# these names ever leaves its network.
-my @IGNORE_PREFIXES;
-
-sub ignore_header_prefixes {
-    @IGNORE_PREFIXES = map { lc } @_;
-    return;
-}
-
+# should_skip($name, \@prefixes)
+#
+# True when the field is excluded from the header hash: by the spec's list
+# above, or by one of the caller's prefixes. The prefixes are an operator's
+# own field names, put on the wrong side of the signature by its own systems:
+# added at its border on the way in, stripped at its border on the way out.
+# A signer that hashed one would sign a message no recipient ever sees; a
+# verifier that hashed one would fail the operator's own forwards. The spec
+# knows nothing of them and neither does a remote verifier, so the operator
+# also has to make sure no field with one of these names ever leaves its
+# network. They are local policy, so they travel as an argument -- never as
+# state shared by every Signer and Verifier in the process.
 sub should_skip {
-    my $hname = lc(shift);
+    my ($name, $prefixes) = @_;
+    my $hname = lc $name;
     return 1 if $SKIP_EXACT{$hname};
     return 1 if $hname =~ m/^x-/;
     return 1 if $hname =~ m/^received-/;
-    return 1 if grep { index($hname, $_) == 0 } @IGNORE_PREFIXES;
+    return 1 if $prefixes && grep { index($hname, lc $_) == 0 } @$prefixes;
     return 0;
 }
 
@@ -552,23 +550,16 @@ format are subject to change.  Do not use in production.
 
 All functions are exportable on request.
 
-=head2 should_skip($header_name)
+=head2 should_skip($header_name, \@prefixes)
 
-Returns true if the named header should be excluded from DKIM2 hashing.
-Excluded headers include C<Received>, C<Return-Path>, C<Message-Instance>,
-C<DKIM2-Signature>, C<DKIM-Signature>, C<Authentication-Results>, ARC
-headers, and any C<X-*> header, plus any header whose name starts with a
-prefix given to C<ignore_header_prefixes>.
-
-=head2 ignore_header_prefixes(@prefixes)
-
-Names, by case-insensitive prefix, the header fields the operator's own
-systems add after mail is signed and remove before it leaves, which its
-signers and verifiers then hash as if absent. Replaces any list set before;
-call with no arguments to clear it. This is local policy, not protocol: a
-remote verifier hashes these fields like any other, so the operator has to
-strip them at its border, and both ends of its own infrastructure have to
-agree on the list.
+Returns true if the named header is excluded from DKIM2 hashing: the
+spec-06 Section 4 list (C<Received>, C<Return-Path>, C<Message-Instance>,
+C<DKIM2-Signature>, C<DKIM-Signature>, C<Authentication-Results>, the ARC
+fields and so on), any C<X-*> or C<Received-*> field, or a field whose name
+starts with one of the caller's C<@prefixes> (case-insensitive). The
+prefixes are an operator's local policy for fields its own border adds and
+strips; pass them as C<IgnorePrefixes> to L<Mail::DKIM2::Verifier> and to
+the L<Mail::DKIM2::MessageInstance> class methods.
 
 =head2 dkim2_canonicalize_header($line)
 
