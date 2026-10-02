@@ -262,8 +262,8 @@ sub addheader_callback {
         $signer->CLOSE();
         $self->check_timeout();
 
-        my $sig_result = $signer->result;
-        $self->dbgout( 'DKIM2SignResult', $sig_result, LOG_DEBUG );
+        my $sig_result = $signer->result // 'none';
+        $self->dbgout( 'DKIM2SignResult', $signer->result_detail // 'none', LOG_DEBUG );
 
         if ( $sig_result eq 'signed' ) {
             # Extract the DKIM2-Signature header
@@ -281,7 +281,7 @@ sub addheader_callback {
         }
         else {
             $self->metric_count( 'dkim2_sign_total', { 'result' => 'error' } );
-            $self->log_error( "DKIM2 signing failed: $sig_result" );
+            $self->log_error( "DKIM2 signing failed: " . ($signer->result_detail // 'no result') );
         }
     };
     if ( my $error = $@ ) {

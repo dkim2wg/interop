@@ -72,7 +72,8 @@ sub _sign_with {
     my ($text, %sa) = @_;
     my $signer = Mail::DKIM2::Signer->new(%sa);
     $signer->PRINT($text); $signer->CLOSE;
-    croak "signing failed: " . $signer->result unless $signer->result eq 'signed';
+    croak "signing failed: " . ($signer->result_detail // 'no result')
+        unless ($signer->result // '') eq 'signed';
     return $signer->as_string;   # "DKIM2-Signature: ..."
 }
 
@@ -538,7 +539,8 @@ sub _sign {
     $sa{Timestamp} = $a{timestamp} if $a{timestamp};
     my $signer = Mail::DKIM2::Signer->new(%sa);
     $signer->PRINT($text); $signer->CLOSE;
-    croak "signing failed: " . $signer->result unless $signer->result eq 'signed';
+    croak "signing failed: " . ($signer->result_detail // 'no result')
+        unless ($signer->result // '') eq 'signed';
     return $signer->as_string;   # "DKIM2-Signature: ..."
 }
 

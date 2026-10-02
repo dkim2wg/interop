@@ -92,9 +92,10 @@ my $text = build_chain(MAX_CHAIN_LENGTH);
 
 {
     my $signer = signer();
-    ok(!eval { $signer->PRINT($text); $signer->CLOSE; 1 },
+    $signer->PRINT($text); $signer->CLOSE;
+    is($signer->result, 'fail',
         'the signer will not add signature ' . (MAX_CHAIN_LENGTH + 1));
-    like($@, qr/^cannot sign: PERMERROR more than 32 DKIM2-Signature fields/,
+    like($signer->details, qr/^PERMERROR more than 32 DKIM2-Signature fields/,
         '... and says why');
 
     my $current = Email::MIME->new($text);
@@ -163,9 +164,9 @@ my ($top_mi)  = $text =~ /^(Message-Instance:.*?\r\n)(?=\S)/ms;
     is($lookups, 0, '... with no key fetched');
 
     my $signer = signer();
-    ok(!eval { $signer->PRINT($sig . $short); $signer->CLOSE; 1 },
-        'the signer will not extend a chain with a repeated i=');
-    like($@, qr/^cannot sign: PERMERROR DKIM2-Signature i=2 appears more than once/,
+    $signer->PRINT($sig . $short); $signer->CLOSE;
+    is($signer->result, 'fail', 'the signer will not extend a chain with a repeated i=');
+    like($signer->details, qr/^PERMERROR DKIM2-Signature i=2 appears more than once/,
         '... and says why');
 
     my $twice = $mi . $short;

@@ -82,7 +82,13 @@ sub finish_header {
         // duplicate_number_error('DKIM2-Signature', 'i',
                map { $_->{i} } @dk2_headers);
     if ($error) {
-        die "cannot sign: $error\n";
+        # A protocol outcome, not a programming error: reported through
+        # result/details like the Verifier's, so a streaming host is not
+        # handed an exception from inside PRINT. The body is discarded.
+        $self->{result}  = 'fail';
+        $self->{details} = $error;
+        $self->stop;
+        return;
     }
     # Determine highest MI version
     my $mi_version = @mi_headers ? $mi_headers[-1]{v} : 0;
@@ -211,9 +217,21 @@ sub as_string {
     return $self->{_signature}->as_folded_string();
 }
 
+# undef until CLOSE; then 'signed', or 'fail' with the reason in details().
 sub result {
     my $self = shift;
-    return $self->{result} || '?';
+    return $self->{result};
+}
+
+sub details {
+    my $self = shift;
+    return $self->{details};
+}
+
+sub result_detail {
+    my $self = shift;
+    my $result = $self->result // return;
+    return $self->{details} ? "$result ($self->{details})" : $result;
 }
 
 1;
@@ -322,7 +340,18 @@ Returns the complete C<DKIM2-Signature: ...> header line.
 
 =head2 result()
 
-Returns C<'signed'> on success, C<'?'> if not yet complete.
+Undef until C<CLOSE>; then C<'signed'>, or C<'fail'> when the message
+cannot be signed (a chain already at the length limit, or with a repeated
+C<i=> or C<m=>). A failure is a result, not an exception: C<PRINT> and
+C<CLOSE> return normally.
+
+=head2 details()
+
+The reason for a C<'fail'> result, or undef.
+
+=head2 result_detail()
+
+C<result> and C<details> together, e.g. C<"fail (PERMERROR ...)">.
 
 =head1 AUTHOR
 

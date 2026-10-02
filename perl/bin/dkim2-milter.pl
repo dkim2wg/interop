@@ -666,7 +666,7 @@ sub _do_sign {
     $signer->PRINT($message);
     $signer->CLOSE();
 
-    return unless $signer->result eq 'signed';
+    return unless ($signer->result // '') eq 'signed';
 
     my $header = $signer->as_string();
     # Strip "DKIM2-Signature: " prefix for insheader

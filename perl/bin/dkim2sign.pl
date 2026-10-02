@@ -99,7 +99,8 @@ my $signer = Mail::DKIM2::Signer->new(
 $signer->PRINT($msg->as_string);
 $signer->CLOSE;
 
-die "signing failed\n" unless ($signer->result // '') eq 'signed';
+die "signing failed: " . ($signer->result_detail // 'no result') . "\n"
+    unless ($signer->result // '') eq 'signed';
 
 (my $sig_header = $signer->as_string) =~ s/^DKIM2-Signature:\s*//;
 $msg->header_raw_prepend('DKIM2-Signature', $sig_header);
