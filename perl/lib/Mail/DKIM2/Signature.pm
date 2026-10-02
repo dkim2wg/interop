@@ -125,8 +125,14 @@ sub _strip_fws {
     return $v;
 }
 
+# f= is a comma-separated list of flags (§8.6). Get as an arrayref, or set
+# from one.
 sub flags {
     my $self = shift;
+    if (@_) {
+        my $list = shift;
+        $self->set_tag('f', join(',', ref $list eq 'ARRAY' ? @$list : ($list)));
+    }
     my $f = $self->get_tag('f');
     return unless defined $f;
     return [grep { length } map { _strip_fws($_) } split /,/, $f];
@@ -150,36 +156,47 @@ sub signatures_data {
     return \@items;
 }
 
-# --- SMTP parameter accessors (mf= and rt= tags) ---
+# --- Envelope accessors (mf= and rt= tags) ---
+
+# mf= and rt= are base64-encoded RFC 5321 paths; both are excluded by nd=
+# (§8.7), which marks an imaginary forwarding hop with no envelope of its
+# own. Setting either on an nd= signature is therefore a caller error.
+sub _croak_if_nd {
+    my ($self, $tag) = @_;
+    croak "cannot set $tag= on a signature carrying nd= (spec-06 §8.7)"
+        if defined $self->get_tag('nd');
+}
 
 sub mail_from {
     my $self = shift;
+    if (@_) {
+        $self->_croak_if_nd('mf');
+        $self->set_tag('mf', encode_base64(to_rfc5321_path(shift), ''));
+    }
     my $mf = $self->get_tag('mf');
     return unless defined $mf;
     return decode_base64($mf);
-}
-
-sub rcpt_to {
-    my $self = shift;
-    my $rt = $self->get_tag('rt');
-    return unless defined $rt;
-    return [map { decode_base64($_) } split /,/, $rt];
 }
 
 # rt= is the only tag that differs between recipients of the same message.
 # §9.6 signs solely the Message-Instance and DKIM2-Signature header fields, so
 # the body hash, the header-fields hash and the Message-Instance are all
 # recipient-invariant: re-signing for another recipient means changing this tag
-# and nothing else. See Mail::DKIM2::Signer::sign_for_recipient.
-sub set_rcpt_to {
-    my ($self, $rcpt) = @_;
-    croak "cannot set rt= on a signature carrying nd= (spec-06 §8.7)"
-        if defined $self->get_tag('nd');
-    my @list = ref $rcpt eq 'ARRAY' ? @$rcpt : ($rcpt);
-    croak "set_rcpt_to requires at least one recipient" unless @list;
-    $self->set_tag('rt',
-        join(',', map { encode_base64(to_rfc5321_path($_), '') } @list));
-    return $self;
+# and nothing else. See Mail::DKIM2::Signer::sign_for_recipient. Takes one
+# address or an arrayref of them; always returns an arrayref.
+sub rcpt_to {
+    my $self = shift;
+    if (@_) {
+        $self->_croak_if_nd('rt');
+        my $rcpt = shift;
+        my @list = ref $rcpt eq 'ARRAY' ? @$rcpt : ($rcpt);
+        croak "rcpt_to requires at least one recipient" unless @list;
+        $self->set_tag('rt',
+            join(',', map { encode_base64(to_rfc5321_path($_), '') } @list));
+    }
+    my $rt = $self->get_tag('rt');
+    return unless defined $rt;
+    return [map { decode_base64($_) } split /,/, $rt];
 }
 
 # --- Convenience methods for signature items ---

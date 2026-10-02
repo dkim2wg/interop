@@ -147,12 +147,12 @@ sub finish_body {
 #     }
 #
 # Takes one address or an arrayref of them. Not usable on a signature carrying
-# nd=, which excludes rt= by §8.7; set_rcpt_to croaks in that case.
+# nd=, which excludes rt= by §8.7; Signature::rcpt_to croaks in that case.
 sub sign_for_recipient {
     my ($self, $rcpt) = @_;
     croak "sign_for_recipient requires CLOSE to have run first"
         unless $self->{_signature};
-    $self->{_signature}->set_rcpt_to($rcpt);
+    $self->{_signature}->rcpt_to($rcpt);
     $self->_compute_signature;
     $self->{result} = 'signed';
     return $self->as_string;
