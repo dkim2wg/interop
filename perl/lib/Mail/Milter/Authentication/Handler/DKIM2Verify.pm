@@ -286,25 +286,10 @@ sub _setup_pubkey_callback {
         });
     }
     else {
-        # Use real DNS via the milter's resolver
-        $verifier->set_pubkey_callback(sub {
-            my ($signature, $idx) = @_;
-            $idx //= 0;
-            my $sel = $signature->selector($idx);
-            my $dom = $signature->domain;
-            return unless $sel && $dom;
-            my $resolver = $self->get_object('resolver');
-            my $lookup = "$sel._domainkey.$dom";
-            $self->dbgout( 'DKIM2DNSLookup', "$lookup TXT", LOG_DEBUG );
-            my $reply = $resolver->query( $lookup, 'TXT' );
-            return unless $reply;
-            foreach my $rr ( $reply->answer ) {
-                next unless $rr->type eq 'TXT';
-                my $txt = $rr->txtdata;
-                return parse_dkim_pubkey($txt);
-            }
-            return;
-        });
+        # Real DNS through the milter's own resolver (so its timeouts and
+        # caching apply). The library classifies the answer: no record is
+        # permerror, anything transient is temperror.
+        $verifier->resolver( $self->get_object('resolver') );
     }
 }
 

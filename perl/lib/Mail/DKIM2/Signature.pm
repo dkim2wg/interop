@@ -326,46 +326,6 @@ sub check_duplicates {
     return @errors;
 }
 
-# --- DNS key lookup ---
-
-sub fetch_public_key {
-    my ($self, $idx) = @_;
-    $idx //= 0;
-    my $sel = $self->selector($idx);
-    my $dom = $self->domain;
-    croak "missing selector or domain" unless $sel && $dom;
-
-    # Fetch TXT record from DNS. Resolver is injectable for testing.
-    my $resolver = $self->{_resolver};
-    unless ($resolver) {
-        require Net::DNS::Resolver;
-        $resolver = Net::DNS::Resolver->new;
-    }
-    my $fqdn = "$sel._domainkey.$dom";
-    my $reply = $resolver->query($fqdn, 'TXT');
-    unless ($reply) {
-        # Distinguish a TRANSIENT DNS failure (timeout, SERVFAIL, network
-        # unreachable) from a genuine no-record answer. Per
-        # draft-ietf-dkim-dkim2-spec-06 §10, DNS timeouts MUST be reported as
-        # TEMPERROR (retryable) — not as a permanent "no verifiable signature
-        # items". We signal the transient case by dying; the verifier's eval
-        # maps that to temperror. NXDOMAIN / NOERROR-with-no-record is permanent
-        # (the key really is absent), so we return undef.
-        my $err = $resolver->errorstring // '';
-        if ($err =~ /timeout|timed out|SERVFAIL|REFUSED|network|unreachable|connection|no reply/i) {
-            croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
-        }
-        return;
-    }
-    for my $rr ($reply->answer) {
-        next unless $rr->type eq 'TXT';
-        my $txt = join('', $rr->txtdata);
-        require Mail::DKIM2::Common;
-        return Mail::DKIM2::Common::parse_dkim_pubkey($txt);
-    }
-    return;
-}
-
 1;
 
 __END__
@@ -522,13 +482,6 @@ characters, ready for insertion into a message.
 =head2 sig_count()
 
 Returns the number of signature items in the C<s=> tag.
-
-=head1 DNS
-
-=head2 fetch_public_key([$index])
-
-Fetches the public key via DNS for the signature item at C<$index>
-(default 0), using the selector and domain from this signature.
 
 =head1 AUTHOR
 

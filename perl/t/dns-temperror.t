@@ -12,12 +12,15 @@ use DKIM2TestKeys;
 
 # A transient DNS failure (timeout / SERVFAIL / network unreachable) MUST be
 # reported as TEMPERROR (retryable), per draft-ietf-dkim-dkim2-spec-06 §10 —
-# NOT as a permanent "no verifiable signature items". A genuine NXDOMAIN /
-# no-record IS permanent and returns undef (no key). fetch_public_key signals
-# the transient case by dying, which the verifier's eval maps to temperror.
+# NOT as a permanent "no verifiable signature items". Only an answer that
+# positively says the name has no TXT record (NXDOMAIN, NOERROR, NODATA) is
+# permanent and returns undef (no key). Anything else -- including an error
+# string this code has never seen -- is treated as transient: a DNS blip must
+# never read as a forged signature. fetch_public_key signals the transient
+# case by dying, which the verifier's eval maps to temperror.
 
 # Minimal mock resolver: query() always returns no reply; errorstring() is
-# whatever we set. Injected via $sig->{_resolver}.
+# whatever we set. Injected via the Verifier's Resolver option.
 package MockResolver;
 sub new { my ($c, %a) = @_; bless {%a}, $c }
 sub query { return undef }
@@ -30,21 +33,45 @@ my $tmpl = 'i=1; m=1; t=1; d=example.com; '
          . 's=sel1:rsa-sha256:AAAA;';
 
 # 1. Transient failures die (→ temperror in the verifier).
-for my $err ('query timed out', 'SERVFAIL', 'connection failed', 'network unreachable') {
+for my $err ('query timed out', 'SERVFAIL', 'connection failed', 'network unreachable',
+             'something this code has never heard of') {
     my $sig = Mail::DKIM2::Signature->parse($tmpl);
-    $sig->{_resolver} = MockResolver->new(err => $err);
-    my $ok = eval { $sig->fetch_public_key(0); 1 };
-    ok(!$ok, "transient DNS failure '$err' dies (temperror, not silent undef)");
+    my $v = Mail::DKIM2::Verifier->new(Resolver => MockResolver->new(err => $err));
+    my $ok = eval { $v->fetch_public_key($sig, 0); 1 };
+    ok(!$ok, "DNS failure '$err' dies (temperror, not silent undef)");
     like($@, qr/temperror/i, "  ... and the die message is tagged TEMPERROR");
 }
 
 # 2. NXDOMAIN / no-record does NOT die; returns undef (genuinely no key → permerror).
-for my $err ('NXDOMAIN', 'NOERROR') {
+for my $err ('NXDOMAIN', 'NOERROR', 'NODATA') {
     my $sig = Mail::DKIM2::Signature->parse($tmpl);
-    $sig->{_resolver} = MockResolver->new(err => $err);
-    my $r = eval { $sig->fetch_public_key(0) };
+    my $v = Mail::DKIM2::Verifier->new(Resolver => MockResolver->new(err => $err));
+    my $r = eval { $v->fetch_public_key($sig, 0) };
     ok(!$@, "no-record '$err' does not die");
     is($r, undef, "  ... and returns undef (no key)");
+}
+
+# 2b. A Verifier with a Resolver and no callback uses it for the whole verify.
+{
+    my $signed = signed_message();
+    my $v = Mail::DKIM2::Verifier->new(SkipTimestampCheck => 1,
+        Resolver => MockResolver->new(err => 'query timed out'));
+    $v->load($signed);
+    is($v->result, 'temperror', 'Resolver option drives the default key fetch');
+}
+
+# 2c. The pubkey callback is handed the verifier as its third argument, so a
+#     callback that only overrides some keys can fall back to the real fetch.
+{
+    my $signed = signed_message();
+    my @seen;
+    my $v = Mail::DKIM2::Verifier->new(SkipTimestampCheck => 1,
+        Resolver => MockResolver->new(err => 'SERVFAIL'),
+        PubkeyCallback => sub { my ($sig, $idx, $verifier) = @_; push @seen, $verifier;
+                                return $verifier->fetch_public_key($sig, $idx) });
+    $v->load($signed);
+    is($seen[0], $v, 'callback receives the verifier');
+    is($v->result, 'temperror', '  ... and the fallback fetch is classified as usual');
 }
 
 # 3. The same transient failure reached through a *pubkey callback* must also be

@@ -105,13 +105,15 @@ sub _default_cb {
         }
     }
     return sub {
-        my ($sig, $idx) = @_; $idx //= 0;
+        my ($sig, $idx, $verifier) = @_; $idx //= 0;
         my $sel = $sig->selector($idx); my $dom = $sig->domain;
         if ($dns && $dom && $sel) {
             my $t = $dns->{$dom}{"$sel._domainkey"}[0][1];
             return parse_dkim_pubkey($t) if $t;
         }
-        return eval { $sig->fetch_public_key($idx) };
+        # Real DNS. Not eval'd: a transient failure must stay a TEMPERROR,
+        # which the verifier classifies; swallowing it here read as "no key".
+        return $verifier->fetch_public_key($sig, $idx);
     };
 }
 

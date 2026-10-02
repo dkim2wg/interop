@@ -440,14 +440,7 @@ sub _verify {
     # this the result would be permerror instead of 'none' and we would refuse
     # to sign the very mail we are here to sign.
     $v->allow_unsigned_mi(1);
-    if ($cb) {
-        $v->set_pubkey_callback($cb);
-    } else {
-        $v->set_pubkey_callback(sub {
-            my ($sig, $idx) = @_; $idx //= 0;
-            return $sig->fetch_public_key($idx);
-        });
-    }
+    $v->set_pubkey_callback($cb) if $cb;
     $v->PRINT($text); $v->CLOSE;
     return ($v->result // 'none', $v->details);
 }

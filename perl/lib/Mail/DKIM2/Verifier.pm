@@ -34,7 +34,7 @@ sub _extract_mi_hash_sets {
 
 sub known_options {
     return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
-              PubkeyCallback IgnorePrefixes);
+              PubkeyCallback Resolver IgnorePrefixes);
 }
 
 sub init {
@@ -599,17 +599,16 @@ sub _verify_signature {
         next unless $sig_b64;
 
         # Get the public key for this signature item.  The fetch is eval'd
-        # whichever way the key is sourced: every real caller (milter,
-        # reflector, validator, CLIs) installs a pubkey callback, and the stock
-        # callbacks end in fetch_public_key(), which dies on transient DNS.
-        # Guarding only the no-callback branch let that croak escape the
-        # verifier and take the caller down with it -- the reflector dropped
-        # the message outright instead of reflecting it unsigned.
+        # whichever way the key is sourced: a pubkey callback may end in
+        # fetch_public_key(), which dies on transient DNS. Guarding only the
+        # no-callback branch once let that croak escape the verifier and take
+        # the caller down with it -- the reflector dropped the message outright
+        # instead of reflecting it unsigned.
         my $pubkey;
         my $fetched = eval {
             $pubkey = $self->{PubkeyCallback}
-                ? $self->{PubkeyCallback}->($signature, $idx)
-                : $signature->fetch_public_key($idx);
+                ? $self->{PubkeyCallback}->($signature, $idx, $self)
+                : $self->fetch_public_key($signature, $idx);
             1;
         };
         unless ($fetched) {
@@ -757,7 +756,52 @@ sub _verify_chain {
     return 1;
 }
 
-# Allow setting a callback for public key lookup (for testing with dns.json)
+# --- Public key lookup ---
+
+# fetch_public_key($signature, $idx): the default key source, a TXT lookup of
+# <selector>._domainkey.<d=> through the Resolver option (a Net::DNS::Resolver
+# or anything with the same query/errorstring interface; one is made if none
+# was given). Returns a Crypt::PK object, or undef when the answer positively
+# says there is no such record. Anything else -- a timeout, SERVFAIL, REFUSED,
+# a network error, or an errorstring this code has never seen -- dies with a
+# TEMPERROR: spec-06 §10 makes a DNS failure retryable, never a permanent "no
+# verifiable signature items", and emphatically never a 'fail', which reads as
+# a forged signature. _verify_signature's eval maps the die to temperror.
+#
+# A PubkeyCallback replaces this; it is called as ($signature, $idx, $verifier)
+# so a callback that only overrides some keys can fall back to
+# $verifier->fetch_public_key($signature, $idx) and keep the classification.
+sub fetch_public_key {
+    my ($self, $signature, $idx) = @_;
+    $idx //= 0;
+    my $sel = $signature->selector($idx);
+    my $dom = $signature->domain;
+    croak "missing selector or domain" unless $sel && $dom;
+
+    my $resolver = $self->{Resolver} //= do {
+        require Net::DNS::Resolver;
+        Net::DNS::Resolver->new;
+    };
+    my $fqdn = "$sel._domainkey.$dom";
+    my $reply = $resolver->query($fqdn, 'TXT');
+    unless ($reply) {
+        my $err = $resolver->errorstring // '';
+        return if $err =~ /^(?:NXDOMAIN|NOERROR|NODATA)\s*$/i;
+        croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
+    }
+    for my $rr ($reply->answer) {
+        next unless $rr->type eq 'TXT';
+        return Mail::DKIM2::Common::parse_dkim_pubkey(join('', $rr->txtdata));
+    }
+    return;
+}
+
+sub resolver {
+    my ($self, $val) = @_;
+    $self->{Resolver} = $val if defined $val;
+    return $self->{Resolver};
+}
+
 sub set_pubkey_callback {
     my ($self, $cb) = @_;
     $self->{PubkeyCallback} = $cb;

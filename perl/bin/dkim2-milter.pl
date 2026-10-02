@@ -521,14 +521,14 @@ sub _do_verify {
 
     if ($dns_data) {
         $verifier->set_pubkey_callback(sub {
-            my ($sig, $idx) = @_;
+            my ($sig, $idx, $v) = @_;
             $idx //= 0;
             my $sel = $sig->selector($idx);
             my $dom = $sig->domain;
             my $key_txt = $dns_data->{$dom}{"$sel._domainkey"}[0][1]
                 if $dns_data->{$dom} && $dns_data->{$dom}{"$sel._domainkey"};
             return parse_dkim_pubkey($key_txt) if $key_txt;
-            return $sig->fetch_public_key($idx);  # fall back to real DNS
+            return $v->fetch_public_key($sig, $idx);  # fall back to real DNS
         });
     }
 
