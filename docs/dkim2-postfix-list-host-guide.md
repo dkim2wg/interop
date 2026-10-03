@@ -389,11 +389,12 @@ git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/sympa/pat
 autoreconf -i && ./configure && make && make install
 ```
 
-(`./configure` takes the same prefix options as the install it replaces;
-the dkim2.com host builds into the Debian package's layout.) Or overlay
-the patched files onto an installed 6.2.78; the file list is in
-`sympa/README.md`. A distribution package of an older Sympa is not a
-supported base.
+(`./configure --enable-fhs` with the same prefix options as the install it
+replaces; `sympa/README.md` has the line the dkim2.com host used to build
+into the Debian package's layout, and the three extra Perl modules 6.2.78
+needs.) Or overlay the patched files onto an installed 6.2.78; the file
+list is in `sympa/README.md`. A distribution package of an older Sympa is
+not a supported base.
 
 Sympa submits outbound mail through a `sendmail` command. Install the
 wrapper that submits to the signing listener instead:
