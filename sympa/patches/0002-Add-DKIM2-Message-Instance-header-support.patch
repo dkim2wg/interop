@@ -786,7 +786,7 @@ index 1f444000e..94a5f45f0 100644
              'err',
 diff --git a/t/Message_DKIM2.t b/t/Message_DKIM2.t
 new file mode 100644
-index 000000000..cf447ba23
+index 000000000..2ffc968f5
 --- /dev/null
 +++ b/t/Message_DKIM2.t
 @@ -0,0 +1,737 @@
@@ -892,7 +892,7 @@ index 000000000..cf447ba23
 +
 +    # Parse the MI header and check version.
 +    my $mi_raw = $msg->{_head}->get('Message-Instance', 0);
-+    like $mi_raw, qr/v=1/, 'MI header has v=1';
++    like $mi_raw, qr/\bm=1;/, 'MI header has m=1';
 +    like $mi_raw, qr/h=/, 'MI header has h= tag';
 +
 +    # Verify the MI using the library.
@@ -1515,7 +1515,7 @@ index 000000000..cf447ba23
 +    my $mi_v2;
 +    for my $h (@mi) {
 +        my $parsed = Mail::DKIM2::MessageInstance->parse($h);
-+        $mi_v2 = $parsed if ($parsed->get_tag('v') // 0) == 2;
++        $mi_v2 = $parsed if ($parsed->get_tag('m') // 0) == 2;
 +    }
 +    ok $mi_v2, 'found MI v=2 header';
 +    my $rb = $mi_v2->get_tag('rb');

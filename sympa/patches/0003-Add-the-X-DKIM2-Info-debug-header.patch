@@ -17,8 +17,8 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
  src/lib/Sympa/Message.pm | 58 +++++++++++++++++++++++++++++++++-------
- t/Message_DKIM2.t        | 18 +++++++++++++
- 2 files changed, 67 insertions(+), 9 deletions(-)
+ t/Message_DKIM2.t        | 19 +++++++++++++
+ 2 files changed, 68 insertions(+), 9 deletions(-)
 
 diff --git a/src/lib/Sympa/Message.pm b/src/lib/Sympa/Message.pm
 index 89672515b..93355cf0c 100644
@@ -109,10 +109,10 @@ index 89672515b..93355cf0c 100644
      $log->syslog('debug2', 'Added Message-Instance m=%s', $version);
      return 1;
 diff --git a/t/Message_DKIM2.t b/t/Message_DKIM2.t
-index cf447ba23..57f183a47 100644
+index 2ffc968f5..e6a277d39 100644
 --- a/t/Message_DKIM2.t
 +++ b/t/Message_DKIM2.t
-@@ -109,6 +109,19 @@ subtest 'MI v=1 on plain message' => sub {
+@@ -109,6 +109,20 @@ subtest 'MI v=1 on plain message' => sub {
      is $version, 1, 'MI v=1 verifies correctly';
      is $error, undef, 'no verification error';
  
@@ -122,7 +122,8 @@ index cf447ba23..57f183a47 100644
 +    # draft-gondwana-dkim2-debug-header-01: a tag-list in the DKIM2 syntax,
 +    # every tag followed by ";", and the instance action is mi-m=<N>.
 +    my ($info) = $rfc822 =~ /^X-DKIM2-Info:[ \t]*((?:[^\n]|\n[ \t])*)/m;
-+    $info =~ s/\n[ \t]+/ /g;
++    $info =~ s/\r?\n[ \t]+/ /g;      # unfold (the message may be CRLF)
++    $info =~ s/\s+\z//;
 +    $info =~ s/([;,])[ \t]+/$1/g;    # a consumer ignores WSP next to ; and ,
 +    $info =~ s/;(?=.)/; /g;
 +    like $info,
@@ -132,7 +133,7 @@ index cf447ba23..57f183a47 100644
      # mi_original should be stored.
      ok defined $msg->{mi_original}, 'mi_original is stored';
      like $msg->{mi_original}, qr/Message-Instance/,
-@@ -206,6 +219,11 @@ subtest 'MI v=2 captures header additions' => sub {
+@@ -206,6 +220,11 @@ subtest 'MI v=2 captures header additions' => sub {
  
      # Verify v=2 against current message.
      my $rfc822 = $msg->as_rfc822_string;
