@@ -414,9 +414,9 @@ locally. Decode each copy's `rt=` and expect exactly one recipient in each.
 **Installation:** `pip install 'git+https://github.com/brong/mailman@dkim2-3.3.10'`
 into the venv at `/opt/mailman/venv/` (since 2026-10-03). `dkim2-3.3.10` is the
 v3.3.10 release plus two upstream Python 3.13 fixes plus the 3-commit DKIM2
-series (`mailman/patches`); the box runs it deliberately, to gain experience
+series (`mailman/patches-3.3.10`); the box runs it deliberately, to gain experience
 with what operators install. The `dkim2` branch is the same series on upstream
-master (`mailman/patches-master`). The installed package files live at:
+master (`mailman/patches-master`; `mailman/patches-3.3.8` is the LTS backport). The installed package files live at:
 ```
 /opt/mailman/venv/lib/python3.13/site-packages/mailman/
 ```
@@ -511,7 +511,7 @@ additions in `src/lib/Sympa/Message.pm`.
 
 **Installation (since 2026-10-03):** Sympa **6.2.78 built from the patched
 source** in `/opt/sympa-dkim2` (a checkout of `brong/sympa`, branch `dkim2` =
-the 3-commit series in `sympa/patches`), installed over the Ubuntu `sympa`
+the 3-commit series in `sympa/patches-6.2.78`), installed over the Ubuntu `sympa`
 6.2.76 package's layout (`--enable-fhs`, modules in `/usr/share/sympa/lib`,
 programs in `/usr/lib/sympa/bin`, CGI in `/usr/lib/cgi-bin/sympa`); the
 package is `apt-mark hold`. The package's systemd units are kept (the build's
@@ -939,6 +939,9 @@ ssh dkim2 'cd /opt/mailman/src-test && git fetch origin && git reset --hard orig
 ```
 `/opt/mailman/test-venv` has the production venv's dependencies plus `nose2`
 and `flufl.testing`, and the clone installed with `pip install -e . --no-deps`.
+The 3.3.8 backport has its own pair, `/opt/mailman/src-test-3.3.8` and
+`/opt/mailman/test-venv-3.12` (Python 3.12 from `uv`, SQLAlchemy < 2, as Debian
+12 / Ubuntu 24.04 ship it), run the same way with `dkim2-3.3.8`.
 
 ### Sympa (Perl, brong/sympa repo, `dkim2` branch)
 

@@ -1,21 +1,22 @@
 #!/bin/bash
 # Export the DKIM2 patch series for Mailman 3 and Sympa from their fork
-# checkouts into mailman/patches (the 3.3.10 backport, what operators install),
-# mailman/patches-master (the same change on upstream master) and
-# sympa/patches, or (--check) verify that the exported series still apply to
-# the bases the READMEs name.
+# checkouts into mailman/patches-3.3.10, mailman/patches-3.3.8,
+# mailman/patches-master and sympa/patches-6.2.78, or (--check) verify that the
+# exported series still apply to the bases the READMEs name.
 #
 #   util/export-list-patches.sh            # regenerate both series
 #   util/export-list-patches.sh --check    # apply them to their bases; exit 1 on failure
 #
 # The fork checkouts default to ~/src/mailman and ~/src/sympa. Mailman carries
-# the work twice: branch dkim2-3.3.10 on the v3.3.10 release and branch dkim2 on
-# upstream master; Sympa has branch dkim2 on tag 6.2.78. Three commits each.
+# the work three times: branch dkim2-3.3.10 on the v3.3.10 release (plus two
+# upstream Python 3.13 fixes), dkim2-3.3.8 on the 3.3.8 release, and dkim2 on
+# upstream master; Sympa has branch dkim2 on tag 6.2.78.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 MAILMAN=${MAILMAN_DIR:-$HOME/src/mailman}
 SYMPA=${SYMPA_DIR:-$HOME/src/sympa}
-MAILMAN_RELEASE=v3.3.10         # branch dkim2-3.3.10: the series operators install
+MAILMAN_3310=v3.3.10            # branch dkim2-3.3.10: current release (Debian 13, Ubuntu 25.04+)
+MAILMAN_338=3.3.8               # branch dkim2-3.3.8: LTS release (Debian 12, Ubuntu 24.04)
 MAILMAN_MASTER=687b9e4dc        # branch dkim2: the same change on upstream master
 SYMPA_BASE=6.2.78
 check=0
@@ -29,8 +30,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-export_series() {  # name checkout base branch [subdir]
-  local name=$1 dir=$2 base=$3 branch=${4:-dkim2} sub=${5:-patches}
+export_series() {  # name checkout base branch subdir
+  local name=$1 dir=$2 base=$3 branch=$4 sub=$5
   local out="$ROOT/$name/$sub"
   rm -rf "$out"; mkdir -p "$out"
   # --no-signature drops the "-- \n<git version>" trailer so regenerating with
@@ -40,10 +41,10 @@ export_series() {  # name checkout base branch [subdir]
   echo "exported $(ls "$out" | wc -l | tr -d ' ') patches to $name/$sub (base $base, $branch at $(git -C "$dir" rev-parse --short "$branch"))"
 }
 
-check_series() {  # name checkout base [subdir]
+check_series() {  # name checkout base subdir
   # A disposable worktree at the base; `git am` applies the series for real,
   # which is the only honest check when patch 2 depends on patch 1.
-  local name=$1 dir=$2 base=$3 sub=${4:-patches} wt rc=0 err
+  local name=$1 dir=$2 base=$3 sub=$4 wt rc=0 err
   err=$(mktemp)
   wt=$(mktemp -d)
   rmdir "$wt"   # worktree add wants to create it
@@ -61,14 +62,16 @@ check_series() {  # name checkout base [subdir]
 }
 
 if [ $check -eq 0 ]; then
-  export_series mailman "$MAILMAN" "$MAILMAN_RELEASE" dkim2-3.3.10 patches
-  export_series mailman "$MAILMAN" "$MAILMAN_MASTER"  dkim2        patches-master
-  export_series sympa   "$SYMPA"   "$SYMPA_BASE"      dkim2        patches
+  export_series mailman "$MAILMAN" "$MAILMAN_3310"   dkim2-3.3.10 patches-3.3.10
+  export_series mailman "$MAILMAN" "$MAILMAN_338"    dkim2-3.3.8  patches-3.3.8
+  export_series mailman "$MAILMAN" "$MAILMAN_MASTER" dkim2        patches-master
+  export_series sympa   "$SYMPA"   "$SYMPA_BASE"     dkim2        patches-6.2.78
   exit 0
 fi
 
 fail=0
-check_series mailman "$MAILMAN" "$MAILMAN_RELEASE" patches        || fail=1
-check_series mailman "$MAILMAN" "$MAILMAN_MASTER"  patches-master || fail=1
-check_series sympa   "$SYMPA"   "$SYMPA_BASE"      patches        || fail=1
+check_series mailman "$MAILMAN" "$MAILMAN_3310"   patches-3.3.10 || fail=1
+check_series mailman "$MAILMAN" "$MAILMAN_338"    patches-3.3.8  || fail=1
+check_series mailman "$MAILMAN" "$MAILMAN_MASTER" patches-master || fail=1
+check_series sympa   "$SYMPA"   "$SYMPA_BASE"     patches-6.2.78 || fail=1
 exit $fail

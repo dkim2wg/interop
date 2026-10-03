@@ -53,7 +53,7 @@ Apply to a 6.2.78 source tree and build as usual:
 ```bash
 git clone https://github.com/sympa-community/sympa.git && cd sympa
 git checkout 6.2.78
-git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/sympa/patches/*.patch
+git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/sympa/patches-6.2.78/*.patch
 autoreconf -i            # needs the autopoint package (gettext)
 ./configure --enable-fhs --prefix=/usr --sysconfdir=/etc/sympa --localstatedir=/var \
     --with-user=sympa --with-group=sympa ...

@@ -276,11 +276,13 @@ listener.
 
 Mailman adds the `Message-Instance` headers; the milter signs. The
 changes are three patches, described in `mailman/README.md`, carried on
-two branches of <https://github.com/brong/mailman>: `dkim2-3.3.10` on the
-3.3.10 release, which is the one to install, and `dkim2` on upstream
-master. The 3.3.10 branch also carries two small upstream fixes without
-which 3.3.10 does not install or decorate on Python 3.13, the default on
-Debian 13 and Ubuntu 25.04 and later; they are harmless on older Pythons.
+three branches of <https://github.com/brong/mailman>: `dkim2-3.3.10` on
+the current 3.3.10 release, `dkim2-3.3.8` on the 3.3.8 release that Debian
+12 and Ubuntu 24.04 package, and `dkim2` on upstream master. Install the
+one matching your Mailman. The 3.3.10 branch also carries two small
+upstream fixes without which 3.3.10 does not install or decorate on Python
+3.13, the default on Debian 13 and Ubuntu 25.04 and later; they are
+harmless on older Pythons.
 
 This assumes Mailman installed the upstream way, in a virtualenv. A
 distribution `mailman3` package needs the series applied to the package
@@ -290,14 +292,16 @@ Install into the Mailman virtualenv, either from the branch:
 
 ```bash
 /opt/mailman/venv/bin/pip install 'git+https://github.com/brong/mailman@dkim2-3.3.10'
+# or, on Mailman 3.3.8:
+/opt/mailman/venv/bin/pip install 'git+https://github.com/brong/mailman@dkim2-3.3.8'
 ```
 
-or by applying the series to a checkout of the release:
+or by applying the matching series to a checkout of the release:
 
 ```bash
 git clone https://gitlab.com/mailman/mailman.git && cd mailman
-git checkout v3.3.10
-git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/mailman/patches/*.patch
+git checkout v3.3.10                                    # or 3.3.8
+git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/mailman/patches-3.3.10/*.patch
 /opt/mailman/venv/bin/pip install .
 ```
 
@@ -374,7 +378,7 @@ Either build from patched source:
 ```bash
 git clone https://github.com/sympa-community/sympa.git && cd sympa
 git checkout 6.2.78
-git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/sympa/patches/*.patch
+git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/sympa/patches-6.2.78/*.patch
 autoreconf -i && ./configure && make && make install
 ```
 
