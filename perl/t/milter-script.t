@@ -29,8 +29,8 @@ use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;
 use DKIM2TestKeys;
 
-plan skip_all => 'Sendmail::PMilter not installed'
-    unless eval { require Sendmail::PMilter; 1 };
+plan skip_all => 'Sendmail::PMilter 1.28 or later not installed (1.27 never answered MAIL FROM:<>)'
+    unless eval { require Sendmail::PMilter; Sendmail::PMilter->VERSION(1.28); 1 };
 
 my $SCRIPT   = "$FindBin::Bin/../bin/dkim2-milter";
 my $LIB      = "$FindBin::Bin/../lib";

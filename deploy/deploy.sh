@@ -26,6 +26,18 @@ REPO=/root/interop
 cd "$REPO"
 echo ">> interop HEAD: $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
 
+# 0. Sendmail::PMilter 1.28+ (July 2026): the first release that answers a
+#     null-sender MAIL FROM:<>; 1.27 made Postfix wait out milter_command_timeout
+#     and internally-generated bounces shipped unsigned (we carried a local patch
+#     until 2026-10-03). dkim2-milter refuses to start with an older version, so
+#     upgrade before the test gate (t/milter-script.t runs the milter) and
+#     the restart below.
+if perl -MSendmail::PMilter\ 1.28 -e1 2>/dev/null; then
+    echo ">> Sendmail::PMilter $(perl -MSendmail::PMilter -e 'print $Sendmail::PMilter::VERSION') ok"
+else
+    echo ">> upgrading Sendmail::PMilter to 1.28+ ..."
+    cpanm --quiet --notest Sendmail::PMilter
+
 # 1. Perl library: clean rebuild + mandatory test gate, then install.
 cd "$REPO/perl"
 echo ">> clean rebuild of Mail::DKIM2 ..."
@@ -85,16 +97,6 @@ install -m 644 "$REPO/deploy/postfix-dkim2-delayedbounce" /etc/postfix/dkim2-del
 postmap /etc/postfix/dkim2-delayedbounce
 postfix reload
 
-# 3c. Sendmail::PMilter 1.28+ (July 2026): the first release that answers a
-#     null-sender MAIL FROM:<>; 1.27 made Postfix wait out milter_command_timeout
-#     and internally-generated bounces shipped unsigned (we carried a local patch
-#     until 2026-10-03). dkim2-milter refuses to start with an older version, so
-#     upgrade here rather than fail at the restart below.
-if perl -MSendmail::PMilter\ 1.28 -e1 2>/dev/null; then
-    echo ">> Sendmail::PMilter $(perl -MSendmail::PMilter -e 'print $Sendmail::PMilter::VERSION') ok"
-else
-    echo ">> upgrading Sendmail::PMilter to 1.28+ ..."
-    cpanm --quiet --notest Sendmail::PMilter
 fi
 
 # 4. Restart the long-running milters so they load the freshly-installed lib
