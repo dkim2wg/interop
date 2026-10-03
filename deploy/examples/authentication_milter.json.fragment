@@ -1,5 +1,5 @@
 "DKIM2Verify" : {
-    "hide_none"              : 1,
+    "hide_none"              : 0,
     "add_message_instance"   : 1,
     "snapshot_directory"     : "/var/spool/dkim2/snapshots",
     "ignore_header_prefixes" : []

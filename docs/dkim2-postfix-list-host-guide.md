@@ -168,47 +168,35 @@ both active, and `journalctl -u dkim2-milter-outbound -n 5` shows
 ### 5b. authentication_milter with the DKIM2 handlers
 
 If you run (or want) Mail::Milter::Authentication for SPF, DKIM and DMARC,
-the two DKIM2 handlers go into it instead. **This path has not been tested
-end to end by us**: Fastmail runs the handlers inside its own
-infrastructure, and the dkim2.com host runs the standalone milter. What
-follows is what the handlers' code and configuration say; expect to check
-each step.
+the two DKIM2 handlers go into it instead. We have not tested this path end
+to end; the dkim2.com host runs 5a. What follows is what the handlers' code
+and configuration say.
+
+Run two instances, as in 5a: one that verifies, on the socket port 25 uses,
+and one that only signs, on the socket the list listener and
+`non_smtpd_milters` use. Each has its own configuration file and socket.
 
 ```bash
 cpanm Mail::Milter::Authentication
-```
-
-Paste `deploy/examples/authentication_milter.json.fragment` into the
-`"handlers"` object of `/etc/authentication_milter.json`, replacing
-`lists.example.org` and the key path with yours. Both handlers name the
-same `snapshot_directory`, which is how the sign handler finds the copy the
-verify handler kept; create it, and make the key directory readable, for
-the user authentication_milter runs as (its `runas` setting, `nobody` by
-default):
-
-```bash
 install -d -m 750 -o nobody -g nogroup /var/spool/dkim2/snapshots
 chgrp nogroup /etc/dkim2/keys/lists.example.org /etc/dkim2/keys/lists.example.org/sel1.key
 ```
 
-`sign_local` is what makes mail arriving on the loopback list listener
-(step 6) get signed; `sign_authenticated` covers SASL-authenticated
-submission if you have it.
+(`nobody` is authentication_milter's default `runas` user; use yours.)
+`deploy/examples/authentication_milter.json.fragment` holds both handler
+blocks: put `DKIM2Verify` in the inbound instance's `"handlers"` object and
+`DKIM2Sign` in the outbound one's, with your domain and key path. The two
+name the same `snapshot_directory`, which is how the signer finds the copy
+the verifier kept. `sign_local` is what makes mail arriving on the loopback
+list listener get signed; `sign_authenticated` covers SASL submission if
+you have it.
 
-Two differences from path 5a matter. First, authentication_milter runs
-every handler on every connection, so the verify handler also sees list
-copies on the loopback listener; the fragment sets `hide_none: 1` so it
-adds no `dkim2=none` line to them, but a signed upstream will get a
-`permerror` line for the list's not-yet-signed `m=2`. To avoid that, run a
-second authentication_milter instance from a configuration containing only
-`DKIM2Sign` on its own socket, and use that socket for the list listener
-and `non_smtpd_milters`. Second, `DKIM2Verify` stamps `m=1` only on mail
-whose chain verified, so an unsigned post gets its `m=1` from the list
-manager at ingress rather than at the border; the result at the subscriber
-is the same.
+One difference from 5a: `DKIM2Verify` stamps `m=1` only on mail whose
+chain verified, so an unsigned post gets its `m=1` from the list manager
+instead. The subscriber sees the same result.
 
-Check: the authentication_milter service is active, and a message through
-port 25 produces an `Authentication-Results` line with `dkim2=`.
+Check: both instances are active, and a message through port 25 produces
+an `Authentication-Results` line with `dkim2=`.
 
 ## 6. Postfix
 
