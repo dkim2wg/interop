@@ -42,9 +42,9 @@ there. Older packages are not supported.
 ## Dependencies
 
 `Sympa::Message` loads `Mail::DKIM2::MessageInstance` and
-`Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution in
-[`../perl`](../perl); install it first (`cpanm .` in that directory). It is a
-soft dependency: without it Sympa runs but adds no headers.
+`Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution (on CPAN:
+`cpanm Mail::DKIM2`; source in [`../perl`](../perl)); install it first. It
+is a soft dependency: without it Sympa runs but adds no headers.
 
 ## Installing
 

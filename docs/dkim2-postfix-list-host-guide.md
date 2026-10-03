@@ -93,19 +93,21 @@ Check: `dig +short TXT sel1._domainkey.lists.example.org` returns the record.
 The Perl distribution carries the library, both milters and the
 command-line tools.
 
+Mail::DKIM2 is on CPAN:
+
 ```bash
-cd interop/perl
-cpanm --installdeps .
+cpanm Mail::DKIM2
 cpanm Sendmail::PMilter        # for the standalone milter (step 5a)
-cpanm .
 ```
 
 This installs `dkim2sign`, `dkim2verify`, `dkim2-milter` and
 `dkim2-split-lmtp` into `/usr/local/bin`, and the `Mail::DKIM2` modules
 plus the `Mail::Milter::Authentication::Handler::DKIM2Sign` and
 `DKIM2Verify` handlers for step 5b. Sendmail::PMilter is a recommended
-dependency rather than a required one, which is why `--installdeps` does
-not pull it in.
+dependency rather than a required one, which is why `cpanm Mail::DKIM2`
+does not pull it in. To install from the repository instead (for a change
+not yet released), `cpanm .` in `perl/`. The repository checkout is still
+needed for the templates and patch series in the steps below.
 
 Check: `dkim2verify --help` prints usage. If you have any DKIM2-signed
 message to hand (mail from a dkim2.com reflector, step 9, is one), `dkim2verify
