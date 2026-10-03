@@ -327,12 +327,23 @@ out and sign after-queue for the accepted set; a *downstream* per-recipient
 failure is async regardless (and is then subject to the bounce-trust rules —
 see the DSN discussion in `docs/` / the interop notes).
 
-#### Split outbound gateway (DEPLOYED — all originated mail, since 2026-07-29)
+#### Split outbound gateway (RETIRED on this box 2026-10-03; shipped as the alternative)
+
+Since 2026-10-03 the box runs the guide's primary recommendation instead:
+`127.0.0.1:10587` is a plain signing listener (`deploy/examples/postfix-master.cf.fragment`,
+listener 1), Mailman delivers one recipient per transaction (`max_recipients: 1`)
+and Sympa likewise (`nrcpt 1`), so every signed copy's `rt=` names one recipient
+without a splitter. `dkim2-split.service` is installed but disabled; the daemon
+and the two-listener wiring below remain available for hosts that cannot set
+their submitters to one recipient per transaction
+(`docs/dkim2-postfix-list-host-guide.md`, "Recipient privacy").
+
+The description below is how the box ran from 2026-07-29 to 2026-10-03.
 
 Every message this box originates is fanned out per recipient **before** signing.
 
 ```
-Mailman (smtp_port: 10587)  ─┐
+Mailman (smtp_port: 10587)  ─┐   (historical: the split path, retired 2026-10-03)
 Sympa (via sympa-sendmail)  ─┼─→  10587  split entry: NO milter, content_filter
 swaks --server ...:10587    ─┘         │
                                        ▼
@@ -400,13 +411,16 @@ locally. Decode each copy's `rt=` and expect exactly one recipient in each.
 `src/mailman/handlers/message_instance.py` and
 `src/mailman/mta/message_instance.py`.
 
-**Installation:** Installed as a Python package in a venv at `/opt/mailman/venv/`.
-The installed package files live at:
+**Installation:** `pip install 'git+https://github.com/brong/mailman@dkim2'`
+into the venv at `/opt/mailman/venv/` (since 2026-10-03; the `dkim2` branch is the
+3-commit series exported to `mailman/patches`). The installed package files live at:
 ```
 /opt/mailman/venv/lib/python3.13/site-packages/mailman/
 ```
-Version: 3.3.11b1 (from brong fork, installed via pip in development mode or
-copied directly).
+Version: 3.3.11b1 (upstream master + the DKIM2 series). To update:
+`pip install --force-reinstall --no-deps 'git+https://github.com/brong/mailman@dkim2'`,
+then `systemctl stop mailman3; sudo -u mailman /opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg info; systemctl start mailman3 mailman-web`
+(any `mailman` command applies pending migrations).
 
 **Config files:**
 - `/etc/mailman3/mailman.cfg` — main mailman config
@@ -422,8 +436,12 @@ outgoing: mailman.mta.deliver.deliver
 lmtp_host: 127.0.0.1
 lmtp_port: 8024
 smtp_host: localhost
-smtp_port: 10587        # DKIM2 split gateway → fan out, then sign on 10589
+smtp_port: 10587        # the DKIM2 signing listener (outbound milter only)
 message_instance: yes   # global DKIM2 MI enable
+max_recipients: 1       # one recipient per transaction -> one address per rt=
+
+[logging.dkim2]
+path: dkim2.log         # the Message-Instance handlers' logger
 
 [database]
 url: sqlite:////var/lib/mailman3/mailman.db
@@ -464,25 +482,10 @@ ignored by logrotate as a duplicate. Corrected config is committed at
 Recovery if it recurs: `chown mailman:mailman /var/log/mailman3/mailman.log &&
 systemctl restart mailman3`.
 
-**Update process:**
-
-Sync changed handler files from the local brong/mailman checkout:
-```bash
-VENV=/opt/mailman/venv/lib/python3.13/site-packages/mailman
-rsync -av src/mailman/handlers/message_instance.py \
-          src/mailman/mta/message_instance.py \
-          root@dkim2.com:$VENV/handlers/
-```
-Or from the repo directory on the local machine, run the deploy script
-(see below).  After copying files:
-```bash
-ssh dkim2
-# Run Alembic migration if model changed:
-/opt/mailman/venv/bin/mailman --config /etc/mailman3/mailman.cfg \
-    shell -r mailman.database.initialize:initialize
-# or: /opt/mailman/venv/bin/alembic upgrade head
-systemctl restart mailman3 mailman-web
-```
+**Update process:** push the `dkim2` branch of brong/mailman, then run the
+`pip install --force-reinstall` line under Installation above. Until 2026-10-03
+the two handler files were rsync'd into the venv by hand; the venv is now a
+plain pip install of the branch, so do not rsync over it.
 
 **Per-list DKIM2 toggle (added 2026-03-23):**
 The `dkim2_message_instance` boolean attribute on each list can be set
@@ -886,23 +889,17 @@ ssh dkim2 'cd /root/interop && git pull && cd perl && \
     systemctl restart dkim2-milter-inbound dkim2-milter-outbound'
 ```
 
-### Mailman handlers (Python, brong/mailman repo)
+### Mailman (Python, brong/mailman repo, `dkim2` branch)
 
-From your local `~/src/mailman` working directory:
 ```bash
-DEST=root@dkim2.com:/opt/mailman/venv/lib/python3.13/site-packages/mailman
-rsync -av src/mailman/handlers/message_instance.py $DEST/handlers/
-rsync -av src/mailman/mta/message_instance.py $DEST/mta/
-ssh dkim2 systemctl restart mailman3 mailman-web
+ssh dkim2 "/opt/mailman/venv/bin/pip install --force-reinstall --no-deps 'git+https://github.com/brong/mailman@dkim2' \
+  && systemctl stop mailman3 \
+  && sudo -u mailman /opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg info >/dev/null \
+  && systemctl start mailman3 && systemctl restart mailman-web"
 ```
 
-If the database model changed (new Alembic migration):
-```bash
-ssh dkim2 'MAILMAN_CONFIG_FILE=/etc/mailman3/mailman.cfg \
-    /opt/mailman/venv/bin/alembic \
-    -c /opt/mailman/venv/lib/python3.13/site-packages/mailman/config/alembic.cfg \
-    upgrade head'
-```
+Any `mailman` command applies pending Alembic migrations, so the `info` run
+covers a model change.
 
 ### Sympa Message.pm (Perl, brong/sympa repo)
 
