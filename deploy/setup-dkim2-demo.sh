@@ -180,6 +180,8 @@ postconf -e "default_process_limit = 20"
 # ------------------------------------------------------------------
 # 10. systemd unit for milter
 # ------------------------------------------------------------------
+echo ">>> Installing Mail::DKIM2 (library, dkim2-milter, dkim2-split-lmtp) ..."
+(cd "$INSTALL_DIR/perl" && cpanm --notest .)
 echo ">>> Installing systemd unit..."
 cp "$INSTALL_DIR/deploy/examples/dkim2-milter.service" /etc/systemd/system/
 systemctl daemon-reload

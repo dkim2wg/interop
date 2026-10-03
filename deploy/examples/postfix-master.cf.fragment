@@ -4,7 +4,8 @@
 # 1. List submission. Mailman's smtp_port and Sympa's sendmail wrapper deliver
 #    here. Only the signing milter runs; the inbound milter must not, or the
 #    list's own copy would get an Authentication-Results and a second
-#    Message-Instance before it is signed. Loopback only.
+#    Message-Instance before it is signed. Loopback only. If you also sign
+#    with DKIM (OpenDKIM, rspamd), append that milter after the DKIM2 one.
 127.0.0.1:10587 inet n  -       y       -       -       smtpd
   -o syslog_name=postfix/dkim2-list
   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
@@ -28,4 +29,4 @@
 #   -o content_filter=
 #   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
 #   -o smtpd_relay_restrictions=permit_mynetworks,reject
-#   -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks
+#   -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks

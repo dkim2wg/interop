@@ -25,6 +25,22 @@ like($text, qr/pmilter-null-sender-envfrom\.patch/, 'covers the PMilter null-sen
 like($text, qr/DKIM2Sign/ && qr/DKIM2Verify/, 'covers the authentication_milter handlers');
 unlike($text, qr{/root/interop|/opt/dkim2}, 'no dkim2.com box paths');
 
+# The copy-paste steps a reviewer found broken on a fresh host.
+unlike($text, qr/^(?:smtp_port|message_instance|max_recipients):[^\n#]*#/m,
+       'mailman.cfg block has no inline comments (lazr.config keeps them in the value)');
+like($text, qr/-H 'Content-Type: application\/json'/, 'REST example sends JSON as JSON');
+unlike($text, qr/mailman\.database\.initialize/, 'no nonexistent migration entry point');
+like($text, qr/perl -MSendmail::PMilter::Context/, 'PMilter patch finds the module without perldoc');
+unlike($text, qr/perldoc -l/, '  ... (perl-doc is not on a stock Debian)');
+like($text, qr/useradd -r -U -G postfix/, 'the dkim2 user has its own group and is in postfix');
+like($text, qr/install -d -m 750 -o dkim2 -g postfix \/var\/spool\/postfix\/var\/run/,
+     'the socket directory is created before the units start');
+like($text, qr/logging\.dkim2/, 'tells Mailman where dkim2.log comes from');
+like($text, qr/not (?:been )?tested end to end/i, 'the authentication_milter path is labelled as untested');
+like($text, qr/wwsympa/, 'Sympa restart list includes wwsympa');
+like($text, qr/git -c user\.name/, 'git am works on a host with no identity');
+like($text, qr/i=1\.\.1 verified/, 'the plain-upstream example shows i=1..1');
+
 my $index = do { local (@ARGV, $/) = "$root/deploy/www/index.html"; <> };
 like($index, qr{docs/dkim2-postfix-list-host-guide\.md}, 'dkim2.com links to the guide');
 my $opguide = do { local (@ARGV, $/) = "$root/docs/dkim2-operator-guide.md"; <> };

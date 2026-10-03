@@ -77,7 +77,7 @@ GetOptions(\%opts,
     'help|h',
 ) or pod2usage(2);
 
-pod2usage(-exitval => 0, -verbose => 2) if $opts{help};
+pod2usage(-exitval => 0, -verbose => 2, -noperldoc => 1) if $opts{help};
 
 if ($opts{'use-epilogue'} && defined $opts{'epilogue-threshold'}) {
     die "--use-epilogue and --epilogue-threshold are mutually exclusive\n";
@@ -170,9 +170,11 @@ sub _keydir_lookup {
     my $try = $domain;
     while ($try) {
         my $dir = "$opts{keydir}/$try";
-        if (-d $dir) {
+        # A directory we cannot read is treated like one that is not there,
+        # and the walk-up below still runs: `next` here would never advance
+        # $try and the milter would spin forever on a permissions mistake.
+        if (-d $dir && opendir(my $dh, $dir)) {
             # Find the newest .key file (by ctime)
-            opendir my $dh, $dir or next;
             my @keys = map { $_->[0] }
                        sort { $b->[1] <=> $a->[1] }
                        map { [$_, (stat("$dir/$_"))[10] || 0] }
@@ -199,6 +201,8 @@ sub _keydir_lookup {
                     return $config;
                 }
             }
+        } elsif (-d $dir) {
+            warn "dkim2-milter: key directory $dir is not readable: $!\n";
         }
         # Walk up: sub.example.com -> example.com -> (stop)
         $try =~ s/^[^.]+\.// or last;

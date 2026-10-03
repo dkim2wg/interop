@@ -53,12 +53,14 @@ Apply to a 6.2.78 source tree and build as usual:
 ```bash
 git clone https://github.com/sympa-community/sympa.git && cd sympa
 git checkout 6.2.78
-git am /path/to/interop/sympa/patches/*.patch
+git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/sympa/patches/*.patch
 autoreconf -i && ./configure ... && make && make install
 ```
 
-Or overlay the patched files onto an installed 6.2.78 (paths under
-`/usr/share/sympa/lib` on Debian):
+Or overlay the patched files onto an installed 6.2.78 (an older install,
+such as a distribution's 6.2.76 package, is not a supported base: its
+`Message.pm` differs and the overlay then needs files from 6.2.78 that the
+patches do not carry):
 
 ```
 src/lib/Sympa/Message.pm
@@ -81,7 +83,8 @@ nrcpt 1
 ```
 
 `sympa-sendmail` is in [`../deploy/examples/`](../deploy/examples/). Restart
-`sympa sympa-bulk sympa-archived sympa-bounced`.
+`sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa`;
+all of them load `Message.pm`.
 
 ## Regenerating the series
 

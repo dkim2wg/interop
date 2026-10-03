@@ -59,36 +59,45 @@ that:
 ```bash
 git clone https://gitlab.com/mailman/mailman.git && cd mailman
 git checkout 687b9e4dc
-git am /path/to/interop/mailman/patches/*.patch
+git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/mailman/patches/*.patch
 /opt/mailman/venv/bin/pip install .
 ```
 
-Then, with Mailman stopped:
+Either way the virtualenv moves from a 3.3.10 release to a master
+snapshot; check that your Postorius and HyperKitty versions accept it.
+
+Then, with Mailman stopped, run any `mailman` command as the Mailman user;
+every one applies pending database migrations (the per-list flag adds a
+column):
 
 ```bash
-# the per-list flag adds a column
-/opt/mailman/venv/bin/mailman --config /etc/mailman3/mailman.cfg \
-    shell -r mailman.database.initialize:initialize
+sudo -u mailman /opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg info
 ```
 
-and in `mailman.cfg`:
+and in `mailman.cfg` (comments on their own lines: lazr.config keeps an
+inline comment as part of the value):
 
 ```ini
 [mta]
+# Record the list's changes in Message-Instance headers.
 message_instance: yes
 # One recipient per SMTP transaction, so each signed copy's rt= names only
 # its own recipient. See the guide, "Recipient privacy".
 max_recipients: 1
+
+[logging.dkim2]
+# The handlers log to the mailman.dkim2 logger; without this section their
+# lines go to mailman.log.
+path: dkim2.log
 ```
 
-Restart Mailman. Message-Instance activity is logged to
-`$LOG_DIR/dkim2.log`; baselines for Recipe computation live briefly in
+Restart Mailman. Baselines for Recipe computation live briefly in
 `$VAR_DIR/mi-cache/`.
 
-To turn it off for one list:
+To turn it off for one list (the body must be sent as JSON):
 
 ```bash
-curl -u restadmin:PASSWORD -X PATCH \
+curl -u restadmin:PASSWORD -X PATCH -H 'Content-Type: application/json' \
      http://localhost:8001/3.1/lists/LIST.DOMAIN/config \
      -d '{"dkim2_message_instance": false}'
 ```

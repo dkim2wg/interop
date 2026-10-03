@@ -1,7 +1,7 @@
 # DKIM2 for a Postfix mailing-list host
 
 **Spec:** draft-ietf-dkim-dkim2-spec-06
-**Status:** tested on the dkim2.com host (Debian, Postfix 3.7, Mailman 3.3.10+ and Sympa 6.2.78); 2026-10-02
+**Status:** the dkim2.com host runs this configuration (Ubuntu 25.10, Postfix 3.10, Mailman from the `dkim2` fork branch, Sympa 6.2.78 built from the patched source, the standalone milter); the authentication_milter path has not been tested end to end. 2026-10-03
 **Audience:** a Postfix operator who runs Mailman 3 or Sympa and wants list mail to verify as DKIM2 downstream
 
 This guide builds the host in order. Each step ends with a check you can
@@ -60,11 +60,15 @@ the way both milters read them:
         sel1.key          # the selector is the file name
 ```
 
+The milter runs as a `dkim2` user in the `postfix` group (created here;
+step 5 uses it), and the keys are readable by that user only:
+
 ```bash
-install -d -m 750 -o root -g dkim2 /etc/dkim2/keys/lists.example.org
+groupadd -r dkim2 2>/dev/null; useradd -r -U -G postfix -s /usr/sbin/nologin dkim2
+install -d -m 750 -o dkim2 -g postfix /etc/dkim2/keys/lists.example.org
 openssl genpkey -algorithm ed25519 -out /etc/dkim2/keys/lists.example.org/sel1.key
+chown dkim2:postfix /etc/dkim2/keys/lists.example.org/sel1.key
 chmod 640 /etc/dkim2/keys/lists.example.org/sel1.key
-chgrp dkim2 /etc/dkim2/keys/lists.example.org/sel1.key
 openssl pkey -in /etc/dkim2/keys/lists.example.org/sel1.key -pubout -outform DER | tail -c 32 | base64
 ```
 
@@ -74,9 +78,7 @@ Publish the output:
 sel1._domainkey.lists.example.org. IN TXT "v=DKIM1; k=ed25519; p=<output>"
 ```
 
-(The `dkim2` group is created in step 5; create it now with `groupadd -r
-dkim2` if you want the permissions in place first.) The signing domain is
-the directory name. The milter signs for the envelope sender's domain,
+The signing domain is the directory name. The milter signs for the envelope sender's domain,
 walking up parent domains until it finds a key directory, so one key for
 `lists.example.org` also signs `bounces.lists.example.org`.
 
@@ -90,14 +92,14 @@ command-line tools.
 ```bash
 cd interop/perl
 cpanm --installdeps .
-cpanm Sendmail::PMilter        # for dkim2-milter (path A)
+cpanm Sendmail::PMilter        # for the standalone milter (step 5a)
 cpanm .
 ```
 
 This installs `dkim2sign`, `dkim2verify`, `dkim2-milter` and
 `dkim2-split-lmtp` into `/usr/local/bin`, and the `Mail::DKIM2` modules
 plus the `Mail::Milter::Authentication::Handler::DKIM2Sign` and
-`DKIM2Verify` handlers for path B. Sendmail::PMilter is a recommended
+`DKIM2Verify` handlers for step 5b. Sendmail::PMilter is a recommended
 dependency rather than a required one, which is why `--installdeps` does
 not pull it in.
 
@@ -115,9 +117,14 @@ One program, run twice: an inbound instance that verifies, adds
 `Authentication-Results`, stamps `m=1` and keeps a snapshot; an outbound
 instance that computes the Recipe against the snapshot and signs.
 
+The sockets live inside the Postfix chroot, in a directory the
+distribution's Postfix does not create; the units create it (and the
+snapshot directory) with the right owner before dropping privileges, and
+this creates it now so the first start is clean:
+
 ```bash
-useradd -r -g postfix -s /usr/sbin/nologin dkim2
-install -d -m 770 -o dkim2 -g postfix /var/spool/dkim2/snapshots
+install -d -m 750 -o dkim2 -g postfix /var/spool/postfix/var/run
+install -d -m 750 -o dkim2 -g postfix /var/spool/dkim2/snapshots
 cp interop/deploy/examples/dkim2-milter-inbound.service \
    interop/deploy/examples/dkim2-milter-outbound.service /etc/systemd/system/
 systemctl daemon-reload
@@ -125,11 +132,11 @@ systemctl enable --now dkim2-milter-inbound dkim2-milter-outbound
 ```
 
 The units are `deploy/examples/dkim2-milter-inbound.service` and
-`deploy/examples/dkim2-milter-outbound.service`. They create their
-sockets inside the Postfix chroot, at
+`deploy/examples/dkim2-milter-outbound.service`. The sockets are
 `/var/spool/postfix/var/run/dkim2-milter-in.sock` and `-out.sock`, which
 Postfix sees as `unix:var/run/dkim2-milter-in.sock` and `-out.sock`. The
-outbound unit reads `/etc/dkim2/keys`. `dkim2-milter --help` lists the
+outbound unit reads `/etc/dkim2/keys`; a key directory it cannot read is
+skipped with a log line, and the next domain up is tried. `dkim2-milter --help` lists the
 options; `--mode both` on one socket is also possible
 (`deploy/examples/dkim2-milter.service`) but gives Postfix no way to keep
 the inbound stamp off the list's own copies, so the two-instance layout is
@@ -142,7 +149,8 @@ goes out unsigned. Until a fixed release exists, patch the installed
 module:
 
 ```bash
-patch --forward --backup "$(perldoc -l Sendmail::PMilter::Context)" \
+patch --forward --backup \
+    "$(perl -MSendmail::PMilter::Context -e 'print $INC{"Sendmail/PMilter/Context.pm"}')" \
     < interop/deploy/patches/pmilter-null-sender-envfrom.patch
 systemctl restart dkim2-milter-inbound dkim2-milter-outbound
 ```
@@ -165,7 +173,11 @@ both active, and `journalctl -u dkim2-milter-outbound -n 5` shows
 ### 5b. authentication_milter with the DKIM2 handlers
 
 If you run (or want) Mail::Milter::Authentication for SPF, DKIM and DMARC,
-add the two DKIM2 handlers to it instead.
+the two DKIM2 handlers go into it instead. **This path has not been tested
+end to end by us**: Fastmail runs the handlers inside its own
+infrastructure, and the dkim2.com host runs the standalone milter. What
+follows is what the handlers' code and configuration say; expect to check
+each step.
 
 ```bash
 cpanm Mail::Milter::Authentication
@@ -173,22 +185,35 @@ cpanm Mail::Milter::Authentication
 
 Paste `deploy/examples/authentication_milter.json.fragment` into the
 `"handlers"` object of `/etc/authentication_milter.json`, replacing
-`lists.example.org` and the key path with yours. `DKIM2Verify` goes
-before any handler that adds headers; `DKIM2Sign` goes last. Both name
-the same `snapshot_directory`, which is how the sign handler finds the
-copy the verify handler kept. `sign_local` is what makes mail arriving on
-the loopback list listener (step 6) get signed; `sign_authenticated`
-covers SASL-authenticated submission if you have it.
+`lists.example.org` and the key path with yours. Both handlers name the
+same `snapshot_directory`, which is how the sign handler finds the copy the
+verify handler kept; create it, and make the key directory readable, for
+the user authentication_milter runs as (its `runas` setting, `nobody` by
+default):
 
-authentication_milter runs one socket for both directions. In step 6, use
-that socket for `smtpd_milters` and `non_smtpd_milters` and for the list
-listener's `-o smtpd_milters=`; the handlers decide what to do from the
-connection, so there is no second instance to run. Everything else in
-this guide applies unchanged.
+```bash
+install -d -m 750 -o nobody -g nogroup /var/spool/dkim2/snapshots
+chgrp nogroup /etc/dkim2/keys/lists.example.org /etc/dkim2/keys/lists.example.org/sel1.key
+```
 
-Check: `systemctl status authentication_milter` is active, and sending a
-message through Postfix produces an `Authentication-Results` line with
-`dkim2=`.
+`sign_local` is what makes mail arriving on the loopback list listener
+(step 6) get signed; `sign_authenticated` covers SASL-authenticated
+submission if you have it.
+
+Two differences from path 5a matter. First, authentication_milter runs
+every handler on every connection, so the verify handler also sees list
+copies on the loopback listener; the fragment sets `hide_none: 1` so it
+adds no `dkim2=none` line to them, but a signed upstream will get a
+`permerror` line for the list's not-yet-signed `m=2`. To avoid that, run a
+second authentication_milter instance from a configuration containing only
+`DKIM2Sign` on its own socket, and use that socket for the list listener
+and `non_smtpd_milters`. Second, `DKIM2Verify` stamps `m=1` only on mail
+whose chain verified, so an unsigned post gets its `m=1` from the list
+manager at ingress rather than at the border; the result at the subscriber
+is the same.
+
+Check: the authentication_milter service is active, and a message through
+port 25 produces an `Authentication-Results` line with `dkim2=`.
 
 ## 6. Postfix
 
@@ -204,6 +229,12 @@ internal_mail_filter_classes = bounce
 disable_mime_output_conversion = yes
 ```
 
+If `main.cf` already lists milters (OpenDKIM, rspamd), append them after
+the DKIM2 sockets rather than replacing them, for instance
+`smtpd_milters = unix:var/run/dkim2-milter-in.sock, inet:localhost:8891`;
+the DKIM2 signer goes before a DKIM signer so its headers exist when the
+DKIM signature is made. Do the same on the list listener below.
+
 In turn: port 25 mail goes through the inbound milter; mail Postfix
 generates itself, which is bounces, goes through the outbound milter so
 bounces are signed; if a milter is down, mail flows unsigned rather than
@@ -211,7 +242,7 @@ stopping; protocol 6 carries the macros the milters need; bounces are
 filtered at all (Postfix does not by default); and a body that was signed
 as 8bit is never downgraded to 7bit on the way to a server without
 8BITMIME, because that rewrites `Content-Transfer-Encoding` after signing
-and the header hash no longer matches.
+and the body hash no longer matches.
 
 Append `deploy/examples/postfix-master.cf.fragment` to `master.cf`. Its
 first listener is the one every list copy will be submitted to:
@@ -277,16 +308,17 @@ or by applying the series to a checkout:
 ```bash
 git clone https://gitlab.com/mailman/mailman.git && cd mailman
 git checkout 687b9e4dc
-git am /path/to/interop/mailman/patches/*.patch
+git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/mailman/patches/*.patch
 /opt/mailman/venv/bin/pip install .
 ```
 
-Stop Mailman, run the migration for the per-list column, configure, start:
+Stop Mailman, configure, then run any `mailman` command as the Mailman
+user, which applies the pending migration for the per-list column, and
+start it again. Comments in `mailman.cfg` go on their own lines: Mailman's
+config parser keeps an inline comment as part of the value.
 
 ```bash
 systemctl stop mailman3
-/opt/mailman/venv/bin/mailman --config /etc/mailman3/mailman.cfg \
-    shell -r mailman.database.initialize:initialize
 ```
 
 ```ini
@@ -294,14 +326,26 @@ systemctl stop mailman3
 incoming: mailman.mta.postfix.LMTP
 outgoing: mailman.mta.deliver.deliver
 smtp_host: localhost
-smtp_port: 10587          # the signing listener from step 6
-message_instance: yes     # record changes in Message-Instance headers
-max_recipients: 1         # one recipient per transaction (step 6)
+# The signing listener from step 6.
+smtp_port: 10587
+# Record the list's changes in Message-Instance headers.
+message_instance: yes
+# One recipient per transaction (step 6, "Recipient privacy").
+max_recipients: 1
+
+[logging.dkim2]
+# Where the Message-Instance handlers log; without this they log to
+# mailman.log.
+path: dkim2.log
 ```
 
 ```bash
+sudo -u mailman /opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg info
 systemctl start mailman3
 ```
+
+Installing the fork moves the virtualenv from a 3.3.10 release to a master
+snapshot; check that your Postorius and HyperKitty accept it.
 
 What happens: the `message-instance-ingress` handler runs first in the
 posting pipeline and records the message as it arrived (if the inbound
@@ -314,11 +358,13 @@ instance gets an `X-DKIM2-Info` line beside it saying what Mailman did.
 A list can opt out through the REST API:
 
 ```bash
-curl -u restadmin:PASSWORD -X PATCH http://localhost:8001/3.1/lists/LIST.DOMAIN/config \
+curl -u restadmin:PASSWORD -X PATCH -H 'Content-Type: application/json' \
+     http://localhost:8001/3.1/lists/LIST.DOMAIN/config \
      -d '{"dkim2_message_instance": false}'
 ```
 
-Logs go to `dkim2.log` in Mailman's log directory. Baselines wait in
+Logs go to `dkim2.log` in Mailman's log directory with the `[logging.dkim2]`
+section above. Baselines wait in
 `mi-cache/` under the var directory until the message has left; files
 older than your queue retry window there are orphans from a crash and can
 be deleted.
@@ -339,12 +385,15 @@ Either build from patched source:
 ```bash
 git clone https://github.com/sympa-community/sympa.git && cd sympa
 git checkout 6.2.78
-git am /path/to/interop/sympa/patches/*.patch
+git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/sympa/patches/*.patch
 autoreconf -i && ./configure && make && make install
 ```
 
-or overlay the patched files onto an installed 6.2.78. The file list is in
-`sympa/README.md`; on Debian they live under `/usr/share/sympa/lib/`.
+(`./configure` takes the same prefix options as the install it replaces;
+the dkim2.com host builds into the Debian package's layout.) Or overlay
+the patched files onto an installed 6.2.78; the file list is in
+`sympa/README.md`. A distribution package of an older Sympa is not a
+supported base.
 
 Sympa submits outbound mail through a `sendmail` command. Install the
 wrapper that submits to the signing listener instead:
@@ -363,7 +412,7 @@ nrcpt 1
 ```
 
 ```bash
-systemctl restart sympa sympa-bulk sympa-archived sympa-bounced
+systemctl restart sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa
 ```
 
 What happens: `ProcessIncoming` records the message as received and keeps
@@ -395,7 +444,8 @@ Verify the copy yourself:
 
 ```bash
 dkim2verify copy.eml
-# pass (i=1..2 verified)
+# pass (i=1..1 verified)        plain upstream: your signature only
+# pass (i=1..2 verified)        signed upstream: theirs and yours
 ```
 
 Paste it into <https://dkim2.com/validate/> for a per-hop breakdown with

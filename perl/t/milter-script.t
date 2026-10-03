@@ -302,4 +302,22 @@ sub list_modified {
         'broken: refusal is logged with the upstream result');
 }
 
+# --- 4. An unreadable key directory must not hang the milter ---
+# A reader who gets the permissions wrong on one domain's directory gets a
+# message signed with the parent domain's key (or none), never a milter that
+# spins forever while Postfix times out and ships the copy unsigned.
+SKIP: {
+    skip 'running as root, every directory is readable', 3 if $> == 0;
+    path("$dir/keys/unreadable.test2.dkim2.com")->mkpath;
+    chmod 0000, "$dir/keys/unreadable.test2.dkim2.com";
+    my ($verdict, $mods) = run_milter(
+        from => 'list-bounces@unreadable.test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => $PLAIN);
+    is($verdict, 'c', 'unreadable: milter answers');
+    my @sig = inserted($mods, 'DKIM2-Signature');
+    is(scalar @sig, 1, 'unreadable: signed with the parent domain key');
+    like($sig[0]{value}, qr/\bd=test2\.dkim2\.com;/, 'unreadable: d= is the readable parent');
+    chmod 0700, "$dir/keys/unreadable.test2.dkim2.com";
+}
+
 done_testing;

@@ -8,8 +8,10 @@ Before=postfix.service
 Type=simple
 User=dkim2
 Group=postfix
-ExecStartPre=/bin/mkdir -p /var/spool/postfix/var/run
-ExecStartPre=/bin/mkdir -p /var/spool/dkim2/snapshots
+# "+" runs these with full privileges, outside the sandbox below, so the
+# directories exist with the right owner before the milter starts.
+ExecStartPre=+/usr/bin/install -d -m 750 -o dkim2 -g postfix /var/spool/postfix/var/run
+ExecStartPre=+/usr/bin/install -d -m 750 -o dkim2 -g postfix /var/spool/dkim2/snapshots
 ExecStart=/usr/local/bin/dkim2-milter \
     --socket unix:/var/spool/postfix/var/run/dkim2-milter.sock \
     --keydir /etc/dkim2/keys \

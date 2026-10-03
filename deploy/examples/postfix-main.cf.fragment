@@ -1,5 +1,10 @@
 # DKIM2 for a mailing-list host: main.cf settings. See
-# docs/dkim2-postfix-list-host-guide.md ("Postfix"). Apply with postconf -e.
+# docs/dkim2-postfix-list-host-guide.md ("Postfix").
+#
+# The two milter lists REPLACE whatever is in main.cf: if you already run
+# OpenDKIM, rspamd or another milter, append the existing entries after the
+# DKIM2 socket (DKIM2 first, then the DKIM signer) rather than pasting these
+# lines as they are.
 
 # Verify inbound mail and stamp a Message-Instance (inbound milter); sign
 # anything Postfix generates itself, such as bounces (outbound milter).
