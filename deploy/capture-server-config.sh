@@ -79,9 +79,9 @@ fetch /etc/aliases aliases
 
 # The one outbound script that exists nowhere but the box. Lives at deploy/ top
 # level, not under config/, because it is installed code rather than config.
-ssh "$HOST" 'cat /usr/local/bin/sympa-sendmail' > "$REPO/deploy/sympa-sendmail"
-chmod 755 "$REPO/deploy/sympa-sendmail"
-echo "   ../sympa-sendmail"
+ssh "$HOST" 'cat /usr/local/bin/sympa-sendmail' > "$REPO/deploy/examples/sympa-sendmail"
+chmod 755 "$REPO/deploy/examples/sympa-sendmail"
+echo "   ../examples/sympa-sendmail"
 
 # Fail loudly if a redaction missed: better to abort than to commit a credential.
 if redact_leaks "$DEST"; then

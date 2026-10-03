@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 use 5.020; use strict; use warnings;
 use FindBin;
-use lib "$FindBin::Bin/../lib";
+use lib -d "$FindBin::Bin/../lib/Mail/DKIM2" ? "$FindBin::Bin/../lib" : ();   # running from a checkout
 use IO::Socket::INET;
 use Net::SMTP;
 use POSIX ':sys_wait_h';

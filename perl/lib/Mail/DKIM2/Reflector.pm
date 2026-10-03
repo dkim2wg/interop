@@ -50,7 +50,7 @@ sub _sign_info_line {
 }
 
 # (count, comma-separated-names) of the headers a Message-Instance hash covers,
-# matching dkim2-milter.pl's hc=/hn= fields.
+# matching dkim2-milter's hc=/hn= fields.
 sub _header_list_for_hash {
     my ($msg) = @_;
     my @fields;

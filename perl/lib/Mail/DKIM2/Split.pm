@@ -18,7 +18,7 @@ our @EXPORT_OK = qw(plan_copies disclosed_addresses);
 # get its own. The signing step then records only that copy's recipients in rt=.
 #
 # This module is the (network-free, testable) grouping logic. The LMTP daemon
-# (bin/dkim2-split-lmtp.pl) uses it to fan a message out into per-copy
+# (bin/dkim2-split-lmtp) uses it to fan a message out into per-copy
 # re-injections. See deploy/SERVER.md "Bcc-safe origination".
 
 # disclosed_addresses($message_bytes) -> hashref { lc-address => 1 } of every

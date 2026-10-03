@@ -19,7 +19,7 @@
 #   10587  split entry: NO milter, content_filter -> the LMTP splitter
 #        |
 #        v
-#   10590  dkim2-split-lmtp (systemd, deploy/dkim2-split.service):
+#   10590  dkim2-split-lmtp (systemd, deploy/examples/dkim2-split.service):
 #          one copy per disclosed group, one per undisclosed recipient
 #        |
 #        v

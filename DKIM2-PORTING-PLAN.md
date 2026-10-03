@@ -217,7 +217,7 @@ Patching libraries gives DKIM2 to all downstream consumers at once.
 - **Complexity:** High — large legacy C codebase
 - **Leverage:** Highest historical deployment, but uncertain upstream velocity.
   A standalone milter may be more practical than patching OpenDKIM itself.
-- **Note:** The `brong/bin/dkim2-milter.pl` standalone milter already exists
+- **Note:** The `perl/bin/dkim2-milter` standalone milter already exists
   as an alternative path for Postfix/Sendmail users who don't want to wait
   for OpenDKIM patches.
 

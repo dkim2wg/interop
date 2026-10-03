@@ -37,6 +37,9 @@ Revision history for Mail::DKIM2
           the *-mailversion tools are removed.
         - POD rewritten for spec-06 (the previous text described
           draft-clayton-08 tags); Net::DNS declared as a prerequisite.
+        - dkim2-milter and dkim2-split-lmtp are installed programs (were
+          bin/*.pl, run from the checkout). X-DKIM2-Info sw= says
+          dkim2-milter.
 
 0.01    2026-03-08
         - Initial release

@@ -1,7 +1,10 @@
 # DKIM2 Demonstration Server
 
+This describes the dkim2.com demonstration box. To run DKIM2 on your own
+Postfix list host, follow [the guide](../docs/dkim2-postfix-list-host-guide.md).
+
 Deploy a working DKIM2 mail server on a small Ubuntu VPS for interoperability
-testing. The server runs Postfix with `dkim2-milter.pl` for DKIM2 signing
+testing. The server runs Postfix with `dkim2-milter` for DKIM2 signing
 and verification.
 
 ## Prerequisites
@@ -62,7 +65,7 @@ ssh root@dkim2.com bash /opt/dkim2/interop/deploy/generate-dns-records.sh
 ## Architecture
 
 ```
-Internet → Postfix (port 25) → dkim2-milter.pl → deliver/relay
+Internet → Postfix (port 25) → dkim2-milter → deliver/relay
                                   ↓
                           /etc/dkim2/keys/     (signing keys)
                           /var/spool/dkim2/    (MI snapshots)

@@ -42,6 +42,14 @@ WriteMakefile(
         prereqs => {
             runtime => {
                 recommends => {
+                    # dkim2-milter
+                    'Sendmail::PMilter' => '1.27',
+                    # dkim2-split-lmtp
+                    'Net::SMTP'   => '0',
+                    'Sys::Syslog' => '0',
+                    # the authentication_milter handlers
+                    'Mail::Milter::Authentication' => '0',
+                    'Mail::AuthenticationResults'  => '0',
                 },
             },
             test => {
@@ -68,6 +76,8 @@ WriteMakefile(
     EXE_FILES => [
         'bin/dkim2sign',
         'bin/dkim2verify',
+        'bin/dkim2-milter',
+        'bin/dkim2-split-lmtp',
     ],
 
     dist  => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },

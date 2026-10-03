@@ -35,12 +35,24 @@ make >/dev/null
 echo ">> Mail::DKIM2 test suite (deploy gate; aborts on failure) ..."
 make test
 make install >/dev/null
+# Programs an older `make install` left behind under their previous names.
+rm -f /usr/local/bin/calculate-dkim2.pl /usr/local/bin/calculate-mailversion.pl \
+      /usr/local/bin/reverse-mailversion.pl /usr/local/bin/validate-mailversion.pl \
+      /usr/local/bin/verify-sig.pl /usr/local/bin/validate.pl /usr/local/bin/dkim2sign.pl
+
+# 1b. systemd units and the Sympa sendmail wrapper are the generic ones every
+#     operator gets (deploy/examples/); the box runs exactly those.
+install -m 644 "$REPO"/deploy/examples/dkim2-milter-inbound.service \
+               "$REPO"/deploy/examples/dkim2-milter-outbound.service \
+               "$REPO"/deploy/examples/dkim2-split.service /etc/systemd/system/
+systemctl daemon-reload
+install -m 755 "$REPO/deploy/examples/sympa-sendmail" /usr/local/bin/sympa-sendmail
 
 # 2. Binaries that embed the library (reflector wrapper + validator CGI) plus
-#    the delayed-bounce demo's failing delivery agent.
+#    the delayed-bounce demo's failing delivery agent. dkim2-milter and
+#    dkim2-split-lmtp are installed by make install above.
 install -m 755 bin/dkim2-reflector.pl        /usr/local/bin/dkim2-reflect
 install -m 755 bin/dkim2-delayedbounce-fail.pl /usr/local/bin/dkim2-delayedbounce-fail
-install -m 755 bin/dkim2-split-lmtp.pl       /usr/local/bin/dkim2-split-lmtp
 install -m 755 bin/validate.cgi              /usr/local/bin/dkim2-validate.cgi
 
 # 2b. Static web assets: apex landing page + the validator UI + the standalone

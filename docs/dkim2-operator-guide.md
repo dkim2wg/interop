@@ -2,6 +2,7 @@
 
 **Spec:** draft-ietf-dkim-dkim2-spec-06  
 **Audience:** MTA operators and postmasters deploying DKIM2
+**Installing it:** see the [Postfix mailing-list host guide](dkim2-postfix-list-host-guide.md)
 
 ---
 
@@ -222,14 +223,11 @@ forwarder's domain (which it will if SRS is used correctly).
 
 ## Milter integration
 
-The C reference implementation includes a libmilter integration (`dkim2-milter`)
-that can be used with Sendmail and Postfix.  The Perl implementation includes milter
-handlers in `Mail::Milter::Authentication::Handler::DKIM2Sign` and
-`DKIM2Verify`.
-
-Milter configuration provides the SMTP envelope values (MAIL FROM, RCPT TO)
-automatically from the MTA, eliminating the need to extract them from the message
-headers.
+Two Perl milters implement this for Postfix: the standalone `dkim2-milter`
+and the `DKIM2Sign`/`DKIM2Verify` handlers for Mail::Milter::Authentication.
+Both take MAIL FROM and RCPT TO from the MTA rather than from the message.
+Installing either, and wiring Mailman 3 or Sympa to them, is the subject of
+the [Postfix mailing-list host guide](dkim2-postfix-list-host-guide.md).
 
 ---
 

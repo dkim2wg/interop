@@ -1,0 +1,176 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Wed, 23 Sep 2026 13:34:31 -0400
+Subject: [PATCH 3/3] Add a per-list dkim2_message_instance flag
+
+Let a list opt out of Message-Instance processing even when the site
+has it enabled.  The flag is a Boolean column on the mailing list with
+an Alembic migration that defaults existing lists to True, is set to
+True by the base list style, and is exposed through the REST list
+configuration resource.
+
+Both handlers already consult the attribute through _mi_enabled(),
+treating an unset value as enabled so lists that predate the migration
+keep working.  DKIM2-MESSAGE-INSTANCE.md gains the per-list option.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ DKIM2-MESSAGE-INSTANCE.md                     | 10 +++++
+ .../a1b2c3d4e5f6_dkim2_message_instance.py    | 37 +++++++++++++++++++
+ src/mailman/interfaces/mailinglist.py         | 10 +++++
+ src/mailman/model/mailinglist.py              |  2 +
+ src/mailman/rest/listconf.py                  |  1 +
+ src/mailman/rest/tests/test_listconf.py       |  1 +
+ src/mailman/styles/base.py                    |  2 +
+ 7 files changed, 63 insertions(+)
+ create mode 100644 src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
+
+diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
+index 22af94409..51d9f9f30 100644
+--- a/DKIM2-MESSAGE-INSTANCE.md
++++ b/DKIM2-MESSAGE-INSTANCE.md
+@@ -124,6 +124,11 @@ message_instance: yes
+ 
+ The default is `no`.  When disabled, neither handler does any work.
+ 
++Each list also has a `dkim2_message_instance` attribute (default
++`True`, exposed through the REST list configuration resource) so
++individual lists can opt out.  Lists created before the migration that
++adds the column are treated as enabled.
++
+ ## Files
+ 
+ ### New
+@@ -133,6 +138,8 @@ The default is `no`.  When disabled, neither handler does any work.
+   cache, and the ingress and egress handlers.
+ - `src/mailman/mta/message_instance.py`: the delivery mixin, following
+   the `ARCSigningMixin` pattern.
++- `src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py`:
++  adds the per-list column.
+ - `src/mailman/handlers/tests/test_message_instance.py`: hashing against
+   interop vectors, Recipe shapes, folding and unfolding, decoration
+   encoding preservation, and full ingress/decorate/egress/undo round
+@@ -149,6 +156,9 @@ The default is `no`.  When disabled, neither handler does any work.
+ - `src/mailman/config/schema.cfg`: the `[mta] message_instance` option.
+ - `src/mailman/pipelines/builtin.py`: register the ingress handler.
+ - `src/mailman/mta/deliver.py`, `src/mailman/mta/bulk.py`: call egress.
++- `src/mailman/interfaces/mailinglist.py`, `src/mailman/model/mailinglist.py`,
++  `src/mailman/styles/base.py`, `src/mailman/rest/listconf.py`: the
++  per-list flag.
+ 
+ ## Encoding-preserving decoration
+ 
+diff --git a/src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py b/src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
+new file mode 100644
+index 000000000..425a8e768
+--- /dev/null
++++ b/src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
+@@ -0,0 +1,37 @@
++"""dkim2_message_instance per-list flag
++
++Revision ID: a1b2c3d4e5f6
++Revises: bf4cf66cf589
++Create Date: 2026-03-23 00:00:00.000000
++
++"""
++
++import sqlalchemy as sa
++
++from alembic import op
++from mailman.database.helpers import exists_in_db
++
++
++# revision identifiers, used by Alembic.
++revision = 'a1b2c3d4e5f6'
++down_revision = 'bf4cf66cf589'
++
++
++def upgrade():
++    if not exists_in_db(op.get_bind(), 'mailinglist',
++                        'dkim2_message_instance'):
++        op.add_column('mailinglist', sa.Column(
++            'dkim2_message_instance',
++            sa.Boolean,
++            nullable=True))
++    mlist = sa.sql.table(
++        'mailinglist',
++        sa.sql.column('dkim2_message_instance', sa.Boolean),
++    )
++    op.execute(mlist.update().values(
++        dkim2_message_instance=op.inline_literal(True)))
++
++
++def downgrade():
++    with op.batch_alter_table('mailinglist') as batch_op:
++        batch_op.drop_column('dkim2_message_instance')
+diff --git a/src/mailman/interfaces/mailinglist.py b/src/mailman/interfaces/mailinglist.py
+index 96b2e8249..cd195b886 100644
+--- a/src/mailman/interfaces/mailinglist.py
++++ b/src/mailman/interfaces/mailinglist.py
+@@ -257,6 +257,16 @@ class IMailingList(Interface):
+     def confirm_address(cookie=''):
+         """The address used for various forms of email confirmation."""
+ 
++    # DKIM2 attributes.
++
++    dkim2_message_instance = Attribute(
++        """Should DKIM2 Message-Instance headers be added to messages?
++
++        A per-list flag to enable or disable DKIM2 Message-Instance header
++        processing.  When False, ingress and egress MI handlers skip this
++        list entirely.  Defaults to True.
++        """)
++
+     # DMARC attributes.
+ 
+     dmarc_mitigate_action = Attribute(
+diff --git a/src/mailman/model/mailinglist.py b/src/mailman/model/mailinglist.py
+index 294361224..6428563f6 100644
+--- a/src/mailman/model/mailinglist.py
++++ b/src/mailman/model/mailinglist.py
+@@ -162,6 +162,8 @@ class MailingList(Model):
+     forward_unrecognized_bounces_to = Column(
+         Enum(UnrecognizedBounceDisposition))
+     process_bounces = Column(Boolean)
++    # DKIM2
++    dkim2_message_instance = Column(Boolean)
+     # DMARC
+     dmarc_mitigate_action = Column(Enum(DMARCMitigateAction))
+     dmarc_mitigate_unconditionally = Column(Boolean)
+diff --git a/src/mailman/rest/listconf.py b/src/mailman/rest/listconf.py
+index bf36c624c..98e405c56 100644
+--- a/src/mailman/rest/listconf.py
++++ b/src/mailman/rest/listconf.py
+@@ -207,6 +207,7 @@ ATTRIBUTES = dict(
+     digests_enabled=GetterSetter(as_boolean),
+     display_name=GetterSetter(str),
+     discard_these_nonmembers=GetterSetter(list_of_emails_or_regexp_validator),
++    dkim2_message_instance=GetterSetter(as_boolean),
+     dmarc_mitigate_action=GetterSetter(enum_validator(DMARCMitigateAction)),
+     dmarc_mitigate_unconditionally=GetterSetter(as_boolean),
+     dmarc_addresses=GetterSetter(list_of_emails_or_regexp_validator),
+diff --git a/src/mailman/rest/tests/test_listconf.py b/src/mailman/rest/tests/test_listconf.py
+index 8f75ce8ef..77a90b9f1 100644
+--- a/src/mailman/rest/tests/test_listconf.py
++++ b/src/mailman/rest/tests/test_listconf.py
+@@ -80,6 +80,7 @@ RESOURCE = dict(
+        'aperson@example.com',
+        ],
+     display_name='Fnords',
++    dkim2_message_instance=True,
+     dmarc_mitigate_action='munge_from',
+     dmarc_mitigate_unconditionally=False,
+     dmarc_addresses='',
+diff --git a/src/mailman/styles/base.py b/src/mailman/styles/base.py
+index dc2b06cf2..24c61a82c 100644
+--- a/src/mailman/styles/base.py
++++ b/src/mailman/styles/base.py
+@@ -93,6 +93,8 @@ class BasicOperation:
+         mlist.digest_send_periodic = True
+         mlist.digest_volume_frequency = DigestFrequency.monthly
+         mlist.next_digest_number = 1
++        # DKIM2
++        mlist.dkim2_message_instance = True
+         # DMARC
+         mlist.dmarc_mitigate_action = DMARCMitigateAction.no_mitigation
+         mlist.dmarc_mitigate_unconditionally = False

@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Wed, 22 Apr 2026 11:19:44 +1000
+Subject: [PATCH 3/3] Add the X-DKIM2-Info debug header
+
+Every Message-Instance Sympa adds is accompanied by an X-DKIM2-Info field
+directly above it, in the draft-gondwana-dkim2-debug-header-01 form: a
+tag-list in the DKIM2 syntax, every tag followed by ";", recording the
+draft implemented, the repository and date of the implementation, the
+software, the action ("mi-m=<N>"), and the count and ordered names of
+the header fields that went into the hash. It exists so an interop
+problem can be diagnosed from the message alone. The whole value is
+folded only after a ";" or ",", never inside a token, and it is excluded
+from the header hash by the spec's X- rule.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ src/lib/Sympa/Message.pm | 58 +++++++++++++++++++++++++++++++++-------
+ t/Message_DKIM2.t        | 18 +++++++++++++
+ 2 files changed, 67 insertions(+), 9 deletions(-)
+
+diff --git a/src/lib/Sympa/Message.pm b/src/lib/Sympa/Message.pm
+index 89672515b..93355cf0c 100644
+--- a/src/lib/Sympa/Message.pm
++++ b/src/lib/Sympa/Message.pm
+@@ -463,16 +463,48 @@ BEGIN {
+ # DKIM2 implementation metadata — update DKIM2_DATE on each change.
+ use constant DKIM2_DRAFT    => 'ietf-dkim-dkim2-spec-06';
+ use constant DKIM2_REPO     => 'github.com/brong/sympa';
+-use constant DKIM2_DATE     => '2026-08-28';
++use constant DKIM2_DATE     => '2026-09-30';
+ use constant DKIM2_SOFTWARE => 'sympa';
+ 
++# X-DKIM2-Info value per draft-gondwana-dkim2-debug-header-01: a tag-list in
++# the DKIM2 syntax, every tag (the last included) followed by ";". A ";" has
++# no escape and ends a tag, so one inside a value becomes ",".
+ sub _dkim2_info {
+-    my ($action) = @_;
+-    return "draft=" . DKIM2_DRAFT
+-         . ";\r\n\trepo=" . DKIM2_REPO
+-         . ";\r\n\tdate=" . DKIM2_DATE
+-         . "; sw=" . DKIM2_SOFTWARE
+-         . ";\r\n\taction=$action";
++    my ($action, %extra) = @_;
++    my @tags = ("draft=" . DKIM2_DRAFT, "repo=" . DKIM2_REPO,
++                "date=" . DKIM2_DATE, "sw=" . DKIM2_SOFTWARE, "action=$action");
++    push @tags, "$_=$extra{$_}" for grep { defined $extra{$_} } sort keys %extra;
++    my $val = join ' ', map { (my $t = $_) =~ s/;/,/g; "$t;" } @tags;
++    # Fold only after a ";" or a "," (Section 5): never inside a token, so the
++    # hn= list of hashed header names -- which pushes a list message past the
++    # RFC 5322 recommendation of 78 to 200+ characters -- breaks between
++    # names.  X-DKIM2-Info is excluded from the header hash by the x-* rule,
++    # so folding it cannot affect a signature.
++    eval { require Mail::DKIM2::Common };
++    return $val if $EVAL_ERROR;
++    # fold_header() budgets for the field name, so fold with it attached and
++    # strip it back off -- callers insert the value alone.
++    my $folded = Mail::DKIM2::Common::fold_header("X-DKIM2-Info: $val", undef,
++        delimiters_only => 1);
++    $folded =~ s/^X-DKIM2-Info:\s*//;
++    return $folded;
++}
++
++sub _header_list_for_hash {
++    my ($msg_string) = @_;
++    eval { require Email::MIME };
++    return (0, '') if $EVAL_ERROR;
++    eval { require Mail::DKIM2::Common };
++    return (0, '') if $EVAL_ERROR;
++
++    my $em = Email::MIME->new($msg_string);
++    my @names;
++    for my $header (sort { lc($a) cmp lc($b) } $em->header_names) {
++        next if Mail::DKIM2::Common::should_skip($header);
++        my @vals = $em->header_raw($header);
++        push @names, (lc($header)) x scalar(@vals);
++    }
++    return (scalar(@names), join(',', @names));
+ }
+ 
+ # Add Message-Instance v=1 header for DKIM2.
+@@ -500,8 +532,12 @@ sub add_message_instance_ingress {
+     }
+ 
+     my $mi_value = _fold_mi_header($mi->as_string);
+-    $self->prepend_header('X-DKIM2-Info', _dkim2_info('mi-m1'));
++    my ($hc, $hn) = _header_list_for_hash($msg_string);
++    # Message-Instance first, then the X-DKIM2-Info describing it, so the
++    # info field ends up directly above the field it records.
+     $self->prepend_header('Message-Instance', $mi_value);
++    $self->prepend_header('X-DKIM2-Info',
++        _dkim2_info('mi-m=1', hc => $hc, hn => $hn));
+ 
+     # Store the original message (with MI m=1 now added) for later
+     # diffing at egress.
+@@ -571,8 +607,12 @@ sub add_message_instance_egress {
+ 
+     my $mi_value = _fold_mi_header($mi->as_string);
+     my $version = $mi->get_tag('m');
+-    $self->prepend_header('X-DKIM2-Info', _dkim2_info("mi-m$version"));
++    my ($hc, $hn) = _header_list_for_hash($msg_current);
++    # Message-Instance first, then the X-DKIM2-Info describing it (see
++    # add_message_instance_ingress).
+     $self->prepend_header('Message-Instance', $mi_value);
++    $self->prepend_header('X-DKIM2-Info',
++        _dkim2_info("mi-m=$version", hc => $hc, hn => $hn));
+ 
+     $log->syslog('debug2', 'Added Message-Instance m=%s', $version);
+     return 1;
+diff --git a/t/Message_DKIM2.t b/t/Message_DKIM2.t
+index cf447ba23..57f183a47 100644
+--- a/t/Message_DKIM2.t
++++ b/t/Message_DKIM2.t
+@@ -109,6 +109,19 @@ subtest 'MI v=1 on plain message' => sub {
+     is $version, 1, 'MI v=1 verifies correctly';
+     is $error, undef, 'no verification error';
+ 
++    # The X-DKIM2-Info describing the MI sits directly above it.
++    like $rfc822, qr/^X-DKIM2-Info:[^\n]*(?:\n[ \t][^\n]*)*\nMessage-Instance:/m,
++        'X-DKIM2-Info immediately above Message-Instance v=1';
++    # draft-gondwana-dkim2-debug-header-01: a tag-list in the DKIM2 syntax,
++    # every tag followed by ";", and the instance action is mi-m=<N>.
++    my ($info) = $rfc822 =~ /^X-DKIM2-Info:[ \t]*((?:[^\n]|\n[ \t])*)/m;
++    $info =~ s/\n[ \t]+/ /g;
++    $info =~ s/([;,])[ \t]+/$1/g;    # a consumer ignores WSP next to ; and ,
++    $info =~ s/;(?=.)/; /g;
++    like $info,
++        qr/^draft=\S+; repo=\S+; date=\d{4}-\d\d-\d\d; sw=sympa; action=mi-m=1; hc=\d+; hn=\S+;\z/,
++        'X-DKIM2-Info is a tag-list with every tag followed by ";"';
++
+     # mi_original should be stored.
+     ok defined $msg->{mi_original}, 'mi_original is stored';
+     like $msg->{mi_original}, qr/Message-Instance/,
+@@ -206,6 +219,11 @@ subtest 'MI v=2 captures header additions' => sub {
+ 
+     # Verify v=2 against current message.
+     my $rfc822 = $msg->as_rfc822_string;
++
++    # The new X-DKIM2-Info (mi-m=2) sits directly above the new MI.
++    like $rfc822,
++        qr/^X-DKIM2-Info:(?:[^\n]|\n[ \t])*?action=mi-m=2;(?:[^\n]|\n[ \t])*\nMessage-Instance:/m,
++        'X-DKIM2-Info mi-m=2 immediately above Message-Instance v=2';
+     my ($version, $error) = Mail::DKIM2::MessageInstance->verify($rfc822);
+     is $version, 2, 'MI v=2 verifies correctly';
+     is $error, undef, 'no verification error';

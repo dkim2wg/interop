@@ -21,7 +21,7 @@ use warnings;
 use Email::MIME;
 use Getopt::Long qw(GetOptions);
 use FindBin;
-use lib "$FindBin::Bin/../lib";
+use lib -d "$FindBin::Bin/../lib/Mail/DKIM2" ? "$FindBin::Bin/../lib" : ();   # running from a checkout
 
 use Mail::DKIM2::Common qw(fold_header);
 use Mail::DKIM2::MessageInstance;
