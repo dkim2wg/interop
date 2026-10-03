@@ -467,11 +467,35 @@ done_testing;
 
 - [ ] **Step 6: Commit.** `git commit -m "Guide: DKIM2 for a Postfix mailing-list host"`.
 
-### Task 7: Deploy, acceptance, memory
+### Task 7: Deploy, make the box match the guide, acceptance, memory
 
-- [ ] **Step 1:** `cd perl && prove -l -j8 t && make distcheck` — PASS, clean. `git push origin master` (after merging the working branch locally per repo convention).
-- [ ] **Step 2:** `ssh dkim2 'cd /root/interop && git pull --ff-only && deploy/deploy.sh'` — Expected: tests pass, units installed, `smoke test: pass`, null-sender smoke ok, `config drift` may now report the unit files: refresh the snapshot with `deploy/capture-server-config.sh` if it tracks units, else note.
-- [ ] **Step 3:** `ssh dkim2 'systemctl status dkim2-milter-inbound dkim2-milter-outbound dkim2-split --no-pager | grep -E "Active|ExecStart"; /usr/local/bin/dkim2-milter --help | head -3; ls /usr/local/bin | grep dkim2'` — Expected: three `active (running)`, ExecStart from `/usr/local/bin`, usage printed, no `*.pl` left.
-- [ ] **Step 4:** `ssh dkim2 'cd /root/interop && deploy/dkim2-list-smoke.sh'` — PASS for all six lines.
-- [ ] **Step 5:** Validator good/bad check as in the previous deploy (fresh `Reflector::generate` message → `pass`; tampered → `fail`).
-- [ ] **Step 6:** Memory: update `project_mailman_sympa_deploy_from_branch.md` (branches rewritten 2026-10-02; history tags; patches exported by `util/export-list-patches.sh`; Sympa base 6.2.78 only), `project_mail_dkim2_api_0_10.md` (dist split dropped for good; milter installed; guide path), and `project_pmilter_null_sender.md` (now documented for operators in the guide).
+The dkim2.com box is the reference deployment of the guide: where the
+guide offers alternatives, the box runs the primary recommendation
+(decided with Bron 2026-10-02).
+
+- [ ] **Step 1:** `cd perl && prove -l -j8 t && make distcheck` — PASS, clean. Merge the branch to master locally and `git push origin master`.
+- [ ] **Step 2:** `ssh dkim2 'cd /root/interop && git pull --ff-only && deploy/deploy.sh'` — tests pass, units installed from `deploy/examples`, `smoke test: pass`, null-sender smoke ok.
+- [ ] **Step 3: Mailman matches the guide.** On the box: `pip install --upgrade 'git+https://github.com/brong/mailman@dkim2'` into `/opt/mailman/venv` (it currently has an older fork commit); run a `mailman` command as the mailman user so pending migrations apply; in `/etc/mailman3/mailman.cfg` add `max_recipients: 1` under `[mta]` and a `[logging.dkim2]` section with `path: dkim2.log`; restart `mailman3 mailman-web`.
+- [ ] **Step 4: Postfix matches the guide.** Replace the `127.0.0.1:10587` split entry in `master.cf` with the guide's signing listener (`deploy/examples/postfix-master.cf.fragment`, listener 1), remove the `127.0.0.1:10589` listener, `postfix check && postfix reload`; `systemctl disable --now dkim2-split`. Mailman's `smtp_port: 10587` and `sympa-sendmail` need no change.
+- [ ] **Step 5: Sympa configuration matches the guide.** Add `nrcpt 1` to `/etc/sympa/sympa/sympa.conf`; restart `sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa`.
+- [ ] **Step 6:** `ssh dkim2 'systemctl status dkim2-milter-inbound dkim2-milter-outbound --no-pager | grep -E "Active|ExecStart"; dkim2-milter --help | head -3; ls /usr/local/bin | grep dkim2'` — both `active (running)`, ExecStart from `/usr/local/bin`, usage printed, no `*.pl` left.
+- [ ] **Step 7:** `ssh dkim2 'cd /root/interop && deploy/dkim2-list-smoke.sh'` — PASS for all six lines. Then decode `rt=` from a captured copy of each list's message: exactly one recipient.
+- [ ] **Step 8:** Validator good/bad check (fresh `Reflector::generate` message → `pass`; tampered → `fail`).
+- [ ] **Step 9:** `deploy/capture-server-config.sh` to refresh `deploy/config/` (master.cf, mailman.cfg, sympa.conf changed); `deploy/SERVER.md`: the split gateway section becomes "retired on this box 2026-10-03, kept as the alternative in the guide", the Mailman install method is the fork branch via pip, the Sympa section is rewritten after Task 8. Commit and push; `check-server-config.sh` clean.
+- [ ] **Step 10:** Memory: `project_mailman_sympa_deploy_from_branch.md` (box installs Mailman from the branch via pip; Sympa from source), `project_dkim2_split_gateway.md` (retired on the box; daemon still shipped), `project_mail_dkim2_api_0_10.md`, `project_pmilter_null_sender.md`.
+
+### Task 8: Sympa 6.2.78 from patched source on the box
+
+The box runs the Ubuntu 25.10 `sympa` 6.2.76 package with the patched
+files overlaid (and `URIFind.pm` carried along). The guide requires
+6.2.78; Ubuntu has no such package. Replace the overlay with a source
+build of 6.2.78 plus the three patches, into the same layout the package
+uses, so config, spool, database and the nginx/systemd wiring stay put.
+Done last, after Task 7 is green, with the package held for rollback.
+
+- [ ] **Step 1: Record the current layout.** On the box: `dpkg -L sympa | grep -E "bin/|lib/Sympa$|etc/|/var/" | head -40`, `systemctl cat sympa.service sympa-bulk.service wwsympa.service | grep -E "ExecStart|User|Environment"`, `grep -E "^(home|etc|spool|...)" /etc/sympa/sympa/sympa.conf`, `ls -l /usr/lib/sympa/bin /usr/share/sympa/lib/Sympa | head`. Save to `/root/sympa-6.2.76-layout.txt`. `apt-mark hold sympa`.
+- [ ] **Step 2: Build.** In `/opt/sympa-dkim2` (a checkout): `git fetch brong && git checkout dkim2` (the rewritten branch, 6.2.78 + 3 patches); `autoreconf -i`; `./configure` with the prefixes from Step 1 (expected: `--prefix=/usr --sysconfdir=/etc/sympa --localstatedir=/var --libexecdir=/usr/lib/sympa --with-confdir=/etc/sympa --with-spooldir=/var/spool/sympa --with-expldir=/var/lib/sympa/list_data --with-piddir=/run/sympa --with-staticdir=/var/lib/sympa/static_content --with-modulesdir=/usr/share/sympa/lib --with-execcgidir=/usr/lib/cgi-bin/sympa --with-scriptdir=/usr/lib/sympa/bin --with-sbindir=/usr/lib/sympa/bin` and the Debian user `--with-user=sympa --with-group=sympa`; confirm each against Step 1); `make`. `make check` if the stub deps allow; `t/Message_DKIM2.t` must pass.
+- [ ] **Step 3: Install.** `systemctl stop sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa`; `cp -a /usr/share/sympa/lib /root/sympa-lib-6.2.76.bak`; `make install`; `perl -I/usr/share/sympa/lib -MSympa::Message -e 1`; `grep VERSION /usr/share/sympa/lib/Sympa/Constants.pm` shows 6.2.78; `sympa.pl --health_check` (or the 6.2 equivalent) runs the DB upgrade if 6.2.78 needs one; start the services; `systemctl status` all active; the web UI at https://sympa.dkim2.com/sympa loads with styling (nginx static paths from SERVER.md).
+- [ ] **Step 4:** `deploy/dkim2-list-smoke.sh` — Sympa lines PASS with `draft=ietf-dkim-dkim2-spec-06`. Post to `dkim2test@sympa.dkim2.com` from outside and confirm the copy verifies.
+- [ ] **Step 5:** `deploy/SERVER.md` Sympa section: source-built 6.2.78 from `/opt/sympa-dkim2` on the `dkim2` branch, package held; update procedure is `git pull && make && make install && restart`. `deploy/capture-server-config.sh`, commit, push. Guide status line: "Sympa 6.2.78 built from the patched source". Memory: `project_sympa_overlay_urifind.md` (overlay retired; URIFind note historical).
+- [ ] **Rollback if Step 3 fails:** `rm -rf /usr/share/sympa/lib && cp -a /root/sympa-lib-6.2.76.bak /usr/share/sympa/lib`, `apt-get install --reinstall sympa`, re-overlay from the `dkim2-history-2026-10-02` tag as SERVER.md describes today, start services.
