@@ -1,8 +1,8 @@
 # DKIM2 Operator Guide
 
-**Spec:** draft-ietf-dkim-dkim2-spec-06  
-**Audience:** MTA operators and postmasters deploying DKIM2
-**Installing it:** see the [Postfix mailing-list host guide](dkim2-postfix-list-host-guide.md)
+- **Spec:** draft-ietf-dkim-dkim2-spec-06
+- **Audience:** MTA operators and postmasters deploying DKIM2
+- **Installing it:** see the [Postfix mailing-list host guide](dkim2-postfix-list-host-guide.md)
 
 ---
 

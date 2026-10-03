@@ -1,8 +1,12 @@
 # DKIM2 for a Postfix mailing-list host
 
-**Spec:** draft-ietf-dkim-dkim2-spec-06
-**Status:** the dkim2.com host runs this configuration (Ubuntu 25.10, Postfix 3.10, Mailman from the `dkim2` fork branch, Sympa 6.2.78 built from the patched source, the standalone milter); the authentication_milter path has not been tested end to end. 2026-10-03
-**Audience:** a Postfix operator who runs Mailman 3 or Sympa and wants list mail to verify as DKIM2 downstream
+- **Spec:** draft-ietf-dkim-dkim2-spec-06
+- **Audience:** a Postfix operator who runs Mailman 3 or Sympa and wants list
+  mail to verify as DKIM2 downstream
+- **Status (2026-10-03):** the dkim2.com host runs this configuration: Ubuntu
+  25.10, Postfix 3.10, Mailman from the `dkim2` fork branch, Sympa 6.2.78
+  built from the patched source, the standalone milter. The
+  authentication_milter path has not been tested end to end.
 
 This guide builds the host in order. Each step ends with a check you can
 run. For what DKIM2 is and why, read the [operator
