@@ -1,19 +1,41 @@
 # DKIM2 Message-Instance support for GNU Mailman 3
 
-Three patches that make Mailman record, in a `Message-Instance` header, what
+Three patches (plus two small upstream fixes 3.3.10 needs on Python 3.13,
+see below) that make Mailman record, in a `Message-Instance` header, what
 it changed about each message it redistributes, so a DKIM2 verifier
 downstream can undo the list's changes and check the signatures of earlier
 hops. Mailman adds only `Message-Instance`; the `DKIM2-Signature` is added
 by the MTA (see the [Postfix mailing-list host
 guide](../docs/dkim2-postfix-list-host-guide.md)).
 
-The same three commits are the `dkim2` branch of
-<https://github.com/brong/mailman>, which is what these patches are exported
-from. The design is described in that branch's `DKIM2-MESSAGE-INSTANCE.md`,
-which patch 2 adds.
+The series exists on two bases in <https://github.com/brong/mailman>:
+
+- branch **`dkim2-3.3.10`**, on the v3.3.10 release (October 2024, the
+  current release on PyPI and in Debian 13 and Ubuntu 25.04+): the one to
+  install (`patches/` here);
+- branch `dkim2`, on upstream master: the same change where upstream
+  development happens (`patches-master/` here).
+
+The DKIM2 code is identical on both; they differ only where 3.3.10 and
+master differ around it (the owner pipeline's handler list, and the Alembic
+revision the migration follows). The design is described in
+`DKIM2-MESSAGE-INSTANCE.md`, which the Message-Instance patch adds.
+
+`patches/` carries five patches. The first two are upstream commits that
+3.3.10 needs to run on Python 3.13 at all (the default on Debian 13 and
+Ubuntu 25.04+) and that have not been in a release yet: the `nntplib`
+requirement becomes `standard-nntplib`, without which `pip install` cannot
+resolve 3.3.10 on 3.13, and the template loader stops using a `pathlib`
+path as a context manager, without which every template lookup (and so
+every decoration) raises a TypeError on 3.13. On Python 3.12 and earlier
+they change nothing and can be skipped. The DKIM2 patches are the last
+three.
 
 ## The patches
 
+0. *(upstream, `patches/` only)* **Fix requirement for standard-nntplib
+   with Python >= 3.13** and **remove context manager usage for
+   PosixPath**: the two Python 3.13 fixes described above.
 1. **Preserve the original Content-Transfer-Encoding when decorating.**
    Adding a header or footer to a single-part text message used to let
    Python's email library pick a new encoding (a UTF-8 body arriving as 8bit
@@ -37,34 +59,39 @@ which patch 2 adds.
 
 ## What they apply to
 
-The series is based on upstream `master` at commit `687b9e4dc`
-(`v3.3.10-466-g687b9e4dc`, September 2026) and applies cleanly there.
+`patches/` applies to the `v3.3.10` tag. `patches-master/` applies to
+upstream master at `687b9e4dc` (September 2026) and not to v3.3.10.
 
-It does **not** apply to the `v3.3.10` release: patch 1 touches
-`src/mailman/handlers/decorate.py`, which changed on master after 3.3.10.
-Use master, or the fork branch below, until a release carries those
-changes.
+Both assume Mailman installed the upstream way, as a Python package in a
+virtualenv. If you run a distribution's `mailman3` package instead, apply
+`patches/` to the package source and rebuild it, or overlay the changed
+files into `/usr/lib/python3/dist-packages/mailman/`; this README does not
+cover either.
+
+Tested: the `dkim2-3.3.10` branch passes Mailman's own test suite for the
+handlers, decoration, REST list configuration, templates and modules on
+Python 3.13 (150 tests), and runs the lists on dkim2.com.
 
 ## Installing
 
-Either install the fork branch into the Mailman virtualenv:
+Either install the backport branch into the Mailman virtualenv:
 
 ```bash
-/opt/mailman/venv/bin/pip install 'git+https://github.com/brong/mailman@dkim2'
+/opt/mailman/venv/bin/pip install 'git+https://github.com/brong/mailman@dkim2-3.3.10'
 ```
 
-or apply the patches to your own checkout of Mailman master and install
-that:
+or apply the patches to a checkout of the 3.3.10 release and install that:
 
 ```bash
 git clone https://gitlab.com/mailman/mailman.git && cd mailman
-git checkout 687b9e4dc
+git checkout v3.3.10
 git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/mailman/patches/*.patch
 /opt/mailman/venv/bin/pip install .
 ```
 
-Either way the virtualenv moves from a 3.3.10 release to a master
-snapshot; check that your Postorius and HyperKitty versions accept it.
+Either way you stay on 3.3.10 plus these three changes, so your Postorius
+and HyperKitty keep working. (If you run Mailman master, use branch `dkim2`
+or `patches-master/` the same way.)
 
 Then, with Mailman stopped, run any `mailman` command as the Mailman user;
 every one applies pending database migrations (the per-list flag adds a

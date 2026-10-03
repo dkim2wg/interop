@@ -275,22 +275,28 @@ listener.
 ## 7. Mailman 3
 
 Mailman adds the `Message-Instance` headers; the milter signs. The
-changes are three patches, described in `mailman/README.md`, exported
-from the `dkim2` branch of <https://github.com/brong/mailman>. They apply
-to upstream master (commit `687b9e4dc`, after v3.3.10), not to the
-v3.3.10 release.
+changes are three patches, described in `mailman/README.md`, carried on
+two branches of <https://github.com/brong/mailman>: `dkim2-3.3.10` on the
+3.3.10 release, which is the one to install, and `dkim2` on upstream
+master. The 3.3.10 branch also carries two small upstream fixes without
+which 3.3.10 does not install or decorate on Python 3.13, the default on
+Debian 13 and Ubuntu 25.04 and later; they are harmless on older Pythons.
 
-Install into the Mailman virtualenv, either from the fork branch:
+This assumes Mailman installed the upstream way, in a virtualenv. A
+distribution `mailman3` package needs the series applied to the package
+source instead; the README says what that involves.
+
+Install into the Mailman virtualenv, either from the branch:
 
 ```bash
-/opt/mailman/venv/bin/pip install 'git+https://github.com/brong/mailman@dkim2'
+/opt/mailman/venv/bin/pip install 'git+https://github.com/brong/mailman@dkim2-3.3.10'
 ```
 
-or by applying the series to a checkout:
+or by applying the series to a checkout of the release:
 
 ```bash
 git clone https://gitlab.com/mailman/mailman.git && cd mailman
-git checkout 687b9e4dc
+git checkout v3.3.10
 git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/mailman/patches/*.patch
 /opt/mailman/venv/bin/pip install .
 ```
@@ -327,8 +333,8 @@ sudo -u mailman /opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg info
 systemctl start mailman3
 ```
 
-Installing the fork moves the virtualenv from a 3.3.10 release to a master
-snapshot; check that your Postorius and HyperKitty accept it.
+You stay on 3.3.10 plus these three changes, so Postorius and HyperKitty
+keep working.
 
 What happens: the `message-instance-ingress` handler runs first in the
 posting pipeline and records the message as it arrived (if the inbound

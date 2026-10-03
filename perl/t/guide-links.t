@@ -17,6 +17,8 @@ for my $path ($text =~ /`((?:perl|deploy|mailman|sympa|util|docs)\/[A-Za-z0-9_.\
     ok(-e "$root/$path", "guide path $path exists in the repo");
 }
 like($text, qr/^## .*Mailman/m, 'has a Mailman section');
+like($text, qr/mailman\@dkim2-3\.3\.10/, 'recommends the 3.3.10 backport branch');
+like($text, qr/git checkout v3\.3\.10/, '  ... and the release tag for the patch route');
 like($text, qr/^## .*Sympa/m,   'has a Sympa section');
 like($text, qr/max_recipients: 1/, 'tells Mailman to deliver one recipient per transaction');
 like($text, qr/\bnrcpt 1\b/,     'tells Sympa the same');

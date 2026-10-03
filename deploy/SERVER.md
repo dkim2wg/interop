@@ -411,14 +411,17 @@ locally. Decode each copy's `rt=` and expect exactly one recipient in each.
 `src/mailman/handlers/message_instance.py` and
 `src/mailman/mta/message_instance.py`.
 
-**Installation:** `pip install 'git+https://github.com/brong/mailman@dkim2'`
-into the venv at `/opt/mailman/venv/` (since 2026-10-03; the `dkim2` branch is the
-3-commit series exported to `mailman/patches`). The installed package files live at:
+**Installation:** `pip install 'git+https://github.com/brong/mailman@dkim2-3.3.10'`
+into the venv at `/opt/mailman/venv/` (since 2026-10-03). `dkim2-3.3.10` is the
+v3.3.10 release plus two upstream Python 3.13 fixes plus the 3-commit DKIM2
+series (`mailman/patches`); the box runs it deliberately, to gain experience
+with what operators install. The `dkim2` branch is the same series on upstream
+master (`mailman/patches-master`). The installed package files live at:
 ```
 /opt/mailman/venv/lib/python3.13/site-packages/mailman/
 ```
-Version: 3.3.11b1 (upstream master + the DKIM2 series). To update:
-`pip install --force-reinstall --no-deps 'git+https://github.com/brong/mailman@dkim2'`,
+Version: 3.3.10 + the series. To update:
+`pip install --force-reinstall --no-deps 'git+https://github.com/brong/mailman@dkim2-3.3.10'`,
 then `systemctl stop mailman3; sudo -u mailman /opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg info; systemctl start mailman3 mailman-web`
 (any `mailman` command applies pending migrations).
 
@@ -482,7 +485,8 @@ ignored by logrotate as a duplicate. Corrected config is committed at
 Recovery if it recurs: `chown mailman:mailman /var/log/mailman3/mailman.log &&
 systemctl restart mailman3`.
 
-**Update process:** push the `dkim2` branch of brong/mailman, then run the
+**Update process:** push the `dkim2-3.3.10` branch of brong/mailman (and keep
+`dkim2` in step: same three DKIM2 commits, rebased), then run the
 `pip install --force-reinstall` line under Installation above. Until 2026-10-03
 the two handler files were rsync'd into the venv by hand; the venv is now a
 plain pip install of the branch, so do not rsync over it.
@@ -912,10 +916,10 @@ ssh dkim2 'cd /root/interop && git pull && cd perl && \
     systemctl restart dkim2-milter-inbound dkim2-milter-outbound'
 ```
 
-### Mailman (Python, brong/mailman repo, `dkim2` branch)
+### Mailman (Python, brong/mailman repo, `dkim2-3.3.10` branch)
 
 ```bash
-ssh dkim2 "/opt/mailman/venv/bin/pip install --force-reinstall --no-deps 'git+https://github.com/brong/mailman@dkim2' \
+ssh dkim2 "/opt/mailman/venv/bin/pip install --force-reinstall --no-deps 'git+https://github.com/brong/mailman@dkim2-3.3.10' \
   && systemctl stop mailman3 \
   && sudo -u mailman /opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg info >/dev/null \
   && systemctl start mailman3 && systemctl restart mailman-web"
@@ -923,6 +927,18 @@ ssh dkim2 "/opt/mailman/venv/bin/pip install --force-reinstall --no-deps 'git+ht
 
 Any `mailman` command applies pending Alembic migrations, so the `info` run
 covers a model change.
+
+**Running Mailman's test suite on the box** (it cannot run on a dev Mac, and
+3.3.10's own suite needs Python 3.13 fixes the branch carries): a scratch
+clone and venv exist for it.
+```bash
+ssh dkim2 'cd /opt/mailman/src-test && git fetch origin && git reset --hard origin/dkim2-3.3.10 \
+  && /opt/mailman/test-venv/bin/python -m nose2 mailman.handlers.tests.test_message_instance \
+       mailman.handlers.tests.test_mi_roundtrip mailman.handlers.tests.test_mi_null_recipe \
+       mailman.handlers.tests.test_decorate mailman.rest.tests.test_listconf'
+```
+`/opt/mailman/test-venv` has the production venv's dependencies plus `nose2`
+and `flufl.testing`, and the clone installed with `pip install -e . --no-deps`.
 
 ### Sympa (Perl, brong/sympa repo, `dkim2` branch)
 
