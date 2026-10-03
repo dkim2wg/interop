@@ -54,8 +54,22 @@ Apply to a 6.2.78 source tree and build as usual:
 git clone https://github.com/sympa-community/sympa.git && cd sympa
 git checkout 6.2.78
 git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/sympa/patches/*.patch
-autoreconf -i && ./configure ... && make && make install
+autoreconf -i            # needs the autopoint package (gettext)
+./configure --enable-fhs --prefix=/usr --sysconfdir=/etc/sympa --localstatedir=/var \
+    --with-user=sympa --with-group=sympa ...
+make && make install
+sympa upgrade --from=OLD --to=6.2.78    # as the sympa user, if replacing an older install
 ```
+
+If you re-run `./configure` with different paths, `make clean` before
+`make`: the C queue wrappers bake the configuration path in at compile time
+and are not rebuilt for a changed define. `--enable-fhs` selects the
+Filesystem Hierarchy layout; the remaining
+`--with-*dir` options should match the install you are replacing (compare
+the generated `src/lib/Sympa/Constants.pm` with the installed one before
+`make install`). 6.2.78 needs `Archive::Zip::SimpleUnzip`,
+`Archive::Zip::SimpleZip` and `Unicode::UTF8`, which a distribution's
+6.2.76 package did not; `cpanm` them if `perl -c wwsympa.fcgi` complains.
 
 Or overlay the patched files onto an installed 6.2.78 (an older install,
 such as a distribution's 6.2.76 package, is not a supported base: its

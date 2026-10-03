@@ -505,11 +505,34 @@ curl -u restadmin:dkim2demo -X PATCH \
 **Source:** Fork at `github.com/brong/sympa` (branch `dkim2`) with DKIM2
 additions in `src/lib/Sympa/Message.pm`.
 
-**Installation:** Installed from the Debian/Ubuntu `sympa` package, then
-DKIM2-modified Perl files overlaid into `/usr/share/sympa/lib/`.
-The key modified file is `/usr/share/sympa/lib/Sympa/Message.pm`.
+**Installation (since 2026-10-03):** Sympa **6.2.78 built from the patched
+source** in `/opt/sympa-dkim2` (a checkout of `brong/sympa`, branch `dkim2` =
+the 3-commit series in `sympa/patches`), installed over the Ubuntu `sympa`
+6.2.76 package's layout (`--enable-fhs`, modules in `/usr/share/sympa/lib`,
+programs in `/usr/lib/sympa/bin`, CGI in `/usr/lib/cgi-bin/sympa`); the
+package is `apt-mark hold`. The package's systemd units are kept (the build's
+`--with-unitsdir` points at a scratch dir). 6.2.78 needed
+`Archive::Zip::SimpleUnzip`, `Archive::Zip::SimpleZip` and `Unicode::UTF8`
+from CPAN. Pre-upgrade files are in `/root/sympa-6.2.76-backup/`.
 
-Version: 6.2.76
+The configure line (reproducible from the box's `config.log`):
+```bash
+./configure --enable-fhs --prefix=/usr --sysconfdir=/etc/sympa --localstatedir=/var \
+  --libexecdir=/usr/lib/sympa/bin --sbindir=/usr/lib/sympa/bin \
+  --with-confdir=/etc/sympa/sympa --with-aliases_file=/etc/mail/sympa/aliases \
+  --with-modulesdir=/usr/share/sympa/lib --with-scriptdir=/usr/share/sympa/bin \
+  --with-defaultdir=/usr/share/sympa/default --with-localedir=/usr/share/locale \
+  --with-staticdir=/usr/share/sympa/static_content --with-cgidir=/usr/lib/cgi-bin/sympa \
+  --with-expldir=/var/lib/sympa/list_data --with-spooldir=/var/spool/sympa \
+  --with-piddir=/run/sympa --with-lockdir=/var/lock/sympa \
+  --with-cssdir=/var/lib/sympa/css --with-picturesdir=/var/lib/sympa/pictures \
+  --with-docdir=/usr/share/doc/sympa \
+  --with-unitsdir=/opt/sympa-dkim2/.scratch/units --with-initdir=/opt/sympa-dkim2/.scratch/init \
+  --with-smrshdir=/opt/sympa-dkim2/.scratch/smrsh --with-user=sympa --with-group=sympa
+```
+
+Version: 6.2.78 (`/etc/sympa/data_structure.version` upgraded from 6.2.76 with
+`sympa upgrade --from=6.2.76 --to=6.2.78`).
 
 **Config files:**
 - `/etc/sympa/sympa/sympa.conf` — main Sympa config
@@ -546,7 +569,7 @@ icons:
 - `/static-sympa/css/` → **`/var/lib/sympa/css/`** — per-robot CSS that Sympa
   generates at runtime (`css_path`), e.g. `css/sympa.dkim2.com/style.css`.
 - `/static-sympa/` → **`/opt/sympa-dkim2/www/`** — the shipped JS/fonts/icons
-  for the running 6.2.76 build (Font Awesome 6). NOTE: the distro
+  for the running build (Font Awesome 6; 6.2.78 since 2026-10-03). NOTE: the distro
   `/usr/share/sympa/static_content` is a **stale older bundle** (Font Awesome 4,
   wrong filenames) — do not point nginx there.
 ```
@@ -901,43 +924,27 @@ ssh dkim2 "/opt/mailman/venv/bin/pip install --force-reinstall --no-deps 'git+ht
 Any `mailman` command applies pending Alembic migrations, so the `info` run
 covers a model change.
 
-### Sympa Message.pm (Perl, brong/sympa repo)
+### Sympa (Perl, brong/sympa repo, `dkim2` branch)
 
-`Message.pm` does **not** stand alone — it does `use Sympa::HTML::URIFind`, which in
-turn does `use base qw(URI::Find::Schemeless)`. Copying `Message.pm` on its own takes
-Sympa down with `Can't locate Sympa/HTML/URIFind.pm in @INC`; every Sympa service then
-sits in `activating` and restarts in a loop. This happened on 2026-08-26 because this
-section only listed `Message.pm` — the companion module was added to the source tree
-after the previous deploy, and nothing here said to carry it.
-
-One-time, if `perl -MURI::Find::Schemeless -e1` fails on the box:
 ```bash
-ssh dkim2 'DEBIAN_FRONTEND=noninteractive apt-get install -y liburi-find-perl'
+ssh dkim2 'cd /opt/sympa-dkim2 && git fetch origin && git reset --hard origin/dkim2 \
+  && make && systemctl stop wwsympa sympa-task_manager sympa-bounced sympa-archived sympa-bulk sympa \
+  && make install >/tmp/sympa-install.log \
+  && systemctl start sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa'
 ```
 
-Then, from your local `~/src/sympa` working directory — **both** files:
-```bash
-scp src/lib/Sympa/Message.pm \
-    root@dkim2.com:/usr/share/sympa/lib/Sympa/Message.pm
-ssh dkim2 mkdir -p /usr/share/sympa/lib/Sympa/HTML
-scp src/lib/Sympa/HTML/URIFind.pm \
-    root@dkim2.com:/usr/share/sympa/lib/Sympa/HTML/URIFind.pm
-```
+If `./configure` is ever re-run with different paths, `make clean` first: the C
+queue wrappers in `src/libexec` bake `CONFIG` in at compile time and `make`
+does not rebuild them for a changed define (2026-10-03: a stale `queue` looked
+for `/etc/sympa/sympa.conf` and every list post bounced with "SYMPA internal
+error : unable to open"). Check with
+`strings /usr/lib/sympa/bin/queue | grep /etc/sympa` → `/etc/sympa/sympa/sympa.conf`.
 
-**Compile-check before restarting** — a load failure here is a full outage, and
-`perl -c` catches it in a second:
-```bash
-ssh dkim2 'perl -I/usr/share/sympa/lib -c /usr/share/sympa/lib/Sympa/Message.pm'
-ssh dkim2 systemctl restart sympa sympa-bulk sympa-archived sympa-bounced \
-    sympa-task_manager wwsympa
-ssh dkim2 systemctl is-active sympa sympa-bulk sympa-archived sympa-bounced
-```
-
-Note `/opt/sympa-dkim2` on the box is a checkout of `brong/sympa`, but it is **not**
-the deploy source and has been observed sitting on an abandoned, force-pushed lineage.
-The live files are the overlay above; treat the checkout as a convenience only.
-
----
+The interop Perl library it calls (`Mail::DKIM2::*`) is installed by
+`deploy/deploy.sh`; a change there needs only the Sympa restart. Run
+`sympa upgrade --from=X --to=Y` (as `sympa`) when the Sympa version itself
+moves. The old rsync-a-Message.pm overlay is gone: do not copy files into
+`/usr/share/sympa/lib` by hand.
 
 ## Server configuration snapshot (`deploy/config/`)
 
