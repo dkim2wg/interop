@@ -300,10 +300,14 @@ or by applying the matching series to a checkout of the release:
 
 ```bash
 git clone https://gitlab.com/mailman/mailman.git && cd mailman
-git checkout v3.3.10                                    # or 3.3.8
+git checkout v3.3.10        # or: git checkout 3.3.8
 git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/mailman/patches-3.3.10/*.patch
+                            # or: .../mailman/patches-3.3.8/*.patch
 /opt/mailman/venv/bin/pip install .
 ```
+
+(On upstream master, branch `dkim2` and `mailman/patches-master/` are the
+same change; they are for following upstream, not for a list host.)
 
 Stop Mailman, configure, then run any `mailman` command as the Mailman
 user, which applies the pending migration for the per-list column, and
