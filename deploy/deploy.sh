@@ -85,21 +85,16 @@ install -m 644 "$REPO/deploy/postfix-dkim2-delayedbounce" /etc/postfix/dkim2-del
 postmap /etc/postfix/dkim2-delayedbounce
 postfix reload
 
-# 3c. Patch the (effectively unmaintained) Sendmail::PMilter for the null-sender
-#     hang: its SMFIC_MAIL handler skips the envfrom hook and sends NO reply when
-#     the sender arg list is empty (MAIL FROM:<>), so Postfix blocks until
-#     milter_command_timeout and internally-generated bounces ship unsigned.
-#     Idempotent: re-applies after a CPAN reinstall, skips if already patched.
-PMILTER_CTX=$(perl -MSendmail::PMilter::Context -e 'print $INC{"Sendmail/PMilter/Context.pm"}' 2>/dev/null)
-if [ -n "$PMILTER_CTX" ]; then
-    if grep -q 'null sender MAIL FROM' "$PMILTER_CTX"; then
-        echo ">> Sendmail::PMilter null-sender patch already applied"
-    else
-        patch --forward --backup "$PMILTER_CTX" < "$REPO/deploy/patches/pmilter-null-sender-envfrom.patch"
-        echo ">> applied Sendmail::PMilter null-sender patch to $PMILTER_CTX"
-    fi
+# 3c. Sendmail::PMilter 1.28+ (July 2026): the first release that answers a
+#     null-sender MAIL FROM:<>; 1.27 made Postfix wait out milter_command_timeout
+#     and internally-generated bounces shipped unsigned (we carried a local patch
+#     until 2026-10-03). dkim2-milter refuses to start with an older version, so
+#     upgrade here rather than fail at the restart below.
+if perl -MSendmail::PMilter\ 1.28 -e1 2>/dev/null; then
+    echo ">> Sendmail::PMilter $(perl -MSendmail::PMilter -e 'print $Sendmail::PMilter::VERSION') ok"
 else
-    echo ">> WARNING: Sendmail::PMilter::Context not found; skipping null-sender patch" >&2
+    echo ">> upgrading Sendmail::PMilter to 1.28+ ..."
+    cpanm --quiet --notest Sendmail::PMilter
 fi
 
 # 4. Restart the long-running milters so they load the freshly-installed lib

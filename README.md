@@ -91,9 +91,6 @@ Two things in this tree are not covered by that licence:
   <https://forge.turscar.ie/turscar/dkim2tests>, which carries its own
   BSD-2-Clause licence (`Copyright (c) 2026 Turscar`). Nothing here relicenses
   it.
-- `deploy/patches/pmilter-null-sender-envfrom.patch` is a diff against
-  `Sendmail::PMilter`, and its context lines remain under that distribution's
-  own terms.
 
 # An Alternative Proposal
 

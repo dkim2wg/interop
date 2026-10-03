@@ -6,8 +6,8 @@
 # This guards against regression of the Sendmail::PMilter null-sender bug: its
 # SMFIC_MAIL handler skips the envfrom hook (and sends no reply) when the sender
 # arg list is empty, so Postfix blocks until milter_command_timeout (30s). The
-# fix is deploy/patches/pmilter-null-sender-envfrom.patch, applied by deploy.sh.
-# Without the patch this script fails in ~8s instead of the MTA's 30s, so a
+# fix is Sendmail::PMilter 1.28 (July 2026), which dkim2-milter requires.
+# With an older Sendmail::PMilter this script fails in ~8s instead of the MTA's 30s, so a
 # broken deploy is caught loudly rather than silently shipping unsigned bounces.
 #
 # Speaks just enough of the milter protocol (as the MTA side) to negotiate and
@@ -71,7 +71,7 @@ send_cmd('M', "\0");
 my $reply = eval { read_reply() };
 if ($@) {
     die "SMOKE TEST FAILED: milter did not answer MAIL FROM:<> "
-      . "(Sendmail::PMilter null-sender bug — patch not applied?): $@";
+      . "(Sendmail::PMilter null-sender bug — version older than 1.28?): $@";
 }
 
 my $action = length($reply) ? substr($reply, 0, 1) : '(none)';

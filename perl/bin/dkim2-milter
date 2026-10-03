@@ -6,7 +6,7 @@ use Getopt::Long;
 use Pod::Usage;
 use FindBin;
 use lib -d "$FindBin::Bin/../lib/Mail/DKIM2" ? "$FindBin::Bin/../lib" : ();   # running from a checkout
-use Sendmail::PMilter ':all';
+use Sendmail::PMilter 1.28 ':all';   # 1.27 never answered MAIL FROM:<>
 
 # Imported before _dkim2_info/_header_list_for_hash so the constants and
 # should_skip are known at compile time. Spec version constants are the single
@@ -913,17 +913,16 @@ Add to C<main.cf>:
 
 =head1 DEPENDENCIES
 
-Requires L<Sendmail::PMilter>, a recommended (not required) dependency of
-the Mail-DKIM2 distribution:
+Requires L<Sendmail::PMilter> 1.28 or later, a recommended (not required)
+dependency of the Mail-DKIM2 distribution:
 
     cpanm Sendmail::PMilter
 
-Sendmail::PMilter 1.27 never answers a null-sender C<MAIL FROM:E<lt>E<gt>>,
-so the MTA waits out its milter timeout and bounces go out unsigned. Apply
-C<deploy/patches/pmilter-null-sender-envfrom.patch> from the interop
-repository to the installed C<Sendmail/PMilter/Context.pm>; the guide
-(C<docs/dkim2-postfix-list-host-guide.md>) shows how, and
-C<deploy/smoke-null-sender-milter.pl> detects a missing patch.
+1.28 (July 2026) is the first release that answers a null-sender
+C<MAIL FROM:E<lt>E<gt>>; with 1.27 the MTA waited out its milter timeout
+and bounces went out unsigned. This program refuses to start with an older
+version. C<deploy/smoke-null-sender-milter.pl> in the interop repository
+checks a running milter answers a null sender.
 
 =head1 AUTHOR
 

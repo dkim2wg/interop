@@ -146,21 +146,12 @@ options; `--mode both` on one socket is also possible
 the inbound stamp off the list's own copies, so the two-instance layout is
 what this guide wires up.
 
-**The null-sender patch.** Sendmail::PMilter 1.27 never answers a `MAIL
-FROM:<>` command: its envelope hook does not fire for an empty sender, so
-Postfix waits out `milter_command_timeout` (30 seconds) and the bounce
-goes out unsigned. Until a fixed release exists, patch the installed
-module:
-
-```bash
-patch --forward --backup \
-    "$(perl -MSendmail::PMilter::Context -e 'print $INC{"Sendmail/PMilter/Context.pm"}')" \
-    < interop/deploy/patches/pmilter-null-sender-envfrom.patch
-systemctl restart dkim2-milter-inbound dkim2-milter-outbound
-```
-
-The patch is `deploy/patches/pmilter-null-sender-envfrom.patch`. Re-apply
-it after any CPAN upgrade of Sendmail::PMilter. To check it is in place:
+**Null senders.** `dkim2-milter` requires Sendmail::PMilter 1.28 or later
+and refuses to start with an older one. 1.27 never answered a `MAIL
+FROM:<>` command, so Postfix waited out `milter_command_timeout` (30
+seconds) and every bounce went out unsigned. `cpanm Sendmail::PMilter`
+installs the current release. To check a running milter answers a null
+sender:
 
 ```bash
 perl interop/deploy/smoke-null-sender-milter.pl /var/spool/postfix/var/run/dkim2-milter-out.sock
@@ -492,7 +483,7 @@ signing key for`. Mailman: `dkim2.log`. Sympa logs through its usual `sympa.log`
 | `dkim2=temperror` | A key lookup failed for a transient reason: timeout, SERVFAIL, refused | Retryable; check the resolver and the record |
 | `dkim2=fail (... timestamp ...)` on old mail | Signatures are valid for 14 days from `t=` | Expected; verifiers may relax it locally |
 | `permerror Message-Instance m=2 is not signed` | The list stamped `m=2` but no signature was added over it: the copy did not go through the signing listener | Point the list manager's submission at `127.0.0.1:10587` (steps 7 and 8) |
-| Bounces go out unsigned; Postfix logs a 30 second milter timeout on `MAIL FROM:<>` | The PMilter null-sender bug | Apply the patch (step 5a) |
+| Bounces go out unsigned; Postfix logs a 30 second milter timeout on `MAIL FROM:<>` | Sendmail::PMilter older than 1.28 | `cpanm Sendmail::PMilter`, restart the milters (step 5a) |
 | Every subscriber's address visible in `rt=` | Many recipients per transaction | `max_recipients: 1` / `nrcpt 1`, or the split gateway (step 6) |
 | Mailman `mi-cache/` grows | Messages that never finished delivery | Delete files older than the retry window |
 

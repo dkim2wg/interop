@@ -43,7 +43,7 @@ WriteMakefile(
             runtime => {
                 recommends => {
                     # dkim2-milter
-                    'Sendmail::PMilter' => '1.27',
+                    'Sendmail::PMilter' => '1.28',   # 1.27 never answered MAIL FROM:<>
                     # dkim2-split-lmtp
                     'Net::SMTP'   => '0',
                     'Sys::Syslog' => '0',

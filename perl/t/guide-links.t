@@ -21,7 +21,8 @@ like($text, qr/^## .*Sympa/m,   'has a Sympa section');
 like($text, qr/max_recipients: 1/, 'tells Mailman to deliver one recipient per transaction');
 like($text, qr/\bnrcpt 1\b/,     'tells Sympa the same');
 like($text, qr/disable_mime_output_conversion = yes/, 'warns about transport conversion');
-like($text, qr/pmilter-null-sender-envfrom\.patch/, 'covers the PMilter null-sender patch');
+like($text, qr/Sendmail::PMilter 1\.28/, 'requires the Sendmail::PMilter that answers a null sender');
+unlike($text, qr/pmilter-null-sender-envfrom\.patch|deploy\/patches/, 'no longer tells operators to patch PMilter');
 like($text, qr/DKIM2Sign/ && qr/DKIM2Verify/, 'covers the authentication_milter handlers');
 unlike($text, qr{/root/interop|/opt/dkim2}, 'no dkim2.com box paths');
 
@@ -30,8 +31,7 @@ unlike($text, qr/^(?:smtp_port|message_instance|max_recipients):[^\n#]*#/m,
        'mailman.cfg block has no inline comments (lazr.config keeps them in the value)');
 like($text, qr/-H 'Content-Type: application\/json'/, 'REST example sends JSON as JSON');
 unlike($text, qr/mailman\.database\.initialize/, 'no nonexistent migration entry point');
-like($text, qr/perl -MSendmail::PMilter::Context/, 'PMilter patch finds the module without perldoc');
-unlike($text, qr/perldoc -l/, '  ... (perl-doc is not on a stock Debian)');
+unlike($text, qr/perldoc -l/, 'nothing depends on perl-doc (not on a stock Debian)');
 like($text, qr/useradd -r -U -G postfix/, 'the dkim2 user has its own group and is in postfix');
 like($text, qr/install -d -m 750 -o dkim2 -g postfix \/var\/spool\/postfix\/var\/run/,
      'the socket directory is created before the units start');
