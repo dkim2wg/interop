@@ -11,8 +11,6 @@ use Email::MIME;
 use DKIM2TestKeys;
 use Path::Tiny;
 use Mail::DKIM2::Common qw(parse_dkim_pubkey);
-use JSON;
-use MIME::Base64 qw(encode_base64 decode_base64);
 
 # Fixed timestamp for reproducible signing
 my $TIMESTAMP = 1740000000;
@@ -127,22 +125,28 @@ sign_msg($msg,
     isnt($v->result, 'permerror', 'allow_unsigned_mi suppresses the unsigned-MI permerror');
 }
 
-# The case that opt-out exists for, with real bytes: a Fastmail-signed post
-# (m=1/i=1, d=unstable.email) after Mailman on mail.dkim2.com has tagged the
+# The case that opt-out exists for, with real bytes: a DKIM2-signed post
+# (m=1/i=1, d=dkim2.com) after Mailman on mail.dkim2.com has tagged the
 # subject, added List-* fields and a footer, and recorded the change as an
 # UNSIGNED Message-Instance m=2 -- exactly what the outbound milter is handed
-# to sign. Captured 2026-09-10, the first day Fastmail signed: the milter's
-# pre-sign verify ran WITHOUT the opt-out, reported this PERMERROR, and every
-# list post with a signed upstream left unsigned (bin/dkim2-milter; see
-# t/milter-script.t for the end-to-end guard). unstable.email's fm3 key is
-# pinned here so the fixture does not depend on live DNS or key rotation.
+# to sign. The original capture (2026-09-10, the first day Fastmail signed)
+# showed the milter's pre-sign verify running WITHOUT the opt-out, reporting
+# this PERMERROR, and every list post with a signed upstream leaving
+# unsigned (bin/dkim2-milter; see t/milter-script.t for the end-to-end
+# guard). That capture also carried a folded Content-Type, CRLF included,
+# inside a "d" literal, which spec-06 §5.1 forbids and every verifier now
+# rejects, so it was regenerated on 2026-10-04 from the fixed Mailman: the
+# same multipart/alternative shape posted through dkim2test@mailman.dkim2.com,
+# with the milter's own i=2 signature and X-DKIM2-Info removed again to leave
+# Mailman's output as the milter received it. dkim2.com's sel1 key is pinned
+# here so the fixture does not depend on live DNS or key rotation.
 {
     my $raw = path("$FindBin::Bin/../tests/emails/mailman-m2-unsigned.eml")->slurp_raw;
-    my $fm3 = 'v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvNUm+tvS0U30of4pAM4H6vX4Y9JK3H6om8lTIVZdl8MnbOvyn6xu5NPocIdwlQYZso4yFvNkSzbeCglvk3cCJHT8Xze1GNgUVSAJ7U8NjZKBD038pHeKtKQ6/3tEI0TgXZB2E+S8BL4v0w7xnq9lZMktqPbf7tZC7+5Tgyl/67lDN6j7ZQQMOkGCVhMsq58YIggcTrTrABIpoQmZ5Murj5EvTC6AulupdGJRblS8kUxU8caP+TiRPpgAIRY0J9rcJWQL767l6chVEFEdXbTiSW1gsaH7MYlYFomEJzJqVZVoJbL4ezPWoAELzDztlLCAs1SxHsEAbJuFs+HX8zKFtQIDAQAB';
+    my $sel1 = 'v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvwtNJpRLYM99Ya2Vm5Th/BUxw7MazipAvYMHJA80TD9P1F5gx6eHMT8kErqOG5w7ngZPAoEvH0Dq2rfyGC7gqp93RR7xCD/YNm72/uq9NC+zv1gQ3IqeHbKJEd8MQMj4CL+0fhRyAPpMWEPirYGSgVDxKjJHwa0XLlt00iI6DV1m/IhbH2hzcd6WfBBdiFLV+ovTS8InQDedl12aJtRJv/gKLA+6+Nd4DlTb3mBT2JvT0WoIbJ43pZpBR8ItXHOGT75mxMILEcWI2EhtPq/GaJHWbn7RxgyV0I44bTUiKut+8udflCjSpiOBXlFNp20bUQTjNxKNcCiLGFzc8cYFIwIDAQAB';
     my $pinned = sub {
         my ($sig, $idx) = @_;
-        return unless $sig->domain eq 'unstable.email' && $sig->selector($idx // 0) eq 'fm3';
-        return parse_dkim_pubkey($fm3);
+        return unless $sig->domain eq 'dkim2.com' && $sig->selector($idx // 0) eq 'sel1';
+        return parse_dkim_pubkey($sel1);
     };
     my $run = sub {
         my ($text, $allow) = @_;
@@ -158,59 +162,14 @@ sign_msg($msg,
     is($wire->result, 'permerror', 'captured list post: as a receiver, the unsigned m=2 is PERMERROR');
     like($wire->result_detail, qr/m=2 is not signed/, 'captured list post: spec wording');
 
-    # As captured, Mailman's m=2 Recipe recorded the folded Content-Type as a
-    # "d" literal with the CRLF fold still inside it. spec-06 §5.1 says a "d"
-    # string MUST NOT contain CR or LF, and since 2026-10 every verifier
-    # rejects one that does, so the capture is real-mail evidence for that
-    # rule rather than for the opt-out it was taken for.
-    my $as_captured = $run->($raw, 1);
-    is($as_captured->result, 'permerror',
-        'captured list post: the folded "d" literal is a malformed Recipe');
-    like($as_captured->result_detail, qr/m=2 Recipe literal contains CR or LF/,
-        'captured list post: and is named as such');
-
-    # The point the capture was taken for still holds once the Recipe is
-    # written the way a conforming list manager writes it. Only the UNSIGNED
-    # m=2 header is re-encoded, with the literal unfolded; relaxed
-    # canonicalization collapses the fold to the same single space, so the
-    # rebuilt m=1 header hash is unchanged and nothing signed is touched.
-    my $fixed = unfold_recipe_literals($raw, 2);
-    my $signer = $run->($fixed, 1);
+    my $signer = $run->($raw, 1);
     is($signer->result, 'pass', 'captured list post: as the signer of m=2, the upstream chain passes')
         or diag($signer->result_detail);
     like($signer->result_detail, qr/i=1\.\.1 verified/, 'captured list post: i=1 verified');
 
-    my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($fixed);
+    my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($raw);
     ok($ok, "captured list post: Mailman's m=2 matches the content and undoes to m=1")
         or diag($why);
-}
-
-# Re-encode Message-Instance m=$num of $raw with every "d" literal unfolded
-# (CRLF + WSP -> a single space). Returns the message text.
-sub unfold_recipe_literals {
-    my ($raw, $num) = @_;
-    my $msg = Email::MIME->new($raw);
-    my @mi = map {
-        my $h = $_;
-        (my $u = $h) =~ s/\r?\n[ \t]+/ /g;
-        if ($u =~ /\bm=$num\b/) {
-            my ($hashes, $r) = $u =~ /\bh=([^;]+);\s*r=([A-Za-z0-9+\/=\s]+)/
-                or die "cannot take apart: $u";
-            $r =~ s/\s+//g;
-            my $data = JSON->new->decode(decode_base64($r));
-            for my $steps (values %{ $data->{h} || {} }) {
-                for my $step (@$steps) {
-                    next unless ref $step eq 'HASH' && $step->{d};
-                    s/\r?\n[ \t]+/ /g for @{ $step->{d} };
-                }
-            }
-            $h = "m=$num; h=$hashes; r="
-               . encode_base64(JSON->new->canonical(1)->encode($data), '') . ";";
-        }
-        $h;
-    } $msg->header_raw('Message-Instance');
-    $msg->header_raw_set('Message-Instance', @mi);
-    return $msg->as_string;
 }
 
 done_testing;
