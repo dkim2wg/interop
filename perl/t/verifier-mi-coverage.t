@@ -125,28 +125,29 @@ sign_msg($msg,
     isnt($v->result, 'permerror', 'allow_unsigned_mi suppresses the unsigned-MI permerror');
 }
 
-# The case that opt-out exists for, with real bytes: a DKIM2-signed post
-# (m=1/i=1, d=dkim2.com) after Mailman on mail.dkim2.com has tagged the
+# The case that opt-out exists for, with real bytes: a Fastmail-signed post
+# (m=1/i=1, d=unstable.email) after Mailman on mail.dkim2.com has tagged the
 # subject, added List-* fields and a footer, and recorded the change as an
 # UNSIGNED Message-Instance m=2 -- exactly what the outbound milter is handed
-# to sign. The original capture (2026-09-10, the first day Fastmail signed)
+# to sign. The first capture (2026-09-10, the first day Fastmail signed)
 # showed the milter's pre-sign verify running WITHOUT the opt-out, reporting
 # this PERMERROR, and every list post with a signed upstream leaving
 # unsigned (bin/dkim2-milter; see t/milter-script.t for the end-to-end
 # guard). That capture also carried a folded Content-Type, CRLF included,
 # inside a "d" literal, which spec-06 §5.1 forbids and every verifier now
-# rejects, so it was regenerated on 2026-10-04 from the fixed Mailman: the
-# same multipart/alternative shape posted through dkim2test@mailman.dkim2.com,
-# with the milter's own i=2 signature and X-DKIM2-Info removed again to leave
-# Mailman's output as the milter received it. dkim2.com's sel1 key is pinned
-# here so the fixture does not depend on live DNS or key rotation.
+# rejects, so Bron posted again on 2026-10-04 through
+# dkim2test@mailman.dkim2.com with the fixed Mailman, and the file is that
+# capture with the local-delivery trace and the outbound milter's own i=2
+# signature and X-DKIM2-Info removed: Mailman's output as the milter received
+# it. unstable.email's fm3 key is pinned here so the fixture does not depend
+# on live DNS or key rotation.
 {
     my $raw = path("$FindBin::Bin/../tests/emails/mailman-m2-unsigned.eml")->slurp_raw;
-    my $sel1 = 'v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvwtNJpRLYM99Ya2Vm5Th/BUxw7MazipAvYMHJA80TD9P1F5gx6eHMT8kErqOG5w7ngZPAoEvH0Dq2rfyGC7gqp93RR7xCD/YNm72/uq9NC+zv1gQ3IqeHbKJEd8MQMj4CL+0fhRyAPpMWEPirYGSgVDxKjJHwa0XLlt00iI6DV1m/IhbH2hzcd6WfBBdiFLV+ovTS8InQDedl12aJtRJv/gKLA+6+Nd4DlTb3mBT2JvT0WoIbJ43pZpBR8ItXHOGT75mxMILEcWI2EhtPq/GaJHWbn7RxgyV0I44bTUiKut+8udflCjSpiOBXlFNp20bUQTjNxKNcCiLGFzc8cYFIwIDAQAB';
+    my $fm3 = 'v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvNUm+tvS0U30of4pAM4H6vX4Y9JK3H6om8lTIVZdl8MnbOvyn6xu5NPocIdwlQYZso4yFvNkSzbeCglvk3cCJHT8Xze1GNgUVSAJ7U8NjZKBD038pHeKtKQ6/3tEI0TgXZB2E+S8BL4v0w7xnq9lZMktqPbf7tZC7+5Tgyl/67lDN6j7ZQQMOkGCVhMsq58YIggcTrTrABIpoQmZ5Murj5EvTC6AulupdGJRblS8kUxU8caP+TiRPpgAIRY0J9rcJWQL767l6chVEFEdXbTiSW1gsaH7MYlYFomEJzJqVZVoJbL4ezPWoAELzDztlLCAs1SxHsEAbJuFs+HX8zKFtQIDAQAB';
     my $pinned = sub {
         my ($sig, $idx) = @_;
-        return unless $sig->domain eq 'dkim2.com' && $sig->selector($idx // 0) eq 'sel1';
-        return parse_dkim_pubkey($sel1);
+        return unless $sig->domain eq 'unstable.email' && $sig->selector($idx // 0) eq 'fm3';
+        return parse_dkim_pubkey($fm3);
     };
     my $run = sub {
         my ($text, $allow) = @_;

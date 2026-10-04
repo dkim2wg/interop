@@ -1,67 +1,125 @@
 Received: from [127.0.1.1] (localhost [127.0.0.1])
-	by mail.dkim2.com (Postfix) with ESMTP id 7E9AD51A71
-	for <dkim2capture@dkim2.com>; Sun, 04 Oct 2026 17:54:19 +0000 (UTC)
+	by mail.dkim2.com (Postfix) with ESMTP id B405751A9B
+	for <dkim2capture@test1.dkim2.com>; Sun, 04 Oct 2026 18:03:03 +0000 (UTC)
 X-DKIM2-Info: draft=ietf-dkim-dkim2-spec-06; repo=github.com/brong/mailman;
-	date=2026-10-04; sw=mailman; action=mi-m=2; hc=17;
-	hn=archived-at,content-type,date,from,list-archive,list-help,list-id,
-	list-owner,list-post,list-subscribe,list-unsubscribe,message-id,
-	message-id-hash,mime-version,precedence,subject,to;
-	snapf=a77c8862a5ea460814afe560f85fa4b2c1f512f4.orig;
-Message-Instance: m=2; h=sha256:Y7wwOzDAnomOoa8c9Y+U9OI8V3+UcHgbs8ZeNXux
-	M44=:RetloKqF+xJWtHLwX1UbGyRxDvGyk8a54DQUO//ULZU=; r=eyJoIjp7ImF
+	date=2026-10-04; sw=mailman; action=mi-m=2; hc=18;
+	hn=archived-at,content-type,date,feedback-id,from,list-archive,
+	list-help,list-id,list-owner,list-post,list-subscribe,list-unsubscribe,
+	message-id,message-id-hash,mime-version,precedence,subject,to;
+	snapf=3421312623957f90f5edc69ec8e124ca1898bab9.orig;
+Message-Instance: m=2; h=sha256:zAoJYrJPzVUuum/vKjGYhF8BB4g2A5mhA3SsqKYU
+	bjg=:uIgtJbT7vbUZlyXnRRPHNtPguT6iJ1hv27pcbuPbeJE=; r=eyJoIjp7ImF
 	yY2hpdmVkLWF0IjpbXSwiY29udGVudC10eXBlIjpbeyJkIjpbIm11bHRpcGFydC9
-	hbHRlcm5hdGl2ZTsgYm91bmRhcnk9XCItLS0tPV9QYXJ0XzgzMTEyNDJfMTQ4MDM
-	xODQ2My4xNzkxMTM2NDU0MTIzNDU2Nzg5MGFiY2RlZlwiIl19XSwibGlzdC1hcmN
-	oaXZlIjpbXSwibGlzdC1oZWxwIjpbXSwibGlzdC1pZCI6W10sImxpc3Qtb3duZXI
-	iOltdLCJsaXN0LXBvc3QiOltdLCJsaXN0LXN1YnNjcmliZSI6W10sImxpc3QtdW5
-	zdWJzY3JpYmUiOltdLCJtZXNzYWdlLWlkLWhhc2giOltdLCJwcmVjZWRlbmNlIjp
-	bXSwic3ViamVjdCI6W3siZCI6WyJNYWlsbWFuIHRlc3RlciJdfV19LCJiIjpbeyJ
-	jIjpbNSwxN119XX0=;
-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple; d=dkim2.com; s=sel1;
-	t=1791136455; bh=UCyFE3iC/uGIfiQ32R0O8LISappPAZhLR82oUDDcd6g=;
-	h=From:To:Subject:Date:From;
-	b=Tsl0rlYWqoicJ0M2DFigqshOmhNl9vEODcbrBQdjuEemF6nj7ZLmQKHk+0KGQfH7q
-	 i72x6UgBSeYju1jA9WIVcEJirgJskwPD0U7cwJ+LSo/F2wzmj16ls4orUFn6pATcdN
-	 pSlRRZg7ekuL+1ZmOU/+zHQBOw3gkqsojw2+zwGrYSIeqG0L9zX5LYntVOupQhTZh3
-	 gJYBzouq4oB5YOz6MFElydgj4ndXyKVkK9qe7bo/VRh/7O61W9EZbqVrJuBvHKMccY
-	 nNrK/XgBDgE7BvSehqe+PJE6YPuBIDJNXQGFKFb5mHGC6vyYskopctVqTojhnEjF+t
-	 3tWmo3ulN/r8Q==
+	hbHRlcm5hdGl2ZTsgYm91bmRhcnk9NjM1NWI4YWNkOGMzMzY1MzM5NGRkYWVlNWU
+	yMzUwY2NjMzUyMDAxZSJdfV0sImxpc3QtYXJjaGl2ZSI6W10sImxpc3QtaGVscCI
+	6W10sImxpc3QtaWQiOltdLCJsaXN0LW93bmVyIjpbXSwibGlzdC1wb3N0IjpbXSw
+	ibGlzdC1zdWJzY3JpYmUiOltdLCJsaXN0LXVuc3Vic2NyaWJlIjpbXSwibWVzc2F
+	nZS1pZC1oYXNoIjpbXSwicHJlY2VkZW5jZSI6W10sInN1YmplY3QiOlt7ImQiOls
+	iVGVzdCBlbWFpbCBzaWduZWQgYnkgRmFzdG1haWwiXX1dfSwiYiI6W3siYyI6WzU
+	sMTVdfV19;
+Authentication-Results: mail.dkim2.com;
+	dkim=pass (2048-bit key;
+ unprotected) header.d=unstable.email header.i=@unstable.email
+ header.a=rsa-sha256 header.s=fm1 header.b=MsoOsQJZ;
+	dkim=pass (2048-bit key;
+ unprotected) header.d=messagingengine.com header.i=@messagingengine.com
+ header.a=rsa-sha256 header.s=fm2 header.b=Yx7M3haQ;
+	dkim-atps=neutral
 X-DKIM2-Info: draft=ietf-dkim-dkim2-spec-06;
 	repo=github.com/dkim2wg/interop; date=2026-10-02;
 	sw=dkim2-milter; action=verify=pass (i=1..1 verified);
 Authentication-Results: localhost; dkim2=pass (i=1..1 verified)
-Received: from localhost.localdomain (localhost [127.0.0.1])
-	by mail.dkim2.com (Postfix) with ESMTP id D176251A71
-	for <dkim2test@mailman.dkim2.com>; Sun, 04 Oct 2026 17:54:14 +0000 (UTC)
-DKIM2-Signature: i=1; m=1; t=1791136454; d=dkim2.com;
-	mf=PGRraW0yY2FwdHVyZUBka2ltMi5jb20+;
+Received: from fout-a1-smtp.messagingengine.com
+ (fout-a1-smtp.messagingengine.com [103.168.172.144])
+	by mail.dkim2.com (Postfix) with ESMTPS id 549AF51A98
+	for <dkim2test@mailman.dkim2.com>; Sun, 04 Oct 2026 18:03:01 +0000 (UTC)
+Received: from phl-betaweb-01.internal (phl-betaweb-01.internal [10.202.2.10])
+	by mailfout.phl.internal (Postfix) with ESMTP id 0CF38EC02B5
+	for <dkim2test@mailman.dkim2.com>; Sun,  4 Oct 2026 14:03:01 -0400 (EDT)
+Received: from phl-imap-16 ([::ffff:10.202.2.88])
+  by phl-betaweb-01.internal (MEProxy); Sun, 04 Oct 2026 14:03:01 -0400
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=unstable.email;
+	 h=cc:content-type:content-type:date:date:from:from:in-reply-to
+	:message-id:mime-version:reply-to:subject:subject:to:to; s=fm1;
+	 t=1791136981; x=1791223381; bh=QSm8fda/zEbBjVgYCvEdawOVmVd9V6lr
+	pjarYpwlAZ8=; b=MsoOsQJZJXye+p/PO+opobHiPgjflxALX2qtU8Cj32QfM8dx
+	LicDuEsLlflgr2ozZx9NM2FrM2eXHmvUgjZ0qrjApXscPZHJ43o6eiv3uAjA+miz
+	TpcA0bH6rUjMkBzfUjw2ejzGEh3jo8bGyWBpeIf7Wt6AgqSWDAfMuPfwRR5ZrIXS
+	MJmAkHB00IlawZw/P0p/t78bfi0jcjiy4tCMAz5uBumv3G1K/hgmTrmIpa4RAm2u
+	EViSVaULkzN5dJFMBNZUvoP0C/v68iY0924IVC0fPyRWpLX0wX7V0eKJtjWN3YdV
+	V6/4+RNztMt5h/vr1L3aTt92aJgX2tFm3uwYGw==
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=
+	messagingengine.com; h=cc:content-type:content-type:date:date
+	:feedback-id:feedback-id:from:from:in-reply-to:message-id
+	:mime-version:reply-to:subject:subject:to:to:x-me-proxy
+	:x-me-sender:x-me-sender:x-sasl-enc; s=fm2; t=1791136981; x=
+	1791223381; bh=QSm8fda/zEbBjVgYCvEdawOVmVd9V6lrpjarYpwlAZ8=; b=Y
+	x7M3haQOV8Rm4L2J8NcRJZdeJpd09dHrlXgArIfO9GZnLXJdZn8JRCAoa/fg+dUX
+	1tViLfOifthLuV57AZEIEMejfJiI2+tWcWxacI858rOxMeFEZzrVqiQbHeBMKpom
+	rnYQuXRoWxWggAHURBwEy2F4vcvYr30zOfdxK2TkNz0TbTHrMzUc3j6QMsf9iODt
+	YAOXZwBUbsIP6awfNYtgS/LdmENdW1vCoPwFT1tWOW61HORjSxiyG4wcKRiX9NFY
+	+WpJs5imtANiVMNS/65vL7Ijkzxl9p/I0MJjI/Nb32hhTbIUVljtrjhLyoP435uX
+	wwz+nGrRm+rM39ImWli8g==
+X-DKIM2-Info: draft=ietf-dkim-dkim2-spec-06;
+	repo=github.com/dkim2wg/interop; date=2026-09-30; sw=lmtpprox;
+	action=sign d=unstable.email a=rsa-sha256;
+DKIM2-Signature: i=1; m=1; t=1791136981; d=unstable.email;
+	mf=PGJyb25nQHVuc3RhYmxlLmVtYWlsPg==;
 	rt=PGRraW0ydGVzdEBtYWlsbWFuLmRraW0yLmNvbT4=;
-	s=sel1:rsa-sha256:EtO0EVS+GbpVoIrgBWdS4DhG1jC9dKyD4l7yBJUXAniCW4
-	EDx8g0L9ovBlONrJF51dizS/oXCUyXWhfc+ZgFY3L7OPCNQ9oQUPVyv9N/v/hAzJ
-	iV+B1RV4LIe+9So8WSkwJQ3IbQoyNIuQmVF+GxhbehqTZFh+gu3CxoWieHnFnHYZ
-	FM29Sbley1wq6IrmbDx2oBb9CR4TX4CPIIbK3haqDzItbqnR7oPWlcR1z5+UAnFe
-	XVnyiw6m9/WAqx741EoJ1HSU4RdNEBKMv9AzIBdi8YEhhXYaHdU2Z0Aw2iiH81PA
-	GmUcKd9o3fj5KTCbI1WYyRtk3m5nNGmrBQDiuspQ==;
+	s=fm1:rsa-sha256:cTZRlUaox5aTjtctfEudL2rM+60Gm/d8Teba/O8sS7/wIMg
+	wo9bCoQ6F/6IHOyA5CAcEyn3To7SpeQRBz9fChbkNUSslFpDYxPCBFzH5bP07DkF
+	P35oAKgn2tWLettpFYcv6GKp6Z9PaLkZRq6K+Xu0XtrM89lryOoCLZqUB0UDKAuy
+	Q5HKGGbOuy/z6zk4Z63kQ1AH4Q/4NKyV/OrEUYEbv/1vvnrGdfvyBHi6N3L4wHzc
+	ajj4L6buDU7raRjXkkXgYyj0cPkd1YeOjRcEnVl/VqptHROx0cP7Qa05hBhPNK6y
+	4WDuehg2PlWai8VuvCUt81YAsqQExPa+KJs//cQ==;
+X-DKIM2-Info: draft=ietf-dkim-dkim2-spec-06;
+	repo=github.com/dkim2wg/interop; date=2026-09-30; sw=lmtpprox;
+	action=mi-m=1; hc=8;
+	hn=content-type,date,feedback-id,from,message-id,mime-version,
+	subject,to;
 Message-Instance: m=1;
-	h=sha256:QCBNo3qk7ATpqjTzRQ7XczjhsNqZStZXdWMnxYhoiBY=:UCyFE3iC/u
-	GIfiQ32R0O8LISappPAZhLR82oUDDcd6g=;
-From: "DKIM2 capture (corpus)" <dkim2capture@dkim2.com>
-To: dkim2test@mailman.dkim2.com
-Date: Sun, 04 Oct 2026 17:54:14 +0000
-Message-ID: <regen-1791136454@dkim2.com>
+ h=sha256:Uvqd0imo+NLo80gyP9yBgZNAb0VfS3uLI9sooqkUw/8=:QSm8fda/zEbBjVgYCvEdawOVmVd9V6lrpjarYpwlAZ8=;
+X-ME-Sender: <xms:1JTCalD_Y5ENPK71Bokxn2dkb4vGzOnHfkiVFOcRWz2e37adI_Iczw>
+    <xme:1JTCauVoRFgTnvMaQFbwrNQDieDMubeIRHmCRgcSGfG3mWH5jeRjqhtzJMdWJa24e
+    Y0rhAhnv6waSx0CD9prhsE1Sw6lXg5b45K-vxQW7FP7gOCIY8SHog>
+X-ME-Proxy-Cause: 
+ dmFkZTE8+vX+jAWz/ST55FffaF4M6MQK4SHhgu/xhjwNmVc1du04PZ2jgA710DHYUvOhOG
+    Lvj/Gw+JjnXlcajCXPZPqA4Hnfjq+aAaysBoIk0cZByLCDIZRSaoxRtMiYGa37d99MSNVh
+    1w8HW4MOA4r8d2G8bgP2p/N+gmgPNAui69pVRg/oc8gE4a5bI+qTyvOBmtVqqiu0XbGn5c
+    d1QrwvWKhNn+XLyAiIYswKx7lpK0TEuiVIhtxMTNH5Hqer9qdPVUQf+TXhHd7fKui+vrg9
+    IXP32ylvrwCZjjqtaBPhKBwHx4zBKfoCgeYONn5HpdPnBZtYUI8qs35n17ntCQ9CuOVnHO
+    xCB7ox/JihgT2uKr2pbT6WMb7CZ2uM1ofaNDhMIFb6do1txWw0juAebk7GO2u4cIRBXO30
+    kB6rS9qb5Ft7NOKlpM4gTIq7rjYdhZCp5aDXF6+HghycQf85I7CcGzW5XD9yKpygNVVsT4
+    NLQZcTp0cwaFqbQ6rt0jPeD6m4KujZRMTYGppD7yUoOjm0YKmS78F4Ak2QQ5SXptaPSUYM
+    HE6Fy1goEBmRVMHFznbRqXk2+WhXldqQnsvXGA8vEbXaPxEbbw4IOzg+3yow2p3sXN35qL
+    JP45VQUMZHJNtab7VZp49APcRKjJLvxLTn+U97DLRXtUuKPZFKafJyT0gbvw
+X-ME-Proxy: <xmx:1JTCaqQieHoGQ5a69h1KDIp7CsttX7SkgG91ewktLh1SJ0VLH58vzw>
+    <xmx:1JTCavuY66MEeMbdT6Nx2sziIYjnwNo7qfISqe7zx1m0l9bmQlL5Pg>
+    <xmx:1JTCakuaSsk8l_RPo15uhYCzyEmVB7DvxoE1pr2jPVsNNCz3zVFdOQ>
+    <xmx:1JTCatwAMsQYP7mh7lBn7AckqR_bpBOXXBwj8A1h5QwkA7w9gAC8kg>
+    <xmx:1ZTCammsRvg2EzmxVM8WUm8f0dvbuUj3AkdGutac8hQhnFsF3ROjybZW>
+Feedback-ID: ia4f947a5:Fastmail
+Received: by mailuser.phl.internal (Postfix, from userid 501)
+	id DB3AE2CC0088; Sun,  4 Oct 2026 14:03:00 -0400 (EDT)
+X-Mailer: MessagingEngine.com Webmail Interface
 MIME-Version: 1.0
-Message-ID-Hash: HFXSHMKP5YIV2XIWK37A7BIANFU6APYI
-X-Message-ID-Hash: HFXSHMKP5YIV2XIWK37A7BIANFU6APYI
-X-MailFrom: dkim2capture@dkim2.com
-X-Mailman-Rule-Hits: member-moderation
+Date: Sun, 04 Oct 2026 14:02:40 -0400
+From: "Bron Gondwana (unstable)" <brong@unstable.email>
+To: dkim2test@mailman.dkim2.com
+Message-Id: <7934a65b-3bfd-463e-82d4-5370cafb76a4@app.fastmail.com>
+Message-ID-Hash: JI6GVIOXTSYTXJE6EATDY5JK6UQ447W2
+X-Message-ID-Hash: JI6GVIOXTSYTXJE6EATDY5JK6UQ447W2
+X-MailFrom: brong@unstable.email
 X-Mailman-Rule-Misses: dmarc-mitigation; no-senders; approved; loop;
- banned-address; emergency
+ banned-address; emergency; member-moderation; nonmember-moderation;
+ administrivia; implicit-dest; max-recipients; max-size; news-moderation;
+ no-subject; digests; suspicious-header
 X-Mailman-Version: 3.3.10
 Precedence: list
-Subject: [DKIM2test] Mailman tester
+Subject: [DKIM2test] Test email signed by Fastmail
 List-Id: <dkim2test.mailman.dkim2.com>
 Archived-At: 
- <https://mailman.dkim2.com/archives/list/dkim2test@mailman.dkim2.com/message/HFXSHMKP5YIV2XIWK37A7BIANFU6APYI/>
+ <https://mailman.dkim2.com/archives/list/dkim2test@mailman.dkim2.com/message/JI6GVIOXTSYTXJE6EATDY5JK6UQ447W2/>
 List-Archive: 
  <https://mailman.dkim2.com/archives/list/dkim2test@mailman.dkim2.com/>
 List-Help: <mailto:dkim2test-request@mailman.dkim2.com?subject=help>
@@ -69,27 +127,25 @@ List-Owner: <mailto:dkim2test-owner@mailman.dkim2.com>
 List-Post: <mailto:dkim2test@mailman.dkim2.com>
 List-Subscribe: <mailto:dkim2test-join@mailman.dkim2.com>
 List-Unsubscribe: <mailto:dkim2test-leave@mailman.dkim2.com>
-Content-Type: multipart/mixed; boundary="===============8237035252679058930=="
+Content-Type: multipart/mixed; boundary="===============4149279132889112856=="
 
---===============8237035252679058930==
+--===============4149279132889112856==
 Content-Type: multipart/alternative;
- boundary="----=_Part_8311242_1480318463.17911364541234567890abcdef"
+ boundary=6355b8acd8c33653394ddaee5e2350ccc352001e
 
-------=_Part_8311242_1480318463.17911364541234567890abcdef
-Content-Type: text/plain; charset=utf-8
+--6355b8acd8c33653394ddaee5e2350ccc352001e
+Content-Type: text/plain
 Content-Transfer-Encoding: 7bit
 
-Mailman tester, signed upstream.
-
-------=_Part_8311242_1480318463.17911364541234567890abcdef
-Content-Type: text/html; charset=utf-8
+Here's another test message
+--6355b8acd8c33653394ddaee5e2350ccc352001e
+Content-Type: text/html
 Content-Transfer-Encoding: 7bit
 
-<div>Mailman tester, signed upstream.</div>
+<!DOCTYPE html><html><head><title></title></head><body><div>Here's another test message</div></body></html>
+--6355b8acd8c33653394ddaee5e2350ccc352001e--
 
-------=_Part_8311242_1480318463.17911364541234567890abcdef--
-
---===============8237035252679058930==
+--===============4149279132889112856==
 Content-Type: text/plain; charset="us-ascii"
 MIME-Version: 1.0
 Content-Transfer-Encoding: 7bit
@@ -99,4 +155,4 @@ _______________________________________________
 Dkim2test mailing list -- dkim2test@mailman.dkim2.com
 To unsubscribe send an email to dkim2test-leave@mailman.dkim2.com
 
---===============8237035252679058930==--
+--===============4149279132889112856==--
