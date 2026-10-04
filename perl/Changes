@@ -37,6 +37,12 @@ Revision history for Mail::DKIM2
           the library parses with parameter checking relaxed, for the parse
           only, since DKIM2 never reads a MIME parameter.
           (t/malformed-content-type.t)
+        - The test suite is self-contained: the test keys and dns.json ship
+          under t/data/ (t/data-in-sync.t keeps them equal to the interop
+          repository's shared copies), bin/validate.pl takes --dns-json and
+          defaults to that copy, and the tests that cross-check the other
+          implementations or the deployment templates skip outside the
+          repository. 0.10's tests could not run from the tarball.
 
 0.10    2026-10-02
         API cleanup ahead of a CPAN release. Incompatible changes are marked *.

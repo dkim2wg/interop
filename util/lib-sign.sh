@@ -57,8 +57,7 @@ sign() { # sign <impl> <alg> <out>
 # Every native verifier takes its keys from a dns.json; $DNS_JSON (default: the
 # repo root's) names it, for runners that must add keys the repo file lacks
 # (util/charset-corpus.sh verifies mail signed with the live dkim2.com key).
-# The Perl CLI has no such flag, so it always reads ../dns.json. The file path
-# must be absolute: the Perl and JS tools chdir before opening it.
+# The file path must be absolute: the Perl and JS tools chdir before opening it.
 VERIFIERS="python go c perl js"
 
 verify() { # verify <impl> <file>
@@ -68,7 +67,7 @@ verify() { # verify <impl> <file>
     python) python3 python/dkim2verify.py "$2" --dns-json "$dns" --ignore-timestamps ;;
     go)     ./go/dkim2verify -dns "$dns" -ignore-timestamps < "$2" ;;
     c)      ./c/dkim2verify "$2" --dns-json "$dns" --ignore-timestamps ;;
-    perl)   (cd perl && perl -Ilib bin/validate.pl --ignore-timestamps "$2") ;;
+    perl)   (cd perl && perl -Ilib bin/validate.pl --ignore-timestamps --dns-json "$dns" "$2") ;;
     js)     (cd deploy/www/verify && node tests/verify-file.mjs "$2" "$dns") ;;
     *)      echo "verify: unknown implementation '$1'" >&2; return 1 ;;
     esac
