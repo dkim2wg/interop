@@ -45,6 +45,23 @@ static int buf_append(char **buf, size_t *pos, size_t *cap,
     return 0;
 }
 
+/* A "c" step is exactly two integers >= 1, start <= end (spec-06 §5 schema).
+   Anything else -- the bounds as JSON strings, which one list manager
+   emitted; zero; a fraction -- is a malformed Recipe: return -1 so the caller
+   rejects the instance. cJSON reports valueint 0 for a string, so reading it
+   unchecked made start -1 and indexed lines[-1]: a segfault on every such
+   message (2026-10-04, replaying Sympa output). */
+static int copy_range(const cJSON *c, int *start, int *end) {
+    if (!c || !cJSON_IsArray(c) || cJSON_GetArraySize(c) != 2) return -1;
+    const cJSON *a = cJSON_GetArrayItem(c, 0), *b = cJSON_GetArrayItem(c, 1);
+    if (!cJSON_IsNumber(a) || !cJSON_IsNumber(b)) return -1;
+    if (a->valuedouble != (double)a->valueint || b->valuedouble != (double)b->valueint) return -1;
+    if (a->valueint < 1 || b->valueint < a->valueint) return -1;
+    *start = a->valueint;
+    *end = b->valueint;
+    return 0;
+}
+
 char *dkim2_apply_body_recipe(const char *r_json,
     const char *body, size_t bodylen, size_t *out_len) {
     cJSON *root = cJSON_Parse(r_json);
@@ -76,10 +93,10 @@ char *dkim2_apply_body_recipe(const char *r_json,
         cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
         cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
 
-        if (c && cJSON_IsArray(c) && cJSON_GetArraySize(c) == 2) {
-            int start = cJSON_GetArrayItem(c, 0)->valueint - 1;
-            int end_i = cJSON_GetArrayItem(c, 1)->valueint - 1;
-            for (int i = start; i <= end_i && i < n_lines && ok; i++)
+        if (c) {
+            int start, end_i;
+            if (copy_range(c, &start, &end_i) != 0) { ok = 0; break; }
+            for (int i = start - 1; i <= end_i - 1 && i < n_lines && ok; i++)
                 ok = (buf_append(&out, &pos, &cap, lines[i].ptr, lines[i].len) == 0);
         } else if (d && cJSON_IsArray(d)) {
             cJSON *item;
@@ -180,10 +197,19 @@ char **dkim2_apply_header_recipe(const char *r_json,
             cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
             cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
 
-            if (c && cJSON_IsArray(c) && cJSON_GetArraySize(c) == 2) {
-                int start = cJSON_GetArrayItem(c, 0)->valueint - 1;
-                int end_i = cJSON_GetArrayItem(c, 1)->valueint - 1;
-                for (int i = start; i <= end_i && i < n_field; i++) {
+            if (c) {
+                int start, end_i;
+                if (copy_range(c, &start, &end_i) != 0) {
+                    /* Malformed Recipe: reject the whole instance. */
+                    for (int i = 0; i < n_new; i++) free(new_vals[i]);
+                    free(new_vals);
+                    free(field_hdrs);
+                    for (int i = 0; i < working_n; i++) free(working[i]);
+                    free(working);
+                    cJSON_Delete(root);
+                    return NULL;
+                }
+                for (int i = start - 1; i <= end_i - 1 && i < n_field; i++) {
                     if (n_new >= new_cap) {
                         new_cap = new_cap ? new_cap * 2 : 8;
                         new_vals = realloc(new_vals, (size_t)new_cap * sizeof(char *));

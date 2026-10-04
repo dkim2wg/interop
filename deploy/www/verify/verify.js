@@ -4,7 +4,7 @@ import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './ca
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
 import { fetchKey as dohFetchKey } from './doh.js';
 import { decodeRecipe, bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe } from './recipes.js';
-import { stringToBytes, b64ToBytes, b64ToString } from './b64.js';
+import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
 
 const SIG_MI_NAMES = new Set(['message-instance', 'dkim2-signature']);
 
@@ -119,8 +119,16 @@ function duplicateTag(tags) {
 // hardcoded to the literal name Received-SPF, not a general mechanism, so it
 // covered nothing else anyway. Mirrored removal in
 // Mail::DKIM2::Validate::report().
+// raw: the message as a Uint8Array (exact octets -- what a file or an SMTP
+// stream gives) or a string (pasted text, taken as UTF-8). Either way the
+// verifier works on a binary string, one code unit per byte; see b64.js.
 export async function verifyMessage(raw, opts = {}) {
-  return verifyOnce(raw, opts);
+  let bin;
+  if (raw instanceof Uint8Array) bin = bytesToBinary(raw);
+  else if (ArrayBuffer.isView(raw)) bin = bytesToBinary(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength));
+  else if (raw instanceof ArrayBuffer) bin = bytesToBinary(new Uint8Array(raw));
+  else bin = textToBinary(String(raw));
+  return verifyOnce(bin, opts);
 }
 
 async function verifyOnce(raw, opts = {}) {
@@ -284,8 +292,8 @@ async function verifyOnce(raw, opts = {}) {
         levels.push(level);
         continue;
       }
-      const hdrBytes = stringToBytes(canonHeaderHash(signedFields(state.fields)));
-      const bodyBytes = stringToBytes(canonBody(linesToBody(state.bodyLines)));
+      const hdrBytes = binaryToBytes(canonHeaderHash(signedFields(state.fields)));
+      const bodyBytes = binaryToBytes(canonBody(linesToBody(state.bodyLines)));
       // §3.4: ignore hash-sets naming algorithms we do not implement; all the
       // ones we do implement must match (mirrors §11.6 for signatures).
       const usable = sets.filter((s) => s.alg in HASH_ALGS);
@@ -422,7 +430,7 @@ async function verifyOnce(raw, opts = {}) {
       const ordered = [];
       for (let m = 1; m <= mAtSig; m++) ordered.push(instances[m].field);
       for (let k = 1; k <= i; k++) ordered.push(signatures[k].field);
-      inputBytes = stringToBytes(signingInput(ordered, sig.field));
+      inputBytes = binaryToBytes(signingInput(ordered, sig.field));
       inputHash = await sha256Bytes(inputBytes);
     } catch (e) {
       level.result = 'fail';

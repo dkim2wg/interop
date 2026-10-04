@@ -21,8 +21,13 @@
 #     message path needs the `../` prefix while an absolute one must be
 #     passed through unmodified.
 #
-# util/hash-matrix.sh and util/croessner-verify.sh both source this, so a
-# corrected invocation reaches every runner at once.
+# util/hash-matrix.sh, util/croessner-verify.sh and util/charset-corpus.sh all
+# source this, so a corrected invocation reaches every runner at once.
+#
+# $SRC is read when sign() runs, not when this file is sourced, so a runner
+# that signs many messages can say `SRC=path/to/msg.eml sign python sha256 out`.
+# Keep it repo-relative: the Perl branch prefixes `../`, which breaks an
+# absolute path.
 
 SRC=perl/tests/emails/brong-orig.eml
 KEY=keys/sel1._domainkey.test1.dkim2.com.pem
@@ -44,5 +49,27 @@ sign() { # sign <impl> <alg> <out>
     perl)   (cd perl && perl -Ilib bin/dkim2sign "../$SRC" -s "$SEL" -d "$DOM" \
                 -k "../$KEY" --mailfrom "$MF" --rcptto "$RT" --hash "$2") > "$3" 2>"$tmp/err" ;;
     *)      echo "sign: unknown implementation '$1'" >&2; return 1 ;;
+    esac
+}
+
+# verify <impl> <file>
+#
+# Every native verifier takes its keys from a dns.json; $DNS_JSON (default: the
+# repo root's) names it, for runners that must add keys the repo file lacks
+# (util/charset-corpus.sh verifies mail signed with the live dkim2.com key).
+# The Perl CLI has no such flag, so it always reads ../dns.json. The file path
+# must be absolute: the Perl and JS tools chdir before opening it.
+VERIFIERS="python go c perl js"
+
+verify() { # verify <impl> <file>
+    local dns=${DNS_JSON:-dns.json}
+    case $dns in /*) ;; *) dns="$PWD/$dns" ;; esac
+    case $1 in
+    python) python3 python/dkim2verify.py "$2" --dns-json "$dns" --ignore-timestamps ;;
+    go)     ./go/dkim2verify -dns "$dns" -ignore-timestamps < "$2" ;;
+    c)      ./c/dkim2verify "$2" --dns-json "$dns" --ignore-timestamps ;;
+    perl)   (cd perl && perl -Ilib bin/validate.pl --ignore-timestamps "$2") ;;
+    js)     (cd deploy/www/verify && node tests/verify-file.mjs "$2" "$dns") ;;
+    *)      echo "verify: unknown implementation '$1'" >&2; return 1 ;;
     esac
 }

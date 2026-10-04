@@ -140,17 +140,24 @@ func shouldExcludeHeader(name string) bool {
 	return false
 }
 
+// collapseWSP folds each run of WSP (SP / HTAB, spec-06 §2.12) to one SP.
+// It walks BYTES, not runes: a header value is a sequence of octets (§6.2) and
+// may well not be valid UTF-8 (a raw EUC-KR or Big5 Subject). Ranging over
+// the string would decode every such byte to U+FFFD and hash the replacement
+// character instead of the octet the signer hashed.
 func collapseWSP(s string) string {
 	var b strings.Builder
+	b.Grow(len(s))
 	inWSP := false
-	for _, c := range s {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
 		if c == ' ' || c == '\t' {
 			if !inWSP {
-				b.WriteRune(' ')
+				b.WriteByte(' ')
 				inWSP = true
 			}
 		} else {
-			b.WriteRune(c)
+			b.WriteByte(c)
 			inWSP = false
 		}
 	}
@@ -243,10 +250,12 @@ func canonicalizeSigHeader(raw string) []byte {
 
 	name = strings.TrimSpace(strings.ToLower(name))
 
+	// Bytes, not runes -- see collapseWSP.
 	var b strings.Builder
-	for _, c := range value {
-		if c != ' ' && c != '\t' {
-			b.WriteRune(c)
+	b.Grow(len(value))
+	for i := 0; i < len(value); i++ {
+		if c := value[i]; c != ' ' && c != '\t' {
+			b.WriteByte(c)
 		}
 	}
 	value = b.String()

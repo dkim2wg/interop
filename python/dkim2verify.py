@@ -375,7 +375,11 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
     # the more specific "contains invalid JSON" case.
     r_tag = _extract_tag(value, "r")
     if r_tag:
-        r_bytes = _b64decode_strict(r_tag)
+        # §2.12: FWS inside the value MUST be ignored when it is used. A list
+        # manager's r= runs to several hundred bytes and arrives folded with
+        # CRLF+HTAB; the strict decoder below rejects any whitespace, so strip
+        # it first (found replaying real Mailman/Sympa output, 2026-10-04).
+        r_bytes = _b64decode_strict(re.sub(r"\s+", "", r_tag))
         if r_bytes is None:
             errors.append(
                 f"PERMERROR Message-Instance m={m_val} syntax error"

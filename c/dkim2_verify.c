@@ -433,26 +433,41 @@ static int verify_mi_hashes(
                    state -- only meaningful when there IS a previous hop. */
                 if (vi > 0) {
                     /* Apply body Recipe */
+                    /* The JSON parsed above, so a NULL from either apply_*
+                       call now means the Recipe violates the §5 schema (a
+                       copy range given as strings, a zero bound). Report
+                       it as such rather than fall through to a hash
+                       mismatch on the un-undone content. */
                     if (cur_body) {
                         size_t new_len;
                         char *new_body = dkim2_apply_body_recipe(rj, cur_body, cur_body_len, &new_len);
+                        if (!new_body) {
+                            free(r_json_bytes);
+                            snprintf(errbuf, errbufsz,
+                                "PERMERROR Message-Instance m=%d has a malformed body Recipe", mi->m);
+                            ret = -1; goto done;
+                        }
                         free(cur_body);
                         cur_body = new_body;
-                        cur_body_len = new_body ? new_len : 0;
+                        cur_body_len = new_len;
                     }
 
                     /* Apply header Recipe — result is always a new owned array */
                     int new_n = 0;
                     char **new_content = dkim2_apply_header_recipe(rj, content, n_content, &new_n);
-                    if (new_content) {
-                        if (content_owned) {
-                            for (int i = 0; i < n_content; i++) free(content[i]);
-                        }
-                        free(content);
-                        content = new_content;
-                        n_content = new_n;
-                        content_owned = 1;
+                    if (!new_content) {
+                        free(r_json_bytes);
+                        snprintf(errbuf, errbufsz,
+                            "PERMERROR Message-Instance m=%d has a malformed header Recipe", mi->m);
+                        ret = -1; goto done;
                     }
+                    if (content_owned) {
+                        for (int i = 0; i < n_content; i++) free(content[i]);
+                    }
+                    free(content);
+                    content = new_content;
+                    n_content = new_n;
+                    content_owned = 1;
                 }
 
                 free(r_json_bytes);

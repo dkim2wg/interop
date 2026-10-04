@@ -1,0 +1,166 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Sun, 4 Oct 2026 11:53:39 -0400
+Subject: [PATCH 4/6] Hash headers as the generator emits them, not as
+ str(value)
+
+subject_prefix stores a Subject it has to encode as an email.header.Header
+object.  str() of a Header is the decoded text, but BytesGenerator (and so
+smtplib.send_message) writes policy.fold_binary(): the RFC 2047 encoded-word
+form.  compute_header_hash() and the Recipe builder used str(value), so the
+m=2 header hash Mailman recorded could not be reproduced from the bytes it
+delivered for any Subject that needed encoding, and the outbound signer
+refused to sign the result.
+
+Found 2026-10-04 by replaying 88 public-archive messages in assorted
+charsets through a test list (interop util/charset-corpus.sh): 59 of the 88
+hit this, every one with an encoded-word or raw 8-bit Subject.
+
+Derive every hashed and Recipe'd header value through policy.fold_binary(),
+which is what the generator will put on the wire.  Plain str values are
+unchanged apart from folding, which canonicalization removes; non-UTF-8
+bytes pass through surrogate-escaped as before.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ src/mailman/handlers/message_instance.py      | 37 +++++++++++++--
+ .../handlers/tests/test_message_instance.py   | 47 ++++++++++++++++++-
+ 2 files changed, 80 insertions(+), 4 deletions(-)
+
+diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
+index 1d39213f7..1c3aaa7b8 100644
+--- a/src/mailman/handlers/message_instance.py
++++ b/src/mailman/handlers/message_instance.py
+@@ -218,6 +218,33 @@ def _canonicalize_header_field(name, value):
+ # Hash computation
+ # ---------------------------------------------------------------------------
+ 
++def _wire_value(msg, name, value):
++    """Return a header's value as the generator will put it on the wire.
++
++    Mailman's handlers store some headers as email.header.Header objects
++    (subject_prefix does, for any Subject it has to encode).  str() of a
++    Header is the DECODED text, but what reaches the wire is
++    policy.fold_binary(): the RFC 2047 encoded-word form that
++    BytesGenerator -- and so smtplib.send_message -- writes.  Hashing
++    str(value) recorded an m=2 header hash that no verifier could reproduce
++    from the delivered bytes for every Subject that needed encoding (found
++    2026-10-04 replaying real list mail; a quarter of it failed this way).
++
++    A plain str comes back unchanged apart from folding, which
++    canonicalization undoes; bytes that are not valid UTF-8 (surrogate-
++    escaped by the parser) pass straight through.
++    """
++    try:
++        wire = msg.policy.fold_binary(name, value)
++    except Exception:                               # pragma: nocover
++        return str(value)
++    text = wire.decode('utf-8', errors='surrogateescape')
++    colon = text.find(':')
++    if colon != -1:
++        text = text[colon + 1:]
++    return text.rstrip('\r\n')
++
++
+ @public
+ def compute_header_hash(msg):
+     """Compute SHA-256 header hash per DKIM2 spec-06 §6.2.
+@@ -230,7 +257,7 @@ def compute_header_hash(msg):
+     for name, value in msg.items():
+         if _should_exclude_header(name):
+             continue
+-        canon = _canonicalize_header_field(name, str(value))
++        canon = _canonicalize_header_field(name, _wire_value(msg, name, value))
+         canon_headers.append((name.lower().encode(), canon))
+     # Step 7: Reverse for bottom-up numbering, then stable sort by name
+     canon_headers.reverse()
+@@ -709,11 +736,15 @@ def _strip_stamped(msg):
+ 
+ 
+ def _collect_headers(msg):
+-    """Collect non-excluded headers as a list of (name, value) tuples."""
++    """Collect non-excluded headers as a list of (name, value) tuples.
++
++    Values are the wire form (see _wire_value), so a Recipe's copy ranges
++    refer to header values exactly as the verifier will see them.
++    """
+     headers = []
+     for name, value in msg.items():
+         if not _should_exclude_header(name):
+-            headers.append((name, str(value)))
++            headers.append((name, _wire_value(msg, name, value)))
+     return headers
+ 
+ 
+diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
+index a24f2b574..5034c7f57 100644
+--- a/src/mailman/handlers/tests/test_message_instance.py
++++ b/src/mailman/handlers/tests/test_message_instance.py
+@@ -27,7 +27,7 @@ import unittest
+ from mailman.app.lifecycle import create_list
+ from mailman.config import config
+ from mailman.email.message import Message
+-from mailman.handlers import decorate
++from mailman.handlers import decorate, subject_prefix
+ from mailman.handlers.message_instance import (
+     build_mi_header_value,
+     compute_body_hash,
+@@ -41,6 +41,7 @@ from mailman.handlers.message_instance import (
+     _get_body_lines,
+     _parse_mi,
+     _should_exclude_header,
++    _collect_headers,
+ )
+ from mailman.interfaces.template import ITemplateManager
+ from mailman.testing.helpers import specialized_message_from_string as mfs
+@@ -451,6 +452,50 @@ This is a test.
+         self.assertNotIn(b'base64', as_bytes.lower().split(b'\n\n')[1])
+         self.assertIn(b'List Footer', as_bytes)
+ 
++    def test_header_hash_covers_the_wire_form_of_an_encoded_subject(self):
++        # subject_prefix stores a non-ASCII Subject as a Header object; the
++        # hash must be over what the generator emits (RFC 2047 encoded
++        # words), not str(Header), which is the decoded text.
++        raw = (
++            b'To: ant@example.com\r\n'
++            b'From: aperson@example.com\r\n'
++            b'Message-ID: <alpha>\r\n'
++            b'Subject: =?ISO-2022-JP?B?UmU6IBskQiUkJXMlLSVlJVkhPCU/QjQ2SD1gSHcbKEI=?=\r\n'
++            b'Content-Type: text/plain; charset=iso-2022-jp\r\n'
++            b'Content-Transfer-Encoding: 7bit\r\n'
++            b'\r\n'
++            b'\x1b$B%F%9%H\x1b(B\r\n'
++        )
++        msg = _msg_from_bytes(raw)
++        self._mlist.subject_prefix = '[Ant] '
++        subject_prefix.process(self._mlist, msg, {})
++        self.assertNotIsInstance(msg['subject'], str)
++        wire = email.message_from_bytes(msg.as_bytes(), Message)
++        self.assertIn(b'=?iso-2022-jp?', msg.as_bytes())
++        self.assertEqual(compute_header_hash(msg), compute_header_hash(wire))
++        # And the Recipe side sees the same value the verifier will.
++        collected = dict(_collect_headers(msg))
++        self.assertEqual(collected['Subject'], str(wire['subject']))
++
++    def test_header_hash_covers_the_wire_form_of_a_raw_8bit_subject(self):
++        # Raw non-UTF-8 bytes in a Subject (2003-era spam, some current
++        # senders): the prefix handler re-encodes it as unknown-8bit, and
++        # the hash must follow the bytes actually sent.
++        raw = (
++            b'To: ant@example.com\r\n'
++            b'From: aperson@example.com\r\n'
++            b'Message-ID: <alpha>\r\n'
++            b'Subject: (\xb1\xa4---\xb0\xed) \xc0\xcc\xb8\xe1 500\r\n'
++            b'Content-Type: text/plain; charset=euc-kr\r\n'
++            b'\r\n'
++            b'body\r\n'
++        )
++        msg = _msg_from_bytes(raw)
++        self._mlist.subject_prefix = '[Ant] '
++        subject_prefix.process(self._mlist, msg, {})
++        wire = email.message_from_bytes(msg.as_bytes(), Message)
++        self.assertEqual(compute_header_hash(msg), compute_header_hash(wire))
++
+     def test_qp_preserves_original_encoding(self):
+         raw = (
+             b'To: ant@example.com\r\n'

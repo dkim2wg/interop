@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Sun, 4 Oct 2026 11:58:55 -0400
+Subject: [PATCH 8/8] Wire-form header values come back without the generator's
+ leading space
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ src/mailman/handlers/message_instance.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
+index 1c3aaa7b8..cadf8826b 100644
+--- a/src/mailman/handlers/message_instance.py
++++ b/src/mailman/handlers/message_instance.py
+@@ -242,7 +242,8 @@ def _wire_value(msg, name, value):
+     colon = text.find(':')
+     if colon != -1:
+         text = text[colon + 1:]
+-    return text.rstrip('\r\n')
++    # As the parser would hand it back: no leading WSP, no line ending.
++    return text.lstrip(' \t').rstrip('\r\n')
+ 
+ 
+ @public

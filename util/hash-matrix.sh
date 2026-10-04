@@ -23,7 +23,7 @@ cd "$root"
 # dropping one -- a runner that quietly covers less than it claims is worse
 # than no runner, because it still reads as proof.
 ALGS="sha256 sha512 both"
-VERIFIERS="python go c perl js"
+# $SIGNERS and $VERIFIERS come from util/lib-sign.sh.
 n_signers=0;   for _s in $SIGNERS;   do n_signers=$((n_signers + 1));   done
 n_algs=0;      for _a in $ALGS;      do n_algs=$((n_algs + 1));         done
 n_verifiers=0; for _v in $VERIFIERS; do n_verifiers=$((n_verifiers + 1)); done
@@ -34,20 +34,8 @@ trap 'rm -rf "$tmp"' EXIT
 rc=0
 cells=0
 
-# All four native verifiers load DNS from the repo-root dns.json (the Perl
-# tools resolve '../dns.json' relative to their own cwd, perl/), so the
-# message path passed to them must be absolute -- which is what $tmp (from
-# mktemp -d) already gives us.
-verify() { # verify <impl> <file>
-    case $1 in
-    python) python3 python/dkim2verify.py "$2" --dns-json dns.json --ignore-timestamps ;;
-    go)     ./go/dkim2verify -dns dns.json -ignore-timestamps < "$2" ;;
-    c)      ./c/dkim2verify "$2" --dns-json dns.json --ignore-timestamps ;;
-    perl)   (cd perl && perl -Ilib bin/validate.pl --ignore-timestamps "$2") ;;
-    js)     (cd deploy/www/verify && node tests/verify-file.mjs "$2") ;;
-    *)      echo "verify: unknown implementation '$1'" >&2; return 1 ;;
-    esac
-}
+# verify() is shared with util/charset-corpus.sh via util/lib-sign.sh; the
+# message path must be absolute, which $tmp (from mktemp -d) already gives us.
 
 for signer in $SIGNERS; do
     for alg in $ALGS; do

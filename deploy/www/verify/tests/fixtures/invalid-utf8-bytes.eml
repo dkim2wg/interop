@@ -1,0 +1,14 @@
+DKIM2-Signature: i=1; m=1; t=1759579200; d=test1.dkim2.com; mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+; rt=PHJjcHRAdGVzdDIuZGtpbTIuY29tPg==; s=sel1:rsa-sha256:cu1gRTsZWH0iZJTCEgmYKPwvA2f1Acl6tUHuiwUiV3aF8qRrpK/F8Rv0W3ZUs4i9azsV1s9BLQsPA66ZuD/nik2ciAXbH73ouB/2bePCUiks7wy8PUmViApfxhieLi9PMCPa8y/4rJKvxBEgcfB2/UaPRjsxXXpKlhc6O/xFtLLkuyMyMilx8gdyLC9bcmMrCC7W3N63ZFq/mZQcNwdvo4C3P+2uMcMSnm8PcPBOEU9bXOpYzMVMN1vnVlDWffrjgUPwYM5tbbJszy6Ba1YB/BfUne4ofYRNj01zmAOO39CvWPEAcZB7VJNcikVUv+mGSXR6PR1IuZ6NRV978Ufjhg==;
+Message-Instance: m=1; h=sha256:VKMPZtlIQbuFdZhPjtSenKNyJUcgv0pcjWJcmJRnwDM=:Cu9SXqvJ1u4QqNJuZWWDV9diOyfpvhlgD8btVxCoSMo=;
+From: sender@test1.dkim2.com
+To: rcpt@test2.dkim2.com
+Subject: ÁÙ¦b ¥Î20% ªº«H  (not UTF-8)
+Date: Sat, 04 Oct 2026 12:00:00 +0000
+Message-ID: <bytes@test1.dkim2.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=big5
+Content-Transfer-Encoding: 8bit
+
+¤¤¤å line one
+café au lait 
+

@@ -39,3 +39,23 @@ func TestSpec05ARCNarrowed(t *testing.T) {
 		t.Error("the ARC- prefix match was removed in spec-06 §4; only the three RFC 8617 names are excluded")
 	}
 }
+
+// Header values are sequences of octets (spec-06 §6.2): bytes that are not
+// valid UTF-8 -- a raw EUC-KR or Big5 Subject, as 2003-era spam and some
+// current senders still emit -- must reach the hash unchanged. Iterating a
+// Go string with `range` decodes runes and turns every such byte into U+FFFD,
+// which is what collapseWSP used to do (found 2026-10-04 by
+// util/charset-corpus.sh: Go and the other three native verifiers disagreed
+// on three SpamAssassin-corpus messages).
+func TestCanonicalizeHeaderKeepsInvalidUTF8Bytes(t *testing.T) {
+	raw := "Subject:  \xc1\xd9\xa6b  \xa5\xce20%\t\xaa\xba  \r\n"
+	got := canonicalizeHeader(Header{Name: "Subject", Raw: raw})
+	want := "subject:\xc1\xd9\xa6b \xa5\xce20% \xaa\xba"
+	if got != want {
+		t.Fatalf("canonicalizeHeader mangled non-UTF-8 bytes:\n got  %q\n want %q", got, want)
+	}
+	sig := canonicalizeSigHeader("DKIM2-Signature: i=1; \xc1 \xd9\r\n")
+	if string(sig) != "dkim2-signature:i=1;\xc1\xd9\r\n" {
+		t.Fatalf("canonicalizeSigHeader mangled non-UTF-8 bytes: %q", sig)
+	}
+}

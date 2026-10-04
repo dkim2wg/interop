@@ -1138,3 +1138,66 @@ only showed on 2026-09-10, the first day Fastmail signed
    verifying: `$raw =~ s/\r\n/\n/g; $raw =~ s/\n/\r\n/g;`.
 
 Both are handled inside `deploy/dkim2-list-smoke.sh`.
+
+## DKIM2 charset corpus lists (Mailman + Sympa, local capture only)
+
+`util/charset-corpus.sh` replays real public-archive mail in assorted
+charsets (ISO-2022-JP, GB2312/GB18030, Big5, EUC-KR, Latin-1, raw 8-bit
+headers, 2003 spam with broken `charset=` values) through a dedicated pair of
+lists and verifies what comes out with all five verifiers. Run it from a dev
+checkout; the on-box half is `deploy/dkim2-corpus-inject.sh`, which the runner
+copies over and executes.
+
+```bash
+./util/charset-corpus.sh                 # fetch + matrix + lists (+ captures)
+./util/charset-corpus.sh --stage lists   # just the list round
+```
+
+The lists are **`dkim2corpus@mailman.dkim2.com`** and
+**`dkim2corpus@sympa.dkim2.com`**, created 2026-10-04. Corpus mail is other
+people's real mail plus spam, so they are built to go nowhere:
+
+- Members: only `dkim2capture@dkim2.com` and `dkim2capture@test1.dkim2.com`
+  (both the local capture Maildir, see the smoke test above). The inject
+  script re-reads both rosters before sending anything and aborts if any
+  member is not a `dkim2capture@` address.
+- Mailman: `default_nonmember_action=accept`, `require_explicit_destination=False`,
+  `max_num_recipients=0`, `max_message_size=0`, `administrivia=False`,
+  `respond_to_post_requests=False`, `advertised=False`,
+  `subscription_policy=moderate`, **`archive_policy=never` and the HyperKitty
+  archiver disabled** (the corpus must not appear on mailman.dkim2.com). All
+  set over REST; `mailman --run-as-root aliases && postfix reload` afterwards.
+- Sympa: `send public`, `subscribe closed`, `review owner`, `visibility conceal`,
+  **`process_archive off`**, `web_access owner`. Members added with
+  `sympa add`.
+
+**Sympa `create` CLI gotcha (6.2.78 build on the box):** `sympa create
+--input-file=X.xml` fails with "missing 'input_file' parameter" and
+`--input_file=` is "Unknown option" -- `Sympa::CLI::create` declares the option
+as `input-file` but reads `input_file`. Work around it by calling the class
+directly (as the `sympa` user, so the list directory is owned correctly):
+
+```bash
+sudo -u sympa perl -I/usr/share/sympa/lib -MSympa::CLI::create \
+  -e 'exit(Sympa::CLI::create->run({input_file => "/tmp/dkim2corpus.xml"}, "sympa.dkim2.com") ? 0 : 1)'
+```
+
+Its alias hook does install the six aliases itself on this box, so do not
+also append them by hand (check `/etc/sympa/sympa/aliases` for duplicates;
+`postalias` it and `postfix reload` if you touched it). Then edit the list's
+`config` and `sudo -u sympa sympa reload_list_config dkim2corpus@sympa.dkim2.com`.
+
+**Why not the smoke lists:** `dkim2test@sympa.dkim2.com` has `subscribe
+open_notify` and had acquired an outside gmail subscriber by 2026-10-04, so it
+is not local-only; and the smoke lists' hold rules (implicit destination,
+recipient count, size) would hold most corpus mail. The smoke test is left
+as it is.
+
+**What the first run found (2026-10-04, 88 samples):** Go and the browser JS
+replaced bytes that were not valid UTF-8 with U+FFFD before hashing (fixed);
+Python rejected every list-produced `m=2` because the folded `r=` reached a
+strict base64 decoder with its FWS (fixed); the Perl library emitted Recipe
+copy ranges as JSON strings, so Go rejected every Sympa `m=2` (fixed, Mail::DKIM2
+0.11); Mailman hashed `str()` of its prefixed Subject `Header` object -- the
+decoded text -- while sending the RFC 2047 form, so the outbound milter refused
+to sign 59 of the 88 (fixed on all three `brong/mailman` branches).

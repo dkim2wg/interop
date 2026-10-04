@@ -1,5 +1,16 @@
 Revision history for Mail::DKIM2
 
+0.11    2026-10-04
+        Fixes found by replaying public-archive mail in assorted charsets
+        (ISO-2022-JP, GB2312/GB18030, Big5, EUC-KR, Latin-1, raw 8-bit
+        headers) through the signers, verifiers and list managers
+        (interop util/charset-corpus.sh).
+        - Recipe copy ranges are emitted as JSON integers. An index used as
+          a hash key while de-duplicating header copies was stringified in
+          place, so every Sympa Message-Instance carried {"c":["2","2"]},
+          which the spec-06 schema forbids and strict verifiers reject.
+          (t/recipe-integers.t)
+
 0.10    2026-10-02
         API cleanup ahead of a CPAN release. Incompatible changes are marked *.
         - New top-level Mail::DKIM2 module documenting the conventions every

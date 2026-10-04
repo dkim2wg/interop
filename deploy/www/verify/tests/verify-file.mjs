@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseKeyRecord } from '../doh.js';
+import { bytesToBinary } from '../b64.js';
 import { verifyMessage } from '../verify.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,12 +41,13 @@ function fetchKey(selector, domain) {
 // Same "newest t= + 1h" deterministic clock as vectors.test.mjs, so a
 // well-formed sample never spuriously trips the §11.3 14-day-old rule.
 function pickNow(msg) {
-  const ts = [...(msg || '').matchAll(/[;\s]t=(\d+)/gi)].map((m) => parseInt(m[1], 10));
+  const ts = [...bytesToBinary(msg).matchAll(/[;\s]t=(\d+)/gi)].map((m) => parseInt(m[1], 10));
   const max = ts.filter(Number.isFinite).reduce((a, b) => Math.max(a, b), 0);
   return (max || 1782394336) + 3600;
 }
 
-const msg = readFileSync(msgPath, 'utf8');
+// Bytes, not text: the message may carry octets that are not valid UTF-8.
+const msg = new Uint8Array(readFileSync(msgPath));
 const rep = await verifyMessage(msg, { fetchKey, now: pickNow(msg) });
 
 console.log(`${rep.overall}: ${rep.summary}`);

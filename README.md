@@ -77,6 +77,31 @@ message, and enabling it requires a full protected generation (datasource,
 private-key manifest with SPKI digests, PKCS#8 children), so that direction is
 waiting on a command-line signer.
 
+## Charset corpus
+
+The hand-written fixtures are ASCII and UTF-8. `util/charset-corpus.sh`
+fetches public archives that still serve full raw messages (the Apache
+ponymail mbox API, a HyperKitty export, the SpamAssassin public corpus), keeps
+a sample spread over every charset / transfer-encoding combination they
+contain -- ISO-2022-JP 7bit, GB18030 base64, Big5 and EUC-KR with raw 8-bit
+Subjects, Latin-1, `charset=3Dbig5` -- and then:
+
+    ./util/charset-corpus.sh                # all stages
+    ./util/charset-corpus.sh --stage matrix # local only: 4 signers x 5 verifiers per sample
+    ./util/charset-corpus.sh --stage lists  # replay through the dkim2corpus lists on the box
+
+The `matrix` stage is `util/hash-matrix.sh`'s shape on real bytes. The `lists`
+stage signs each sample as dkim2.com/sel1, posts it to the Mailman and Sympa
+corpus lists on mail.dkim2.com (members: the local capture address only; see
+`deploy/SERVER.md`), pulls the captured copies back and checks that each list's
+`m=2` Recipe rebuilds the signed `m=1` under every verifier. Results land in
+`corpus/results/` (not committed): per-cell TSVs, summaries by charset, and
+the failing messages with verifier logs under `corpus/results/fail/`.
+
+Pipermail's "Gzip'd Text" archives are scrubbed (no `Content-Type`, bodies
+re-encoded), which is why the many `lists.ubuntu.com` locale lists are not a
+source despite looking ideal; `util/charset-corpus-sample.py` lists what is.
+
 ## Licence
 
 BSD 3-Clause — see [`LICENSE`](LICENSE). This work was contributed under the

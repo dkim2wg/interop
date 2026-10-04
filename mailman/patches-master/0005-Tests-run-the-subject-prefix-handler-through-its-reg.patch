@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Sun, 4 Oct 2026 11:57:54 -0400
+Subject: [PATCH 5/6] Tests: run the subject-prefix handler through its
+ registered class
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ src/mailman/handlers/tests/test_message_instance.py | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
+index 5034c7f57..814563abd 100644
+--- a/src/mailman/handlers/tests/test_message_instance.py
++++ b/src/mailman/handlers/tests/test_message_instance.py
+@@ -27,7 +27,7 @@ import unittest
+ from mailman.app.lifecycle import create_list
+ from mailman.config import config
+ from mailman.email.message import Message
+-from mailman.handlers import decorate, subject_prefix
++from mailman.handlers import decorate
+ from mailman.handlers.message_instance import (
+     build_mi_header_value,
+     compute_body_hash,
+@@ -468,7 +468,7 @@ This is a test.
+         )
+         msg = _msg_from_bytes(raw)
+         self._mlist.subject_prefix = '[Ant] '
+-        subject_prefix.process(self._mlist, msg, {})
++        config.handlers['subject-prefix'].process(self._mlist, msg, {})
+         self.assertNotIsInstance(msg['subject'], str)
+         wire = email.message_from_bytes(msg.as_bytes(), Message)
+         self.assertIn(b'=?iso-2022-jp?', msg.as_bytes())
+@@ -492,7 +492,7 @@ This is a test.
+         )
+         msg = _msg_from_bytes(raw)
+         self._mlist.subject_prefix = '[Ant] '
+-        subject_prefix.process(self._mlist, msg, {})
++        config.handlers['subject-prefix'].process(self._mlist, msg, {})
+         wire = email.message_from_bytes(msg.as_bytes(), Message)
+         self.assertEqual(compute_header_hash(msg), compute_header_hash(wire))
+ 

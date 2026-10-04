@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 
 use Crypt::Digest::SHA256;
@@ -208,7 +208,11 @@ sub _encode_recipe_list {
                 push @encoded, { d => [@pending_strings] };
                 @pending_strings = ();
             }
-            push @encoded, { c => $item };
+            # Force numeric: an index that was used as a hash key upstream
+            # (de-duplicating copies) is stringified in place, and the JSON
+            # encoder would then emit {"c":["2","2"]} -- strings, which the
+            # spec-06 §5 schema forbids and Go rejects as invalid JSON.
+            push @encoded, { c => [ map { 0 + $_ } @$item ] };
         } else {
             push @pending_strings, $item;
         }

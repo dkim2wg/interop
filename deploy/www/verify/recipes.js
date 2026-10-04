@@ -1,5 +1,5 @@
 // Recipe application (undo) per spec-06 §5 and §7.2.
-import { b64ToString } from './b64.js';
+import { b64ToString, textToBinary } from './b64.js';
 
 export function decodeRecipe(rB64) {
   return JSON.parse(b64ToString(rB64));
@@ -24,7 +24,7 @@ export function applyBodyRecipe(curLines, steps) {
       const [s, e] = step.c;
       for (let n = s; n <= e; n++) out.push(curLines[n - 1]);
     } else if ('d' in step) {
-      for (const line of step.d) out.push(line);
+      for (const line of step.d) out.push(textToBinary(line));
     }
   }
   return out;
@@ -54,10 +54,12 @@ export function applyHeaderRecipe(fields, hObj) {
         const [s, e] = step.c;
         for (let num = s; num <= e; num++) emitted.push(bottomUp[num - 1]);
       } else if ('d' in step) {
-        for (const val of step.d) {
+        for (const text of step.d) {
           // `name` here is the lowercased Recipe key; `raw` is a synthesized,
           // space-less approximation. Both are harmless: canon/parse always
-          // lowercase name and never read raw.
+          // lowercase name and never read raw. The literal is JSON text and
+          // the message is a binary string, so convert (see b64.js).
+          const val = textToBinary(text);
           emitted.push({ name, value: val, raw: name + ':' + val + '\r\n' });
         }
       }

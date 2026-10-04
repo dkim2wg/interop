@@ -7,6 +7,31 @@
 int main(void) {
     size_t out_len;
 
+    /* spec-06 §5 schema: "c" items are integers >= 1. A copy range given as
+       JSON strings -- {"c":["1","1"]}, which one list manager emitted -- or
+       with a zero/negative/non-integer bound is a malformed Recipe and must be
+       rejected, not applied. cJSON reports valueint 0 for a string, so the
+       old code indexed lines[-1] and crashed (2026-10-04, replaying Sympa
+       output through util/charset-corpus.sh). */
+    {
+        const char *b3 = "L1\r\nL2\r\nL3\r\n";
+        size_t n;
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[\"1\",\"1\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[0,1]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[2,1]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[1.5,2]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[1]}]}", b3, strlen(b3), &n) == NULL);
+        char *hdrs[] = { "Precedence: list\r\n", "Subject: x\r\n" };
+        int n_out;
+        assert(dkim2_apply_header_recipe("{\"h\":{\"precedence\":[{\"c\":[\"1\",\"1\"]}]}}", hdrs, 2, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"precedence\":[{\"c\":[0,0]}]}}", hdrs, 2, &n_out) == NULL);
+        /* and the well-formed equivalent still works */
+        char **ok = dkim2_apply_header_recipe("{\"h\":{\"precedence\":[{\"c\":[1,1]}]}}", hdrs, 2, &n_out);
+        assert(ok != NULL && n_out == 2);
+        for (int i = 0; i < n_out; i++) free(ok[i]);
+        free(ok);
+    }
+
     /* Body Recipe: copy lines 1-2 of 3-line body */
     const char *body = "Line1\r\nLine2\r\nLine3\r\n";
     const char *r1 = "{\"b\":[{\"c\":[1,2]}]}";
