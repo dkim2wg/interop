@@ -37,6 +37,11 @@ if perl -MSendmail::PMilter\ 1.28 -e1 2>/dev/null; then
 else
     echo ">> upgrading Sendmail::PMilter to 1.28+ ..."
     cpanm --quiet --notest Sendmail::PMilter
+fi
+# (2026-10-04: this `fi` used to sit after step 3, so with PMilter already
+# current the script skipped the rebuild, install and web assets entirely and
+# still reported "deploy complete" -- the smoke test only proves the
+# installed library works, not that it is the one just pulled.)
 
 # 1. Perl library: clean rebuild + mandatory test gate, then install.
 cd "$REPO/perl"
@@ -97,7 +102,12 @@ install -m 644 "$REPO/deploy/postfix-dkim2-delayedbounce" /etc/postfix/dkim2-del
 postmap /etc/postfix/dkim2-delayedbounce
 postfix reload
 
-fi
+# 3b. The installed library must be the one in this checkout -- the exact gap
+#     the mis-scoped `fi` above hid for a day.
+want=$(perl -Ilib -MMail::DKIM2 -e 'print $Mail::DKIM2::VERSION')
+have=$(cd / && perl -MMail::DKIM2 -e 'print $Mail::DKIM2::VERSION')
+[ "$want" = "$have" ] || { echo "!! installed Mail::DKIM2 is $have, checkout is $want"; exit 1; }
+echo ">> installed Mail::DKIM2 $have matches the checkout"
 
 # 4. Restart the long-running milters so they load the freshly-installed lib
 #    (and the patched Sendmail::PMilter above).

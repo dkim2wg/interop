@@ -1104,7 +1104,12 @@ only showed on 2026-09-10, the first day Fastmail signed
   use Maildir): `/etc/aliases`: `dkim2capture:  /var/spool/dkim2-capture/Maildir/`
   then `newaliases`. `dkim2.com` is in `mydestination`, so `dkim2capture@dkim2.com`
   delivers to that local Maildir.
-- **Mailman list** `dkim2test@mailman.dkim2.com`, sole member `dkim2capture@`, via
+- **Mailman list** `dkim2test@mailman.dkim2.com`, members `dkim2capture@dkim2.com`
+  and `dkim2capture@test1.dkim2.com` (both the local capture Maildir; two so a
+  recipient leak is visible), plus `accept_these_nonmembers:
+  [brong@unstable.email]` (2026-10-04) so Bron can post Fastmail-signed test
+  mail to it from outside -- that is how `perl/tests/emails/mailman-m2-unsigned.eml`
+  was captured. Created via
   the REST API (`localhost:8001`, `restadmin:dkim2demo`): create with style
   `legacy-default`; set `subject_prefix`, `default_member_action=accept`,
   `advertised=false`; subscribe `dkim2capture@` pre-verified/confirmed/approved.
@@ -1188,10 +1193,10 @@ also append them by hand (check `/etc/sympa/sympa/aliases` for duplicates;
 `config` and `sudo -u sympa sympa reload_list_config dkim2corpus@sympa.dkim2.com`.
 
 **Why not the smoke lists:** `dkim2test@sympa.dkim2.com` has `subscribe
-open_notify` and had acquired an outside gmail subscriber by 2026-10-04, so it
-is not local-only; and the smoke lists' hold rules (implicit destination,
-recipient count, size) would hold most corpus mail. The smoke test is left
-as it is.
+open_notify` and a gmail subscriber besides the capture address (Bron's own,
+so fine for smoke mail, but not for a corpus of other people's messages); and
+the smoke lists' hold rules (implicit destination, recipient count, size)
+would hold most corpus mail. The smoke test is left as it is.
 
 **What the first run found (2026-10-04, 88 samples):** Go and the browser JS
 replaced bytes that were not valid UTF-8 with U+FFFD before hashing (fixed);
