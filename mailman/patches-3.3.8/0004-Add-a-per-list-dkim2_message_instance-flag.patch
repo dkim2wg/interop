@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Wed, 23 Sep 2026 13:34:31 -0400
-Subject: [PATCH 3/3] Add a per-list dkim2_message_instance flag
+Subject: [PATCH 4/4] Add a per-list dkim2_message_instance flag
 
 Let a list opt out of Message-Instance processing even when the site
 has it enabled.  The flag is a Boolean column on the mailing list with
@@ -62,14 +62,14 @@ index 22af94409..51d9f9f30 100644
  
 diff --git a/src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py b/src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
 new file mode 100644
-index 000000000..425a8e768
+index 000000000..5e7dd4214
 --- /dev/null
 +++ b/src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
 @@ -0,0 +1,37 @@
 +"""dkim2_message_instance per-list flag
 +
 +Revision ID: a1b2c3d4e5f6
-+Revises: bf4cf66cf589
++Revises: 98224512c9c2
 +Create Date: 2026-03-23 00:00:00.000000
 +
 +"""
@@ -82,7 +82,7 @@ index 000000000..425a8e768
 +
 +# revision identifiers, used by Alembic.
 +revision = 'a1b2c3d4e5f6'
-+down_revision = 'bf4cf66cf589'
++down_revision = '98224512c9c2'
 +
 +
 +def upgrade():
@@ -104,7 +104,7 @@ index 000000000..425a8e768
 +    with op.batch_alter_table('mailinglist') as batch_op:
 +        batch_op.drop_column('dkim2_message_instance')
 diff --git a/src/mailman/interfaces/mailinglist.py b/src/mailman/interfaces/mailinglist.py
-index 96b2e8249..cd195b886 100644
+index c0379bea5..d21240927 100644
 --- a/src/mailman/interfaces/mailinglist.py
 +++ b/src/mailman/interfaces/mailinglist.py
 @@ -257,6 +257,16 @@ class IMailingList(Interface):
@@ -125,10 +125,10 @@ index 96b2e8249..cd195b886 100644
  
      dmarc_mitigate_action = Attribute(
 diff --git a/src/mailman/model/mailinglist.py b/src/mailman/model/mailinglist.py
-index 294361224..6428563f6 100644
+index f54a6b6ca..616ee91e6 100644
 --- a/src/mailman/model/mailinglist.py
 +++ b/src/mailman/model/mailinglist.py
-@@ -162,6 +162,8 @@ class MailingList(Model):
+@@ -159,6 +159,8 @@ class MailingList(Model):
      forward_unrecognized_bounces_to = Column(
          Enum(UnrecognizedBounceDisposition))
      process_bounces = Column(Boolean)
@@ -138,34 +138,34 @@ index 294361224..6428563f6 100644
      dmarc_mitigate_action = Column(Enum(DMARCMitigateAction))
      dmarc_mitigate_unconditionally = Column(Boolean)
 diff --git a/src/mailman/rest/listconf.py b/src/mailman/rest/listconf.py
-index bf36c624c..98e405c56 100644
+index 7b65e541c..b83babf37 100644
 --- a/src/mailman/rest/listconf.py
 +++ b/src/mailman/rest/listconf.py
-@@ -207,6 +207,7 @@ ATTRIBUTES = dict(
+@@ -204,6 +204,7 @@ ATTRIBUTES = dict(
      digests_enabled=GetterSetter(as_boolean),
      display_name=GetterSetter(str),
      discard_these_nonmembers=GetterSetter(list_of_emails_or_regexp_validator),
 +    dkim2_message_instance=GetterSetter(as_boolean),
      dmarc_mitigate_action=GetterSetter(enum_validator(DMARCMitigateAction)),
      dmarc_mitigate_unconditionally=GetterSetter(as_boolean),
-     dmarc_addresses=GetterSetter(list_of_emails_or_regexp_validator),
+     dmarc_moderation_notice=GetterSetter(str),
 diff --git a/src/mailman/rest/tests/test_listconf.py b/src/mailman/rest/tests/test_listconf.py
-index 8f75ce8ef..77a90b9f1 100644
+index 9dfa62ff8..4545ebe0c 100644
 --- a/src/mailman/rest/tests/test_listconf.py
 +++ b/src/mailman/rest/tests/test_listconf.py
-@@ -80,6 +80,7 @@ RESOURCE = dict(
+@@ -79,6 +79,7 @@ RESOURCE = dict(
         'aperson@example.com',
         ],
      display_name='Fnords',
 +    dkim2_message_instance=True,
      dmarc_mitigate_action='munge_from',
      dmarc_mitigate_unconditionally=False,
-     dmarc_addresses='',
+     dmarc_moderation_notice='Some moderation notice',
 diff --git a/src/mailman/styles/base.py b/src/mailman/styles/base.py
-index dc2b06cf2..24c61a82c 100644
+index 4cac660a1..db9598795 100644
 --- a/src/mailman/styles/base.py
 +++ b/src/mailman/styles/base.py
-@@ -93,6 +93,8 @@ class BasicOperation:
+@@ -91,6 +91,8 @@ class BasicOperation:
          mlist.digest_send_periodic = True
          mlist.digest_volume_frequency = DigestFrequency.monthly
          mlist.next_digest_number = 1

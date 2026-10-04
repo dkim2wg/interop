@@ -23,7 +23,7 @@ releases differ around it (the owner pipeline's handler list, and the
 Alembic revision the migration follows). The design is described in
 `DKIM2-MESSAGE-INSTANCE.md`, which the Message-Instance patch adds.
 
-`patches-3.3.10/` carries five patches. The first two are upstream commits
+`patches-3.3.10/` carries six patches. The first two are upstream commits
 that 3.3.10 needs to run on Python 3.13 at all (the default on Debian 13 and
 Ubuntu 25.04+) and that have not been in a release yet: the `nntplib`
 requirement becomes `standard-nntplib`, without which `pip install` cannot
@@ -31,7 +31,7 @@ resolve 3.3.10 on 3.13, and the template loader stops using a `pathlib`
 path as a context manager, without which every template lookup (and so
 every decoration) raises a TypeError on 3.13. On Python 3.12 and earlier
 they change nothing and can be skipped. The DKIM2 patches are the last
-three. `patches-3.3.8/` is the three DKIM2 patches alone: 3.3.8 is only
+four. `patches-3.3.8/` is these four patches alone: 3.3.8 is only
 shipped with Python 3.11 and 3.12, where it needs no such fixes.
 
 ## The patches
@@ -47,7 +47,13 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
    Message-Instance Recipe for the common footer-append case is one copy
    range rather than the whole body. This applies whether or not
    Message-Instance is enabled.
-2. **Add DKIM2 Message-Instance headers at ingress and egress.** A
+2. **Keep the bytes a message arrived with.** The LMTP runner stores the
+   received octets as `msg.original_bytes`. Re-serializing a parsed
+   multipart message is not byte-faithful (a part header loses a trailing
+   space or is refolded, a final boundary gains a line ending), and a
+   Message-Instance Recipe has to rebuild exactly what the sender signed.
+   A Mailman-core change, independent of DKIM2.
+3. **Add DKIM2 Message-Instance headers at ingress and egress.** A
    `message-instance-ingress` handler at the front of the posting and owner
    pipelines records the message as received (adding `m=1` if it has no
    instance, leaving any existing instance alone), and a
@@ -56,7 +62,7 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
    personalisation and ARC signing. Each instance is accompanied by an
    `X-DKIM2-Info` debug header. Enabled by `[mta] message_instance: yes`.
    Includes the tests and `DKIM2-MESSAGE-INSTANCE.md`.
-3. **Add a per-list `dkim2_message_instance` flag.** A boolean list
+4. **Add a per-list `dkim2_message_instance` flag.** A boolean list
    attribute (default on) exposed through the REST list configuration
    resource, with its Alembic migration, so individual lists can opt out.
 

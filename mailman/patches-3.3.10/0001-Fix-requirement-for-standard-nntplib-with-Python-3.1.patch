@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mark Sapiro <mark@msapiro.net>
 Date: Mon, 5 May 2025 15:34:52 -0700
-Subject: [PATCH 1/5] Fix requirement for standard-nntplib with Python >= 3.13.
+Subject: [PATCH 1/6] Fix requirement for standard-nntplib with Python >= 3.13.
 
 ---
  pyproject.toml | 2 +-

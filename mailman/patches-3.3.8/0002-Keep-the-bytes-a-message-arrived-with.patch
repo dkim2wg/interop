@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Sun, 4 Oct 2026 14:52:35 -0400
+Subject: [PATCH 2/4] Keep the bytes a message arrived with
+
+The LMTP runner now stores the octets it received on the parsed message as
+msg.original_bytes, next to the original_size it already recorded.  They
+travel with the message through the queues (pickled with it) so anything
+that later has to speak about the message as it was received can.
+
+Re-serializing the parsed message is not byte-faithful: the generator
+drops a trailing space from a part header, refolds a long one, and
+terminates a final boundary that arrived without a line ending.  For most
+of Mailman that is harmless.  It is not for a DKIM2 Message-Instance
+Recipe, which has to rebuild exactly the bytes the sender's signer hashed,
+and a verifier downstream compares that rebuild against the signature.
+Found replaying 88 archived messages in assorted charsets through a list:
+3 of them, all 2003-era multipart, could not be rebuilt from the
+re-serialized form.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ src/mailman/runners/lmtp.py            |  8 ++++++++
+ src/mailman/runners/tests/test_lmtp.py | 24 ++++++++++++++++++++++++
+ 2 files changed, 32 insertions(+)
+
+diff --git a/src/mailman/runners/lmtp.py b/src/mailman/runners/lmtp.py
+index 701f104f6..71dfc9d2c 100644
+--- a/src/mailman/runners/lmtp.py
++++ b/src/mailman/runners/lmtp.py
+@@ -183,6 +183,14 @@ class LMTPHandler:
+             # message, reject it right away; it's probably spam.
+             msg = email.message_from_bytes(envelope.content, Message)
+             msg.set_unixfrom(envelope.mail_from)
++            # Keep the octets the message arrived as.  Re-serializing the
++            # parsed message is not byte-faithful -- a part header loses a
++            # trailing space or is refolded, a final boundary without a line
++            # ending gains one -- and anything that has to speak about the
++            # message as it was received, a DKIM2 Message-Instance Recipe
++            # for one, needs the original.  Pickled with the message, so it
++            # follows it through the queues; original_size is its length.
++            msg.original_bytes = envelope.content
+         except Exception:
+             elog.exception('LMTP message parsing')
+             config.db.abort()
+diff --git a/src/mailman/runners/tests/test_lmtp.py b/src/mailman/runners/tests/test_lmtp.py
+index 07c2e94e1..1a18f1f67 100644
+--- a/src/mailman/runners/tests/test_lmtp.py
++++ b/src/mailman/runners/tests/test_lmtp.py
+@@ -66,6 +66,30 @@ Subject: This has no Message-ID header
+         items = get_queue_messages('in', expected_count=1)
+         self.assertIsNotNone(items[0].msg.get('message-id'))
+ 
++    def test_original_bytes_are_kept(self):
++        # The octets as received, not a re-serialization: the trailing
++        # space on the Subject and the unterminated last line survive.
++        text = (
++            'From: anne@example.com\r\n'
++            'To: test@example.com\r\n'
++            'Message-ID: <ant>\r\n'
++            'Subject: kept as it came \r\n'
++            'Content-Type: multipart/mixed; boundary="b"\r\n'
++            '\r\n'
++            '--b\r\n'
++            'Content-Type: text/plain; charset="us-ascii" \r\n'
++            '\r\n'
++            'hello\r\n'
++            '--b--')
++        self._lmtp.sendmail('anne@example.com', ['test@example.com'], text)
++        items = get_queue_messages('in', expected_count=1)
++        original = items[0].msg.original_bytes
++        self.assertIsInstance(original, bytes)
++        # smtplib terminates the data; everything before that is verbatim.
++        self.assertTrue(original.startswith(text.encode('ascii')), original)
++        self.assertNotEqual(original, items[0].msg.as_bytes())
++        self.assertEqual(items[0].msg.original_size, len(original))
++
+     def test_message_id_hash_is_added(self):
+         self._lmtp.sendmail('anne@example.com', ['test@example.com'], """\
+ From: anne@example.com
