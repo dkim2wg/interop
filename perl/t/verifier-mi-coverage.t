@@ -139,15 +139,16 @@ sign_msg($msg,
 # dkim2test@mailman.dkim2.com with the fixed Mailman, and the file is that
 # capture with the local-delivery trace and the outbound milter's own i=2
 # signature and X-DKIM2-Info removed: Mailman's output as the milter received
-# it. unstable.email's fm3 key is pinned here so the fixture does not depend
-# on live DNS or key rotation.
+# it. unstable.email's fm1 key (Fastmail's DKIM2 selector today; fm3 signed the
+# first capture) is pinned here so the fixture does not depend on live DNS or
+# key rotation.
 {
     my $raw = path("$FindBin::Bin/../tests/emails/mailman-m2-unsigned.eml")->slurp_raw;
-    my $fm3 = 'v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvNUm+tvS0U30of4pAM4H6vX4Y9JK3H6om8lTIVZdl8MnbOvyn6xu5NPocIdwlQYZso4yFvNkSzbeCglvk3cCJHT8Xze1GNgUVSAJ7U8NjZKBD038pHeKtKQ6/3tEI0TgXZB2E+S8BL4v0w7xnq9lZMktqPbf7tZC7+5Tgyl/67lDN6j7ZQQMOkGCVhMsq58YIggcTrTrABIpoQmZ5Murj5EvTC6AulupdGJRblS8kUxU8caP+TiRPpgAIRY0J9rcJWQL767l6chVEFEdXbTiSW1gsaH7MYlYFomEJzJqVZVoJbL4ezPWoAELzDztlLCAs1SxHsEAbJuFs+HX8zKFtQIDAQAB';
+    my $fm1 = 'v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt47+YjZU86ZMZINh2BYbL+EQJsxJeoL9qFyCTVBTsXdwYHiTS+paWjWr12GytPw8iah+hT134uy4G8jRe60XtXPTK29H/zNQ9T8lVa3ujt8rFUWW6k1A0hL7Jerw3YGXD5WoAwGnNE5xyuRkBLd4rSEM/Fw1614/O2DqFXqC8fy2RxS1XmstreR5RzImgLkmC9uTGMGliio+NsC6UjEqP80ps5CxdhgoWXlcYDaGadNsfRhKYduqTBejxZHiGaHXstNf1B6i+N8A1ZEJciCbSlTFr1S3UNFRnGEYTOtLEtllHGIZ+9kX9/7sGvyJtaI8jJARKQf9BplqCBu8leL6kwIDAQAB';
     my $pinned = sub {
         my ($sig, $idx) = @_;
-        return unless $sig->domain eq 'unstable.email' && $sig->selector($idx // 0) eq 'fm3';
-        return parse_dkim_pubkey($fm3);
+        return unless $sig->domain eq 'unstable.email' && $sig->selector($idx // 0) eq 'fm1';
+        return parse_dkim_pubkey($fm1);
     };
     my $run = sub {
         my ($text, $allow) = @_;
