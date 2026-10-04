@@ -1,5 +1,15 @@
 Revision history for Mail::DKIM2
 
+0.12    2026-10-04
+        - undo() rebuilt a base64 or quoted-printable body encoded twice:
+          Recipes work on wire lines, so the rebuilt body is already in its
+          transfer encoding, and Email::MIME->body_set encoded it again.
+          Every such message a list re-encoded (footer appended, body
+          re-wrapped) failed "m=1 does not match content" and the milter
+          refused to sign it -- 17 of 88 charset-corpus samples through
+          Mailman, while the Python undo rebuilt them byte for byte. The
+          body is now set as raw octets. (t/undo-encoded-body.t)
+
 0.11    2026-10-04
         Fixes found by replaying public-archive mail in assorted charsets
         (ISO-2022-JP, GB2312/GB18030, Big5, EUC-KR, Latin-1, raw 8-bit

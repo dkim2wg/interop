@@ -106,6 +106,7 @@ t/split-lmtp.t
 t/split.t
 t/turscar.t
 t/undo-bounds.t
+t/undo-encoded-body.t
 t/validate-cgi.t
 t/validate-cli.t
 t/validate-report.t

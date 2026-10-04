@@ -15,7 +15,11 @@
 # The one header added is `X-DKIM2-Corpus: <sample id>` at the top, so the
 # captured copies can be matched back to their sample without trusting
 # Message-ID (spam often has none, or a duplicate). It is signed over, like
-# any other header, and Mailman/Sympa leave it alone.
+# any other header, and Mailman/Sympa leave it alone. The Message-ID itself is
+# replaced with one unique to this run: Sympa remembers every Message-ID it
+# has distributed and drops a repeat as a mail loop ("Found known Message-ID
+# ... would cause a loop"), which silently emptied the Sympa half of a replay
+# on 2026-10-04. The original value is kept in X-DKIM2-Corpus-Message-ID.
 #
 # Lists: dkim2corpus@mailman.dkim2.com and dkim2corpus@sympa.dkim2.com, both
 # created 2026-10-04 (see SERVER.md "DKIM2 charset corpus lists"): open posting,
@@ -46,6 +50,7 @@ RESTAUTH=restadmin:dkim2demo
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+RUN=$(date +%s)
 
 # --- Guardrail: both rosters must be capture addresses only -------------------
 echo ">> checking list rosters"
@@ -77,7 +82,8 @@ for f in "$SAMPLES"/*.eml; do
   id=$(basename "$f" .eml)
   n=$((n+1))
   src="$work/src.eml"
-  { printf 'X-DKIM2-Corpus: %s\r\n' "$id"; cat "$f"; } > "$src"
+  { printf 'X-DKIM2-Corpus: %s\r\n' "$id"; cat "$f"; } \
+    | perl -pe 'BEGIN { $run = shift; $id = shift } s/^Message-ID:[ \t]*(.*)$/Message-ID: <$id.$run\@corpus.dkim2.com>\r\nX-DKIM2-Corpus-Message-ID: $1/i' "$RUN" "$id" > "$src"
   for L in "$MAILMAN_LIST" "$SYMPA_LIST"; do
     signed="$work/signed.eml"
     if ! perl -I"$LIB" "$REPO/perl/bin/dkim2sign" -s sel1 -d dkim2.com -k "$SIGN_KEY" \

@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 
 use Crypt::Digest::SHA256;
@@ -972,6 +972,20 @@ sub _apply_recipe {
     } @$recipe;
 }
 
+# Set a message's body to exactly these octets. Email::MIME->body_set encodes
+# what it is given according to the Content-Transfer-Encoding header, so on a
+# base64 or quoted-printable part the rebuilt previous body -- already in its
+# wire encoding, since Recipes work on wire lines -- came back encoded twice,
+# and every base64/QP message a list re-encoded failed its m=1 hash on undo
+# (2026-10-04: 17 of 88 corpus samples through Mailman; the milter refused to
+# sign them). This is Email::MIME::body_set without the encoding step.
+sub _body_raw_set {
+    my ($msg, $raw) = @_;
+    $msg->{body_raw} = $raw;
+    $msg->Email::Simple::body_set($raw);
+    return;
+}
+
 sub undo {
     my ($class, $msg) = @_;
     croak "need a message" unless $msg;
@@ -998,7 +1012,7 @@ sub undo {
     if ($rb) {
         my @old = split /\r?\n/, $msg->body_raw;
         my @new = _apply_recipe('body', $rb, \@old);
-        $msg->body_set(join("\r\n", @new, ''));
+        _body_raw_set($msg, join("\r\n", @new, ''));
     }
 
     if ($rh) {
