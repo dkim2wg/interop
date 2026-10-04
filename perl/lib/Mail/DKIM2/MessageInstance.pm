@@ -19,6 +19,7 @@ use List::Util qw(max);
 use Carp;
 
 use Mail::DKIM2::Common qw(
+    parse_mime
     should_skip
     dkim2_canonicalize_header
     digest64
@@ -705,7 +706,7 @@ sub calculate {
     $self->{algs} = ($opts{Algs} && @{$opts{Algs}}) ? [ @{$opts{Algs}} ] : ['sha256'];
 
     unless (ref($current) && $current->isa('Email::MIME')) {
-        $current = Email::MIME->new($current);
+        $current = parse_mime($current);
     }
 
     # $rb_recipe is determined before hash computation because epilogue
@@ -715,7 +716,7 @@ sub calculate {
 
     if ($previous) {
         unless (ref($previous) && $previous->isa('Email::MIME')) {
-            $previous = Email::MIME->new($previous);
+            $previous = parse_mime($previous);
         }
 
         my @mi_cur = $current->header_raw('Message-Instance');
@@ -825,7 +826,7 @@ sub verify {
     check_ignore_prefixes($opts{IgnorePrefixes});
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
-        $msg = Email::MIME->new($msg);
+        $msg = parse_mime($msg);
     }
 
     if (my $error = _chain_error($msg)) {
@@ -914,7 +915,7 @@ sub undo {
     croak "need a message" unless $msg;
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
-        $msg = Email::MIME->new($msg);
+        $msg = parse_mime($msg);
     }
 
     if (my $error = _chain_error($msg)) {
@@ -961,7 +962,7 @@ sub chain_verifies {
     my ($class, $msg, %opts) = @_;
     check_ignore_prefixes($opts{IgnorePrefixes});
     unless (ref($msg) && $msg->isa('Email::MIME')) {
-        $msg = Email::MIME->new("$msg");
+        $msg = parse_mime("$msg");
     }
     if (my $error = _chain_error($msg)) {
         return (0, $error);

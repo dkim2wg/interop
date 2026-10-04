@@ -387,7 +387,12 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
         else:
             try:
                 json.loads(r_bytes)
-            except json.JSONDecodeError:
+            except ValueError:
+                # json.JSONDecodeError, and UnicodeDecodeError for a payload
+                # that is not valid UTF-8 (a Perl producer writes Recipe
+                # literals as raw octets; a Latin-1 or EUC-KR line makes the
+                # whole JSON undecodable). Both are ValueErrors; catching only
+                # the former let the latter escape as a traceback.
                 errors.append(
                     f"PERMERROR Message-Instance m={m_val} contains invalid JSON"
                 )

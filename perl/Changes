@@ -10,6 +10,11 @@ Revision history for Mail::DKIM2
           place, so every Sympa Message-Instance carried {"c":["2","2"]},
           which the spec-06 schema forbids and strict verifiers reject.
           (t/recipe-integers.t)
+        - A broken Content-Type (`text/plain; Windows-1252`) no longer makes
+          every verification print Email::MIME's "Illegal parameter" warning:
+          the library parses with parameter checking relaxed, for the parse
+          only, since DKIM2 never reads a MIME parameter.
+          (t/malformed-content-type.t)
 
 0.10    2026-10-02
         API cleanup ahead of a CPAN release. Incompatible changes are marked *.

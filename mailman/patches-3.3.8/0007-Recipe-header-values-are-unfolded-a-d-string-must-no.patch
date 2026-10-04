@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Sun, 4 Oct 2026 12:16:06 -0400
+Subject: [PATCH 7/7] Recipe header values are unfolded: a d string must not
+ contain CR or LF
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The parser keeps a header's fold inside its value, so a Recipe literal for a
+long encoded-word Subject carried a literal LF+SP.  spec-06 §5.1 forbids CR
+and LF in Recipe strings; two verifiers tolerated it and three rejected the
+reconstruction (28 of 88 corpus samples, 2026-10-04).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ src/mailman/handlers/message_instance.py      |  7 +++++--
+ .../handlers/tests/test_message_instance.py   | 21 +++++++++++++++++++
+ 2 files changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
+index cadf8826b..6b2d03ec6 100644
+--- a/src/mailman/handlers/message_instance.py
++++ b/src/mailman/handlers/message_instance.py
+@@ -242,8 +242,11 @@ def _wire_value(msg, name, value):
+     colon = text.find(':')
+     if colon != -1:
+         text = text[colon + 1:]
+-    # As the parser would hand it back: no leading WSP, no line ending.
+-    return text.lstrip(' \t').rstrip('\r\n')
++    # Unfold (spec-06 §5.1: Recipe strings MUST NOT contain CR or LF; the
++    # hash collapses WSP runs anyway, so a fold is one SP), then as the
++    # parser would hand it back: no leading WSP, no line ending.
++    text = re.sub(r'\r?\n[ \t]+', ' ', text.rstrip('\r\n'))
++    return text.lstrip(' \t')
+ 
+ 
+ @public
+diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
+index 814563abd..5ccabac90 100644
+--- a/src/mailman/handlers/tests/test_message_instance.py
++++ b/src/mailman/handlers/tests/test_message_instance.py
+@@ -477,6 +477,27 @@ This is a test.
+         collected = dict(_collect_headers(msg))
+         self.assertEqual(collected['Subject'], str(wire['subject']))
+ 
++    def test_collected_header_values_are_unfolded(self):
++        # A long encoded-word Subject arrives folded; the parser keeps the
++        # fold in the value.  Recipe "d" strings MUST NOT contain CR or LF
++        # (spec-06 §5.1): a literal with a fold inside it verified in two
++        # implementations and failed in three.
++        raw = (
++            b'To: ant@example.com\r\n'
++            b'From: aperson@example.com\r\n'
++            b'Message-ID: <alpha>\r\n'
++            b'Subject: =?UTF-8?B?UmU6IEZsaW5rS2Fma2FQcm9kdWNlciDlvIDlkK9FeGNhdGx5IE9uY2U=?=\r\n'
++            b' =?UTF-8?B?5LmL5ZCOIOWIneWni+WMluS6i+WKoeeKtuaAgei2heaXtueahOmXrumimA==?=\r\n'
++            b'\r\n'
++            b'body\r\n'
++        )
++        msg = _msg_from_bytes(raw)
++        for name, value in _collect_headers(msg):
++            self.assertNotIn('\n', value, name)
++            self.assertNotIn('\r', value, name)
++        subject = dict(_collect_headers(msg))['Subject']
++        self.assertIn('?= =?UTF-8?B?', subject)
++
+     def test_header_hash_covers_the_wire_form_of_a_raw_8bit_subject(self):
+         # Raw non-UTF-8 bytes in a Subject (2003-era spam, some current
+         # senders): the prefix handler re-encodes it as unknown-8bit, and

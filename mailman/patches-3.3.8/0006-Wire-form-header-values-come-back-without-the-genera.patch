@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Sun, 4 Oct 2026 11:58:55 -0400
-Subject: [PATCH 6/6] Wire-form header values come back without the generator's
+Subject: [PATCH 6/7] Wire-form header values come back without the generator's
  leading space
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>

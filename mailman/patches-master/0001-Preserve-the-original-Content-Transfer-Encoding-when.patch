@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Wed, 23 Sep 2026 13:34:30 -0400
-Subject: [PATCH 1/6] Preserve the original Content-Transfer-Encoding when
+Subject: [PATCH 1/7] Preserve the original Content-Transfer-Encoding when
  decorating
 
 When a header or footer is added to a single-part text message, keep the

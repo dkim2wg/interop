@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Sun, 4 Oct 2026 11:53:39 -0400
-Subject: [PATCH 4/6] Hash headers as the generator emits them, not as
+Subject: [PATCH 4/7] Hash headers as the generator emits them, not as
  str(value)
 
 subject_prefix stores a Subject it has to encode as an email.header.Header

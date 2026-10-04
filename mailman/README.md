@@ -23,7 +23,7 @@ releases differ around it (the owner pipeline's handler list, and the
 Alembic revision the migration follows). The design is described in
 `DKIM2-MESSAGE-INSTANCE.md`, which the Message-Instance patch adds.
 
-`patches-3.3.10/` carries eight patches. The first two are upstream commits
+`patches-3.3.10/` carries nine patches. The first two are upstream commits
 that 3.3.10 needs to run on Python 3.13 at all (the default on Debian 13 and
 Ubuntu 25.04+) and that have not been in a release yet: the `nntplib`
 requirement becomes `standard-nntplib`, without which `pip install` cannot
@@ -31,7 +31,7 @@ resolve 3.3.10 on 3.13, and the template loader stops using a `pathlib`
 path as a context manager, without which every template lookup (and so
 every decoration) raises a TypeError on 3.13. On Python 3.12 and earlier
 they change nothing and can be skipped. The DKIM2 patches are the last
-six. `patches-3.3.8/` is the six DKIM2 patches alone: 3.3.8 is only
+seven. `patches-3.3.8/` is the seven DKIM2 patches alone: 3.3.8 is only
 shipped with Python 3.11 and 3.12, where it needs no such fixes.
 
 ## The patches
@@ -67,8 +67,12 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
    RFC 2047 form. Hashing `str()` recorded `m=2` header hashes no verifier
    could reproduce for any non-ASCII Subject, so the outbound signer refused
    to sign. Found 2026-10-04 by replaying public-archive mail in assorted
-   charsets through a test list (interop `util/charset-corpus.sh`). These
-   three belong in patch 2 and will be folded into it.
+   charsets through a test list (interop `util/charset-corpus.sh`).
+5. **Recipe header values are unfolded.** The parser keeps a header's fold
+   inside its value, so a Recipe literal for a long encoded-word Subject
+   carried a literal LF; spec-06 §5.1 forbids CR and LF in Recipe strings.
+   Same origin as 4. Patches 4 and 5 (and the two small follow-ups) belong
+   in patch 2 and will be folded into it.
 
 ## What they apply to
 

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Sun, 4 Oct 2026 11:57:54 -0400
-Subject: [PATCH 5/6] Tests: run the subject-prefix handler through its
+Subject: [PATCH 5/7] Tests: run the subject-prefix handler through its
  registered class
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
