@@ -149,6 +149,7 @@ uucp      unix  -       n       n       -       -       pipe
 # DKIM2 reflector injection: no milters (the reflector signs itself).
 127.0.0.1:10588 inet n  -  y  -  -  smtpd
   -o cleanup_service_name=cleanup-dkim2
+  -o local_header_rewrite_clients=
   -o syslog_name=postfix/reflector-inject
   -o smtpd_milters=
   -o non_smtpd_milters=
@@ -199,8 +200,21 @@ dkim2-delayedbounce unix  -     n       n       -       -       pipe
 #    with DKIM (OpenDKIM, rspamd), append that milter after the DKIM2 one.
 127.0.0.1:10587 inet n  -       y       -       -       smtpd
   -o cleanup_service_name=cleanup-dkim2
+  -o local_header_rewrite_clients=
   -o syslog_name=postfix/dkim2-list
   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_relay_restrictions=permit_mynetworks,reject
   -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
+
+# Charset-corpus injection (deploy/dkim2-corpus-inject.sh): port 25 exactly
+# (main.cf smtpd_milters = the inbound milter, header-preserving cleanup), but
+# loopback-only and WITHOUT Postfix's local-client header rewriting, which
+# rewrites header addresses and adds missing Resent-* fields for clients on
+# this host and so altered signed test mail that real port-25 mail from other
+# hosts never sees.
+127.0.0.1:10591 inet n  -       y       -       -       smtpd
+  -o syslog_name=postfix/corpus-inject
+  -o cleanup_service_name=cleanup-dkim2
+  -o local_header_rewrite_clients=
+  -o smtpd_client_restrictions=permit_mynetworks,reject

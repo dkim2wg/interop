@@ -45,6 +45,11 @@ FROM=dkim2capture@dkim2.com
 SIGN_KEY=/etc/dkim2/reflector/sel1.key
 MAILMAN_LIST=dkim2corpus@mailman.dkim2.com
 SYMPA_LIST=dkim2corpus@sympa.dkim2.com
+# Injection listener: port 25's behaviour (inbound milter, header-preserving
+# cleanup) without Postfix's local-client header rewriting -- see SERVER.md
+# "DKIM2 charset corpus lists". Injecting on port 25 from this host had
+# Postfix rewrite header addresses and add Resent-* fields to signed mail.
+export INJECT_PORT=${INJECT_PORT:-10591}
 REST=http://localhost:8001/3.1
 RESTAUTH=restadmin:dkim2demo
 
@@ -100,7 +105,7 @@ for f in "$SAMPLES"/*.eml; do
     if perl -MNet::SMTP -e '
         my ($from, $to, $file) = @ARGV;
         my $raw = do { local $/; open my $h, "<", $file or die $!; binmode $h; <$h> };
-        my $s = Net::SMTP->new("127.0.0.1", Port => 25, Timeout => 60) or die "connect: $!";
+        my $s = Net::SMTP->new("127.0.0.1", Port => $ENV{INJECT_PORT}, Timeout => 60) or die "connect: $!";
         $s->mail($from) && $s->to($to) && $s->data($raw) && $s->quit
           or die "smtp: " . ($s->code // "?") . " " . ($s->message // "");
       ' "$FROM" "$L" "$signed" 2> "$work/smtp.err"; then

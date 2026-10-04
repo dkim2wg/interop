@@ -1076,6 +1076,17 @@ in `cleanup` before milters run. DKIM2 hashes the first three, so on
 (`-o cleanup_service_name=cleanup-dkim2`). Submission and pickup keep the
 default. Backup of the previous file: `/etc/postfix/master.cf.bak-2026-10-04-drop-headers`.
 Found by the charset corpus: three 2005 messages with an empty `Bcc:`.
+
+The list (`10587`) and reflector (`10588`) listeners also run with
+`-o local_header_rewrite_clients=`: for clients on this host Postfix
+otherwise rewrites header addresses and adds missing `Resent-*` fields
+after the list computed its Message-Instance. The charset corpus is
+injected on its own loopback listener, `127.0.0.1:10591`
+(`postfix/corpus-inject`): port 25's behaviour (main.cf's inbound milter,
+`cleanup-dkim2`) with local header rewriting off, because injecting on
+port 25 from this host had Postfix alter signed test mail in ways real
+mail from other hosts never sees. `deploy/dkim2-corpus-inject.sh` uses
+it (`INJECT_PORT`, default 10591).
 The operator-facing version is in the list-host guide, section 6.
 
 ## DKIM2 list smoke test (Mailman + Sympa, no-spam local capture)

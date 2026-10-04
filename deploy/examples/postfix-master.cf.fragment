@@ -11,6 +11,11 @@
 #    before the message is signed. Also add
 #        -o cleanup_service_name=cleanup-dkim2
 #    under your existing "smtp inet ... smtpd" line (port 25).
+#
+#    local_header_rewrite_clients= (empty) on the list listener: the list
+#    manager submits from this host, and for local clients Postfix rewrites
+#    header addresses and adds missing Resent-* fields -- after the list has
+#    recorded its Message-Instance, so the signer finds it no longer matches.
 cleanup-dkim2 unix n     -       y       -       0       cleanup
   -o message_drop_headers=return-path
 #
@@ -22,6 +27,7 @@ cleanup-dkim2 unix n     -       y       -       0       cleanup
 127.0.0.1:10587 inet n  -       y       -       -       smtpd
   -o syslog_name=postfix/dkim2-list
   -o cleanup_service_name=cleanup-dkim2
+  -o local_header_rewrite_clients=
   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_relay_restrictions=permit_mynetworks,reject
@@ -34,6 +40,7 @@ cleanup-dkim2 unix n     -       y       -       0       cleanup
 # 127.0.0.1:10587 inet n  -       y       -       -       smtpd
 #   -o syslog_name=postfix/dkim2-split-in
 #   -o cleanup_service_name=cleanup-dkim2
+#   -o local_header_rewrite_clients=
 #   -o content_filter=lmtp:[127.0.0.1]:10590
 #   -o smtpd_milters=
 #   -o smtpd_client_restrictions=permit_mynetworks,reject
@@ -42,6 +49,7 @@ cleanup-dkim2 unix n     -       y       -       0       cleanup
 # 127.0.0.1:10589 inet n  -       n       -       -       smtpd
 #   -o syslog_name=postfix/dkim2-sign-out
 #   -o cleanup_service_name=cleanup-dkim2
+#   -o local_header_rewrite_clients=
 #   -o content_filter=
 #   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
 #   -o smtpd_relay_restrictions=permit_mynetworks,reject

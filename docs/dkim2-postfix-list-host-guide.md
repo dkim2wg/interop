@@ -235,6 +235,8 @@ first listener is the one every list copy will be submitted to:
 ```
 127.0.0.1:10587 inet n  -       y       -       -       smtpd
   -o syslog_name=postfix/dkim2-list
+  -o cleanup_service_name=cleanup-dkim2
+  -o local_header_rewrite_clients=
   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_relay_restrictions=permit_mynetworks,reject
@@ -245,6 +247,16 @@ Only the signing milter runs here. If the inbound milter ran too, the
 list's copy would get an `Authentication-Results` and a second
 `Message-Instance` before being signed, and the Recipe the list wrote
 would no longer describe the message.
+
+`local_header_rewrite_clients=` (empty) matters for the same reason. The
+list manager submits from this host, and for local clients Postfix
+rewrites addresses in headers (quoting an odd local part, appending your
+domain to an unqualified one) and adds missing `Resent-From`,
+`Resent-Date` and `Resent-Message-ID` when a message has any `Resent-`
+field. All of that happens after the list recorded its
+`Message-Instance`, so the signer finds the instance no longer matches and
+refuses to sign. The list has already produced the headers it means to
+send; Postfix should leave them alone.
 
 ### Keep Bcc, Resent-Bcc and Content-Length on mail you receive or forward
 
