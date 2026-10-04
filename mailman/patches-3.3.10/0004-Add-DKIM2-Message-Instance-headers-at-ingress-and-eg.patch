@@ -105,15 +105,15 @@ charsets through a test list (interop util/charset-corpus.sh):
 ---
  DKIM2-MESSAGE-INSTANCE.md                     |  215 +++
  src/mailman/config/schema.cfg                 |    7 +
- src/mailman/handlers/message_instance.py      | 1150 ++++++++++++
- .../handlers/tests/test_message_instance.py   | 1630 +++++++++++++++++
+ src/mailman/handlers/message_instance.py      | 1152 ++++++++++++
+ .../handlers/tests/test_message_instance.py   | 1639 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
  .../handlers/tests/test_mi_roundtrip.py       |  241 +++
  src/mailman/mta/bulk.py                       |    5 +-
  src/mailman/mta/deliver.py                    |    5 +-
  src/mailman/mta/message_instance.py           |   31 +
  src/mailman/pipelines/builtin.py              |    2 +
- 10 files changed, 3318 insertions(+), 2 deletions(-)
+ 10 files changed, 3329 insertions(+), 2 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
  create mode 100644 src/mailman/handlers/tests/test_message_instance.py
@@ -362,10 +362,10 @@ index 9b3773b24..9c4403e01 100644
  # with python: then it is a Python import path, otherwise it is a file system
 diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
 new file mode 100644
-index 000000000..c7bc94e0a
+index 000000000..f17ab67cb
 --- /dev/null
 +++ b/src/mailman/handlers/message_instance.py
-@@ -0,0 +1,1150 @@
+@@ -0,0 +1,1152 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -695,16 +695,18 @@ index 000000000..c7bc94e0a
 +def _get_body_lines(msg):
 +    """Get the body as a list of line strings (without line endings).
 +
-+    Uses CRLF-normalized raw body, strips the final trailing newline
-+    for line splitting.
++    Uses the CRLF-normalized raw body.  Trailing empty lines are not
++    lines: the §6.1 body canonicalization ignores them, so they are not
++    part of what a Recipe has to rebuild, and a Recipe must never number
++    or restore one.  Counting a trailing empty line here made the Recipe
++    copy "lines N-N+1 of N" for a body that ended in a blank line, which
++    every other implementation rejects.
 +    """
 +    body = _get_raw_body(msg)
 +    # Normalize to LF for splitting
 +    body_str = body.replace(b'\r\n', b'\n').replace(
 +        b'\r', b'\n').decode('utf-8', errors='surrogateescape')
-+    # Strip single trailing newline (for clean line splitting)
-+    if body_str.endswith('\n'):
-+        body_str = body_str[:-1]
++    body_str = body_str.rstrip('\n')
 +    if not body_str:
 +        return []
 +    return body_str.split('\n')
@@ -1518,10 +1520,10 @@ index 000000000..c7bc94e0a
 +        _cleanup_mi_original(mi_file)
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..39ca864fb
+index 000000000..db16b4d43
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,1630 @@
+@@ -0,0 +1,1639 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -1783,6 +1785,15 @@ index 000000000..39ca864fb
 +
 +
 +class TestBodyLines(unittest.TestCase):
++
++    def test_trailing_empty_lines_are_not_numbered(self):
++        # §6.1 canonicalization drops trailing empty lines, so a Recipe has
++        # nothing to say about them and must not count them.
++        msg = _msg_from_bytes(b'From: a@b.com\r\n\r\nline1\r\nline2\r\n\r\n\r\n')
++        self.assertEqual(_get_body_lines(msg), ['line1', 'line2'])
++        # ... while an empty line INSIDE the body is a line like any other.
++        msg = _msg_from_bytes(b'From: a@b.com\r\n\r\nline1\r\n\r\nline3\r\n')
++        self.assertEqual(_get_body_lines(msg), ['line1', '', 'line3'])
 +
 +    def test_simple_body(self):
 +        msg = _msg_from_bytes(
