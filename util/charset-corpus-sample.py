@@ -39,35 +39,58 @@ from pathlib import Path
 #   mbox      a Unix mbox (plain or gzip; detected by magic)
 #   tar-eml   a tarball whose regular files are each one message, some with a
 #             leading mbox From_ line (the SpamAssassin corpus layout)
+def _apache(lst, domain, month):
+    return (f"https://lists.apache.org/api/mbox.lua?list={lst}&domain={domain}&d={month}", "mbox")
+
+
+def _hyperkitty(host, lst, year):
+    return (f"https://{host}/archives/list/{lst}/export/{lst}.mbox.gz"
+            f"?start={year}-01-01&end={year + 1}-01-01", "mbox")
+
+
+def _sa(tarball):
+    return (f"https://spamassassin.apache.org/old/publiccorpus/{tarball}.tar.bz2", "tar-eml")
+
+
+# name -> (url, kind). kind is how to turn the download into messages:
+#   mbox      a Unix mbox (plain or gzip; detected by magic)
+#   tar-eml   a tarball whose regular files are each one message, some with a
+#             leading mbox From_ line (the SpamAssassin corpus layout)
+#
+# Apache's localized lists are ezmlm, so their archives hold the bytes the
+# sender sent. The Mailman 3 (HyperKitty) exports have already been through a
+# list once -- footer, prefix -- so a second list hop is what they test. The
+# SpamAssassin corpus is 2002-2003 mail with every charset sin there is.
+# Months were chosen by probing for traffic (2026-10-04); a month that has
+# gone empty upstream just yields nothing.
 SOURCES = {
-    # ISO-2022-JP, 7bit: the stateful 7-bit encoding footers are most likely
-    # to break (ezmlm list, so these are sender-original bytes).
-    "apache-ja": (
-        "https://lists.apache.org/api/mbox.lua?list=general-ja&domain=openoffice.apache.org&d=2012-10",
-        "mbox"),
-    # gb2312 / gbk / gb18030 / utf-8, with 8bit, base64 and QP all in one month.
-    "apache-zh": (
-        "https://lists.apache.org/api/mbox.lua?list=user-zh&domain=flink.apache.org&d=2019-09",
-        "mbox"),
-    # iso-8859-1 / iso-8859-15 / windows-1252, QP-heavy.
-    "apache-de": (
-        "https://lists.apache.org/api/mbox.lua?list=users-de&domain=openoffice.apache.org&d=2013-05",
-        "mbox"),
-    # Japanese UTF-8 that has ALREADY been through Mailman 3 (HyperKitty export):
-    # footer and prefix present, so a second list hop is the test.
-    "ruby-list": (
-        "https://ml.ruby-lang.org/archives/list/ruby-list@ml.ruby-lang.org/export/"
-        "ruby-list@ml.ruby-lang.org.mbox.gz?start=2024-01-01&end=2025-01-01",
-        "mbox"),
-    # Adversarial: big5, gb2312, iso-8859-2, koi8-r, broken charset= values,
-    # 8-bit bytes in headers, HTML-only bodies. 2003 vintage.
-    "sa-spam2": (
-        "https://spamassassin.apache.org/old/publiccorpus/20030228_spam_2.tar.bz2",
-        "tar-eml"),
-    # Legit mail that spam filters find hard: HTML, odd encodings, long lines.
-    "sa-hardham": (
-        "https://spamassassin.apache.org/old/publiccorpus/20030228_hard_ham.tar.bz2",
-        "tar-eml"),
+    # Japanese: ISO-2022-JP 7bit is the stateful encoding footers break.
+    "apache-ja":        _apache("general-ja", "openoffice.apache.org", "2012-10"),
+    "apache-ja-2013":   _apache("general-ja", "openoffice.apache.org", "2013-01"),
+    "ruby-list":        _hyperkitty("ml.ruby-lang.org", "ruby-list@ml.ruby-lang.org", 2024),
+    "ruby-list-2023":   _hyperkitty("ml.ruby-lang.org", "ruby-list@ml.ruby-lang.org", 2023),
+    "ruby-dev-2023":    _hyperkitty("ml.ruby-lang.org", "ruby-dev@ml.ruby-lang.org", 2023),
+    "fedora-ja-2008":   _hyperkitty("lists.fedoraproject.org", "trans-ja@lists.fedoraproject.org", 2008),
+    # Chinese: gb2312 / gbk / gb18030 / big5 / utf-8; 8bit, base64 and QP.
+    "apache-zh":        _apache("user-zh", "flink.apache.org", "2019-09"),
+    "apache-zh-2020":   _apache("user-zh", "flink.apache.org", "2020-06"),
+    "apache-zh-2023":   _apache("user-zh", "flink.apache.org", "2023-03"),
+    "apache-cn-2013":   _apache("users-cn", "cloudstack.apache.org", "2013-06"),
+    # German, French, Spanish, Italian, Czech: Latin-1/-2/-15, windows-125x.
+    "apache-de":        _apache("users-de", "openoffice.apache.org", "2013-05"),
+    "apache-de-2015":   _apache("users-de", "openoffice.apache.org", "2015-06"),
+    "httpd-de-2004":    _apache("users-de", "httpd.apache.org", "2004-06"),
+    "cocoon-fr-2005":   _apache("users-fr", "cocoon.apache.org", "2005-03"),
+    "apache-fr-2014":   _apache("users-fr", "openoffice.apache.org", "2014-01"),
+    "apache-es-2012":   _apache("general-es", "openoffice.apache.org", "2012-11"),
+    "apache-it-2016":   _apache("utenti-it", "openoffice.apache.org", "2016-03"),
+    "ibatis-cs-2007":   _apache("user-cs", "ibatis.apache.org", "2007-04"),
+    # Adversarial: big5, gb2312, iso-8859-2, koi8-r, euc-kr, broken charset=
+    # values, 8-bit bytes in headers, HTML-only bodies.
+    "sa-spam2":         _sa("20030228_spam_2"),
+    "sa-spam-2002":     _sa("20021010_spam"),
+    "sa-hardham":       _sa("20030228_hard_ham"),
+    "sa-easyham2":      _sa("20030228_easy_ham_2"),
 }
 
 CHARSET_RE = re.compile(rb'charset\s*=\s*"?\s*([A-Za-z0-9_.:+-]+)', re.I)
