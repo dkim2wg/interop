@@ -105,15 +105,15 @@ charsets through a test list (interop util/charset-corpus.sh):
 ---
  DKIM2-MESSAGE-INSTANCE.md                     |  215 ++
  src/mailman/config/schema.cfg                 |    7 +
- src/mailman/handlers/message_instance.py      | 1275 ++++++++++++
- .../handlers/tests/test_message_instance.py   | 1732 +++++++++++++++++
+ src/mailman/handlers/message_instance.py      | 1285 ++++++++++++
+ .../handlers/tests/test_message_instance.py   | 1763 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
  .../handlers/tests/test_mi_roundtrip.py       |  241 +++
  src/mailman/mta/bulk.py                       |    5 +-
  src/mailman/mta/deliver.py                    |    5 +-
  src/mailman/mta/message_instance.py           |   31 +
  src/mailman/pipelines/builtin.py              |    2 +
- 10 files changed, 3545 insertions(+), 2 deletions(-)
+ 10 files changed, 3586 insertions(+), 2 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
  create mode 100644 src/mailman/handlers/tests/test_message_instance.py
@@ -362,10 +362,10 @@ index 7aeec2ced..da6de45b1 100644
  # with python: then it is a Python import path, otherwise it is a file system
 diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
 new file mode 100644
-index 000000000..d8a90c270
+index 000000000..aa9e4f4ed
 --- /dev/null
 +++ b/src/mailman/handlers/message_instance.py
-@@ -0,0 +1,1275 @@
+@@ -0,0 +1,1285 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -1388,6 +1388,9 @@ index 000000000..d8a90c270
 +# deliberately not considered here.)
 +_MAILMAN_STAMPED = ('message-id-hash',)
 +
++# Header fields smtplib.send_message deletes on the way to the MTA.
++_SEND_MESSAGE_DROPS = ('bcc', 'resent-bcc')
++
 +
 +def _strip_stamped(msg):
 +    """Return a deep copy of msg with the Mailman-stamped header(s) removed."""
@@ -1584,6 +1587,13 @@ index 000000000..d8a90c270
 +        """See `IHandler`."""
 +        if not _mi_enabled(mlist):
 +            return
++        # smtplib.send_message, which hands the message to the MTA, deletes
++        # Bcc and Resent-Bcc.  Both are signed header fields, so a removal
++        # the Recipe did not record would leave this instance describing
++        # headers the recipient never sees.  Remove them here instead, where
++        # the Recipe records the change and an upstream verifier can undo it.
++        for name in _SEND_MESSAGE_DROPS:
++            del msg[name]
 +        snapshot = msgdata.get('mi_snapshot')
 +        if not snapshot:
 +            # No snapshot means this message didn't go through an ingress
@@ -1643,10 +1653,10 @@ index 000000000..d8a90c270
 +        _cleanup_mi_original(mi_file)
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..afe99f194
+index 000000000..12da090ac
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,1732 @@
+@@ -0,0 +1,1763 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -2827,6 +2837,37 @@ index 000000000..afe99f194
 +            'utf-8', 'surrogateescape')
 +        self.assertEqual(
 +            _b64(hashlib.sha256(rebuilt_body).digest()), hashes1['b'][1])
++
++    def test_egress_records_bcc_removal(self):
++        # smtplib.send_message drops Bcc; egress removes it first so the
++        # m=2 Recipe says so and undoing it gives back what arrived.
++        raw = (b'To: ant@example.com\r\n'
++               b'From: aperson@example.com\r\n'
++               b'Bcc: \r\n'
++               b'Resent-Bcc: hidden@example.com\r\n'
++               b'Message-ID: <alpha>\r\n'
++               b'Subject: has a Bcc\r\n'
++               b'\r\n'
++               b'Hello world.\r\n')
++        msg = _msg_from_bytes(raw)
++        msg.original_bytes = raw
++        msgdata = {}
++        self._ingress.process(self._mlist, msg, msgdata)
++        _, hashes1, _ = _parse_mi(msg['message-instance'])
++        self._egress.process(self._mlist, msg, msgdata)
++        self.assertIsNone(msg['bcc'])
++        self.assertIsNone(msg['resent-bcc'])
++        m2 = [v for v in msg.get_all('message-instance')
++              if _get_mi_version(v) == 2][0]
++        _, hashes2, recipe = _parse_mi(m2)
++        self.assertEqual(recipe['h']['bcc'], [{'d': ['']}])
++        self.assertEqual(recipe['h']['resent-bcc'],
++                         [{'d': ['hidden@example.com']}])
++        # m=2 describes the message as it will be sent ...
++        self.assertEqual(hashes2['h'][1], _b64(compute_header_hash(msg)))
++        # ... and its Recipe rebuilds m=1.
++        self.assertEqual(undo_message_instance(msg), 2)
++        self.assertEqual(_b64(compute_header_hash(msg)), hashes1['h'][1])
 +
 +    def test_ingress_without_received_octets_still_works(self):
 +        # A message Mailman made itself, or one from an older queue entry,

@@ -1066,6 +1066,18 @@ ssh dkim2 tail -f /var/log/mail.log
 ssh dkim2 journalctl -fu sympa
 ```
 
+## Header-preserving cleanup (Bcc, Resent-Bcc, Content-Length)
+
+Postfix 3.0+ strips `Bcc`, `Resent-Bcc`, `Content-Length` and `Return-Path`
+in `cleanup` before milters run. DKIM2 hashes the first three, so on
+2026-10-04 the box gained a `cleanup-dkim2` service in `master.cf` with
+`message_drop_headers = return-path`, used by the port 25 `smtpd`, the
+`10587` list listener and the `10588` reflector injection
+(`-o cleanup_service_name=cleanup-dkim2`). Submission and pickup keep the
+default. Backup of the previous file: `/etc/postfix/master.cf.bak-2026-10-04-drop-headers`.
+Found by the charset corpus: three 2005 messages with an empty `Bcc:`.
+The operator-facing version is in the list-host guide, section 6.
+
 ## DKIM2 list smoke test (Mailman + Sympa, no-spam local capture)
 
 Confirm both list managers stamp the current spec draft (`Mail::DKIM2::Common`'s

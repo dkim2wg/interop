@@ -10,6 +10,7 @@
 #               (yes)   (yes)   (no)    (never) (100)
 # ==========================================================================
 smtp      inet  n       -       y       -       -       smtpd
+  -o cleanup_service_name=cleanup-dkim2
 #smtp      inet  n       -       y       -       1       postscreen
 #smtpd     pass  -       -       y       -       -       smtpd
 #dnsblog   unix  -       -       y       -       0       dnsblog
@@ -54,6 +55,11 @@ smtp      inet  n       -       y       -       -       smtpd
 #628       inet  n       -       y       -       -       qmqpd
 pickup    unix  n       -       y       60      1       pickup
 cleanup   unix  n       -       y       -       0       cleanup
+# DKIM2: inbound and forwarded mail keeps Bcc, Resent-Bcc and Content-Length,
+# which are signed; only Return-Path is dropped. Submission and pickup keep
+# the default cleanup above, which strips Bcc before the message is signed.
+cleanup-dkim2 unix n     -       y       -       0       cleanup
+  -o message_drop_headers=return-path
 qmgr      unix  n       -       n       300     1       qmgr
 #qmgr     unix  n       -       n       300     1       oqmgr
 tlsmgr    unix  -       -       y       1000?   1       tlsmgr
@@ -142,6 +148,7 @@ uucp      unix  -       n       n       -       -       pipe
 
 # DKIM2 reflector injection: no milters (the reflector signs itself).
 127.0.0.1:10588 inet n  -  y  -  -  smtpd
+  -o cleanup_service_name=cleanup-dkim2
   -o syslog_name=postfix/reflector-inject
   -o smtpd_milters=
   -o non_smtpd_milters=
@@ -191,6 +198,7 @@ dkim2-delayedbounce unix  -     n       n       -       -       pipe
 #    Message-Instance before it is signed. Loopback only. If you also sign
 #    with DKIM (OpenDKIM, rspamd), append that milter after the DKIM2 one.
 127.0.0.1:10587 inet n  -       y       -       -       smtpd
+  -o cleanup_service_name=cleanup-dkim2
   -o syslog_name=postfix/dkim2-list
   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
   -o smtpd_client_restrictions=permit_mynetworks,reject

@@ -1,6 +1,19 @@
 # DKIM2 for a mailing-list host: master.cf listeners. See
 # docs/dkim2-postfix-list-host-guide.md ("Postfix").
 #
+# 0. A cleanup service that keeps signed header fields. Postfix 3.0+ removes
+#    Bcc, Resent-Bcc, Content-Length and Return-Path from every message
+#    (message_drop_headers) before any milter runs. DKIM2 hashes the first
+#    three, so removing them from mail that is already signed breaks it.
+#    Inbound and forwarded mail goes through this service instead; only
+#    Return-Path, which DKIM2 does not hash, is dropped. Leave submission
+#    (587) and pickup on the default cleanup: there Bcc must go, and it goes
+#    before the message is signed. Also add
+#        -o cleanup_service_name=cleanup-dkim2
+#    under your existing "smtp inet ... smtpd" line (port 25).
+cleanup-dkim2 unix n     -       y       -       0       cleanup
+  -o message_drop_headers=return-path
+#
 # 1. List submission. Mailman's smtp_port and Sympa's sendmail wrapper deliver
 #    here. Only the signing milter runs; the inbound milter must not, or the
 #    list's own copy would get an Authentication-Results and a second
@@ -8,6 +21,7 @@
 #    with DKIM (OpenDKIM, rspamd), append that milter after the DKIM2 one.
 127.0.0.1:10587 inet n  -       y       -       -       smtpd
   -o syslog_name=postfix/dkim2-list
+  -o cleanup_service_name=cleanup-dkim2
   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_relay_restrictions=permit_mynetworks,reject
@@ -19,6 +33,7 @@
 #
 # 127.0.0.1:10587 inet n  -       y       -       -       smtpd
 #   -o syslog_name=postfix/dkim2-split-in
+#   -o cleanup_service_name=cleanup-dkim2
 #   -o content_filter=lmtp:[127.0.0.1]:10590
 #   -o smtpd_milters=
 #   -o smtpd_client_restrictions=permit_mynetworks,reject
@@ -26,6 +41,7 @@
 #   -o receive_override_options=no_unknown_recipient_checks,no_address_mappings,no_header_body_checks
 # 127.0.0.1:10589 inet n  -       n       -       -       smtpd
 #   -o syslog_name=postfix/dkim2-sign-out
+#   -o cleanup_service_name=cleanup-dkim2
 #   -o content_filter=
 #   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
 #   -o smtpd_relay_restrictions=permit_mynetworks,reject

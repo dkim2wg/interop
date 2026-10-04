@@ -244,7 +244,44 @@ first listener is the one every list copy will be submitted to:
 Only the signing milter runs here. If the inbound milter ran too, the
 list's copy would get an `Authentication-Results` and a second
 `Message-Instance` before being signed, and the Recipe the list wrote
-would no longer describe the message. Then `postfix reload`.
+would no longer describe the message.
+
+### Keep Bcc, Resent-Bcc and Content-Length on mail you receive or forward
+
+Since Postfix 3.0, `cleanup` removes `Bcc`, `Resent-Bcc`,
+`Content-Length` and `Return-Path` from every message, before any milter
+sees it (`message_drop_headers`). DKIM2 excludes `Return-Path` from the
+header hash but hashes the other three. A signed message that carries
+one of them, even an empty `Bcc:`, stops verifying at the first Postfix
+that removes it, and the list's own signature can then no longer be
+added.
+
+Removing `Bcc` is right where a message is first submitted, and there it
+happens before signing. On mail that arrives already signed, or that a
+list or forwarder sends on, it is the sending side's job, not yours: do
+not strip these headers on ingress, and do not strip them on the egress
+of forwarded mail. The fragment's first entry is a second `cleanup`
+service that drops only `Return-Path`:
+
+```
+cleanup-dkim2 unix n     -       y       -       0       cleanup
+  -o message_drop_headers=return-path
+```
+
+Point every listener that receives mail or carries forwarded mail at it
+with `-o cleanup_service_name=cleanup-dkim2`: the port 25 `smtp inet ...
+smtpd` line already in your `master.cf` (add the option under it), the
+`10587` list listener above (the fragment already has it), and the split
+gateway's listeners if you use them. Leave submission (587) and the local
+`sendmail` path on the default `cleanup`.
+
+Then `postfix reload`, and check with
+`postconf -P | grep -E 'cleanup_service_name|message_drop_headers'`.
+
+Mailman removes `Bcc` and `Resent-Bcc` itself before sending (Python's
+`smtplib` does it on its way to Postfix); with the patches below it does
+so before computing its `Message-Instance`, so the removal is in the
+Recipe and the chain still verifies. Sympa passes them through.
 
 ### Recipient privacy
 

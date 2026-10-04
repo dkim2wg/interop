@@ -59,7 +59,9 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
    instance, leaving any existing instance alone), and a
    `MessageInstanceMixin` on the `Deliver` and `BulkDelivery` classes adds
    the next `m=` with header and body Recipes after decoration,
-   personalisation and ARC signing. Each instance is accompanied by an
+   personalisation and ARC signing. It removes `Bcc` and `Resent-Bcc`
+   first, which Python's `smtplib` would otherwise drop after the instance
+   was computed, so the Recipe records that change too. Each instance is accompanied by an
    `X-DKIM2-Info` debug header. Enabled by `[mta] message_instance: yes`.
    Includes the tests and `DKIM2-MESSAGE-INSTANCE.md`.
 4. **Add a per-list `dkim2_message_instance` flag.** A boolean list
