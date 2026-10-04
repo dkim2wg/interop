@@ -56,7 +56,7 @@ tests/test_hash: tests/test_hash.c dkim2_hash.o base64.o
 tests/test_header: tests/test_header.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-tests/test_recipe: tests/test_recipe.c dkim2_recipe.o
+tests/test_recipe: tests/test_recipe.c dkim2_recipe.o base64.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 tests/test_crypto: tests/test_crypto.c dkim2_crypto.o base64.o

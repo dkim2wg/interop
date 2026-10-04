@@ -1,4 +1,5 @@
 #include "dkim2_recipe.h"
+#include "base64.h"
 #include <cjson/cJSON.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,21 +46,69 @@ static int buf_append(char **buf, size_t *pos, size_t *cap,
     return 0;
 }
 
-/* A "c" step is exactly two integers >= 1, start <= end (spec-06 §5 schema).
+/* ---- Recipe step validation (shared by the body and header appliers) ---- */
+
+/* A "c" step is exactly two integers with 1 <= start <= end <= n_items, and
+   its start MUST be greater than the end of every preceding "c" step in the
+   same list (spec-06 §5.1; the same ascending/non-overlapping rule is applied
+   to body lists -- WG extension, 2026-10). `prev_end` is the end of the
+   previous "c" step, 0 when there is none.
+
    Anything else -- the bounds as JSON strings, which one list manager
-   emitted; zero; a fraction -- is a malformed Recipe: return -1 so the caller
-   rejects the instance. cJSON reports valueint 0 for a string, so reading it
-   unchecked made start -1 and indexed lines[-1]: a segfault on every such
-   message (2026-10-04, replaying Sympa output). */
-static int copy_range(const cJSON *c, int *start, int *end) {
+   emitted; zero; a fraction; a range past the last item; a range that goes
+   backwards or overlaps an earlier one -- is a malformed Recipe: return -1
+   so the caller rejects the instance. cJSON reports valueint 0 for a string,
+   so reading it unchecked made start -1 and indexed lines[-1]: a segfault on
+   every such message (2026-10-04, replaying Sympa output). An end past the
+   last item used to be silently clamped, which let a Recipe that disagreed
+   with the message it was attached to "apply" and then fail on the hash. */
+static int copy_range(const cJSON *c, int n_items, int prev_end,
+                      int *start, int *end) {
     if (!c || !cJSON_IsArray(c) || cJSON_GetArraySize(c) != 2) return -1;
     const cJSON *a = cJSON_GetArrayItem(c, 0), *b = cJSON_GetArrayItem(c, 1);
     if (!cJSON_IsNumber(a) || !cJSON_IsNumber(b)) return -1;
     if (a->valuedouble != (double)a->valueint || b->valuedouble != (double)b->valueint) return -1;
     if (a->valueint < 1 || b->valueint < a->valueint) return -1;
+    if (b->valueint > n_items) return -1;
+    if (a->valueint <= prev_end) return -1;
     *start = a->valueint;
     *end = b->valueint;
     return 0;
+}
+
+static int is_b64_char(char ch) {
+    return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+           (ch >= '0' && ch <= '9') || ch == '+' || ch == '/';
+}
+
+/* A "b" item is a JSON string holding the literal's raw octets as standard
+   alphabet base64 (RFC 4648 §4): alphabet characters followed by at most two
+   '=' and nothing else (no whitespace, no URL-safe alphabet). It is applied
+   exactly like a "d" item once decoded. Returns the malloc'd octets and their
+   length, or NULL for anything that is not clean base64 or whose decoded
+   octets contain CR or LF (a literal is one line/value; a line break inside
+   it would change the line numbering the rest of the Recipe depends on).
+   The octets are otherwise arbitrary, so callers must carry `*len_out` and
+   never strlen() the result. */
+static unsigned char *decode_b_item(const cJSON *item, size_t *len_out) {
+    if (!cJSON_IsString(item) || !item->valuestring) return NULL;
+    const char *s = item->valuestring;
+    size_t sl = strlen(s), i = 0, npad = 0;
+    while (i < sl && is_b64_char(s[i])) i++;
+    while (i < sl && s[i] == '=') { i++; npad++; }
+    /* Canonical §4 form only: padded to a multiple of four ("QUI" is
+       rejected, "QUI=" accepted), so every verifier decodes the same set. */
+    if (i != sl || npad > 2 || sl % 4 != 0) return NULL;
+
+    size_t cap = sl / 4 * 3 + 3;
+    unsigned char *out = malloc(cap);
+    if (!out) return NULL;
+    int n = b64_decode(s, out, cap);
+    if (n < 0) { free(out); return NULL; }
+    for (int k = 0; k < n; k++)
+        if (out[k] == '\r' || out[k] == '\n') { free(out); return NULL; }
+    *len_out = (size_t)n;
+    return out;
 }
 
 char *dkim2_apply_body_recipe(const char *r_json,
@@ -87,26 +136,45 @@ char *dkim2_apply_body_recipe(const char *r_json,
     char *out = NULL;
     size_t pos = 0, cap = 0;
     int ok = 1;
+    int prev_end = 0;
 
     cJSON *step;
     cJSON_ArrayForEach(step, b) {
         cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
         cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
+        cJSON *bl = cJSON_GetObjectItemCaseSensitive(step, "b");
 
         if (c) {
             int start, end_i;
-            if (copy_range(c, &start, &end_i) != 0) { ok = 0; break; }
-            for (int i = start - 1; i <= end_i - 1 && i < n_lines && ok; i++)
+            if (copy_range(c, n_lines, prev_end, &start, &end_i) != 0) { ok = 0; break; }
+            for (int i = start - 1; i <= end_i - 1 && ok; i++)
                 ok = (buf_append(&out, &pos, &cap, lines[i].ptr, lines[i].len) == 0);
+            prev_end = end_i;
         } else if (d && cJSON_IsArray(d)) {
+            /* schema minItems 1: an empty literal array is malformed */
+            if (cJSON_GetArraySize(d) == 0) { ok = 0; break; }
             cJSON *item;
             cJSON_ArrayForEach(item, d) {
                 if (!cJSON_IsString(item)) continue;
                 const char *s = item->valuestring;
+                /* §5.2: a line MUST NOT contain CR or LF */
+                if (strpbrk(s, "\r\n")) { ok = 0; break; }
                 ok = ok && (buf_append(&out, &pos, &cap, s, strlen(s)) == 0);
                 ok = ok && (buf_append(&out, &pos, &cap, "\r\n", 2) == 0);
             }
+        } else if (bl && cJSON_IsArray(bl)) {
+            if (cJSON_GetArraySize(bl) == 0) { ok = 0; break; }
+            cJSON *item;
+            cJSON_ArrayForEach(item, bl) {
+                size_t dl;
+                unsigned char *dec = decode_b_item(item, &dl);
+                if (!dec) { ok = 0; break; }
+                ok = ok && (buf_append(&out, &pos, &cap, (const char *)dec, dl) == 0);
+                ok = ok && (buf_append(&out, &pos, &cap, "\r\n", 2) == 0);
+                free(dec);
+            }
         }
+        if (!ok) break;
     }
 
     free(lines);
@@ -154,6 +222,34 @@ static char **headers_for_name(char **headers, int n, const char *lname,
     return out;
 }
 
+/* "Name: value\r\n" from an explicit-length value (which may hold 8-bit
+   octets from a "b" item, so no printf-family formatting of the value). */
+static char *make_field(const char *fname, const unsigned char *val, size_t vlen) {
+    size_t nl = strlen(fname);
+    char *hdr = malloc(nl + 2 + vlen + 3);
+    if (!hdr) return NULL;
+    memcpy(hdr, fname, nl);
+    hdr[nl] = ':';
+    hdr[nl + 1] = ' ';
+    memcpy(hdr + nl + 2, val, vlen);
+    memcpy(hdr + nl + 2 + vlen, "\r\n", 2);
+    hdr[nl + 2 + vlen + 2] = '\0';
+    return hdr;
+}
+
+static int push_val(char ***vals, int *n, int *cap, char *v) {
+    if (!v) return -1;
+    if (*n >= *cap) {
+        int nc = *cap ? *cap * 2 : 8;
+        char **nv = realloc(*vals, (size_t)nc * sizeof(char *));
+        if (!nv) { free(v); return -1; }
+        *vals = nv;
+        *cap = nc;
+    }
+    (*vals)[(*n)++] = v;
+    return 0;
+}
+
 char **dkim2_apply_header_recipe(const char *r_json,
     char **headers, int n, int *n_out) {
     cJSON *root = cJSON_Parse(r_json);
@@ -181,57 +277,66 @@ char **dkim2_apply_header_recipe(const char *r_json,
     int working_n = n;
     for (int i = 0; i < n; i++) working[i] = strdup(headers[i]);
 
+    char **field_hdrs = NULL;
+    char **new_vals = NULL;
+    int n_new = 0, new_cap = 0;
+
     cJSON *field;
     cJSON_ArrayForEach(field, h) {
         const char *fname = field->string;
         if (!fname || !cJSON_IsArray(field)) continue;
 
         int n_field = 0;
-        char **field_hdrs = headers_for_name(working, working_n, fname, &n_field);
+        field_hdrs = headers_for_name(working, working_n, fname, &n_field);
+        if (!field_hdrs) goto fail;
 
-        char **new_vals = NULL;
-        int n_new = 0, new_cap = 0;
+        new_vals = NULL;
+        n_new = 0; new_cap = 0;
+        int prev_end = 0;
 
         cJSON *step;
         cJSON_ArrayForEach(step, field) {
             cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
             cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
+            cJSON *bl = cJSON_GetObjectItemCaseSensitive(step, "b");
 
             if (c) {
                 int start, end_i;
-                if (copy_range(c, &start, &end_i) != 0) {
-                    /* Malformed Recipe: reject the whole instance. */
-                    for (int i = 0; i < n_new; i++) free(new_vals[i]);
-                    free(new_vals);
-                    free(field_hdrs);
-                    for (int i = 0; i < working_n; i++) free(working[i]);
-                    free(working);
-                    cJSON_Delete(root);
-                    return NULL;
-                }
-                for (int i = start - 1; i <= end_i - 1 && i < n_field; i++) {
-                    if (n_new >= new_cap) {
-                        new_cap = new_cap ? new_cap * 2 : 8;
-                        new_vals = realloc(new_vals, (size_t)new_cap * sizeof(char *));
-                    }
-                    new_vals[n_new++] = strdup(field_hdrs[i]);
-                }
+                /* Malformed Recipe: reject the whole instance. */
+                if (copy_range(c, n_field, prev_end, &start, &end_i) != 0) goto fail;
+                for (int i = start - 1; i <= end_i - 1; i++)
+                    if (push_val(&new_vals, &n_new, &new_cap, strdup(field_hdrs[i])) != 0) goto fail;
+                prev_end = end_i;
             } else if (d && cJSON_IsArray(d)) {
+                /* schema minItems 1: an empty literal array is malformed */
+                if (cJSON_GetArraySize(d) == 0) goto fail;
                 cJSON *item;
                 cJSON_ArrayForEach(item, d) {
                     if (!cJSON_IsString(item)) continue;
-                    if (n_new >= new_cap) {
-                        new_cap = new_cap ? new_cap * 2 : 8;
-                        new_vals = realloc(new_vals, (size_t)new_cap * sizeof(char *));
-                    }
-                    size_t len = strlen(fname) + 2 + strlen(item->valuestring) + 3;
-                    char *hdr = malloc(len);
-                    snprintf(hdr, len, "%s: %s\r\n", fname, item->valuestring);
-                    new_vals[n_new++] = hdr;
+                    /* §5.1: a value MUST NOT contain CR or LF */
+                    if (strpbrk(item->valuestring, "\r\n")) goto fail;
+                    char *hdr = make_field(fname, (const unsigned char *)item->valuestring,
+                                           strlen(item->valuestring));
+                    if (push_val(&new_vals, &n_new, &new_cap, hdr) != 0) goto fail;
+                }
+            } else if (bl && cJSON_IsArray(bl)) {
+                if (cJSON_GetArraySize(bl) == 0) goto fail;
+                cJSON *item;
+                cJSON_ArrayForEach(item, bl) {
+                    size_t dl;
+                    unsigned char *dec = decode_b_item(item, &dl);
+                    if (!dec) goto fail;
+                    /* Header fields travel as NUL-terminated strings through
+                       this API, so an embedded NUL cannot be represented. */
+                    if (memchr(dec, '\0', dl)) { free(dec); goto fail; }
+                    char *hdr = make_field(fname, dec, dl);
+                    free(dec);
+                    if (push_val(&new_vals, &n_new, &new_cap, hdr) != 0) goto fail;
                 }
             }
         }
         free(field_hdrs);
+        field_hdrs = NULL;
 
         /* Remove existing instances of fname */
         for (int i = 0; i < working_n; i++) {
@@ -255,6 +360,7 @@ char **dkim2_apply_header_recipe(const char *r_json,
             working[working_n++] = new_vals[i];
         }
         free(new_vals);
+        new_vals = NULL;
     }
 
     cJSON_Delete(root);
@@ -265,6 +371,74 @@ char **dkim2_apply_header_recipe(const char *r_json,
     working[out_n] = NULL;
     *n_out = out_n;
     return working;
+
+fail:
+    for (int i = 0; i < n_new; i++) free(new_vals[i]);
+    free(new_vals);
+    free(field_hdrs);
+    for (int i = 0; i < working_n; i++) free(working[i]);
+    free(working);
+    cJSON_Delete(root);
+    return NULL;
+}
+
+/* ---- Recipe generation ---- */
+
+/* Append one literal (a body line or a header value, without its line
+   terminator) to `steps`, coalescing with the previous step when that is a
+   literal step of the same kind. Any byte >= 0x80 forces a "b" item (base64
+   of the raw octets): cJSON would otherwise copy the bytes straight into the
+   JSON text, which has to stay 7-bit clean. Pure-ASCII literals stay "d".
+   `*cur` is the open literal array (NULL after a "c" step), `*cur_is_b` its
+   kind. */
+static void add_literal(cJSON *steps, cJSON **cur, int *cur_is_b,
+                        const char *p, size_t l) {
+    int is_b = 0;
+    for (size_t i = 0; i < l; i++)
+        if ((unsigned char)p[i] >= 0x80) { is_b = 1; break; }
+
+    if (!*cur || *cur_is_b != is_b) {
+        cJSON *step = cJSON_CreateObject();
+        *cur = cJSON_CreateArray();
+        cJSON_AddItemToObject(step, is_b ? "b" : "d", *cur);
+        cJSON_AddItemToArray(steps, step);
+        *cur_is_b = is_b;
+    }
+
+    if (is_b) {
+        size_t cap = (l + 2) / 3 * 4 + 1;
+        char *enc = malloc(cap);
+        if (!enc) return;
+        if (b64_encode((const unsigned char *)p, l, enc, cap) >= 0)
+            cJSON_AddItemToArray(*cur, cJSON_CreateString(enc));
+        free(enc);
+    } else {
+        char *s = malloc(l + 1);
+        if (!s) return;
+        memcpy(s, p, l); s[l] = '\0';
+        cJSON_AddItemToArray(*cur, cJSON_CreateString(s));
+        free(s);
+    }
+}
+
+static void add_copy(cJSON *steps, cJSON **cur, int start, int end) {
+    cJSON *step = cJSON_CreateObject();
+    cJSON *c = cJSON_CreateArray();
+    cJSON_AddItemToArray(c, cJSON_CreateNumber(start));
+    cJSON_AddItemToArray(c, cJSON_CreateNumber(end));
+    cJSON_AddItemToObject(step, "c", c);
+    cJSON_AddItemToArray(steps, step);
+    *cur = NULL;
+}
+
+static int body_run(const line_t *nw, int ni, int n_new,
+                    const line_t *od, int oi, int n_old) {
+    int run = 0;
+    while (ni + run < n_new && oi + run < n_old &&
+           nw[ni + run].len == od[oi + run].len &&
+           memcmp(nw[ni + run].ptr, od[oi + run].ptr, nw[ni + run].len) == 0)
+        run++;
+    return run;
 }
 
 char *dkim2_gen_body_recipe(
@@ -289,53 +463,29 @@ char *dkim2_gen_body_recipe(
     cJSON *steps = cJSON_CreateArray();
     cJSON_AddItemToObject(root, "b", steps);
 
-    int ni = 0;
+    /* Copy ranges must ascend without overlapping across the list, so only
+       old lines after the previous range's end are candidates; anything
+       earlier is emitted literally (it still round-trips, just less
+       compactly). */
+    int ni = 0, prev_end = 0;
+    cJSON *cur = NULL; int cur_is_b = 0;
     while (ni < n_new) {
         int best_old = -1, best_len_found = 0;
-        for (int oi = 0; oi < n_old; oi++) {
-            int run = 0;
-            while (ni + run < n_new && oi + run < n_old &&
-                   new_lines[ni + run].len == old_lines[oi + run].len &&
-                   memcmp(new_lines[ni + run].ptr, old_lines[oi + run].ptr,
-                          new_lines[ni + run].len) == 0)
-                run++;
+        for (int oi = prev_end; oi < n_old; oi++) {
+            int run = body_run(new_lines, ni, n_new, old_lines, oi, n_old);
             if (run > best_len_found) { best_len_found = run; best_old = oi; }
         }
 
         if (best_len_found >= 2) {
-            cJSON *step = cJSON_CreateObject();
-            cJSON *c = cJSON_CreateArray();
-            cJSON_AddItemToArray(c, cJSON_CreateNumber(best_old + 1));
-            cJSON_AddItemToArray(c, cJSON_CreateNumber(best_old + best_len_found));
-            cJSON_AddItemToObject(step, "c", c);
-            cJSON_AddItemToArray(steps, step);
+            add_copy(steps, &cur, best_old + 1, best_old + best_len_found);
+            prev_end = best_old + best_len_found;
             ni += best_len_found;
         } else {
-            cJSON *step = cJSON_CreateObject();
-            cJSON *d = cJSON_CreateArray();
-            while (ni < n_new) {
-                int found = 0;
-                for (int oi = 0; oi < n_old && !found; oi++) {
-                    int run = 0;
-                    while (ni + run < n_new && oi + run < n_old &&
-                           new_lines[ni + run].len == old_lines[oi + run].len &&
-                           memcmp(new_lines[ni + run].ptr, old_lines[oi + run].ptr,
-                                  new_lines[ni + run].len) == 0)
-                        run++;
-                    if (run >= 2) found = 1;
-                }
-                if (found) break;
-                const char *p = new_lines[ni].ptr;
-                size_t l = new_lines[ni].len;
-                while (l > 0 && (p[l-1] == '\n' || p[l-1] == '\r')) l--;
-                char *s = malloc(l + 1);
-                memcpy(s, p, l); s[l] = '\0';
-                cJSON_AddItemToArray(d, cJSON_CreateString(s));
-                free(s);
-                ni++;
-            }
-            cJSON_AddItemToObject(step, "d", d);
-            cJSON_AddItemToArray(steps, step);
+            const char *p = new_lines[ni].ptr;
+            size_t l = new_lines[ni].len;
+            while (l > 0 && (p[l-1] == '\n' || p[l-1] == '\r')) l--;
+            add_literal(steps, &cur, &cur_is_b, p, l);
+            ni++;
         }
     }
 
@@ -360,10 +510,14 @@ char *dkim2_gen_header_recipe(const char *field_name,
     lname[i] = '\0';
     cJSON_AddItemToObject(h, lname, steps);
 
-    int ni = 0;
+    /* As for the body: a field instance that matches an old one at or below
+       the previous copy range's end (reordered duplicates, say) is emitted as
+       a literal rather than as a range that would go backwards. */
+    int ni = 0, prev_end = 0;
+    cJSON *cur = NULL; int cur_is_b = 0;
     while (ni < n_new) {
         int best_old = -1, best_len_found = 0;
-        for (int oi = 0; oi < n_old; oi++) {
+        for (int oi = prev_end; oi < n_old; oi++) {
             int run = 0;
             while (ni + run < n_new && oi + run < n_old &&
                    strcmp(new_fields[ni + run], old_fields[oi + run]) == 0)
@@ -372,36 +526,28 @@ char *dkim2_gen_header_recipe(const char *field_name,
         }
 
         if (best_len_found >= 1) {
-            cJSON *step = cJSON_CreateObject();
-            cJSON *c = cJSON_CreateArray();
-            cJSON_AddItemToArray(c, cJSON_CreateNumber(best_old + 1));
-            cJSON_AddItemToArray(c, cJSON_CreateNumber(best_old + best_len_found));
-            cJSON_AddItemToObject(step, "c", c);
-            cJSON_AddItemToArray(steps, step);
+            add_copy(steps, &cur, best_old + 1, best_old + best_len_found);
+            prev_end = best_old + best_len_found;
             ni += best_len_found;
         } else {
-            cJSON *step = cJSON_CreateObject();
-            cJSON *d = cJSON_CreateArray();
-            while (ni < n_new) {
-                int found = 0;
-                for (int oi = 0; oi < n_old && !found; oi++)
-                    if (strcmp(new_fields[ni], old_fields[oi]) == 0) found = 1;
-                if (found) break;
-                const char *val = strchr(new_fields[ni], ':');
-                if (val) {
-                    val++;
-                    while (*val == ' ') val++;
-                    size_t vl = strlen(val);
-                    while (vl > 0 && (val[vl-1] == '\n' || val[vl-1] == '\r')) vl--;
-                    char *s = malloc(vl + 1);
-                    memcpy(s, val, vl); s[vl] = '\0';
-                    cJSON_AddItemToArray(d, cJSON_CreateString(s));
+            const char *val = strchr(new_fields[ni], ':');
+            if (val) {
+                val++;
+                while (*val == ' ') val++;
+                /* A literal is one unfolded value: drop every CR/LF (the
+                   §6.2 header hash unfolds and collapses WSP, so this is
+                   hash-neutral) and the terminator with them. */
+                size_t vl = strlen(val);
+                char *s = malloc(vl + 1);
+                if (s) {
+                    size_t k = 0;
+                    for (size_t j = 0; j < vl; j++)
+                        if (val[j] != '\r' && val[j] != '\n') s[k++] = val[j];
+                    add_literal(steps, &cur, &cur_is_b, s, k);
                     free(s);
                 }
-                ni++;
             }
-            cJSON_AddItemToObject(step, "d", d);
-            cJSON_AddItemToArray(steps, step);
+            ni++;
         }
     }
 

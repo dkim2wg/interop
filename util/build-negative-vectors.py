@@ -28,6 +28,9 @@ Writes:
   positive-control-two-selectors.eml -- s= has one algorithm twice with
                                          DISTINCT selectors (sel1, sel2);
                                          §8.9 explicitly permits this
+  recipe-descending-ranges.eml     -- body Recipe copy ranges out of order
+  recipe-overlapping-ranges.eml    -- body Recipe copy ranges overlap
+  positive-control-b-literal.eml   -- Recipe "b" items carry non-UTF-8 octets
   positive-control-bottom-recipe.eml -- m=1 (bottom) Message-Instance
                                          carries a VALID r= Recipe; §9.1
                                          explicitly permits this
@@ -35,6 +38,7 @@ Writes:
                                          the domain the message DID arrive at
 """
 import base64
+import json
 import os
 import sys
 
@@ -176,6 +180,84 @@ def build_malformed_json():
     return msg
 
 
+def _two_hop(prev_headers, prev_body, cur_headers, cur_body, recipe):
+    """A genuine two-hop chain: m=1/i=1 (test1) over the PREVIOUS content,
+    then m=2 carrying `recipe` (a dict, encoded here by hand so the vector
+    does not depend on any signer's own Recipe builder) and i=2 (test2)
+    over the CURRENT content. Everything is cryptographically valid; only
+    the Recipe's content is under test."""
+    mi1 = ds.build_message_instance(prev_headers, prev_body, version=1, algs=["sha256"])
+    priv1, alg1 = ds.load_private_key(key("sel1"))
+    sig1 = ds.build_dkim2_signature(
+        [], [], mi1, DOM, "sel1", priv1, alg1,
+        mailfrom=MF, rcptto=RT, seq=1, mi_version=1, timestamp=TS,
+    )
+    hh = ds.b64(ds.compute_header_hash(cur_headers, "sha256"))
+    bh = ds.b64(ds.compute_body_hash(cur_body, "sha256"))
+    r = base64.b64encode(json.dumps(recipe, separators=(",", ":")).encode("ascii")).decode()
+    mi2 = f"Message-Instance: m=2; h=sha256:{hh}:{bh}; r={r};"
+    priv2, alg2 = ds.load_private_key(key("sel1", "test2.dkim2.com"))
+    sig2 = ds.build_dkim2_signature(
+        [mi1], [sig1], mi2, "test2.dkim2.com", "sel1", priv2, alg2,
+        mailfrom="relay@test2.dkim2.com", rcptto=["final@example.com"],
+        seq=2, mi_version=2, timestamp=TS + 100,
+    )
+    msg = sig2.encode() + b"\r\n" + sig1.encode() + b"\r\n"
+    msg += mi2.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+    for h in cur_headers:
+        msg += h + b"\r\n"
+    msg += b"\r\n" + cur_body
+    return msg
+
+
+CUR_BODY = b"alpha\r\nbeta\r\ngamma\r\n"
+
+
+def build_recipe_descending():
+    """Body Recipe whose copy ranges are out of order. spec-06 §5.2: "The
+    start value of each "c" step MUST be in ascending order and MUST be
+    greater than the end value of all preceding "c" steps." The previous
+    body was [gamma, alpha, beta]; the current is [alpha, beta, gamma], so
+    {"c":[3,3]},{"c":[1,2]} rebuilds it EXACTLY -- a verifier that applies
+    ranges without checking their order reconstructs m=1, matches its
+    hashes, and accepts. A conformant producer must write the moved line
+    literally instead. MUST be rejected."""
+    headers, _ = load_base()
+    prev_body = b"gamma\r\nalpha\r\nbeta\r\n"
+    return _two_hop(headers, prev_body, headers, CUR_BODY,
+                    {"b": [{"c": [3, 3]}, {"c": [1, 2]}]})
+
+
+def build_recipe_overlapping():
+    """Body Recipe whose copy ranges overlap: previous body [alpha, beta,
+    beta, gamma], current [alpha, beta, gamma], Recipe {"c":[1,2]},{"c":[2,3]}.
+    Again an exact reconstruction, so only the §5.2 ordering rule can reject
+    it (and without the rule a few bytes of Recipe can name a copy of the
+    body many times over). MUST be rejected."""
+    headers, _ = load_base()
+    prev_body = b"alpha\r\nbeta\r\nbeta\r\ngamma\r\n"
+    return _two_hop(headers, prev_body, headers, CUR_BODY,
+                    {"b": [{"c": [1, 2]}, {"c": [2, 3]}]})
+
+
+def build_positive_b_literal():
+    """POSITIVE CONTROL for the "b" Recipe step: literals whose octets are
+    not UTF-8 -- a Latin-1 e-acute, an EUC-KR Hangul pair, plus a valid UTF-8
+    CJK character -- carried as base64 of the raw bytes inside the JSON
+    string, for one header value and one body line that the hop removed.
+    "d" cannot carry them: JSON text is Unicode, and the three producers we
+    had disagreed (raw octets, \\udcXX surrogate escapes, U+FFFD). MUST be
+    accepted, with the exact bytes restored."""
+    headers, _ = load_base()
+    octets = b"caf\xe9 \xb1\xa4 \xe4\xb8\xad"
+    b = base64.b64encode(octets).decode()
+    prev_headers = headers + [b"Comments: " + octets]
+    prev_body = octets + b"\r\n" + CUR_BODY
+    return _two_hop(prev_headers, prev_body, headers, CUR_BODY,
+                    {"h": {"comments": [{"b": [b]}]},
+                     "b": [{"b": [b]}, {"c": [1, 3]}]})
+
+
 def build_positive_control():
     """POSITIVE CONTROL: rsa-sha256 twice, with DISTINCT selectors (sel1,
     sel2) -- §8.9 explicitly permits this (e.g. key-rotation overlap). MUST
@@ -290,6 +372,9 @@ FIXTURES = {
     "nd-bridge-wrong-domain.eml": build_nd_bridge_wrong_domain,
     "positive-control-two-selectors.eml": build_positive_control,
     "positive-control-bottom-recipe.eml": build_positive_bottom_recipe,
+    "recipe-descending-ranges.eml": build_recipe_descending,
+    "recipe-overlapping-ranges.eml": build_recipe_overlapping,
+    "positive-control-b-literal.eml": build_positive_b_literal,
     "positive-control-nd-bridge.eml": build_positive_nd_bridge,
 }
 

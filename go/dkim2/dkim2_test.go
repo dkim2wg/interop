@@ -419,11 +419,21 @@ func TestDKIM2SignatureRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sig.Sequence != 1 { t.Errorf("i= got %d", sig.Sequence) }
-	if sig.MIVersion != 1 { t.Errorf("m= got %d", sig.MIVersion) }
-	if sig.Timestamp != 1740000000 { t.Errorf("t= got %d", sig.Timestamp) }
-	if sig.Domain != "test1.dkim2.com" { t.Errorf("d= got %q", sig.Domain) }
-	if sig.MailFrom != "<sender@test1.dkim2.com>" { t.Errorf("mf= got %q", sig.MailFrom) }
+	if sig.Sequence != 1 {
+		t.Errorf("i= got %d", sig.Sequence)
+	}
+	if sig.MIVersion != 1 {
+		t.Errorf("m= got %d", sig.MIVersion)
+	}
+	if sig.Timestamp != 1740000000 {
+		t.Errorf("t= got %d", sig.Timestamp)
+	}
+	if sig.Domain != "test1.dkim2.com" {
+		t.Errorf("d= got %q", sig.Domain)
+	}
+	if sig.MailFrom != "<sender@test1.dkim2.com>" {
+		t.Errorf("mf= got %q", sig.MailFrom)
+	}
 	if len(sig.RcptTo) != 1 || sig.RcptTo[0] != "<recipient@example.com>" {
 		t.Errorf("rt= got %v", sig.RcptTo)
 	}
@@ -758,7 +768,10 @@ func TestUndoHeaderRecipesRoundTrip(t *testing.T) {
 		t.Fatal("expected recipe with header changes, got nil")
 	}
 
-	result := undoHeaderRecipes(after, recipe.Headers)
+	result, err := undoHeaderRecipes(after, recipe.Headers)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(result) != len(before) {
 		t.Fatalf("got %d headers, want %d", len(result), len(before))
@@ -777,7 +790,10 @@ func TestApplyHeaderRecipe(t *testing.T) {
 	current := []Header{
 		{Name: "Subject", Value: "World", Raw: "Subject: World\r\n"},
 	}
-	got := applyHeaderRecipe(current, "Subject", steps)
+	got, err := applyHeaderRecipe(current, "Subject", steps)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 1 || got[0].Value != "Hello" {
 		t.Errorf("expected Subject: Hello, got %v", got)
 	}
@@ -798,7 +814,10 @@ func TestApplyHeaderRecipeCopy(t *testing.T) {
 	current := []Header{
 		{Name: "Subject", Value: "B", Raw: "Subject: B\r\n"},
 	}
-	got := applyHeaderRecipe(current, "Subject", steps)
+	got, err := applyHeaderRecipe(current, "Subject", steps)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 2 || got[0].Value != "A" || got[1].Value != "B" {
 		t.Errorf("expected [A, B], got %v", got)
 	}
@@ -989,7 +1008,7 @@ func TestVerifyMultipleSigsAllChecked(t *testing.T) {
 	// If we only check item[0], we'd incorrectly PASS.
 	tampered := strings.Replace(string(msg),
 		";", // first semicolon (end of i=1)
-		";",  // no change to i= tag
+		";", // no change to i= tag
 		1)
 	// Replace s=sel:alg:VALUE; with s=sel:alg:VALUE,sel:alg:BADVALUE;
 	tampered = strings.Replace(string(msg),
@@ -1197,7 +1216,10 @@ func TestUndoBodyRecipe(t *testing.T) {
 		{Data: []string{"inserted"}},
 		{Copy: &c3},
 	}
-	got := undoBodyRecipe(body, steps)
+	got, err := undoBodyRecipe(body, steps)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []byte("line1\r\ninserted\r\nline3\r\n")
 	if !bytes.Equal(got, want) {
 		t.Errorf("got %q want %q", got, want)

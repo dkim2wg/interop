@@ -435,7 +435,9 @@ static int verify_mi_hashes(
                     /* Apply body Recipe */
                     /* The JSON parsed above, so a NULL from either apply_*
                        call now means the Recipe violates the §5 schema (a
-                       copy range given as strings, a zero bound). Report
+                       copy range given as strings, a zero bound, an end past
+                       the last item, ranges out of ascending order, a "b"
+                       item that is not clean base64 or decodes to CR/LF). Report
                        it as such rather than fall through to a hash
                        mismatch on the un-undone content. */
                     if (cur_body) {

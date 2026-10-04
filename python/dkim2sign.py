@@ -8,6 +8,7 @@ message with Message-Instance and DKIM2-Signature headers on stdout.
 
 import argparse
 import base64
+import difflib
 import hashlib
 import io
 import json
@@ -277,6 +278,139 @@ def _lowercase_recipe_keys(recipe: dict) -> dict:
     out = dict(recipe)
     out["h"] = {k.lower(): v for k, v in h.items()}
     return out
+
+
+# ---------------------------------------------------------------------------
+# Recipe generation (Section 5)
+# ---------------------------------------------------------------------------
+#
+# An intermediary that changes a message records how to get the previous
+# version back.  The rules here are spec-06 §5.1/§5.2 plus the extension
+# proposed to the WG: a literal whose octets are not all ASCII goes out as a
+# "b" item (base64 of the raw octets), never as a "d" string -- JSON text
+# cannot carry Latin-1 or EUC-KR bytes, and escaping them as \udcXX
+# surrogates is Python-private.  Pure-ASCII literals stay "d".
+
+def recipe_literal_steps(values: list[bytes]) -> list[dict]:
+    """Turn literal lines/values into "d"/"b" steps.
+
+    Consecutive literals of the same kind coalesce into one step; a mixed
+    run alternates "d" and "b" steps in order.  A literal may not contain
+    CR or LF (§5.1/§5.2) -- a folded header value must be unfolded first.
+    """
+    steps: list[dict] = []
+    for v in values:
+        if b"\r" in v or b"\n" in v:
+            raise ValueError("Recipe literal contains CR or LF")
+        if v.isascii():
+            kind, item = "d", v.decode("ascii")
+        else:
+            kind, item = "b", b64(v)
+        if steps and kind in steps[-1]:
+            steps[-1][kind].append(item)
+        else:
+            steps.append({kind: [item]})
+    return steps
+
+
+def _recipe_steps(current: list, previous: list, keys, literal) -> list[dict]:
+    """Steps that rebuild `previous` from `current`, both in Recipe order.
+
+    `keys(x)` gives the comparison form of an item (equal keys mean a copy
+    is hash-equivalent); `literal(x)` gives the octets to emit when an item
+    must be written out.  Matched runs become "c" ranges; since the matcher
+    walks both lists in order, every "c" start is greater than the previous
+    "c" end (§5.1/§5.2).  An item of `previous` that does not match anything
+    after the last copied item -- a reordered duplicate, say -- is emitted
+    literally rather than as an out-of-order range.
+    """
+    cur_keys = [keys(x) for x in current]
+    prev_keys = [keys(x) for x in previous]
+    sm = difflib.SequenceMatcher(None, cur_keys, prev_keys, autojunk=False)
+    steps: list[dict] = []
+    pending: list[bytes] = []
+
+    def flush():
+        if pending:
+            steps.extend(recipe_literal_steps(pending))
+            pending.clear()
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            flush()
+            steps.append({"c": [i1 + 1, i2]})
+        elif tag in ("insert", "replace"):
+            pending.extend(literal(x) for x in previous[j1:j2])
+        # "delete": items only in the current message are simply not emitted
+    flush()
+    return steps
+
+
+def _header_field_value(hdr: bytes) -> bytes:
+    """The value after the colon, unfolded, without the trailing CRLF."""
+    hdr = re.sub(rb"\r\n([ \t])", rb"\1", hdr.rstrip(b"\r\n"))
+    colon = hdr.find(b":")
+    return hdr[colon + 1:] if colon != -1 else b""
+
+
+def build_header_recipe(previous: list[bytes], current: list[bytes]) -> list[dict]:
+    """Recipe steps for one header field name (§5.1).
+
+    Both lists hold the raw instances of that name in top-to-bottom message
+    order.  Instances are numbered bottom-up and steps are emitted bottom-up,
+    so both are reversed before alignment.  Two instances match when their
+    §6.2 canonical forms are equal.
+    """
+    return _recipe_steps(list(reversed(current)), list(reversed(previous)),
+                         canonicalize_header_field, _header_field_value)
+
+
+def _body_lines(body: bytes) -> list[bytes]:
+    body = body.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    lines = body.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    return lines
+
+
+def build_body_recipe(previous: bytes, current: bytes) -> list[dict]:
+    """Recipe steps that rebuild the previous body from the current one (§5.2)."""
+    return _recipe_steps(_body_lines(current), _body_lines(previous),
+                         lambda line: line, lambda line: line)
+
+
+def build_recipes(previous_headers: list[bytes], previous_body: bytes,
+                  current_headers: list[bytes], current_body: bytes) -> dict | None:
+    """The r= object for a hop that turned (previous_*) into (current_*).
+
+    Only header field names whose instances changed get an "h" entry (an
+    empty list where the name is new); "b" is present only if the body
+    changed.  Header fields excluded from the hash (§4) are never described.
+    Returns None when nothing relevant changed, so the caller omits r=.
+    """
+    def by_name(headers):
+        out: dict[bytes, list[bytes]] = {}
+        for hdr in headers:
+            out.setdefault(_header_name(hdr), []).append(hdr)
+        return out
+
+    prev_by, cur_by = by_name(previous_headers), by_name(current_headers)
+    h: dict[str, list] = {}
+    for name in sorted(set(prev_by) | set(cur_by)):
+        if _should_exclude_header(name):
+            continue
+        prev, cur = prev_by.get(name, []), cur_by.get(name, [])
+        if ([canonicalize_header_field(x) for x in prev]
+                == [canonicalize_header_field(x) for x in cur]):
+            continue
+        h[name.decode("ascii")] = build_header_recipe(prev, cur)
+
+    recipes: dict = {}
+    if h:
+        recipes["h"] = h
+    if compute_body_hash(previous_body) != compute_body_hash(current_body):
+        recipes["b"] = build_body_recipe(previous_body, current_body)
+    return recipes or None
 
 
 # ---------------------------------------------------------------------------

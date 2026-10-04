@@ -11,6 +11,8 @@ use Email::MIME;
 use DKIM2TestKeys;
 use Path::Tiny;
 use Mail::DKIM2::Common qw(parse_dkim_pubkey);
+use JSON;
+use MIME::Base64 qw(encode_base64 decode_base64);
 
 # Fixed timestamp for reproducible signing
 my $TIMESTAMP = 1740000000;
@@ -143,27 +145,72 @@ sign_msg($msg,
         return parse_dkim_pubkey($fm3);
     };
     my $run = sub {
-        my ($allow) = @_;
+        my ($text, $allow) = @_;
         my $v = Mail::DKIM2::Verifier->new;
         $v->allow_unsigned_mi($allow);
         $v->skip_timestamp_check(1);
         $v->set_pubkey_callback($pinned);
-        $v->PRINT($raw); $v->CLOSE;
+        $v->PRINT($text); $v->CLOSE;
         return $v;
     };
 
-    my $wire = $run->(0);
+    my $wire = $run->($raw, 0);
     is($wire->result, 'permerror', 'captured list post: as a receiver, the unsigned m=2 is PERMERROR');
     like($wire->result_detail, qr/m=2 is not signed/, 'captured list post: spec wording');
 
-    my $signer = $run->(1);
+    # As captured, Mailman's m=2 Recipe recorded the folded Content-Type as a
+    # "d" literal with the CRLF fold still inside it. spec-06 §5.1 says a "d"
+    # string MUST NOT contain CR or LF, and since 2026-10 every verifier
+    # rejects one that does, so the capture is real-mail evidence for that
+    # rule rather than for the opt-out it was taken for.
+    my $as_captured = $run->($raw, 1);
+    is($as_captured->result, 'permerror',
+        'captured list post: the folded "d" literal is a malformed Recipe');
+    like($as_captured->result_detail, qr/m=2 Recipe literal contains CR or LF/,
+        'captured list post: and is named as such');
+
+    # The point the capture was taken for still holds once the Recipe is
+    # written the way a conforming list manager writes it. Only the UNSIGNED
+    # m=2 header is re-encoded, with the literal unfolded; relaxed
+    # canonicalization collapses the fold to the same single space, so the
+    # rebuilt m=1 header hash is unchanged and nothing signed is touched.
+    my $fixed = unfold_recipe_literals($raw, 2);
+    my $signer = $run->($fixed, 1);
     is($signer->result, 'pass', 'captured list post: as the signer of m=2, the upstream chain passes')
         or diag($signer->result_detail);
     like($signer->result_detail, qr/i=1\.\.1 verified/, 'captured list post: i=1 verified');
 
-    my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($raw);
+    my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($fixed);
     ok($ok, "captured list post: Mailman's m=2 matches the content and undoes to m=1")
         or diag($why);
+}
+
+# Re-encode Message-Instance m=$num of $raw with every "d" literal unfolded
+# (CRLF + WSP -> a single space). Returns the message text.
+sub unfold_recipe_literals {
+    my ($raw, $num) = @_;
+    my $msg = Email::MIME->new($raw);
+    my @mi = map {
+        my $h = $_;
+        (my $u = $h) =~ s/\r?\n[ \t]+/ /g;
+        if ($u =~ /\bm=$num\b/) {
+            my ($hashes, $r) = $u =~ /\bh=([^;]+);\s*r=([A-Za-z0-9+\/=\s]+)/
+                or die "cannot take apart: $u";
+            $r =~ s/\s+//g;
+            my $data = JSON->new->decode(decode_base64($r));
+            for my $steps (values %{ $data->{h} || {} }) {
+                for my $step (@$steps) {
+                    next unless ref $step eq 'HASH' && $step->{d};
+                    s/\r?\n[ \t]+/ /g for @{ $step->{d} };
+                }
+            }
+            $h = "m=$num; h=$hashes; r="
+               . encode_base64(JSON->new->canonical(1)->encode($data), '') . ";";
+        }
+        $h;
+    } $msg->header_raw('Message-Instance');
+    $msg->header_raw_set('Message-Instance', @mi);
+    return $msg->as_string;
 }
 
 done_testing;

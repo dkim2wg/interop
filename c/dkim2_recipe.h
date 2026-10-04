@@ -1,6 +1,17 @@
 #pragma once
 #include <stddef.h>
 
+/* Recipe steps (spec-06 §5 plus the WG extension of 2026-10):
+     {"c": [start, end]}  copy items start..end (1-based, inclusive); across
+                          a list each start MUST exceed the previous end
+     {"d": [str, ...]}    literal lines/values, ASCII/UTF-8 JSON strings
+     {"b": [b64, ...]}    literal lines/values whose raw octets are base64
+                          (RFC 4648 §4) -- used for any literal with a byte
+                          >= 0x80; decoded octets MUST NOT contain CR or LF
+   Any violation is a malformed Recipe: the apply_* functions return NULL and
+   the verifier reports PERMERROR. The gen_* functions never emit a literal
+   with 8-bit bytes as "d", nor a "c" range that breaks the ascending rule. */
+
 /* Apply a body Recipe (JSON string) to reconstruct the original body.
    body/bodylen: current (possibly modified) body.
    out_len: set to reconstructed body length.

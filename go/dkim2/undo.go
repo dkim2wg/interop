@@ -101,11 +101,20 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 		if recipe.BodyNull {
 			return fmt.Errorf("v=%d: %w", version, ErrUnrecoverable)
 		}
+		// A Recipe that breaks the §5 rules against the message it is
+		// applied to (parse-time checks cannot know the item counts) is
+		// the same PERMERROR parseMI reports for a structurally bad one.
 		if recipe.Headers != nil {
-			currentContent = undoHeaderRecipes(currentContent, recipe.Headers)
+			currentContent, err = undoHeaderRecipes(currentContent, recipe.Headers)
+			if err != nil {
+				return undoRecipeError(version, err)
+			}
 		}
 		if recipe.Body != nil {
-			currentBody = undoBodyRecipe(currentBody, recipe.Body)
+			currentBody, err = undoBodyRecipe(currentBody, recipe.Body)
+			if err != nil {
+				return undoRecipeError(version, err)
+			}
 		}
 	}
 
@@ -166,9 +175,21 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 	return nil
 }
 
+// undoRecipeError reports a failure applying Message-Instance m=version's
+// Recipe: the self-describing PERMERROR for a malformed Recipe, otherwise
+// the error with the version prefixed.
+func undoRecipeError(version int, err error) error {
+	if errors.Is(err, errMalformedRecipe) {
+		return &malformedRecipeError{m: version}
+	}
+	return fmt.Errorf("v=%d: %w", version, err)
+}
+
 // undoHeaderRecipes applies header Recipes to reconstruct the previous header
-// state. recipes keys are lowercase field names.
-func undoHeaderRecipes(headers []Header, recipes map[string][]RecipeStep) []Header {
+// state. recipes keys are lowercase field names. The error wraps
+// errMalformedRecipe when a step breaks the §5.1 rules against the current
+// instances (a "c" range past the last instance, say).
+func undoHeaderRecipes(headers []Header, recipes map[string][]RecipeStep) ([]Header, error) {
 	lcRecipes := make(map[string][]RecipeStep, len(recipes))
 	for k, v := range recipes {
 		lcRecipes[lowerName(k)] = v
@@ -188,7 +209,10 @@ func undoHeaderRecipes(headers []Header, recipes map[string][]RecipeStep) []Head
 		if steps, ok := lcRecipes[n]; ok {
 			if !processed[n] {
 				processed[n] = true
-				reconstructed := applyHeaderRecipe(byName[n], h.Name, steps)
+				reconstructed, err := applyHeaderRecipe(byName[n], h.Name, steps)
+				if err != nil {
+					return nil, fmt.Errorf("header %q: %w", n, err)
+				}
 				result = append(result, reconstructed...)
 			}
 		} else {
@@ -201,17 +225,24 @@ func undoHeaderRecipes(headers []Header, recipes map[string][]RecipeStep) []Head
 	for name, steps := range lcRecipes {
 		if !processed[name] && len(steps) > 0 {
 			processed[name] = true
-			reconstructed := applyHeaderRecipe(nil, name, steps)
+			reconstructed, err := applyHeaderRecipe(nil, name, steps)
+			if err != nil {
+				return nil, fmt.Errorf("header %q: %w", name, err)
+			}
 			result = append(reconstructed, result...)
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // applyHeaderRecipe reconstructs previous header instances for one field.
 // current holds the current (after) instances in top-to-bottom order.
-func applyHeaderRecipe(current []Header, fieldName string, steps []RecipeStep) []Header {
+func applyHeaderRecipe(current []Header, fieldName string, steps []RecipeStep) ([]Header, error) {
+	if err := validateRecipeSteps(steps, len(current)); err != nil {
+		return nil, err
+	}
+
 	// Instances are indexed bottom-up: instance 1 = last occurrence.
 	bottomUp := make([]Header, len(current))
 	copy(bottomUp, current)
@@ -224,19 +255,19 @@ func applyHeaderRecipe(current []Header, fieldName string, steps []RecipeStep) [
 	for _, step := range steps {
 		if step.Copy != nil {
 			start, end := step.Copy[0], step.Copy[1]
-			for i := start; i <= end; i++ {
-				if idx := i - 1; idx >= 0 && idx < len(bottomUp) {
-					emitted = append(emitted, bottomUp[idx])
-				}
-			}
-		} else {
-			for _, val := range step.Data {
-				emitted = append(emitted, Header{
-					Name:  fieldName,
-					Value: val,
-					Raw:   fieldName + ": " + val + "\r\n",
-				})
-			}
+			emitted = append(emitted, bottomUp[start-1:end]...)
+			continue
+		}
+		vals, err := step.literals() // already validated above
+		if err != nil {
+			return nil, err
+		}
+		for _, val := range vals {
+			emitted = append(emitted, Header{
+				Name:  fieldName,
+				Value: val,
+				Raw:   fieldName + ": " + val + "\r\n",
+			})
 		}
 	}
 
@@ -244,30 +275,35 @@ func applyHeaderRecipe(current []Header, fieldName string, steps []RecipeStep) [
 	for i, j := 0, len(emitted)-1; i < j; i, j = i+1, j-1 {
 		emitted[i], emitted[j] = emitted[j], emitted[i]
 	}
-	return emitted
+	return emitted, nil
 }
 
 // undoBodyRecipe reconstructs the previous body using body Recipe steps.
-// Body is in CRLF format; returned value is also CRLF.
-func undoBodyRecipe(body []byte, steps []RecipeStep) []byte {
+// Body is in CRLF format; returned value is also CRLF. The error wraps
+// errMalformedRecipe when a step breaks the §5.2 rules against the current
+// body (a "c" range past the last line, say).
+func undoBodyRecipe(body []byte, steps []RecipeStep) ([]byte, error) {
 	lines := splitLines(body)
+	if err := validateRecipeSteps(steps, len(lines)); err != nil {
+		return nil, fmt.Errorf("body: %w", err)
+	}
 
 	var result []string
 	for _, step := range steps {
 		if step.Copy != nil {
 			start, end := step.Copy[0], step.Copy[1]
-			for i := start; i <= end; i++ {
-				if idx := i - 1; idx >= 0 && idx < len(lines) {
-					result = append(result, lines[idx])
-				}
-			}
-		} else {
-			result = append(result, step.Data...)
+			result = append(result, lines[start-1:end]...)
+			continue
 		}
+		vals, err := step.literals() // already validated above
+		if err != nil {
+			return nil, fmt.Errorf("body: %w", err)
+		}
+		result = append(result, vals...)
 	}
 
 	if len(result) == 0 {
-		return []byte("\r\n")
+		return []byte("\r\n"), nil
 	}
-	return []byte(strings.Join(result, "\r\n") + "\r\n")
+	return []byte(strings.Join(result, "\r\n") + "\r\n"), nil
 }

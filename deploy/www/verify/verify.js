@@ -3,7 +3,7 @@ import { parseMessage, collectLevels, parseTagList, parseHashSets } from './pars
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
 import { fetchKey as dohFetchKey } from './doh.js';
-import { decodeRecipe, bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe } from './recipes.js';
+import { decodeRecipe, bodyToLines, linesToBody, applyRecipe, MalformedRecipe } from './recipes.js';
 import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
 
 const SIG_MI_NAMES = new Set(['message-instance', 'dkim2-signature']);
@@ -71,11 +71,31 @@ export function checkSignatureDuplicates(items, i) {
 //    content) -- the payload never even reached JSON parsing.
 //  - a JSON.parse failure (SyntaxError) on the successfully-decoded bytes
 //    is the more specific "contains invalid JSON" case.
+//  - valid JSON that is not a valid Recipe (§5: a "c" range out of bounds
+//    or not ascending, a non-base64 "b" item, CR/LF in a literal...) is
+//    "has a malformed Recipe" -- recipes.js throws MalformedRecipe.
 // Anything else is a generic, non-specific Recipe-decode failure.
 function classifyRecipeDecodeError(e) {
+  if (e instanceof MalformedRecipe) return 'malformed';
   if (e instanceof SyntaxError) return 'invalid-json';
   if (e instanceof DOMException) return 'syntax-error';
   return 'broken';
+}
+
+// The §11.2 error text for a classified Recipe failure, or null when the
+// failure is not a specific PERMERROR (a generic "undo broke").
+function recipeErrorSuffix(reason) {
+  if (reason === 'invalid-json') return 'contains invalid JSON';
+  if (reason === 'syntax-error') return 'syntax error';
+  if (reason === 'malformed') return 'has a malformed Recipe';
+  return null;
+}
+
+// Message content is a binary string (one code unit per byte); for the
+// report, show it as text: UTF-8 where it is, U+FFFD where it is not.
+const displayDecoder = new TextDecoder();
+function displayText(bin) {
+  return displayDecoder.decode(binaryToBytes(bin));
 }
 
 // All (unfolded, WSP-trimmed) values of a header field name, in document order.
@@ -195,7 +215,7 @@ async function verifyOnce(raw, opts = {}) {
   const states = {};
   states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(body) };
   let undoBroken = null; // m at which undo became impossible
-  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'invalid-json' | 'syntax-error' | 'broken'
+  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'invalid-json' | 'syntax-error' | 'malformed' | 'broken'
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
     if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
@@ -207,15 +227,16 @@ async function verifyOnce(raw, opts = {}) {
       undoBrokenReason = classifyRecipeDecodeError(e);
       break;
     }
-    if (recipe.b === null) { undoBroken = m; undoBrokenReason = 'redacted'; break; } // §5.2 intentional redaction
-    const cur = states[m];
-    let fields = cur.fields;
-    let bodyLines = cur.bodyLines;
+    if (recipe !== null && typeof recipe === 'object' && recipe.b === null) {
+      undoBroken = m; undoBrokenReason = 'redacted'; break; // §5.2 intentional redaction
+    }
     try {
-      if (recipe.h) fields = applyHeaderRecipe(cur.fields, recipe.h);
-      if (recipe.b) bodyLines = applyBodyRecipe(cur.bodyLines, recipe.b);
-    } catch (e) { undoBroken = m; undoBrokenReason = 'broken'; break; }
-    states[m - 1] = { fields, bodyLines };
+      states[m - 1] = applyRecipe(recipe, states[m]);
+    } catch (e) {
+      undoBroken = m;
+      undoBrokenReason = e instanceof MalformedRecipe ? 'malformed' : 'broken';
+      break;
+    }
   }
 
   // --- §11.7 MI hash checks (top-down) ----------------------------------
@@ -236,15 +257,15 @@ async function verifyOnce(raw, opts = {}) {
       if (undoBrokenReason === 'redacted') {
         level.undo = 'unrecoverable';
         level.detail = `state unavailable (redaction at m=${undoBroken})`;
-      } else if (undoBrokenReason === 'invalid-json' || undoBrokenReason === 'syntax-error') {
+      } else if (recipeErrorSuffix(undoBrokenReason)) {
         // spec-06 §11.2: report the specific PERMERROR (JSON parse failure
-        // vs. base64 syntax error are distinct, per the ruling that they are
-        // different errors), not the generic "undo broke" fail below -- and
-        // every level whose state is unreachable because of it must bump
-        // 'permerror' too (not 'fail', which outranks 'permerror' in the
-        // overall verdict), so the final verdict is permerror rather than
-        // being clobbered by a downstream fail.
-        const suffix = undoBrokenReason === 'invalid-json' ? 'contains invalid JSON' : 'syntax error';
+        // vs. base64 syntax error vs. malformed Recipe are distinct, per the
+        // ruling that they are different errors), not the generic "undo
+        // broke" fail below -- and every level whose state is unreachable
+        // because of it must bump 'permerror' too (not 'fail', which
+        // outranks 'permerror' in the overall verdict), so the final verdict
+        // is permerror rather than being clobbered by a downstream fail.
+        const suffix = recipeErrorSuffix(undoBrokenReason);
         level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
         level.detail = `PERMERROR Message-Instance m=${undoBroken} ${suffix}`;
         bump('permerror');
@@ -262,13 +283,14 @@ async function verifyOnce(raw, opts = {}) {
       // DKIM2 ecosystem"); it never participates in the reconstruction loop
       // above (there is no earlier state to undo to, so a malformed r=
       // there was previously never even looked at), so it needs its own
-      // check here.
+      // check here: decode it, and dry-run it against the m=1 state so a
+      // malformed Recipe (§5) is caught the same way as at m>=2.
       try {
-        decodeRecipe(mi.map.r);
+        applyRecipe(decodeRecipe(mi.map.r), state); // a null "b" is left alone here
       } catch (e) {
         const reason = classifyRecipeDecodeError(e);
-        if (reason === 'invalid-json' || reason === 'syntax-error') {
-          const suffix = reason === 'invalid-json' ? 'contains invalid JSON' : 'syntax error';
+        const suffix = recipeErrorSuffix(reason);
+        if (suffix) {
           level.result = 'fail';
           level.detail = `PERMERROR Message-Instance m=1 ${suffix}`;
           bump('permerror');
@@ -334,8 +356,10 @@ async function verifyOnce(raw, opts = {}) {
     if ('r' in mi.map) {
       let rec;
       try { rec = decodeRecipe(mi.map.r); } catch (e) { rec = undefined; }
-      if (rec !== undefined) {
-        const hasH = rec.h && Object.keys(rec.h).length > 0;
+      // Only a JSON object is a Recipe (§5); anything else was already
+      // reported as malformed above and has nothing to break down.
+      if (rec !== null && typeof rec === 'object' && !Array.isArray(rec)) {
+        const hasH = rec.h !== null && typeof rec.h === 'object' && Object.keys(rec.h).length > 0;
         level.recipe = rec.b === null ? 'null' : (hasH || Array.isArray(rec.b)) ? 'diff' : 'none';
         level.body_recipe = rec.b === null ? 'null' : (Array.isArray(rec.b) ? 'diff' : 'none');
         level.recipe_json = rec;
@@ -344,10 +368,10 @@ async function verifyOnce(raw, opts = {}) {
         if (rtag) rtag.value = recipeSummary(rec);
         // Per-header current<-previous, only when the previous state exists.
         const prev = states[m - 1];
-        if (rec.h && prev) {
+        if (hasH && prev) {
           for (const name of Object.keys(rec.h).sort()) {
-            const cur = headerValues(state.fields, name).join(' / ');
-            const pre = headerValues(prev.fields, name).join(' / ');
+            const cur = displayText(headerValues(state.fields, name).join(' / '));
+            const pre = displayText(headerValues(prev.fields, name).join(' / '));
             level.header_recipes.push({
               name,
               current: cur.length ? cur : '(absent)',

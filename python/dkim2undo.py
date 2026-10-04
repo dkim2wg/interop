@@ -8,6 +8,7 @@ and reconstructs the message as it was at a previous version.
 
 import argparse
 import base64
+import binascii
 import json
 import sys
 from pathlib import Path
@@ -52,31 +53,112 @@ def decode_recipes(mi_hdr: str) -> dict | None:
     return json.loads(base64.b64decode(r_b64))
 
 
-def parse_step(recipe) -> tuple[str, any]:
-    """Parse a recipe step object.
+class MalformedRecipe(ValueError):
+    """The r= payload is valid JSON but is not a well-formed set of Recipes.
 
-    Returns (type, data) where:
-    - ("c", (start, end)) for copy ranges
-    - ("d", ["val1", ...]) for data/literal values
-    - ("z", True) for truncation marker
-    - ("legacy_range", (start, end)) for bare [start, end] arrays
-    - ("legacy_str", "text") for bare strings
+    spec-06 §5 (and the extension proposed to the WG on top of it): a "c"
+    step is exactly two integers 1 <= start <= end <= the number of items
+    present, and each "c" start is greater than every preceding "c" end in
+    the same list; "d" items are text with no CR or LF; "b" items are the
+    base64 of raw octets with no CR or LF.  Anything else cannot be applied
+    and the message MUST NOT be accepted -- §11.2 "PERMERROR Message-Instance
+    m=<x> has a malformed Recipe".  A ValueError so that existing callers
+    (the dkim2undo CLI, DSN propagation) fail as before; its own type so the
+    verifier can report it under the right §11.2 text.
     """
-    if isinstance(recipe, dict):
-        if "c" in recipe:
-            c = recipe["c"]
-            return ("c", (int(c[0]), int(c[1])))
-        elif "d" in recipe:
-            return ("d", recipe["d"])
-        elif "z" in recipe:
-            return ("z", True)
-    # Legacy bare array format
-    if isinstance(recipe, list) and len(recipe) == 2:
-        return ("c", (int(recipe[0]), int(recipe[1])))
-    # Legacy bare string
-    if isinstance(recipe, str):
-        return ("d", [recipe])
-    return ("unknown", recipe)
+
+
+def _is_int(v) -> bool:
+    # JSON true/false parse to bool, which is an int subclass in Python.
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def compile_steps(steps, count: int | None) -> list[tuple]:
+    """Validate one Recipe step list and return it in applied form.
+
+    `count` is the number of items currently present (header field instances
+    of the name, or body lines); None skips only the upper-bound check, for
+    callers that hold the JSON but not the message.
+
+    Returns a list of ("c", start, end) and ("lit", [bytes, ...]) items in
+    step order.  Literal bytes are the exact octets to emit ("d" items
+    UTF-8 encoded, "b" items base64-decoded), without the header name or
+    the trailing CRLF.  Raises MalformedRecipe on any violation.
+    """
+    if not isinstance(steps, list):
+        raise MalformedRecipe("Recipe steps are not a JSON array")
+    out: list[tuple] = []
+    prev_end = 0
+    for step in steps:
+        if not isinstance(step, dict) or len(step) != 1:
+            raise MalformedRecipe(
+                "Recipe step is not a JSON object with exactly one key")
+        (kind, arg), = step.items()
+        if kind == "c":
+            if not (isinstance(arg, list) and len(arg) == 2
+                    and all(_is_int(x) for x in arg)):
+                raise MalformedRecipe('"c" step is not a pair of integers')
+            start, end = arg
+            if start < 1 or end < start:
+                raise MalformedRecipe(
+                    f'"c" range [{start}, {end}] is not 1 <= start <= end')
+            if count is not None and end > count:
+                raise MalformedRecipe(
+                    f'"c" range [{start}, {end}] exceeds the {count} item(s) present')
+            if start <= prev_end:
+                raise MalformedRecipe(
+                    f'"c" range [{start}, {end}] does not ascend past the '
+                    f'previous range ending at {prev_end}')
+            prev_end = end
+            out.append(("c", start, end))
+        elif kind in ("d", "b"):
+            if not isinstance(arg, list) or not all(isinstance(x, str) for x in arg):
+                raise MalformedRecipe(f'"{kind}" step is not an array of strings')
+            if not arg:
+                # Schema: minItems 1. An empty literal step emits nothing and
+                # a producer has no reason to write one.
+                raise MalformedRecipe(f'"{kind}" step is an empty array')
+            vals: list[bytes] = []
+            for item in arg:
+                if kind == "b":
+                    try:
+                        raw = base64.b64decode(item, validate=True)
+                    except (binascii.Error, ValueError):
+                        raise MalformedRecipe('"b" item is not valid base64')
+                else:
+                    # A JSON producer that escaped raw octets as \udcXX
+                    # (surrogateescape) still round-trips to the same bytes.
+                    raw = item.encode("utf-8", errors="surrogateescape")
+                if b"\r" in raw or b"\n" in raw:
+                    raise MalformedRecipe(f'"{kind}" item contains CR or LF')
+                vals.append(raw)
+            out.append(("lit", vals))
+        else:
+            raise MalformedRecipe(f"unknown Recipe step type {kind!r}")
+    return out
+
+
+def validate_recipes(recipes) -> None:
+    """Check the shape of a decoded r= object without reference to a message.
+
+    Everything compile_steps can decide from the JSON alone is checked here
+    (so a verifier that is not undoing Recipes still rejects a malformed
+    one); the per-list upper bound needs the message and is checked when the
+    Recipe is applied.  A null "h" is left alone: it has its own §5.1 error.
+    """
+    if not isinstance(recipes, dict):
+        raise MalformedRecipe("Recipe is not a JSON object")
+    if "h" not in recipes and "b" not in recipes:
+        raise MalformedRecipe('Recipe has neither "h" nor "b"')
+    h = recipes.get("h")
+    if h is not None:
+        if not isinstance(h, dict):
+            raise MalformedRecipe('"h" is not a JSON object')
+        for steps in h.values():
+            compile_steps(steps, None)
+    b = recipes.get("b")
+    if b is not None:
+        compile_steps(b, None)
 
 
 # ---------------------------------------------------------------------------
@@ -110,25 +192,23 @@ def apply_header_recipe(current_instances: list[bytes], field_name: str,
     # Build bottom-up index: instance 1 = last, instance 2 = second-to-last, etc.
     # current_instances is in top-to-bottom order, so reverse for bottom-up numbering
     bottom_up = list(reversed(current_instances))
+    name = field_name.encode("utf-8", errors="surrogateescape")
 
     # Process Recipes in order; each Recipe emits header(s)
     # Results are collected so that later entries appear above earlier ones
     # i.e. we build the output top-to-bottom by reversing at the end
     emitted: list[bytes] = []
 
-    for recipe in recipes:
-        step_type, step_data = parse_step(recipe)
-        if step_type == "c":
-            start, end = step_data
+    for item in compile_steps(recipes, len(bottom_up)):
+        if item[0] == "c":
+            _, start, end = item
             # Emit instances numbered start through end (1-based, bottom-up)
-            for i in range(start, end + 1):
-                idx = i - 1  # Convert to 0-based
-                if idx < len(bottom_up):
-                    emitted.append(bottom_up[idx])
-        elif step_type == "d":
-            for val in step_data:
-                line = f"{field_name}: {val}".encode("utf-8", errors="surrogateescape")
-                emitted.append(line)
+            emitted.extend(bottom_up[start - 1:end])
+        else:
+            # §5.1: the header field name and a colon are prepended to each
+            # value (the value carries its own leading whitespace, if any).
+            for val in item[1]:
+                emitted.append(name + b":" + val)
 
     # Recipes emit so "later header fields appear above earlier ones"
     # Since we processed in order and appended, reverse to get top-to-bottom
@@ -150,8 +230,10 @@ def reconstruct_headers(headers: list[bytes], header_recipes: dict) -> list[byte
     """
     if header_recipes is None:
         raise ValueError("Header recipes are null - cannot reconstruct previous state")
+    if not isinstance(header_recipes, dict):
+        raise MalformedRecipe('"h" is not a JSON object')
 
-    if isinstance(header_recipes, dict) and len(header_recipes) == 0:
+    if len(header_recipes) == 0:
         # Empty object means headers were unmodified
         return list(headers)
 
@@ -231,17 +313,12 @@ def reconstruct_body(body: bytes, body_recipes: list[str]) -> bytes:
     # Process Recipes in order; results emitted so later lines appear below earlier
     result_lines: list[bytes] = []
 
-    for recipe in body_recipes:
-        step_type, step_data = parse_step(recipe)
-        if step_type == "c":
-            start, end = step_data
-            for i in range(start, end + 1):
-                idx = i - 1  # Convert to 0-based
-                if idx < len(lines):
-                    result_lines.append(lines[idx])
-        elif step_type == "d":
-            for val in step_data:
-                result_lines.append(val.encode("utf-8", errors="surrogateescape"))
+    for item in compile_steps(body_recipes, len(lines)):
+        if item[0] == "c":
+            _, start, end = item
+            result_lines.extend(lines[start - 1:end])
+        else:
+            result_lines.extend(item[1])
 
     # Rejoin with CRLF
     return b"\r\n".join(result_lines) + b"\r\n" if result_lines else b"\r\n"

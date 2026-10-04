@@ -192,6 +192,14 @@ func parseMI(raw string) (*MessageInstance, error) {
 			// covers actual JSON syntax/type errors; other parseRecipe
 			// failures (e.g. the §5.1 null-header-Recipe rejection) already
 			// carry their own specific message and are left as-is.
+			//
+			// Well-formed JSON whose steps break the §5 rules (see
+			// errMalformedRecipe) is the agreed "has a malformed Recipe"
+			// PERMERROR instead; validateRecipeSteps at parse time catches
+			// everything but the item-count checks, which Undo applies.
+			if errors.Is(err, errMalformedRecipe) {
+				return nil, &malformedRecipeError{m: m}
+			}
 			var syntaxErr *json.SyntaxError
 			var typeErr *json.UnmarshalTypeError
 			if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {

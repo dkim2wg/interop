@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Wed, 23 Sep 2026 13:34:30 -0400
-Subject: [PATCH 2/7] Add DKIM2 Message-Instance headers at ingress and egress
+Subject: [PATCH 2/3] Add DKIM2 Message-Instance headers at ingress and egress
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -87,18 +87,33 @@ and the header fields that went into the hash, so interop problems can
 be diagnosed from the message alone.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+
+Amended 2026-10-04 after replaying 88 public-archive messages in assorted
+charsets through a test list (interop util/charset-corpus.sh):
+
+- Header values are hashed and Recipe'd as the generator emits them
+  (policy.fold_binary over raw_items()), not as str(value): str() of the
+  Header object subject_prefix stores is the decoded text while the wire
+  carries the RFC 2047 form, and a raw 8-bit header is wrapped as
+  unknown-8bit by items() but written verbatim by BytesGenerator.
+- Recipe header values are unfolded: a Recipe string MUST NOT contain CR
+  or LF (spec-06 §5.1).
+- Recipe literals whose octets are not ASCII are emitted as {"b": [base64]}
+  items (raw octets, 8-bit clean); copy ranges are validated (two integers,
+  ascending, non-overlapping, within the item count) and a malformed Recipe
+  is never applied at undo.
 ---
  DKIM2-MESSAGE-INSTANCE.md                     |  215 +++
  src/mailman/config/schema.cfg                 |    7 +
- src/mailman/handlers/message_instance.py      |  930 +++++++++++++
- .../handlers/tests/test_message_instance.py   | 1170 +++++++++++++++++
+ src/mailman/handlers/message_instance.py      | 1150 ++++++++++++
+ .../handlers/tests/test_message_instance.py   | 1630 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
- .../handlers/tests/test_mi_roundtrip.py       |  241 ++++
+ .../handlers/tests/test_mi_roundtrip.py       |  241 +++
  src/mailman/mta/bulk.py                       |    5 +-
  src/mailman/mta/deliver.py                    |    5 +-
  src/mailman/mta/message_instance.py           |   31 +
  src/mailman/pipelines/builtin.py              |    2 +
- 10 files changed, 2638 insertions(+), 2 deletions(-)
+ 10 files changed, 3318 insertions(+), 2 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
  create mode 100644 src/mailman/handlers/tests/test_message_instance.py
@@ -347,10 +362,10 @@ index 7aeec2ced..da6de45b1 100644
  # with python: then it is a Python import path, otherwise it is a file system
 diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
 new file mode 100644
-index 000000000..1d39213f7
+index 000000000..c7bc94e0a
 --- /dev/null
 +++ b/src/mailman/handlers/message_instance.py
-@@ -0,0 +1,930 @@
+@@ -0,0 +1,1150 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -401,7 +416,7 @@ index 000000000..1d39213f7
 +# DKIM2 implementation metadata — update DKIM2_DATE on each change.
 +DKIM2_DRAFT = 'ietf-dkim-dkim2-spec-06'
 +DKIM2_REPO = 'github.com/brong/mailman'
-+DKIM2_DATE = '2026-09-30'
++DKIM2_DATE = '2026-10-04'
 +DKIM2_SOFTWARE = 'mailman'
 +
 +
@@ -513,7 +528,7 @@ index 000000000..1d39213f7
 +    reversed (bottom-up) then stable-sorted by name, matching
 +    compute_header_hash.
 +    """
-+    pairs = [(name.lower(), value) for name, value in msg.items()
++    pairs = [(name.lower(), value) for name, value in msg.raw_items()
 +             if not _should_exclude_header(name)]
 +    pairs.reverse()
 +    pairs.sort(key=lambda x: x[0])
@@ -571,6 +586,44 @@ index 000000000..1d39213f7
 +# Hash computation
 +# ---------------------------------------------------------------------------
 +
++def _wire_value(msg, name, value):
++    """Return a header's value as the generator will put it on the wire.
++
++    Mailman's handlers store some headers as email.header.Header objects
++    (subject_prefix does, for any Subject it has to encode).  str() of a
++    Header is the DECODED text, but what reaches the wire is
++    policy.fold_binary(): the RFC 2047 encoded-word form that
++    BytesGenerator -- and so smtplib.send_message -- writes.  Hashing
++    str(value) recorded an m=2 header hash that no verifier could reproduce
++    from the delivered bytes for every Subject that needed encoding (found
++    2026-10-04 replaying real list mail; a quarter of it failed this way).
++
++    A plain str comes back unchanged apart from folding, which
++    canonicalization undoes; bytes that are not valid UTF-8 (surrogate-
++    escaped by the parser) pass straight through.
++
++    Callers must hand in the value from msg.raw_items(), which is what
++    BytesGenerator folds.  msg.items() runs compat32's header_fetch_parse,
++    which wraps a raw 8-bit value in a Header(charset=unknown-8bit): folding
++    that gives an =?unknown-8bit?b?...?= encoded word the wire never
++    carries, so a Latin-1 From display name Mailman never rewrote hashed
++    differently from the delivered bytes (found 2026-10-04).
++    """
++    try:
++        wire = msg.policy.fold_binary(name, value)
++    except Exception:                               # pragma: nocover
++        return str(value)
++    text = wire.decode('utf-8', errors='surrogateescape')
++    colon = text.find(':')
++    if colon != -1:
++        text = text[colon + 1:]
++    # Unfold (spec-06 §5.1: Recipe strings MUST NOT contain CR or LF; the
++    # hash collapses WSP runs anyway, so a fold is one SP), then as the
++    # parser would hand it back: no leading WSP, no line ending.
++    text = re.sub(r'\r?\n[ \t]+', ' ', text.rstrip('\r\n'))
++    return text.lstrip(' \t')
++
++
 +@public
 +def compute_header_hash(msg):
 +    """Compute SHA-256 header hash per DKIM2 spec-06 §6.2.
@@ -580,10 +633,10 @@ index 000000000..1d39213f7
 +    Returns raw SHA-256 digest bytes.
 +    """
 +    canon_headers = []
-+    for name, value in msg.items():
++    for name, value in msg.raw_items():
 +        if _should_exclude_header(name):
 +            continue
-+        canon = _canonicalize_header_field(name, str(value))
++        canon = _canonicalize_header_field(name, _wire_value(msg, name, value))
 +        canon_headers.append((name.lower().encode(), canon))
 +    # Step 7: Reverse for bottom-up numbering, then stable sort by name
 +    canon_headers.reverse()
@@ -661,6 +714,34 @@ index 000000000..1d39213f7
 +# Recipe computation
 +# ---------------------------------------------------------------------------
 +
++def _literal_steps(values):
++    """Recipe steps that emit these literal header values or body lines.
++
++    Pure-ASCII literals go in a {"d": [...]} step as spec-06 §5 has them.
++    A literal whose octets include a byte >= 0x80 -- the str form here is
++    the surrogateescape decoding of the raw octets -- goes in a {"b": [...]}
++    step: the raw octets base64-encoded inside the JSON string.  JSON text
++    cannot carry Latin-1, EUC-KR or any other non-UTF-8 octets, and the
++    U+DCxx lone surrogates json.dumps would otherwise emit are undecodable
++    by every other implementation.  (Extension to spec-06 §5, proposed to
++    the WG.)
++
++    Consecutive literals of one kind share a step; a mixed run alternates.
++    """
++    steps = []
++    for value in values:
++        if value.isascii():
++            kind, item = 'd', value
++        else:
++            kind = 'b'
++            item = _b64(value.encode('utf-8', errors='surrogateescape'))
++        if steps and kind in steps[-1]:
++            steps[-1][kind].append(item)
++        else:
++            steps.append({kind: [item]})
++    return steps
++
++
 +@public
 +def compute_body_recipe(current_lines, previous_lines):
 +    """Compute body recipe to undo current body back to previous.
@@ -668,7 +749,9 @@ index 000000000..1d39213f7
 +    Uses line-level diff.  Returns a list of Recipe steps (spec-06 §5):
 +    - {"c": [start, end]}: copy this range of lines from the current body
 +      (1-based, inclusive)
-+    - {"d": [line, ...]}: literal lines from the previous body
++    - {"d": [line, ...]}: literal ASCII lines from the previous body
++    - {"b": [base64, ...]}: literal 8-bit lines from the previous body,
++      see _literal_steps
 +
 +    Returns None if bodies are identical.
 +    """
@@ -688,16 +771,18 @@ index 000000000..1d39213f7
 +        if tag == 'equal':
 +            # Flush any pending data lines
 +            if pending_data:
-+                recipe.append({'d': pending_data})
++                recipe.extend(_literal_steps(pending_data))
 +                pending_data = []
-+            # Reference lines in the current body (1-based, inclusive end)
++            # Reference lines in the current body (1-based, inclusive end).
++            # Opcodes walk the current body forwards, so these ranges
++            # ascend without overlapping as spec-06 §5.2 requires.
 +            recipe.append({'c': [i1 + 1, i2]})
 +        elif tag in ('replace', 'insert'):
 +            # Literal text from the previous body
 +            pending_data.extend(previous_lines[j1:j2])
 +        # 'delete': lines only in current, not needed for previous
 +    if pending_data:
-+        recipe.append({'d': pending_data})
++        recipe.extend(_literal_steps(pending_data))
 +    return recipe
 +
 +
@@ -707,9 +792,15 @@ index 000000000..1d39213f7
 +
 +    Both arguments are lists of (name, value) tuples.
 +    Returns a dict mapping lowercase header names to Recipe step lists
-+    ({"c": [i, j]} copies by bottom-up index, {"d": [...]} restores literal
-+    values),
++    ({"c": [i, j]} copies by bottom-up index, {"d": [...]} / {"b": [...]}
++    restore literal values -- see _literal_steps),
 +    or None if no non-excluded headers changed.
++
++    spec-06 §5.1 requires the "c" ranges of one header name to ascend
++    without overlapping, so a previous value can only be copied from a
++    current instance below every instance already copied; a value whose
++    instances were reordered (or one of two identical instances when the
++    other has already been used) is restored literally instead.
 +    """
 +    # Collect by lowercase name, preserving order
 +    def collect(headers):
@@ -739,32 +830,36 @@ index 000000000..1d39213f7
 +        prev_vals_rev = list(reversed(prev_vals))
 +        prev_canon_rev = [_canonicalize_header_field(name, v)
 +                          for v in prev_vals_rev]
-+        # Map canonical current values to their bottom-up index (1-based)
-+        known = {}
-+        for idx, cv in enumerate(cur_canon_rev):
-+            if cv not in known:
-+                known[cv] = idx + 1
++        # Map each canonical current value to its bottom-up indexes
++        # (1-based, ascending).
++        positions = {}
++        for idx, cv in enumerate(cur_canon_rev, 1):
++            positions.setdefault(cv, []).append(idx)
 +        # Build Recipe for this header name using {"c":...}/{"d":...}
 +        hrecipe = []
 +        pending_data = []
++        last_end = 0
 +        for pval, pcanon in zip(prev_vals_rev, prev_canon_rev):
-+            if pcanon in known:
-+                # Flush pending data
-+                if pending_data:
-+                    hrecipe.append({'d': pending_data})
-+                    pending_data = []
-+                idx = known[pcanon]
-+                # Combine adjacent copy ranges
-+                if (hrecipe and isinstance(hrecipe[-1], dict)
-+                        and 'c' in hrecipe[-1]
-+                        and idx == hrecipe[-1]['c'][1] + 1):
-+                    hrecipe[-1]['c'][1] = idx
-+                else:
-+                    hrecipe.append({'c': [idx, idx]})
-+            else:
++            # The lowest matching instance above everything copied so far;
++            # none means a literal (§5.1 ranges must ascend).
++            idx = next((i for i in positions.get(pcanon, ())
++                        if i > last_end), None)
++            if idx is None:
 +                pending_data.append(pval)
++                continue
++            # Flush pending data
++            if pending_data:
++                hrecipe.extend(_literal_steps(pending_data))
++                pending_data = []
++            # Combine adjacent copy ranges
++            if (hrecipe and 'c' in hrecipe[-1]
++                    and idx == hrecipe[-1]['c'][1] + 1):
++                hrecipe[-1]['c'][1] = idx
++            else:
++                hrecipe.append({'c': [idx, idx]})
++            last_end = idx
 +        if pending_data:
-+            hrecipe.append({'d': pending_data})
++            hrecipe.extend(_literal_steps(pending_data))
 +        recipe[name] = hrecipe
 +
 +    return recipe if recipe else None
@@ -906,12 +1001,159 @@ index 000000000..1d39213f7
 +                'h': [parts[0], parts[1]],
 +                'b': [parts[0], parts[2]],
 +            }
-+    # Parse r= tag: base64-encoded JSON
++    # Parse r= tag: base64-encoded JSON.  The JSON is returned as decoded;
++    # _compile_recipe checks it against spec-06 §5.
 +    r_match = re.search(r'r=([A-Za-z0-9+/=\s]+)', val)
 +    if r_match:
 +        b64_clean = re.sub(r'\s', '', r_match.group(1))
-+        recipe = json.loads(base64.b64decode(b64_clean))
++        try:
++            recipe = json.loads(base64.b64decode(b64_clean))
++        except ValueError as error:
++            raise MalformedRecipe('r= is not base64 JSON: {}'.format(error))
 +    return version, hashes, recipe
++
++
++# ---------------------------------------------------------------------------
++# Recipe validation and application (spec-06 §5)
++# ---------------------------------------------------------------------------
++
++@public
++class MalformedRecipe(ValueError):
++    """A Message-Instance Recipe that cannot be applied.
++
++    Raised for anything spec-06 §5 (plus the "b" literal step, see
++    _literal_steps) does not allow: an r= that is not base64 JSON, a step
++    that is not a one-key object, a "c" that is not two integers or whose
++    range is below 1, descending, overlapping an earlier range or past the
++    items available, an empty "d"/"b", a "d"/"b" string holding CR or LF,
++    a "b" string that is not base64.  verify and undo treat it as an
++    instance that does not verify; it never escapes them.
++    """
++
++
++def _compile_steps(steps, where):
++    """Check one step list and return it as ('c', start, end) / ('d', [str])
++    tuples, "b" items decoded to the surrogateescape str form the rest of
++    this module uses for header values and body lines.  The upper bound of
++    a "c" range is checked by _apply_steps, which knows the item count."""
++    if not isinstance(steps, list):
++        raise MalformedRecipe('{}: steps are not an array'.format(where))
++    compiled = []
++    last_end = 0
++    for step in steps:
++        # Pre-spec-06 forms: a bare [start, end] array, a bare string.
++        if isinstance(step, list):
++            step = {'c': step}
++        elif isinstance(step, str):
++            step = {'d': [step]}
++        if not isinstance(step, dict) or len(step) != 1:
++            raise MalformedRecipe(
++                '{}: step is not an object with one key'.format(where))
++        (kind, arg), = step.items()
++        if not isinstance(arg, list):
++            raise MalformedRecipe(
++                '{}: "{}" is not an array'.format(where, kind))
++        if kind == 'c':
++            # bool is an int subclass; JSON true is not an integer here.
++            if len(arg) != 2 or any(type(v) is not int for v in arg):
++                raise MalformedRecipe(
++                    '{}: "c" is not two integers'.format(where))
++            start, end = arg
++            if start < 1 or end < start:
++                raise MalformedRecipe(
++                    '{}: bad "c" range [{}, {}]'.format(where, start, end))
++            if start <= last_end:
++                raise MalformedRecipe(
++                    '{}: "c" range [{}, {}] does not ascend past {}'.format(
++                        where, start, end, last_end))
++            last_end = end
++            compiled.append(('c', start, end))
++            continue
++        if kind not in ('d', 'b'):
++            raise MalformedRecipe(
++                '{}: unknown step type "{}"'.format(where, kind))
++        if not arg:
++            # Schema minItems 1; an empty step list means "remove all",
++            # an empty step means nothing.
++            raise MalformedRecipe('{}: "{}" is empty'.format(where, kind))
++        values = []
++        for item in arg:
++            if not isinstance(item, str):
++                raise MalformedRecipe(
++                    '{}: "{}" item is not a string'.format(where, kind))
++            if kind == 'b':
++                try:
++                    octets = base64.b64decode(item, validate=True)
++                except ValueError:
++                    raise MalformedRecipe(
++                        '{}: "b" item is not base64'.format(where))
++                item = octets.decode('utf-8', errors='surrogateescape')
++            if '\r' in item or '\n' in item:
++                raise MalformedRecipe(
++                    '{}: "{}" item contains CR or LF'.format(where, kind))
++            values.append(item)
++        compiled.append(('d', values))
++    return compiled
++
++
++def _compile_recipe(recipe):
++    """Check a decoded r= Recipe object and return (header_steps, body_steps).
++
++    header_steps maps each header name under "h" to its compiled steps;
++    body_steps is the compiled "b" list, or None when the body was not
++    changed (no "b") or cannot be recreated ("b": null, spec-06 §5.2).
++    """
++    if recipe is None:
++        return {}, None
++    if not isinstance(recipe, dict):
++        raise MalformedRecipe('Recipe is not an object')
++    header_steps = {}
++    if 'h' in recipe:
++        if not isinstance(recipe['h'], dict):
++            raise MalformedRecipe('"h" is not an object')
++        for hname, steps in recipe['h'].items():
++            header_steps[hname] = _compile_steps(steps, 'h ' + hname)
++    body_steps = None
++    if recipe.get('b') is not None:
++        body_steps = _compile_steps(recipe['b'], 'b')
++    return header_steps, body_steps
++
++
++def _apply_steps(compiled, items, where):
++    """Emit the items a compiled step list produces from the current ones."""
++    out = []
++    for step in compiled:
++        if step[0] == 'c':
++            _, start, end = step
++            if end > len(items):
++                raise MalformedRecipe(
++                    '{}: "c" range [{}, {}] exceeds the {} available'.format(
++                        where, start, end, len(items)))
++            out.extend(items[start - 1:end])
++        else:
++            out.extend(step[1])
++    return out
++
++
++def _plan_undo(msg, recipe):
++    """Work out what applying recipe to msg produces, without changing msg.
++
++    Returns (body_lines, headers): the rebuilt body lines, or None when the
++    body is to be left alone, and a dict of header name to its rebuilt
++    values in top-down order.  Raises MalformedRecipe.
++    """
++    header_steps, body_steps = _compile_recipe(recipe)
++    body_lines = None
++    if body_steps is not None:
++        body_lines = _apply_steps(body_steps, _get_body_lines(msg), 'b')
++    headers = {}
++    for hname, steps in header_steps.items():
++        # Current values bottom-up, as the Recipe numbers them.  Raw, so a
++        # copied 8-bit value is re-added as the octets it arrived as.
++        cur_vals = list(reversed(_raw_values(msg, hname)))
++        headers[hname] = list(reversed(
++            _apply_steps(steps, cur_vals, 'h ' + hname)))
++    return body_lines, headers
 +
 +
 +# ---------------------------------------------------------------------------
@@ -933,7 +1175,10 @@ index 000000000..1d39213f7
 +    # Find the MI header with the highest version.
 +    for val in msg.get_all('message-instance', []):
 +        if _get_mi_version(val) == max_v:
-+            _, hashes, _ = _parse_mi(val)
++            try:
++                _, hashes, recipe = _parse_mi(val)
++            except MalformedRecipe as error:
++                return 0, 'malformed Recipe: {}'.format(error)
 +            break
 +    if hashes is None:
 +        return 0, 'could not parse h= tag'
@@ -947,6 +1192,12 @@ index 000000000..1d39213f7
 +    if stored_b != computed_b:
 +        return 0, 'body hash mismatch ({} != {})'.format(
 +            stored_b, computed_b)
++    # An instance whose Recipe cannot be applied to this message (spec-06
++    # §5) does not verify either: nothing downstream could undo it.
++    try:
++        _plan_undo(msg, recipe)
++    except MalformedRecipe as error:
++        return 0, 'malformed Recipe: {}'.format(error)
 +    return max_v, None
 +
 +
@@ -956,7 +1207,9 @@ index 000000000..1d39213f7
 +
 +    Removes the highest MI header from the message, applies body and header
 +    recipes to reconstruct the previous version, and returns the version
-+    number that was undone.  Returns 0 if there are no MI headers.
++    number that was undone.  Returns 0 if there are no MI headers, or if
++    the highest one carries a Recipe that cannot be applied (spec-06 §5,
++    see MalformedRecipe) -- the message is then left untouched.
 +
 +    After a successful undo, verify_message_instance(msg) should return
 +    the version of the now-highest MI header.
@@ -970,7 +1223,15 @@ index 000000000..1d39213f7
 +        if _get_mi_version(val) == max_v:
 +            highest_mi = val
 +            break
-+    _, _, recipe = _parse_mi(highest_mi)
++    # Work out the whole result before touching the message, so a Recipe
++    # that turns out to be malformed part-way through changes nothing.
++    try:
++        _, _, recipe = _parse_mi(highest_mi)
++        new_body_lines, new_headers = _plan_undo(msg, recipe)
++    except MalformedRecipe as error:
++        log.warning('Message-Instance m=%d has a malformed Recipe (%s); '
++                    'not undone', max_v, error)
++        return 0
 +    # Remove the highest MI header, keep all others.
 +    # Python's email library doesn't support selective deletion of
 +    # duplicate headers by value, so we collect all, delete all,
@@ -983,58 +1244,20 @@ index 000000000..1d39213f7
 +    for val in all_mi:
 +        if _get_mi_version(val) != max_v:
 +            msg['Message-Instance'] = val
-+    # Apply body Recipe.
-+    if recipe and 'b' in recipe and isinstance(recipe['b'], list):
-+        body_lines = _get_body_lines(msg)
-+        new_lines = []
-+        for cmd in recipe['b']:
-+            if isinstance(cmd, dict) and 'c' in cmd:
-+                start, end = cmd['c'][0] - 1, cmd['c'][1]
-+                new_lines.extend(body_lines[start:end])
-+            elif isinstance(cmd, dict) and 'd' in cmd:
-+                new_lines.extend(cmd['d'])
-+            elif isinstance(cmd, list):
-+                # Legacy bare array
-+                start, end = cmd[0] - 1, cmd[1]
-+                new_lines.extend(body_lines[start:end])
-+            else:
-+                # Legacy bare string
-+                new_lines.append(cmd)
-+        # Reconstruct the body.
-+        new_body = '\r\n'.join(new_lines) + '\r\n'
-+        if msg.is_multipart():
-+            msg.set_payload(
-+                new_body.encode('utf-8', errors='surrogateescape'))
-+        else:
-+            msg.set_payload(
-+                new_body.decode('utf-8', errors='surrogateescape')
-+                if isinstance(new_body, bytes) else new_body)
-+    # Apply header Recipes.
-+    if recipe and 'h' in recipe and isinstance(recipe['h'], dict):
-+        for hname, hrecipe in recipe['h'].items():
-+            # Get current values for this header (bottom-up = reversed).
-+            cur_vals = list(reversed(msg.get_all(hname, [])))
-+            # Build new values from Recipe.
-+            new_vals = []
-+            for cmd in hrecipe:
-+                if isinstance(cmd, dict) and 'c' in cmd:
-+                    start, end = cmd['c'][0] - 1, cmd['c'][1]
-+                    new_vals.extend(cur_vals[start:end])
-+                elif isinstance(cmd, dict) and 'd' in cmd:
-+                    new_vals.extend(cmd['d'])
-+                elif isinstance(cmd, list):
-+                    # Legacy bare array
-+                    start, end = cmd[0] - 1, cmd[1]
-+                    new_vals.extend(cur_vals[start:end])
-+                else:
-+                    # Legacy bare string
-+                    new_vals.append(cmd)
-+            # Replace headers: delete all, re-add in top-down order
-+            # (reverse of bottom-up).
-+            while hname in msg:
-+                del msg[hname]
-+            for val in reversed(new_vals):
-+                msg[hname] = val
++    # Rebuild the body.  Setting the payload from its raw octets stores it
++    # in the parser's own surrogateescape form, which the generator writes
++    # back byte for byte whatever the octets are -- a str with real
++    # non-ASCII characters (a UTF-8 line decoded by _get_body_lines) would
++    # not survive the trip.
++    if new_body_lines is not None:
++        new_body = '\r\n'.join(new_body_lines) + '\r\n'
++        msg.set_payload(new_body.encode('utf-8', errors='surrogateescape'))
++    # Replace each header named in the Recipe: delete all, re-add top-down.
++    for hname, new_vals in new_headers.items():
++        while hname in msg:
++            del msg[hname]
++        for val in new_vals:
++            msg[hname] = val
 +    return max_v
 +
 +
@@ -1062,12 +1285,24 @@ index 000000000..1d39213f7
 +
 +
 +def _collect_headers(msg):
-+    """Collect non-excluded headers as a list of (name, value) tuples."""
++    """Collect non-excluded headers as a list of (name, value) tuples.
++
++    Values are the wire form (see _wire_value), so a Recipe's copy ranges
++    refer to header values exactly as the verifier will see them.
++    """
 +    headers = []
-+    for name, value in msg.items():
++    for name, value in msg.raw_items():
 +        if not _should_exclude_header(name):
-+            headers.append((name, str(value)))
++            headers.append((name, _wire_value(msg, name, value)))
 +    return headers
++
++
++def _raw_values(msg, name):
++    """The stored values of this header, top-down, as the generator sees
++    them (see _wire_value for why not msg.get_all)."""
++    lname = name.lower()
++    return [value for hname, value in msg.raw_items()
++            if hname.lower() == lname]
 +
 +
 +def _prepend_header(msg, name, value):
@@ -1283,10 +1518,10 @@ index 000000000..1d39213f7
 +        _cleanup_mi_original(mi_file)
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..a24f2b574
+index 000000000..39ca864fb
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,1170 @@
+@@ -0,0 +1,1630 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -1308,6 +1543,7 @@ index 000000000..a24f2b574
 +
 +import base64
 +import email
++import hashlib
 +import json
 +import os
 +import re
@@ -1330,6 +1566,7 @@ index 000000000..a24f2b574
 +    _get_body_lines,
 +    _parse_mi,
 +    _should_exclude_header,
++    _collect_headers,
 +)
 +from mailman.interfaces.template import ITemplateManager
 +from mailman.testing.helpers import specialized_message_from_string as mfs
@@ -1376,6 +1613,20 @@ index 000000000..a24f2b574
 +def _data_steps(steps):
 +    """The {"d": [...]} literal-data steps of a recipe (spec-06 §5)."""
 +    return [s for s in steps if isinstance(s, dict) and 'd' in s]
++
++
++def _octets(raw):
++    """Raw octets as the str form message_instance works in: decoded as
++    UTF-8 with surrogateescape, so bytes >= 0x80 that are not UTF-8 become
++    lone surrogates and valid UTF-8 becomes the characters it encodes."""
++    return raw.decode('utf-8', errors='surrogateescape')
++
++
++def _assert_no_surrogates_in_json(test, recipe):
++    """A recipe must JSON-encode without the \\udcXX lone-surrogate escapes
++    that no other implementation can decode."""
++    encoded = json.dumps(recipe, separators=(',', ':'))
++    test.assertNotIn('\\udc', encoded, encoded)
 +
 +
 +# =====================================================================
@@ -1494,6 +1745,35 @@ index 000000000..a24f2b574
 +        msg2['DKIM-Signature'] = 'v=1; ...'
 +        self.assertEqual(h1, compute_header_hash(msg2))
 +
++    def test_raw_8bit_header_hashes_as_the_octets_on_the_wire(self):
++        # A Latin-1 From display name Mailman never rewrites goes out as
++        # the raw octets (BytesGenerator folds raw_items()).  The hash must
++        # be over those octets, not the =?unknown-8bit?b?...?= encoded word
++        # compat32's items() wraps them in, and the Recipe side must carry
++        # the same octets.
++        raw = (
++            b'From: Jos\xe9 <jose@example.com>\r\n'
++            b'To: list@example.com\r\n'
++            b'Subject: hi\r\n'
++            b'Message-ID: <x@example.com>\r\n'
++            b'\r\n'
++            b'body\r\n'
++        )
++        msg = _msg_from_bytes(raw)
++        wire_bytes = msg.as_bytes()
++        self.assertIn(b'From: Jos\xe9 <jose@example.com>', wire_bytes)
++        expected = hashlib.sha256(
++            b'from:Jos\xe9 <jose@example.com>\r\n'
++            b'message-id:<x@example.com>\r\n'
++            b'subject:hi\r\n'
++            b'to:list@example.com\r\n').digest()
++        self.assertEqual(compute_header_hash(msg), expected)
++        self.assertEqual(compute_header_hash(_msg_from_bytes(wire_bytes)),
++                         expected)
++        self.assertEqual(dict(_collect_headers(msg))['From'],
++                         _octets(b'Jos\xe9 <jose@example.com>'))
++        self.assertNotIn('unknown-8bit', dict(_collect_headers(msg))['From'])
++
 +    def test_body_hash_trailing_blank_lines(self):
 +        raw1 = b'From: a@b.com\r\n\r\nbody\r\n'
 +        raw2 = b'From: a@b.com\r\n\r\nbody\r\n\r\n\r\n'
@@ -1557,6 +1837,40 @@ index 000000000..a24f2b574
 +        self.assertEqual(
 +            recipe, [{'c': [1, 1]}, {'c': [3, 3]}, {'c': [5, 5]}])
 +
++    def test_8bit_literal_is_a_b_step(self):
++        # A restored line with any byte >= 0x80 -- Latin-1 here, which is
++        # not UTF-8 and so not representable as JSON text -- is emitted as
++        # a {"b": [...]} step holding the base64 of its raw octets, never
++        # as a "d" string of lone surrogates.
++        latin1 = b'caf\xe9 au lait'
++        recipe = compute_body_recipe(['New'], ['Old ascii', _octets(latin1)])
++        self.assertEqual(recipe, [{'d': ['Old ascii']},
++                                  {'b': [_b64(latin1)]}])
++        _assert_no_surrogates_in_json(self, recipe)
++        self.assertEqual(base64.b64decode(recipe[1]['b'][0]), latin1)
++
++    def test_utf8_literal_is_a_b_step_too(self):
++        # Valid UTF-8 above 0x7f is representable as JSON text, but the rule
++        # is by octet: anything >= 0x80 goes in a "b" step.
++        utf8 = 'Hello w\u00f6rld'.encode('utf-8')
++        recipe = compute_body_recipe(['New'], [_octets(utf8)])
++        self.assertEqual(recipe, [{'b': [_b64(utf8)]}])
++
++    def test_mixed_literals_alternate_d_and_b_steps(self):
++        # Consecutive literals of one kind share a step; a mixed run
++        # alternates, in order.
++        latin1 = b'caf\xe9'
++        utf8 = 'w\u00f6rld'.encode('utf-8')
++        recipe = compute_body_recipe(
++            ['New'],
++            ['one', 'two', _octets(latin1), _octets(utf8), 'three'])
++        self.assertEqual(recipe, [
++            {'d': ['one', 'two']},
++            {'b': [_b64(latin1), _b64(utf8)]},
++            {'d': ['three']},
++        ])
++        _assert_no_surrogates_in_json(self, recipe)
++
 +
 +class TestHeaderRecipe(unittest.TestCase):
 +
@@ -1587,6 +1901,67 @@ index 000000000..a24f2b574
 +            [('From', 'a@b.com'), ('Received', 'from mx')],
 +            [('From', 'a@b.com'), ('Received', 'from mx2')]))
 +
++    def test_8bit_literal_is_a_b_step(self):
++        # A raw EUC-KR Subject (not UTF-8) restored literally goes in a
++        # "b" step as base64 of its octets.
++        euckr = b'(\xb1\xa4---\xb0\xed) \xc0\xcc\xb8\xe1 500'
++        recipe = compute_header_recipe(
++            [('Subject', '[Ant] ' + _octets(euckr))],
++            [('Subject', _octets(euckr))])
++        self.assertEqual(recipe['subject'], [{'b': [_b64(euckr)]}])
++        _assert_no_surrogates_in_json(self, recipe)
++        self.assertEqual(base64.b64decode(recipe['subject'][0]['b'][0]),
++                         euckr)
++
++    def test_mixed_literals_alternate_d_and_b_steps(self):
++        latin1 = b'Caf\xe9'
++        recipe = compute_header_recipe(
++            [('Comments', 'x')],
++            [('Comments', 'plain'), ('Comments', _octets(latin1)),
++             ('Comments', 'also plain')])
++        # Bottom-up: 'also plain', latin1, 'plain'.
++        self.assertEqual(recipe['comments'], [
++            {'d': ['also plain']}, {'b': [_b64(latin1)]}, {'d': ['plain']},
++        ])
++
++    def test_reordered_duplicates_never_descend(self):
++        # Two instances swapped.  Bottom-up the current message is
++        # 1='two', 2='one'; the previous was 1='one', 2='two'.  'one' is
++        # copied from instance 2, after which 'two' at instance 1 cannot
++        # be copied -- spec-06 §5.1 requires "c" starts to ascend past the
++        # previous end -- so it is restored literally.
++        recipe = compute_header_recipe(
++            [('Comments', 'one'), ('Comments', 'two')],
++            [('Comments', 'two'), ('Comments', 'one')])
++        self.assertEqual(recipe['comments'],
++                         [{'c': [2, 2]}, {'d': ['two']}])
++
++    def test_identical_duplicates_copy_distinct_instances(self):
++        # Two identical previous values must come from two different
++        # current instances: [2, 3], not [2, 2] twice.
++        recipe = compute_header_recipe(
++            [('Comments', 'same'), ('Comments', 'same'), ('Comments', 'x')],
++            [('Comments', 'same'), ('Comments', 'same')])
++        self.assertEqual(recipe['comments'], [{'c': [2, 3]}])
++
++    def test_copy_ranges_always_ascend(self):
++        # Whatever the permutation, every emitted "c" starts above the end
++        # of the one before it.
++        import itertools
++        values = ['a', 'b', 'c', 'd']
++        for perm in itertools.permutations(values):
++            recipe = compute_header_recipe(
++                [('Comments', v) for v in perm],
++                [('Comments', v) for v in values])
++            if recipe is None:
++                continue
++            last_end = 0
++            for step in _copy_steps(recipe['comments']):
++                start, end = step['c']
++                self.assertGreater(start, last_end, (perm, recipe))
++                self.assertGreaterEqual(end, start, (perm, recipe))
++                last_end = end
++
 +
 +class TestMIHeaderValue(unittest.TestCase):
 +
@@ -1605,6 +1980,261 @@ index 000000000..a24f2b574
 +        recipe = _decode_mi_recipe(value)
 +        self.assertEqual(recipe['h'], {'list-id': []})
 +        self.assertEqual(recipe['b'], [[2, 5]])
++
++
++class TestRecipeUndo(unittest.TestCase):
++    """Recipe validation and application by undo / verify (spec-06 §5).
++
++    Pure-function tests: the instance under test is built by hand on a
++    fixed message, with hashes that match it, so only the Recipe decides
++    whether it verifies and undoes.
++    """
++
++    RAW = (
++        b'From: a@example.com\r\n'
++        b'To: list@example.com\r\n'
++        b'Subject: hello\r\n'
++        b'Comments: one\r\n'
++        b'Comments: two\r\n'
++        b'Message-ID: <x@example.com>\r\n'
++        b'\r\n'
++        b'line one\r\n'
++        b'line two\r\n'
++        b'line three\r\n'
++    )
++
++    def _with_recipe(self, header_recipe=None, body_recipe=None):
++        """The fixed message carrying an m=2 whose hashes match it and whose
++        r= holds exactly these (possibly invalid) recipe objects."""
++        msg = _msg_from_bytes(self.RAW)
++        mi2 = build_mi_header_value(
++            2, compute_header_hash(msg), compute_body_hash(msg),
++            header_recipe, body_recipe)
++        msg._headers.insert(0, ('Message-Instance', mi2))
++        return msg
++
++    def _assert_rejected(self, msg, what):
++        before = msg.as_bytes()
++        self.assertEqual(undo_message_instance(msg), 0, what)
++        self.assertEqual(msg.as_bytes(), before,
++                         'a rejected Recipe must leave the message alone')
++        self.assertEqual(get_max_mi_version(msg), 2)
++        version, error = verify_message_instance(msg)
++        self.assertEqual(version, 0, what)
++        self.assertIn('malformed Recipe', error, what)
++
++    def test_bad_body_copy_ranges_are_rejected(self):
++        cases = {
++            'descending': [{'c': [2, 3]}, {'c': [1, 1]}],
++            'overlapping': [{'c': [1, 2]}, {'c': [2, 3]}],
++            'touching is still overlapping': [{'c': [1, 1]}, {'c': [1, 2]}],
++            'zero start': [{'c': [0, 1]}],
++            'end before start': [{'c': [2, 1]}],
++            'past the last line': [{'c': [1, 9]}],
++            'one integer': [{'c': [1]}],
++            'three integers': [{'c': [1, 2, 3]}],
++            'string': [{'c': [1, '2']}],
++            'float': [{'c': [1, 2.0]}],
++            'boolean': [{'c': [True, 1]}],
++            'null': [{'c': [None, 1]}],
++        }
++        for what, steps in cases.items():
++            with self.subTest(what):
++                self._assert_rejected(
++                    self._with_recipe(body_recipe=steps), what)
++
++    def test_bad_header_copy_ranges_are_rejected(self):
++        cases = {
++            'descending': [{'c': [2, 2]}, {'c': [1, 1]}],
++            'overlapping': [{'c': [1, 2]}, {'c': [2, 2]}],
++            'zero start': [{'c': [0, 2]}],
++            'past the top instance': [{'c': [1, 3]}],
++            'string': [{'c': ['1', 2]}],
++        }
++        for what, steps in cases.items():
++            with self.subTest(what):
++                self._assert_rejected(
++                    self._with_recipe(header_recipe={'comments': steps}),
++                    what)
++
++    def test_bad_literals_are_rejected(self):
++        cases = {
++            'b not base64': [{'b': ['not base64!']}],
++            'b bad padding': [{'b': ['YQ']}],
++            'b non-ascii': [{'b': ['caf\u00e9']}],
++            'b decodes to CRLF': [{'b': [_b64(b'a\r\nb')]}],
++            'b decodes to LF': [{'b': [_b64(b'a\nb')]}],
++            'b decodes to CR': [{'b': [_b64(b'a\rb')]}],
++            'd with LF': [{'d': ['a\nb']}],
++            'd with CR': [{'d': ['a\rb']}],
++            'd non-string item': [{'d': [1]}],
++            'b non-string item': [{'b': [1]}],
++            'd empty': [{'d': []}],
++            'b empty': [{'b': []}],
++        }
++        for what, steps in cases.items():
++            with self.subTest('body ' + what):
++                self._assert_rejected(
++                    self._with_recipe(body_recipe=steps), what)
++            with self.subTest('header ' + what):
++                self._assert_rejected(
++                    self._with_recipe(header_recipe={'comments': steps}),
++                    what)
++
++    def test_bad_step_shapes_are_rejected(self):
++        cases = {
++            'unknown step type': [{'x': [1]}],
++            'two keys': [{'c': [1, 1], 'd': ['x']}],
++            'empty object': [{}],
++            'number': [7],
++            'c not an array': [{'c': 1}],
++            'd not an array': [{'d': 'x'}],
++        }
++        for what, steps in cases.items():
++            with self.subTest(what):
++                self._assert_rejected(
++                    self._with_recipe(body_recipe=steps), what)
++        with self.subTest('body steps not an array'):
++            self._assert_rejected(
++                self._with_recipe(body_recipe={'c': [1, 1]}), 'object')
++        with self.subTest('h not an object'):
++            self._assert_rejected(
++                self._with_recipe(header_recipe=['x']), 'array')
++
++    def test_unparseable_r_is_rejected(self):
++        msg = _msg_from_bytes(self.RAW)
++        not_json = _b64(b'not json')
++        msg._headers.insert(0, ('Message-Instance', 'm=2; h=sha256:{}:{}; '
++                                'r={};'.format(_b64(compute_header_hash(msg)),
++                                               _b64(compute_body_hash(msg)),
++                                               not_json)))
++        self._assert_rejected(msg, 'r= is not JSON')
++
++    def test_b_steps_undo_to_the_original_octets(self):
++        latin1 = b'caf\xe9'
++        utf8 = 'w\u00f6rld'.encode('utf-8')
++        msg = self._with_recipe(
++            header_recipe={'subject': [{'b': [_b64(latin1)]}]},
++            body_recipe=[{'c': [1, 1]}, {'b': [_b64(latin1), _b64(utf8)]}])
++        self.assertEqual(verify_message_instance(msg)[0], 2)
++        self.assertEqual(undo_message_instance(msg), 2)
++        self.assertEqual(_get_body_lines(msg),
++                         ['line one', _octets(latin1), _octets(utf8)])
++        # And the octets are what reaches the wire.  (undo re-adds a header
++        # under the Recipe's lower-case key; the hash ignores case.)
++        wire = msg.as_bytes().replace(b'\r\n', b'\n')
++        self.assertIn(b'\nline one\ncaf\xe9\nw\xc3\xb6rld\n', wire)
++        self.assertRegex(wire, rb'(?i)\nsubject: caf\xe9\n')
++
++    def test_reordered_duplicates_undo_correctly(self):
++        # The recipe compute_header_recipe emits for Comments swapped from
++        # (two, one) to (one, two): copy instance 2 ('one'), then 'two'
++        # literally.  Undo must give back (two, one) top-down.
++        msg = self._with_recipe(
++            header_recipe={'comments': [{'c': [2, 2]}, {'d': ['two']}]})
++        self.assertEqual(verify_message_instance(msg)[0], 2)
++        self.assertEqual(undo_message_instance(msg), 2)
++        self.assertEqual(msg.get_all('Comments'), ['two', 'one'])
++
++    def test_null_body_recipe_leaves_the_body_alone(self):
++        # spec-06 §5.2: "b": null says the body cannot be recreated.
++        msg = self._with_recipe(header_recipe={'comments': []},
++                                body_recipe=None)
++        # build_mi_header_value omits a None body recipe; put the null in
++        # by hand.
++        msg = _msg_from_bytes(self.RAW)
++        r = _b64(json.dumps({'h': {'comments': []}, 'b': None}).encode())
++        msg._headers.insert(0, ('Message-Instance', 'm=2; h=sha256:{}:{}; '
++                                'r={};'.format(_b64(compute_header_hash(msg)),
++                                               _b64(compute_body_hash(msg)),
++                                               r)))
++        self.assertEqual(verify_message_instance(msg)[0], 2)
++        self.assertEqual(undo_message_instance(msg), 2)
++        self.assertEqual(_get_body_lines(msg),
++                         ['line one', 'line two', 'line three'])
++        self.assertIsNone(msg.get_all('Comments'))
++
++    def test_8bit_message_round_trips_through_b_steps(self):
++        # End to end on the producer side: a message with a raw EUC-KR body
++        # line and swapped Comments is changed the way a list would change
++        # it; the recipe is "b"/"d"/"c" only, encodes without surrogates,
++        # and undoing it restores the m=1 hashes exactly.
++        original = (
++            b'From: a@example.com\r\n'
++            b'Subject: hello\r\n'
++            b'Comments: two\r\n'
++            b'Comments: one\r\n'
++            b'Message-ID: <x@example.com>\r\n'
++            b'Content-Type: text/plain; charset=euc-kr\r\n'
++            b'Content-Transfer-Encoding: 8bit\r\n'
++            b'\r\n'
++            b'\xc0\xcc\xb8\xe1 line\r\n'
++            b'ascii line\r\n'
++        )
++        orig = _msg_from_bytes(original)
++        h1, b1 = compute_header_hash(orig), compute_body_hash(orig)
++        msg = _msg_from_bytes(original)
++        msg.replace_header('Subject', '[Ant] hello')
++        del msg['Comments']
++        msg['Comments'] = 'one'
++        msg['Comments'] = 'two'
++        msg.set_payload(msg.get_payload() + 'footer\r\n')
++        header_recipe = compute_header_recipe(
++            _collect_headers(msg), _collect_headers(orig))
++        body_recipe = compute_body_recipe(
++            _get_body_lines(msg), _get_body_lines(orig))
++        self.assertEqual(body_recipe,
++                         [{'b': [_b64(b'\xc0\xcc\xb8\xe1 line')]},
++                          {'c': [2, 2]}])
++        self.assertEqual(header_recipe['comments'],
++                         [{'c': [2, 2]}, {'d': ['two']}])
++        _assert_no_surrogates_in_json(
++            self, {'h': header_recipe, 'b': body_recipe})
++        mi2 = build_mi_header_value(
++            2, compute_header_hash(msg), compute_body_hash(msg),
++            header_recipe, body_recipe)
++        msg._headers.insert(0, ('Message-Instance',
++                                build_mi_header_value(1, h1, b1)))
++        msg._headers.insert(0, ('Message-Instance', mi2))
++        self.assertEqual(verify_message_instance(msg), (2, None))
++        self.assertEqual(undo_message_instance(msg), 2)
++        self.assertEqual(_b64(compute_header_hash(msg)), _b64(h1))
++        self.assertEqual(_b64(compute_body_hash(msg)), _b64(b1))
++        self.assertEqual(verify_message_instance(msg), (1, None))
++
++    def test_copied_raw_8bit_header_keeps_its_octets(self):
++        # A raw Latin-1 From that the Recipe copies must come back out as
++        # the same octets, not re-encoded, so the header hash still matches
++        # the wire after undo.
++        raw = (
++            b'From: Jos\xe9 <jose@example.com>\r\n'
++            b'To: list@example.com\r\n'
++            b'Comments: one\r\n'
++            b'Message-ID: <x@example.com>\r\n'
++            b'\r\n'
++            b'body\r\n'
++        )
++        msg = _msg_from_bytes(raw)
++        before = compute_header_hash(msg)
++        mi2 = build_mi_header_value(
++            2, before, compute_body_hash(msg),
++            {'from': [{'c': [1, 1]}], 'comments': [{'c': [1, 1]}]})
++        msg._headers.insert(0, ('Message-Instance', mi2))
++        self.assertEqual(undo_message_instance(msg), 2)
++        self.assertRegex(msg.as_bytes(),
++                         rb'(?i)\nfrom: Jos\xe9 <jose@example.com>\n')
++        self.assertEqual(compute_header_hash(msg), before)
++        self.assertEqual(compute_header_hash(_msg_from_bytes(msg.as_bytes())),
++                         before)
++
++    def test_legacy_bare_steps_still_apply(self):
++        # Pre-spec-06 bare [start, end] and bare string steps are accepted,
++        # under the same range rules.
++        msg = self._with_recipe(body_recipe=[[1, 1], 'legacy'])
++        self.assertEqual(undo_message_instance(msg), 2)
++        self.assertEqual(_get_body_lines(msg), ['line one', 'legacy'])
++        self._assert_rejected(
++            self._with_recipe(body_recipe=[[2, 3], [1, 1]]), 'descending')
 +
 +
 +class TestParseMIFolding(unittest.TestCase):
@@ -1673,7 +2303,7 @@ index 000000000..a24f2b574
 +    def test_draft_version_is_06(self):
 +        from mailman.handlers.message_instance import DKIM2_DRAFT, DKIM2_DATE
 +        self.assertEqual(DKIM2_DRAFT, 'ietf-dkim-dkim2-spec-06')
-+        self.assertEqual(DKIM2_DATE, '2026-09-30')
++        self.assertEqual(DKIM2_DATE, '2026-10-04')
 +
 +
 +# =====================================================================
@@ -1739,6 +2369,71 @@ index 000000000..a24f2b574
 +        as_bytes = msg.as_bytes()
 +        self.assertNotIn(b'base64', as_bytes.lower().split(b'\n\n')[1])
 +        self.assertIn(b'List Footer', as_bytes)
++
++    def test_header_hash_covers_the_wire_form_of_an_encoded_subject(self):
++        # subject_prefix stores a non-ASCII Subject as a Header object; the
++        # hash must be over what the generator emits (RFC 2047 encoded
++        # words), not str(Header), which is the decoded text.
++        raw = (
++            b'To: ant@example.com\r\n'
++            b'From: aperson@example.com\r\n'
++            b'Message-ID: <alpha>\r\n'
++            b'Subject: =?ISO-2022-JP?B?UmU6IBskQiUkJXMlLSVlJVkhPCU/QjQ2SD1gSHcbKEI=?=\r\n'
++            b'Content-Type: text/plain; charset=iso-2022-jp\r\n'
++            b'Content-Transfer-Encoding: 7bit\r\n'
++            b'\r\n'
++            b'\x1b$B%F%9%H\x1b(B\r\n'
++        )
++        msg = _msg_from_bytes(raw)
++        self._mlist.subject_prefix = '[Ant] '
++        config.handlers['subject-prefix'].process(self._mlist, msg, {})
++        self.assertNotIsInstance(msg['subject'], str)
++        wire = email.message_from_bytes(msg.as_bytes(), Message)
++        self.assertIn(b'=?iso-2022-jp?', msg.as_bytes())
++        self.assertEqual(compute_header_hash(msg), compute_header_hash(wire))
++        # And the Recipe side sees the same value the verifier will.
++        collected = dict(_collect_headers(msg))
++        self.assertEqual(collected['Subject'], str(wire['subject']))
++
++    def test_collected_header_values_are_unfolded(self):
++        # A long encoded-word Subject arrives folded; the parser keeps the
++        # fold in the value.  Recipe "d" strings MUST NOT contain CR or LF
++        # (spec-06 §5.1): a literal with a fold inside it verified in two
++        # implementations and failed in three.
++        raw = (
++            b'To: ant@example.com\r\n'
++            b'From: aperson@example.com\r\n'
++            b'Message-ID: <alpha>\r\n'
++            b'Subject: =?UTF-8?B?UmU6IEZsaW5rS2Fma2FQcm9kdWNlciDlvIDlkK9FeGNhdGx5IE9uY2U=?=\r\n'
++            b' =?UTF-8?B?5LmL5ZCOIOWIneWni+WMluS6i+WKoeeKtuaAgei2heaXtueahOmXrumimA==?=\r\n'
++            b'\r\n'
++            b'body\r\n'
++        )
++        msg = _msg_from_bytes(raw)
++        for name, value in _collect_headers(msg):
++            self.assertNotIn('\n', value, name)
++            self.assertNotIn('\r', value, name)
++        subject = dict(_collect_headers(msg))['Subject']
++        self.assertIn('?= =?UTF-8?B?', subject)
++
++    def test_header_hash_covers_the_wire_form_of_a_raw_8bit_subject(self):
++        # Raw non-UTF-8 bytes in a Subject (2003-era spam, some current
++        # senders): the prefix handler re-encodes it as unknown-8bit, and
++        # the hash must follow the bytes actually sent.
++        raw = (
++            b'To: ant@example.com\r\n'
++            b'From: aperson@example.com\r\n'
++            b'Message-ID: <alpha>\r\n'
++            b'Subject: (\xb1\xa4---\xb0\xed) \xc0\xcc\xb8\xe1 500\r\n'
++            b'Content-Type: text/plain; charset=euc-kr\r\n'
++            b'\r\n'
++            b'body\r\n'
++        )
++        msg = _msg_from_bytes(raw)
++        self._mlist.subject_prefix = '[Ant] '
++        config.handlers['subject-prefix'].process(self._mlist, msg, {})
++        wire = email.message_from_bytes(msg.as_bytes(), Message)
++        self.assertEqual(compute_header_hash(msg), compute_header_hash(wire))
 +
 +    def test_qp_preserves_original_encoding(self):
 +        raw = (

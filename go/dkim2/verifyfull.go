@@ -2,6 +2,7 @@ package dkim2
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -46,6 +47,14 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	// and verifies the target level's recorded hashes.
 	for target := highest - 1; target >= 1; target-- {
 		if err := Undo(bytes.NewReader(buf), io.Discard, target); err != nil {
+			// A Recipe that only fails against the real item counts is
+			// found here, not in parseMI; report it the way Verify reports
+			// a structurally malformed one -- the verbatim PERMERROR, as
+			// the top-level error, and the message is not accepted.
+			var mre *malformedRecipeError
+			if errors.As(err, &mre) {
+				return results, mre
+			}
 			results = append(results, VerifyResult{
 				Domain: fmt.Sprintf("MI-chain v=%d", target),
 				Error:  fmt.Errorf("MI chain validation failed: %w", err),

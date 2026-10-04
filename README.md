@@ -32,11 +32,14 @@ combinations in total.
 
 `util/negative-vectors.sh` hand-builds one cryptographically valid message
 per spec-06 PERMERROR — a duplicate hash algorithm, a duplicate
-Selector, more selectors than allowed, and malformed Recipe JSON —
-plus one positive control (the same algorithm signed twice under distinct
-Selectors, which §8.9 explicitly permits) and feeds all five through every
-verifier's real CLI entry point, asserting each negative vector is REJECTED
-and the positive control is ACCEPTED:
+Selector, more selectors than allowed, malformed Recipe JSON, an unsigned
+top instance, a wrongly-keyed `nd=` bridge, and Recipe copy ranges that are
+out of order or overlap (§5.2) — plus positive controls (the same algorithm
+signed twice under distinct Selectors, which §8.9 explicitly permits; a
+Recipe on the bottom instance; a correct bridge; and a Recipe whose `b`
+items restore non-UTF-8 octets) and feeds them all through every verifier's
+real CLI entry point, asserting each negative vector is REJECTED and each
+positive control is ACCEPTED:
 
     ./util/negative-vectors.sh
 

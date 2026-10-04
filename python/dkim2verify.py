@@ -45,6 +45,13 @@ from dkim2sign import (
     b64json,
     Source,
 )
+from dkim2undo import (
+    MalformedRecipe,
+    decode_recipes,
+    reconstruct_body,
+    reconstruct_headers,
+    validate_recipes,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +341,11 @@ def _b64decode_strict(val: str) -> bytes | None:
         return None
 
 
+def _malformed_recipe_error(m_val) -> str:
+    """§11.2-style text for a Recipe that parses as JSON but cannot be applied."""
+    return f"PERMERROR Message-Instance m={m_val} has a malformed Recipe"
+
+
 def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
     """Parse a spec-06 §7.3 h= value into (alg, header_hash, body_hash) triples.
 
@@ -386,7 +398,7 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
             )
         else:
             try:
-                json.loads(r_bytes)
+                recipes = json.loads(r_bytes)
             except ValueError:
                 # json.JSONDecodeError, and UnicodeDecodeError for a payload
                 # that is not valid UTF-8 (a Perl producer writes Recipe
@@ -396,6 +408,18 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
                 errors.append(
                     f"PERMERROR Message-Instance m={m_val} contains invalid JSON"
                 )
+            else:
+                # Valid JSON that is not a well-formed Recipe (§5: a "c"
+                # that is not two integers, not 1 <= start <= end, or that
+                # does not ascend past the previous "c"; a "b" that is not
+                # base64; a literal carrying CR or LF) is a third, distinct
+                # failure. This is the message-independent part; the
+                # per-list upper bound is checked where the Recipe is
+                # applied (full-chain undo) and reported under the same text.
+                try:
+                    validate_recipes(recipes)
+                except MalformedRecipe:
+                    errors.append(_malformed_recipe_error(m_val))
 
     h_tag = _extract_tag(value, "h")
     if not h_tag:
@@ -841,8 +865,6 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         return _make_result(all_errors, top_sig_i, top_domain)
 
     # Full chain validation: walk backwards through MI versions
-    from dkim2undo import decode_recipes, reconstruct_headers, reconstruct_body
-
     mi_by_version = {}
     for mi_hdr in mi_headers:
         v = _get_version_from_mi(mi_hdr)
@@ -924,6 +946,21 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                     all_errors.append(
                         f"v={version}: header recipe is null: not permitted"
                     )
+                # A Recipe that cannot be applied (§5: a "c" range past the
+                # items present, or any structural fault the hash check
+                # above already named) is the §11.2 malformed-Recipe
+                # PERMERROR; verify_message_instance() may have reported
+                # the structural part already, so don't list it twice. The
+                # reconstruction stops here: the lower instances cannot be
+                # checked against a state we could not rebuild.
+                def _malformed(e):
+                    msg = _malformed_recipe_error(version)
+                    if msg not in all_errors:
+                        all_errors.append(msg)
+                    if verbose:
+                        print(f"  Malformed Recipe in m={version}: {e}",
+                              file=sys.stderr)
+
                 h_recipes = recipes.get("h")
                 if h_recipes and isinstance(h_recipes, dict) and len(h_recipes) > 0:
                     try:
@@ -933,6 +970,9 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                         if verbose:
                             print(f"  Undid header recipes for v={version}",
                                   file=sys.stderr)
+                    except MalformedRecipe as e:
+                        _malformed(e)
+                        break
                     except ValueError as e:
                         all_errors.append(
                             f"v={version}: failed to undo header recipes: {e}"
@@ -947,6 +987,9 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                         if verbose:
                             print(f"  Undid body recipes for v={version}",
                                   file=sys.stderr)
+                    except MalformedRecipe as e:
+                        _malformed(e)
+                        break
                     except ValueError as e:
                         all_errors.append(
                             f"v={version}: failed to undo body recipes: {e}"

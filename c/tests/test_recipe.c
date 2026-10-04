@@ -153,6 +153,212 @@ int main(void) {
     for (int i = 0; i < n_multi; i++) free(red[i]);
     free(red);
 
+    /* ---- "c" range ordering (spec-06 §5.1, extended to body lists) and
+       end-of-list bounds. Each start must exceed the previous end; an end
+       past the last item is a rejection, not a clamp. ---- */
+    {
+        const char *b3 = "L1\r\nL2\r\nL3\r\n";
+        size_t n;
+        /* descending */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[3,3]},{\"c\":[1,1]}]}", b3, strlen(b3), &n) == NULL);
+        /* overlapping */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[1,2]},{\"c\":[2,3]}]}", b3, strlen(b3), &n) == NULL);
+        /* same range twice */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[1,3]},{\"c\":[1,3]}]}", b3, strlen(b3), &n) == NULL);
+        /* end beyond count (used to be silently clamped) */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[1,4]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[4,4]}]}", b3, strlen(b3), &n) == NULL);
+        /* ascending with a literal between is fine, and the literal does not
+           reset the ordering constraint */
+        char *r = dkim2_apply_body_recipe("{\"b\":[{\"c\":[1,1]},{\"d\":[\"x\"]},{\"c\":[3,3]}]}", b3, strlen(b3), &n);
+        assert(r && n == 11 && memcmp(r, "L1\r\nx\r\nL3\r\n", n) == 0);
+        free(r);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[2,2]},{\"d\":[\"x\"]},{\"c\":[1,1]}]}", b3, strlen(b3), &n) == NULL);
+
+        char *hdrs3[] = { "X: top\r\n", "X: mid\r\n", "X: bot\r\n" };   /* bot = 1, top = 3 */
+        int n_out;
+        assert(dkim2_apply_header_recipe("{\"h\":{\"x\":[{\"c\":[2,2]},{\"c\":[1,1]}]}}", hdrs3, 3, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"x\":[{\"c\":[1,2]},{\"c\":[2,3]}]}}", hdrs3, 3, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"x\":[{\"c\":[1,4]}]}}", hdrs3, 3, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"x\":[{\"c\":[0,1]}]}}", hdrs3, 3, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"x\":[{\"c\":[1,\"2\"]}]}}", hdrs3, 3, &n_out) == NULL);
+        /* a field with no instances: any copy is out of range */
+        assert(dkim2_apply_header_recipe("{\"h\":{\"absent\":[{\"c\":[1,1]}]}}", hdrs3, 3, &n_out) == NULL);
+        /* and a legal reorder-free selection works: keep 1 and 3, drop 2 */
+        char **ok = dkim2_apply_header_recipe("{\"h\":{\"x\":[{\"c\":[1,1]},{\"c\":[3,3]}]}}", hdrs3, 3, &n_out);
+        assert(ok && n_out == 2);
+        assert(strcmp(ok[0], "X: top\r\n") == 0 && strcmp(ok[1], "X: bot\r\n") == 0);
+        for (int i = 0; i < n_out; i++) free(ok[i]);
+        free(ok);
+    }
+
+    /* ---- "b" steps: base64 literals carrying raw octets ---- */
+    {
+        const char *b3 = "L1\r\nL2\r\nL3\r\n";
+        size_t n;
+        /* "\xb1\xa4" = saQ=   "caf\xe9" = Y2Fm6Q== */
+        char *r = dkim2_apply_body_recipe(
+            "{\"b\":[{\"c\":[1,1]},{\"b\":[\"saQ=\",\"Y2Fm6Q==\"]},{\"c\":[3,3]}]}",
+            b3, strlen(b3), &n);
+        const char want[] = "L1\r\n\xb1\xa4\r\ncaf\xe9\r\nL3\r\n";
+        assert(r != NULL);
+        assert(n == sizeof want - 1);
+        assert(memcmp(r, want, n) == 0);
+        free(r);
+
+        /* an empty "b" item is an empty line, like an empty "d" string */
+        r = dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"\"]}]}", b3, strlen(b3), &n);
+        assert(r && n == 2 && memcmp(r, "\r\n", 2) == 0);
+        free(r);
+
+        /* rejections: not base64; whitespace inside; URL-safe alphabet;
+           trailing junk after padding; decoded CR; decoded LF; non-string */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"c@f=\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"sa Q=\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"sa-_\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"saQ=x\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"YQ1i\"]}]}", b3, strlen(b3), &n) == NULL);  /* a\rb */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"YQpi\"]}]}", b3, strlen(b3), &n) == NULL);  /* a\nb */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"YQ0K\"]}]}", b3, strlen(b3), &n) == NULL);  /* a\r\n */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[1]}]}", b3, strlen(b3), &n) == NULL);
+
+        /* header side: same bytes come back inside the field value */
+        char *hdrs1[] = { "Subject: plain\r\n" };
+        int n_out;
+        char **hh = dkim2_apply_header_recipe(
+            "{\"h\":{\"subject\":[{\"b\":[\"Y2Fm6Q==\"]},{\"d\":[\"ascii\"]},{\"b\":[\"saQ=\"]}]}}",
+            hdrs1, 1, &n_out);
+        assert(hh != NULL && n_out == 3);
+        /* new values are bottom-up, so they land top-down reversed */
+        assert(strcmp(hh[0], "subject: \xb1\xa4\r\n") == 0);
+        assert(strcmp(hh[1], "subject: ascii\r\n") == 0);
+        assert(strcmp(hh[2], "subject: caf\xe9\r\n") == 0);
+        for (int i = 0; i < n_out; i++) free(hh[i]);
+        free(hh);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[\"YQ1i\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[\"YQpi\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[\"!!\"]}]}}", hdrs1, 1, &n_out) == NULL);
+    }
+
+    /* ---- generation: 8-bit literals become "b" items, JSON stays 7-bit,
+       and the result round-trips through apply ---- */
+    {
+        const char *old_b = "Line1\r\nLine2\r\nLine3\r\n";
+        const char *new_b = "Line1\r\nLine2\r\ncaf\xe9\r\nascii\r\n\xb1\xa4\r\n";
+        int imp = 0;
+        char *rc = dkim2_gen_body_recipe(old_b, strlen(old_b), new_b, strlen(new_b), &imp);
+        assert(rc && imp == 0);
+        for (const char *p = rc; *p; p++) assert((unsigned char)*p < 0x80);
+        assert(strstr(rc, "\"b\":[\"Y2Fm6Q==\"]") != NULL);
+        assert(strstr(rc, "\"d\":[\"ascii\"]") != NULL);
+        assert(strstr(rc, "\"b\":[\"saQ=\"]") != NULL);
+        size_t n;
+        char *r = dkim2_apply_body_recipe(rc, old_b, strlen(old_b), &n);
+        assert(r && n == strlen(new_b) && memcmp(r, new_b, n) == 0);
+        free(r);
+        free(rc);
+
+        /* consecutive 8-bit lines coalesce into one "b" step */
+        const char *new_b2 = "caf\xe9\r\nth\xe9\r\n";
+        rc = dkim2_gen_body_recipe(old_b, strlen(old_b), new_b2, strlen(new_b2), &imp);
+        assert(rc && strstr(rc, "{\"b\":[{\"b\":[\"Y2Fm6Q==\",\"dGjp\"]}]}") != NULL);
+        free(rc);
+
+        /* header: an 8-bit value is a "b" item and applies back to the bytes */
+        char *new_hdr[] = { "Subject: caf\xe9\r\n" };
+        char *hr = dkim2_gen_header_recipe("Subject", NULL, 0, new_hdr, 1);
+        assert(hr != NULL);
+        for (const char *p = hr; *p; p++) assert((unsigned char)*p < 0x80);
+        assert(strcmp(hr, "{\"h\":{\"subject\":[{\"b\":[\"Y2Fm6Q==\"]}]}}") == 0);
+        int n_out;
+        char **hh = dkim2_apply_header_recipe(hr, NULL, 0, &n_out);
+        assert(hh && n_out == 1 && strcmp(hh[0], "subject: caf\xe9\r\n") == 0);
+        free(hh[0]); free(hh); free(hr);
+
+        /* a folded 8-bit value is emitted unfolded (no CR/LF in the literal),
+           so what we generate is something our own apply will accept */
+        char *folded[] = { "Subject: caf\xe9\r\n th\xe9\r\n" };
+        hr = dkim2_gen_header_recipe("Subject", NULL, 0, folded, 1);
+        assert(hr != NULL);
+        hh = dkim2_apply_header_recipe(hr, NULL, 0, &n_out);
+        assert(hh && n_out == 1 && strcmp(hh[0], "subject: caf\xe9 th\xe9\r\n") == 0);
+        free(hh[0]); free(hh); free(hr);
+    }
+
+    /* ---- generation: reordered duplicate headers never produce a copy
+       range that goes backwards; the displaced instance is a literal ---- */
+    {
+        /* bottom-up arrays: old = [A(1), B(2)], new = [B, A] */
+        char *old_f[] = { "X: A\r\n", "X: B\r\n" };
+        char *new_f[] = { "X: B\r\n", "X: A\r\n" };
+        char *hr = dkim2_gen_header_recipe("X", old_f, 2, new_f, 2);
+        assert(hr != NULL);
+        assert(strcmp(hr, "{\"h\":{\"x\":[{\"c\":[2,2]},{\"d\":[\"A\"]}]}}") == 0);
+        /* message top-down is B then A; after the Recipe it must be A then B */
+        char *msg[] = { "X: B\r\n", "X: A\r\n" };
+        int n_out;
+        char **hh = dkim2_apply_header_recipe(hr, msg, 2, &n_out);
+        assert(hh && n_out == 2);
+        assert(strcmp(hh[0], "x: A\r\n") == 0 && strcmp(hh[1], "X: B\r\n") == 0);
+        free(hh[0]); free(hh[1]); free(hh); free(hr);
+
+        /* the same instance repeated: second occurrence must not re-copy */
+        char *old_1[] = { "X: A\r\n" };
+        char *new_dup[] = { "X: A\r\n", "X: A\r\n" };
+        hr = dkim2_gen_header_recipe("X", old_1, 1, new_dup, 2);
+        assert(hr && strcmp(hr, "{\"h\":{\"x\":[{\"c\":[1,1]},{\"d\":[\"A\"]}]}}") == 0);
+        char *msg1[] = { "X: A\r\n" };
+        hh = dkim2_apply_header_recipe(hr, msg1, 1, &n_out);
+        assert(hh && n_out == 2);
+        free(hh[0]); free(hh[1]); free(hh); free(hr);
+
+        /* body: a block duplicated in the new body gets copied once, then
+           emitted literally, so the generated Recipe is accepted by apply */
+        const char *old_b = "a\r\nb\r\nc\r\n";
+        const char *new_b = "a\r\nb\r\nc\r\na\r\nb\r\nc\r\n";
+        int imp = 0;
+        char *rc = dkim2_gen_body_recipe(old_b, strlen(old_b), new_b, strlen(new_b), &imp);
+        assert(rc && imp == 0);
+        assert(strcmp(rc, "{\"b\":[{\"c\":[1,3]},{\"d\":[\"a\",\"b\",\"c\"]}]}") == 0);
+        size_t n;
+        char *r = dkim2_apply_body_recipe(rc, old_b, strlen(old_b), &n);
+        assert(r && n == strlen(new_b) && memcmp(r, new_b, n) == 0);
+        free(r); free(rc);
+    }
+
+    /* ---- cross-implementation alignment: CR/LF in "d", canonical base64
+       padding in "b", and empty literal arrays are all malformed ---- */
+    {
+        const char *b3 = "L1\r\nL2\r\nL3\r\n";
+        char *hdrs1[] = { "Subject: plain\r\n" };
+        size_t n;
+        int n_out;
+        /* (1) "d" item containing CR or LF */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"d\":[\"a\\rb\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"d\":[\"a\\nb\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"d\":[\"ok\",\"a\\r\\n\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"d\":[\"a\\rb\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"d\":[\"a\\nb\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        /* (2) "b" must be canonical padded base64: "QUI" rejected, "QUI=" ok */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"QUI\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"QQ\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"QUJD=\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[\"QUI\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        char *r = dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"QUI=\",\"QQ==\",\"QUJD\"]}]}", b3, strlen(b3), &n);
+        assert(r && n == 12 && memcmp(r, "AB\r\nA\r\nABC\r\n", n) == 0);
+        free(r);
+        /* (3) empty "d" or "b" array (schema minItems 1) */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"d\":[]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[1,1]},{\"d\":[]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"d\":[]}]}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[]}]}}", hdrs1, 1, &n_out) == NULL);
+        /* an empty step LIST is still the legal "remove all instances" */
+        char **ok = dkim2_apply_header_recipe("{\"h\":{\"subject\":[]}}", hdrs1, 1, &n_out);
+        assert(ok && n_out == 0);
+        free(ok);
+    }
+
     puts("recipe: all tests passed");
     return 0;
 }
