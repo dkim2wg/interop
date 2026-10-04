@@ -89,6 +89,7 @@ t/outbound-header-set.t
 t/pod-coverage.t
 t/pod.t
 t/recipe-base64.t
+t/recipe-empty-header.t
 t/recipe-integers.t
 t/recipe-lowercase.t
 t/recipe-order.t

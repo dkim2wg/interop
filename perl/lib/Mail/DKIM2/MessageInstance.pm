@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.12';
+our $VERSION = '0.13';
 
 
 use Crypt::Digest::SHA256;
@@ -827,7 +827,11 @@ sub calculate {
         next if should_skip($h, $prefixes);
         my @cur  = reverse $current->header_raw($h);
         my @prev = reverse $previous->header_raw($h);
-        next if join("\n", map { dkim2_canonicalize_header($_) } @cur)
+        # Same number of instances AND the same values: zero instances and
+        # one empty instance both join to "", and removing an empty field
+        # (a bare "Bcc:") is still a change the Recipe must record.
+        next if @cur == @prev
+             && join("\n", map { dkim2_canonicalize_header($_) } @cur)
              eq join("\n", map { dkim2_canonicalize_header($_) } @prev);
         # headers are indexed from 1 from the bottom up
         my %known;

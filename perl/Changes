@@ -1,5 +1,11 @@
 Revision history for Mail::DKIM2
 
+0.13    2026-10-04
+        - The header Recipe builder treated "no instances" and "one empty
+          instance" of a field as the same, so removing an empty header
+          (a bare "Bcc:", which Sympa's egress now removes) went unrecorded
+          and the Message-Instance did not verify. (t/recipe-empty-header.t)
+
 0.12    2026-10-04
         - undo() rebuilt a base64 or quoted-printable body encoded twice:
           Recipes work on wire lines, so the rebuilt body is already in its
