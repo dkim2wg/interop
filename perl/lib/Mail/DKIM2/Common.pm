@@ -52,7 +52,7 @@ our @EXPORT_OK = qw(
 # emit, not only on a spec bump. See ../spec/draft-gondwana-dkim2-debug-header.
 use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-06';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE  => '2026-10-02';
+use constant DKIM2_DATE  => '2026-10-04';
 
 # Local policy, not spec-06: a message carrying more Message-Instance or
 # DKIM2-Signature fields than this is a PERMERROR, found before any key is

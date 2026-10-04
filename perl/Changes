@@ -9,6 +9,10 @@ Revision history for Mail::DKIM2
           refused to sign it -- 17 of 88 charset-corpus samples through
           Mailman, while the Python undo rebuilt them byte for byte. The
           body is now set as raw octets. (t/undo-encoded-body.t)
+        - DKIM2_DATE is 2026-10-04: the Message-Instance headers this
+          library emits changed shape in 0.11 ("b" literals, integer copy
+          ranges), and the X-DKIM2-Info date stamp follows emitted-header
+          changes.
 
 0.11    2026-10-04
         Fixes found by replaying public-archive mail in assorted charsets
