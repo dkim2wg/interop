@@ -42,15 +42,15 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
  DKIM2-MESSAGE-INSTANCE.md                | 334 ++++++++++
  Makefile.am                              |   1 +
- src/lib/Sympa/Message.pm                 | 168 +++++-
+ src/lib/Sympa/Message.pm                 | 177 +++++-
  src/lib/Sympa/Spindle/ProcessIncoming.pm |  10 +
  src/lib/Sympa/Spindle/ProcessOutgoing.pm |  12 +
  src/lib/Sympa/Spindle/ResendArchive.pm   |  15 +
  src/lib/Sympa/Spindle/ToList.pm          |   7 +-
  src/lib/Sympa/Spindle/ToMailer.pm        |   7 +
  src/lib/Sympa/Spool/Outgoing.pm          |  40 ++
- t/Message_DKIM2.t                        | 737 +++++++++++++++++++++++
- 10 files changed, 1328 insertions(+), 3 deletions(-)
+ t/Message_DKIM2.t                        | 768 +++++++++++++++++++++++
+ 10 files changed, 1368 insertions(+), 3 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 t/Message_DKIM2.t
 
@@ -407,7 +407,7 @@ index 87dc1a471..3d1f3f577 100644
  	t/Message_urlize.t \
  	t/Regexps.t \
 diff --git a/src/lib/Sympa/Message.pm b/src/lib/Sympa/Message.pm
-index 822606d5b..89672515b 100644
+index 822606d5b..0b7cde27a 100644
 --- a/src/lib/Sympa/Message.pm
 +++ b/src/lib/Sympa/Message.pm
 @@ -406,6 +406,14 @@ sub add_header {
@@ -425,7 +425,7 @@ index 822606d5b..89672515b 100644
  sub delete_header {
      my $self = shift;
      $self->{_head}->delete(@_);
-@@ -452,6 +460,146 @@ BEGIN {
+@@ -452,6 +460,155 @@ BEGIN {
      eval 'use Mail::DKIM::TextWrap';    # This doesn't export $VERSION.
  }
  
@@ -496,6 +496,15 @@ index 822606d5b..89672515b 100644
 +    }
 +    eval { require Mail::DKIM::TextWrap };
 +    eval { require Email::MIME };
++
++    # Bcc and Resent-Bcc are signed header fields that subscribers must not
++    # see.  The MTA would strip them after this instance was computed
++    # (Postfix's default message_drop_headers), leaving it describing
++    # headers the recipient never gets; a DKIM2 host keeps them on
++    # forwarded mail instead (see the Postfix list-host guide), so remove
++    # them here, where the Recipe records the change and an upstream
++    # verifier can undo it.
++    $self->delete_header($_) for qw(Bcc Resent-Bcc);
 +
 +    my $msg_current = $self->as_rfc822_string;
 +
@@ -572,7 +581,7 @@ index 822606d5b..89672515b 100644
  # Old name: tools::dkim_sign() which took string and returned string.
  sub dkim_sign {
      $log->syslog('debug', '(%s)', @_);
-@@ -928,6 +1076,24 @@ sub body_as_string {
+@@ -928,6 +1085,24 @@ sub body_as_string {
      return $self->{_body};
  }
  
@@ -597,7 +606,7 @@ index 822606d5b..89672515b 100644
  sub header_as_string {
      my $self = shift;
      return $self->{_head}->as_string;
-@@ -2254,7 +2420,7 @@ sub _append_footer_header_to_part {
+@@ -2254,7 +2429,7 @@ sub _append_footer_header_to_part {
      # original body lines remain byte-identical.  This preserves the
      # original sender's QP choices (e.g. unnecessarily-quoted characters,
      # non-standard soft line break positions) and produces compact
@@ -786,10 +795,10 @@ index 1f444000e..94a5f45f0 100644
              'err',
 diff --git a/t/Message_DKIM2.t b/t/Message_DKIM2.t
 new file mode 100644
-index 000000000..2ffc968f5
+index 000000000..5c3a9e499
 --- /dev/null
 +++ b/t/Message_DKIM2.t
-@@ -0,0 +1,737 @@
+@@ -0,0 +1,768 @@
 +# -*- indent-tabs-mode: nil; -*-
 +# vim:ft=perl:et:sw=4
 +
@@ -1524,6 +1533,37 @@ index 000000000..2ffc968f5
 +        ok scalar(@ranges) >= 1,
 +            'body Recipe has copy ranges (not all literals)';
 +    }
++};
++
++# ===================================================================
++# Bcc and Resent-Bcc: removed at egress, and the Recipe says so
++# ===================================================================
++subtest 'egress removes Bcc and Resent-Bcc and records it' => sub {
++    my $msg = Sympa::Message->new(
++        build_message(extra_headers =>
++            "Bcc: secret\@example.org\nResent-Bcc: hidden\@example.org\n"),
++        context => '*');
++    $msg->add_message_instance_ingress;
++    my $mi_original = $msg->{mi_original};
++    like $mi_original, qr/^Bcc: secret\@example\.org/m, 'm=1 snapshot has the Bcc';
++
++    $msg->add_header('List-Id', '<test.mail.example.org>');
++    ok $msg->add_message_instance_egress($mi_original), 'egress succeeded';
++
++    my $rfc822 = $msg->as_rfc822_string;
++    unlike $rfc822, qr/^(?:Resent-)?Bcc:/mi, 'no Bcc or Resent-Bcc goes out';
++
++    my ($version, $error) = Mail::DKIM2::MessageInstance->verify($rfc822);
++    is $version, 2, 'm=2 describes the message as sent';
++    is $error, undef, 'no verification error';
++
++    my $prev = Mail::DKIM2::MessageInstance->undo($rfc822);
++    ok $prev, 'undo succeeded';
++    my $prev_text = ref $prev ? $prev->as_string : $prev;
++    like $prev_text, qr/^Bcc: secret\@example\.org/mi, 'undo restores Bcc';
++    like $prev_text, qr/^Resent-Bcc: hidden\@example\.org/mi, 'undo restores Resent-Bcc';
++    my ($pv, $pe) = Mail::DKIM2::MessageInstance->verify($prev);
++    is $pv, 1, 'undone message verifies as m=1';
 +};
 +
 +done_testing();

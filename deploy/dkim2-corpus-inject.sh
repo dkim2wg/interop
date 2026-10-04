@@ -48,6 +48,11 @@ SYMPA_LIST=dkim2corpus@sympa.dkim2.com
 REST=http://localhost:8001/3.1
 RESTAUTH=restadmin:dkim2demo
 
+# One run at a time: every run empties and then collects the one shared
+# capture Maildir, so two concurrent runs spoil each other's results.
+exec 9>/run/lock/dkim2-corpus-inject.lock
+flock -n 9 || { echo "   ABORT: another corpus inject is running"; exit 3; }
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 RUN=$(date +%s)

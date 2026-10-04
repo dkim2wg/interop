@@ -21,7 +21,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  2 files changed, 68 insertions(+), 9 deletions(-)
 
 diff --git a/src/lib/Sympa/Message.pm b/src/lib/Sympa/Message.pm
-index 89672515b..93355cf0c 100644
+index 0b7cde27a..d77c4299f 100644
 --- a/src/lib/Sympa/Message.pm
 +++ b/src/lib/Sympa/Message.pm
 @@ -463,16 +463,48 @@ BEGIN {
@@ -29,7 +29,7 @@ index 89672515b..93355cf0c 100644
  use constant DKIM2_DRAFT    => 'ietf-dkim-dkim2-spec-06';
  use constant DKIM2_REPO     => 'github.com/brong/sympa';
 -use constant DKIM2_DATE     => '2026-08-28';
-+use constant DKIM2_DATE     => '2026-09-30';
++use constant DKIM2_DATE     => '2026-10-04';
  use constant DKIM2_SOFTWARE => 'sympa';
  
 +# X-DKIM2-Info value per draft-gondwana-dkim2-debug-header-01: a tag-list in
@@ -94,7 +94,7 @@ index 89672515b..93355cf0c 100644
  
      # Store the original message (with MI m=1 now added) for later
      # diffing at egress.
-@@ -571,8 +607,12 @@ sub add_message_instance_egress {
+@@ -580,8 +616,12 @@ sub add_message_instance_egress {
  
      my $mi_value = _fold_mi_header($mi->as_string);
      my $version = $mi->get_tag('m');
@@ -109,7 +109,7 @@ index 89672515b..93355cf0c 100644
      $log->syslog('debug2', 'Added Message-Instance m=%s', $version);
      return 1;
 diff --git a/t/Message_DKIM2.t b/t/Message_DKIM2.t
-index 2ffc968f5..e6a277d39 100644
+index 5c3a9e499..b1870acee 100644
 --- a/t/Message_DKIM2.t
 +++ b/t/Message_DKIM2.t
 @@ -109,6 +109,20 @@ subtest 'MI v=1 on plain message' => sub {
