@@ -141,23 +141,25 @@ charsets through a test list (interop util/charset-corpus.sh):
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- DKIM2-MESSAGE-INSTANCE.md                     |  262 ++
+ DKIM2-MESSAGE-INSTANCE.md                     |  268 ++
  src/mailman/handlers/decorate.py              |  129 +
  src/mailman/handlers/dmarc.py                 |    2 +
- src/mailman/handlers/message_instance.py      | 1410 ++++++++++
+ src/mailman/handlers/message_instance.py      | 1090 ++++++++
  src/mailman/handlers/mime_delete.py           |    3 +
- .../handlers/tests/test_message_instance.py   | 2267 +++++++++++++++++
+ src/mailman/handlers/tests/mi_support.py      |  317 +++
+ .../handlers/tests/test_message_instance.py   | 2306 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
- .../handlers/tests/test_mi_roundtrip.py       |  241 ++
+ .../handlers/tests/test_mi_roundtrip.py       |  152 ++
  src/mailman/handlers/to_archive.py            |    7 +-
  src/mailman/handlers/to_usenet.py             |    8 +-
  src/mailman/mta/bulk.py                       |    5 +-
  src/mailman/mta/deliver.py                    |    5 +-
  src/mailman/mta/message_instance.py           |   31 +
  src/mailman/pipelines/builtin.py              |    2 +
- 14 files changed, 4400 insertions(+), 6 deletions(-)
+ 15 files changed, 4353 insertions(+), 6 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
+ create mode 100644 src/mailman/handlers/tests/mi_support.py
  create mode 100644 src/mailman/handlers/tests/test_message_instance.py
  create mode 100644 src/mailman/handlers/tests/test_mi_null_recipe.py
  create mode 100644 src/mailman/handlers/tests/test_mi_roundtrip.py
@@ -165,10 +167,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..2f36a977d
+index 000000000..6752b1848
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,268 @@
 +# DKIM2 Message-Instance Support
 +
 +This documents the changes that add DKIM2 Message-Instance header support
@@ -249,15 +251,17 @@ index 000000000..2f36a977d
 +  stamp, a repaired `Message-ID`) goes into the egress Recipe.  If the
 +  instance does not verify against those octets, that is logged as a
 +  warning: the chain may not undo cleanly.
-+- Only when there are no received octets (a message queued by an older
-+  Mailman, or one injected internally) does Mailman work out from the
-+  parsed message which state the instance describes, using verification
-+  as the oracle.  If it verifies against the current message, that is
-+  the baseline.  If it only verifies once the `Message-ID-Hash` that
-+  Mailman's message store stamps on arrival is removed, the unstamped
-+  message is the baseline, so the egress Recipe records the stamp as a
-+  reversible change.  A `Message-ID-Hash` that was part of the signed
-+  instance is left alone.  Anything else is logged as a warning.
++- When there are no received octets (`mailman inject`, a message
++  posted through REST or made internally, or one queued by an older
++  Mailman) the baseline is the parsed message with the
++  `Message-ID-Hash` Mailman stamps on it removed, whether or not it
++  carries an instance: the stamp is not part of the message as
++  received, so `m=1` leaves it out, as it does for the LMTP runner's
++  octets, and the egress Recipe records it.  An existing instance that
++  does not verify against that baseline is logged as a warning, as
++  above.  (A sender that put its own `Message-ID-Hash` under its
++  instance and reached Mailman this way gets that warning: Mailman
++  replaces the field.)
 +- In every case the baseline is kept as `msg.original_bytes` (which the
 +  queue pickles with the message) for Recipe computation at egress.
 +  Only the two hashes and the instance number go into
@@ -325,16 +329,21 @@ index 000000000..2f36a977d
 +### New
 +
 +- `src/mailman/handlers/message_instance.py`: hash computation, Recipe
-+  computation, header building, parsing, verify and undo, and the
-+  ingress and egress handlers.
++  computation, header building, parsing, the hash check of an inbound
++  instance, and the ingress and egress handlers.  Mailman never undoes
++  a Recipe, so verifying and undoing a parsed message lives with the
++  tests.
 +- `src/mailman/mta/message_instance.py`: the delivery mixin, following
 +  the `ARCSigningMixin` pattern.
 +- `src/mailman/handlers/tests/test_message_instance.py`: hashing against
 +  interop vectors, Recipe shapes, folding and unfolding, the DKIM2 wrap,
 +  the null body Recipe, and full ingress/decorate/egress/undo round
 +  trips for 7bit, 8bit, quoted-printable, base64 and multipart bodies.
++- `src/mailman/handlers/tests/mi_support.py`: verify and undo of a
++  parsed message (Recipe validation and application, spec-06 §5), as a
++  downstream verifier does them, for the tests.
 +- `src/mailman/handlers/tests/test_mi_roundtrip.py`: round trips through
-+  the real list transformations, including the milter-then-stamp seam.
++  the real list transformations.
 +- `src/mailman/handlers/tests/test_mi_null_recipe.py`: a body-only
 +  change produces no header Recipe rather than a null one.
 +
@@ -424,9 +433,8 @@ index 000000000..2f36a977d
 +## Code structure
 +
 +`message_instance.py` keeps the library-grade code (canonicalisation,
-+hashing, Recipe computation, header building, folding and parsing,
-+verify and undo) free of Mailman imports and operating on
-+`email.message.Message`, with the Mailman-specific glue (config check,
++hashing, Recipe computation, header building, folding and parsing) free
++of Mailman imports and operating on `email.message.Message`, with the Mailman-specific glue (config check,
 +pipeline handlers) below it.  When a standalone Python
 +DKIM2 library exists, the first part can move there and the handlers
 +become a thin wrapper, as Sympa's implementation does by delegating to
@@ -605,10 +613,10 @@ index fbcd4bd39..a75adc50d 100644
  
 diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
 new file mode 100644
-index 000000000..f5614efa8
+index 000000000..82310f4ae
 --- /dev/null
 +++ b/src/mailman/handlers/message_instance.py
-@@ -0,0 +1,1410 @@
+@@ -0,0 +1,1090 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -636,7 +644,6 @@ index 000000000..f5614efa8
 +
 +import base64
 +import copy
-+import email
 +import hashlib
 +import json
 +import logging
@@ -649,7 +656,6 @@ index 000000000..f5614efa8
 +from lazr.config import as_boolean
 +from mailman.config import config
 +from mailman.core.i18n import _
-+from mailman.email.message import Message
 +from mailman.interfaces.handler import IHandler
 +from public import public
 +from zope.interface import implementer
@@ -896,9 +902,8 @@ index 000000000..f5614efa8
 +#
 +#   _serialize_msg(msg)  the PARSED view, as_bytes() CRLF-normalized: the
 +#                        stand-in for the octets a parsed message arrived
-+#                        as.  verify_message_instance, undo_message_instance
-+#                        and the ingress fallback (no received octets) judge
-+#                        an inbound or undone message by it.
++#                        as, which the ingress fallback (no received octets)
++#                        takes the snapshot from.
 +#   _wire_bytes(msg)     the OUTGOING view: what smtplib will send.  Only
 +#                        the hashes and lines of the instance Mailman adds
 +#                        for the message it sends (egress m=N+1, originator
@@ -954,27 +959,6 @@ index 000000000..f5614efa8
 +    return _normalize_crlf(msg.as_bytes())
 +
 +
-+def _get_raw_body(msg):
-+    """Get the raw body bytes from a message (everything after headers)."""
-+    raw = _serialize_msg(msg)
-+    sep = b'\r\n\r\n'
-+    idx = raw.find(sep)
-+    if idx == -1:
-+        return b''
-+    return raw[idx + len(sep):]
-+
-+
-+@public
-+def compute_body_hash(msg):
-+    """Compute SHA-256 body hash per DKIM2 spec-06 §6.1.
-+
-+    Uses simple body canonicalization: strip trailing empty lines,
-+    ensure body ends with exactly one CRLF.
-+    Returns raw SHA-256 digest bytes.
-+    """
-+    return _hash_body_bytes(_get_raw_body(msg))
-+
-+
 +def _hash_body_bytes(body, start=0):
 +    """SHA-256 body hash (spec-06 §6.1) of body[start:]: trailing empty
 +    lines ignored, one CRLF at the end.  Hashed in place, not sliced: the
@@ -991,30 +975,6 @@ index 000000000..f5614efa8
 +    while end - start >= 2 and raw.endswith(b'\r\n', start, end):
 +        end -= 2
 +    return end
-+
-+
-+# ---------------------------------------------------------------------------
-+# Body line extraction (for Recipe computation)
-+# ---------------------------------------------------------------------------
-+
-+def _get_body_lines(msg):
-+    """Get the body as a list of line strings (without line endings).
-+
-+    Uses the CRLF-normalized raw body.  Trailing empty lines are not
-+    lines: the §6.1 body canonicalization ignores them, so they are not
-+    part of what a Recipe has to rebuild, and a Recipe must never number
-+    or restore one.  Counting a trailing empty line here made the Recipe
-+    copy "lines N-N+1 of N" for a body that ended in a blank line, which
-+    every other implementation rejects.
-+    """
-+    body = _get_raw_body(msg)
-+    # Normalize to LF for splitting
-+    body_str = body.replace(b'\r\n', b'\n').replace(
-+        b'\r', b'\n').decode('utf-8', errors='surrogateescape')
-+    body_str = body_str.rstrip('\n')
-+    if not body_str:
-+        return []
-+    return body_str.split('\n')
 +
 +
 +# ---------------------------------------------------------------------------
@@ -1101,8 +1061,9 @@ index 000000000..f5614efa8
 +
 +
 +def _body_lines_raw(raw):
-+    """Body lines of the raw octets, as _get_body_lines gives them for a
-+    message: trailing empty lines are not lines."""
++    """Body lines of the raw octets.  Trailing empty lines are not lines:
++    the spec-06 §6.1 body canonicalization ignores them, so a Recipe must
++    never number or restore one."""
 +    body = _split_raw(raw)[1].decode('utf-8', errors='surrogateescape')
 +    body = body.rstrip('\r\n')
 +    if not body:
@@ -1495,8 +1456,7 @@ index 000000000..f5614efa8
 +                'h': [parts[0], parts[1]],
 +                'b': [parts[0], parts[2]],
 +            }
-+    # Parse r= tag: base64-encoded JSON.  The JSON is returned as decoded;
-+    # _compile_recipe checks it against spec-06 §5.
++    # Parse r= tag: base64-encoded JSON, returned as decoded.
 +    r_match = re.search(r'r=([A-Za-z0-9+/=\s]+)', val)
 +    if r_match:
 +        b64_clean = re.sub(r'\s', '', r_match.group(1))
@@ -1507,29 +1467,370 @@ index 000000000..f5614efa8
 +    return version, hashes, recipe
 +
 +
++@public
++class MalformedRecipe(ValueError):
++    """A Message-Instance Recipe that cannot be applied (spec-06 §5).
++
++    _parse_mi raises it for an r= that is not base64 JSON; verify_mi_raw
++    reports that as an instance that does not verify.
++    """
++
++
++# ---------------------------------------------------------------------------
++# Snapshot helpers
++# ---------------------------------------------------------------------------
++
++# Mailman stamps Message-ID-Hash onto the message (the LMTP runner after
++# keeping the received octets, `mailman inject` before the pipeline), so the
++# message as received does not include it.  A snapshot taken from the parsed
++# message leaves it out.  (X-Message-ID-Hash is already X- excluded from the
++# hash, so it is deliberately not considered here.)
++_MAILMAN_STAMPED = ('message-id-hash',)
++
++# Header fields smtplib.send_message deletes on the way to the MTA.
++_SEND_MESSAGE_DROPS = ('bcc', 'resent-bcc')
++
++
++def _strip_stamped(msg):
++    """Return a deep copy of msg with the Mailman-stamped header(s) removed."""
++    clean = copy.deepcopy(msg)
++    for name in list(clean.keys()):
++        if name.lower() in _MAILMAN_STAMPED:
++            del clean[name]
++    return clean
++
++
++def _collect_headers(msg):
++    """Collect non-excluded headers as a list of (name, value) tuples.
++
++    Values are the wire form (see _wire_value), so a Recipe's copy ranges
++    refer to header values exactly as the verifier will see them.
++    """
++    headers = []
++    for name, value in msg.raw_items():
++        if not _should_exclude_header(name):
++            headers.append((name, _wire_value(msg, name, value)))
++    return headers
++
++
++def _prepend_header(msg, name, value):
++    """Insert a header at the top of the message headers.
++
++    Unlike msg[name] = value which appends, this inserts at position 0
++    so Message-Instance headers appear before the original headers.
++    """
++    msg._headers.insert(0, (name, value))
++
++
++_MISSING = object()
++
++
++@public
++@contextmanager
++def without_received_bytes(msg):
++    """Leave msg.original_bytes out of a copy of the message that never
++    reaches Message-Instance egress (the archive and NNTP queues): pickled
++    with it, the octets would be a second copy of the message in that
++    queue, for nothing.  The message keeps them for its way to delivery.
++    """
++    saved = msg.__dict__.pop('original_bytes', _MISSING)
++    try:
++        yield msg
++    finally:
++        if saved is not _MISSING:
++            msg.original_bytes = saved
++
++
++# ---------------------------------------------------------------------------
++# Pipeline handlers
++# ---------------------------------------------------------------------------
++
++@public
++@implementer(IHandler)
++class MessageInstanceIngress:
++    """Add Message-Instance m=1 at ingress and snapshot message state."""
++
++    name = 'message-instance-ingress'
++    description = _('Add Message-Instance header at ingress.')
++
++    def process(self, mlist, msg, msgdata):
++        """See `IHandler`."""
++        if not _mi_enabled(mlist):
++            # The LMTP runner keeps the received octets when the site has
++            # Message-Instance on; a list that opts out does not need them
++            # pickled with the message through every queue.
++            if hasattr(msg, 'original_bytes'):
++                del msg.original_bytes
++            return
++        # Skip digests — they aggregate multiple messages and are not
++        # a single authored message in the DKIM2 sense.
++        if msgdata.get('isdigest'):
++            return
++        # The snapshot is the message as received: the octets the LMTP
++        # runner kept or, for a message that came in otherwise (`mailman
++        # inject`, an internal path, an older queue entry), the parsed
++        # message less Mailman's own stamp.  The egress Recipe then records
++        # everything Mailman has done since (the Message-ID-Hash stamp, a
++        # repaired Message-ID).
++        snap_raw = _received_bytes(msg)
++        if snap_raw is None:
++            # Serializing resolves auto-generated parameters (multipart
++            # boundaries) on msg itself, before the copy is taken.
++            _serialize_msg(msg)
++            snap_raw = _serialize_msg(_strip_stamped(msg))
++        msg.original_bytes = snap_raw
++        existing_version = get_max_mi_version(msg)
++        if existing_version > 0:
++            # An MI is already present (inbound milter, or a signing sender).
++            # NEVER modify it -- it may be signed.
++            #
++            # Nothing is emitted for this: X-DKIM2-Info records actions that
++            # add a header, and accepting an existing instance adds none.
++            matched, why = verify_mi_raw(snap_raw)
++            if matched != existing_version:
++                log.warning('Existing Message-Instance m=%d does not match '
++                            'the message as received (%s); chain may not '
++                            'undo cleanly', existing_version, why)
++            log.debug('Accepted existing Message-Instance m=%d',
++                      existing_version)
++            msgdata['mi_snapshot'] = {
++                'version': existing_version,
++                'header_hash': compute_header_hash_raw(snap_raw),
++                'body_hash': compute_body_hash_raw(snap_raw),
++            }
++            return
++        # No MI headers present -- add m=1 documenting the message as
++        # received.
++        hcount, hnames = _hashed_header_names(_raw_header_pairs(snap_raw))
++        h_hash = compute_header_hash_raw(snap_raw)
++        b_hash = compute_body_hash_raw(snap_raw)
++        value = build_mi_header_value(1, h_hash, b_hash)
++        _prepend_header(msg, 'Message-Instance', value)
++        _prepend_header(msg, 'X-DKIM2-Info', _dkim2_info(
++            'mi-m=1', hc=hcount, hn=hnames))
++        log.debug('Added Message-Instance m=1')
++        msgdata['mi_snapshot'] = {
++            'version': 1,
++            'header_hash': h_hash,
++            'body_hash': b_hash,
++        }
++
++
++@public
++@implementer(IHandler)
++class MessageInstanceEgress:
++    """Add Message-Instance m=N+1 at egress if message changed."""
++
++    name = 'message-instance-egress'
++    description = _('Add Message-Instance header at egress.')
++
++    def process(self, mlist, msg, msgdata):
++        """See `IHandler`."""
++        if not _mi_enabled(mlist):
++            return
++        # smtplib.send_message, which hands the message to the MTA, deletes
++        # Bcc and Resent-Bcc.  Both are signed header fields, so a removal
++        # the Recipe did not record would leave this instance describing
++        # headers the recipient never sees.  Remove them here instead, where
++        # the Recipe records the change and an upstream verifier can undo it.
++        for name in _SEND_MESSAGE_DROPS:
++            del msg[name]
++        snapshot = msgdata.get('mi_snapshot')
++        if snapshot and get_max_mi_version(msg) > snapshot['version']:
++            # Mailman already stamped this message: BulkDelivery decorates
++            # and runs egress on the queued message itself, and a temporary
++            # failure re-enqueues it, stamped, for a retry.
++            return
++        if not snapshot:
++            # No snapshot means this message didn't go through an ingress
++            # handler (e.g. internally generated via VirginPipeline).
++            # If no MI headers are present, Mailman is the originator —
++            # add MI m=1 so the message enters the DKIM2 ecosystem.
++            if get_max_mi_version(msg) == 0:
++                wire = _wire_bytes(msg)
++                hcount, hnames = _get_hashed_headers(msg)
++                h_hash = compute_header_hash(msg)
++                b_hash = compute_body_hash_raw(wire)
++                value = build_mi_header_value(1, h_hash, b_hash)
++                _prepend_header(msg, 'Message-Instance', value)
++                _prepend_header(msg, 'X-DKIM2-Info',
++                                _dkim2_info('mi-m=1', hc=hcount, hn=hnames))
++                log.debug('Added originator Message-Instance m=1')
++            return
++        # Serialize the way smtplib will (which also resolves multipart
++        # boundaries before hashing): this instance describes what is sent.
++        wire = _wire_bytes(msg)
++        # Compute current hashes.
++        h_hash = compute_header_hash(msg)
++        b_hash = compute_body_hash_raw(wire)
++        # Check if anything changed.
++        if (h_hash == snapshot['header_hash']
++                and b_hash == snapshot['body_hash']):
++            return
++        # The snapshot is the bytes the message carries as original_bytes.
++        # Work from the octets: parsing and re-serializing them here would
++        # put the generator's reshaping of part headers into the "previous"
++        # side.
++        snap_raw = getattr(msg, 'original_bytes', None)
++        if snap_raw is None:
++            log.warning('Message-Instance snapshot missing (no '
++                        'original_bytes) -- skipping MI egress')
++            return
++        snap_raw = _normalize_crlf(snap_raw)
++        # Compute Recipes.
++        body_recipe = None
++        header_recipe = None
++        if b_hash != snapshot['body_hash']:
++            if msgdata.get('body-modified'):
++                body_recipe = NULL_BODY_RECIPE
++            else:
++                # decorate's DKIM2 wrap records its boundary: the original
++                # body is then found where the wrap put it, with no line
++                # lists of two large bodies.  Anything else is diffed.
++                boundary = msgdata.get('dkim2-wrap')
++                if boundary is not None:
++                    body_recipe = _wrapped_body_recipe(
++                        wire, snap_raw, boundary)
++                if body_recipe is None:
++                    body_recipe = compute_body_recipe(
++                        _body_lines_raw(wire), _body_lines_raw(snap_raw))
++        if h_hash != snapshot['header_hash']:
++            current_headers = _collect_headers(msg)
++            header_recipe = compute_header_recipe(
++                current_headers, _hashed_pairs(_raw_header_pairs(snap_raw)))
++        hcount, hnames = _get_hashed_headers(msg)
++        version = get_max_mi_version(msg) + 1
++        value = build_mi_header_value(
++            version, h_hash, b_hash, header_recipe, body_recipe)
++        _prepend_header(msg, 'Message-Instance', value)
++        _prepend_header(msg, 'X-DKIM2-Info', _dkim2_info(
++            'mi-m={}'.format(version),
++            hc=hcount, hn=hnames))
++        log.debug('Added Message-Instance m=%d', version)
+diff --git a/src/mailman/handlers/mime_delete.py b/src/mailman/handlers/mime_delete.py
+index 62dc9f6c1..de4ac9990 100644
+--- a/src/mailman/handlers/mime_delete.py
++++ b/src/mailman/handlers/mime_delete.py
+@@ -151,6 +151,7 @@ following MIME parts from this message.
+         if ctype == 'multipart/alternative':
+             firstalt = msg.get_payload(0)
+             reset_payload(msg, firstalt)
++            msgdata['body-modified'] = True
+             report += _("""
+ Replaced multipart/alternative part with first alternative.
+ """)
+@@ -181,7 +182,9 @@ Replaced multipart/alternative part with first alternative.
+             changedp = 1
+     if changedp:
+         msg['X-Content-Filtered-By'] = 'Mailman/MimeDel {}'.format(VERSION)
++        msgdata['body-modified'] = True
+     if attach_report and as_boolean(config.mailman.filter_report):
++        msgdata['body-modified'] = True
+         if msg.is_multipart():
+             if msg.get_content_type() == 'multipart/mixed':
+                 msg.attach(MIMEText(report))
+diff --git a/src/mailman/handlers/tests/mi_support.py b/src/mailman/handlers/tests/mi_support.py
+new file mode 100644
+index 000000000..6d12c78f1
+--- /dev/null
++++ b/src/mailman/handlers/tests/mi_support.py
+@@ -0,0 +1,317 @@
++# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
++#
++# This file is part of GNU Mailman.
++#
++# GNU Mailman is free software: you can redistribute it and/or modify it under
++# the terms of the GNU General Public License as published by the Free
++# Software Foundation, either version 3 of the License, or (at your option)
++# any later version.
++#
++# GNU Mailman is distributed in the hope that it will be useful, but WITHOUT
++# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++# more details.
++#
++# You should have received a copy of the GNU General Public License along with
++# GNU Mailman.  If not, see <https://www.gnu.org/licenses/>.
++
++
++"""Verify and undo Message-Instance headers, for the DKIM2 tests.
++
++Mailman adds Message-Instance headers; it never checks or applies one
++beyond the hash check at ingress (verify_mi_raw).  The tests use these to
++show that what Mailman emits verifies and that its Recipes undo, as a
++downstream verifier would.  They work on a parsed message, in the PARSED
++view (_serialize_msg).
++"""
++
++import base64
++import logging
++
++from mailman.handlers.message_instance import (
++    MalformedRecipe, _b64, _hash_body_bytes, _get_mi_version, _parse_mi,
++    _serialize_msg, compute_header_hash, get_max_mi_version)
++
++
++log = logging.getLogger('mailman.dkim2')
++
++
++def _get_raw_body(msg):
++    """Get the raw body bytes from a message (everything after headers)."""
++    raw = _serialize_msg(msg)
++    sep = b'\r\n\r\n'
++    idx = raw.find(sep)
++    if idx == -1:
++        return b''
++    return raw[idx + len(sep):]
++
++
++def compute_body_hash(msg):
++    """Compute SHA-256 body hash per DKIM2 spec-06 §6.1.
++
++    Uses simple body canonicalization: strip trailing empty lines,
++    ensure body ends with exactly one CRLF.
++    Returns raw SHA-256 digest bytes.
++    """
++    return _hash_body_bytes(_get_raw_body(msg))
++
++
++def _get_body_lines(msg):
++    """Get the body as a list of line strings (without line endings).
++
++    Uses the CRLF-normalized raw body.  Trailing empty lines are not
++    lines: the §6.1 body canonicalization ignores them, so they are not
++    part of what a Recipe has to rebuild, and a Recipe must never number
++    or restore one.  Counting a trailing empty line here made the Recipe
++    copy "lines N-N+1 of N" for a body that ended in a blank line, which
++    every other implementation rejects.
++    """
++    body = _get_raw_body(msg)
++    # Normalize to LF for splitting
++    body_str = body.replace(b'\r\n', b'\n').replace(
++        b'\r', b'\n').decode('utf-8', errors='surrogateescape')
++    body_str = body_str.rstrip('\n')
++    if not body_str:
++        return []
++    return body_str.split('\n')
++
++
++def _raw_values(msg, name):
++    """The stored values of this header, top-down, as the generator sees
++    them (see _wire_value for why not msg.get_all)."""
++    lname = name.lower()
++    return [value for hname, value in msg.raw_items()
++            if hname.lower() == lname]
++
++
 +# ---------------------------------------------------------------------------
 +# Recipe validation and application (spec-06 §5)
 +# ---------------------------------------------------------------------------
 +
-+@public
-+class MalformedRecipe(ValueError):
-+    """A Message-Instance Recipe that cannot be applied.
-+
-+    Raised for anything spec-06 §5 (plus the "b" literal step, see
-+    _literal_steps) does not allow: an r= that is not base64 JSON, a step
-+    that is not a one-key object, a "c" that is not two integers or whose
-+    range is below 1, descending, overlapping an earlier range or past the
-+    items available, an empty "d"/"b", a "d"/"b" string holding CR or LF,
-+    a "b" string that is not base64.  verify and undo treat it as an
-+    instance that does not verify; it never escapes them.
-+    """
-+
-+
 +def _compile_steps(steps, where):
 +    """Check one step list and return it as ('c', start, end) / ('d', [str])
-+    tuples, "b" items decoded to the surrogateescape str form the rest of
-+    this module uses for header values and body lines.  The upper bound of
-+    a "c" range is checked by _apply_steps, which knows the item count."""
++    tuples, "b" items decoded to the surrogateescape str form that
++    message_instance uses for header values and body lines.  The upper
++    bound of a "c" range is checked by _apply_steps, which knows the item
++    count."""
 +    if not isinstance(steps, list):
 +        raise MalformedRecipe('{}: steps are not an array'.format(where))
 +    compiled = []
@@ -1654,7 +1955,6 @@ index 000000000..f5614efa8
 +# Verify and undo
 +# ---------------------------------------------------------------------------
 +
-+@public
 +def verify_message_instance(msg):
 +    """Verify the highest MI header matches the current message content.
 +
@@ -1695,7 +1995,6 @@ index 000000000..f5614efa8
 +    return max_v, None
 +
 +
-+@public
 +def undo_message_instance(msg):
 +    """Apply the recipe from the highest MI header to reverse the message.
 +
@@ -1753,300 +2052,12 @@ index 000000000..f5614efa8
 +        for val in new_vals:
 +            msg[hname] = val
 +    return max_v
-+
-+
-+# ---------------------------------------------------------------------------
-+# Snapshot helpers
-+# ---------------------------------------------------------------------------
-+
-+# Mailman's message store stamps Message-ID-Hash onto the in-flight message
-+# *after* an upstream signer / the inbound milter computed m=1, so the baseline
-+# that external MI describes does not include it. We only ever treat it as
-+# Mailman-stamped when removing it actually restores the external MI's hash, so
-+# a Message-ID-Hash that arrived as part of a (possibly signed) m=1 is left
-+# untouched. (X-Message-ID-Hash is already X- excluded from the hash, so it is
-+# deliberately not considered here.)
-+_MAILMAN_STAMPED = ('message-id-hash',)
-+
-+# Header fields smtplib.send_message deletes on the way to the MTA.
-+_SEND_MESSAGE_DROPS = ('bcc', 'resent-bcc')
-+
-+
-+def _strip_stamped(msg):
-+    """Return a deep copy of msg with the Mailman-stamped header(s) removed."""
-+    clean = copy.deepcopy(msg)
-+    for name in list(clean.keys()):
-+        if name.lower() in _MAILMAN_STAMPED:
-+            del clean[name]
-+    return clean
-+
-+
-+def _collect_headers(msg):
-+    """Collect non-excluded headers as a list of (name, value) tuples.
-+
-+    Values are the wire form (see _wire_value), so a Recipe's copy ranges
-+    refer to header values exactly as the verifier will see them.
-+    """
-+    headers = []
-+    for name, value in msg.raw_items():
-+        if not _should_exclude_header(name):
-+            headers.append((name, _wire_value(msg, name, value)))
-+    return headers
-+
-+
-+def _raw_values(msg, name):
-+    """The stored values of this header, top-down, as the generator sees
-+    them (see _wire_value for why not msg.get_all)."""
-+    lname = name.lower()
-+    return [value for hname, value in msg.raw_items()
-+            if hname.lower() == lname]
-+
-+
-+def _prepend_header(msg, name, value):
-+    """Insert a header at the top of the message headers.
-+
-+    Unlike msg[name] = value which appends, this inserts at position 0
-+    so Message-Instance headers appear before the original headers.
-+    """
-+    msg._headers.insert(0, (name, value))
-+
-+
-+_MISSING = object()
-+
-+
-+@public
-+@contextmanager
-+def without_received_bytes(msg):
-+    """Leave msg.original_bytes out of a copy of the message that never
-+    reaches Message-Instance egress (the archive and NNTP queues): pickled
-+    with it, the octets would be a second copy of the message in that
-+    queue, for nothing.  The message keeps them for its way to delivery.
-+    """
-+    saved = msg.__dict__.pop('original_bytes', _MISSING)
-+    try:
-+        yield msg
-+    finally:
-+        if saved is not _MISSING:
-+            msg.original_bytes = saved
-+
-+
-+# ---------------------------------------------------------------------------
-+# Pipeline handlers
-+# ---------------------------------------------------------------------------
-+
-+@public
-+@implementer(IHandler)
-+class MessageInstanceIngress:
-+    """Add Message-Instance m=1 at ingress and snapshot message state."""
-+
-+    name = 'message-instance-ingress'
-+    description = _('Add Message-Instance header at ingress.')
-+
-+    def process(self, mlist, msg, msgdata):
-+        """See `IHandler`."""
-+        if not _mi_enabled(mlist):
-+            # The LMTP runner keeps the received octets when the site has
-+            # Message-Instance on; a list that opts out does not need them
-+            # pickled with the message through every queue.
-+            if hasattr(msg, 'original_bytes'):
-+                del msg.original_bytes
-+            return
-+        # Skip digests — they aggregate multiple messages and are not
-+        # a single authored message in the DKIM2 sense.
-+        if msgdata.get('isdigest'):
-+            return
-+        received = _received_bytes(msg)
-+        if received is None:
-+            # Force serialization so that auto-generated parameters (e.g.
-+            # multipart boundaries) are resolved before hashing the parsed
-+            # message.  The received octets need no such thing.
-+            _serialize_msg(msg)
-+        existing_version = get_max_mi_version(msg)
-+        if existing_version > 0:
-+            # An MI is already present (inbound milter, or a signing sender).
-+            # NEVER modify it — it may be signed.  The snapshot the egress
-+            # Recipe is computed against must be the state that MI
-+            # describes: the message as received, when the LMTP runner kept
-+            # it, which also puts everything Mailman has done since (the
-+            # Message-ID-Hash stamp, a repaired Message-ID) into the Recipe.
-+            #
-+            # Nothing is emitted for this: X-DKIM2-Info records actions that
-+            # add a header, and accepting an existing instance adds none.
-+            if received is not None:
-+                matched, why = verify_mi_raw(received)
-+                if matched != existing_version:
-+                    log.warning('Existing Message-Instance m=%d does not '
-+                                'match the message as received (%s); chain '
-+                                'may not undo cleanly', existing_version, why)
-+                snap_raw = received
-+            else:
-+                # No received octets (an older queue entry, or an internal
-+                # path): fall back to the parsed message.  Mailman's message
-+                # store stamps Message-ID-Hash after the MI was computed, so
-+                # use verify as the oracle: if removing the stamp restores
-+                # the MI's hash, snapshot that baseline so the Recipe
-+                # records the stamp as a reversible change.
-+                matched, why = verify_message_instance(msg)
-+                snap_src = msg
-+                if matched != existing_version:
-+                    baseline = _strip_stamped(msg)
-+                    b_matched, _ = verify_message_instance(baseline)
-+                    if b_matched == existing_version:
-+                        snap_src = baseline
-+                        log.debug('Existing Message-Instance m=%d matches '
-+                                  'the unstamped baseline', existing_version)
-+                    else:
-+                        log.warning('Existing Message-Instance m=%d does not '
-+                                    'match content (%s); chain may not undo '
-+                                    'cleanly', existing_version, why)
-+                snap_raw = _serialize_msg(snap_src)
-+            log.debug('Accepted existing Message-Instance m=%d',
-+                      existing_version)
-+            msg.original_bytes = snap_raw
-+            msgdata['mi_snapshot'] = {
-+                'version': existing_version,
-+                'header_hash': compute_header_hash_raw(snap_raw),
-+                'body_hash': compute_body_hash_raw(snap_raw),
-+            }
-+            return
-+        # No MI headers present — add m=1 documenting the message as
-+        # received (as parsed, when the octets were not kept).
-+        snap_raw = received if received is not None else _serialize_msg(msg)
-+        hcount, hnames = _hashed_header_names(_raw_header_pairs(snap_raw))
-+        h_hash = compute_header_hash_raw(snap_raw)
-+        b_hash = compute_body_hash_raw(snap_raw)
-+        value = build_mi_header_value(1, h_hash, b_hash)
-+        _prepend_header(msg, 'Message-Instance', value)
-+        msg.original_bytes = snap_raw
-+        _prepend_header(msg, 'X-DKIM2-Info', _dkim2_info(
-+            'mi-m=1', hc=hcount, hn=hnames))
-+        log.debug('Added Message-Instance m=1')
-+        msgdata['mi_snapshot'] = {
-+            'version': 1,
-+            'header_hash': h_hash,
-+            'body_hash': b_hash,
-+        }
-+
-+
-+@public
-+@implementer(IHandler)
-+class MessageInstanceEgress:
-+    """Add Message-Instance m=N+1 at egress if message changed."""
-+
-+    name = 'message-instance-egress'
-+    description = _('Add Message-Instance header at egress.')
-+
-+    def process(self, mlist, msg, msgdata):
-+        """See `IHandler`."""
-+        if not _mi_enabled(mlist):
-+            return
-+        # smtplib.send_message, which hands the message to the MTA, deletes
-+        # Bcc and Resent-Bcc.  Both are signed header fields, so a removal
-+        # the Recipe did not record would leave this instance describing
-+        # headers the recipient never sees.  Remove them here instead, where
-+        # the Recipe records the change and an upstream verifier can undo it.
-+        for name in _SEND_MESSAGE_DROPS:
-+            del msg[name]
-+        snapshot = msgdata.get('mi_snapshot')
-+        if snapshot and get_max_mi_version(msg) > snapshot['version']:
-+            # Mailman already stamped this message: BulkDelivery decorates
-+            # and runs egress on the queued message itself, and a temporary
-+            # failure re-enqueues it, stamped, for a retry.
-+            return
-+        if not snapshot:
-+            # No snapshot means this message didn't go through an ingress
-+            # handler (e.g. internally generated via VirginPipeline).
-+            # If no MI headers are present, Mailman is the originator —
-+            # add MI m=1 so the message enters the DKIM2 ecosystem.
-+            if get_max_mi_version(msg) == 0:
-+                wire = _wire_bytes(msg)
-+                hcount, hnames = _get_hashed_headers(msg)
-+                h_hash = compute_header_hash(msg)
-+                b_hash = compute_body_hash_raw(wire)
-+                value = build_mi_header_value(1, h_hash, b_hash)
-+                _prepend_header(msg, 'Message-Instance', value)
-+                _prepend_header(msg, 'X-DKIM2-Info',
-+                                _dkim2_info('mi-m=1', hc=hcount, hn=hnames))
-+                log.debug('Added originator Message-Instance m=1')
-+            return
-+        # Serialize the way smtplib will (which also resolves multipart
-+        # boundaries before hashing): this instance describes what is sent.
-+        wire = _wire_bytes(msg)
-+        # Compute current hashes.
-+        h_hash = compute_header_hash(msg)
-+        b_hash = compute_body_hash_raw(wire)
-+        # Check if anything changed.
-+        if (h_hash == snapshot['header_hash']
-+                and b_hash == snapshot['body_hash']):
-+            return
-+        # The snapshot is the bytes the message carries as original_bytes.
-+        # Work from the octets: parsing and re-serializing them here would
-+        # put the generator's reshaping of part headers into the "previous"
-+        # side.
-+        snap_raw = getattr(msg, 'original_bytes', None)
-+        if snap_raw is None:
-+            log.warning('Message-Instance snapshot missing (no '
-+                        'original_bytes) -- skipping MI egress')
-+            return
-+        snap_raw = _normalize_crlf(snap_raw)
-+        # Compute Recipes.
-+        body_recipe = None
-+        header_recipe = None
-+        if b_hash != snapshot['body_hash']:
-+            if msgdata.get('body-modified'):
-+                body_recipe = NULL_BODY_RECIPE
-+            else:
-+                # decorate's DKIM2 wrap records its boundary: the original
-+                # body is then found where the wrap put it, with no line
-+                # lists of two large bodies.  Anything else is diffed.
-+                boundary = msgdata.get('dkim2-wrap')
-+                if boundary is not None:
-+                    body_recipe = _wrapped_body_recipe(
-+                        wire, snap_raw, boundary)
-+                if body_recipe is None:
-+                    body_recipe = compute_body_recipe(
-+                        _body_lines_raw(wire), _body_lines_raw(snap_raw))
-+        if h_hash != snapshot['header_hash']:
-+            current_headers = _collect_headers(msg)
-+            header_recipe = compute_header_recipe(
-+                current_headers, _hashed_pairs(_raw_header_pairs(snap_raw)))
-+        hcount, hnames = _get_hashed_headers(msg)
-+        version = get_max_mi_version(msg) + 1
-+        value = build_mi_header_value(
-+            version, h_hash, b_hash, header_recipe, body_recipe)
-+        _prepend_header(msg, 'Message-Instance', value)
-+        _prepend_header(msg, 'X-DKIM2-Info', _dkim2_info(
-+            'mi-m={}'.format(version),
-+            hc=hcount, hn=hnames))
-+        log.debug('Added Message-Instance m=%d', version)
-diff --git a/src/mailman/handlers/mime_delete.py b/src/mailman/handlers/mime_delete.py
-index 62dc9f6c1..de4ac9990 100644
---- a/src/mailman/handlers/mime_delete.py
-+++ b/src/mailman/handlers/mime_delete.py
-@@ -151,6 +151,7 @@ following MIME parts from this message.
-         if ctype == 'multipart/alternative':
-             firstalt = msg.get_payload(0)
-             reset_payload(msg, firstalt)
-+            msgdata['body-modified'] = True
-             report += _("""
- Replaced multipart/alternative part with first alternative.
- """)
-@@ -181,7 +182,9 @@ Replaced multipart/alternative part with first alternative.
-             changedp = 1
-     if changedp:
-         msg['X-Content-Filtered-By'] = 'Mailman/MimeDel {}'.format(VERSION)
-+        msgdata['body-modified'] = True
-     if attach_report and as_boolean(config.mailman.filter_report):
-+        msgdata['body-modified'] = True
-         if msg.is_multipart():
-             if msg.get_content_type() == 'multipart/mixed':
-                 msg.attach(MIMEText(report))
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..edadae809
+index 000000000..297e74fec
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,2267 @@
+@@ -0,0 +1,2306 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -2086,18 +2097,13 @@ index 000000000..edadae809
 +from mailman.handlers import decorate
 +from mailman.handlers.message_instance import (
 +    build_mi_header_value,
-+    compute_body_hash,
 +    compute_body_recipe,
 +    compute_header_hash,
 +    compute_header_recipe,
 +    get_max_mi_version,
-+    undo_message_instance,
-+    verify_message_instance,
 +    verify_mi_raw,
 +    _b64,
 +    _fold_mi_value,
-+    _get_body_lines,
-+    _get_raw_body,
 +    _normalize_crlf,
 +    _split_raw,
 +    _parse_mi,
@@ -2106,19 +2112,25 @@ index 000000000..edadae809
 +    _collect_headers,
 +    _body_lines_raw,
 +    _hash_header_pairs,
-+    _hashed_pairs,
-+    _plan_undo,
-+    _raw_header_pairs,
 +    _serialize_msg,
 +    _wire_bytes,
 +    compute_body_hash_raw,
 +    compute_header_hash_raw,
++)
++from mailman.handlers.tests.mi_support import (
++    compute_body_hash,
++    undo_message_instance,
++    verify_message_instance,
++    _get_body_lines,
++    _get_raw_body,
++    _plan_undo,
 +)
 +from mailman.interfaces.archiver import ArchivePolicy
 +from mailman.interfaces.template import ITemplateManager
 +from mailman.testing.helpers import get_queue_messages
 +from mailman.testing.helpers import specialized_message_from_string as mfs
 +from mailman.testing.layers import ConfigLayer
++from mailman.utilities.email import add_message_hash
 +from tempfile import TemporaryDirectory
 +from unittest.mock import patch
 +from zope.component import getUtility
@@ -3262,6 +3274,44 @@ index 000000000..edadae809
 +        version, error = verify_message_instance(msg)
 +        self.assertEqual((version, error), (1, None))
 +
++    def test_injected_message_stamp_goes_into_the_recipe(self):
++        # `mailman inject` stamps Message-ID-Hash before the pipeline and
++        # keeps no received octets.  The snapshot leaves Mailman's stamp out,
++        # as the LMTP runner's octets do, so m=1 describes the post without
++        # it and m=2 records it.
++        msg = self._make_7bit_msg()
++        add_message_hash(msg)
++        msgdata = {}
++        self._ingress.process(self._mlist, msg, msgdata)
++        decorate.process(self._mlist, msg, msgdata)
++        self._egress.process(self._mlist, msg, msgdata)
++        v, err = verify_message_instance(msg)
++        self.assertEqual(v, 2, err)
++        self.assertIn('message-id-hash', _recipe_at(msg, 2)['h'])
++        self.assertEqual(undo_message_instance(msg), 2)
++        self.assertNotIn('Message-ID-Hash', msg)
++        v, err = verify_message_instance(msg)
++        self.assertEqual(v, 1, err)
++
++    def test_injected_message_with_an_instance_records_the_stamp(self):
++        # An injected message whose existing instance covers content with no
++        # Message-ID-Hash: Mailman's stamp goes into the egress Recipe, and
++        # undoing it gets back to the existing instance.
++        msg = self._make_7bit_msg()
++        msg['Message-Instance'] = build_mi_header_value(
++            1, compute_header_hash(msg), compute_body_hash(msg))
++        add_message_hash(msg)
++        msgdata = {}
++        self._ingress.process(self._mlist, msg, msgdata)
++        decorate.process(self._mlist, msg, msgdata)
++        self._egress.process(self._mlist, msg, msgdata)
++        v, err = verify_message_instance(msg)
++        self.assertEqual(v, 2, err)
++        self.assertIn('message-id-hash', _recipe_at(msg, 2)['h'])
++        self.assertEqual(undo_message_instance(msg), 2)
++        v, err = verify_message_instance(msg)
++        self.assertEqual(v, 1, err)
++
 +    def test_ingress_adds_v1(self):
 +        msg = self._make_7bit_msg()
 +        msgdata = {}
@@ -4356,10 +4406,10 @@ index 000000000..3fb8e2ea0
 +        self.assertIn('subject', recipe)
 diff --git a/src/mailman/handlers/tests/test_mi_roundtrip.py b/src/mailman/handlers/tests/test_mi_roundtrip.py
 new file mode 100644
-index 000000000..c868a3595
+index 000000000..5ceb98970
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_mi_roundtrip.py
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,152 @@
 +# Copyright (C) 2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -4378,15 +4428,14 @@ index 000000000..c868a3595
 +fails. These are pure-function tests (no config/database layer needed).
 +"""
 +
-+import copy
 +import email
 +import unittest
 +
 +from mailman.handlers.message_instance import (
-+    _b64, _collect_headers, _get_body_lines, _strip_stamped,
-+    build_mi_header_value, compute_body_hash, compute_body_recipe,
-+    compute_header_hash, compute_header_recipe, get_max_mi_version,
-+    undo_message_instance, verify_message_instance)
++    _b64, _collect_headers, build_mi_header_value, compute_body_recipe,
++    compute_header_hash, compute_header_recipe)
++from mailman.handlers.tests.mi_support import (
++    _get_body_lines, compute_body_hash, undo_message_instance)
 +
 +
 +ORIGINAL = (
@@ -4509,94 +4558,6 @@ index 000000000..c868a3595
 +            msg.set_payload(body + '-- \r\nMailing list footer\r\n')
 +        ok, detail = _round_trip(m)
 +        self.assertTrue(ok, detail)
-+
-+
-+class TestExternalMIWithStamp(unittest.TestCase):
-+    """The inbound milter / a signing sender computes m=1, then Mailman's
-+    message store stamps Message-ID-Hash. The ingress snapshot must be the
-+    baseline the external MI describes — chosen via verify(), never by blindly
-+    stripping — so the chain round-trips and a *signed* Message-ID-Hash is
-+    preserved."""
-+
-+    BARE = (
-+        'From: a@example.com\r\n'
-+        'To: test@lists.example.com\r\n'
-+        'Subject: hello there\r\n'
-+        'Message-ID: <orig-1@example.com>\r\n'
-+        'Date: Wed, 24 Jun 2026 20:00:00 +0000\r\n'
-+        '\r\n'
-+        'Body line one.\r\n'
-+    )
-+
-+    def _external_mi_message(self, include_midh_in_m1):
-+        # The message as the external signer/milter saw it when computing m=1.
-+        seen = email.message_from_string(self.BARE)
-+        if include_midh_in_m1:
-+            seen['Message-ID-Hash'] = 'AAAAAAAAAAAAAAAAAAAAAAAAAAA'
-+        ext_h = compute_header_hash(seen)
-+        ext_b = compute_body_hash(seen)
-+        ext_mi = build_mi_header_value(1, ext_h, ext_b)
-+        # The message Mailman actually receives: the external MI is present,
-+        # and the message store stamps Message-ID-Hash (unless the signer
-+        # included its own).
-+        msg = email.message_from_string(self.BARE)
-+        if include_midh_in_m1:
-+            msg['Message-ID-Hash'] = 'AAAAAAAAAAAAAAAAAAAAAAAAAAA'
-+        else:
-+            # Mailman's stamp.
-+            msg['Message-ID-Hash'] = 'ZZZZZZZZZZZZZZZZZZZZZZZZZZZ'
-+        msg._headers.insert(0, ('Message-Instance', ext_mi))
-+        return msg, ext_h
-+
-+    def _ingress_snapshot(self, msg):
-+        # Mirror MessageInstanceIngress: pick the snapshot the external MI
-+        # describes, using verify() as the oracle (never modify the MI).
-+        existing = get_max_mi_version(msg)
-+        matched, _why = verify_message_instance(msg)
-+        snap = msg
-+        if matched != existing:
-+            baseline = _strip_stamped(msg)
-+            if verify_message_instance(baseline)[0] == existing:
-+                snap = baseline
-+        return snap
-+
-+    def test_stamp_added_after_m1_round_trips(self):
-+        msg, ext_h = self._external_mi_message(include_midh_in_m1=False)
-+        # m=1 no longer matches the stamped message ...
-+        self.assertEqual(verify_message_instance(msg)[0], 0)
-+        # ... but stripping the stamp restores it, so the snapshot is the
-+        # baseline and the egress recipe documents the stamp.
-+        snap = self._ingress_snapshot(msg)
-+        self.assertEqual(_b64(compute_header_hash(snap)), _b64(ext_h))
-+        # full round-trip: list modifies, recipe, undo back to the baseline.
-+        prev_headers = _collect_headers(snap)
-+        prev_body = _get_body_lines(snap)
-+        msg.replace_header('Subject', '[Test] hello there')
-+        msg.set_payload(msg.get_payload() + '-- \r\nfooter\r\n')
-+        hrec = compute_header_recipe(_collect_headers(msg), prev_headers)
-+        brec = compute_body_recipe(_get_body_lines(msg), prev_body)
-+        mi2 = build_mi_header_value(2, compute_header_hash(msg),
-+                                    compute_body_hash(msg), hrec, brec)
-+        msg._headers.insert(0, ('Message-Instance', mi2))
-+        undo_message_instance(msg)
-+        self.assertEqual(_b64(compute_header_hash(msg)), _b64(ext_h),
-+                         'reconstruction must match the external m=1')
-+
-+    def test_signed_message_id_hash_is_preserved(self):
-+        # The signer included Message-ID-Hash in m=1. verify() matches as-is,
-+        # so the snapshot keeps it — stripping would (wrongly) break the hash.
-+        msg, ext_h = self._external_mi_message(include_midh_in_m1=True)
-+        self.assertEqual(verify_message_instance(msg)[0], 1,
-+                         'signed-in Message-ID-Hash should verify as-is')
-+        snap = self._ingress_snapshot(msg)
-+        self.assertIn('Message-ID-Hash', snap,
-+                      'a Message-ID-Hash that is part of m=1 must NOT be '
-+                      'stripped')
-+        self.assertEqual(_b64(compute_header_hash(snap)), _b64(ext_h))
-+        # And stripping it WOULD break the hash — proving the verify-gate is
-+        # what protects the signed case.
-+        self.assertNotEqual(
-+            _b64(compute_header_hash(_strip_stamped(msg))), _b64(ext_h))
 +
 +
 +if __name__ == '__main__':
