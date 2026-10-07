@@ -1,7 +1,7 @@
 # /etc/logrotate.d/mailman3 on the dkim2.com server.
 #
 # IMPORTANT: the Mailman 3 core service runs as user `mailman` (see
-# mailman3.service), so the log MUST be created owned by mailman:mailman.
+# mailman3.service), so the logs MUST be created owned by mailman:mailman.
 # The distro default shipped `create 640 list list`, which made mailman.log
 # owned by `list` after the first rotation; the mailman-user service then
 # could not write its log and crash-looped on next start
@@ -9,17 +9,41 @@
 # /etc/logrotate.d/mailman3-fix was ignored as a "duplicate log entry", so the
 # bad default won. Fix: a single correct stanza (this file), and remove
 # mailman3-fix. `su mailman mailman` rotates as the service user; `mailman
-# reopen` makes the running runners reopen the freshly-created log.
-/var/log/mailman3/mailman.log {
+# reopen` makes the running runners reopen the freshly-created logs.
+#
+# Keep NO other file naming these logs in /etc/logrotate.d/ -- not even a
+# backup: logrotate reads every file there except a short list of package
+# extensions (.dpkg-old, .rpmsave, ...), so "mailman3.bak-20260618" was read,
+# hit "duplicate log entry" and made every logrotate run exit with an error.
+#
+# The core's other logs (smtp, bounce, debug, plugins) were never rotated;
+# `mailman reopen` reopens them all, so they share the stanza.
+/var/log/mailman3/mailman.log /var/log/mailman3/smtp.log /var/log/mailman3/bounce.log /var/log/mailman3/debug.log /var/log/mailman3/plugins.log {
 	daily
 	rotate 5
 	compress
 	delaycompress
 	missingok
 	notifempty
+	sharedscripts
 	su mailman mailman
 	create 640 mailman mailman
 	postrotate
 		/opt/mailman/venv/bin/mailman reopen >/dev/null 2>&1 || true
 	endscript
+}
+
+# Postorius/HyperKitty (mailman-web, gunicorn as `mailman`) log through a
+# Django FileHandler opened in append mode, which has no reopen signal;
+# copytruncate keeps the open file working. It had reached 127 MB unrotated.
+/var/log/mailman3/mailman-web.log {
+	weekly
+	maxsize 50M
+	rotate 4
+	compress
+	delaycompress
+	missingok
+	notifempty
+	su mailman mailman
+	copytruncate
 }

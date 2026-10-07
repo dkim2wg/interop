@@ -502,6 +502,15 @@ ignored by logrotate as a duplicate. Corrected config is committed at
 Recovery if it recurs: `chown mailman:mailman /var/log/mailman3/mailman.log &&
 systemctl restart mailman3`.
 
+**2026-10-07:** the same file now also rotates the core's `smtp.log`,
+`bounce.log`, `debug.log` and `plugins.log` (one stanza, `sharedscripts`, one
+`mailman reopen`) and `mailman-web.log` (weekly or 50 MB, `copytruncate`:
+Django's FileHandler has no reopen signal). `mailman-web.log` had reached
+127 MB unrotated. A leftover `/etc/logrotate.d/mailman3.bak-20260618` was
+also being read (logrotate skips only package extensions like `.dpkg-old`,
+not `.bak-*`), failing every run with "duplicate log entry"; it was moved to
+`/root/logrotate-backups/`. Never leave backups in `/etc/logrotate.d/`.
+
 **Update process:** push the `dkim2-3.3.10` branch of brong/mailman (and keep
 `dkim2` in step: same three DKIM2 commits, rebased), then run the
 `pip install --force-reinstall` line under Installation above. Until 2026-10-03
