@@ -430,7 +430,8 @@ curl -u restadmin:PASSWORD -X PATCH -H 'Content-Type: application/json' \
 
 Logs go to `dkim2.log` in Mailman's log directory with the `[logging.dkim2]`
 section above. The baseline for each Recipe is pickled with the queued
-message; there is no cache directory (a `mi-cache/` left by an earlier
+message, only when Message-Instance support is enabled (and not for a list
+that opts out); there is no cache directory (a `mi-cache/` left by an earlier
 build can be deleted). Messages queued by this build cannot be unpickled
 by a build without the DKIM2 wrap, so drain the queues before downgrading.
 

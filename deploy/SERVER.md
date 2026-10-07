@@ -427,8 +427,9 @@ then `systemctl stop mailman3; sudo -u mailman /opt/mailman/venv/bin/mailman -C 
 
 **DKIM2 behaviour (since 2026-10-07):** on a list with `dkim2_message_instance`
 on, Mailman always MIME-wraps the post (a `multipart/mixed` with a short
-preamble note, the original body spliced in byte-for-byte as the first part),
-so its `m=2` body Recipe is a copy range. When content filtering
+preamble note, the original body spliced in byte-for-byte as the middle part
+between the list's header and footer parts, or the first part when the list has
+no header), so its `m=2` body Recipe is a copy range. When content filtering
 (`mime_delete`) or DMARC wrapping rewrites the body it records `"b":null`
 instead, and the outbound milter (`dkim2-milter-outbound.service`) runs with
 `--allow-null-body-recipe` so it still signs such an `m=2` (logging
@@ -455,7 +456,8 @@ message_instance: yes   # global DKIM2 MI enable
 max_recipients: 1       # one recipient per transaction -> one address per rt=
 
 [logging.dkim2]
-path: dkim2.log         # the Message-Instance handlers' logger
+path: dkim2.log         # NO EFFECT: Mailman only sets up the loggers its schema
+                        # names, so mailman.dkim2 goes to the journal (Logs)
 
 [database]
 url: sqlite:////var/lib/mailman3/mailman.db
@@ -471,7 +473,11 @@ url: sqlite:////var/lib/mailman3/mailman.db
 
 **Logs:**
 - `/var/log/mailman3/mailman.log` — core mailman
-- `/var/log/mailman3/dkim2.log` — DKIM2 MI handler
+- `journalctl -u mailman3` — DKIM2 MI handlers. They log to `mailman.dkim2`,
+  which is not one of Mailman's schema loggers, so the `[logging.dkim2]`
+  section above is ignored and there is no `dkim2.log`: the records propagate
+  to the root logger, the runners' stderr (warnings such as "Existing
+  Message-Instance m=1 does not match the message as received")
 - `/var/log/mailman3/mailman-web.log` — Django/gunicorn
 
 **Database:** `/var/lib/mailman3/mailman.db` (SQLite)
@@ -1068,7 +1074,8 @@ ssh dkim2 journalctl -fu dkim2-milter-inbound
 ssh dkim2 journalctl -fu dkim2-milter-outbound
 
 # Mailman
-ssh dkim2 tail -f /var/log/mailman3/mailman.log /var/log/mailman3/dkim2.log
+ssh dkim2 tail -f /var/log/mailman3/mailman.log
+ssh dkim2 journalctl -fu mailman3   # DKIM2 MI handler warnings (no dkim2.log)
 
 # Postfix
 ssh dkim2 tail -f /var/log/mail.log
@@ -1282,6 +1289,8 @@ must carry `Message-Instance: m=2` whose Recipe is `{"h":{...},"b":null}`, a
 from the outbound milter; the zip is gone and the body is the bare text part
 plus footer. After restoring CRLF, `Mail::DKIM2::Verifier` (0.14+, which walks
 the header history past the null body Recipe) and the browser JS verifier give
-`pass (i=1..2 verified)`. The Python, Go and C verifiers reject it at 2026-10-07
-(Python/C: m=1 body hash mismatch; Go: "previous body declared unrecoverable"),
-as does `perl/bin/validate.pl`: they do not yet do the header-history walk.
+`pass (i=1..2 verified)`, and so does `perl/bin/validate.pl` (Validate.pm checks
+the header history below the null and reports the lower body hashes as
+`not-checked`). The Python, Go and C verifiers reject it at 2026-10-07
+(Python/C: m=1 body hash mismatch; Go: "previous body declared unrecoverable"):
+they do not yet do the header-history walk.
