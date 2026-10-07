@@ -84,9 +84,44 @@ sub forge_history {
     my $m2 = list_hop($m1, 'list');
     my $prev = $MI->undo($m2, HeadersOnly => 1);
     ok($prev, 'undo HeadersOnly returns a message');
-    unlike($prev->body_raw, qr/^body one\r\nbody two\r\n\z/, 'body left as it is (not rebuilt)');
+    like($prev->body_raw, qr/rewritten by list/, 'body left as it is (not rebuilt)');
     is(scalar $MI->verify($prev, HeadersOnly => 1), 1, 'verify HeadersOnly passes m=1 on header history');
     is(scalar $MI->verify($prev), 0, 'full verify fails m=1 (body differs)');
+}
+
+use lib "$FindBin::Bin/lib";
+use Mail::DKIM2::Signer;
+use Mail::DKIM2::Verifier;
+use DKIM2TestKeys;
+
+sub sign_i1 {
+    my ($msg) = @_;
+    my $s = Mail::DKIM2::Signer->new(
+        Domain => 'test1.dkim2.com', Selector => 'rsa1024',
+        Key => DKIM2TestKeys::private_key('test1.dkim2.com', 'rsa1024'),
+        MailFrom => 'a@test1.dkim2.com', RcptTo => ['list@test2.dkim2.com'],
+        Timestamp => 1740000000);
+    $s->PRINT($msg); $s->CLOSE;
+    return $s->as_string . $EOL . $msg;
+}
+
+sub verifier_result {
+    my ($msg) = @_;
+    my $v = Mail::DKIM2::Verifier->new;
+    $v->allow_unsigned_mi(1);
+    $v->skip_timestamp_check(1);
+    $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+    $v->PRINT($msg); $v->CLOSE;
+    return $v->result_detail;
+}
+
+{
+    my $signed = sign_i1($m1);
+    my $m2 = list_hop($signed, 'list');
+    like(verifier_result($m2), qr/^pass/, 'Verifier: null body over signed m=1 passes');
+
+    my $forged = forge_history($signed);
+    like(verifier_result($forged), qr/^fail.*m=1 does not match content/, 'Verifier: tampered history below null fails on m=1');
 }
 
 done_testing;

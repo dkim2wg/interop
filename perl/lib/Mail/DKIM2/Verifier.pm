@@ -348,7 +348,8 @@ sub finish_body {
     # NOT that the current body/headers still match them. Walk the MI chain:
     # verify the top instance against the current content, then undo each
     # instance and verify the reconstructed content against the next one down,
-    # until m=1 or an instance that declares the previous state unrecoverable.
+    # until m=1; past an instance with a null body Recipe (previous body
+    # unrecoverable) the walk continues over the header history only.
     #
     # MessageInstance::parse() dies (rather than returning an error) on a
     # malformed r= payload -- e.g. the §11.2 invalid-JSON PERMERROR -- so
@@ -409,6 +410,7 @@ sub _verify_mi_chain {
     my $raw = join('', @{$self->{headers}}) . "\r\n" . ($self->{_buf} // '');
     my $msg = parse_mime($raw);
 
+    my $headers_only = 0;
     while (1) {
         my @mi = $msg->header_raw('Message-Instance');
         my %by_v = map { (extract_mi_version($_) // 0) => $_ } @mi;
@@ -416,7 +418,8 @@ sub _verify_mi_chain {
         last unless $num;
 
         my ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg,
-            IgnorePrefixes => $self->{IgnorePrefixes});
+            IgnorePrefixes => $self->{IgnorePrefixes},
+            HeadersOnly    => $headers_only);
         unless ($ok) {
             # A malformed instance is a PERMERROR in its own words (§11.2
             # names the strings); a hash that does not match is a fail.
@@ -433,12 +436,13 @@ sub _verify_mi_chain {
 
         last if $num <= 1;
 
-        # If this instance declares the previous state non-recreatable, the
-        # chain cannot (and need not) be undone further — accept what verified.
+        # A null body Recipe loses the previous body, not the header
+        # history: from here down, undo header Recipes only and check each
+        # instance's header hashes, down to m=1.
         my $mi_obj = Mail::DKIM2::MessageInstance->parse($by_v{$num});
-        last if $mi_obj->unrecoverable;
+        $headers_only = 1 if $mi_obj->unrecoverable;
 
-        my $prev = eval { Mail::DKIM2::MessageInstance->undo($msg) };
+        my $prev = eval { Mail::DKIM2::MessageInstance->undo($msg, HeadersOnly => $headers_only) };
         die $@ if ref $@;
         if ($@ || !$prev) {
             $self->{result}  = 'fail';
@@ -893,7 +897,8 @@ chain must be complete (C<i=1> to C<i=N> with no gaps), each signature must
 verify over the headers that existed when it was made, consecutive hops must
 satisfy the chain-of-custody rules of spec-06 section 11.4, and the
 Message-Instance chain must undo cleanly back to the first instance, each
-one matching the content it describes. The outcome is a result and a reason,
+one matching the content it describes. Past a null body Recipe (the previous body is
+gone) only the header history is checked. The outcome is a result and a reason,
 never an exception; see C<result> below.
 
 Extends L<Mail::DKIM2::HeaderParser>, which provides C<PRINT>, C<CLOSE>,
@@ -1086,7 +1091,8 @@ exploded it after a C<donotexplode>, is a C<fail>.
 
 B<Content.> The top Message-Instance must match the message; its Recipe
 is applied and the next instance down checked against the result, back to
-C<m=1> or an instance that declares the previous state unrecoverable.
+C<m=1>; past an instance with a null body Recipe the walk continues over the
+header history only.
 
 =back
 

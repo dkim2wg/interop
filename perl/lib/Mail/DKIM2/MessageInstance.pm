@@ -1038,8 +1038,9 @@ sub undo {
 # Verify the WHOLE Message-Instance chain reverses cleanly: check the top
 # instance against the current content, then undo it and check the next one
 # down, until m=1; past an instance with a null body Recipe, header-only
-# (the body is gone but the header history is still checked). This is the undo check a recipient performs — running it
-# before signing catches an upstream that emitted a non-reversible Recipe.
+# (the body is gone but the header history is still checked). This is the
+# undo check a recipient performs — running it before signing catches an
+# upstream that emitted a non-reversible Recipe.
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
     my ($class, $msg, %opts) = @_;
