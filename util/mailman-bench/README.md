@@ -32,6 +32,10 @@ Run locally:
 
 Run on the box:
 
+- `soak.sh BUILD VENV on|off|na` (+ `sink.py`) runs one real Mailman instance
+  (own ports 18024/18025/18001, own units `mmsoak-*`, master capped at 700M in
+  its own cgroup) over the corpus 3x and writes `results/soak-BUILD*.{tsv,json}`.
+  Only the delivery-path runners are started (the full set idles above the cap).
 - `setup-builds.sh` builds the venvs `/opt/mailman/bench/{up,cte,wrap}/venv`
   from the refs above, installing the production `pip freeze` minus the web UI
   packages. Idempotent: a build is redone only when its ref now resolves to a
