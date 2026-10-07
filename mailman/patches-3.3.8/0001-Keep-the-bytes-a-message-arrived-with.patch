@@ -3,10 +3,13 @@ From: Bron Gondwana <brong@fastmailteam.com>
 Date: Sun, 4 Oct 2026 14:52:35 -0400
 Subject: [PATCH 1/3] Keep the bytes a message arrived with
 
-The LMTP runner now stores the octets it received on the parsed message as
-msg.original_bytes, next to the original_size it already recorded.  They
-travel with the message through the queues (pickled with it) so anything
-that later has to speak about the message as it was received can.
+With the new [mta] message_instance option on, the LMTP runner stores the
+octets it received on the parsed message as msg.original_bytes, next to the
+original_size it already recorded.  They travel with the message through
+the queues (pickled with it) so a DKIM2 Message-Instance, added by the
+handlers the option enables, can speak about the message as it was
+received.  The option is off by default, and with it off nothing is kept:
+the queue pickles do not grow by a second copy of every message.
 
 Re-serializing the parsed message is not byte-faithful: the generator
 drops a trailing space from a part header, refolds a long one, and
@@ -19,62 +22,148 @@ Found replaying 88 archived messages in assorted charsets through a list:
 re-serialized form.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/mailman/runners/lmtp.py            |  8 ++++++++
- src/mailman/runners/tests/test_lmtp.py | 24 ++++++++++++++++++++++++
- 2 files changed, 32 insertions(+)
+ src/mailman/config/schema.cfg          |  7 +++
+ src/mailman/runners/lmtp.py            | 11 +++++
+ src/mailman/runners/tests/test_lmtp.py | 63 +++++++++++++++++++++++++-
+ 3 files changed, 80 insertions(+), 1 deletion(-)
 
+diff --git a/src/mailman/config/schema.cfg b/src/mailman/config/schema.cfg
+index fb59b3df8..e0feb6904 100644
+--- a/src/mailman/config/schema.cfg
++++ b/src/mailman/config/schema.cfg
+@@ -926,6 +926,13 @@ max_autoresponses_per_day: 10
+ # may wish to remove these headers by setting this to 'yes'.
+ remove_dkim_headers: no
+ 
++# Add DKIM2 Message-Instance headers to outgoing messages.  These headers
++# record SHA-256 hashes of the message at each point in the delivery chain,
++# along with Recipes that allow a verifier to undo the changes made by the
++# mailing list and verify signatures from prior hops.  See
++# draft-ietf-dkim-dkim2-spec-06 for details.
++message_instance: no
++
+ # Where can we find the mail server specific configuration file?  The path can
+ # be either a file system path or a Python import path.  If the value starts
+ # with python: then it is a Python import path, otherwise it is a file system
 diff --git a/src/mailman/runners/lmtp.py b/src/mailman/runners/lmtp.py
-index 701f104f6..71dfc9d2c 100644
+index 701f104f6..706b9850a 100644
 --- a/src/mailman/runners/lmtp.py
 +++ b/src/mailman/runners/lmtp.py
-@@ -183,6 +183,14 @@ class LMTPHandler:
+@@ -41,6 +41,7 @@ from aiosmtpd.controller import Controller
+ from aiosmtpd.lmtp import LMTP
+ from contextlib import suppress
+ from email.utils import parseaddr
++from lazr.config import as_boolean
+ from mailman.config import config
+ from mailman.core.runner import Runner
+ from mailman.database.transaction import transactional
+@@ -183,6 +184,16 @@ class LMTPHandler:
              # message, reject it right away; it's probably spam.
              msg = email.message_from_bytes(envelope.content, Message)
              msg.set_unixfrom(envelope.mail_from)
-+            # Keep the octets the message arrived as.  Re-serializing the
-+            # parsed message is not byte-faithful -- a part header loses a
-+            # trailing space or is refolded, a final boundary without a line
-+            # ending gains one -- and anything that has to speak about the
-+            # message as it was received, a DKIM2 Message-Instance Recipe
-+            # for one, needs the original.  Pickled with the message, so it
-+            # follows it through the queues; original_size is its length.
-+            msg.original_bytes = envelope.content
++            # With DKIM2 Message-Instance support on, keep the octets the
++            # message arrived as.  Re-serializing the parsed message is not
++            # byte-faithful -- a part header loses a trailing space or is
++            # refolded, a final boundary without a line ending gains one --
++            # and a Message-Instance Recipe has to rebuild the original.
++            # Pickled with the message, so it follows it through the queues
++            # (doubling their size, hence only when needed); original_size
++            # is its length.
++            if as_boolean(config.mta.message_instance):
++                msg.original_bytes = envelope.content
          except Exception:
              elog.exception('LMTP message parsing')
              config.db.abort()
 diff --git a/src/mailman/runners/tests/test_lmtp.py b/src/mailman/runners/tests/test_lmtp.py
-index 07c2e94e1..1a18f1f67 100644
+index 07c2e94e1..8af083d99 100644
 --- a/src/mailman/runners/tests/test_lmtp.py
 +++ b/src/mailman/runners/tests/test_lmtp.py
-@@ -66,6 +66,30 @@ Subject: This has no Message-ID header
+@@ -21,13 +21,15 @@ import os
+ import smtplib
+ import unittest
+ 
++from aiosmtpd.smtp import Envelope
+ from datetime import datetime
+ from mailman.app.lifecycle import create_list
+ from mailman.config import config
+ from mailman.database.transaction import transaction
+ from mailman.interfaces.domain import IDomainManager
++from mailman.runners.lmtp import LMTPHandler
+ from mailman.testing.helpers import get_lmtp_client, get_queue_messages
+-from mailman.testing.layers import LMTPLayer
++from mailman.testing.layers import ConfigLayer, LMTPLayer
+ from zope.component import getUtility
+ 
+ 
+@@ -66,6 +68,20 @@ Subject: This has no Message-ID header
          items = get_queue_messages('in', expected_count=1)
          self.assertIsNotNone(items[0].msg.get('message-id'))
  
-+    def test_original_bytes_are_kept(self):
-+        # The octets as received, not a re-serialization: the trailing
-+        # space on the Subject and the unterminated last line survive.
-+        text = (
-+            'From: anne@example.com\r\n'
-+            'To: test@example.com\r\n'
-+            'Message-ID: <ant>\r\n'
-+            'Subject: kept as it came \r\n'
-+            'Content-Type: multipart/mixed; boundary="b"\r\n'
-+            '\r\n'
-+            '--b\r\n'
-+            'Content-Type: text/plain; charset="us-ascii" \r\n'
-+            '\r\n'
-+            'hello\r\n'
-+            '--b--')
-+        self._lmtp.sendmail('anne@example.com', ['test@example.com'], text)
++    def test_original_bytes_not_kept_by_default(self):
++        # Only Message-Instance support needs the received octets; without
++        # it, the queue pickles do not carry a second copy of the message.
++        self._lmtp.sendmail('anne@example.com', ['test@example.com'], """\
++From: anne@example.com
++To: test@example.com
++Message-ID: <ant>
++Subject: not kept
++
++hello
++""")
 +        items = get_queue_messages('in', expected_count=1)
-+        original = items[0].msg.original_bytes
-+        self.assertIsInstance(original, bytes)
-+        # smtplib terminates the data; everything before that is verbatim.
-+        self.assertTrue(original.startswith(text.encode('ascii')), original)
-+        self.assertNotEqual(original, items[0].msg.as_bytes())
-+        self.assertEqual(items[0].msg.original_size, len(original))
++        self.assertFalse(hasattr(items[0].msg, 'original_bytes'))
 +
      def test_message_id_hash_is_added(self):
          self._lmtp.sendmail('anne@example.com', ['test@example.com'], """\
  From: anne@example.com
+@@ -345,3 +361,48 @@ Message-ID: <alpha>
+         items = get_queue_messages('command', expected_count=1)
+         self.assertEqual(items[0].msgdata['listid'],
+                          'longer_than_15_bytes.example.com')
++
++
++class TestOriginalBytes(unittest.TestCase):
++    """The received octets are kept when Message-Instance is enabled."""
++
++    layer = ConfigLayer
++
++    def setUp(self):
++        with transaction():
++            create_list('test@example.com')
++
++    def _deliver(self, content):
++        # The handler in-process, so the test's configuration applies.
++        envelope = Envelope()
++        envelope.mail_from = 'anne@example.com'
++        envelope.rcpt_tos = ['test@example.com']
++        envelope.content = content
++        LMTPHandler()._handle_DATA(None, None, envelope)
++        return get_queue_messages('in', expected_count=1)[0].msg
++
++    # The octets as received, not a re-serialization: the trailing space on
++    # the Subject and the unterminated last line survive.
++    TEXT = (b'From: anne@example.com\r\n'
++            b'To: test@example.com\r\n'
++            b'Message-ID: <ant>\r\n'
++            b'Subject: kept as it came \r\n'
++            b'Content-Type: multipart/mixed; boundary="b"\r\n'
++            b'\r\n'
++            b'--b\r\n'
++            b'Content-Type: text/plain; charset="us-ascii" \r\n'
++            b'\r\n'
++            b'hello\r\n'
++            b'--b--')
++
++    def test_original_bytes_are_kept(self):
++        config.push('mi_on', '[mta]\nmessage_instance: yes')
++        self.addCleanup(config.pop, 'mi_on')
++        msg = self._deliver(self.TEXT)
++        self.assertEqual(msg.original_bytes, self.TEXT)
++        self.assertNotEqual(msg.original_bytes, msg.as_bytes())
++        self.assertEqual(msg.original_size, len(self.TEXT))
++
++    def test_original_bytes_not_kept_when_off(self):
++        msg = self._deliver(self.TEXT)
++        self.assertFalse(hasattr(msg, 'original_bytes'))
