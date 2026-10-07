@@ -70,7 +70,14 @@ from zope.component import getUtility
 # Only builds whose LMTP runner keeps the received octets carry them in
 # their queue pickles; setting the attribute on the others would charge
 # upstream for our patch.
-KEEPS_BYTES = 'original_bytes' in inspect.getsource(lmtp_runner)
+_LMTP_SRC = inspect.getsource(lmtp_runner)
+KEEPS_BYTES = 'original_bytes' in _LMTP_SRC
+# The wrap build keeps them only when [mta] message_instance is on; cte keeps
+# them unconditionally.
+BYTES_GATED = 'config.mta.message_instance' in _LMTP_SRC
+from lazr.config import as_boolean
+KEEP_NOW = KEEPS_BYTES and (
+    not BYTES_GATED or as_boolean(config.mta.message_instance))
 
 WIRE = []
 
@@ -203,7 +210,7 @@ def one(raw, mlist, traced):
         # What LMTPHandler._handle_DATA does before it enqueues.
         msg = email.message_from_bytes(raw, Message)
         msg.set_unixfrom('sender@example.org')
-        if KEEPS_BYTES:
+        if KEEP_NOW:
             msg.original_bytes = raw
         msg.original_size = len(raw)
         add_message_hash(msg)
