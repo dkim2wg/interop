@@ -6,12 +6,13 @@ Mirrors what the runners do -- LMTP parse, in queue, posting pipeline,
 out queue, delivery -- without runner processes or an MTA, so each
 message's CPU, peak memory and queue footprint can be measured alone.
 
-CPU and peak figures are taken under tracemalloc, which slows the measured
-code; every build pays the same overhead so comparisons hold, but the
-absolute CPU numbers are inflated.
+cpu_* are the median of --repeat runs made WITHOUT tracemalloc (it inflates
+allocation-heavy code unequally).  peak_* come from one separate traced run
+per message.  Each run has a --timeout (all stages of one run); a message
+that exceeds it gets a row with "timeout": true and no metrics.
 """
 import argparse, email, inspect, json, os, re, shutil, smtplib, statistics
-import tempfile, time, tracemalloc
+import signal, tempfile, time, tracemalloc
 from pathlib import Path
 
 ap = argparse.ArgumentParser()
@@ -22,6 +23,8 @@ ap.add_argument('--signed', choices=['signed', 'unsigned'], required=True)
 ap.add_argument('--out', required=True)
 ap.add_argument('--members', type=int, default=25)
 ap.add_argument('--repeat', type=int, default=5)
+ap.add_argument('--timeout', type=int, default=120,
+                help='seconds allowed for all stages of one run of one message')
 ap.add_argument('--resume', action='store_true',
                 help='skip ids already in the output file (after an OOM kill)')
 args = ap.parse_args()
@@ -45,6 +48,8 @@ url: sqlite:///{var}/mailman.db
 smtp_host: 127.0.0.1
 smtp_port: 9
 {mi_line}
+[archiver.prototype]
+enable: yes
 """)
 from mailman.core.initialize import initialize
 initialize(str(cfg))
@@ -126,14 +131,33 @@ config.db.commit()
 LISTS = {0: make_list('bench', 0), 1: make_list('benchfilter', 1)}
 
 
-def measure(fn):
-    tracemalloc.start()
-    tracemalloc.reset_peak()
-    t0 = time.process_time()
-    result = fn()
-    cpu = time.process_time() - t0
-    _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+class BenchTimeout(Exception):
+    pass
+
+
+def _alarm(signum, frame):
+    raise BenchTimeout()
+
+
+signal.signal(signal.SIGALRM, _alarm)
+STAGE = 'start'
+
+
+def measure(fn, stage, traced):
+    """Return (result, cpu seconds, tracemalloc peak or None)."""
+    global STAGE
+    STAGE = stage
+    if traced:
+        tracemalloc.start()
+        tracemalloc.reset_peak()
+    try:
+        t0 = time.process_time()
+        result = fn()
+        cpu = time.process_time() - t0
+        peak = tracemalloc.get_traced_memory()[1] if traced else None
+    finally:
+        if traced:
+            tracemalloc.stop()
     return result, cpu, peak
 
 
@@ -146,14 +170,32 @@ def mi_cache_bytes():
     return sum(p.stat().st_size for p in d.glob('*')) if d.exists() else 0
 
 
+def clear_state():
+    """Empty every queue (subscribing leaves welcome mail in virgin) and the
+    mi-cache, before a run and after a timeout."""
+    for sb in config.switchboards.values():
+        d = sb.queue_directory
+        for f in os.listdir(d):
+            os.unlink(os.path.join(d, f))
+    shutil.rmtree(var / 'mi-cache', ignore_errors=True)
+
+
+def odd_queues():
+    """Files in the queues a held/shunted/bounced post would land in."""
+    return sum(len(os.listdir(config.switchboards[n].queue_directory))
+               for n in ('hold', 'shunt', 'bad', 'virgin', 'bounces')
+               if n in config.switchboards)
+
+
 def mi_len(wire):
     head = wire.split(b'\r\n\r\n', 1)[0]
     return sum(len(f) for f in re.split(rb'\r\n(?![ \t])', head)
                if f.split(b':', 1)[0].strip().lower() == b'message-instance')
 
 
-def one(raw, mlist):
+def one(raw, mlist, traced):
     WIRE.clear()
+    clear_state()
     sb_in, sb_pipe, sb_out, sb_arch = (
         config.switchboards[n] for n in ('in', 'pipeline', 'out', 'archive'))
     def lmtp():
@@ -168,33 +210,39 @@ def one(raw, mlist):
         return sb_in.enqueue(msg, {}, listid=mlist.list_id,
                              original_size=len(raw), received_time=now(),
                              to_list=True)
-    fb, cpu_in, peak_in = measure(lmtp)
-    r = {'pck_in': pck_size(sb_in, fb), 'cpu_in': cpu_in, 'peak_in': peak_in}
-    # The incoming runner's posting chain accepts the post and moves it to
-    # the pipeline queue unchanged.
-    msg, data = sb_in.dequeue(fb)
-    sb_in.finish(fb)
-    fb = sb_pipe.enqueue(msg, data, pipeline=mlist.posting_pipeline)
-    r['pck_pipeline'] = pck_size(sb_pipe, fb)
-    def pipeline():
-        msg, data = sb_pipe.dequeue(fb)
-        sb_pipe.finish(fb)
-        run_pipeline(mlist, msg, data, mlist.posting_pipeline)
-    _, r['cpu_pipeline'], r['peak_pipeline'] = measure(pipeline)
-    # to-outgoing and to-archive enqueued copies.
-    r['pck_out'] = sum(pck_size(sb_out, f) for f in sb_out.files)
-    r['pck_archive'] = sum(pck_size(sb_arch, f) for f in sb_arch.files)
-    r['mi_cache'] = mi_cache_bytes()
-    out_files = list(sb_out.files)
-    def outgoing():
-        for f in out_files:
-            m, d = sb_out.dequeue(f)
-            sb_out.finish(f)
-            deliver(mlist, m, d)
-    _, r['cpu_out'], r['peak_out'] = measure(outgoing)
-    for f in list(sb_arch.files):
-        sb_arch.dequeue(f)
-        sb_arch.finish(f)
+    signal.setitimer(signal.ITIMER_REAL, args.timeout)
+    try:
+        fb, cpu_in, peak_in = measure(lmtp, 'lmtp', traced)
+        r = {'pck_in': pck_size(sb_in, fb), 'cpu_in': cpu_in,
+             'peak_in': peak_in}
+        # The incoming runner's posting chain accepts the post and moves it
+        # to the pipeline queue unchanged.
+        msg, data = sb_in.dequeue(fb)
+        sb_in.finish(fb)
+        fb = sb_pipe.enqueue(msg, data, pipeline=mlist.posting_pipeline)
+        r['pck_pipeline'] = pck_size(sb_pipe, fb)
+        def pipeline():
+            msg, data = sb_pipe.dequeue(fb)
+            sb_pipe.finish(fb)
+            run_pipeline(mlist, msg, data, mlist.posting_pipeline)
+        _, r['cpu_pipeline'], r['peak_pipeline'] = measure(
+            pipeline, 'pipeline', traced)
+        # to-outgoing and to-archive enqueued copies.
+        out_files = list(sb_out.files)
+        r['n_out_files'] = len(out_files)
+        r['pck_out'] = sum(pck_size(sb_out, f) for f in out_files)
+        r['pck_archive'] = sum(pck_size(sb_arch, f) for f in sb_arch.files)
+        r['mi_cache'] = mi_cache_bytes()
+        def outgoing():
+            for f in out_files:
+                m, d = sb_out.dequeue(f)
+                sb_out.finish(f)
+                deliver(mlist, m, d)
+        _, r['cpu_out'], r['peak_out'] = measure(outgoing, 'outgoing', traced)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    r['delivered'] = len(WIRE)
+    r['odd_queue_files'] = odd_queues()
     first = WIRE[0] if WIRE else b''
     r['wire_bytes'] = len(first)
     r['mi_header_len'] = mi_len(first)
@@ -209,7 +257,21 @@ out_file = out_dir / f'inproc-{args.build}-{args.signed}.jsonl'
 current = out_dir / f'inproc-{args.build}-{args.signed}.current'
 done = set()
 if args.resume and out_file.exists():
-    done = {json.loads(l)['id'] for l in out_file.open()}
+    for l in out_file.open():
+        try:
+            done.add(json.loads(l)['id'])
+        except ValueError:
+            pass    # a partial line left by a kill
+# Warm-up (imports, template cache, sqlite) so the first message is not
+# charged for it; not recorded.
+for warm_id, warm_size, _, warm_filt in index:
+    if int(warm_size) < 1_000_000:
+        try:
+            one(Path(args.corpus, args.signed, warm_id + '.eml').read_bytes(),
+                LISTS[int(warm_filt)], False)
+        except BenchTimeout:
+            clear_state()
+        break
 # A cgroup OOM kill ends this process outright (no MemoryError), so the id
 # being worked on is written to .current first; run-inproc.sh records it as
 # an OOM row and resumes after it.
@@ -219,19 +281,32 @@ with open(out_file, 'a' if args.resume else 'w') as fp:
             continue
         current.write_text(f'{ident}\t{size}\t{cls}\t{filt}\n')
         raw = Path(args.corpus, args.signed, ident + '.eml').read_bytes()
-        runs = []
+        base = dict(build=args.build, dkim2=args.dkim2, signed=args.signed,
+                    id=ident, size=int(size), cls=cls, filter=int(filt))
+        mlist = LISTS[int(filt)]
         # Multi-megabyte messages are slow and the medians of their runs
-        # barely differ, so run them once.
-        for _ in range(1 if int(size) > 1_000_000 else args.repeat):
-            r, first = one(raw, LISTS[int(filt)])
-            runs.append(r)
-        row = {k: statistics.median(run[k] for run in runs)
-               for k in runs[0]}
-        row['oom'] = False
-        (out_dir / 'eml' / f'{args.build}-{args.signed}-{ident}.eml'
-         ).write_bytes(first)
-        row.update(build=args.build, dkim2=args.dkim2, signed=args.signed,
-                   id=ident, size=int(size), cls=cls, filter=int(filt))
+        # barely differ, so time them once.
+        n = 1 if int(size) > 1_000_000 else args.repeat
+        runs = []
+        try:
+            for _ in range(n):
+                r, first = one(raw, mlist, False)
+                runs.append(r)
+            traced, _ = one(raw, mlist, True)
+        except BenchTimeout:
+            clear_state()
+            row = dict(base, oom=False, timeout=True,
+                       timeout_s=args.timeout, stage=STAGE)
+        else:
+            row = {k: statistics.median(run[k] for run in runs)
+                   for k in runs[0] if not k.startswith('peak_')}
+            row.update({k: v for k, v in traced.items()
+                        if k.startswith('peak_')})
+            row.update(base, oom=False, runs=len(runs))
+            if row['delivered'] == 0:
+                row['undelivered'] = True
+            (out_dir / 'eml' / f'{args.build}-{args.signed}-{ident}.eml'
+             ).write_bytes(first)
         fp.write(json.dumps(row) + '\n')
         fp.flush()
 current.unlink(missing_ok=True)
