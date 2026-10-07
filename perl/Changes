@@ -13,6 +13,8 @@ Revision history for Mail::DKIM2
           signed silently; it is refused (X-DKIM2-Info
           not-signed=null-body-recipe) unless the option is set, and signed
           with X-DKIM2-Info null-body-recipe when it is.
+        - DKIM2_DATE is 2026-10-07: what the milter signs and how the
+          Verifier judges a null body Recipe changed.
 
 0.13    2026-10-04
         - The header Recipe builder treated "no instances" and "one empty
