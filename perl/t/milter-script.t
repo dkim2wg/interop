@@ -43,29 +43,40 @@ my $EOL = "\015\012";
 
 # --- Spawn the milter: outbound mode, signing for test2.dkim2.com from a keydir ---
 
-my $dir  = tempdir(CLEANUP => 1);
-my $sock = "$dir/out.sock";
+my $dir = tempdir(CLEANUP => 1);
 my $log  = "$dir/milter.log";
 path("$dir/keys/test2.dkim2.com")->mkpath;
 $KEYS->child('sel1._domainkey.test2.dkim2.com.pem')->copy("$dir/keys/test2.dkim2.com/sel1.key");
 path("$dir/snap")->mkpath;
 
-my $pid = fork();
-die "fork: $!" unless defined $pid;
-if ($pid == 0) {
-    open STDERR, '>>', $log or die $!;
-    open STDOUT, '>>', $log or die $!;
-    exec $^X, "-I$LIB", $SCRIPT,
-        '--mode', 'outbound',
-        '--socket', "unix:$sock",
-        '--keydir', "$dir/keys",
-        '--dns-json', "$DNS_JSON",
-        '--snapshot-dir', "$dir/snap"
-        or die "exec: $!";
-}
-END { local $?; kill "TERM", $pid if $pid; waitpid($pid, 0) if $pid; }
+my @pids;
+END { local $?; for my $p (@pids) { kill "TERM", $p; waitpid($p, 0) } }
 
-for (1 .. 50) { last if -S $sock; select(undef, undef, undef, 0.2); }
+# Start a milter on its own socket; extra => [...] adds command-line options.
+sub spawn_milter {
+    my (%o) = @_;
+    my $n    = @pids;
+    my $sock = $n ? "$dir/out$n.sock" : "$dir/out.sock";
+    my $pid  = fork();
+    die "fork: $!" unless defined $pid;
+    if ($pid == 0) {
+        open STDERR, '>>', $log or die $!;
+        open STDOUT, '>>', $log or die $!;
+        exec $^X, "-I$LIB", $SCRIPT,
+            '--mode', 'outbound',
+            '--socket', "unix:$sock",
+            '--keydir', "$dir/keys",
+            '--dns-json', "$DNS_JSON",
+            '--snapshot-dir', "$dir/snap",
+            @{ $o{extra} || [] }
+            or die "exec: $!";
+    }
+    push @pids, $pid;
+    for (1 .. 50) { last if -S $sock; select(undef, undef, undef, 0.2); }
+    return ($pid, $sock);
+}
+
+my ($pid, $sock) = spawn_milter();
 ok(-S $sock, 'milter is listening') or BAIL_OUT("milter never came up:\n" . path($log)->slurp);
 
 sub milter_log { path($log)->slurp }
@@ -128,8 +139,9 @@ sub read_verdict {
 # modifications it asked for.
 sub run_milter {
     my (%a) = @_;
-    my $s = IO::Socket::UNIX->new(Peer => $sock, Type => SOCK_STREAM)
-        or die "connect $sock: $!";
+    my $peer = $a{sock} // $sock;
+    my $s = IO::Socket::UNIX->new(Peer => $peer, Type => SOCK_STREAM)
+        or die "connect $peer: $!";
     $s->autoflush(1);
 
     pkt($s, 'O', pack('NNN', 6, 0x1FF, 0));
@@ -318,6 +330,63 @@ SKIP: {
     is(scalar @sig, 1, 'unreadable: signed with the parent domain key');
     like($sig[0]{value}, qr/\bd=test2\.dkim2\.com;/, 'unreadable: d= is the readable parent');
     chmod 0700, "$dir/keys/unreadable.test2.dkim2.com";
+}
+
+# --- 5. A list's unsigned m=2 with a null body Recipe ---
+#
+# Built like the case in 2, but the list rewrote the body and said so ("b":
+# null). Signing that is the host's choice: --allow-null-body-recipe, off by
+# default. Either way the header history below the null is still checked.
+sub null_list_post {
+    my (%o) = @_;
+    my $signed = originator_signed();
+    my $mod = $signed;
+    $mod =~ s/^Subject: /Subject: [list] /m;
+    $mod =~ s/^To: .*$/To: tampered\@example.net/m if $o{forge};
+    $mod .= "--$EOL" . "rewritten$EOL";
+    my $mi = Mail::DKIM2::MessageInstance->calculate(
+        Email::MIME->new($mod), Email::MIME->new($signed));
+    $mi->set_null_body_recipe;
+    if ($o{forge}) {
+        # hide the To change from the header Recipe
+        my $rh = $mi->{bits}{rh};
+        delete $rh->{$_} for grep { lc($_) eq 'to' } keys %$rh;
+    }
+    return "Message-Instance: " . $mi->as_string . $EOL . $mod;
+}
+
+sub info_values {
+    my ($mods) = @_;
+    return map { $_->{value} } inserted($mods, 'X-DKIM2-Info');
+}
+
+{
+    my ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => null_list_post());
+    is($verdict, 'c', 'null body: milter continues');
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'option off: null body Recipe not signed');
+    like(join("\n", info_values($mods)), qr/not-signed=null-body-recipe/,
+        'option off: X-DKIM2-Info records not-signed=null-body-recipe');
+}
+
+{
+    my ($pid2, $sock2) = spawn_milter(extra => ['--allow-null-body-recipe']);
+    ok(-S $sock2, 'option-on milter is listening') or BAIL_OUT("milter never came up");
+    my ($verdict, $mods) = run_milter(sock => $sock2,
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => null_list_post());
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 1, 'option on: signed') or diag(milter_log());
+    like(join("\n", info_values($mods)), qr/action=null-body-recipe/,
+        'option on: X-DKIM2-Info records null-body-recipe');
+
+    # The list also changed To, and its header Recipe hides that: refused
+    # even with the option on, by the header-history walk.
+    ($verdict, $mods) = run_milter(sock => $sock2,
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => null_list_post(forge => 1));
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 0,
+        'option on: forged header history not signed');
 }
 
 done_testing;

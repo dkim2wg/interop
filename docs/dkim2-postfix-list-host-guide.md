@@ -148,6 +148,15 @@ options; `--mode both` on one socket is also possible
 the inbound stamp off the list's own copies, so the two-instance layout is
 what this guide wires up.
 
+**Null body Recipes.** A list that rewrites a body (content filtering, DMARC
+wrap) records a null body Recipe in its Message-Instance: the previous body is
+gone. `dkim2-milter` does not sign such a message unless started with
+`--allow-null-body-recipe`, which is off by default in the program. The
+outbound example unit turns it on, since it is for list hosts. With it on, the
+message is still signed only if the upstream signatures verify and the header
+history below the null Recipe checks out; the milter adds
+`X-DKIM2-Info: null-body-recipe` when it signs one.
+
 **Null senders.** `dkim2-milter` requires Sendmail::PMilter 1.28 or later
 and refuses to start with an older one. 1.27 never answered a `MAIL
 FROM:<>` command, so Postfix waited out `milter_command_timeout` (30

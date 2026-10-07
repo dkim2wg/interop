@@ -72,6 +72,7 @@ GetOptions(\%opts,
     'algorithm|a=s',
     'snapshot-dir=s',
     'dns-json=s',
+    'allow-null-body-recipe',
     'use-epilogue',
     'epilogue-threshold=i',
     'help|h',
@@ -377,6 +378,23 @@ sub cb_eom {
         my ($mi_chain_ok, $mi_chain_why) =
             Mail::DKIM2::MessageInstance->chain_verifies($message);
 
+        # A top instance with a null body Recipe ("b": null): the list
+        # rewrote the body (content filtering, DMARC wrap) and says so.
+        # chain_verifies has already checked the header history below it.
+        # Signing it is the host's choice: --allow-null-body-recipe.
+        my $top_null = 0;
+        {
+            my %by_v;
+            for my $hdr (@{$priv->{headers}}) {
+                next unless lc($hdr->[0]) eq 'message-instance';
+                (my $val = $hdr->[1]) =~ s/^\s+//;
+                $by_v{extract_mi_version($val) // 0} = $val;
+            }
+            my ($top) = sort { $b <=> $a } keys %by_v;
+            $top_null = 1 if $top
+                && eval { Mail::DKIM2::MessageInstance->parse($by_v{$top})->unrecoverable };
+        }
+
         if ($has_dk2 && $verify_result !~ /^pass/) {
             # Upstream chain is broken — don't extend it with a new signature.
             warn "dkim2-milter: not signing $msgid: upstream DKIM2 chain "
@@ -386,6 +404,11 @@ sub cb_eom {
                . "does not undo cleanly: $mi_chain_why\n";
             $ctx->insheader('X-DKIM2-Info',
                 _milter_value(_dkim2_info("not-signed=broken-mi-chain")), 0);
+        } elsif ($top_null && !$opts{'allow-null-body-recipe'}) {
+            warn "dkim2-milter: not signing $msgid: top Message-Instance has a "
+               . "null body Recipe (--allow-null-body-recipe not set)\n";
+            $ctx->insheader('X-DKIM2-Info',
+                _milter_value(_dkim2_info("not-signed=null-body-recipe")), 0);
         } else {
             # Chain is valid (or there is no upstream chain) — proceed.
             my $mi_header;
@@ -466,6 +489,8 @@ sub cb_eom {
                         _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
                     warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
                        . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
+                    $ctx->insheader('X-DKIM2-Info',
+                        _milter_value(_dkim2_info("null-body-recipe")), 0) if $top_null;
                 }
             } else {
                 warn "dkim2-milter: no signing key for $msgid from=$priv->{env_from}\n";
@@ -863,6 +888,15 @@ In keydir mode, the algorithm is auto-detected from each key file.
 Directory for message snapshots.  Enables diff-based Message-Instance
 computation: on inbound, a snapshot is stored keyed by the MI header value;
 on outbound, the snapshot is used to compute recipes describing changes.
+
+=item B<--allow-null-body-recipe>
+
+Sign a message whose top Message-Instance has a null body Recipe.  Default:
+off, and such a message is delivered unsigned with
+C<X-DKIM2-Info: not-signed=null-body-recipe>.  When set, the message is
+signed provided the upstream signatures verify and the header history below
+the null Recipe checks out.  For list hosts whose list manager rewrites
+bodies (content filtering, DMARC wrap).
 
 =item B<--use-epilogue>
 

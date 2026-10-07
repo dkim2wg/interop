@@ -2,7 +2,7 @@ package Mail::DKIM2::Verifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 
 use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
@@ -442,7 +442,9 @@ sub _verify_mi_chain {
         my $mi_obj = Mail::DKIM2::MessageInstance->parse($by_v{$num});
         $headers_only = 1 if $mi_obj->unrecoverable;
 
-        my $prev = eval { Mail::DKIM2::MessageInstance->undo($msg, HeadersOnly => $headers_only) };
+        my $prev = eval {
+            Mail::DKIM2::MessageInstance->undo($msg, HeadersOnly => $headers_only)
+        };
         die $@ if ref $@;
         if ($@ || !$prev) {
             $self->{result}  = 'fail';
@@ -897,9 +899,9 @@ chain must be complete (C<i=1> to C<i=N> with no gaps), each signature must
 verify over the headers that existed when it was made, consecutive hops must
 satisfy the chain-of-custody rules of spec-06 section 11.4, and the
 Message-Instance chain must undo cleanly back to the first instance, each
-one matching the content it describes. Past a null body Recipe (the previous body is
-gone) only the header history is checked. The outcome is a result and a reason,
-never an exception; see C<result> below.
+one matching the content it describes. Past a null body Recipe (the previous
+body is gone) only the header history is checked. The outcome is a result and
+a reason, never an exception; see C<result> below.
 
 Extends L<Mail::DKIM2::HeaderParser>, which provides C<PRINT>, C<CLOSE>,
 C<load> and the tie interface. A message with no DKIM2-Signature is decided
