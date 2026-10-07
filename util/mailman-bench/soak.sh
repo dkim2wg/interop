@@ -148,6 +148,7 @@ row() { # t label pid -> one tab row, or nothing unless both reads worked
   m=$(awk -v t=$1 -v r="$2" -v p=$3 '/^VmRSS/{rss=$2} /^VmHWM/{hwm=$2} END{if(rss=="")exit 1; printf "%s\t%s\t%s\t%s\t%s", t,r,p,rss,hwm}' /proc/$3/status 2>/dev/null) || return 0
   c=$(sed 's/.*) //' /proc/$3/stat 2>/dev/null | awk '{print $12+$13}') || return 0
   [ -n "$c" ] && printf '%s\t%s\n' "$m" "$c"
+  return 0
 }
 ( while sleep 1; do
     t=$(date +%s)
@@ -264,7 +265,7 @@ kill $SAMPLER 2>/dev/null || true; SAMPLER=
 systemctl stop $UNIT 2>/dev/null || true
 RESULT=$(systemctl show -p Result --value $UNIT 2>/dev/null || true)
 systemctl stop $SINKUNIT 2>/dev/null || true
-SHUNT=$(find $V/var/queue/shunt -type f 2>/dev/null | wc -l); BAD=$(find $V/var/queue/bad -type f 2>/dev/null | wc -l)
+SHUNT=$( { find $V/var/queue/shunt -type f 2>/dev/null || true; } | wc -l); BAD=$( { find $V/var/queue/bad -type f 2>/dev/null || true; } | wc -l)
 LOGDIED=$(grep -ciE 'died|signal 9|killed' $V/var/logs/mailman.log 2>/dev/null || true)
 systemctl reset-failed $UNIT $SINKUNIT 2>/dev/null || true
 
