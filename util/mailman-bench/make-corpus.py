@@ -46,6 +46,12 @@ def synthetic():
     m.add_attachment(rng.randbytes(10_000_000), maintype='application',
                      subtype='zip', filename='kitten.zip')
     yield 'syn-filter-10mb', m, 1
+    # Zero bytes base64 to ~137k identical lines: the worst case for a line
+    # diff (last, so the rng-driven items above stay byte-identical).
+    m = base('zeros 10MB'); m.set_content(text(1_000))
+    m.add_attachment(bytes(10_000_000), maintype='application',
+                     subtype='octet-stream', filename='zeros.bin')
+    yield 'syn-zeros-10mb', m, 0
 
 def size_class(n):
     return 'small' if n < 20_000 else 'medium' if n < 1_000_000 else 'large' if n < 20_000_000 else 'huge'
@@ -68,16 +74,27 @@ def main():
         raw = raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
         try:
             signed = sign(raw)
-            assert b'Message-Instance:' in signed and b'DKIM2-Signature:' in signed
-        except (subprocess.CalledProcessError, AssertionError) as e:
+        except subprocess.CalledProcessError as e:
+            why = e.stderr.decode('utf-8', 'replace').strip() or f'exit {e.returncode}'
+            signed = None
+        else:
+            why = None if (b'Message-Instance:' in signed and b'DKIM2-Signature:' in signed) \
+                else 'no Message-Instance/DKIM2-Signature in the output'
+        if why:
             skipped.append(ident)
-            print(f'skip {ident}: signing failed ({type(e).__name__})', file=sys.stderr)
+            print(f'skip {ident}: signing failed: {why}', file=sys.stderr)
             continue
         (OUT / 'unsigned' / f'{ident}.eml').write_bytes(raw)
         (OUT / 'signed' / f'{ident}.eml').write_bytes(signed)
         rows.append(f'{ident}\t{len(raw)}\t{size_class(len(raw))}\t{filt}')
     (OUT / 'index.tsv').write_text('id\tsize\tclass\tfilter\n' + '\n'.join(rows) + '\n')
     print(f'{len(rows)} messages -> {OUT} ({len(skipped)} skipped)')
+    # A partial corpus would make the benchmark silently incomparable.
+    if not rows or skipped:
+        print('error: ' + ('no messages' if not rows else
+                           'skipped: ' + ', '.join(skipped)), file=sys.stderr)
+        return 1
+    return 0
 
 if __name__ == '__main__':
     sys.exit(main())

@@ -45,12 +45,14 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
 0. *(upstream, `patches-3.3.10/` only)* **Fix requirement for standard-nntplib
    with Python >= 3.13** and **remove context manager usage for
    PosixPath**: the two Python 3.13 fixes described above.
-1. **Keep the bytes a message arrived with.** The LMTP runner stores the
-   received octets as `msg.original_bytes`. Re-serializing a parsed
-   multipart message is not byte-faithful (a part header loses a trailing
-   space or is refolded, a final boundary gains a line ending), and a
-   Message-Instance Recipe has to rebuild exactly what the sender signed.
-   A Mailman-core change, independent of DKIM2.
+1. **Keep the bytes a message arrived with.** Only when Message-Instance
+   support is enabled (`[mta] message_instance: yes`, the option this patch
+   adds, off by default), the LMTP runner stores the received octets as
+   `msg.original_bytes`. Re-serializing a parsed multipart message is not
+   byte-faithful (a part header loses a trailing space or is refolded, a
+   final boundary gains a line ending), and a Message-Instance Recipe has
+   to rebuild exactly what the sender signed. With the option off nothing
+   is kept, so the queue pickles do not grow.
 2. **Add DKIM2 Message-Instance headers at ingress and egress.** A
    `message-instance-ingress` handler at the front of the posting and owner
    pipelines records the message as received (adding `m=1` if it has no
@@ -61,7 +63,8 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
    personalisation and ARC signing. It hashes the message as `smtplib`
    will send it (without `Bcc` and `Resent-Bcc`, which `smtplib` drops), so
    the Recipe records that change too. Each instance is accompanied by an
-   `X-DKIM2-Info` debug header. Enabled by `[mta] message_instance: yes`.
+   `X-DKIM2-Info` debug header. Enabled by `[mta] message_instance: yes`;
+   on a list that opts out, ingress drops the received octets.
    Includes the tests and `DKIM2-MESSAGE-INSTANCE.md`.
 
    On a list with Message-Instance enabled, decoration always MIME-wraps:
@@ -146,7 +149,9 @@ path: dkim2.log
 ```
 
 Restart Mailman. The baseline for Recipe computation travels with each
-queued message (`msg.original_bytes`); there is no cache directory. Earlier
+queued message (`msg.original_bytes`, kept only when Message-Instance
+support is enabled, and not for a list that opts out); there is no cache
+directory. Earlier
 builds kept baselines in `$VAR_DIR/mi-cache/`, which is no longer used and
 can be deleted.
 

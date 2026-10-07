@@ -27,16 +27,22 @@ owner pipelines after authenticity validation):
 - With one already present (from an inbound milter, or a signing
   sender), never modify it: it may be covered by a DKIM2-Signature, and
   rewriting or dropping it would destroy the evidence of a broken chain
-  and let Mailman pose as the originator.  Instead pick the snapshot the
-  instance actually describes, using verification as the oracle.  If it
-  matches the current message, that is the baseline.  If it only matches
-  once the Message-ID-Hash that Mailman's message store stamps on arrival
-  is removed, the unstamped message is the baseline, so the egress Recipe records
-  the stamp as a reversible Mailman change.  A Message-ID-Hash that was
-  part of the signed instance is left alone.  A mismatch that cannot be
-  explained is logged as a warning.
+  and let Mailman pose as the originator.  The baseline is the message
+  as received, so everything Mailman did since (the Message-ID-Hash
+  stamp, a repaired Message-ID) goes into the egress Recipe; an instance
+  that does not match those octets is logged as a warning.  Only without
+  received octets (an older queue entry, an injected message) is the
+  snapshot picked from the parsed message, using verification as the
+  oracle: if it matches the current message, that is the baseline; if
+  it only matches once the Message-ID-Hash that Mailman's message store
+  stamps on arrival is removed, the unstamped message is the baseline,
+  so the egress Recipe records the stamp as a reversible Mailman change.
+  A Message-ID-Hash that was part of the signed instance is left alone.
 
 - Digests are skipped; they are not a single authored message.
+
+- On a list with Message-Instance off, the received octets are dropped
+  so they are not pickled through every queue.
 
 Egress mixin (MessageInstanceMixin on Deliver and BulkDelivery, after
 decoration and ARC signing):
@@ -44,14 +50,22 @@ decoration and ARC signing):
 - If the hashes still match the snapshot, add nothing.  Otherwise
   compute header and body Recipes against the snapshot and prepend
   m=N+1.  Hashes and Recipes are over the message as smtplib will send
-  it.  The pure-append case is detected directly and emitted as a single
-  copy range without a full diff.
+  it.  When the previous body is one contiguous run of the current one
+  (a pure append, or the DKIM2 wrap below) the body Recipe is a single
+  copy range found by a linear scan; the line diff, quadratic in
+  repeated lines, runs only for other changes.
+
+- A message that already carries an instance newer than the snapshot
+  is left alone: BulkDelivery stamps the queued message itself, and a
+  temporary failure retries that stamped copy.
 
 - When Mailman rewrote the body itself (content filtering in
   mime_delete, or the DMARC wrap), those handlers set
   msgdata['body-modified'] and the body Recipe is "b": null: the
   previous body cannot be rebuilt, and the Recipe says so rather than
-  carrying the whole original as literal data.
+  carrying the whole original as literal data.  A site handler that
+  rewrites the body must do the same, or the wrap below would splice in
+  the body as received and revert its change.
 
 Decoration on a DKIM2 list wraps instead of re-encoding.  Upstream
 re-encodes a single-part text/plain body to append a footer (utf-8
@@ -88,8 +102,8 @@ and names, so interop problems can be
 diagnosed from the message alone.  It is excluded from the hash by the
 X-* rule and is folded to 78 characters.
 
-The feature is off by default; enable it with the new [mta]
-message_instance option.
+The feature is off by default; enable it with the [mta]
+message_instance option (added with the received octets).
 
 DKIM2-MESSAGE-INSTANCE.md describes the design, the wire format, the
 decoration interaction and the resource impact.
@@ -127,20 +141,19 @@ charsets through a test list (interop util/charset-corpus.sh):
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- DKIM2-MESSAGE-INSTANCE.md                     |  215 ++
- src/mailman/config/schema.cfg                 |    7 +
+ DKIM2-MESSAGE-INSTANCE.md                     |  236 ++
  src/mailman/handlers/decorate.py              |  105 +
  src/mailman/handlers/dmarc.py                 |    2 +
- src/mailman/handlers/message_instance.py      | 1297 +++++++++++
+ src/mailman/handlers/message_instance.py      | 1319 +++++++++++
  src/mailman/handlers/mime_delete.py           |    3 +
- .../handlers/tests/test_message_instance.py   | 1960 +++++++++++++++++
+ .../handlers/tests/test_message_instance.py   | 2058 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
  .../handlers/tests/test_mi_roundtrip.py       |  241 ++
  src/mailman/mta/bulk.py                       |    5 +-
  src/mailman/mta/deliver.py                    |    5 +-
  src/mailman/mta/message_instance.py           |   31 +
  src/mailman/pipelines/builtin.py              |    2 +
- 13 files changed, 3905 insertions(+), 2 deletions(-)
+ 12 files changed, 4039 insertions(+), 2 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
  create mode 100644 src/mailman/handlers/tests/test_message_instance.py
@@ -150,10 +163,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..723fe2923
+index 000000000..3dc69f722
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,236 @@
 +# DKIM2 Message-Instance Support
 +
 +This documents the changes that add DKIM2 Message-Instance header support
@@ -229,18 +242,27 @@ index 000000000..723fe2923
 +  signing sender) Mailman never modifies it: it may be covered by a
 +  `DKIM2-Signature`, and rewriting or dropping it would destroy the
 +  evidence of a broken chain and let Mailman pose as the originator.
-+  Instead Mailman works out which state the instance describes.  If it
-+  verifies against the current message, that is the baseline.  If it
-+  only verifies once the `Message-ID-Hash` that Mailman's message store
-+  stamps on arrival is removed, the unstamped message is the baseline,
-+  so the egress Recipe records the stamp as a reversible change.  A
-+  `Message-ID-Hash` that was part of the signed instance is left alone.
-+  Anything else is logged as a warning: the chain may not undo cleanly.
-+- In both cases the baseline is kept as `msg.original_bytes` (which the
++  The baseline is the message as received, the octets the LMTP runner
++  kept, so everything Mailman has done since (the `Message-ID-Hash`
++  stamp, a repaired `Message-ID`) goes into the egress Recipe.  If the
++  instance does not verify against those octets, that is logged as a
++  warning: the chain may not undo cleanly.
++- Only when there are no received octets (a message queued by an older
++  Mailman, or one injected internally) does Mailman work out from the
++  parsed message which state the instance describes, using verification
++  as the oracle.  If it verifies against the current message, that is
++  the baseline.  If it only verifies once the `Message-ID-Hash` that
++  Mailman's message store stamps on arrival is removed, the unstamped
++  message is the baseline, so the egress Recipe records the stamp as a
++  reversible change.  A `Message-ID-Hash` that was part of the signed
++  instance is left alone.  Anything else is logged as a warning.
++- In every case the baseline is kept as `msg.original_bytes` (which the
 +  queue pickles with the message) for Recipe computation at egress.
 +  Only the two hashes and the instance number go into
 +  `msgdata['mi_snapshot']`.
 +- Digests are skipped.  They are not a single authored message.
++- On a list that has opted out of Message-Instance, the received
++  octets are dropped so the queues do not carry them.
 +
 +**At egress** (`MessageInstanceMixin` on `Deliver` and `BulkDelivery`,
 +after decoration, personalisation and ARC signing):
@@ -249,9 +271,13 @@ index 000000000..723fe2923
 +  snapshot, no header is added.
 +- Otherwise it computes header and body Recipes against the saved
 +  baseline (`msg.original_bytes`) and prepends `m=N+1`.  The hashes and
-+  Recipes are over the message as smtplib will send it.  The common
-+  footer-append case is detected directly and emitted as a single copy
-+  range without running a full diff.
++  Recipes are over the message as smtplib will send it.  When the
++  previous body is one contiguous run of the current body (a pure
++  append, or the DKIM2 wrap below) the body Recipe is a single copy
++  range found by a linear scan; only other changes run the line diff.
++- A message that already carries an instance newer than the snapshot
++  is left alone: a bulk delivery that failed temporarily is retried
++  with the copy egress already stamped.
 +- When Mailman rewrote the body itself (content filtering removed or
 +  replaced parts, a filter report was attached, or the DMARC mitigation
 +  wrapped the message), the body Recipe is `"b": null`: the previous
@@ -341,12 +367,20 @@ index 000000000..723fe2923
 +case gets the null body Recipe described above.  Lists without
 +Message-Instance decorate exactly as upstream does.
 +
++A site handler that rewrites the body before decoration must set
++`msgdata['body-modified']` as `mime_delete` and `dmarc` do.  Otherwise
++the wrap splices in the body as received, silently reverting the
++handler's change.
++
 +## Resource impact
 +
 +**Memory and disk.**  The baseline is `msg.original_bytes`, a second
 +copy of the message (the bytes as received, or as parsed when those were
 +not kept) that is pickled to the queue with the message and dropped
-+with it.  There is no separate cache directory to clean up.  The
++with it.  The LMTP runner keeps the received bytes only when
++`[mta] message_instance` is on, and ingress drops them for a list that
++has opted out, so a site or list without Message-Instance pays
++nothing.  There is no separate cache directory to clean up.  The
 +pickled `msgdata` holds only two hashes and a number.  Hashing
 +serialises the message a few times, a transient allocation of a few
 +times the message size.
@@ -369,26 +403,8 @@ index 000000000..723fe2923
 +DKIM2 library exists, the first part can move there and the handlers
 +become a thin wrapper, as Sympa's implementation does by delegating to
 +`Mail::DKIM2::MessageInstance`.
-diff --git a/src/mailman/config/schema.cfg b/src/mailman/config/schema.cfg
-index 7aeec2ced..da6de45b1 100644
---- a/src/mailman/config/schema.cfg
-+++ b/src/mailman/config/schema.cfg
-@@ -1058,6 +1058,13 @@ max_autoresponses_per_day: 10
- # may wish to remove these headers by setting this to 'yes'.
- remove_dkim_headers: no
- 
-+# Add DKIM2 Message-Instance headers to outgoing messages.  These headers
-+# record SHA-256 hashes of the message at each point in the delivery chain,
-+# along with Recipes that allow a verifier to undo the changes made by the
-+# mailing list and verify signatures from prior hops.  See
-+# draft-ietf-dkim-dkim2-spec-06 for details.
-+message_instance: no
-+
- # Where can we find the mail server specific configuration file?  The path can
- # be either a file system path or a Python import path.  If the value starts
- # with python: then it is a Python import path, otherwise it is a file system
 diff --git a/src/mailman/handlers/decorate.py b/src/mailman/handlers/decorate.py
-index 4bf83475b..52d28e7c2 100644
+index 4bf83475b..bb4b12932 100644
 --- a/src/mailman/handlers/decorate.py
 +++ b/src/mailman/handlers/decorate.py
 @@ -19,11 +19,15 @@
@@ -411,11 +427,6 @@ index 4bf83475b..52d28e7c2 100644
  alog = logging.getLogger('mailman.archiver')
  
  
-+DKIM2_PREAMBLE = (
-+    'This message was MIME-wrapped because the list adds DKIM2 change\n'
-+    'records; a MIME-capable mail reader shows it as the sender intended.')
-+
-+
 +def _new_boundary():
 +    return '===============DKIM2{}=='.format(uuid.uuid4().hex)
 +
@@ -466,7 +477,8 @@ index 4bf83475b..52d28e7c2 100644
 +    raw = getattr(msg, 'original_bytes', None)
 +    if raw is None or not _mi_enabled(mlist):
 +        return False
-+    head, body = _split_raw(_normalize_crlf(raw))
++    raw = _normalize_crlf(raw)
++    head, body = _split_raw(raw)
 +    lines = []
 +    # The Content-* fields as received, folding and whitespace included.
 +    for field in re.split(rb'\r\n(?![ \t])', head):
@@ -479,11 +491,11 @@ index 4bf83475b..52d28e7c2 100644
 +    if body.endswith(b'\r\n'):
 +        body = body[:-2]
 +    lines.extend(body.split(b'\r\n'))
-+    # The boundary must not occur anywhere in the part it delimits.
-+    part_bytes = b'\r\n'.join(lines)
++    # The boundary must not occur anywhere in the part it delimits; every
++    # octet of that part is in the message as received.
 +    while True:
 +        boundary = _new_boundary()
-+        if boundary.encode('ascii') not in part_bytes:
++        if boundary.encode('ascii') not in raw:
 +            break
 +    lcset = mlist.preferred_language.charset
 +    payload = [_ReceivedPart(
@@ -501,7 +513,11 @@ index 4bf83475b..52d28e7c2 100644
 +    if msg['MIME-Version'] is None:
 +        msg['MIME-Version'] = '1.0'
 +    # A multipart original's preamble and epilogue are in the middle part.
-+    msg.preamble = DKIM2_PREAMBLE
++    with _.using(mlist.preferred_language.code):
++        msg.preamble = _(
++            'This message was MIME-wrapped because the list adds DKIM2 '
++            'change\nrecords; a MIME-capable mail reader shows it as the '
++            'sender intended.')
 +    msg.epilogue = None
 +    msg.set_payload(payload)
 +    return True
@@ -537,10 +553,10 @@ index fbcd4bd39..a75adc50d 100644
  
 diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
 new file mode 100644
-index 000000000..dc6b69a5a
+index 000000000..58164fdcb
 --- /dev/null
 +++ b/src/mailman/handlers/message_instance.py
-@@ -0,0 +1,1297 @@
+@@ -0,0 +1,1319 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -591,7 +607,7 @@ index 000000000..dc6b69a5a
 +# DKIM2 implementation metadata — update DKIM2_DATE on each change.
 +DKIM2_DRAFT = 'ietf-dkim-dkim2-spec-06'
 +DKIM2_REPO = 'github.com/brong/mailman'
-+DKIM2_DATE = '2026-10-04'
++DKIM2_DATE = '2026-10-07'
 +DKIM2_SOFTWARE = 'mailman'
 +
 +
@@ -942,7 +958,8 @@ index 000000000..dc6b69a5a
 +# ---------------------------------------------------------------------------
 +# The message as received: octets, not a re-serialization
 +# ---------------------------------------------------------------------------
-+# The LMTP runner keeps the bytes a message arrived as in msg.original_bytes.
++# With [mta] message_instance on, the LMTP runner keeps the bytes a message
++# arrived as in msg.original_bytes.
 +# Everything the ingress side says about "the message as received" -- the
 +# m=1 hashes, and the snapshot the egress Recipe is computed against -- is
 +# taken from those bytes.  Re-serializing the parsed message is not
@@ -1102,6 +1119,17 @@ index 000000000..dc6b69a5a
 +        return []
 +    if len(current_lines) > n and current_lines[:n] == previous_lines:
 +        return [{'c': [1, n]}]
++    # Fast path: the previous body is one contiguous run of the current
++    # body -- the DKIM2 wrap puts it, unchanged, between a preamble and the
++    # closing boundary.  The general diff is quadratic in repeated lines (a
++    # zero-filled base64 attachment is thousands of identical ones); this
++    # scan is linear in practice.
++    first, last = previous_lines[0], previous_lines[-1]
++    for k in range(len(current_lines) - n + 1):
++        if (current_lines[k] == first
++                and current_lines[k + n - 1] == last
++                and current_lines[k:k + n] == previous_lines):
++            return [{'c': [k + 1, k + n]}]
 +    sm = SequenceMatcher(None, current_lines, previous_lines, autojunk=False)
 +    recipe = []
 +    pending_data = []
@@ -1681,6 +1709,11 @@ index 000000000..dc6b69a5a
 +    def process(self, mlist, msg, msgdata):
 +        """See `IHandler`."""
 +        if not _mi_enabled(mlist):
++            # The LMTP runner keeps the received octets when the site has
++            # Message-Instance on; a list that opts out does not need them
++            # pickled with the message through every queue.
++            if hasattr(msg, 'original_bytes'):
++                del msg.original_bytes
 +            return
 +        # Skip digests — they aggregate multiple messages and are not
 +        # a single authored message in the DKIM2 sense.
@@ -1777,6 +1810,11 @@ index 000000000..dc6b69a5a
 +        for name in _SEND_MESSAGE_DROPS:
 +            del msg[name]
 +        snapshot = msgdata.get('mi_snapshot')
++        if snapshot and get_max_mi_version(msg) > snapshot['version']:
++            # Mailman already stamped this message: BulkDelivery decorates
++            # and runs egress on the queued message itself, and a temporary
++            # failure re-enqueues it, stamped, for a retry.
++            return
 +        if not snapshot:
 +            # No snapshot means this message didn't go through an ingress
 +            # handler (e.g. internally generated via VirginPipeline).
@@ -1862,10 +1900,10 @@ index 62dc9f6c1..de4ac9990 100644
                  msg.attach(MIMEText(report))
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..7954ac218
+index 000000000..4f790ddbf
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,1960 @@
+@@ -0,0 +1,2058 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -2208,6 +2246,25 @@ index 000000000..7954ac218
 +            ['A', 'B', 'C'])
 +        self.assertEqual(
 +            recipe, [{'c': [1, 1]}, {'c': [3, 3]}, {'c': [5, 5]}])
++
++    def test_wrapped_repeated_lines_are_one_copy_and_fast(self):
++        # The DKIM2 wrap puts the original body, unchanged, after a
++        # preamble and part headers.  A body of identical lines (a
++        # zero-filled base64 attachment) must not send the diff quadratic.
++        previous = ['A' * 76] * 20000
++        current = (['preamble', '', '--b', 'Content-Type: text/plain', '']
++                   + previous + ['--b', 'footer', '--b--'])
++        start = time.monotonic()
++        recipe = compute_body_recipe(current, previous)
++        self.assertLess(time.monotonic() - start, 1.0)
++        self.assertEqual(recipe, [{'c': [6, 20005]}])
++
++    def test_non_contiguous_previous_uses_the_diff(self):
++        # The previous lines are all there but not as one run: the
++        # general diff, not the contiguous-run fast path.
++        recipe = compute_body_recipe(
++            ['x', 'a', 'y', 'b', 'c', 'z'], ['a', 'b', 'c'])
++        self.assertEqual(recipe, [{'c': [2, 2]}, {'c': [4, 5]}])
 +
 +    def test_8bit_literal_is_a_b_step(self):
 +        # A restored line with any byte >= 0x80 -- Latin-1 here, which is
@@ -2745,7 +2802,7 @@ index 000000000..7954ac218
 +    def test_draft_version_is_06(self):
 +        from mailman.handlers.message_instance import DKIM2_DRAFT, DKIM2_DATE
 +        self.assertEqual(DKIM2_DRAFT, 'ietf-dkim-dkim2-spec-06')
-+        self.assertEqual(DKIM2_DATE, '2026-10-04')
++        self.assertEqual(DKIM2_DATE, '2026-10-07')
 +
 +
 +# =====================================================================
@@ -3013,6 +3070,39 @@ index 000000000..7954ac218
 +        # ... and its Recipe rebuilds m=1.
 +        self.assertEqual(undo_message_instance(msg), 2)
 +        self.assertEqual(_b64(compute_header_hash(msg)), hashes1['h'][1])
++
++    def test_egress_after_a_retry_adds_no_second_instance(self):
++        # BulkDelivery decorates and runs egress on the queued message
++        # itself; a temporary failure re-enqueues that stamped message to
++        # the retry queue (with nodecorate), and egress runs again on it.
++        msg = self._make_received_msg()
++        msgdata = {}
++        self._ingress.process(self._mlist, msg, msgdata)
++        decorate.process(self._mlist, msg, msgdata)
++        self._egress.process(self._mlist, msg, msgdata)
++        self.assertEqual(get_max_mi_version(msg), 2)
++        msg, msgdata = pickle.loads(pickle.dumps((msg, msgdata)))
++        msgdata['nodecorate'] = True
++        decorate.process(self._mlist, msg, msgdata)
++        self._egress.process(self._mlist, msg, msgdata)
++        self.assertEqual(len(msg.get_all('message-instance')), 2)
++        self.assertEqual(len(msg.get_all('x-dkim2-info')), 2)
++        v, err = verify_message_instance(msg)
++        self.assertEqual(v, 2, err)
++        self.assertEqual(undo_message_instance(msg), 2)
++        v, err = verify_message_instance(msg)
++        self.assertEqual(v, 1, err)
++
++    def test_ingress_drops_received_octets_when_the_list_opts_out(self):
++        # A list with Message-Instance off on a site with it on must not
++        # carry the received octets through every queue pickle.
++        self._mlist.dkim2_message_instance = False
++        msg = self._make_received_msg()
++        msgdata = {}
++        self._ingress.process(self._mlist, msg, msgdata)
++        self.assertFalse(hasattr(msg, 'original_bytes'))
++        self.assertEqual(get_max_mi_version(msg), 0)
++        self.assertNotIn('mi_snapshot', msgdata)
 +
 +    def test_ingress_without_received_octets_still_works(self):
 +        # A message Mailman made itself, or one from an older queue entry,
@@ -3826,6 +3916,52 @@ index 000000000..7954ac218
 +                               b'not a part\r\n')
 +            wire = _wrap_round_trip(self, raw)
 +        self.assertIn(b'boundary="fresh-boundary"', wire)
++
++    def _set_header(self, text):
++        site_dir = os.path.join(config.TEMPLATE_DIR, 'site', 'en')
++        with open(os.path.join(site_dir, 'myheader.txt'), 'w',
++                  encoding='utf-8') as fp:
++            fp.write(text)
++
++    def test_header_only_decoration(self):
++        self._set_footer('')
++        raw = self.HDRS + b'Content-Type: text/plain\r\n\r\nHello.\r\n'
++        wire = _wrap_round_trip(self, raw)
++        self.assertIn(b'List Header', wire)
++        self.assertNotIn(b'List Footer', wire)
++
++    def test_footer_only_decoration(self):
++        self._set_header('')
++        raw = self.HDRS + b'Content-Type: text/plain\r\n\r\nHello.\r\n'
++        wire = _wrap_round_trip(self, raw)
++        self.assertNotIn(b'List Header', wire)
++        self.assertIn(b'List Footer', wire)
++
++    def test_multipart_mixed_original(self):
++        # A multipart/mixed original becomes a part of the wrap, its own
++        # preamble, boundaries and epilogue intact.
++        raw = self.HDRS + (
++            b'Content-Type: multipart/mixed; boundary="inner"\r\n\r\n'
++            b'This is a multi-part message in MIME format.\r\n'
++            b'--inner\r\nContent-Type: text/plain\r\n\r\nHi\r\n'
++            b'--inner\r\nContent-Type: application/octet-stream\r\n'
++            b'Content-Transfer-Encoding: base64\r\n\r\nAAAA\r\n'
++            b'--inner--\r\nepilogue\r\n')
++        wire = _wrap_round_trip(self, raw)
++        self.assertIn(b'--inner--\r\nepilogue\r\n', wire)
++        self.assertIn(b'This is a multi-part message in MIME format.', wire)
++
++    def test_broken_mime_missing_final_boundary(self):
++        # No closing delimiter at all: the octets still go through as
++        # they came, and the Recipe still rebuilds them.
++        body = (b'--b\r\nContent-Type: text/plain\r\n\r\nHi\r\n'
++                b'--b\r\nContent-Type: text/html\r\n\r\n<p>Hi</p>\r\n')
++        raw = self.HDRS + (
++            b'Content-Type: multipart/alternative; boundary="b"\r\n\r\n'
++            + body)
++        wire = _wrap_round_trip(self, raw)
++        self.assertIn(body, wire)
++        self.assertNotIn(b'--b--', wire)
 diff --git a/src/mailman/handlers/tests/test_mi_null_recipe.py b/src/mailman/handlers/tests/test_mi_null_recipe.py
 new file mode 100644
 index 000000000..3fb8e2ea0

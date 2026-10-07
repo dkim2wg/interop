@@ -79,6 +79,25 @@ sub forge_history {
     ok($ok, 'body Recipe below a null instance is skipped, headers still checked') or diag $why;
 }
 
+# A header Recipe below the null that does not apply at all: m=2's Subject
+# Recipe copies a Subject instance the message does not have. Its hashes
+# match its own message, so only applying the Recipe shows the history is
+# broken -- that must fail the chain, not be skipped like the body Recipe.
+sub bad_header_recipe_below_null {
+    my ($prev) = @_;
+    my $cur2 = $prev; $cur2 =~ s/^Subject: /Subject: [fwd] /m;
+    my $mi2 = $MI->calculate($cur2, $prev);
+    $mi2->{bits}{rh}{subject} = [[5, 5]];
+    return list_hop(with_mi($mi2, $cur2), 'list');
+}
+
+{
+    my ($ok, $why) = $MI->chain_verifies(bad_header_recipe_below_null($m1));
+    ok(!$ok, 'header Recipe that does not apply below a null body Recipe is caught');
+    like($why // '', qr/m=2 did not undo cleanly.*copies lines 5-5 of 1/,
+        'reason names the m=2 header Recipe') or diag $why;
+}
+
 {
     # verify / undo HeadersOnly directly
     my $m2 = list_hop($m1, 'list');
@@ -122,6 +141,9 @@ sub verifier_result {
 
     my $forged = forge_history($signed);
     like(verifier_result($forged), qr/^fail.*m=1 does not match content/, 'Verifier: tampered history below null fails on m=1');
+
+    like(verifier_result(bad_header_recipe_below_null($signed)), qr/^fail.*m=2 did not undo cleanly/,
+        'Verifier: header Recipe that does not apply below null fails');
 }
 
 done_testing;
