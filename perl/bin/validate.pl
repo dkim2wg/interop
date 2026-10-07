@@ -52,14 +52,20 @@ if ($instance) {
     if $instance > $top_signed;
 }
 
+# Set once past an instance with a null body Recipe: the body below it is
+# lost, so lower levels check header hashes only, undoing header Recipes only.
+my $hdr_only = 0;
+
 while (1) {
   my $hi = $num ? _getv($map{$num}) : 0;
   while ($instance > $hi) {
-    my ($check, $error) = Mail::DKIM2::MessageInstance->verify($msg1);
+    my ($check, $error) = Mail::DKIM2::MessageInstance->verify($msg1, HeadersOnly => $hdr_only);
     die "ERROR: failed to verify instance $instance: $error\n" unless $check;
     die "DIDN'T FIND TOP $instance <> $check" unless $instance == $check;
     say "OK Message-Instance: m=$check";
-    die "Failed to undo" unless Mail::DKIM2::MessageInstance->undo($msg1);
+    my $mi = Mail::DKIM2::MessageInstance->parse($mimap{$instance});
+    $hdr_only = 1 if $mi && $mi->unrecoverable;
+    die "Failed to undo" unless Mail::DKIM2::MessageInstance->undo($msg1, HeadersOnly => $hdr_only);
     # Email::MIME keeps internal caches which get broken by replacing the body
     $instance--;
     last unless $instance;
@@ -85,6 +91,7 @@ while (1) {
   # legitimate §9.3 nd= bridge below the top looks locally topmost here.
   # The first step still sees the whole chain, so a true top nd= is caught.
   $verifier->mid_process(1) if $num < $top_i;
+  $verifier->headers_only(1) if $hdr_only;
   $verifier->set_pubkey_callback(sub { find_key(@_) });
   $verifier->PRINT($msg1->as_string());
   $verifier->CLOSE;

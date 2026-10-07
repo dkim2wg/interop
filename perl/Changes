@@ -5,6 +5,9 @@ Revision history for Mail::DKIM2
           history past an instance whose body Recipe is null: the body is
           unrecoverable there, but every lower instance's header hashes
           are still checked down to m=1. (t/mi-null-header-history.t)
+        - Validate (and bin/validate.pl): a null body Recipe no longer fails
+          the chain; the header history below it is checked, and the lower
+          levels report body_hash 'not-checked'. (t/validate-null-body.t)
         - dkim2-milter --allow-null-body-recipe (default off): a message
           whose top Message-Instance has a null body Recipe is no longer
           signed silently; it is refused (X-DKIM2-Info

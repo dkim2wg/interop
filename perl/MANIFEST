@@ -110,6 +110,7 @@ t/undo-bounds.t
 t/undo-encoded-body.t
 t/validate-cgi.t
 t/validate-cli.t
+t/validate-null-body.t
 t/validate-report.t
 t/verifier-accessors.t
 t/verifier-mi-coverage.t
