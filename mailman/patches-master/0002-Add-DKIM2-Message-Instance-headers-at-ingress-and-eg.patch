@@ -141,12 +141,12 @@ charsets through a test list (interop util/charset-corpus.sh):
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- DKIM2-MESSAGE-INSTANCE.md                     |  253 ++
+ DKIM2-MESSAGE-INSTANCE.md                     |  262 ++
  src/mailman/handlers/decorate.py              |  129 +
  src/mailman/handlers/dmarc.py                 |    2 +
- src/mailman/handlers/message_instance.py      | 1407 +++++++++++
+ src/mailman/handlers/message_instance.py      | 1410 ++++++++++
  src/mailman/handlers/mime_delete.py           |    3 +
- .../handlers/tests/test_message_instance.py   | 2242 +++++++++++++++++
+ .../handlers/tests/test_message_instance.py   | 2267 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
  .../handlers/tests/test_mi_roundtrip.py       |  241 ++
  src/mailman/handlers/to_archive.py            |    7 +-
@@ -155,7 +155,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/mailman/mta/deliver.py                    |    5 +-
  src/mailman/mta/message_instance.py           |   31 +
  src/mailman/pipelines/builtin.py              |    2 +
- 14 files changed, 4363 insertions(+), 6 deletions(-)
+ 14 files changed, 4400 insertions(+), 6 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
  create mode 100644 src/mailman/handlers/tests/test_message_instance.py
@@ -165,10 +165,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..f024587e6
+index 000000000..2f36a977d
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,262 @@
 +# DKIM2 Message-Instance Support
 +
 +This documents the changes that add DKIM2 Message-Instance header support
@@ -412,6 +412,15 @@ index 000000000..f024587e6
 +shared copy; individual delivery runs it once per recipient after
 +per-recipient decoration.
 +
++## Limitations
++
++The Mail-Archive.com archiver (`mail-archive`) mails its archive copy
++through the out queue with fresh metadata: no Message-Instance snapshot,
++and (as for every archive copy) no `msg.original_bytes`.  Egress adds no
++instance for it, so the instance from ingress no longer describes the
++copy as sent and it is not DKIM2-signed.  The archive copy is the post as
++archived, not a delivery; this is a known limitation.
++
 +## Code structure
 +
 +`message_instance.py` keeps the library-grade code (canonicalisation,
@@ -596,10 +605,10 @@ index fbcd4bd39..a75adc50d 100644
  
 diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
 new file mode 100644
-index 000000000..d4f8ac5ed
+index 000000000..f5614efa8
 --- /dev/null
 +++ b/src/mailman/handlers/message_instance.py
-@@ -0,0 +1,1407 @@
+@@ -0,0 +1,1410 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -1802,6 +1811,9 @@ index 000000000..d4f8ac5ed
 +    msg._headers.insert(0, (name, value))
 +
 +
++_MISSING = object()
++
++
 +@public
 +@contextmanager
 +def without_received_bytes(msg):
@@ -1810,11 +1822,11 @@ index 000000000..d4f8ac5ed
 +    with it, the octets would be a second copy of the message in that
 +    queue, for nothing.  The message keeps them for its way to delivery.
 +    """
-+    saved = msg.__dict__.pop('original_bytes', None)
++    saved = msg.__dict__.pop('original_bytes', _MISSING)
 +    try:
 +        yield msg
 +    finally:
-+        if saved is not None:
++        if saved is not _MISSING:
 +            msg.original_bytes = saved
 +
 +
@@ -2031,10 +2043,10 @@ index 62dc9f6c1..de4ac9990 100644
                  msg.attach(MIMEText(report))
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..378ecbe42
+index 000000000..edadae809
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,2242 @@
+@@ -0,0 +1,2267 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -2097,6 +2109,7 @@ index 000000000..378ecbe42
 +    _hashed_pairs,
 +    _plan_undo,
 +    _raw_header_pairs,
++    _serialize_msg,
 +    _wire_bytes,
 +    compute_body_hash_raw,
 +    compute_header_hash_raw,
@@ -4113,7 +4126,10 @@ index 000000000..378ecbe42
 +
 +    def test_body_that_is_also_the_list_header(self):
 +        # The original's one line is also the list header's: the Recipe
-+        # copies whichever run the line diff would, the first.
++        # copies whichever run the line diff would, the first.  Either path
++        # may make it (the layout path does, as the first occurrence is
++        # followed by a delimiter too); the property is that the Recipe is
++        # the diff's.
 +        raw = self.HDRS + b'Content-Type: text/plain\r\n\r\nList Header\r\n'
 +        _wrap_round_trip(self, raw, layout=False)
 +
@@ -4127,6 +4143,24 @@ index 000000000..378ecbe42
 +    def test_body_without_final_line_break(self):
 +        raw = self.HDRS + b'Content-Type: text/plain\r\n\r\nHello.'
 +        _wrap_round_trip(self, raw)
++
++    def test_boundaryless_multipart_ingress_wire_unchanged(self):
++        # Ingress no longer serialises a message it has the received octets
++        # of, which used to resolve a missing multipart boundary.  Parsed,
++        # such a message is not multipart at all: nothing to resolve.
++        raw = self.HDRS + (b'Content-Type: multipart/mixed\r\n\r\n'
++                           b'--x\r\nContent-Type: text/plain\r\n\r\nHi\r\n'
++                           b'--x--\r\n')
++        wires = []
++        for serialize_first in (False, True):
++            msg = _msg_from_bytes(raw)
++            msg.original_bytes = raw
++            if serialize_first:
++                _serialize_msg(msg)
++            self._ingress.process(self._mlist, msg, {})
++            self.assertFalse(msg.is_multipart())
++            wires.append(_wire_bytes(msg))
++        self.assertEqual(wires[0], wires[1])
 +
 +    def test_unexpected_layout_falls_back_to_the_diff(self):
 +        raw = self.HDRS + (b'Content-Type: text/plain; charset=us-ascii\r\n'
@@ -4229,7 +4263,10 @@ index 000000000..378ecbe42
 +
 +class TestQueueCopiesWithoutReceivedOctets(unittest.TestCase):
 +    """The archive and NNTP copies do not carry the received octets; the
-+    copy that goes on to delivery does."""
++    copy that goes on to delivery does.  The archive copy is the post as
++    archived, whichever archivers are on (the testing config enables
++    Mail-Archive.com, which mails it on without a Message-Instance
++    snapshot: a known limitation)."""
 +
 +    layer = ConfigLayer
 +

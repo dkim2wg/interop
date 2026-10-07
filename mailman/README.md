@@ -159,7 +159,7 @@ can be deleted.
 When upgrading or downgrading: messages queued by this version pickle a
 `mailman.handlers.decorate._ReceivedPart` (the wrapped middle part), so a
 build without that class cannot unpickle them, and an earlier build that
-held the part as a list of lines (before mailman commit 86bd7bee8) cannot
+held the part as a list of lines cannot
 send them; this build still sends parts those earlier builds queued. Drain the queues (stop
 accepting mail and let `out` and `retry` empty) before rolling back to an
 earlier build.
