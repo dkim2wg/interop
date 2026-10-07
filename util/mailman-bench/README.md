@@ -36,6 +36,10 @@ Run on the box:
   (own ports 18024/18025/18001, own units `mmsoak-*`, master capped at 700M in
   its own cgroup) over the corpus 3x and writes `results/soak-BUILD*.{tsv,json}`.
   Only the delivery-path runners are started (the full set idles above the cap).
+  TSV notes: runner labels look like `in:0:1` (group on the part before the
+  first colon; the sink is `sink`); `cpu_ticks` are raw clock ticks (CLK_TCK,
+  normally 100/s); the cgroup `memory.peak` in the summary includes page cache,
+  so compare builds on the per-runner RSS columns.
 - `setup-builds.sh` builds the venvs `/opt/mailman/bench/{up,cte,wrap}/venv`
   from the refs above, installing the production `pip freeze` minus the web UI
   packages. Idempotent: a build is redone only when its ref now resolves to a
