@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: liushuyu <liushuyu011@gmail.com>
 Date: Thu, 16 Jan 2025 09:12:34 -0700
-Subject: [PATCH 2/6] utilities: remove context manager usage for PosixPath ...
+Subject: [PATCH 2/5] utilities: remove context manager usage for PosixPath ...
 
 ... Python 3.13 removed the context manager functions from PosixPath
 ---

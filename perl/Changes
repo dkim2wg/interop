@@ -1,5 +1,16 @@
 Revision history for Mail::DKIM2
 
+0.14    2026-10-07
+        - The Verifier and MessageInstance->chain_verifies walk the header
+          history past an instance whose body Recipe is null: the body is
+          unrecoverable there, but every lower instance's header hashes
+          are still checked down to m=1. (t/mi-null-header-history.t)
+        - dkim2-milter --allow-null-body-recipe (default off): a message
+          whose top Message-Instance has a null body Recipe is no longer
+          signed silently; it is refused (X-DKIM2-Info
+          not-signed=null-body-recipe) unless the option is set, and signed
+          with X-DKIM2-Info null-body-recipe when it is.
+
 0.13    2026-10-04
         - The header Recipe builder treated "no instances" and "one empty
           instance" of a field as the same, so removing an empty header

@@ -18,12 +18,18 @@ The series exists on three bases in <https://github.com/brong/mailman>:
 - branch `dkim2`, on upstream master: the same change where upstream
   development happens (`patches-master/` here).
 
+The previous approach, which preserved the body's Content-Transfer-Encoding
+when appending a footer instead of MIME-wrapping, is kept on the branches
+`dkim2-cte-preserve-3.3.10`, `dkim2-cte-preserve-3.3.8` and
+`dkim2-cte-preserve` (October 2026) in case it is wanted again.
+
 The DKIM2 code is identical on all three; they differ only where the
-releases differ around it (the owner pipeline's handler list, and the
-Alembic revision the migration follows). The design is described in
+releases differ around it (the owner pipeline's handler list, the Alembic
+revision the migration follows, and the upstream code around the few lines
+added to `decorate.py`, `mime_delete.py` and `dmarc.py`). The design is described in
 `DKIM2-MESSAGE-INSTANCE.md`, which the Message-Instance patch adds.
 
-`patches-3.3.10/` carries six patches. The first two are upstream commits
+`patches-3.3.10/` carries five patches. The first two are upstream commits
 that 3.3.10 needs to run on Python 3.13 at all (the default on Debian 13 and
 Ubuntu 25.04+) and that have not been in a release yet: the `nntplib`
 requirement becomes `standard-nntplib`, without which `pip install` cannot
@@ -31,7 +37,7 @@ resolve 3.3.10 on 3.13, and the template loader stops using a `pathlib`
 path as a context manager, without which every template lookup (and so
 every decoration) raises a TypeError on 3.13. On Python 3.12 and earlier
 they change nothing and can be skipped. The DKIM2 patches are the last
-four. `patches-3.3.8/` is these four patches alone: 3.3.8 is only
+three. `patches-3.3.8/` and `patches-master/` are these three patches alone: 3.3.8 is only
 shipped with Python 3.11 and 3.12, where it needs no such fixes.
 
 ## The patches
@@ -39,32 +45,35 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
 0. *(upstream, `patches-3.3.10/` only)* **Fix requirement for standard-nntplib
    with Python >= 3.13** and **remove context manager usage for
    PosixPath**: the two Python 3.13 fixes described above.
-1. **Preserve the original Content-Transfer-Encoding when decorating.**
-   Adding a header or footer to a single-part text message used to let
-   Python's email library pick a new encoding (a UTF-8 body arriving as 8bit
-   came out as base64), which changed every line of the body. Now 7bit/8bit,
-   quoted-printable and base64 bodies keep their encoding, so a
-   Message-Instance Recipe for the common footer-append case is one copy
-   range rather than the whole body. This applies whether or not
-   Message-Instance is enabled.
-2. **Keep the bytes a message arrived with.** The LMTP runner stores the
+1. **Keep the bytes a message arrived with.** The LMTP runner stores the
    received octets as `msg.original_bytes`. Re-serializing a parsed
    multipart message is not byte-faithful (a part header loses a trailing
    space or is refolded, a final boundary gains a line ending), and a
    Message-Instance Recipe has to rebuild exactly what the sender signed.
    A Mailman-core change, independent of DKIM2.
-3. **Add DKIM2 Message-Instance headers at ingress and egress.** A
+2. **Add DKIM2 Message-Instance headers at ingress and egress.** A
    `message-instance-ingress` handler at the front of the posting and owner
    pipelines records the message as received (adding `m=1` if it has no
-   instance, leaving any existing instance alone), and a
+   instance, leaving any existing instance alone; the baseline is
+   `msg.original_bytes`, with no on-disk cache), and a
    `MessageInstanceMixin` on the `Deliver` and `BulkDelivery` classes adds
    the next `m=` with header and body Recipes after decoration,
-   personalisation and ARC signing. It removes `Bcc` and `Resent-Bcc`
-   first, which Python's `smtplib` would otherwise drop after the instance
-   was computed, so the Recipe records that change too. Each instance is accompanied by an
+   personalisation and ARC signing. It hashes the message as `smtplib`
+   will send it (without `Bcc` and `Resent-Bcc`, which `smtplib` drops), so
+   the Recipe records that change too. Each instance is accompanied by an
    `X-DKIM2-Info` debug header. Enabled by `[mta] message_instance: yes`.
    Includes the tests and `DKIM2-MESSAGE-INSTANCE.md`.
-4. **Add a per-list `dkim2_message_instance` flag.** A boolean list
+
+   On a list with Message-Instance enabled, decoration always MIME-wraps:
+   the received `Content-*` fields and body octets are spliced in unchanged
+   as the middle part of a new `multipart/mixed`, between `text/plain`
+   header and footer parts, so the body Recipe is literal lines, one copy
+   range, literal lines, whatever the body's encoding or structure. When
+   Mailman rewrites the body itself (content filtering, or the DMARC
+   mitigation's wrap), the body Recipe is `"b": null` instead: the earlier
+   body cannot be rebuilt, and the Recipe says so. Lists without
+   Message-Instance decorate exactly as upstream does.
+3. **Add a per-list `dkim2_message_instance` flag.** A boolean list
    attribute (default on) exposed through the REST list configuration
    resource, with its Alembic migration, so individual lists can opt out.
 
@@ -82,8 +91,9 @@ cover either.
 
 Tested: the `dkim2-3.3.10` branch passes Mailman's own test suite for the
 handlers, decoration, REST list configuration, templates and modules on
-Python 3.13 (150 tests), and runs the lists on dkim2.com. The `dkim2-3.3.8`
-branch passes the same handler, decoration and REST tests on Python 3.12.
+Python 3.13, and runs the lists on dkim2.com. The `dkim2-3.3.8` branch
+passes the same handler, decoration, content filter, DMARC, REST and LMTP
+tests on Python 3.12, and the `dkim2` branch on Python 3.13.
 
 ## Installing
 
@@ -135,8 +145,16 @@ max_recipients: 1
 path: dkim2.log
 ```
 
-Restart Mailman. Baselines for Recipe computation live briefly in
-`$VAR_DIR/mi-cache/`.
+Restart Mailman. The baseline for Recipe computation travels with each
+queued message (`msg.original_bytes`); there is no cache directory. Earlier
+builds kept baselines in `$VAR_DIR/mi-cache/`, which is no longer used and
+can be deleted.
+
+When upgrading or downgrading: messages queued by this version pickle a
+`mailman.handlers.decorate._ReceivedPart` (the wrapped middle part), so a
+build without that class cannot unpickle them. Drain the queues (stop
+accepting mail and let `out` and `retry` empty) before rolling back to an
+earlier build.
 
 To turn it off for one list (the body must be sent as JSON):
 

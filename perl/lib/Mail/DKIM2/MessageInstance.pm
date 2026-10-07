@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 
 
 use Crypt::Digest::SHA256;
@@ -913,10 +913,13 @@ sub verify {
     for my $alg (@usable) {
         my ($h1, $b1) = @{ $hashes->{$alg} };
         my $hd = h_digest($msg, $alg, $opts{IgnorePrefixes});
-        my $bd = b_digest($msg, $alg);
         if ($h1 ne $hd) {
             return wantarray ? (0, "$alg header hash mismatch ($h1 != $hd)") : 0;
         }
+        # HeadersOnly: below a null body Recipe the body this instance
+        # hashed is gone; its header hashes are still checkable.
+        next if $opts{HeadersOnly};
+        my $bd = b_digest($msg, $alg);
         if ($b1 ne $bd) {
             return wantarray ? (0, "$alg body hash mismatch ($b1 != $bd)") : 0;
         }
@@ -991,7 +994,7 @@ sub _body_raw_set {
 }
 
 sub undo {
-    my ($class, $msg) = @_;
+    my ($class, $msg, %opts) = @_;
     croak "need a message" unless $msg;
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
@@ -1013,7 +1016,7 @@ sub undo {
     my $rb = $self->get_tag('rb');
     my $rh = $self->get_tag('rh');
 
-    if ($rb) {
+    if ($rb && !$opts{HeadersOnly}) {
         my @old = split /\r?\n/, $msg->body_raw;
         my @new = _apply_recipe('body', $rb, \@old);
         _body_raw_set($msg, join("\r\n", @new, ''));
@@ -1034,9 +1037,10 @@ sub undo {
 
 # Verify the WHOLE Message-Instance chain reverses cleanly: check the top
 # instance against the current content, then undo it and check the next one
-# down, until m=1 or an instance that declares the previous state
-# unrecoverable. This is the undo check a recipient performs — running it
-# before signing catches an upstream that emitted a non-reversible Recipe.
+# down, until m=1; past an instance with a null body Recipe, header-only
+# (the body is gone but the header history is still checked). This is the
+# undo check a recipient performs — running it before signing catches an
+# upstream that emitted a non-reversible Recipe.
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
     my ($class, $msg, %opts) = @_;
@@ -1047,21 +1051,24 @@ sub chain_verifies {
     if (my $error = _chain_error($msg)) {
         return (0, $error);
     }
+    my $headers_only = 0;
     while (1) {
         my @mi = $msg->header_raw('Message-Instance');
         my %by_v = map { (extract_mi_version($_) // 0) => $_ } @mi;
         my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
         last unless $num;
 
-        my ($ok, $err) = $class->verify($msg, %opts);
+        my ($ok, $err) = $class->verify($msg, %opts, HeadersOnly => $headers_only);
         return (0, "Message-Instance m=$num does not match content"
                  . ($err ? " ($err)" : '')) unless $ok;
 
         last if $num <= 1;
-        my $self = $class->parse($by_v{$num});
-        last if $self->unrecoverable;
+        # A null body Recipe loses the previous body, not the header
+        # history: from here down, undo header Recipes only and check each
+        # instance's header hashes, down to m=1.
+        $headers_only = 1 if $class->parse($by_v{$num})->unrecoverable;
 
-        my $prev = eval { $class->undo($msg) };
+        my $prev = eval { $class->undo($msg, HeadersOnly => $headers_only) };
         die $@ if ref $@;
         return (0, "Message-Instance m=$num did not undo cleanly"
                  . ($@ ? ": $@" : '')) if $@ || !$prev;
@@ -1185,7 +1192,11 @@ Checks the top instance against the message. Returns its C<m=> on success.
 On failure, including an instance that does not parse, returns C<0> in
 scalar context and C<(0, $reason)> in list context. Never dies.
 
-=head2 undo($msg)
+With C<HeadersOnly =E<gt> 1> only the header hashes are checked and the body
+hash is skipped; this is how instances below a null body Recipe are checked,
+since the body they hashed is gone.
+
+=head2 undo($msg, %options)
 
 Applies the top instance's Recipes and removes that instance, returning
 the L<Email::MIME> of the previous form of the message; undef if there is
@@ -1193,11 +1204,16 @@ no instance. Dies if the Recipe is malformed (a copy range outside the
 message, overlapping another or out of order, or a C<"b"> literal that is
 not base64 or decodes to a CR or LF) or the instances do not form a chain.
 
+With C<HeadersOnly =E<gt> 1> only the header Recipes are applied and the body
+is left as it is.
+
 =head2 chain_verifies($msg, %options)
 
-Runs C<verify> and C<undo> down the whole chain to C<m=1> or to an
-instance that declares the previous state unrecoverable. Returns C<(1,
-undef)>, or C<(0, $reason)> at the first instance that does not match or
+Runs C<verify> and C<undo> down the whole chain to C<m=1>. Past an instance
+with a null body Recipe (previous body unrecoverable) it carries on
+header-only (C<HeadersOnly>), so every lower instance's header hashes are
+still checked. Returns C<(1, undef)> only when the whole header history
+checks out, or C<(0, $reason)> at the first instance that does not match or
 does not undo. Never dies. A forwarder runs this before signing so it does
 not put its name to a chain its recipients will reject.
 
