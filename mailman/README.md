@@ -150,14 +150,17 @@ path: dkim2.log
 
 Restart Mailman. The baseline for Recipe computation travels with each
 queued message (`msg.original_bytes`, kept only when Message-Instance
-support is enabled, and not for a list that opts out); there is no cache
+support is enabled, not for a list that opts out, and not in the copies
+queued for the archivers and the NNTP gateway); there is no cache
 directory. Earlier
 builds kept baselines in `$VAR_DIR/mi-cache/`, which is no longer used and
 can be deleted.
 
 When upgrading or downgrading: messages queued by this version pickle a
 `mailman.handlers.decorate._ReceivedPart` (the wrapped middle part), so a
-build without that class cannot unpickle them. Drain the queues (stop
+build without that class cannot unpickle them, and an earlier build that
+held the part as a list of lines cannot
+send them; this build still sends parts those earlier builds queued. Drain the queues (stop
 accepting mail and let `out` and `retry` empty) before rolling back to an
 earlier build.
 

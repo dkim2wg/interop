@@ -48,6 +48,8 @@ Run on the box:
   force-pushed.**
 - `run-inproc.sh` runs the in-process benchmark of one build over the corpus.
 - `soak.sh` runs the sustained-load soak of one build.
+- `mi_10mb.py` (a nose2 test module copied into a Mailman checkout) times one
+  10 MB post through ingress, decorate and egress and reports tracemalloc peaks.
 
 ## Running safely
 
