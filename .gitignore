@@ -1,3 +1,4 @@
 corpus/
 perl/Mail-DKIM2-*.tar.gz
 __pycache__/
+bench/
