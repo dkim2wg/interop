@@ -127,29 +127,43 @@ updated.
 - Non-DKIM2 list: upstream `decorate.rst` doctest passes unchanged.
 - The `mi-cache` directory is never created.
 
-## §1b dkim2-milter change
+## §1b Mail::DKIM2 and dkim2-milter change
 
-New option `--allow-null-body-recipe`, default off, documented in the POD and
-the Postfix list-host guide.
+Probe (2026-10-07): today the milter already signs a top unsigned instance
+with a null body Recipe. `chain_verifies` and the Verifier's
+`_verify_mi_chain` both stop at an unrecoverable instance (`last if
+unrecoverable`) and pass, so nothing below it is checked at all.
 
-When on, and the existing chain check (`chain_verifies`) fails **only**
-because the topmost Message-Instance has a null body Recipe, the milter signs
-if all of these hold:
+A null body Recipe loses only the body. The header Recipes still describe the
+whole header history, so it is checked:
 
-- that instance is unsigned, i.e. it is above the top DKIM2-Signature (the
-  list's own instance, the `allow_unsigned_mi` case);
-- its header and body hashes match the current message;
-- its header Recipe applies cleanly.
+- **Mail::DKIM2** (`MessageInstance` and `Verifier`): when the walk reaches an
+  instance with a null body Recipe, it continues **header-only**: undo applies
+  header Recipes and leaves the body alone, and each lower instance's header
+  hashes are checked down to m=1. Body hashes below the null instance are not
+  checked; a body Recipe below it is not applied. A header hash mismatch, or a
+  header Recipe that does not apply, anywhere in the history is a failure,
+  exactly as without the null. `MessageInstance->verify` and `->undo` take
+  `HeadersOnly => 1` for this. This changes what a receiver checks, so it is
+  a Mail::DKIM2 release (0.14, or folded into 0.13 if that is not yet on
+  CPAN).
+- **dkim2-milter** gets `--allow-null-body-recipe`, default off:
+  - off: a message whose top instance has a null body Recipe is not signed
+    (`X-DKIM2-Info: not-signed=null-body-recipe`). This is a behaviour change
+    from today's silent signing; nothing emits null body Recipes yet.
+  - on: it is signed when the upstream DKIM2-Signatures verify and the
+    header history checks out as above; the milter adds
+    `X-DKIM2-Info: null-body-recipe`.
+- One outbound milter process serves every signing listener on a host, so
+  the option is per host. The list-host example unit
+  (`deploy/examples/dkim2-milter-outbound.service`, which the box runs) turns
+  it on with a comment, because that unit is for list hosts; the POD
+  documents the default as off.
 
-Earlier DKIM2-Signatures cannot be verified through a null body, so in this
-case their verification result does not block signing. The milter adds
-`X-DKIM2-Info: null-body-recipe` and signs. Still refused: a null body Recipe
-lower in the chain, a hash mismatch on the null instance, or a header Recipe
-that does not apply.
-
-Tests in `perl/t/` cover each accept and refuse case with the option on and
-off. On dkim2-dev the option is enabled only on the list egress listeners
-(10587/10588).
+Tests in `perl/t/`: header-history walk (null at m=2 over m=1; null at m=3
+over a normal m=2; tampered header below the null; bad header Recipe below
+the null) in both `chain_verifies` and the Verifier; milter on and off in
+`t/milter-script.t`.
 
 Sympa needs no change: it does not modify bodies before its Message-Instance
 step.
@@ -179,11 +193,14 @@ Each build is installed from a git ref into its own venv under
 - Synthetic: plain 2 KB text; Outlook-style text + HTML (4 KB + 40 KB);
   1 MB, 10 MB and 50 MB base64 attachments; a 5 MB QP text body; a 10 MB
   attachment posted to a list with `filter_content` on (null Recipe path).
+  The 50 MB case is the largest: the box has 2 GB RAM and runs production.
 - Each message is run both unsigned and DKIM2-signed by the interop signer.
 
 ### In-process driver (`bench_inproc.py`)
 
-Runs inside each venv with a temporary `var/` and Mailman's config. It
+Runs inside each venv with a temporary `var/` and Mailman's config, under
+`systemd-run --scope -p MemoryMax=700M` so an oversized case can only kill
+the benchmark, never production (an OOM is itself a recorded result). It
 creates a list with a header and a footer, 25 members (configurable),
 personalization off. Per message:
 
@@ -201,7 +218,8 @@ Output is JSON lines.
 
 ### Soak (`bench_soak.sh`)
 
-Each build runs as a real Mailman instance on its own ports: LMTP in, an
+Each build runs, one at a time and under the same memory cap, as a real
+Mailman instance on its own ports: LMTP in, an
 aiosmtpd sink that discards everything out, prototype archiver on, 100
 members. The full corpus is injected 3× as fast as LMTP accepts. Every second
 it samples each runner's VmRSS/VmHWM and utime+stime from `/proc`, plus `du`
@@ -226,7 +244,8 @@ HTML page.
 
 - Mailman's tests pass on the box for all three branches (3.3.10 py3.13,
   3.3.8 py3.12, master).
-- Milter tests pass; `--allow-null-body-recipe` enabled on 10587/10588.
+- Perl tests pass; the outbound milter on the box runs with
+  `--allow-null-body-recipe`.
 - Deployed to dkim2-dev: Mailman from `dkim2-3.3.10` (force-reinstall,
   migrations), milter via `deploy/deploy.sh`.
 - Charset corpus replay: 317/317 through dkim2corpus@mailman.dkim2.com, all
@@ -242,7 +261,8 @@ HTML page.
 - The interop libraries (Perl Mail::DKIM2, Python, C, Go, JS): confirm each
   verifier accepts an unsigned top instance with a null body Recipe, and add
   the equivalent of `--allow-null-body-recipe` wherever a signer gates on
-  the chain undoing.
+  the chain undoing; port the header-only history walk past a null body
+  Recipe to the Python, C, Go and JS verifiers (and the browser verifier).
 
 ## Out of scope
 
