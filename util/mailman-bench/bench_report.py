@@ -60,7 +60,9 @@ def fail_kind(r):
         return 'timeout'
     if r.get('crash'):
         return 'crash'
-    return 'undelivered'
+    if r.get('undelivered'):
+        return 'undelivered'
+    return 'incomplete'
 
 
 def fail_label(r):
@@ -82,8 +84,36 @@ def peak_max(r):
     return max(r['peak_in'], r['peak_pipeline'], r['peak_out'])
 
 
-def aggregate(rows):
-    agg, censored = {}, {}
+def _stat_block(sel):
+    a = {m: stats([r[m] for r in sel if m in r]) for m in METRICS if any(m in r for r in sel)}
+    a['cpu_total'] = stats([total_cpu(r) for r in sel])
+    a['peak_max'] = stats([peak_max(r) for r in sel])
+    a['n'] = len(sel)
+    return a
+
+
+def intersections(rows):
+    """(signed, cls) -> (builds compared, ids that succeeded in EVERY one of them).
+
+    A build is compared if it has at least one successful row in that cell;
+    a message censored in any compared build drops out of all builds' headline."""
+    inter = {}
+    for signed in SIGNED:
+        for cls in CLASSES:
+            per = {}
+            for b in BUILDS:
+                ids = {r['id'] for r in rows if r['build'] == b and r['signed'] == signed
+                       and (cls == 'all' or r['cls'] == cls) and not is_failure(r)}
+                if ids:
+                    per[b] = ids
+            if per:
+                inter[(signed, cls)] = (list(per), set.intersection(*per.values()))
+    return inter
+
+
+def aggregate(rows, inter):
+    """agg: like-for-like (intersection ids); own: each build's own successful rows."""
+    agg, own, censored = {}, {}, {}
     for b in BUILDS:
         for signed in SIGNED:
             brows = [r for r in rows if r['build'] == b and r['signed'] == signed]
@@ -96,23 +126,22 @@ def aggregate(rows):
                     k = fail_kind(r)
                     c[k] += 1
                     kinds[k].append(r['id'] + ' ' + fail_label(r))
-                elif r.get('undelivered'):
-                    c['undelivered'] += 1
             censored[f'{b}/{signed}'] = {'counts': dict(c), 'rows': kinds, 'n_rows': len(brows)}
             for cls in CLASSES:
                 sel = [r for r in brows if (cls == 'all' or r['cls'] == cls) and not is_failure(r)]
                 if not sel:
                     continue
-                a = {m: stats([r[m] for r in sel if m in r]) for m in METRICS
-                     if any(m in r for r in sel)}
-                a['cpu_total'] = stats([total_cpu(r) for r in sel])
-                a['peak_max'] = stats([peak_max(r) for r in sel])
-                a['n'] = len(sel)
-                agg[f'{b}/{signed}/{cls}'] = a
-    return agg, censored
+                own[f'{b}/{signed}/{cls}'] = _stat_block(sel)
+                ids = inter[(signed, cls)][1]
+                lf = [r for r in sel if r['id'] in ids]
+                if lf:
+                    a = _stat_block(lf)
+                    a['n_own'] = len(sel)
+                    agg[f'{b}/{signed}/{cls}'] = a
+    return agg, own, censored
 
 
-def added_by_mailman(rows):
+def added_by_mailman(rows, inter):
     """mi_header_len minus the same message's `up` value (paired by id)."""
     up = {(r['signed'], r['id']): r for r in rows if r['build'] == 'up' and not is_failure(r)}
     out = {}
@@ -126,6 +155,8 @@ def added_by_mailman(rows):
                     if r['build'] != b or r['signed'] != signed or is_failure(r):
                         continue
                     if cls != 'all' and r['cls'] != cls:
+                        continue
+                    if r['id'] not in inter.get((signed, cls), (0, ()))[1]:
                         continue
                     u = up.get((signed, r['id']))
                     if u is not None and 'mi_header_len' in r and 'mi_header_len' in u:
@@ -172,8 +203,7 @@ def soak_one(res, build, summary):
     clk = s.get('clk_tck') or CLK_TCK
     groups = defaultdict(lambda: defaultdict(int))     # group -> t -> summed rss kb
     hwm = defaultdict(int)
-    ticks = {}                                         # (runner, pid) -> max ticks
-    total_t = defaultdict(int)
+    ticks = {}                                         # (runner, pid) -> [first, last] ticks
     for row in read_tsv(res / f'soak-{build}.tsv'):
         try:
             t, runner, pid, rss, h, cpu = row[:6]
@@ -182,14 +212,24 @@ def soak_one(res, build, summary):
             continue
         g = runner.split(':')[0]
         groups[g][t] += rss
-        total_t[t] += rss
         hwm[g] = max(hwm[g], h)
-        ticks[(runner, pid)] = max(ticks.get((runner, pid), 0), cpu)
+        ticks.setdefault((runner, pid), [cpu, cpu])[1] = cpu
+    # ticks are cumulative since process start: CPU over the sampled window is
+    # last minus first (startup before the first sample, and anything after the
+    # last, is not counted); a restarted runner's new pid starts its own baseline.
     cpu_g = defaultdict(float)
-    for (runner, _pid), tk in ticks.items():
-        cpu_g[runner.split(':')[0]] += tk / clk
-    s['groups'] = {g: {'peak_rss_kb': max(v.values()), 'hwm_kb': hwm[g], 'cpu_s': cpu_g[g]}
-                   for g, v in groups.items()}
+    for (runner, _pid), (first, last) in ticks.items():
+        cpu_g[runner.split(':')[0]] += (last - first) / clk
+    allg = {g: {'peak_rss_kb': max(v.values()), 'hwm_kb': hwm[g], 'cpu_s': cpu_g[g]}
+            for g, v in groups.items()}
+    # `sink` is the harness's discard SMTP sink, not Mailman: reported apart.
+    s['harness_sink'] = allg.pop('sink', None)
+    s['groups'] = allg
+    total_t = defaultdict(int)
+    for g, v in groups.items():
+        if g != 'sink':
+            for t, kb in v.items():
+                total_t[t] += kb
     s['sum_group_peak_rss_kb'] = sum(g['peak_rss_kb'] for g in s['groups'].values())
     s['peak_total_rss_kb'] = max(total_t.values()) if total_t else None
     du = read_tsv(res / f'soak-{build}-du.tsv')
@@ -243,7 +283,7 @@ def ratio(v, base):
     return f' ({v / base:.2f}x)'
 
 
-def md_report(agg, censored, added, syn, soak, rows):
+def md_report(agg, own, inter, censored, added, syn, soak, rows):
     ALLM = ['cpu_total', 'peak_max'] + METRICS
     out = ['# Mailman DKIM2 benchmark', '']
     if not rows:
@@ -254,8 +294,14 @@ def md_report(agg, censored, added, syn, soak, rows):
             if not keys:
                 continue
             base = agg.get(f'up/{signed}/{cls}')
-            out += [f'## {signed}, {cls}: median (ratio vs up)', '',
-                    '| metric | ' + ' | '.join(f"{k.split('/')[0]} (n={agg[k]['n']})" for k in keys) + ' |',
+            n_i = inter[(signed, cls)][1]
+            out += [f'## {signed}, {cls}: median (ratio vs up), like-for-like n={len(n_i)}', '',
+                    'Computed on the messages that succeeded in every build compared.', '']
+            odd = [f"{k.split('/')[0]} own n={own[k]['n']}" for k in keys if own[k]['n'] != len(n_i)]
+            if odd:
+                out += [f"**WARNING: n differs from the like-for-like n={len(n_i)} for: " + ', '.join(odd)
+                        + ' (censored or missing messages dropped from every build; see secondary table).**', '']
+            out += ['| metric | ' + ' | '.join(f"{k.split('/')[0]} (n={agg[k]['n']})" for k in keys) + ' |',
                     '|---|' + '---|' * len(keys)]
             for m in ALLM:
                 if not all(m in agg[k] for k in keys):
@@ -271,23 +317,35 @@ def md_report(agg, censored, added, syn, soak, rows):
                 out.append('| mi added by Mailman (vs up, paired) | ' + ' | '.join(
                     '-' if not a else f"{fb(a['median'])} (n={a['n']})" for a in ak) + ' |')
             out.append('')
-            out += [f'p95 / max, {signed} {cls}', '',
+            out += [f'p95 / max, {signed} {cls} (p95 is index-based, noisy for small n)', '',
                     '| metric | ' + ' | '.join(k.split('/')[0] for k in keys) + ' |',
                     '|---|' + '---|' * len(keys)]
             for m in ['cpu_total', 'peak_max', 'pck_out', 'wire_bytes']:
                 if all(m in agg[k] for k in keys):
                     out.append(f'| {m} | ' + ' | '.join(
-                        f"{fmt(m, agg[k][m]['p95'])} / {fmt(m, agg[k][m]['max'])}" for k in keys) + ' |')
+                        f"{fmt(m, agg[k][m]['p95'])} / {fmt(m, agg[k][m]['max'])} (n={agg[k]['n']})" for k in keys) + ' |')
+            out.append('')
+    out += ['## Per-build own numbers (NOT like-for-like: each build\'s own successful rows, median, own n)', '']
+    for signed in SIGNED:
+        for cls in CLASSES:
+            keys = [f'{b}/{signed}/{cls}' for b in BUILDS if f'{b}/{signed}/{cls}' in own]
+            if not keys:
+                continue
+            out += [f'{signed}, {cls}', '',
+                    '| metric | ' + ' | '.join(f"{k.split('/')[0]} (n={own[k]['n']})" for k in keys) + ' |',
+                    '|---|' + '---|' * len(keys)]
+            for m in ['cpu_total', 'peak_max', 'pck_out', 'wire_bytes']:
+                out.append(f'| {m} | ' + ' | '.join(fmt(m, own[k][m]['median']) for k in keys) + ' |')
             out.append('')
     # censored
     out += ['## Censored rows (excluded from every aggregate above)', '']
     if censored:
-        out += ['| build/signed | rows | ok | oom | timeout | crash | undelivered |', '|---|---|---|---|---|---|---|']
+        out += ['| build/signed | rows | ok | oom | timeout | crash | undelivered | incomplete |', '|---|---|---|---|---|---|---|---|']
         for k, c in censored.items():
             n = c['counts']
             bad = sum(n.values())
             out.append(f"| {k} | {c['n_rows']} | {c['n_rows'] - bad} | {n.get('oom', 0)} | "
-                       f"{n.get('timeout', 0)} | {n.get('crash', 0)} | {n.get('undelivered', 0)} |")
+                       f"{n.get('timeout', 0)} | {n.get('crash', 0)} | {n.get('undelivered', 0)} | {n.get('incomplete', 0)} |")
         out.append('')
         lines = [f'- {k}: {x}' for k, c in censored.items() for kind in c['rows'] for x in c['rows'][kind]]
         if lines:
@@ -328,19 +386,21 @@ def md_report(agg, censored, added, syn, soak, rows):
                                           if soak[b].get('failures') or soak[b].get('sink_failed')
                                           or soak[b].get('injection_aborted') or soak[b].get('unit_result') not in (None, 'success')) or 'none'), '']
         gs = sorted({g for s in soak.values() for g in s['groups']})
-        out += ['Peak RSS per runner group (max over time of the group sum; "sum" = sum of group peaks; "conc" = peak of concurrent total):', '',
+        out += ['Peak RSS per Mailman runner group (harness sink excluded; max over time of the group sum; "sum" = sum of group peaks; "conc" = peak of concurrent total). RSS is summed across processes, so shared pages are double-counted, and 1 s sampling can miss short peaks: the cgroup memory peak above is authoritative.', '',
                 '| build | ' + ' | '.join(gs) + ' | sum | conc |', '|---|' + '---|' * (len(gs) + 2)]
         for b in soak:
             s = soak[b]
             out.append(f'| {b} | ' + ' | '.join(
                 fb(s['groups'][g]['peak_rss_kb'] * 1024) if g in s['groups'] else '-' for g in gs)
                 + f" | {fb(s['sum_group_peak_rss_kb'] * 1024)} | {fb((s['peak_total_rss_kb'] or 0) * 1024)} |")
-        out += ['', 'Total CPU seconds per runner group:', '',
+        out += ['', 'Total CPU seconds per Mailman runner group (last minus first sample per process; startup before the first sample and work after the last are not counted):', '',
                 '| build | ' + ' | '.join(gs) + ' |', '|---|' + '---|' * len(gs)]
         for b in soak:
             out.append(f'| {b} | ' + ' | '.join(
                 f"{soak[b]['groups'][g]['cpu_s']:.1f}" if g in soak[b]['groups'] else '-' for g in gs) + ' |')
-        out += ['', 'Disk: peak queue / archives / mi-cache', '',
+        out += ['', 'Harness discard sink (not Mailman, excluded from all totals above): ' + '; '.join(
+            f"{b}: peak RSS {fb(soak[b]['harness_sink']['peak_rss_kb'] * 1024)}, CPU {soak[b]['harness_sink']['cpu_s']:.1f} s"
+            for b in soak if soak[b].get('harness_sink')) , '', 'Disk: peak queue / archives / mi-cache', '',
                 '| build | queue | archives | mi-cache |', '|---|---|---|---|']
         for b in soak:
             s = soak[b]
@@ -359,11 +419,14 @@ def main():
     outdir = REPO / 'bench'
     outdir.mkdir(exist_ok=True)
     rows = load_rows(res)
-    agg, censored = aggregate(rows)
-    added, syn, soak = added_by_mailman(rows), synthetic(rows), load_soak(res)
+    inter = intersections(rows)
+    agg, own, censored = aggregate(rows, inter)
+    added, syn, soak = added_by_mailman(rows, inter), synthetic(rows), load_soak(res)
     (outdir / 'report.json').write_text(json.dumps(
-        {'inproc': agg, 'censored': censored, 'mi_added': added, 'synthetic': syn, 'soak': soak}, indent=1))
-    (outdir / 'report.md').write_text(md_report(agg, censored, added, syn, soak, rows))
+        {'inproc': agg, 'inproc_own': own,
+         'like_for_like_n': {'/'.join(k): len(v[1]) for k, v in inter.items()},
+         'censored': censored, 'mi_added': added, 'synthetic': syn, 'soak': soak}, indent=1))
+    (outdir / 'report.md').write_text(md_report(agg, own, inter, censored, added, syn, soak, rows))
     print(outdir / 'report.md')
 
 
