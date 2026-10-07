@@ -412,6 +412,14 @@ the message with the baseline and, if anything changed, adds `m=2` with a
 Recipe for the subject prefix, the list headers and the footer. Each
 instance gets an `X-DKIM2-Info` line beside it saying what Mailman did.
 
+On such a list a header or footer is always added by MIME-wrapping: the
+body exactly as it arrived becomes the middle part of a `multipart/mixed`,
+with the list header and footer as `text/plain` parts around it, so the
+body Recipe is one copy range plus the added lines whatever the original
+encoding. Subscribers see the footer as a separate part. A body Mailman
+rewrites itself (content filtering, DMARC wrap) gets a null body Recipe;
+see "Null body Recipes" above.
+
 A list can opt out through the REST API:
 
 ```bash
@@ -421,10 +429,10 @@ curl -u restadmin:PASSWORD -X PATCH -H 'Content-Type: application/json' \
 ```
 
 Logs go to `dkim2.log` in Mailman's log directory with the `[logging.dkim2]`
-section above. Baselines wait in
-`mi-cache/` under the var directory until the message has left; files
-older than your queue retry window there are orphans from a crash and can
-be deleted.
+section above. The baseline for each Recipe is pickled with the queued
+message; there is no cache directory (a `mi-cache/` left by an earlier
+build can be deleted). Messages queued by this build cannot be unpickled
+by a build without the DKIM2 wrap, so drain the queues before downgrading.
 
 Check: post to a test list from an outside address and read the copy you
 get back (step 9).
@@ -547,7 +555,6 @@ signing key for`. Mailman: `dkim2.log`. Sympa logs through its usual `sympa.log`
 | `permerror Message-Instance m=2 is not signed` | The list stamped `m=2` but no signature was added over it: the copy did not go through the signing listener | Point the list manager's submission at `127.0.0.1:10587` (steps 7 and 8) |
 | Bounces go out unsigned; Postfix logs a 30 second milter timeout on `MAIL FROM:<>` | Sendmail::PMilter older than 1.28 | `cpanm Sendmail::PMilter`, restart the milters (step 5a) |
 | Every subscriber's address visible in `rt=` | Many recipients per transaction | `max_recipients: 1` / `nrcpt 1`, or the split gateway (step 6) |
-| Mailman `mi-cache/` grows | Messages that never finished delivery | Delete files older than the retry window |
 
 ## 11. What this guide does not cover
 
