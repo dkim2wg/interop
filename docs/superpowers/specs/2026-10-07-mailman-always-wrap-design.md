@@ -106,7 +106,10 @@ On each of `dkim2-3.3.10`, `dkim2-3.3.8` and `dkim2` (master):
 3. Add a per-list `dkim2_message_instance` flag (unchanged).
 
 On 3.3.10 these follow the two py3.13 upstream fixes. Before rewriting, the
-current heads are tagged `pre-always-wrap-<branch>` (and pushed). Re-export
+current heads are kept as historical branches `dkim2-cte-preserve-3.3.10`,
+`dkim2-cte-preserve-3.3.8` and `dkim2-cte-preserve` (pushed to the `brong`
+remote, never deleted), in case the CTE-preserving style is revived.
+`mailman/README.md` names them. Re-export
 with `util/export-list-patches.sh`, and `--check` must pass.
 `mailman/README.md`, `DKIM2-MESSAGE-INSTANCE.md` and the list-host guide are
 updated.
@@ -165,7 +168,7 @@ Each build is installed from a git ref into its own venv under
 | id | build | list DKIM2 flag |
 |---|---|---|
 | `up` | v3.3.10 + the two py3.13 fixes | n/a |
-| `cte` | `pre-always-wrap-dkim2-3.3.10` | on |
+| `cte` | `dkim2-cte-preserve-3.3.10` | on |
 | `cte-off` | same | off |
 | `wrap` | new `dkim2-3.3.10` | on |
 | `wrap-off` | same | off |
@@ -232,10 +235,18 @@ HTML page.
   `"b": null`.
 - Benchmark run complete and the report published.
 
+## Next stage (TODO, not this change)
+
+- Sympa: apply the same always-wrap / null body Recipe policy to its
+  decoration, and measure it with the same harness.
+- The interop libraries (Perl Mail::DKIM2, Python, C, Go, JS): confirm each
+  verifier accepts an unsigned top instance with a null body Recipe, and add
+  the equivalent of `--allow-null-body-recipe` wherever a signer gates on
+  the chain undoing.
+
 ## Out of scope
 
 - Upstreaming anything to the Python email package.
 - An IN-queue size check before parsing (Steve's suggestion; a separate
   change).
-- Sympa, and the interop C/Python/Go/JS libraries (no behaviour they depend
-  on changes; that every verifier already accepts a null body Recipe is checked during implementation).
+- Sympa and the interop libraries: the next stage, above.
