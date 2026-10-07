@@ -26,10 +26,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  create mode 100644 src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
-index 3dc69f722..d4af13bae 100644
+index f024587e6..9a6a626be 100644
 --- a/DKIM2-MESSAGE-INSTANCE.md
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -144,6 +144,11 @@ message_instance: yes
+@@ -149,6 +149,11 @@ message_instance: yes
  
  The default is `no`.  When disabled, neither handler does any work.
  
@@ -41,7 +41,7 @@ index 3dc69f722..d4af13bae 100644
  ## Files
  
  ### New
-@@ -153,6 +158,8 @@ The default is `no`.  When disabled, neither handler does any work.
+@@ -158,6 +163,8 @@ The default is `no`.  When disabled, neither handler does any work.
    ingress and egress handlers.
  - `src/mailman/mta/message_instance.py`: the delivery mixin, following
    the `ARCSigningMixin` pattern.
@@ -50,7 +50,7 @@ index 3dc69f722..d4af13bae 100644
  - `src/mailman/handlers/tests/test_message_instance.py`: hashing against
    interop vectors, Recipe shapes, folding and unfolding, the DKIM2 wrap,
    the null body Recipe, and full ingress/decorate/egress/undo round
-@@ -170,6 +177,9 @@ The default is `no`.  When disabled, neither handler does any work.
+@@ -177,6 +184,9 @@ The default is `no`.  When disabled, neither handler does any work.
  - `src/mailman/config/schema.cfg`: the `[mta] message_instance` option.
  - `src/mailman/pipelines/builtin.py`: register the ingress handler.
  - `src/mailman/mta/deliver.py`, `src/mailman/mta/bulk.py`: call egress.

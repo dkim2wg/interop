@@ -141,19 +141,21 @@ charsets through a test list (interop util/charset-corpus.sh):
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- DKIM2-MESSAGE-INSTANCE.md                     |  236 ++
- src/mailman/handlers/decorate.py              |  105 +
+ DKIM2-MESSAGE-INSTANCE.md                     |  253 ++
+ src/mailman/handlers/decorate.py              |  129 +
  src/mailman/handlers/dmarc.py                 |    2 +
- src/mailman/handlers/message_instance.py      | 1319 +++++++++++
+ src/mailman/handlers/message_instance.py      | 1407 +++++++++++
  src/mailman/handlers/mime_delete.py           |    3 +
- .../handlers/tests/test_message_instance.py   | 2058 +++++++++++++++++
+ .../handlers/tests/test_message_instance.py   | 2242 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
  .../handlers/tests/test_mi_roundtrip.py       |  241 ++
+ src/mailman/handlers/to_archive.py            |    7 +-
+ src/mailman/handlers/to_usenet.py             |    8 +-
  src/mailman/mta/bulk.py                       |    5 +-
  src/mailman/mta/deliver.py                    |    5 +-
  src/mailman/mta/message_instance.py           |   31 +
  src/mailman/pipelines/builtin.py              |    2 +
- 12 files changed, 4039 insertions(+), 2 deletions(-)
+ 14 files changed, 4363 insertions(+), 6 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
  create mode 100644 src/mailman/handlers/tests/test_message_instance.py
@@ -163,10 +165,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..3dc69f722
+index 000000000..f024587e6
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,253 @@
 +# DKIM2 Message-Instance Support
 +
 +This documents the changes that add DKIM2 Message-Instance header support
@@ -271,10 +273,15 @@ index 000000000..3dc69f722
 +  snapshot, no header is added.
 +- Otherwise it computes header and body Recipes against the saved
 +  baseline (`msg.original_bytes`) and prepends `m=N+1`.  The hashes and
-+  Recipes are over the message as smtplib will send it.  When the
-+  previous body is one contiguous run of the current body (a pure
-+  append, or the DKIM2 wrap below) the body Recipe is a single copy
-+  range found by a linear scan; only other changes run the line diff.
++  Recipes are over the message as smtplib will send it.  After the
++  DKIM2 wrap below, decorate records its boundary in
++  `msgdata['dkim2-wrap']` and egress finds the original body's octets
++  where the wrap put them, checks they are followed by that boundary,
++  and counts line breaks for the single copy range, without splitting
++  either body into lines.  Otherwise, when the previous body is one
++  contiguous run of the current body (a pure append) the body Recipe is
++  a single copy range found by a linear scan; only other changes run
++  the line diff.  Both give the same Recipe.
 +- A message that already carries an instance newer than the snapshot
 +  is left alone: a bulk delivery that failed temporarily is retried
 +  with the copy egress already stamped.
@@ -334,6 +341,8 @@ index 000000000..3dc69f722
 +### Modified
 +
 +- `src/mailman/handlers/decorate.py`: the DKIM2 wrap (below).
++- `src/mailman/handlers/to_archive.py`, `src/mailman/handlers/to_usenet.py`:
++  queue their copy without `msg.original_bytes`.
 +- `src/mailman/handlers/mime_delete.py`, `src/mailman/handlers/dmarc.py`:
 +  set `msgdata['body-modified']` when they rewrite the body.
 +- `src/mailman/config/schema.cfg`: the `[mta] message_instance` option.
@@ -380,10 +389,20 @@ index 000000000..3dc69f722
 +with it.  The LMTP runner keeps the received bytes only when
 +`[mta] message_instance` is on, and ingress drops them for a list that
 +has opted out, so a site or list without Message-Instance pays
-+nothing.  There is no separate cache directory to clean up.  The
-+pickled `msgdata` holds only two hashes and a number.  Hashing
-+serialises the message a few times, a transient allocation of a few
-+times the message size.
++nothing.  The copies queued for the archivers and the NNTP gateway
++leave them out, as they never reach egress; the digest mbox never had
++them.  There is no separate cache directory to clean up.  The pickled
++`msgdata` holds only two hashes and a number.
++
++Ingress hashes the received octets in place: they are not copied when
++they already have CRLF line endings (as LMTP delivers them), and the
++parsed message is not re-serialised.  The wrap holds the original part
++as one bytes object, not one string per line.  Egress serialises the
++message once, the way smtplib will, and hashes and locates the original
++body in that.  For a post with a 10 MB attachment (13.7 MiB as
++received) the peak traced allocation is under 1 MiB at ingress and
++about 29 MiB for decoration and egress together, about twice the
++message size: the outgoing serialisation and the generator's buffers.
 +
 +**Wire size.**  Each message gains one or two `Message-Instance`
 +headers plus their `X-DKIM2-Info` headers, a few hundred bytes.
@@ -404,26 +423,27 @@ index 000000000..3dc69f722
 +become a thin wrapper, as Sympa's implementation does by delegating to
 +`Mail::DKIM2::MessageInstance`.
 diff --git a/src/mailman/handlers/decorate.py b/src/mailman/handlers/decorate.py
-index 4bf83475b..bb4b12932 100644
+index 4bf83475b..29ab084f4 100644
 --- a/src/mailman/handlers/decorate.py
 +++ b/src/mailman/handlers/decorate.py
-@@ -19,11 +19,15 @@
+@@ -19,11 +19,16 @@
  
  import re
  import copy
 +import uuid
  import logging
  
++from email.generator import BytesGenerator
  from email.mime.text import MIMEText
  from email.utils import formataddr
  from mailman.core.i18n import _
 +from mailman.email.message import Message
 +from mailman.handlers.message_instance import (
-+    _mi_enabled, _normalize_crlf, _split_raw)
++    _body_offset, _mi_enabled, _normalize_crlf, _raw_head)
  from mailman.interfaces.handler import IHandler
  from mailman.interfaces.mailinglist import IListArchiverSet
  from mailman.interfaces.template import ITemplateLoader
-@@ -37,6 +41,102 @@ log = logging.getLogger('mailman.error')
+@@ -37,6 +42,125 @@ log = logging.getLogger('mailman.error')
  alog = logging.getLogger('mailman.archiver')
  
  
@@ -434,24 +454,42 @@ index 4bf83475b..bb4b12932 100644
 +class _ReceivedPart(Message):
 +    """A MIME part that is written out as the octets it arrived with.
 +
-+    It holds the lines of a part -- header fields, blank line, body -- as
-+    received, without line endings and with 8-bit octets surrogate-escaped,
-+    and writes them through the generator's own header hook, so they come
-+    out verbatim in the generator's line ending: no refolding, no From_
-+    mangling (smtplib's generator mangles), and no decoding of 8-bit octets
-+    (which a string payload on the multipart itself would suffer).  The
-+    part has no header fields or payload of its own as far as the email
-+    package is concerned.
++    It holds a part -- header fields, blank line, body -- as one bytes
++    object, the octets received with CRLF line endings, and writes it
++    through the generator's own header hook, so it comes out verbatim in
++    the generator's line ending: no refolding, no From_ mangling (smtplib's
++    generator mangles), and no decoding of 8-bit octets (which a string
++    payload on the multipart itself would suffer).  One object, not one
++    per line: a line costs a str's overhead, megabytes for a large post.
++    The part has no header fields or payload of its own as far as the
++    email package is concerned.
 +    """
 +
-+    def __init__(self, lines):
++    def __init__(self, received):
 +        super().__init__()
-+        self._received_lines = lines
++        self._received = received
++
++    def __setstate__(self, values):
++        # Earlier builds held the lines, surrogate-escaped, in a list; a
++        # message they wrapped can still be in the retry queue.
++        lines = values.pop('_received_lines', None)
++        if lines is not None:
++            values['_received'] = '\r\n'.join(lines).encode(
++                'ascii', 'surrogateescape')
++        super().__setstate__(values)
 +
 +    # Generator._write calls getattr(msg, '_write_headers', None) when it
 +    # writes a part: a private CPython hook, stable since Python 3.2.
 +    def _write_headers(self, generator):
-+        generator.write(generator.policy.linesep.join(self._received_lines))
++        data = self._received
++        linesep = generator.policy.linesep
++        if linesep != '\r\n':
++            data = data.replace(b'\r\n', linesep.encode('ascii'))
++        if isinstance(generator, BytesGenerator):
++            # write() would decode-then-encode a str copy of the octets.
++            generator._fp.write(data)
++        else:
++            generator.write(data.decode('ascii', 'surrogateescape'))
 +
 +
 +def _decoration_part(text, charset):
@@ -463,7 +501,7 @@ index 4bf83475b..bb4b12932 100644
 +    return part
 +
 +
-+def _dkim2_wrap(mlist, msg, header, footer):
++def _dkim2_wrap(mlist, msg, msgdata, header, footer):
 +    """On a DKIM2 list, wrap the body exactly as it arrived.
 +
 +    The original top-level Content-* fields and body octets become the
@@ -472,25 +510,30 @@ index 4bf83475b..bb4b12932 100644
 +    the body's encoding or structure.  Returns False when the message must
 +    be decorated the usual way: DKIM2 is off for this list, the message
 +    did not come through ingress, or Mailman already rewrote the body (it
-+    then gets a null body Recipe instead).
++    then gets a null body Recipe instead).  The boundary goes in
++    msgdata['dkim2-wrap'], so egress can find the original body in the
++    wrap rather than diff for it.
 +    """
 +    raw = getattr(msg, 'original_bytes', None)
 +    if raw is None or not _mi_enabled(mlist):
 +        return False
 +    raw = _normalize_crlf(raw)
-+    head, body = _split_raw(raw)
-+    lines = []
 +    # The Content-* fields as received, folding and whitespace included.
-+    for field in re.split(rb'\r\n(?![ \t])', head):
-+        if field.split(b':', 1)[0].strip().lower().startswith(b'content-'):
-+            lines.extend(field.split(b'\r\n'))
-+    lines.append(b'')
++    pieces = [
++        field + b'\r\n'
++        for field in re.split(rb'\r\n(?![ \t])', _raw_head(raw))
++        if field.split(b':', 1)[0].strip().lower().startswith(b'content-')]
++    pieces.append(b'\r\n')
 +    # The generator puts the line break before the next delimiter, so the
 +    # body's own final line break goes: the original's last line is then
 +    # followed by exactly one, and the Recipe copies its lines as one range.
-+    if body.endswith(b'\r\n'):
-+        body = body[:-2]
-+    lines.extend(body.split(b'\r\n'))
++    start = _body_offset(raw)
++    end = len(raw)
++    if raw.endswith(b'\r\n', start):
++        end -= 2
++    # The body is the bulk of the part: a view, so it is copied only once,
++    # into the part.
++    pieces.append(memoryview(raw)[start:end])
 +    # The boundary must not occur anywhere in the part it delimits; every
 +    # octet of that part is in the message as received.
 +    while True:
@@ -498,8 +541,7 @@ index 4bf83475b..bb4b12932 100644
 +        if boundary.encode('ascii') not in raw:
 +            break
 +    lcset = mlist.preferred_language.charset
-+    payload = [_ReceivedPart(
-+        [line.decode('ascii', 'surrogateescape') for line in lines])]
++    payload = [_ReceivedPart(b''.join(pieces))]
 +    if len(header) > 0:
 +        payload.insert(0, _decoration_part(header, lcset))
 +    if len(footer) > 0:
@@ -520,20 +562,21 @@ index 4bf83475b..bb4b12932 100644
 +            'sender intended.')
 +    msg.epilogue = None
 +    msg.set_payload(payload)
++    msgdata['dkim2-wrap'] = boundary
 +    return True
 +
 +
  def process(mlist, msg, msgdata):
      """Decorate the message with headers and footers."""
      # Digests and Mailman-craft messages should not get additional headers.
-@@ -86,6 +186,11 @@ def process(mlist, msg, msgdata):
+@@ -86,6 +210,11 @@ def process(mlist, msg, msgdata):
      # Escape hatch if both the footer and header are empty or None.
      if len(header) == 0 and len(footer) == 0:
          return
 +    # On a DKIM2 list, wrap the body as it arrived (unless Mailman already
 +    # rewrote it, when the Recipe says the body cannot be rebuilt anyway).
 +    if not msgdata.get('body-modified') and _dkim2_wrap(
-+            mlist, msg, header, footer):
++            mlist, msg, msgdata, header, footer):
 +        return
      # Be MIME smart here.  We only attach the header and footer by
      # concatenation when the message is a non-multipart of type text/plain.
@@ -553,10 +596,10 @@ index fbcd4bd39..a75adc50d 100644
  
 diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
 new file mode 100644
-index 000000000..58164fdcb
+index 000000000..d4f8ac5ed
 --- /dev/null
 +++ b/src/mailman/handlers/message_instance.py
-@@ -0,0 +1,1319 @@
+@@ -0,0 +1,1407 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -590,6 +633,7 @@ index 000000000..58164fdcb
 +import logging
 +import re
 +
++from contextlib import contextmanager
 +from difflib import SequenceMatcher
 +from email.generator import BytesGenerator
 +from io import BytesIO
@@ -922,13 +966,22 @@ index 000000000..58164fdcb
 +    return _hash_body_bytes(_get_raw_body(msg))
 +
 +
-+def _hash_body_bytes(body):
-+    """SHA-256 body hash (spec-06 §6.1): trailing empty lines ignored, one
-+    CRLF at the end."""
-+    while body.endswith(b'\r\n'):
-+        body = body[:-2]
-+    body += b'\r\n'
-+    return hashlib.sha256(body).digest()
++def _hash_body_bytes(body, start=0):
++    """SHA-256 body hash (spec-06 §6.1) of body[start:]: trailing empty
++    lines ignored, one CRLF at the end.  Hashed in place, not sliced: the
++    body can be most of a large message."""
++    end = _body_end(body, start)
++    digest = hashlib.sha256(memoryview(body)[start:end])
++    digest.update(b'\r\n')
++    return digest.digest()
++
++
++def _body_end(raw, start):
++    """The end of raw[start:] with its trailing CRLFs (empty lines) off."""
++    end = len(raw)
++    while end - start >= 2 and raw.endswith(b'\r\n', start, end):
++        end -= 2
++    return end
 +
 +
 +# ---------------------------------------------------------------------------
@@ -969,9 +1022,17 @@ index 000000000..58164fdcb
 +# message the way smtplib will (_wire_bytes, see the two serializations
 +# above): that is what goes on the wire next.
 +
++_LINE_BREAK = re.compile(rb'\r\n|\r|\n')
++
++
 +def _normalize_crlf(raw):
-+    raw = raw.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
-+    return raw.replace(b'\n', b'\r\n')
++    """raw with every line break -- CRLF, bare CR or bare LF -- as CRLF.
++    Octets that already have only CRLFs (as received over LMTP) come back
++    as they are, not copied."""
++    crlf = raw.count(b'\r\n')
++    if raw.count(b'\r') == crlf and raw.count(b'\n') == crlf:
++        return raw
++    return _LINE_BREAK.sub(b'\r\n', raw)
 +
 +
 +def _received_bytes(msg):
@@ -988,11 +1049,24 @@ index 000000000..58164fdcb
 +    return raw[:idx], raw[idx + 4:]
 +
 +
++# _split_raw copies the body; these give the head alone, and where the body
++# starts, for the many callers that need no copy of the body.
++
++def _raw_head(raw):
++    idx = raw.find(b'\r\n\r\n')
++    return raw if idx == -1 else raw[:idx]
++
++
++def _body_offset(raw):
++    idx = raw.find(b'\r\n\r\n')
++    return len(raw) if idx == -1 else idx + 4
++
++
 +def _raw_header_pairs(raw):
 +    """(name, value) for every header field in the raw octets, the value in
 +    the shape _wire_value gives: unfolded, no leading WSP, no line ending,
 +    bytes outside UTF-8 surrogate-escaped."""
-+    head, _ = _split_raw(raw)
++    head = _raw_head(raw)
 +    pairs = []
 +    for field in re.split(rb'\r\n(?![ \t])', head):
 +        name, sep, value = field.partition(b':')
@@ -1014,7 +1088,7 @@ index 000000000..58164fdcb
 +
 +
 +def compute_body_hash_raw(raw):
-+    return _hash_body_bytes(_split_raw(raw)[1])
++    return _hash_body_bytes(raw, _body_offset(raw))
 +
 +
 +def _body_lines_raw(raw):
@@ -1150,6 +1224,40 @@ index 000000000..58164fdcb
 +    if pending_data:
 +        recipe.extend(_literal_steps(pending_data))
 +    return recipe
++
++
++def _wrapped_body_recipe(wire, snap_raw, boundary):
++    """The body Recipe for a message decorate's DKIM2 wrap spliced the
++    original body into, taken from where the wrap put it rather than by
++    splitting both bodies into lines and comparing them.
++
++    The wrap writes the original body, its final line break dropped,
++    straight before the line break and delimiter of its boundary.  If the
++    first occurrence of the original body's octets (trailing empty lines
++    off, as spec-06 §6.1 has it) in the wire body starts a line and is
++    followed by that delimiter, it is the first run of current lines equal
++    to the previous lines -- the copy range compute_body_recipe gives --
++    and k and n are counts of CRLFs.  Returns None when the octets are not
++    there as expected (the caller then diffs), or the body is empty.
++    """
++    start = _body_offset(snap_raw)
++    end = _body_end(snap_raw, start)
++    if end == start:
++        return None
++    trailing = (len(snap_raw) - end) // 2
++    original = memoryview(snap_raw)[start:end]
++    wire_start = _body_offset(wire)
++    pos = wire.find(original, wire_start)
++    if pos == -1:
++        return None
++    if pos > wire_start and not wire.endswith(b'\r\n', wire_start, pos):
++        return None
++    delimiter = b'\r\n' * max(trailing, 1) + b'--' + boundary.encode('ascii')
++    if not wire.startswith(delimiter, pos + len(original)):
++        return None
++    k = wire.count(b'\r\n', wire_start, pos)
++    n = snap_raw.count(b'\r\n', start, end) + 1
++    return [{'c': [k + 1, k + n]}]
 +
 +
 +@public
@@ -1694,6 +1802,22 @@ index 000000000..58164fdcb
 +    msg._headers.insert(0, (name, value))
 +
 +
++@public
++@contextmanager
++def without_received_bytes(msg):
++    """Leave msg.original_bytes out of a copy of the message that never
++    reaches Message-Instance egress (the archive and NNTP queues): pickled
++    with it, the octets would be a second copy of the message in that
++    queue, for nothing.  The message keeps them for its way to delivery.
++    """
++    saved = msg.__dict__.pop('original_bytes', None)
++    try:
++        yield msg
++    finally:
++        if saved is not None:
++            msg.original_bytes = saved
++
++
 +# ---------------------------------------------------------------------------
 +# Pipeline handlers
 +# ---------------------------------------------------------------------------
@@ -1720,9 +1844,11 @@ index 000000000..58164fdcb
 +        if msgdata.get('isdigest'):
 +            return
 +        received = _received_bytes(msg)
-+        # Force serialization so that auto-generated parameters (e.g.
-+        # multipart boundaries) are resolved before hashing.
-+        _serialize_msg(msg)
++        if received is None:
++            # Force serialization so that auto-generated parameters (e.g.
++            # multipart boundaries) are resolved before hashing the parsed
++            # message.  The received octets need no such thing.
++            _serialize_msg(msg)
 +        existing_version = get_max_mi_version(msg)
 +        if existing_version > 0:
 +            # An MI is already present (inbound milter, or a signing sender).
@@ -1851,8 +1977,6 @@ index 000000000..58164fdcb
 +                        'original_bytes) -- skipping MI egress')
 +            return
 +        snap_raw = _normalize_crlf(snap_raw)
-+        prev_body_lines = _body_lines_raw(snap_raw)
-+        prev_headers = _hashed_pairs(_raw_header_pairs(snap_raw))
 +        # Compute Recipes.
 +        body_recipe = None
 +        header_recipe = None
@@ -1860,13 +1984,20 @@ index 000000000..58164fdcb
 +            if msgdata.get('body-modified'):
 +                body_recipe = NULL_BODY_RECIPE
 +            else:
-+                current_lines = _body_lines_raw(wire)
-+                body_recipe = compute_body_recipe(
-+                    current_lines, prev_body_lines)
++                # decorate's DKIM2 wrap records its boundary: the original
++                # body is then found where the wrap put it, with no line
++                # lists of two large bodies.  Anything else is diffed.
++                boundary = msgdata.get('dkim2-wrap')
++                if boundary is not None:
++                    body_recipe = _wrapped_body_recipe(
++                        wire, snap_raw, boundary)
++                if body_recipe is None:
++                    body_recipe = compute_body_recipe(
++                        _body_lines_raw(wire), _body_lines_raw(snap_raw))
 +        if h_hash != snapshot['header_hash']:
 +            current_headers = _collect_headers(msg)
 +            header_recipe = compute_header_recipe(
-+                current_headers, prev_headers)
++                current_headers, _hashed_pairs(_raw_header_pairs(snap_raw)))
 +        hcount, hnames = _get_hashed_headers(msg)
 +        version = get_max_mi_version(msg) + 1
 +        value = build_mi_header_value(
@@ -1900,10 +2031,10 @@ index 62dc9f6c1..de4ac9990 100644
                  msg.attach(MIMEText(report))
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..4f790ddbf
+index 000000000..378ecbe42
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,2058 @@
+@@ -0,0 +1,2242 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -1938,6 +2069,7 @@ index 000000000..4f790ddbf
 +from io import BytesIO
 +from mailman.app.lifecycle import create_list
 +from mailman.config import config
++from mailman.core.pipelines import process as process_pipeline
 +from mailman.email.message import Message
 +from mailman.handlers import decorate
 +from mailman.handlers.message_instance import (
@@ -1965,10 +2097,13 @@ index 000000000..4f790ddbf
 +    _hashed_pairs,
 +    _plan_undo,
 +    _raw_header_pairs,
++    _wire_bytes,
 +    compute_body_hash_raw,
 +    compute_header_hash_raw,
 +)
++from mailman.interfaces.archiver import ArchivePolicy
 +from mailman.interfaces.template import ITemplateManager
++from mailman.testing.helpers import get_queue_messages
 +from mailman.testing.helpers import specialized_message_from_string as mfs
 +from mailman.testing.layers import ConfigLayer
 +from tempfile import TemporaryDirectory
@@ -3669,20 +3804,33 @@ index 000000000..4f790ddbf
 +    return buf.getvalue()
 +
 +
-+def _wrap_round_trip(test, raw):
++def _wrap_round_trip(test, raw, layout=True):
 +    """Ingress, decorate, egress, then undo m=2: m=1 must verify and the
-+    rebuilt body must be the original octets."""
++    rebuilt body must be the original octets.
++
++    With layout (the usual case) egress must find the original body where
++    the wrap put it, without diffing; either way the body Recipe must be
++    exactly what the line diff makes of the same two bodies."""
 +    msg = _msg_from_bytes(raw)
 +    msg.original_bytes = raw
 +    msgdata = {}
 +    test._ingress.process(test._mlist, msg, msgdata)
 +    decorate.process(test._mlist, msg, msgdata)
-+    test._egress.process(test._mlist, msg, msgdata)
++    test.assertIn('dkim2-wrap', msgdata)
++    if layout:
++        with patch('mailman.handlers.message_instance.compute_body_recipe',
++                   side_effect=AssertionError('body Recipe was diffed')):
++            test._egress.process(test._mlist, msg, msgdata)
++    else:
++        test._egress.process(test._mlist, msg, msgdata)
 +    wire = _normalize_crlf(msg.as_bytes())
 +    test.assertEqual(msg.get_content_type(), 'multipart/mixed')
 +    v, err = verify_message_instance(msg)
 +    test.assertEqual(v, 2, err)
 +    recipe = _recipe_at(msg, 2)
++    test.assertEqual(recipe['b'], compute_body_recipe(
++        _body_lines_raw(_wire_bytes(msg)),
++        _body_lines_raw(_normalize_crlf(raw))))
 +    # The original's lines are copied as one range, whatever they are.
 +    test.assertEqual(len(_copy_steps(recipe['b'])), 1, recipe['b'])
 +    test.assertEqual(undo_message_instance(msg), 2)
@@ -3962,6 +4110,173 @@ index 000000000..4f790ddbf
 +        wire = _wrap_round_trip(self, raw)
 +        self.assertIn(body, wire)
 +        self.assertNotIn(b'--b--', wire)
++
++    def test_body_that_is_also_the_list_header(self):
++        # The original's one line is also the list header's: the Recipe
++        # copies whichever run the line diff would, the first.
++        raw = self.HDRS + b'Content-Type: text/plain\r\n\r\nList Header\r\n'
++        _wrap_round_trip(self, raw, layout=False)
++
++    def test_body_with_trailing_empty_lines(self):
++        # Trailing empty lines are not lines (spec-06 §6.1): the copy range
++        # stops before them although the wrap carries them.
++        raw = self.HDRS + (b'Content-Type: text/plain\r\n\r\n'
++                           b'Hello.\r\n\r\n\r\n')
++        _wrap_round_trip(self, raw)
++
++    def test_body_without_final_line_break(self):
++        raw = self.HDRS + b'Content-Type: text/plain\r\n\r\nHello.'
++        _wrap_round_trip(self, raw)
++
++    def test_unexpected_layout_falls_back_to_the_diff(self):
++        raw = self.HDRS + (b'Content-Type: text/plain; charset=us-ascii\r\n'
++                           b'\r\nHello.\r\n')
++        msg = _msg_from_bytes(raw)
++        msg.original_bytes = raw
++        msgdata = {}
++        self._ingress.process(self._mlist, msg, msgdata)
++        decorate.process(self._mlist, msg, msgdata)
++        msgdata['dkim2-wrap'] = 'not-the-boundary'
++        with patch('mailman.handlers.message_instance.compute_body_recipe',
++                   wraps=compute_body_recipe) as diff:
++            self._egress.process(self._mlist, msg, msgdata)
++        diff.assert_called_once()
++        v, err = verify_message_instance(msg)
++        self.assertEqual(v, 2, err)
++        self.assertEqual(undo_message_instance(msg), 2)
++        v, err = verify_message_instance(msg)
++        self.assertEqual(v, 1, err)
++
++    def test_upstream_decoration_records_no_wrap(self):
++        raw = self.HDRS + b'Content-Type: text/plain\r\n\r\nHello.\r\n'
++        msg = _msg_from_bytes(raw)
++        msg.original_bytes = raw
++        msgdata = {'body-modified': True}
++        self._ingress.process(self._mlist, msg, msgdata)
++        decorate.process(self._mlist, msg, msgdata)
++        self.assertNotIn('dkim2-wrap', msgdata)
++
++
++class TestReceivedPart(unittest.TestCase):
++    """The wrap's middle part is one blob of octets, written verbatim."""
++
++    PART = (b'Content-Type: text/plain; charset=iso-8859-1\r\n'
++            b'Content-Transfer-Encoding: 8bit\r\n\r\n'
++            b'From the start\r\ncaf\xe9\r\nlast line')
++
++    def _container(self):
++        outer = Message()
++        outer['Content-Type'] = 'multipart/mixed; boundary="B"'
++        outer.set_payload([decorate._ReceivedPart(self.PART)])
++        return outer
++
++    def test_holds_one_blob(self):
++        part = decorate._ReceivedPart(self.PART)
++        self.assertIs(part._received, self.PART)
++
++    def test_as_bytes_uses_lf(self):
++        out = self._container().as_bytes()
++        self.assertIn(b'--B\n' + self.PART.replace(b'\r\n', b'\n') +
++                      b'\n--B--', out)
++
++    def test_smtplib_wire_uses_crlf_unmangled(self):
++        out = _smtplib_wire(self._container())
++        self.assertIn(b'--B\r\n' + self.PART + b'\r\n--B--', out)
++
++    def test_as_string_is_the_same_text(self):
++        out = self._container().as_string()
++        self.assertIn('--B\nContent-Type: text/plain; charset=iso-8859-1\n'
++                      'Content-Transfer-Encoding: 8bit\n\nFrom the start\n',
++                      out)
++
++    def test_part_queued_by_an_earlier_build(self):
++        # Earlier builds held the part as a list of surrogate-escaped
++        # lines; a wrapped message they left in the retry queue still goes.
++        outer = self._container()
++        expected = _smtplib_wire(outer)
++        part = outer.get_payload()[0]
++        del part._received
++        part._received_lines = [
++            line.decode('ascii', 'surrogateescape')
++            for line in self.PART.split(b'\r\n')]
++        outer = pickle.loads(pickle.dumps(outer))
++        self.assertEqual(_smtplib_wire(outer), expected)
++
++    def test_pickle_and_deepcopy_round_trip(self):
++        outer = self._container()
++        expected = outer.as_bytes()
++        self.assertEqual(pickle.loads(pickle.dumps(outer)).as_bytes(),
++                         expected)
++        self.assertEqual(copy.deepcopy(outer).as_bytes(), expected)
++
++
++class TestNormalizeCRLF(unittest.TestCase):
++    @staticmethod
++    def _three_pass(raw):
++        raw = raw.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
++        return raw.replace(b'\n', b'\r\n')
++
++    def test_pure_crlf_is_returned_uncopied(self):
++        raw = b'a: b\r\n\r\nline\r\n'
++        self.assertIs(_normalize_crlf(raw), raw)
++
++    def test_same_octets_as_three_passes(self):
++        for raw in (b'', b'a', b'a\nb', b'a\rb', b'a\r\r\nb', b'a\n\rb',
++                    b'\r\n\r', b'\n\n\r\r', b'x\r\n\n\ry\r', b'\r\n'):
++            self.assertEqual(_normalize_crlf(raw), self._three_pass(raw),
++                             raw)
++
++
++class TestQueueCopiesWithoutReceivedOctets(unittest.TestCase):
++    """The archive and NNTP copies do not carry the received octets; the
++    copy that goes on to delivery does."""
++
++    layer = ConfigLayer
++
++    RAW = (b'To: ant@example.com\r\nFrom: anne@example.com\r\n'
++           b'Message-ID: <queues>\r\nSubject: queues\r\n'
++           b'MIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\n'
++           b'Hello.\r\n')
++
++    def setUp(self):
++        self._mlist = create_list('ant@example.com')
++        self._mlist.archive_policy = ArchivePolicy.public
++        self._mlist.gateway_to_news = True
++        self._mlist.linked_newsgroup = 'comp.lang.python'
++        config.push('test_mi_queues', '[mta]\nmessage_instance: yes')
++        self.addCleanup(config.pop, 'test_mi_queues')
++
++    def test_posting_pipeline(self):
++        msg = _msg_from_bytes(self.RAW)
++        msg.original_bytes = self.RAW
++        msgdata = {}
++        process_pipeline(self._mlist, msg, msgdata,
++                         'default-posting-pipeline')
++        for queue in ('archive', 'nntp'):
++            items = get_queue_messages(queue, expected_count=1)
++            self.assertFalse(hasattr(items[0].msg, 'original_bytes'), queue)
++        self.assertEqual(msg.original_bytes, self.RAW)
++        items = get_queue_messages('out', expected_count=1)
++        out, outdata = items[0].msg, items[0].msgdata
++        self.assertEqual(out.original_bytes, self.RAW)
++        # And delivery still records this hop.
++        decorate.process(self._mlist, out, outdata)
++        config.handlers['message-instance-egress'].process(
++            self._mlist, out, outdata)
++        v, err = verify_message_instance(out)
++        self.assertEqual(v, 2, err)
++        self.assertEqual(undo_message_instance(out), 2)
++        v, err = verify_message_instance(out)
++        self.assertEqual(v, 1, err)
++
++    def test_received_octets_come_back_after_a_failed_enqueue(self):
++        msg = _msg_from_bytes(self.RAW)
++        msg.original_bytes = self.RAW
++        with patch.object(config.switchboards['archive'], 'enqueue',
++                          side_effect=OSError('disk full')):
++            with self.assertRaises(OSError):
++                config.handlers['to-archive'].process(self._mlist, msg, {})
++        self.assertEqual(msg.original_bytes, self.RAW)
 diff --git a/src/mailman/handlers/tests/test_mi_null_recipe.py b/src/mailman/handlers/tests/test_mi_null_recipe.py
 new file mode 100644
 index 000000000..3fb8e2ea0
@@ -4249,6 +4564,51 @@ index 000000000..c868a3595
 +
 +if __name__ == '__main__':
 +    unittest.main(verbosity=2)
+diff --git a/src/mailman/handlers/to_archive.py b/src/mailman/handlers/to_archive.py
+index ddc7ad3c3..f4ef0a85a 100644
+--- a/src/mailman/handlers/to_archive.py
++++ b/src/mailman/handlers/to_archive.py
+@@ -19,6 +19,7 @@
+ 
+ from mailman.config import config
+ from mailman.core.i18n import _
++from mailman.handlers.message_instance import without_received_bytes
+ from mailman.interfaces.archiver import ArchivePolicy
+ from mailman.interfaces.handler import IHandler
+ from public import public
+@@ -44,5 +45,7 @@ class ToArchive:
+         # presence.  I'm keeping "X-Archive: no" for backwards compatibility.
+         if 'x-no-archive' in msg or msg.get('x-archive', '').lower() == 'no':
+             return
+-        # Send the message to the archiver queue.
+-        config.switchboards['archive'].enqueue(msg, msgdata)
++        # Send the message to the archiver queue.  Archivers never need the
++        # octets kept for DKIM2 Message-Instance egress.
++        with without_received_bytes(msg):
++            config.switchboards['archive'].enqueue(msg, msgdata)
+diff --git a/src/mailman/handlers/to_usenet.py b/src/mailman/handlers/to_usenet.py
+index 77c620438..f9de81653 100644
+--- a/src/mailman/handlers/to_usenet.py
++++ b/src/mailman/handlers/to_usenet.py
+@@ -21,6 +21,7 @@ import logging
+ 
+ from mailman.config import config
+ from mailman.core.i18n import _
++from mailman.handlers.message_instance import without_received_bytes
+ from mailman.interfaces.handler import IHandler
+ from public import public
+ from zope.interface import implementer
+@@ -54,5 +55,8 @@ class ToUsenet:
+             log.error('NNTP gateway improperly configured: %s',
+                       COMMASPACE.join(error))
+             return
+-        # Put the message in the news runner's queue.
+-        config.switchboards['nntp'].enqueue(msg, msgdata, listid=mlist.list_id)
++        # Put the message in the news runner's queue, without the octets
++        # kept for DKIM2 Message-Instance egress: it never gets there.
++        with without_received_bytes(msg):
++            config.switchboards['nntp'].enqueue(
++                msg, msgdata, listid=mlist.list_id)
 diff --git a/src/mailman/mta/bulk.py b/src/mailman/mta/bulk.py
 index 446b76ff5..abf4a9252 100644
 --- a/src/mailman/mta/bulk.py
