@@ -425,6 +425,17 @@ Version: 3.3.10 + the series. To update:
 then `systemctl stop mailman3; sudo -u mailman /opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg info; systemctl start mailman3 mailman-web`
 (any `mailman` command applies pending migrations).
 
+**DKIM2 behaviour (since 2026-10-07):** on a list with `dkim2_message_instance`
+on, Mailman always MIME-wraps the post (a `multipart/mixed` with a short
+preamble note, the original body spliced in byte-for-byte as the first part),
+so its `m=2` body Recipe is a copy range. When content filtering
+(`mime_delete`) or DMARC wrapping rewrites the body it records `"b":null`
+instead, and the outbound milter (`dkim2-milter-outbound.service`) runs with
+`--allow-null-body-recipe` so it still signs such an `m=2` (logging
+`X-DKIM2-Info: ... action=null-body-recipe`). There is **no `mi-cache`** any
+more: the pre-pipeline snapshot is `msg.original_bytes` in the queue entry, and
+`/var/lib/mailman3/mi-cache` was removed at the 2026-10-07 deploy.
+
 **Config files:**
 - `/etc/mailman3/mailman.cfg` — main mailman config
 - `/etc/mailman3/web/settings.py` — Django settings for Postorius + HyperKitty
@@ -1229,3 +1240,48 @@ copy ranges as JSON strings, so Go rejected every Sympa `m=2` (fixed, Mail::DKIM
 0.11); Mailman hashed `str()` of its prefixed Subject `Header` object -- the
 decoded text -- while sending the RFC 2047 form, so the outbound milter refused
 to sign 59 of the 88 (fixed on all three `brong/mailman` branches).
+
+### Null body Recipe list (`dkim2filter@mailman.dkim2.com`)
+
+Acceptance list for Mailman's `"b":null` path, created 2026-10-07 like the
+Mailman corpus list (same REST settings, members only the two `dkim2capture@`
+addresses, `archive_policy=never`, HyperKitty off, `subscription_policy=moderate`)
+plus content filtering that strips zip attachments:
+
+```bash
+ssh dkim2 'R="curl -sS -u restadmin:dkim2demo"; B=http://localhost:8001/3.1; L=dkim2filter.mailman.dkim2.com
+$R -X POST $B/lists -d fqdn_listname=dkim2filter@mailman.dkim2.com -d style_name=legacy-default
+$R -X PATCH $B/lists/$L/config -d default_nonmember_action=accept -d require_explicit_destination=False \
+   -d max_num_recipients=0 -d max_message_size=0 -d administrivia=False -d respond_to_post_requests=False \
+   -d advertised=False -d subscription_policy=moderate -d archive_policy=never \
+   -d "subject_prefix=[DKIM2filter] " -d dkim2_message_instance=True \
+   -d filter_content=True -d filter_types=application/zip
+$R -X PATCH $B/lists/$L/archivers -d hyperkitty=False
+for a in dkim2capture@dkim2.com dkim2capture@test1.dkim2.com; do
+  $R -X POST $B/members -d list_id=$L -d subscriber=$a -d pre_verified=True -d pre_confirmed=True -d pre_approved=True
+done
+/opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg --run-as-root aliases && postfix reload'
+```
+
+Test: build a `multipart/mixed` post (a text part plus a small
+`application/zip`) from `dkim2capture@dkim2.com`, sign it and inject it exactly
+as `deploy/dkim2-corpus-inject.sh` does (holding its lock,
+`/run/lock/dkim2-corpus-inject.lock`, so it cannot collide with a corpus run):
+
+```bash
+perl -I/root/interop/perl/lib /root/interop/perl/bin/dkim2sign -s sel1 -d dkim2.com \
+  -k /etc/dkim2/reflector/sel1.key --mailfrom '<dkim2capture@dkim2.com>' \
+  --rcptto '<dkim2filter@mailman.dkim2.com>' post.eml > signed.eml
+# then Net::SMTP to 127.0.0.1:10591, MAIL FROM dkim2capture@dkim2.com,
+# RCPT TO dkim2filter@mailman.dkim2.com (the inject script's one-liner)
+```
+
+Each capture (found in `/var/spool/dkim2-capture/Maildir/new` by Message-ID)
+must carry `Message-Instance: m=2` whose Recipe is `{"h":{...},"b":null}`, a
+`DKIM2-Signature: i=2; m=2`, and `X-DKIM2-Info: ... action=null-body-recipe`
+from the outbound milter; the zip is gone and the body is the bare text part
+plus footer. After restoring CRLF, `Mail::DKIM2::Verifier` (0.14+, which walks
+the header history past the null body Recipe) and the browser JS verifier give
+`pass (i=1..2 verified)`. The Python, Go and C verifiers reject it at 2026-10-07
+(Python/C: m=1 body hash mismatch; Go: "previous body declared unrecoverable"),
+as does `perl/bin/validate.pl`: they do not yet do the header-history walk.
