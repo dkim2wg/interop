@@ -131,7 +131,8 @@ config.db.commit()
 LISTS = {0: make_list('bench', 0), 1: make_list('benchfilter', 1)}
 
 
-class BenchTimeout(Exception):
+class BenchTimeout(BaseException):
+    # Not an Exception: Mailman's broad `except Exception` must not swallow it.
     pass
 
 
