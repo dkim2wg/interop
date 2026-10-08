@@ -5,7 +5,7 @@ use warnings;
 our $VERSION = '0.14';
 
 use Email::MIME;
-use Mail::DKIM2::Common qw(extract_mi_version);
+use Mail::DKIM2::Common qw(extract_mi_version parse_mime);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Verifier;
@@ -71,7 +71,7 @@ sub _top_has_nd {
 sub check {
     my ($class, $message, %o) = @_;
 
-    my $msg = Email::MIME->new($message);
+    my $msg = parse_mime($message);
     my @sigs = $msg->header_raw('DKIM2-Signature');
     my @mis  = $msg->header_raw('Message-Instance');
     my $has_dk2 = @sigs ? 1 : 0;

@@ -7,7 +7,7 @@ use Mail::Milter::Authentication::Pragmas;
 our $VERSION = '0.14';
 use base 'Mail::Milter::Authentication::Handler';
 
-use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey fold_header);
+use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey fold_header parse_mime);
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
@@ -202,7 +202,7 @@ sub _add_mi_and_store {
                          . $EOL
                          . join(q{}, @{$self->{'body'}});
 
-        my $msg = Email::MIME->new($message_data);
+        my $msg = parse_mime($message_data);
         my @mi_headers = $msg->header_raw('Message-Instance');
         my $mi_value;
         my $snapshot;
