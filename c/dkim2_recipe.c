@@ -111,6 +111,50 @@ static unsigned char *decode_b_item(const cJSON *item, size_t *len_out) {
     return out;
 }
 
+/* Classify one Recipe step the same way for every walker: a "c" member wins,
+   then a "d" array, then a "b" array. Returns 'c', 'd', 'b', or 0 for a step
+   that carries none of them (silently ignored). *arr is the "c" value or the
+   literal array. */
+static int step_kind(const cJSON *step, const cJSON **arr) {
+    const cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
+    const cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
+    const cJSON *bl = cJSON_GetObjectItemCaseSensitive(step, "b");
+    if (c) { *arr = c; return 'c'; }
+    if (d && cJSON_IsArray(d)) { *arr = d; return 'd'; }
+    if (bl && cJSON_IsArray(bl)) { *arr = bl; return 'b'; }
+    return 0;
+}
+
+/* Receives one literal's octets (not NUL-terminated for "b"); nonzero = fail. */
+typedef int (*literal_fn)(void *ctx, const unsigned char *s, size_t len);
+
+/* Validate every item of a "d" (kind 'd') or "b" (kind 'b') literal array and
+   hand each to `fn` (NULL: validate only). Rejects (-1) an empty array
+   (schema minItems 1), a "d" string containing CR/LF (§5.1/§5.2), a "b" item
+   that is not clean base64 or decodes to CR/LF, and -- if `reject_nul` -- a
+   "b" item with an embedded NUL. Non-string "d" items are skipped. */
+static int walk_literals(const cJSON *arr, int kind, int reject_nul,
+                         literal_fn fn, void *ctx) {
+    if (cJSON_GetArraySize(arr) == 0) return -1;
+    const cJSON *item;
+    cJSON_ArrayForEach(item, arr) {
+        if (kind == 'd') {
+            if (!cJSON_IsString(item)) continue;
+            const char *s = item->valuestring;
+            if (strpbrk(s, "\r\n")) return -1;
+            if (fn && fn(ctx, (const unsigned char *)s, strlen(s)) != 0) return -1;
+        } else {
+            size_t dl;
+            unsigned char *dec = decode_b_item(item, &dl);
+            if (!dec) return -1;
+            if ((reject_nul && memchr(dec, '\0', dl)) ||
+                (fn && fn(ctx, dec, dl) != 0)) { free(dec); return -1; }
+            free(dec);
+        }
+    }
+    return 0;
+}
+
 int dkim2_validate_body_recipe(const char *r_json) {
     cJSON *root = cJSON_Parse(r_json);
     if (!root) return -1;
@@ -120,33 +164,26 @@ int dkim2_validate_body_recipe(const char *r_json) {
     int prev_end = 0, rc = 0;
     cJSON *step;
     cJSON_ArrayForEach(step, b) {
-        cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
-        cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
-        cJSON *bl = cJSON_GetObjectItemCaseSensitive(step, "b");
-        if (c) {
+        const cJSON *arr;
+        int kind = step_kind(step, &arr);
+        if (kind == 'c') {
             int st, en;
-            if (copy_range(c, -1, prev_end, &st, &en) != 0) { rc = -1; break; }
+            if (copy_range(arr, -1, prev_end, &st, &en) != 0) { rc = -1; break; }
             prev_end = en;
-        } else if (d && cJSON_IsArray(d)) {
-            if (cJSON_GetArraySize(d) == 0) { rc = -1; break; }
-            cJSON *item;
-            cJSON_ArrayForEach(item, d)
-                if (cJSON_IsString(item) && strpbrk(item->valuestring, "\r\n")) { rc = -1; break; }
-            if (rc) break;
-        } else if (bl && cJSON_IsArray(bl)) {
-            if (cJSON_GetArraySize(bl) == 0) { rc = -1; break; }
-            cJSON *item;
-            cJSON_ArrayForEach(item, bl) {
-                size_t dl;
-                unsigned char *dec = decode_b_item(item, &dl);
-                if (!dec) { rc = -1; break; }
-                free(dec);
-            }
-            if (rc) break;
+        } else if (kind) {
+            if (walk_literals(arr, kind, 0, NULL, NULL) != 0) { rc = -1; break; }
         }
     }
     cJSON_Delete(root);
     return rc;
+}
+
+typedef struct { char *out; size_t pos, cap; } body_acc_t;
+
+static int body_literal(void *ctx, const unsigned char *s, size_t len) {
+    body_acc_t *a = ctx;
+    if (buf_append(&a->out, &a->pos, &a->cap, (const char *)s, len) != 0) return -1;
+    return buf_append(&a->out, &a->pos, &a->cap, "\r\n", 2);
 }
 
 char *dkim2_apply_body_recipe(const char *r_json,
@@ -171,46 +208,22 @@ char *dkim2_apply_body_recipe(const char *r_json,
     line_t *lines = split_lines(body, bodylen, &n_lines);
     if (!lines) { cJSON_Delete(root); return NULL; }
 
-    char *out = NULL;
-    size_t pos = 0, cap = 0;
+    body_acc_t acc = {NULL, 0, 0};
     int ok = 1;
     int prev_end = 0;
 
     cJSON *step;
     cJSON_ArrayForEach(step, b) {
-        cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
-        cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
-        cJSON *bl = cJSON_GetObjectItemCaseSensitive(step, "b");
-
-        if (c) {
+        const cJSON *arr;
+        int kind = step_kind(step, &arr);
+        if (kind == 'c') {
             int start, end_i;
-            if (copy_range(c, n_lines, prev_end, &start, &end_i) != 0) { ok = 0; break; }
+            if (copy_range(arr, n_lines, prev_end, &start, &end_i) != 0) { ok = 0; break; }
             for (int i = start - 1; i <= end_i - 1 && ok; i++)
-                ok = (buf_append(&out, &pos, &cap, lines[i].ptr, lines[i].len) == 0);
+                ok = (buf_append(&acc.out, &acc.pos, &acc.cap, lines[i].ptr, lines[i].len) == 0);
             prev_end = end_i;
-        } else if (d && cJSON_IsArray(d)) {
-            /* schema minItems 1: an empty literal array is malformed */
-            if (cJSON_GetArraySize(d) == 0) { ok = 0; break; }
-            cJSON *item;
-            cJSON_ArrayForEach(item, d) {
-                if (!cJSON_IsString(item)) continue;
-                const char *s = item->valuestring;
-                /* §5.2: a line MUST NOT contain CR or LF */
-                if (strpbrk(s, "\r\n")) { ok = 0; break; }
-                ok = ok && (buf_append(&out, &pos, &cap, s, strlen(s)) == 0);
-                ok = ok && (buf_append(&out, &pos, &cap, "\r\n", 2) == 0);
-            }
-        } else if (bl && cJSON_IsArray(bl)) {
-            if (cJSON_GetArraySize(bl) == 0) { ok = 0; break; }
-            cJSON *item;
-            cJSON_ArrayForEach(item, bl) {
-                size_t dl;
-                unsigned char *dec = decode_b_item(item, &dl);
-                if (!dec) { ok = 0; break; }
-                ok = ok && (buf_append(&out, &pos, &cap, (const char *)dec, dl) == 0);
-                ok = ok && (buf_append(&out, &pos, &cap, "\r\n", 2) == 0);
-                free(dec);
-            }
+        } else if (kind) {
+            ok = (walk_literals(arr, kind, 0, body_literal, &acc) == 0);
         }
         if (!ok) break;
     }
@@ -218,10 +231,10 @@ char *dkim2_apply_body_recipe(const char *r_json,
     free(lines);
     cJSON_Delete(root);
 
-    if (!ok) { free(out); return NULL; }
-    if (out) out[pos] = '\0';
-    *out_len = pos;
-    return out ? out : calloc(1, 1);
+    if (!ok) { free(acc.out); return NULL; }
+    if (acc.out) acc.out[acc.pos] = '\0';
+    *out_len = acc.pos;
+    return acc.out ? acc.out : calloc(1, 1);
 }
 
 static char **headers_for_name(char **headers, int n, const char *lname,
@@ -288,6 +301,13 @@ static int push_val(char ***vals, int *n, int *cap, char *v) {
     return 0;
 }
 
+typedef struct { const char *fname; char ***vals; int *n, *cap; } hdr_acc_t;
+
+static int header_literal(void *ctx, const unsigned char *s, size_t len) {
+    hdr_acc_t *a = ctx;
+    return push_val(a->vals, a->n, a->cap, make_field(a->fname, s, len));
+}
+
 char **dkim2_apply_header_recipe(const char *r_json,
     char **headers, int n, int *n_out) {
     cJSON *root = cJSON_Parse(r_json);
@@ -334,43 +354,20 @@ char **dkim2_apply_header_recipe(const char *r_json,
 
         cJSON *step;
         cJSON_ArrayForEach(step, field) {
-            cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
-            cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
-            cJSON *bl = cJSON_GetObjectItemCaseSensitive(step, "b");
-
-            if (c) {
+            const cJSON *arr;
+            int kind = step_kind(step, &arr);
+            if (kind == 'c') {
                 int start, end_i;
                 /* Malformed Recipe: reject the whole instance. */
-                if (copy_range(c, n_field, prev_end, &start, &end_i) != 0) goto fail;
+                if (copy_range(arr, n_field, prev_end, &start, &end_i) != 0) goto fail;
                 for (int i = start - 1; i <= end_i - 1; i++)
                     if (push_val(&new_vals, &n_new, &new_cap, strdup(field_hdrs[i])) != 0) goto fail;
                 prev_end = end_i;
-            } else if (d && cJSON_IsArray(d)) {
-                /* schema minItems 1: an empty literal array is malformed */
-                if (cJSON_GetArraySize(d) == 0) goto fail;
-                cJSON *item;
-                cJSON_ArrayForEach(item, d) {
-                    if (!cJSON_IsString(item)) continue;
-                    /* §5.1: a value MUST NOT contain CR or LF */
-                    if (strpbrk(item->valuestring, "\r\n")) goto fail;
-                    char *hdr = make_field(fname, (const unsigned char *)item->valuestring,
-                                           strlen(item->valuestring));
-                    if (push_val(&new_vals, &n_new, &new_cap, hdr) != 0) goto fail;
-                }
-            } else if (bl && cJSON_IsArray(bl)) {
-                if (cJSON_GetArraySize(bl) == 0) goto fail;
-                cJSON *item;
-                cJSON_ArrayForEach(item, bl) {
-                    size_t dl;
-                    unsigned char *dec = decode_b_item(item, &dl);
-                    if (!dec) goto fail;
-                    /* Header fields travel as NUL-terminated strings through
-                       this API, so an embedded NUL cannot be represented. */
-                    if (memchr(dec, '\0', dl)) { free(dec); goto fail; }
-                    char *hdr = make_field(fname, dec, dl);
-                    free(dec);
-                    if (push_val(&new_vals, &n_new, &new_cap, hdr) != 0) goto fail;
-                }
+            } else if (kind) {
+                hdr_acc_t ha = { fname, &new_vals, &n_new, &new_cap };
+                /* Header fields travel as NUL-terminated strings through this
+                   API, so an embedded NUL in a "b" item cannot be represented. */
+                if (walk_literals(arr, kind, 1, header_literal, &ha) != 0) goto fail;
             }
         }
         free(field_hdrs);
