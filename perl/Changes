@@ -1,5 +1,11 @@
 Revision history for Mail::DKIM2
 
+0.15    2026-10-08
+        - MessageInstance->calculate takes BodyRecipe ('none', 'null' or a
+          Recipe) and then skips the body diff; body_hash accessor;
+          body_digest_raw(). For list managers that build the Recipe from
+          their own layout (Sympa always-wrap). (t/mi-body-recipe-option.t)
+
 0.14    2026-10-07
         - The Verifier and MessageInstance->chain_verifies walk the header
           history past an instance whose body Recipe is null: the body is

@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 
 use Crypt::Digest::SHA256;
@@ -124,6 +124,18 @@ sub get_tag {
 
 # The header-hash component (base64) of this Message-Instance's h= tag.
 sub header_hash { return $_[0]->{bits}{h1} }
+sub body_hash { return $_[0]->{bits}{b1} }
+
+# The body hash (spec-06 section 6.3) of a raw body string with LF or CRLF
+# line ends: no Email::MIME parse, for callers that hold the body alone.
+sub body_digest_raw {
+    my ($body, $alg) = @_;
+    $alg = lc($alg // 'sha256');
+    (my $b = $body // '') =~ s/\r?\n/\r\n/g;
+    $b =~ s/(\r\n)+\z//;
+    $b .= "\r\n";
+    return _hash_data_b64($alg, $b);
+}
 
 # Mark the body Recipe as null per spec-06 §4.2: the body changed but the
 # previous state cannot be recreated. as_string() then emits "b": null.
@@ -785,7 +797,31 @@ sub calculate {
         my %map = map { extract_mi_version($_) => $_ } @mi_cur;
         $self->set_tag('m', max(keys %map) + 1);
 
-        if ($opts{UseEpilogue}) {
+        if (exists $opts{BodyRecipe}) {
+            # Caller supplies the body Recipe: no body diff runs.
+            my $br = $opts{BodyRecipe};
+            if (!ref $br && $br eq 'none') {
+                $rb_recipe = undef;
+            } elsif (!ref $br && $br eq 'null') {
+                $self->set_null_body_recipe;
+            } elsif (ref $br eq 'ARRAY') {
+                my $last = 0;
+                for my $step (@$br) {
+                    next unless ref $step;
+                    croak "BodyRecipe step must be [from,to] or a string"
+                        unless ref $step eq 'ARRAY' && @$step == 2;
+                    my ($f, $t) = @$step;
+                    croak "BodyRecipe range [$f,$t] invalid"
+                        unless $f =~ /^\d+\z/ && $t =~ /^\d+\z/
+                            && $f >= 1 && $t >= $f && $f > $last;
+                    $last = $t;
+                }
+                $rb_recipe = [ map { ref $_ ? [ @$_ ] : $_ } @$br ];
+            } else {
+                croak "BodyRecipe must be 'none', 'null' or an ARRAY ref";
+            }
+        }
+        elsif ($opts{UseEpilogue}) {
             # Always store old body in MIME epilogue.
             $rb_recipe = _epilogue_recipe($current, $previous->body_raw);
         }
@@ -1179,6 +1215,15 @@ and header Recipes; see L<Mail::DKIM2/Operator-local header fields>.
 C<calculate> only: an arrayref of hash algorithm names for C<h=>, from
 C<sha256> and C<sha512>. Default C<['sha256']>.
 
+=item BodyRecipe
+
+C<calculate> with a previous message only: the caller supplies the body
+Recipe and no body diff runs (the body of C<$previous> is ignored, and may
+be empty). One of C<'none'> (no C<b> key), C<'null'> (C<"b": null>), or an
+ARRAY ref in the internal form: C<[from,to]> arrays for copy ranges (1-based
+body lines of C<$msg>, ascending) and plain strings for literal lines. An
+empty array gives C<"b": []>. Croaks on a malformed value.
+
 =item UseEpilogue, EpilogueThreshold
 
 C<calculate> with a previous message only; see below.
@@ -1264,6 +1309,17 @@ L<Mail::DKIM2::Common/fold_header> before inserting it.
 
 The base64 sha256 header hash, or undef if the instance carries no sha256
 set.
+
+=head2 body_hash()
+
+The base64 sha256 body hash, or undef if the instance carries no sha256
+set.
+
+=head2 body_digest_raw($body, [$alg])
+
+Function, not a method. The body hash of a raw body string with LF or CRLF
+line ends, equal to what the instance records for a message with that body.
+C<$alg> defaults to C<sha256>.
 
 =head2 unrecoverable()
 
