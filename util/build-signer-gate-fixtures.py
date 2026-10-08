@@ -17,9 +17,15 @@ that does not check out.
   null-top.eml           unsigned m=2 with a null body Recipe and a
                          valid header Recipe                      -> REFUSE,
                                        SIGN with --allow-null-body-recipe
+                         (i=1 covers only m=1: no signature has m=2,
+                         so this null is one THIS hop would introduce)
   null-top-forged.eml    like null-top but the header Recipe hides
                          a To: change                             -> REFUSE
                                        even with the flag
+  null-top-signed.eml    the list domain test2 made the null m=2 AND
+                         signed it (i=2, m=2, rt= the next hop); test3 just
+                         forwards it unchanged                    -> SIGN
+                                       (a signed null top needs no flag)
   mi-only.eml            NO DKIM2-Signature: a list added unsigned m=1 and
                          unsigned m=2 (ordinary Recipe), as Mailman does
                                                                   -> SIGN
@@ -146,6 +152,15 @@ def build_null_top_forged():
                               b + b"rewritten by list\r\n", bnv._forged_recipe)
 
 
+def build_null_top_signed():
+    """i=1/m=1 by test1 (rt= test2), then the list domain test2 adds m=2 with
+    a Subject tag and a rewritten body (null body Recipe, valid header Recipe)
+    and SIGNS it: i=2, m=2, rt= user@test3.dkim2.com.  The next hop forwards
+    the message unchanged.  Its signature covers the null, so the forwarder
+    must sign without --allow-null-body-recipe."""
+    return bnv.build_positive_null_body()
+
+
 def _nd_bridge(nd):
     """i=1 test1 -> test2, then test2's §9.3 bridge i=2 carrying nd=<nd>."""
     raw = open(bnv.SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
@@ -174,6 +189,7 @@ FIXTURES = {
     "broken-mi-chain.eml": build_broken_mi_chain,
     "null-top.eml": build_null_top,
     "null-top-forged.eml": build_null_top_forged,
+    "null-top-signed.eml": build_null_top_signed,
     "mi-only.eml": build_mi_only,
     "mi-only-broken.eml": build_mi_only_broken,
     "mi-only-null.eml": build_mi_only_null,

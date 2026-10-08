@@ -13,8 +13,9 @@
 #   valid-chain          SIGN     SIGN
 #   broken-signature     REFUSE   REFUSE
 #   broken-mi-chain      REFUSE   REFUSE
-#   null-top             REFUSE   SIGN
+#   null-top             REFUSE   SIGN     (unsigned null m=2; i=1 covers only m=1)
 #   null-top-forged      REFUSE   REFUSE   (flag must not excuse a forged history)
+#   null-top-signed      SIGN     SIGN     (null m=2 already signed i=2/m=2 upstream)
 #   mi-only              SIGN     SIGN     (no signature; list added unsigned m=1, m=2)
 #   mi-only-broken       REFUSE   REFUSE
 #   mi-only-null         REFUSE   SIGN
@@ -39,7 +40,7 @@ cd "$root"
 # Single source of truth: the expected cell count is DERIVED from these lists,
 # so a silently dropped fixture/signer/mode shows up as a coverage shortfall.
 # fixture:plain-want:flag-want
-FIXTURES="fresh:sign:sign valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse mi-only:sign:sign mi-only-broken:refuse:refuse mi-only-null:refuse:sign nd-to-us:sign:sign nd-to-other:refuse:refuse signature-gap:refuse:refuse instance-gap:refuse:refuse"
+FIXTURES="fresh:sign:sign valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse null-top-signed:sign:sign mi-only:sign:sign mi-only-broken:refuse:refuse mi-only-null:refuse:sign nd-to-us:sign:sign nd-to-other:refuse:refuse signature-gap:refuse:refuse instance-gap:refuse:refuse"
 SIGNERS="python go c perl"
 MODES="plain flag"
 n=0; for _f in $FIXTURES; do n=$((n + 1)); done
