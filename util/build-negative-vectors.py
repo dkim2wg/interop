@@ -56,6 +56,20 @@ Writes:
                                          "DKIM2-Signature: m=2; d=evil.example"
                                          (no i=); REJECT (PERMERROR)
   unkeyable-signature-i-abc.eml    -- the same with i=abc; REJECT (PERMERROR)
+  lone-junk-signature.eml          -- an unsigned message whose only DKIM2 field
+                                         is "DKIM2-Signature: m=1; d=evil.example";
+                                         REJECT (PERMERROR, not "none")
+  signature-i-33.eml               -- two real hops, the second signed as i=33
+                                         (one more than MAX_CHAIN_LENGTH, 32);
+                                         REJECT (PERMERROR) before any gap check
+  signature-i-huge.eml             -- the same with i=99999999999999999999;
+                                         REJECT (PERMERROR), no overflow, no hang
+  signature-m-huge.eml             -- second hop i=2 over Message-Instance m=2,
+                                         but its signature says m=4294967297;
+                                         REJECT (PERMERROR)
+  instance-m-huge.eml              -- second hop's Message-Instance (and the
+                                         signature covering it) m=99999999999999999999;
+                                         REJECT (PERMERROR)
 """
 import base64
 import json
@@ -604,7 +618,7 @@ def build_positive_unreferenced_lower_mi():
     return out + b"\r\n" + b2
 
 
-def _gap_chain(sig2_seq, mi2_version):
+def _gap_chain(sig2_seq, mi2_version, sig2_m=None):
     """Two real hops (m=1/i=1 by test1, then a Subject-tag + footer hop by
     test2) built with the second hop's i= and m= forced to the given values.
     build_dkim2_signature takes seq/mi_version directly, so the second hop is
@@ -625,7 +639,8 @@ def _gap_chain(sig2_seq, mi2_version):
     sig2 = ds.build_dkim2_signature(
         [mi1], [sig1], mi2, dom2, "sel1", priv2, alg2,
         mailfrom="relay@test2.dkim2.com", rcptto=["final@example.com"],
-        seq=sig2_seq, mi_version=mi2_version, timestamp=TS + 100)
+        seq=sig2_seq, mi_version=mi2_version if sig2_m is None else sig2_m,
+        timestamp=TS + 100)
     out = sig2.encode() + b"\r\n" + sig1.encode() + b"\r\n"
     out += mi2.encode() + b"\r\n" + mi1.encode() + b"\r\n"
     for h in h2:
@@ -667,6 +682,41 @@ def build_unkeyable_signature_i_abc():
     return _with_unkeyable_signature(b"DKIM2-Signature: i=abc; m=2; d=evil.example")
 
 
+def build_lone_junk_signature():
+    """NEGATIVE: an otherwise unsigned message whose only DKIM2 field is a
+    junk "DKIM2-Signature: m=1; d=evil.example" (no i=).  It is a PERMERROR
+    like any other unkeyable signature -- not "no DKIM2 here", and certainly
+    not a pass: a checker whose walk is driven by the i= values it can read
+    sees no chain at all and has nothing to fail."""
+    return b"DKIM2-Signature: m=1; d=evil.example\r\n" + open(SRC, "rb").read()
+
+
+# Every i= and m= is bounded by MAX_CHAIN_LENGTH (32 in every implementation
+# here; Perl's Mail::DKIM2::Common has the constant).  A value above it, or
+# too long to be one, is a PERMERROR before any gap/contiguity check walks
+# 1..max -- which, for i=99999999999999999999, crashed Perl ("Range iterator
+# outside integer range"), ran the browser verifier out of memory, and was
+# undefined behaviour in C's atoi().  These chains are otherwise genuinely
+# signed: _gap_chain signs the second hop with exactly these numbers.
+HUGE = 99999999999999999999
+
+
+def build_signature_i_33():
+    return _gap_chain(sig2_seq=33, mi2_version=2)
+
+
+def build_signature_i_huge():
+    return _gap_chain(sig2_seq=HUGE, mi2_version=2)
+
+
+def build_signature_m_huge():
+    return _gap_chain(sig2_seq=2, mi2_version=2, sig2_m=4294967297)
+
+
+def build_instance_m_huge():
+    return _gap_chain(sig2_seq=2, mi2_version=HUGE)
+
+
 FIXTURES = {
     "signature-gap.eml": build_signature_gap,
     "instance-gap.eml": build_instance_gap,
@@ -693,6 +743,11 @@ FIXTURES = {
     "malformed-body-recipe-below-null.eml": build_malformed_body_recipe_below_null,
     "unkeyable-signature-no-i.eml": build_unkeyable_signature_no_i,
     "unkeyable-signature-i-abc.eml": build_unkeyable_signature_i_abc,
+    "lone-junk-signature.eml": build_lone_junk_signature,
+    "signature-i-33.eml": build_signature_i_33,
+    "signature-i-huge.eml": build_signature_i_huge,
+    "signature-m-huge.eml": build_signature_m_huge,
+    "instance-m-huge.eml": build_instance_m_huge,
 }
 
 
