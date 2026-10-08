@@ -13,11 +13,21 @@ use Test::More;
 use Path::Tiny;
 use File::Temp qw(tempdir);
 use File::Spec;
+use FindBin;
+use lib "$FindBin::Bin/lib";
+use Email::MIME;
+use Mail::DKIM2::Signer;
+use Mail::DKIM2::MessageInstance;
+use DKIM2TestKeys;
 
 my $keyfile = 't/data/keys/sel1._domainkey.test1.dkim2.com.pem';
 plan skip_all => 't/data/keys not available' unless -e $keyfile;
 my $keyfile2 = 't/data/keys/sel1._domainkey.test2.dkim2.com.pem';
 plan skip_all => 't/data/keys not available' unless -e $keyfile2;
+
+# The CLI verifies an upstream chain before extending it; answer key lookups
+# from the shared dns.json rather than the network.
+$ENV{DKIM2_DNS_JSON} = DKIM2TestKeys::dns_json();
 
 my $dir = tempdir(CLEANUP => 1);
 my $src = path($dir)->child('base.eml');
@@ -77,6 +87,7 @@ my ($resigned, $rc2) = sign($hop1,
     '-s' => 'sel1', '-d' => 'test2.dkim2.com', '-k' => $keyfile2,
     '--mailfrom' => '<sender@test2.dkim2.com>',
     '--rcptto'   => '<final@test3.dkim2.com>',
+    '--ignore-timestamps',   # the hop1 fixture carries a fixed old t=
     '--timestamp' => 1740000100);
 is($rc2, 0, 're-signer exits 0');
 is(scalar(() = $resigned =~ /^Message-Instance:/mg), 1,
@@ -99,5 +110,98 @@ unlike($nd, qr/\brt=/, 'nd= hop omits rt=');
 # --- missing required options fail rather than producing garbage ---
 my (undef, $rc4) = sign_quietly($src, '-d' => 'test1.dkim2.com', '-k' => $keyfile);
 isnt($rc4, 0, 'missing --selector is an error');
+
+# --- the gate: an existing DKIM2 chain must check out before we extend it ---
+#
+# Same decision as bin/dkim2-milter (Mail::DKIM2::Gate). The library Signer
+# stays ungated; the front ends refuse.
+{
+    my $EOL = "\r\n";
+    my $plain = $src->slurp_raw;
+
+    my $originator = sub {
+        my $mi  = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($plain));
+        my $msg = "Message-Instance: " . $mi->as_string . $EOL . $plain;
+        my $s = Mail::DKIM2::Signer->new(
+            Domain => 'test1.dkim2.com', Selector => 'sel1',
+            Key => DKIM2TestKeys::private_key('test1.dkim2.com', 'sel1'),
+            MailFrom => 'sender@test1.dkim2.com', RcptTo => ['rcpt@test2.dkim2.com'],
+            Timestamp => time());
+        $s->PRINT($msg); $s->CLOSE;
+        return $s->as_string . $EOL . $msg;
+    };
+    my $null_top = sub {
+        my (%o) = @_;
+        my $signed = $originator->();
+        my $mod = $signed;
+        $mod =~ s/^Subject: /Subject: [list] /m;
+        $mod =~ s/^To: .*$/To: tampered\@example.net/m if $o{forge};
+        $mod .= "--$EOL" . "rewritten$EOL";
+        my $mi = Mail::DKIM2::MessageInstance->calculate(
+            Email::MIME->new($mod), Email::MIME->new($signed));
+        $mi->set_null_body_recipe;
+        if ($o{forge}) {
+            my $rh = $mi->{bits}{rh};
+            delete $rh->{$_} for grep { lc($_) eq 'to' } keys %$rh;
+        }
+        return "Message-Instance: " . $mi->as_string . $EOL . $mod;
+    };
+
+    my @me = ('-s' => 'sel1', '-d' => 'test2.dkim2.com', '-k' => $keyfile2,
+              '--mailfrom' => '<list@test2.dkim2.com>',
+              '--rcptto'   => '<sub@test3.dkim2.com>');
+    my $run = sub {
+        my ($text, @extra) = @_;
+        my $f = path($dir)->child('gate-' . ++$main::n . '.eml');
+        $f->spew_raw($text);
+        my $err = path($dir)->child("gate-$main::n.err");
+        my @cmd = ($^X, '-Ilib', 'bin/dkim2sign', @me, @extra, "$f");
+        open my $fh, '-|', "@{[map { quotemeta } @cmd]} 2>$err" or die $!;
+        binmode $fh; my $out = do { local $/; <$fh> }; close $fh;
+        return ($out, $? >> 8, $err->slurp);
+    };
+
+    my ($out, $rc) = $run->($originator->());
+    is($rc, 0, 'gate: valid upstream chain is extended');
+    like($out, qr/^DKIM2-Signature: i=2;/m, 'gate: new signature is i=2');
+
+    my $bad = $originator->();
+    $bad =~ s/(DKIM2-Signature: i=1; m=1; t=)(\d+)/$1 . ($2 + 1)/e or die 'no t=';
+    my $err;
+    ($out, $rc, $err) = $run->($bad);
+    isnt($rc, 0, 'gate: broken upstream signature refused');
+    is($out, '', 'gate: nothing written on refusal');
+    like($err, qr/not signing: upstream DKIM2 chain/, 'gate: reason names the upstream chain');
+
+    # Corrupt the m=1 body hash: the chain no longer checks out.
+    my $mi_broken = $originator->();
+    $mi_broken =~ s/(Message-Instance: m=1; h=sha256:)(.)/$1 . ($2 eq 'A' ? 'B' : 'A')/e or die 'no h=';
+    ($out, $rc, $err) = $run->($mi_broken);
+    isnt($rc, 0, 'gate: broken Message-Instance chain refused');
+    is($out, '', 'gate: nothing written for a broken MI chain');
+    like($err, qr/not signing:/, 'gate: MI refusal explains itself');
+
+    ($out, $rc, $err) = $run->($null_top->());
+    isnt($rc, 0, 'gate: null body Recipe refused by default');
+    is($out, '', 'gate: nothing written for null body Recipe');
+    like($err, qr/null body Recipe/, 'gate: reason names the null body Recipe');
+
+    ($out, $rc) = $run->($null_top->(), '--allow-null-body-recipe');
+    is($rc, 0, 'gate: null body Recipe signed with --allow-null-body-recipe');
+    like($out, qr/^DKIM2-Signature: i=2;/m, 'gate: and the signature is i=2');
+
+    ($out, $rc) = $run->($null_top->(forge => 1), '--allow-null-body-recipe');
+    isnt($rc, 0, 'gate: forged null-top refused even with the option');
+
+    # Old fixtures: --ignore-timestamps and --dns-json
+    {
+        local $ENV{DKIM2_DNS_JSON};
+        ($out, $rc) = $run->($originator->(), '--dns-json' => DKIM2TestKeys::dns_json());
+        is($rc, 0, 'gate: --dns-json supplies the verification keys');
+    }
+    # Fixtures from the past: --ignore-timestamps is accepted.
+    ($out, $rc) = $run->($originator->(), '--ignore-timestamps');
+    is($rc, 0, 'gate: --ignore-timestamps accepted');
+}
 
 done_testing();

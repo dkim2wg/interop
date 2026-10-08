@@ -13,6 +13,14 @@ Revision history for Mail::DKIM2
           signed silently; it is refused (X-DKIM2-Info
           not-signed=null-body-recipe) unless the option is set, and signed
           with X-DKIM2-Info null-body-recipe when it is.
+        - bin/dkim2sign no longer signs blindly over an existing chain: like
+          dkim2-milter it verifies the upstream DKIM2-Signatures (an unsigned
+          top Message-Instance is allowed) and that the Message-Instance chain
+          undoes cleanly, and refuses (exit 1, nothing on stdout) otherwise.
+          A top null body Recipe is refused unless --allow-null-body-recipe.
+          New --dns-json (default $DKIM2_DNS_JSON) and --ignore-timestamps.
+          The decision is the new Mail::DKIM2::Gate, shared with the milter;
+          the Signer library itself still signs ungated. (t/sign-cli.t)
         - A Message-Instance whose r= has a "b" that is neither null nor an
           array (e.g. 5, "x", {}) is now a PERMERROR instead of being read
           as a null body Recipe; likewise an "h" that is not an object.
