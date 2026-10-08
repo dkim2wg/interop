@@ -316,7 +316,9 @@ static int verify_mi_hashes(
 
     char *cur_body = NULL;
     size_t cur_body_len = 0;
-    if (initial_body && initial_body_len > 0) {
+    /* A non-NULL body of length 0 is a valid EMPTY body (still hashed and
+       Recipe-undone like any other); only a NULL pointer means digest-only. */
+    if (initial_body) {
         cur_body = malloc(initial_body_len + 1);
         if (!cur_body) {
             free(content);

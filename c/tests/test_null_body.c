@@ -79,8 +79,9 @@ int main(void) {
         assert(run(m, 3, h3, 3, B3, err, sizeof err) == 0);
         for (int i = 0; i < 3; i++) dkim2_mi_free(m[i]);
     }
-    /* normal chain with null only at m=3, m=2 body hash wrong: must still
-       pass (unchecked); but WITHOUT the null the same chain must fail */
+    /* negative control, NO null at m=2/m=3 body Recipe being null: m=3 has an
+       ordinary body Recipe and m=2's body hash is wrong, so the chain must
+       fail at m=2 body hash (proves bodies ARE checked without a null) */
     {
         const char *r3b = "{\"h\":{\"subject\":[{\"d\":[\"[L] hi\"]}]},"
                           "\"b\":[{\"c\":[1,1]}]}";
@@ -111,6 +112,38 @@ int main(void) {
         assert(run(m, 2, h2, 3, B2, err, sizeof err) != 0);
         assert(strstr(err, "m=2 body hash mismatch"));
         dkim2_mi_free(m[0]); dkim2_mi_free(m[1]);
+    }
+    /* EMPTY top body: clean chain (m=2 header-only Recipe) -> pass */
+    {
+        const char *r = "{\"h\":{\"subject\":[{\"d\":[\"hi\"]}]}}";
+        dkim2_mi_t *m[2] = { mkmi(1, h1, 3, "", NULL), mkmi(2, h2, 3, "", r) };
+        assert(run(m, 2, h2, 3, "", err, sizeof err) == 0);
+        dkim2_mi_free(m[0]); dkim2_mi_free(m[1]);
+    }
+    /* EMPTY top body, To change hidden from m=2's header Recipe -> fail */
+    {
+        const char *hf[] = { F, T2, S2 };
+        const char *r = "{\"h\":{\"subject\":[{\"d\":[\"hi\"]}]}}";
+        dkim2_mi_t *m[2] = { mkmi(1, h1, 3, "", NULL), mkmi(2, hf, 3, "", r) };
+        assert(run(m, 2, hf, 3, "", err, sizeof err) != 0);
+        assert(strstr(err, "m=1 header hash mismatch"));
+        dkim2_mi_free(m[0]); dkim2_mi_free(m[1]);
+    }
+    /* null BELOW an ordinary instance: m=3 ordinary (header Recipe only,
+       body unchanged) over m=2 null over m=1 -> pass; forged -> fail at m=1 */
+    {
+        const char *r3 = "{\"h\":{\"subject\":[{\"d\":[\"[L] hi\"]}]}}";
+        dkim2_mi_t *m[3] = { mkmi(1, h1, 3, B1, NULL), mkmi(2, h2, 3, B2, r2),
+                             mkmi(3, h3, 3, B2, r3) };
+        assert(run(m, 3, h3, 3, B2, err, sizeof err) == 0);
+        for (int i = 0; i < 3; i++) dkim2_mi_free(m[i]);
+
+        const char *hf2[] = { F, T2, S2 }, *hf3[] = { F, T2, S3 };
+        dkim2_mi_t *f[3] = { mkmi(1, h1, 3, B1, NULL), mkmi(2, hf2, 3, B2, r2),
+                             mkmi(3, hf3, 3, B2, r3) };
+        assert(run(f, 3, hf3, 3, B2, err, sizeof err) != 0);
+        assert(strstr(err, "m=1 header hash mismatch"));
+        for (int i = 0; i < 3; i++) dkim2_mi_free(f[i]);
     }
     printf("test_null_body: all passed\n");
     return 0;
