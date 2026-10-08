@@ -3,7 +3,7 @@ import { parseMessage, collectLevels, parseTagList, parseHashSets } from './pars
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
 import { fetchKey as dohFetchKey } from './doh.js';
-import { decodeRecipe, bodyToLines, linesToBody, applyRecipe, MalformedRecipe } from './recipes.js';
+import { decodeRecipe, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe, MalformedRecipe } from './recipes.js';
 import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
 
 const SIG_MI_NAMES = new Set(['message-instance', 'dkim2-signature']);
@@ -214,8 +214,10 @@ async function verifyOnce(raw, opts = {}) {
   // state[m] = { fields, bodyLines } representing the message at instance m.
   const states = {};
   states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(body) };
+  const nullBodyInstances = new Set(); // every m whose body Recipe is null
+  let nullBodyAt = null; // highest m whose body Recipe is null (§5.2)
   let undoBroken = null; // m at which undo became impossible
-  let undoBrokenReason = null; // 'redacted' (§5.2, legitimate) | 'invalid-json' | 'syntax-error' | 'malformed' | 'broken'
+  let undoBrokenReason = null; // 'invalid-json' | 'syntax-error' | 'malformed' | 'broken'
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
     if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
@@ -227,11 +229,25 @@ async function verifyOnce(raw, opts = {}) {
       undoBrokenReason = classifyRecipeDecodeError(e);
       break;
     }
-    if (recipe !== null && typeof recipe === 'object' && recipe.b === null) {
-      undoBroken = m; undoBrokenReason = 'redacted'; break; // §5.2 intentional redaction
-    }
     try {
-      states[m - 1] = applyRecipe(recipe, states[m]);
+      if (states[m].noBody) {
+        // Below a null body Recipe the body is gone: apply the header Recipe
+        // only (still validated as a Recipe object) and carry on.
+        if (recipe === null || typeof recipe !== 'object' || Array.isArray(recipe)) throw new MalformedRecipe('Recipe is not a JSON object');
+        if (!('h' in recipe) && !('b' in recipe)) throw new MalformedRecipe('Recipe has neither "h" nor "b"');
+        validateBodyRecipe(recipe.b); // structure still checked; body not applied
+        states[m - 1] = { fields: 'h' in recipe ? applyHeaderRecipe(states[m].fields, recipe.h) : states[m].fields, bodyLines: states[m].bodyLines, noBody: true };
+        if (recipe.b === null) nullBodyInstances.add(m);
+      } else if (recipe !== null && typeof recipe === 'object' && recipe.b === null) {
+        // §5.2 null "b": the previous body cannot be recreated, but the
+        // header Recipe is mandatory and the header history is still
+        // checkable. Sticky: every lower instance is header-hash-only.
+        states[m - 1] = { fields: 'h' in recipe ? applyHeaderRecipe(states[m].fields, recipe.h) : states[m].fields, bodyLines: states[m].bodyLines, noBody: true };
+        nullBodyInstances.add(m);
+        if (nullBodyAt === null) nullBodyAt = m;
+      } else {
+        states[m - 1] = applyRecipe(recipe, states[m]);
+      }
     } catch (e) {
       undoBroken = m;
       undoBrokenReason = e instanceof MalformedRecipe ? 'malformed' : 'broken';
@@ -251,13 +267,9 @@ async function verifyOnce(raw, opts = {}) {
       result: 'pass', detail: '',
     };
     if (!state) {
-      // No reconstructed state: distinguish intentional redaction (§5.2 —
-      // legitimate, do NOT downgrade overall) from a broken chain (fail).
+      // No reconstructed state: a broken chain (permerror or fail).
       level.result = 'not-checked';
-      if (undoBrokenReason === 'redacted') {
-        level.undo = 'unrecoverable';
-        level.detail = `state unavailable (redaction at m=${undoBroken})`;
-      } else if (recipeErrorSuffix(undoBrokenReason)) {
+      if (recipeErrorSuffix(undoBrokenReason)) {
         // spec-06 §11.2: report the specific PERMERROR (JSON parse failure
         // vs. base64 syntax error vs. malformed Recipe are distinct, per the
         // ruling that they are different errors), not the generic "undo
@@ -325,7 +337,8 @@ async function verifyOnce(raw, opts = {}) {
         bump('fail');
       } else {
         level.header_hash = 'match';
-        level.body_hash = 'match';
+        level.body_hash = state.noBody ? 'not-checked' : 'match';
+        if (state.noBody) level.detail = `body not checked (null body Recipe at m=${nullBodyAt})`;
         for (const s of usable) {
           if (await hashB64(hdrBytes, s.alg) !== s.headerHash) {
             level.header_hash = 'mismatch';
@@ -334,7 +347,7 @@ async function verifyOnce(raw, opts = {}) {
             bump('fail');
             break;
           }
-          if (await hashB64(bodyBytes, s.alg) !== s.bodyHash) {
+          if (!state.noBody && await hashB64(bodyBytes, s.alg) !== s.bodyHash) {
             level.body_hash = 'mismatch';
             level.result = 'fail';
             level.detail = `Message Instance m=${m} ${s.alg} body hash mismatch`;
@@ -348,7 +361,8 @@ async function verifyOnce(raw, opts = {}) {
       level.detail = `Message Instance m=${m} hash computation error`;
       bump('fail');
     }
-    if (m >= 2 && undoBroken === m) level.undo = recipeUndoLabel(instances[m]);
+    if (m >= 2 && undoBroken === m) level.undo = 'failed';
+    else if (m >= 2 && nullBodyInstances.has(m)) level.undo = 'unrecoverable';
 
     // Recipe breakdown (§5/§7.2): decode r= and show what it changed — a
     // readable summary in the r= tag, the decoded Recipe JSON, and per-header
@@ -438,7 +452,7 @@ async function verifyOnce(raw, opts = {}) {
     const state = states[mAtSig];
     if (!state) {
       // Reconstruction did not reach this signature's instance: broken chain
-      // downgrades overall; intentional redaction (§5.2) does not.
+      // downgrades overall.
       level.result = 'not-checked';
       level.detail = 'message state for this signature could not be reconstructed';
       if (undoBrokenReason === 'broken') bump('fail');
@@ -549,19 +563,14 @@ async function verifyOnce(raw, opts = {}) {
     levels.push(level);
   }
 
+  const nullNote = nullBodyAt !== null && nullBodyAt > 1
+    ? `; body not checked below m=${nullBodyAt} (null body Recipe), header history verified` : '';
   const summary = overall === 'pass'
-    ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact`
+    ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact${nullNote}`
     : overall === 'warn'
-    ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact — with warnings: ${levels.filter((l) => l.result === 'warn' && l.detail).map((l) => l.detail).join('; ')}`
+    ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact${nullNote} — with warnings: ${levels.filter((l) => l.result === 'warn' && l.detail).map((l) => l.detail).join('; ')}`
     : levels.filter((l) => l.detail).map((l) => l.detail).join('; ') || `verification ${overall}`;
   return { overall, summary, levels };
-}
-
-function recipeUndoLabel(mi) {
-  try {
-    const r = decodeRecipe(mi.map.r);
-    return r.b === null ? 'unrecoverable' : 'failed';
-  } catch (e) { return 'failed'; }
 }
 
 function keyErrorDetail(e) {

@@ -23,6 +23,16 @@ var ErrUnrecoverable = errors.New("previous body declared unrecoverable (null Re
 // Returns an error wrapping ErrUnrecoverable when a Recipe on the way down
 // declares the previous body unrecoverable.
 func Undo(r io.Reader, w io.Writer, targetVersion int) error {
+	return undo(r, w, targetVersion, false)
+}
+
+// undo is Undo's body. With walkPastNull set (the verification path), a null
+// body Recipe does not stop the walk: from that instance down only the header
+// history is rebuilt and checked (spec-06: the previous body cannot be
+// recreated, but header Recipes are mandatory and so the header history can).
+// The reconstructed body is then meaningless, so nothing is written to w for
+// such a walk beyond what the caller discards.
+func undo(r io.Reader, w io.Writer, targetVersion int, walkPastNull bool) error {
 	headers, bodyReader, err := parseHeaders(r)
 	if err != nil {
 		return fmt.Errorf("parsing headers: %w", err)
@@ -80,6 +90,7 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 	currentContent := make([]Header, len(contentHeaders))
 	copy(currentContent, contentHeaders)
 	currentBody := body
+	bodyGone := false // sticky: a null body Recipe was undone above
 
 	for version := highestVersion; version > targetVersion; version-- {
 		var entry *miEntry
@@ -99,7 +110,10 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 
 		recipe := entry.parsed.Recipe
 		if recipe.BodyNull {
-			return fmt.Errorf("v=%d: %w", version, ErrUnrecoverable)
+			if !walkPastNull {
+				return fmt.Errorf("v=%d: %w", version, ErrUnrecoverable)
+			}
+			bodyGone = true
 		}
 		// A Recipe that breaks the §5 rules against the message it is
 		// applied to (parse-time checks cannot know the item counts) is
@@ -110,7 +124,7 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 				return undoRecipeError(version, err)
 			}
 		}
-		if recipe.Body != nil {
+		if recipe.Body != nil && !bodyGone {
 			currentBody, err = undoBodyRecipe(currentBody, recipe.Body)
 			if err != nil {
 				return undoRecipeError(version, err)
@@ -131,7 +145,11 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 		if targetMI == nil {
 			return fmt.Errorf("Message-Instance v=%d not found for verification", targetVersion)
 		}
-		{
+		if bodyGone {
+			if err := verifyMIHeaderHashes(targetMI.parsed, currentContent); err != nil {
+				return fmt.Errorf("hash mismatch after reconstruction (target v=%d, body not checked below a null body Recipe): %w", targetVersion, err)
+			}
+		} else {
 			if err := verifyMIHashes(targetMI.parsed, currentContent, currentBody); err != nil {
 				return fmt.Errorf("hash mismatch after reconstruction (target v=%d): %w", targetVersion, err)
 			}

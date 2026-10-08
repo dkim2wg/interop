@@ -308,8 +308,11 @@ sub parse {
         if (exists $recipe_data->{b}) {
             if (defined $recipe_data->{b} && ref($recipe_data->{b}) eq 'ARRAY') {
                 $self->{bits}{rb} = _decode_recipe_list($recipe_data->{b}, $tags{m});
-            } else {
+            } elsif (!defined $recipe_data->{b}) {
                 $self->{bits}{rb_null} = 1;
+            } else {
+                # spec-06 §5: the body Recipe is null or an array of steps.
+                die "PERMERROR Message-Instance m=$tags{m} Recipe body is neither null nor an array\n";
             }
         }
         if (exists $recipe_data->{h}) {
@@ -319,6 +322,8 @@ sub parse {
                     $rh{$h} = _decode_recipe_list($recipe_data->{h}{$h}, $tags{m});
                 }
                 $self->{bits}{rh} = \%rh;
+            } elsif (defined $recipe_data->{h} && ref($recipe_data->{h}) ne 'HASH') {
+                die "PERMERROR Message-Instance m=$tags{m} Recipe header is not an object\n";
             } else {
                 # spec-06 §5.1 disallows the null header Recipe: a present "h"
                 # MUST be a non-empty object. Reject anything else.
@@ -951,9 +956,12 @@ sub _is_json_integer {
     return ($flags & B::SVf_IOK) && !($flags & (B::SVf_POK | B::SVf_NOK)) ? 1 : 0;
 }
 
-sub _apply_recipe {
-    my ($what, $recipe, $old) = @_;
-    my $lines = @$old;
+# Recipe structure: integer bounds, from <= to, ascending, non-overlapping.
+# $lines, when given, also bounds "to" by the old body/header; it is omitted
+# when the thing the Recipe applies to is gone (a body below a null body
+# Recipe), where the structure must still be valid.
+sub _check_recipe {
+    my ($what, $recipe, $lines) = @_;
     my $prev;
     for my $cmd (grep { ref($_) eq 'ARRAY' } @$recipe) {
         my ($from, $to) = @$cmd;
@@ -962,7 +970,7 @@ sub _apply_recipe {
                 && _is_json_integer($from) && $from >= 0
                 && _is_json_integer($to)   && $to   >= 0;
         die "$what Recipe copies lines $from-$to of $lines\n"
-            unless 1 <= $from && $from <= $to && $to <= $lines;
+            unless 1 <= $from && $from <= $to && (!defined $lines || $to <= $lines);
         if ($prev && $from <= $prev->[1]) {
             if ($to >= $prev->[0]) {
                 my $lo = $from > $prev->[0] ? $from : $prev->[0];
@@ -973,6 +981,12 @@ sub _apply_recipe {
         }
         $prev = [$from, $to];
     }
+    return;
+}
+
+sub _apply_recipe {
+    my ($what, $recipe, $old) = @_;
+    _check_recipe($what, $recipe, scalar @$old);
 
     return map {
         ref($_) eq 'ARRAY' ? @$old[$_->[0] - 1 .. $_->[1] - 1] : $_
@@ -1020,6 +1034,9 @@ sub undo {
         my @old = split /\r?\n/, $msg->body_raw;
         my @new = _apply_recipe('body', $rb, \@old);
         _body_raw_set($msg, join("\r\n", @new, ''));
+    } elsif ($rb) {
+        # The body is not rebuilt, but the Recipe must still be well formed.
+        _check_recipe('body', $rb);
     }
 
     if ($rh) {

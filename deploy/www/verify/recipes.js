@@ -75,7 +75,7 @@ function decodeDItem(item, where) {
 //  - "d" and "b" arrays are non-empty (schema minItems 1); "d" items are
 //    strings without CR/LF; "b" items canonical base64 of octets without
 //    CR/LF.
-function* walkSteps(steps, count, where) {
+function* walkSteps(steps, count, where, structuralOnly = false) {
   if (!Array.isArray(steps)) throw new MalformedRecipe(`${where}: steps are not an array`);
   let prevEnd = 0;
   for (const step of steps) {
@@ -89,13 +89,13 @@ function* walkSteps(steps, count, where) {
         throw new MalformedRecipe(`${where}: "c" is not [start, end] integers`);
       }
       const [start, end] = c;
-      if (start < 1 || end < start || end > count) {
+      if (start < 1 || end < start || (!structuralOnly && end > count)) {
         throw new MalformedRecipe(`${where}: "c" range [${start}, ${end}] is outside 1..${count}`);
       }
       if (start <= prevEnd) {
         throw new MalformedRecipe(`${where}: "c" range [${start}, ${end}] does not follow the previous copy (ended at ${prevEnd})`);
       }
-      for (let n = start; n <= end; n++) yield { copy: n };
+      if (!structuralOnly) for (let n = start; n <= end; n++) yield { copy: n };
       prevEnd = end;
     } else if (kind === 'd') {
       if (!Array.isArray(step.d) || step.d.length === 0) throw new MalformedRecipe(`${where}: "d" is not a non-empty array`);
@@ -107,6 +107,16 @@ function* walkSteps(steps, count, where) {
       throw new MalformedRecipe(`${where}: unknown step "${kind}"`);
     }
   }
+}
+
+// Structural check of a body Recipe ("b": null, or valid steps) without a
+// body to apply it to: used below a null body Recipe, where the body is gone
+// but a malformed Recipe is still a malformed Recipe. Bounds against the
+// (absent) body are not checked; everything else is.
+export function validateBodyRecipe(b) {
+  if (b === undefined || b === null) return;
+  if (!Array.isArray(b)) throw new MalformedRecipe('"b" is neither steps nor null');
+  for (const _ of walkSteps(b, Infinity, 'body', true)) { /* validate only */ }
 }
 
 // §5.2: body lines numbered top-down from 1.

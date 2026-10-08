@@ -316,7 +316,9 @@ static int verify_mi_hashes(
 
     char *cur_body = NULL;
     size_t cur_body_len = 0;
-    if (initial_body && initial_body_len > 0) {
+    /* A non-NULL body of length 0 is a valid EMPTY body (still hashed and
+       Recipe-undone like any other); only a NULL pointer means digest-only. */
+    if (initial_body) {
         cur_body = malloc(initial_body_len + 1);
         if (!cur_body) {
             free(content);
@@ -329,6 +331,11 @@ static int verify_mi_hashes(
     }
 
     int ret = 0;
+    /* spec-06 §4.2: a null body Recipe means the previous body cannot be
+       recreated -- but header Recipes are mandatory (§5.1), so the header
+       history can still be walked. Once set (sticky), every lower instance
+       is checked on its header hashes only and body Recipes are not applied. */
+    int body_gone = 0;
     for (int vi = n_mi - 1; vi >= 0; vi--) {
         dkim2_mi_t *mi = mi_arr[vi];
 
@@ -339,6 +346,7 @@ static int verify_mi_hashes(
             size_t alen = dkim2_hash_alg_len(alg);
             n_checked++;
 
+            if (!body_gone) {
             unsigned char stored_bh[DKIM2_MAX_HASH_LEN];
             int bh_len = (int)b64_decode(mi->hsets[hi].body_hash, stored_bh, sizeof stored_bh);
             if (bh_len != (int)alen) {
@@ -357,6 +365,7 @@ static int verify_mi_hashes(
                 snprintf(errbuf, errbufsz,
                     "FAIL: Message-Instance m=%d body hash mismatch", mi->m);
                 ret = -1; goto done;
+            }
             }
 
             unsigned char computed_hh[DKIM2_MAX_HASH_LEN];
@@ -427,6 +436,11 @@ static int verify_mi_hashes(
                         "PERMERROR Message-Instance m=%d contains invalid JSON", mi->m);
                     ret = -1; goto done;
                 }
+                int null_body = 0;
+                {
+                    cJSON *pb = cJSON_GetObjectItemCaseSensitive(probe, "b");
+                    null_body = pb && cJSON_IsNull(pb);
+                }
                 cJSON_Delete(probe);
 
                 /* Undo this MI's Recipe to reconstruct the previous hop's
@@ -440,7 +454,22 @@ static int verify_mi_hashes(
                        item that is not clean base64 or decodes to CR/LF). Report
                        it as such rather than fall through to a hash
                        mismatch on the un-undone content. */
-                    if (cur_body) {
+                    if (null_body) {
+                        /* Previous body is unrecoverable: stop checking
+                           bodies from here down (headers still checked). */
+                        body_gone = 1;
+                        free(cur_body);
+                        cur_body = NULL;
+                        cur_body_len = 0;
+                    } else if (body_gone) {
+                        /* Structure is still validated below a null. */
+                        if (dkim2_validate_body_recipe(rj) != 0) {
+                            free(r_json_bytes);
+                            snprintf(errbuf, errbufsz,
+                                "PERMERROR Message-Instance m=%d has a malformed body Recipe", mi->m);
+                            ret = -1; goto done;
+                        }
+                    } else if (cur_body) {
                         size_t new_len;
                         char *new_body = dkim2_apply_body_recipe(rj, cur_body, cur_body_len, &new_len);
                         if (!new_body) {

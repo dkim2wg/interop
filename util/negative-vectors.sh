@@ -18,9 +18,10 @@
 # otherwise cryptographically VALID -- correct hashes, correct signature
 # bytes -- and violates exactly one rule, so a verifier that silently never
 # reaches the corresponding check would ACCEPT it instead of rejecting it.
-# One positive control (same algorithm twice, distinct Selectors -- §8.9
-# explicitly permits this) must be ACCEPTED; a verifier that rejects it has
-# a false positive that would reject conformant mail.
+# The positive controls (e.g. the same algorithm twice with distinct
+# Selectors, which §8.9 explicitly permits; null body Recipes; empty bodies)
+# must be ACCEPTED; a verifier that rejects one has a false positive that
+# would reject conformant mail.
 set -u
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -31,8 +32,8 @@ cd "$root"
 # or verifier is deliberately added, and so it CATCHES one being silently
 # dropped -- a runner that quietly covers less than it claims is worse than
 # no runner, because it still reads as proof.
-NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml"
-POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml positive-control-nd-bridge.eml positive-control-b-literal.eml"
+NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml null-body-forged-history.eml empty-body-forged-history.eml malformed-body-recipe-below-null.eml"
+POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml positive-control-nd-bridge.eml positive-control-b-literal.eml positive-control-null-body.eml positive-control-null-body-over-recipe.eml positive-control-null-below.eml positive-control-empty-body-chain.eml"
 VERIFIERS="python go c perl js"
 n_vectors=0;   for _f in $NEG_VECTORS $POS_VECTORS; do n_vectors=$((n_vectors + 1));     done
 n_verifiers=0; for _v in $VERIFIERS;                 do n_verifiers=$((n_verifiers + 1)); done
@@ -55,6 +56,9 @@ want_text() {
     malformed-json-r.eml)    echo "Message-Instance m=<x> contains invalid JSON" ;;
     recipe-descending-ranges.eml)  echo "Message-Instance m=<x> has a malformed Recipe" ;;
     recipe-overlapping-ranges.eml) echo "Message-Instance m=<x> has a malformed Recipe" ;;
+    null-body-forged-history.eml) echo "Message-Instance m=<x> does not match content (header hash)" ;;
+    malformed-body-recipe-below-null.eml) echo "Message-Instance m=<x> has a malformed Recipe (structure validated below a null body Recipe)" ;;
+    empty-body-forged-history.eml) echo "Message-Instance m=<x> does not match content (header hash)" ;;
     unsigned-mi.eml)         echo "Message-Instance m=<x> is not signed" ;;
     nd-bridge-wrong-domain.eml) echo "DKIM2-Signature i=<x> nd= hop d=<domain> did not match RCPT TO" ;;
     esac

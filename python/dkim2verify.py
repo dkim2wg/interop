@@ -884,6 +884,10 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
     current_content_headers = list(content_headers)
     current_body = body
+    # spec-06 §5: once an instance's body Recipe is null the previous body
+    # cannot be recreated, so every lower instance is checked on its header
+    # hash only (header Recipes are mandatory, so header history still is).
+    body_unchecked_below = None
 
     for version in versions:
         mi_hdr = mi_by_version[version]
@@ -892,7 +896,9 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
             print(f"Verifying MI v={version}...", file=sys.stderr)
 
         # Verify this MI's hashes against the current message state
-        errs = verify_message_instance(mi_hdr, current_content_headers, current_body)
+        errs = verify_message_instance(
+            mi_hdr, current_content_headers, current_body,
+            headers_only=body_unchecked_below is not None)
         if errs:
             for e in errs:
                 # A self-describing PERMERROR already names its own m=
@@ -979,7 +985,15 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                         )
 
                 b_recipes = recipes.get("b")
-                if b_recipes and isinstance(b_recipes, list):
+                if "b" in recipes and b_recipes is None:
+                    # Null body Recipe: header history is still walked.
+                    if body_unchecked_below is None:
+                        body_unchecked_below = version
+                        if verbose:
+                            print(f"  Body not checked below m={version}: "
+                                  f"null body Recipe", file=sys.stderr)
+                elif (b_recipes and isinstance(b_recipes, list)
+                      and body_unchecked_below is None):
                     try:
                         current_body = reconstruct_body(
                             current_body, b_recipes
@@ -997,7 +1011,11 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
     top_sig_i = _get_seq_from_sig(top_sig)
     top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
-    return _make_result(all_errors, top_sig_i, top_domain)
+    result = _make_result(all_errors, top_sig_i, top_domain)
+    if result.ok and body_unchecked_below is not None:
+        result.message += (f" (body not checked below m={body_unchecked_below}: "
+                           f"null body Recipe)")
+    return result
 
 
 # ---------------------------------------------------------------------------
