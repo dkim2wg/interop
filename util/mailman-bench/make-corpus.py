@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Build the Mailman benchmark corpus: the charset-corpus samples plus
-synthetic messages, each unsigned and DKIM2-signed (perl/bin/dkim2sign)."""
-import random, subprocess, sys
+synthetic messages, each unsigned and DKIM2-signed (perl/bin/dkim2sign).
+
+With --sympa, build only the extra synthetics the Sympa benchmark needs
+(util/sympa-bench) into bench/corpus-sympa; the charset samples are
+reused from the Mailman corpus on the box."""
+import argparse, base64, random, subprocess, sys
 from email.message import EmailMessage
 from email.policy import SMTP
 from pathlib import Path
@@ -53,6 +57,68 @@ def synthetic():
                      subtype='octet-stream', filename='zeros.bin')
     yield 'syn-zeros-10mb', m, 0
 
+def b64_attachment(m, data, width, filename):
+    """Attach data base64-encoded at `width` columns (the email package
+    always uses 76)."""
+    enc = base64.b64encode(data).decode('ascii')
+    m.make_mixed()
+    part = EmailMessage(policy=SMTP)
+    part['Content-Type'] = 'application/octet-stream'
+    part['Content-Disposition'] = f'attachment; filename="{filename}"'
+    part['Content-Transfer-Encoding'] = 'base64'
+    part.set_payload('\n'.join(enc[i:i + width]
+                               for i in range(0, len(enc), width)) + '\n')
+    m.attach(part)
+
+def sympa_synthetic():
+    """The Sympa-only cases (docs/superpowers/specs/2026-10-08-sympa-always-
+    wrap-design.md, "Corpus").  Sizes are of the decoded content."""
+    rng.seed(20261008)
+    sizes = (('10k', 10_000), ('30k', 30_000), ('100k', 100_000),
+             ('1mb', 1_000_000), ('5mb', 5_000_000))
+    for label, n in sizes:
+        m = base(f'b64 text {label}')
+        m.set_content(text(n).replace('the', 'thé'), cte='base64')
+        yield f'syn-b64-text-{label}', m, 0
+        m = base(f'b64 html {label}')
+        m.set_content('<html><body><p>' + text(n).replace('\n', '</p>\n<p>')
+                      + '</p></body></html>\n', subtype='html', cte='base64')
+        yield f'syn-b64-html-{label}', m, 0
+    m = base('qp 100k')
+    m.set_content(text(100_000).replace('the', 'thé'), cte='quoted-printable')
+    yield 'syn-qp-100k', m, 0
+    m = base('alternative qp')
+    m.set_content(text(4_000))
+    m.add_alternative('<html><body><p style="font-family: Arial, sans-serif">'
+                      + text(8_000).replace('the', 'thé').replace('\n', ' ')
+                      + '</p></body></html>\n', subtype='html',
+                      cte='quoted-printable')
+    yield 'syn-alt-qp', m, 0
+    for mb in (1, 10, 25, 50):
+        data = rng.randbytes(mb * 1_000_000)
+        for width in (76, 72):
+            m = base(f'attach {mb}MB b{width}')
+            m.set_content(text(1_000))
+            b64_attachment(m, data, width, f'blob{mb}.bin')
+            yield f'syn-attach-{mb}mb-b{width}', m, 0
+    m = base('latin1')
+    m.set_content(text(4_000).replace('the', 'thé').replace('a ', 'à '),
+                  charset='iso-8859-1', cte='8bit')
+    yield 'syn-latin1', m, 0
+    jp = 'メーリングリストはフッターを追加します。本文はもう一度折り返されます。'
+    m = base('iso-2022-jp')
+    m.set_content('\n'.join([jp] * 100) + '\n', charset='iso-2022-jp', cte='7bit')
+    yield 'syn-iso2022jp', m, 0
+    # Personalisation ("merge") "all" rewrites the body through the template
+    # engine: a tag near the top and one in the middle.
+    m = base('merge')
+    body = text(4_000)
+    mid = len(body) // 2
+    mid = body.index('\n', mid) + 1
+    m.set_content('Hello [% user.email %],\n\n' + body[:mid]
+                  + 'You are subscribed as [% user.email %].\n' + body[mid:])
+    yield 'syn-merge', m, 0
+
 def size_class(n):
     return 'small' if n < 20_000 else 'medium' if n < 1_000_000 else 'large' if n < 20_000_000 else 'huge'
 
@@ -65,11 +131,19 @@ def sign(raw):
         input=raw, capture_output=True, check=True).stdout
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--sympa', action='store_true',
+                    help='build only the Sympa extras, into bench/corpus-sympa')
+    args = ap.parse_args()
+    out = ROOT / 'bench' / 'corpus-sympa' if args.sympa else OUT
     for sub in ('unsigned', 'signed'):
-        (OUT / sub).mkdir(parents=True, exist_ok=True)
+        (out / sub).mkdir(parents=True, exist_ok=True)
     rows, skipped = [], []
-    items = [(p.stem, p.read_bytes(), 0) for p in sorted((ROOT / 'corpus/sample').glob('*.eml'))]
-    items += [(i, m.as_bytes(policy=SMTP), f) for i, m, f in synthetic()]
+    if args.sympa:
+        items = [(i, m.as_bytes(policy=SMTP), f) for i, m, f in sympa_synthetic()]
+    else:
+        items = [(p.stem, p.read_bytes(), 0) for p in sorted((ROOT / 'corpus/sample').glob('*.eml'))]
+        items += [(i, m.as_bytes(policy=SMTP), f) for i, m, f in synthetic()]
     for ident, raw, filt in items:
         raw = raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
         try:
@@ -84,11 +158,11 @@ def main():
             skipped.append(ident)
             print(f'skip {ident}: signing failed: {why}', file=sys.stderr)
             continue
-        (OUT / 'unsigned' / f'{ident}.eml').write_bytes(raw)
-        (OUT / 'signed' / f'{ident}.eml').write_bytes(signed)
+        (out / 'unsigned' / f'{ident}.eml').write_bytes(raw)
+        (out / 'signed' / f'{ident}.eml').write_bytes(signed)
         rows.append(f'{ident}\t{len(raw)}\t{size_class(len(raw))}\t{filt}')
-    (OUT / 'index.tsv').write_text('id\tsize\tclass\tfilter\n' + '\n'.join(rows) + '\n')
-    print(f'{len(rows)} messages -> {OUT} ({len(skipped)} skipped)')
+    (out / 'index.tsv').write_text('id\tsize\tclass\tfilter\n' + '\n'.join(rows) + '\n')
+    print(f'{len(rows)} messages -> {out} ({len(skipped)} skipped)')
     # A partial corpus would make the benchmark silently incomparable.
     if not rows or skipped:
         print('error: ' + ('no messages' if not rows else
