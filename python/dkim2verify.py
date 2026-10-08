@@ -1011,7 +1011,11 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
     top_sig_i = _get_seq_from_sig(top_sig)
     top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
-    return _make_result(all_errors, top_sig_i, top_domain)
+    result = _make_result(all_errors, top_sig_i, top_domain)
+    if result.ok and body_unchecked_below is not None:
+        result.message += (f" (body not checked below m={body_unchecked_below}: "
+                           f"null body Recipe)")
+    return result
 
 
 # ---------------------------------------------------------------------------
