@@ -461,7 +461,15 @@ static int verify_mi_hashes(
                         free(cur_body);
                         cur_body = NULL;
                         cur_body_len = 0;
-                    } else if (cur_body && !body_gone) {
+                    } else if (body_gone) {
+                        /* Structure is still validated below a null. */
+                        if (dkim2_validate_body_recipe(rj) != 0) {
+                            free(r_json_bytes);
+                            snprintf(errbuf, errbufsz,
+                                "PERMERROR Message-Instance m=%d has a malformed body Recipe", mi->m);
+                            ret = -1; goto done;
+                        }
+                    } else if (cur_body) {
                         size_t new_len;
                         char *new_body = dkim2_apply_body_recipe(rj, cur_body, cur_body_len, &new_len);
                         if (!new_body) {

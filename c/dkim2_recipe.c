@@ -69,7 +69,7 @@ static int copy_range(const cJSON *c, int n_items, int prev_end,
     if (!cJSON_IsNumber(a) || !cJSON_IsNumber(b)) return -1;
     if (a->valuedouble != (double)a->valueint || b->valuedouble != (double)b->valueint) return -1;
     if (a->valueint < 1 || b->valueint < a->valueint) return -1;
-    if (b->valueint > n_items) return -1;
+    if (n_items >= 0 && b->valueint > n_items) return -1;  /* <0: no body to bound against */
     if (a->valueint <= prev_end) return -1;
     *start = a->valueint;
     *end = b->valueint;
@@ -109,6 +109,44 @@ static unsigned char *decode_b_item(const cJSON *item, size_t *len_out) {
         if (out[k] == '\r' || out[k] == '\n') { free(out); return NULL; }
     *len_out = (size_t)n;
     return out;
+}
+
+int dkim2_validate_body_recipe(const char *r_json) {
+    cJSON *root = cJSON_Parse(r_json);
+    if (!root) return -1;
+    cJSON *b = cJSON_GetObjectItemCaseSensitive(root, "b");
+    if (!b || cJSON_IsNull(b)) { cJSON_Delete(root); return 0; }
+    if (!cJSON_IsArray(b)) { cJSON_Delete(root); return -1; }
+    int prev_end = 0, rc = 0;
+    cJSON *step;
+    cJSON_ArrayForEach(step, b) {
+        cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
+        cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
+        cJSON *bl = cJSON_GetObjectItemCaseSensitive(step, "b");
+        if (c) {
+            int st, en;
+            if (copy_range(c, -1, prev_end, &st, &en) != 0) { rc = -1; break; }
+            prev_end = en;
+        } else if (d && cJSON_IsArray(d)) {
+            if (cJSON_GetArraySize(d) == 0) { rc = -1; break; }
+            cJSON *item;
+            cJSON_ArrayForEach(item, d)
+                if (cJSON_IsString(item) && strpbrk(item->valuestring, "\r\n")) { rc = -1; break; }
+            if (rc) break;
+        } else if (bl && cJSON_IsArray(bl)) {
+            if (cJSON_GetArraySize(bl) == 0) { rc = -1; break; }
+            cJSON *item;
+            cJSON_ArrayForEach(item, bl) {
+                size_t dl;
+                unsigned char *dec = decode_b_item(item, &dl);
+                if (!dec) { rc = -1; break; }
+                free(dec);
+            }
+            if (rc) break;
+        }
+    }
+    cJSON_Delete(root);
+    return rc;
 }
 
 char *dkim2_apply_body_recipe(const char *r_json,

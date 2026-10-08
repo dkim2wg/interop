@@ -12,6 +12,11 @@
    the verifier reports PERMERROR. The gen_* functions never emit a literal
    with 8-bit bytes as "d", nor a "c" range that breaks the ascending rule. */
 
+/* Structure-only validation of a body Recipe (same rules as apply, but no
+   bounds check against a body, which may be unrecoverable below a null body
+   Recipe). Returns 0 if well-formed (including null/absent "b"), -1 if not. */
+int dkim2_validate_body_recipe(const char *r_json);
+
 /* Apply a body Recipe (JSON string) to reconstruct the original body.
    body/bodylen: current (possibly modified) body.
    out_len: set to reconstructed body length.

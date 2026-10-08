@@ -42,6 +42,8 @@ Writes:
   positive-control-null-below.eml  -- ordinary m=3 over a null-body m=2; ACCEPT
   positive-control-empty-body-chain.eml -- empty body, Subject change; ACCEPT
   empty-body-forged-history.eml    -- empty body, To: change hidden from Recipe; REJECT
+  malformed-body-recipe-below-null.eml -- malformed body Recipe at m=2 below a
+                                         null at m=3; REJECT
   positive-control-nd-bridge.eml   -- the same §9.3 bridge made with a key for
                                          the domain the message DID arrive at
 """
@@ -528,6 +530,28 @@ def build_empty_body_forged_history():
     ])
 
 
+def _bad_body_recipe(*a):
+    r = ds.build_recipes(*a) or {}
+    r["b"] = [{"c": [3, 4]}, {"c": [1, 2]}]  # descending: structurally invalid
+    return r
+
+
+def build_malformed_body_recipe_below_null():
+    """NEGATIVE: m=2 is an ordinary hop whose body Recipe has descending copy
+    ranges (malformed); m=3 records a null body Recipe, so the body Recipe
+    at m=2 has no body to apply to. Recipe STRUCTURE must still be validated
+    below a null. Everything is validly signed. MUST be rejected."""
+    headers, body = load_base()
+    h2 = _subject_prefixed(headers, b"list")
+    b2 = body + b"footer\r\n"
+    h3 = _subject_prefixed(h2, b"again")
+    return _null_body_chain([
+        (headers, body),
+        (h2, b2, _bad_body_recipe),
+        (h3, b2 + b"rewritten\r\n", _null_body_recipe),
+    ])
+
+
 FIXTURES = {
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
@@ -547,6 +571,7 @@ FIXTURES = {
     "positive-control-null-below.eml": build_positive_null_below,
     "positive-control-empty-body-chain.eml": build_positive_empty_body,
     "empty-body-forged-history.eml": build_empty_body_forged_history,
+    "malformed-body-recipe-below-null.eml": build_malformed_body_recipe_below_null,
 }
 
 
