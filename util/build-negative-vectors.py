@@ -34,6 +34,11 @@ Writes:
   positive-control-bottom-recipe.eml -- m=1 (bottom) Message-Instance
                                          carries a VALID r= Recipe; §9.1
                                          explicitly permits this
+  positive-control-null-body.eml   -- list hop with a null body Recipe ("b": null)
+                                         and a real header Recipe; ACCEPT
+  positive-control-null-body-over-recipe.eml -- same, over an ordinary m=2; ACCEPT
+  null-body-forged-history.eml     -- null body Recipe whose header Recipe hides
+                                         a To: change; REJECT at m=1
   positive-control-nd-bridge.eml   -- the same §9.3 bridge made with a key for
                                          the domain the message DID arrive at
 """
@@ -363,6 +368,118 @@ def build_positive_nd_bridge():
     return _bridged_chain("test2.dkim2.com")
 
 
+def _subject_prefixed(headers, tag):
+    out = []
+    for h in headers:
+        if h.lower().startswith(b"subject:"):
+            h = b"Subject: [" + tag + b"] " + h[len(b"subject:"):].lstrip()
+        out.append(h)
+    return out
+
+
+def _to_changed(headers):
+    return [b"To: other@example.org" if h.lower().startswith(b"to:") else h
+            for h in headers]
+
+
+def _null_body_chain(hops):
+    """A DKIM2 chain over successive message states.
+
+    hops[0] is (headers, body) for m=1.  Each later hop is (headers, body,
+    recipe_fn): the Message-Instance m=N is built over that state with the
+    Recipe recipe_fn(prev_headers, prev_body, headers, body) returns (a dict
+    or None).  Instance N is signed i=N by test<N>.dkim2.com (sel1), rt= the
+    next domain, so every signature is valid and the only thing under test is
+    what the verifier does with the Recipes.  DKIM2-Signatures cover only
+    Message-Instance and DKIM2-Signature fields (§9.6), so nothing else
+    protects the header Recipe."""
+    mis, sigs = [], []
+    for n, hop in enumerate(hops, 1):
+        headers, body = hop[0], hop[1]
+        recipe = hop[2](*hops[n - 2][:2], headers, body) if n > 1 else None
+        mi = ds.build_message_instance(headers, body, version=n, algs=["sha256"],
+                                       recipe=recipe)
+        dom = f"test{n}.dkim2.com"
+        priv, alg = ds.load_private_key(key("sel1", dom))
+        sig = ds.build_dkim2_signature(
+            mis, sigs, mi, dom, "sel1", priv, alg,
+            mailfrom=f"hop{n}@{dom}", rcptto=[f"user@test{n + 1}.dkim2.com"],
+            seq=n, mi_version=n, timestamp=TS + 100 * n)
+        mis.append(mi)
+        sigs.append(sig)
+    top_headers, top_body = hops[-1][0], hops[-1][1]
+    msg = b""
+    for sig in reversed(sigs):
+        msg += sig.encode() + b"\r\n"
+    for mi in reversed(mis):
+        msg += mi.encode() + b"\r\n"
+    for h in top_headers:
+        msg += h + b"\r\n"
+    return msg + b"\r\n" + top_body
+
+
+def _null_body_recipe(*a):
+    r = ds.build_recipes(*a) or {}
+    r["b"] = None  # the previous body is not recoverable
+    return r
+
+
+def _forged_recipe(*a):
+    r = _null_body_recipe(*a)
+    r["h"] = {k: v for k, v in r["h"].items() if k.lower() != "to"}
+    return r
+
+
+def _footer_recipe(*a):
+    return ds.build_recipes(*a)
+
+
+def build_positive_null_body():
+    """POSITIVE CONTROL: m=1 signed by the originator, then a list hop that
+    changes Subject (a real header Recipe) and rewrites the body, recording a
+    NULL body Recipe ("b": null: the previous body is not recoverable), then
+    signed i=2 by the list domain. The header history below the null is
+    still intact, so this MUST be accepted."""
+    headers, body = load_base()
+    return _null_body_chain([
+        (headers, body),
+        (_subject_prefixed(headers, b"list"), body + b"rewritten by list\r\n",
+         _null_body_recipe),
+    ])
+
+
+def build_positive_null_body_over_recipe():
+    """POSITIVE CONTROL: m=2 is an ordinary header+body hop (Subject tag and
+    a footer, real Recipes); m=3 rewrites the body with a null body Recipe
+    and a real header Recipe. The body Recipe below the null must be
+    skipped (there is no body for it to apply to) while the header history
+    is still walked. MUST be accepted."""
+    headers, body = load_base()
+    h2 = _subject_prefixed(headers, b"fwd")
+    b2 = body + b"footer\r\n"
+    return _null_body_chain([
+        (headers, body),
+        (h2, b2, _footer_recipe),
+        (_subject_prefixed(h2, b"list"), b2 + b"rewritten by list\r\n",
+         _null_body_recipe),
+    ])
+
+
+def build_null_body_forged_history():
+    """NEGATIVE: like the null-body positive control, but the list hop also
+    changes To: and its header Recipe omits that change. The top instance's
+    hashes match the message it is on; only undoing the Recipe shows m=1's
+    header hash no longer matches. A verifier that stops checking at the
+    null body Recipe (instead of walking the header history below it)
+    accepts a forged history. MUST be rejected."""
+    headers, body = load_base()
+    return _null_body_chain([
+        (headers, body),
+        (_to_changed(_subject_prefixed(headers, b"list")),
+         body + b"rewritten by list\r\n", _forged_recipe),
+    ])
+
+
 FIXTURES = {
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
@@ -376,6 +493,9 @@ FIXTURES = {
     "recipe-overlapping-ranges.eml": build_recipe_overlapping,
     "positive-control-b-literal.eml": build_positive_b_literal,
     "positive-control-nd-bridge.eml": build_positive_nd_bridge,
+    "positive-control-null-body.eml": build_positive_null_body,
+    "positive-control-null-body-over-recipe.eml": build_positive_null_body_over_recipe,
+    "null-body-forged-history.eml": build_null_body_forged_history,
 }
 
 

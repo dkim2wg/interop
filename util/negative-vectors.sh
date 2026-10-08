@@ -31,8 +31,8 @@ cd "$root"
 # or verifier is deliberately added, and so it CATCHES one being silently
 # dropped -- a runner that quietly covers less than it claims is worse than
 # no runner, because it still reads as proof.
-NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml"
-POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml positive-control-nd-bridge.eml positive-control-b-literal.eml"
+NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml null-body-forged-history.eml"
+POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml positive-control-nd-bridge.eml positive-control-b-literal.eml positive-control-null-body.eml positive-control-null-body-over-recipe.eml"
 VERIFIERS="python go c perl js"
 n_vectors=0;   for _f in $NEG_VECTORS $POS_VECTORS; do n_vectors=$((n_vectors + 1));     done
 n_verifiers=0; for _v in $VERIFIERS;                 do n_verifiers=$((n_verifiers + 1)); done
@@ -55,6 +55,7 @@ want_text() {
     malformed-json-r.eml)    echo "Message-Instance m=<x> contains invalid JSON" ;;
     recipe-descending-ranges.eml)  echo "Message-Instance m=<x> has a malformed Recipe" ;;
     recipe-overlapping-ranges.eml) echo "Message-Instance m=<x> has a malformed Recipe" ;;
+    null-body-forged-history.eml) echo "Message-Instance m=1 does not match content (header hash), found by walking header history below the null body Recipe" ;;
     unsigned-mi.eml)         echo "Message-Instance m=<x> is not signed" ;;
     nd-bridge-wrong-domain.eml) echo "DKIM2-Signature i=<x> nd= hop d=<domain> did not match RCPT TO" ;;
     esac
