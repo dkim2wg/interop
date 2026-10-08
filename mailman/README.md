@@ -141,14 +141,10 @@ message_instance: yes
 # One recipient per SMTP transaction, so each signed copy's rt= names only
 # its own recipient. See the guide, "Recipient privacy".
 max_recipients: 1
-
-[logging.dkim2]
-# The handlers log to the mailman.dkim2 logger; without this section their
-# lines go to mailman.log.
-path: dkim2.log
 ```
 
-Restart Mailman. The baseline for Recipe computation travels with each
+Restart Mailman. The Message-Instance handlers log to the mailman3 journal
+(`journalctl -u mailman3`). The baseline for Recipe computation travels with each
 queued message (`msg.original_bytes`, kept only when Message-Instance
 support is enabled, not for a list that opts out, and not in the copies
 queued for the archivers and the NNTP gateway); there is no cache

@@ -455,10 +455,6 @@ smtp_port: 10587        # the DKIM2 signing listener (outbound milter only)
 message_instance: yes   # global DKIM2 MI enable
 max_recipients: 1       # one recipient per transaction -> one address per rt=
 
-[logging.dkim2]
-path: dkim2.log         # NO EFFECT: Mailman only sets up the loggers its schema
-                        # names, so mailman.dkim2 goes to the journal (Logs)
-
 [database]
 url: sqlite:////var/lib/mailman3/mailman.db
 ```
@@ -473,11 +469,10 @@ url: sqlite:////var/lib/mailman3/mailman.db
 
 **Logs:**
 - `/var/log/mailman3/mailman.log` — core mailman
-- `journalctl -u mailman3` — DKIM2 MI handlers. They log to `mailman.dkim2`,
-  which is not one of Mailman's schema loggers, so the `[logging.dkim2]`
-  section above is ignored and there is no `dkim2.log`: the records propagate
-  to the root logger, the runners' stderr (warnings such as "Existing
-  Message-Instance m=1 does not match the message as received")
+- `journalctl -u mailman3` — DKIM2 MI handlers, which log to the mailman3
+  journal (warnings such as "Existing Message-Instance m=1 does not match the
+  message as received"). There is no `dkim2.log`: `mailman.dkim2` is not one
+  of Mailman's schema loggers, so a `[logging.dkim2]` section would be ignored.
 - `/var/log/mailman3/mailman-web.log` — Django/gunicorn
 
 **Database:** `/var/lib/mailman3/mailman.db` (SQLite)
