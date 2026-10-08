@@ -345,11 +345,14 @@ def _bridged_chain(bridge_domain):
     msg = ds.sign_message(raw, "sel1", "test1.dkim2.com", key("sel1", "test1.dkim2.com"),
                           mailfrom="sender@test1.dkim2.com",
                           rcptto=["user@test2.dkim2.com"], timestamp=TS)
+    # Fixture builder: sign over whatever chain results, broken or not.
     msg = ds.sign_message(msg, "sel1", bridge_domain, key("sel1", bridge_domain),
-                          next_domain="test3.dkim2.com", timestamp=TS)
+                          next_domain="test3.dkim2.com", timestamp=TS,
+                          skip_upstream_check=True)
     return ds.sign_message(msg, "sel1", "test3.dkim2.com", key("sel1", "test3.dkim2.com"),
                            mailfrom="srs0=x@bounce.test3.dkim2.com",
-                           rcptto=["dest@test5.dkim2.com"], timestamp=TS)
+                           rcptto=["dest@test5.dkim2.com"], timestamp=TS,
+                           skip_upstream_check=True)
 
 
 def build_nd_bridge_wrong_domain():

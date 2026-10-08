@@ -702,7 +702,8 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  algs: list[str] | None = None,
                  dns_data: dict | None = None,
                  skip_timestamp_check: bool = False,
-                 allow_null_body_recipe: bool = False) -> bytes:
+                 allow_null_body_recipe: bool = False,
+                 skip_upstream_check: bool = False) -> bytes:
     """Sign a raw email message with DKIM2.
 
     A message that already carries a DKIM2 chain is verified first (outbound
@@ -710,6 +711,10 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     check out, or its top Message-Instance has a null body Recipe and
     allow_null_body_recipe is not set, SigningRefused is raised.  Keys come
     from dns_data, else the dns.json named by $DKIM2_DNS_JSON.
+
+    skip_upstream_check=True bypasses the gate entirely.  It exists for test
+    and fixture builders that must sign over broken chains on purpose; there
+    is deliberately no CLI flag for it.
 
     Returns the complete message with Message-Instance and DKIM2-Signature
     headers prepended.
@@ -729,7 +734,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
         elif name == b"dkim2-signature":
             existing_sig.append(hdr.decode("utf-8", errors="surrogateescape"))
 
-    if existing_mi or existing_sig:
+    if (existing_mi or existing_sig) and not skip_upstream_check:
         _gate_upstream(raw, headers, existing_mi, existing_sig, dns_data,
                        skip_timestamp_check, allow_null_body_recipe)
 
