@@ -128,13 +128,47 @@ sub body_hash { return $_[0]->{bits}{b1} }
 
 # The body hash (spec-06 section 6.3) of a raw body string with LF or CRLF
 # line ends: no Email::MIME parse, for callers that hold the body alone.
+# Streams the body through the digest a megabyte at a time (each piece
+# ending at a LF, so a CRLF is never split): a large body is never copied
+# whole.
+my %DIGEST_CLASS = (
+    sha256 => 'Crypt::Digest::SHA256',
+    sha512 => 'Crypt::Digest::SHA512',
+);
+use constant BODY_CHUNK => 1 << 20;
+
 sub body_digest_raw {
-    my ($body, $alg) = @_;
-    $alg = lc($alg // 'sha256');
-    (my $b = $body // '') =~ s/\r?\n/\r\n/g;
-    $b =~ s/(\r\n)+\z//;
-    $b .= "\r\n";
-    return _hash_data_b64($alg, $b);
+    # Through a reference: "my ($body) = @_" would copy the body.
+    my $bref = defined $_[0] ? \$_[0] : \'';
+    my $alg = lc($_[1] // 'sha256');
+    my $class = $DIGEST_CLASS{$alg} or croak "unsupported hash algorithm: $alg";
+    my $len = length $$bref;
+
+    # $end: the body without its trailing line breaks, each a LF with an
+    # optional CR before it, taken from the end.
+    my $end = $len;
+    while ($end > 0 && substr($$bref, $end - 1, 1) eq "\n") {
+        $end--;
+        $end-- if $end > 0 && substr($$bref, $end - 1, 1) eq "\r";
+    }
+
+    my $d = $class->new;
+    for (my $pos = 0; $pos < $end; ) {
+        my $n = $end - $pos;
+        if ($n > BODY_CHUNK) {
+            my $nl = index($$bref, "\n", $pos + BODY_CHUNK);
+            $n = $nl + 1 - $pos if $nl >= 0 && $nl < $end;
+        }
+        # s/\r?\n/\r\n/g, as two literal substitutions: several times
+        # faster, the same result ("\r\r\n" stays "\r\r\n").
+        my $piece = substr($$bref, $pos, $n);
+        $piece =~ s/\r\n/\n/g if index($piece, "\r") >= 0;
+        $piece =~ s/\n/\r\n/g;
+        $d->add($piece);
+        $pos += $n;
+    }
+    $d->add("\r\n");
+    return encode_base64($d->digest, '');
 }
 
 # Mark the body Recipe as null per spec-06 §4.2: the body changed but the
@@ -784,6 +818,23 @@ sub calculate {
     # is sha256 only (the signer default MUST NOT change).
     $self->{algs} = ($opts{Algs} && @{$opts{Algs}}) ? [ @{$opts{Algs}} ] : ['sha256'];
 
+    # BodyHash: the caller hashed the body (body_digest_raw), so $current
+    # may be the header block alone.  Only where nothing here reads or
+    # changes the body: m=1, or a caller-supplied BodyRecipe.
+    my $body_hash;
+    if (exists $opts{BodyHash}) {
+        my $bh = $opts{BodyHash};
+        $bh = { sha256 => $bh } if defined $bh && !ref $bh;
+        croak "BodyHash must be a base64 string or a hashref of algorithm => base64"
+            unless ref $bh eq 'HASH';
+        for my $alg (@{$self->{algs}}) {
+            croak "BodyHash has no $alg hash" unless defined $bh->{$alg};
+        }
+        croak "BodyHash needs BodyRecipe when there is a previous message"
+            if $previous && !exists $opts{BodyRecipe};
+        $body_hash = $bh;
+    }
+
     unless (ref($current) && $current->isa('Email::MIME')) {
         $current = parse_mime($current);
     }
@@ -869,7 +920,8 @@ sub calculate {
     # computed after any epilogue modification, for every configured
     # algorithm (spec-06 §7.3).
     for my $alg (@{$self->{algs}}) {
-        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg, $prefixes), b_digest($current, $alg) ];
+        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg, $prefixes),
+            $body_hash ? $body_hash->{$alg} : b_digest($current, $alg) ];
     }
     if (my $sha256 = $self->{bits}{hashes}{sha256}) {
         @{$self->{bits}}{qw(h1 b1)} = @$sha256;
@@ -1241,6 +1293,18 @@ be empty). One of C<'none'> (no C<b> key), C<'null'> (C<"b": null>), or an
 ARRAY ref in the internal form: C<[from,to]> arrays for copy ranges (1-based
 body lines of C<$msg>, ascending) and plain strings for literal lines. An
 empty array gives C<"b": []>. Croaks on a malformed value.
+
+=item BodyHash
+
+C<calculate> only, with no C<$previous> or with C<BodyRecipe>: the body
+hash, already computed with L</body_digest_raw> over the body of C<$msg>.
+A base64 string is the C<sha256> hash; a hashref maps each algorithm in
+C<Algs> to its hash. The body of C<$msg> is then neither hashed nor read,
+so C<$msg> may be the header block alone (the fields and the blank line
+after them): a list manager sending many copies of a large body hashes
+each body once and never has the module parse it. Croaks if an algorithm
+is missing, or if the body is needed (a previous message without
+C<BodyRecipe>, which runs the body diff).
 
 =item UseEpilogue, EpilogueThreshold
 
