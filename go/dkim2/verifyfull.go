@@ -46,7 +46,7 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	// Validate each lower instance. Undo(target) reconstructs highest..target
 	// and verifies the target level's recorded hashes.
 	for target := highest - 1; target >= 1; target-- {
-		if err := Undo(bytes.NewReader(buf), io.Discard, target); err != nil {
+		if err := undo(bytes.NewReader(buf), io.Discard, target, true); err != nil {
 			// A Recipe that only fails against the real item counts is
 			// found here, not in parseMI; report it the way Verify reports
 			// a structurally malformed one -- the verbatim PERMERROR, as
