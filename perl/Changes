@@ -17,6 +17,10 @@ Revision history for Mail::DKIM2
           array (e.g. 5, "x", {}) is now a PERMERROR instead of being read
           as a null body Recipe; likewise an "h" that is not an object.
           (t/mi-null-recipe.t)
+        - A body Recipe's structure (integer bounds, ascending, no overlap)
+          is validated even when a null body Recipe above it means it is
+          never applied; a malformed one below a null now fails the chain.
+          (t/mi-null-header-history.t)
         - DKIM2_DATE is 2026-10-07: what the milter signs and how the
           Verifier judges a null body Recipe changed.
 

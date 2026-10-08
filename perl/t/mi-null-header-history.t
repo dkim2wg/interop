@@ -152,11 +152,28 @@ my $e1 = with_mi($MI->calculate($empty), $empty);
     like($why // '', qr/m=1 does not match content.*header hash/, 'empty-body: reason names m=1 header hash') or diag $why;
 }
 
+# Recipe structure is checked even where the body is gone: m=2 has a body
+# Recipe with descending copy ranges, m=3 a null one.
+sub malformed_body_below_null {
+    my ($prev) = @_;
+    my $cur2 = $prev . "footer$EOL";
+    my $mi2 = $MI->calculate($cur2, $prev);
+    $mi2->{bits}{rb} = [[2, 2], [1, 1]];
+    return list_hop(with_mi($mi2, $cur2), 'list');
+}
+
+{
+    my ($ok, $why) = $MI->chain_verifies(malformed_body_below_null($m1));
+    ok(!$ok, 'malformed body Recipe below a null body Recipe is caught');
+    like($why // '', qr/m=2 did not undo cleanly.*out of order/, 'reason names the malformed body Recipe') or diag $why;
+}
+
 use lib "$FindBin::Bin/lib";
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 use DKIM2TestKeys;
 
+my $signed_m1;
 sub sign_i1 {
     my ($msg) = @_;
     my $s = Mail::DKIM2::Signer->new(
@@ -183,11 +200,17 @@ sub verifier_result {
     my $m2 = list_hop($signed, 'list');
     like(verifier_result($m2), qr/^pass/, 'Verifier: null body over signed m=1 passes');
 
+    $signed_m1 = $signed;
     my $forged = forge_history($signed);
     like(verifier_result($forged), qr/^fail.*m=1 does not match content/, 'Verifier: tampered history below null fails on m=1');
 
     like(verifier_result(bad_header_recipe_below_null($signed)), qr/^fail.*m=2 did not undo cleanly/,
         'Verifier: header Recipe that does not apply below null fails');
+}
+
+{
+    my $v = verifier_result(malformed_body_below_null($signed_m1));
+    unlike($v, qr/^pass/, 'Verifier: malformed body Recipe below null is not a pass');
 }
 
 done_testing;
