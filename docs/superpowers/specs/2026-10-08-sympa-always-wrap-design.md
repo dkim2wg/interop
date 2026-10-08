@@ -138,9 +138,10 @@ Per recipient (inside `__twist_one`, used for merge, VERP and tracking):
 
 - VERP and DSN tracking change only the envelope, so the packet's instance
   is reused as is.
-- Footer-only personalisation changes only the trailing literal. Reuse the
-  SHA-256 state of everything before it, and rebuild only the last literal
-  and the hash.
+- Footer-only personalisation changes only the trailing footer. Each
+  recipient's body hash is a full pass at first. Reusing the SHA-256 state
+  of everything before the footer is done only if the benchmark shows the
+  per-recipient hash matters (plan Task 12).
 - Body merge (`mail_apply_on: all`) means `"b": null` for each recipient.
 
 Failure handling: the whole DKIM2 step runs in an `eval`. On any exception
@@ -162,18 +163,17 @@ instance. List mail is never blocked or lost because of DKIM2.
 - Built by string assembly, not through MIME::Entity, so the original part
   is never re-encoded. The Recipe's copy range is computed from the line
   offsets of the assembled pieces.
-- Where stock Sympa skips decoration, we skip too: opaque
-  `application/pkcs7-mime`, and the other cases its code skips today. Where
-  stock decorates a `multipart/signed`, the whole signed entity becomes the
-  original part, so the signature stays valid.
+- Where stock Sympa skips decoration, we skip too. Stock `decorate()`
+  returns early for `multipart/signed` and `multipart/encrypted`. On DKIM2
+  lists opaque `application/pkcs7-mime` is skipped as well, so the body
+  Recipe is a copy.
 
 ### Special cases
 
 | Case | Behaviour |
 |---|---|
 | S/MIME encrypted list | headers saved before decrypt; re-encrypted body differs, so `"b": null`; no plaintext in any header |
-| Opaque `application/pkcs7-mime`, other cases stock skips | untouched; body Recipe is a copy |
-| `multipart/signed` that stock decorates | wrapped whole; signature intact |
+| `multipart/signed`, `multipart/encrypted` (stock skips), opaque `application/pkcs7-mime` | untouched; no body Recipe |
 | txt, html, urlize, notice reception modes | `"b": null`; instance built per mode's packets |
 | Body merge | `"b": null` per recipient |
 | Footer-only merge | wrap; per-recipient trailing literal |
