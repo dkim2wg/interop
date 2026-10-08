@@ -23,10 +23,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 86 insertions(+), 13 deletions(-)
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
-index 1bdbd04c2..07e993fea 100644
+index f6a499143..e3b93d01d 100644
 --- a/DKIM2-MESSAGE-INSTANCE.md
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -157,7 +157,8 @@ and ARC signing.
+@@ -159,7 +159,8 @@ and ARC signing.
     header Recipe. If nothing changed at all (no header change, body Recipe
     "none"), no instance is added.
  5. Add it as the next `m=` (one more than the highest present) at the top of
@@ -36,7 +36,7 @@ index 1bdbd04c2..07e993fea 100644
  
  The whole step runs in an `eval`. On any failure it logs and the copy goes
  out without the new instance: DKIM2 never blocks or loses list mail.
-@@ -178,6 +179,19 @@ An outbound `dkim2-milter` refuses to sign a message whose top instance
+@@ -180,6 +181,19 @@ An outbound `dkim2-milter` refuses to sign a message whose top instance
  has a null body Recipe unless it is started with `--allow-null-body-recipe`.
  A list host running Sympa needs that option on its outbound signer.
  
@@ -56,7 +56,7 @@ index 1bdbd04c2..07e993fea 100644
  ### Ordering
  
  Nothing that changes a hashed header field may run after `egress_add`.
-@@ -196,7 +210,7 @@ comes before the DKIM2 step.
+@@ -198,7 +212,7 @@ comes before the DKIM2 step.
  | txt, html, urlize, notice reception modes | null body Recipe, small header Recipe |
  | Full-body personalisation (`personalization.mail_apply_on all`) | null body Recipe per recipient |
  | Footer-only personalisation (`personalization.mail_apply_on footer`) | wrap; the copies differ only in the trailing part |
@@ -66,10 +66,10 @@ index 1bdbd04c2..07e993fea 100644
  | Digests, notifications, auto-replies, direct sends, bounces | no saved header block; Sympa adds nothing (the outbound signer adds `m=1`) |
  | Messages embedded in a digest | content, left alone |
 diff --git a/src/lib/Sympa/DKIM2.pm b/src/lib/Sympa/DKIM2.pm
-index 5b7b7ea70..ebd362989 100644
+index 87159d619..385e2f44c 100644
 --- a/src/lib/Sympa/DKIM2.pm
 +++ b/src/lib/Sympa/DKIM2.pm
-@@ -198,11 +198,51 @@ sub _recovers_body {
+@@ -204,11 +204,51 @@ sub _recovers_body {
  sub _strip_chain {
      my $message = shift;
      $message->delete_header($_)
@@ -124,7 +124,7 @@ index 5b7b7ea70..ebd362989 100644
  sub _prepend_instance {
      my ($message, $mi) = @_;
      my $folded = Mail::DKIM2::Common::fold_header(
-@@ -211,6 +251,12 @@ sub _prepend_instance {
+@@ -217,6 +257,12 @@ sub _prepend_instance {
      $folded =~ s/\r\n/\n/g;
      $message->{_head}->add('Message-Instance', $folded, 0);
      delete $message->{_entity_cache};
@@ -137,7 +137,7 @@ index 5b7b7ea70..ebd362989 100644
  }
  
  # Never decorated: wrapping would break the signature or encryption.
-@@ -381,7 +427,8 @@ The header block as received is carried through the spools in the
+@@ -387,7 +433,8 @@ The header block as received is carried through the spools in the
  C<X-Sympa-DKIM2-Headers> pseudo-header (see L<Sympa::Message>).  Decoration
  on a DKIM2 list wraps the original body in a C<multipart/mixed> instead of
  editing it, so the body Recipe is a copy range; a body rewritten for any
@@ -147,7 +147,7 @@ index 5b7b7ea70..ebd362989 100644
  
  Requires Mail::DKIM2 0.15 or later, loaded on first use.  See
  F<DKIM2-MESSAGE-INSTANCE.md> for the design.
-@@ -432,9 +479,10 @@ instance hashed, and that hash.
+@@ -439,9 +486,10 @@ instance hashed, and that hash.
  =item egress_add ( $message, $context, [ body_rewritten =E<gt> 1 ] )
  
  Run for each copy, after every other transformation and before DKIM and
@@ -162,10 +162,10 @@ index 5b7b7ea70..ebd362989 100644
  otherwise it is the copy range recorded by L</wrap>, or none, provided that
  it really gives back the received body.  Adds nothing if nothing changed.
 diff --git a/t/DKIM2.t b/t/DKIM2.t
-index 3d0f1f3da..45522772a 100644
+index 716a63915..66318ced0 100644
 --- a/t/DKIM2.t
 +++ b/t/DKIM2.t
-@@ -175,7 +175,7 @@ subtest 'wrap: header kept intact, Content-* moved to the original part' => sub
+@@ -188,7 +188,7 @@ subtest 'wrap: header kept intact, Content-* moved to the original part' => sub
      is $b->get_header('X-Other'), 'kept', 'other fields kept';
      is $h->count('Message-Instance'), 1, 'Message-Instance kept';
      my @tags = grep { !/^(content-|mime-version)/i } $h->as_string =~ /^([^\s:]+):/mg;
@@ -174,7 +174,7 @@ index 3d0f1f3da..45522772a 100644
      like $b->{_body}, qr/\n--\S+\nContent-Type:\ text\/plain;\n\tcharset="iso-8859-1";\n\tformat=flowed\n
          Content-Transfer-Encoding:\ quoted-printable\nContent-Language:\ fr\n\ncaf=E9\n\n--/x,
          'original part: fields in order, then the body verbatim';
-@@ -524,19 +524,19 @@ subtest 'ProcessOutgoing: no DKIM2 context -> stock order' => sub {
+@@ -537,19 +537,19 @@ subtest 'ProcessOutgoing: no DKIM2 context -> stock order' => sub {
  };
  
  subtest 'anonymous list strips the chain, original From nowhere' => sub {
@@ -197,7 +197,7 @@ index 3d0f1f3da..45522772a 100644
      my $m = Sympa::Message->new($plain, context => list());
      $m->{shelved}{dkim2_strip} = 1;
      like $m->to_string, qr/^X-Sympa-Shelved: .*dkim2_strip/m, 'flag is spooled';
-@@ -561,6 +561,17 @@ subtest 'custom archiver file has no DKIM2 pseudo-header' => sub {
+@@ -574,6 +574,17 @@ subtest 'custom archiver file has no DKIM2 pseudo-header' => sub {
      like $m->to_string, qr/^X-Sympa-DKIM2-Headers:/m, 'still spooled';
  };
  

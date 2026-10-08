@@ -51,8 +51,8 @@ there. Older packages are not supported.
 `Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution, version 0.15
 or later (source in [`../perl`](../perl); `cpanm Mail::DKIM2` once 0.15 is
 on CPAN). It is loaded only for lists with the switch on; a list with the
-switch on and no Mail::DKIM2 logs an error and runs as stock. Nothing else
-is needed beyond what 6.2.78 itself requires.
+switch on and no Mail::DKIM2, or one older than 0.15, logs an error and
+runs as stock. Nothing else is needed beyond what 6.2.78 itself requires.
 
 ## Installing
 
