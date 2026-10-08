@@ -41,6 +41,7 @@ from dkim2sign import (
     _tag_names,
     _get_version_from_mi,
     _get_seq_from_sig,
+    _sig_has_valid_i,
     b64,
     b64json,
     Source,
@@ -785,6 +786,16 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
         seen_m.add(mv)
+
+    # A DKIM2-Signature without an i= that is a positive integer cannot be
+    # placed in the chain or keyed.  It is a PERMERROR, never silently
+    # skipped: a signer gate counting "coverage" by m= must not be fooled by
+    # a junk signature that names an m= but signs nothing.
+    for h in sig_headers:
+        if not _sig_has_valid_i(h):
+            msg = "PERMERROR DKIM2-Signature has a missing or malformed i= tag"
+            return VerifyResult(ok=False, status='permerror', failing_i=None,
+                                domain=None, message=msg, errors=[msg])
 
     # spec-06 §7.1: Message-Instance m= and DKIM2-Signature i= values must be
     # contiguous from 1.  Structural, so checked before any crypto.  (A

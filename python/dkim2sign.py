@@ -494,11 +494,22 @@ def _mi_hashes(hdr: str) -> str | None:
 
 
 def _get_seq_from_sig(hdr: str) -> int:
-    """Extract i= value from a DKIM2-Signature header string."""
+    """Extract i= value from a DKIM2-Signature header string.
+
+    0 when i= is missing or not a positive integer (ASCII digits): such a
+    signature cannot be keyed, and verify_message() reports it as a
+    PERMERROR (see _sig_has_valid_i)."""
     colon = hdr.find(":")
     value = hdr[colon + 1:] if colon != -1 else hdr
     v = _extract_tag(value, "i")
-    return int(v) if v else 0
+    if v is None or not v.isascii() or not v.isdigit():
+        return 0
+    return int(v)
+
+
+def _sig_has_valid_i(hdr: str) -> bool:
+    """True iff the DKIM2-Signature has an i= that is a positive integer."""
+    return _get_seq_from_sig(hdr) > 0
 
 
 def _get_mi_from_sig(hdr: str) -> int | None:
@@ -706,7 +717,10 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
     # (e.g. a forwarder relaying a list post unchanged).
     top = max(existing_mi, key=_get_version_from_mi)
     top_m = _get_version_from_mi(top)
-    top_signed = any(_get_mi_from_sig(s) == top_m for s in existing_sig)
+    # Only a signature with a valid i= can cover anything: one the verifier
+    # cannot key is a PERMERROR above, and never counts as coverage here.
+    top_signed = any(_get_mi_from_sig(s) == top_m
+                     for s in existing_sig if _sig_has_valid_i(s))
     mi_json = _extract_mi_recipe(top)
     if mi_json is not None and "b" in mi_json and mi_json["b"] is None \
             and not top_signed and not allow_null_body_recipe:

@@ -87,6 +87,44 @@ def test_signed_null_top_signs_without_option():
                         allow_null_body_recipe=True)) == 3
 
 
+@pytest.mark.parametrize("name", sorted(fx.FAKE_COVER))
+@pytest.mark.parametrize("allow", [False, True])
+def test_fake_coverage_signature_refused(name, allow):
+    # null-top plus a DKIM2-Signature naming m=2 that cannot be keyed (no i=,
+    # i=0, i=abc, the real i=1 signature with m rewritten, unparseable): it
+    # is not coverage, and the chain itself is a PERMERROR, so the signer
+    # refuses with or without the option -- and never with a traceback.
+    msg = fx._fake_cover(fx.FAKE_COVER[name])
+    with pytest.raises(dkim2sign.SigningRefused, match="not signing"):
+        _sign(msg, allow_null_body_recipe=allow)
+
+
+@pytest.mark.parametrize("ival", ["", "0", "abc", "-1", "\u0661"])
+def test_verifier_permerror_on_unkeyable_signature(ival):
+    import dkim2verify
+    msg = (f"DKIM2-Signature: i={ival}; m=2; d=evil.example\r\n").encode() \
+        + fx.build_null_top_signed()
+    r = dkim2verify.verify_message(msg, DNS, full_chain=True,
+                                   skip_timestamp_check=True)
+    assert r.status == "permerror"
+    assert "malformed i= tag" in r.message
+
+
+def test_verifier_permerror_on_signature_without_i():
+    import dkim2verify
+    msg = b"DKIM2-Signature: m=2; d=evil.example\r\n" + fx.build_null_top_signed()
+    r = dkim2verify.verify_message(msg, DNS, full_chain=True,
+                                   skip_timestamp_check=True)
+    assert r.status == "permerror"
+    assert "missing or malformed i= tag" in r.message
+
+
+def test_get_seq_from_sig_never_raises():
+    assert dkim2sign._get_seq_from_sig("DKIM2-Signature: i=abc; m=1") == 0
+    assert dkim2sign._get_seq_from_sig("DKIM2-Signature: m=1") == 0
+    assert dkim2sign._get_seq_from_sig("DKIM2-Signature: i = 7 ; m=1") == 7
+
+
 def test_forged_null_top_refused_even_with_option():
     with pytest.raises(dkim2sign.SigningRefused):
         _sign(fx.build_null_top_forged(), allow_null_body_recipe=True)
