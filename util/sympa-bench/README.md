@@ -99,10 +99,27 @@ child runs the case:
 | `egress`   | `egress_context` + `egress_add` (`wrap`); `add_message_instance_*` during distribution (`cte`) |
 | `total`    | all of the above and the rest of `__twist_one` (`dup` per packet or recipient), less the capture |
 
+The DKIM2 work does not land in the same stage in every build:
+
+- In `wrap`, building the MIME wrap happens inside `decorate`.
+- In `cte`, the line diff happens in `egress`.
+
+A comparison of DKIM2 cost therefore has to use `decorate + egress`, or
+`total`, never `egress` alone.
+
 CPU is `CLOCK_PROCESS_CPUTIME_ID`. Each stage value is the median of up to
 5 runs; fewer runs are made when the next one would pass a 240 s budget.
-`peak_rss_kb` is the child's `VmHWM`. It includes the parent's inherited
-pages, which `rss_base_kb` gives. The child runs under `alarm 300`. A
+`peak_rss_kb` is the child's `VmHWM`. It includes the parent's
+inherited pages, which `rss_base_kb` gives. That baseline differs by
+build. Builds that load Mail::DKIM2 (`cte`, `wrap`, `wrap-off`) start
+3–5 MB higher than `up` and `cte-nomod` (smoke run). The report must therefore
+compare the per-case cost `peak_rss_kb - rss_base_kb`, not
+`peak_rss_kb`.
+
+The 700M cap covers the whole scope: parent, child and verifier. A
+higher baseline leaves less headroom, so near the cap a build with
+Mail::DKIM2 loaded can be OOM-killed on a message that `up` just
+survives. Read an OOM on the 25 and 50 MB cases with that in mind. The child runs under `alarm 300`. A
 timeout, a death (`error`) or a cgroup OOM kill (`oom`) is recorded, and
 the run moves on. The first wire copy of the first run is checked
 afterwards by a separate verifier process that loads Mail::DKIM2 0.15
@@ -112,11 +129,33 @@ whatever the build loads. It runs `chain_verifies` on the CRLF wire text:
   Message-Instance;
 - `undo_ok`: it also undoes this hop's instance (m ≥ 2) with no null body
   Recipe on the way, so the body as received is recoverable;
-- also `mi_count`, `top_m`, `null_body` and `verify_err`.
+- also `mi_count`, `top_m`, `null_body` and `verify_err`;
+- `expect_mi`: true when DKIM2 is on for the build (`wrap` with the switch
+  on, or `cte` with Mail::DKIM2 loadable). If such a build's wire copy
+  has no Message-Instance, the record says `verifies: false` with
+  `verify_err: "no instance"`. For the other builds, no instance means
+  `verifies: null`;
+- `pseudo_leak`: the spool pseudo-header `X-Sympa-DKIM2-Headers` reached
+  the wire. This must always be false.
 
-Recipients are `memberN@dN%50.example.net`. Packets come from
-`Sympa::Spool::Outgoing::_get_recipient_tabs_by_domain`, with the default
-`nrcpt` of 25. VERP, merge and tracking run one `__twist_one` per
+Packets come from `Sympa::Spool::Outgoing::_get_recipient_tabs_by_domain`,
+with the defaults `nrcpt` 25 and `avg` 10. That function starts a new
+packet when either of these is true:
+
+- the packet already holds 25 recipients;
+- it holds more than 10, and the next recipient's last two domain labels
+  differ.
+
+Recipients are set up for two cases:
+
+- **Few domains** (every config except `m1000-manydom`): recipients are
+  `memberN@d(N%50).example.net`. The last two labels are always
+  `example.net`, so the domain rule never fires and packets fill to 25.
+  1000 members make 40 packets.
+- **Many domains** (`m1000-manydom`): recipients are
+  `memberN@d(N%200).example`, which is 200 registrable domains. After
+  sorting by domain, a packet ends at the first domain change after 10
+  recipients, so there are more, smaller packets. VERP, merge and tracking run one `__twist_one` per
 recipient. The footer is UTF-8 with non-ASCII text, and under
 personalisation it carries `[% user.email %]`.
 
@@ -133,12 +172,28 @@ List configurations are one factor at a time from `f-mime`:
 | `verp100`       | VERP 100% (one `__twist_one` per recipient) |
 | `txt`           | reception mode txt |
 | `notice`        | reception mode notice |
-| `m1000`         | 1000 members (40 packets) |
+| `m1000`         | 1000 members, few domains (40 packets) |
+| `m1000-manydom` | 1000 members over 200 domains (67 packets of 15) |
 | `m1000-verp100` | 1000 members, VERP 100% (1000 `__twist_one`) |
 
-The two 1000-member configurations run only on the synthetics and on every
+The 1000-member configurations run only on the synthetics and on every
 10th charset sample, and `m1000-verp100` only below 2 MB. Otherwise one
 build would take days.
+
+What is left out, and why:
+
+- **Interactions.** The configurations change one factor at a time. They
+  show what each factor costs on its own, not how factors combine: for
+  example, append + personalisation all + VERP is not measured. The full
+  cross product would be 144 configurations, days per build.
+- **Digest mode.** A digest is a new message that Sympa composes, and
+  Sympa never adds an instance to its own messages (no m=1 for digests).
+  The always-wrap change has nothing to measure there. `nomail` and
+  `summary` send nothing.
+- **OOM kills.** A cgroup OOM kill is a recorded result, not the end of the
+  run. That needs `-p OOMPolicy=continue`: systemd's default
+  (`OOMPolicy=stop`) stops the whole scope at the first kill. A trial run
+  ended that way, with SIGTERM to every process.
 
 Output is `/opt/sympa-bench/results/inproc-BUILD.jsonl`, one record per
 message × configuration × signed/unsigned:
@@ -147,7 +202,8 @@ message × configuration × signed/unsigned:
      config, members, stage_cpu:{ingress,tolist,spool,decorate,egress,total},
      runs, wall_s, peak_rss_kb, rss_base_kb, spool_bytes,
      wire_bytes_per_rcpt, mi_len_max, n_wire, packets, twists,
-     verifies, undo_ok, mi_count, top_m, null_body, verify_err,
+     verifies, undo_ok, expect_mi, pseudo_leak, mi_count, top_m,
+     null_body, verify_err,
      timeout, oom, stage (where a timeout/OOM hit), error, log}
 
 `log` is the first `err` or `notice` Sympa logged in the case. The wire copy

@@ -67,6 +67,8 @@ GetOptionsFromArray(\@ARGV, \%o, 'dkim2lib=s', 'switch=s', 'corpus=s',
     or die "bad options\n";
 die "--switch on|off\n" unless $o{switch} =~ /\A(on|off)\z/;
 
+our $EXPECT_MI;
+
 # Verifier mode (internal): bench_inproc.pl - - --verify-server reads wire
 # file names on stdin and answers each with one JSON line, checking each in
 # a forked child (modules loaded once, memory returned after each).
@@ -75,8 +77,9 @@ if ($o{'verify-server'}) {
     require Mail::DKIM2::MessageInstance;
     require Mail::DKIM2::Common;
     $| = 1;
-    while (my $file = <STDIN>) {
-        chomp $file;
+    while (my $line = <STDIN>) {
+        chomp $line;
+        (my $file, $EXPECT_MI) = split /\t/, $line;
         my ($res, $fail) = in_child(sub {
             my $wfh = shift;
             alarm $o{timeout};
@@ -172,6 +175,7 @@ my @CONFIGS = (
     {name => 'txt',         mode   => 'txt'},
     {name => 'notice',      mode   => 'notice'},
     {name => 'm1000',         members => 1000, heavy => 1},
+    {name => 'm1000-manydom', members => 1000, manydom => 1, heavy => 1},
     {name => 'm1000-verp100', members => 1000, verp => 100, heavy => 2},
 );
 for (@CONFIGS) {
@@ -222,8 +226,15 @@ sub setup_list {
     } => 'Sympa::List';
 }
 
+# Few domains: every member is under example.net, so the packet rule that
+# splits on a change of the last two domain labels ("avg") never fires and
+# packets fill to nrcpt (25).  Many domains (manydom): 200 distinct
+# registrable domains (dN.example), so a packet also ends once it holds
+# more than avg (10) recipients and the next one is in another domain.
 sub members {
-    my $n = shift;
+    my ($n, $manydom) = @_;
+    return map { sprintf 'member%d@d%d.example', $_, $_ % 200 } 0 .. $n - 1
+        if $manydom;
     return map { sprintf 'member%d@d%d.example.net', $_, $_ % 50 } 0 .. $n - 1;
 }
 
@@ -289,7 +300,7 @@ sub stage { return unless $STAGEFILE; open my $f, '>', $STAGEFILE; print $f $_[0
 sub run_once {
     my ($raw, $cfg, $dir, $capture) = @_;
     my $list = setup_list($cfg);
-    my @rcpts = members($cfg->{members});
+    my @rcpts = members($cfg->{members}, $cfg->{manydom});
     %ACC = ();
     @WIRE = ();
     $CAPTURE = $capture;
@@ -517,7 +528,10 @@ sub verify_file {
     my $s = do { local $/; open my $fh, '<', $file or die; <$fh> };
     my ($head) = split /\r\n\r\n/, $s, 2;
     my @mi = grep {/\AMessage-Instance:/i} split /\r\n(?![ \t])/, $head;
-    my %r = (mi_count => scalar @mi);
+    my %r = (mi_count => scalar @mi,
+        # The Sympa spool pseudo-header must never reach the wire.
+        pseudo_leak => ($head =~ /^X-Sympa-DKIM2-Headers:/mi
+            ? JSON::PP::true : JSON::PP::false));
     if (@mi) {
         my ($ok, $err) =
             eval { Mail::DKIM2::MessageInstance->chain_verifies($s) };
@@ -539,6 +553,10 @@ sub verify_file {
         $r{undo_ok} = ($ok and $mi and $r{top_m} >= 2 and !$null)
             ? JSON::PP::true : JSON::PP::false;
         ($r{verify_err} = "$err") =~ s/\s+\z// if !$ok and defined $err;
+    } elsif ($EXPECT_MI) {
+        # A DKIM2 build with DKIM2 on must always leave an instance.
+        $r{verifies}   = $r{undo_ok} = JSON::PP::false;
+        $r{verify_err} = 'no instance';
     } else {
         $r{verifies} = $r{undo_ok} = undef;
     }
@@ -547,6 +565,11 @@ sub verify_file {
 }
 
 # --- main ---
+
+# DKIM2 is on for this build: wrap with the switch on, or cte with
+# Mail::DKIM2 loadable.  Its output must carry a Message-Instance.
+my $expect_mi = (($VARIANT eq 'wrap' and $o{switch} eq 'on')
+    or ($VARIANT eq 'cte' and defined $DKIM2_VERSION)) ? 1 : 0;
 
 my @index = do {
     open my $fh, '<', "$o{corpus}/index.tsv" or die "$o{corpus}/index.tsv: $!";
@@ -583,7 +606,8 @@ my %done;
 if ($o{resume} and open my $fh, '<', $out_file) {
     while (<$fh>) {
         my $r = eval { decode_json($_) } or next;
-        $done{"$r->{msg_id}\t$r->{signed}\t$r->{config}"} = 1;
+        my $signed = $r->{signed} ? 'signed' : 'unsigned';
+        $done{"$r->{msg_id}\t$signed\t$r->{config}"} = 1;
     }
 }
 open my $OUT, ($o{resume} ? '>>' : '>'), $out_file or die "$out_file: $!";
@@ -630,6 +654,7 @@ for my $row (@index) {
             next if $done{"$row->{id}\t$signed\t$cfg->{name}"};
             unlink "$casedir/wire.eml", $STAGEFILE;
             my %rec = (
+                expect_mi     => ($expect_mi ? JSON::PP::true : JSON::PP::false),
                 build         => $BUILD,
                 variant       => $VARIANT,
                 switch        => ($VARIANT eq 'up' ? undef : $o{switch}),
@@ -659,7 +684,7 @@ for my $row (@index) {
                 if (open my $fh, '<', $STAGEFILE) { $rec{stage} = <$fh> }
             }
             if (-s "$casedir/wire.eml") {
-                print $VIN "$casedir/wire.eml\n";
+                print $VIN "$casedir/wire.eml\t$expect_mi\n";
                 my $v = eval { decode_json(scalar <$VOUT> // '') }
                     // {verify_fail => 'verifier gave no answer'};
                 %rec = (%rec, %$v);
