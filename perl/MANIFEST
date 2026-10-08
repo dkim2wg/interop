@@ -80,6 +80,7 @@ t/load-private-key-data.t
 t/malformed-content-type.t
 t/mf-rt-brackets.t
 t/mi-chain.t
+t/mi-flat-common-len.t
 t/mi-hostile-header.t
 t/mi-null-recipe.t
 t/milter-script.t
