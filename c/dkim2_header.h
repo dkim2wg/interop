@@ -23,6 +23,11 @@ char *dkim2_mi_format(const dkim2_mi_t *mi);
    mf= and rt= are base64-decoded into the struct.
    Returns allocated struct or NULL if any required tag is absent. */
 dkim2_sig_t *dkim2_sig_parse(const char *value);
+/* As dkim2_sig_parse(); on failure errbuf gets the PERMERROR to report:
+   "PERMERROR DKIM2-Signature has a missing or malformed i= tag" when i= is
+   missing or not a positive integer, else "PERMERROR DKIM2-Signature is
+   malformed". */
+dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz);
 void dkim2_sig_free(dkim2_sig_t *sig);
 
 /* Format a DKIM2-Signature header value.

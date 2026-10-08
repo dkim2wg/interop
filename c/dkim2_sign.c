@@ -171,7 +171,7 @@ static int top_mi_null_body_unsigned(const dkim2_ctx_t *ctx) {
    the header Recipes) are still walked. */
 static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     if (cfg->skip_chain_check) return 0;
-    if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0])
+    if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0] && !ctx->sig_error[0])
         return 0;                       /* no existing chain: sign as always */
 
     /* spec-06 §9.3/§11.4: an nd= on the top signature names the domain that

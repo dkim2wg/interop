@@ -102,11 +102,15 @@ static sfsistat cb_header(SMFICTX *ctx, char *name, char *value) {
             snprintf(c->mi_error, sizeof c->mi_error, "%s", errbuf);
         }
     } else if (strcasecmp(name, "DKIM2-Signature") == 0) {
-        dkim2_sig_t *sig = dkim2_sig_parse(value);
+        char errbuf[256];
+        dkim2_sig_t *sig = dkim2_sig_parse_err(value, errbuf, sizeof errbuf);
         if (sig) {
             dkim2_sig_t **tail = &c->sig_list;
             while (*tail) tail = &(*tail)->next;
             *tail = sig;
+        } else if (!c->sig_error[0]) {
+            /* Never skipped silently: dkim2_do_verify() PERMERRORs. */
+            snprintf(c->sig_error, sizeof c->sig_error, "%s", errbuf);
         }
     }
     return SMFIS_CONTINUE;

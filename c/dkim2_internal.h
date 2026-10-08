@@ -72,6 +72,14 @@ typedef struct dkim2_ctx {
        reports it verbatim. Empty string means no such error occurred. */
     char mi_error[256];
 
+    /* Likewise for a DKIM2-Signature that fails to parse (dkim2_sig_parse_err):
+       it never makes it into sig_list, and dkim2_do_verify() reports this as a
+       PERMERROR before anything else rather than verifying the rest as if it
+       were not there. Otherwise a junk "DKIM2-Signature: m=2" would be
+       invisible here while another implementation, or a reader counting
+       coverage by m=, saw it. Empty string means none. */
+    char sig_error[256];
+
     /* Body hash — computed incrementally, never buffered.
        Holds every implemented algorithm's digest (spec-06 §3.1). */
     dkim2_digests_t body_digests;               /* valid once body_hasher is NULL */

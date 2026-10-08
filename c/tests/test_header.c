@@ -110,6 +110,32 @@ int main(void) {
     assert(sig->rt[0] != NULL && sig->rt[1] != NULL && sig->rt[2] == NULL);
     dkim2_sig_free(sig);
 
+    /* i= must be a positive integer in ASCII digits; anything else is a
+       PERMERROR saying so, and any other parse failure says "malformed". */
+    {
+        static const char *bad_i[] = {
+            "m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=0; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=abc; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=-1; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=+1; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=1x; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            NULL };
+        char eb[256];
+        for (int k = 0; bad_i[k]; k++) {
+            assert(dkim2_sig_parse(bad_i[k]) == NULL);
+            assert(dkim2_sig_parse_err(bad_i[k], eb, sizeof eb) == NULL);
+            assert(strcmp(eb, "PERMERROR DKIM2-Signature has a missing or malformed i= tag") == 0);
+        }
+        assert(dkim2_sig_parse_err("i=1; m=1; t=1; d=e.example", eb, sizeof eb) == NULL);
+        assert(strcmp(eb, "PERMERROR DKIM2-Signature is malformed") == 0);
+        dkim2_sig_t *ok = dkim2_sig_parse_err(
+            "i=3; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", eb, sizeof eb);
+        assert(ok && ok->i == 3 && eb[0] == '\0');
+        dkim2_sig_free(ok);
+    }
+
     /* Missing required tag → NULL */
     sig = dkim2_sig_parse("i=1; m=1; t=123; d=example.com; s=sel:rsa-sha256:XXX");
     assert(sig == NULL); /* neither nd= nor mf=+rt= present */

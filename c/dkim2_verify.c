@@ -568,6 +568,12 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     if (ctx->mi_error[0])
         SETSTATUS(DKIM2_PERMERROR, "%s", ctx->mi_error);
 
+    /* Likewise a DKIM2-Signature that did not parse (no i=, an i= that is
+       not a positive integer, a missing required tag): a PERMERROR, never
+       verified around as if it were absent. */
+    if (ctx->sig_error[0])
+        SETSTATUS(DKIM2_PERMERROR, "%s", ctx->sig_error);
+
     /* §7.3/§10.7: each Message-Instance m= value appears once. Check it
        explicitly (inbound and outbound), before any crypto, rather than
        leaving it to an incidental signature or hash failure. */

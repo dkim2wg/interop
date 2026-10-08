@@ -211,8 +211,13 @@ static void expect_digest_only(const char *name, int allow_null, int want_sign) 
                 dkim2_mi_t *mi = dkim2_mi_parse(v);
                 dkim2_mi_t **t = &ctx.mi_list; while (*t) t = &(*t)->next; *t = mi;
             } else if (!strncasecmp(h[i], "DKIM2-Signature", 15)) {
-                dkim2_sig_t *s = dkim2_sig_parse(v);
-                dkim2_sig_t **t = &ctx.sig_list; while (*t) t = &(*t)->next; *t = s;
+                char eb[256];
+                dkim2_sig_t *s = dkim2_sig_parse_err(v, eb, sizeof eb);
+                if (s) {
+                    dkim2_sig_t **t = &ctx.sig_list; while (*t) t = &(*t)->next; *t = s;
+                } else if (!ctx.sig_error[0]) {
+                    snprintf(ctx.sig_error, sizeof ctx.sig_error, "%s", eb);
+                }
             }
             free(v);
         }
@@ -253,6 +258,20 @@ int main(int argc, char **argv) {
     /* the null m=2 is already signed i=2/m=2 upstream: no option needed */
     expect("null-top-signed.eml",  0, 1, NULL);
     expect("null-top-signed.eml",  1, 1, NULL);
+
+    /* A DKIM2-Signature naming m=2 that cannot be keyed is not coverage:
+       the verifier PERMERRORs on it, so these are refused with or without
+       the option. */
+    {
+        static const char *fake[] = {
+            "fake-cover-no-i.eml", "fake-cover-i0.eml", "fake-cover-i-abc.eml",
+            "fake-cover-m-rewritten.eml", "fake-cover-unparseable.eml", NULL };
+        for (int k = 0; fake[k]; k++) {
+            expect(fake[k], 0, 0, "result=permerror (PERMERROR DKIM2-Signature");
+            expect(fake[k], 1, 0, "result=permerror (PERMERROR DKIM2-Signature");
+            expect_digest_only(fake[k], 1, 0);
+        }
+    }
 
     expect_digest_only("valid-chain.eml", 0, 1);
     expect_digest_only("broken-mi-chain.eml", 0, 0);

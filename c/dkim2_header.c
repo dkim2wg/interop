@@ -259,6 +259,28 @@ static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
     return 0;
 }
 
+/* i= must be a positive integer in ASCII digits: atoi() alone would take
+   "abc" as 0 and "+1" or " 1x" as 1. */
+static int valid_i(const char *v) {
+    if (!v || !*v) return 0;
+    for (const char *p = v; *p; p++)
+        if (*p < '0' || *p > '9') return 0;
+    return atoi(v) > 0;
+}
+
+dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz) {
+    if (errbuf && errbufsz) errbuf[0] = '\0';
+    dkim2_sig_t *sig = dkim2_sig_parse(value);
+    if (sig || !errbuf || !errbufsz) return sig;
+    taglist_t *tl = tagparse(value, NULL);
+    int ok_i = tl && valid_i(tag_get(tl, "i"));
+    if (tl) taglist_free(tl);
+    snprintf(errbuf, errbufsz, "%s", ok_i
+        ? "PERMERROR DKIM2-Signature is malformed"
+        : "PERMERROR DKIM2-Signature has a missing or malformed i= tag");
+    return NULL;
+}
+
 dkim2_sig_t *dkim2_sig_parse(const char *value) {
     taglist_t *tl = tagparse(value, NULL);
     if (!tl) return NULL;
@@ -268,7 +290,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     if (!sig) { taglist_free(tl); return NULL; }
     const char *v;
 #define REQ(tag) do { v = tag_get(tl, tag); if (!v) goto err; } while(0)
-    REQ("i"); sig->i = atoi(v);
+    REQ("i"); if (!valid_i(v)) goto err; sig->i = atoi(v);
     REQ("m"); sig->m = atoi(v);
     REQ("t"); sig->t = (uint64_t)strtoull(v, NULL, 10);
     REQ("d"); sig->d = strdup(v);
