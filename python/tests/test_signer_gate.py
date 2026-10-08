@@ -87,6 +87,25 @@ def test_signed_null_top_signs_without_option():
                         allow_null_body_recipe=True)) == 3
 
 
+def test_null_below_unsigned_top_refused_then_signed_with_option():
+    # Unsigned null m=2 under an unsigned ordinary m=3; i=1 covers only m=1.
+    # The null is not the top, but nothing covers it: refused like null-top.
+    with pytest.raises(dkim2sign.SigningRefused,
+                       match="unsigned Message-Instance m=2 has a null body Recipe"):
+        _sign(fx.build_null_below_unsigned_top())
+    assert _top_i(_sign(fx.build_null_below_unsigned_top(),
+                        allow_null_body_recipe=True)) == 2
+
+
+def test_null_below_signed_signs_without_option():
+    # The null m=2 is covered by a valid i=2/m=2; only an ordinary m=3 is
+    # unsigned on top of it.
+    out = _sign(fx.build_null_below_signed())
+    assert _top_i(out) == 3
+    assert _top_i(_sign(fx.build_null_below_signed(),
+                        allow_null_body_recipe=True)) == 3
+
+
 @pytest.mark.parametrize("name", sorted(fx.FAKE_COVER))
 @pytest.mark.parametrize("allow", [False, True])
 def test_fake_coverage_signature_refused(name, allow):
