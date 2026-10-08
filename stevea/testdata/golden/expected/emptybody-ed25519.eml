@@ -1,0 +1,11 @@
+Message-Instance: m=1; h=sha256:WT8nqIyG8W1R78H1QT4oZdo1SKdQrY9JHQ4fMC+IXHU=:frcCV1k9oG9oKj3dpUqdJg1PxRT2RSN/XKdLCPjaYaY=
+Dkim2-Signature: i=1; m=1; t=1740000000; d=test4.dkim2.com;
+ mf=c2VuZGVyQHRlc3Q0LmRraW0yLmNvbQ==;
+ rt=cmVjaXBpZW50QGV4YW1wbGUuY29t;
+ s=ed25519:ed25519-sha256:fItcg/qn6YEJ27WwD/P9Xd9Fb5NTUvRFG2CUsejrVdTspaR+0iTZNERm9eYfANqsf/UTM4CqLB3uWrkorOrGAQ==
+From: sender@test4.dkim2.com
+To: recipient@example.com
+Subject: Message with empty body
+Date: Sat, 01 Mar 2026 12:00:00 +0000
+Message-ID: <test-empty@test4.dkim2.com>
+

@@ -1,0 +1,9 @@
+DKIM2-Signature: i=1; m=1; t=1740000000; d=test1.dkim2.com; mf=c2VuZGVyQHRlc3QxLmRraW0yLmNvbQ==; rt=cmVjaXBpZW50QGV4YW1wbGUuY29t; s=sel1:rsa-sha256:QX6uddm2dv2enRr/W9rPSww897sC3V/5Ai71VGkA3hhHwwlzknauDnAbY0pDJMIpcR243wpXGECHeY51LJoJpNSoW0zqlP0iTR3P4L4R2CyiuQ8JiqqVLCLHW4bmeJJUcp3fb4jXydYP2YNdIY7+TeVtMr7qPrJguMngsc++1jaxQW4dn+LKubEJ3Imrdq8mitkObeu9TJOn5w++0lLQ3LN++hkcxT+syh26MoZJhLlGm8O6D2ITIbgKVwpmmas4SuoRy+8G3KBbSqmhXCOYv5Z4X7CmMqvn0JVTSCwjSekPrJe7AfnaMmi2ffF6WMWpoQqTCl+ZpLvXc5oW420HzA==;
+Message-Instance: m=1; h=sha256:SLtzk6LO68CCaX4edrJ6yfpWbp3hwgvI8IdMBRLDk+Y=:SgG5fNGEg1x24MwItCUYGDHQkWKng06W1/IvTGBdwzU=;
+From: sender@test1.dkim2.com
+To: recipient@example.com
+Subject: Simple test message
+Date: Sat, 01 Mar 2026 12:00:00 +0000
+Message-ID: <test-simple@test1.dkim2.com>
+
+Hello, this is a simple test message.
