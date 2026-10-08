@@ -41,6 +41,23 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		return fmt.Errorf("reading body: %w", err)
 	}
 
+	// Out-of-range i=/m= are refused even with the gate bypassed: the next
+	// i= and m= are computed from them below.
+	{
+		var mis, sigs []string
+		for _, h := range headers {
+			switch strings.ToLower(h.Name) {
+			case "message-instance":
+				mis = append(mis, h.Raw)
+			case "dkim2-signature":
+				sigs = append(sigs, h.Raw)
+			}
+		}
+		if err := chainRangeError(mis, sigs); err != nil {
+			return fmt.Errorf("not signing: %w", err)
+		}
+	}
+
 	// Signer gate: never put our signature over a chain that does not check out.
 	if !opts.SkipUpstreamCheck {
 		if err := checkUpstream(raw, headers, opts); err != nil {

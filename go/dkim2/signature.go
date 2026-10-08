@@ -108,9 +108,60 @@ type VerifyOptions struct {
 // missing or not a positive integer (or that has no tag-list at all).
 var errUnkeyableSignature = errors.New("PERMERROR DKIM2-Signature has a missing or malformed i= tag")
 
+// MaxChainLength is the most hops a chain may have: every i= and m= names
+// one, so none may be larger.
+const MaxChainLength = 32
+
+// chainNumberInRange is false for an ASCII-digit i=/m= value above
+// MaxChainLength, or one longer than two digits (never converted, so it
+// cannot overflow).  Values that are not digits are left to the syntax checks.
+func chainNumberInRange(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return true
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return true
+		}
+	}
+	if len(v) > 2 {
+		return false
+	}
+	n, _ := strconv.Atoi(v)
+	return n <= MaxChainLength
+}
+
+// chainRangeError is the PERMERROR for the first DKIM2-Signature i= or m=, or
+// Message-Instance m=, above MaxChainLength, or nil.  Raw fields, name
+// included.  Checked before anything walks 1..max for gaps.
+func chainRangeError(miHeaders, sigHeaders []string) error {
+	type check struct {
+		field, tag string
+		raws       []string
+	}
+	for _, c := range []check{
+		{"DKIM2-Signature", "i", sigHeaders},
+		{"DKIM2-Signature", "m", sigHeaders},
+		{"Message-Instance", "m", miHeaders},
+	} {
+		for _, raw := range c.raws {
+			colon := strings.IndexByte(raw, ':')
+			if colon < 0 {
+				continue
+			}
+			if !chainNumberInRange(parseTagValueList(raw[colon+1:]).get(c.tag)) {
+				return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain length of %d",
+					c.field, c.tag, MaxChainLength)
+			}
+		}
+	}
+	return nil
+}
+
 // validSequenceTag reports whether a raw DKIM2-Signature field carries an i=
-// that is a positive integer written in ASCII digits.  strconv.Atoi alone
-// would also take "+1", so the digits are checked first.
+// that is a positive integer written in ASCII digits.  strconv.Atoi would
+// also take "+1", so only the digits are looked at.
 func validSequenceTag(raw string) bool {
 	colon := strings.IndexByte(raw, ':')
 	if colon < 0 {
@@ -125,8 +176,9 @@ func validSequenceTag(raw string) bool {
 			return false
 		}
 	}
-	n, err := strconv.Atoi(v)
-	return err == nil && n > 0
+	// Positive: not all zeros.  Not converted, so a value too large for an
+	// int is still a sequence number here; chainRangeError bounds it.
+	return strings.TrimLeft(v, "0") != ""
 }
 
 func parseSig(raw string) (*DKIM2Signature, error) {

@@ -49,6 +49,11 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
+	// Every i= and m= is bounded by MaxChainLength, before any 1..max walk.
+	if err := chainRangeError(miHeaders, sigHeaders); err != nil {
+		return nil, err
+	}
+
 	noSigsOutbound := len(sigHeaders) == 0 && len(opts) > 0 && opts[0].Outbound
 	if len(sigHeaders) == 0 && !noSigsOutbound {
 		return nil, fmt.Errorf("no DKIM2-Signature headers found")
