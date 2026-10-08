@@ -5,7 +5,7 @@
 #       [--corpus DIR] [--out DIR] [--tmp DIR] [--verifier-lib DIR]
 #       [--repeat 5] [--timeout 300] [--budget 240]
 #       [--configs a,b] [--ids a,b] [--limit N] [--signed signed|unsigned]
-#       [--resume]
+#       [--heavy-max-size BYTES] [--resume]
 #
 # Loads LIBDIR (a copy of the build's src/lib plus Constants.pm) with a
 # throwaway %Conf::Conf and a stub list, as t/DKIM2.t does: no database, no
@@ -63,7 +63,8 @@ my %o = (
 );
 GetOptionsFromArray(\@ARGV, \%o, 'dkim2lib=s', 'switch=s', 'corpus=s',
     'out=s', 'tmp=s', 'verifier-lib=s', 'repeat=i', 'timeout=i', 'budget=i',
-    'configs=s', 'ids=s', 'limit=i', 'signed=s', 'resume', 'verify-server')
+    'configs=s', 'ids=s', 'limit=i', 'signed=s', 'resume', 'verify-server',
+    'heavy-max-size=i')
     or die "bad options\n";
 die "--switch on|off\n" unless $o{switch} =~ /\A(on|off)\z/;
 
@@ -598,6 +599,7 @@ sub wanted {
     return 1 unless $cfg->{heavy};
     return 0 unless $sampled{$row->{id}};
     return 0 if $cfg->{heavy} == 2 and $row->{size} >= 2_000_000;
+    return 0 if $o{'heavy-max-size'} and $row->{size} >= $o{'heavy-max-size'};
     return 1;
 }
 

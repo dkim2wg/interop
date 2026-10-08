@@ -45,16 +45,16 @@ v=$(perl -I$ROOT/dkim2lib -MMail::DKIM2::MessageInstance -e 'print Mail::DKIM2::
 echo "dkim2lib: Mail::DKIM2 $v"
 [ "$v" = 0.15 ] || { echo "error: dkim2lib must be Mail::DKIM2 0.15" >&2; exit 1; }
 
-# Corpus: the charset samples from the Mailman benchmark corpus (symlinked),
-# plus the Sympa synthetics.
+# Corpus: the charset samples and syn-plain-2k / syn-outlook from the
+# Mailman benchmark corpus (symlinked), plus the Sympa synthetics.
 C=$ROOT/corpus
 rm -rf $C && mkdir -p $C/signed $C/unsigned
 {
   head -1 $MAILMAN_CORPUS/index.tsv
-  tail -n +2 $MAILMAN_CORPUS/index.tsv | grep -v '^syn-'
+  tail -n +2 $MAILMAN_CORPUS/index.tsv | grep -vP '^syn-(?!plain-2k\t|outlook\t)'
   tail -n +2 $ROOT/corpus-sympa/index.tsv
 } > $C/index.tsv
-tail -n +2 $MAILMAN_CORPUS/index.tsv | grep -v '^syn-' | cut -f1 | while read -r id; do
+tail -n +2 $MAILMAN_CORPUS/index.tsv | grep -vP '^syn-(?!plain-2k\t|outlook\t)' | cut -f1 | while read -r id; do
   for s in signed unsigned; do ln -s $MAILMAN_CORPUS/$s/$id.eml $C/$s/$id.eml; done
 done
 tail -n +2 $ROOT/corpus-sympa/index.tsv | cut -f1 | while read -r id; do

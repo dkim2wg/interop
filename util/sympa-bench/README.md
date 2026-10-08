@@ -52,7 +52,7 @@ Run on the box:
   `sympa.bundle`, checks `dkim2lib` is 0.15, and assembles
   `/opt/sympa-bench/corpus`. The corpus is the 317 charset samples
   symlinked from the Mailman corpus (`/opt/mailman/bench/corpus`), plus
-  `corpus-sympa`, with a merged `index.tsv`. The script is idempotent: a
+  `corpus-sympa` (plus Mailman's `syn-plain-2k` and `syn-outlook`), with a merged `index.tsv`. The script is idempotent: a
   build is redone only when its ref now resolves to a different commit.
 - `bench_inproc.pl BUILD LIBDIR [--dkim2lib DIR] [--switch on|off]` runs one
   build over the corpus. The header comment documents the stages and
@@ -211,6 +211,44 @@ of each message under `f-mime` is kept in `results/eml/`. Results stay on
 the box.
 
 ## Running
+
+The usual run is the quick profile, which takes about 10 minutes:
+
+    ssh dkim2 'cd /opt/sympa-bench && bash run-inproc.sh --quick'
+
+It covers:
+
+- **Builds:** `up`, `cte` and `wrap`. The two switch-off builds are left
+  out because Sympa's `util/off-identical.sh` already shows that `wrap`
+  with the switch off is byte-identical to stock 6.2.78. The old series
+  has no switch.
+- **Messages:** 8, signed copies only:
+  - `syn-plain-2k`: plain text, about 2 KB;
+  - `syn-outlook`: Outlook-style text and HTML, about 21 KB, the closest
+    in the corpus to the 40 KB case;
+  - `syn-b64-text-100k`: single-part base64 text;
+  - `syn-attach-1mb-b76` and `syn-attach-1mb-b72`: a 1 MB attachment,
+    base64-wrapped at 76 and at 72 columns;
+  - `syn-attach-10mb-b76`: a 10 MB attachment;
+  - `syn-qp-100k`: a QP text body;
+  - `syn-latin1`: a latin1 body. The footer is always UTF-8.
+
+  `syn-plain-2k` and `syn-outlook` are the Mailman corpus's synthetics,
+  linked in by `setup-builds.sh`.
+- **Configurations:** `f-mime`, `pers-footer` and `m1000` (few
+  domains). `m1000` skips messages of 2 MB and over
+  (`--heavy-max-size 2000000`).
+- **Runs:** each case is the median of 3 runs. `cte` cases time out at
+  60 s (`--timeout 60 --budget 50`), recorded as `timeout`.
+- **Waiting:** the profile checks once that no test suite is running
+  before each build, and waits only while one is.
+
+Results go to `results/quick/`. The script runs with `--resume`, so
+delete that directory before running it again.
+
+The full profile is every build, both signed and unsigned copies, all
+342 messages, the 12 configurations and 5 runs per case. It takes a day
+or more:
 
     ssh dkim2 'cd /opt/sympa-bench && nohup bash run-inproc.sh \
         > results/run-inproc.out 2>&1 &'
