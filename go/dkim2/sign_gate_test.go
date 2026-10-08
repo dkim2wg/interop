@@ -92,12 +92,20 @@ func TestGateBrokenMIChainRefused(t *testing.T) {
 	wantRefused(t, dropTopSig(t, m), false, "")
 }
 
+// An unsigned null top (i=1 covers only m=1) is one this hop would
+// introduce: refused unless the option is set.
 func TestGateNullTopRefusedUnlessAllowed(t *testing.T) {
-	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
-	wantRefused(t, m, false, "null")
-	wantRefused(t, dropTopSig(t, m), false, "null")
+	m := dropTopSig(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe))
+	wantRefused(t, m, false, "unsigned top Message-Instance m=2 has a null body Recipe")
 	wantSigned(t, m, true)
-	wantSigned(t, dropTopSig(t, m), true)
+}
+
+// A null top the upstream domain already signed (i=2, m=2) is extended
+// without the option: a forwarder relaying a list post unchanged.
+func TestGateSignedNullTopSigns(t *testing.T) {
+	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
+	wantSigned(t, m, false)
+	wantSigned(t, m, true)
 }
 
 func TestGateForgedNullTopRefusedEvenWithOption(t *testing.T) {

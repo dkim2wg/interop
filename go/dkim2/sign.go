@@ -249,15 +249,21 @@ func LoadPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 
 // checkUpstream is the signer gate.  A message with no DKIM2 headers passes.
 // Otherwise the existing chain is verified in outbound mode (an unsigned top
-// Message-Instance is allowed) and, unless opts.AllowNullBodyRecipe, the top
-// Message-Instance must not carry a null body Recipe.
+// Message-Instance is allowed) and, unless opts.AllowNullBodyRecipe, an
+// UNSIGNED top Message-Instance (no DKIM2-Signature carries its m=) must not
+// carry a null body Recipe.  A null top an upstream domain already signed is
+// extended normally: that is a forwarder relaying, not this hop discarding.
 func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 	var mis []*MessageInstance
+	signedM := map[int]bool{}
 	chain := false
 	for _, h := range headers {
 		switch strings.ToLower(h.Name) {
 		case "dkim2-signature":
 			chain = true
+			if sig, err := parseSig(h.Raw); err == nil {
+				signedM[sig.MIVersion] = true
+			}
 		case "message-instance":
 			chain = true
 			if mi, err := parseMI(h.Raw); err == nil {
@@ -292,8 +298,8 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 			top = mi
 		}
 	}
-	if top != nil && top.Recipe != nil && top.Recipe.BodyNull && !opts.AllowNullBodyRecipe {
-		return fmt.Errorf("not signing: top Message-Instance m=%d has a null body Recipe (set allow-null-body-recipe to sign anyway)", top.Version)
+	if top != nil && top.Recipe != nil && top.Recipe.BodyNull && !signedM[top.Version] && !opts.AllowNullBodyRecipe {
+		return fmt.Errorf("not signing: unsigned top Message-Instance m=%d has a null body Recipe (set allow-null-body-recipe to sign anyway)", top.Version)
 	}
 	return nil
 }
