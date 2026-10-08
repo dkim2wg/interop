@@ -25,6 +25,7 @@ use Mail::DKIM2::Common qw(
     duplicate_number_error
     valid_sequence
     UNKEYABLE_SIGNATURE_ERROR
+    chain_number_error
 );
 use Email::MIME;
 use Mail::DKIM2::Signature;
@@ -126,7 +127,11 @@ sub handle_header {
     if ($lc_name eq 'message-instance') {
         eval {
             my $v = extract_mi_version($contents);
-            if ($v) {
+            # Bounded here, before finish_body walks 1..m= for gaps.
+            if (my $e = chain_number_error('Message-Instance', 'm', $v)) {
+                $self->{_range_error} //= $e;
+            }
+            elsif ($v) {
                 push @{$self->{_numbers}{'message-instance'}}, $v;
                 $self->{_mi_headers}{$v} = $line || "$field_name:$contents";
             }
@@ -145,7 +150,14 @@ sub handle_header {
         my $sig = eval { Mail::DKIM2::Signature->parse($contents) };
         die $@ if ref $@;
         my $i = $sig ? $sig->sequence : undef;
-        if (valid_sequence($i)) {
+        my $range = valid_sequence($i)
+            && (chain_number_error('DKIM2-Signature', 'i', $i)
+                // chain_number_error('DKIM2-Signature', 'm', $sig->version));
+        if ($range) {
+            # Bounded here, before finish_body walks 1..i= for gaps.
+            $self->{_range_error} //= $range;
+        }
+        elsif (valid_sequence($i)) {
             push @{$self->{_numbers}{'dkim2-signature'}}, $i;
             $self->{_dk2_headers}{$i + 0} = {
                 raw => $line || "$field_name:$contents",
@@ -164,6 +176,7 @@ sub finish_header {
     my $numbers = $self->{_numbers};
     my $error = chain_length_error($self->{_chain_counts})
         // $self->{_dk2_unkeyable}
+        // $self->{_range_error}
         // duplicate_number_error('Message-Instance', 'm',
                @{$numbers->{'message-instance'} || []})
         // duplicate_number_error('DKIM2-Signature', 'i',

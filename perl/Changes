@@ -49,6 +49,23 @@ Revision history for Mail::DKIM2
           Gate->check takes Resolver and IgnorePrefixes. The test mock of
           Mail::Milter::Authentication moved to t/lib/MockAuthMilter.pm.
           (t/milter-sign-gate.t)
+        - Every DKIM2-Signature i= and m=, and every Message-Instance m=, is
+          bounded by MAX_CHAIN_LENGTH (32): a larger value, or one longer
+          than two digits, is permerror "PERMERROR <field> <tag>= exceeds the
+          maximum chain length of 32", found while the header fields are
+          read and before any gap check. i=99999999999999999999 used to
+          kill the Verifier ("Range iterator outside integer range"). The
+          Signer refuses to sign over such a field. Common exports
+          chain_number_error(); extract_mi_version() takes ASCII digits
+          only. (t/chain-number-bound.t)
+        - bin/dkim2-milter fails closed: an exception in the Verifier, the
+          Gate or the Signer is logged and the message goes on unsigned
+          (verify result temperror), instead of dying in the eom callback.
+          A Signer that declines is now logged too. (t/milter-script.t)
+        - bin/validate.pl reports the header-level PERMERRORs (a
+          DKIM2-Signature with no usable i=, an out-of-range i=/m=) before
+          its walk. It used to pass a message whose only DKIM2-Signature
+          was junk. (t/validate-cli.t)
         - DKIM2_DATE 2026-10-08.
 
 0.15    2026-10-08

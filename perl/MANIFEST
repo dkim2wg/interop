@@ -32,6 +32,7 @@ lib/Mail/Milter/Authentication/Handler/DKIM2Verify.pm
 spec-review-notes.md
 t/body-canon.t
 t/chain-length.t
+t/chain-number-bound.t
 t/common.t
 t/data-in-sync.t
 t/data/dns.json

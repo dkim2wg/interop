@@ -43,6 +43,7 @@ our @EXPORT_OK = qw(
     chain_length_error
     valid_sequence
     UNKEYABLE_SIGNATURE_ERROR
+    chain_number_error
     duplicate_number_error
 );
 
@@ -133,6 +134,21 @@ use constant UNKEYABLE_SIGNATURE_ERROR =>
 sub valid_sequence {
     my ($i) = @_;
     return (defined $i && $i =~ /\A[0-9]+\z/ && $i > 0) ? 1 : 0;
+}
+
+# The PERMERROR for an i= or m= value above MAX_CHAIN_LENGTH, or undef. Each
+# number names one hop and a chain has at most MAX_CHAIN_LENGTH of them, so a
+# bigger one is never valid -- and checking it before anything walks 1..max
+# keeps a value like 99999999999999999999 from being used as a loop bound.
+# Values longer than two digits are out of range without being treated as
+# numbers at all. Anything that is not ASCII digits is left to the callers'
+# own syntax checks.
+sub chain_number_error {
+    my ($field, $tag, $n) = @_;
+    return unless defined $n && $n =~ /\A[0-9]+\z/;
+    return if length($n) <= 2 && $n <= MAX_CHAIN_LENGTH;
+    return "PERMERROR $field $tag= exceeds the maximum chain length of "
+        . MAX_CHAIN_LENGTH;
 }
 
 # The PERMERROR for the first number that appears twice among a field's
@@ -342,7 +358,7 @@ sub extract_mi_version {
     my ($header) = @_;
     $header = $header->[0] if ref($header) eq 'ARRAY';
     $header = $$header if ref($header);
-    return unless $header =~ m/^\s*m=(\d+)/;
+    return unless $header =~ m/^\s*m=([0-9]+)/;
     return $1;
 }
 
@@ -675,6 +691,14 @@ L</UNKEYABLE_SIGNATURE_ERROR>.
 
 The PERMERROR string for a DKIM2-Signature with a missing or malformed
 C<i=>, or one that does not parse.
+
+=head2 chain_number_error($field, $tag, $n)
+
+The PERMERROR string C<"PERMERROR $field $tag= exceeds the maximum chain
+length of 32"> when C<$n> is ASCII digits naming a number above
+L</MAX_CHAIN_LENGTH> (or more than two digits long), or undef. Every
+C<i=> and C<m=> names one hop, so none can be larger than the chain.
+Values that are not digits are left to the caller's syntax checks.
 
 =head2 duplicate_number_error($field, $tag, @numbers)
 

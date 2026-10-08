@@ -390,14 +390,24 @@ sub cb_eom {
             my $gc = _get_sign_config($priv->{env_from}, $gd);
             $gate_sd = $gc->{domain} if $gc;
         }
-        my $gate = Mail::DKIM2::Gate->check($message,
-            (defined $gate_sd ? (SigningDomain => $gate_sd) : ()),
-            AllowNullBodyRecipe => $opts{'allow-null-body-recipe'},
-            ($do_verify ? (VerifyResult => $verify_result) : ()),
-            _gate_pubkey_cb());
+        # Fail closed: an exception anywhere in the gate (a crafted message
+        # must never take the callback down with it) is a logged refusal.
+        my $gate = eval {
+            Mail::DKIM2::Gate->check($message,
+                (defined $gate_sd ? (SigningDomain => $gate_sd) : ()),
+                AllowNullBodyRecipe => $opts{'allow-null-body-recipe'},
+                ($do_verify ? (VerifyResult => $verify_result) : ()),
+                _gate_pubkey_cb());
+        };
+        unless ($gate) {
+            my $err = _error_text($@);
+            $gate = { reason => 'error', verify_result => $verify_result,
+                      message => "internal error checking the upstream chain: $err" };
+        }
         $verify_result = $gate->{verify_result};
 
-        if ($gate->{reason} && $gate->{reason} eq 'upstream-chain') {
+        if ($gate->{reason}
+            && ($gate->{reason} eq 'upstream-chain' || $gate->{reason} eq 'error')) {
             # Upstream chain is broken — don't extend it with a new signature.
             warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
         } elsif ($gate->{reason} && $gate->{reason} eq 'broken-mi-chain') {
@@ -570,10 +580,26 @@ sub _do_verify {
     my %cb = _gate_pubkey_cb();
     $verifier->set_pubkey_callback($cb{PubkeyCallback}) if $cb{PubkeyCallback};
 
-    $verifier->PRINT($message);
-    $verifier->CLOSE();
+    # Fail closed: a verifier exception is reported as temperror (never
+    # pass) and logged, rather than killing the milter callback.
+    my $ok = eval { $verifier->PRINT($message); $verifier->CLOSE(); 1 };
+    unless ($ok) {
+        warn "dkim2-milter: verify failed with an internal error: "
+           . _error_text($@) . "\n";
+        return 'temperror (internal error)';
+    }
 
     return $verifier->result_detail();
+}
+
+# One line of an exception, for the log.
+sub _error_text {
+    my ($err) = @_;
+    $err = "$err" if defined $err;
+    $err = 'unknown error' unless defined $err && length $err;
+    $err =~ s/\s+\z//;
+    $err =~ s/\s*\n\s*/ /g;
+    return $err;
 }
 
 # --- Message-Instance ---
@@ -692,19 +718,32 @@ sub _milter_value {
 sub _do_sign {
     my ($message, $priv, $config) = @_;
 
-    my $signer = Mail::DKIM2::Signer->new(
-        Domain    => $config->{domain},
-        Selector  => $config->{selector},
-        Key       => $config->{key},
-        Algorithm => $config->{algorithm},
-        MailFrom  => ( length($priv->{env_from} // '') ? $priv->{env_from} : '<>' ),
-        RcptTo    => $priv->{env_rcpt},
-    );
+    my $signer;
+    # Fail closed, as for the gate: an exception means no signature.
+    my $ok = eval {
+        $signer = Mail::DKIM2::Signer->new(
+            Domain    => $config->{domain},
+            Selector  => $config->{selector},
+            Key       => $config->{key},
+            Algorithm => $config->{algorithm},
+            MailFrom  => ( length($priv->{env_from} // '') ? $priv->{env_from} : '<>' ),
+            RcptTo    => $priv->{env_rcpt},
+        );
+        $signer->PRINT($message);
+        $signer->CLOSE();
+        1;
+    };
+    unless ($ok) {
+        warn "dkim2-milter: not signing: internal error in the signer: "
+           . _error_text($@) . "\n";
+        return;
+    }
 
-    $signer->PRINT($message);
-    $signer->CLOSE();
-
-    return unless ($signer->result // '') eq 'signed';
+    unless (($signer->result // '') eq 'signed') {
+        warn "dkim2-milter: not signing: signer result="
+           . ($signer->result_detail // $signer->result // 'none') . "\n";
+        return;
+    }
 
     my $header = $signer->as_string();
     # Strip "DKIM2-Signature: " prefix for insheader

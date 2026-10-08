@@ -55,7 +55,8 @@ path("$dir/snap")->mkpath;
 my @pids;
 END { local $?; for my $p (@pids) { kill "TERM", $p; waitpid($p, 0) } }
 
-# Start a milter on its own socket; extra => [...] adds command-line options.
+# Start a milter on its own socket; extra => [...] adds command-line options,
+# perl => [...] options for perl itself (e.g. -M to load a test fault).
 sub spawn_milter {
     my (%o) = @_;
     my $n    = @pids;
@@ -65,7 +66,7 @@ sub spawn_milter {
     if ($pid == 0) {
         open STDERR, '>>', $log or die $!;
         open STDOUT, '>>', $log or die $!;
-        exec $^X, "-I$LIB", $SCRIPT,
+        exec $^X, "-I$LIB", @{ $o{perl} || [] }, $SCRIPT,
             '--mode', 'outbound',
             '--socket', "unix:$sock",
             '--keydir', "$dir/keys",
@@ -465,6 +466,59 @@ sub info_values {
         my $new = substr(milter_log(), $before);
         unlike($new, qr/Extra semicolon|Illegal parameter/, "Content-Type '$ct': no Email::MIME warning in log");
     }
+}
+
+# --- 7. An out-of-range i= upstream: refused, and the milter survives ---
+# i=99999999999999999999 used to kill the Verifier ("Range iterator outside
+# integer range") inside cb_eom, and with it the callback. Every i= and m= is
+# bounded by MAX_CHAIN_LENGTH now, so it is an ordinary PERMERROR refusal.
+{
+    my $msg = "DKIM2-Signature: i=99999999999999999999; m=1; d=evil.example$EOL"
+            . originator_signed();
+    my ($verdict, $mods) = eval { run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => $msg) };
+    is($@, '', 'huge i=: the milter answers');
+    is($verdict, 'c', 'huge i=: milter continues');
+    is(scalar(inserted($mods || [], 'DKIM2-Signature')), 0, 'huge i=: not signed');
+    like(milter_log(), qr/not signing <post\@test1\.dkim2\.com>: .*exceeds the maximum chain length/,
+        'huge i=: refusal is logged with the reason');
+}
+
+# --- 8. An exception in the gate or the verifier fails closed ---
+# A die inside the verify/sign path must not kill the callback: the milter
+# logs a refusal and does not sign. Faults are injected with a -M module.
+{
+    path("$dir/inject")->mkpath;
+    path("$dir/inject/DKIM2TestDieGate.pm")->spew(
+        "package DKIM2TestDieGate; require Mail::DKIM2::Gate;\n"
+      . "no warnings 'redefine';\n"
+      . "*Mail::DKIM2::Gate::check = sub { die \"injected gate fault\\n\" };\n1;\n");
+    path("$dir/inject/DKIM2TestDieVerifier.pm")->spew(
+        "package DKIM2TestDieVerifier; require Mail::DKIM2::Verifier;\n"
+      . "no warnings 'redefine';\n"
+      . "*Mail::DKIM2::Verifier::CLOSE = sub { die \"injected verifier fault\\n\" };\n1;\n");
+
+    my (undef, $sock_g) = spawn_milter(perl => ["-I$dir/inject", '-MDKIM2TestDieGate']);
+    my ($verdict, $mods) = eval { run_milter(sock => $sock_g,
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => list_modified(originator_signed())) };
+    is($@, '', 'gate fault: the milter answers');
+    is($verdict, 'c', 'gate fault: milter continues');
+    is(scalar(inserted($mods || [], 'DKIM2-Signature')), 0, 'gate fault: not signed');
+    like(milter_log(), qr/not signing <post\@test1\.dkim2\.com>: .*injected gate fault/,
+        'gate fault: refusal is logged');
+
+    my (undef, $sock_v) = spawn_milter(perl => ["-I$dir/inject", '-MDKIM2TestDieVerifier'],
+                                      extra => ['--mode', 'inbound']);
+    ($verdict, $mods) = eval { run_milter(sock => $sock_v,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'],
+        message => originator_signed()) };
+    is($@, '', 'verifier fault: the milter answers');
+    is($verdict, 'c', 'verifier fault: milter continues');
+    my ($ar) = inserted($mods || [], 'Authentication-Results');
+    like($ar ? $ar->{value} : '', qr/dkim2=temperror/, 'verifier fault: A-R says temperror, not pass');
+    like(milter_log(), qr/verify .*injected verifier fault/, 'verifier fault: logged');
 }
 
 done_testing;

@@ -4,7 +4,9 @@ use 5.020;
 use Path::Tiny;
 use Email::MIME;
 use lib 'lib';
-use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey parse_mime);
+use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey parse_mime
+                           valid_sequence chain_number_error UNKEYABLE_SIGNATURE_ERROR);
+use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
 use List::Util qw(max);
@@ -28,6 +30,23 @@ $data =~ s/\n/\r\n/gs;
 my $msg1 = parse_mime($data);
 
 my $dns = decode_json(path($dns_json)->slurp);
+
+# Header-level PERMERRORs first, as the Verifier reports them. The walk below
+# is driven by the i= and m= values it can read, so without this a junk
+# DKIM2-Signature with no usable i= -- even the only one -- would simply never
+# be visited, and an i= or m= above MAX_CHAIN_LENGTH would be a loop bound.
+for my $h ($msg1->header_raw('DKIM2-Signature')) {
+  my $sig = eval { Mail::DKIM2::Signature->parse($h) };
+  my $i = $sig ? $sig->sequence : undef;
+  die UNKEYABLE_SIGNATURE_ERROR . "\n" unless valid_sequence($i);
+  my $e = chain_number_error('DKIM2-Signature', 'i', $i)
+       // chain_number_error('DKIM2-Signature', 'm', $sig->version);
+  die "$e\n" if $e;
+}
+for my $h ($msg1->header_raw('Message-Instance')) {
+  my $e = chain_number_error('Message-Instance', 'm', extract_mi_version($h));
+  die "$e\n" if $e;
+}
 
 my %map = map { _geti($_) => $_ } $msg1->header('DKIM2-Signature');
 my $num = %map ? max(keys %map) : 0;
@@ -107,13 +126,13 @@ while (1) {
 
 sub _geti {
   my $arg = shift;
-  return 0 unless $arg =~ m/\bi=(\d+)/;
+  return 0 unless $arg =~ m/\bi=([0-9]+)/;
   return 0 + $1;
 }
 
 sub _getv {
   my $arg = shift;
-  return 0 unless $arg =~ m/\bm=(\d+)/;
+  return 0 unless $arg =~ m/\bm=([0-9]+)/;
   return 0 + $1;
 }
 
