@@ -155,7 +155,7 @@ async function verifyOnce(raw, opts = {}) {
   const fetchKey = opts.fetchKey || dohFetchKey;
   const now = opts.now || Math.floor(Date.now() / 1000);
   const { headers, body } = parseMessage(raw);
-  const { instances, signatures } = collectLevels(headers);
+  const { instances, signatures, dupInstances, dupSignatures } = collectLevels(headers);
 
   const miNums = Object.keys(instances).map(Number).sort((a, b) => a - b);
   const sigNums = Object.keys(signatures).map(Number).sort((a, b) => a - b);
@@ -191,6 +191,9 @@ async function verifyOnce(raw, opts = {}) {
     if (hasNd && (hasMf || hasRt)) structErr.push(`DKIM2-Signature i=${i} tag=nd was unexpected`);
     if (!hasNd && !(hasMf && hasRt)) structErr.push(`DKIM2-Signature i=${i} tag=mf missing`);
   }
+  // spec-06: exactly one Message-Instance per m= and one DKIM2-Signature per i=.
+  for (const m of new Set(dupInstances)) structErr.push(`Message-Instance m=${m} appears more than once`);
+  for (const i of new Set(dupSignatures)) structErr.push(`DKIM2-Signature i=${i} appears more than once`);
   for (const m of miNums) {
     const mi = instances[m];
     for (const t of ['m', 'h']) if (!(t in mi.map)) structErr.push(`Message-Instance m=${m} tag=${t} missing`);
