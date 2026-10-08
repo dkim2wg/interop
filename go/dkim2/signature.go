@@ -2,6 +2,7 @@ package dkim2
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -101,6 +102,31 @@ type VerifyOptions struct {
 	// chain are checked as usual; of the Message-Instance content check, only
 	// the topmost instance's header hash can be, so only that is.
 	HeadersOnly bool
+}
+
+// errUnkeyableSignature is the PERMERROR for a DKIM2-Signature whose i= is
+// missing or not a positive integer (or that has no tag-list at all).
+var errUnkeyableSignature = errors.New("PERMERROR DKIM2-Signature has a missing or malformed i= tag")
+
+// validSequenceTag reports whether a raw DKIM2-Signature field carries an i=
+// that is a positive integer written in ASCII digits.  strconv.Atoi alone
+// would also take "+1", so the digits are checked first.
+func validSequenceTag(raw string) bool {
+	colon := strings.IndexByte(raw, ':')
+	if colon < 0 {
+		return false
+	}
+	v := parseTagValueList(raw[colon+1:]).get("i")
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	n, err := strconv.Atoi(v)
+	return err == nil && n > 0
 }
 
 func parseSig(raw string) (*DKIM2Signature, error) {

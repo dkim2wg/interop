@@ -261,7 +261,9 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 		switch strings.ToLower(h.Name) {
 		case "dkim2-signature":
 			chain = true
-			if sig, err := parseSig(h.Raw); err == nil {
+			// Only a signature with a valid i= can cover anything; the
+			// verifier below PERMERRORs on any other.
+			if sig, err := parseSig(h.Raw); err == nil && validSequenceTag(h.Raw) {
 				signedM[sig.MIVersion] = true
 			}
 		case "message-instance":
@@ -281,7 +283,11 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 	results, err := VerifyFull(bytes.NewReader(raw), fetcher,
 		VerifyOptions{SkipTimestampCheck: opts.SkipTimestampCheck, Outbound: true, Signer: opts.Domain})
 	if err != nil {
-		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail: %w", err)
+		status := "fail"
+		if strings.HasPrefix(err.Error(), "PERMERROR") {
+			status = "permerror"
+		}
+		return fmt.Errorf("not signing: upstream DKIM2 chain result=%s: %w", status, err)
 	}
 	for _, r := range results {
 		if r.Error == nil {

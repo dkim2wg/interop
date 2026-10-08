@@ -40,6 +40,15 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
+	// A DKIM2-Signature whose i= is missing or not a positive integer cannot
+	// be placed in the chain or keyed: PERMERROR, never silently skipped, so
+	// a junk "DKIM2-Signature: m=2" can never pass for coverage of m=2.
+	for _, raw := range sigHeaders {
+		if !validSequenceTag(raw) {
+			return nil, errUnkeyableSignature
+		}
+	}
+
 	noSigsOutbound := len(sigHeaders) == 0 && len(opts) > 0 && opts[0].Outbound
 	if len(sigHeaders) == 0 && !noSigsOutbound {
 		return nil, fmt.Errorf("no DKIM2-Signature headers found")
