@@ -387,13 +387,8 @@ README. Results and the generated report (`bench/`) are not committed.
     /opt/mailman/bench/run-inproc.sh
 
     # soak, one build at a time, on the < 2 MB subset of the corpus
-    cd /opt/mailman/bench && mkdir -p corpus-soak && \
-      ln -sfn ../corpus/signed corpus-soak/signed && \
-      ln -sfn ../corpus/unsigned corpus-soak/unsigned && \
-      awk -F'\t' 'NR==1 || $2 < 2000000' corpus/index.tsv > corpus-soak/index.tsv
-    for b in "up up na" "cte cte on" "cte-off cte off" "wrap wrap on" "wrap-off wrap off"; do
-      set -- $b; CORPUS=/opt/mailman/bench/corpus-soak ./soak.sh $1 /opt/mailman/bench/$2/venv $3
-    done
+    # (run-soaks.sh builds corpus-soak/ and runs soak.sh for every build)
+    WAIT=0 bash /opt/mailman/bench/run-soaks.sh
 
     # locally: pull results/ into bench/results and build bench/report.{md,json}
     util/mailman-bench/bench_report.py

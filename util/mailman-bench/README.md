@@ -47,7 +47,7 @@ Run on the box:
   remote branch `dkim2-3.3.10`, so re-run the script after that branch is
   force-pushed.**
 - `run-inproc.sh` runs the in-process benchmark of one build over the corpus.
-- `soak.sh` runs the sustained-load soak of one build.
+- `soak.sh` runs the sustained-load soak of one build; `run-soaks.sh` runs it for every build on the < 2 MB corpus subset.
 - `mi_10mb.py` (a nose2 test module copied into a Mailman checkout) times one
   10 MB post through ingress, decorate and egress and reports tracemalloc peaks.
 
