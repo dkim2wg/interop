@@ -26,7 +26,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  create mode 100644 src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
-index 6752b1848..788539ded 100644
+index 95fca8717..efaae1c1e 100644
 --- a/DKIM2-MESSAGE-INSTANCE.md
 +++ b/DKIM2-MESSAGE-INSTANCE.md
 @@ -151,6 +151,11 @@ message_instance: yes

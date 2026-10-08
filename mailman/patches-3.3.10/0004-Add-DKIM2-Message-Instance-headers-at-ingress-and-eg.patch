@@ -146,8 +146,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/mailman/handlers/dmarc.py                 |    2 +
  src/mailman/handlers/message_instance.py      | 1090 ++++++++
  src/mailman/handlers/mime_delete.py           |    3 +
- src/mailman/handlers/tests/mi_support.py      |  317 +++
- .../handlers/tests/test_message_instance.py   | 2306 +++++++++++++++++
+ src/mailman/handlers/tests/mi_support.py      |  316 +++
+ .../handlers/tests/test_message_instance.py   | 2325 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
  .../handlers/tests/test_mi_roundtrip.py       |  152 ++
  src/mailman/handlers/to_archive.py            |    7 +-
@@ -156,7 +156,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/mailman/mta/deliver.py                    |    5 +-
  src/mailman/mta/message_instance.py           |   31 +
  src/mailman/pipelines/builtin.py              |    2 +
- 15 files changed, 4353 insertions(+), 6 deletions(-)
+ 15 files changed, 4371 insertions(+), 6 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
  create mode 100644 src/mailman/handlers/tests/mi_support.py
@@ -167,7 +167,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..6752b1848
+index 000000000..95fca8717
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
 @@ -0,0 +1,268 @@
@@ -434,11 +434,11 @@ index 000000000..6752b1848
 +
 +`message_instance.py` keeps the library-grade code (canonicalisation,
 +hashing, Recipe computation, header building, folding and parsing) free
-+of Mailman imports and operating on `email.message.Message`, with the Mailman-specific glue (config check,
-+pipeline handlers) below it.  When a standalone Python
-+DKIM2 library exists, the first part can move there and the handlers
-+become a thin wrapper, as Sympa's implementation does by delegating to
-+`Mail::DKIM2::MessageInstance`.
++of Mailman imports and operating on `email.message.Message`, with the
++Mailman-specific glue (config check, pipeline handlers) below it.  When
++a standalone Python DKIM2 library exists, the first part can move there
++and the handlers become a thin wrapper, as Sympa's implementation does
++by delegating to `Mail::DKIM2::MessageInstance`.
 diff --git a/src/mailman/handlers/decorate.py b/src/mailman/handlers/decorate.py
 index e34b1ffdb..35d4928f1 100644
 --- a/src/mailman/handlers/decorate.py
@@ -1732,10 +1732,10 @@ index 6808f5722..91da31e86 100644
                  msg.attach(MIMEText(report))
 diff --git a/src/mailman/handlers/tests/mi_support.py b/src/mailman/handlers/tests/mi_support.py
 new file mode 100644
-index 000000000..6d12c78f1
+index 000000000..d10182885
 --- /dev/null
 +++ b/src/mailman/handlers/tests/mi_support.py
-@@ -0,0 +1,317 @@
+@@ -0,0 +1,316 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -1752,7 +1752,6 @@ index 000000000..6d12c78f1
 +#
 +# You should have received a copy of the GNU General Public License along with
 +# GNU Mailman.  If not, see <https://www.gnu.org/licenses/>.
-+
 +
 +"""Verify and undo Message-Instance headers, for the DKIM2 tests.
 +
@@ -2055,10 +2054,10 @@ index 000000000..6d12c78f1
 +    return max_v
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..297e74fec
+index 000000000..435ac6dac
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,2306 @@
+@@ -0,0 +1,2325 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -3312,6 +3311,25 @@ index 000000000..297e74fec
 +        self.assertEqual(undo_message_instance(msg), 2)
 +        v, err = verify_message_instance(msg)
 +        self.assertEqual(v, 1, err)
++
++    def test_injected_message_with_its_own_stamp_under_the_instance(self):
++        # A sender put a Message-ID-Hash under its own instance and the
++        # message came in without received octets.  The snapshot leaves
++        # every Message-ID-Hash out, so the instance does not match it:
++        # that is logged, and egress still adds an m=2 that verifies.
++        msg = self._make_7bit_msg()
++        add_message_hash(msg)
++        msg['Message-Instance'] = build_mi_header_value(
++            1, compute_header_hash(msg), compute_body_hash(msg))
++        msgdata = {}
++        with self.assertLogs('mailman.dkim2', 'WARNING') as logs:
++            self._ingress.process(self._mlist, msg, msgdata)
++        self.assertIn('Existing Message-Instance m=1 does not match',
++                      logs.output[0])
++        decorate.process(self._mlist, msg, msgdata)
++        self._egress.process(self._mlist, msg, msgdata)
++        v, err = verify_message_instance(msg)
++        self.assertEqual(v, 2, err)
 +
 +    def test_ingress_adds_v1(self):
 +        msg = self._make_7bit_msg()

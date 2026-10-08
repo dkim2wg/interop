@@ -26,7 +26,7 @@ from mailman.app.lifecycle import create_list
 from mailman.config import config
 from mailman.email.message import Message
 from mailman.handlers import decorate
-from mailman.handlers.message_instance import verify_message_instance
+from mailman.handlers.tests.mi_support import verify_message_instance
 from mailman.interfaces.template import ITemplateManager
 from mailman.testing.layers import ConfigLayer
 from tempfile import TemporaryDirectory
