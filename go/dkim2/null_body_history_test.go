@@ -160,7 +160,7 @@ func TestNullBodyForgedHistoryBelowNullFails(t *testing.T) {
 
 func TestNullBodyHeaderRecipeNotApplyingFails(t *testing.T) {
 	expectFail(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n",
-		`{"h":{"subject":[{"c":[1,9]}]},"b":null}`), "")
+		`{"h":{"subject":[{"c":[1,9]}]},"b":null}`), "has a malformed Recipe")
 }
 
 func TestUndoStillRefusesNullBody(t *testing.T) {
@@ -168,4 +168,56 @@ func TestUndoStillRefusesNullBody(t *testing.T) {
 	if err := Undo(bytes.NewReader(m), io.Discard, 1); err == nil {
 		t.Fatal("standalone Undo rebuilt a body it cannot")
 	}
+}
+
+func forgeTo(hs []Header) []Header {
+	hs = subjectTag(hs)
+	for i, h := range hs {
+		if strings.EqualFold(h.Name, "to") {
+			hs[i] = Header{Name: "To", Value: " evil@example.com", Raw: "To: evil@example.com\r\n"}
+		}
+	}
+	return hs
+}
+
+func subjectTag2(hs []Header) []Header {
+	out := make([]Header, len(hs))
+	copy(out, hs)
+	for i, h := range out {
+		if strings.EqualFold(h.Name, "subject") {
+			out[i] = Header{Name: "Subject", Value: " [x] [list] hello", Raw: "Subject: [x] [list] hello\r\n"}
+		}
+	}
+	return out
+}
+
+const ordinaryOverNull = `{"h":{"subject":[{"d":["[list] hello"]}]}}`
+
+func TestNullBelowOrdinaryInstancePasses(t *testing.T) {
+	m2 := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
+	expectPass(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull))
+}
+
+func TestNullBelowOrdinaryInstanceForgedFails(t *testing.T) {
+	m2 := nullHop(t, nullHopBase(t), forgeTo, "new body\r\n", subjRecipe)
+	expectFail(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull),
+		"m=1: sha256 header hash mismatch")
+}
+
+func emptyBodyBase(t *testing.T) []byte {
+	raw := []byte("From: Sender <sender@test1.dkim2.com>\r\nTo: user@test2.dkim2.com\r\n" +
+		"Subject: hello\r\n\r\n")
+	return signOnce(t, raw, "../../keys/sel1._domainkey.test1.dkim2.com.pem",
+		"sel1", "test1.dkim2.com", "sender@test1.dkim2.com", []string{"user@test2.dkim2.com"})
+}
+
+const subjOnly = `{"h":{"subject":[{"d":["hello"]}]}}`
+
+func TestEmptyBodyHeaderOnlyRecipePasses(t *testing.T) {
+	expectPass(t, nullHop(t, emptyBodyBase(t), subjectTag, "", subjOnly))
+}
+
+func TestEmptyBodyHiddenHeaderChangeFails(t *testing.T) {
+	expectFail(t, nullHop(t, emptyBodyBase(t), forgeTo, "", subjOnly),
+		"m=1: sha256 header hash mismatch")
 }
