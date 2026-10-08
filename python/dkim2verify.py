@@ -42,6 +42,7 @@ from dkim2sign import (
     _get_version_from_mi,
     _get_seq_from_sig,
     _sig_has_valid_i,
+    chain_range_error,
     b64,
     b64json,
     Source,
@@ -796,6 +797,13 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
             msg = "PERMERROR DKIM2-Signature has a missing or malformed i= tag"
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
+
+    # Every i= and m= is bounded by MAX_CHAIN_LENGTH, before the gap loops
+    # below walk 1..max.
+    range_error = chain_range_error(mi_headers, sig_headers)
+    if range_error:
+        return VerifyResult(ok=False, status='permerror', failing_i=None,
+                            domain=None, message=range_error, errors=[range_error])
 
     # spec-06 §7.1: Message-Instance m= and DKIM2-Signature i= values must be
     # contiguous from 1.  Structural, so checked before any crypto.  (A

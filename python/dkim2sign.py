@@ -507,6 +507,39 @@ def _get_seq_from_sig(hdr: str) -> int:
     return int(v)
 
 
+# Every i= and m= names one hop, and a chain has at most this many.
+MAX_CHAIN_LENGTH = 32
+
+
+def chain_number_in_range(v: str) -> bool:
+    """False for an ASCII-digit i=/m= value above MAX_CHAIN_LENGTH, or one
+    longer than two digits (so it is never turned into a huge number).
+    Values that are not digits are left to the other syntax checks."""
+    v = v.strip()
+    if not v.isascii() or not v.isdigit():
+        return True
+    return len(v) <= 2 and int(v) <= MAX_CHAIN_LENGTH
+
+
+def _tag_of(hdr: str, tag: str) -> str | None:
+    colon = hdr.find(":")
+    return _extract_tag(hdr[colon + 1:] if colon != -1 else hdr, tag)
+
+
+def chain_range_error(mi_headers: list[str], sig_headers: list[str]) -> str | None:
+    """The PERMERROR for the first i= or m= above MAX_CHAIN_LENGTH, or None.
+    Checked before anything walks 1..max for gaps."""
+    for field, tag, hdrs in (("DKIM2-Signature", "i", sig_headers),
+                             ("DKIM2-Signature", "m", sig_headers),
+                             ("Message-Instance", "m", mi_headers)):
+        for h in hdrs:
+            v = _tag_of(h, tag)
+            if v is not None and not chain_number_in_range(v):
+                return (f"PERMERROR {field} {tag}= exceeds the maximum chain "
+                        f"length of {MAX_CHAIN_LENGTH}")
+    return None
+
+
 def _sig_has_valid_i(hdr: str) -> bool:
     """True iff the DKIM2-Signature has an i= that is a positive integer."""
     return _get_seq_from_sig(hdr) > 0
@@ -778,6 +811,12 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
             existing_mi.append(hdr.decode("utf-8", errors="surrogateescape"))
         elif name == b"dkim2-signature":
             existing_sig.append(hdr.decode("utf-8", errors="surrogateescape"))
+
+    # Out-of-range numbers are refused even with the gate bypassed: the next
+    # i= and m= below are computed from them.
+    range_error = chain_range_error(existing_mi, existing_sig)
+    if range_error:
+        raise SigningRefused(f"not signing: {range_error}")
 
     if (existing_mi or existing_sig) and not skip_upstream_check:
         _gate_upstream(raw, headers, existing_mi, existing_sig, dns_data,
