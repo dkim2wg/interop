@@ -576,6 +576,27 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
             if (a->m == b->m)
                 SETSTATUS(DKIM2_PERMERROR, "PERMERROR: duplicate Message-Instance m=%d", a->m);
 
+    /* §7.1: m= values must be contiguous 1..N. Explicit, before any crypto:
+       name the first missing m=. (An unsigned top MI above the top signature
+       is still a member of 1..N, so outbound mode needs no exemption; only a
+       gap is an error.) */
+    {
+        int max_m = 0, n_mi = 0;
+        for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next) {
+            n_mi++;
+            if (a->m > max_m) max_m = a->m;
+        }
+        for (int want = 1; n_mi && want <= max_m; want++) {
+            int found = 0;
+            for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next)
+                if (a->m == want) { found = 1; break; }
+            if (!found)
+                SETSTATUS(DKIM2_PERMERROR,
+                    "PERMERROR: Message-Instance sequence not contiguous "
+                    "(missing m=%d)", want);
+        }
+    }
+
     /* Outbound mode (signer gate): a chain with no signature yet -- just an
        unsigned Message-Instance the signer is about to cover -- has no
        signature to verify; its MI chain is still checked. */
