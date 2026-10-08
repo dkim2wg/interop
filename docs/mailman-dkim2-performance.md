@@ -4,6 +4,7 @@ Measurements made 2026-10-07/08 for the mailman-developers discussion of
 the DKIM2 Message-Instance series, which asked what DKIM2 support costs on a
 small host (1 vCPU, 2 GB RAM, small `/var`). This note says what was measured
 and how, gives the numbers, and lists what they do and do not show.
+A shareable summary page with the same numbers: https://claude.ai/code/artifact/ffca3a33-59bf-4ada-a1df-16941625bc4b (private until shared).
 
 ## Summary
 
