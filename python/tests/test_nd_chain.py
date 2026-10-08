@@ -3,6 +3,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import gate_env  # noqa: E402,F401  (signer gate: keys + old timestamps)
 import dkim2sign  # noqa: E402
 import dkim2verify  # noqa: E402
 
@@ -128,7 +129,11 @@ def test_bridge_after_a_real_hop_keeps_custody():
 
 
 def test_bridge_from_a_domain_the_mail_never_reached_fails():
-    raw = _bridged_chain("test4.dkim2.com")
+    # The signer gate would (rightly) refuse to sign over the broken bridge;
+    # build the bad chain with the gate off to test the verifier.
+    from unittest import mock
+    with mock.patch.object(dkim2sign, "_gate_upstream", lambda *a, **k: None):
+        raw = _bridged_chain("test4.dkim2.com")
     result = dkim2verify.verify_message(raw, DNS_DATA, skip_timestamp_check=True)
     assert result.status == 'fail', result
     assert 'i=2 nd= hop d=test4.dkim2.com did not match RCPT TO' in result.message, \

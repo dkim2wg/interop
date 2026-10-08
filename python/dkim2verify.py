@@ -741,7 +741,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                    skip_timestamp_check: bool = False,
                    mail_from: str | None = None,
                    rcpt_to: list[str] | None = None,
-                   headers_only: bool = False) -> "VerifyResult":
+                   headers_only: bool = False,
+                   allow_unsigned_mi: bool = False) -> "VerifyResult":
     """Verify all DKIM2 signatures in a message.
 
     If full_chain is True, walks backwards through MI versions, undoing
@@ -755,6 +756,11 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     check only the top instance's header hash can be, so only that is --
     nothing further down the chain can be undone without a body to undo into,
     which is why headers_only overrides full_chain.
+
+    If allow_unsigned_mi is True (outbound mode, used by the signer gate) a
+    Message-Instance above the top DKIM2-Signature's m= is allowed: it is the
+    instance the caller is about to sign.  It is still checked against the
+    content and undone like any other; every signature must still verify.
 
     Returns a VerifyResult (ok=True on success).
     """
@@ -781,7 +787,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     top_sig_seq = _extract_tag(top_sig_value, "i")
     top_sig_m = _extract_tag(top_sig_value, "m")
     top_sig_m_int = int(top_sig_m) if top_sig_m else 0
-    if top_sig_m_int != max_mi_version:
+    if top_sig_m_int != max_mi_version and not (
+            allow_unsigned_mi and top_sig_m_int < max_mi_version):
         top_sig_i = _get_seq_from_sig(top_sig)
         top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
         msg = (f"top signature i={top_sig_seq} m={top_sig_m_int} does not cover "
@@ -793,7 +800,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     # nd= only ever legitimately appears together with a subsequent, higher-i=
     # signature that takes over custody; a top-of-chain nd= means the chain
     # is incomplete/tampered, so reject before any further checks run.
-    if _extract_tag(top_sig_value, "nd"):
+    if _extract_tag(top_sig_value, "nd") and not allow_unsigned_mi:
         top_i = _get_seq_from_sig(top_sig)
         msg = f"DKIM2-Signature i={top_sig_seq} unexpected nd= tag"
         return VerifyResult(ok=False, status='permerror', failing_i=top_i,

@@ -22,6 +22,9 @@ fi
 
 # Fixed timestamp for reproducibility
 TIMESTAMP=1740000000
+# Signing over an earlier hop verifies it first (signer gate); old fixed
+# timestamps are fine for these fixtures.
+export DKIM2_DNS_JSON="$(dirname "$PYTHON_DIR")/dns.json"
 
 GENERATE=false
 if [ "${1:-}" = "--generate" ]; then
@@ -55,7 +58,7 @@ run_test() {
     local result
     result=$(python3 "$SIGNER" "$email" \
         -s "$selector" -d "$domain" -k "$keyfile" \
-        --mailfrom "$mailfrom" --timestamp "$TIMESTAMP" \
+        --mailfrom "$mailfrom" --timestamp "$TIMESTAMP" --ignore-timestamps \
         "${rcptto_flags[@]}" 2>&1)
 
     if [ "$GENERATE" = true ]; then

@@ -13,6 +13,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import gate_env  # noqa: E402,F401  (signer gate: keys + old timestamps)
 from dkim2sign import sign_message  # noqa: E402
 from dkim2verify import verify_message  # noqa: E402
 
