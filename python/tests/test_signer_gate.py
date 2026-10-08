@@ -82,10 +82,30 @@ def test_old_timestamps_refused_unless_ignored():
 
 def test_chain_without_key_source_refused(monkeypatch):
     monkeypatch.delenv("DKIM2_DNS_JSON", raising=False)
-    with pytest.raises(dkim2sign.SigningRefused, match="keys"):
+    with pytest.raises(dkim2sign.SigningRefused, match="no DNS data"):
         _sign(fx.build_valid_chain(), dns_data=None)
 
 
 def test_dns_json_env_honoured(monkeypatch):
     monkeypatch.setenv("DKIM2_DNS_JSON", os.path.join(ROOT, "dns.json"))
     assert _top_i(_sign(fx.build_valid_chain(), dns_data=None)) == 2
+
+
+def test_mi_only_signs_without_keys(monkeypatch):
+    monkeypatch.delenv("DKIM2_DNS_JSON", raising=False)
+    out = dkim2sign.sign_message(
+        fx.build_mi_only(), "sel1", "test3.dkim2.com", KEY,
+        mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
+    assert _top_i(out) == 1
+
+
+def test_mi_only_broken_refused_for_the_chain_not_the_signature():
+    with pytest.raises(dkim2sign.SigningRefused) as e:
+        _sign(fx.build_mi_only_broken())
+    assert "no DKIM2-Signature" not in str(e.value)
+
+
+def test_mi_only_null_refused_then_signed_with_option():
+    with pytest.raises(dkim2sign.SigningRefused, match="null body Recipe"):
+        _sign(fx.build_mi_only_null())
+    assert _top_i(_sign(fx.build_mi_only_null(), allow_null_body_recipe=True)) == 1

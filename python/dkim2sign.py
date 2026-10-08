@@ -647,16 +647,14 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
     # dkim2verify imports this module, so import it lazily.
     import dkim2verify
 
-    if not existing_sig:
-        raise SigningRefused(
-            "not signing: Message-Instance present but no DKIM2-Signature "
-            "to extend")
+    if dns_data is None and not existing_sig:
+        dns_data = {}   # nothing to verify a signature with; MI chain only
     if dns_data is None:
         path = os.environ.get("DKIM2_DNS_JSON")
         if not path:
             raise SigningRefused(
-                "not signing: cannot verify the upstream DKIM2 chain: no keys "
-                "available (set DKIM2_DNS_JSON to a dns.json; this verifier "
+                "not signing: cannot verify the upstream DKIM2 chain: no DNS "
+                "data: pass --dns-json or set DKIM2_DNS_JSON (this verifier "
                 "has no live DNS)")
         try:
             dns_data = dkim2verify.load_dns_json(path)
