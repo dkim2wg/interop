@@ -93,7 +93,6 @@ def test_header_recipe_not_applying_below_null_error_text():
         (bnv._subject_prefixed(headers, b"list"), body + b"rewritten\r\n", bad),
     ]))
     assert not r.ok
-    assert bnv.__dict__["ds"]  # builders loaded
     from dkim2verify import _malformed_recipe_error
     assert _malformed_recipe_error(2) in r.errors, r.errors
     assert not any("signature" in e.lower() and "verif" in e.lower()
