@@ -23,12 +23,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 87 insertions(+), 13 deletions(-)
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
-index 9d1c09670..c3b3505fc 100644
+index 0428ed900..3ba2aa945 100644
 --- a/DKIM2-MESSAGE-INSTANCE.md
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -165,7 +165,8 @@ and ARC signing.
-    never parsed as MIME, nor the copy built as one string. If nothing changed at all (no header change, body Recipe
-    "none"), no instance is added.
+@@ -167,7 +167,8 @@ and ARC signing.
+    changed at all (no header change, body Recipe "none"), no instance is
+    added.
  5. Add it as the next `m=` (one more than the highest present) at the top of
 -   the header, folded with Mail::DKIM2's folder.
 +   the header, folded with Mail::DKIM2's folder, with an `X-DKIM2-Info`
@@ -36,7 +36,7 @@ index 9d1c09670..c3b3505fc 100644
  
  The whole step runs in an `eval`. On any failure it logs and the copy goes
  out without the new instance: DKIM2 never blocks or loses list mail.
-@@ -186,6 +187,19 @@ An outbound `dkim2-milter` refuses to sign a message whose top instance
+@@ -188,6 +189,19 @@ An outbound `dkim2-milter` refuses to sign a message whose top instance
  has a null body Recipe unless it is started with `--allow-null-body-recipe`.
  A list host running Sympa needs that option on its outbound signer.
  
@@ -56,7 +56,7 @@ index 9d1c09670..c3b3505fc 100644
  ### Ordering
  
  Nothing that changes a hashed header field may run after `egress_add`.
-@@ -204,7 +218,7 @@ comes before the DKIM2 step.
+@@ -206,7 +220,7 @@ comes before the DKIM2 step.
  | txt, html, urlize, notice reception modes | null body Recipe, small header Recipe |
  | Full-body personalisation (`personalization.mail_apply_on all`) | null body Recipe per recipient |
  | Footer-only personalisation (`personalization.mail_apply_on footer`) | wrap; the copies differ only in the trailing part |

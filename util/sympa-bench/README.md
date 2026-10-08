@@ -46,6 +46,9 @@ Run locally:
   - latin1 and ISO-2022-JP bodies;
   - a body with `[% user.email %]` tags, for personalisation.
 
+- `bench_report.py RESULTS_DIR` prints the markdown comparison with `up`
+  (CPU, RSS delta, wire, MI header, verifies, timeouts/OOMs).
+
 Run on the box:
 
 - `setup-builds.sh` installs `/opt/sympa-bench/{up,cte,wrap}/lib` from
