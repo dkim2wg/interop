@@ -5,6 +5,10 @@ Revision history for Mail::DKIM2
           Recipe) and then skips the body diff; body_hash accessor;
           body_digest_raw(). For list managers that build the Recipe from
           their own layout (Sympa always-wrap). (t/mi-body-recipe-option.t)
+        - The body diff finds the common prefix and suffix a 4 KB block at a
+          time instead of a character at a time: about 5x faster for a list
+          manager's per-recipient Recipe (2 MB body: 104 ms to 21 ms), the
+          same Recipes. (t/mi-flat-common-len.t)
 
 0.14    2026-10-07
         - The Verifier and MessageInstance->chain_verifies walk the header

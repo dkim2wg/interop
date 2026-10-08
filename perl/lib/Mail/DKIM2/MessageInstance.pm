@@ -549,6 +549,35 @@ sub _recipe_cost {
 # Byte-level prefix/suffix matching strategy.
 # Flattens both bodies, finds common prefix and suffix, maps back
 # to line boundaries, then uses line-level matching on the middle.
+# The length of the common prefix (suffix) of $x and $y, at most $max:
+# compared a block at a time, each block one string comparison, and only the
+# block where they differ a character at a time.  A character-at-a-time loop
+# over the whole body cost ~50ns a byte, which a list manager pays for every
+# recipient's copy.
+use constant CMP_BLOCK => 4096;
+
+sub _common_prefix_len {
+    my ($x, $y, $max) = @_;
+    my $n = 0;
+    $n += CMP_BLOCK
+        while $n + CMP_BLOCK <= $max
+          and substr($x, $n, CMP_BLOCK) eq substr($y, $n, CMP_BLOCK);
+    $n++ while $n < $max and substr($x, $n, 1) eq substr($y, $n, 1);
+    return $n;
+}
+
+sub _common_suffix_len {
+    my ($x, $y, $max) = @_;
+    my ($lx, $ly) = (length $x, length $y);
+    my $n = 0;
+    $n += CMP_BLOCK
+        while $n + CMP_BLOCK <= $max
+          and substr($x, $lx - $n - CMP_BLOCK, CMP_BLOCK)
+           eq substr($y, $ly - $n - CMP_BLOCK, CMP_BLOCK);
+    $n++ while $n < $max and substr($x, -1 - $n, 1) eq substr($y, -1 - $n, 1);
+    return $n;
+}
+
 sub _body_recipe_flat {
     my ($l1, $l2) = @_;
 
@@ -558,21 +587,10 @@ sub _body_recipe_flat {
     # Find common prefix length.
     my $min_len = length($cur_flat) < length($prev_flat)
         ? length($cur_flat) : length($prev_flat);
-    my $prefix = 0;
-    while ($prefix < $min_len
-           and substr($cur_flat, $prefix, 1)
-               eq substr($prev_flat, $prefix, 1)) {
-        $prefix++;
-    }
+    my $prefix = _common_prefix_len($cur_flat, $prev_flat, $min_len);
 
     # Find common suffix length (not overlapping prefix).
-    my $suffix = 0;
-    my $max_suffix = $min_len - $prefix;
-    while ($suffix < $max_suffix
-           and substr($cur_flat, -1 - $suffix, 1)
-               eq substr($prev_flat, -1 - $suffix, 1)) {
-        $suffix++;
-    }
+    my $suffix = _common_suffix_len($cur_flat, $prev_flat, $min_len - $prefix);
 
     # If no significant prefix or suffix, this strategy won't help.
     return undef unless $prefix > 0 or $suffix > 0;
