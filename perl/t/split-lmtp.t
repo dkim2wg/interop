@@ -21,12 +21,13 @@ $SIG{PIPE} = 'IGNORE';
 $SIG{ALRM} = $SIG{TERM} = $SIG{INT} = sub { die "split-lmtp.t: aborted by signal @_\n" };
 alarm 60;
 
-sub cleanup { kill 'TERM', @pids; waitpid($_, 0) for @pids; $? = 0; }
+sub cleanup { alarm 0; kill 'TERM', @pids; waitpid($_, 0) for @pids; $? = 0; }
 END { cleanup(); $? = 0 }   # don't let a reaped child's signal status leak into our exit code
 
 # --- capture sink: one file per injected copy, recording its RCPTs ----------
 my $sink = fork;
 if (defined $sink && $sink == 0) {
+    $SIG{$_} = 'DEFAULT' for qw(TERM INT ALRM PIPE); alarm 0;
     my $s = IO::Socket::INET->new(LocalAddr=>'127.0.0.1', LocalPort=>$CAP_PORT,
         Listen=>10, ReuseAddr=>1) or exit 1;
     $SIG{CHLD} = sub { while (waitpid(-1, WNOHANG) > 0) {} };
@@ -57,6 +58,7 @@ push @pids, $sink if $sink;
 # --- the split daemon, re-injecting to the capture sink ---------------------
 my $daemon = fork;
 if (defined $daemon && $daemon == 0) {
+    $SIG{PIPE} = 'DEFAULT'; $SIG{$_} = 'DEFAULT' for qw(TERM INT ALRM); alarm 0;   # as in production
     $ENV{DKIM2_SPLIT_HOST}  = '127.0.0.1'; $ENV{DKIM2_SPLIT_PORT}  = $LMTP_PORT;
     $ENV{DKIM2_INJECT_HOST} = '127.0.0.1'; $ENV{DKIM2_INJECT_PORT} = $CAP_PORT;
     exec($^X, '-Ilib', 'bin/dkim2-split-lmtp');
