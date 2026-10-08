@@ -1,7 +1,8 @@
 /* Signer gate: dkim2_sign_message / dkim2_do_sign must verify an existing
    DKIM2 chain (outbound mode: the unsigned top Message-Instance is the one
-   being signed) before extending it, and refuse a null body Recipe on top
-   unless allow_null_body_recipe is set.
+   being signed) before extending it, and refuse a null body Recipe on an
+   UNSIGNED top instance (no DKIM2-Signature has its m=) unless
+   allow_null_body_recipe is set; a null top already signed upstream signs.
 
    Usage: test_signer_gate <fixture-dir> <dns.json> <key.pem>
    Fixtures come from util/build-signer-gate-fixtures.py. */
@@ -245,16 +246,20 @@ int main(int argc, char **argv) {
     expect("broken-signature.eml", 1, 0, "not signing: upstream DKIM2 chain");
     expect("broken-mi-chain.eml",  0, 0, "not signing: Message-Instance chain");
     expect("broken-mi-chain.eml",  1, 0, "not signing: Message-Instance chain");
-    expect("null-top.eml",         0, 0, "null body Recipe");
+    expect("null-top.eml",         0, 0, "unsigned top Message-Instance m=2 has a null body Recipe");
     expect("null-top.eml",         1, 1, NULL);
     expect("null-top-forged.eml",  0, 0, "not signing");
     expect("null-top-forged.eml",  1, 0, "not signing");
+    /* the null m=2 is already signed i=2/m=2 upstream: no option needed */
+    expect("null-top-signed.eml",  0, 1, NULL);
+    expect("null-top-signed.eml",  1, 1, NULL);
 
     expect_digest_only("valid-chain.eml", 0, 1);
     expect_digest_only("broken-mi-chain.eml", 0, 0);
     expect_digest_only("null-top.eml", 0, 0);
     expect_digest_only("null-top.eml", 1, 1);
     expect_digest_only("null-top-forged.eml", 1, 0);
+    expect_digest_only("null-top-signed.eml", 0, 1);
 
     expect_reuse_top_mi("valid-chain.eml");
     expect_reuse_top_mi("mi-only.eml");
