@@ -93,7 +93,8 @@ Revision history for Mail::DKIM2
         - bin/validate.pl reports the header-level PERMERRORs (a
           DKIM2-Signature with no usable i=, an out-of-range i=/m=) before
           its walk. It used to pass a message whose only DKIM2-Signature
-          was junk. (t/validate-cli.t)
+          was junk. It also reads i=/m= with the tag-list parser, so FWS
+          around "=" no longer breaks its walk. (t/validate-cli.t)
         - DKIM2_DATE 2026-10-08.
 
 0.15    2026-10-08
