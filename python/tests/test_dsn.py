@@ -6,6 +6,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import gate_env  # noqa: E402,F401  (signer gate: keys + old timestamps)
 import dkim2sign  # noqa: E402
 import dkim2dsn  # noqa: E402
 import dkim2verify  # noqa: E402

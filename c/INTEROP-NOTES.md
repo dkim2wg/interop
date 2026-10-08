@@ -80,7 +80,7 @@ sequence, not by re-serializing from a parsed representation.
 Python's verifier performs no timestamp check at all. Our C verifier enforces
 the 14-day window strictly.
 
-**Fix:** Implementations should provide a `--no-timestamp-check` flag (or
+**Fix:** Implementations should provide a `--ignore-timestamps` flag (or
 equivalent API) for testing and forensic purposes.
 
 **Recommendation to spec:** Consider recommending that implementations expose a
@@ -766,7 +766,7 @@ message, fixed timestamp, known key, showing every intermediate value.
 |---|-------|--------|----------|
 | 1 | Trailing semicolon in tag-values | Fix needed in verifier (use raw bytes) | Critical for interop |
 | 2 | Verifier reconstructs instead of using raw bytes | Fixed | Critical for interop |
-| 3 | Timestamp check blocks test emails | Fixed (--no-timestamp-check) | Low (test infra) |
+| 3 | Timestamp check blocks test emails | Fixed (--ignore-timestamps) | Low (test infra) |
 | 4 | Dangling pointer after taglist_free | Fixed | Critical (correctness) |
 | 5 | addr_domain off-by-one | Fixed | High (correctness) |
 | 6 | C_IN/T_TXT not on macOS | Fixed | Platform (macOS) |

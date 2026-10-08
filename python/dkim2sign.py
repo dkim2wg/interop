@@ -12,6 +12,7 @@ import difflib
 import hashlib
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -631,13 +632,100 @@ def load_private_key(keyfile: str) -> tuple:
 # Main
 # ---------------------------------------------------------------------------
 
+class SigningRefused(Exception):
+    """The signer gate refused to extend an existing DKIM2 chain."""
+
+
+def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
+                   dns_data: dict | None, skip_timestamp_check: bool,
+                   allow_null_body_recipe: bool,
+                   signing_domain: str | None = None) -> None:
+    """Refuse (SigningRefused) unless the chain already on the message checks
+    out.  Runs the verifier in outbound mode: an unsigned top Message-Instance
+    is the one we are about to cover.  A top instance with a null body Recipe
+    needs allow_null_body_recipe as well."""
+    import os
+    # dkim2verify imports this module, so import it lazily.
+    import dkim2verify
+
+    if dns_data is None and not existing_sig:
+        dns_data = {}   # nothing to verify a signature with; MI chain only
+    if dns_data is None:
+        path = os.environ.get("DKIM2_DNS_JSON")
+        if not path:
+            raise SigningRefused(
+                "not signing: cannot verify the upstream DKIM2 chain: no DNS "
+                "data: pass --dns-json or set DKIM2_DNS_JSON (this verifier "
+                "has no live DNS)")
+        try:
+            dns_data = dkim2verify.load_dns_json(path)
+        except (OSError, ValueError) as e:
+            raise SigningRefused(f"not signing: cannot read keys from "
+                                 f"{path}: {e}")
+
+    # A top signature with nd= may only be extended by the domain it names.
+    if existing_sig:
+        top_sig = max(existing_sig, key=_get_seq_from_sig)
+        top_nd = _extract_tag(top_sig[top_sig.find(":") + 1:], "nd")
+        if top_nd and (signing_domain is None
+                       or top_nd.strip().lower() != signing_domain.lower()):
+            raise SigningRefused(
+                f"not signing: top signature nd={top_nd.strip()} names "
+                f"another domain")
+
+    result = dkim2verify.verify_message(
+        raw, dns_data, full_chain=True,
+        skip_timestamp_check=skip_timestamp_check, allow_unsigned_mi=True)
+    if not result.ok:
+        detail = "; ".join(result.errors) or result.message
+        if any("v=" in e or "Recipe" in e or "Message-Instance" in e
+               for e in result.errors) and result.status != "fail":
+            raise SigningRefused(
+                f"not signing: Message-Instance chain does not undo cleanly: "
+                f"{detail}")
+        raise SigningRefused(
+            f"not signing: upstream DKIM2 chain result={result.status} "
+            f"{detail}")
+
+    top = max(existing_mi, key=_get_version_from_mi)
+    mi_json = _extract_mi_recipe(top)
+    if mi_json is not None and "b" in mi_json and mi_json["b"] is None \
+            and not allow_null_body_recipe:
+        raise SigningRefused(
+            "not signing: top Message-Instance has a null body Recipe "
+            "(--allow-null-body-recipe not set)")
+
+
+def _extract_mi_recipe(mi_hdr: str):
+    """Decoded r= object of a Message-Instance header, or None if absent."""
+    import dkim2verify
+    try:
+        return dkim2verify.decode_recipes(mi_hdr)
+    except (ValueError, TypeError):
+        return None
+
+
 def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  mailfrom: str = "<>", rcptto: list[str] | None = None,
                  timestamp: int | None = None,
                  next_domain: str | None = None,
                  flags: list[str] | None = None,
-                 algs: list[str] | None = None) -> bytes:
+                 algs: list[str] | None = None,
+                 dns_data: dict | None = None,
+                 skip_timestamp_check: bool = False,
+                 allow_null_body_recipe: bool = False,
+                 skip_upstream_check: bool = False) -> bytes:
     """Sign a raw email message with DKIM2.
+
+    A message that already carries a DKIM2 chain is verified first (outbound
+    mode: an unsigned top Message-Instance is allowed); if the chain does not
+    check out, or its top Message-Instance has a null body Recipe and
+    allow_null_body_recipe is not set, SigningRefused is raised.  Keys come
+    from dns_data, else the dns.json named by $DKIM2_DNS_JSON.
+
+    skip_upstream_check=True bypasses the gate entirely.  It exists for test
+    and fixture builders that must sign over broken chains on purpose; there
+    is deliberately no CLI flag for it.
 
     Returns the complete message with Message-Instance and DKIM2-Signature
     headers prepended.
@@ -656,6 +744,11 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
             existing_mi.append(hdr.decode("utf-8", errors="surrogateescape"))
         elif name == b"dkim2-signature":
             existing_sig.append(hdr.decode("utf-8", errors="surrogateescape"))
+
+    if (existing_mi or existing_sig) and not skip_upstream_check:
+        _gate_upstream(raw, headers, existing_mi, existing_sig, dns_data,
+                       skip_timestamp_check, allow_null_body_recipe,
+                       signing_domain=domain)
 
     # Determine version numbers
     top_mi = None
@@ -728,6 +821,17 @@ def main():
                         choices=["sha256", "sha512", "both"],
                         help="hash algorithm(s) for the Message-Instance h= tag "
                              "(spec-06 §3.1; default sha256)")
+    parser.add_argument("--allow-null-body-recipe", action="store_true",
+                        help="sign even when the top Message-Instance has a "
+                             "null body Recipe (default: refuse)")
+    parser.add_argument("--dns-json",
+                        default=os.environ.get("DKIM2_DNS_JSON"),
+                        help="dns.json with keys to verify an existing chain "
+                             "(default: $DKIM2_DNS_JSON)")
+    parser.add_argument("--ignore-timestamps", action="store_true",
+                        dest="skip_timestamp_check",
+                        help="skip the timestamp check when verifying an "
+                             "existing chain")
     args = parser.parse_args()
 
     if args.message == "-":
@@ -736,14 +840,22 @@ def main():
         raw = Path(args.message).read_bytes()
 
     rcptto = args.rcptto or ["unknown@example.com"]
+    if args.dns_json:
+        os.environ["DKIM2_DNS_JSON"] = args.dns_json
 
     algs = ["sha256", "sha512"] if args.hash_algs == "both" else [args.hash_algs]
 
-    result = sign_message(raw, args.selector, args.domain, args.keyfile,
-                          mailfrom=args.mailfrom, rcptto=rcptto,
-                          timestamp=args.timestamp,
-                          next_domain=args.next_domain, flags=args.flags,
-                          algs=algs)
+    try:
+        result = sign_message(raw, args.selector, args.domain, args.keyfile,
+                              mailfrom=args.mailfrom, rcptto=rcptto,
+                              timestamp=args.timestamp,
+                              next_domain=args.next_domain, flags=args.flags,
+                              algs=algs,
+                              skip_timestamp_check=args.skip_timestamp_check,
+                              allow_null_body_recipe=args.allow_null_body_recipe)
+    except SigningRefused as e:
+        print(f"dkim2sign: {e}", file=sys.stderr)
+        sys.exit(1)
 
     sys.stdout.buffer.write(result)
 

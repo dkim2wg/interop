@@ -741,7 +741,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                    skip_timestamp_check: bool = False,
                    mail_from: str | None = None,
                    rcpt_to: list[str] | None = None,
-                   headers_only: bool = False) -> "VerifyResult":
+                   headers_only: bool = False,
+                   allow_unsigned_mi: bool = False) -> "VerifyResult":
     """Verify all DKIM2 signatures in a message.
 
     If full_chain is True, walks backwards through MI versions, undoing
@@ -756,6 +757,11 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     nothing further down the chain can be undone without a body to undo into,
     which is why headers_only overrides full_chain.
 
+    If allow_unsigned_mi is True (outbound mode, used by the signer gate) a
+    Message-Instance above the top DKIM2-Signature's m= is allowed: it is the
+    instance the caller is about to sign.  It is still checked against the
+    content and undone like any other; every signature must still verify.
+
     Returns a VerifyResult (ok=True on success).
     """
     raw = _to_bytes(source)
@@ -765,7 +771,23 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     mi_headers = extract_mi_headers(headers)
     sig_headers = extract_sig_headers(headers)
 
-    if not sig_headers:
+    seen_m = set()
+    for h in mi_headers:
+        m_raw = _extract_tag(_get_header_value(h), "m")
+        if m_raw is None or not m_raw.strip().isascii() \
+                or not m_raw.strip().isdigit():
+            msg = "Message-Instance has a malformed m= tag"
+            return VerifyResult(ok=False, status='permerror', failing_i=None,
+                                domain=None, message=msg, errors=[msg])
+        mv = _get_version_from_mi(h)
+        if mv in seen_m:
+            msg = f"duplicate Message-Instance m={mv}"
+            return VerifyResult(ok=False, status='permerror', failing_i=None,
+                                domain=None, message=msg, errors=[msg])
+        seen_m.add(mv)
+
+    mi_only = allow_unsigned_mi and not sig_headers and bool(mi_headers)
+    if not sig_headers and not mi_only:
         return VerifyResult(ok=False, status='none', failing_i=None, domain=None,
                             message='no DKIM2-Signature headers',
                             errors=['no DKIM2-Signature headers'])
@@ -774,38 +796,42 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                             message='no Message-Instance headers',
                             errors=['no Message-Instance headers'])
 
-    # Spec-01 §9/§10: top DKIM2-Signature must cover the topmost MI
     max_mi_version = max(_get_version_from_mi(h) for h in mi_headers)
-    top_sig = max(sig_headers, key=_get_seq_from_sig)
-    top_sig_value = _get_header_value(top_sig)
-    top_sig_seq = _extract_tag(top_sig_value, "i")
-    top_sig_m = _extract_tag(top_sig_value, "m")
-    top_sig_m_int = int(top_sig_m) if top_sig_m else 0
-    if top_sig_m_int != max_mi_version:
-        top_sig_i = _get_seq_from_sig(top_sig)
-        top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
-        msg = (f"top signature i={top_sig_seq} m={top_sig_m_int} does not cover "
-               f"topmost MI m={max_mi_version}")
-        return VerifyResult(ok=False, status='permerror', failing_i=top_sig_i,
-                            domain=top_domain, message=msg, errors=[msg])
+    top_sig = None
+    if not mi_only:
+        # Spec-01 §9/§10: top DKIM2-Signature must cover the topmost MI
+        max_mi_version = max(_get_version_from_mi(h) for h in mi_headers)
+        top_sig = max(sig_headers, key=_get_seq_from_sig)
+        top_sig_value = _get_header_value(top_sig)
+        top_sig_seq = _extract_tag(top_sig_value, "i")
+        top_sig_m = _extract_tag(top_sig_value, "m")
+        top_sig_m_int = int(top_sig_m) if top_sig_m else 0
+        if top_sig_m_int != max_mi_version and not (
+                allow_unsigned_mi and top_sig_m_int < max_mi_version):
+            top_sig_i = _get_seq_from_sig(top_sig)
+            top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
+            msg = (f"top signature i={top_sig_seq} m={top_sig_m_int} does not cover "
+                   f"topmost MI m={max_mi_version}")
+            return VerifyResult(ok=False, status='permerror', failing_i=top_sig_i,
+                                domain=top_domain, message=msg, errors=[msg])
 
-    # Local policy: the top (highest-i=) DKIM2-Signature MUST NOT carry nd=.
-    # nd= only ever legitimately appears together with a subsequent, higher-i=
-    # signature that takes over custody; a top-of-chain nd= means the chain
-    # is incomplete/tampered, so reject before any further checks run.
-    if _extract_tag(top_sig_value, "nd"):
-        top_i = _get_seq_from_sig(top_sig)
-        msg = f"DKIM2-Signature i={top_sig_seq} unexpected nd= tag"
-        return VerifyResult(ok=False, status='permerror', failing_i=top_i,
-                            domain=_extract_tag(top_sig_value, 'd') or '',
-                            message=msg, errors=[msg])
+        # Local policy: the top (highest-i=) DKIM2-Signature MUST NOT carry nd=.
+        # nd= only ever legitimately appears together with a subsequent, higher-i=
+        # signature that takes over custody; a top-of-chain nd= means the chain
+        # is incomplete/tampered, so reject before any further checks run.
+        if _extract_tag(top_sig_value, "nd") and not allow_unsigned_mi:
+            top_i = _get_seq_from_sig(top_sig)
+            msg = f"DKIM2-Signature i={top_sig_seq} unexpected nd= tag"
+            return VerifyResult(ok=False, status='permerror', failing_i=top_i,
+                                domain=_extract_tag(top_sig_value, 'd') or '',
+                                message=msg, errors=[msg])
 
     # Envelope MAIL FROM / RCPT TO checks (spec §"Check the Chain of Custody"):
     # exact match against the top signature's declared mf=/rt=, domains
     # lowercased, local-part case-sensitive. Applies regardless of
     # full_chain/simple mode. rt= MAY carry extra recipients beyond what was
     # actually delivered; every delivered RCPT TO must be present in the set.
-    if mail_from is not None or rcpt_to:
+    if (mail_from is not None or rcpt_to) and top_sig is not None:
         top_i = _get_seq_from_sig(top_sig)
         top_mf_b64 = _extract_tag(top_sig_value, "mf")
         top_rt_raw = _extract_tag(top_sig_value, "rt")
@@ -1009,8 +1035,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                             f"v={version}: failed to undo body recipes: {e}"
                         )
 
-    top_sig_i = _get_seq_from_sig(top_sig)
-    top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
+    top_sig_i = _get_seq_from_sig(top_sig) if top_sig else 0
+    top_domain = (_extract_tag(_get_header_value(top_sig), 'd') or '') if top_sig else ''
     result = _make_result(all_errors, top_sig_i, top_domain)
     if result.ok and body_unchecked_below is not None:
         result.message += (f" (body not checked below m={body_unchecked_below}: "

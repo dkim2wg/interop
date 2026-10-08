@@ -54,6 +54,20 @@ type SignOptions struct {
 	// h= tag (spec-06 §3.1/§7.3), in emission order. nil/empty means
 	// []string{"sha256"} — the signer default, which MUST NOT change.
 	HashAlgs []string
+
+	// Signer gate: before signing a message that already carries a DKIM2
+	// chain, Sign verifies that chain (outbound mode: an unsigned top
+	// Message-Instance is the one this hop is about to cover) and refuses
+	// if it does not check out.  Fetcher supplies the verification keys
+	// (nil = real DNS); SkipTimestampCheck relaxes the §10.3 age check.
+	Fetcher            KeyFetcher
+	SkipTimestampCheck bool
+	// AllowNullBodyRecipe lets Sign cover a top Message-Instance whose
+	// body Recipe is null ("b": null); by default that is refused.
+	AllowNullBodyRecipe bool
+	// SkipUpstreamCheck turns the gate off entirely (the caller built the
+	// chain itself).
+	SkipUpstreamCheck bool
 }
 
 // VerifyResult is the outcome for one DKIM2-Signature in the message.
@@ -69,6 +83,16 @@ type VerifyOptions struct {
 	MailFrom           string   // SMTP MAIL FROM; empty = skip check
 	RcptTo             []string // SMTP RCPT TO values; nil = skip check
 	SkipTimestampCheck bool     // disable §10.3 14-day expiry check (for testing)
+
+	// Outbound verifies a message as its next signer sees it: a top
+	// Message-Instance that no signature covers yet (m= above every
+	// signature's) is allowed, and is checked against the message content
+	// instead.  Upstream signatures must still verify.
+	Outbound bool
+
+	// Signer is the domain about to sign, in Outbound mode: a top signature
+	// whose nd= names it (a §9.3 bridge) is accepted; any other nd= is not.
+	Signer string
 
 	// HeadersOnly says the message has no body, as with the returned original
 	// in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures and the

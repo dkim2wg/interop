@@ -44,3 +44,37 @@ def test_duplicate_selector_and_excess_selector_are_independent():
     errs = _check_signature_duplicates(items, "1")
     assert any("duplicate selector" in e for e in errs)
     assert not any("more selectors than allowed" in e for e in errs)
+
+
+def test_duplicate_mi_version_is_permerror_inbound_and_outbound():
+    import json
+    import dkim2verify
+    import dkim2sign
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(os.path.dirname(here))
+    dns = json.load(open(os.path.join(root, "dns.json")))
+    eml = (b"From: a@test1.dkim2.com\r\nTo: b@test2.dkim2.com\r\n"
+           b"Subject: x\r\n\r\nbody\r\n")
+    headers, body = dkim2sign.parse_message(eml)
+    mi1 = dkim2sign.build_message_instance(headers, body, version=1)
+    raw = (mi1.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+           + b"\r\n".join(headers) + b"\r\n\r\n" + body)
+    for allow in (False, True):
+        r = dkim2verify.verify_message(raw, dns, allow_unsigned_mi=allow,
+                                       skip_timestamp_check=True)
+        assert r.status == 'permerror', (allow, r)
+        assert 'duplicate Message-Instance m=1' in r.message, r.message
+
+
+def test_malformed_mi_m_is_clean_permerror():
+    import json
+    import dkim2verify
+    here = os.path.dirname(os.path.abspath(__file__))
+    dns = json.load(open(os.path.join(os.path.dirname(os.path.dirname(here)), "dns.json")))
+    for bad in ("abc", "", "1x", "-1"):
+        raw = (f"Message-Instance: m={bad}; h=sha256:AA:BB\r\n"
+               "From: a@test1.dkim2.com\r\n\r\nbody\r\n").encode()
+        for allow in (False, True):
+            r = dkim2verify.verify_message(raw, dns, allow_unsigned_mi=allow)
+            assert r.status == 'permerror', (bad, allow, r)
+            assert 'malformed m= tag' in r.message, r.message

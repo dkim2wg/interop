@@ -3,6 +3,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import gate_env  # noqa: E402,F401  (signer gate: keys + old timestamps)
 import dkim2sign  # noqa: E402
 import dkim2verify  # noqa: E402
 
@@ -92,7 +93,7 @@ def test_legit_nd_chain_still_passes():
     assert result.status == 'pass', result.message
 
 
-def _bridged_chain(bridge_domain: str) -> bytes:
+def _bridged_chain(bridge_domain: str, skip_upstream_check: bool = False) -> bytes:
     """A Forwarder's §9.3 bridge after a real hop.
 
     The message arrives at test2 (i=1 rt=); test2 sends it on from test3, and
@@ -114,11 +115,12 @@ def _bridged_chain(bridge_domain: str) -> bytes:
         timestamp=1740000000)
     msg = dkim2sign.sign_message(
         msg, "sel1", bridge_domain, key_path(f"sel1._domainkey.{bridge_domain}.pem"),
-        next_domain="test3.dkim2.com", timestamp=1740000000)
+        next_domain="test3.dkim2.com", timestamp=1740000000,
+        skip_upstream_check=skip_upstream_check)
     return dkim2sign.sign_message(
         msg, "sel1", "test3.dkim2.com", key_path("sel1._domainkey.test3.dkim2.com.pem"),
         mailfrom="srs0=x@bounce.test3.dkim2.com", rcptto=["dest@test5.dkim2.com"],
-        timestamp=1740000000)
+        timestamp=1740000000, skip_upstream_check=skip_upstream_check)
 
 
 def test_bridge_after_a_real_hop_keeps_custody():
@@ -128,7 +130,8 @@ def test_bridge_after_a_real_hop_keeps_custody():
 
 
 def test_bridge_from_a_domain_the_mail_never_reached_fails():
-    raw = _bridged_chain("test4.dkim2.com")
+    # Built over a deliberately broken bridge, so skip the signer gate.
+    raw = _bridged_chain("test4.dkim2.com", skip_upstream_check=True)
     result = dkim2verify.verify_message(raw, DNS_DATA, skip_timestamp_check=True)
     assert result.status == 'fail', result
     assert 'i=2 nd= hop d=test4.dkim2.com did not match RCPT TO' in result.message, \

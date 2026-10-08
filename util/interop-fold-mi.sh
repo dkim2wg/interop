@@ -23,6 +23,10 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 1
 
+# The re-signing tools verify the chain they extend (verify-before-sign), so they
+# need the keys and, because hop1 is signed at a fixed old TS, no timestamp check.
+export DKIM2_DNS_JSON="$ROOT/dns.json"
+
 DNS="$ROOT/dns.json"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -154,22 +158,22 @@ count_hdr() { grep -ci "^$1:" "$2" | tr -d ' '; }
 resign_python() {
     python3 "$ROOT/python/dkim2sign.py" -s sel1 -d test2.dkim2.com \
         -k "$(key test2.dkim2.com)" --mailfrom '<sender@test2.dkim2.com>' \
-        --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) "$1" > "$2"
+        --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) --ignore-timestamps "$1" > "$2"
 }
 resign_go() {
     (cd "$ROOT/go" && go run ./cmd/dkim2sign -selector sel1 -domain test2.dkim2.com \
         -key "$(key test2.dkim2.com)" -mail-from '<sender@test2.dkim2.com>' \
-        -rcpt-to '<final@test3.dkim2.com>' -timestamp $((TS + 100)) < "$1" > "$2")
+        -rcpt-to '<final@test3.dkim2.com>' -timestamp $((TS + 100)) -ignore-timestamps < "$1" > "$2")
 }
 resign_c() {
     "$ROOT/c/dkim2sign" "$1" -s sel1 -d test2.dkim2.com \
         -k "$(key test2.dkim2.com)" --mailfrom '<sender@test2.dkim2.com>' \
-        --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) > "$2"
+        --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) --ignore-timestamps > "$2"
 }
 resign_perl() {
     perl "$ROOT/perl/bin/dkim2sign" -s sel1 -d test2.dkim2.com \
         -k "$(key test2.dkim2.com)" --mailfrom '<sender@test2.dkim2.com>' \
-        --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) "$1" > "$2"
+        --rcptto '<final@test3.dkim2.com>' --timestamp $((TS + 100)) --ignore-timestamps "$1" > "$2"
 }
 
 SIGNERS="python"

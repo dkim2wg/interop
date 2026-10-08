@@ -132,6 +132,46 @@ the `s=` tag, one per key.  The verifier is expected to verify all of them.
 
 ---
 
+## Verify before you sign
+
+A signer that is given a message already carrying DKIM2 headers is extending a
+chain of custody, so it must verify that chain first and refuse to sign on top
+of one that does not check out. All four signers (Python, Go, C, Perl) do this;
+`util/signer-gate.sh` is the cross-implementation test.
+
+- **The gate.** Verify the upstream chain as an outbound signer would: the top
+  Message-Instance may be unsigned (it is the one about to be signed), but
+  every signature below must verify and the Recipes must undo cleanly back to
+  the instance below. Any failure means refuse ("not signing: upstream DKIM2
+  chain ..."), exit non-zero and emit no new signature. A message with no
+  DKIM2 headers is just signed.
+- **Null body Recipe.** An unsigned top instance whose body Recipe is
+  `"b": null` (the previous body is not recoverable) is refused by default,
+  because the signer would be vouching for a change it cannot check. The
+  operator opts in with `--allow-null-body-recipe` (Go: `-allow-null-body-recipe`).
+  The flag does not excuse a forged history: the header Recipe is still undone
+  and checked.
+- **Message-Instance-only chains sign.** A list that adds unsigned
+  Message-Instances but no DKIM2-Signature (Mailman does this for an unsigned
+  post) gives a chain with m=1 and m=2 and no i=1. That is signable: verify
+  the Recipes, then sign i=1 over the highest m=. An instance below the
+  highest signed m= need not be referenced by any signature; spec-06 §11 only
+  forbids an instance with an m= higher than every signature's.
+- **The `nd=` bridge rule.** When the top DKIM2-Signature carries `nd=` (a §9.3
+  bridge), the signer may extend the chain only if `nd=` equals its own
+  signing `d=` (case-insensitive). Otherwise refuse: "not signing: top
+  signature nd=X names another domain".
+- **Test tools.** The gate fetches keys like a verifier does. The CLIs take
+  them from `dns.json` via `$DKIM2_DNS_JSON`, and fixtures with old `t=` values
+  need `--ignore-timestamps` (Go: `-ignore-timestamps`); the signer no longer
+  ignores timestamps on its own. The Python verifier likewise needs a
+  `dns.json` (`--dns-json`) because it does no live DNS lookups.
+- **Fixture builders** that must sign over a deliberately broken chain use
+  Python's `sign_message(..., skip_upstream_check=True)`; there is no CLI
+  flag for that.
+
+---
+
 ## Implementation API comparison
 
 All four reference implementations provide the same logical operations; the API shape

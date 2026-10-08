@@ -389,4 +389,32 @@ sub info_values {
         'option on: forged header history not signed');
 }
 
+# --- 5. nd= bridge: sign when the top nd= names our d=, refuse otherwise ---
+{
+    my $nd_signed = sub {
+        my ($nd) = @_;
+        my $mi  = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($PLAIN));
+        my $msg = "Message-Instance: " . $mi->as_string . $EOL . $PLAIN;
+        my $signer = Mail::DKIM2::Signer->new(
+            Domain => 'test1.dkim2.com', Selector => 'sel1',
+            Key => DKIM2TestKeys::private_key('test1.dkim2.com', 'sel1'),
+            NextDomain => $nd, Timestamp => time());
+        $signer->PRINT($msg); $signer->CLOSE;
+        return $signer->as_string . $EOL . $msg;
+    };
+    my ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => $nd_signed->('test2.dkim2.com'));
+    my @sig = inserted($mods, 'DKIM2-Signature');
+    is(scalar @sig, 1, 'nd=us: signed') or diag(milter_log());
+    like($sig[0]{value}, qr/\bi=2;/, 'nd=us: signature is i=2') if @sig;
+
+    ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => $nd_signed->('test3.dkim2.com'));
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'nd=other: not signed');
+    like(milter_log(), qr/not signing .*top signature nd=test3\.dkim2\.com names another domain/,
+        'nd=other: refusal is logged');
+}
+
 done_testing;

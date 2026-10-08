@@ -55,6 +55,7 @@ sub _header_list_for_hash {
 
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
+use Mail::DKIM2::Gate;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
 use Email::MIME;
@@ -364,47 +365,44 @@ sub cb_eom {
         # loosen the chain gate: i=1..n still have to verify, and
         # chain_verifies() below still requires the unsigned instance to match
         # the content and undo cleanly.
-        my $has_dk2 = grep { lc($_->[0]) eq 'dkim2-signature' } @{$priv->{headers}};
-        if ($has_dk2 && !$do_verify) {
-            $verify_result = _do_verify($message, allow_unsigned_mi => 1);
-        }
-
-        # Always run the full undo check on the existing Message-Instance chain
-        # before signing — not just the top MI.  An upstream that emitted a
-        # non-reversible Recipe (e.g. a mailing list) produces a chain whose top
-        # instance matches the current content but cannot be undone back to m=1;
-        # signing it would mint a signature over a chain that fails at every
-        # recipient.  Refuse, exactly as we refuse a broken DKIM2-Signature chain.
-        my ($mi_chain_ok, $mi_chain_why) =
-            Mail::DKIM2::MessageInstance->chain_verifies($message);
-
-        # A top instance with a null body Recipe ("b": null): the list
-        # rewrote the body (content filtering, DMARC wrap) and says so.
-        # chain_verifies has already checked the header history below it.
-        # Signing it is the host's choice: --allow-null-body-recipe.
-        my $top_null = 0;
+        # The decision itself lives in Mail::DKIM2::Gate, shared with
+        # bin/dkim2sign so the two front ends cannot drift apart: verify the
+        # upstream signatures (allowing our own unsigned instance on top), run
+        # the full undo check on the Message-Instance chain (an upstream that
+        # emitted a non-reversible Recipe would give a signature that fails at
+        # every recipient), and refuse a top null body Recipe unless
+        # --allow-null-body-recipe.
+        # nd= bridge: when the top signature carries nd= we may extend it only
+        # if nd= names the domain we sign as, so tell the gate which. (The
+        # gate ignores this unless the top signature has nd=.)
+        my $gate_sd;
         {
-            my %by_v;
+            my $gd = '';
             for my $hdr (@{$priv->{headers}}) {
-                next unless lc($hdr->[0]) eq 'message-instance';
-                (my $val = $hdr->[1]) =~ s/^\s+//;
-                $by_v{extract_mi_version($val) // 0} = $val;
+                if (lc($hdr->[0]) eq 'from') {
+                    ($gd) = $hdr->[1] =~ /\@([\w.-]+)/;
+                    $gd = lc($gd // '');
+                    last;
+                }
             }
-            my ($top) = sort { $b <=> $a } keys %by_v;
-            $top_null = 1 if $top
-                && eval { Mail::DKIM2::MessageInstance->parse($by_v{$top})->unrecoverable };
+            my $gc = _get_sign_config($priv->{env_from}, $gd);
+            $gate_sd = $gc->{domain} if $gc;
         }
+        my $gate = Mail::DKIM2::Gate->check($message,
+            (defined $gate_sd ? (SigningDomain => $gate_sd) : ()),
+            AllowNullBodyRecipe => $opts{'allow-null-body-recipe'},
+            ($do_verify ? (VerifyResult => $verify_result) : ()),
+            _gate_pubkey_cb());
+        $verify_result = $gate->{verify_result};
 
-        if ($has_dk2 && $verify_result !~ /^pass/) {
+        if ($gate->{reason} && $gate->{reason} eq 'upstream-chain') {
             # Upstream chain is broken — don't extend it with a new signature.
-            warn "dkim2-milter: not signing $msgid: upstream DKIM2 chain "
-               . "result=$verify_result\n";
-        } elsif (!$mi_chain_ok) {
-            warn "dkim2-milter: not signing $msgid: Message-Instance chain "
-               . "does not undo cleanly: $mi_chain_why\n";
+            warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
+        } elsif ($gate->{reason} && $gate->{reason} eq 'broken-mi-chain') {
+            warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
             $ctx->insheader('X-DKIM2-Info',
                 _milter_value(_dkim2_info("not-signed=broken-mi-chain")), 0);
-        } elsif ($top_null && !$opts{'allow-null-body-recipe'}) {
+        } elsif ($gate->{reason}) {
             warn "dkim2-milter: not signing $msgid: top Message-Instance has a "
                . "null body Recipe (--allow-null-body-recipe not set)\n";
             $ctx->insheader('X-DKIM2-Info',
@@ -490,7 +488,7 @@ sub cb_eom {
                     warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
                        . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
                     $ctx->insheader('X-DKIM2-Info',
-                        _milter_value(_dkim2_info("null-body-recipe")), 0) if $top_null;
+                        _milter_value(_dkim2_info("null-body-recipe")), 0) if $gate->{top_null};
                 }
             } else {
                 warn "dkim2-milter: no signing key for $msgid from=$priv->{env_from}\n";
@@ -540,6 +538,21 @@ sub _get_sign_config {
 
 # --- Verification ---
 
+# _gate_pubkey_cb(): PubkeyCallback option answering from --dns-json, else real DNS.
+sub _gate_pubkey_cb {
+    return unless $dns_data;
+    return (PubkeyCallback => sub {
+        my ($sig, $idx, $v) = @_;
+        $idx //= 0;
+        my $sel = $sig->selector($idx);
+        my $dom = $sig->domain;
+        my $key_txt = $dns_data->{$dom}{"$sel._domainkey"}[0][1]
+            if $dns_data->{$dom} && $dns_data->{$dom}{"$sel._domainkey"};
+        return parse_dkim_pubkey($key_txt) if $key_txt;
+        return $v->fetch_public_key($sig, $idx);  # fall back to real DNS
+    });
+}
+
 # _do_verify($message, %opts): run the Verifier over a reconstructed message.
 #   allow_unsigned_mi => 1   permit a Message-Instance above the top signature
 #                            (outbound only: it is the instance we are about to
@@ -550,18 +563,8 @@ sub _do_verify {
     my $verifier = Mail::DKIM2::Verifier->new();
     $verifier->allow_unsigned_mi(1) if $o{allow_unsigned_mi};
 
-    if ($dns_data) {
-        $verifier->set_pubkey_callback(sub {
-            my ($sig, $idx, $v) = @_;
-            $idx //= 0;
-            my $sel = $sig->selector($idx);
-            my $dom = $sig->domain;
-            my $key_txt = $dns_data->{$dom}{"$sel._domainkey"}[0][1]
-                if $dns_data->{$dom} && $dns_data->{$dom}{"$sel._domainkey"};
-            return parse_dkim_pubkey($key_txt) if $key_txt;
-            return $v->fetch_public_key($sig, $idx);  # fall back to real DNS
-        });
-    }
+    my %cb = _gate_pubkey_cb();
+    $verifier->set_pubkey_callback($cb{PubkeyCallback}) if $cb{PubkeyCallback};
 
     $verifier->PRINT($message);
     $verifier->CLOSE();

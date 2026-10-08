@@ -354,14 +354,19 @@ static int verify_mi_hashes(
                 ret = -1; goto done;
             }
             unsigned char computed_bh[DKIM2_MAX_HASH_LEN];
+            int have_body_hash = 1;
             if (cur_body) {
                 dkim2_body_hash_raw_alg(cur_body, cur_body_len, alg, computed_bh);
             } else if (vi == n_mi - 1) {
                 memcpy(computed_bh, ctx->body_digests.d[alg], alen);
             } else {
-                continue;                    /* no body bytes for inner MIs */
+                have_body_hash = 0;          /* no body bytes for inner MIs */
             }
-            if (memcmp(computed_bh, stored_bh, alen) != 0) {
+            /* Only the BODY comparison is skipped without body bytes: the
+               header hash below is still checked (it used to be skipped
+               with it, so a digest-only caller never saw a bad inner
+               header history). */
+            if (have_body_hash && memcmp(computed_bh, stored_bh, alen) != 0) {
                 snprintf(errbuf, errbufsz,
                     "FAIL: Message-Instance m=%d body hash mismatch", mi->m);
                 ret = -1; goto done;
@@ -513,6 +518,22 @@ done:
     return ret;
 }
 
+/* §10.7 over ctx->mi_list: sort by m=, then verify_mi_hashes(). Returns 0, or
+   -1 with errbuf set ("FAIL..." / "PERMERROR..."). */
+static int verify_ctx_mi_chain(const dkim2_ctx_t *ctx, char *errbuf, size_t errbufsz) {
+    const int MAX_MI = 64;
+    dkim2_mi_t *mi_sorted[MAX_MI]; int n_mi = 0;
+    for (dkim2_mi_t *m = ctx->mi_list; m && n_mi < MAX_MI; m = m->next)
+        mi_sorted[n_mi++] = m;
+    for (int i = 1; i < n_mi; i++) {
+        dkim2_mi_t *key = mi_sorted[i]; int j = i - 1;
+        while (j >= 0 && mi_sorted[j]->m > key->m) { mi_sorted[j+1] = mi_sorted[j]; j--; }
+        mi_sorted[j+1] = key;
+    }
+    return verify_mi_hashes(mi_sorted, n_mi, ctx->headers, ctx->n_headers,
+                            ctx->body, ctx->body_len, ctx, errbuf, errbufsz);
+}
+
 void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->status = DKIM2_PERMERROR;
     result->message[0] = '\0';
@@ -547,6 +568,28 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     if (ctx->mi_error[0])
         SETSTATUS(DKIM2_PERMERROR, "%s", ctx->mi_error);
 
+    /* §7.3/§10.7: each Message-Instance m= value appears once. Check it
+       explicitly (inbound and outbound), before any crypto, rather than
+       leaving it to an incidental signature or hash failure. */
+    for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next)
+        for (const dkim2_mi_t *b = a->next; b; b = b->next)
+            if (a->m == b->m)
+                SETSTATUS(DKIM2_PERMERROR, "PERMERROR: duplicate Message-Instance m=%d", a->m);
+
+    /* Outbound mode (signer gate): a chain with no signature yet -- just an
+       unsigned Message-Instance the signer is about to cover -- has no
+       signature to verify; its MI chain is still checked. */
+    if (ctx->outbound && !ctx->sig_list && ctx->mi_list) {
+        char mi_errbuf[512];
+        if (verify_ctx_mi_chain(ctx, mi_errbuf, sizeof mi_errbuf) < 0)
+            SETSTATUS((mi_errbuf[0] == 'F') ? DKIM2_FAIL : DKIM2_PERMERROR,
+                "%s", mi_errbuf);
+        result->status = DKIM2_OK;
+        snprintf(result->message, sizeof result->message,
+            "PASS: no DKIM2-Signature yet; Message-Instance chain verified");
+        return;
+    }
+
     /* §10.2: Require at least one DKIM2-Signature */
     if (!ctx->sig_list)
         SETSTATUS(DKIM2_PERMERROR, "PERMERROR: No DKIM2-Signature header");
@@ -570,8 +613,10 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
        DKIM2-Signature MUST NOT carry nd=. The only legitimate nd= producer
        emits the nd= hop together with a matching higher-i= signature, so
        nd= should never appear on the top signature. Non-top nd= adjacency
-       (§11.4, matched further below) is unaffected by this check. */
-    if (latest->nd && latest->nd[0])
+       (§11.4, matched further below) is unaffected by this check. In
+       outbound (signer gate) mode the signer has already required nd= to
+       name its own domain, so the check is skipped. */
+    if (!ctx->outbound && latest->nd && latest->nd[0])
         SETSTATUS(DKIM2_PERMERROR, "DKIM2-Signature i=%d unexpected nd= tag", latest->i);
 
     /* §7.1: i= sequence must be contiguous 1..N */
@@ -592,14 +637,16 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
 
     /* §10.2: No MI with m= higher than latest->m should exist unsigned */
     for (dkim2_mi_t *m = ctx->mi_list; m; m = m->next) {
-        if (m->m > latest->m)
+        /* Outbound mode: the unsigned top instance is the one the signer is
+           about to cover (e.g. a list manager's own m=), so it is allowed. */
+        if (!ctx->outbound && m->m > latest->m)
             SETSTATUS(DKIM2_PERMERROR,
                 "PERMERROR: Message-Instance m=%d is not covered by any signature", m->m);
     }
 
     /* §10.4: Envelope MAIL FROM must match top sig's mf= (domain
        case-insensitive, local-part case-sensitive, null sender aware). */
-    if (ctx->mail_from && latest->mf) {
+    if (!ctx->outbound && ctx->mail_from && latest->mf) {
         if (!env_addr_eq(ctx->mail_from, latest->mf))
             SETSTATUS(DKIM2_PERMERROR,
                 "DKIM2-Signature i=%d MAIL FROM %s did not match",
@@ -608,7 +655,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
 
     /* RCPT TO: every envelope recipient must appear in rt= (§7.7 domains
        match case-insensitively). */
-    if (ctx->rcpt_to && latest->rt) {
+    if (!ctx->outbound && ctx->rcpt_to && latest->rt) {
         for (int i = 0; ctx->rcpt_to[i]; i++) {
             int found = 0;
             for (int j = 0; latest->rt[j]; j++)
@@ -792,25 +839,10 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
 
     /* §10.7: Verify all MI body+header hashes, undoing Recipes for inner hops. */
     {
-        const int MAX_MI = 64;
-        dkim2_mi_t *mi_sorted[MAX_MI]; int n_mi = 0;
-        for (dkim2_mi_t *m = ctx->mi_list; m && n_mi < MAX_MI; m = m->next)
-            mi_sorted[n_mi++] = m;
-        for (int i = 1; i < n_mi; i++) {
-            dkim2_mi_t *key = mi_sorted[i]; int j = i - 1;
-            while (j >= 0 && mi_sorted[j]->m > key->m) { mi_sorted[j+1] = mi_sorted[j]; j--; }
-            mi_sorted[j+1] = key;
-        }
         char mi_errbuf[512];
-        if (verify_mi_hashes(mi_sorted, n_mi,
-                             ctx->headers, ctx->n_headers,
-                             ctx->body, ctx->body_len,
-                             ctx,
-                             mi_errbuf, sizeof mi_errbuf) < 0) {
-            SETSTATUS(
-                (mi_errbuf[0] == 'F') ? DKIM2_FAIL : DKIM2_PERMERROR,
+        if (verify_ctx_mi_chain(ctx, mi_errbuf, sizeof mi_errbuf) < 0)
+            SETSTATUS((mi_errbuf[0] == 'F') ? DKIM2_FAIL : DKIM2_PERMERROR,
                 "%s", mi_errbuf);
-        }
     }
 
     result->status = DKIM2_OK;

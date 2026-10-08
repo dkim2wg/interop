@@ -20,6 +20,12 @@ func main() {
 	nextDomain := flag.String("nd", "", "nd= next-domain for an imaginary forwarding hop (draft-03 §9.3); omits mf=/rt=")
 	hashAlgs := flag.String("hash", "sha256",
 		"hash algorithm(s) for the Message-Instance h= tag: sha256, sha512 or both (spec-05 §3.1)")
+	allowNull := flag.Bool("allow-null-body-recipe", false,
+		"sign even when the top Message-Instance has a null body Recipe (default: refuse)")
+	dnsJSON := flag.String("dns-json", os.Getenv("DKIM2_DNS_JSON"),
+		"dns.json for verifying an upstream chain before signing (default $DKIM2_DNS_JSON, else real DNS)")
+	ignoreTS := flag.Bool("ignore-timestamps", false,
+		"skip the §10.3 timestamp check when verifying the upstream chain")
 	flag.Parse()
 
 	if *selector == "" || *domain == "" || *keyFile == "" {
@@ -73,6 +79,12 @@ func main() {
 		NextDomain: *nextDomain,
 		Timestamp:  ts,
 		HashAlgs:   algs,
+
+		AllowNullBodyRecipe: *allowNull,
+		SkipTimestampCheck:  *ignoreTS,
+	}
+	if *dnsJSON != "" {
+		opts.Fetcher = &dkim2.JSONKeyFetcher{Path: *dnsJSON}
 	}
 
 	if err := dkim2.Sign(os.Stdin, os.Stdout, key, opts); err != nil {

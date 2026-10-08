@@ -40,7 +40,8 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	if len(sigHeaders) == 0 {
+	noSigsOutbound := len(sigHeaders) == 0 && len(opts) > 0 && opts[0].Outbound
+	if len(sigHeaders) == 0 && !noSigsOutbound {
 		return nil, fmt.Errorf("no DKIM2-Signature headers found")
 	}
 	if len(miHeaders) == 0 {
@@ -98,6 +99,23 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
+	// Outbound with no signature at all (a list host added unsigned
+	// Message-Instances to an unsigned post): there is nothing to verify
+	// cryptographically, but the top instance must still match the content;
+	// VerifyFull then checks that the chain undoes.
+	if noSigsOutbound {
+		var mierr error
+		if headersOnly {
+			mierr = verifyMIHeaderHashes(topMI, contentHeaders)
+		} else {
+			mierr = verifyMIHashesPrecomputed(topMI, contentHeaders, bodyHashes)
+		}
+		if mierr != nil {
+			return []VerifyResult{{Domain: "MI-chain", Error: fmt.Errorf("unsigned top %w", mierr)}}, nil
+		}
+		return []VerifyResult{}, nil
+	}
+
 	var topSig *DKIM2Signature
 	for _, raw := range sigHeaders {
 		s, err := parseSig(raw)
@@ -114,11 +132,40 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 	// time, so nd= should never appear alone on the top signature. This is
 	// distinct from checkChainOfCustody's adjacency handling below, which
 	// still allows (and requires) nd= on non-top signatures.
+	// A signer's own gate (Outbound with Signer set) may extend a top nd=
+	// signature that names that signer; any other domain is refused.
 	if topSig != nil && topSig.NextDomain != "" {
-		return nil, fmt.Errorf("DKIM2-Signature i=%d unexpected nd= tag", topSig.Sequence)
+		if len(opts) > 0 && opts[0].Outbound && opts[0].Signer != "" {
+			if !strings.EqualFold(topSig.NextDomain, opts[0].Signer) {
+				return nil, fmt.Errorf("top signature i=%d nd=%s names another domain than %s",
+					topSig.Sequence, topSig.NextDomain, opts[0].Signer)
+			}
+		} else {
+			return nil, fmt.Errorf("DKIM2-Signature i=%d unexpected nd= tag", topSig.Sequence)
+		}
 	}
 
-	if topSig != nil && topSig.MIVersion != maxMIVersion {
+	outbound := len(opts) > 0 && opts[0].Outbound
+	// Outbound: an unsigned top instance is the one the next signer covers.
+	// The signatures' own top instance is then an ordinary lower level (the
+	// chain walk checks it); the unsigned one is checked against the content.
+	unsignedTop := outbound && topSig != nil && topSig.MIVersion < maxMIVersion
+	if unsignedTop && !headersOnly {
+		if mierr := verifyMIHashesPrecomputed(topMI, contentHeaders, bodyHashes); mierr != nil {
+			return []VerifyResult{{
+				Sequence: topSig.Sequence, Domain: topSig.Domain,
+				Error: fmt.Errorf("i=%d: unsigned top %w", topSig.Sequence, mierr),
+			}}, nil
+		}
+	} else if unsignedTop {
+		if mierr := verifyMIHeaderHashes(topMI, contentHeaders); mierr != nil {
+			return []VerifyResult{{
+				Sequence: topSig.Sequence, Domain: topSig.Domain,
+				Error: fmt.Errorf("i=%d: unsigned top %w", topSig.Sequence, mierr),
+			}}, nil
+		}
+	}
+	if topSig != nil && topSig.MIVersion != maxMIVersion && !unsignedTop {
 		return []VerifyResult{{
 			Sequence: topSig.Sequence,
 			Domain:   topSig.Domain,
@@ -185,6 +232,18 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			return nil, fmt.Errorf("i= not contiguous: expected %d got %d", expected, got)
 		}
 	}
+	// A repeated m= is its own error, before the contiguity check.
+	{
+		seenM := make(map[int]bool)
+		for _, raw := range miHeaders {
+			if mi, _ := parseMI(raw); mi != nil {
+				if seenM[mi.Version] {
+					return nil, fmt.Errorf("duplicate Message-Instance m=%d", mi.Version)
+				}
+				seenM[mi.Version] = true
+			}
+		}
+	}
 	// §7.1 MUST: m= values must be contiguous 1..N
 	for idx, raw := range miHeaders {
 		mi, _ := parseMI(raw)
@@ -198,18 +257,20 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	// §7.1 MUST: every MI must be referenced by at least one signature
+	// Spec-06 §11: a Message-Instance whose m= is higher than every
+	// signature's is an error. A lower one no signature names is valid (a
+	// list's unsigned m=1 under a signature on m=2).
 	{
-		miReferenced := make(map[int]bool)
+		maxSigM := 0
 		for _, raw := range sigHeaders {
 			sig, _ := parseSig(raw)
-			if sig != nil {
-				miReferenced[sig.MIVersion] = true
+			if sig != nil && sig.MIVersion > maxSigM {
+				maxSigM = sig.MIVersion
 			}
 		}
 		for _, raw := range miHeaders {
 			mi, _ := parseMI(raw)
-			if mi != nil && !miReferenced[mi.Version] {
+			if mi != nil && mi.Version > maxSigM && !(unsignedTop && mi.Version == maxMIVersion) {
 				return nil, fmt.Errorf("Message-Instance m=%d has no referencing signature", mi.Version)
 			}
 		}

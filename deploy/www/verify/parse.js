@@ -83,18 +83,22 @@ export function collectLevels(headers) {
   const signatures = {};
   const miFields = [];
   const sigFields = [];
+  const dupInstances = [];
+  const dupSignatures = [];
   for (const f of headers) {
     if (isName(f, 'message-instance')) {
       miFields.push(f);
       const parsed = parseTagList(f.value);
       const m = parseInt(parsed.map.m, 10);
+      if (!Number.isNaN(m) && instances[m]) dupInstances.push(m);
       if (!Number.isNaN(m)) instances[m] = { field: f, tags: parsed.tags, map: parsed.map };
     } else if (isName(f, 'dkim2-signature')) {
       sigFields.push(f);
       const parsed = parseTagList(f.value);
       const i = parseInt(parsed.map.i, 10);
+      if (!Number.isNaN(i) && signatures[i]) dupSignatures.push(i);
       if (!Number.isNaN(i)) signatures[i] = { field: f, tags: parsed.tags, map: parsed.map };
     }
   }
-  return { instances, signatures, miFields, sigFields };
+  return { instances, signatures, miFields, sigFields, dupInstances, dupSignatures };
 }

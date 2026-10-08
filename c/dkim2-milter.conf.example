@@ -21,3 +21,9 @@ alg=ed25519-sha256
 
 # Authentication-Results authservid (verifier mode; defaults to "localhost")
 # authservid=mail.example.com
+
+# Signer gate (modes s/r): a message already carrying a DKIM2 chain is verified
+# before it is extended, and delivered UNSIGNED (logged) if the chain does not
+# verify. A chain whose top Message-Instance has a null body Recipe is refused
+# too, unless this is set to 1. Keys for the check come from DNS.
+# allow_null_body_recipe=0

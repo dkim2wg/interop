@@ -89,6 +89,9 @@ typedef struct dkim2_ctx {
 
     /* Verifier options */
     int skip_timestamp_check;  /* 1 = skip t= expiry check (for testing) */
+    int outbound;              /* 1 = signer gate: an unsigned top Message-Instance
+                                  is allowed, and the envelope in mail_from/rcpt_to
+                                  is OUR next hop, not checked against the top sig */
 
     /* Result */
     dkim2_status_t status;

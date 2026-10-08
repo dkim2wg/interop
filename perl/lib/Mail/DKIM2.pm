@@ -87,6 +87,12 @@ Parses and builds one DKIM2-Signature header.
 Generates, authenticates and propagates DKIM2-signed Delivery Status
 Notifications (spec-06 section 12).
 
+=item L<Mail::DKIM2::Gate>
+
+The verify-before-sign decision shared by C<bin/dkim2sign> and
+C<bin/dkim2-milter>: whether the upstream chain is worth extending, and
+whether a top C<nd=> names the domain about to sign.
+
 =item L<Mail::DKIM2::Common>
 
 Canonicalization, hashing, folding and key-loading functions shared by the

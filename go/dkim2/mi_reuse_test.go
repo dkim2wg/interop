@@ -28,7 +28,7 @@ func signHop(t *testing.T, in []byte, keyName, selector, domain, mailFrom string
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := Sign(bytes.NewReader(in), &out, key, SignOptions{
+	if err := Sign(bytes.NewReader(in), &out, key, SignOptions{SkipUpstreamCheck: true,
 		Selector: selector, Domain: domain,
 		MailFrom: mailFrom, RcptTo: rcptTo, Timestamp: ts,
 	}); err != nil {

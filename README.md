@@ -28,15 +28,30 @@ This signs one message with each of the four signers (Python, Go, C, Perl) at
 five verifiers (adding browser JS) — 60 signer/algorithm/verifier
 combinations in total.
 
+## Signer gate
+
+A signer that is handed a message with a DKIM2 chain must verify that chain
+before extending it (see "Verify before you sign" in
+`docs/dkim2-implementer-guide.md`). `util/signer-gate.sh` runs a set of
+chain-shaped fixtures (no chain, valid chain, broken signature, broken MI
+chain, null body Recipe, Message-Instance-only chains, `nd=` bridges) through
+all four signer CLIs, plain and with `--allow-null-body-recipe`, and checks each
+signs or refuses as specified:
+
+    ./util/signer-gate.sh
+
+It needs the built `c/dkim2sign` and `go/dkim2sign`, and uses `dns.json` for
+the verification keys.
+
 ## Negative vectors
 
 `util/negative-vectors.sh` hand-builds one cryptographically valid message
 per spec-06 PERMERROR — a duplicate hash algorithm, a duplicate
 Selector, more selectors than allowed, malformed Recipe JSON, an unsigned
 top instance, a wrongly-keyed `nd=` bridge, and Recipe copy ranges that are
-out of order or overlap (§5.2) — plus positive controls (the same algorithm
+out of order or overlap (§5.2), and a duplicated Message-Instance `m=` — plus positive controls (the same algorithm
 signed twice under distinct Selectors, which §8.9 explicitly permits; a
-Recipe on the bottom instance; a correct bridge; and a Recipe whose `b`
+Recipe on the bottom instance; a correct bridge; an unsigned lower Message-Instance under a signed higher one; and a Recipe whose `b`
 items restore non-UTF-8 octets) and feeds them all through every verifier's
 real CLI entry point, asserting each negative vector is REJECTED and each
 positive control is ACCEPTED:

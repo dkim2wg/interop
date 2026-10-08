@@ -26,14 +26,26 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		ts = time.Now().Unix()
 	}
 
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("reading message: %w", err)
+	}
+
 	// 1. Parse headers; buffer body for re-emission.
-	headers, bodyReader, err := parseHeaders(r)
+	headers, bodyReader, err := parseHeaders(bytes.NewReader(raw))
 	if err != nil {
 		return fmt.Errorf("parsing headers: %w", err)
 	}
 	bodyBuf := &bytes.Buffer{}
 	if _, err := io.Copy(bodyBuf, bodyReader); err != nil {
 		return fmt.Errorf("reading body: %w", err)
+	}
+
+	// Signer gate: never put our signature over a chain that does not check out.
+	if !opts.SkipUpstreamCheck {
+		if err := checkUpstream(raw, headers, opts); err != nil {
+			return err
+		}
 	}
 
 	// 2. Determine the hash algorithm(s) to sign with (spec-06 §3.1). Default
@@ -233,4 +245,55 @@ func LoadPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 		return nil, fmt.Errorf("parsing private key: %w", err)
 	}
 	return key, nil
+}
+
+// checkUpstream is the signer gate.  A message with no DKIM2 headers passes.
+// Otherwise the existing chain is verified in outbound mode (an unsigned top
+// Message-Instance is allowed) and, unless opts.AllowNullBodyRecipe, the top
+// Message-Instance must not carry a null body Recipe.
+func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
+	var mis []*MessageInstance
+	chain := false
+	for _, h := range headers {
+		switch strings.ToLower(h.Name) {
+		case "dkim2-signature":
+			chain = true
+		case "message-instance":
+			chain = true
+			if mi, err := parseMI(h.Raw); err == nil {
+				mis = append(mis, mi)
+			}
+		}
+	}
+	if !chain {
+		return nil
+	}
+	fetcher := opts.Fetcher
+	if fetcher == nil {
+		fetcher = &NetKeyFetcher{}
+	}
+	results, err := VerifyFull(bytes.NewReader(raw), fetcher,
+		VerifyOptions{SkipTimestampCheck: opts.SkipTimestampCheck, Outbound: true, Signer: opts.Domain})
+	if err != nil {
+		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail: %w", err)
+	}
+	for _, r := range results {
+		if r.Error == nil {
+			continue
+		}
+		if strings.HasPrefix(r.Domain, "MI-chain") {
+			return fmt.Errorf("not signing: Message-Instance chain does not undo cleanly: %w", r.Error)
+		}
+		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail i=%d d=%s: %w", r.Sequence, r.Domain, r.Error)
+	}
+	var top *MessageInstance
+	for _, mi := range mis {
+		if top == nil || mi.Version > top.Version {
+			top = mi
+		}
+	}
+	if top != nil && top.Recipe != nil && top.Recipe.BodyNull && !opts.AllowNullBodyRecipe {
+		return fmt.Errorf("not signing: top Message-Instance m=%d has a null body Recipe (set allow-null-body-recipe to sign anyway)", top.Version)
+	}
+	return nil
 }
