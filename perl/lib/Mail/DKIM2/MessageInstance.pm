@@ -969,8 +969,11 @@ sub _check_recipe {
             unless @$cmd == 2
                 && _is_json_integer($from) && $from >= 0
                 && _is_json_integer($to)   && $to   >= 0;
-        die "$what Recipe copies lines $from-$to of $lines\n"
-            unless 1 <= $from && $from <= $to && (!defined $lines || $to <= $lines);
+        unless (1 <= $from && $from <= $to && (!defined $lines || $to <= $lines)) {
+            # No line count (structure-only check below a null body Recipe).
+            die "$what Recipe has an invalid copy range $from-$to\n" unless defined $lines;
+            die "$what Recipe copies lines $from-$to of $lines\n";
+        }
         if ($prev && $from <= $prev->[1]) {
             if ($to >= $prev->[0]) {
                 my $lo = $from > $prev->[0] ? $from : $prev->[0];
