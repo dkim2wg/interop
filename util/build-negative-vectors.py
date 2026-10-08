@@ -48,6 +48,8 @@ Writes:
                                          in an otherwise valid chain; REJECT
   positive-control-unreferenced-lower-mi.eml -- unsigned m=1 under an m=2
                                          (with Recipe) covered by i=1; ACCEPT
+  signature-gap.eml                -- i=1 and i=3, no i=2; otherwise valid; REJECT
+  instance-gap.eml                 -- m=1 and m=3, no m=2; otherwise valid; REJECT
   positive-control-nd-bridge.eml   -- the same §9.3 bridge made with a key for
                                          the domain the message DID arrive at
 """
@@ -598,7 +600,55 @@ def build_positive_unreferenced_lower_mi():
     return out + b"\r\n" + b2
 
 
+def _gap_chain(sig2_seq, mi2_version):
+    """Two real hops (m=1/i=1 by test1, then a Subject-tag + footer hop by
+    test2) built with the second hop's i= and m= forced to the given values.
+    build_dkim2_signature takes seq/mi_version directly, so the second hop is
+    GENUINELY signed over a chain that never contained the skipped number:
+    its signature covers exactly the headers present.  Hashes, Recipe and
+    signatures are all valid; only the numbering has a hole."""
+    headers, body = load_base()
+    h2, b2 = _subject_prefixed(headers, b"list"), body + b"footer\r\n"
+    mi1 = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
+    priv1, alg1 = ds.load_private_key(key("sel1"))
+    sig1 = ds.build_dkim2_signature(
+        [], [], mi1, DOM, "sel1", priv1, alg1,
+        mailfrom=MF, rcptto=RT, seq=1, mi_version=1, timestamp=TS)
+    mi2 = ds.build_message_instance(h2, b2, version=mi2_version, algs=["sha256"],
+                                    recipe=ds.build_recipes(headers, body, h2, b2))
+    dom2 = "test2.dkim2.com"
+    priv2, alg2 = ds.load_private_key(key("sel1", dom2))
+    sig2 = ds.build_dkim2_signature(
+        [mi1], [sig1], mi2, dom2, "sel1", priv2, alg2,
+        mailfrom="relay@test2.dkim2.com", rcptto=["final@example.com"],
+        seq=sig2_seq, mi_version=mi2_version, timestamp=TS + 100)
+    out = sig2.encode() + b"\r\n" + sig1.encode() + b"\r\n"
+    out += mi2.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+    for h in h2:
+        out += h + b"\r\n"
+    return out + b"\r\n" + b2
+
+
+def build_signature_gap():
+    """NEGATIVE: DKIM2-Signature i=1 and i=3, no i=2 (Message-Instance m=1,
+    m=2, consecutive).  i=3 is genuinely signed over the chain as it stands
+    (it never contained an i=2), its m=2 Recipe and hashes are right, and
+    d=/rt= adjacency holds.  Only the missing i=2 is wrong: a chain of
+    custody with a hole.  MUST be rejected."""
+    return _gap_chain(sig2_seq=3, mi2_version=2)
+
+
+def build_instance_gap():
+    """NEGATIVE: Message-Instance m=1 and m=3, no m=2 (signatures i=1, i=2,
+    consecutive).  The m=3 Recipe undoes straight to the m=1 state, so every
+    hash checks, and i=2 (m=3) genuinely signs the headers present.  Only
+    the missing m=2 is wrong.  MUST be rejected."""
+    return _gap_chain(sig2_seq=2, mi2_version=3)
+
+
 FIXTURES = {
+    "signature-gap.eml": build_signature_gap,
+    "instance-gap.eml": build_instance_gap,
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
     "too-many-signatures.eml": build_too_many,
