@@ -45,26 +45,26 @@ verifier and undo.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- DKIM2-MESSAGE-INSTANCE.md                | 242 +++++++
+ DKIM2-MESSAGE-INSTANCE.md                | 248 ++++++
  Makefile.am                              |   1 +
  src/lib/Makefile.am                      |   1 +
- src/lib/Sympa/DKIM2.pm                   | 457 +++++++++++++
+ src/lib/Sympa/DKIM2.pm                   | 543 +++++++++++++
  src/lib/Sympa/Message.pm                 |  33 +
  src/lib/Sympa/Spindle/ProcessArchive.pm  |  13 +-
  src/lib/Sympa/Spindle/ProcessIncoming.pm |   5 +
  src/lib/Sympa/Spindle/ProcessOutgoing.pm |  61 +-
  src/lib/Sympa/Spindle/ResendArchive.pm   |   4 +
- t/DKIM2.t                                | 835 ++++++++++++++++++++++-
- 10 files changed, 1634 insertions(+), 18 deletions(-)
+ t/DKIM2.t                                | 929 ++++++++++++++++++++++-
+ 10 files changed, 1820 insertions(+), 18 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/lib/Sympa/DKIM2.pm
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..f6a499143
+index 000000000..9d1c09670
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,248 @@
 +# DKIM2 Message-Instance support for Sympa
 +
 +Sympa changes the messages it redistributes: it adds list headers, a
@@ -104,7 +104,8 @@ index 000000000..f6a499143
 +then install it from `perl/` in the DKIM2 interop repository
 +(<https://github.com/dkim2wg/interop>). 0.15 adds the `BodyRecipe` option
 +that lets the caller give the body Recipe instead of having it computed by
-+diff. Mail::DKIM2 is loaded on first use, not at compile time, so Sympa
++diff, and the `BodyHash` option that lets it give the body hash, so the
++instance is calculated from the header block alone. Mail::DKIM2 is loaded on first use, not at compile time, so Sympa
 +without it runs as stock; an older version counts as missing.
 +
 +## Ingress: before decryption, into a pseudo-header
@@ -220,10 +221,15 @@ index 000000000..f6a499143
 +   outgoing body gives back a body whose hash is the top instance's body
 +   hash, counting lines as the verifier does. Otherwise something changed
 +   the body without saying so; Sympa logs at `notice` and uses a null body
-+   Recipe.
++   Recipe. For a copy range the check usually costs no hash: the copied
++   lines are compared byte for byte with the packet's body, which
++   `egress_context` hashed. Only when they differ (the lines were rewritten,
++   or their line ends changed) are they hashed.
 +4. Compute the instance with `Mail::DKIM2::MessageInstance->calculate`,
 +   diffing the saved header block against the outgoing header block for the
-+   header Recipe. If nothing changed at all (no header change, body Recipe
++   header Recipe. The outgoing body is hashed once, here, and passed in
++   (`BodyHash`), so `calculate` sees the header block only: the body is
++   never parsed as MIME, nor the copy built as one string. If nothing changed at all (no header change, body Recipe
 +   "none"), no instance is added.
 +5. Add it as the next `m=` (one more than the highest present) at the top of
 +   the header, folded with Mail::DKIM2's folder.
@@ -291,7 +297,7 @@ index 000000000..f6a499143
 +message. With it on, ingress adds one hash of the message and one header
 +block (base64) to the spooled message; egress adds a header-only verify
 +and one body hash per packet, and one body hash, a header diff and a
-+self-check per copy. There is no extra spool file. Measurements are in
++self-check (normally a byte compare) per copy. There is no extra spool file. Measurements are in
 +progress; figures will be added here.
 +
 +## Tests
@@ -333,10 +339,10 @@ index 1e4b49c3d..d3d962453 100644
  	Sympa/HTML/URIFind.pm \
 diff --git a/src/lib/Sympa/DKIM2.pm b/src/lib/Sympa/DKIM2.pm
 new file mode 100644
-index 000000000..87159d619
+index 000000000..8de43af0f
 --- /dev/null
 +++ b/src/lib/Sympa/DKIM2.pm
-@@ -0,0 +1,457 @@
+@@ -0,0 +1,543 @@
 +# -*- indent-tabs-mode: nil; -*-
 +# vim:ft=perl:et:sw=4
 +
@@ -418,7 +424,9 @@ index 000000000..87159d619
 +    eval {
 +        unless ($message->{_head}->count('Message-Instance')) {
 +            my $mi = Mail::DKIM2::MessageInstance->calculate(
-+                $message->as_rfc822_string);
++                _header_block($message), undef,
++                BodyHash => Mail::DKIM2::MessageInstance::body_digest_raw(
++                    $message->{_body}));
 +            _prepend_instance($message, $mi);
 +        }
 +        $message->{'dkim2_headers'} = $message->{_head}->as_string;
@@ -430,7 +438,8 @@ index 000000000..87159d619
 +# Once per packet, before any per-recipient change.  Returns undef (add
 +# nothing), {strip => 1} (anonymous: remove the chain), or {prev => the
 +# saved header block (CRLF, ending in a blank line), unchanged => 1 if the
-+# body is still the one the top instance hashed, body_hash => that hash}.
++# body is still the one the top instance hashed, body_hash => that hash,
++# orig_body => that body when unchanged}.
 +sub egress_context {
 +    my $message = shift;
 +    my $list    = $message->{context};
@@ -455,7 +464,8 @@ index 000000000..87159d619
 +            eq $top->body_hash;
 +        {   prev      => $prev,
 +            unchanged => ($unchanged ? 1 : 0),
-+            body_hash => $top->body_hash
++            body_hash => $top->body_hash,
++            ($unchanged ? (orig_body => $message->{_body} // '') : ())
 +        };
 +    };
 +    $log->syslog('err', 'DKIM2: %s: %s; no Message-Instance added',
@@ -483,6 +493,10 @@ index 000000000..87159d619
 +# range or none is used only if the body it gives back hashes to the top
 +# instance's body hash; otherwise something changed the body unannounced,
 +# and the Recipe is null.  Never dies.
++#
++# A copy's body is hashed once, and the instance calculated from the
++# header block alone: nothing here parses the body or builds the whole
++# message as a string.
 +sub egress_add {
 +    my ($message, $ctx, %opts) = @_;
 +    return unless $ctx;
@@ -502,16 +516,21 @@ index 000000000..87159d619
 +        } else {
 +            $br = 'none';
 +        }
-+        my $cur = $message->as_rfc822_string;
++        # A reference: copying the body is what this avoids.
++        my $body = defined $message->{_body} ? \$message->{_body} : \'';
++        my $bh = Mail::DKIM2::MessageInstance::body_digest_raw($$body);
 +        if ((ref $br or $br ne 'null')
-+            and not _recovers_body($cur, $br, $ctx->{body_hash})) {
++            and not(ref $br
++                ? _recovers_body($$body, $br, $ctx)
++                : $bh eq $ctx->{body_hash})) {
 +            $log->syslog('notice',
 +                'DKIM2: body of %s changed after ingress; null body Recipe',
 +                $message);
 +            $br = 'null';
 +        }
-+        my $mi = Mail::DKIM2::MessageInstance->calculate($cur, $ctx->{prev},
-+            BodyRecipe => $br);
++        my $mi = Mail::DKIM2::MessageInstance->calculate(
++            _header_block($message), $ctx->{prev},
++            BodyRecipe => $br, BodyHash => $bh);
 +        # Nothing changed at all: no instance (spec: r= needs "h" or "b").
 +        return 1 if !ref $br and $br eq 'none' and $mi->as_string !~ /; r=/;
 +        _prepend_instance($message, $mi);
@@ -521,21 +540,83 @@ index 000000000..87159d619
 +        $message, $EVAL_ERROR);
 +}
 +
-+# True if the body Recipe $br ('none', or [] / [[first, last]] from wrap())
-+# applied to the body of the CRLF message $cur gives a body with hash $hash.
++# True if the copy Recipe $br ([] or [[first, last]], from wrap()) applied
++# to the body $_[0] gives back a body with the top instance's hash,
++# $ctx->{body_hash}.  The body is used in place, never copied.  Lines are
++# counted as the verifier splits them (/\r?\n/, trailing empty lines
++# dropped).  Copies of one packet differ only outside the copied lines, so
++# the usual answer comes from comparing those bytes with the packet's body,
++# which egress_context() hashed ($ctx->{orig_body}): a memory compare, not
++# a hash.  Anything else (an LF body sent as CRLF, say) is hashed.
 +sub _recovers_body {
-+    my ($cur, $br, $hash) = @_;
-+    my (undef, $body) = split /\r\n\r\n/, $cur, 2;
-+    $body //= '';
-+    if (ref $br) {
-+        my ($first, $last) = @{$br->[0] || []};
-+        my @lines = split /\r?\n/, $body;   # as the verifier does
-+        return 0 if defined $last and $last > @lines;
-+        $body = defined $first
-+            ? join("\r\n", @lines[$first - 1 .. $last - 1]) . "\r\n"
-+            : '';
++    my (undef, $br, $ctx) = @_;
++    my $bref = \$_[0];
++    my $hash = $ctx->{body_hash};
++    my ($first, $last) = @{$br->[0] || []};
++    return Mail::DKIM2::MessageInstance::body_digest_raw('') eq $hash
++        unless defined $first;
++    my ($start, $end) = _line_span($bref, $first, $last) or return 0;
++    return 1
++        if defined $ctx->{orig_body}
++        and _same_bytes($bref, $start, $end, \$ctx->{orig_body});
++    return Mail::DKIM2::MessageInstance::body_digest_raw(
++        substr($$bref, $start, $end - $start)) eq $hash;
++}
++
++# The byte offsets (start, end) of lines $first .. $last of $$bref, end
++# being after line $last's line break (if it has one); empty if line $last
++# is not one of the verifier's lines.  Walks forward to $first and back
++# from the end to $last, so for a wrapped body only the few header and
++# footer lines are visited.
++sub _line_span {
++    my ($bref, $first, $last) = @_;
++    my $len   = length $$bref;
++    my $start = 0;
++    for (2 .. $first) {
++        my $nl = index($$bref, "\n", $start);
++        return if $nl < 0;
++        $start = $nl + 1;
 +    }
-+    return Mail::DKIM2::MessageInstance::body_digest_raw($body) eq $hash;
++    my $total = ($$bref =~ tr/\n//);
++    my $end;
++    if ($last <= $total) {
++        $end = $len;
++        $end = rindex($$bref, "\n", $end - 1) for 0 .. $total - $last;
++        $end++;
++    } elsif ($last == $total + 1 and $len and substr($$bref, -1) ne "\n") {
++        $end = $len;
++    } else {
++        return;
++    }
++    # split() drops trailing empty lines: line $last must be followed, or
++    # be made, by something other than line breaks.
++    my $line_start = $last == 1 ? 0 : rindex($$bref, "\n", $end - 2) + 1;
++    pos($$bref) = $line_start;
++    my $only_breaks = $$bref =~ /\G(?:\r?\n)*\z/gc;
++    pos($$bref) = undef;
++    return if $only_breaks or $start > $line_start;
++    return ($start, $end);
++}
++
++# True if $$bref from $start to $end is $$oref: the same bytes, or those
++# bytes and a "\n" when $$oref ends without a line break (wrap() adds one
++# before the next delimiter).  Compared a megabyte at a time.
++sub _same_bytes {
++    my ($bref, $start, $end, $oref) = @_;
++    my $olen = length $$oref;
++    unless ($end - $start == $olen) {
++        return 0
++            unless $olen
++            and $end - $start == $olen + 1
++            and substr($$oref, -1) !~ /[\r\n]/
++            and substr($$bref, $end - 1, 1) eq "\n";
++    }
++    for (my $i = 0; $i < $olen; $i += 1 << 20) {
++        my $n = $olen - $i < 1 << 20 ? $olen - $i : 1 << 20;
++        return 0
++            unless substr($$bref, $start + $i, $n) eq substr($$oref, $i, $n);
++    }
++    return 1;
 +}
 +
 +# Anonymous lists and resends from the archive start a new chain: the
@@ -544,6 +625,14 @@ index 000000000..87159d619
 +    my $message = shift;
 +    $message->delete_header($_)
 +        for 'DKIM2-Signature', 'Message-Instance';
++}
++
++# The header block of $message as calculate() takes it: the fields as
++# they go on the wire, a blank line, CRLF line ends, no body.
++sub _header_block {
++    my $message = shift;
++    (my $h = $message->{_head}->as_string . "\n") =~ s/\r?\n/\r\n/g;
++    return $h;
 +}
 +
 +# fold_header returns the field folded with "\r\n\t" and no trailing newline;
@@ -585,8 +674,10 @@ index 000000000..87159d619
 +    );
 +    return 1 unless @before or @after;
 +
-+    my $body     = $message->{_body} // '';
-+    my $boundary = _boundary(join '', $body, @before, @after);
++    # The body is used through a reference and copied only into the new
++    # body: it can be large, and this runs once per recipient.
++    my $body     = defined $message->{_body} ? \$message->{_body} : \'';
++    my $boundary = _boundary($$body, @before, @after);
 +
 +    # The original part: the top-level MIME fields move to it, verbatim.
 +    # Content-Length no longer describes anything, so it goes.
@@ -604,10 +695,11 @@ index 000000000..87159d619
 +    # are counted by "\n", which also ends each CRLF line, so the count
 +    # matches the CRLF wire form.
 +    my $first  = ($pre =~ tr/\n//) + 1;
-+    my $nlines = ($body =~ tr/\n//) + ($body =~ /[^\n]\z/ ? 1 : 0);
++    my $open   = length $$body && substr($$body, -1) ne "\n";
++    my $nlines = ($$body =~ tr/\n//) + ($open ? 1 : 0);
 +    # The delimiter's own line break: the body's final newline (if any)
 +    # stays part of the body, as received.
-+    my $post = ($body =~ /[^\n]\z/) ? "\n" : '';
++    my $post = $open ? "\n" : '';
 +    $post .= "\n--$boundary\n$_" for @after;
 +    $post .= "\n--$boundary--\n";
 +
@@ -621,13 +713,13 @@ index 000000000..87159d619
 +        sprintf 'multipart/mixed; boundary="%s"', $boundary);
 +    if ($cte eq 'binary') {
 +        $new_head->replace('Content-Transfer-Encoding', 'binary');
-+    } elsif ($cte eq '8bit' or grep {/[^\x00-\x7F]/} $body, @before, @after)
++    } elsif ($cte eq '8bit' or grep {/[^\x00-\x7F]/} $$body, @before, @after)
 +    {
 +        $new_head->replace('Content-Transfer-Encoding', '8bit');
 +    }
 +
 +    $message->{_head} = $new_head;
-+    $message->{_body} = $pre . $body . $post;
++    $message->{_body} = $pre . $$body . $post;
 +    delete $message->{_entity_cache};
 +    $message->{_dkim2_body_lines} =
 +        $nlines ? [$first, $first + $nlines - 1] : [];
@@ -683,13 +775,13 @@ index 000000000..87159d619
 +            . $t);
 +}
 +
-+# A boundary not occurring anywhere in $text (the body and the new parts).
++# A boundary occurring in none of the strings given (the body and the new
++# parts; none is copied).
 +sub _boundary {
-+    my $text = shift;
 +    while (1) {
 +        my $b = sprintf '=_dkim2_%08x%08x',
 +            int rand 0xffffffff, int rand 0xffffffff;
-+        return $b if index($text, $b) < 0;
++        return $b unless grep { index($_, $b) >= 0 } @_;
 +    }
 +}
 +
@@ -1067,10 +1159,10 @@ index a70320541..8675b485f 100644
      $message->{envelope_sender} = $self->{resent_by};
  
 diff --git a/t/DKIM2.t b/t/DKIM2.t
-index f042f8ece..716a63915 100644
+index f042f8ece..6a61ab256 100644
 --- a/t/DKIM2.t
 +++ b/t/DKIM2.t
-@@ -1,8 +1,35 @@
+@@ -1,8 +1,36 @@
  # -*- indent-tabs-mode: nil; -*-
 -# DKIM2 Message-Instance support.
 +# DKIM2 Message-Instance support. Needs Mail::DKIM2 (interop perl/lib or
@@ -1084,6 +1176,7 @@ index f042f8ece..716a63915 100644
 +use Sympa::DKIM2; use Sympa::Spindle::ProcessArchive;
 +use Mail::DKIM2::MessageInstance; use Mail::DKIM2::Common;
 +use MIME::Base64 qw(encode_base64 decode_base64);
++use List::Util ();
 +
 +Sympa::Log->instance->{log_to_stderr} = 'err';
 +%Conf::Conf = (domain => 'mail.example.org', listmaster => 'lm@example.org',
@@ -1107,7 +1200,7 @@ index f042f8ece..716a63915 100644
  
  subtest 'switch parameter' => sub {
      my %p = %{ $Sympa::Config::Schema::pinfo{dkim2_message_instance} || {} };
-@@ -12,4 +39,810 @@ subtest 'switch parameter' => sub {
+@@ -12,4 +40,903 @@ subtest 'switch parameter' => sub {
      is_deeply $p{context}, [qw(list domain site)], 'list/domain/site';
  };
  
@@ -1450,6 +1543,32 @@ index f042f8ece..716a63915 100644
 +    chain_ok($w, 'header history still verifies');
 +};
 +
++subtest 'egress: original part edited in place after decorate -> null' => sub {
++    my ($w, $err) = ('', '');
++    { local *STDERR; open STDERR, '>', \$err or die;
++      $w = through($plain, undef, post => sub {
++          $_[0]->{_body} =~ s/^hello$/HELLO/m or die 'no hello';
++          delete $_[0]->{_entity_cache} }) }
++    like $err, qr/^notice .*body of .* changed after ingress; null body Recipe/m, 'logged';
++    ok top_recipe($w)->unrecoverable, 'same length, same lines: still b null';
++    chain_ok($w, 'header history still verifies');
++};
++
++subtest 'egress: original body without a final newline' => sub {
++    (my $nonl = $plain) =~ s/\n\z//;
++    for my $end ('', "\r") {
++        my ($w, $err) = ('', '');
++        { local *STDERR; open STDERR, '>', \$err or die;
++          $w = through($nonl . $end) }
++        my $mi = top_recipe($w);
++        ok $mi, 'instance' and is !!$mi->unrecoverable, !!length $end,
++            length $end ? 'lone CR at the end: b null' : 'body recoverable';
++        is $err =~ /null body Recipe/ ? 1 : 0, length $end ? 1 : 0,
++            length $end ? 'logged' : 'nothing logged';
++        chain_ok($w, 'verifies');
++    }
++};
++
 +subtest 'egress: no saved headers -> nothing, no error' => sub {
 +    my $l = list();
 +    my $b = Sympa::Message->new($plain, context => $l);
@@ -1628,12 +1747,79 @@ index f042f8ece..716a63915 100644
 +};
 +
 +subtest '_recovers_body: copy range must fit the verifier line count' => sub {
-+    my $body = "a\r\nb\r\n";
 +    my $h = sub { Mail::DKIM2::MessageInstance::body_digest_raw(shift) };
-+    ok Sympa::DKIM2::_recovers_body("H: x\r\n\r\n$body", [[1, 2]], $h->($body)),
-+        'whole body (1..2) recovered';
-+    ok !Sympa::DKIM2::_recovers_body("H: x\r\n\r\n$body", [[1, 3]], $h->("$body\r\n")),
-+        'range one past the last line is not a copy';
++    for my $body ("a\r\nb\r\n", "a\nb\n") {
++        my $ctx = {body_hash => $h->($body)};
++        ok Sympa::DKIM2::_recovers_body($body, [[1, 2]], $ctx),
++            'whole body (1..2) recovered';
++        $ctx = {body_hash => $h->("$body\r\n")};
++        ok !Sympa::DKIM2::_recovers_body($body, [[1, 3]], $ctx),
++            'range one past the last line is not a copy';
++        ok !Sympa::DKIM2::_recovers_body("$body\n\n", [[1, 3]], $ctx),
++            'nor is a trailing empty line';
++    }
++    my $orig = "x\ny\n";
++    my $ctx = {body_hash => $h->($orig), orig_body => $orig};
++    ok Sympa::DKIM2::_recovers_body("p\n${orig}f\n", [[2, 3]], $ctx),
++        'byte-equal to the packet body';
++    ok Sympa::DKIM2::_recovers_body("p\n${orig}f\n", [[2, 3]],
++        {%$ctx, body_hash => 'not consulted'}),
++        'byte-equal: decided by the compare, no hash';
++    ok Sympa::DKIM2::_recovers_body("p\nx\ny\nf\n", [[2, 3]],
++        {body_hash => 'not consulted', orig_body => "x\ny"}),
++        'byte-equal but for the line break wrap() adds';
++    ok !Sympa::DKIM2::_recovers_body("p\nx\ny\r\nf\n", [[2, 3]],
++        {body_hash => $h->("x\ny\r"), orig_body => "x\ny\r"}),
++        'a final lone CR is not given back';
++    ok !Sympa::DKIM2::_recovers_body("p\nx\nY\nf\n", [[2, 3]], $ctx),
++        'one byte different';
++    ok Sympa::DKIM2::_recovers_body("p\r\nx\r\ny\r\nf\r\n", [[2, 3]], $ctx),
++        'CRLF copy of an LF body: not byte-equal, hashes the same';
++    ok !Sympa::DKIM2::_recovers_body("p\nx\ny\nf\n", [[1, 2]], $ctx),
++        'wrong range';
++    ok !Sympa::DKIM2::_recovers_body("", [[1, 1]], $ctx), 'empty body';
++    ok Sympa::DKIM2::_recovers_body("p\n", [], {body_hash => $h->('')}),
++        'empty original';
++};
++
++subtest 'egress: personalised footers on a large body, no MIME parse of the body' => sub {
++    local %FILES;
++    set_file('message_footer', "for [% user.email %]\n");
++    no warnings qw(redefine once);
++    local *Sympa::List::get_list_member =
++        sub { +{email => $_[1], date => 0} };
++    my $att = join '', map { encode_base64(pack('N*', $_ .. $_ + 40)) } 1 .. 2000;
++    my $raw = "From: a\@example.org\nTo: test\@mail.example.org\nSubject: big\n"
++        . "Message-ID: <big\@example.org>\nMIME-Version: 1.0\n"
++        . "Content-Type: multipart/mixed; boundary=\"b1\"\n\n"
++        . "--b1\nContent-Type: text/plain\n\nsee attached\n"
++        . "--b1\nContent-Type: application/octet-stream\n"
++        . "Content-Transfer-Encoding: base64\n\n$att--b1--\n";
++    my $l = list();
++    my $m = Sympa::Message->new($raw, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $pk = Sympa::Message->new($m->to_string, context => $l);
++    my $ctx = Sympa::DKIM2::egress_context($pk);
++    my $new = \&Email::MIME::new;
++    my $digest = \&Mail::DKIM2::MessageInstance::body_digest_raw;
++    for my $rcpt (map {"r$_\@example.net"} 1 .. 4) {
++        my $one = $pk->dup;
++        $one->decorate($l, $rcpt, mode => 'footer');
++        my (@parsed, $hashed);
++        {   local *Email::MIME::new = sub { push @parsed, length $_[1]; goto &$new };
++            local *Mail::DKIM2::MessageInstance::body_digest_raw =
++                sub { $hashed++; goto &$digest };
++            Sympa::DKIM2::egress_add($one, $ctx);
++        }
++        cmp_ok(List::Util::max(0, @parsed), '<', 4096,
++            "$rcpt: egress_add parsed header blocks only");
++        is $hashed, 1, "$rcpt: body hashed once";
++        my $w = $one->as_rfc822_string;
++        like $w, qr/^for \Q$rcpt\E\r$/m, "$rcpt: personalised";
++        my $mi = top_recipe($w);
++        ok $mi && !$mi->unrecoverable, "$rcpt: body recoverable";
++        chain_ok($w, "$rcpt: verifies");
++    }
 +};
 +
 +subtest 'custom archiver file has no DKIM2 pseudo-header' => sub {
