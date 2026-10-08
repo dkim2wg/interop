@@ -132,33 +132,44 @@ static unsigned char *build_sign_input(
     return (unsigned char *)buf;
 }
 
-/* The top Message-Instance's m= if it carries a null body Recipe ("b": null,
-   spec-06 §4.2: the previous body cannot be recreated) AND no DKIM2-Signature
-   covers it (none has that m=, spec-06 §8.2); else 0. A null top an upstream
-   domain already signed is not this hop's doing. */
-static int top_mi_null_body_unsigned(const dkim2_ctx_t *ctx) {
-    const dkim2_mi_t *top = NULL;
-    for (const dkim2_mi_t *m = ctx->mi_list; m; m = m->next)
-        if (!top || m->m >= top->m) top = m;
-    if (!top || !top->r_raw) return 0;
-    for (const dkim2_sig_t *s = ctx->sig_list; s; s = s->next)
-        if (s->m == top->m) return 0;
-    size_t n = strlen(top->r_raw);
+/* Non-zero if a Message-Instance's r= carries a null body Recipe ("b": null,
+   spec-06 §4.2: the previous body cannot be recreated). */
+static int mi_null_body(const dkim2_mi_t *mi) {
+    if (!mi->r_raw) return 0;
+    size_t n = strlen(mi->r_raw);
     unsigned char *buf = malloc(n * 3 / 4 + 5);
     if (!buf) return 0;
-    int len = (int)b64_decode(top->r_raw, buf, n * 3 / 4 + 4);
+    int len = (int)b64_decode(mi->r_raw, buf, n * 3 / 4 + 4);
     int null_body = 0;
     if (len > 0) {
         buf[len] = '\0';
         cJSON *j = cJSON_Parse((const char *)buf);
         if (j) {
             cJSON *b = cJSON_GetObjectItemCaseSensitive(j, "b");
-            null_body = (b && cJSON_IsNull(b)) ? top->m : 0;
+            null_body = b && cJSON_IsNull(b);
             cJSON_Delete(j);
         }
     }
     free(buf);
     return null_body;
+}
+
+/* The m= of the highest UNSIGNED Message-Instance with a null body Recipe,
+   else 0. A DKIM2-Signature with m=k covers instances 1..k (spec-06 §8.2),
+   so an instance is unsigned when its m= is above the highest m= of every
+   parsed (valid i=) signature -- whether it is the top, or another unsigned
+   instance was added over it. A null an upstream domain already signed is
+   not this hop's doing. *is_top says whether it is the top instance. */
+static int unsigned_null_body_mi(const dkim2_ctx_t *ctx, int *is_top) {
+    int covered = 0, top_m = 0, null_m = 0;
+    for (const dkim2_sig_t *s = ctx->sig_list; s; s = s->next)
+        if (s->m > covered) covered = s->m;
+    for (const dkim2_mi_t *m = ctx->mi_list; m; m = m->next) {
+        if (m->m > top_m) top_m = m->m;
+        if (m->m > covered && m->m > null_m && mi_null_body(m)) null_m = m->m;
+    }
+    *is_top = null_m && null_m == top_m;
+    return null_m;
 }
 
 /* Signer gate: before extending an existing DKIM2 chain, verify it in
@@ -213,11 +224,12 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
                 outcome, res.message);
         return -1;
     }
-    int null_m = top_mi_null_body_unsigned(ctx);
+    int is_top = 0;
+    int null_m = unsigned_null_body_mi(ctx, &is_top);
     if (null_m && !cfg->allow_null_body_recipe) {
         snprintf(ctx->errmsg, sizeof ctx->errmsg,
-            "not signing: unsigned top Message-Instance m=%d has a null body Recipe "
-            "(--allow-null-body-recipe not set)", null_m);
+            "not signing: unsigned %sMessage-Instance m=%d has a null body Recipe "
+            "(--allow-null-body-recipe not set)", is_top ? "top " : "", null_m);
         return -1;
     }
     return 0;

@@ -19,7 +19,7 @@ static struct {
     char *privkey_path;
     char *alg;
     char *authservid;    /* for Authentication-Results */
-    int   allow_null_body_recipe; /* sign a chain whose UNSIGNED top MI has a null body Recipe */
+    int   allow_null_body_recipe; /* sign a chain with an UNSIGNED MI with a null body Recipe */
 } g_cfg;
 
 /* Per-message state */
@@ -178,7 +178,7 @@ static sfsistat cb_eom(SMFICTX *ctx) {
         char *mi_val = NULL, *sig_val = NULL;
         if (dkim2_do_sign(c, &cfg, &mi_val, &sig_val) != 0) {
             /* Signer gate: an existing DKIM2 chain that does not verify (or a
-               null body Recipe on an unsigned top instance, without
+               null body Recipe on an unsigned instance, without
                allow_null_body_recipe) is never extended. Deliver the message unsigned, as the Perl
                milter does -- refusing to sign is not grounds to bounce mail.
                (This milter emits no X-DKIM2-Info header, so log only.)

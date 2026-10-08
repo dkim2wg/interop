@@ -13,9 +13,9 @@ static void usage(const char *prog) {
         "       [--allow-null-body-recipe] [--dns-json PATH] [--ignore-timestamps]\n"
         "A message already carrying a DKIM2 chain is verified first (keys from\n"
         "--dns-json or $DKIM2_DNS_JSON, else DNS) and is not signed if it fails;\n"
-        "a null body Recipe on an UNSIGNED top Message-Instance (no signature\n"
-        "has its m=) is refused unless --allow-null-body-recipe; a null top an\n"
-        "upstream signature already covers is signed without it.\n",
+        "a null body Recipe on an UNSIGNED Message-Instance (m= above every\n"
+        "signature's m=, top or not) is refused unless --allow-null-body-recipe;\n"
+        "a null an upstream signature already covers is signed without it.\n",
         prog);
     exit(1);
 }

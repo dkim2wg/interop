@@ -24,10 +24,10 @@ alg=ed25519-sha256
 
 # Signer gate (modes s/r): a message already carrying a DKIM2 chain is verified
 # before it is extended, and delivered UNSIGNED (logged) if the chain does not
-# verify. A chain whose top Message-Instance has a null body Recipe and is NOT
-# covered by any DKIM2-Signature (no signature has its m=) is refused too,
-# unless this is set to 1: only a host that itself introduces a null body
-# Recipe (a list host whose list manager adds an unsigned instance) needs it.
-# A null top an upstream domain already signed (forwarded list mail) is signed
-# without it. Keys for the check come from DNS.
+# verify. A chain with a Message-Instance that has a null body Recipe and is NOT
+# covered by any DKIM2-Signature (its m= is above every signature's m=; a
+# signature with m=k covers 1..k) is refused too, unless this is set to 1:
+# only a host that itself introduces a null body Recipe (a list host whose list
+# manager adds an unsigned instance) needs it. A null an upstream domain
+# already signed (forwarded list mail) is signed without it. Keys for the check come from DNS.
 # allow_null_body_recipe=0
