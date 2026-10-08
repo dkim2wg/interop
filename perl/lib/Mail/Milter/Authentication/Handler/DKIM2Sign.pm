@@ -8,7 +8,7 @@ our $VERSION = '0.16';
 use base 'Mail::Milter::Authentication::Handler';
 
 use Mail::DKIM2::Common qw(extract_mi_version strip_mi_versions load_private_key fold_header parse_mime
-    parse_dkim_pubkey DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
+    parse_dkim_pubkey chain_number_error DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
 use Mail::DKIM2::Gate;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
@@ -377,6 +377,10 @@ sub _compute_message_instance {
         }
 
         my @mi_headers = $msg->header_raw('Message-Instance');
+        # An m= above MAX_CHAIN_LENGTH is never a loop bound below (the gate
+        # refuses the message on it).
+        return undef if grep { chain_number_error('Message-Instance', 'm', extract_mi_version($_)) }
+                        @mi_headers;
         my %mi_by_v = map { (extract_mi_version($_) || 0) => $_ } @mi_headers;
         my $max_v = @mi_headers ? (sort { $b <=> $a } keys %mi_by_v)[0] : 0;
 

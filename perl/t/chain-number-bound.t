@@ -93,4 +93,20 @@ for my $name (sort keys %cases) {
     is_deeply(\@warn, [], "$name: no warnings");
 }
 
+# Message-Instance chain checks (used by the Gate and the milters on chains
+# with no signature) bound m= too.
+{
+    my $msg = $unsigned;
+    $msg =~ s/^(Message-Instance: m=)1;/${1}99999999999999999999;/m or die;
+    my @warn;
+    local $SIG{__WARN__} = sub { push @warn, @_ };
+    my ($ok, $why) = Mail::DKIM2::MessageInstance->verify($msg);
+    ok(!$ok, 'MessageInstance->verify: huge m= fails');
+    like($why // '', qr/Message-Instance m= $range/, 'MessageInstance->verify: says why');
+    ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($msg);
+    ok(!$ok, 'MessageInstance->chain_verifies: huge m= fails');
+    like($why // '', qr/Message-Instance m= $range/, 'MessageInstance->chain_verifies: says why');
+    is_deeply(\@warn, [], 'MessageInstance: no warnings');
+}
+
 done_testing;

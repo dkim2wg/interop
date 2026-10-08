@@ -30,6 +30,7 @@ use Mail::DKIM2::Common qw(
     check_ignore_prefixes
     MAX_CHAIN_LENGTH
     chain_length_error
+    chain_number_error
     duplicate_number_error
 );
 
@@ -40,9 +41,12 @@ our $DEBUG = 0;
 sub _chain_error {
     my ($msg) = @_;
     my @mi = $msg->header_raw('Message-Instance');
+    my ($range) = grep { defined }
+                  map { chain_number_error('Message-Instance', 'm', extract_mi_version($_)) } @mi;
     return chain_length_error($msg)
         // ((grep { !defined extract_mi_version($_) } @mi)
                ? 'PERMERROR Message-Instance without m= tag' : undef)
+        // $range
         // duplicate_number_error('Message-Instance', 'm', map { extract_mi_version($_) } @mi);
 }
 
