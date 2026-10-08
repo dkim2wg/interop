@@ -160,6 +160,12 @@ of one that does not check out. All four signers (Python, Go, C, Perl) do this;
   the option; a forwarder needs nothing. Either way the upstream signatures
   must verify, and the flag does not excuse a forged history: the header
   Recipe is still undone and checked.
+- **Only a keyable signature is coverage.** Count a signature towards
+  "the top is signed" only if its `i=` is a positive integer, and have the
+  verifier report any DKIM2-Signature it cannot key — no `i=`, `i=0`,
+  `i=abc`, a field that does not parse — as a PERMERROR, never skip it. A
+  verifier that ignores such a field while the gate reads its `m=` lets a
+  junk `DKIM2-Signature: m=2` turn an unsigned null top into a "signed" one.
 - **Message-Instance-only chains sign.** A list that adds unsigned
   Message-Instances but no DKIM2-Signature (Mailman does this for an unsigned
   post) gives a chain with m=1 and m=2 and no i=1. That is signable: verify

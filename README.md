@@ -34,9 +34,10 @@ A signer that is handed a message with a DKIM2 chain must verify that chain
 before extending it (see "Verify before you sign" in
 `docs/dkim2-implementer-guide.md`). `util/signer-gate.sh` runs a set of
 chain-shaped fixtures (no chain, valid chain, broken signature, broken MI
-chain, null body Recipe, Message-Instance-only chains, `nd=` bridges) through
-all four signer CLIs, plain and with `--allow-null-body-recipe`, and checks each
-signs or refuses as specified (14 fixtures, 112 cells):
+chain, null body Recipe, fake "coverage" signatures, Message-Instance-only
+chains, `nd=` bridges) through all four signer CLIs, plain and with
+`--allow-null-body-recipe`, and checks each signs or refuses as specified
+(19 fixtures, 152 cells):
 
     ./util/signer-gate.sh
 
@@ -47,7 +48,11 @@ A null top that arrived already signed (`null-top-signed`: a list post the
 list host signed, forwarded unchanged) is signed without the option. Only a
 host that introduces a null body Recipe and signs it itself — a list host whose
 list manager adds an unsigned instance — needs the option; a forwarder needs
-nothing.
+nothing. Only a signature with a valid `i=` counts as covering the top: the
+`fake-cover-*` fixtures put a DKIM2-Signature naming `m=2` with no `i=`,
+`i=0`, `i=abc`, a rewritten `m=` or no tag-list syntax on top of `null-top`,
+and every signer refuses them in both modes, because every verifier reports
+such a signature as a PERMERROR rather than skipping it.
 
 It needs the built `c/dkim2sign` and `go/dkim2sign`, and uses `dns.json` for
 the verification keys.
@@ -58,7 +63,9 @@ the verification keys.
 per spec-06 PERMERROR — a duplicate hash algorithm, a duplicate
 Selector, more selectors than allowed, malformed Recipe JSON, an unsigned
 top instance, a wrongly-keyed `nd=` bridge, and Recipe copy ranges that are
-out of order or overlap (§5.2), and a duplicated Message-Instance `m=` — plus positive controls (the same algorithm
+out of order or overlap (§5.2), a duplicated Message-Instance `m=`, and a
+DKIM2-Signature with no usable `i=` (missing, or not a positive integer) on
+top of an otherwise valid chain — plus positive controls (the same algorithm
 signed twice under distinct Selectors, which §8.9 explicitly permits; a
 Recipe on the bottom instance; a correct bridge; an unsigned lower Message-Instance under a signed higher one; and a Recipe whose `b`
 items restore non-UTF-8 octets) and feeds them all through every verifier's
