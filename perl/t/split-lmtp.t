@@ -27,7 +27,7 @@ END { cleanup(); $? = 0 }   # don't let a reaped child's signal status leak into
 # --- capture sink: one file per injected copy, recording its RCPTs ----------
 my $sink = fork;
 if (defined $sink && $sink == 0) {
-    $SIG{$_} = 'DEFAULT' for qw(TERM INT ALRM PIPE); alarm 0;
+    $SIG{$_} = 'DEFAULT' for qw(TERM INT ALRM); alarm 0;
     my $s = IO::Socket::INET->new(LocalAddr=>'127.0.0.1', LocalPort=>$CAP_PORT,
         Listen=>10, ReuseAddr=>1) or exit 1;
     $SIG{CHLD} = sub { while (waitpid(-1, WNOHANG) > 0) {} };
