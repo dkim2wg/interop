@@ -26,6 +26,19 @@ that does not check out.
                          signed it (i=2, m=2, rt= the next hop); test3 just
                          forwards it unchanged                    -> SIGN
                                        (a signed null top needs no flag)
+  fake-cover-*.eml       null-top plus one extra DKIM2-Signature that claims
+                         m=2 but cannot be keyed or verified, so it must
+                         NOT count as covering the null top.  Every
+                         verifier must PERMERROR on it, so these are
+                                                                  -> REFUSE,
+                                       REFUSE even with the flag:
+    fake-cover-no-i         "m=2; d=evil.example" -- no i= at all
+    fake-cover-i0           i=0 (not a positive integer)
+    fake-cover-i-abc        i=abc (not an integer)
+    fake-cover-m-rewritten  the real i=1 signature with "i=1; m=1;"
+                            rewritten to "m=2;" (no i=)
+    fake-cover-unparseable  "m=2; i=2; garbage without equals" (not a
+                            tag-list)
   mi-only.eml            NO DKIM2-Signature: a list added unsigned m=1 and
                          unsigned m=2 (ordinary Recipe), as Mailman does
                                                                   -> SIGN
@@ -161,6 +174,36 @@ def build_null_top_signed():
     return bnv.build_positive_null_body()
 
 
+def _fake_cover(fake_sig_fn):
+    """null-top (unsigned null m=2 over a valid i=1/m=1) with one extra
+    DKIM2-Signature prepended that names m=2 but is not a signature any
+    verifier can key.  fake_sig_fn(sig1) returns that header (no CRLF)."""
+    h, b = bnv.load_base()
+    mi1, sig1 = _signed_bottom(h, b)
+    msg = build_null_top()
+    assert sig1.encode() in msg
+    fake = fake_sig_fn(sig1)
+    assert fake.startswith("DKIM2-Signature:")
+    return fake.encode() + b"\r\n" + msg
+
+
+def _m_rewritten(sig1):
+    out = sig1.replace("i=1; m=1;", "m=2;")
+    assert out != sig1
+    return out
+
+
+FAKE_COVER = {
+    "fake-cover-no-i.eml": lambda s: "DKIM2-Signature: m=2; d=evil.example",
+    "fake-cover-i0.eml":
+        lambda s: "DKIM2-Signature: i=0; m=2; t=1; d=evil.example; s=sel1:rsa-sha256:AAAA",
+    "fake-cover-i-abc.eml": lambda s: "DKIM2-Signature: i=abc; m=2; d=evil.example",
+    "fake-cover-m-rewritten.eml": _m_rewritten,
+    "fake-cover-unparseable.eml":
+        lambda s: "DKIM2-Signature: m=2; i=2; garbage without equals",
+}
+
+
 def _nd_bridge(nd):
     """i=1 test1 -> test2, then test2's §9.3 bridge i=2 carrying nd=<nd>."""
     raw = open(bnv.SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
@@ -196,6 +239,8 @@ FIXTURES = {
     "nd-to-us.eml": build_nd_to_us,
     "nd-to-other.eml": build_nd_to_other,
 }
+for _name, _fn in FAKE_COVER.items():
+    FIXTURES[_name] = (lambda fn: lambda: _fake_cover(fn))(_fn)
 
 
 def main():
