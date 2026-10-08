@@ -44,6 +44,10 @@ Writes:
   empty-body-forged-history.eml    -- empty body, To: change hidden from Recipe; REJECT
   malformed-body-recipe-below-null.eml -- malformed body Recipe at m=2 below a
                                          null at m=3; REJECT
+  duplicate-mi-version.eml         -- two Message-Instance headers both m=1
+                                         in an otherwise valid chain; REJECT
+  positive-control-unreferenced-lower-mi.eml -- unsigned m=1 under an m=2
+                                         (with Recipe) covered by i=1; ACCEPT
   positive-control-nd-bridge.eml   -- the same §9.3 bridge made with a key for
                                          the domain the message DID arrive at
 """
@@ -555,6 +559,45 @@ def build_malformed_body_recipe_below_null():
     ])
 
 
+def build_duplicate_mi_version():
+    """NEGATIVE: a valid i=1/m=1 chain with a second Message-Instance header
+    that also says m=1. The copy is byte-identical to the signed one, so every
+    hash and signature still checks; only the rule that each m= occurs once
+    (a duplicate is a PERMERROR) can reject it. A verifier that keys its
+    instances by m= silently keeps one and accepts."""
+    headers, body = load_base()
+    mi1 = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
+    priv, alg = ds.load_private_key(key("sel1"))
+    sig1 = ds.build_dkim2_signature(
+        [], [], mi1, DOM, "sel1", priv, alg,
+        mailfrom=MF, rcptto=RT, seq=1, mi_version=1, timestamp=TS)
+    out = sig1.encode() + b"\r\n" + mi1.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+    for h in headers:
+        out += h + b"\r\n"
+    return out + b"\r\n" + body
+
+
+def build_positive_unreferenced_lower_mi():
+    """POSITIVE CONTROL: what Mailman emits for an unsigned post: an unsigned
+    m=1 over the message as received and an m=2 (with a real Recipe) over the
+    list's output, and a single signature i=1 that covers m=2.  m=1 is
+    referenced by no signature, but spec-06 §11 forbids only an instance whose
+    m= is HIGHER than every signature's m=.  MUST be accepted."""
+    headers, body = load_base()
+    h2, b2 = _subject_prefixed(headers, b"list"), body + b"footer\r\n"
+    mi1 = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
+    mi2 = ds.build_message_instance(h2, b2, version=2, algs=["sha256"],
+                                    recipe=ds.build_recipes(headers, body, h2, b2))
+    priv, alg = ds.load_private_key(key("sel1"))
+    sig1 = ds.build_dkim2_signature(
+        [mi1], [], mi2, DOM, "sel1", priv, alg,
+        mailfrom=MF, rcptto=RT, seq=1, mi_version=2, timestamp=TS)
+    out = sig1.encode() + b"\r\n" + mi2.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+    for h in h2:
+        out += h + b"\r\n"
+    return out + b"\r\n" + b2
+
+
 FIXTURES = {
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
@@ -562,6 +605,8 @@ FIXTURES = {
     "malformed-json-r.eml": build_malformed_json,
     "unsigned-mi.eml": build_unsigned_mi,
     "nd-bridge-wrong-domain.eml": build_nd_bridge_wrong_domain,
+    "duplicate-mi-version.eml": build_duplicate_mi_version,
+    "positive-control-unreferenced-lower-mi.eml": build_positive_unreferenced_lower_mi,
     "positive-control-two-selectors.eml": build_positive_control,
     "positive-control-bottom-recipe.eml": build_positive_bottom_recipe,
     "recipe-descending-ranges.eml": build_recipe_descending,

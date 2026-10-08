@@ -28,6 +28,13 @@ that does not check out.
   mi-only-null.eml       like mi-only, m=2 has a null body Recipe -> REFUSE,
                                        SIGN with --allow-null-body-recipe
 
+  nd-to-us.eml           i=1 (test1, rt= test2) then a §9.3 bridge i=2 made by
+                         test2 with nd=test3.dkim2.com: the next hop IS the
+                         signer                                   -> SIGN
+  nd-to-other.eml        same, but nd=test4.dkim2.com: the bridge names some
+                         other domain                             -> REFUSE
+                                       ("top signature nd=X names another domain")
+
 Reuses the machinery in build-negative-vectors.py (loaded by path: its name
 has a hyphen).  Usage: build-signer-gate-fixtures.py <output-dir>
 """
@@ -136,6 +143,25 @@ def build_null_top_forged():
                               b + b"rewritten by list\r\n", bnv._forged_recipe)
 
 
+def _nd_bridge(nd):
+    """i=1 test1 -> test2, then test2's §9.3 bridge i=2 carrying nd=<nd>."""
+    raw = open(bnv.SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    msg = ds.sign_message(raw, "sel1", "test1.dkim2.com", bnv.key("sel1", "test1.dkim2.com"),
+                          mailfrom="sender@test1.dkim2.com",
+                          rcptto=["user@test2.dkim2.com"], timestamp=bnv.TS)
+    return ds.sign_message(msg, "sel1", "test2.dkim2.com", bnv.key("sel1", "test2.dkim2.com"),
+                           next_domain=nd, timestamp=bnv.TS + 100,
+                           skip_upstream_check=True)
+
+
+def build_nd_to_us():
+    return _nd_bridge(NEXT_DOM)
+
+
+def build_nd_to_other():
+    return _nd_bridge("test4.dkim2.com")
+
+
 FIXTURES = {
     "fresh.eml": build_fresh,
     "valid-chain.eml": build_valid_chain,
@@ -146,6 +172,8 @@ FIXTURES = {
     "mi-only.eml": build_mi_only,
     "mi-only-broken.eml": build_mi_only_broken,
     "mi-only-null.eml": build_mi_only_null,
+    "nd-to-us.eml": build_nd_to_us,
+    "nd-to-other.eml": build_nd_to_other,
 }
 
 
