@@ -563,3 +563,21 @@ test('spec-06 §11.6: a broken signature names the failing Selector', async () =
   assert.equal(sig.result, 'fail');
   assert.equal(sig.detail, 'DKIM2-Signature i=1 rsa2048 incorrect signature');
 });
+
+// A DKIM2-Signature the verifier cannot key (no i=, or an i= that is not a
+// positive integer) is a PERMERROR, never silently skipped: a junk
+// "DKIM2-Signature: m=1" on top of a chain that verifies must not pass, and
+// on its own must not read as 'none'.
+for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
+  const label = ival === null ? 'no i=' : `i=${JSON.stringify(ival)}`;
+  test(`unkeyable DKIM2-Signature (${label}) is permerror`, async () => {
+    const junk = `DKIM2-Signature: ${ival === null ? '' : `i=${ival}; `}m=1; d=evil.example\r\n`;
+    const ok = await verifyMessage(SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
+    assert.equal(ok.overall, 'pass');
+    const rep = await verifyMessage(junk + SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
+    assert.equal(rep.overall, 'permerror');
+    assert.equal(rep.summary, 'DKIM2-Signature has a missing or malformed i= tag');
+    const alone = await verifyMessage(junk + 'From: a@b\r\n\r\nhi\r\n');
+    assert.equal(alone.overall, 'permerror');
+  });
+}

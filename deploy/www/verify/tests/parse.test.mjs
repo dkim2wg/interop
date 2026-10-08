@@ -86,3 +86,16 @@ test('collectLevels does not create NaN-keyed entries for malformed headers', ()
   assert.equal(miFields.length, 1);
   assert.equal(sigFields.length, 1);
 });
+
+test('collectLevels counts DKIM2-Signatures with no valid i= as unkeyable', () => {
+  const msg =
+    'DKIM2-Signature: m=2; d=evil.example\r\n' +
+    'DKIM2-Signature: i=0; m=2; d=evil.example\r\n' +
+    'DKIM2-Signature: i=abc; m=2; d=evil.example\r\n' +
+    'DKIM2-Signature: i=1; m=1; d=good.example\r\n' +
+    'From: a@b\r\n\r\nbody\r\n';
+  const { headers } = parseMessage(msg);
+  const { signatures, unkeyableSignatures } = collectLevels(headers);
+  assert.equal(unkeyableSignatures, 3);
+  assert.deepEqual(Object.keys(signatures), ['1']);
+});

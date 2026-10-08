@@ -85,6 +85,10 @@ export function collectLevels(headers) {
   const sigFields = [];
   const dupInstances = [];
   const dupSignatures = [];
+  // DKIM2-Signature fields whose i= is missing or not a positive integer in
+  // ASCII digits: no verifier can place or key one, so verifyOnce() reports
+  // a PERMERROR rather than verifying around it.
+  let unkeyableSignatures = 0;
   for (const f of headers) {
     if (isName(f, 'message-instance')) {
       miFields.push(f);
@@ -95,10 +99,13 @@ export function collectLevels(headers) {
     } else if (isName(f, 'dkim2-signature')) {
       sigFields.push(f);
       const parsed = parseTagList(f.value);
-      const i = parseInt(parsed.map.i, 10);
-      if (!Number.isNaN(i) && signatures[i]) dupSignatures.push(i);
-      if (!Number.isNaN(i)) signatures[i] = { field: f, tags: parsed.tags, map: parsed.map };
+      const iv = parsed.map.i;
+      const i = /^[0-9]+$/.test(iv || '') ? parseInt(iv, 10) : NaN;
+      if (Number.isNaN(i) || i < 1) { unkeyableSignatures++; continue; }
+      if (signatures[i]) dupSignatures.push(i);
+      signatures[i] = { field: f, tags: parsed.tags, map: parsed.map };
     }
   }
-  return { instances, signatures, miFields, sigFields, dupInstances, dupSignatures };
+  return { instances, signatures, miFields, sigFields, dupInstances, dupSignatures,
+           unkeyableSignatures };
 }

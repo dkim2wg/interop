@@ -155,7 +155,16 @@ async function verifyOnce(raw, opts = {}) {
   const fetchKey = opts.fetchKey || dohFetchKey;
   const now = opts.now || Math.floor(Date.now() / 1000);
   const { headers, body } = parseMessage(raw);
-  const { instances, signatures, dupInstances, dupSignatures } = collectLevels(headers);
+  const { instances, signatures, dupInstances, dupSignatures, unkeyableSignatures } =
+    collectLevels(headers);
+
+  // A DKIM2-Signature with no i=, or an i= that is not a positive integer, is
+  // a PERMERROR -- never silently skipped (and never "none" when it is the
+  // only one), as in the other implementations.
+  if (unkeyableSignatures) {
+    return { overall: 'permerror',
+             summary: 'DKIM2-Signature has a missing or malformed i= tag', levels: [] };
+  }
 
   const miNums = Object.keys(instances).map(Number).sort((a, b) => a - b);
   const sigNums = Object.keys(signatures).map(Number).sort((a, b) => a - b);
