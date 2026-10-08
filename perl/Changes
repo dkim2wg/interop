@@ -1,5 +1,22 @@
 Revision history for Mail::DKIM2
 
+0.16    2026-10-08
+        - Mail::DKIM2::Gate refuses a null body Recipe on the top
+          Message-Instance (without AllowNullBodyRecipe) only when no
+          DKIM2-Signature covers that instance, i.e. none has m= equal to the
+          top m=: a null this hop introduces. A null top an upstream domain
+          already declared and signed (a list post forwarded unchanged) is
+          extended without the option; the upstream chain must still verify
+          and the header history below the null must still check out. The
+          result gains top_signed; the refusal message reads "unsigned top
+          Message-Instance m=N has a null body Recipe". (t/gate-null-top.t)
+        - bin/dkim2sign and bin/dkim2-milter follow the Gate. The milter logs
+          the Gate's message on refusal and adds the informational
+          X-DKIM2-Info action=null-body-recipe whenever it signs over a null
+          top, whether it arrived signed or the option let it sign its own.
+          (t/sign-cli.t, t/milter-script.t)
+        - DKIM2_DATE 2026-10-08.
+
 0.15    2026-10-08
         - MessageInstance->calculate takes BodyRecipe ('none', 'null' or a
           Recipe) and then skips the body diff; body_hash accessor;
