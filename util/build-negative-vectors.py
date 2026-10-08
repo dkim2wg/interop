@@ -39,6 +39,9 @@ Writes:
   positive-control-null-body-over-recipe.eml -- same, over an ordinary m=2; ACCEPT
   null-body-forged-history.eml     -- null body Recipe whose header Recipe hides
                                          a To: change; REJECT at m=1
+  positive-control-null-below.eml  -- ordinary m=3 over a null-body m=2; ACCEPT
+  positive-control-empty-body-chain.eml -- empty body, Subject change; ACCEPT
+  empty-body-forged-history.eml    -- empty body, To: change hidden from Recipe; REJECT
   positive-control-nd-bridge.eml   -- the same §9.3 bridge made with a key for
                                          the domain the message DID arrive at
 """
@@ -480,6 +483,51 @@ def build_null_body_forged_history():
     ])
 
 
+def build_positive_null_below():
+    """POSITIVE CONTROL: an ORDINARY top instance over a null one. m=2 is a
+    list hop with a null body Recipe and a header Recipe; m=3 is a later hop
+    that only adds a header (body unchanged, so no "b"). The verifier must
+    undo m=3 normally and then walk the header history below m=2's null.
+    MUST be accepted."""
+    headers, body = load_base()
+    h2 = _subject_prefixed(headers, b"list")
+    b2 = body + b"rewritten by list\r\n"
+    return _null_body_chain([
+        (headers, body),
+        (h2, b2, _null_body_recipe),
+        (h2 + [b"Comments: added by a later hop"], b2, _footer_recipe),
+    ])
+
+
+def build_positive_empty_body():
+    """POSITIVE CONTROL: a message with an EMPTY body: m=1, then m=2 changes
+    Subject (header Recipe only), signed i=2. MUST be accepted."""
+    headers, _ = load_base()
+    return _null_body_chain([
+        (headers, b""),
+        (_subject_prefixed(headers, b"list"), b"", _footer_recipe),
+    ])
+
+
+def _forged_plain_recipe(*a):
+    r = ds.build_recipes(*a) or {}
+    r["h"] = {k: v for k, v in r["h"].items() if k.lower() != "to"}
+    return r
+
+
+def build_empty_body_forged_history():
+    """NEGATIVE: empty body; m=2 changes Subject AND To but its header
+    Recipe omits the To change. The top instance matches the message; only
+    undoing the Recipe shows m=1's header hash no longer matches. MUST be
+    rejected."""
+    headers, _ = load_base()
+    return _null_body_chain([
+        (headers, b""),
+        (_to_changed(_subject_prefixed(headers, b"list")), b"",
+         _forged_plain_recipe),
+    ])
+
+
 FIXTURES = {
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
@@ -496,6 +544,9 @@ FIXTURES = {
     "positive-control-null-body.eml": build_positive_null_body,
     "positive-control-null-body-over-recipe.eml": build_positive_null_body_over_recipe,
     "null-body-forged-history.eml": build_null_body_forged_history,
+    "positive-control-null-below.eml": build_positive_null_below,
+    "positive-control-empty-body-chain.eml": build_positive_empty_body,
+    "empty-body-forged-history.eml": build_empty_body_forged_history,
 }
 
 
