@@ -1,5 +1,29 @@
 Revision history for Mail::DKIM2
 
+0.15    2026-10-08
+        - MessageInstance->calculate takes BodyRecipe ('none', 'null' or a
+          Recipe) and then skips the body diff; body_hash accessor;
+          body_digest_raw(). For list managers that build the Recipe from
+          their own layout (Sympa always-wrap). (t/mi-body-recipe-option.t)
+        - MessageInstance->calculate takes BodyHash (a base64 sha256 hash, or
+          a hashref per algorithm, from body_digest_raw) with BodyRecipe or
+          for m=1: the body is not hashed or read, so the message passed may
+          be its header block alone. A list manager sending many copies of a
+          large body no longer has each one parsed and hashed twice.
+          body_digest_raw hashes the body a megabyte at a time instead of
+          copying it whole. (t/mi-body-recipe-option.t)
+        - calculate validates both: a BodyHash value must be the base64 of a
+          digest of its algorithm's length (it goes into h= verbatim); a
+          string message without a final line break gets a CRLF; a
+          BodyRecipe of undef, with an undefined step or a literal holding
+          CR or LF, or with no previous message croaks; BodyRecipe 'none'
+          with BodyHash croaks unless the hash is the previous instance's
+          body hash. (t/mi-body-recipe-option.t)
+        - The body diff finds the common prefix and suffix a 4 KB block at a
+          time instead of a character at a time: about 5x faster for a list
+          manager's per-recipient Recipe (2 MB body: 104 ms to 21 ms), the
+          same Recipes. (t/mi-flat-common-len.t)
+
 0.14    2026-10-07
         - The Verifier and MessageInstance->chain_verifies walk the header
           history past an instance whose body Recipe is null: the body is

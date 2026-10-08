@@ -527,8 +527,45 @@ curl -u restadmin:dkim2demo -X PATCH \
 
 **Role:** Mailing list manager at `sympa.dkim2.com`.
 
-**Source:** Fork at `github.com/brong/sympa` (branch `dkim2`) with DKIM2
-additions in `src/lib/Sympa/Message.pm`.
+**Source:** Fork at `github.com/brong/sympa` (branch `dkim2`) with the DKIM2
+code in `src/lib/Sympa/DKIM2.pm` and its call sites in `Message.pm` and the
+`Spindle::Process{Incoming,Outgoing,Archive}` / `ResendArchive` spindles.
+
+**DKIM2 series (always-wrap, deployed 2026-10-08):** `dkim2` = bdc9eee4d, three
+commits on tag 6.2.78, exported as `sympa/patches-6.2.78`:
+1. the `dkim2_message_instance` list parameter (on/off, list/domain/site
+   context, default **off** -- off is byte-identical to stock 6.2.78);
+2. Message-Instance support with always-wrap decoration: at ingress Sympa keeps
+   the header block (adding `m=1` if the post has none); at egress it wraps any
+   footer/header decoration in a new `multipart/mixed` so the original body
+   survives as a copy range, and adds `m=N+1` per copy -- a copy Recipe, or
+   `"b":null` when the body was rewritten (txt/html/urlize/notice reception,
+   personalization, S/MIME). Anonymous lists strip the upstream chain (the
+   outbound milter then originates a fresh `m=1`). Sympa never originates an
+   instance itself (no `m=` on notifications, digests, archive resends);
+3. the `X-DKIM2-Info` debug header above each instance it adds.
+
+The previous series (CTE-preserving decoration with `.mi_orig` side files in
+the bulk spool) is kept as tag `dkim2-cte-preserve-6.2.78` (bc6d4413b), both
+on the box and on `brong/sympa`. The new series needs **Mail::DKIM2 0.15 or
+later** (`Sympa::DKIM2::enabled()` checks the version and logs an `err`, adding
+nothing, if it is older); `deploy/deploy.sh` installs it from `perl/`.
+
+**Lists with `dkim2_message_instance on`** (a line in each list's `config`,
+then `sudo -u sympa sympa reload_list_config <list>@sympa.dkim2.com`):
+`dkim2test` (smoke), `dkim2corpus` (charset corpus), and three acceptance lists
+created 2026-10-08, all `send public`/`subscribe closed`/`visibility
+conceal`/`process_archive off` with members only the two `dkim2capture@`
+addresses:
+- `dkim2footer` -- `footer_type append` plus a UTF-8 `message_footer`;
+  `dkim2capture@test1.dkim2.com` receives in `txt` mode (its copies carry
+  `"b":null`);
+- `dkim2anon` -- `anonymous_sender anonymous@sympa.dkim2.com`;
+- `dkim2mod` -- `send editorkey`, editor `dkim2capture@dkim2.com`; approve with
+  a `DISTRIBUTE dkim2mod <key>` mail from the editor to `sympa@sympa.dkim2.com`
+  (the key is in the moderation notice in the capture Maildir) or the web UI.
+
+`test@sympa.dkim2.com` (subscriber `brong@brong.net`) stays off.
 
 **Installation (since 2026-10-03):** Sympa **6.2.78 built from the patched
 source** in `/opt/sympa-dkim2` (a checkout of `brong/sympa`, branch `dkim2` =
@@ -604,20 +641,13 @@ location /static-sympa/     { alias /opt/sympa-dkim2/www/; }
 
 **Database:** `/var/lib/sympa/sympa.sqlite` (SQLite)
 
-**Perl dependency (Mail::DKIM2):** Installed system-wide from this repo:
-```bash
-ssh dkim2
-cd /root/interop/perl
-perl Makefile.PL && make && make install
-```
+**Perl dependency (Mail::DKIM2 0.15):** installed system-wide from this repo's
+`perl/` by `deploy/deploy.sh` (see "Updating Code on the Server"). Check with
+`perl -MMail::DKIM2 -e 'print $Mail::DKIM2::VERSION'`.
 
-**Update process:**
-```bash
-# From local machine
-rsync -av src/lib/Sympa/Message.pm \
-          root@dkim2.com:/usr/share/sympa/lib/Sympa/Message.pm
-ssh dkim2 systemctl restart sympa sympa-bulk sympa-archived
-```
+**Update process:** see "Updating Code on the Server" → Sympa below (git
+bundle, rebuild, `make install`). Do not copy modules into
+`/usr/share/sympa/lib` by hand.
 
 ---
 
@@ -973,6 +1003,15 @@ ssh dkim2 'cd /opt/sympa-dkim2 && git fetch origin && git reset --hard origin/dk
   && systemctl start sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa'
 ```
 
+Unpushed work goes over as a git bundle instead (2026-10-08, the always-wrap
+series): locally `git -C ~/src/sympa bundle create sympa.bundle 6.2.78..dkim2`,
+`scp` it over, then in `/opt/sympa-dkim2` `git fetch <bundle>
+dkim2:refs/remotes/bundle/dkim2 && git checkout -B dkim2 bundle/dkim2`. When a
+series changes a `Makefile.am` (a new module), run `autoreconf -i`, the
+configure line from §4, `make clean`, then `make` and the stop / `make install`
+/ start above. Afterwards `prove -I/usr/share/sympa/lib t/DKIM2.t` in
+`/opt/sympa-dkim2` runs the DKIM2 tests against the installed tree.
+
 If `./configure` is ever re-run with different paths, `make clean` first: the C
 queue wrappers in `src/libexec` bake `CONFIG` in at compile time and `make`
 does not rebuild them for a changed define (2026-10-03: a stale `queue` looked
@@ -1232,9 +1271,13 @@ sudo -u sympa perl -I/usr/share/sympa/lib -MSympa::CLI::create \
   -e 'exit(Sympa::CLI::create->run({input_file => "/tmp/dkim2corpus.xml"}, "sympa.dkim2.com") ? 0 : 1)'
 ```
 
-Its alias hook does install the six aliases itself on this box, so do not
-also append them by hand (check `/etc/sympa/sympa/aliases` for duplicates;
-`postalias` it and `postfix reload` if you touched it). Then edit the list's
+Its alias hook writes the six aliases to `/etc/mail/sympa/aliases` (the
+build's `--with-aliases_file`, and `sympa.conf` sets no `sendmail_aliases`), but
+Postfix reads `/etc/sympa/sympa/aliases`. Copy the list's block across
+(`sed -n '/^#-* LIST: list alias/,/^LIST-owner:/p' /etc/mail/sympa/aliases >>
+/etc/sympa/sympa/aliases`, checking for duplicates), `postalias
+/etc/sympa/sympa/aliases`, `postfix reload` (seen 2026-10-08 creating the
+acceptance lists). Then edit the list's
 `config` and `sudo -u sympa sympa reload_list_config dkim2corpus@sympa.dkim2.com`.
 
 **Why not the smoke lists:** `dkim2test@sympa.dkim2.com` has `subscribe

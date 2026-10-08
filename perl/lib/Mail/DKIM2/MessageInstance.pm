@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 
 use Crypt::Digest::SHA256;
@@ -124,6 +124,52 @@ sub get_tag {
 
 # The header-hash component (base64) of this Message-Instance's h= tag.
 sub header_hash { return $_[0]->{bits}{h1} }
+sub body_hash { return $_[0]->{bits}{b1} }
+
+# The body hash (spec-06 section 6.3) of a raw body string with LF or CRLF
+# line ends: no Email::MIME parse, for callers that hold the body alone.
+# Streams the body through the digest a megabyte at a time (each piece
+# ending at a LF, so a CRLF is never split): a large body is never copied
+# whole.
+my %DIGEST_CLASS = (
+    sha256 => 'Crypt::Digest::SHA256',
+    sha512 => 'Crypt::Digest::SHA512',
+);
+use constant BODY_CHUNK => 1 << 20;
+
+sub body_digest_raw {
+    # Through a reference: "my ($body) = @_" would copy the body.
+    my $bref = defined $_[0] ? \$_[0] : \'';
+    my $alg = lc($_[1] // 'sha256');
+    my $class = $DIGEST_CLASS{$alg} or croak "unsupported hash algorithm: $alg";
+    my $len = length $$bref;
+
+    # $end: the body without its trailing line breaks, each a LF with an
+    # optional CR before it, taken from the end.
+    my $end = $len;
+    while ($end > 0 && substr($$bref, $end - 1, 1) eq "\n") {
+        $end--;
+        $end-- if $end > 0 && substr($$bref, $end - 1, 1) eq "\r";
+    }
+
+    my $d = $class->new;
+    for (my $pos = 0; $pos < $end; ) {
+        my $n = $end - $pos;
+        if ($n > BODY_CHUNK) {
+            my $nl = index($$bref, "\n", $pos + BODY_CHUNK);
+            $n = $nl + 1 - $pos if $nl >= 0 && $nl < $end;
+        }
+        # s/\r?\n/\r\n/g, as two literal substitutions: several times
+        # faster, the same result ("\r\r\n" stays "\r\r\n").
+        my $piece = substr($$bref, $pos, $n);
+        $piece =~ s/\r\n/\n/g if index($piece, "\r") >= 0;
+        $piece =~ s/\n/\r\n/g;
+        $d->add($piece);
+        $pos += $n;
+    }
+    $d->add("\r\n");
+    return encode_base64($d->digest, '');
+}
 
 # Mark the body Recipe as null per spec-06 §4.2: the body changed but the
 # previous state cannot be recreated. as_string() then emits "b": null.
@@ -537,6 +583,35 @@ sub _recipe_cost {
 # Byte-level prefix/suffix matching strategy.
 # Flattens both bodies, finds common prefix and suffix, maps back
 # to line boundaries, then uses line-level matching on the middle.
+# The length of the common prefix (suffix) of $x and $y, at most $max:
+# compared a block at a time, each block one string comparison, and only the
+# block where they differ a character at a time.  A character-at-a-time loop
+# over the whole body cost ~50ns a byte, which a list manager pays for every
+# recipient's copy.
+use constant CMP_BLOCK => 4096;
+
+sub _common_prefix_len {
+    my ($x, $y, $max) = @_;
+    my $n = 0;
+    $n += CMP_BLOCK
+        while $n + CMP_BLOCK <= $max
+          and substr($x, $n, CMP_BLOCK) eq substr($y, $n, CMP_BLOCK);
+    $n++ while $n < $max and substr($x, $n, 1) eq substr($y, $n, 1);
+    return $n;
+}
+
+sub _common_suffix_len {
+    my ($x, $y, $max) = @_;
+    my ($lx, $ly) = (length $x, length $y);
+    my $n = 0;
+    $n += CMP_BLOCK
+        while $n + CMP_BLOCK <= $max
+          and substr($x, $lx - $n - CMP_BLOCK, CMP_BLOCK)
+           eq substr($y, $ly - $n - CMP_BLOCK, CMP_BLOCK);
+    $n++ while $n < $max and substr($x, -1 - $n, 1) eq substr($y, -1 - $n, 1);
+    return $n;
+}
+
 sub _body_recipe_flat {
     my ($l1, $l2) = @_;
 
@@ -546,21 +621,10 @@ sub _body_recipe_flat {
     # Find common prefix length.
     my $min_len = length($cur_flat) < length($prev_flat)
         ? length($cur_flat) : length($prev_flat);
-    my $prefix = 0;
-    while ($prefix < $min_len
-           and substr($cur_flat, $prefix, 1)
-               eq substr($prev_flat, $prefix, 1)) {
-        $prefix++;
-    }
+    my $prefix = _common_prefix_len($cur_flat, $prev_flat, $min_len);
 
     # Find common suffix length (not overlapping prefix).
-    my $suffix = 0;
-    my $max_suffix = $min_len - $prefix;
-    while ($suffix < $max_suffix
-           and substr($cur_flat, -1 - $suffix, 1)
-               eq substr($prev_flat, -1 - $suffix, 1)) {
-        $suffix++;
-    }
+    my $suffix = _common_suffix_len($cur_flat, $prev_flat, $min_len - $prefix);
 
     # If no significant prefix or suffix, this strategy won't help.
     return undef unless $prefix > 0 or $suffix > 0;
@@ -741,6 +805,24 @@ sub _epilogue_recipe {
     return [[$prefix_len + 1, $prefix_len + @old_lines]];
 }
 
+# BodyRecipe 'none' with a caller-supplied BodyHash: croak unless the hash
+# equals the body hash in the previous message's top Message-Instance, for
+# every algorithm both carry (and at least one).
+sub _check_body_unchanged {
+    my ($previous, $body_hash, $algs) = @_;
+    my %map = map { (extract_mi_version($_) // 0) => $_ }
+        $previous->header_raw('Message-Instance');
+    my $top = __PACKAGE__->parse($map{ max(keys %map) });
+    my @common = grep { $top->{bits}{hashes}{$_} } @$algs;
+    croak "BodyRecipe 'none' with BodyHash: the previous instance has no "
+        . join('/', @$algs) . " body hash to compare" unless @common;
+    for my $alg (@common) {
+        croak "BodyRecipe 'none' with BodyHash: the body hash is not the "
+            . "previous instance's, so the body changed"
+            unless $body_hash->{$alg} eq $top->{bits}{hashes}{$alg}[1];
+    }
+}
+
 # --- Calculate ---
 
 sub calculate {
@@ -753,6 +835,41 @@ sub calculate {
     # spec-06 §3.1: the signer chooses one or more hash algorithms; default
     # is sha256 only (the signer default MUST NOT change).
     $self->{algs} = ($opts{Algs} && @{$opts{Algs}}) ? [ @{$opts{Algs}} ] : ['sha256'];
+
+    # BodyHash: the caller hashed the body (body_digest_raw), so $current
+    # may be the header block alone.  Only where nothing here reads or
+    # changes the body: m=1, or a caller-supplied BodyRecipe.
+    croak "BodyRecipe needs a previous message"
+        if exists $opts{BodyRecipe} && !$previous;
+
+    my $body_hash;
+    if (exists $opts{BodyHash}) {
+        my $bh = $opts{BodyHash};
+        $bh = { sha256 => $bh } if defined $bh && !ref $bh;
+        croak "BodyHash must be a base64 string or a hashref of algorithm => base64"
+            unless ref $bh eq 'HASH';
+        for my $alg (@{$self->{algs}}) {
+            croak "BodyHash has no $alg hash" unless defined $bh->{$alg};
+        }
+        # Each value goes into the h= tag verbatim: it must be the base64
+        # of a digest of that algorithm's length, nothing else.
+        for my $alg (sort keys %$bh) {
+            my $fn = $HASH_ALGS{$alg}
+                or croak "BodyHash: unsupported hash algorithm $alg";
+            my $v = $bh->{$alg};
+            croak "BodyHash $alg is not a $alg digest in base64"
+                unless defined $v && !ref $v
+                    && $v =~ m{\A[A-Za-z0-9+/]+={0,2}\z}
+                    && length(decode_base64($v)) == length($fn->(''));
+        }
+        croak "BodyHash needs BodyRecipe when there is a previous message"
+            if $previous && !exists $opts{BodyRecipe};
+        $body_hash = $bh;
+        # The header block must be complete: a string whose last field has
+        # no line break gets one (nothing reads the body here).
+        $current .= "\r\n"
+            if !ref $current && $current !~ /\n\z/;
+    }
 
     unless (ref($current) && $current->isa('Email::MIME')) {
         $current = parse_mime($current);
@@ -785,7 +902,40 @@ sub calculate {
         my %map = map { extract_mi_version($_) => $_ } @mi_cur;
         $self->set_tag('m', max(keys %map) + 1);
 
-        if ($opts{UseEpilogue}) {
+        if (exists $opts{BodyRecipe}) {
+            # Caller supplies the body Recipe: no body diff runs.
+            my $br = $opts{BodyRecipe};
+            if (defined $br && !ref $br && $br eq 'none') {
+                $rb_recipe = undef;
+                # No b key declares the body unchanged: a caller-supplied
+                # BodyHash must then be the previous instance's body hash.
+                _check_body_unchanged($previous, $body_hash, $self->{algs})
+                    if $body_hash;
+            } elsif (defined $br && !ref $br && $br eq 'null') {
+                $self->set_null_body_recipe;
+            } elsif (ref $br eq 'ARRAY') {
+                my $last = 0;
+                for my $step (@$br) {
+                    croak "BodyRecipe step is undefined" unless defined $step;
+                    unless (ref $step) {
+                        croak "BodyRecipe literal contains a line break"
+                            if $step =~ /[\r\n]/;
+                        next;
+                    }
+                    croak "BodyRecipe step must be [from,to] or a string"
+                        unless ref $step eq 'ARRAY' && @$step == 2;
+                    my ($f, $t) = @$step;
+                    croak "BodyRecipe range [$f,$t] invalid"
+                        unless $f =~ /^\d+\z/ && $t =~ /^\d+\z/
+                            && $f >= 1 && $t >= $f && $f > $last;
+                    $last = $t;
+                }
+                $rb_recipe = [ map { ref $_ ? [ @$_ ] : $_ } @$br ];
+            } else {
+                croak "BodyRecipe must be 'none', 'null' or an ARRAY ref";
+            }
+        }
+        elsif ($opts{UseEpilogue}) {
             # Always store old body in MIME epilogue.
             $rb_recipe = _epilogue_recipe($current, $previous->body_raw);
         }
@@ -815,7 +965,8 @@ sub calculate {
     # computed after any epilogue modification, for every configured
     # algorithm (spec-06 §7.3).
     for my $alg (@{$self->{algs}}) {
-        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg, $prefixes), b_digest($current, $alg) ];
+        $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg, $prefixes),
+            $body_hash ? $body_hash->{$alg} : b_digest($current, $alg) ];
     }
     if (my $sha256 = $self->{bits}{hashes}{sha256}) {
         @{$self->{bits}}{qw(h1 b1)} = @$sha256;
@@ -1179,6 +1330,36 @@ and header Recipes; see L<Mail::DKIM2/Operator-local header fields>.
 C<calculate> only: an arrayref of hash algorithm names for C<h=>, from
 C<sha256> and C<sha512>. Default C<['sha256']>.
 
+=item BodyRecipe
+
+C<calculate> with a previous message only: the caller supplies the body
+Recipe and no body diff runs (the body of C<$previous> is ignored, and may
+be empty). One of C<'none'> (no C<b> key), C<'null'> (C<"b": null>), or an
+ARRAY ref in the internal form: C<[from,to]> arrays for copy ranges (1-based
+body lines of C<$msg>, ascending) and plain strings for literal lines,
+each one line without its line break. An empty array gives C<"b": []>.
+Croaks on a malformed value: C<undef>, an undefined step, a bad range, a
+literal containing CR or LF, or C<BodyRecipe> with no C<$previous>.
+C<'none'> declares the body unchanged; with C<BodyHash> as well, croaks
+unless that hash equals the body hash of the top Message-Instance of
+C<$previous> (for every algorithm both carry, and at least one).
+
+=item BodyHash
+
+C<calculate> only, with no C<$previous> or with C<BodyRecipe>: the body
+hash, already computed with C<body_digest_raw> (below) over the body of C<$msg>.
+A base64 string is the C<sha256> hash; a hashref maps each algorithm in
+C<Algs> to its hash. The body of C<$msg> is then neither hashed nor read,
+so C<$msg> may be the header block alone (the fields and the blank line
+after them): a list manager sending many copies of a large body hashes
+each body once and never has the module parse it. A string C<$msg> that
+does not end in a line break gets a CRLF appended, so a header block
+whose last field lacks one is still complete. Croaks if an algorithm is
+missing or unsupported, if a value is not the base64 of a digest of that
+algorithm's length (32 octets for C<sha256>, 64 for C<sha512>), or if the
+body is needed (a previous message without C<BodyRecipe>, which runs the
+body diff).
+
 =item UseEpilogue, EpilogueThreshold
 
 C<calculate> with a previous message only; see below.
@@ -1264,6 +1445,17 @@ L<Mail::DKIM2::Common/fold_header> before inserting it.
 
 The base64 sha256 header hash, or undef if the instance carries no sha256
 set.
+
+=head2 body_hash()
+
+The base64 sha256 body hash, or undef if the instance carries no sha256
+set.
+
+=head2 body_digest_raw($body, [$alg])
+
+Function, not a method. The body hash of a raw body string with LF or CRLF
+line ends, equal to what the instance records for a message with that body.
+C<$alg> defaults to C<sha256>.
 
 =head2 unrecoverable()
 

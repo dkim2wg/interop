@@ -152,8 +152,10 @@ instance. List mail is never blocked or lost because of DKIM2.
 
 - Output: `multipart/mixed`, containing:
   1. an optional `message_header` part, `text/plain` in UTF-8;
-  2. the original part: the original `Content-*` fields from the saved
-     headers, a blank line, then the raw `_body` octets byte for byte;
+  2. the original part: the message's current `Content-*` fields (they
+     describe the current `_body`; the header Recipe records their move off
+     the top level), a blank line, then the raw `_body` octets byte for
+     byte;
   3. the footer part(s), personalised per recipient where configured.
 
   It uses a fresh boundary that is checked not to occur in the body. The
