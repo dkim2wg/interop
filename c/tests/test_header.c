@@ -136,6 +136,41 @@ int main(void) {
         dkim2_sig_free(ok);
     }
 
+    /* Every i= and m= is bounded by DKIM2_MAX_CHAIN_LENGTH (32): a larger
+       value, or one longer than two digits, is a PERMERROR saying so --
+       never atoi()'d into an overflowed or truncated number. */
+    {
+        assert(DKIM2_MAX_CHAIN_LENGTH == 32);
+        static const char *ok_n[] = { "1", "9", "32", "01", NULL };
+        static const char *bad_n[] = { "33", "99", "001", "4294967297",
+            "99999999999999999999", NULL };
+        for (int k = 0; ok_n[k]; k++) assert(!dkim2_chain_number_out_of_range(ok_n[k]));
+        for (int k = 0; bad_n[k]; k++) assert(dkim2_chain_number_out_of_range(bad_n[k]));
+        assert(!dkim2_chain_number_out_of_range("abc"));  /* left to syntax checks */
+
+        char eb[256], v[256];
+        for (int k = 0; bad_n[k]; k++) {
+            snprintf(v, sizeof v, "i=%s; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
+            assert(dkim2_sig_parse(v) == NULL);
+            assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
+            assert(strcmp(eb, "PERMERROR DKIM2-Signature i= exceeds the maximum chain length of 32") == 0);
+
+            snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
+            assert(dkim2_sig_parse(v) == NULL);
+            assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
+            assert(strcmp(eb, "PERMERROR DKIM2-Signature m= exceeds the maximum chain length of 32") == 0);
+
+            snprintf(v, sizeof v, "m=%s; h=sha256:AAAA:BBBB", bad_n[k]);
+            assert(dkim2_mi_parse(v) == NULL);
+            assert(dkim2_mi_parse_err(v, eb, sizeof eb) == NULL);
+            assert(strcmp(eb, "PERMERROR Message-Instance m= exceeds the maximum chain length of 32") == 0);
+        }
+        dkim2_sig_t *s32 = dkim2_sig_parse_err(
+            "i=32; m=32; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", eb, sizeof eb);
+        assert(s32 && s32->i == 32 && s32->m == 32 && eb[0] == '\0');
+        dkim2_sig_free(s32);
+    }
+
     /* Missing required tag → NULL */
     sig = dkim2_sig_parse("i=1; m=1; t=123; d=example.com; s=sel:rsa-sha256:XXX");
     assert(sig == NULL); /* neither nd= nor mf=+rt= present */

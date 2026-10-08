@@ -1,6 +1,16 @@
 #pragma once
 #include "dkim2_internal.h"
 
+/* Every i= and m= names one hop, and a chain has at most this many. */
+#define DKIM2_MAX_CHAIN_LENGTH 32
+
+/* Non-zero when v is ASCII digits naming a number above
+   DKIM2_MAX_CHAIN_LENGTH, or longer than two digits (never converted, so it
+   cannot overflow). Anything else -- NULL, empty, non-digits -- is 0: left to
+   the syntax checks. The parsers below reject such an i= or m= with
+   "PERMERROR <field> <tag>= exceeds the maximum chain length of 32". */
+int dkim2_chain_number_out_of_range(const char *v);
+
 /* Parse a Message-Instance header value (everything after "Message-Instance:").
    Returns allocated struct or NULL on parse error. */
 dkim2_mi_t *dkim2_mi_parse(const char *value);
@@ -25,8 +35,9 @@ char *dkim2_mi_format(const dkim2_mi_t *mi);
 dkim2_sig_t *dkim2_sig_parse(const char *value);
 /* As dkim2_sig_parse(); on failure errbuf gets the PERMERROR to report:
    "PERMERROR DKIM2-Signature has a missing or malformed i= tag" when i= is
-   missing or not a positive integer, else "PERMERROR DKIM2-Signature is
-   malformed". */
+   missing or not a positive integer; "PERMERROR DKIM2-Signature i= (or m=)
+   exceeds the maximum chain length of 32" when one is out of range; else
+   "PERMERROR DKIM2-Signature is malformed". */
 dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz);
 void dkim2_sig_free(dkim2_sig_t *sig);
 
