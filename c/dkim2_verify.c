@@ -568,6 +568,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     if (ctx->mi_error[0])
         SETSTATUS(DKIM2_PERMERROR, "%s", ctx->mi_error);
 
+    /* §7.3/§10.7: each Message-Instance m= value appears once. Check it
+       explicitly (inbound and outbound), before any crypto, rather than
+       leaving it to an incidental signature or hash failure. */
+    for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next)
+        for (const dkim2_mi_t *b = a->next; b; b = b->next)
+            if (a->m == b->m)
+                SETSTATUS(DKIM2_PERMERROR, "PERMERROR: duplicate Message-Instance m=%d", a->m);
+
     /* Outbound mode (signer gate): a chain with no signature yet -- just an
        unsigned Message-Instance the signer is about to cover -- has no
        signature to verify; its MI chain is still checked. */
@@ -605,8 +613,10 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
        DKIM2-Signature MUST NOT carry nd=. The only legitimate nd= producer
        emits the nd= hop together with a matching higher-i= signature, so
        nd= should never appear on the top signature. Non-top nd= adjacency
-       (§11.4, matched further below) is unaffected by this check. */
-    if (latest->nd && latest->nd[0])
+       (§11.4, matched further below) is unaffected by this check. In
+       outbound (signer gate) mode the signer has already required nd= to
+       name its own domain, so the check is skipped. */
+    if (!ctx->outbound && latest->nd && latest->nd[0])
         SETSTATUS(DKIM2_PERMERROR, "DKIM2-Signature i=%d unexpected nd= tag", latest->i);
 
     /* §7.1: i= sequence must be contiguous 1..N */

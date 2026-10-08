@@ -32,8 +32,7 @@ int main(int argc, char *argv[]) {
             if (n_rcpt < 63) rcptto[n_rcpt++] = argv[++i];
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0)
             verbose = 1;
-        else if (strcmp(argv[i], "--no-timestamp-check") == 0 ||
-                 strcmp(argv[i], "--ignore-timestamps") == 0)
+        else if (strcmp(argv[i], "--ignore-timestamps") == 0)
             no_timestamp = 1;
         else if (strcmp(argv[i], "--full-chain") == 0)
             ; /* body bytes are always kept; full-chain MI hash walk is automatic */

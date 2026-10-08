@@ -48,8 +48,7 @@ int main(int argc, char *argv[]) {
             timestamp = atoll(argv[++i]);
         else if (strcmp(argv[i], "--allow-null-body-recipe") == 0)
             allow_null = 1;
-        else if (strcmp(argv[i], "--ignore-timestamps") == 0 ||
-                 strcmp(argv[i], "--no-timestamp-check") == 0)
+        else if (strcmp(argv[i], "--ignore-timestamps") == 0)
             ignore_ts = 1;
         else if (strcmp(argv[i], "--dns-json") == 0 && i + 1 < argc)
             dns_json = argv[++i];

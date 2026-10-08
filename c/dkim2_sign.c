@@ -8,6 +8,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <openssl/evp.h>
@@ -169,6 +170,23 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0])
         return 0;                       /* no existing chain: sign as always */
 
+    /* spec-06 §9.3/§11.4: an nd= on the top signature names the domain that
+       signs next. We may extend the chain only if that is us; the verifier's
+       blanket "top signature carries nd=" rejection is lifted in outbound
+       mode because this is the check that replaces it. */
+    {
+        const dkim2_sig_t *top = NULL;
+        for (const dkim2_sig_t *s = ctx->sig_list; s; s = s->next)
+            if (!top || s->i >= top->i) top = s;
+        if (top && top->nd && top->nd[0] &&
+            (!cfg->domain || strcasecmp(top->nd, cfg->domain) != 0)) {
+            snprintf(ctx->errmsg, sizeof ctx->errmsg,
+                "not signing: top signature nd=%.200s names another domain",
+                top->nd);
+            return -1;
+        }
+    }
+
     int save_out = ctx->outbound, save_ts = ctx->skip_timestamp_check;
     ctx->outbound = 1;
     ctx->skip_timestamp_check = cfg->skip_timestamp_check;
@@ -255,7 +273,8 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
        applies to the legacy single-sha256 path so --hash semantics stay
        simple: a multi-hash sign always adds a new MI. */
     dkim2_mi_t *latest_mi = NULL;
-    for (dkim2_mi_t *mi = ctx->mi_list; mi; mi = mi->next) latest_mi = mi;
+    for (dkim2_mi_t *mi = ctx->mi_list; mi; mi = mi->next)
+        if (!latest_mi || mi->m >= latest_mi->m) latest_mi = mi;   /* highest m=, not list tail */
     if (n_sel == 1 && sel_algs[0] == 0 &&
         latest_mi && latest_mi->n_hsets > 0 &&
         strcmp(latest_mi->hsets[0].hdr_hash, hh_b64[0]) == 0 &&

@@ -1136,6 +1136,23 @@ int main(void) {
         free(sig1_out);
     }
 
+    /* --- Error: duplicate Message-Instance m= -> explicit PERMERROR --- */
+    {
+        dkim2_ctx_t dctx;
+        memset(&dctx, 0, sizeof dctx);
+        dctx.mi_list = dkim2_mi_parse(mi_val);
+        dctx.mi_list->next = dkim2_mi_parse(mi_val);
+        dctx.sig_list = dkim2_sig_parse(sig_val);
+        assert(dctx.mi_list && dctx.mi_list->next && dctx.sig_list);
+        dkim2_verify_result_t dres;
+        dkim2_do_verify(&dctx, &dres);
+        assert(dres.status == DKIM2_PERMERROR);
+        assert(strstr(dres.message, "duplicate Message-Instance m=1") != NULL);
+        dkim2_mi_free(dctx.mi_list->next); dctx.mi_list->next = NULL;
+        dkim2_mi_free(dctx.mi_list);
+        dkim2_sig_free(dctx.sig_list);
+    }
+
     free(mi_val);
     free(sig_val);
     puts("sign+verify: all tests passed");
