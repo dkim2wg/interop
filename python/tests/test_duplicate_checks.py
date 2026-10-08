@@ -64,3 +64,17 @@ def test_duplicate_mi_version_is_permerror_inbound_and_outbound():
                                        skip_timestamp_check=True)
         assert r.status == 'permerror', (allow, r)
         assert 'duplicate Message-Instance m=1' in r.message, r.message
+
+
+def test_malformed_mi_m_is_clean_permerror():
+    import json
+    import dkim2verify
+    here = os.path.dirname(os.path.abspath(__file__))
+    dns = json.load(open(os.path.join(os.path.dirname(os.path.dirname(here)), "dns.json")))
+    for bad in ("abc", "", "1x", "-1"):
+        raw = (f"Message-Instance: m={bad}; h=sha256:AA:BB\r\n"
+               "From: a@test1.dkim2.com\r\n\r\nbody\r\n").encode()
+        for allow in (False, True):
+            r = dkim2verify.verify_message(raw, dns, allow_unsigned_mi=allow)
+            assert r.status == 'permerror', (bad, allow, r)
+            assert 'malformed m= tag' in r.message, r.message

@@ -773,6 +773,12 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
 
     seen_m = set()
     for h in mi_headers:
+        m_raw = _extract_tag(_get_header_value(h), "m")
+        if m_raw is None or not m_raw.strip().isascii() \
+                or not m_raw.strip().isdigit():
+            msg = "Message-Instance has a malformed m= tag"
+            return VerifyResult(ok=False, status='permerror', failing_i=None,
+                                domain=None, message=msg, errors=[msg])
         mv = _get_version_from_mi(h)
         if mv in seen_m:
             msg = f"duplicate Message-Instance m={mv}"
