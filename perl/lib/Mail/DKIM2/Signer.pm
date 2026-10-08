@@ -398,9 +398,11 @@ Feed the message; see L<Mail::DKIM2::HeaderParser>.
 =head2 result()
 
 Undef until C<CLOSE>; then C<'signed'>, or C<'fail'> when the message
-cannot be signed (no Message-Instance to sign over, a chain already at the
-length limit, or a repeated C<i=> or C<m=>). A failure is a result, not an exception: C<PRINT> and
-C<CLOSE> return normally.
+cannot be signed: no Message-Instance to sign over, a chain already at the
+length limit, a DKIM2-Signature with a missing or malformed C<i=> (or one
+that does not parse), an C<i=> or C<m=> above C<MAX_CHAIN_LENGTH>, or a
+repeated C<i=> or C<m=>. L</details> says which. A failure is a result, not
+an exception: C<PRINT> and C<CLOSE> return normally.
 
 =head2 details()
 

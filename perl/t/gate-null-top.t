@@ -1,9 +1,12 @@
 #!/usr/bin/perl
-# Mail::DKIM2::Gate: a null body Recipe on the top Message-Instance is refused
+# Mail::DKIM2::Gate: a null body Recipe on a Message-Instance is refused
 # (without AllowNullBodyRecipe) only when no DKIM2-Signature covers that
-# instance, i.e. none has m= equal to the top m=.  That is a null THIS hop
-# would introduce.  A null top that the upstream domain declared and signed
-# (a list host's signed post, forwarded unchanged) is extended normally.
+# instance.  A signature with m=k covers instances 1..k, so an instance is
+# uncovered when its m= is above the highest m= of every valid signature --
+# the top, or one under another unsigned instance.  That is a null THIS hop
+# would be the first to sign.  A null that the upstream domain declared and
+# signed (a list host's signed post, forwarded unchanged) is extended
+# normally.
 use strict;
 use warnings;
 use Test::More;
@@ -66,6 +69,18 @@ sub signed_null_list_post {
         'list-bounces@test2.dkim2.com', 'subscriber@test3.dkim2.com');
 }
 
+# An ordinary hop on top of $msg: another Subject tag and a footer, recorded as
+# a new UNSIGNED Message-Instance with real Recipes.
+sub ordinary_on_top {
+    my ($msg) = @_;
+    my $mod = $msg;
+    $mod =~ s/^Subject: /Subject: [fwd] /m;
+    $mod .= "footer$EOL";
+    my $mi = Mail::DKIM2::MessageInstance->calculate(
+        Email::MIME->new($mod), Email::MIME->new($msg));
+    return "Message-Instance: " . $mi->as_string . $EOL . $mod;
+}
+
 my %cb = (PubkeyCallback => DKIM2TestKeys::pubkey_callback());
 
 {
@@ -101,6 +116,52 @@ my %cb = (PubkeyCallback => DKIM2TestKeys::pubkey_callback());
     $g = Mail::DKIM2::Gate->check(signed_null_list_post(forge => 1), %cb,
         AllowNullBodyRecipe => 1);
     ok(!$g->{ok}, 'signed forged null top: refused even with the option');
+}
+
+{
+    # Unsigned null m=2 under an unsigned ordinary m=3: the null is not the
+    # top, but i=1 covers only m=1, so nothing vouches for it yet.
+    my $msg = ordinary_on_top(null_list_post());
+    like($msg, qr/^Message-Instance: m=3;/m, 'fixture: an unsigned m=3 on top');
+    my $g = Mail::DKIM2::Gate->check($msg, %cb);
+    ok(!$g->{ok}, 'null below unsigned top: refused by default');
+    is($g->{reason}, 'null-body-recipe', 'null below unsigned top: reason null-body-recipe');
+    like($g->{message}, qr/^unsigned Message-Instance m=2 has a null body Recipe/,
+        'null below unsigned top: message names the unsigned null m=2');
+    is($g->{top_null}, 0, 'null below unsigned top: top_null is 0 (m=3 is ordinary)');
+    is($g->{top_signed}, 0, 'null below unsigned top: top_signed is 0');
+    is($g->{covered_m}, 1, 'null below unsigned top: covered_m is 1');
+    is($g->{unsigned_null}, 2, 'null below unsigned top: unsigned_null is 2');
+    $g = Mail::DKIM2::Gate->check($msg, %cb, AllowNullBodyRecipe => 1);
+    ok($g->{ok}, 'null below unsigned top: signed with AllowNullBodyRecipe')
+        or diag($g->{message});
+
+    # The history under both unsigned instances is still checked.
+    $g = Mail::DKIM2::Gate->check(ordinary_on_top(null_list_post(forge => 1)), %cb,
+        AllowNullBodyRecipe => 1);
+    ok(!$g->{ok}, 'forged null below unsigned top: refused even with the option');
+}
+
+{
+    # The null m=2 is covered by the list's valid i=2/m=2; only an ordinary
+    # m=3 is unsigned on top of it.
+    my $msg = ordinary_on_top(signed_null_list_post());
+    my $g = Mail::DKIM2::Gate->check($msg, %cb, SigningDomain => 'test3.dkim2.com');
+    ok($g->{ok}, 'null below signed: extended without the option')
+        or diag($g->{message});
+    is($g->{covered_m}, 2, 'null below signed: covered_m is 2');
+    is($g->{unsigned_null}, 0, 'null below signed: no unsigned null');
+    is($g->{top_null}, 0, 'null below signed: top_null is 0');
+    $g = Mail::DKIM2::Gate->check($msg, %cb, AllowNullBodyRecipe => 1);
+    ok($g->{ok}, 'null below signed: and with the option');
+}
+
+{
+    my $g = Mail::DKIM2::Gate->check(null_list_post(), %cb);
+    is($g->{unsigned_null}, 2, 'unsigned null top: unsigned_null is the top m=');
+    is($g->{covered_m}, 1, 'unsigned null top: covered_m');
+    $g = Mail::DKIM2::Gate->check(signed_null_list_post(), %cb);
+    is($g->{unsigned_null}, 0, 'signed null top: no unsigned null');
 }
 
 {

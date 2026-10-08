@@ -15,9 +15,9 @@
 # Before extending an existing DKIM2 chain it runs the same verify-before-sign
 # gate as dkim2-milter (Mail::DKIM2::Gate): the upstream signatures must
 # verify, the Message-Instance chain must undo cleanly, and a null body Recipe
-# on an UNSIGNED top Message-Instance (no signature has its m=) is refused
-# unless --allow-null-body-recipe; a null top an upstream domain already
-# signed is extended without it. A top signature carrying
+# on an UNSIGNED Message-Instance (m= above every signature's m=, top or not)
+# is refused unless --allow-null-body-recipe; a null an upstream domain
+# already signed is extended without it. A top signature carrying
 # nd= is extended only when nd= equals DOMAIN. On refusal it prints the reason
 # on stderr and exits 1 with nothing on stdout.
 #
@@ -87,7 +87,7 @@ $raw =~ s/\n/\r\n/g;
 # Gate (shared with dkim2-milter, Mail::DKIM2::Gate): before extending an
 # existing DKIM2 chain, verify it -- an unsigned top Message-Instance is the one
 # we are about to cover, so it is allowed -- and refuse a null body Recipe on
-# an unsigned top instance unless --allow-null-body-recipe. A message with no
+# an unsigned instance unless --allow-null-body-recipe. A message with no
 # chain is signed as before.
 my %gate_opts = (AllowNullBodyRecipe => $allow_null, SkipTimestampCheck => $ignore_ts,
                  SigningDomain => $domain);
@@ -163,9 +163,9 @@ usage: $0 -s SELECTOR -d DOMAIN -k KEYFILE [options] [MESSAGE|-]
       --timestamp N  fixed t= (default: now)
       --next-domain D  emit nd= for an imaginary forwarding hop, omitting mf=/rt=
       --flag F       f= flag; repeatable
-      --allow-null-body-recipe  sign even if the top Message-Instance has a null body
-                     Recipe that no upstream signature covers (a signed null top
-                     needs no option)
+      --allow-null-body-recipe  sign even if a Message-Instance has a null body
+                     Recipe that no upstream signature covers (its m= is above
+                     every signature's m=; a signed null needs no option)
       --ignore-timestamps  do not fail an upstream signature for its t= age
       --dns-json PATH  answer key lookups from an interop dns.json (default \$DKIM2_DNS_JSON)
       --hash A       hash algorithm(s) for Message-Instance h=: sha256|sha512|both (default sha256)

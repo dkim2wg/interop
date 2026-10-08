@@ -498,11 +498,13 @@ sub cb_eom {
                         _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
                     warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
                        . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
-                    # Informational: we signed over a top instance with a
-                    # null body Recipe, whether it arrived signed (no option
-                    # needed) or is our own unsigned one (option set).
+                    # Informational: we signed over a null body Recipe --
+                    # a null top, whether it arrived signed (no option
+                    # needed) or is our own, or any unsigned null under the
+                    # top (the option was set).
                     $ctx->insheader('X-DKIM2-Info',
-                        _milter_value(_dkim2_info("null-body-recipe")), 0) if $gate->{top_null};
+                        _milter_value(_dkim2_info("null-body-recipe")), 0)
+                        if $gate->{top_null} || $gate->{unsigned_null};
                 }
             } else {
                 warn "dkim2-milter: no signing key for $msgid from=$priv->{env_from}\n";
@@ -937,8 +939,10 @@ on outbound, the snapshot is used to compute recipes describing changes.
 
 =item B<--allow-null-body-recipe>
 
-Sign a message whose top Message-Instance has a null body Recipe that no
-upstream DKIM2-Signature covers (none has its C<m=>): a null this host is
+Sign a message with a Message-Instance that has a null body Recipe no upstream
+DKIM2-Signature covers (its C<m=> is above every valid signature's C<m=>; a
+signature with C<m=k> covers instances 1 to I<k>), whether it is the top
+instance or another unsigned instance was added over it: a null this host is
 introducing.  Default: off, and such a message is delivered unsigned with
 C<X-DKIM2-Info: not-signed=null-body-recipe>.  When set, the message is
 signed provided the upstream signatures verify and the header history below
@@ -946,11 +950,11 @@ the null Recipe checks out.  For list hosts whose list manager rewrites
 bodies (content filtering, DMARC wrap) and adds an unsigned instance for the
 milter to sign.
 
-A null top that arrived already signed (a list host's post, forwarded
-unchanged) needs no option: the domain that declared the null signed it, and
-the milter extends the chain as for any other valid one.  Whenever the milter
-signs over a null top, in either case, it adds the informational
-C<X-DKIM2-Info: action=null-body-recipe;>.
+A null that arrived already signed (a list host's post, forwarded unchanged)
+needs no option: the domain that declared the null signed it, and the milter
+extends the chain as for any other valid one.  Whenever the milter signs over
+a null top, in either case, or over an unsigned null under the top (with the
+option), it adds the informational C<X-DKIM2-Info: action=null-body-recipe;>.
 
 =item B<--use-epilogue>
 
