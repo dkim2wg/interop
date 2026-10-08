@@ -32,7 +32,8 @@ first make sure the chain is worth extending.
 C<< Mail::DKIM2::Gate->check($message, %opts) >> takes the whole message as a
 string (CRLF line endings) and returns a hashref. Options:
 C<PubkeyCallback> and C<SkipTimestampCheck> are passed to the Verifier,
-C<AllowNullBodyRecipe> permits a top Message-Instance whose body Recipe is null,
+C<AllowNullBodyRecipe> permits an I<unsigned> top Message-Instance whose body
+Recipe is null (see L</Null body Recipes>),
 C<SigningDomain> is the C<d=> the caller will sign with: when the top
 upstream signature carries C<nd=> the gate passes only if it equals that
 domain (case-insensitive) and refuses otherwise ("top signature nd=X names
@@ -46,9 +47,25 @@ to sign), and the Message-Instance chain must match the content and undo
 cleanly down to m=1, including the header history below a null body Recipe.
 
 The result has C<ok> (true to sign), C<verify_result> (C<none> without a
-DKIM2-Signature), C<has_chain>, C<top_null> and, when refusing, C<reason>
+DKIM2-Signature), C<has_chain>, C<top_null> (the top Message-Instance has a
+null body Recipe), C<top_signed> (some DKIM2-Signature has C<m=> equal to the
+top Message-Instance's C<m=>) and, when refusing, C<reason>
 (C<upstream-chain>, C<broken-mi-chain> or C<null-body-recipe>) and a
 human-readable C<message>.
+
+=head2 Null body Recipes
+
+A null body Recipe (C<"b": null>) says the previous body cannot be recreated.
+The gate refuses one on the top Message-Instance only when no upstream
+DKIM2-Signature covers that instance (none has its C<m=>): that is a null
+I<this> hop is introducing, typically a list manager that rewrote the body and
+added an unsigned instance for the outbound signer to sign. Signing it is the
+host's choice, made with C<AllowNullBodyRecipe>.
+
+A null top that already arrived signed (a list host's post, forwarded
+unchanged) was declared and signed by the upstream domain; the gate extends it
+without the option. Either way the upstream signatures must verify and the
+header history below the null must check out.
 
 =cut
 
@@ -108,18 +125,32 @@ sub check {
     my ($top) = sort { $b <=> $a } keys %by_v;
     my $top_null = ($top
         && eval { Mail::DKIM2::MessageInstance->parse($by_v{$top})->unrecoverable }) ? 1 : 0;
+    # Is the top instance covered by an upstream signature (one whose m= is
+    # the top m=, spec-06 §8.2)?  Then its null body Recipe was declared and
+    # signed by that domain, not introduced by this hop.
+    my $top_signed = 0;
+    if ($top) {
+        for my $raw (@sigs) {
+            (my $v = $raw) =~ s/^\s+//;
+            my $sig = eval { Mail::DKIM2::Signature->parse($v) } or next;
+            my $m = $sig->version // next;
+            if ($m =~ /^\d+$/ && $m == $top) { $top_signed = 1; last }
+        }
+    }
 
     my %r = (ok => 0, verify_result => $verify_result,
-             has_chain => $has_dk2, top_null => $top_null);
+             has_chain => $has_dk2, top_null => $top_null,
+             top_signed => $top_signed);
     if ($has_dk2 && $verify_result !~ /^pass/) {
         @r{qw(reason message)} = ('upstream-chain',
             "upstream DKIM2 chain result=$verify_result");
     } elsif (!$chain_ok) {
         @r{qw(reason message)} = ('broken-mi-chain',
             "Message-Instance chain does not undo cleanly: $chain_why");
-    } elsif ($top_null && !$o{AllowNullBodyRecipe}) {
+    } elsif ($top_null && !$top_signed && !$o{AllowNullBodyRecipe}) {
         @r{qw(reason message)} = ('null-body-recipe',
-            'top Message-Instance has a null body Recipe (--allow-null-body-recipe not set)');
+            "unsigned top Message-Instance m=$top has a null body Recipe "
+            . '(--allow-null-body-recipe not set)');
     } else {
         $r{ok} = 1;
     }

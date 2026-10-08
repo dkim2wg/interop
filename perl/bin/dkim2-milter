@@ -370,8 +370,10 @@ sub cb_eom {
         # upstream signatures (allowing our own unsigned instance on top), run
         # the full undo check on the Message-Instance chain (an upstream that
         # emitted a non-reversible Recipe would give a signature that fails at
-        # every recipient), and refuse a top null body Recipe unless
-        # --allow-null-body-recipe.
+        # every recipient), and refuse a null body Recipe on an UNSIGNED top
+        # instance (no upstream signature has its m=: a null this hop is
+        # introducing) unless --allow-null-body-recipe. A null top that
+        # arrived signed (a list post forwarded unchanged) is extended.
         # nd= bridge: when the top signature carries nd= we may extend it only
         # if nd= names the domain we sign as, so tell the gate which. (The
         # gate ignores this unless the top signature has nd=.)
@@ -403,8 +405,7 @@ sub cb_eom {
             $ctx->insheader('X-DKIM2-Info',
                 _milter_value(_dkim2_info("not-signed=broken-mi-chain")), 0);
         } elsif ($gate->{reason}) {
-            warn "dkim2-milter: not signing $msgid: top Message-Instance has a "
-               . "null body Recipe (--allow-null-body-recipe not set)\n";
+            warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
             $ctx->insheader('X-DKIM2-Info',
                 _milter_value(_dkim2_info("not-signed=null-body-recipe")), 0);
         } else {
@@ -487,6 +488,9 @@ sub cb_eom {
                         _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
                     warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
                        . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
+                    # Informational: we signed over a top instance with a
+                    # null body Recipe, whether it arrived signed (no option
+                    # needed) or is our own unsigned one (option set).
                     $ctx->insheader('X-DKIM2-Info',
                         _milter_value(_dkim2_info("null-body-recipe")), 0) if $gate->{top_null};
                 }
@@ -894,12 +898,20 @@ on outbound, the snapshot is used to compute recipes describing changes.
 
 =item B<--allow-null-body-recipe>
 
-Sign a message whose top Message-Instance has a null body Recipe.  Default:
-off, and such a message is delivered unsigned with
+Sign a message whose top Message-Instance has a null body Recipe that no
+upstream DKIM2-Signature covers (none has its C<m=>): a null this host is
+introducing.  Default: off, and such a message is delivered unsigned with
 C<X-DKIM2-Info: not-signed=null-body-recipe>.  When set, the message is
 signed provided the upstream signatures verify and the header history below
 the null Recipe checks out.  For list hosts whose list manager rewrites
-bodies (content filtering, DMARC wrap).
+bodies (content filtering, DMARC wrap) and adds an unsigned instance for the
+milter to sign.
+
+A null top that arrived already signed (a list host's post, forwarded
+unchanged) needs no option: the domain that declared the null signed it, and
+the milter extends the chain as for any other valid one.  Whenever the milter
+signs over a null top, in either case, it adds the informational
+C<X-DKIM2-Info: action=null-body-recipe;>.
 
 =item B<--use-epilogue>
 

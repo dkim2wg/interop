@@ -70,6 +70,7 @@ t/foreign-exception.t
 t/fraud-detection.t
 t/full-chain.t
 t/gate-mime-warn.t
+t/gate-null-top.t
 t/guide-links.t
 t/hash-agility.t
 t/headerparser.t

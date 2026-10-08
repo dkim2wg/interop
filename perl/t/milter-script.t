@@ -47,6 +47,9 @@ my $dir = tempdir(CLEANUP => 1);
 my $log  = "$dir/milter.log";
 path("$dir/keys/test2.dkim2.com")->mkpath;
 $KEYS->child('sel1._domainkey.test2.dkim2.com.pem')->copy("$dir/keys/test2.dkim2.com/sel1.key");
+# test3.dkim2.com: a forwarder further down the chain (case 5b).
+path("$dir/keys/test3.dkim2.com")->mkpath;
+$KEYS->child('sel1._domainkey.test3.dkim2.com.pem')->copy("$dir/keys/test3.dkim2.com/sel1.key");
 path("$dir/snap")->mkpath;
 
 my @pids;
@@ -368,6 +371,39 @@ sub info_values {
     is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'option off: null body Recipe not signed');
     like(join("\n", info_values($mods)), qr/not-signed=null-body-recipe/,
         'option off: X-DKIM2-Info records not-signed=null-body-recipe');
+    like(milter_log(), qr/not signing <post\@test1\.dkim2\.com>: unsigned top Message-Instance m=2 has a null body Recipe/,
+        'option off: the log says the null top is unsigned');
+}
+
+# --- 5b. The same null m=2, but the list domain signed it (i=2, m=2) ---
+# A forwarder (test3) relays the list post unchanged. The null was declared
+# and signed upstream, so the default milter (option off) extends the chain,
+# and X-DKIM2-Info still notes the null top it signed over.
+{
+    my $post = null_list_post();
+    my $s = Mail::DKIM2::Signer->new(
+        Domain => 'test2.dkim2.com', Selector => 'sel1',
+        Key => DKIM2TestKeys::private_key('test2.dkim2.com', 'sel1'),
+        MailFrom => 'list-bounces@test2.dkim2.com', RcptTo => ['subscriber@test3.dkim2.com'],
+        Timestamp => time());
+    $s->PRINT($post); $s->CLOSE;
+    my $signed_post = $s->as_string . $EOL . $post;
+
+    my ($verdict, $mods) = run_milter(
+        from => 'fwd@test3.dkim2.com', rcpt => ['user@example.org'],
+        message => $signed_post);
+    is($verdict, 'c', 'signed null top: milter continues');
+    my @sig = inserted($mods, 'DKIM2-Signature');
+    is(scalar @sig, 1, 'signed null top: signed with the option off') or diag(milter_log());
+    like($sig[0]{value} // '', qr/\bi=3;.*\bm=2;/s, 'signed null top: i=3 over the list\'s m=2');
+    like($sig[0]{value} // '', qr/\bd=test3\.dkim2\.com;/, 'signed null top: by the forwarder');
+    like(join("\n", info_values($mods)), qr/action=null-body-recipe/,
+        'signed null top: X-DKIM2-Info notes the null top (informational)');
+    unlike(join("\n", info_values($mods)), qr/not-signed=/,
+        'signed null top: no not-signed= tag');
+    my $v = verify(assemble($signed_post, $mods));
+    is($v->result, 'pass', 'signed null top: full chain verifies at a receiver')
+        or diag($v->result_detail);
 }
 
 {

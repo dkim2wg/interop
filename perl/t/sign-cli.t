@@ -186,6 +186,7 @@ isnt($rc4, 0, 'missing --selector is an error');
     isnt($rc, 0, 'gate: null body Recipe refused by default');
     is($out, '', 'gate: nothing written for null body Recipe');
     like($err, qr/null body Recipe/, 'gate: reason names the null body Recipe');
+    like($err, qr/unsigned top Message-Instance m=2/, 'gate: and says the null top is unsigned');
 
     ($out, $rc) = $run->($null_top->(), '--allow-null-body-recipe');
     is($rc, 0, 'gate: null body Recipe signed with --allow-null-body-recipe');
@@ -193,6 +194,29 @@ isnt($rc4, 0, 'missing --selector is an error');
 
     ($out, $rc) = $run->($null_top->(forge => 1), '--allow-null-body-recipe');
     isnt($rc, 0, 'gate: forged null-top refused even with the option');
+
+    # The list domain test2 signed its own null m=2 (i=2, m=2); test3 forwards
+    # it unchanged and signs i=3 without the option.
+    {
+        my $s = Mail::DKIM2::Signer->new(
+            Domain => 'test2.dkim2.com', Selector => 'sel1',
+            Key => DKIM2TestKeys::private_key('test2.dkim2.com', 'sel1'),
+            MailFrom => 'list@test2.dkim2.com', RcptTo => ['sub@test3.dkim2.com'],
+            Timestamp => time());
+        my $m = $null_top->();
+        $s->PRINT($m); $s->CLOSE;
+        my $f = path($dir)->child('gate-signed-null.eml');
+        $f->spew_raw($s->as_string . $EOL . $m);
+        my $e = path($dir)->child('gate-signed-null.err');
+        my @cmd = ($^X, '-Ilib', 'bin/dkim2sign', '-s', 'sel1', '-d', 'test3.dkim2.com',
+            '-k', 't/data/keys/sel1._domainkey.test3.dkim2.com.pem',
+            '--mailfrom', '<fwd@test3.dkim2.com>', '--rcptto', '<user@test4.dkim2.com>', "$f");
+        open my $fh, '-|', "@{[map { quotemeta } @cmd]} 2>$e" or die $!;
+        binmode $fh; my $o = do { local $/; <$fh> }; close $fh;
+        is($? >> 8, 0, 'gate: a null top the list already signed is extended without the option')
+            or diag($e->slurp);
+        like($o, qr/^DKIM2-Signature: i=3; m=2;/m, 'gate: forwarder signs i=3 over the signed m=2');
+    }
 
     # nd= bridge: a top signature carrying nd= may be extended only by the
     # domain it names.
