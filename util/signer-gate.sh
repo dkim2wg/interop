@@ -63,7 +63,8 @@ export DKIM2_DNS_JSON="$root/dns.json"
 # as an option rather than from $DKIM2_DNS_JSON.  Edit as signers grow them.
 gate_dns_args() {
     case $1 in
-    python|go|c|perl) ;;
+    c) echo --ignore-timestamps ;;        # fixtures are old; keys via $DKIM2_DNS_JSON
+    python|go|perl) ;;
     esac
 }
 

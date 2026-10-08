@@ -62,7 +62,10 @@ int dkim2_sign_message(const char *eml_path, FILE *out,
     int n_headers = 0;
     dkim2_ctx_t ctx = {0};
 
-    if (eml_parse(eml_path, &headers, &n_headers, &ctx.body_digests) < 0) {
+    /* Body bytes are kept so the signer gate can check every existing
+       Message-Instance's body hash, not only the topmost. */
+    if (eml_parse_with_body(eml_path, &headers, &n_headers, &ctx.body_digests,
+                            &ctx.body, &ctx.body_len) < 0) {
         snprintf(errbuf, errbufsz, "failed to parse %s", eml_path);
         return -1;
     }
@@ -80,8 +83,13 @@ int dkim2_sign_message(const char *eml_path, FILE *out,
     dkim2_mi_free(ctx.mi_list);
     dkim2_sig_free(ctx.sig_list);
 
+    free(ctx.body);
     if (r < 0) {
-        snprintf(errbuf, errbufsz, "signing failed: %s", ctx.errmsg);
+        /* A gate refusal reads "not signing: ..." -- don't bury it. */
+        if (strncmp(ctx.errmsg, "not signing:", 12) == 0)
+            snprintf(errbuf, errbufsz, "%s", ctx.errmsg);
+        else
+            snprintf(errbuf, errbufsz, "signing failed: %s", ctx.errmsg);
         eml_free(headers, n_headers);
         return -1;
     }

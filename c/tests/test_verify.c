@@ -454,6 +454,7 @@ int main(void) {
         dkim2_sign_config_t cfg2 = {
             .domain = "example.com", .selector = "test",
             .privkey_path = "/tmp/dkim2_test_sign.pem", .alg = "ed25519-sha256",
+            .skip_chain_check = 1, /* deliberately broken chains under test */
         };
         char *mi2_out = NULL, *sig2_out = NULL;
         int r2 = dkim2_do_sign(&ctx2, &cfg2, &mi2_out, &sig2_out);
@@ -518,6 +519,7 @@ int main(void) {
         dkim2_sign_config_t cfg2 = {
             .domain = "example.com", .selector = "test",
             .privkey_path = "/tmp/dkim2_test_sign.pem", .alg = "ed25519-sha256",
+            .skip_chain_check = 1, /* deliberately broken chains under test */
         };
         char *mi2_out = NULL, *sig2_out = NULL;
         int r2 = dkim2_do_sign(&ctx2, &cfg2, &mi2_out, &sig2_out);

@@ -3,6 +3,8 @@
 #include "dkim2_header.h"
 #include "dkim2_crypto.h"
 #include "base64.h"
+#include "dkim2_verify.h"
+#include <cjson/cJSON.h>
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
@@ -129,8 +131,79 @@ static unsigned char *build_sign_input(
     return (unsigned char *)buf;
 }
 
+/* 1 if the Message-Instance with the highest m= carries a null body Recipe
+   ("b": null, spec-06 §4.2): the previous body cannot be recreated. */
+static int top_mi_null_body(const dkim2_ctx_t *ctx) {
+    const dkim2_mi_t *top = NULL;
+    for (const dkim2_mi_t *m = ctx->mi_list; m; m = m->next)
+        if (!top || m->m >= top->m) top = m;
+    if (!top || !top->r_raw) return 0;
+    size_t n = strlen(top->r_raw);
+    unsigned char *buf = malloc(n * 3 / 4 + 5);
+    if (!buf) return 0;
+    int len = (int)b64_decode(top->r_raw, buf, n * 3 / 4 + 4);
+    int null_body = 0;
+    if (len > 0) {
+        buf[len] = '\0';
+        cJSON *j = cJSON_Parse((const char *)buf);
+        if (j) {
+            cJSON *b = cJSON_GetObjectItemCaseSensitive(j, "b");
+            null_body = b && cJSON_IsNull(b);
+            cJSON_Delete(j);
+        }
+    }
+    free(buf);
+    return null_body;
+}
+
+/* Signer gate: before extending an existing DKIM2 chain, verify it in
+   outbound mode (the unsigned top Message-Instance is the one we are about to
+   cover). Returns 0 to go ahead and sign, -1 to refuse with ctx->errmsg set.
+
+   When ctx->body is NULL (the milter only keeps a body digest) the topmost
+   instance's body hash is checked against the digest, but body Recipes cannot
+   be undone to check inner instances' body hashes; their header hashes (and
+   the header Recipes) are still walked. */
+static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
+    if (cfg->skip_chain_check) return 0;
+    if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0])
+        return 0;                       /* no existing chain: sign as always */
+
+    int save_out = ctx->outbound, save_ts = ctx->skip_timestamp_check;
+    ctx->outbound = 1;
+    ctx->skip_timestamp_check = cfg->skip_timestamp_check;
+    dkim2_verify_result_t res;
+    dkim2_do_verify(ctx, &res);
+    ctx->outbound = save_out;
+    ctx->skip_timestamp_check = save_ts;
+
+    if (res.status != DKIM2_OK) {
+        const char *outcome =
+            (res.status == DKIM2_FAIL)      ? "fail" :
+            (res.status == DKIM2_TEMPERROR) ? "temperror" : "permerror";
+        if (strstr(res.message, "Message-Instance") || strstr(res.message, " MI m="))
+            snprintf(ctx->errmsg, sizeof ctx->errmsg,
+                "not signing: Message-Instance chain does not undo cleanly: %s",
+                res.message);
+        else
+            snprintf(ctx->errmsg, sizeof ctx->errmsg,
+                "not signing: upstream DKIM2 chain result=%s (%s)",
+                outcome, res.message);
+        return -1;
+    }
+    if (top_mi_null_body(ctx) && !cfg->allow_null_body_recipe) {
+        snprintf(ctx->errmsg, sizeof ctx->errmsg,
+            "not signing: top Message-Instance has a null body Recipe "
+            "(--allow-null-body-recipe not set)");
+        return -1;
+    }
+    return 0;
+}
+
 int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     char **mi_out, char **sig_out) {
+    if (sign_gate(ctx, cfg) < 0) return -1;
+
     /* spec-06 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
        NULL) is sha256 only, so default output stays byte-identical to before
        hash agility existed. "--hash both" emits sha256 first, then sha512. */

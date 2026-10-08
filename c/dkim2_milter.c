@@ -18,6 +18,7 @@ static struct {
     char *privkey_path;
     char *alg;
     char *authservid;    /* for Authentication-Results */
+    int   allow_null_body_recipe; /* sign a chain whose top MI has a null body Recipe */
 } g_cfg;
 
 /* Per-message state */
@@ -167,9 +168,22 @@ static sfsistat cb_eom(SMFICTX *ctx) {
             .selector     = g_cfg.selector,
             .privkey_path = g_cfg.privkey_path,
             .alg          = g_cfg.alg,
+            .allow_null_body_recipe = g_cfg.allow_null_body_recipe,
         };
         char *mi_val = NULL, *sig_val = NULL;
         if (dkim2_do_sign(c, &cfg, &mi_val, &sig_val) != 0) {
+            /* Signer gate: an existing DKIM2 chain that does not verify (or a
+               null body Recipe on top, without allow_null_body_recipe) is
+               never extended. Deliver the message unsigned, as the Perl
+               milter does -- refusing to sign is not grounds to bounce mail.
+               (This milter emits no X-DKIM2-Info header, so log only.)
+               Limitation: the milter keeps only the body digest, so body
+               hashes of inner Message-Instances are not re-checked here; the
+               signatures, the top body hash and every header hash are. */
+            if (strncmp(c->errmsg, "not signing:", 12) == 0) {
+                syslog(LOG_WARNING, "dkim2-milter: %s", c->errmsg);
+                return SMFIS_ACCEPT;
+            }
             syslog(LOG_ERR, "dkim2-milter: sign failed: %s", c->errmsg);
             return SMFIS_TEMPFAIL;
         }
@@ -235,6 +249,8 @@ static void load_config(const char *path) {
         else if (strcmp(k, "privkey")    == 0) g_cfg.privkey_path = strdup(v);
         else if (strcmp(k, "alg")        == 0) g_cfg.alg        = strdup(v);
         else if (strcmp(k, "authservid") == 0) g_cfg.authservid = strdup(v);
+        else if (strcmp(k, "allow_null_body_recipe") == 0)
+            g_cfg.allow_null_body_recipe = (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
     }
     fclose(f);
 

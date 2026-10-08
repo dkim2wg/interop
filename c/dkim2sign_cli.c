@@ -3,12 +3,17 @@
 #include <string.h>
 #include <time.h>
 #include "dkim2_message.h"
+#include "dkim2_dnsjson.h"
 
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s <email.eml> -s SELECTOR -d DOMAIN -k KEYFILE\n"
         "       [--mailfrom ADDR] [--rcptto ADDR]... [--timestamp N]\n"
-        "       [--hash sha256|sha512|both]\n",
+        "       [--hash sha256|sha512|both]\n"
+        "       [--allow-null-body-recipe] [--dns-json PATH] [--ignore-timestamps]\n"
+        "A message already carrying a DKIM2 chain is verified first (keys from\n"
+        "--dns-json or $DKIM2_DNS_JSON, else DNS) and is not signed if it fails;\n"
+        "a null body Recipe on top is refused unless --allow-null-body-recipe.\n",
         prog);
     exit(1);
 }
@@ -25,6 +30,8 @@ int main(int argc, char *argv[]) {
     int n_rcpt = 0;
     long long timestamp = -1;
     const char *hash = NULL;
+    const char *dns_json = getenv("DKIM2_DNS_JSON");
+    int allow_null = 0, ignore_ts = 0;
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc)
@@ -39,6 +46,13 @@ int main(int argc, char *argv[]) {
             if (n_rcpt < 63) rcptto[n_rcpt++] = argv[++i];
         } else if (strcmp(argv[i], "--timestamp") == 0 && i + 1 < argc)
             timestamp = atoll(argv[++i]);
+        else if (strcmp(argv[i], "--allow-null-body-recipe") == 0)
+            allow_null = 1;
+        else if (strcmp(argv[i], "--ignore-timestamps") == 0 ||
+                 strcmp(argv[i], "--no-timestamp-check") == 0)
+            ignore_ts = 1;
+        else if (strcmp(argv[i], "--dns-json") == 0 && i + 1 < argc)
+            dns_json = argv[++i];
         else if (strcmp(argv[i], "--hash") == 0 && i + 1 < argc) {
             hash = argv[++i];
             if (strcmp(hash, "sha256") != 0 && strcmp(hash, "sha512") != 0 &&
@@ -61,7 +75,16 @@ int main(int argc, char *argv[]) {
         .alg          = NULL,
         .timestamp    = (timestamp >= 0) ? (uint64_t)timestamp : 0,
         .hash         = hash,
+        .allow_null_body_recipe = allow_null,
+        .skip_timestamp_check   = ignore_ts,
     };
+    if (dns_json && *dns_json) {
+        char jerr[256];
+        if (dkim2_dns_json_load(dns_json, jerr, sizeof jerr) < 0) {
+            fprintf(stderr, "%s\n", jerr);
+            return 1;
+        }
+    }
     rcptto[n_rcpt] = NULL;
 
     char errbuf[512];
