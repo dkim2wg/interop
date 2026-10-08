@@ -45,26 +45,27 @@ verifier and undo.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- DKIM2-MESSAGE-INSTANCE.md                | 273 +++++++
+ DKIM2-MESSAGE-INSTANCE.md                | 282 +++++++
  Makefile.am                              |   1 +
+ cpanfile                                 |   4 +
  src/lib/Makefile.am                      |   1 +
- src/lib/Sympa/DKIM2.pm                   | 543 +++++++++++++
- src/lib/Sympa/Message.pm                 |  33 +
+ src/lib/Sympa/DKIM2.pm                   | 556 +++++++++++++
+ src/lib/Sympa/Message.pm                 |  59 ++
  src/lib/Sympa/Spindle/ProcessArchive.pm  |  13 +-
  src/lib/Sympa/Spindle/ProcessIncoming.pm |   5 +
  src/lib/Sympa/Spindle/ProcessOutgoing.pm |  61 +-
- src/lib/Sympa/Spindle/ResendArchive.pm   |   4 +
- t/DKIM2.t                                | 929 ++++++++++++++++++++++-
- 10 files changed, 1845 insertions(+), 18 deletions(-)
+ src/lib/Sympa/Spindle/ResendArchive.pm   |   7 +
+ t/DKIM2.t                                | 969 ++++++++++++++++++++++-
+ 11 files changed, 1940 insertions(+), 18 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/lib/Sympa/DKIM2.pm
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..88d7bed13
+index 000000000..2929eb4e3
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,282 @@
 +# DKIM2 Message-Instance support for Sympa
 +
 +Sympa changes the messages it redistributes: it adds list headers, a
@@ -107,7 +108,8 @@ index 000000000..88d7bed13
 +diff, and the `BodyHash` option that lets it give the body hash, so the
 +instance is calculated from the header block alone. Mail::DKIM2 is loaded
 +on first use, not at compile time, so Sympa without it runs as stock; an
-+older version counts as missing.
++older version counts as missing. In `cpanfile` it is the optional feature
++`dkim2`.
 +
 +## Ingress: before decryption, into a pseudo-header
 +
@@ -199,8 +201,9 @@ index 000000000..88d7bed13
 +`egress_context`:
 +
 +1. With no saved header block (a message Sympa composed itself, a digest,
-+   or a message queued before the switch was turned on), add nothing and
-+   log at `info`.
++   or a message queued before the switch was turned on), add nothing. Log
++   at `info` if the message carries a `Message-Instance` or
++   `DKIM2-Signature` (a relayed post that missed ingress), else at `debug`.
 +2. Check the saved block's top instance header hash against the saved
 +   block itself. On a mismatch, log at `err` and add nothing: Sympa never
 +   builds on a broken chain.
@@ -239,14 +242,21 @@ index 000000000..88d7bed13
 +The whole step runs in an `eval`. On any failure it logs and the copy goes
 +out without the new instance: DKIM2 never blocks or loses list mail.
 +
++The instance is computed for every copy, one body hash and one header diff
++each, also when the copies differ only in the envelope (VERP, DSN
++tracking) and could share one instance. Reusing it would mean telling such
++copies apart from personalised ones; computing it per copy is simpler, and
++the measured cost is small (see "Resource impact").
++
 +### The null body Recipe
 +
 +A null body Recipe says "the previous body cannot be rebuilt". A verifier
 +can still check the previous hop's header hash, because the header Recipe
 +rebuilds the previous header block, but it cannot check the earlier body
 +hashes. Sympa uses it whenever the outgoing body is neither the received
-+body nor the received body wrapped, because the alternative is a Recipe carrying the whole
-+original body (a 300 KB attachment gave a 572 KB header in the old series).
++body nor the received body wrapped, because the alternative is a Recipe
++carrying the whole original body (a 300 KB attachment gave a 572 KB header
++in the old series).
 +The test is always against the body hash in the top instance's `h=`, so a
 +body change Sympa did not anticipate still gives a correct, if null,
 +Recipe rather than a wrong one.
@@ -274,14 +284,14 @@ index 000000000..88d7bed13
 +| Full-body personalisation (`personalization.mail_apply_on all`) | null body Recipe per recipient |
 +| Footer-only personalisation (`personalization.mail_apply_on footer`) | wrap; the copies differ only in the trailing part |
 +| Anonymous list | no pseudo-header at ingress, stock decoration; egress removes `DKIM2-Signature` and `Message-Instance`, and the outbound signer starts a new chain with `m=1` |
-+| Resend from archive | the chain is removed as for anonymous lists |
++| Resend from archive | on a DKIM2 list, the chain is removed as for anonymous lists |
 +| Digests, notifications, auto-replies, direct sends, bounces | no saved header block; Sympa adds nothing (the outbound signer adds `m=1`) |
 +| Messages embedded in a digest | content, left alone |
-+| VERP, DSN tracking | envelope only; no effect on the instance |
++| VERP, DSN tracking | envelope only; the instance is still computed per copy (below) |
 +| MDN tracking | `Disposition-Notification-To` is set before the DKIM2 step |
 +| DMARC From rewrite, subject tag, custom headers, topics, `remove_headers` | header changes, captured by the header diff at egress |
 +| Moderated, held, auth-confirmed messages | the pseudo-header is in the spooled text, so the chain survives |
-+| Requeued from `bad/` | likewise |
++| Requeued from `bad/` | likewise; ingress keeps the saved header block it finds |
 +| Archive and custom archiver copies | stored without the pseudo-header |
 +
 +### `remove_headers`
@@ -320,10 +330,10 @@ index 000000000..88d7bed13
 +
 +The old CTE-preserving series, by comparison, took 14 to 41 times stock CPU
 +on Outlook-style HTML and QP text (with personalisation: 25 per-recipient
-+copies), timed out on a base64 attachment wrapped
-+at 72 columns, ran out of memory at 10 MB, and wrote a 134 KB header for a
-+100 KB QP message. The figures, method and limits are in
-+`docs/sympa-dkim2-performance.md` of the DKIM2 interop repository.
++copies), timed out on a base64 attachment wrapped at 72 columns, ran out of
++memory at 10 MB, and wrote a 134 KB header for a 100 KB QP message. The
++figures, method and limits are in `docs/sympa-dkim2-performance.md` of the
++DKIM2 interop repository.
 +
 +## Tests
 +
@@ -350,6 +360,21 @@ index 6c4aa2819..257088816 100644
  	INSTALL.md \
  	NEWS.md \
  	ONEWS \
+diff --git a/cpanfile b/cpanfile
+index 3c2cb1cc6..0cec7c5f0 100644
+--- a/cpanfile
++++ b/cpanfile
+@@ -206,6 +206,10 @@ feature 'cas', 'CAS Single Sign-On client libraries. Required if you configure S
+     requires 'AuthCAS', '>= 1.4';
+ };
+ 
++feature 'dkim2', 'DKIM2 Message-Instance support: required if you set the dkim2_message_instance list parameter to on.' => sub {
++    requires 'Mail::DKIM2', '>= 0.15';
++};
++
+ feature 'Clone', 'Used to make copy of internal data structures.' => sub {
+     requires 'Clone', '>= 0.31';
+ };
 diff --git a/src/lib/Makefile.am b/src/lib/Makefile.am
 index 1e4b49c3d..d3d962453 100644
 --- a/src/lib/Makefile.am
@@ -364,10 +389,10 @@ index 1e4b49c3d..d3d962453 100644
  	Sympa/HTML/URIFind.pm \
 diff --git a/src/lib/Sympa/DKIM2.pm b/src/lib/Sympa/DKIM2.pm
 new file mode 100644
-index 000000000..8de43af0f
+index 000000000..fc5024f37
 --- /dev/null
 +++ b/src/lib/Sympa/DKIM2.pm
-@@ -0,0 +1,543 @@
+@@ -0,0 +1,556 @@
 +# -*- indent-tabs-mode: nil; -*-
 +# vim:ft=perl:et:sw=4
 +
@@ -445,6 +470,8 @@ index 000000000..8de43af0f
 +    my $list    = $message->{context};
 +    return unless enabled($list);
 +    return if anonymous($list);
++    # Requeued (from bad/, say): ingress already ran on this message.
++    return if defined $message->{'dkim2_headers'};
 +
 +    eval {
 +        unless ($message->{_head}->count('Message-Instance')) {
@@ -472,7 +499,11 @@ index 000000000..8de43af0f
 +    return {strip => 1}
 +        if anonymous($list) or $message->{shelved}{dkim2_strip};
 +    unless (defined $message->{'dkim2_headers'}) {
-+        $log->syslog('info',
++        # Worth an info line only for a post that carries a DKIM2 chain
++        # (relayed, but it missed ingress); otherwise it is routine.
++        my $relayed = grep { $message->{_head}->count($_) }
++            qw(Message-Instance DKIM2-Signature);
++        $log->syslog(($relayed ? 'info' : 'debug'),
 +            'DKIM2: %s has no saved header block; no Message-Instance added',
 +            $message);
 +        return undef;
@@ -557,7 +588,11 @@ index 000000000..8de43af0f
 +            _header_block($message), $ctx->{prev},
 +            BodyRecipe => $br, BodyHash => $bh);
 +        # Nothing changed at all: no instance (spec: r= needs "h" or "b").
-+        return 1 if !ref $br and $br eq 'none' and $mi->as_string !~ /; r=/;
++        return 1
++            if !ref $br
++            and $br eq 'none'
++            and !$mi->get_tag('rh')
++            and !$mi->get_tag('rb');
 +        _prepend_instance($message, $mi);
 +        1;
 +    } or $log->syslog('err',
@@ -870,7 +905,9 @@ index 000000000..8de43af0f
 +change.  On a DKIM2 list that is not anonymous: adds C<m=1> describing the
 +message as received unless it already carries a Message-Instance, and
 +saves the header block in C<< $message->{dkim2_headers} >>, which is
-+spooled as the pseudo-header.  Logs and carries on on failure.
++spooled as the pseudo-header.  Does nothing if the message already has a
++saved header block (requeued from F<bad/>, say).  Logs and carries on on
++failure.
 +
 +=item wrap ( $message, $list, $rcpt, [ mode =E<gt> $mode ] )
 +
@@ -887,7 +924,8 @@ index 000000000..8de43af0f
 +
 +Run once per packet in ProcessOutgoing, before any per-recipient change.
 +Returns C<undef> if nothing is to be added (switch off, no saved header
-+block, or a saved block that does not verify), C<< {strip =E<gt> 1} >> for
++block, or a saved block that does not verify; a missing block is logged at
++C<info> if the message carries a DKIM2 chain, else at C<debug>), C<< {strip =E<gt> 1} >> for
 +anonymous lists and resends from the archive, or a context for
 +L</egress_add>: the saved block, whether the body is still the one the top
 +instance hashed, and that hash.
@@ -912,7 +950,7 @@ index 000000000..8de43af0f
 +
 +=cut
 diff --git a/src/lib/Sympa/Message.pm b/src/lib/Sympa/Message.pm
-index f832e13c3..1e01e5394 100644
+index f832e13c3..c69943034 100644
 --- a/src/lib/Sympa/Message.pm
 +++ b/src/lib/Sympa/Message.pm
 @@ -34,6 +34,7 @@ use English;    # FIXME: drop $PREMATCH usage
@@ -990,6 +1028,60 @@ index f832e13c3..1e01e5394 100644
      my $entity = $self->as_entity->dup;
      my $mode = $options{mode} || '';
  
+@@ -3898,6 +3931,15 @@ Gets header part of the message as string.
+ 
+ Note that the result won't be decoded nor unfolded.
+ 
++=item as_rfc822_string ( )
++
++I<Instance method>.
++Gets the message as it goes on the wire, for DKIM2 hashing:
++the header fields (without pseudo-header fields and without the
++C<Return-Path:> field L</to_string> adds), a blank line and the body, with CRLF line ends.
++
++Note that the result won't be decoded.
++
+ =item get_header ( $field, [ $sep ] )
+ 
+ I<Instance method>.
+@@ -4382,6 +4424,16 @@ These are accessible as hash elements of objects.
+ No longer used.  It is kept for compatibility with Sympa 6.1.x or earlier.
+ See also L<sympa upgrade incoming|sympa-upgrade-incoming(1)> command line.
+ 
++=item {dkim2_headers}
++
++The header block of the message as received, after ingress added its
++DKIM2 C<Message-Instance> (if any): header fields with C<"\n"> line ends,
++no body.  Set by L<Sympa::DKIM2/ingress> on lists with
++C<dkim2_message_instance> on, and used at egress to compute the header
++Recipe of the next instance.  Serialized as the C<X-Sympa-DKIM2-Headers:>
++pseudo-header field, whose value is the block in base64 without line
++breaks.  Never stored in archives.
++
+ =item {envelope_sender}
+ 
+ Envelope sender, a.k.a. "Unix From".
+@@ -4444,6 +4496,12 @@ with the messages stored into outgoing spool by earlier version of Sympa.
+ 
+ Adding DKIM signature.
+ 
++=item dkim2_strip =E<gt> 1
++
++Removing the DKIM2 chain (C<DKIM2-Signature:>, C<Message-Instance:>) at
++egress.  Set when a message is resent from the
++archive on a list with C<dkim2_message_instance> on.  See L<Sympa::DKIM2>.
++
+ =item dmarc_protect =E<gt> 1
+ 
+ DMARC protection.  See also L</dmarc_protect>().
+@@ -4499,6 +4557,7 @@ Below is an example of serialized form.
+   X-Sympa-Display-Name: Infant                    : {gecos} attribute
+   X-Sympa-Shelved: dkim_sign; tracking=mdn        : {shelved} attribute
+   X-Sympa-Spam-Status: ham                        : {spam_status} attribute
++  X-Sympa-DKIM2-Headers: RnJvbTogSW5mYW50...      : {dkim2_headers} attribute
+   Return-Path: sympa-request@domain.name          : {envelope_sender} attribute
+   Message-Id: <123456789.12345@domain.name>       :   ---
+   From: Infant <user@other.host.dom>              :    |
 diff --git a/src/lib/Sympa/Spindle/ProcessArchive.pm b/src/lib/Sympa/Spindle/ProcessArchive.pm
 index d1a4ca951..ad363bdab 100644
 --- a/src/lib/Sympa/Spindle/ProcessArchive.pm
@@ -1169,22 +1261,32 @@ index 5f384a74e..2d7be7748 100644
  
      1;
 diff --git a/src/lib/Sympa/Spindle/ResendArchive.pm b/src/lib/Sympa/Spindle/ResendArchive.pm
-index a70320541..8675b485f 100644
+index a70320541..0f3cb1da7 100644
 --- a/src/lib/Sympa/Spindle/ResendArchive.pm
 +++ b/src/lib/Sympa/Spindle/ResendArchive.pm
-@@ -100,6 +100,10 @@ sub _twist {
+@@ -32,6 +32,7 @@ use warnings;
+ 
+ use Sympa;
+ use Conf;
++use Sympa::DKIM2;
+ use Sympa::Language;
+ use Sympa::Log;
+ use Sympa::Tools::Text;
+@@ -100,6 +101,12 @@ sub _twist {
      # If encrypted, it will be re-encrypted by succeeding processes.
      $message->smime_decrypt;
  
 +    # DKIM2: the archived copy can't describe the message as received, so
-+    # the resend starts a new chain (Sympa::DKIM2).
-+    $message->{shelved}{dkim2_strip} = 1;
++    # the resend starts a new chain (Sympa::DKIM2).  Only on DKIM2 lists:
++    # with the switch off the spooled message stays as stock.
++    $message->{shelved}{dkim2_strip} = 1
++        if Sympa::DKIM2::enabled($self->{context});
 +
      # Assign privileges of resending user to the message.
      $message->{envelope_sender} = $self->{resent_by};
  
 diff --git a/t/DKIM2.t b/t/DKIM2.t
-index f042f8ece..6a61ab256 100644
+index f042f8ece..eda9b7bac 100644
 --- a/t/DKIM2.t
 +++ b/t/DKIM2.t
 @@ -1,8 +1,36 @@
@@ -1225,7 +1327,7 @@ index f042f8ece..6a61ab256 100644
  
  subtest 'switch parameter' => sub {
      my %p = %{ $Sympa::Config::Schema::pinfo{dkim2_message_instance} || {} };
-@@ -12,4 +40,903 @@ subtest 'switch parameter' => sub {
+@@ -12,4 +40,943 @@ subtest 'switch parameter' => sub {
      is_deeply $p{context}, [qw(list domain site)], 'list/domain/site';
  };
  
@@ -1283,6 +1385,14 @@ index f042f8ece..6a61ab256 100644
 +    my $again = Sympa::Message->new($m->as_string, context => list());
 +    Sympa::DKIM2::ingress($again);
 +    is $again->{_head}->count('Message-Instance'), 1, 'existing instance kept';
++
++    # Requeued from bad/: the saved block comes back through the spool and
++    # ingress leaves it alone, though the message itself has changed.
++    my $requeued = Sympa::Message->new($m->to_string, context => list());
++    $requeued->replace_header('Subject', 'changed after ingress');
++    Sympa::DKIM2::ingress($requeued);
++    is $requeued->{dkim2_headers}, $m->{dkim2_headers},
++        'requeued: saved header block kept';
 +
 +    my $off = Sympa::Message->new($plain, context => list(dkim2_message_instance => 'off'));
 +    Sympa::DKIM2::ingress($off);
@@ -1596,14 +1706,27 @@ index f042f8ece..6a61ab256 100644
 +
 +subtest 'egress: no saved headers -> nothing, no error' => sub {
 +    my $l = list();
-+    my $b = Sympa::Message->new($plain, context => $l);
-+    my ($ctx, $err) = (1, '');
-+    { local *STDERR; open STDERR, '>', \$err or die;
-+      $ctx = Sympa::DKIM2::egress_context($b) }
-+    is $ctx, undef, 'no context';
-+    like $err, qr/^info .*has no saved header block/m, 'logged';
-+    Sympa::DKIM2::egress_add($b, undef);
-+    is $b->{_head}->count('Message-Instance'), 0, 'no instance';
++    for my $c (
++        [ 'plain post', '', 'debug' ],
++        [ 'post with a Message-Instance',
++          "Message-Instance: m=1; h=sha256:x:y;\n", 'info' ],
++        [ 'post with a DKIM2-Signature',
++          "DKIM2-Signature: i=1; d=example.org; fake\n", 'info' ],
++    ) {
++        my ($name, $extra, $level) = @$c;
++        my $b = Sympa::Message->new($extra . $plain, context => $l);
++        # Captured at the source: debug lines never reach STDERR here.
++        my ($ctx, @logged) = (1);
++        { no warnings 'redefine';
++          local *Sympa::Log::syslog = sub { push @logged, [@_[1, 2]] };
++          $ctx = Sympa::DKIM2::egress_context($b) }
++        is $ctx, undef, "$name: no context";
++        is_deeply [map { $_->[0] } grep { $_->[1] =~ /no saved header block/ }
++                   @logged], [$level], "$name: logged once, at $level";
++        Sympa::DKIM2::egress_add($b, undef);
++        is $b->{_head}->count('Message-Instance'), $extra =~ /^Message/ ? 1 : 0,
++            "$name: no instance added";
++    }
 +};
 +
 +subtest 'egress: Bcc removed and recorded' => sub {
@@ -1764,11 +1887,30 @@ index f042f8ece..6a61ab256 100644
 +};
 +
 +subtest 'resend from archive strips the chain' => sub {
-+    my $w = through($plain, undef, shelved => ['dkim2_strip']);
-+    unlike $w, qr/^Message-Instance:/mi, 'stripped';
++    my $signed = "DKIM2-Signature: i=1; d=example.org; fake\n" . $plain;
++    my $w = through($signed, undef, shelved => ['dkim2_strip']);
++    unlike $w, qr/^(DKIM2-Signature|Message-Instance):/mi,
++        'stripped';
 +    my $m = Sympa::Message->new($plain, context => list());
 +    $m->{shelved}{dkim2_strip} = 1;
 +    like $m->to_string, qr/^X-Sympa-Shelved: .*dkim2_strip/m, 'flag is spooled';
++
++    # ResendArchive sets the flag on DKIM2 lists only.
++    require Sympa::Spindle::ResendArchive;
++    for my $c ([on => 1], [off => 0]) {
++        my ($sw, $want) = @$c;
++        my $l = list(dkim2_message_instance => $sw);
++        my $a = Sympa::Message->new($plain, context => $l);
++        my $spindle = bless { context => $l, resent_by => 'r@example.org',
++            message_id => Sympa::Tools::Text::canonic_message_id(
++                $a->get_header('Message-Id')) },
++            'Sympa::Spindle::ResendArchive';
++        ok $spindle->_twist($a), "switch $sw: resent";
++        is !!$a->{shelved}{dkim2_strip}, !!$want, "switch $sw: flag "
++            . ($want ? 'set' : 'not set');
++        unlike $a->to_string, qr/dkim2_strip/, "switch $sw: not spooled"
++            unless $want;
++    }
 +};
 +
 +subtest '_recovers_body: copy range must fit the verifier line count' => sub {

@@ -16,7 +16,7 @@ production build, run in-process (no daemon, no database):
 |---|---|---|
 | `up` | `6.2.78` | stock |
 | `cte` | `dkim2-cte-preserve-6.2.78` (`bc6d4413b`) | the old series: keeps the body's Content-Transfer-Encoding, line-diffs the body at egress |
-| `wrap` | `dkim2` (`254bae3fa`) | the always-wrap rebuild, switch on, with Mail::DKIM2 0.15 |
+| `wrap` | `dkim2` (`254bae3fa`, see below) | the always-wrap rebuild, switch on, with Mail::DKIM2 0.15 |
 
 Eight messages, each arriving DKIM2-signed (so the list adds `m=2`):
 `syn-plain-2k`, `syn-outlook` (about 21 KB, text and HTML), `syn-latin1`,
@@ -30,6 +30,17 @@ RSS less the baseline of the forked child. Every build runs in a 700 MB
 cgroup, and the `cte` build is cut off at 60 s per case. The box is the
 `dkim2` host: 2 vCPU, 2 GB (a small cloud VM). The wire copy of each case is
 checked afterwards with Mail::DKIM2's verifier.
+
+The measured `wrap` build, `254bae3fa`, has since been replaced on the
+`dkim2` branch by `bdc9eee4d` (the patches in `sympa/patches-6.2.78`). Its
+code differs only by the final review's fixes, none on the measured path's
+cost: ingress returns early for a requeued message; a missing saved header
+block is logged at `debug` unless the post carries a DKIM2 chain;
+"nothing changed" at egress is read from the instance's Recipe tags
+instead of its string form; ResendArchive marks the chain for removal on
+DKIM2 lists only. Mail::DKIM2 0.15 gained input checks in `calculate`
+(per copy, one base64 check of the 44-character body hash). The rest is
+POD and tests.
 
 Raw rows for the run are in `inproc-*.jsonl`; `util/sympa-bench/bench_report.py`
 turns them into the full 69-row table.

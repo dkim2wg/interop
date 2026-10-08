@@ -1,13 +1,16 @@
 #!/bin/bash
 # Switch-off must be byte-identical to stock: run off-identical.pl against
-# a worktree of stock Sympa 6.2.78 and one of dkim2-wrap, over the charset
-# corpus samples plus the review inputs, and compare.
-# usage: off-identical.sh [SCRATCH_DIR]   (worktrees go there, then removed)
+# a worktree of stock Sympa 6.2.78 and one of the DKIM2 series (branch
+# dkim2, or $SYMPA_REF), over the charset corpus samples plus the review
+# inputs, and compare.
+# usage: [SYMPA_REF=ref] off-identical.sh [SCRATCH_DIR]
+#        (worktrees go there, then removed)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 INTEROP=$(cd "$HERE/../.." && pwd)
 SYMPA=${SYMPA:-$HOME/src/sympa}
 DEPS=${SYMPA_DEPS:-$HOME/src/sympa-dev-deps/lib/perl5}
+SYMPA_REF=${SYMPA_REF:-dkim2}
 SCRATCH=${1:-$(mktemp -d)}
 mkdir -p "$SCRATCH"
 # The deps only; each side puts its own src/lib on @INC.
@@ -23,7 +26,7 @@ trap cleanup EXIT
 for t in up wrap; do
   case $t in
     up)   ref=6.2.78     expect= ;;
-    wrap) ref=dkim2-wrap expect=--expect-dkim2 ;;
+    wrap) ref=$SYMPA_REF expect=--expect-dkim2 ;;
   esac
   git -C "$SYMPA" worktree remove --force "$SCRATCH/$t" 2>/dev/null || true
   git -C "$SYMPA" worktree add -q --detach "$SCRATCH/$t" "$ref"
