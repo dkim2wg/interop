@@ -308,8 +308,11 @@ sub parse {
         if (exists $recipe_data->{b}) {
             if (defined $recipe_data->{b} && ref($recipe_data->{b}) eq 'ARRAY') {
                 $self->{bits}{rb} = _decode_recipe_list($recipe_data->{b}, $tags{m});
-            } else {
+            } elsif (!defined $recipe_data->{b}) {
                 $self->{bits}{rb_null} = 1;
+            } else {
+                # spec-06 §5: the body Recipe is null or an array of steps.
+                die "PERMERROR Message-Instance m=$tags{m} Recipe body is neither null nor an array\n";
             }
         }
         if (exists $recipe_data->{h}) {
@@ -319,6 +322,8 @@ sub parse {
                     $rh{$h} = _decode_recipe_list($recipe_data->{h}{$h}, $tags{m});
                 }
                 $self->{bits}{rh} = \%rh;
+            } elsif (defined $recipe_data->{h} && ref($recipe_data->{h}) ne 'HASH') {
+                die "PERMERROR Message-Instance m=$tags{m} Recipe header is not an object\n";
             } else {
                 # spec-06 §5.1 disallows the null header Recipe: a present "h"
                 # MUST be a non-empty object. Reject anything else.

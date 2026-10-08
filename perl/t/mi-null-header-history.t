@@ -108,6 +108,50 @@ sub bad_header_recipe_below_null {
     is(scalar $MI->verify($prev), 0, 'full verify fails m=1 (body differs)');
 }
 
+# Null BELOW an ordinary instance: m=3 header-only over m=2 null over m=1.
+sub ordinary_hop {
+    my ($prev, $hide_to) = @_;
+    my $cur = $prev;
+    $cur =~ s/^Subject: /Subject: [top] /m;
+    $cur =~ s/^To: list\@example\.org/To: other\@example.org/m if $hide_to;
+    my $mi = $MI->calculate($cur, $prev);
+    if ($hide_to) {
+        my $rh = $mi->{bits}{rh};
+        delete $rh->{$_} for grep { lc($_) eq 'to' } keys %$rh;
+    }
+    return with_mi($mi, $cur);
+}
+
+{
+    my $m3 = ordinary_hop(list_hop($m1, 'list'));
+    my ($ok, $why) = $MI->chain_verifies($m3);
+    ok($ok, 'ordinary m=3 over null m=2 over m=1 verifies') or diag $why;
+
+    ($ok, $why) = $MI->chain_verifies(ordinary_hop(list_hop($m1, 'list'), 1));
+    ok(!$ok, 'hidden To change in m=3 header Recipe over null m=2 is caught');
+    like($why // '', qr/m=2 does not match content.*header hash/, 'reason names the failing header hash') or diag $why;
+}
+
+{
+    # forged variant of the above where the hidden change is in the null instance's own header Recipe
+    my $m3 = ordinary_hop(forge_history($m1));
+    my ($ok, $why) = $MI->chain_verifies($m3);
+    ok(!$ok, 'hidden To change in null m=2 header Recipe, ordinary m=3 above, is caught');
+    like($why // '', qr/m=1 does not match content.*header hash/, 'reason names m=1 header hash') or diag $why;
+}
+
+# Empty-body chain: no body at all, header-only Recipe at m=2.
+my $empty = join($EOL, 'From: a@example.com', 'To: list@example.org',
+    'Subject: hello', 'Message-ID: <x@example.com>', '', '');
+my $e1 = with_mi($MI->calculate($empty), $empty);
+{
+    my ($ok, $why) = $MI->chain_verifies(ordinary_hop($e1));
+    ok($ok, 'empty-body chain, header-only m=2 verifies') or diag $why;
+    ($ok, $why) = $MI->chain_verifies(ordinary_hop($e1, 1));
+    ok(!$ok, 'empty-body chain, hidden To change fails');
+    like($why // '', qr/m=1 does not match content.*header hash/, 'empty-body: reason names m=1 header hash') or diag $why;
+}
+
 use lib "$FindBin::Bin/lib";
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
