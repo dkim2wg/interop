@@ -52,6 +52,10 @@ Writes:
   instance-gap.eml                 -- m=1 and m=3, no m=2; otherwise valid; REJECT
   positive-control-nd-bridge.eml   -- the same §9.3 bridge made with a key for
                                          the domain the message DID arrive at
+  unkeyable-signature-no-i.eml     -- positive-control-null-body plus a junk
+                                         "DKIM2-Signature: m=2; d=evil.example"
+                                         (no i=); REJECT (PERMERROR)
+  unkeyable-signature-i-abc.eml    -- the same with i=abc; REJECT (PERMERROR)
 """
 import base64
 import json
@@ -646,6 +650,23 @@ def build_instance_gap():
     return _gap_chain(sig2_seq=2, mi2_version=3)
 
 
+def _with_unkeyable_signature(fake):
+    """POSITIVE CONTROL null-body chain (every signature and hash valid) with
+    one extra DKIM2-Signature prepended that names m=2 but has no i= a
+    verifier can key.  Silently skipping it would ACCEPT; it MUST be a
+    PERMERROR.  (A signer gate counting coverage by m= was fooled by exactly
+    this when the verifier ignored it.)"""
+    return fake + b"\r\n" + build_positive_null_body()
+
+
+def build_unkeyable_signature_no_i():
+    return _with_unkeyable_signature(b"DKIM2-Signature: m=2; d=evil.example")
+
+
+def build_unkeyable_signature_i_abc():
+    return _with_unkeyable_signature(b"DKIM2-Signature: i=abc; m=2; d=evil.example")
+
+
 FIXTURES = {
     "signature-gap.eml": build_signature_gap,
     "instance-gap.eml": build_instance_gap,
@@ -670,6 +691,8 @@ FIXTURES = {
     "positive-control-empty-body-chain.eml": build_positive_empty_body,
     "empty-body-forged-history.eml": build_empty_body_forged_history,
     "malformed-body-recipe-below-null.eml": build_malformed_body_recipe_below_null,
+    "unkeyable-signature-no-i.eml": build_unkeyable_signature_no_i,
+    "unkeyable-signature-i-abc.eml": build_unkeyable_signature_i_abc,
 }
 
 
