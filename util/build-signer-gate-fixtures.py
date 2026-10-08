@@ -20,6 +20,13 @@ that does not check out.
   null-top-forged.eml    like null-top but the header Recipe hides
                          a To: change                             -> REFUSE
                                        even with the flag
+  mi-only.eml            NO DKIM2-Signature: a list added unsigned m=1 and
+                         unsigned m=2 (ordinary Recipe), as Mailman does
+                                                                  -> SIGN
+  mi-only-broken.eml     like mi-only, m=2's Recipe hides a To: change
+                                                                  -> REFUSE
+  mi-only-null.eml       like mi-only, m=2 has a null body Recipe -> REFUSE,
+                                       SIGN with --allow-null-body-recipe
 
 Reuses the machinery in build-negative-vectors.py (loaded by path: its name
 has a hyphen).  Usage: build-signer-gate-fixtures.py <output-dir>
@@ -60,6 +67,37 @@ def _with_unsigned_top(headers1, body1, headers2, body2, recipe_fn):
     for h in headers2:
         msg += h + b"\r\n"
     return msg + b"\r\n" + body2
+
+
+def _mi_only(headers1, body1, headers2, body2, recipe_fn):
+    """NO DKIM2-Signature at all: a list (as Mailman does) adds an unsigned
+    m=1 over the post as received and an unsigned m=2 over the list's output
+    with Recipe recipe_fn(h1, b1, h2, b2)."""
+    mi1 = ds.build_message_instance(headers1, body1, version=1, algs=["sha256"])
+    mi2 = ds.build_message_instance(headers2, body2, version=2, algs=["sha256"],
+                                    recipe=recipe_fn(headers1, body1, headers2, body2))
+    msg = mi2.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+    for h in headers2:
+        msg += h + b"\r\n"
+    return msg + b"\r\n" + body2
+
+
+def build_mi_only():
+    h, b = bnv.load_base()
+    return _mi_only(h, b, bnv._subject_prefixed(h, b"list"),
+                    b + b"footer\r\n", ds.build_recipes)
+
+
+def build_mi_only_broken():
+    h, b = bnv.load_base()
+    return _mi_only(h, b, bnv._to_changed(bnv._subject_prefixed(h, b"list")),
+                    b + b"footer\r\n", bnv._forged_plain_recipe)
+
+
+def build_mi_only_null():
+    h, b = bnv.load_base()
+    return _mi_only(h, b, bnv._subject_prefixed(h, b"list"),
+                    b + b"rewritten by list\r\n", bnv._null_body_recipe)
 
 
 def build_fresh():
@@ -105,6 +143,9 @@ FIXTURES = {
     "broken-mi-chain.eml": build_broken_mi_chain,
     "null-top.eml": build_null_top,
     "null-top-forged.eml": build_null_top_forged,
+    "mi-only.eml": build_mi_only,
+    "mi-only-broken.eml": build_mi_only_broken,
+    "mi-only-null.eml": build_mi_only_null,
 }
 
 

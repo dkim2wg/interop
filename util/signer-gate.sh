@@ -15,6 +15,9 @@
 #   broken-mi-chain      REFUSE   REFUSE
 #   null-top             REFUSE   SIGN
 #   null-top-forged      REFUSE   REFUSE   (flag must not excuse a forged history)
+#   mi-only              SIGN     SIGN     (no signature; list added unsigned m=1, m=2)
+#   mi-only-broken       REFUSE   REFUSE
+#   mi-only-null         REFUSE   SIGN
 #
 # SIGN   = exit 0 and stdout carries a new DKIM2-Signature i=<N+1>.
 # REFUSE = non-zero exit and no new DKIM2-Signature on stdout.
@@ -32,7 +35,7 @@ cd "$root"
 # Single source of truth: the expected cell count is DERIVED from these lists,
 # so a silently dropped fixture/signer/mode shows up as a coverage shortfall.
 # fixture:plain-want:flag-want
-FIXTURES="fresh:sign:sign valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse"
+FIXTURES="fresh:sign:sign valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse mi-only:sign:sign mi-only-broken:refuse:refuse mi-only-null:refuse:sign"
 SIGNERS="python go c perl"
 MODES="plain flag"
 n=0; for _f in $FIXTURES; do n=$((n + 1)); done
@@ -59,12 +62,12 @@ MF='<list@test3.dkim2.com>'
 RT='<subscriber@test4.dkim2.com>'
 export DKIM2_DNS_JSON="$root/dns.json"
 
-# Extra flags that hand a signer the verification keys, once it wants them
-# as an option rather than from $DKIM2_DNS_JSON.  Edit as signers grow them.
+# Extra per-signer flags: the fixtures are old, so ignore timestamps (Go does
+# so by itself when $DKIM2_DNS_JSON is set).
 gate_dns_args() {
     case $1 in
-    c) echo --ignore-timestamps ;;        # fixtures are old; keys via $DKIM2_DNS_JSON
-    python|go|perl) ;;
+    python|perl|c) echo --ignore-timestamps ;;   # fixtures are old; keys via $DKIM2_DNS_JSON
+    go) ;;
     esac
 }
 
