@@ -417,4 +417,18 @@ sub info_values {
         'nd=other: refusal is logged');
 }
 
+# --- 6. Malformed Content-Type: parsed quietly, same decision ---
+{
+    for my $ct ('text/plain; charset=Windows-1252;', 'text/plain; Windows-1252') {
+        (my $m = $PLAIN) =~ s/^Content-Type: text\/plain(?=\r)/Content-Type: $ct/m;
+        my $before = length milter_log();
+        my ($verdict, $mods) = run_milter(
+            from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+            message => $m);
+        is(scalar(inserted($mods, 'DKIM2-Signature')), 1, "Content-Type '$ct': signed");
+        my $new = substr(milter_log(), $before);
+        unlike($new, qr/Extra semicolon|Illegal parameter/, "Content-Type '$ct': no Email::MIME warning in log");
+    }
+}
+
 done_testing;

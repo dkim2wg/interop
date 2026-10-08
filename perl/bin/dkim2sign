@@ -31,7 +31,7 @@ use Getopt::Long qw(GetOptions);
 use FindBin;
 use lib -d "$FindBin::Bin/../lib/Mail/DKIM2" ? "$FindBin::Bin/../lib" : ();   # running from a checkout
 
-use Mail::DKIM2::Common qw(fold_header parse_dkim_pubkey);
+use Mail::DKIM2::Common qw(fold_header parse_dkim_pubkey parse_mime);
 use Mail::DKIM2::Gate;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signer;
@@ -109,7 +109,7 @@ unless ($gate->{ok}) {
     exit 1;
 }
 
-my $msg = Email::MIME->new($raw);
+my $msg = parse_mime($raw);
 
 # §9.1/§9.2.5: only add an instance if this hop actually changed something.
 # MessageInstance->verify returns the version it matched, so a true result means

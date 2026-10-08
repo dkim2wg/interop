@@ -7,7 +7,7 @@ use Mail::Milter::Authentication::Pragmas;
 our $VERSION = '0.14';
 use base 'Mail::Milter::Authentication::Handler';
 
-use Mail::DKIM2::Common qw(extract_mi_version strip_mi_versions load_private_key fold_header);
+use Mail::DKIM2::Common qw(extract_mi_version strip_mi_versions load_private_key fold_header parse_mime);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
 use Mail::DKIM2::Signer;
@@ -313,7 +313,7 @@ sub _compute_message_instance {
     my ( $self, $message_data, $config ) = @_;
 
     my $mi = eval {
-        my $msg = Email::MIME->new($message_data);
+        my $msg = parse_mime($message_data);
 
         # Skip if the topmost MI already matches current content
         my @ignore = ( IgnorePrefixes => $config->{'ignore_header_prefixes'} );
@@ -335,7 +335,7 @@ sub _compute_message_instance {
                 my $snapshot_data = $store->fetch($mi_by_v{$v});
                 if ( $snapshot_data ) {
                     $self->dbgout( 'DKIM2MI', "Found snapshot for MI m=$v, computing diff", LOG_DEBUG );
-                    my $snapshot_msg = Email::MIME->new($snapshot_data);
+                    my $snapshot_msg = parse_mime($snapshot_data);
                     my @snap_mi = $snapshot_msg->header_raw('Message-Instance');
 
                     # If the current message has more MI headers than the snapshot,
@@ -349,7 +349,7 @@ sub _compute_message_instance {
                         my $snap_max_v = (sort { $b <=> $a } keys %snap_by_v)[0] // 0;
                         my @to_strip = ($snap_max_v + 1 .. $max_v);
                         $work_data = strip_mi_versions($message_data, @to_strip);
-                        $work_msg  = Email::MIME->new($work_data);
+                        $work_msg  = parse_mime($work_data);
                         $self->{'_stripped_mi_versions'} = \@to_strip;
                         $self->dbgout( 'DKIM2MI',
                             'Stripped broken MI versions ' . join(',', @to_strip)

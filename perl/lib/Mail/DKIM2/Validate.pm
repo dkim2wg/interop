@@ -5,7 +5,7 @@ our $VERSION = '0.14';
 
 use Email::MIME;
 use List::Util qw(max);
-use Mail::DKIM2::Common qw(extract_mi_version extract_domain relaxed_domain_match parse_dkim_pubkey);
+use Mail::DKIM2::Common qw(extract_mi_version extract_domain relaxed_domain_match parse_dkim_pubkey parse_mime);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Signature;
@@ -147,7 +147,7 @@ sub _report_once {
     my %res = (overall => 'none', summary => '',
                counts => { signatures => 0, instances => 0 }, levels => []);
 
-    my $msg = eval { Email::MIME->new($text) };
+    my $msg = eval { parse_mime($text) };
     return { %res, overall => 'fail', summary => "could not parse message: $@" }
         if $@ || !$msg;
 
@@ -189,7 +189,7 @@ sub _report_once {
     # for them), then record that MI level and undo one step. Records a level
     # for every signature and every MI, in chain order (top hop first).
     my @levels;
-    my $work = Email::MIME->new($text);
+    my $work = parse_mime($text);
     my $stopped;
     # Set once the walk has crossed an instance with a null body Recipe: the
     # body below it is lost, so lower levels are judged on their header
@@ -227,10 +227,10 @@ sub _report_once {
                 $stopped = "stopped below m=$inst (header history did not undo)";
                 last;
             }
-            $work = Email::MIME->new($work->as_string);
+            $work = parse_mime($work->as_string);
         } elsif ($lvl->{undo} eq 'clean') {
             Mail::DKIM2::MessageInstance->undo($work, HeadersOnly => $hdr_only);
-            $work = Email::MIME->new($work->as_string);   # reset Email::MIME caches
+            $work = parse_mime($work->as_string);   # reset Email::MIME caches
         } else {
             $stopped = "stopped below m=$inst ($lvl->{undo})";
             last;
@@ -293,7 +293,7 @@ sub _mi_level {
     } elsif ($mi->unrecoverable) {
         $lvl{undo} = 'unrecoverable';
     } else {
-        my $clone = Email::MIME->new($msg->as_string);
+        my $clone = parse_mime($msg->as_string);
         my $ok = eval { Mail::DKIM2::MessageInstance->undo($clone, HeadersOnly => $hdr_only ? 1 : 0) };
         $lvl{undo} = ($ok && !$@) ? 'clean' : 'failed';
         if ($ok && !$@ && $rh) {
