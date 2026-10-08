@@ -501,6 +501,17 @@ def _get_seq_from_sig(hdr: str) -> int:
     return int(v) if v else 0
 
 
+def _get_mi_from_sig(hdr: str) -> int | None:
+    """Extract m= (the Message-Instance it covers) from a DKIM2-Signature."""
+    colon = hdr.find(":")
+    value = hdr[colon + 1:] if colon != -1 else hdr
+    v = _extract_tag(value, "m")
+    try:
+        return int(v) if v else None
+    except ValueError:
+        return None
+
+
 def compute_signature(mi_headers: list[str], sig_headers: list[str],
                       incomplete_sig: str, private_key, algorithm: str) -> bytes:
     """Compute the DKIM2 signature over MI and DKIM2-Sig headers.
@@ -642,8 +653,9 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
                    signing_domain: str | None = None) -> None:
     """Refuse (SigningRefused) unless the chain already on the message checks
     out.  Runs the verifier in outbound mode: an unsigned top Message-Instance
-    is the one we are about to cover.  A top instance with a null body Recipe
-    needs allow_null_body_recipe as well."""
+    is the one we are about to cover.  An UNSIGNED top instance (no
+    DKIM2-Signature has its m=) with a null body Recipe needs
+    allow_null_body_recipe as well; a signed one does not."""
     import os
     # dkim2verify imports this module, so import it lazily.
     import dkim2verify
@@ -687,13 +699,20 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
             f"not signing: upstream DKIM2 chain result={result.status} "
             f"{detail}")
 
+    # A null body Recipe on the top instance is refused only when no upstream
+    # signature covers it (no DKIM2-Signature with m= equal to the top m=):
+    # then it is a null THIS hop introduced, which needs the option.  A null
+    # some upstream domain already declared and signed is extended normally
+    # (e.g. a forwarder relaying a list post unchanged).
     top = max(existing_mi, key=_get_version_from_mi)
+    top_m = _get_version_from_mi(top)
+    top_signed = any(_get_mi_from_sig(s) == top_m for s in existing_sig)
     mi_json = _extract_mi_recipe(top)
     if mi_json is not None and "b" in mi_json and mi_json["b"] is None \
-            and not allow_null_body_recipe:
+            and not top_signed and not allow_null_body_recipe:
         raise SigningRefused(
-            "not signing: top Message-Instance has a null body Recipe "
-            "(--allow-null-body-recipe not set)")
+            f"not signing: unsigned top Message-Instance m={top_m} has a null "
+            f"body Recipe (--allow-null-body-recipe not set)")
 
 
 def _extract_mi_recipe(mi_hdr: str):
@@ -719,7 +738,8 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
     A message that already carries a DKIM2 chain is verified first (outbound
     mode: an unsigned top Message-Instance is allowed); if the chain does not
-    check out, or its top Message-Instance has a null body Recipe and
+    check out, or its top Message-Instance has a null body Recipe that no
+    upstream DKIM2-Signature covers (none has that m=) and
     allow_null_body_recipe is not set, SigningRefused is raised.  Keys come
     from dns_data, else the dns.json named by $DKIM2_DNS_JSON.
 
@@ -823,7 +843,9 @@ def main():
                              "(spec-06 §3.1; default sha256)")
     parser.add_argument("--allow-null-body-recipe", action="store_true",
                         help="sign even when the top Message-Instance has a "
-                             "null body Recipe (default: refuse)")
+                             "null body Recipe that no upstream signature "
+                             "covers (default: refuse; a signed null top "
+                             "needs no option)")
     parser.add_argument("--dns-json",
                         default=os.environ.get("DKIM2_DNS_JSON"),
                         help="dns.json with keys to verify an existing chain "

@@ -70,6 +70,23 @@ def test_null_top_signed_with_option():
     assert _top_i(_sign(fx.build_null_top(), allow_null_body_recipe=True)) == 2
 
 
+def test_null_top_refusal_says_unsigned():
+    # i=1 covers only m=1; the null m=2 is unsigned, so it is refused.
+    with pytest.raises(dkim2sign.SigningRefused,
+                       match="unsigned top Message-Instance m=2 has a null body Recipe"):
+        _sign(fx.build_null_top())
+
+
+def test_signed_null_top_signs_without_option():
+    # The list domain signed its null m=2 (i=2, m=2): a forwarder extends it.
+    out = _sign(fx.build_null_top_signed())
+    assert _top_i(out) == 3
+    first = out.split(b"\r\n", 1)[0].decode()
+    assert " m=2;" in first          # unchanged: no new Message-Instance
+    assert _top_i(_sign(fx.build_null_top_signed(),
+                        allow_null_body_recipe=True)) == 3
+
+
 def test_forged_null_top_refused_even_with_option():
     with pytest.raises(dkim2sign.SigningRefused):
         _sign(fx.build_null_top_forged(), allow_null_body_recipe=True)
