@@ -80,6 +80,8 @@ for my $case (
       qr/PERMERROR DKIM2-Signature m= exceeds the maximum chain length of 32/ ],
     [ 'instance m=33', ($signed =~ s/^(Message-Instance: m=)1;/${1}33;/mr),
       qr/PERMERROR Message-Instance m= exceeds the maximum chain length of 32/ ],
+    [ 'FWS around = (allowed)', ($signed =~ s/^(DKIM2-Signature: i=)1; m=1;/${1} 1; m =1;/mr),
+      undef ],
 ) {
     my ($name, $msg, $want) = @$case;
     my $path = "$dir/hdr.eml";
@@ -87,6 +89,11 @@ for my $case (
     print $fh $msg;
     close $fh;
     my $out = `perl -Ilib bin/validate.pl --ignore-timestamps $path 2>&1`;
+    unless ($want) {
+        is($?, 0, "$name: validates") or diag($out);
+        unlike($out, qr/uninitialized|MISMATCH/, "$name: no warnings");
+        next;
+    }
     isnt($?, 0, "$name: rejected");
     like($out, $want, "$name: says why");
 }

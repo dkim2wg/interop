@@ -124,16 +124,17 @@ while (1) {
   $num--;
 }
 
-sub _geti {
-  my $arg = shift;
-  return 0 unless $arg =~ m/\bi=([0-9]+)/;
-  return 0 + $1;
-}
+# i= and m= of a DKIM2-Signature, read with the tag-list parser so FWS around
+# "=" (which the syntax allows) is no obstacle. Both are already known to be
+# in range (checked above).
+sub _geti { return _sigtag(shift, 'sequence') }
+sub _getv { return _sigtag(shift, 'version') }
 
-sub _getv {
-  my $arg = shift;
-  return 0 unless $arg =~ m/\bm=([0-9]+)/;
-  return 0 + $1;
+sub _sigtag {
+  my ($arg, $tag) = @_;
+  my $sig = eval { Mail::DKIM2::Signature->parse($arg) } or return 0;
+  my $v = $sig->$tag;
+  return (defined $v && $v =~ /\A[0-9]+\z/) ? 0 + $v : 0;
 }
 
 sub find_key {
