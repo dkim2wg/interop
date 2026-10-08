@@ -209,6 +209,10 @@ isnt($rc4, 0, 'missing --selector is an error');
     ($out, $rc) = $run->($nd_top->('test2.dkim2.com'));
     is($rc, 0, 'gate: top nd= naming our d= is extended');
     like($out, qr/^DKIM2-Signature: i=2;/m, 'gate: nd= bridge gets i=2');
+    (my $ws = $nd_top->('test2.dkim2.com')) =~ s/\bnd=/nd = /
+        or die 'no nd=';
+    ($out, $rc) = $run->($ws, '--ignore-timestamps');
+    is($rc, 0, 'gate: "nd = x" with whitespace around "=" is recognised and signed');
     ($out, $rc) = $run->($nd_top->('TEST2.dkim2.com'));
     is($rc, 0, 'gate: nd= match is case-insensitive');
     ($out, $rc, $err) = $run->($nd_top->('test3.dkim2.com'));

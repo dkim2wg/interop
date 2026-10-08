@@ -7,6 +7,7 @@ our $VERSION = '0.14';
 use Email::MIME;
 use Mail::DKIM2::Common qw(extract_mi_version);
 use Mail::DKIM2::MessageInstance;
+use Mail::DKIM2::Signature;
 use Mail::DKIM2::Verifier;
 
 =head1 NAME
@@ -51,14 +52,18 @@ human-readable C<message>.
 
 =cut
 
-# True when the highest-i= DKIM2-Signature among @$sigs carries nd=.
+# True when the highest-i= DKIM2-Signature among @$sigs carries nd=. Uses the
+# parsed signature, so FWS around "=" (allowed by the tag-list syntax) is seen.
 sub _top_has_nd {
     my ($sigs) = @_;
     my ($best, $top_nd) = (-1, 0);
-    for my $s (@$sigs) {
-        my ($i) = $s =~ /(?:^|[\s;])i=\s*(\d+)/ or next;
+    for my $raw (@$sigs) {
+        (my $v = $raw) =~ s/^\s+//;
+        my $sig = eval { Mail::DKIM2::Signature->parse($v) } or next;
+        my $i = $sig->sequence // next;
         next unless $i > $best;
-        ($best, $top_nd) = ($i, ($s =~ /(?:^|[\s;])nd=/) ? 1 : 0);
+        my $nd = $sig->next_domain;
+        ($best, $top_nd) = ($i, (defined $nd && length $nd) ? 1 : 0);
     }
     return $top_nd;
 }
