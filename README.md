@@ -36,9 +36,18 @@ before extending it (see "Verify before you sign" in
 chain-shaped fixtures (no chain, valid chain, broken signature, broken MI
 chain, null body Recipe, Message-Instance-only chains, `nd=` bridges) through
 all four signer CLIs, plain and with `--allow-null-body-recipe`, and checks each
-signs or refuses as specified:
+signs or refuses as specified (14 fixtures, 112 cells):
 
     ./util/signer-gate.sh
+
+A null body Recipe on the top Message-Instance is refused without
+`--allow-null-body-recipe` only when no upstream DKIM2-Signature covers it
+(none has its `m=`): a null this hop introduces (`null-top`, `mi-only-null`).
+A null top that arrived already signed (`null-top-signed`: a list post the
+list host signed, forwarded unchanged) is signed without the option. Only a
+host that introduces a null body Recipe and signs it itself — a list host whose
+list manager adds an unsigned instance — needs the option; a forwarder needs
+nothing.
 
 It needs the built `c/dkim2sign` and `go/dkim2sign`, and uses `dns.json` for
 the verification keys.

@@ -108,9 +108,10 @@ nrcpt 1
 `sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa`;
 all of them load `Message.pm`.
 
-The outbound signer must accept null body Recipes: `dkim2-milter` signs
-such a message only when started with `--allow-null-body-recipe` (the
-example outbound unit has it).
+The outbound signer must accept null body Recipes: Sympa adds the instance
+unsigned, and `dkim2-milter` signs an unsigned null top only when started
+with `--allow-null-body-recipe` (the example outbound unit has it).
+Downstream forwarders need no option: by then the null is signed.
 
 ## Turning it on
 

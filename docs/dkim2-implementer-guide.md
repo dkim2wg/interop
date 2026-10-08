@@ -145,12 +145,21 @@ of one that does not check out. All four signers (Python, Go, C, Perl) do this;
   the instance below. Any failure means refuse ("not signing: upstream DKIM2
   chain ..."), exit non-zero and emit no new signature. A message with no
   DKIM2 headers is just signed.
-- **Null body Recipe.** An unsigned top instance whose body Recipe is
+- **Null body Recipe.** An *unsigned* top instance whose body Recipe is
   `"b": null` (the previous body is not recoverable) is refused by default,
-  because the signer would be vouching for a change it cannot check. The
-  operator opts in with `--allow-null-body-recipe` (Go: `-allow-null-body-recipe`).
-  The flag does not excuse a forged history: the header Recipe is still undone
-  and checked.
+  because the signer would be vouching for a change it cannot check.
+  "Unsigned" means no DKIM2-Signature in the message has `m=` equal to the top
+  instance's `m=` (a signature's `m=` is the highest instance at signing time,
+  spec-06 §8.2): this hop, or the list manager in front of it, is the one
+  introducing the null. The operator opts in with `--allow-null-body-recipe`
+  (Go: `-allow-null-body-recipe`). A null top that arrived already signed —
+  a list host declared it and signed it, and this hop forwards the message
+  unchanged — is extended without the option: the domain that made the change
+  vouched for it. So only a host that introduces a null body Recipe and signs
+  it itself (a list host whose list manager adds an unsigned instance) needs
+  the option; a forwarder needs nothing. Either way the upstream signatures
+  must verify, and the flag does not excuse a forged history: the header
+  Recipe is still undone and checked.
 - **Message-Instance-only chains sign.** A list that adds unsigned
   Message-Instances but no DKIM2-Signature (Mailman does this for an unsigned
   post) gives a chain with m=1 and m=2 and no i=1. That is signable: verify
