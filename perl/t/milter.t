@@ -369,8 +369,12 @@ sub run_outbound_sign {
     # Override env_from for the forwarding domain
     $handler->{'env_from'} = '<forwarder@test2.dkim2.com>';
     # Re-run addheader with corrected env_from
-    $mock = { pre_headers => [], add_headers => [], remove_headers => [] };
+    $mock = { pre_headers => [], add_headers => [] };
+    $handler->{_changed_headers} = [];
     $handler->addheader_callback($mock);
+    # Header changes go through the framework's change_header(), not the
+    # mock handler object.
+    $mock->{changed_headers} = $handler->{_changed_headers};
     return ($handler, $mock);
 }
 
@@ -388,13 +392,22 @@ sub assemble_outbound {
     }
     $input_msg =~ s/\r//gs;
     $input_msg =~ s/\n/\r\n/gs;
-    # Apply header removals recorded by the signer (e.g. stripped broken MI headers)
-    if (my @removals = @{$mock->{remove_headers} // []}) {
-        my @mi_versions = map { $_->{version} }
-                          grep { lc($_->{field}) eq 'message-instance' } @removals;
-        if (@mi_versions) {
-            $input_msg = strip_mi_versions($input_msg, @mi_versions);
+    # Apply the header changes the handler asked the framework for (e.g.
+    # deleting stripped broken MI headers), in order, as the MTA does: an
+    # empty value deletes the index'th field of that name (1-based).
+    for my $c (@{$mock->{changed_headers} // []}) {
+        my ($hdr, $body) = split /\r\n\r\n/, $input_msg, 2;
+        my @fields;
+        for my $line (split /\r\n/, $hdr) {
+            if ($line =~ /^[ \t]/ && @fields) { $fields[-1] .= "\r\n$line" }
+            else                               { push @fields, $line }
         }
+        my $n = 0;
+        @fields = map {
+            my $hit = /^\Q$c->{field}\E\s*:/i && ++$n == $c->{index};
+            $hit ? ($c->{value} eq '' ? () : ("$c->{field}: $c->{value}")) : ($_)
+        } @fields;
+        $input_msg = join("\r\n", @fields) . "\r\n\r\n" . $body;
     }
     $result .= $input_msg;
     return $result;
@@ -564,17 +577,19 @@ my $expected_dir = path("tests/expected");
     my ($sign_handler, $mock) = run_outbound_sign($with_broken_mi2, $snapshot_dir);
     my @dk2 = grep { $_->{field} eq 'DKIM2-Signature' } @{$mock->{pre_headers}};
     my @mi  = grep { $_->{field} eq 'Message-Instance' } @{$mock->{pre_headers}};
-    my @rem = grep { lc($_->{field}) eq 'message-instance' } @{$mock->{remove_headers}};
+    my @rem = grep { lc($_->{field}) eq 'message-instance' } @{$mock->{changed_headers}};
 
     ok(@dk2 > 0,       'case4: outbound added DKIM2-Signature');
     ok(@mi > 0,        'case4: outbound added a new MI v=2');
-    ok(@rem > 0,       'case4: outbound recorded bad MI v=2 for removal');
+    ok(@rem > 0,       'case4: outbound asked the framework to delete the bad MI v=2');
     if (@mi) {
         like($mi[0]{value}, qr/^m=2/, 'case4: new MI is version 2');
         like($mi[0]{value}, qr/r=/,   'case4: new MI has recipes (diff from snapshot)');
     }
     if (@rem) {
-        is($rem[0]{version}, 2, 'case4: removal targets MI version 2');
+        is(scalar @rem, 1, 'case4: one header deleted');
+        is($rem[0]{index}, 1, 'case4: the first Message-Instance field (the broken m=2)');
+        is($rem[0]{value}, '', 'case4: deleted (empty value)');
     }
 
     # Assemble the outbound message (with bad MI v=2 stripped)

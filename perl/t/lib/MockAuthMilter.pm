@@ -48,6 +48,9 @@ BEGIN {
     sub metric_count       { $_[0]->{_metrics}{$_[1]} = ($_[0]->{_metrics}{$_[1]} || 0) + 1 }
     sub add_auth_header    { push @{$_[0]->{_auth_headers}}, $_[1] }
     sub prepend_header     { push @{$_[0]->{_prepended}}, { field => $_[1], value => $_[2] } }
+    # The framework's header-change call (SMFIR_CHGHEADER: an empty value
+    # deletes the index'th field of that name), recorded in call order.
+    sub change_header      { push @{$_[0]->{_changed_headers}}, { field => $_[1], index => $_[2], value => $_[3] } }
 
     # Stub AuthenticationResults classes
     $INC{'Mail/AuthenticationResults/Header/Entry.pm'} = 1;

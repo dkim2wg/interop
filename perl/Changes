@@ -62,6 +62,34 @@ Revision history for Mail::DKIM2
           Gate or the Signer is logged and the message goes on unsigned
           (verify result temperror), instead of dying in the eom callback.
           A Signer that declines is now logged too. (t/milter-script.t)
+        - Mail::DKIM2::Gate generalises the null body rule: a
+          DKIM2-Signature with m=k covers Message-Instances 1..k, so the
+          gate refuses (without AllowNullBodyRecipe) when ANY instance with
+          a null body Recipe has m= above the highest m= of the valid
+          upstream signatures -- the top, or one with another unsigned
+          instance added over it. Before, only the top was checked, so a
+          hop that added its own ordinary instance over an unsigned null
+          (the DKIM2Sign handler, recomputing from a snapshot keyed by the
+          null instance) signed it without the option. The message reads
+          "unsigned Message-Instance m=N" when the null is not the top. The
+          result gains covered_m and unsigned_null; top_null and top_signed
+          are unchanged. dkim2-milter and the DKIM2Sign handler add the
+          informational X-DKIM2-Info action=null-body-recipe when they sign
+          over either kind of null. (t/gate-null-top.t,
+          t/milter-sign-gate.t; signer-gate fixtures
+          null-below-unsigned-top and null-below-signed)
+        - The DKIM2Sign handler applies its own default_config() to any
+          option the configuration leaves out (or sets to null).
+          authentication_milter only uses default_config() to generate a
+          sample config, so before this sign_local, sign_authenticated,
+          add_message_instance and record_smtp_params were off unless set.
+          An explicit 0 still wins. (t/milter-sign-gate.t)
+        - The DKIM2Sign handler deletes the broken intermediate
+          Message-Instances it strips through the framework's
+          change_header() (SMFIR_CHGHEADER). It used to push them onto the
+          handler's remove_headers, which authentication_milter never
+          reads, so they stayed on the wire. (t/milter.t)
+        - Signer POD: result() lists every fail cause.
         - bin/validate.pl reports the header-level PERMERRORs (a
           DKIM2-Signature with no usable i=, an out-of-range i=/m=) before
           its walk. It used to pass a message whose only DKIM2-Signature

@@ -25,8 +25,10 @@ use lib "$FindBin::Bin/lib";
 use lib "$FindBin::Bin/../lib";
 use MockAuthMilter qw(run_sign);
 use Email::MIME;
-use Mail::DKIM2::Common qw(fold_header);
+use File::Temp qw(tempdir);
+use Mail::DKIM2::Common qw(fold_header parse_mime);
 use Mail::DKIM2::MessageInstance;
+use Mail::DKIM2::MessageStore;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 use DKIM2TestKeys;
@@ -143,7 +145,7 @@ sub expect_refuse {
     my ($h, $mock) = gate_sign($raw, $dom, %cfg);
     is(scalar(fields($mock, 'DKIM2-Signature')), 0, "$name: not signed");
     is(scalar(fields($mock, 'Message-Instance')), 0, "$name: no Message-Instance added");
-    is_deeply($mock->{remove_headers}, [], "$name: nothing removed");
+    is_deeply($h->{_changed_headers} // [], [], "$name: nothing removed");
     my @info = map { $_->{value} } fields($mock, 'X-DKIM2-Info');
     if ($reason eq 'upstream-chain') {
         is(scalar @info, 0, "$name: no X-DKIM2-Info (the verifier's A-R reports it)");
@@ -177,7 +179,48 @@ sub expect_refuse {
         { field => 'Message-Instance', value => $mi_value },
         { field => 'DKIM2-Signature',  value => $sig_value },
     ], 'fresh: exactly the Message-Instance and signature a direct signing gives');
-    is_deeply($mock->{remove_headers}, [], 'fresh: nothing removed');
+    is_deeply($h->{_changed_headers} // [], [], 'fresh: nothing removed');
+}
+
+# --- options left out of the config take their documented defaults ------------
+# The real authentication_milter does not merge default_config() into the
+# operator's config: an option the operator leaves out is just undef. The
+# handler applies its own defaults (sign_authenticated, sign_local,
+# add_message_instance, record_smtp_params all 1).
+{
+    my ($h, $mock) = run_sign($PLAIN,
+        domains => { 'test1.dkim2.com' => { selector => 'sel1',
+            key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'sel1') } },
+        map { $_ => undef } qw(sign_authenticated sign_local add_message_instance
+            record_smtp_params snapshot_directory ignore_header_prefixes
+            allow_null_body_recipe key_endpoint key_endpoint_timeout));
+    my @sig = fields($mock, 'DKIM2-Signature');
+    is(scalar @sig, 1, 'defaults: signs an authenticated sender with sign_* left out');
+    is(scalar(fields($mock, 'Message-Instance')), 1,
+        'defaults: add_message_instance defaults on');
+    like($sig[0]{value} // '', qr/\bmf=/, 'defaults: record_smtp_params defaults on (mf=)');
+    like($sig[0]{value} // '', qr/\brt=/, 'defaults: record_smtp_params defaults on (rt=)');
+
+    ($h, $mock) = run_sign($PLAIN,
+        domains => { 'test1.dkim2.com' => { selector => 'sel1',
+            key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'sel1') } },
+        sign_authenticated => undef, sign_local => undef,
+        _authenticated => 0, _local => 1);
+    is(scalar(fields($mock, 'DKIM2-Signature')), 1, 'defaults: sign_local defaults on');
+
+    ($h, $mock) = run_sign(list_post(null => 1),
+        domains => { 'test2.dkim2.com' => { selector => 'sel1',
+            key => DKIM2TestKeys::private_key_pem('test2.dkim2.com', 'sel1') } },
+        env_from => '<bounces@test2.dkim2.com>', signature_timestamp => undef,
+        allow_null_body_recipe => undef);
+    is(scalar(fields($mock, 'DKIM2-Signature')), 0,
+        'defaults: allow_null_body_recipe defaults off');
+
+    ($h, $mock) = run_sign($PLAIN,
+        domains => { 'test1.dkim2.com' => { selector => 'sel1',
+            key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'sel1') } },
+        sign_authenticated => 0, sign_local => 0);
+    is(scalar(fields($mock, 'DKIM2-Signature')), 0, 'defaults: an explicit 0 still wins');
 }
 expect_sign('fresh (sel1)', $PLAIN, 'test1.dkim2.com', 1);
 
@@ -209,6 +252,33 @@ expect_refuse('mi-only-null', list_post(null => 1, unsigned => 1), 'test2.dkim2.
     'null-body-recipe');
 expect_sign('mi-only-null (allow_null_body_recipe)', list_post(null => 1, unsigned => 1),
     'test2.dkim2.com', 1, allow_null_body_recipe => 1);
+
+# --- the handler's own instance over an unsigned null ------------------------------
+# The list's unsigned null m=2 is snapshotted; the message then changes again on
+# this host (a List-Help field), so the handler computes its own ordinary m=3
+# over the null and signs that.  The null is no longer the top, but nothing
+# upstream covers it (i=1 has m=1): refused like a null top, unless
+# allow_null_body_recipe.
+{
+    my $post = list_post(null => 1);
+    my $dir  = tempdir(CLEANUP => 1);
+    my ($top) = grep { /^\s*m=2;/ } parse_mime($post)->header_raw('Message-Instance');
+    Mail::DKIM2::MessageStore->new(directory => $dir)->store($top, $post);
+    (my $msg = $post) =~ s/^(Subject: )/List-Help: <mailto:list-help\@test2.dkim2.com>$EOL$1/m
+        or die 'fixture';
+    my ($h, $mock) = expect_refuse('own instance over unsigned null', $msg, 'test2.dkim2.com',
+        'null-body-recipe', snapshot_directory => $dir);
+    my ($logged) = grep { /^Not signing/ } map { $_->[1] // '' } @{$h->{_log}};
+    like($logged // '', qr/unsigned Message-Instance m=2 has a null body Recipe/,
+        'own instance over unsigned null: the log names the unsigned null m=2');
+    my (undef, $mock2) = expect_sign('own instance over unsigned null (allow_null_body_recipe)',
+        $msg, 'test2.dkim2.com', 2, allow_null_body_recipe => 1, snapshot_directory => $dir);
+    my @mi = fields($mock2, 'Message-Instance');
+    like($mi[0]{value} // '', qr/^m=3;/, 'own instance over unsigned null: the handler added m=3');
+    my @info = map { $_->{value} } fields($mock2, 'X-DKIM2-Info');
+    like($info[0] // '', qr/\baction=null-body-recipe;/,
+        'own instance over unsigned null (allowed): X-DKIM2-Info action=null-body-recipe');
+}
 
 # --- unsigned null top: this hop's own null --------------------------------------
 {
