@@ -35,6 +35,9 @@ that does not check out.
                          other domain                             -> REFUSE
                                        ("top signature nd=X names another domain")
 
+  signature-gap.eml      i=1 and i=3, no i=2; otherwise valid     -> REFUSE
+  instance-gap.eml       m=1 and m=3, no m=2; otherwise valid     -> REFUSE
+
 Reuses the machinery in build-negative-vectors.py (loaded by path: its name
 has a hyphen).  Usage: build-signer-gate-fixtures.py <output-dir>
 """
@@ -163,6 +166,8 @@ def build_nd_to_other():
 
 
 FIXTURES = {
+    "signature-gap.eml": bnv.build_signature_gap,
+    "instance-gap.eml": bnv.build_instance_gap,
     "fresh.eml": build_fresh,
     "valid-chain.eml": build_valid_chain,
     "broken-signature.eml": build_broken_signature,

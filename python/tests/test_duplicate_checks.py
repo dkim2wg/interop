@@ -78,3 +78,48 @@ def test_malformed_mi_m_is_clean_permerror():
             r = dkim2verify.verify_message(raw, dns, allow_unsigned_mi=allow)
             assert r.status == 'permerror', (bad, allow, r)
             assert 'malformed m= tag' in r.message, r.message
+
+
+def _gap_verify(sigs, mis, allow):
+    import json
+    import dkim2verify
+    here = os.path.dirname(os.path.abspath(__file__))
+    dns = json.load(open(os.path.join(os.path.dirname(os.path.dirname(here)), "dns.json")))
+    hdrs = "".join(f"DKIM2-Signature: i={i}; m={m}; d=test1.dkim2.com; s1=sel:rsa-sha256:AA\r\n"
+                   for i, m in sigs)
+    hdrs += "".join(f"Message-Instance: m={m}; h=sha256:AA:BB\r\n" for m in mis)
+    raw = (hdrs + "From: a@test1.dkim2.com\r\n\r\nbody\r\n").encode()
+    return dkim2verify.verify_message(raw, dns, allow_unsigned_mi=allow,
+                                      skip_timestamp_check=True)
+
+
+def test_signature_i_gap_is_permerror_naming_first_missing():
+    for allow in (False, True):
+        r = _gap_verify([(1, 1), (3, 2)], [1, 2], allow)
+        assert r.status == 'permerror', (allow, r)
+        assert 'missing DKIM2-Signature i=2' in r.message, r.message
+
+
+def test_signature_chain_not_starting_at_one_is_gap():
+    r = _gap_verify([(2, 1)], [1], False)
+    assert 'missing DKIM2-Signature i=1' in r.message, r.message
+
+
+def test_instance_m_gap_is_permerror_naming_first_missing():
+    for allow in (False, True):
+        r = _gap_verify([(1, 1), (2, 3)], [1, 3], allow)
+        assert r.status == 'permerror', (allow, r)
+        assert 'missing Message-Instance m=2' in r.message, r.message
+
+
+def test_instance_gap_below_unsigned_top_is_error_outbound():
+    r = _gap_verify([(1, 1)], [1, 3], True)
+    assert r.status == 'permerror'
+    assert 'missing Message-Instance m=2' in r.message, r.message
+
+
+def test_contiguous_chain_passes_gap_checks():
+    r = _gap_verify([(1, 1), (2, 2)], [1, 2], False)
+    assert 'missing ' not in (r.message or ''), r.message
+    r = _gap_verify([(1, 1)], [1, 2], True)
+    assert 'missing ' not in (r.message or ''), r.message

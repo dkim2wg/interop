@@ -786,6 +786,20 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                                 domain=None, message=msg, errors=[msg])
         seen_m.add(mv)
 
+    # spec-06 §7.1: Message-Instance m= and DKIM2-Signature i= values must be
+    # contiguous from 1.  Structural, so checked before any crypto.  (A
+    # missing top instance in outbound mode is not a gap: the caller adds it.)
+    for label, name, vals in (
+            ("Message-Instance", "m", seen_m),
+            ("DKIM2-Signature", "i",
+             {_get_seq_from_sig(h) for h in sig_headers})):
+        for n in range(1, (max(vals) if vals else 0) + 1):
+            if n not in vals:
+                msg = f"PERMERROR missing {label} {name}={n}"
+                return VerifyResult(ok=False, status='permerror',
+                                    failing_i=None, domain=None,
+                                    message=msg, errors=[msg])
+
     mi_only = allow_unsigned_mi and not sig_headers and bool(mi_headers)
     if not sig_headers and not mi_only:
         return VerifyResult(ok=False, status='none', failing_i=None, domain=None,
