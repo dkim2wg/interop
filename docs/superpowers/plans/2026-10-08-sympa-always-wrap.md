@@ -22,8 +22,8 @@ with a benchmark harness.
 
 **Tech stack:**
 - Perl 5, Sympa 6.2.78.
-- Mail::DKIM2 0.14 from interop `perl/`, still unreleased. This change goes
-  in it.
+- Mail::DKIM2 from interop `perl/`: 0.14 is on CPAN, so this change ships
+  as 0.15.
 - Email::MIME, MIME::Tools, Test::More, prove.
 - The benchmark uses bash plus Perl drivers and runs on dkim2-dev.
 
@@ -48,8 +48,9 @@ with a benchmark harness.
 - **Never block mail:** every DKIM2 call site is inside `eval`. On failure,
   log with a valid Sympa level (`err`, `info`, `notice`, `debug`; there is
   no `warning`) and deliver without the new instance.
-- **Mail::DKIM2:** the `BodyRecipe` work goes into the unreleased 0.14
-  (Changes entry 0.14). Do not bump the version.
+- **Mail::DKIM2:** 0.14 is released on CPAN. The `BodyRecipe` work is 0.15:
+  bump `$VERSION` in all 16 modules that say `'0.14'` and add a new Changes
+  entry `0.15`. Sympa's dependency is Mail::DKIM2 >= 0.15.
 - **Interop repo rules:**
   - never commit `perl/Capital One.pdf`;
   - commit trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`;
@@ -87,7 +88,7 @@ with a benchmark harness.
 
 | File | Responsibility |
 |---|---|
-| `interop/perl/lib/Mail/DKIM2/MessageInstance.pm` | `calculate(..., BodyRecipe => ...)`, `body_hash`, `body_digest_raw` |
+| `interop/perl/lib/Mail/DKIM2/MessageInstance.pm` (+ version bump to 0.15 in every module) | `calculate(..., BodyRecipe => ...)`, `body_hash`, `body_digest_raw` |
 | `interop/perl/t/mi-body-recipe-option.t` | tests for the above |
 | `sympa/src/lib/Sympa/Config/Schema.pm` | `dkim2_message_instance` parameter |
 | `sympa/src/lib/Sympa/DKIM2.pm` (new) | `enabled`, `ingress`, `wrap`, `egress_context`, `egress_add`, folding, X-DKIM2-Info |
@@ -105,12 +106,12 @@ with a benchmark harness.
 
 ---
 
-### Task 1: Mail::DKIM2: a `BodyRecipe` option for `calculate`, `body_hash`, `body_digest_raw`
+### Task 1: Mail::DKIM2 0.15: a `BodyRecipe` option for `calculate`, `body_hash`, `body_digest_raw`
 
 **Files:**
 - Modify: `perl/lib/Mail/DKIM2/MessageInstance.pm` (in `calculate`, near
   `header_hash` at about line 126, and the POD at about line 1190)
-- Modify: `perl/Changes` (0.14 entry)
+- Modify: `perl/Changes` (new 0.15 entry), `$VERSION` in every module
 - Test: `perl/t/mi-body-recipe-option.t` (new)
 
 **Interfaces:**
@@ -271,7 +272,9 @@ sub body_digest_raw {
   POD: document `BodyRecipe`, `body_hash` and `body_digest_raw` under
   `calculate` and the accessors (`t/pod-coverage.t` must pass).
 
-  Changes, 0.14 entry: `- MessageInstance->calculate takes BodyRecipe
+  Bump `$VERSION` from `'0.14'` to `'0.15'` everywhere it appears
+  (`grep -rln "VERSION = '0.14'" lib bin`; 16 files). Then add a new top
+  Changes entry `0.15    <today>` with: `- MessageInstance->calculate takes BodyRecipe
   ('none', 'null' or a Recipe) and then skips the body diff; body_hash
   accessor; body_digest_raw(). For list managers that build the Recipe from
   their own layout (Sympa always-wrap).`
@@ -284,8 +287,8 @@ sub body_digest_raw {
 - [ ] **Step 5: Commit**
 
 ```bash
-cd ~/src/interop && git add perl/lib/Mail/DKIM2/MessageInstance.pm perl/Changes perl/t/mi-body-recipe-option.t
-git commit -m "Mail::DKIM2: calculate(BodyRecipe => ...), body_hash, body_digest_raw
+cd ~/src/interop && git add perl/lib perl/bin perl/Changes perl/t/mi-body-recipe-option.t
+git commit -m "Mail::DKIM2 0.15: calculate(BodyRecipe => ...), body_hash, body_digest_raw
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1324,7 +1327,7 @@ cd ~/src/interop && bash util/sympa-bench/off-identical.sh
   - the special-cases table from the spec;
   - the `remove_headers` note: removed hashed fields (not `X-`, not trace)
     stay in the header Recipe, as spec §5.1 requires;
-  - the dependency: Mail::DKIM2 0.14 or later;
+  - the dependency: Mail::DKIM2 0.15 or later;
   - resource figures: leave a sentence pointing at Task 13's numbers, then
     fill them in during Task 13.
 
@@ -1359,7 +1362,7 @@ cd ~/src/interop && git rm -q sympa/patches-6.2.78/*.patch
 git -C ~/src/sympa format-patch -o ~/src/interop/sympa/patches-6.2.78 6.2.78..dkim2
 ```
 
-  Rewrite `sympa/README.md`'s patch list. Dependencies: Mail::DKIM2 0.14,
+  Rewrite `sympa/README.md`'s patch list. Dependencies: Mail::DKIM2 0.15,
   with no Algorithm::Diff needed. Add the switch, and a pointer to the old
   series tag. Update the list-host guide's Sympa parts: the switch must be
   on per list, and `--allow-null-body-recipe` is needed on the outbound
@@ -1595,5 +1598,5 @@ report and in `docs/sympa-dkim2-performance.md`, and skip it.
     errors.
 - [ ] **Step 4: Update** `deploy/SERVER.md` and the memory files. Commit:
   `"deploy: Sympa always-wrap series on dkim2-dev"`. Report to Bron, and
-  ask about pushing `brong/dkim2` (force), the tag, and the Mail::DKIM2 0.14
+  ask about pushing `brong/dkim2` (force), the tag, and the Mail::DKIM2 0.15
   CPAN upload.
