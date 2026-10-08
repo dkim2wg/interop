@@ -13,3 +13,4 @@ tests/test_header
 tests/test_recipe
 tests/test_tagparse
 tests/test_verify
+tests/test_null_body

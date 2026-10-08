@@ -39,7 +39,7 @@ dkim2_milter.o: dkim2_milter.c
 
 TESTS = tests/test_base64 tests/test_tagparse tests/test_hash \
         tests/test_header tests/test_recipe tests/test_crypto \
-        tests/test_dns tests/test_verify
+        tests/test_dns tests/test_verify tests/test_null_body
 
 test: $(TESTS)
 	@for t in $(TESTS); do echo "Running $$t..."; $$t || exit 1; done
@@ -67,6 +67,12 @@ tests/test_dns: tests/test_dns.c dkim2_dns.o tagparse.o base64.o
 
 tests/test_verify: tests/test_verify.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Includes dkim2_verify.c itself (tests the static chain walk), so link every
+# core object EXCEPT dkim2_verify.o.
+tests/test_null_body: dkim2_verify.c
+tests/test_null_body: tests/test_null_body.c eml_parse.o $(filter-out dkim2_verify.o,$(CORE_OBJS))
+	$(CC) $(CFLAGS) -o $@ $(filter-out dkim2_verify.c,$^) $(LDFLAGS)
 
 dkim2sign: dkim2sign_cli.o eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
