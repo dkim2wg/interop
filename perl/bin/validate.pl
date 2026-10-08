@@ -4,7 +4,7 @@ use 5.020;
 use Path::Tiny;
 use Email::MIME;
 use lib 'lib';
-use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey);
+use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey parse_mime);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
 use List::Util qw(max);
@@ -25,7 +25,7 @@ my $f1 = shift;
 my $data = path($f1)->slurp;
 $data =~ s/\r//gs;
 $data =~ s/\n/\r\n/gs;
-my $msg1 = Email::MIME->new($data);
+my $msg1 = parse_mime($data);
 
 my $dns = decode_json(path($dns_json)->slurp);
 
@@ -69,7 +69,7 @@ while (1) {
     # Email::MIME keeps internal caches which get broken by replacing the body
     $instance--;
     last unless $instance;
-    $msg1 = Email::MIME->new($msg1->as_string);
+    $msg1 = parse_mime($msg1->as_string);
     %mimap = map { extract_mi_version($_) => $_ } $msg1->header('Message-Instance');
     %map = map { _geti($_) => $_ } $msg1->header('DKIM2-Signature');
     my $newnum = %map ? max(keys %map) : 0;
