@@ -38,7 +38,7 @@ sub _extract_mi_hash_sets {
 
 sub known_options {
     return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
-              PubkeyCallback Resolver IgnorePrefixes);
+              PubkeyCallback Resolver IgnorePrefixes NextDomainOK);
 }
 
 sub init {
@@ -77,6 +77,17 @@ sub allow_unsigned_mi {
     my ($self, $val) = @_;
     $self->{AllowUnsignedMI} = $val if defined $val;
     return $self->{AllowUnsignedMI};
+}
+
+# next_domain_ok: an OUTBOUND signer's own d=. A top DKIM2-Signature carrying
+# nd= is then acceptable when nd= names that domain (case-insensitively): the
+# caller is the hop the imaginary hop pointed at, and its signature is the one
+# nd= promised. Any other nd= on top is refused. Unset (the default) keeps the
+# inbound rule: a top nd= is a permerror.
+sub next_domain_ok {
+    my ($self, $val) = @_;
+    $self->{NextDomainOK} = $val if defined $val;
+    return $self->{NextDomainOK};
 }
 
 # mid_process: set when this Verifier is being run against a partial view of
@@ -241,11 +252,25 @@ sub finish_body {
     # mid-chain verify (mid_process set, e.g. by Validate.pm's per-level
     # sub-verify after stripping higher signatures) that "top" is not the
     # real top of the chain, so this rejection must be suppressed.
+    #
+    # An outbound signer (next_domain_ok set to its own d=) may extend a chain
+    # whose top nd= names it: that is the bridge it was named to complete.
     if (!$self->{MidProcess}
         && defined $signature->next_domain && length $signature->next_domain) {
-        $self->{result}  = 'permerror';
-        $self->{details} = "DKIM2-Signature i=$max_i unexpected nd= tag";
-        return;
+        my $ok = $self->{NextDomainOK};
+        if (defined $ok && length $ok) {
+            if (lc $signature->next_domain ne lc $ok) {
+                $self->{result}  = 'permerror';
+                $self->{details} = "not signing: top signature nd="
+                    . $signature->next_domain . " names another domain";
+                return;
+            }
+            # nd= names us: carry on
+        } else {
+            $self->{result}  = 'permerror';
+            $self->{details} = "DKIM2-Signature i=$max_i unexpected nd= tag";
+            return;
+        }
     }
 
     # Validate chain completeness - check for gaps
@@ -955,6 +980,13 @@ that verifies the message it is about to sign, where the new instance
 legitimately exists before its signature does. Never set it on inbound
 mail.
 
+=item NextDomainOK
+
+An outbound signer's own C<d=>. A top signature carrying C<nd=> is then
+accepted when C<nd=> equals it (case-insensitive), and refused with
+"not signing: top signature nd=X names another domain" otherwise. Unset, a
+top C<nd=> is the usual permerror.
+
 =item MidProcess
 
 The verifier is looking at a partial view of the chain, with higher
@@ -1047,7 +1079,7 @@ verifier maps that die to C<temperror>: spec-06 section 10 makes a DNS
 failure retryable, never a C<fail>, which would read as a forged
 signature.
 
-=head2 resolver([$resolver]), set_pubkey_callback(\&cb), skip_timestamp_check([$bool]), allow_unsigned_mi([$bool]), mid_process([$bool]), headers_only([$bool])
+=head2 resolver([$resolver]), set_pubkey_callback(\&cb), skip_timestamp_check([$bool]), allow_unsigned_mi([$bool]), next_domain_ok([$domain]), mid_process([$bool]), headers_only([$bool])
 
 Get or set the constructor options of the same names.
 

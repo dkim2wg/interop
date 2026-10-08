@@ -193,6 +193,30 @@ isnt($rc4, 0, 'missing --selector is an error');
     ($out, $rc) = $run->($null_top->(forge => 1), '--allow-null-body-recipe');
     isnt($rc, 0, 'gate: forged null-top refused even with the option');
 
+    # nd= bridge: a top signature carrying nd= may be extended only by the
+    # domain it names.
+    my $nd_top = sub {
+        my ($nd) = @_;
+        my $mi  = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($plain));
+        my $msg = "Message-Instance: " . $mi->as_string . $EOL . $plain;
+        my $s = Mail::DKIM2::Signer->new(
+            Domain => 'test1.dkim2.com', Selector => 'sel1',
+            Key => DKIM2TestKeys::private_key('test1.dkim2.com', 'sel1'),
+            NextDomain => $nd, Timestamp => time());
+        $s->PRINT($msg); $s->CLOSE;
+        return $s->as_string . $EOL . $msg;
+    };
+    ($out, $rc) = $run->($nd_top->('test2.dkim2.com'));
+    is($rc, 0, 'gate: top nd= naming our d= is extended');
+    like($out, qr/^DKIM2-Signature: i=2;/m, 'gate: nd= bridge gets i=2');
+    ($out, $rc) = $run->($nd_top->('TEST2.dkim2.com'));
+    is($rc, 0, 'gate: nd= match is case-insensitive');
+    ($out, $rc, $err) = $run->($nd_top->('test3.dkim2.com'));
+    isnt($rc, 0, 'gate: top nd= naming another domain refused');
+    is($out, '', 'gate: nothing written for an nd= mismatch');
+    like($err, qr/not signing: top signature nd=test3\.dkim2\.com names another domain/,
+        'gate: reason names the nd= domain');
+
     # Old fixtures: --ignore-timestamps and --dns-json
     {
         local $ENV{DKIM2_DNS_JSON};

@@ -32,7 +32,11 @@ C<< Mail::DKIM2::Gate->check($message, %opts) >> takes the whole message as a
 string (CRLF line endings) and returns a hashref. Options:
 C<PubkeyCallback> and C<SkipTimestampCheck> are passed to the Verifier,
 C<AllowNullBodyRecipe> permits a top Message-Instance whose body Recipe is null,
-and C<VerifyResult> supplies an already-computed verifier result so the upstream
+C<SigningDomain> is the C<d=> the caller will sign with: when the top
+upstream signature carries C<nd=> the gate passes only if it equals that
+domain (case-insensitive) and refuses otherwise ("top signature nd=X names
+another domain"); without it a top C<nd=> is refused as before.
+C<VerifyResult> supplies an already-computed verifier result so the upstream
 signatures are not verified again.
 
 The upstream DKIM2-Signatures are verified with a Verifier that allows an
@@ -47,6 +51,18 @@ human-readable C<message>.
 
 =cut
 
+# True when the highest-i= DKIM2-Signature among @$sigs carries nd=.
+sub _top_has_nd {
+    my ($sigs) = @_;
+    my ($best, $top_nd) = (-1, 0);
+    for my $s (@$sigs) {
+        my ($i) = $s =~ /(?:^|[\s;])i=\s*(\d+)/ or next;
+        next unless $i > $best;
+        ($best, $top_nd) = ($i, ($s =~ /(?:^|[\s;])nd=/) ? 1 : 0);
+    }
+    return $top_nd;
+}
+
 sub check {
     my ($class, $message, %o) = @_;
 
@@ -55,13 +71,20 @@ sub check {
     my @mis  = $msg->header_raw('Message-Instance');
     my $has_dk2 = @sigs ? 1 : 0;
 
+    # nd= bridge: a top signature with nd= may be extended only by the domain
+    # it names. A caller-supplied VerifyResult came from a plain verifier that
+    # refuses any top nd=, so recompute it when we know our own d=.
+    my $sd = $o{SigningDomain};
     my $verify_result = $o{VerifyResult};
+    $verify_result = undef
+        if defined $sd && length $sd && $has_dk2 && _top_has_nd(\@sigs);
     if (!defined $verify_result) {
         if ($has_dk2) {
             my $v = Mail::DKIM2::Verifier->new(
                 SkipTimestampCheck => $o{SkipTimestampCheck} ? 1 : 0,
                 ($o{PubkeyCallback} ? (PubkeyCallback => $o{PubkeyCallback}) : ()));
             $v->allow_unsigned_mi(1);
+            $v->next_domain_ok($sd) if defined $sd && length $sd;
             $v->PRINT($message);
             $v->CLOSE();
             $verify_result = $v->result_detail();

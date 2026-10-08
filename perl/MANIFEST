@@ -15,8 +15,8 @@ build-fraud-test.pl
 contrib/strip.pl
 lib/Mail/DKIM2.pm
 lib/Mail/DKIM2/Common.pm
-lib/Mail/DKIM2/Gate.pm
 lib/Mail/DKIM2/DSN.pm
+lib/Mail/DKIM2/Gate.pm
 lib/Mail/DKIM2/HeaderParser.pm
 lib/Mail/DKIM2/MessageInstance.pm
 lib/Mail/DKIM2/MessageStore.pm

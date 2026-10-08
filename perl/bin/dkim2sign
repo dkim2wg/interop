@@ -9,7 +9,15 @@
 #
 #   dkim2sign -s SELECTOR -d DOMAIN -k KEYFILE [--mailfrom '<a@b>']
 #                [--rcptto '<c@d>']... [--timestamp N] [--next-domain D]
-#                [--flag F]... [MESSAGE|-]
+#                [--flag F]... [--allow-null-body-recipe]
+#                [--ignore-timestamps] [--dns-json PATH] [MESSAGE|-]
+#
+# Before extending an existing DKIM2 chain it runs the same verify-before-sign
+# gate as dkim2-milter (Mail::DKIM2::Gate): the upstream signatures must
+# verify, the Message-Instance chain must undo cleanly, and a top null body
+# Recipe is refused unless --allow-null-body-recipe. A top signature carrying
+# nd= is extended only when nd= equals DOMAIN. On refusal it prints the reason
+# on stderr and exits 1 with nothing on stdout.
 #
 # Per §9.1/§9.2.5 an unmodified hop adds no Message-Instance: if the top
 # instance already matches the content, its m= is reused and only a
@@ -78,7 +86,8 @@ $raw =~ s/\n/\r\n/g;
 # existing DKIM2 chain, verify it -- an unsigned top Message-Instance is the one
 # we are about to cover, so it is allowed -- and refuse a null body Recipe
 # unless --allow-null-body-recipe. A message with no chain is signed as before.
-my %gate_opts = (AllowNullBodyRecipe => $allow_null, SkipTimestampCheck => $ignore_ts);
+my %gate_opts = (AllowNullBodyRecipe => $allow_null, SkipTimestampCheck => $ignore_ts,
+                 SigningDomain => $domain);
 if ($dns_json) {
     require JSON;
     my $dns = do {

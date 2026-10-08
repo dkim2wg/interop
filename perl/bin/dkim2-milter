@@ -372,7 +372,24 @@ sub cb_eom {
         # emitted a non-reversible Recipe would give a signature that fails at
         # every recipient), and refuse a top null body Recipe unless
         # --allow-null-body-recipe.
+        # nd= bridge: when the top signature carries nd= we may extend it only
+        # if nd= names the domain we sign as, so tell the gate which. (The
+        # gate ignores this unless the top signature has nd=.)
+        my $gate_sd;
+        {
+            my $gd = '';
+            for my $hdr (@{$priv->{headers}}) {
+                if (lc($hdr->[0]) eq 'from') {
+                    ($gd) = $hdr->[1] =~ /\@([\w.-]+)/;
+                    $gd = lc($gd // '');
+                    last;
+                }
+            }
+            my $gc = _get_sign_config($priv->{env_from}, $gd);
+            $gate_sd = $gc->{domain} if $gc;
+        }
         my $gate = Mail::DKIM2::Gate->check($message,
+            (defined $gate_sd ? (SigningDomain => $gate_sd) : ()),
             AllowNullBodyRecipe => $opts{'allow-null-body-recipe'},
             ($do_verify ? (VerifyResult => $verify_result) : ()),
             _gate_pubkey_cb());
