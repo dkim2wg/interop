@@ -118,7 +118,27 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		return nil, fmt.Errorf("DKIM2-Signature i=%d unexpected nd= tag", topSig.Sequence)
 	}
 
-	if topSig != nil && topSig.MIVersion != maxMIVersion {
+	outbound := len(opts) > 0 && opts[0].Outbound
+	// Outbound: an unsigned top instance is the one the next signer covers.
+	// The signatures' own top instance is then an ordinary lower level (the
+	// chain walk checks it); the unsigned one is checked against the content.
+	unsignedTop := outbound && topSig != nil && topSig.MIVersion < maxMIVersion
+	if unsignedTop && !headersOnly {
+		if mierr := verifyMIHashesPrecomputed(topMI, contentHeaders, bodyHashes); mierr != nil {
+			return []VerifyResult{{
+				Sequence: topSig.Sequence, Domain: topSig.Domain,
+				Error: fmt.Errorf("i=%d: unsigned top %w", topSig.Sequence, mierr),
+			}}, nil
+		}
+	} else if unsignedTop {
+		if mierr := verifyMIHeaderHashes(topMI, contentHeaders); mierr != nil {
+			return []VerifyResult{{
+				Sequence: topSig.Sequence, Domain: topSig.Domain,
+				Error: fmt.Errorf("i=%d: unsigned top %w", topSig.Sequence, mierr),
+			}}, nil
+		}
+	}
+	if topSig != nil && topSig.MIVersion != maxMIVersion && !unsignedTop {
 		return []VerifyResult{{
 			Sequence: topSig.Sequence,
 			Domain:   topSig.Domain,
@@ -209,7 +229,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 		for _, raw := range miHeaders {
 			mi, _ := parseMI(raw)
-			if mi != nil && !miReferenced[mi.Version] {
+			if mi != nil && !miReferenced[mi.Version] && !(unsignedTop && mi.Version == maxMIVersion) {
 				return nil, fmt.Errorf("Message-Instance m=%d has no referencing signature", mi.Version)
 			}
 		}

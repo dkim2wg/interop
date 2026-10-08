@@ -1077,7 +1077,7 @@ func buildDoubleSignedMsg(t *testing.T) ([]byte, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts2 := SignOptions{
+	opts2 := SignOptions{SkipUpstreamCheck: true,
 		Selector: "ed25519", Domain: "test2.dkim2.com",
 		MailFrom: "relay@test2.dkim2.com", RcptTo: []string{"recipient@example.com"},
 		Timestamp: 1740000001,

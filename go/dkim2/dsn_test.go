@@ -30,7 +30,7 @@ func signOnce(t *testing.T, in []byte, keyPath, sel, dom, mf string, rt []string
 	key := loadKey(t, keyPath)
 	var out bytes.Buffer
 	if err := Sign(bytes.NewReader(in), &out, key, SignOptions{
-		Selector: sel, Domain: dom, MailFrom: mf, RcptTo: rt, Timestamp: 1740000000,
+		Selector: sel, Domain: dom, MailFrom: mf, RcptTo: rt, Timestamp: 1740000000, SkipUpstreamCheck: true,
 	}); err != nil {
 		t.Fatalf("sign: %v", err)
 	}

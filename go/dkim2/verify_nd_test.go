@@ -22,7 +22,7 @@ func ndSignHop(t *testing.T, in []byte, keyFile, sel, dom, mf string, rt []strin
 		t.Fatalf("load key %s: %v", keyFile, err)
 	}
 	var out bytes.Buffer
-	if err := Sign(bytes.NewReader(in), &out, key, SignOptions{
+	if err := Sign(bytes.NewReader(in), &out, key, SignOptions{SkipUpstreamCheck: true,
 		Selector: sel, Domain: dom, MailFrom: mf, RcptTo: rt, NextDomain: nd,
 		Timestamp: 1740000000,
 	}); err != nil {

@@ -1,0 +1,107 @@
+package dkim2
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
+
+// Signer gate: Sign verifies an existing chain before covering it.
+
+func gateSign(t *testing.T, in []byte, allowNull bool) ([]byte, error) {
+	t.Helper()
+	key := loadKey(t, "../../keys/sel1._domainkey.test3.dkim2.com.pem")
+	var out bytes.Buffer
+	err := Sign(bytes.NewReader(in), &out, key, SignOptions{
+		Selector: "sel1", Domain: "test3.dkim2.com",
+		MailFrom: "<list@test3.dkim2.com>", RcptTo: []string{"<subscriber@test4.dkim2.com>"},
+		Fetcher:             &JSONKeyFetcher{Path: "../../dns.json"},
+		SkipTimestampCheck:  true,
+		AllowNullBodyRecipe: allowNull,
+	})
+	return out.Bytes(), err
+}
+
+func wantSigned(t *testing.T, in []byte, allowNull bool) {
+	t.Helper()
+	out, err := gateSign(t, in, allowNull)
+	if err != nil {
+		t.Fatalf("Sign refused: %v", err)
+	}
+	if len(out) == 0 {
+		t.Fatal("no output")
+	}
+}
+
+func wantRefused(t *testing.T, in []byte, allowNull bool, sub string) {
+	t.Helper()
+	out, err := gateSign(t, in, allowNull)
+	if err == nil {
+		t.Fatal("Sign signed, want refusal")
+	}
+	if len(out) != 0 {
+		t.Errorf("refused but wrote %d bytes", len(out))
+	}
+	if !strings.Contains(err.Error(), "not signing") || !strings.Contains(err.Error(), sub) {
+		t.Errorf("error %q lacks %q / not signing", err, sub)
+	}
+}
+
+// dropTopSig removes the highest DKIM2-Signature header, leaving the top
+// Message-Instance unsigned: the shape a hop sees outbound.
+func dropTopSig(t *testing.T, msg []byte) []byte {
+	t.Helper()
+	// Sign prepends, so the highest-i= signature is the first one.
+	i := bytes.Index(msg, []byte("DKIM2-Signature:"))
+	if i < 0 {
+		t.Fatal("no sig")
+	}
+	j := i
+	for {
+		j += bytes.Index(msg[j:], []byte("\r\n")) + 2
+		if msg[j] != ' ' && msg[j] != '\t' {
+			break
+		}
+	}
+	return append(append([]byte{}, msg[:i]...), msg[j:]...)
+}
+
+func TestGateFreshSigns(t *testing.T) {
+	wantSigned(t, []byte("From: a@test1.dkim2.com\r\nTo: b@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n"), false)
+}
+
+func TestGateValidChainSigns(t *testing.T) {
+	wantSigned(t, nullHopBase(t), false)
+}
+
+func TestGateUnsignedTopMISigns(t *testing.T) {
+	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", `{"h":{"subject":[{"d":["hello"]}]},"b":[{"d":["body line"]}]}`)
+	wantSigned(t, dropTopSig(t, m), false)
+}
+
+func TestGateBrokenSignatureRefused(t *testing.T) {
+	m := bytes.Replace(nullHopBase(t), []byte("sender@test1"), []byte("sendex@test1"), 1)
+	wantRefused(t, m, false, "chain")
+}
+
+func TestGateBrokenMIChainRefused(t *testing.T) {
+	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", `{"h":{"subject":[{"d":["hello"]}]},"b":[{"d":["body line"]}]}`)
+	m = bytes.Replace(m, []byte("body line\r\n"), []byte("body lime\r\n"), 1)
+	// the body of m=2 is "new body"; tamper that instead
+	m = bytes.Replace(m, []byte("new body"), []byte("new bodz"), 1)
+	wantRefused(t, dropTopSig(t, m), false, "")
+}
+
+func TestGateNullTopRefusedUnlessAllowed(t *testing.T) {
+	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
+	wantRefused(t, m, false, "null")
+	wantRefused(t, dropTopSig(t, m), false, "null")
+	wantSigned(t, m, true)
+	wantSigned(t, dropTopSig(t, m), true)
+}
+
+func TestGateForgedNullTopRefusedEvenWithOption(t *testing.T) {
+	m := nullHop(t, nullHopBase(t), forgeTo, "new body\r\n", subjRecipe)
+	wantRefused(t, m, true, "")
+	wantRefused(t, dropTopSig(t, m), true, "")
+}
