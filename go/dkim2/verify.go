@@ -40,7 +40,8 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	if len(sigHeaders) == 0 {
+	noSigsOutbound := len(sigHeaders) == 0 && len(opts) > 0 && opts[0].Outbound
+	if len(sigHeaders) == 0 && !noSigsOutbound {
 		return nil, fmt.Errorf("no DKIM2-Signature headers found")
 	}
 	if len(miHeaders) == 0 {
@@ -96,6 +97,23 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		if err != nil {
 			return nil, fmt.Errorf("body hash: %w", err)
 		}
+	}
+
+	// Outbound with no signature at all (a list host added unsigned
+	// Message-Instances to an unsigned post): there is nothing to verify
+	// cryptographically, but the top instance must still match the content;
+	// VerifyFull then checks that the chain undoes.
+	if noSigsOutbound {
+		var mierr error
+		if headersOnly {
+			mierr = verifyMIHeaderHashes(topMI, contentHeaders)
+		} else {
+			mierr = verifyMIHashesPrecomputed(topMI, contentHeaders, bodyHashes)
+		}
+		if mierr != nil {
+			return []VerifyResult{{Domain: "MI-chain", Error: fmt.Errorf("unsigned top %w", mierr)}}, nil
+		}
+		return []VerifyResult{}, nil
 	}
 
 	var topSig *DKIM2Signature

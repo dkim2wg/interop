@@ -105,3 +105,39 @@ func TestGateForgedNullTopRefusedEvenWithOption(t *testing.T) {
 	wantRefused(t, m, true, "")
 	wantRefused(t, dropTopSig(t, m), true, "")
 }
+
+// A list host adds unsigned Message-Instances to an unsigned post; there is no
+// DKIM2-Signature at all.  The signer still checks the MI chain.
+func miOnly(t *testing.T, recipe, body string) []byte {
+	t.Helper()
+	orig := []byte("From: Sender <sender@test1.dkim2.com>\r\nTo: user@test2.dkim2.com\r\nSubject: hello\r\n\r\nbody line\r\n")
+	m1 := dropAllSigs(t, signOnce(t, orig, "../../keys/sel1._domainkey.test1.dkim2.com.pem",
+		"sel1", "test1.dkim2.com", "<sender@test1.dkim2.com>", []string{"<user@test2.dkim2.com>"}))
+	return dropAllSigs(t, nullHop(t, m1, subjectTag, body, recipe))
+}
+
+func dropAllSigs(t *testing.T, msg []byte) []byte {
+	t.Helper()
+	for bytes.Contains(msg[:bytes.Index(msg, []byte("\r\n\r\n"))], []byte("DKIM2-Signature:")) {
+		msg = dropTopSig(t, msg)
+	}
+	return msg
+}
+
+const ordRecipe = `{"h":{"subject":[{"d":["hello"]}]},"b":[{"d":["body line"]}]}`
+
+func TestGateMIOnlySigns(t *testing.T) {
+	wantSigned(t, miOnly(t, ordRecipe, "new body\r\n"), false)
+}
+
+func TestGateMIOnlyBrokenRefused(t *testing.T) {
+	m := miOnly(t, ordRecipe, "new body\r\n")
+	wantRefused(t, bytes.Replace(m, []byte("To: user@test2"), []byte("To: evil@test2"), 1), false, "")
+	wantRefused(t, bytes.Replace(m, []byte("new body"), []byte("new bodz"), 1), false, "")
+}
+
+func TestGateMIOnlyNull(t *testing.T) {
+	m := miOnly(t, subjRecipe, "new body\r\n")
+	wantRefused(t, m, false, "null")
+	wantSigned(t, m, true)
+}

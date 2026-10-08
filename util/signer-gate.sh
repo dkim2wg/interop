@@ -67,7 +67,7 @@ export DKIM2_DNS_JSON="$root/dns.json"
 gate_dns_args() {
     case $1 in
     python|perl|c) echo --ignore-timestamps ;;   # fixtures are old; keys via $DKIM2_DNS_JSON
-    go) ;;
+    go) echo -ignore-timestamps ;;
     esac
 }
 

@@ -24,8 +24,8 @@ func main() {
 		"sign even when the top Message-Instance has a null body Recipe (default: refuse)")
 	dnsJSON := flag.String("dns-json", os.Getenv("DKIM2_DNS_JSON"),
 		"dns.json for verifying an upstream chain before signing (default $DKIM2_DNS_JSON, else real DNS)")
-	ignoreTS := flag.Bool("ignore-timestamps", os.Getenv("DKIM2_DNS_JSON") != "",
-		"skip the §10.3 timestamp check when verifying the upstream chain (default on when a dns.json is used)")
+	ignoreTS := flag.Bool("ignore-timestamps", false,
+		"skip the §10.3 timestamp check when verifying the upstream chain")
 	flag.Parse()
 
 	if *selector == "" || *domain == "" || *keyFile == "" {
