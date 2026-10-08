@@ -45,7 +45,7 @@ verifier and undo.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- DKIM2-MESSAGE-INSTANCE.md                | 271 +++++++
+ DKIM2-MESSAGE-INSTANCE.md                | 273 +++++++
  Makefile.am                              |   1 +
  src/lib/Makefile.am                      |   1 +
  src/lib/Sympa/DKIM2.pm                   | 543 +++++++++++++
@@ -55,16 +55,16 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/lib/Sympa/Spindle/ProcessOutgoing.pm |  61 +-
  src/lib/Sympa/Spindle/ResendArchive.pm   |   4 +
  t/DKIM2.t                                | 929 ++++++++++++++++++++++-
- 10 files changed, 1843 insertions(+), 18 deletions(-)
+ 10 files changed, 1845 insertions(+), 18 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/lib/Sympa/DKIM2.pm
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..0428ed900
+index 000000000..88d7bed13
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,273 @@
 +# DKIM2 Message-Instance support for Sympa
 +
 +Sympa changes the messages it redistributes: it adds list headers, a
@@ -309,16 +309,18 @@ index 000000000..0428ed900
 +Measured against stock 6.2.78 on a small host (2 vCPU, 2 GB, in-process,
 +DKIM2-signed input, 25 members, footer and personalised footer):
 +
-+- CPU: 0.9x to 1.3x of stock for messages up to 100 KB, 1.2x to 1.8x for 1
-+  and 10 MB attachments. QP text is faster than stock, which re-encodes it.
-+  A personalised footer on a 10 MB attachment takes 5.1 s against 3.3 s.
-+- Memory: at or below stock, and the same for small messages. The same
-+  10 MB case peaks at +214 MB against +274 MB for stock.
-+- Wire: the `Message-Instance` header is 370 to 480 bytes whatever the
++- CPU: 0.8x to 1.3x of stock for messages up to 100 KB (QP text much
++  faster, probably because stock re-encodes it), 1.2x to 1.8x for the 1 MB
++  and 10 MB attachments. A personalised footer on a 10 MB attachment takes
++  5.1 s against 3.3 s.
++- Memory: within about 1 MB of stock up to 100 KB, below stock for the 1 MB
++  and 10 MB attachments (the 10 MB case peaks at +214 MB against +274 MB).
++- Wire: the `Message-Instance` header is 366 to 476 bytes whatever the
 +  message; larger messages grow by well under 1% per copy.
 +
 +The old CTE-preserving series, by comparison, took 14 to 41 times stock CPU
-+on Outlook-style HTML and QP text, timed out on a base64 attachment wrapped
++on Outlook-style HTML and QP text (with personalisation: 25 per-recipient
++copies), timed out on a base64 attachment wrapped
 +at 72 columns, ran out of memory at 10 MB, and wrote a 134 KB header for a
 +100 KB QP message. The figures, method and limits are in
 +`docs/sympa-dkim2-performance.md` of the DKIM2 interop repository.

@@ -23,7 +23,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 87 insertions(+), 13 deletions(-)
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
-index 0428ed900..3ba2aa945 100644
+index 88d7bed13..0dfa9bf04 100644
 --- a/DKIM2-MESSAGE-INSTANCE.md
 +++ b/DKIM2-MESSAGE-INSTANCE.md
 @@ -167,7 +167,8 @@ and ARC signing.

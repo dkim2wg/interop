@@ -25,7 +25,7 @@ and at 72 columns (same bytes), and a 10 MB attachment at 76. Three list
 configurations, one factor at a time from a MIME-appended footer, 25 members:
 `f-mime`, `pers-footer` (personalised footer, one decorate per recipient)
 and `m1000` (1000 members, 40 packets; under 2 MB only). Each case is the
-median of 3 runs. CPU is process CPU time. RSS is the case's own cost, peak
+median of 3 runs (old-series cases that time out or run out of memory run fewer). CPU is process CPU time. RSS is the case's own cost, peak
 RSS less the baseline of the forked child. Every build runs in a 700 MB
 cgroup, and the `cte` build is cut off at 60 s per case. The box is the
 `dkim2` host: 2 vCPU, 2 GB (a small cloud VM). The wire copy of each case is
@@ -77,17 +77,18 @@ adds no instance, so the inbound chain breaks, which is what DKIM2 is for.
   worst case for a diff. The 10 MB attachment was OOM-killed at 700 MB.
   The QP message produced a 134 KB `Message-Instance` header, because the
   Recipe listed the changed lines.
-- **The rebuild is within 1.1x to 1.7x of stock CPU** for the cases that
-  carry real work (1.2-1.3x for 100 KB base64 and 1 MB attachments with
-  personalisation, 1.5x for 10 MB, 1.7x for 1 MB with 1000 members), and at
-  stock for small messages. It is faster than stock where stock re-encodes
-  the body (QP 100 KB: 0.3x with personalisation), because the wrap copies
-  the original lines instead.
-- **Its Message-Instance header is 370 to 480 bytes,** for every message,
+- **The rebuild's CPU is 0.8x to 1.3x of stock** up to 100 KB (QP text
+  much faster), and **1.2x to 1.8x** for the 1 MB and 10 MB attachments
+  (1.5x at 10 MB). The QP gain is probably because stock re-encodes the
+  body (QP 100 KB: 0.3x with personalisation) and the wrap copies the
+  original lines instead; that was not isolated.
+- **Its Message-Instance header is 366 to 476 bytes,** for every message,
   because the body Recipe is one copy range or a null.
-- **Memory is at or below stock** for every message of 100 KB and over
-  (10 MB attachment: +214 MB against +274 MB for stock) and the same for
-  small ones. The `cte` build used 2.6x stock RSS for the 1 MB attachment (+90 MB against +34 MB).
+- **Memory is within about 1 MB of stock** up to 100 KB (for example
+  +10 against +9 MB for QP 100 KB with personalisation), and **below stock**
+  for the 1 MB and 10 MB attachments (10 MB: +214 MB against +274 MB). The
+  `cte` build used 2.6x stock RSS for the 1 MB attachment (+90 MB against
+  +34 MB).
 - **Task 12 (one body hash per copy, no MIME parse at egress)** was
   measured on the 10 MB attachment with a personalised footer. Before (an earlier run of the same quick profile): 27.5 s
   CPU and +600 MB RSS. After, in this run: 5.1 s and +214 MB. Stock: 3.3 s
