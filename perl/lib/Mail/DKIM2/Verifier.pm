@@ -23,6 +23,8 @@ use Mail::DKIM2::Common qw(
     MAX_CHAIN_LENGTH
     chain_length_error
     duplicate_number_error
+    valid_sequence
+    UNKEYABLE_SIGNATURE_ERROR
 );
 use Email::MIME;
 use Mail::DKIM2::Signature;
@@ -135,20 +137,23 @@ sub handle_header {
         };
     }
     elsif ($lc_name eq 'dkim2-signature') {
-        eval {
-            my $sig = Mail::DKIM2::Signature->parse($contents);
-            if ($sig && $sig->sequence) {
-                push @{$self->{_numbers}{'dkim2-signature'}}, $sig->sequence;
-                $self->{_dk2_headers}{$sig->sequence + 0} = {
-                    raw => $line || "$field_name:$contents",
-                    sig => $sig,
-                };
-            }
-            1;
-        } or do {
-            die $@ if ref $@;
-            $self->{_dk2_parse_error} = $@;
-        };
+        # A signature this verifier cannot key -- one that does not parse,
+        # or whose i= is missing or not a positive integer -- is a PERMERROR
+        # (finish_header), never silently ignored: otherwise a junk
+        # "DKIM2-Signature: m=2" would read as covering m=2 to anyone counting
+        # coverage by m= (the signer gate) while nothing here checked it.
+        my $sig = eval { Mail::DKIM2::Signature->parse($contents) };
+        die $@ if ref $@;
+        my $i = $sig ? $sig->sequence : undef;
+        if (valid_sequence($i)) {
+            push @{$self->{_numbers}{'dkim2-signature'}}, $i;
+            $self->{_dk2_headers}{$i + 0} = {
+                raw => $line || "$field_name:$contents",
+                sig => $sig,
+            };
+        } else {
+            $self->{_dk2_unkeyable} //= UNKEYABLE_SIGNATURE_ERROR;
+        }
     }
 }
 
@@ -158,6 +163,7 @@ sub finish_header {
     my $self = shift;
     my $numbers = $self->{_numbers};
     my $error = chain_length_error($self->{_chain_counts})
+        // $self->{_dk2_unkeyable}
         // duplicate_number_error('Message-Instance', 'm',
                @{$numbers->{'message-instance'} || []})
         // duplicate_number_error('DKIM2-Signature', 'i',
@@ -1089,9 +1095,11 @@ Get or set the constructor options of the same names.
 
 =item 1.
 
-B<Shape.> At most 32 Message-Instance and 32 DKIM2-Signature fields, no
-C<i=> or C<m=> twice, and no Message-Instance above the highest signed
-C<m=>. Any of these is a C<permerror> decided from the headers alone,
+B<Shape.> At most 32 Message-Instance and 32 DKIM2-Signature fields, every
+DKIM2-Signature parses with an C<i=> that is a positive integer (one that
+does not is never skipped: "PERMERROR DKIM2-Signature has a missing or
+malformed i= tag"), no C<i=> or C<m=> twice, and no Message-Instance above
+the highest signed C<m=>. Any of these is a C<permerror> decided from the headers alone,
 before any key is fetched. A tag repeated within one signature is a
 C<permerror> found when that signature is checked.
 

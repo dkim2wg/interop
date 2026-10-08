@@ -121,6 +121,7 @@ t/validate-report.t
 t/verifier-accessors.t
 t/verifier-mi-coverage.t
 t/verifier-streaming.t
+t/verifier-unkeyable.t
 t/verifier_flags.t
 t/verify-cli.t
 t/verify-mi-hash.t

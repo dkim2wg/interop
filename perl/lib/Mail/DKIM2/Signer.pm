@@ -17,6 +17,8 @@ use Mail::DKIM2::Common qw(
     MAX_CHAIN_LENGTH
     chain_length_error
     duplicate_number_error
+    valid_sequence
+    UNKEYABLE_SIGNATURE_ERROR
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -46,6 +48,7 @@ sub finish_header {
     # Extract existing MI and DKIM2-Signature headers from the parsed headers
     my @mi_headers;
     my @dk2_headers;
+    my $unkeyable;
 
     for my $header (@{$self->{headers}}) {
         if ($header =~ /^Message-Instance:/i) {
@@ -59,8 +62,12 @@ sub finish_header {
             $val =~ s/\r\n$//;
             my $sig = eval { Mail::DKIM2::Signature->parse($val) };
             die $@ if ref $@;
-            if ($sig && $sig->sequence) {
+            # One no verifier can key (no parse, no valid i=) makes the
+            # chain a PERMERROR, so do not sign over it.
+            if ($sig && valid_sequence($sig->sequence)) {
                 push @dk2_headers, { i => $sig->sequence, raw => $header, sig => $sig };
+            } else {
+                $unkeyable = UNKEYABLE_SIGNATURE_ERROR;
             }
         }
     }
@@ -79,6 +86,7 @@ sub finish_header {
         'dkim2-signature'  => $next_i,
     );
     my $error = chain_length_error(\%counts)
+        // $unkeyable
         // duplicate_number_error('Message-Instance', 'm',
                map { $_->{v} } @mi_headers)
         // duplicate_number_error('DKIM2-Signature', 'i',

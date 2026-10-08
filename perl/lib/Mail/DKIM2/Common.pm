@@ -41,6 +41,8 @@ our @EXPORT_OK = qw(
     DKIM2_DATE
     MAX_CHAIN_LENGTH
     chain_length_error
+    valid_sequence
+    UNKEYABLE_SIGNATURE_ERROR
     duplicate_number_error
 );
 
@@ -118,6 +120,19 @@ sub chain_length_error {
             if $count > MAX_CHAIN_LENGTH;
     }
     return;
+}
+
+# A DKIM2-Signature's i= must be a positive integer (ASCII digits) for the
+# signature to be placed in the chain and keyed. One that is not -- no i=,
+# i=, i=0, i=abc, or a header that does not parse -- is a PERMERROR, never
+# silently skipped: a signer gate that counts which instances are signed by
+# m= must not be fooled by a junk signature naming an m=.
+use constant UNKEYABLE_SIGNATURE_ERROR =>
+    'PERMERROR DKIM2-Signature has a missing or malformed i= tag';
+
+sub valid_sequence {
+    my ($i) = @_;
+    return (defined $i && $i =~ /\A[0-9]+\z/ && $i > 0) ? 1 : 0;
 }
 
 # The PERMERROR for the first number that appears twice among a field's
@@ -648,6 +663,18 @@ chose are signed.
 The PERMERROR string for a message over L</MAX_CHAIN_LENGTH>, or undef.
 Takes an L<Email::MIME> or a hashref of field counts keyed by lowercased
 name.
+
+=head2 valid_sequence($i)
+
+True when C<$i> (a DKIM2-Signature C<i=> value) is a positive integer
+written in ASCII digits. A signature whose C<i=> is not is one no verifier
+can place in the chain or key: L<Mail::DKIM2::Verifier> reports it as
+L</UNKEYABLE_SIGNATURE_ERROR>.
+
+=head2 UNKEYABLE_SIGNATURE_ERROR
+
+The PERMERROR string for a DKIM2-Signature with a missing or malformed
+C<i=>, or one that does not parse.
 
 =head2 duplicate_number_error($field, $tag, @numbers)
 

@@ -5,7 +5,7 @@ use warnings;
 our $VERSION = '0.16';
 
 use Email::MIME;
-use Mail::DKIM2::Common qw(extract_mi_version parse_mime);
+use Mail::DKIM2::Common qw(extract_mi_version parse_mime valid_sequence);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Verifier;
@@ -48,8 +48,10 @@ cleanly down to m=1, including the header history below a null body Recipe.
 
 The result has C<ok> (true to sign), C<verify_result> (C<none> without a
 DKIM2-Signature), C<has_chain>, C<top_null> (the top Message-Instance has a
-null body Recipe), C<top_signed> (some DKIM2-Signature has C<m=> equal to the
-top Message-Instance's C<m=>) and, when refusing, C<reason>
+null body Recipe), C<top_signed> (some DKIM2-Signature with a valid,
+positive-integer C<i=> has C<m=> equal to the top Message-Instance's C<m=>;
+a signature without one never counts, and the Verifier reports it as a
+C<permerror>) and, when refusing, C<reason>
 (C<upstream-chain>, C<broken-mi-chain> or C<null-body-recipe>) and a
 human-readable C<message>.
 
@@ -77,8 +79,8 @@ sub _top_has_nd {
     for my $raw (@$sigs) {
         (my $v = $raw) =~ s/^\s+//;
         my $sig = eval { Mail::DKIM2::Signature->parse($v) } or next;
-        my $i = $sig->sequence // next;
-        next unless $i > $best;
+        my $i = $sig->sequence;
+        next unless valid_sequence($i) && $i > $best;
         my $nd = $sig->next_domain;
         ($best, $top_nd) = ($i, (defined $nd && length $nd) ? 1 : 0);
     }
@@ -127,12 +129,16 @@ sub check {
         && eval { Mail::DKIM2::MessageInstance->parse($by_v{$top})->unrecoverable }) ? 1 : 0;
     # Is the top instance covered by an upstream signature (one whose m= is
     # the top m=, spec-06 §8.2)?  Then its null body Recipe was declared and
-    # signed by that domain, not introduced by this hop.
+    # signed by that domain, not introduced by this hop.  Only a signature
+    # with a valid i= counts: one the Verifier cannot key is a PERMERROR
+    # there (so the upstream-chain check below refuses anyway), and is never
+    # coverage here even if a caller-supplied VerifyResult said "pass".
     my $top_signed = 0;
     if ($top) {
         for my $raw (@sigs) {
             (my $v = $raw) =~ s/^\s+//;
             my $sig = eval { Mail::DKIM2::Signature->parse($v) } or next;
+            next unless valid_sequence($sig->sequence);
             my $m = $sig->version // next;
             if ($m =~ /^\d+$/ && $m == $top) { $top_signed = 1; last }
         }

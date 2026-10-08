@@ -10,6 +10,25 @@ Revision history for Mail::DKIM2
           and the header history below the null must still check out. The
           result gains top_signed; the refusal message reads "unsigned top
           Message-Instance m=N has a null body Recipe". (t/gate-null-top.t)
+        - Behaviour change: Mail::DKIM2::Verifier reports a DKIM2-Signature
+          it cannot key -- no i=, an i= that is not a positive integer
+          (i=, i=0, i=abc, i=-1), or one that does not parse -- as
+          permerror, "PERMERROR DKIM2-Signature has a missing or malformed
+          i= tag", as the Python, Go, C and JS verifiers now all do. It used
+          to ignore such a field and verify the rest, so a junk
+          "DKIM2-Signature: m=2" prepended to a valid chain passed -- and
+          the Gate, counting coverage by m=, took it as signing an unsigned
+          null top, letting dkim2sign/dkim2-milter sign without
+          --allow-null-body-recipe. Mail::DKIM2::Signer likewise refuses to
+          sign over such a field (result fail with the same message).
+          (t/verifier-unkeyable.t)
+        - Gate coverage rule: only a DKIM2-Signature with a valid
+          (positive-integer) i= counts towards top_signed, even when the
+          caller passes VerifyResult; its nd= check likewise ignores one
+          without a valid i= (no more "isn't numeric" warnings on i=abc or
+          an empty i=). (t/gate-null-top.t)
+        - Mail::DKIM2::Common exports valid_sequence() and
+          UNKEYABLE_SIGNATURE_ERROR.
         - bin/dkim2sign and bin/dkim2-milter follow the Gate. The milter logs
           the Gate's message on refusal and adds the informational
           X-DKIM2-Info action=null-body-recipe whenever it signs over a null

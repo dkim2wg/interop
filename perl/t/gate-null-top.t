@@ -103,4 +103,43 @@ my %cb = (PubkeyCallback => DKIM2TestKeys::pubkey_callback());
     ok(!$g->{ok}, 'signed forged null top: refused even with the option');
 }
 
+{
+    # A DKIM2-Signature that names m=2 but that no verifier can key is not
+    # coverage.  The Verifier PERMERRORs on it, so the gate refuses with or
+    # without the option; and even if a caller hands in VerifyResult 'pass',
+    # it does not count towards top_signed (defence in depth).
+    my $base = null_list_post();
+    (my $real) = $base =~ /^(DKIM2-Signature: i=1; m=1;.*?\015\012)(?![ \t])/ms;
+    ok($real, 'fixture: the real i=1 signature');
+    (my $rewritten = $real) =~ s/i=1; m=1;/m=2;/;
+    my %fake = (
+        'no i='        => "DKIM2-Signature: m=2; d=evil.example$EOL",
+        'i=0'          => "DKIM2-Signature: i=0; m=2; t=1; d=evil.example; s=sel1:rsa-sha256:AAAA$EOL",
+        'empty i='     => "DKIM2-Signature: i=; m=2; d=evil.example$EOL",
+        'i=abc'        => "DKIM2-Signature: i=abc; m=2; d=evil.example$EOL",
+        'i=-1'         => "DKIM2-Signature: i=-1; m=2; d=evil.example$EOL",
+        'FWS m = 2'    => "DKIM2-Signature: m = 2 ; d=evil.example$EOL",
+        'm rewritten'  => $rewritten,
+    );
+    for my $name (sort keys %fake) {
+        my $msg = $fake{$name} . $base;
+        my @warn;
+        local $SIG{__WARN__} = sub { push @warn, @_ };
+        for my $allow (0, 1) {
+            my $g = Mail::DKIM2::Gate->check($msg, %cb,
+                ($allow ? (AllowNullBodyRecipe => 1) : ()));
+            ok(!$g->{ok}, "fake coverage ($name, allow=$allow): refused");
+            is($g->{reason}, 'upstream-chain',
+                "fake coverage ($name, allow=$allow): for the chain");
+            like($g->{verify_result}, qr/^permerror/,
+                "fake coverage ($name, allow=$allow): verifier permerror");
+            is($g->{top_signed}, 0, "fake coverage ($name, allow=$allow): not top_signed");
+        }
+        my $g = Mail::DKIM2::Gate->check($msg, %cb, VerifyResult => 'pass');
+        is($g->{top_signed}, 0, "fake coverage ($name): not coverage even given 'pass'");
+        is($g->{reason}, 'null-body-recipe', "fake coverage ($name): null refused given 'pass'");
+        is_deeply(\@warn, [], "fake coverage ($name): no warnings");
+    }
+}
+
 done_testing;
