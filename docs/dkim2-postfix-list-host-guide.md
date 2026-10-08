@@ -389,11 +389,6 @@ smtp_port: 10587
 message_instance: yes
 # One recipient per transaction (step 6, "Recipient privacy").
 max_recipients: 1
-
-[logging.dkim2]
-# Where the Message-Instance handlers log; without this they log to
-# mailman.log.
-path: dkim2.log
 ```
 
 ```bash
@@ -428,8 +423,8 @@ curl -u restadmin:PASSWORD -X PATCH -H 'Content-Type: application/json' \
      -d '{"dkim2_message_instance": false}'
 ```
 
-Logs go to `dkim2.log` in Mailman's log directory with the `[logging.dkim2]`
-section above. The baseline for each Recipe is pickled with the queued
+The Message-Instance handlers log to the mailman3 journal
+(`journalctl -u mailman3`). The baseline for each Recipe is pickled with the queued
 message, only when Message-Instance support is enabled (and not for a list
 that opts out); there is no cache directory (a `mi-cache/` left by an earlier
 build can be deleted). Messages queued by this build cannot be unpickled
@@ -543,7 +538,7 @@ stamped so the outbound milter can diff against it. Expire them:
 
 **Logs.** `journalctl -u dkim2-milter-inbound -u dkim2-milter-outbound`;
 each message logs `verify ... result=`, `signed ... d= a= sel=` or `no
-signing key for`. Mailman: `dkim2.log`. Sympa logs through its usual `sympa.log`.
+signing key for`. Mailman: the mailman3 journal (`journalctl -u mailman3`). Sympa logs through its usual `sympa.log`.
 
 **Troubleshooting.**
 
