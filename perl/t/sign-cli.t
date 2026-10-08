@@ -17,6 +17,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib";
 use Email::MIME;
 use Mail::DKIM2::Signer;
+use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;
 use DKIM2TestKeys;
 
@@ -213,6 +214,22 @@ isnt($rc4, 0, 'missing --selector is an error');
         or die 'no nd=';
     ($out, $rc) = $run->($ws, '--ignore-timestamps');
     is($rc, 0, 'gate: "nd = x" with whitespace around "=" is recognised and signed');
+    # Not a tampering hole: spec-06 canonicalises a DKIM2-Signature field by
+    # removing all whitespace before hashing it, so adding FWS around "=" does
+    # not change what i=1's b= covers. The countersigned chain verifies, while
+    # changing the domain really does break i=1 (next test).
+    {
+        my $v = Mail::DKIM2::Verifier->new;
+        $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+        $v->PRINT($out); $v->CLOSE;
+        is($v->result, 'pass', 'gate: whitespace-in-nd= chain, countersigned, verifies')
+            or diag($v->result_detail);
+        (my $changed = $out) =~ s/\bnd = test2\.dkim2\.com/nd = test9.dkim2.com/ or die 'no nd';
+        my $v2 = Mail::DKIM2::Verifier->new;
+        $v2->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+        $v2->PRINT($changed); $v2->CLOSE;
+        is($v2->result, 'fail', 'gate: changing the nd= domain does break i=1');
+    }
     ($out, $rc) = $run->($nd_top->('TEST2.dkim2.com'));
     is($rc, 0, 'gate: nd= match is case-insensitive');
     ($out, $rc, $err) = $run->($nd_top->('test3.dkim2.com'));
