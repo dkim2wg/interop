@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# usage: off-identical.pl BUILD_LIB [FILE.eml ...]
+# usage: off-identical.pl [--expect-dkim2] BUILD_LIB [FILE.eml ...]
 #
 # Runs each input, plus the adversarial review's inputs built in below,
 # through a Sympa build (BUILD_LIB = its src/lib) with
@@ -7,12 +7,15 @@
 # footer_type mime and then append, egress.  Prints one line per input:
 # name, sha256 of as_string after the mime decoration, then after append.
 # On stock Sympa, where Sympa::DKIM2 does not exist, the DKIM2 calls are
-# skipped.  Run once per build and diff the outputs: switch-off must be
+# skipped; with --expect-dkim2 failing to load it is fatal.  Run once per build and diff the outputs: switch-off must be
 # byte-identical to stock.
 use strict;
 use warnings;
+my $expect_dkim2;
 BEGIN {
-    die "usage: $0 BUILD_LIB [FILE...]\n" unless @ARGV and -d $ARGV[0];
+    $expect_dkim2 = (@ARGV and $ARGV[0] eq '--expect-dkim2') ? shift @ARGV : 0;
+    die "usage: $0 [--expect-dkim2] BUILD_LIB [FILE...]\n"
+        unless @ARGV and -d $ARGV[0];
     unshift @INC, shift @ARGV;
 }
 use Digest::SHA qw(sha256_hex);
@@ -24,6 +27,7 @@ use Sympa::Log;
 use Sympa::Message;
 
 my $dkim2 = eval { require Sympa::DKIM2; 1 };
+die "--expect-dkim2: cannot load Sympa::DKIM2: $@" if $expect_dkim2 and !$dkim2;
 print STDERR "Sympa::DKIM2 ", ($dkim2 ? 'present' : 'absent (stock)'), "\n";
 
 # The same stubbed list and Conf bootstrap as Sympa's t/DKIM2.t.
