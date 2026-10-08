@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMessage, parseTagList, collectLevels } from '../parse.js';
+import { parseMessage, parseTagList, collectLevels, MAX_CHAIN_LENGTH, chainNumberInRange } from '../parse.js';
 
 const MSG =
   'Message-Instance: m=1; h=sha256:AA=:BB=\r\n' +
@@ -98,4 +98,10 @@ test('collectLevels counts DKIM2-Signatures with no valid i= as unkeyable', () =
   const { signatures, unkeyableSignatures } = collectLevels(headers);
   assert.equal(unkeyableSignatures, 3);
   assert.deepEqual(Object.keys(signatures), ['1']);
+});
+
+test('chainNumberInRange bounds i=/m= at MAX_CHAIN_LENGTH without converting long values', () => {
+  assert.equal(MAX_CHAIN_LENGTH, 32);
+  for (const v of ['1', '9', '32', '01', 'abc', '']) assert.equal(chainNumberInRange(v), true, v);
+  for (const v of ['33', '99', '001', '4294967297', '99999999999999999999']) assert.equal(chainNumberInRange(v), false, v);
 });

@@ -581,3 +581,33 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
     assert.equal(alone.overall, 'permerror');
   });
 }
+
+// Every DKIM2-Signature i= and m=, and every Message-Instance m=, is bounded
+// by MAX_CHAIN_LENGTH (32): a larger value, or one longer than two digits, is
+// a PERMERROR before the §11.2 contiguity loops walk 1..max. i=/m= of
+// 4294967297 or more used to run this page out of memory.
+{
+  const RANGE = 'exceeds the maximum chain length of 32';
+  const cases = [
+    ['signature i=33', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=33;', `DKIM2-Signature i= ${RANGE}`],
+    ['signature i=2^32+1', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=4294967297;', `DKIM2-Signature i= ${RANGE}`],
+    ['signature i=huge', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=99999999999999999999;', `DKIM2-Signature i= ${RANGE}`],
+    ['signature m=huge', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297;', `DKIM2-Signature m= ${RANGE}`],
+    ['instance m=huge', 'Message-Instance: m=1;', 'Message-Instance: m=99999999999999999999;', `Message-Instance m= ${RANGE}`],
+    ['instance m=33', 'Message-Instance: m=1;', 'Message-Instance: m=33;', `Message-Instance m= ${RANGE}`],
+  ];
+  for (const [label, from, to, want] of cases) {
+    test(`out-of-range ${label} is permerror`, async () => {
+      assert.ok(SIGNED_SAMPLE.includes(from), `sample has ${from}`);
+      const rep = await verifyMessage(SIGNED_SAMPLE.replace(from, to), { fetchKey: realFetchKey, now: FRESH_NOW });
+      assert.equal(rep.overall, 'permerror');
+      assert.equal(rep.summary, want);
+    });
+  }
+  test('an extra junk signature with a huge i= is permerror', async () => {
+    const rep = await verifyMessage('DKIM2-Signature: i=99999999999999999999; m=2; d=evil.example\r\n' + SIGNED_SAMPLE,
+      { fetchKey: realFetchKey, now: FRESH_NOW });
+    assert.equal(rep.overall, 'permerror');
+    assert.equal(rep.summary, `DKIM2-Signature i= ${RANGE}`);
+  });
+}

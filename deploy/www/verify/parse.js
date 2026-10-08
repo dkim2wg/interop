@@ -78,6 +78,17 @@ function isName(field, name) {
   return field.name.toLowerCase() === name;
 }
 
+// Every i= and m= names one hop, and a chain has at most this many.
+export const MAX_CHAIN_LENGTH = 32;
+
+// False for an ASCII-digit i=/m= value above MAX_CHAIN_LENGTH, or one longer
+// than two digits (never converted, so never a huge loop bound). Anything
+// that is not digits is left to the other syntax checks.
+export function chainNumberInRange(v) {
+  if (typeof v !== 'string' || !/^[0-9]+$/.test(v)) return true;
+  return v.length <= 2 && parseInt(v, 10) <= MAX_CHAIN_LENGTH;
+}
+
 export function collectLevels(headers) {
   const instances = {};
   const signatures = {};
@@ -89,10 +100,17 @@ export function collectLevels(headers) {
   // ASCII digits: no verifier can place or key one, so verifyOnce() reports
   // a PERMERROR rather than verifying around it.
   let unkeyableSignatures = 0;
+  // The first i= or m= above MAX_CHAIN_LENGTH, as a PERMERROR summary; such a
+  // field is not placed in instances/signatures, so nothing loops up to it.
+  let rangeError = null;
+  const outOfRange = (field, tag) => {
+    rangeError = rangeError || `${field} ${tag}= exceeds the maximum chain length of ${MAX_CHAIN_LENGTH}`;
+  };
   for (const f of headers) {
     if (isName(f, 'message-instance')) {
       miFields.push(f);
       const parsed = parseTagList(f.value);
+      if (!chainNumberInRange(parsed.map.m)) { outOfRange('Message-Instance', 'm'); continue; }
       const m = parseInt(parsed.map.m, 10);
       if (!Number.isNaN(m) && instances[m]) dupInstances.push(m);
       if (!Number.isNaN(m)) instances[m] = { field: f, tags: parsed.tags, map: parsed.map };
@@ -102,10 +120,12 @@ export function collectLevels(headers) {
       const iv = parsed.map.i;
       const i = /^[0-9]+$/.test(iv || '') ? parseInt(iv, 10) : NaN;
       if (Number.isNaN(i) || i < 1) { unkeyableSignatures++; continue; }
+      if (!chainNumberInRange(iv)) { outOfRange('DKIM2-Signature', 'i'); continue; }
+      if (!chainNumberInRange(parsed.map.m)) { outOfRange('DKIM2-Signature', 'm'); continue; }
       if (signatures[i]) dupSignatures.push(i);
       signatures[i] = { field: f, tags: parsed.tags, map: parsed.map };
     }
   }
   return { instances, signatures, miFields, sigFields, dupInstances, dupSignatures,
-           unkeyableSignatures };
+           unkeyableSignatures, rangeError };
 }

@@ -155,7 +155,7 @@ async function verifyOnce(raw, opts = {}) {
   const fetchKey = opts.fetchKey || dohFetchKey;
   const now = opts.now || Math.floor(Date.now() / 1000);
   const { headers, body } = parseMessage(raw);
-  const { instances, signatures, dupInstances, dupSignatures, unkeyableSignatures } =
+  const { instances, signatures, dupInstances, dupSignatures, unkeyableSignatures, rangeError } =
     collectLevels(headers);
 
   // A DKIM2-Signature with no i=, or an i= that is not a positive integer, is
@@ -164,6 +164,12 @@ async function verifyOnce(raw, opts = {}) {
   if (unkeyableSignatures) {
     return { overall: 'permerror',
              summary: 'DKIM2-Signature has a missing or malformed i= tag', levels: [] };
+  }
+
+  // An i= or m= above MAX_CHAIN_LENGTH: a PERMERROR before the §11.2 loops
+  // below walk 1..max (4294967297 used to run this page out of memory).
+  if (rangeError) {
+    return { overall: 'permerror', summary: rangeError, levels: [] };
   }
 
   const miNums = Object.keys(instances).map(Number).sort((a, b) => a - b);
