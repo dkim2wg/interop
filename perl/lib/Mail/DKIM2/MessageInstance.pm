@@ -805,6 +805,24 @@ sub _epilogue_recipe {
     return [[$prefix_len + 1, $prefix_len + @old_lines]];
 }
 
+# BodyRecipe 'none' with a caller-supplied BodyHash: croak unless the hash
+# equals the body hash in the previous message's top Message-Instance, for
+# every algorithm both carry (and at least one).
+sub _check_body_unchanged {
+    my ($previous, $body_hash, $algs) = @_;
+    my %map = map { (extract_mi_version($_) // 0) => $_ }
+        $previous->header_raw('Message-Instance');
+    my $top = __PACKAGE__->parse($map{ max(keys %map) });
+    my @common = grep { $top->{bits}{hashes}{$_} } @$algs;
+    croak "BodyRecipe 'none' with BodyHash: the previous instance has no "
+        . join('/', @$algs) . " body hash to compare" unless @common;
+    for my $alg (@common) {
+        croak "BodyRecipe 'none' with BodyHash: the body hash is not the "
+            . "previous instance's, so the body changed"
+            unless $body_hash->{$alg} eq $top->{bits}{hashes}{$alg}[1];
+    }
+}
+
 # --- Calculate ---
 
 sub calculate {
@@ -821,6 +839,9 @@ sub calculate {
     # BodyHash: the caller hashed the body (body_digest_raw), so $current
     # may be the header block alone.  Only where nothing here reads or
     # changes the body: m=1, or a caller-supplied BodyRecipe.
+    croak "BodyRecipe needs a previous message"
+        if exists $opts{BodyRecipe} && !$previous;
+
     my $body_hash;
     if (exists $opts{BodyHash}) {
         my $bh = $opts{BodyHash};
@@ -830,9 +851,24 @@ sub calculate {
         for my $alg (@{$self->{algs}}) {
             croak "BodyHash has no $alg hash" unless defined $bh->{$alg};
         }
+        # Each value goes into the h= tag verbatim: it must be the base64
+        # of a digest of that algorithm's length, nothing else.
+        for my $alg (sort keys %$bh) {
+            my $fn = $HASH_ALGS{$alg}
+                or croak "BodyHash: unsupported hash algorithm $alg";
+            my $v = $bh->{$alg};
+            croak "BodyHash $alg is not a $alg digest in base64"
+                unless defined $v && !ref $v
+                    && $v =~ m{\A[A-Za-z0-9+/]+={0,2}\z}
+                    && length(decode_base64($v)) == length($fn->(''));
+        }
         croak "BodyHash needs BodyRecipe when there is a previous message"
             if $previous && !exists $opts{BodyRecipe};
         $body_hash = $bh;
+        # The header block must be complete: a string whose last field has
+        # no line break gets one (nothing reads the body here).
+        $current .= "\r\n"
+            if !ref $current && $current !~ /\n\z/;
     }
 
     unless (ref($current) && $current->isa('Email::MIME')) {
@@ -869,14 +905,23 @@ sub calculate {
         if (exists $opts{BodyRecipe}) {
             # Caller supplies the body Recipe: no body diff runs.
             my $br = $opts{BodyRecipe};
-            if (!ref $br && $br eq 'none') {
+            if (defined $br && !ref $br && $br eq 'none') {
                 $rb_recipe = undef;
-            } elsif (!ref $br && $br eq 'null') {
+                # No b key declares the body unchanged: a caller-supplied
+                # BodyHash must then be the previous instance's body hash.
+                _check_body_unchanged($previous, $body_hash, $self->{algs})
+                    if $body_hash;
+            } elsif (defined $br && !ref $br && $br eq 'null') {
                 $self->set_null_body_recipe;
             } elsif (ref $br eq 'ARRAY') {
                 my $last = 0;
                 for my $step (@$br) {
-                    next unless ref $step;
+                    croak "BodyRecipe step is undefined" unless defined $step;
+                    unless (ref $step) {
+                        croak "BodyRecipe literal contains a line break"
+                            if $step =~ /[\r\n]/;
+                        next;
+                    }
                     croak "BodyRecipe step must be [from,to] or a string"
                         unless ref $step eq 'ARRAY' && @$step == 2;
                     my ($f, $t) = @$step;
@@ -1291,20 +1336,29 @@ C<calculate> with a previous message only: the caller supplies the body
 Recipe and no body diff runs (the body of C<$previous> is ignored, and may
 be empty). One of C<'none'> (no C<b> key), C<'null'> (C<"b": null>), or an
 ARRAY ref in the internal form: C<[from,to]> arrays for copy ranges (1-based
-body lines of C<$msg>, ascending) and plain strings for literal lines. An
-empty array gives C<"b": []>. Croaks on a malformed value.
+body lines of C<$msg>, ascending) and plain strings for literal lines,
+each one line without its line break. An empty array gives C<"b": []>.
+Croaks on a malformed value: C<undef>, an undefined step, a bad range, a
+literal containing CR or LF, or C<BodyRecipe> with no C<$previous>.
+C<'none'> declares the body unchanged; with C<BodyHash> as well, croaks
+unless that hash equals the body hash of the top Message-Instance of
+C<$previous> (for every algorithm both carry, and at least one).
 
 =item BodyHash
 
 C<calculate> only, with no C<$previous> or with C<BodyRecipe>: the body
-hash, already computed with L</body_digest_raw> over the body of C<$msg>.
+hash, already computed with C<body_digest_raw> (below) over the body of C<$msg>.
 A base64 string is the C<sha256> hash; a hashref maps each algorithm in
 C<Algs> to its hash. The body of C<$msg> is then neither hashed nor read,
 so C<$msg> may be the header block alone (the fields and the blank line
 after them): a list manager sending many copies of a large body hashes
-each body once and never has the module parse it. Croaks if an algorithm
-is missing, or if the body is needed (a previous message without
-C<BodyRecipe>, which runs the body diff).
+each body once and never has the module parse it. A string C<$msg> that
+does not end in a line break gets a CRLF appended, so a header block
+whose last field lacks one is still complete. Croaks if an algorithm is
+missing or unsupported, if a value is not the base64 of a digest of that
+algorithm's length (32 octets for C<sha256>, 64 for C<sha512>), or if the
+body is needed (a previous message without C<BodyRecipe>, which runs the
+body diff).
 
 =item UseEpilogue, EpilogueThreshold
 

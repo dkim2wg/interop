@@ -86,7 +86,8 @@ subtest 'BodyHash: header block only, same instance' => sub {
         my ($name, $full) = @$c;
         my ($hdr, $body) = split /\r\n\r\n/, $full, 2;
         $hdr .= "\r\n\r\n";
-        for my $br ([[3, 4]], 'null', 'none') {
+        # 'none' declares the body unchanged, so it is checked separately.
+        for my $br ([[3, 4]], 'null') {
             my $want = Mail::DKIM2::MessageInstance->calculate($full,
                 $headers_only_prev, BodyRecipe => $br)->as_string;
             my $got = Mail::DKIM2::MessageInstance->calculate($hdr,
@@ -112,6 +113,78 @@ subtest 'BodyHash: header block only, same instance' => sub {
     is(Mail::DKIM2::MessageInstance->calculate($orig, undef,
             BodyHash => Mail::DKIM2::MessageInstance::body_digest_raw($orig_body)
         )->as_string, $m1->as_string, 'm=1');
+};
+
+subtest 'BodyHash with none: the body must be unchanged' => sub {
+    my $hdr = $cur; $hdr =~ s/\r\n\r\n.*\z/\r\n\r\n/s;
+    my $same = $hdr . $orig_body;
+    my $want = Mail::DKIM2::MessageInstance->calculate($same,
+        $headers_only_prev, BodyRecipe => 'none')->as_string;
+    is(Mail::DKIM2::MessageInstance->calculate($hdr, $headers_only_prev,
+            BodyRecipe => 'none',
+            BodyHash => Mail::DKIM2::MessageInstance::body_digest_raw($orig_body)
+        )->as_string, $want, 'unchanged body: same instance');
+    eval { Mail::DKIM2::MessageInstance->calculate($hdr, $headers_only_prev,
+        BodyRecipe => 'none',
+        BodyHash => Mail::DKIM2::MessageInstance::body_digest_raw("other\r\n")) };
+    like $@, qr/body changed/, 'changed body croaks';
+};
+
+subtest 'BodyHash: header block with or without its final line break' => sub {
+    my $bh = Mail::DKIM2::MessageInstance::body_digest_raw($orig_body);
+    my @got = map {
+        Mail::DKIM2::MessageInstance->calculate($_, undef, BodyHash => $bh)->as_string
+    } "From: a\@example.com\r\nSubject: hi",
+      "From: a\@example.com\r\nSubject: hi\r\n",
+      "From: a\@example.com\r\nSubject: hi\r\n\r\n";
+    is $got[0], $got[2], 'no final CRLF';
+    is $got[1], $got[2], 'no blank line';
+    is $got[2], $m1->as_string, 'same as the full message';
+};
+
+subtest 'BodyHash values are validated' => sub {
+    my $good = Mail::DKIM2::MessageInstance::body_digest_raw("x\r\n");
+    my $good512 = Mail::DKIM2::MessageInstance::body_digest_raw("x\r\n", 'sha512');
+    my @bad = (
+        [ 'not a digest',  'deadbeef' ],
+        [ 'header injection', "$good\r\nX-Injected: yes" ],
+        [ 'wrong length',  $good512 ],
+        [ 'sha512 wrong length', { sha256 => $good, sha512 => $good } ],
+        [ 'unknown algorithm', { sha256 => $good, md5 => $good } ],
+        [ 'undef value', { sha256 => undef } ],
+    );
+    for my $c (@bad) {
+        my ($name, $bh) = @$c;
+        my $algs = ref $bh && exists $bh->{sha512} ? [qw(sha256 sha512)] : ['sha256'];
+        eval { Mail::DKIM2::MessageInstance->calculate($cur, $headers_only_prev,
+            BodyRecipe => 'null', Algs => $algs, BodyHash => $bh) };
+        like $@, qr/BodyHash/, $name;
+    }
+    ok eval { Mail::DKIM2::MessageInstance->calculate($cur, $headers_only_prev,
+        BodyRecipe => 'null', Algs => [qw(sha256 sha512)],
+        BodyHash => { sha256 => $good, sha512 => $good512 }); 1 },
+        'valid sha256 and sha512' or diag $@;
+};
+
+subtest 'BodyRecipe misuse croaks' => sub {
+    my @warn;
+    local $SIG{__WARN__} = sub { push @warn, @_ };
+    for my $c (
+        [ 'undef',             undef ],
+        [ 'undef step',        [[3, 4], undef] ],
+        [ 'literal with CRLF', ["a\r\nX-Injected: yes"] ],
+        [ 'literal with LF',   ["a\nb"] ],
+        [ 'literal with CR',   ["a\rb"] ],
+    ) {
+        my ($name, $br) = @$c;
+        eval { Mail::DKIM2::MessageInstance->calculate($cur, $headers_only_prev,
+            BodyRecipe => $br) };
+        like $@, qr/BodyRecipe/, $name;
+    }
+    eval { Mail::DKIM2::MessageInstance->calculate("From: a\@example.com\r\n\r\nx\r\n",
+        undef, BodyRecipe => 'null') };
+    like $@, qr/BodyRecipe needs a previous message/, 'no previous';
+    is_deeply \@warn, [], 'no warnings';
 };
 
 subtest 'BodyHash misuse croaks' => sub {
