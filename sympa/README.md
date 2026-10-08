@@ -3,36 +3,42 @@
 Three patches that make Sympa record, in a `Message-Instance` header, what
 it changed about each message it redistributes, so a DKIM2 verifier
 downstream can undo the list's changes and check the signatures of earlier
-hops. Sympa adds only `Message-Instance`; the `DKIM2-Signature` is added by
-the MTA (see the [Postfix mailing-list host
+hops. Sympa adds only `Message-Instance` (and `X-DKIM2-Info`); the
+`DKIM2-Signature` is added by the MTA (see the [Postfix mailing-list host
 guide](../docs/dkim2-postfix-list-host-guide.md)).
 
 The same three commits are the `dkim2` branch of
 <https://github.com/brong/sympa>, which is what these patches are exported
-from. The design and its resource impact are described in that branch's
-`DKIM2-MESSAGE-INSTANCE.md`, which patch 2 adds.
+from. The design is described in that branch's `DKIM2-MESSAGE-INSTANCE.md`,
+which patch 2 adds.
 
 ## The patches
 
-1. **Preserve the body encoding when decorating.** Four changes to
-   `Sympa::Message` that keep the lines of the original body byte-identical
-   through personalisation and footer decoration: no re-encoding when
-   personalisation substituted nothing, the original charset preferred over
-   a UTF-8 fallback, a MIME-part fallback instead of a dropped footer, and
-   encoded-level footer appends for quoted-printable and base64 bodies. A
-   Message-Instance Recipe for a footer is then one copy range rather than
-   the whole body. This applies whether or not Message-Instance is enabled.
-2. **Add DKIM2 Message-Instance header support.** At ingress
-   (`ProcessIncoming`) the message is recorded as received, `m=1` added if
-   it has no instance; the original is kept beside the message in the
-   outgoing spool. At egress (`ProcessOutgoing`), after all transformations
-   and before DKIM signing, the next `m=` with Recipes is added if anything
-   changed. Internally generated messages, resends from the archive and
-   direct sends get an originating `m=1`. Includes `t/Message_DKIM2.t` and
-   `DKIM2-MESSAGE-INSTANCE.md`.
+1. **Add the dkim2_message_instance list parameter.** An `on`/`off` list
+   parameter (with robot and site defaults), off by default. With it off a
+   list behaves exactly as stock 6.2.78.
+2. **Add DKIM2 Message-Instance support with always-wrap decoration.**
+   New module `Sympa::DKIM2`, with hooks in `Sympa::Message` and the
+   spindles. At ingress (`ProcessIncoming`, before S/MIME decryption) the
+   message is recorded as received, `m=1` added if it has no instance, and
+   the header block kept in the `X-Sympa-DKIM2-Headers` pseudo-header,
+   which travels through every spool with the message. Decoration wraps the
+   original body, byte for byte, as the middle part of a `multipart/mixed`
+   between the list's header and footer parts, so the body Recipe is one
+   copy range. At egress (`ProcessOutgoing`), after all transformations and
+   before DKIM signing, each copy gets the next `m=`, its header Recipe from
+   diffing the saved header block against the outgoing one. A body changed
+   any other way (txt, html, urlize and notice modes, full-body
+   personalisation, S/MIME, content filters) gets a null body Recipe.
+   Anonymous lists and resends from the archive strip the chain instead.
+   Includes `t/DKIM2.t` and `DKIM2-MESSAGE-INSTANCE.md`.
 3. **Add the X-DKIM2-Info debug header.** One above every Message-Instance
    Sympa adds, naming the draft, implementation date, action and hashed
    header fields, so an interop problem can be diagnosed from the message.
+
+The series before the always-wrap rework (encoding-preserving decoration,
+a `.mi_orig` spool file, Recipes by diff) is kept as the tag
+`dkim2-cte-preserve-6.2.78` in the fork. It is not maintained.
 
 ## What they apply to
 
@@ -41,10 +47,12 @@ there. Older packages are not supported.
 
 ## Dependencies
 
-`Sympa::Message` loads `Mail::DKIM2::MessageInstance` and
-`Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution (on CPAN:
-`cpanm Mail::DKIM2`; source in [`../perl`](../perl)); install it first. It
-is a soft dependency: without it Sympa runs but adds no headers.
+`Sympa::DKIM2` loads `Mail::DKIM2::MessageInstance` and
+`Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution, version 0.15
+or later (source in [`../perl`](../perl); `cpanm Mail::DKIM2` once 0.15 is
+on CPAN). It is loaded only for lists with the switch on; a list with the
+switch on and no Mail::DKIM2 logs an error and runs as stock. Nothing else
+is needed beyond what 6.2.78 itself requires.
 
 ## Installing
 
@@ -77,13 +85,13 @@ such as a distribution's 6.2.76 package, is not a supported base: its
 patches do not carry):
 
 ```
+src/lib/Sympa/Config/Schema.pm
+src/lib/Sympa/DKIM2.pm                     (new)
 src/lib/Sympa/Message.pm
-src/lib/Sympa/Spool/Outgoing.pm
+src/lib/Sympa/Spindle/ProcessArchive.pm
 src/lib/Sympa/Spindle/ProcessIncoming.pm
 src/lib/Sympa/Spindle/ProcessOutgoing.pm
 src/lib/Sympa/Spindle/ResendArchive.pm
-src/lib/Sympa/Spindle/ToList.pm
-src/lib/Sympa/Spindle/ToMailer.pm
 ```
 
 Then in `sympa.conf`:
@@ -99,6 +107,23 @@ nrcpt 1
 `sympa-sendmail` is in [`../deploy/examples/`](../deploy/examples/). Restart
 `sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa`;
 all of them load `Message.pm`.
+
+The outbound signer must accept null body Recipes: `dkim2-milter` signs
+such a message only when started with `--allow-null-body-recipe` (the
+example outbound unit has it).
+
+## Turning it on
+
+Nothing changes until a list has the switch on. In the list's `config`
+(or in the list's web admin, with the other DKIM parameters):
+
+```
+dkim2_message_instance on
+```
+
+The same line in `robot.conf` or `sympa.conf` sets the default for a robot
+or the whole site. A message already in a spool when the switch is turned
+on has no saved header block and goes out without a new instance.
 
 ## Regenerating the series
 

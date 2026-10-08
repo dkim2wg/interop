@@ -302,7 +302,8 @@ Then `postfix reload`, and check with
 Mailman removes `Bcc` and `Resent-Bcc` itself before sending (Python's
 `smtplib` does it on its way to Postfix); with the patches below it does
 so before computing its `Message-Instance`, so the removal is in the
-Recipe and the chain still verifies. Sympa passes them through.
+Recipe and the chain still verifies. Sympa (with the patches below, on a
+list with the switch on) does the same.
 
 ### Recipient privacy
 
@@ -437,9 +438,10 @@ get back (step 9).
 
 Sympa 6.2.78 only. The changes are three patches, described in
 `sympa/README.md`, exported from the `dkim2` branch of
-<https://github.com/brong/sympa>. `Sympa::Message` uses the Mail::DKIM2
-library from step 4 to compute the headers; without it Sympa runs
-unchanged and adds nothing.
+<https://github.com/brong/sympa>. `Sympa::DKIM2` uses the Mail::DKIM2
+library from step 4, 0.15 or later (from `perl/` until 0.15 is on CPAN),
+to compute the headers. Nothing changes until a list has the
+`dkim2_message_instance` switch on (below).
 
 Either build from patched source:
 
@@ -477,12 +479,31 @@ nrcpt 1
 systemctl restart sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa
 ```
 
-What happens: `ProcessIncoming` records the message as received and keeps
-the original beside it in the outgoing spool; `ProcessOutgoing` compares
-after all transformations and before DKIM signing, and adds the next `m=`
-with Recipes if anything changed. Notifications, archive resends and
-direct sends get an originating `m=1`. Encoding-preserving decoration
-(patch 1) keeps the Recipes small.
+Then turn the switch on for each list that should record its changes, in
+the list's `config` (or the list's web admin, with the other DKIM
+parameters):
+
+```
+dkim2_message_instance on
+```
+
+The same line in `robot.conf` or `sympa.conf` makes it the default for a
+robot or the whole site. It is off by default, and a list with it off
+behaves exactly as stock 6.2.78.
+
+What happens on a list with it on: `ProcessIncoming` records the message as
+received (before S/MIME decryption) and keeps its header block in a
+pseudo-header that travels with it through the spools. A header or footer
+is added by MIME-wrapping: the body exactly as it arrived becomes the
+middle part of a `multipart/mixed`, so the body Recipe is one copy range.
+`ProcessOutgoing`, after all transformations and before DKIM signing, adds
+the next `m=` to each copy. A body Sympa rewrites (txt, html, urlize and
+notice reception modes, full-body personalisation, S/MIME) gets a null
+body Recipe, so the outbound milter needs `--allow-null-body-recipe` (step
+5, "Null body Recipes"; the example outbound unit has it). Anonymous lists
+and archive resends drop the upstream chain, and the outbound milter
+starts a new one. Sympa adds nothing to notifications, digests and direct
+sends; the outbound milter gives them `m=1`.
 
 Check: post to a test list and read the copy you get back (step 9).
 

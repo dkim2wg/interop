@@ -1,0 +1,1898 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Thu, 8 Oct 2026 14:08:30 -0400
+Subject: [PATCH 2/3] Add DKIM2 Message-Instance support with always-wrap
+ decoration
+
+On lists with dkim2_message_instance on, record what Sympa changed in
+each copy it sends, per draft-ietf-dkim-dkim2-spec-06, so a DKIM2
+verifier downstream can undo the list's changes and check the signatures
+of earlier hops. The DKIM2-Signature itself is added by the MTA.
+
+At ingress (ProcessIncoming), before S/MIME decryption or any other
+change: add m=1 describing the message as received unless it already
+carries a Message-Instance, and keep the header block. It travels with
+the message, base64, in the X-Sympa-DKIM2-Headers pseudo-header, so it
+survives the moderation, held, auth, topic, bulk and bad spools without
+spool-specific code; archive copies are stored without it.
+
+Decoration on such a list does not edit the body: Sympa::DKIM2::wrap()
+makes the original body, byte for byte under its own Content-* fields,
+the middle part of a multipart/mixed between the header and footer parts.
+The body Recipe is then one copy range whatever the body's encoding.
+Signed and encrypted types are left alone. If wrapping fails the message
+is decorated the stock way and its body marked as rewritten.
+
+At egress (ProcessOutgoing), once per packet: check the saved header
+block's top instance (never build on a broken chain) and whether the body
+is still the one it hashed. Then for each copy, after every other change
+and before DKIM/ARC signing: drop Bcc and Resent-Bcc, and add the next
+m= with a header Recipe from diffing the saved header block against the
+outgoing one. The body Recipe is the wrap's copy range, or none if the
+body was not touched, but only if applying it really gives back the
+received body; a body changed for any other reason (reception modes,
+full-body personalisation, S/MIME signing or encryption, content
+filters) gets a null body Recipe, so the header stays small. On DKIM2
+lists the envelope/MDN tracking step moves ahead of this so it is
+covered. Anonymous lists and resends from the archive strip the chain
+instead, and the outbound signer starts a new one. Any failure is
+logged and the copy goes out without the new instance.
+
+Requires Mail::DKIM2 0.15 or later, loaded on first use. Includes
+DKIM2-MESSAGE-INSTANCE.md (design) and t/DKIM2.t, which drives the real
+decorate() and ProcessOutgoing and checks the output with Mail::DKIM2's
+verifier and undo.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ DKIM2-MESSAGE-INSTANCE.md                | 240 +++++++
+ Makefile.am                              |   1 +
+ src/lib/Makefile.am                      |   1 +
+ src/lib/Sympa/DKIM2.pm                   | 450 +++++++++++++
+ src/lib/Sympa/Message.pm                 |  33 +
+ src/lib/Sympa/Spindle/ProcessArchive.pm  |  13 +-
+ src/lib/Sympa/Spindle/ProcessIncoming.pm |   5 +
+ src/lib/Sympa/Spindle/ProcessOutgoing.pm |  61 +-
+ src/lib/Sympa/Spindle/ResendArchive.pm   |   4 +
+ t/DKIM2.t                                | 822 ++++++++++++++++++++++-
+ 10 files changed, 1612 insertions(+), 18 deletions(-)
+ create mode 100644 DKIM2-MESSAGE-INSTANCE.md
+ create mode 100644 src/lib/Sympa/DKIM2.pm
+
+diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
+new file mode 100644
+index 000000000..1bdbd04c2
+--- /dev/null
++++ b/DKIM2-MESSAGE-INSTANCE.md
+@@ -0,0 +1,240 @@
++# DKIM2 Message-Instance support for Sympa
++
++Sympa changes the messages it redistributes: it adds list headers, a
++subject tag, a header and footer, and sometimes rewrites the body. A DKIM2
++verifier downstream can check the signatures of earlier hops only if every
++hop that changed the message says what it changed. This change makes Sympa
++do that: on lists that turn it on, each copy Sympa sends carries a
++`Message-Instance` header field describing the copy, with a Recipe that
++rebuilds the message as Sympa received it.
++
++Sympa adds only `Message-Instance`. The `DKIM2-Signature` is added by the
++MTA's outbound signer after Sympa hands the message over.
++
++The wire format is the one in draft-ietf-dkim-dkim2-spec-06: `m=` numbers
++the instance, `h=` carries `alg:header-hash:body-hash`, and `r=` the base64
++JSON Recipe (`"h"` for the header fields, `"b"` for the body).
++
++## The switch
++
++A list parameter, `dkim2_message_instance` (`on`/`off`, group `dkim`),
++which can also be set as a robot or site default. The default is `off`.
++
++With it off Sympa behaves exactly as stock 6.2.78: no pseudo-header in the
++spools, no MIME wrap, no `Message-Instance`. Turn it on per list:
++
++```
++dkim2_message_instance on
++```
++
++If the switch is on but Mail::DKIM2 cannot be loaded, Sympa logs at `err`
++and treats the list as off.
++
++## Dependency
++
++Mail::DKIM2 0.15 or later (`Mail::DKIM2::MessageInstance` and
++`Mail::DKIM2::Common`; on CPAN, `cpanm Mail::DKIM2`). 0.15 adds the
++`BodyRecipe` option that lets the caller give the body Recipe instead of
++having it computed by diff. Mail::DKIM2 is loaded on first use, not at
++compile time, so Sympa without it runs as stock.
++
++## Ingress: before decryption, into a pseudo-header
++
++`Spindle::ProcessIncoming` calls `Sympa::DKIM2::ingress` once per message,
++after the S/MIME signature check and before `smime_decrypt` or any other
++change.
++
++1. If the message carries no `Message-Instance`, Sympa adds `m=1`
++   describing it as received. If it carries one (added by an inbound milter
++   or a signing sender), that one is kept: it already describes the message
++   as received.
++2. The header block as received (with the instance) is kept on the message
++   object and serialised, base64, as the pseudo-header
++   `X-Sympa-DKIM2-Headers`. `Sympa::Message::to_string` writes it and
++   `new` reads it back, so it travels through every spool the message passes
++   through (msg, moderation, held, auth, topic, bulk, bad) with no
++   spool-specific code. It is not part of the message proper: `as_string`
++   does not emit it, the archive stores the message without it, and the
++   copy handed to a custom archiver has it removed.
++
++The body is not saved: its hash is already in the top instance's `h=`.
++
++Saving before decryption matters for S/MIME lists: the saved block, and so
++every header Recipe built from it, describes the encrypted message as
++received. No plaintext ever reaches a header field.
++
++Anonymous lists skip ingress entirely: nothing about the original sender is
++kept (see the table below).
++
++## Decoration: always-wrap
++
++On a DKIM2 list whose message has the saved header block, `decorate()`
++does not edit the body. `Sympa::DKIM2::wrap` builds a new body instead:
++
++```
++Content-Type: multipart/mixed; boundary="=_dkim2_..."     (top level)
++
++This is a multi-part message in MIME format.
++
++--=_dkim2_...
++<message_header part>                    (if the list has one)
++
++--=_dkim2_...
++<the message's Content-* fields, verbatim and in order>
++
++<the original body, byte for byte>
++--=_dkim2_...
++<message_footer part>                    (if the list has one)
++
++--=_dkim2_...
++<global footer part>                     (if the robot has one)
++
++--=_dkim2_...--
++```
++
++- The top-level `Content-*` fields move to the original part unchanged
++  (`Content-Length` is dropped). The top level gets `MIME-Version`,
++  `Content-Type: multipart/mixed`, and a `Content-Transfer-Encoding` of
++  `8bit` or `binary` when the original or a decoration part needs it.
++- The body is never parsed or re-encoded, so the original part's lines are
++  the received body's lines, and the body Recipe is one copy range.
++- The boundary is random and checked not to occur in the body or in any
++  decoration part.
++- The decoration parts are chosen and personalised as stock `decorate()`
++  would: with `footer_type mime`, an existing `message_<kind>.mime` file is
++  used as a MIME part (an empty one adds nothing, as stock); otherwise the
++  text file becomes a `text/plain; charset=UTF-8` part. `footer_type
++  append` therefore also wraps on a DKIM2 list: there is no inline append.
++- Personalised footers are built per recipient; only the trailing part
++  differs between copies.
++- `multipart/signed`, `multipart/encrypted` and opaque
++  `application/pkcs7-mime` (and `application/x-pkcs7-mime`) are left alone:
++  wrapping them would break the signature or the encryption.
++- Wrapping is all-or-nothing. The new header and body are built on copies
++  and installed only at the end, so a failure leaves the message as it was.
++  `decorate()` then logs at `err`, decorates the stock way, and marks the
++  body as rewritten so egress gives it a null body Recipe.
++
++`wrap` records the 1-based lines of the original body inside the new body
++(none when the original body is empty); egress uses them as the copy range.
++
++## Egress: one instance per copy
++
++`Spindle::ProcessOutgoing` calls `Sympa::DKIM2::egress_context` once per
++packet, before any per-recipient change, then `Sympa::DKIM2::egress_add`
++in `__twist_one` for each copy, after every transformation and before DKIM
++and ARC signing.
++
++`egress_context`:
++
++1. With no saved header block (a message Sympa composed itself, a digest,
++   or a message queued before the switch was turned on), add nothing and
++   log at `info`.
++2. Check the saved block's top instance header hash against the saved
++   block itself. On a mismatch, log at `err` and add nothing: Sympa never
++   builds on a broken chain.
++3. Hash the current body and compare it with the top instance's body hash.
++   Equal means nothing has rewritten the body since ingress.
++
++`egress_add`:
++
++1. Remove `Bcc` and `Resent-Bcc`, so their removal is in the header Recipe.
++2. Choose the body Recipe:
++
++   | Body | Body Recipe |
++   |---|---|
++   | changed before the packet (txt, html, urlize, notice modes, content filters, anything else), or rewritten for this copy (full-body merge, `smime_sign`, `smime_encrypt`, stock fallback after a failed wrap) | null (`"b": null`) |
++   | wrapped | one copy range of the original lines (`[]` for an empty original body) |
++   | not decorated | none: the body is unchanged |
++
++3. Self-check: a copy range or "none" is used only if applying it to the
++   outgoing body gives back a body whose hash is the top instance's body
++   hash, counting lines as the verifier does. Otherwise something changed
++   the body without saying so; Sympa logs at `notice` and uses a null body
++   Recipe.
++4. Compute the instance with `Mail::DKIM2::MessageInstance->calculate`,
++   diffing the saved header block against the outgoing header block for the
++   header Recipe. If nothing changed at all (no header change, body Recipe
++   "none"), no instance is added.
++5. Add it as the next `m=` (one more than the highest present) at the top of
++   the header, folded with Mail::DKIM2's folder.
++
++The whole step runs in an `eval`. On any failure it logs and the copy goes
++out without the new instance: DKIM2 never blocks or loses list mail.
++
++### The null body Recipe
++
++A null body Recipe says "the previous body cannot be rebuilt". A verifier
++can still check the previous hop's header hash, because the header Recipe
++rebuilds the previous header block, but it cannot check the earlier body
++hashes. Sympa uses it whenever the outgoing body is neither the received
++body nor the received body wrapped, because the alternative is a Recipe carrying the whole
++original body (a 300 KB attachment gave a 572 KB header in the old series).
++The test is always against the body hash in the top instance's `h=`, so a
++body change Sympa did not anticipate still gives a correct, if null,
++Recipe rather than a wrong one.
++
++An outbound `dkim2-milter` refuses to sign a message whose top instance
++has a null body Recipe unless it is started with `--allow-null-body-recipe`.
++A list host running Sympa needs that option on its outbound signer.
++
++### Ordering
++
++Nothing that changes a hashed header field may run after `egress_add`.
++On a DKIM2 list (when `egress_context` returned a context) the envelope and
++tracking block, which sets `Disposition-Notification-To` for MDN tracking,
++runs before the DKIM2 step; on every other list it stays where stock Sympa
++has it, after DKIM and ARC signing. DomainKey-Signature removal already
++comes before the DKIM2 step.
++
++## Special cases
++
++| Case | Behaviour |
++|---|---|
++| S/MIME encrypted list | header block saved before decryption; the re-encrypted body differs, so null body Recipe; no plaintext in any header field |
++| `multipart/signed`, `multipart/encrypted`, opaque `application/pkcs7-mime` | not wrapped; body Recipe none (or null if the copy is S/MIME signed or encrypted) |
++| txt, html, urlize, notice reception modes | null body Recipe, small header Recipe |
++| Full-body personalisation (`personalization.mail_apply_on all`) | null body Recipe per recipient |
++| Footer-only personalisation (`personalization.mail_apply_on footer`) | wrap; the copies differ only in the trailing part |
++| Anonymous list | no pseudo-header at ingress, stock decoration; egress removes `DKIM2-Signature` and `Message-Instance`, and the outbound signer starts a new chain with `m=1` |
++| Resend from archive | the chain is removed as for anonymous lists |
++| Digests, notifications, auto-replies, direct sends, bounces | no saved header block; Sympa adds nothing (the outbound signer adds `m=1`) |
++| Messages embedded in a digest | content, left alone |
++| VERP, DSN tracking | envelope only; no effect on the instance |
++| MDN tracking | `Disposition-Notification-To` is set before the DKIM2 step |
++| DMARC From rewrite, subject tag, custom headers, topics, `remove_headers` | header changes, captured by the header diff at egress |
++| Moderated, held, auth-confirmed messages | the pseudo-header is in the spooled text, so the chain survives |
++| Requeued from `bad/` | likewise |
++| Archive and custom archiver copies | stored without the pseudo-header |
++
++### `remove_headers`
++
++Fields removed by `remove_headers` that are covered by the header hash (not
++`X-` fields, not trace fields) are recorded in the header Recipe, as spec
++§5.1 requires: the Recipe must rebuild the previous header block. So a
++field removed for privacy is still readable, in the Recipe, by anyone who
++receives the copy. Remove such fields before the message reaches a
++DKIM2-signing hop, or leave the list off.
++
++## Resource impact
++
++With the switch off, nothing new runs beyond one parameter lookup per
++message. With it on, ingress adds one hash of the message and one header
++block (base64) to the spooled message; egress adds a header-only verify
++and one body hash per packet, and one body hash, a header diff and a
++self-check per copy. There is no extra spool file. Measurements are in
++progress; figures will be added here.
++
++## Tests
++
++`t/DKIM2.t`, in `check_SCRIPTS`. It needs Mail::DKIM2 on `PERL5LIB`
++(CPAN, or `perl/lib` of the DKIM2 interop repository) and fails rather than
++skipping without it:
++
++```
++PERL5LIB=/path/to/Mail-DKIM2/lib prove -Isrc/lib t/DKIM2.t
++```
++
++It drives the real `decorate()`, `ingress`, the spool round trip and
++`ProcessOutgoing`, and checks the output with Mail::DKIM2's verifier and
++undo.
+diff --git a/Makefile.am b/Makefile.am
+index 6c4aa2819..257088816 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -95,6 +95,7 @@ nobase_modules_DATA = \
+ EXTRA_DIST = \
+ 	AUTHORS.md \
+ 	CONTRIBUTING.md \
++	DKIM2-MESSAGE-INSTANCE.md \
+ 	INSTALL.md \
+ 	NEWS.md \
+ 	ONEWS \
+diff --git a/src/lib/Makefile.am b/src/lib/Makefile.am
+index 1e4b49c3d..d3d962453 100644
+--- a/src/lib/Makefile.am
++++ b/src/lib/Makefile.am
+@@ -108,6 +108,7 @@ nonCLI_modules = \
+ 	Sympa/DataSource/RemoteDump.pm \
+ 	Sympa/DataSource/RemoteFile.pm \
+ 	Sympa/DataSource/SQL.pm \
++	Sympa/DKIM2.pm \
+ 	Sympa/Family.pm \
+ 	Sympa/HTML/FormatText.pm \
+ 	Sympa/HTML/URIFind.pm \
+diff --git a/src/lib/Sympa/DKIM2.pm b/src/lib/Sympa/DKIM2.pm
+new file mode 100644
+index 000000000..5b7b7ea70
+--- /dev/null
++++ b/src/lib/Sympa/DKIM2.pm
+@@ -0,0 +1,450 @@
++# -*- indent-tabs-mode: nil; -*-
++# vim:ft=perl:et:sw=4
++
++# Sympa - SYsteme de Multi-Postage Automatique
++#
++# Copyright (c) 1997, 1998, 1999 Institut Pasteur & Christophe Wolfhugel
++# Copyright (c) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
++# 2006, 2007, 2008, 2009, 2010, 2011 Comite Reseau des Universites
++# Copyright (c) 2011, 2012, 2013, 2014, 2015, 2016, 2017 GIP RENATER
++# Copyright 2017, 2018, 2019, 2020, 2021, 2022 The Sympa Community. See the
++# AUTHORS.md file at the top-level directory of this distribution and at
++# <https://github.com/sympa-community/sympa.git>.
++#
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 2 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program.  If not, see <http://www.gnu.org/licenses/>.
++
++package Sympa::DKIM2;
++
++use strict;
++use warnings;
++use English qw(-no_match_vars);
++use MIME::Parser;
++
++use Sympa;
++use Conf;
++use Sympa::Log;
++
++my $log = Sympa::Log->instance;
++
++# True if $that is a list with dkim2_message_instance on and Mail::DKIM2
++# loadable.  Mail::DKIM2 is loaded on first use, never at compile time.
++sub enabled {
++    my $that = shift;
++    return 0 unless ref $that eq 'Sympa::List';
++    return 0
++        unless ($that->{'admin'}{'dkim2_message_instance'} || 'off') eq 'on';
++    return 1 if eval {
++        require Mail::DKIM2::MessageInstance;
++        require Mail::DKIM2::Common;
++        1;
++    };
++    $log->syslog('err',
++        'dkim2_message_instance is on for %s but Mail::DKIM2 cannot be loaded: %s',
++        $that, $EVAL_ERROR);
++    return 0;
++}
++
++sub anonymous {
++    my $list = shift;
++    return ($list->{'admin'}{'anonymous_sender'} // '') ne '' ? 1 : 0;
++}
++
++# At ingress, before any change (including S/MIME decryption): describe the
++# message as received with m=1 unless it already carries an instance, and
++# keep the header block for egress.  Anonymous lists keep nothing: their
++# chain is stripped at egress.
++sub ingress {
++    my $message = shift;
++    my $list    = $message->{context};
++    return unless enabled($list);
++    return if anonymous($list);
++
++    eval {
++        unless ($message->{_head}->count('Message-Instance')) {
++            my $mi = Mail::DKIM2::MessageInstance->calculate(
++                $message->as_rfc822_string);
++            _prepend_instance($message, $mi);
++        }
++        $message->{'dkim2_headers'} = $message->{_head}->as_string;
++        1;
++    } or $log->syslog('err', 'DKIM2 ingress failed for %s: %s',
++        $message, $EVAL_ERROR);
++}
++
++# Once per packet, before any per-recipient change.  Returns undef (add
++# nothing), {strip => 1} (anonymous: remove the chain), or {prev => the
++# saved header block (CRLF, ending in a blank line), unchanged => 1 if the
++# body is still the one the top instance hashed, body_hash => that hash}.
++sub egress_context {
++    my $message = shift;
++    my $list    = $message->{context};
++    return undef unless enabled($list);
++    return {strip => 1}
++        if anonymous($list) or $message->{shelved}{dkim2_strip};
++    unless (defined $message->{'dkim2_headers'}) {
++        $log->syslog('info',
++            'DKIM2: %s has no saved header block; no Message-Instance added',
++            $message);
++        return undef;
++    }
++    my $ctx = eval {
++        (my $prev = $message->{'dkim2_headers'} . "\n") =~ s/\r?\n/\r\n/g;
++        my ($ok, $why) =
++            Mail::DKIM2::MessageInstance->verify($prev, HeadersOnly => 1);
++        die "saved header block does not verify: " . ($why // '') . "\n"
++            unless $ok;
++        my $top = _top_instance($prev);
++        my $unchanged =
++            Mail::DKIM2::MessageInstance::body_digest_raw($message->{_body})
++            eq $top->body_hash;
++        {   prev      => $prev,
++            unchanged => ($unchanged ? 1 : 0),
++            body_hash => $top->body_hash
++        };
++    };
++    $log->syslog('err', 'DKIM2: %s: %s; no Message-Instance added',
++        $message, $EVAL_ERROR)
++        unless $ctx;
++    return $ctx;
++}
++
++# The highest-numbered Message-Instance in a header block.
++sub _top_instance {
++    my $prev = shift;
++    my @mi =
++        Mail::DKIM2::Common::parse_mime($prev)->header_raw('Message-Instance');
++    my ($top) = sort {
++        Mail::DKIM2::Common::extract_mi_version($b)
++            <=> Mail::DKIM2::Common::extract_mi_version($a)
++    } @mi;
++    return Mail::DKIM2::MessageInstance->parse($top);
++}
++
++# Last step before DKIM/ARC: describe this copy's changes since ingress.
++# The body Recipe is null if the body was rewritten (by the caller's
++# account, by decorate()'s stock fallback, or as seen by egress_context),
++# the copy range recorded by wrap() if it wrapped, else none.  A copy
++# range or none is used only if the body it gives back hashes to the top
++# instance's body hash; otherwise something changed the body unannounced,
++# and the Recipe is null.  Never dies.
++sub egress_add {
++    my ($message, $ctx, %opts) = @_;
++    return unless $ctx;
++    eval {
++        if ($ctx->{strip}) {
++            _strip_chain($message);
++            return 1;
++        }
++        $message->delete_header($_) for qw(Bcc Resent-Bcc);
++        my $br;
++        if (   !$ctx->{unchanged}
++            or $opts{body_rewritten}
++            or $message->{_dkim2_body_rewritten}) {
++            $br = 'null';
++        } elsif (my $lines = $message->{_dkim2_body_lines}) {
++            $br = @$lines ? [[@$lines]] : [];
++        } else {
++            $br = 'none';
++        }
++        my $cur = $message->as_rfc822_string;
++        if ((ref $br or $br ne 'null')
++            and not _recovers_body($cur, $br, $ctx->{body_hash})) {
++            $log->syslog('notice',
++                'DKIM2: body of %s changed after ingress; null body Recipe',
++                $message);
++            $br = 'null';
++        }
++        my $mi = Mail::DKIM2::MessageInstance->calculate($cur, $ctx->{prev},
++            BodyRecipe => $br);
++        # Nothing changed at all: no instance (spec: r= needs "h" or "b").
++        return 1 if !ref $br and $br eq 'none' and $mi->as_string !~ /; r=/;
++        _prepend_instance($message, $mi);
++        1;
++    } or $log->syslog('err',
++        'DKIM2: Message-Instance for %s failed: %s; sent without it',
++        $message, $EVAL_ERROR);
++}
++
++# True if the body Recipe $br ('none', or [] / [[first, last]] from wrap())
++# applied to the body of the CRLF message $cur gives a body with hash $hash.
++sub _recovers_body {
++    my ($cur, $br, $hash) = @_;
++    my (undef, $body) = split /\r\n\r\n/, $cur, 2;
++    $body //= '';
++    if (ref $br) {
++        my ($first, $last) = @{$br->[0] || []};
++        my @lines = split /\r?\n/, $body;   # as the verifier does
++        return 0 if defined $last and $last > @lines;
++        $body = defined $first
++            ? join("\r\n", @lines[$first - 1 .. $last - 1]) . "\r\n"
++            : '';
++    }
++    return Mail::DKIM2::MessageInstance::body_digest_raw($body) eq $hash;
++}
++
++# Anonymous lists and resends from the archive start a new chain: the
++# outbound signer then adds a fresh m=1.
++sub _strip_chain {
++    my $message = shift;
++    $message->delete_header($_)
++        for 'DKIM2-Signature', 'Message-Instance';
++}
++
++# fold_header returns the field folded with "\r\n\t" and no trailing newline;
++# MIME::Head wants "\n\t" continuations and no trailing newline.
++sub _prepend_instance {
++    my ($message, $mi) = @_;
++    my $folded = Mail::DKIM2::Common::fold_header(
++        'Message-Instance: ' . $mi->as_string);
++    $folded =~ s/\AMessage-Instance:\s*//;
++    $folded =~ s/\r\n/\n/g;
++    $message->{_head}->add('Message-Instance', $folded, 0);
++    delete $message->{_entity_cache};
++}
++
++# Never decorated: wrapping would break the signature or encryption.
++my @SKIP_TYPES = qw(multipart/signed multipart/encrypted
++    application/pkcs7-mime application/x-pkcs7-mime);
++
++# decorate() for DKIM2 lists: instead of editing the body, wrap it verbatim
++# as the middle part of a multipart/mixed between the header and footer
++# parts.  The body is never parsed or re-encoded, so it can be copied back
++# out line for line.  Records in $message->{_dkim2_body_lines} the 1-based
++# lines [first, last] of the original body inside the new body ([] when the
++# original body is empty).  Leaves the message alone when there is nothing
++# to add or the type is in @SKIP_TYPES.
++sub wrap {
++    my ($message, $list, $rcpt, %options) = @_;
++    my $mode = $options{mode} || '';
++    my $head = $message->{_head};
++
++    my $type = lc($head->mime_type || 'text/plain');
++    return 1 if grep { $type eq $_ } @SKIP_TYPES;
++
++    my $data = $mode ? $message->_personalize_attrs : undef;
++    my @before = _parts($list, $rcpt, $data, $mode, 'header');
++    my @after  = (
++        _parts($list, $rcpt, $data, $mode, 'footer'),
++        _parts($list->{'domain'}, $rcpt, $data, $mode, 'global footer', $list)
++    );
++    return 1 unless @before or @after;
++
++    my $body     = $message->{_body} // '';
++    my $boundary = _boundary(join '', $body, @before, @after);
++
++    # The original part: the top-level MIME fields move to it, verbatim.
++    # Content-Length no longer describes anything, so it goes.
++    # header() gives the field lines in order, folded, each ending "\n".
++    my @fields = grep {/\Acontent-/i} @{$head->header};
++    my $orig_part = join '', grep { !/\Acontent-length:/i } @fields;
++    my %tags = map { /\A([^:]+):/ ? (lc $1 => 1) : () } @fields;
++    my $cte = lc(($orig_part =~ /^content-transfer-encoding:\s*(\S+)/mi)[0]
++            // '7bit');
++
++    my $pre = "This is a multi-part message in MIME format.\n";
++    $pre .= "\n--$boundary\n$_" for @before;
++    $pre .= "\n--$boundary\n$orig_part\n";
++    # The body starts on the line after the last newline of $pre.  Lines
++    # are counted by "\n", which also ends each CRLF line, so the count
++    # matches the CRLF wire form.
++    my $first  = ($pre =~ tr/\n//) + 1;
++    my $nlines = ($body =~ tr/\n//) + ($body =~ /[^\n]\z/ ? 1 : 0);
++    # The delimiter's own line break: the body's final newline (if any)
++    # stays part of the body, as received.
++    my $post = ($body =~ /[^\n]\z/) ? "\n" : '';
++    $post .= "\n--$boundary\n$_" for @after;
++    $post .= "\n--$boundary--\n";
++
++    # The new header is built on a copy, so a failure anywhere above or
++    # here leaves the message as it was.
++    my $new_head = $head->dup;
++    $new_head->delete($_) for keys %tags;
++    $new_head->replace('MIME-Version', '1.0')
++        unless $new_head->count('MIME-Version');
++    $new_head->replace('Content-Type',
++        sprintf 'multipart/mixed; boundary="%s"', $boundary);
++    if ($cte eq 'binary') {
++        $new_head->replace('Content-Transfer-Encoding', 'binary');
++    } elsif ($cte eq '8bit' or grep {/[^\x00-\x7F]/} $body, @before, @after)
++    {
++        $new_head->replace('Content-Transfer-Encoding', '8bit');
++    }
++
++    $message->{_head} = $new_head;
++    $message->{_body} = $pre . $body . $post;
++    delete $message->{_entity_cache};
++    $message->{_dkim2_body_lines} =
++        $nlines ? [$first, $first + $nlines - 1] : [];
++    return 1;
++}
++
++# The MIME parts (header fields, blank line, body; "\n" line ends; final
++# "\n") for one kind of decoration file, as stock decorate() would choose
++# and personalise it: "message_<kind>.mime" (a MIME entity) when
++# footer_type is mime and it exists, else "message_<kind>" (text).
++# Dies on failure; wrap() changes nothing then.
++sub _parts {
++    my ($that, $rcpt, $data, $mode, $kind, $list) = @_;
++    $list ||= $that;
++    (my $base = "message_$kind") =~ s/ /_/g;    # message_global_footer
++
++    # As stock: with footer_type mime, an existing .mime file is used even
++    # when empty (then nothing is added); no fallback to the text file.
++    my $mime = ($list->{'admin'}{'footer_type'} || '') eq 'mime'
++        && Sympa::search_fullpath($that, "$base.mime");
++    if ($mime) {
++        return () unless -s $mime;
++        my $parser = MIME::Parser->new;
++        $parser->output_to_core(1);
++        $parser->tmp_dir($Conf::Conf{'tmpdir'});
++        my $part = eval { $parser->parse_open($mime) };
++        unless ($part) {
++            $log->syslog('err', 'Failed to parse MIME data %s: %s',
++                $mime, $parser->last_error || $EVAL_ERROR);
++            return ();
++        }
++        if ($mode
++            and not defined Sympa::Message::_merge_msg($part, $list, $rcpt,
++                $data)) {
++            $log->syslog('info', 'Error personalizing %s', $kind);
++            return ();
++        }
++        my $t = $part->stringify;
++        $t =~ s/\r\n/\n/g;
++        $t .= "\n" unless $t =~ /\n\z/;
++        return ($t);
++    }
++
++    my $file = Sympa::search_fullpath($that, $base);
++    my $t = Sympa::Message::_footer_text($file, $list, $rcpt, $data,
++        mode => $mode, type => $kind) // '';
++    return () unless length $t;
++    $t .= "\n" unless $t =~ /\n\z/;
++    my $cte = $t =~ /[^\x00-\x7F]/ ? '8bit' : '7bit';
++    return (  "Content-Type: text/plain; charset=UTF-8\n"
++            . "Content-Transfer-Encoding: $cte\n"
++            . "Content-Disposition: inline\n\n"
++            . $t);
++}
++
++# A boundary not occurring anywhere in $text (the body and the new parts).
++sub _boundary {
++    my $text = shift;
++    while (1) {
++        my $b = sprintf '=_dkim2_%08x%08x',
++            int rand 0xffffffff, int rand 0xffffffff;
++        return $b if index($text, $b) < 0;
++    }
++}
++
++1;
++__END__
++
++=encoding utf-8
++
++=head1 NAME
++
++Sympa::DKIM2 - DKIM2 Message-Instance support
++
++=head1 SYNOPSIS
++
++  # Spindle::ProcessIncoming, before S/MIME decryption:
++  Sympa::DKIM2::ingress($message);
++
++  # Sympa::Message::decorate() on a DKIM2 list:
++  Sympa::DKIM2::wrap($message, $list, $rcpt, mode => $mode);
++
++  # Spindle::ProcessOutgoing, once per packet and then per copy:
++  my $ctx = Sympa::DKIM2::egress_context($message);
++  Sympa::DKIM2::egress_add($message, $ctx, body_rewritten => $rewritten);
++
++=head1 DESCRIPTION
++
++Records what a list changed in each message as a DKIM2 Message-Instance
++header field (draft-ietf-dkim-dkim2-spec-06), so DKIM2 verifiers downstream
++can undo the list's changes and check the signatures of earlier hops.  The
++DKIM2-Signature itself is added by the MTA.
++
++Everything here is gated on the list parameter C<dkim2_message_instance>.
++The header block as received is carried through the spools in the
++C<X-Sympa-DKIM2-Headers> pseudo-header (see L<Sympa::Message>).  Decoration
++on a DKIM2 list wraps the original body in a C<multipart/mixed> instead of
++editing it, so the body Recipe is a copy range; a body rewritten for any
++other reason gets a null body Recipe.
++
++Requires Mail::DKIM2 0.15 or later, loaded on first use.  See
++F<DKIM2-MESSAGE-INSTANCE.md> for the design.
++
++=head2 Functions
++
++=over
++
++=item enabled ( $that )
++
++True if C<$that> is a L<Sympa::List> with C<dkim2_message_instance> set to
++C<on> and Mail::DKIM2 can be loaded.  If the switch is on but the module
++cannot be loaded, logs at C<err> and returns false.
++
++=item anonymous ( $list )
++
++True if the list has C<anonymous_sender> set.  Such lists keep no record of
++the original message and start a new chain at egress.
++
++=item ingress ( $message )
++
++Run once per message at ingress, before S/MIME decryption or any other
++change.  On a DKIM2 list that is not anonymous: adds C<m=1> describing the
++message as received unless it already carries a Message-Instance, and
++saves the header block in C<< $message->{dkim2_headers} >>, which is
++spooled as the pseudo-header.  Logs and carries on on failure.
++
++=item wrap ( $message, $list, $rcpt, [ mode =E<gt> $mode ] )
++
++Decoration for DKIM2 lists, called by C<Sympa::Message::decorate()>.
++Makes the body the middle part of a C<multipart/mixed> between the list's
++header part and its footer and global footer parts, moving the top-level
++C<Content-*> fields to it and copying the body byte for byte.  Records the
++original body's lines in the new body for egress.  Leaves the message alone
++when there is nothing to add or it is C<multipart/signed>,
++C<multipart/encrypted> or opaque S/MIME.  Dies on failure, with the message
++unchanged.  Returns true otherwise.
++
++=item egress_context ( $message )
++
++Run once per packet in ProcessOutgoing, before any per-recipient change.
++Returns C<undef> if nothing is to be added (switch off, no saved header
++block, or a saved block that does not verify), C<< {strip =E<gt> 1} >> for
++anonymous lists and resends from the archive, or a context for
++L</egress_add>: the saved block, whether the body is still the one the top
++instance hashed, and that hash.
++
++=item egress_add ( $message, $context, [ body_rewritten =E<gt> 1 ] )
++
++Run for each copy, after every other transformation and before DKIM and
++ARC signing.  With a C<strip> context removes C<DKIM2-Signature> and
++C<Message-Instance>.  Otherwise removes C<Bcc> and C<Resent-Bcc> and adds
++the next Message-Instance.  The body Recipe is null if the body changed before the packet,
++C<body_rewritten> is set, or decoration fell back to editing the body;
++otherwise it is the copy range recorded by L</wrap>, or none, provided that
++it really gives back the received body.  Adds nothing if nothing changed.
++Never dies.
++
++=back
++
++=head1 SEE ALSO
++
++L<Sympa::Message>, L<Sympa::Spindle::ProcessIncoming>,
++L<Sympa::Spindle::ProcessOutgoing>.
++
++=cut
+diff --git a/src/lib/Sympa/Message.pm b/src/lib/Sympa/Message.pm
+index f832e13c3..1e01e5394 100644
+--- a/src/lib/Sympa/Message.pm
++++ b/src/lib/Sympa/Message.pm
+@@ -34,6 +34,7 @@ use English;    # FIXME: drop $PREMATCH usage
+ use File::Path qw();
+ use HTML::TreeBuilder;
+ use Mail::Address;
++use MIME::Base64 qw();
+ use MIME::Charset;
+ use MIME::EncWords;
+ use MIME::Entity;
+@@ -50,6 +51,7 @@ BEGIN { eval 'use Net::DNS'; }
+ use Sympa;
+ use Conf;
+ use Sympa::Constants;
++use Sympa::DKIM2;
+ use Sympa::HTML::FormatText;
+ use Sympa::HTML::URIFind;
+ use Sympa::HTMLSanitizer;
+@@ -118,6 +120,8 @@ sub new {
+             };
+         } elsif ($k eq 'X-Sympa-Spam-Status') {     # New in 6.2a.41
+             $self->{'spam_status'} = $v;
++        } elsif ($k eq 'X-Sympa-DKIM2-Headers') {
++            $self->{'dkim2_headers'} = MIME::Base64::decode_base64($v);
+         } else {
+             $log->syslog('err', 'Unknown attribute information: "%s: %s"',
+                 $k, $v);
+@@ -389,6 +393,10 @@ sub to_string {
+         $serialized .= sprintf "X-Sympa-Spam-Status: %s\n",
+             $self->{'spam_status'};
+     }
++    if (defined $self->{'dkim2_headers'}) {
++        $serialized .= sprintf "X-Sympa-DKIM2-Headers: %s\n",
++            MIME::Base64::encode_base64($self->{'dkim2_headers'}, '');
++    }
+     # This terminates pseudo-header part for attributes.
+     unless (defined $self->{'envelope_sender'}) {
+         $serialized .= "Return-Path: \n";
+@@ -911,6 +919,19 @@ sub body_as_string {
+     return $self->{_body};
+ }
+ 
++# The message as it goes on the wire, for DKIM2 hashing: header fields
++# (no Sympa pseudo-headers, no synthesized Return-Path), a blank line and
++# the body, with CRLF line ends.
++sub as_rfc822_string {
++    my $self = shift;
++
++    die 'Bug in logic.  Ask developer' unless $self->{_head};
++    my $string = $self->{_head}->as_string . "\n"
++        . (defined $self->{_body} ? $self->{_body} : '');
++    $string =~ s/\r?\n/\r\n/g;
++    return $string;
++}
++
+ sub header_as_string {
+     my $self = shift;
+     return $self->{_head}->as_string;
+@@ -1780,6 +1801,18 @@ sub decorate {
+ 
+     return unless ref $list eq 'Sympa::List';
+ 
++    # DKIM2 lists wrap the original body in a MIME container instead of
++    # editing it (Sympa::DKIM2).  Should wrapping fail (it changes nothing
++    # then), decorate as usual and mark the body as rewritten.
++    if (defined $self->{'dkim2_headers'} and Sympa::DKIM2::enabled($list)) {
++        my $ret = eval { Sympa::DKIM2::wrap($self, $list, $rcpt, %options) };
++        return $ret unless $EVAL_ERROR;
++        $log->syslog('err',
++            'DKIM2 wrap failed for %s, decorating in place: %s',
++            $self, $EVAL_ERROR);
++        $self->{_dkim2_body_rewritten} = 1;
++    }
++
+     my $entity = $self->as_entity->dup;
+     my $mode = $options{mode} || '';
+ 
+diff --git a/src/lib/Sympa/Spindle/ProcessArchive.pm b/src/lib/Sympa/Spindle/ProcessArchive.pm
+index d1a4ca951..ad363bdab 100644
+--- a/src/lib/Sympa/Spindle/ProcessArchive.pm
++++ b/src/lib/Sympa/Spindle/ProcessArchive.pm
+@@ -93,7 +93,7 @@ sub _twist {
+                 'custom_archiver.' . [split /\//, $message->get_id]->[0];
+ 
+             if (open my $fh, '>', $Conf::Conf{'tmpdir'} . '/' . $tmpfile) {
+-                print $fh $message->to_string(original => 1);
++                print $fh _custom_archiver_text($message);
+                 close $fh;
+             } else {
+                 $log->syslog('err', 'Can\'t open temporary file for %s: %m',
+@@ -467,6 +467,17 @@ sub _mail2arc {
+     return 1;
+ }
+ 
++# Serialized message for the custom archiver.  The DKIM2 saved header block
++# is for the outbound signer, not for archives; leave it out of this copy
++# only (the message being delivered keeps it).
++sub _custom_archiver_text {
++    my $message = shift;
++
++    local $message->{'dkim2_headers'};
++    delete $message->{'dkim2_headers'};
++    return $message->to_string(original => 1);
++}
++
+ 1;
+ __END__
+ 
+diff --git a/src/lib/Sympa/Spindle/ProcessIncoming.pm b/src/lib/Sympa/Spindle/ProcessIncoming.pm
+index 9f9c75b92..b59f48833 100644
+--- a/src/lib/Sympa/Spindle/ProcessIncoming.pm
++++ b/src/lib/Sympa/Spindle/ProcessIncoming.pm
+@@ -32,6 +32,7 @@ use File::Copy qw();
+ 
+ use Sympa;
+ use Conf;
++use Sympa::DKIM2;
+ use Sympa::Language;
+ use Sympa::List;
+ use Sympa::Log;
+@@ -202,6 +203,10 @@ sub _twist {
+     $message->aggregate_authentication_results;
+     # Check S/MIME signature.
+     $message->check_smime_signature;
++    # DKIM2: record the message as received, before decryption or any
++    # other change.
++    Sympa::DKIM2::ingress($message);
++
+     # Decrypt message.  On success, check nested S/MIME signature.
+     if ($message->smime_decrypt and not $message->{'smime_signed'}) {
+         $message->check_smime_signature;
+diff --git a/src/lib/Sympa/Spindle/ProcessOutgoing.pm b/src/lib/Sympa/Spindle/ProcessOutgoing.pm
+index 5f384a74e..2d7be7748 100644
+--- a/src/lib/Sympa/Spindle/ProcessOutgoing.pm
++++ b/src/lib/Sympa/Spindle/ProcessOutgoing.pm
+@@ -33,6 +33,7 @@ use English qw(-no_match_vars);
+ use Sympa;
+ use Conf;
+ use Sympa::DatabaseManager;
++use Sympa::DKIM2;
+ use Sympa::List;
+ use Sympa::Log;
+ use Sympa::Mailer;
+@@ -175,6 +176,7 @@ sub __twist_one {
+     my %arc     = %{shift || {}};
+     my %dkim    = %{shift || {}};
+     my $rm_sig  = shift;
++    my $dkim2   = shift;
+ 
+     my $that = $message->{context};
+ 
+@@ -202,6 +204,7 @@ sub __twist_one {
+         @{$that->{'admin'}{'rfc2369_header_fields'}}) {
+         $that->add_list_header($message, 'unsubscribe', oneclick => $rcpt);
+     }
++    my $personalize_all = ($personalize and $personalize ne 'footer');
+     if ($personalize and $personalize ne 'footer') {
+         unless ($message->personalize($that, $rcpt)) {
+             $log->syslog('err', 'Erreur d appel personalize()');
+@@ -253,6 +256,20 @@ sub __twist_one {
+         $message->delete_header('Domainkey-Signature');
+     }
+ 
++    # Determine envelope sender and envelope ID.  With DKIM2 this must
++    # come before egress_add (MDN tracking adds Disposition-Notification-To);
++    # otherwise it stays where stock Sympa has it, after DKIM/ARC.
++    my $envid;
++    $envid = _set_envelope_and_tracking($message, $that, $rcpt, $tracking)
++        if $dkim2;
++
++    # DKIM2: describe this copy's changes, after every transformation and
++    # before DKIM/ARC signing.  Nothing that changes a hashed header field
++    # may come after this.
++    Sympa::DKIM2::egress_add($message, $dkim2,
++        body_rewritten =>
++            (($personalize_all or $smime_sign or $smime_encrypt) ? 1 : 0));
++
+     if ($message->{shelved}{dkim_sign} or %arc) {
+         # apply DKIM signature AFTER any other message transformation.
+         # Note that when ARC seal was added, DKIM signature is forced.
+@@ -265,7 +282,28 @@ sub __twist_one {
+         $message->delete_header('Authentication-Results');
+     }
+ 
+-    # Determine envelope sender and envelope ID.
++    $envid = _set_envelope_and_tracking($message, $that, $rcpt, $tracking)
++        unless $dkim2;
++
++    unless (
++        defined $mailer->store(
++            $message, $rcpt,
++            envid => $envid,
++            tag   => $message->{serial}
++        )
++    ) {
++        $log->syslog('err', 'Failed to store message %s into mailer',
++            $message);
++        # Quarantine packet into bad spool.
++        return undef;
++    }
++}
++
++# Sets the envelope sender (and, for MDN tracking,
++# Disposition-Notification-To) of one copy; returns the envelope ID.
++sub _set_envelope_and_tracking {
++    my ($message, $that, $rcpt, $tracking) = @_;
++
+     my $envid = undef;
+     if ($tracking) {
+         # If tracking (including VERP) is enabled, override envelope sender.
+@@ -293,19 +331,7 @@ sub __twist_one {
+             ? Sympa::get_address($that, 'return_path')
+             : Sympa::get_address($that, 'owner');
+     }
+-
+-    unless (
+-        defined $mailer->store(
+-            $message, $rcpt,
+-            envid => $envid,
+-            tag   => $message->{serial}
+-        )
+-    ) {
+-        $log->syslog('err', 'Failed to store message %s into mailer',
+-            $message);
+-        # Quarantine packet into bad spool.
+-        return undef;
+-    }
++    return $envid;
+ }
+ 
+ sub _twist {
+@@ -381,18 +407,21 @@ sub _twist {
+         if %arc
+         or $message->{shelved}{dkim_sign};
+ 
++    # DKIM2: checked once per packet, before any per-recipient change.
++    my $dkim2 = Sympa::DKIM2::egress_context($message);
++
+     if (   $message->{shelved}{merge}
+         or $message->{shelved}{smime_encrypt}
+         or $message->{shelved}{tracking}) {
+         # message needs personalization
+         foreach my $rcpt (@rcpts) {
+             __twist_one($message, $rcpt, {%arc}, {%dkim},
+-                $arc_enabled || $dkim_enabled);
++                $arc_enabled || $dkim_enabled, $dkim2);
+         }
+     } else {
+         # message doesn't need personalization, so can be sent by packet.
+         __twist_one($message, [@rcpts], {%arc}, {%dkim},
+-            $arc_enabled || $dkim_enabled);
++            $arc_enabled || $dkim_enabled, $dkim2);
+     }
+ 
+     1;
+diff --git a/src/lib/Sympa/Spindle/ResendArchive.pm b/src/lib/Sympa/Spindle/ResendArchive.pm
+index a70320541..8675b485f 100644
+--- a/src/lib/Sympa/Spindle/ResendArchive.pm
++++ b/src/lib/Sympa/Spindle/ResendArchive.pm
+@@ -100,6 +100,10 @@ sub _twist {
+     # If encrypted, it will be re-encrypted by succeeding processes.
+     $message->smime_decrypt;
+ 
++    # DKIM2: the archived copy can't describe the message as received, so
++    # the resend starts a new chain (Sympa::DKIM2).
++    $message->{shelved}{dkim2_strip} = 1;
++
+     # Assign privileges of resending user to the message.
+     $message->{envelope_sender} = $self->{resent_by};
+ 
+diff --git a/t/DKIM2.t b/t/DKIM2.t
+index f042f8ece..3d0f1f3da 100644
+--- a/t/DKIM2.t
++++ b/t/DKIM2.t
+@@ -1,8 +1,35 @@
+ # -*- indent-tabs-mode: nil; -*-
+-# DKIM2 Message-Instance support.
++# DKIM2 Message-Instance support. Needs Mail::DKIM2 (interop perl/lib or
++# CPAN) on PERL5LIB; without it the test fails rather than skipping.
+ use strict; use warnings;
++use English qw(-no_match_vars);
++use File::Temp qw(tempdir);
+ use Test::More;
++use Conf; use Sympa::ConfDef; use Sympa::Log; use Sympa::Message;
+ use Sympa::Config::Schema;
++use Sympa::DKIM2; use Sympa::Spindle::ProcessArchive;
++use Mail::DKIM2::MessageInstance; use Mail::DKIM2::Common;
++use MIME::Base64 qw(encode_base64 decode_base64);
++
++Sympa::Log->instance->{log_to_stderr} = 'err';
++%Conf::Conf = (domain => 'mail.example.org', listmaster => 'lm@example.org',
++               tmpdir => tempdir(CLEANUP => 1));
++for my $p (grep { $_->{name} and exists $_->{default} } @Sympa::ConfDef::params) {
++    $Conf::Conf{$p->{name}} //= $p->{default};
++}
++our %FILES; my $fdir = tempdir(CLEANUP => 1);
++# Each call writes a new file, so "local %FILES" undoes a set_file.
++my $fseq = 0;
++sub set_file { my ($n, $c) = @_; my $p = "$fdir/" . ++$fseq . "-$n";
++               open my $f, '>:raw', $p or die; print $f $c; close $f;
++               $FILES{$n} = $p }
++{ no warnings 'redefine';
++  *Sympa::search_fullpath = sub { $FILES{$_[1]} };
++  *Sympa::List::update_stats = sub { 1 };
++}
++sub list { my %a = @_; bless { name => 'test', domain => 'mail.example.org',
++    admin => { footer_type => 'mime', dkim2_message_instance => 'on', %a } }
++    => 'Sympa::List' }
+ 
+ subtest 'switch parameter' => sub {
+     my %p = %{ $Sympa::Config::Schema::pinfo{dkim2_message_instance} || {} };
+@@ -12,4 +39,797 @@ subtest 'switch parameter' => sub {
+     is_deeply $p{context}, [qw(list domain site)], 'list/domain/site';
+ };
+ 
++my $plain = "From: a\@example.org\nTo: test\@mail.example.org\nSubject: hi\nMessage-ID: <1\@example.org>\n\nhello\n";
++
++subtest 'enabled' => sub {
++    ok Sympa::DKIM2::enabled(list()), 'on';
++    ok !Sympa::DKIM2::enabled(list(dkim2_message_instance => 'off')), 'off';
++    ok !Sympa::DKIM2::enabled('mail.example.org'), 'robot context';
++};
++
++subtest 'pseudo-header round trip' => sub {
++    my $m = Sympa::Message->new($plain, context => list());
++    $m->{dkim2_headers} = "From: a\@example.org\nSubject: hi\n";
++    my $s = $m->to_string;
++    like $s, qr/^X-Sympa-DKIM2-Headers: [A-Za-z0-9+\/=]+\n/m, 'serialised';
++    unlike $m->as_string, qr/X-Sympa-DKIM2/, 'not in the message proper';
++    my $back = Sympa::Message->new($s, context => list());
++    is $back->{dkim2_headers}, $m->{dkim2_headers}, 'decoded';
++    is $back->dup->{dkim2_headers}, $m->{dkim2_headers}, 'dup keeps it';
++};
++
++subtest 'as_rfc822_string' => sub {
++    my $m = Sympa::Message->new($plain, context => list());
++    my $r = $m->as_rfc822_string;
++    unlike $r, qr/(?<!\r)\n/, 'CRLF only';
++    like $r, qr/\r\n\r\nhello\r\n\z/, 'body';
++    unlike $r, qr/^(Return-Path|X-Sympa-)/m, 'no pseudo-headers';
++};
++
++subtest 'ingress' => sub {
++    my $m = Sympa::Message->new($plain, context => list());
++    Sympa::DKIM2::ingress($m);
++    is $m->{_head}->count('Message-Instance'), 1, 'm=1 added';
++    like $m->{dkim2_headers}, qr/^Message-Instance: m=1;/m, 'saved after m=1';
++    like $m->{_head}->as_string, qr/^Message-Instance: [^\n]*\n\t\S/m,
++        'long m=1 folded with a tab continuation';
++    unlike $m->{_head}->as_string, qr/\n\n|\r/, 'no blank lines or CR in header';
++    my ($ok, $err) = Mail::DKIM2::MessageInstance->chain_verifies($m->as_rfc822_string);
++    ok $ok, 'm=1 verifies' or diag $err;
++
++    my $again = Sympa::Message->new($m->as_string, context => list());
++    Sympa::DKIM2::ingress($again);
++    is $again->{_head}->count('Message-Instance'), 1, 'existing instance kept';
++
++    my $off = Sympa::Message->new($plain, context => list(dkim2_message_instance => 'off'));
++    Sympa::DKIM2::ingress($off);
++    ok !$off->{_head}->count('Message-Instance') && !defined $off->{dkim2_headers}, 'off: nothing';
++
++    my $anon = Sympa::Message->new($plain, context => list(anonymous_sender => 'anon@mail.example.org'));
++    Sympa::DKIM2::ingress($anon);
++    ok !defined $anon->{dkim2_headers}, 'anonymous: no saved headers';
++};
++
++# Ingress, spool round trip, decorate; then check the Recipe built from the
++# recorded lines undoes to the original body hash.
++sub wrapped {
++    my ($raw, %listopts) = @_;
++    my $l = list(%listopts);
++    my $m = Sympa::Message->new($raw, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l)->dup;
++    $b->decorate($l, undef);
++    return $b;
++}
++# Copy the recorded lines out of the wire (CRLF) form of the wrapped body,
++# as a verifier applying the Recipe would.
++sub orig_body_lines_ok {
++    my ($b, $raw) = @_;
++    my ($first, $last) = @{ $b->{_dkim2_body_lines} || [] };
++    (my $orig = $raw) =~ s/\A.*?\r?\n\r?\n//s;
++    (my $wire = $b->as_rfc822_string) =~ s/\A.*?\r\n\r\n//s;
++    my @lines = split /\r\n/, $wire, -1;
++    my $copied = defined $first ? join("\r\n", @lines[$first-1 .. $last-1]) . "\r\n" : '';
++    is Mail::DKIM2::MessageInstance::body_digest_raw($copied),
++       Mail::DKIM2::MessageInstance::body_digest_raw($orig), 'copy range is the original body';
++}
++
++set_file('message_footer', "-- \nfooter text\n");
++set_file('message_header', "header text\n");
++
++subtest 'wrap: text/plain with header and footer' => sub {
++    my $b = wrapped($plain);
++    like $b->get_header('Content-Type'), qr{^multipart/mixed;\s*boundary=}i, 'outer multipart/mixed';
++    like $b->{_body}, qr/header text\n.*hello\n.*footer text\n/s, 'order';
++    orig_body_lines_ok($b, $plain);
++};
++
++subtest 'wrap: no final newline, empty body, boundary collision, 8bit' => sub {
++    for my $case (
++        ["From: a\@x\nSubject: s\n\nno newline", 'no final newline'],
++        ["From: a\@x\nSubject: s\n\n", 'empty body'],
++        ["From: a\@x\nSubject: s\n\n--=_dkim2_0000\nx\n", 'boundary-like line'],
++        ["From: a\@x\nSubject: s\nContent-Type: text/plain; charset=iso-8859-1\nContent-Transfer-Encoding: 8bit\n\ncaf\xe9\n", '8bit'],
++    ) {
++        my ($raw, $name) = @$case;
++        my $b = wrapped($raw);
++        my ($bd) = $b->get_header('Content-Type') =~ /boundary="?([^";]+)/;
++        ok index($raw, $bd) < 0, "$name: boundary not in body";
++        orig_body_lines_ok($b, $raw);
++        like $b->get_header('Content-Transfer-Encoding') // '', qr/^8bit$/i, "$name: outer 8bit"
++            if $name eq '8bit';
++    }
++};
++
++subtest 'wrap: CRLF body, trailing blank lines, leading blank line' => sub {
++    for my $case (
++        ["From: a\@x\r\nSubject: s\r\n\r\nline one\r\nline two\r\n", 'CRLF'],
++        ["From: a\@x\nSubject: s\n\nbody\n\n\n\n", 'trailing blank lines'],
++        ["From: a\@x\nSubject: s\n\n\n\nafter blanks\n", 'leading blank lines'],
++        ["From: a\@x\nSubject: s\n\n\n", 'body is one blank line'],
++    ) {
++        my ($raw, $name) = @$case;
++        my $b = wrapped($raw);
++        ok defined $b->{_dkim2_body_lines}, "$name: wrapped";
++        orig_body_lines_ok($b, $raw);
++    }
++    my $b = wrapped("From: a\@x\nSubject: s\n\nbody\n\n\n\n");
++    my ($first, $last) = @{ $b->{_dkim2_body_lines} || [0, 0] };
++    is $last - $first + 1, 4, 'trailing blank lines are inside the range';
++    my $e = wrapped("From: a\@x\nSubject: s\n\n");
++    is_deeply $e->{_dkim2_body_lines}, [], 'empty body: []';
++};
++
++subtest 'wrap: header kept intact, Content-* moved to the original part' => sub {
++    my $raw = "From: a\@x\nTo: t\@mail.example.org\nSubject: s\nMIME-Version: 1.0\n"
++        . "Content-Length: 7\nContent-Type: text/plain;\n\tcharset=\"iso-8859-1\";\n\tformat=flowed\n"
++        . "Content-Transfer-Encoding: quoted-printable\nContent-Language: fr\n"
++        . "X-Other: kept\n\ncaf=E9\n";
++    my $b = wrapped($raw);
++    my $h = $b->{_head};
++    is $h->count('MIME-Version'), 1, 'one MIME-Version';
++    is $h->count('Content-Type'), 1, 'one Content-Type';
++    ok !$h->count('Content-Transfer-Encoding'), 'no outer CTE for a 7bit wrap';
++    ok !$h->count('Content-Language'), 'Content-Language moved';
++    ok !$h->count('Content-Length'), 'Content-Length dropped';
++    is $b->get_header('X-Other'), 'kept', 'other fields kept';
++    is $h->count('Message-Instance'), 1, 'Message-Instance kept';
++    my @tags = grep { !/^(content-|mime-version)/i } $h->as_string =~ /^([^\s:]+):/mg;
++    is_deeply [@tags], [qw(Message-Instance From To Subject X-Other)], 'order of other fields kept';
++    like $b->{_body}, qr/\n--\S+\nContent-Type:\ text\/plain;\n\tcharset="iso-8859-1";\n\tformat=flowed\n
++        Content-Transfer-Encoding:\ quoted-printable\nContent-Language:\ fr\n\ncaf=E9\n\n--/x,
++        'original part: fields in order, then the body verbatim';
++    my $e = $b->as_entity;
++    ok !grep({ $_->head->count('Content-Length') } $e->parts), 'no Content-Length in parts';
++    my ($orig) = grep { ($_->head->get('Content-Language') // '') =~ /fr/ } $e->parts;
++    ok $orig, 'original part found';
++    is $orig->head->get('Content-Type'), "text/plain;\n\tcharset=\"iso-8859-1\";\n\tformat=flowed\n",
++        'folded Content-Type moved verbatim';
++    is $orig->bodyhandle->as_string, "caf\xe9\n", 'original part decodes';
++    is scalar($e->parts), 3, 'header, original, footer';
++    orig_body_lines_ok($b, $raw);
++};
++
++subtest 'wrap: multipart original' => sub {
++    my $raw = "From: a\@x\nSubject: s\nMIME-Version: 1.0\nContent-Type: multipart/alternative; boundary=\"alt\"\n\n"
++        . "preamble\n--alt\nContent-Type: text/plain\n\nplain\n--alt\nContent-Type: text/html\n\n<p>html</p>\n--alt--\n";
++    my $b = wrapped($raw);
++    my @p = $b->as_entity->parts;
++    is scalar(@p), 3, 'three parts';
++    is $p[1]->effective_type, 'multipart/alternative', 'original kept as a part';
++    is scalar($p[1]->parts), 2, 'with its own parts';
++    orig_body_lines_ok($b, $raw);
++};
++
++subtest 'wrap: only header, only footer, nothing' => sub {
++    local %FILES = %FILES;
++    delete $FILES{message_footer};
++    my $b = wrapped($plain);
++    like $b->{_body}, qr/header text\n.*\n\nhello\n\n--\S+--\n\z/s, 'header only';
++    orig_body_lines_ok($b, $plain);
++    delete $FILES{message_header};
++    my $n = wrapped($plain);
++    ok !defined $n->{_dkim2_body_lines}, 'nothing to add: untouched';
++    unlike $n->get_header('Content-Type') // '', qr/multipart/, 'not wrapped';
++};
++
++subtest 'wrap: .mime footer used as a MIME part' => sub {
++    local %FILES = %FILES;
++    set_file('message_footer.mime', "Content-Type: text/html; charset=UTF-8\n\n<p>html footer</p>\n");
++    my $b = wrapped($plain);
++    like $b->{_body}, qr/hello\n\n--\S+\nContent-Type: text\/html; charset="?UTF-8"?\n.*<p>html footer<\/p>\n\n--\S+--\n\z/s,
++        '.mime footer is the last part';
++    unlike $b->{_body}, qr/footer text/, 'text footer not used';
++    my @p = $b->as_entity->parts;
++    is $p[-1]->effective_type, 'text/html', 'parses as text/html';
++    orig_body_lines_ok($b, $plain);
++    my $a = wrapped($plain, footer_type => 'append');
++    like $a->{_body}, qr/footer text/, 'append: .mime ignored';
++};
++
++subtest 'wrap: personalised footers' => sub {
++    local %FILES = %FILES;
++    set_file('message_footer', "plain [% listname %]\n");
++    set_file('message_global_footer.mime',
++        "Content-Type: text/plain; charset=UTF-8\n\nglobal [% domain %]\n");
++    my $l = list();
++    my $m = Sympa::Message->new($plain, context => $l);
++    Sympa::DKIM2::ingress($m);
++    $m->decorate($l, undef, mode => 'footer');
++    like $m->{_body}, qr/hello\n\n--\S+\n.*plain test\n\n--\S+\n.*global mail\.example\.org\n\n--\S+--\n\z/s,
++        'text and .mime footers personalised, in order';
++    orig_body_lines_ok($m, $plain);
++};
++
++subtest 'wrap: append footer_type still wraps' => sub {
++    my $b = wrapped($plain, footer_type => 'append');
++    like $b->get_header('Content-Type'), qr{^multipart/mixed}i, 'wrapped';
++    orig_body_lines_ok($b, $plain);
++};
++
++subtest 'wrap: skipped types and switch off' => sub {
++    for my $ct ('multipart/signed; protocol="application/pgp-signature"; boundary=b',
++                'application/pkcs7-mime; smime-type=signed-data') {
++        my $raw = "From: a\@x\nSubject: s\nMIME-Version: 1.0\nContent-Type: $ct\n\nbody\n";
++        my $b = wrapped($raw);
++        ok !defined $b->{_dkim2_body_lines}, "$ct: no body lines";
++        is $b->get_header('Content-Type'), $ct, "$ct: Content-Type unchanged";
++        is $b->{_body}, "body\n", "$ct: body unchanged";
++    }
++    my $off = wrapped($plain, dkim2_message_instance => 'off');
++    ok !defined $off->{_dkim2_body_lines}, 'off: stock decorate ran';
++    like $off->get_header('Content-Type'), qr{^multipart/mixed}i, 'off: stock MIME footer added';
++    my $anon = wrapped($plain, anonymous_sender => 'anon@mail.example.org');
++    ok !defined $anon->{_dkim2_body_lines}, 'no saved headers (anonymous): stock decorate ran';
++};
++
++subtest 'wrap: empty .mime file adds nothing, no fallback to the text file' => sub {
++    local %FILES = %FILES;
++    set_file('message_footer.mime', '');
++    my $b = wrapped($plain);
++    unlike $b->{_body}, qr/footer text/, 'text footer not used';
++    like $b->{_body}, qr/header text\n.*\n\nhello\n\n--\S+--\n\z/s, 'header only';
++    orig_body_lines_ok($b, $plain);
++    set_file('message_header.mime', '');
++    my $n = wrapped($plain);
++    ok !defined $n->{_dkim2_body_lines}, 'both .mime empty: nothing to add';
++    is $n->{_body}, "hello\n", 'body untouched';
++};
++
++subtest 'wrap: failure leaves the message alone; decorate falls back to stock' => sub {
++    # A die after the parts are built, while the new header is assembled.
++    my $l = list();
++    my $m = Sympa::Message->new($plain, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my ($head_before, $body_before) = ($m->{_head}->as_string, $m->{_body});
++    {
++        no warnings qw(redefine once);
++        local *MIME::Head::replace = sub { die "boom\n" };
++        ok !eval { Sympa::DKIM2::wrap($m, $l, undef); 1 }, 'wrap died';
++    }
++    is $m->{_head}->as_string, $head_before, 'head unchanged';
++    is $m->{_body}, $body_before, 'body unchanged';
++    ok !defined $m->{_dkim2_body_lines}, 'no body lines';
++
++    # decorate() survives a wrap failure and decorates the stock way.
++    my $err = '';
++    {
++        no warnings 'redefine';
++        local *Sympa::DKIM2::_boundary = sub { die "boom\n" };
++        local *STDERR; open STDERR, '>', \$err or die;
++        $m->decorate($l, undef);
++    }
++    like $err, qr/^err .*DKIM2 wrap failed for .*<1\@example\.org>.*: boom$/m, 'logged at err';
++    ok $m->{_dkim2_body_rewritten}, 'body marked rewritten';
++    ok !defined $m->{_dkim2_body_lines}, 'no body lines';
++    like $m->get_header('Content-Type'), qr{^multipart/mixed}i, 'stock MIME footer added';
++    is $m->{_head}->count('Content-Type'), 1, 'one Content-Type';
++    my @p = $m->as_entity->parts;
++    like $p[0]->bodyhandle->as_string, qr/header text/, 'stock header part';
++    like $p[1]->bodyhandle->as_string, qr/^hello/, 'original';
++    like $p[-1]->bodyhandle->as_string, qr/footer text/, 'stock footer part';
++    is $m->{_head}->count('Message-Instance'), 1, 'Message-Instance kept';
++};
++
++# Ingress -> spool -> (mod) -> decorate -> egress; returns the wire text
++# (CRLF), and in list context also the message.  Options besides the list's:
++#   shelved   => [flags] set on the bulk-spool message
++#   pre       => sub run before the bulk spool (as ToList does for modes)
++#   decorate  => 0 to skip decorate (notice mode)
++#   post      => sub run after decorate, before egress_add
++#   rewritten => body_rewritten passed to egress_add
++sub through {
++    my ($raw, $mod, %listopts) = @_;
++    my %o = map { $_ => delete $listopts{$_} }
++        qw(shelved pre decorate post rewritten);
++    my $l = list(%listopts);
++    my $m = Sympa::Message->new($raw, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l);
++    if ($o{pre}) {
++        $o{pre}->($b, $l);
++        $b = Sympa::Message->new($b->to_string, context => $l);
++    }
++    $b->{shelved}{$_} = 1 for @{$o{shelved} || []};
++    my $ctx = Sympa::DKIM2::egress_context($b);
++    my $one = $b->dup;
++    $mod->($one) if $mod;
++    $one->decorate($l, undef) if $o{decorate} // 1;
++    $o{post}->($one) if $o{post};
++    Sympa::DKIM2::egress_add($one, $ctx,
++        body_rewritten => $o{rewritten} ? 1 : 0);
++    my $w = $one->as_rfc822_string;
++    return wantarray ? ($w, $one) : $w;
++}
++sub chain_ok { my ($w, $name) = @_;
++    my ($ok, $err) = Mail::DKIM2::MessageInstance->chain_verifies($w);
++    ok $ok, $name or diag $err }
++sub top_recipe { my $w = shift;
++    my ($v) = $w =~ /^Message-Instance: (m=2;.*?)\r\n(?![ \t])/ms or return;
++    Mail::DKIM2::MessageInstance->parse($v) }
++
++subtest 'egress: wrap verifies' => sub {
++    my $w = through($plain, sub { $_[0]->add_header('List-Id', '<test.mail.example.org>');
++                                  $_[0]->replace_header('Subject', '[test] hi') });
++    chain_ok($w, 'wrapped + headers changed');
++    ok !top_recipe($w)->unrecoverable, 'body recoverable';
++    cmp_ok length(($w =~ /^(Message-Instance: m=2;.*?)\r\n(?![ \t])/ms)[0]), '<', 2000, 'small header';
++};
++
++subtest 'egress: body changed -> null' => sub {
++    my ($w, $err) = ('', '');
++    { local *STDERR; open STDERR, '>', \$err or die;
++      $w = through($plain, sub { $_[0]->{_body} = "rewritten\n"; delete $_[0]->{_entity_cache} }) }
++    like $err, qr/^notice .*body of .* changed after ingress; null body Recipe/m, 'logged';
++    ok top_recipe($w)->unrecoverable, 'b null';
++    chain_ok($w, 'header history still verifies');
++};
++
++subtest 'egress: no saved headers -> nothing, no error' => sub {
++    my $l = list();
++    my $b = Sympa::Message->new($plain, context => $l);
++    my ($ctx, $err) = (1, '');
++    { local *STDERR; open STDERR, '>', \$err or die;
++      $ctx = Sympa::DKIM2::egress_context($b) }
++    is $ctx, undef, 'no context';
++    like $err, qr/^info .*has no saved header block/m, 'logged';
++    Sympa::DKIM2::egress_add($b, undef);
++    is $b->{_head}->count('Message-Instance'), 0, 'no instance';
++};
++
++subtest 'egress: Bcc removed and recorded' => sub {
++    my $w = through("Bcc: x\@example.org\n$plain");
++    unlike $w, qr/^Bcc:/mi, 'Bcc gone';
++    chain_ok($w, 'verifies');
++};
++
++subtest 'egress: wrap fell back to stock decoration -> null' => sub {
++    my ($w, $err) = ('', '');
++    {
++        no warnings 'redefine';
++        local *Sympa::DKIM2::_boundary = sub { die "boom\n" };
++        local *STDERR; open STDERR, '>', \$err or die;
++        $w = through($plain);
++    }
++    like $err, qr/DKIM2 wrap failed/, 'wrap failed';
++    like $w, qr/footer text/, 'stock footer';
++    ok top_recipe($w)->unrecoverable, 'b null';
++    chain_ok($w, 'header history still verifies');
++};
++
++subtest 'egress: body_rewritten option -> null' => sub {
++    my $l = list();
++    my $m = Sympa::Message->new($plain, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l);
++    my $ctx = Sympa::DKIM2::egress_context($b);
++    is $ctx->{unchanged}, 1, 'body unchanged since ingress';
++    $b->decorate($l, undef);
++    Sympa::DKIM2::egress_add($b, $ctx, body_rewritten => 1);
++    ok top_recipe($b->as_rfc822_string)->unrecoverable, 'b null';
++};
++
++subtest 'egress: nothing changed -> no instance' => sub {
++    local %FILES;    # no header or footer: decorate adds nothing
++    my $w = through($plain);
++    unlike $w, qr/^Message-Instance: m=2;/m, 'no m=2';
++    like $w, qr/^Message-Instance: m=1;/m, 'm=1 kept';
++    chain_ok($w, 'verifies');
++};
++
++subtest 'egress: undecorated, header changed -> body Recipe none' => sub {
++    local %FILES;
++    my $w = through($plain, sub { $_[0]->replace_header('Subject', '[test] hi') });
++    my $mi = top_recipe($w);
++    ok $mi, 'm=2 added';
++    ok !$mi->unrecoverable, 'not null';
++    ok !$mi->get_tag('rb'), 'no body Recipe';
++    chain_ok($w, 'verifies');
++};
++
++subtest 'egress: saved header block tampered -> nothing, logged' => sub {
++    my $l = list();
++    my $m = Sympa::Message->new($plain, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l);
++    $b->{dkim2_headers} =~ s/^Subject: hi$/Subject: forged/m;
++    my $err = '';
++    my $ctx;
++    { local *STDERR; open STDERR, '>', \$err or die;
++      $ctx = Sympa::DKIM2::egress_context($b) }
++    is $ctx, undef, 'no context';
++    like $err, qr/^err .*saved header block does not verify/m, 'logged';
++};
++
++subtest 'egress: switch off -> no context' => sub {
++    my $b = Sympa::Message->new($plain, context => list(dkim2_message_instance => 'off'));
++    $b->{dkim2_headers} = "From: a\@example.org\n";
++    is Sympa::DKIM2::egress_context($b), undef, 'undef';
++};
++
++subtest 'egress: anonymous -> strip' => sub {
++    my $b = Sympa::Message->new($plain, context => list(anonymous_sender => 'anon@mail.example.org'));
++    is_deeply Sympa::DKIM2::egress_context($b), {strip => 1}, 'strip';
++};
++
++subtest 'egress: body changed before the packet -> unchanged 0, null' => sub {
++    my $l = list();
++    my $m = Sympa::Message->new($plain, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l);
++    $b->{_body} = "changed in the spool\n";
++    my $ctx = Sympa::DKIM2::egress_context($b);
++    is $ctx->{unchanged}, 0, 'unchanged 0';
++    $b->decorate($l, undef);
++    Sympa::DKIM2::egress_add($b, $ctx);
++    my $w = $b->as_rfc822_string;
++    ok top_recipe($w)->unrecoverable, 'b null';
++    chain_ok($w, 'header history still verifies');
++};
++
++subtest 'egress: empty original body wrapped' => sub {
++    (my $empty = $plain) =~ s/hello\n\z//;
++    my $w = through($empty);
++    my $mi = top_recipe($w);
++    ok $mi && !$mi->unrecoverable, 'body recoverable';
++    chain_ok($w, 'verifies');
++};
++
++# __twist_one as the bulk daemon runs it, with the mailer, tracking DB,
++# bounce address and DKIM signer stubbed; %shelved adds to the packet's
++# shelved flags (MDN tracking, decorate, dkim_sign).  Returns the stored
++# copies and Disposition-Notification-To as dkim_sign saw it.
++sub twist_one {
++    my ($b, $ctx, %shelved) = @_;
++    local $SIG{__WARN__} = sub { warn @_ unless $_[0] =~ /Too late to run INIT/ };
++    require Sympa::Spindle::ProcessOutgoing;
++    my (@stored, @dnt_at_sign);
++    no warnings qw(redefine once);
++    local *Sympa::Mailer::store = sub { push @stored, $_[1]->dup; 1 };
++    local *Sympa::Tracking::find_notification_id_by_message = sub { 'ENVID' };
++    local *Sympa::List::get_bounce_address = sub { 'test-owner@mail.example.org' };
++    local *Sympa::Message::dkim_sign = sub {
++        push @dnt_at_sign, scalar $_[0]->get_header('Disposition-Notification-To') };
++    $b->{shelved} = {tracking => 'mdn', decorate => 1, dkim_sign => 1, %shelved};
++    Sympa::Spindle::ProcessOutgoing::__twist_one($b, 'r@example.net',
++        {}, {d => 'mail.example.org'}, 0, $ctx);
++    return (\@stored, \@dnt_at_sign);
++}
++
++subtest 'ProcessOutgoing: per-recipient copy with MDN tracking verifies' => sub {
++    my $l = list();
++    my $m = Sympa::Message->new($plain, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l);
++    my $ctx = Sympa::DKIM2::egress_context($b);
++    my ($stored, $dnt) = twist_one($b, $ctx);
++    is scalar @$stored, 1, 'stored';
++    is_deeply $dnt, ['test-owner@mail.example.org'], 'MDN header set before DKIM signing';
++    my $w = $stored->[0]->as_rfc822_string;
++    like $w, qr/^Disposition-Notification-To: test-owner\@/m, 'MDN header';
++    my $mi = top_recipe($w);
++    ok $mi && !$mi->unrecoverable, 'm=2, body recoverable';
++    ok $mi->get_tag('rh')->{'disposition-notification-to'}, 'MDN header in the header Recipe';
++    chain_ok($w, 'verifies');
++};
++
++subtest 'ProcessOutgoing: no DKIM2 context -> stock order' => sub {
++    my $l = list(dkim2_message_instance => 'off');
++    my $b = Sympa::Message->new($plain, context => $l);
++    my ($stored, $dnt) = twist_one($b, Sympa::DKIM2::egress_context($b));
++    is_deeply $dnt, [undef], 'MDN header set after DKIM signing, as stock';
++    like $stored->[0]->as_string, qr/^Disposition-Notification-To: test-owner\@/m, 'MDN header';
++    is $stored->[0]{envelope_sender}, 'test-owner@mail.example.org', 'envelope sender';
++    unlike $stored->[0]->as_string, qr/^Message-Instance:/m, 'no Message-Instance';
++};
++
++subtest 'anonymous list strips the chain, original From nowhere' => sub {
++    my $signed_in = "DKIM2-Signature: i=1; d=example.org; fake\nMessage-Instance: m=1; h=sha256:x:y;\n"
++                  . "From: Whistle Blower <whistle\@corp.example>\nOrganization: Corp Inc\nSubject: s\n\nbody\n";
++    my $w = through($signed_in, sub {
++        $_[0]->replace_header('From', 'anon@mail.example.org');
++        $_[0]->delete_header('Organization');
++    }, anonymous_sender => 'anon@mail.example.org');
++    unlike $w, qr/^(DKIM2-Signature|Message-Instance):/mi, 'chain stripped';
++    unlike $w, qr/whistle|Corp Inc/i, 'original sender nowhere';
++};
++
++subtest 'resend from archive strips the chain' => sub {
++    my $w = through($plain, undef, shelved => ['dkim2_strip']);
++    unlike $w, qr/^Message-Instance:/mi, 'stripped';
++    my $m = Sympa::Message->new($plain, context => list());
++    $m->{shelved}{dkim2_strip} = 1;
++    like $m->to_string, qr/^X-Sympa-Shelved: .*dkim2_strip/m, 'flag is spooled';
++};
++
++subtest '_recovers_body: copy range must fit the verifier line count' => sub {
++    my $body = "a\r\nb\r\n";
++    my $h = sub { Mail::DKIM2::MessageInstance::body_digest_raw(shift) };
++    ok Sympa::DKIM2::_recovers_body("H: x\r\n\r\n$body", [[1, 2]], $h->($body)),
++        'whole body (1..2) recovered';
++    ok !Sympa::DKIM2::_recovers_body("H: x\r\n\r\n$body", [[1, 3]], $h->("$body\r\n")),
++        'range one past the last line is not a copy';
++};
++
++subtest 'custom archiver file has no DKIM2 pseudo-header' => sub {
++    require Sympa::Spindle::ProcessArchive;
++    my $m = Sympa::Message->new($plain, context => list());
++    $m->{dkim2_headers} = "Message-Instance: m=1; h=sha256:x:y;\r\n\r\n";
++    my $s = Sympa::Spindle::ProcessArchive::_custom_archiver_text($m);
++    unlike $s, qr/X-Sympa-DKIM2-Headers/, 'not in archive copy';
++    ok defined $m->{dkim2_headers}, 'delivered message keeps its saved headers';
++    like $m->to_string, qr/^X-Sympa-DKIM2-Headers:/m, 'still spooled';
++};
++
++# ---- Regression cases from the adversarial review (scratchpad exp/) ----
++
++# The header block of a wire text, unfolded, plus every Recipe in it decoded:
++# everything a recipient can read outside the body.
++sub visible_headers { my $w = shift;
++    my ($h) = split /\r\n\r\n/, $w, 2;
++    $h =~ s/\r\n[ \t]+/ /g;
++    my @r = map { (my $r = $_) =~ s/\s+//g; decode_base64($r) }
++        $h =~ /^Message-Instance: [^\r\n]*?\br=([^;]+);/mg;
++    return join "\n", $h, @r }
++# The m=2 field of a wire text (folded, as sent).
++sub top_field { ($_[0] =~ /^(Message-Instance: m=2;.*?)\r\n(?![ \t])/ms)[0] // '' }
++
++my $rhdr = "From: Alice <a\@example.com>\nTo: test\@mail.example.org\nSubject: hello\nMessage-ID: <%s\@example.com>\nDate: Mon, 5 Oct 2026 10:00:00 +0000\nMIME-Version: 1.0\n";
++sub rmsg { my ($id, $rest) = @_; sprintf($rhdr, $id) . $rest }
++
++subtest 'review: real decorate cases' => sub {
++    my $alt = "Content-Type: multipart/alternative; boundary=\"ALT\"\n\n--ALT\nContent-Type: text/plain; charset=us-ascii\n\nplain part\n--ALT\nContent-Type: text/html; charset=us-ascii\n\n<html><body><p>html part</p></body></html>\n--ALT--\n";
++    my $mixed = "Content-Type: multipart/mixed; boundary=\"MIX\"\n\n--MIX\nContent-Type: text/plain; charset=us-ascii\n\nbody text\n--MIX\nContent-Type: application/pdf; name=\"a.pdf\"\nContent-Disposition: attachment; filename=\"a.pdf\"\nContent-Transfer-Encoding: base64\n\n" . encode_base64("PDFDATA" x 50) . "--MIX--\n";
++    my $signed = "Content-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"SIG\"\n\n--SIG\nContent-Type: text/plain; charset=us-ascii\n\nsigned text\n--SIG\nContent-Type: application/pgp-signature\n\n-----BEGIN PGP SIGNATURE-----\nAAAA\n-----END PGP SIGNATURE-----\n--SIG--\n";
++    my $foot = {message_footer => "-- \nfooter\n"};
++    my @cases = (
++        ['plain 7bit', rmsg('c1', "Content-Type: text/plain; charset=us-ascii\n\nhello\n"), $foot],
++        ['no final newline', rmsg('c2', "Content-Type: text/plain; charset=us-ascii\n\nhello"), $foot],
++        ['CRLF input', rmsg('c3', "Content-Type: text/plain; charset=us-ascii\n\nhello\n") =~ s/\n/\r\n/gr, $foot],
++        (map { my $ft = $_;
++            ["latin1 8bit, UTF-8 footer ($ft)", rmsg('c4', "Content-Type: text/plain; charset=iso-8859-1\nContent-Transfer-Encoding: 8bit\n\ncaf\xe9\n"),
++             {message_footer => "-- \nfoot\xc3\xa9r \xe2\x82\xac\n"}, undef, footer_type => $ft] } qw(append mime)),
++        ['multipart/alternative, mime footer', rmsg('c6', $alt), $foot],
++        ['mixed with PDF', rmsg('c7', $mixed), $foot],
++        ['PGP/MIME signed', rmsg('c8', $signed), $foot],
++        ['html only', rmsg('c9', "Content-Type: text/html; charset=us-ascii\n\n<html><body>hi</body></html>\n"), $foot],
++        ['header-only changes', rmsg('c10', "Content-Type: text/plain\n\nhello\n"), {}, sub {
++            $_[0]->add_header('List-Id', '<test.mail.example.org>');
++            $_[0]->replace_header('Subject', '[test] hello');
++            $_[0]->replace_header('Reply-To', 'test@mail.example.org') }],
++        ['empty body', rmsg('c11', "Content-Type: text/plain\n\n"), $foot],
++        ['1200-char line', rmsg('c12', "Content-Type: text/plain\n\n" . ("X" x 1200) . "\n"), $foot],
++        ['image only', rmsg('c13', "Content-Type: image/png\nContent-Transfer-Encoding: base64\n\n" . encode_base64("\x89PNG" . ("x" x 300))), $foot],
++        ['odd folding', rmsg('c14', "X-Foo: a\nReferences: <a\@b>\n\t<c\@d>\n   <e\@f>\nContent-Type: text/plain\n\nhello\n"), $foot],
++        ['Keywords:abc', rmsg('c15', "Keywords:abc\nContent-Type: text/plain\n\nhello\n"), $foot],
++        ['Bcc', rmsg('c16', "Bcc: secret\@example.com\nContent-Type: text/plain\n\nhello\n"), {}],
++        ['dot lines', rmsg('c17', "Content-Type: text/plain\n\n.\n..\nFrom me\n"), $foot],
++        ['trailing blank lines', rmsg('c18', "Content-Type: text/plain\n\nhello\n\n\n\n"), $foot],
++        ['bare CR', rmsg('c19', "Content-Type: text/plain\n\nhel\rlo\n"), $foot],
++    );
++    for my $c (@cases) {
++        my ($name, $raw, $files, $mod, @listopts) = @$c;
++        local %FILES;
++        set_file($_, $files->{$_}) for keys %$files;
++        my $w = through($raw, $mod, @listopts);
++        chain_ok($w, $name);
++        if (my $mi = top_recipe($w)) {
++            ok !$mi->unrecoverable, "$name: body recoverable";
++        }
++    }
++    local %FILES;
++    set_file('message_footer', "-- \nfooter\n");
++    my $w = through(rmsg('c20', "Content-Type: text/plain\n\nhello\n"), undef,
++        footer_type => 'append');
++    like $w, qr{^Content-Type: multipart/mixed}mi, 'footer_type append: wrapped';
++    chain_ok($w, 'footer_type append');
++};
++
++# The review's QP and charset bugs were in append mode (stock in-place
++# editing); with DKIM2 on, append and mime both wrap.
++subtest 'review: QP post' => sub {
++    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: qp\nMessage-ID: <qp1\@example.com>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: quoted-printable\n\n"
++        . "Caf=C3=A9 au lait, 1+1=3D2. This is a long line that goes past the soft br=\neak boundary so QP had to wrap it.\n";
++    my $text = "Caf\xc3\xa9 au lait, 1+1=2. This is a long line that goes past the soft break boundary so QP had to wrap it.\n";
++    local %FILES;
++    set_file('message_footer', "-- \nList footer\n");
++    for my $ft (qw(append mime)) {
++        my ($w, $m) = through($raw, undef, footer_type => $ft);
++        chain_ok($w, "$ft: verifies");
++        like $w, qr{^Content-Type: multipart/mixed}mi, "$ft: wrapped";
++        my ($first, $last) = @{$m->{_dkim2_body_lines}};
++        my @lines = split /\r\n/, (split /\r\n\r\n/, $w, 2)[1], -1;
++        (my $rcvd = (split /\n\n/, $raw, 2)[1]) =~ s/\n/\r\n/g;
++        is join("\r\n", @lines[$first - 1 .. $last - 1]) . "\r\n", $rcvd,
++            "$ft: original part is the received body, byte for byte";
++        my @p = $m->as_entity->parts;
++        is $p[0]->bodyhandle->as_string, $text, "$ft: original part decodes once";
++        is $p[-1]->bodyhandle->as_string, "-- \nList footer\n",
++            "$ft: footer part decodes to the footer";
++    }
++    # Switch off, append: stock edits the body in place, which was correct.
++    my ($w, $m) = through($raw, undef, footer_type => 'append',
++        dkim2_message_instance => 'off');
++    unlike $w, qr/^Message-Instance:/m, 'off: no instance';
++    my $dec = $m->as_entity->bodyhandle->as_string;
++    unlike $dec, qr/=C3=A9|=3D/, 'off append: decoded once';
++    like $dec, qr/\A\Q$text\E.*-- \nList footer\n\z/s,
++        'off append: original text, then the footer';
++};
++
++subtest 'review: non-ASCII footer on a us-ascii post' => sub {
++    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: as\nMessage-ID: <as\@x>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=us-ascii\n\nplain ascii\n";
++    my $footer = "Euro \xe2\x82\xac, \xe6\x97\xa5\xe6\x9c\xac\n";
++    local %FILES;
++    set_file('message_footer', $footer);
++    for my $ft (qw(append mime)) {
++        my ($w, $m) = through($raw, undef, footer_type => $ft);
++        chain_ok($w, "$ft: verifies");
++        my @p = $m->as_entity->parts;
++        is $p[0]->bodyhandle->as_string, "plain ascii\n", "$ft: original part";
++        like $p[0]->head->get('Content-Type'), qr/charset=us-ascii/i,
++            "$ft: original part keeps us-ascii";
++        like $p[-1]->head->get('Content-Type'), qr/charset="?UTF-8"?/i,
++            "$ft: footer part charset=UTF-8";
++        is $p[-1]->bodyhandle->as_string, $footer, "$ft: footer bytes intact";
++        unlike $w, qr/Euro \?/, "$ft: no ? substitution";
++    }
++};
++
++subtest 'review: S/MIME encryption after decorate -> null, no plaintext in headers' => sub {
++    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: secret\nMessage-ID: <s\@x>\nMIME-Version: 1.0\nContent-Type: text/plain\n\nThe merger closes on Friday; password is hunter2.\n";
++    my $l = list();
++    my $m = Sympa::Message->new($raw, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l);
++    my $ctx = Sympa::DKIM2::egress_context($b);
++    my ($stored, $err);
++    {
++        # Stand-in for smime_encrypt(): an opaque blob replaces the body.
++        no warnings qw(redefine once);
++        local *Sympa::Message::smime_encrypt = sub {
++            my $self = shift;
++            $self->replace_header('Content-Type',
++                'application/pkcs7-mime; smime-type=enveloped-data; name=smime.p7m');
++            $self->replace_header('Content-Transfer-Encoding', 'base64');
++            $self->{_body} = encode_base64(join '', map { chr(($_ * 37) % 256) } 1 .. 600);
++            delete $self->{_entity_cache};
++            1;
++        };
++        local *STDERR; open STDERR, '>', \$err or die;
++        ($stored) = twist_one($b, $ctx, smime_encrypt => 1);
++    }
++    my $w = $stored->[0]->as_rfc822_string;
++    like $w, qr{^Content-Type: application/pkcs7-mime}m, 'encrypted';
++    ok top_recipe($w)->unrecoverable, 'b null';
++    unlike $err // '', qr/changed after ingress/, 'body_rewritten passed (no fallback notice)';
++    unlike visible_headers($w), qr/hunter2|merger/, 'plaintext in no header or Recipe';
++    chain_ok($w, 'header history verifies');
++};
++
++subtest 'review: moderation round trip' => sub {
++    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: mod\nMessage-ID: <mod\@x>\nMIME-Version: 1.0\nContent-Type: text/plain\n\nplease moderate\n";
++    local %FILES;
++    set_file('message_footer', "-- \nfooter\n");
++    my $l = list();
++    my $m = Sympa::Message->new($raw, context => $l);
++    Sympa::DKIM2::ingress($m);
++    $m->replace_header('Subject', '[test] mod');                    # custom_subject
++    my $mod = Sympa::Message->new($m->to_string(original => 1), context => $l);  # ToModeration
++    ok defined $mod->{dkim2_headers}, 'saved headers survive the moderation spool';
++    my $b = Sympa::Message->new($mod->to_string, context => $l);     # bulk spool
++    my $ctx = Sympa::DKIM2::egress_context($b);
++    my $one = $b->dup;
++    $one->decorate($l, undef);
++    Sympa::DKIM2::egress_add($one, $ctx);
++    my $w = $one->as_rfc822_string;
++    my $mi = top_recipe($w);
++    ok $mi && !$mi->unrecoverable, 'm=2, body recoverable';
++    chain_ok($w, 'verifies');
++};
++
++subtest 'review: notice mode -> null, small instance' => sub {
++    my $att = encode_base64(join '', map { chr(($_ * 7919) % 256) } 1 .. 300000);
++    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: big\nMessage-ID: <big\@x>\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=B\n\n--B\nContent-Type: text/plain\n\nsee attached\n--B\nContent-Type: application/octet-stream; name=a.bin\nContent-Disposition: attachment; filename=a.bin\nContent-Transfer-Encoding: base64\n\n$att--B--\n";
++    my $w = through($raw, undef,
++        pre => sub { $_[0]->prepare_message_according_to_mode('notice', $_[1]) },
++        decorate => 0);
++    ok top_recipe($w)->unrecoverable, 'b null';
++    cmp_ok length(top_field($w)), '<', 4096, 'Message-Instance under 4 KB';
++    chain_ok($w, 'verifies');
++};
++
++subtest 'review: txt mode -> null, small instance' => sub {
++    my $txt  = join '', map { "line $_ with caf\xc3\xa9 text\n" } 1 .. 40;
++    my $html = "<html><body>" . join('', map { "<p>para $_ caf&eacute;</p>\n" } 1 .. 200) . "</body></html>\n";
++    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: alt\nMessage-ID: <alt\@x>\nMIME-Version: 1.0\nContent-Type: multipart/alternative; boundary=ALT\n\n--ALT\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: base64\n\n"
++        . encode_base64($txt) . "--ALT\nContent-Type: text/html; charset=utf-8\n\n$html--ALT--\n";
++    local %FILES;
++    set_file('message_footer', "-- \nfooter\n");
++    my ($w, $err) = ('', '');
++    {
++        local *STDERR; open STDERR, '>', \$err or die;
++        $w = through($raw, undef,
++            pre => sub { $_[0]->prepare_message_according_to_mode('txt', $_[1]) });
++    }
++    is join('', map {"$_\n"} grep { !/^notice .*Multipart message changed to singlepart/ }
++        split /\n/, $err), '', 'only the singlepart notice logged';
++    unlike $w, qr/^Content-Type: multipart\/alternative/mi, 'single part';
++    ok top_recipe($w)->unrecoverable, 'b null';
++    cmp_ok length(top_field($w)), '<', 4096, 'Message-Instance under 4 KB';
++    chain_ok($w, 'verifies');
++};
++
++subtest 'review: MDN header set after decorate' => sub {
++    local %FILES;
++    set_file('message_footer', "-- \nfooter\n");
++    my $w = through($plain, sub { $_[0]->add_header('List-Id', '<t>') },
++        post => sub { $_[0]->replace_header('Disposition-Notification-To',
++                          'test-owner+abc@mail.example.org') });
++    like $w, qr/^Disposition-Notification-To: test-owner\+abc\@/m, 'MDN header';
++    ok top_recipe($w)->get_tag('rh')->{'disposition-notification-to'},
++        'in the header Recipe';
++    chain_ok($w, 'verifies');
++};
++
++subtest 'review: footer personalised per recipient' => sub {
++    local %FILES;
++    set_file('message_footer', "for [% user.email %]\n");
++    no warnings qw(redefine once);
++    local *Sympa::List::get_list_member =
++        sub { +{email => $_[1], date => 0} };
++    my $l = list();
++    my $m = Sympa::Message->new($plain, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l);
++    my $ctx = Sympa::DKIM2::egress_context($b);
++    my (@w, @lines);
++    for my $rcpt (map {"r$_\@example.net"} 1 .. 3) {
++        my $one = $b->dup;
++        $one->decorate($l, $rcpt, mode => 'footer');
++        Sympa::DKIM2::egress_add($one, $ctx);
++        push @w, $one->as_rfc822_string;
++        push @lines, $one->{_dkim2_body_lines};
++        like $w[-1], qr/^for \Q$rcpt\E\r$/m, "$rcpt: personalised";
++        chain_ok($w[-1], "$rcpt: verifies");
++    }
++    is_deeply $lines[$_], $lines[0], "copy range $_ same as 0" for 1, 2;
++    my $last = $lines[0][1];
++    my @body = map { my @l = split /\r\n/, (split /\r\n\r\n/, $_, 2)[1], -1; \@l } @w;
++    # The boundary is random per copy: compare with it masked.
++    my @masked = map { [map { s/=_dkim2_[0-9a-f]+/BOUNDARY/gr } @$_] } @body;
++    for my $i (1, 2) {
++        my ($d) = grep { $masked[0][$_] ne ($masked[$i][$_] // '') } 0 .. $#{$masked[0]};
++        ok defined $d && $d + 1 > $last,
++            "copy $i differs from copy 0, only after line $last"
++            or diag defined $d ? "first difference at line " . ($d + 1) : 'copies identical';
++    }
++};
++
++subtest 'review: upstream m=1 kept' => sub {
++    my $hdr = "From: Alice <a\@example.com>\nTo: test\@mail.example.org\nSubject: hello\nMessage-ID: <%s\@example.com>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n";
++    my $longref = join ' ', map {"<msg$_\@example.com>"} 1 .. 80;
++    local %FILES;
++    set_file('message_footer', "-- \nfooter\n");
++    for my $c (
++        ['simple', sprintf($hdr, 'u1') . "\nhello\n"],
++        ['long unfolded References', sprintf($hdr, 'u2') . "References: $longref\n\nhello\n"],
++        ['8bit UTF-8 Subject', sprintf($hdr, 'u3') =~ s/Subject: hello/Subject: h\xc3\xa9llo/r . "\nhello\n"],
++        ['empty header value', sprintf($hdr, 'u4') . "Keywords:\n\nhello\n"],
++        ['trailing space', sprintf($hdr, 'u5') . "X-A: 1\nComments: hi   \n\nhello\n"],
++    ) {
++        my ($name, $raw) = @$c;
++        (my $crlf = $raw) =~ s/\n/\r\n/g;
++        my $up = Mail::DKIM2::MessageInstance->calculate($crlf)->as_string;
++        my $w = through("Message-Instance: $up\n$raw");
++        my @m1 = map { s/\r\n[ \t]+/ /gr } $w =~ /^Message-Instance: (m=1;.*?)\r\n(?![ \t])/msg;
++        is scalar(@m1), 1, "$name: one m=1";
++        is $m1[0] =~ s/\s+//gr, $up =~ s/\s+//gr, "$name: upstream m=1 kept";
++        unlike $w, qr/action=mi-m=1;/, "$name: Sympa added no m=1";
++        my $mi = top_recipe($w);
++        ok $mi && !$mi->unrecoverable, "$name: m=2, body recoverable";
++        chain_ok($w, "$name: verifies");
++    }
++};
++
+ done_testing;
