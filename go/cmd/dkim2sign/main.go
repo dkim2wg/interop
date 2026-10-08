@@ -21,7 +21,7 @@ func main() {
 	hashAlgs := flag.String("hash", "sha256",
 		"hash algorithm(s) for the Message-Instance h= tag: sha256, sha512 or both (spec-05 §3.1)")
 	allowNull := flag.Bool("allow-null-body-recipe", false,
-		"sign even when the top Message-Instance has a null body Recipe that no upstream signature covers (default: refuse; a signed null top needs no option)")
+		"sign even when a Message-Instance has a null body Recipe that no upstream signature covers (its m= is above every signature's m=; default: refuse; a signed null needs no option)")
 	dnsJSON := flag.String("dns-json", os.Getenv("DKIM2_DNS_JSON"),
 		"dns.json for verifying an upstream chain before signing (default $DKIM2_DNS_JSON, else real DNS)")
 	ignoreTS := flag.Bool("ignore-timestamps", false,

@@ -108,6 +108,30 @@ func TestGateSignedNullTopSigns(t *testing.T) {
 	wantSigned(t, m, true)
 }
 
+// A signature with m=k covers instances 1..k.  An unsigned null m=2 under an
+// unsigned ordinary m=3 is not the top any more, but nothing covers it (the
+// highest valid m= is 1): refused without the option, like a null top.
+func TestGateNullBelowUnsignedTopRefusedUnlessAllowed(t *testing.T) {
+	m2 := dropTopSig(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe))
+	m := dropTopSig(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull))
+	wantRefused(t, m, false, "unsigned Message-Instance m=2 has a null body Recipe")
+	wantSigned(t, m, true)
+
+	// The walk still checks the history under both unsigned instances.
+	f2 := dropTopSig(t, nullHop(t, nullHopBase(t), forgeTo, "new body\r\n", subjRecipe))
+	f := dropTopSig(t, nullHop(t, f2, subjectTag2, "new body\r\n", ordinaryOverNull))
+	wantRefused(t, f, true, "")
+}
+
+// The null m=2 is covered by a valid i=2/m=2; only an ordinary m=3 is
+// unsigned on top of it: no option needed.
+func TestGateNullBelowSignedSigns(t *testing.T) {
+	m2 := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
+	m := dropTopSig(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull))
+	wantSigned(t, m, false)
+	wantSigned(t, m, true)
+}
+
 func TestGateForgedNullTopRefusedEvenWithOption(t *testing.T) {
 	m := nullHop(t, nullHopBase(t), forgeTo, "new body\r\n", subjRecipe)
 	wantRefused(t, m, true, "")

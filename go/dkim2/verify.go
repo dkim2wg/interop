@@ -273,7 +273,10 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 
 	// Spec-06 §11: a Message-Instance whose m= is higher than every
 	// signature's is an error. A lower one no signature names is valid (a
-	// list's unsigned m=1 under a signature on m=2).
+	// list's unsigned m=1 under a signature on m=2).  Outbound, every
+	// instance above the top signature is one the caller is about to cover
+	// (its signature will name the top m=), so none of them is an error:
+	// the chain walk still checks each against the content and undoes it.
 	{
 		maxSigM := 0
 		for _, raw := range sigHeaders {
@@ -284,7 +287,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 		for _, raw := range miHeaders {
 			mi, _ := parseMI(raw)
-			if mi != nil && mi.Version > maxSigM && !(unsignedTop && mi.Version == maxMIVersion) {
+			if mi != nil && mi.Version > maxSigM && !unsignedTop {
 				return nil, fmt.Errorf("Message-Instance m=%d has no referencing signature", mi.Version)
 			}
 		}

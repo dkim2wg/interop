@@ -63,10 +63,10 @@ type SignOptions struct {
 	// (nil = real DNS); SkipTimestampCheck relaxes the §10.3 age check.
 	Fetcher            KeyFetcher
 	SkipTimestampCheck bool
-	// AllowNullBodyRecipe lets Sign cover an UNSIGNED top Message-Instance
-	// (no DKIM2-Signature has its m=) whose body Recipe is null ("b": null);
-	// by default that is refused.  A null top that an upstream signature
-	// already covers is signed without it.
+	// AllowNullBodyRecipe lets Sign cover an UNSIGNED Message-Instance (its
+	// m= above every valid upstream DKIM2-Signature's m=, top or not) whose
+	// body Recipe is null ("b": null); by default that is refused.  A null
+	// that an upstream signature already covers is signed without it.
 	AllowNullBodyRecipe bool
 	// SkipUpstreamCheck turns the gate off entirely (the caller built the
 	// chain itself).
