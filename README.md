@@ -37,15 +37,18 @@ chain-shaped fixtures (no chain, valid chain, broken signature, broken MI
 chain, null body Recipe, fake "coverage" signatures, Message-Instance-only
 chains, `nd=` bridges) through all four signer CLIs, plain and with
 `--allow-null-body-recipe`, and checks each signs or refuses as specified
-(19 fixtures, 152 cells):
+(21 fixtures, 168 cells):
 
     ./util/signer-gate.sh
 
-A null body Recipe on the top Message-Instance is refused without
-`--allow-null-body-recipe` only when no upstream DKIM2-Signature covers it
-(none has its `m=`): a null this hop introduces (`null-top`, `mi-only-null`).
-A null top that arrived already signed (`null-top-signed`: a list post the
-list host signed, forwarded unchanged) is signed without the option. Only a
+A DKIM2-Signature with `m=k` covers Message-Instances 1..k. A null body
+Recipe on any instance above the highest `m=` of the valid upstream
+signatures is refused without `--allow-null-body-recipe`: a null this hop
+introduces, whether it is the top instance (`null-top`, `mi-only-null`) or
+another unsigned instance was added over it (`null-below-unsigned-top`). A
+null that arrived already signed (`null-top-signed`: a list post the list
+host signed, forwarded unchanged; `null-below-signed`: the same with an
+ordinary unsigned instance on top) is signed without the option. Only a
 host that introduces a null body Recipe and signs it itself — a list host whose
 list manager adds an unsigned instance — needs the option; a forwarder needs
 nothing. Only a signature with a valid `i=` counts as covering the top: the
@@ -68,7 +71,10 @@ Selector, more selectors than allowed, malformed Recipe JSON, an unsigned
 top instance, a wrongly-keyed `nd=` bridge, and Recipe copy ranges that are
 out of order or overlap (§5.2), a duplicated Message-Instance `m=`, and a
 DKIM2-Signature with no usable `i=` (missing, or not a positive integer) on
-top of an otherwise valid chain — plus positive controls (the same algorithm
+top of an otherwise valid chain or on its own, and an `i=` or `m=` above the
+chain length limit of 32 (`i=33`, `i=99999999999999999999`, a signature
+`m=4294967297`, a Message-Instance `m=99999999999999999999`), which must be a
+PERMERROR before any gap check walks up to it — plus positive controls (the same algorithm
 signed twice under distinct Selectors, which §8.9 explicitly permits; a
 Recipe on the bottom instance; a correct bridge; an unsigned lower Message-Instance under a signed higher one; and a Recipe whose `b`
 items restore non-UTF-8 octets) and feeds them all through every verifier's

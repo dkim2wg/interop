@@ -109,7 +109,7 @@ nrcpt 1
 all of them load `Message.pm`.
 
 The outbound signer must accept null body Recipes: Sympa adds the instance
-unsigned, and `dkim2-milter` signs an unsigned null top only when started
+unsigned, and `dkim2-milter` signs an unsigned null instance only when started
 with `--allow-null-body-recipe` (the example outbound unit has it).
 Downstream forwarders need no option: by then the null is signed.
 

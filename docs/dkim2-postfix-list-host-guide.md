@@ -153,17 +153,19 @@ what this guide wires up.
 **Null body Recipes.** A list that rewrites a body (content filtering, DMARC
 wrap) records a null body Recipe in its Message-Instance: the previous body is
 gone. The list manager adds that instance unsigned, for the outbound milter
-to sign, and `dkim2-milter` does not sign an unsigned null top unless started
+to sign, and `dkim2-milter` does not sign an unsigned null (one no upstream
+signature covers, at the top or under another unsigned instance) unless started
 with `--allow-null-body-recipe`, which is off by default in the program. The
 outbound example unit turns it on, since it is for list hosts. With it on, the
 message is still signed only if the upstream signatures verify and the header
 history below the null Recipe checks out; the milter adds
 `X-DKIM2-Info: action=null-body-recipe;` when it signs one.
 
-The option is only for the host that introduces the null. A null top that
-arrives already signed — a list post the list host signed, now relayed
-unchanged by a forwarder such as a mailbox provider — is signed without it,
-since a DKIM2-Signature with that instance's `m=` already vouches for it. The
+The option is only for the host that introduces the null. A null that
+arrives already signed — a list post the list host signed, now relayed by a
+forwarder such as a mailbox provider, unchanged or with its own instance on
+top — is signed without it, since a DKIM2-Signature whose `m=` reaches that
+instance already vouches for it. The
 milter adds the same informational `action=null-body-recipe` tag then too.
 
 **Null senders.** `dkim2-milter` requires Sendmail::PMilter 1.28 or later
