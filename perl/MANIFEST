@@ -78,6 +78,7 @@ t/ignore-prefixes.t
 t/interop.t
 t/invalid-json.t
 t/lib/DKIM2TestKeys.pm
+t/lib/MockAuthMilter.pm
 t/load-private-key-data.t
 t/malformed-content-type.t
 t/mf-rt-brackets.t
@@ -88,6 +89,7 @@ t/mi-hostile-header.t
 t/mi-null-header-history.t
 t/mi-null-recipe.t
 t/milter-script.t
+t/milter-sign-gate.t
 t/milter.t
 t/nd-chain.t
 t/null-mailfrom.t

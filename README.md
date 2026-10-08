@@ -55,7 +55,10 @@ and every signer refuses them in both modes, because every verifier reports
 such a signature as a PERMERROR rather than skipping it.
 
 It needs the built `c/dkim2sign` and `go/dkim2sign`, and uses `dns.json` for
-the verification keys.
+the verification keys. The Perl milters make the same decision with the same
+`Mail::DKIM2::Gate`: `perl/t/milter-script.t` covers `dkim2-milter`, and
+`perl/t/milter-sign-gate.t` runs these cases through the authentication_milter
+`DKIM2Sign` handler (`allow_null_body_recipe` in its config).
 
 ## Negative vectors
 

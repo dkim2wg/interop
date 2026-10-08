@@ -34,6 +34,21 @@ Revision history for Mail::DKIM2
           X-DKIM2-Info action=null-body-recipe whenever it signs over a null
           top, whether it arrived signed or the option let it sign its own.
           (t/sign-cli.t, t/milter-script.t)
+        - The authentication_milter DKIM2Sign handler follows the Gate too,
+          on the message as it would sign it (its own Message-Instance
+          included), replacing its own chain_verifies() check. New config
+          allow_null_body_recipe (default 0) is the milter's
+          --allow-null-body-recipe. A refusal signs nothing and adds or
+          strips no Message-Instance; it is logged, counted in
+          dkim2_sign_total by reason, and (broken-mi-chain,
+          null-body-recipe) marked with X-DKIM2-Info
+          action=not-signed=<reason>; signing over a null top adds
+          action=null-body-recipe. Upstream keys come from the milter's
+          resolver (dns_overrides and skip_timestamp_check for tests).
+          Mail is signed exactly as before when there is no upstream chain.
+          Gate->check takes Resolver and IgnorePrefixes. The test mock of
+          Mail::Milter::Authentication moved to t/lib/MockAuthMilter.pm.
+          (t/milter-sign-gate.t)
         - DKIM2_DATE 2026-10-08.
 
 0.15    2026-10-08

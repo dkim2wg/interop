@@ -23,7 +23,9 @@ Mail::DKIM2::Gate - decide whether a front end may sign a message
 
 =head1 DESCRIPTION
 
-The gate shared by C<bin/dkim2sign> and C<bin/dkim2-milter>. Mail::DKIM2::Signer
+The gate shared by C<bin/dkim2sign>, C<bin/dkim2-milter> and the
+authentication_milter handler
+L<Mail::Milter::Authentication::Handler::DKIM2Sign>. Mail::DKIM2::Signer
 itself signs whatever it is given; a front end that extends a DKIM2 chain should
 first make sure the chain is worth extending.
 
@@ -31,7 +33,9 @@ first make sure the chain is worth extending.
 
 C<< Mail::DKIM2::Gate->check($message, %opts) >> takes the whole message as a
 string (CRLF line endings) and returns a hashref. Options:
-C<PubkeyCallback> and C<SkipTimestampCheck> are passed to the Verifier,
+C<PubkeyCallback>, C<Resolver> and C<SkipTimestampCheck> are passed to the
+Verifier, C<IgnorePrefixes> to both the Verifier and the Message-Instance
+chain check (the caller's own header fields, hashed by neither end),
 C<AllowNullBodyRecipe> permits an I<unsigned> top Message-Instance whose body
 Recipe is null (see L</Null body Recipes>),
 C<SigningDomain> is the C<d=> the caller will sign with: when the top
@@ -106,7 +110,9 @@ sub check {
         if ($has_dk2) {
             my $v = Mail::DKIM2::Verifier->new(
                 SkipTimestampCheck => $o{SkipTimestampCheck} ? 1 : 0,
-                ($o{PubkeyCallback} ? (PubkeyCallback => $o{PubkeyCallback}) : ()));
+                ($o{PubkeyCallback} ? (PubkeyCallback => $o{PubkeyCallback}) : ()),
+                ($o{Resolver} ? (Resolver => $o{Resolver}) : ()),
+                ($o{IgnorePrefixes} ? (IgnorePrefixes => $o{IgnorePrefixes}) : ()));
             $v->allow_unsigned_mi(1);
             $v->next_domain_ok($sd) if defined $sd && length $sd;
             $v->PRINT($message);
@@ -117,7 +123,8 @@ sub check {
         }
     }
 
-    my ($chain_ok, $chain_why) = Mail::DKIM2::MessageInstance->chain_verifies($message);
+    my ($chain_ok, $chain_why) = Mail::DKIM2::MessageInstance->chain_verifies($message,
+        ($o{IgnorePrefixes} ? (IgnorePrefixes => $o{IgnorePrefixes}) : ()));
 
     my %by_v;
     for my $val (@mis) {
