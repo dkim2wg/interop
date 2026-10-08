@@ -407,7 +407,6 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	if err := Sign(bytes.NewReader(assembled.Bytes()), &signed, opts.Key, SignOptions{
 		Selector: opts.Selector, Domain: opts.Domain,
 		MailFrom: "<>", RcptTo: []string{upstream}, Timestamp: opts.Timestamp,
-		SkipUpstreamCheck: true, // the chain was just verified/rebuilt above
 	}); err != nil {
 		return nil, "", fmt.Errorf("re-signing propagated DSN: %w", err)
 	}

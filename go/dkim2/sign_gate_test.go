@@ -141,3 +141,37 @@ func TestGateMIOnlyNull(t *testing.T) {
 	wantRefused(t, m, false, "null")
 	wantSigned(t, m, true)
 }
+
+// nd= bridge: a top signature carrying nd= may be extended only by the
+// domain it names.
+func ndBridgeTop(t *testing.T, nd string) []byte {
+	t.Helper()
+	raw := ndTestRaw(t)
+	hop1 := ndSignHop(t, raw, "ed25519._domainkey.test1.dkim2.com.pem", "ed25519",
+		"test1.dkim2.com", "sender@test1.dkim2.com", []string{"relay@test2.dkim2.com"}, "")
+	return ndSignHop(t, hop1, "ed25519._domainkey.test2.dkim2.com.pem", "ed25519",
+		"test2.dkim2.com", "", nil, nd)
+}
+
+func TestGateNdToUsSigns(t *testing.T) {
+	wantSigned(t, ndBridgeTop(t, "TEST3.dkim2.com"), false)
+}
+
+func TestGateNdToOtherRefused(t *testing.T) {
+	wantRefused(t, ndBridgeTop(t, "test5.dkim2.com"), false, "names another domain")
+}
+
+// Spec-06 §11: only an MI whose m= is higher than every signature's is an
+// error; a lower unreferenced MI is valid.
+func TestVerifyUnreferencedLowerMIValid(t *testing.T) {
+	raw := ndTestRaw(t)
+	hop1 := ndSignHop(t, raw, "ed25519._domainkey.test1.dkim2.com.pem", "ed25519",
+		"test1.dkim2.com", "sender@test1.dkim2.com", []string{"relay@test2.dkim2.com"}, "")
+	unsigned := append(dropTopSig(t, hop1), []byte("changed\r\n")...) // m=1 with no signature, body now differs
+	two := ndSignHop(t, unsigned, "ed25519._domainkey.test2.dkim2.com.pem", "ed25519",
+		"test2.dkim2.com", "relay@test2.dkim2.com", []string{"x@test3.dkim2.com"}, "")
+	_, err := Verify(bytes.NewReader(two), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
+	if err != nil && strings.Contains(err.Error(), "no referencing signature") {
+		t.Fatalf("lower unreferenced MI rejected: %v", err)
+	}
+}

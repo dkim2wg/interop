@@ -90,6 +90,10 @@ type VerifyOptions struct {
 	// instead.  Upstream signatures must still verify.
 	Outbound bool
 
+	// Signer is the domain about to sign, in Outbound mode: a top signature
+	// whose nd= names it (a §9.3 bridge) is accepted; any other nd= is not.
+	Signer string
+
 	// HeadersOnly says the message has no body, as with the returned original
 	// in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures and the
 	// chain are checked as usual; of the Message-Instance content check, only

@@ -273,7 +273,7 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 		fetcher = &NetKeyFetcher{}
 	}
 	results, err := VerifyFull(bytes.NewReader(raw), fetcher,
-		VerifyOptions{SkipTimestampCheck: opts.SkipTimestampCheck, Outbound: true})
+		VerifyOptions{SkipTimestampCheck: opts.SkipTimestampCheck, Outbound: true, Signer: opts.Domain})
 	if err != nil {
 		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail: %w", err)
 	}
