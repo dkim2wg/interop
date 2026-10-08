@@ -183,11 +183,11 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
             (res.status == DKIM2_TEMPERROR) ? "temperror" : "permerror";
         if (strstr(res.message, "Message-Instance") || strstr(res.message, " MI m="))
             snprintf(ctx->errmsg, sizeof ctx->errmsg,
-                "not signing: Message-Instance chain does not undo cleanly: %s",
+                "not signing: Message-Instance chain does not undo cleanly: %.400s",
                 res.message);
         else
             snprintf(ctx->errmsg, sizeof ctx->errmsg,
-                "not signing: upstream DKIM2 chain result=%s (%s)",
+                "not signing: upstream DKIM2 chain result=%s (%.400s)",
                 outcome, res.message);
         return -1;
     }
