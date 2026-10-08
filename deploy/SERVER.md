@@ -531,7 +531,7 @@ curl -u restadmin:dkim2demo -X PATCH \
 code in `src/lib/Sympa/DKIM2.pm` and its call sites in `Message.pm` and the
 `Spindle::Process{Incoming,Outgoing,Archive}` / `ResendArchive` spindles.
 
-**DKIM2 series (always-wrap, deployed 2026-10-08):** `dkim2` = 6fb9dfbe8, three
+**DKIM2 series (always-wrap, deployed 2026-10-08):** `dkim2` = bdc9eee4d, three
 commits on tag 6.2.78, exported as `sympa/patches-6.2.78`:
 1. the `dkim2_message_instance` list parameter (on/off, list/domain/site
    context, default **off** -- off is byte-identical to stock 6.2.78);
