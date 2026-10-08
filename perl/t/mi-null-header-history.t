@@ -168,6 +168,22 @@ sub malformed_body_below_null {
     like($why // '', qr/m=2 did not undo cleanly.*out of order/, 'reason names the malformed body Recipe') or diag $why;
 }
 
+# The structure-only check below a null has no line count: a bad range must
+# read sensibly (no dangling "of ") and must not warn.
+for my $range ([0, 2], [3, 1]) {
+    my @warn;
+    local $SIG{__WARN__} = sub { push @warn, @_ };
+    my $cur2 = $m1 . "footer$EOL";
+    my $mi2 = $MI->calculate($cur2, $m1);
+    $mi2->{bits}{rb} = [$range];
+    my ($ok, $why) = $MI->chain_verifies(list_hop(with_mi($mi2, $cur2), 'list'));
+    my $r = "[@$range]";
+    ok(!$ok, "body Recipe $r below a null is caught");
+    unlike($why // '', qr/\bof\s*(?:$|\))/, "$r: no empty 'of' in reason") or diag $why;
+    like($why // '', qr/m=2 did not undo cleanly.*\Q$range->[0]-$range->[1]\E/, "$r: reason names the range") or diag $why;
+    is_deeply(\@warn, [], "$r: no warnings") or diag @warn;
+}
+
 use lib "$FindBin::Bin/lib";
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
