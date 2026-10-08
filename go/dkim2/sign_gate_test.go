@@ -175,3 +175,19 @@ func TestVerifyUnreferencedLowerMIValid(t *testing.T) {
 		t.Fatalf("lower unreferenced MI rejected: %v", err)
 	}
 }
+
+func TestVerifyDuplicateMIVersion(t *testing.T) {
+	raw := ndTestRaw(t)
+	hop1 := ndSignHop(t, raw, "ed25519._domainkey.test1.dkim2.com.pem", "ed25519",
+		"test1.dkim2.com", "sender@test1.dkim2.com", []string{"relay@test2.dkim2.com"}, "")
+	i := bytes.Index(hop1, []byte("Message-Instance:"))
+	j := i + bytes.Index(hop1[i:], []byte("\r\n")) + 2
+	for hop1[j] == ' ' || hop1[j] == '\t' {
+		j += bytes.Index(hop1[j:], []byte("\r\n")) + 2
+	}
+	dup := append(append(append([]byte{}, hop1[:j]...), hop1[i:j]...), hop1[j:]...)
+	_, err := Verify(bytes.NewReader(dup), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
+	if err == nil || !strings.Contains(err.Error(), "duplicate Message-Instance m=1") {
+		t.Fatalf("want duplicate Message-Instance m=1, got %v", err)
+	}
+}

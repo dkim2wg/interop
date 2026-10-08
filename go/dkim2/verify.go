@@ -232,6 +232,18 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			return nil, fmt.Errorf("i= not contiguous: expected %d got %d", expected, got)
 		}
 	}
+	// A repeated m= is its own error, before the contiguity check.
+	{
+		seenM := make(map[int]bool)
+		for _, raw := range miHeaders {
+			if mi, _ := parseMI(raw); mi != nil {
+				if seenM[mi.Version] {
+					return nil, fmt.Errorf("duplicate Message-Instance m=%d", mi.Version)
+				}
+				seenM[mi.Version] = true
+			}
+		}
+	}
 	// §7.1 MUST: m= values must be contiguous 1..N
 	for idx, raw := range miHeaders {
 		mi, _ := parseMI(raw)
