@@ -771,6 +771,15 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     mi_headers = extract_mi_headers(headers)
     sig_headers = extract_sig_headers(headers)
 
+    seen_m = set()
+    for h in mi_headers:
+        mv = _get_version_from_mi(h)
+        if mv in seen_m:
+            msg = f"duplicate Message-Instance m={mv}"
+            return VerifyResult(ok=False, status='permerror', failing_i=None,
+                                domain=None, message=msg, errors=[msg])
+        seen_m.add(mv)
+
     mi_only = allow_unsigned_mi and not sig_headers and bool(mi_headers)
     if not sig_headers and not mi_only:
         return VerifyResult(ok=False, status='none', failing_i=None, domain=None,

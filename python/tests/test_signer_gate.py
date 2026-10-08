@@ -109,3 +109,30 @@ def test_mi_only_null_refused_then_signed_with_option():
     with pytest.raises(dkim2sign.SigningRefused, match="null body Recipe"):
         _sign(fx.build_mi_only_null())
     assert _top_i(_sign(fx.build_mi_only_null(), allow_null_body_recipe=True)) == 1
+
+
+def _nd_top_chain(nd):
+    """test1's i=1 signature carrying nd=<nd>, as it arrives at test3."""
+    import gate_env  # noqa: F401
+    eml = (b"From: sender@test1.dkim2.com\r\nTo: rcpt@test3.dkim2.com\r\n"
+           b"Subject: hello\r\n\r\nbody line\r\n")
+    headers, body = dkim2sign.parse_message(eml)
+    mi1 = dkim2sign.build_message_instance(headers, body, version=1)
+    key1, alg1 = dkim2sign.load_private_key(os.path.join(
+        ROOT, "keys", "ed25519._domainkey.test1.dkim2.com.pem"))
+    sig1 = dkim2sign.build_dkim2_signature(
+        [], [], mi1, "test1.dkim2.com", "ed25519", key1, alg1,
+        seq=1, mi_version=1, timestamp=1740000000, next_domain=nd)
+    return (sig1.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+            + b"\r\n".join(headers) + b"\r\n\r\n" + body)
+
+
+def test_nd_naming_us_is_signed():
+    out = _sign(_nd_top_chain("TEST3.dkim2.com"), allow_null_body_recipe=True)
+    assert _top_i(out) == 2
+
+
+def test_nd_naming_another_domain_is_refused():
+    with pytest.raises(dkim2sign.SigningRefused,
+                       match="top signature nd=test2.dkim2.com names another domain"):
+        _sign(_nd_top_chain("test2.dkim2.com"))

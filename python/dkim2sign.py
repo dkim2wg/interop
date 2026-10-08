@@ -638,7 +638,8 @@ class SigningRefused(Exception):
 
 def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
                    dns_data: dict | None, skip_timestamp_check: bool,
-                   allow_null_body_recipe: bool) -> None:
+                   allow_null_body_recipe: bool,
+                   signing_domain: str | None = None) -> None:
     """Refuse (SigningRefused) unless the chain already on the message checks
     out.  Runs the verifier in outbound mode: an unsigned top Message-Instance
     is the one we are about to cover.  A top instance with a null body Recipe
@@ -661,6 +662,16 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
         except (OSError, ValueError) as e:
             raise SigningRefused(f"not signing: cannot read keys from "
                                  f"{path}: {e}")
+
+    # A top signature with nd= may only be extended by the domain it names.
+    if existing_sig:
+        top_sig = max(existing_sig, key=_get_seq_from_sig)
+        top_nd = _extract_tag(top_sig[top_sig.find(":") + 1:], "nd")
+        if top_nd and (signing_domain is None
+                       or top_nd.strip().lower() != signing_domain.lower()):
+            raise SigningRefused(
+                f"not signing: top signature nd={top_nd.strip()} names "
+                f"another domain")
 
     result = dkim2verify.verify_message(
         raw, dns_data, full_chain=True,
@@ -736,7 +747,8 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
     if (existing_mi or existing_sig) and not skip_upstream_check:
         _gate_upstream(raw, headers, existing_mi, existing_sig, dns_data,
-                       skip_timestamp_check, allow_null_body_recipe)
+                       skip_timestamp_check, allow_null_body_recipe,
+                       signing_domain=domain)
 
     # Determine version numbers
     top_mi = None
