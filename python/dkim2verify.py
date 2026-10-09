@@ -50,6 +50,7 @@ from dkim2sign import (
 from dkim2undo import (
     MalformedRecipe,
     decode_recipes,
+    loads_recipe,
     reconstruct_body,
     reconstruct_headers,
     validate_recipes,
@@ -400,7 +401,7 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
             )
         else:
             try:
-                recipes = json.loads(r_bytes)
+                recipes = loads_recipe(r_bytes)
             except ValueError:
                 # json.JSONDecodeError, and UnicodeDecodeError for a payload
                 # that is not valid UTF-8 (a Perl producer writes Recipe

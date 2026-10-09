@@ -50,7 +50,24 @@ def decode_recipes(mi_hdr: str) -> dict | None:
     r_b64 = _extract_tag(value, "r")
     if not r_b64:
         return None
-    return json.loads(base64.b64decode(r_b64))
+    return loads_recipe(base64.b64decode(r_b64))
+
+
+def _no_duplicate_keys(pairs):
+    obj = {}
+    for k, v in pairs:
+        if k in obj:
+            raise ValueError(f"duplicate JSON object key {k!r}")
+        obj[k] = v
+    return obj
+
+
+def loads_recipe(data):
+    """json.loads for Recipe JSON, refusing an object that gives a key twice
+    (ValueError, as for any invalid JSON): parsers disagree on which value
+    wins, so {"b":[...],"b":null} would be a null body Recipe to some
+    verifiers and signers and a real one to others."""
+    return json.loads(data, object_pairs_hook=_no_duplicate_keys)
 
 
 class MalformedRecipe(ValueError):
