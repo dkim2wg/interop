@@ -30,15 +30,28 @@ function signedFields(fields) {
   return fields.filter((f) => !isUnsignedHeader(f.name) && !SIG_MI_NAMES.has(f.name.toLowerCase()));
 }
 
-// Parse the s= sig-set list into [{selector, alg, sig}], once per signature.
-// The algorithm name is kept byte-for-byte: tag values are case significant
-// (§8), so "RSA-SHA256" is an unknown algorithm, not rsa-sha256. The
-// signature value has its FWS removed (parseTagList already strips WSP).
+// Parse the RAW s= value (FWS intact) into [{selector, alg, sig}], once per
+// signature, or null on a §8.9 syntax error. Each item is exactly three
+// parts on ":"; FWS around the comma and colons is trimmed and FWS inside
+// the signature value removed, but none may sit inside the selector
+// ([A-Za-z0-9_-]+ labels joined by ".") or the algorithm ([A-Za-z0-9_-]+):
+// "rsa- sha256" is an error, never normalised to rsa-sha256. The algorithm
+// name is kept byte-for-byte: tag values are case significant (§8), so
+// "RSA-SHA256" is an unknown algorithm, not rsa-sha256.
+const SELECTOR = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
+const SIG_NAME = /^[A-Za-z0-9_-]+$/;
 function parseSigSets(sValue) {
-  return (sValue || '').split(',').map((set) => {
-    const [selector, alg, sig] = set.split(':');
-    return { selector: (selector || '').trim(), alg: (alg || '').trim(), sig: (sig || '').replace(/[ \t\r\n]+/g, '') };
-  });
+  const trim = (x) => x.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+  const out = [];
+  for (const set of sValue.split(',')) {
+    const parts = set.split(':');
+    if (parts.length !== 3) return null;
+    const selector = trim(parts[0]);
+    const alg = trim(parts[1]);
+    if (!SELECTOR.test(selector) || !SIG_NAME.test(alg)) return null;
+    out.push({ selector, alg, sig: parts[2].replace(/[ \t\r\n]+/g, '') });
+  }
+  return out;
 }
 
 // §3.4: the implemented signature algorithms, exactly as written (§8.9).
@@ -236,11 +249,18 @@ async function verifyOnce(raw, opts = {}) {
     // §7: tag identifiers are case insignificant and there MUST be only one
     // of each kind: h= twice, or h= and H=, is a syntax error (never first-
     // or last-one-wins).
-    if (duplicateTag(mi.tags)) structErr.push(`PERMERROR Message-Instance m=${m} syntax error`);
+    // §7/§7.3: a fragment that is not a well-formed tag, or an h= hash-set
+    // that is not name:digest:digest, makes the whole field a syntax error.
+    let hSyntax = false;
+    const hTag = mi.tags.find((t) => t.tag === 'h');
+    if (hTag) { try { parseHashSets(rawTagValue(hTag)); } catch (e) { hSyntax = true; } }
+    if (duplicateTag(mi.tags) || mi.syntaxError || hSyntax) structErr.push(`PERMERROR Message-Instance m=${m} syntax error`);
   }
   for (const i of sigNums) {
     const s = signatures[i];
     // §8: tags may appear in any order but MUST be only one of each kind.
+    // §8: a fragment that is not a well-formed tag is a syntax error.
+    if (s.syntaxError) structErr.push(`PERMERROR DKIM2-Signature i=${i} syntax error`);
     const dupS = duplicateTag(s.tags);
     if (dupS) structErr.push(`DKIM2-Signature i=${i} tag=${dupS} appears more than once`);
     // §8.4: t= is 1*DIGIT. Checked here, whether or not the age check runs
@@ -357,7 +377,7 @@ async function verifyOnce(raw, opts = {}) {
       }
     }
     try {
-      const sets = parseHashSets(mi.map.h);
+      const sets = parseHashSets(rawTagValue(mi.tags.find((t) => t.tag === 'h')));
       // spec-06 §7.3: an algorithm MUST NOT be present more than once. This
       // must run before any hash is computed or compared, over the parsed
       // LIST (never a deduplicated map, or a second occurrence would be
@@ -522,15 +542,14 @@ async function verifyOnce(raw, opts = {}) {
       continue;
     }
 
-    const sigSets = parseSigSets(sig.map.s);
+    const sigSets = parseSigSets(rawTagValue(sig.tags.find((t) => t.tag === 's')));
     // §8.9 syntax: the s= value must contain sig-sets, each with a Selector and
     // an algorithm name. An empty/malformed s= is a syntax error (permerror),
     // distinct from a well-formed sig-set naming an unsupported algorithm
     // (algorithm_only_future), which is a plain 'fail' below.
-    const sSyntaxOk = (sig.map.s || '').trim() !== '' && sigSets.every((ss) => ss.selector && ss.alg);
-    if (!sSyntaxOk) {
+    if (!sigSets) {
       level.result = 'permerror';
-      level.detail = `DKIM2-Signature i=${i} syntax error`;
+      level.detail = `PERMERROR DKIM2-Signature i=${i} syntax error`;
       bump('permerror');
       levels.push(level);
       continue;

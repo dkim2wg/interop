@@ -9,7 +9,10 @@ export function keyName(selector, domain) {
 }
 
 const WSP = /^[ \t\r\n]*$/;
-const TAG_SPEC = /^[ \t\r\n]*([A-Za-z][A-Za-z0-9_]*)[ \t\r\n]*=([\s\S]*)$/;
+// The value, unknown tags included, is RFC 6376 §3.2 tag-value: VALCHARs
+// (%x21-3A / %x3C-7E) with WSP/FWS only between them, so a NUL, DEL or
+// 8-bit byte anywhere is a syntax error.
+const TAG_SPEC = /^[ \t\r\n]*([A-Za-z][A-Za-z0-9_]*)[ \t\r\n]*=([ \t\r\n]*(?:[\x21-\x3a\x3c-\x7e](?:[ \t\r\n]*[\x21-\x3a\x3c-\x7e])*)?[ \t\r\n]*)$/;
 // A base64string: non-empty, padded with "=" to a multiple of four (§2.13).
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/;
 
