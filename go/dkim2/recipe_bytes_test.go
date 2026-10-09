@@ -389,7 +389,7 @@ func TestRecipeGenerationNeverDescends(t *testing.T) {
 		{[]string{"a", "a", "b", "c"}, []string{"c", "a", "b", "a"}},
 	}
 	for _, tc := range bodyCases {
-		steps := diffLines(tc.before, tc.after)
+		steps, _ := bodyRecipeSteps(tc.before, tc.after, MaxRecipeLiterals)
 		if err := validateRecipeSteps(steps, len(tc.after)); err != nil {
 			t.Errorf("%v -> %v: generated an invalid recipe %+v: %v", tc.before, tc.after, steps, err)
 			continue

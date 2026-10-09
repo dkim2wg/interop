@@ -5,8 +5,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <stdint.h>
 
-typedef struct { const char *ptr; size_t len; } line_t;
+typedef dkim2_line_t line_t;
 
 static line_t *split_lines(const char *body, size_t bodylen, int *n_out) {
     int cnt = 0;
@@ -489,68 +490,247 @@ static void add_copy(cJSON *steps, cJSON **cur, int start, int end) {
     *cur = NULL;
 }
 
-static int body_run(const line_t *nw, int ni, int n_new,
-                    const line_t *od, int oi, int n_old) {
-    int run = 0;
-    while (ni + run < n_new && oi + run < n_old &&
-           nw[ni + run].len == od[oi + run].len &&
-           memcmp(nw[ni + run].ptr, od[oi + run].ptr, nw[ni + run].len) == 0)
-        run++;
-    return run;
+/* ---- Capped Myers body diff ----
+   A direct port of "Exact pseudocode (normative for every port)" in
+   docs/superpowers/specs/2026-10-09-capped-myers-body-diff-design.md; the
+   comments name the pseudocode's variables. Every implementation must make
+   the same tie-breaks so that all produce identical recipes
+   (vectors/body-diff.json). */
+
+static int line_eq(const line_t *x, const line_t *y) {
+    return x->len == y->len && memcmp(x->ptr, y->ptr, x->len) == 0;
+}
+
+static uint64_t line_hash(const line_t *l) {
+    uint64_t h = 1469598103934665603ULL;               /* FNV-1a */
+    for (size_t i = 0; i < l->len; i++) {
+        h ^= (unsigned char)l->ptr[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+/* Intern the n lines of `ls` into `ids` (equal lines, equal ids) using the
+   open-addressed table `slot` (size mask+1, -1 = empty) whose entries index
+   `rep`, the first line seen with each id. Returns the new id count. */
+static int intern_lines(const line_t *ls, int n, int *ids, int *slot,
+                        size_t mask, const line_t **rep, int nid) {
+    for (int i = 0; i < n; i++) {
+        size_t h = (size_t)line_hash(&ls[i]) & mask;
+        for (;;) {
+            int s = slot[h];
+            if (s < 0) { slot[h] = nid; rep[nid] = &ls[i]; ids[i] = nid++; break; }
+            if (line_eq(rep[s], &ls[i])) { ids[i] = s; break; }
+            h = (h + 1) & mask;
+        }
+    }
+    return nid;
+}
+
+int dkim2_body_diff(const line_t *cur, int C, const line_t *prev, int P,
+                    int L, dkim2_diff_step_t **steps_out, int *n_steps_out) {
+    int pre = 0;
+    while (pre < C && pre < P && line_eq(&cur[pre], &prev[pre])) pre++;
+    if (pre == C && pre == P) return DKIM2_DIFF_IDENTICAL;
+    int suf = 0;
+    while (suf < C - pre && suf < P - pre &&
+           line_eq(&cur[C - 1 - suf], &prev[P - 1 - suf])) suf++;
+
+    const line_t *a = cur + pre, *b = prev + pre;
+    int n = C - pre - suf, m = P - pre - suf;
+
+    int rc = DKIM2_DIFF_ERROR;
+    int *ida = NULL, *idb = NULL, *slot = NULL, *cnt_a = NULL, *cnt_b = NULL;
+    int *A = NULL, *ai = NULL, *B = NULL, *bj = NULL, *match = NULL;
+    int *V = NULL, *trace = NULL, *src = NULL;
+    size_t *trace_off = NULL;
+    const line_t **rep = NULL;
+    dkim2_diff_step_t *steps = NULL;
+
+    /* Intern a and b to integer ids and count occurrences. */
+    size_t tsize = 16;
+    while (tsize < 2 * (size_t)(n + m) + 1) tsize <<= 1;
+    ida = malloc(((size_t)n + 1) * sizeof *ida);
+    idb = malloc(((size_t)m + 1) * sizeof *idb);
+    slot = malloc(tsize * sizeof *slot);
+    rep = malloc(((size_t)(n + m) + 1) * sizeof *rep);
+    if (!ida || !idb || !slot || !rep) goto out;
+    memset(slot, 0xff, tsize * sizeof *slot);
+    int nid = intern_lines(a, n, ida, slot, tsize - 1, rep, 0);
+    nid = intern_lines(b, m, idb, slot, tsize - 1, rep, nid);
+    cnt_a = calloc((size_t)nid + 1, sizeof *cnt_a);
+    cnt_b = calloc((size_t)nid + 1, sizeof *cnt_b);
+    if (!cnt_a || !cnt_b) goto out;
+    for (int i = 0; i < n; i++) cnt_a[ida[i]]++;
+    for (int j = 0; j < m; j++) cnt_b[idb[j]]++;
+
+    /* Discard lines that cannot be in the LCS. */
+    A = malloc(((size_t)n + 1) * sizeof *A);
+    ai = malloc(((size_t)n + 1) * sizeof *ai);
+    B = malloc(((size_t)m + 1) * sizeof *B);
+    bj = malloc(((size_t)m + 1) * sizeof *bj);
+    match = malloc(((size_t)m + 1) * sizeof *match);
+    if (!A || !ai || !B || !bj || !match) goto out;
+    int N = 0, M = 0;
+    for (int i = 0; i < n; i++)
+        if (cnt_b[ida[i]] > 0) { A[N] = ida[i]; ai[N] = i; N++; }
+    for (int j = 0; j < m; j++)
+        if (cnt_a[idb[j]] > 0) { B[M] = idb[j]; bj[M] = j; M++; }
+    long long u = m - M;
+    long long floor_lits = u;
+    for (int id = 0; id < nid; id++)
+        if (cnt_a[id] > 0 && cnt_b[id] > cnt_a[id]) floor_lits += cnt_b[id] - cnt_a[id];
+    if (floor_lits > L) { rc = DKIM2_DIFF_TOO_BIG; goto out; }
+
+    for (int y = 0; y < M; y++) match[y] = -1;
+    if (N > 0 && M > 0) {
+        long long dmax_ll = (long long)N - M + 2 * ((long long)L - u);
+        if (dmax_ll > (long long)N + M) dmax_ll = (long long)N + M;
+        if (dmax_ll < 0) { rc = DKIM2_DIFF_TOO_BIG; goto out; }
+        int dmax = (int)dmax_ll;
+        /* V[k] for k in [-dmax-1, dmax+1]: stored at V[k + off]. */
+        int off = dmax + 1;
+        V = calloc(2 * (size_t)dmax + 3, sizeof *V);
+        trace_off = malloc(((size_t)dmax + 1) * sizeof *trace_off);
+        if (!V || !trace_off) goto out;
+        /* trace[d] keeps only k in [-d-1, d+1] (2d+3 values), packed:
+           trace[d][k] = trace[trace_off[d] + k + d + 1]. */
+        size_t tlen = 0, tcap = 0;
+        long long work = 0;
+        int D = -1;
+        for (int d = 0; d <= dmax && D < 0; d++) {
+            size_t need = tlen + 2 * (size_t)d + 3;
+            if (need > tcap) {
+                size_t nc = tcap ? tcap : 1024;
+                while (nc < need) nc *= 2;
+                int *nt = realloc(trace, nc * sizeof *nt);
+                if (!nt) goto out;
+                trace = nt; tcap = nc;
+            }
+            trace_off[d] = tlen;
+            memcpy(trace + tlen, V + off - d - 1, (2 * (size_t)d + 3) * sizeof *V);
+            tlen = need;
+            for (int k = -d; k <= d; k += 2) {
+                int x;
+                if (k == -d || (k != d && V[off + k - 1] < V[off + k + 1]))
+                    x = V[off + k + 1];                 /* down */
+                else
+                    x = V[off + k - 1] + 1;             /* right */
+                int y = x - k;
+                while (x < N && y < M && A[x] == B[y]) { x++; y++; work++; }
+                V[off + k] = x;
+                if (++work > DKIM2_MAX_DIFF_WORK) { rc = DKIM2_DIFF_TOO_BIG; goto out; }
+                if (x == N && y == M) { D = d; break; }
+            }
+        }
+        if (D < 0) { rc = DKIM2_DIFF_TOO_BIG; goto out; }
+
+        /* FOUND(D): backtrack. */
+        int x = N, y = M;
+        for (int d = D; d >= 1; d--) {
+            const int *T = trace + trace_off[d] + d + 1;   /* T[k], k in [-d-1, d+1] */
+            int k = x - y;
+            int down = (k == -d || (k != d && T[k - 1] < T[k + 1]));
+            int pk = down ? k + 1 : k - 1;
+            int px = T[pk], py = px - pk;
+            int sx = down ? px : px + 1;
+            while (x > sx) { x--; y--; match[y] = x; }
+            x = px; y = py;
+        }
+        while (x > 0) { x--; y--; match[y] = x; }
+    }
+
+    /* src[j]: the cur line (0-based) that previous line j copies, or -1. */
+    src = malloc(((size_t)P + 1) * sizeof *src);
+    steps = malloc(((size_t)P + 1) * sizeof *steps);
+    if (!src || !steps) goto out;
+    for (int j = 0; j < P; j++)
+        src[j] = j < pre ? j : j >= P - suf ? j - P + C : -1;
+    for (int y = 0; y < M; y++)
+        if (match[y] >= 0) src[pre + bj[y]] = pre + ai[match[y]];
+
+    int ns = 0, literals = 0;
+    for (int j = 0; j < P; j++) {
+        int i = src[j];
+        if (i < 0) {
+            steps[ns++] = (dkim2_diff_step_t){ 1, j, j };
+            literals++;
+        } else if (ns > 0 && !steps[ns - 1].lit && steps[ns - 1].to == i) {
+            steps[ns - 1].to = i + 1;
+        } else {
+            steps[ns++] = (dkim2_diff_step_t){ 0, i + 1, i + 1 };
+        }
+    }
+    if (literals > L) { rc = DKIM2_DIFF_TOO_BIG; goto out; }   /* cannot happen */
+
+    *steps_out = steps; steps = NULL;
+    *n_steps_out = ns;
+    rc = DKIM2_DIFF_OK;
+
+out:
+    free(ida); free(idb); free(slot); free(rep); free(cnt_a); free(cnt_b);
+    free(A); free(ai); free(B); free(bj); free(match);
+    free(V); free(trace); free(trace_off); free(src); free(steps);
+    return rc;
 }
 
 char *dkim2_gen_body_recipe(
     const char *old_body, size_t old_len,
     const char *new_body, size_t new_len,
     int *impossible) {
-    if (old_len == new_len && memcmp(old_body, new_body, old_len) == 0) {
-        *impossible = 0;
-        return strdup("{}");
-    }
+    return dkim2_gen_body_recipe_ex(old_body, old_len, new_body, new_len,
+                                    DKIM2_MAX_RECIPE_LITERALS, impossible);
+}
 
+char *dkim2_gen_body_recipe_ex(
+    const char *old_body, size_t old_len,
+    const char *new_body, size_t new_len,
+    int max_literals, int *impossible) {
+    if (max_literals <= 0) max_literals = DKIM2_MAX_RECIPE_LITERALS;
+    *impossible = 0;
+    if (old_len == new_len && memcmp(old_body, new_body, old_len) == 0)
+        return strdup("{}");
+
+    /* old_body is the current body (the copy source); new_body is the
+       previous body the Recipe rebuilds. */
     int n_old = 0, n_new = 0;
     line_t *old_lines = split_lines(old_body, old_len, &n_old);
     line_t *new_lines = split_lines(new_body, new_len, &n_new);
+    dkim2_diff_step_t *ds = NULL;
+    int nds = 0;
+    int rc = (old_lines && new_lines)
+        ? dkim2_body_diff(old_lines, n_old, new_lines, n_new,
+                          max_literals, &ds, &nds)
+        : DKIM2_DIFF_ERROR;
 
-    if (!old_lines || !new_lines) {
-        free(old_lines); free(new_lines);
-        *impossible = 1; return NULL;
-    }
-
-    cJSON *root = cJSON_CreateObject();
-    cJSON *steps = cJSON_CreateArray();
-    cJSON_AddItemToObject(root, "b", steps);
-
-    /* Copy ranges must ascend without overlapping across the list, so only
-       old lines after the previous range's end are candidates; anything
-       earlier is emitted literally (it still round-trips, just less
-       compactly). */
-    int ni = 0, prev_end = 0;
-    cJSON *cur = NULL; int cur_is_b = 0;
-    while (ni < n_new) {
-        int best_old = -1, best_len_found = 0;
-        for (int oi = prev_end; oi < n_old; oi++) {
-            int run = body_run(new_lines, ni, n_new, old_lines, oi, n_old);
-            if (run > best_len_found) { best_len_found = run; best_old = oi; }
+    char *json = NULL;
+    if (rc == DKIM2_DIFF_IDENTICAL) {
+        json = strdup("{}");
+    } else if (rc == DKIM2_DIFF_TOO_BIG) {
+        /* Too many literal lines (or too much work): the null body Recipe,
+           body unrecoverable. */
+        *impossible = 1;
+        json = strdup("{\"b\":null}");
+    } else if (rc == DKIM2_DIFF_OK) {
+        cJSON *root = cJSON_CreateObject();
+        cJSON *steps = cJSON_CreateArray();
+        cJSON_AddItemToObject(root, "b", steps);
+        cJSON *cur = NULL; int cur_is_b = 0;
+        for (int s = 0; s < nds; s++) {
+            if (!ds[s].lit) {
+                add_copy(steps, &cur, ds[s].from, ds[s].to);
+            } else {
+                const char *p = new_lines[ds[s].from].ptr;
+                size_t l = new_lines[ds[s].from].len;
+                while (l > 0 && (p[l-1] == '\n' || p[l-1] == '\r')) l--;
+                add_literal(steps, &cur, &cur_is_b, p, l);
+            }
         }
-
-        if (best_len_found >= 2) {
-            add_copy(steps, &cur, best_old + 1, best_old + best_len_found);
-            prev_end = best_old + best_len_found;
-            ni += best_len_found;
-        } else {
-            const char *p = new_lines[ni].ptr;
-            size_t l = new_lines[ni].len;
-            while (l > 0 && (p[l-1] == '\n' || p[l-1] == '\r')) l--;
-            add_literal(steps, &cur, &cur_is_b, p, l);
-            ni++;
-        }
+        json = cJSON_PrintUnformatted(root);
+        cJSON_Delete(root);
     }
-
-    free(old_lines); free(new_lines);
-    *impossible = 0;
-    char *json = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
+    if (!json) *impossible = 1;
+    free(ds); free(old_lines); free(new_lines);
     return json;
 }
 

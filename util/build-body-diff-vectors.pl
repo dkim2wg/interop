@@ -63,6 +63,12 @@ add('alternating', [('a', 'b') x 50], [('b', 'a') x 50]);
 add('line-count floor', [('x', 'y') x 10], [('y', 'y', 'x') x 10], 5);
 add('repeated block', [qw(a b c a b c a b c)], [qw(c b a c b a)]);
 
+# The work budget, either side of where it runs out. A one-literal Recipe
+# exists for both; only the work count (one per snake step, one per
+# diagonal, checked after each diagonal) separates them.
+add('work budget: just enough', [('x', 'y') x 1413, 'z'], [qw(z x y)]);
+add('work budget: exceeded',    [('x', 'y') x 1414, 'z'], [qw(z x y)]);
+
 # Seeded random cases over small alphabets pin the tie-breaking. A
 # deterministic LCG, not Perl's rand, so the file regenerates identically.
 my $seed = 20261009;

@@ -39,7 +39,8 @@ dkim2_milter.o: dkim2_milter.c
 
 TESTS = tests/test_base64 tests/test_tagparse tests/test_hash \
         tests/test_header tests/test_recipe tests/test_crypto \
-        tests/test_dns tests/test_verify tests/test_null_body
+        tests/test_dns tests/test_verify tests/test_null_body \
+        tests/test_body_diff
 
 GATE_FIXTURES = tests/.gate-fixtures
 
@@ -69,6 +70,9 @@ tests/test_header: tests/test_header.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 tests/test_recipe: tests/test_recipe.c dkim2_recipe.o base64.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+tests/test_body_diff: tests/test_body_diff.c dkim2_recipe.o base64.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 tests/test_crypto: tests/test_crypto.c dkim2_crypto.o base64.o
