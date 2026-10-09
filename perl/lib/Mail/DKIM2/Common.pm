@@ -235,7 +235,43 @@ sub encode_tag_json {
 # Decode a base64 JSON tag value
 sub decode_tag_json {
     my ($b64) = @_;
-    return JSON->new->decode(decode_base64($b64));
+    my $text = decode_base64($b64);
+    my $data = JSON->new->decode($text);
+    # A key given twice in one object is invalid here: JSON parsers disagree
+    # on which value wins (first or last), so {"b":[...],"b":null} would be a
+    # null body Recipe to some verifiers and signers and a real one to others.
+    if (defined(my $k = json_duplicate_key($text))) {
+        die "duplicate JSON object key \"$k\"\n";
+    }
+    return $data;
+}
+
+# The first key that appears twice in one JSON object of $text (already known
+# to be valid JSON), compared after unescaping, or undef.
+sub json_duplicate_key {
+    my ($text) = @_;
+    my $json = JSON->new->allow_nonref;
+    my @stack;   # one entry per open container: undef for an array, a hash of keys for an object
+    my $want_key = 0;
+    pos($text) = 0;
+    while (pos($text) < length $text) {
+        if ($text =~ /\G\s+/gc) { next }
+        if ($text =~ /\G\{/gc) { push @stack, {}; $want_key = 1; next }
+        if ($text =~ /\G\[/gc) { push @stack, undef; $want_key = 0; next }
+        if ($text =~ /\G[\}\]]/gc) { pop @stack; $want_key = 0; next }
+        if ($text =~ /\G,/gc) { $want_key = ref $stack[-1] ? 1 : 0; next }
+        if ($text =~ /\G:/gc) { next }
+        if ($text =~ /\G("(?:[^"\\]|\\.)*")/gcs) {
+            if ($want_key && ref $stack[-1]) {
+                my $k = $json->decode($1);
+                return $k if $stack[-1]{$k}++;
+                $want_key = 0;
+            }
+            next;
+        }
+        $text =~ /\G[^\s,:\[\]\{\}"]+/gc or last;   # number, true, false, null
+    }
+    return;
 }
 
 # Fold a header line at 72 characters.
@@ -815,7 +851,8 @@ of RFC 8463 or as DER. Returns undef for a record it cannot parse.
 
 =head2 encode_tag_json($data), decode_tag_json($base64)
 
-Canonical JSON in base64, the encoding of the C<r=> Recipe tag.
+Canonical JSON in base64, the encoding of the C<r=> Recipe tag. C<decode_tag_json> dies on invalid JSON, including an object that gives
+the same key twice (parsers disagree on which value wins).
 
 =head2 digest64($digest_object)
 
