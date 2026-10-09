@@ -42,6 +42,7 @@ from dkim2sign import (
     _get_version_from_mi,
     _get_seq_from_sig,
     _sig_has_valid_i,
+    _is_ascii_digits,
     chain_range_error,
     b64,
     b64json,
@@ -66,21 +67,57 @@ def load_dns_json(path: str) -> dict:
     return json.loads(Path(path).read_text())
 
 
-def parse_dkim1_txt(txt: str) -> dict:
-    """Parse a DKIM1 TXT record into a dict of tag -> value."""
-    result = {}
-    for part in txt.split(";"):
-        part = part.strip()
-        if "=" in part:
-            k, v = part.split("=", 1)
-            result[k.strip()] = v.strip()
-    return result
+class KeyRecordError(Exception):
+    """A key record that exists but MUST NOT be used (spec-06 §11.5).
+
+    `what` completes "public key <selector> ...": "has multiple records",
+    "has a syntax error", "has been revoked" or "algorithm mismatch".
+    """
+
+    def __init__(self, what: str):
+        super().__init__(what)
+        self.what = what
+
+
+_KEY_TAG_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+_WSP = " \t\r\n"
+
+
+def parse_key_record(txt: str) -> dict | None:
+    """Parse a key record as a whole tag-list (dkim2-dns-00 §3.2, §3.4.1).
+
+    Returns tag -> value, or None if the record is not a valid tag-list: a
+    spec that is not `name = value`, a bad tag name, a repeated tag, or a v=
+    that is not the first tag or not exactly "DKIM1". Empty specs (e.g. after
+    a trailing ';') are skipped. Tag names are case sensitive.
+    """
+    tags: dict[str, str] = {}
+    for spec in txt.split(";"):
+        if not spec.strip(_WSP):
+            continue
+        if "=" not in spec:
+            return None
+        name, val = spec.split("=", 1)
+        name = name.strip(_WSP)
+        if not _KEY_TAG_NAME.fullmatch(name) or name in tags:
+            return None
+        tags[name] = val.strip(_WSP)
+    if "v" in tags and (next(iter(tags)) != "v" or tags["v"] != "DKIM1"):
+        return None
+    return tags
 
 
 def lookup_public_key(domain: str, selector: str, dns_data: dict):
-    """Look up a public key from dns.json.
+    """Look up and validate a public key from dns.json.
 
-    Returns (key_object, key_type_str) or raises on failure.
+    dns.json maps domain -> "<selector>._domainkey" -> list of [type, value]
+    records. A TXT value may be a string, or a list of strings: the
+    character-strings of one RR, concatenated with nothing between them
+    (dkim2-dns-00 §3.4.2.2). More than one TXT record is an error.
+
+    Returns (key_object, key_type) with key_type "rsa" or "ed25519".
+    Raises KeyError if there is no record (absent key), KeyRecordError if
+    the record exists but MUST NOT be used.
     """
     domain_records = dns_data.get(domain)
     if not domain_records:
@@ -91,35 +128,40 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
     if not records:
         raise KeyError(f"Selector {selector_key!r} not found for {domain}")
 
-    # records is a list of [type, value] pairs; find the TXT record
-    for rec_type, rec_value in records:
-        if rec_type.lower() == "txt":
-            tags = parse_dkim1_txt(rec_value)
-            key_type = tags.get("k", "rsa")
-            pub_b64 = tags.get("p", "")
-            # h= (hash algorithm list) MUST be ignored per spec-06 Section 10.3
-            pub_bytes = base64.b64decode(pub_b64)
+    txts = [v for t, v in records if t.lower() == "txt"]
+    if not txts:
+        raise KeyError(f"No TXT record found for {selector_key}.{domain}")
+    if len(txts) > 1:
+        raise KeyRecordError("has multiple records")
+    txt = txts[0] if isinstance(txts[0], str) else "".join(txts[0])
 
-            if key_type == "ed25519":
-                # Ed25519 public key is raw 32 bytes
-                # But some implementations prefix with algorithm identifier bytes
-                # Try raw first, then as DER
-                if len(pub_bytes) == 32:
-                    return ed25519.Ed25519PublicKey.from_public_bytes(pub_bytes), "ed25519"
-                else:
-                    # May have DER prefix - try stripping it
-                    # Ed25519 DER prefix is 12 bytes: 30 2a 30 05 06 03 2b 65 70 03 21 00
-                    if len(pub_bytes) > 32:
-                        raw = pub_bytes[-32:]
-                        return ed25519.Ed25519PublicKey.from_public_bytes(raw), "ed25519"
-                    return ed25519.Ed25519PublicKey.from_public_bytes(pub_bytes), "ed25519"
-            elif key_type in ("rsa", "rsa-sha256"):
-                # RSA public key is DER-encoded SubjectPublicKeyInfo
-                return serialization.load_der_public_key(pub_bytes), "rsa"
-            else:
-                raise ValueError(f"Unsupported key type: {key_type}")
+    tags = parse_key_record(txt)
+    if tags is None or "p" not in tags:
+        raise KeyRecordError("has a syntax error")
+    # h= (retired), n=, s=, t= and unknown tags are ignored (spec-06 §11.5).
+    p = _strip_fws(tags["p"])
+    if p == "":
+        raise KeyRecordError("has been revoked")
+    key_type = tags.get("k", "rsa")
+    if key_type not in ("rsa", "ed25519"):
+        raise KeyRecordError("algorithm mismatch")
+    pub_bytes = _b64decode_strict(p)
+    if not pub_bytes:
+        raise KeyRecordError("has a syntax error")
 
-    raise KeyError(f"No TXT record found for {selector_key}.{domain}")
+    if key_type == "ed25519":
+        # RFC 8463: p= is the raw 32-byte Ed25519 public key.
+        if len(pub_bytes) != 32:
+            raise KeyRecordError("has a syntax error")
+        return ed25519.Ed25519PublicKey.from_public_bytes(pub_bytes), "ed25519"
+    # RSA: DER-encoded SubjectPublicKeyInfo, which must hold an RSA key.
+    try:
+        key = serialization.load_der_public_key(pub_bytes)
+    except (ValueError, TypeError):
+        raise KeyRecordError("has a syntax error")
+    if not isinstance(key, rsa.RSAPublicKey):
+        raise KeyRecordError("has a syntax error")
+    return key, "rsa"
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +410,16 @@ def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
     return sets
 
 
+def _mi_duplicate_tag_error(mi_hdr: str) -> str | None:
+    """spec-06 §7: tag identifiers are case insignificant and there MUST be
+    only one of each kind, so `h=..; H=..` or `m=1; M=1` is a syntax error."""
+    names = _tag_names(_get_header_value(mi_hdr))  # lowercased
+    if len(set(names)) != len(names):
+        m_val = _extract_tag(_get_header_value(mi_hdr), "m")
+        return f"PERMERROR Message-Instance m={m_val} syntax error"
+    return None
+
+
 def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
                             headers_only: bool = False) -> list[str]:
     """Verify the hashes in a Message-Instance header against the message.
@@ -381,6 +433,10 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
     errors = []
     value = _get_header_value(mi_hdr)
     m_val = _extract_tag(value, "m")
+
+    dup = _mi_duplicate_tag_error(mi_hdr)
+    if dup:
+        return [dup]
 
     # §11.2: a malformed r= payload is reported specifically, regardless of
     # what else is wrong with this Message-Instance header. Two distinct
@@ -506,6 +562,31 @@ def _check_signature_duplicates(sig_items, i_val) -> list[str]:
     return errors
 
 
+# Implemented signature algorithms (spec-06 §3) -> the k= key type they need.
+SIG_ALGS = {"rsa-sha256": "rsa", "ed25519-sha256": "ed25519"}
+
+
+def _blank_signature_values(sig_hdr: str) -> str:
+    """The incomplete (signed) form of a DKIM2-Signature header: every s=
+    item's signature value removed, everything else byte-for-byte."""
+    colon = sig_hdr.find(":")
+    parts = sig_hdr[colon + 1:].split(";")
+    for idx, part in enumerate(parts):
+        if "=" not in part:
+            continue
+        name, val = part.split("=", 1)
+        if name.strip().lower() != "s":
+            continue
+        inner = val.strip()
+        lead = val[:len(val) - len(val.lstrip())]
+        trail = val[len(val.rstrip()):]
+        blanked = ",".join(":".join(item.split(":", 2)[:2]) + ":"
+                           for item in inner.split(","))
+        parts[idx] = f"{name}={lead}{blanked}{trail}"
+        break
+    return sig_hdr[:colon + 1] + ";".join(parts)
+
+
 def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
                            other_sig_headers: list[str],
                            dns_data: dict,
@@ -553,6 +634,10 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     if not nd_val and not (mf_val and rt_val):
         return [f"DKIM2-Signature i={i_val} tag=mf missing"]
 
+    # §8.4: sig-t-tag = 1*DIGIT. Checked even when the age check is skipped.
+    if not _is_ascii_digits(t_val0):
+        return [f"PERMERROR DKIM2-Signature i={i_val} syntax error"]
+
     # §7.3 SHOULD: n= nonce must not exceed 64 characters
     n_val = _extract_tag(value, "n")
     if n_val and len(n_val) > 64:
@@ -561,15 +646,12 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     # §10.3 SHOULD: reject signatures more than 14 days old or in the future
     t_val = _extract_tag(value, "t")
     if t_val and not skip_timestamp_check:
-        try:
-            ts = int(t_val)
-            now = int(time.time())
-            if ts > now + 300:
-                return [f"DKIM2-Signature i={i_val}: timestamp is in the future"]
-            if now > ts + 14 * 24 * 3600:
-                return [f"DKIM2-Signature i={i_val}: signature has expired (age > 14 days)"]
-        except ValueError:
-            pass
+        ts = int(t_val)  # 1*DIGIT (checked above); Python ints don't overflow
+        now = int(time.time())
+        if ts > now + 300:
+            return [f"DKIM2-Signature i={i_val}: timestamp is in the future"]
+        if now > ts + 14 * 24 * 3600:
+            return [f"DKIM2-Signature i={i_val}: signature has expired (age > 14 days)"]
 
     # Relaxed d<->mf per-sig check (mirrors Perl Verifier.pm:326-333): the
     # envelope MAIL FROM domain must equal or be a subdomain of d=, unless
@@ -606,16 +688,27 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     if dup_errors:
         return dup_errors
 
+    # §3.4/§8.9: only rsa-sha256 and ed25519-sha256 (byte-for-byte; tag
+    # values are case significant, §8) are implemented. Items naming any
+    # other algorithm are ignored entirely -- no key lookup, no crypto. A
+    # known item's value must be non-empty base64 (FWS removed), checked
+    # here before any key lookup.
+    if not any(alg in SIG_ALGS for _, alg, _ in sig_items):
+        return [f"FAIL DKIM2-Signature i={i_val} has no signature with a "
+                f"supported algorithm"]
+    usable_items = []
+    for selector, algorithm, sig_value_b64 in sig_items:
+        if algorithm not in SIG_ALGS:
+            continue
+        sig_bytes = _b64decode_strict(sig_value_b64)
+        if not sig_bytes:
+            return [f"PERMERROR DKIM2-Signature i={i_val} syntax error"]
+        usable_items.append((selector, algorithm, sig_bytes))
+
     # Build the incomplete signature (the signed form) by blanking each s=
-    # item's signature value in place.  This is independent of tag order and
-    # whitespace: we simply remove the base64 signature bytes wherever they
-    # appear, leaving selector:algorithm: and every other tag untouched.
-    incomplete_sig = sig_hdr
-    for selector, algorithm, sig_value_b64 in sig_items_raw:
-        incomplete_sig = incomplete_sig.replace(
-            f"{selector}:{algorithm}:{sig_value_b64}",
-            f"{selector}:{algorithm}:",
-        )
+    # item's signature value in place, leaving selector:algorithm: and every
+    # other tag untouched. One pass over the header (linear in its length).
+    incomplete_sig = _blank_signature_values(sig_hdr)
 
     mi_version = int(m_val)
     relevant_mi = sorted(
@@ -633,57 +726,56 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     data = b"".join(canon)
     digest = hashlib.sha256(data).digest()
 
-    ALG_ALIASES = {"rsa-sha256": "rsa", "ed25519-sha256": "ed25519"}
-
-    # §10.6: ALL s= items must verify; any crypto failure is an error
-    verified_any = False
-    item_err = None
-    for selector, algorithm, sig_value_b64 in sig_items:
+    # Spec "E" outcome rules (§11.5, §11.6). Fetch every implemented item's
+    # key first: a record that is present but unusable makes the whole
+    # signature a PERMERROR even if another item would verify (all items
+    # MUST be checked; a revoked key is not one we may skip). An absent
+    # record only skips its item.
+    keyed = []
+    first_absent = None
+    for selector, algorithm, sig_bytes in usable_items:
         try:
             public_key, key_type = lookup_public_key(d_val, selector, dns_data)
-        except (KeyError, ValueError) as e:
-            if item_err is None:
-                item_err = f"DKIM2-Signature i={i_val}: key lookup failed: {e}"
+        except KeyRecordError as e:
+            return [f"PERMERROR DKIM2-Signature i={i_val} public key {selector} {e.what}"]
+        except KeyError:
+            if first_absent is None:
+                first_absent = selector
             continue
 
-        # §3.2: RSA keys MUST be at least 1024 bits; reject shorter keys
-        # (permerror) rather than trusting a weak signature.
+        if SIG_ALGS[algorithm] != key_type:
+            return [f"PERMERROR DKIM2-Signature i={i_val} public key "
+                    f"{selector} algorithm mismatch"]
+
+        # §3.2: RSA keys MUST be at least 1024 bits. A shorter key is a
+        # present-but-unusable key: PERMERROR for the whole signature.
         if key_type == "rsa" and getattr(public_key, "key_size", 0) < 1024:
-            item_err = (
-                f"DKIM2-Signature i={i_val}: RSA key too short "
-                f"({public_key.key_size} bits < 1024, §3.2)"
-            )
-            continue
+            return [f"PERMERROR DKIM2-Signature i={i_val} public key "
+                    f"{selector} is shorter than 1024 bits"]
+        keyed.append((selector, key_type, public_key, sig_bytes))
 
-        norm_algorithm = ALG_ALIASES.get(algorithm, algorithm)
-        if norm_algorithm != key_type:
-            item_err = (
-                f"DKIM2-Signature i={i_val}: algorithm mismatch: "
-                f"sig says {algorithm!r}, key is {key_type!r}"
-            )
-            continue
+    if not keyed:
+        return [f"PERMERROR DKIM2-Signature i={i_val} public key "
+                f"{first_absent} does not exist"]
 
-        sig_bytes = base64.b64decode(sig_value_b64)
+    # Verify every item that has a key; any failure is FAIL naming the
+    # Selector (§11.6).
+    failed = []
+    for selector, key_type, public_key, sig_bytes in keyed:
         try:
-            if norm_algorithm == "ed25519":
+            if key_type == "ed25519":
                 public_key.verify(sig_bytes, digest)
-            elif norm_algorithm == "rsa":
+            else:
                 public_key.verify(
                     sig_bytes,
                     digest,
                     padding.PKCS1v15(),
                     utils.Prehashed(hashes.SHA256()),
                 )
-            else:
-                item_err = f"DKIM2-Signature i={i_val}: unsupported algorithm: {algorithm}"
-                continue
-        except Exception as e:
-            errors.append(f"DKIM2-Signature i={i_val}: signature verification FAILED: {e}")
-            return errors
-        verified_any = True
-
-    if not verified_any:
-        errors.append(item_err or f"DKIM2-Signature i={i_val}: no verifiable signature items")
+        except Exception:
+            failed.append(selector)
+    if failed:
+        errors.append(f"FAIL DKIM2-Signature i={i_val} {failed[0]} incorrect signature")
 
     return errors
 
@@ -707,6 +799,12 @@ def _classify_status(errors: list[str]) -> str:
         return 'none'
     if 'temperror' in e:
         return 'temperror'
+    # A self-declared §11 PERMERROR is a permerror whatever its wording
+    # ("... public key sel algorithm mismatch" is not a crypto failure).
+    if e.startswith('permerror'):
+        return 'permerror'
+    if e.startswith('fail'):
+        return 'fail'
     # Crypto/hash/custody failures
     if any(k in e for k in ('failed', 'mismatch', 'break', 'expired', 'not match')):
         return 'fail'
@@ -777,6 +875,10 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     for h in mi_headers:
         if _extract_tag(_get_header_value(h), "m") is None:
             msg = "PERMERROR Message-Instance has a malformed m= tag"
+            return VerifyResult(ok=False, status='permerror', failing_i=None,
+                                domain=None, message=msg, errors=[msg])
+        msg = _mi_duplicate_tag_error(h)
+        if msg:
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
 
