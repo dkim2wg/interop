@@ -10,8 +10,9 @@ use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Signature;
 
-sub _i { my $h = shift // ''; $h =~ /\bi=(\d+)/ ? 0 + $1 : 0 }
-sub _m { my $h = shift // ''; $h =~ /\bm=(\d+)/ ? 0 + $1 : 0 }
+# i= / m= of a field value; tag names are case insignificant (spec-06 §7, §8).
+sub _i { my $h = shift // ''; $h =~ /(?:\A|;)\s*i\s*=\s*(\d+)/i ? 0 + $1 : 0 }
+sub _m { my $h = shift // ''; $h =~ /(?:\A|;)\s*m\s*=\s*(\d+)/i ? 0 + $1 : 0 }
 
 # --- parsed-tag breakdown for the validator UI ---------------------------
 # A compact, human-readable rendering of every tag in a DKIM2-Signature or

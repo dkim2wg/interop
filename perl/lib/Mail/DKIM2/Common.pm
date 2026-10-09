@@ -411,7 +411,7 @@ sub mi_version_tag {
     $header = $$header if ref($header);
     return unless defined $header;
     for my $part (split /;/, $header) {
-        next unless $part =~ /\A\s*m\s*=(.*)\z/s;
+        next unless $part =~ /\A\s*m\s*=(.*)\z/si;    # tag names are case insignificant (§7)
         (my $v = $1) =~ s/\s//g;
         return $v;
     }

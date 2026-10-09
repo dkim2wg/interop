@@ -290,17 +290,23 @@ sub parse {
     # Strip leading whitespace
     $header =~ s/^\s+//;
 
-    # Parse tag-value format: m=N; h=...; r=...
-    my %tags;
+    # Parse tag-value format: m=N; h=...; r=... Tag identifiers are case
+    # insignificant and there MUST be only one of each kind (spec-06 §7), so
+    # names are lowercased, and a repeat in any case is a syntax error --
+    # never a silent overwrite, which let a wrong h= ahead of the right one
+    # pass (review R5).
+    my (%tags, $dup);
     for my $part (split /\s*;\s*/, $header) {
         next unless $part =~ /^(\w+)\s*=\s*(.*)/s;
-        my ($name, $val) = ($1, $2);
+        my ($name, $val) = (lc $1, $2);
         $val =~ s/\s//gs;
+        $dup = 1 if exists $tags{$name};
         $tags{$name} = $val;
     }
 
     die "missing m= tag in Message-Instance header"
         unless exists $tags{m};
+    die "PERMERROR Message-Instance m=$tags{m} syntax error\n" if $dup;
     $self->{bits}{m} = $tags{m};
 
     # spec-06 §7.3: h= is a list of hash-sets

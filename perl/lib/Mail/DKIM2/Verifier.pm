@@ -43,7 +43,7 @@ sub _extract_mi_hash_sets {
     my ($raw) = @_;
     $raw =~ s/^[^:]+://;        # strip "Message-Instance:" field name
     $raw =~ s/\r?\n[ \t]/ /g;   # unfold continuation lines
-    return [] unless $raw =~ /\bh=([^;]*)/;
+    return [] unless $raw =~ /(?:\A|;)\s*h\s*=([^;]*)/i;    # §7: any case
     return Mail::DKIM2::MessageInstance::parse_hash_sets($1);
 }
 
@@ -610,21 +610,27 @@ sub _verify_signature {
         return 0;
     }
 
-    # §10.3 SHOULD: reject signatures more than 14 days old or in the future
+    # §8.4: t= is 1*DIGIT. A malformed value is a syntax error even when the
+    # age check is skipped; it used to numify to 0 and skip that check.
+    my $ts = $signature->timestamp;
+    unless (defined $ts && $ts =~ /\A[0-9]+\z/) {
+        $self->{result}  = 'permerror';
+        $self->{details} = "DKIM2-Signature i=$i syntax error (t= is not a decimal timestamp)";
+        return 0;
+    }
+
+    # §11.3 SHOULD: reject signatures more than 14 days old or in the future
     unless ($self->{SkipTimestampCheck}) {
-        my $ts = $signature->timestamp;
-        if (defined $ts && $ts > 0) {
-            my $now = time();
-            if ($ts > $now + 300) {
-                $self->{result}  = 'fail';
-                $self->{details} = "DKIM2-Signature i=$i timestamp is in the future";
-                return 0;
-            }
-            if ($now > $ts + 14 * 24 * 3600) {
-                $self->{result}  = 'fail';
-                $self->{details} = "DKIM2-Signature i=$i has expired (age > 14 days)";
-                return 0;
-            }
+        my $now = time();
+        if ($ts > $now + 300) {
+            $self->{result}  = 'fail';
+            $self->{details} = "DKIM2-Signature i=$i timestamp is in the future";
+            return 0;
+        }
+        if ($now > $ts + 14 * 24 * 3600) {
+            $self->{result}  = 'fail';
+            $self->{details} = "DKIM2-Signature i=$i has expired (age > 14 days)";
+            return 0;
         }
     }
 
