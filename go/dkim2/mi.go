@@ -202,7 +202,7 @@ func parseMI(raw string) (*MessageInstance, error) {
 			}
 			var syntaxErr *json.SyntaxError
 			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
+			if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) || errors.Is(err, errDuplicateJSONKey) {
 				return nil, fmt.Errorf("PERMERROR Message-Instance m=%d contains invalid JSON", m)
 			}
 			return nil, fmt.Errorf("invalid recipe JSON: %w", err)
