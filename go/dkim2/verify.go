@@ -49,7 +49,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
-	// Every i= and m= is bounded by MaxChainLength, before any 1..max walk.
+	// Every i= and m= is a chain number (chainNumberError), before any 1..max walk.
 	if err := chainRangeError(miHeaders, sigHeaders); err != nil {
 		return nil, err
 	}

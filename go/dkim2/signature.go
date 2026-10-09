@@ -112,29 +112,55 @@ var errUnkeyableSignature = errors.New("PERMERROR DKIM2-Signature has a missing 
 // one, so none may be larger.
 const MaxChainLength = 32
 
-// chainNumberInRange is false for an ASCII-digit i=/m= value above
-// MaxChainLength, or one longer than two digits (never converted, so it
-// cannot overflow).  Values that are not digits are left to the syntax checks.
-func chainNumberInRange(v string) bool {
-	v = strings.TrimSpace(v)
+// MaxChainNumber is the largest number an i= or m= may be written as (at
+// most three digits).  Anything bigger is out of range before it is ever a
+// chain number.
+const MaxChainNumber = 100
+
+func allASCIIDigits(v string) bool {
 	if v == "" {
-		return true
+		return false
 	}
 	for i := 0; i < len(v); i++ {
 		if v[i] < '0' || v[i] > '9' {
-			return true
+			return false
 		}
 	}
-	if len(v) > 2 {
-		return false
+	return true
+}
+
+// chainNumberError is the PERMERROR for an i= or m= value that is not a chain
+// number, or nil (also when the tag is absent, which is left to the callers).
+// 1*DIGIT in ASCII, else malformed (also zero): strconv.Atoi would take "+1".
+// At most three digits and 1..MaxChainNumber, so "01" and "001" are 1 (and
+// nothing is converted that could overflow), and no more than MaxChainLength.
+func chainNumberError(field, tag, v string, present bool) error {
+	if !present {
+		return nil
+	}
+	v = strings.TrimSpace(v)
+	if !allASCIIDigits(v) || strings.TrimLeft(v, "0") == "" {
+		if tag == "i" {
+			return fmt.Errorf("PERMERROR %s has a missing or malformed i= tag", field)
+		}
+		return fmt.Errorf("PERMERROR %s has a malformed %s= tag", field, tag)
+	}
+	if len(v) > 3 {
+		return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
 	}
 	n, _ := strconv.Atoi(v)
-	return n <= MaxChainLength
+	if n > MaxChainNumber {
+		return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
+	}
+	if n > MaxChainLength {
+		return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain length of %d", field, tag, MaxChainLength)
+	}
+	return nil
 }
 
 // chainRangeError is the PERMERROR for the first DKIM2-Signature i= or m=, or
-// Message-Instance m=, above MaxChainLength, or nil.  Raw fields, name
-// included.  Checked before anything walks 1..max for gaps.
+// Message-Instance m=, that is not a chain number (chainNumberError), or nil.
+// Raw fields, name included.  Checked before anything walks 1..max for gaps.
 func chainRangeError(miHeaders, sigHeaders []string) error {
 	type check struct {
 		field, tag string
@@ -150,9 +176,9 @@ func chainRangeError(miHeaders, sigHeaders []string) error {
 			if colon < 0 {
 				continue
 			}
-			if !chainNumberInRange(parseTagValueList(raw[colon+1:]).get(c.tag)) {
-				return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain length of %d",
-					c.field, c.tag, MaxChainLength)
+			tvl := parseTagValueList(raw[colon+1:])
+			if err := chainNumberError(c.field, c.tag, tvl.get(c.tag), tvl.has(c.tag)); err != nil {
+				return err
 			}
 		}
 	}
