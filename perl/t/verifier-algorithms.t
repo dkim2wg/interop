@@ -29,11 +29,11 @@ sub run {
 
 run('rsa-sha256', [['sel1', 'rsa-sha256']], qr/^pass/, 1);
 run('unknown algorithm, correctly signed with RSA',
-    [['sel1', 'future-alg']], qr/^permerror .*no verifiable signature items/, 0);
+    [['sel1', 'future-alg']], qr/^fail .*DKIM2-Signature i=1 has no signature with a supported algorithm/, 0);
 run('RSA-SHA256 is not rsa-sha256',
-    [['sel1', 'RSA-SHA256']], qr/^permerror .*no verifiable signature items/, 0);
+    [['sel1', 'RSA-SHA256']], qr/^fail .*DKIM2-Signature i=1 has no signature with a supported algorithm/, 0);
 run('ed25519-sha256x is not ed25519-sha256',
-    [['sel1', 'ed25519-sha256x']], qr/^permerror .*no verifiable signature items/, 0);
+    [['sel1', 'ed25519-sha256x']], qr/^fail .*DKIM2-Signature i=1 has no signature with a supported algorithm/, 0);
 run('unknown item beside a good one',
     [['sel2', 'future-alg', 'AAAA'], ['sel1', 'rsa-sha256']], qr/^pass/, 1);
 run('known algorithm, value not base64',
@@ -44,6 +44,24 @@ run('known algorithm, base64 missing its padding',
     qr/^permerror .*DKIM2-Signature i=1 syntax error/, 0);
 run('unknown algorithm, value not base64: still ignored',
     [['sel2', 'future-alg', '!!x!!'], ['sel1', 'rsa-sha256']], qr/^pass/, 1);
+
+# spec-06 §11.5: an absent key is a PERMERROR when nothing else can be
+# checked; an item with no key beside one that verifies is skipped.
+{
+    my $absent = sub { $calls++; return undef };
+    $calls = 0;
+    my $v = DKIM2SignedFixture::verify(DKIM2SignedFixture::signed(),
+        PubkeyCallback => $absent);
+    like($v->result_detail,
+        qr/^permerror .*DKIM2-Signature i=1 public key sel1 does not exist/,
+        'only key absent: does not exist');
+    my $some = sub { my ($sig, $idx) = @_;
+        return $sig->selector($idx) eq 'sel1' ? $cb->(@_) : undef };
+    $v = DKIM2SignedFixture::verify(DKIM2SignedFixture::signed(
+            items => [['gone', 'rsa-sha256', 'AAAA'], ['sel1', 'rsa-sha256']]),
+        PubkeyCallback => $some);
+    like($v->result_detail, qr/^pass/, 'one key absent, one verifies: pass');
+}
 
 # A key of the wrong type for the algorithm, from a callback.
 {

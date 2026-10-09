@@ -671,22 +671,38 @@ sub _verify_signature {
         return 0;
     }
 
-    my $verified_any = 0;
+    # The items' outcome, in the order every implementation in this
+    # repository follows (docs/superpowers/specs/
+    # 2026-10-09-verifier-strictness-review-fixes.md, section E).
+    #
+    # §3.4: an algorithm this verifier does not implement is ignored --
+    # before any key lookup, so a list of unknown names costs nothing. Names
+    # match exactly: tag values are case significant (§8), and a name that
+    # is merely like a known one must never be verified as it. A known
+    # algorithm's value must be a padded base64string (§2.13).
+    my @items;
     for my $idx (0 .. $sig_count - 1) {
-        # §3.4: an algorithm this verifier does not implement is ignored --
-        # before any key lookup, so a list of unknown names costs nothing.
-        # Names match exactly: tag values are case significant (§8), and a
-        # name that is merely like a known one must never be verified as it.
         my $alg = $signature->algorithm($idx) // '';
         next unless $IMPLEMENTED_ALG{$alg};
-
-        # A known algorithm's value must be a signature: a padded base64string.
         my $sig_b64 = $signature->signature_value($idx) // '';
         unless (Mail::DKIM2::Common::_is_base64string($sig_b64)) {
             $self->{result}  = 'permerror';
             $self->{details} = "DKIM2-Signature i=$i syntax error ($alg signature value is not base64)";
             return 0;
         }
+        push @items, [$idx, $alg, $sig_b64];
+    }
+    # §11.6: when every signature that can be checked fails, FAIL -- here
+    # vacuously, as none can be.
+    unless (@items) {
+        $self->{result}  = 'fail';
+        $self->{details} = "DKIM2-Signature i=$i has no signature with a supported algorithm";
+        return 0;
+    }
+
+    my ($verified_any, $first_absent);
+    for my $item (@items) {
+        my ($idx, $alg, $sig_b64) = @$item;
 
         # Get the public key for this signature item.  The fetch is eval'd
         # whichever way the key is sourced: a pubkey callback may end in
@@ -716,16 +732,18 @@ sub _verify_signature {
                 $self->{details} = "DKIM2-Signature i=$i public key $sel $1";
                 return 0;
             }
-            # A transient DNS failure is a TEMPERROR per spec-06 §10 —
-            # retryable, not a permanent "no verifiable signature items", and
-            # emphatically not a 'fail', which reads as a forged signature.
+            # A transient DNS failure is a TEMPERROR per spec-06 §10 --
+            # retryable, not a permanent "does not exist", and emphatically
+            # not a 'fail', which reads as a forged signature.
             $self->{result}  = 'temperror';
             $self->{details} = "DKIM2-Signature i=$i public key $sel could not be fetched ($why)";
             return 0;
         }
 
         unless ($pubkey) {
-            # No key for this item -- skip it
+            # No key published for this item: skip it, as long as another
+            # item can be checked (below).
+            $first_absent //= $sel;
             next;
         }
 
@@ -766,17 +784,20 @@ sub _verify_signature {
             return 0;
         }
         unless ($verified) {
+            # §11.6's wording, naming the selector.
             $self->{result} = 'fail';
-            $self->{details} = "signature verification failed for $alg at i=$i";
+            $self->{details} = "DKIM2-Signature i=$i $sel incorrect signature";
             return 0;
         }
 
         $verified_any = 1;
     }
 
+    # §11.5: "a DNS result that indicates the key is absent MUST be reported
+    # as a PERMERROR" -- when no item had a key to check.
     unless ($verified_any) {
         $self->{result} = 'permerror';
-        $self->{details} = "no verifiable signature items at i=$i";
+        $self->{details} = "DKIM2-Signature i=$i public key $first_absent does not exist";
         return 0;
     }
 
