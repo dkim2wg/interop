@@ -48,13 +48,13 @@ def _good_mi_value():
             f"{b64(compute_body_hash(body, 'sha256'))};")
 
 
-def make(items, mi_value=None, t="TS"):
+def make(items, mi_value=None, t="TS", extra=""):
     """items: list of (selector, algorithm, value). value "SIGN:<keysel>" is
     replaced by a real signature with that key over the incomplete header."""
     if t == "TS":
         t = str(int(time.time()))
     mi = "Message-Instance: " + (mi_value or _good_mi_value())
-    pre = f"DKIM2-Signature: i=1; m=1; t={t}; d={D}; mf={MF}; rt={RT}; s="
+    pre = f"DKIM2-Signature: i=1; m=1; t={t}; d={D}; mf={MF}; rt={RT}; {extra}s="
     incomplete = pre + ",".join(f"{s}:{a}:" for s, a, _ in items) + ";"
     vals = []
     for s, a, v in items:
@@ -383,6 +383,128 @@ def test_e_short_rsa_key_is_permerror_even_if_other_verifies():
         r = verify(make(items), dns)
         assert r.message == "PERMERROR DKIM2-Signature i=1 public key sel2 is shorter than 1024 bits", (items, r)
         assert r.status == "permerror"
+
+# --- F. whole-field syntax (follow-up review) --------------------------------
+
+SIG_SYNTAX = "PERMERROR DKIM2-Signature i=1 syntax error"
+MI_SYNTAX = "PERMERROR Message-Instance m=1 syntax error"
+GOOD = [("sel1", "rsa-sha256", "SIGN:sel1")]
+
+
+@pytest.mark.parametrize("extra", [
+    "junk; ", "9bad=foo; ", "=v; ", "x=a\x00b; ", "x=a\x7fb; ", "x=café; ",
+    "n=café; ", "x-y=1; ",
+])
+def test_f1_bad_sig_tag_fragment_is_syntax_error(extra):
+    r = verify(make(GOOD, extra=extra))
+    assert r.message == SIG_SYNTAX, (extra, r)
+    assert r.status == "permerror"
+
+
+@pytest.mark.parametrize("extra", [
+    "x_y=foo bar; ", "x=; ", ";; ", " x =\r\n\t1 ; ", "x=a\r\n\tb; ",
+])
+def test_f1_wellformed_sig_fragments_pass(extra):
+    r = verify(make(GOOD, extra=extra))
+    assert r.ok, (extra, r)
+
+
+@pytest.mark.parametrize("mk", [
+    lambda g: g + " junk;",
+    lambda g: g + " 9bad=foo;",
+    lambda g: g + " =v;",
+    lambda g: g + " x=a\x00b;",
+    lambda g: g + " x=a\x7fb;",
+    lambda g: g + " x=café;",
+])
+@pytest.mark.parametrize("full_chain", [False, True])
+def test_f1_bad_mi_tag_fragment_is_syntax_error(mk, full_chain):
+    r = verify(make(GOOD, mk(_good_mi_value())), full_chain=full_chain)
+    assert r.message == MI_SYNTAX, r
+    assert r.status == "permerror"
+
+
+def test_f1_wellformed_mi_unknown_tag_and_empty_fragments_pass():
+    mi = _good_mi_value() + " x_y=a b;;"
+    assert verify(make(GOOD, mi)).ok
+    assert verify(make(GOOD, mi), full_chain=True).ok
+
+
+@pytest.mark.parametrize("items", [
+    [("sel1", "rsa- sha256", "SIGN:sel1")],
+    [("sel1", "rsa-\r\n\tsha256", "SIGN:sel1")],
+    [("se l1", "rsa-sha256", "SIGN:sel1")],
+    [("s@l1", "rsa-sha256", "SIGN:sel1")],
+    [("sel1..x", "rsa-sha256", "SIGN:sel1")],
+    [("x", "future alg", "AAAA"), ("sel1", "rsa-sha256", "SIGN:sel1")],
+])
+def test_f2_fws_inside_selector_or_algorithm_is_syntax_error(items):
+    r = verify(make(items))
+    assert r.message == SIG_SYNTAX, (items, r)
+
+
+def test_f2_item_with_too_few_parts_is_syntax_error():
+    raw = make(GOOD).replace(b"; s=sel1:", b"; s=sel2:ed25519-sha256,sel1:")
+    r = verify(raw)
+    assert r.message == SIG_SYNTAX, r
+
+
+def test_f2_fws_around_colons_and_comma_passes():
+    items = [("sel1 ", " rsa-sha256 ", "SIGN:sel1"),
+             ("\r\n\ted25519\r\n\t", "\r\n\ted25519-sha256", "SIGN:ed25519")]
+    r = verify(make(items))
+    assert r.ok, r
+
+
+def _mi_h(h):
+    return f"m=1; h={h};"
+
+
+def _hashes():
+    headers, body = parse_message(BASE)
+    return (b64(compute_header_hash(headers, "sha256")),
+            b64(compute_body_hash(body, "sha256")))
+
+
+@pytest.mark.parametrize("fmt", [
+    "sha 256:{h}:{b}",
+    "sha\r\n\t256:{h}:{b}",
+    "sha256:{h}:{b},sha512:{h}",
+    "sha256:{h}:{b},sha512:{h}:",
+    "sha256:{h}:{b}:x",
+    "sha256:{h}:{b},",
+])
+def test_f3_bad_hash_set_is_syntax_error(fmt):
+    h, b = _hashes()
+    r = verify(make(GOOD, _mi_h(fmt.format(h=h, b=b))))
+    assert r.message == MI_SYNTAX, (fmt, r)
+
+
+@pytest.mark.parametrize("fmt", [
+    " sha256 : {h} : {b}",
+    "\r\n\tsha256\r\n\t:{h1}\r\n\t{h2}:{b}",
+    "sha256:{h}:{b}, x-future:AAAA:BBBB",
+])
+def test_f3_fws_around_hash_name_and_inside_digests_passes(fmt):
+    h, b = _hashes()
+    v = fmt.format(h=h, b=b, h1=h[:10], h2=h[10:])
+    assert verify(make(GOOD, _mi_h(v))).ok, fmt
+    assert verify(make(GOOD, _mi_h(v)), full_chain=True).ok, fmt
+
+
+@pytest.mark.parametrize("rec", [
+    f"v=DKIM1; x=a\x00b; p={RSA_P}",
+    f"v=DKIM1; x=a\x7fb; p={RSA_P}",
+    f"v=DKIM1; n=café; p={RSA_P}",
+    f"v=DKIM1; k=rsa; p={RSA_P}\x00",
+])
+def test_f4_bad_byte_in_key_record_is_syntax_error(rec):
+    r = _rsa_with(rec)
+    assert r.message == SYNTAX, (rec, r)
+
+
+def test_f4_wsp_between_valchars_in_key_record_passes():
+    assert _rsa_with(f"v=DKIM1; n=a note; p={RSA_P}").ok
 
 
 if __name__ == "__main__":

@@ -92,6 +92,23 @@ def test_all_folds_at_once_verify():
     assert result.ok, f"fully folded message failed to verify: {result.errors}"
 
 
+def test_long_domain_is_never_folded():
+    """Follow-up review F.5 (§8.8): a Domain is never broken by a fold, even
+    when it makes the line longer than 78. This signer emits each field on
+    one line; the d= of two 40-character labels must sign and verify."""
+    dom = "a" * 40 + "." + "b" * 40 + ".example.com"
+    with open(DNS) as fh:
+        dns_data = json.load(fh)
+    dns_data[dom] = {"sel1._domainkey": dns_data["test1.dkim2.com"]["sel1._domainkey"]}
+    signed = sign_message(BASE, "sel1", dom, KEY,
+                          mailfrom=f"<sender@{dom}>", rcptto=["<rcpt@test2.dkim2.com>"],
+                          timestamp=1740000000)
+    head = signed.split(b"\r\n\r\n", 1)[0].decode()
+    assert f"d={dom};" in head
+    result = verify_message(signed, dns_data, skip_timestamp_check=True)
+    assert result.ok, result.errors
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
