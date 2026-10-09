@@ -761,7 +761,7 @@ sub _verify_signature {
             my $bits = $pubkey->size * 8;
             if ($bits < 1024) {
                 $self->{result}  = 'permerror';
-                $self->{details} = "DKIM2-Signature i=$i RSA key too short ($bits bits < 1024, spec 3.2)";
+                $self->{details} = "DKIM2-Signature i=$i public key $sel is shorter than 1024 bits ($bits)";
                 return 0;
             }
         }

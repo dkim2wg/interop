@@ -19,6 +19,8 @@ int dkim2_chain_number_error(const char *field, const char *tag, const char *v,
                              char *errbuf, size_t errbufsz);
 
 /* Parse a Message-Instance header value (everything after "Message-Instance:").
+   Tag names are case insignificant; a tag repeated in any case is a parse
+   error ("PERMERROR Message-Instance m=<x> syntax error" via _err).
    Returns allocated struct or NULL on parse error. */
 dkim2_mi_t *dkim2_mi_parse(const char *value);
 
@@ -43,8 +45,9 @@ dkim2_sig_t *dkim2_sig_parse(const char *value);
 /* As dkim2_sig_parse(); on failure errbuf gets the PERMERROR to report:
    "PERMERROR DKIM2-Signature has a missing or malformed i= tag" when i= is
    missing or not a positive integer; the dkim2_chain_number_error() text
-   when i= or m= is not a chain number; else "PERMERROR DKIM2-Signature is
-   malformed". */
+   when i= or m= is not a chain number; "PERMERROR DKIM2-Signature i=<x>
+   syntax error" when t= is not 1*DIGIT (spec-06 §8.4); else "PERMERROR
+   DKIM2-Signature is malformed". */
 dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz);
 void dkim2_sig_free(dkim2_sig_t *sig);
 

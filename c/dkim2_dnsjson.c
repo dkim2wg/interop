@@ -3,12 +3,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <cjson/cJSON.h>
 
 static cJSON *g_dns_json = NULL;
 
-/* qname is selector._domainkey.domain */
-static char *dns_json_lookup(const char *qname) {
+/* qname is selector._domainkey.domain. Each entry of the name's list is
+   one record, ["txt", "string", "string", ...]: its strings are concatenated
+   (dns-00 §3.4.2.2), and more than one TXT record is reported through
+   *n_records so the key lookup sees what DNS would give it. */
+static char *dns_json_lookup(const char *qname, int *n_records) {
     if (!g_dns_json) return NULL;
     const char *marker = strstr(qname, "._domainkey.");
     if (!marker) return NULL;
@@ -27,11 +31,32 @@ static char *dns_json_lookup(const char *qname) {
     snprintf(key, sizeof key, "%s._domainkey", selector);
     cJSON *records = cJSON_GetObjectItemCaseSensitive(dom_obj, key);
     if (!records || !cJSON_IsArray(records)) return NULL;
-    cJSON *first = cJSON_GetArrayItem(records, 0);
-    if (!first || !cJSON_IsArray(first)) return NULL;
-    cJSON *txt = cJSON_GetArrayItem(first, 1);
-    if (!txt || !cJSON_IsString(txt)) return NULL;
-    return strdup(txt->valuestring);
+
+    char *txt = NULL;
+    int ntxt = 0;
+    cJSON *rec;
+    cJSON_ArrayForEach(rec, records) {
+        if (!cJSON_IsArray(rec)) continue;
+        cJSON *type = cJSON_GetArrayItem(rec, 0);
+        if (!type || !cJSON_IsString(type) || strcasecmp(type->valuestring, "txt") != 0)
+            continue;
+        if (++ntxt > 1) continue;
+        size_t len = 0;
+        for (int i = 1; i < cJSON_GetArraySize(rec); i++) {
+            cJSON *str = cJSON_GetArrayItem(rec, i);
+            if (cJSON_IsString(str)) len += strlen(str->valuestring);
+        }
+        txt = malloc(len + 1);
+        if (!txt) return NULL;
+        txt[0] = '\0';
+        for (int i = 1; i < cJSON_GetArraySize(rec); i++) {
+            cJSON *str = cJSON_GetArrayItem(rec, i);
+            if (cJSON_IsString(str)) strcat(txt, str->valuestring);
+        }
+    }
+    if (ntxt == 0) return NULL;
+    *n_records = ntxt;
+    return txt;
 }
 
 void dkim2_dns_json_free(void) {

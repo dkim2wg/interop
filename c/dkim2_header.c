@@ -113,6 +113,16 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
     if (dkim2_chain_number_error("Message-Instance", "m", v, errbuf, errbufsz))
         goto err;
     mi->m = atoi(v);   /* 1..DKIM2_MAX_CHAIN_LENGTH ASCII digits: exact */
+    /* spec-06 §7: tag names are case insignificant (tagparse() folds them)
+       and "MUST be only one of each kind" -- a repeat in any case
+       combination (h=..; H=.., m=1; M=1) is a syntax error, never
+       first- or last-one-wins. */
+    if (tl->duplicate) {
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz,
+                "PERMERROR Message-Instance m=%d syntax error", mi->m);
+        goto err;
+    }
     v = tag_get(tl, "h");
     if (!v) {
         /* mi->m is known from here on, so every remaining failure can
@@ -307,6 +317,21 @@ static int valid_i(const char *v) {
     return nonzero;
 }
 
+/* spec-06 §8.4: t= is 1*DIGIT (the value's surrounding WSP is already
+   trimmed by tagparse()). Values beyond 2^64-1 saturate rather than wrap --
+   they are far in the future either way. Returns 0, or -1 if not digits. */
+static int parse_t(const char *v, uint64_t *out) {
+    if (!v || !*v) return -1;
+    uint64_t t = 0;
+    for (const char *p = v; *p; p++) {
+        if (*p < '0' || *p > '9') return -1;
+        unsigned d = (unsigned)(*p - '0');
+        t = (t > (UINT64_MAX - d) / 10) ? UINT64_MAX : t * 10 + d;
+    }
+    *out = t;
+    return 0;
+}
+
 dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz) {
     if (errbuf && errbufsz) errbuf[0] = '\0';
     dkim2_sig_t *sig = dkim2_sig_parse(value);
@@ -320,6 +345,8 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
         ;
     else if (dkim2_chain_number_error("DKIM2-Signature", "m", mv, errbuf, errbufsz))
         ;
+    else if (tl && tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0)
+        snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature i=%d syntax error", atoi(iv));
     else
         snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature is malformed");
     if (tl) taglist_free(tl);
@@ -338,7 +365,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     /* Chain numbers only: atoi() of "4294967297x" would be 4294967297. */
     REQ("i"); if (!valid_i(v) || dkim2_chain_number_error("DKIM2-Signature", "i", v, NULL, 0)) goto err; sig->i = atoi(v);
     REQ("m"); if (dkim2_chain_number_error("DKIM2-Signature", "m", v, NULL, 0)) goto err; sig->m = atoi(v);
-    REQ("t"); sig->t = (uint64_t)strtoull(v, NULL, 10);
+    REQ("t"); if (parse_t(v, &sig->t) < 0) goto err;
     REQ("d"); sig->d = strdup(v);
     /* draft-06 §8: either nd= or both mf=+rt=, never both forms. */
     {   const char *nd = tag_get(tl, "nd");
