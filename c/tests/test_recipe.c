@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <time.h>
 #include "../dkim2_recipe.h"
 
 int main(void) {
@@ -381,6 +382,34 @@ int main(void) {
             "{\"h\":{\"subject\":[{\"d\":[\"b\"]}],\"to\":[]},\"b\":[{\"d\":[\"b\"]}]}");
         assert(ok);
         dkim2_recipe_free(ok);
+    }
+
+    /* ---- generation is linear in repeated identical fields (behaviour
+       spec F.6): 16,000 identical Comments: fields plus one added ---- */
+    {
+        enum { N = 16000 };
+        char **old_f = malloc(N * sizeof *old_f);
+        char **new_f = malloc((N + 1) * sizeof *new_f);
+        for (int i = 0; i < N; i++) old_f[i] = "Comments: x\r\n";
+        struct { int at; const char *want; } cases[] = {
+            { N,     "{\"h\":{\"comments\":[{\"c\":[1,16000]},{\"d\":[\"y\"]}]}}" },
+            { 0,     "{\"h\":{\"comments\":[{\"d\":[\"y\"]},{\"c\":[1,16000]}]}}" },
+            { N / 2, "{\"h\":{\"comments\":[{\"c\":[1,8000]},{\"d\":[\"y\"]},{\"c\":[8001,16000]}]}}" },
+            { -1,    "{\"h\":{\"comments\":[{\"c\":[1,16000]},{\"d\":[\"x\"]}]}}" },
+        };
+        for (size_t k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+            for (int i = 0, j = 0; i <= N; i++)
+                new_f[i] = (i == cases[k].at) ? "Comments: y\r\n" : old_f[j < N ? j++ : N - 1];
+            clock_t c0 = clock();
+            char *hr = dkim2_gen_header_recipe("Comments", old_f, N, new_f, N + 1);
+            double secs = (double)(clock() - c0) / CLOCKS_PER_SEC;
+            printf("  16000 identical + 1 at %d: %.3fs\n", cases[k].at, secs);
+            assert(hr);
+            if (strcmp(hr, cases[k].want) != 0) { printf("  got %s\n", hr); assert(0); }
+            assert(secs < 0.05);   /* quadratic was ~0.4s each */
+            free(hr);
+        }
+        free(old_f); free(new_f);
     }
 
     puts("recipe: all tests passed");

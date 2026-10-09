@@ -734,6 +734,27 @@ char *dkim2_gen_body_recipe_ex(
     return json;
 }
 
+/* blk_end[i]: one past the last of the consecutive fields identical to f[i]. */
+static int *blk_ends(char **f, int n) {
+    int *e = n ? malloc((size_t)n * sizeof *e) : NULL;
+    if (!e) return NULL;
+    for (int i = n - 1; i >= 0; i--)
+        e[i] = (i + 1 < n && strcmp(f[i], f[i + 1]) == 0) ? e[i + 1] : i + 1;
+    return e;
+}
+
+/* Length of the match of new[ni..] against old[oi..], a run at a time. */
+static int match_run(char **nf, int n_new, const int *nend, int ni,
+                     char **of, int n_old, const int *oend, int oi) {
+    int run = 0;
+    while (ni + run < n_new && oi + run < n_old &&
+           strcmp(nf[ni + run], of[oi + run]) == 0) {
+        int a = nend[ni + run] - (ni + run), b = oend[oi + run] - (oi + run);
+        run += a < b ? a : b;
+    }
+    return run;
+}
+
 char *dkim2_gen_header_recipe(const char *field_name,
     char **old_fields, int n_old,
     char **new_fields, int n_new) {
@@ -751,16 +772,31 @@ char *dkim2_gen_header_recipe(const char *field_name,
     /* As for the body: a field instance that matches an old one at or below
        the previous copy range's end (reordered duplicates, say) is emitted as
        a literal rather than as a range that would go backwards. */
+    /* Linear in repeated identical fields (16,000 identical Comments:, say):
+       blk_end[i] is one past the run of fields identical to field i. Matching
+       fields inside two such runs match for the shorter remaining run, so a
+       match extends a whole run at a time; and within one run of old fields
+       only two start points can give the first longest match -- the run's
+       first field, and the one leaving exactly the new run's length (where
+       the match can carry on past both runs). Same result as trying every
+       start point. */
+    int *oend = blk_ends(old_fields, n_old), *nend = blk_ends(new_fields, n_new);
+    if ((n_old && !oend) || (n_new && !nend)) {
+        free(oend); free(nend); cJSON_Delete(root); return NULL;
+    }
     int ni = 0, prev_end = 0;
     cJSON *cur = NULL; int cur_is_b = 0;
     while (ni < n_new) {
         int best_old = -1, best_len_found = 0;
-        for (int oi = prev_end; oi < n_old; oi++) {
-            int run = 0;
-            while (ni + run < n_new && oi + run < n_old &&
-                   strcmp(new_fields[ni + run], old_fields[oi + run]) == 0)
-                run++;
-            if (run > best_len_found) { best_len_found = run; best_old = oi; }
+        for (int oi = prev_end; oi < n_old && best_len_found < n_new - ni; ) {
+            int bend = oend[oi], cand[2] = { oi, -1 }, a = nend[ni] - ni;
+            if (bend - a > oi) cand[1] = bend - a;
+            for (int c = 0; c < 2 && cand[c] >= 0; c++) {
+                int run = match_run(new_fields, n_new, nend, ni,
+                                    old_fields, n_old, oend, cand[c]);
+                if (run > best_len_found) { best_len_found = run; best_old = cand[c]; }
+            }
+            oi = bend;
         }
 
         if (best_len_found >= 1) {
@@ -789,6 +825,7 @@ char *dkim2_gen_header_recipe(const char *field_name,
         }
     }
 
+    free(oend); free(nend);
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     return json;

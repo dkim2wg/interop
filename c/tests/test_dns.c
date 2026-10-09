@@ -144,6 +144,18 @@ static void test_key_records(void) {
         "algorithm mismatch", "unknown k= is never read as RSA");
     expect_record(REC("v=DKIM1; k=ed25519; p=%s", g_rsa_b64), DKIM2_PERMERROR,
         "has a syntax error", "p= not a key of type k= is a syntax error");
+    /* Behaviour spec F.4: every value, known or ignored, is VALCHARs with
+       WSP/FWS only between them. */
+    expect_record(REC("v=DKIM1; x=a\x7f" "b; p=%s", g_rsa_b64), DKIM2_PERMERROR,
+        "has a syntax error", "DEL in an unknown tag is a syntax error");
+    expect_record(REC("v=DKIM1; n=caf\xc3\xa9; p=%s", g_rsa_b64), DKIM2_PERMERROR,
+        "has a syntax error", "8-bit byte in n= is a syntax error");
+    expect_record(REC("v=DKIM1; k=rsa\x01; p=%s", g_rsa_b64), DKIM2_PERMERROR,
+        "has a syntax error", "control byte in k= is a syntax error");
+    expect_record(REC("v=DKIM1; p=%s\x80", g_rsa_b64), DKIM2_PERMERROR,
+        "has a syntax error", "8-bit byte in p= is a syntax error");
+    expect_record(REC("v=DKIM1; n=a b\r\n\tc; x=; p=%s", g_rsa_b64), DKIM2_OK, NULL,
+        "WSP/FWS between VALCHARs and an empty value are fine");
 #undef REC
 }
 
@@ -175,7 +187,10 @@ static int fake_query(const char *qname, unsigned char *ans, int anslen) {
             const char *bar = strchr(s, '|');
             size_t n = bar ? (size_t)(bar - s) : strlen(s);
             assert(n < 256);
-            ans[pos++] = (unsigned char)n; memcpy(ans + pos, s, n); pos += (int)n;
+            ans[pos++] = (unsigned char)n; memcpy(ans + pos, s, n);
+            for (size_t j = 0; j < n; j++)         /* '\x02' stands for a NUL */
+                if (ans[pos + j] == 0x02) ans[pos + j] = 0;
+            pos += (int)n;
             if (!bar) break;
             s = bar + 1;
         }
@@ -218,6 +233,12 @@ static void test_txt_rrs(void) {
     const char *rr_two_diff[] = { split, "v=DKIM1; p=" };
     expect_rrs(rr_two_diff, 2, DKIM2_PERMERROR, "has multiple records",
         "two different TXT RRs are multiple records");
+    char nul[2100];
+    /* NUL after a complete record: truncating there would leave a good key */
+    snprintf(nul, sizeof nul, "v=DKIM1; k=rsa; p=%.200s|%s; n=a\x02" "b", g_rsa_b64, g_rsa_b64 + 200);
+    const char *rr_nul[] = { nul };
+    expect_rrs(rr_nul, 1, DKIM2_PERMERROR, "has a syntax error",
+        "a NUL inside the record is a syntax error");
     dkim2_dns_query_hook = NULL;
     dkim2_dns_override = fake_dns;
 }

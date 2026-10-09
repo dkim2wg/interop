@@ -68,6 +68,11 @@ static dkim2_pubkey_t *parse_key_record(const char *txt,
         while (q < end && is_wsp(*q)) q++;
         const char *val = q, *vend = end;
         while (vend > val && is_wsp(vend[-1])) vend--;
+        /* Every value, ignored tags' included: VALCHAR = %x21-3A / %x3C-7E,
+           WSP/FWS only between VALCHARs (no NUL, DEL, 8-bit byte). */
+        for (const char *c = val; c < vend; c++)
+            if (!is_wsp(*c) && !((unsigned char)*c >= 0x21 && (unsigned char)*c <= 0x7E))
+                KEY_SYNTAX();
 
         for (int i = 0; i < nseen; i++)
             if (seen[i].l == nl && memcmp(seen[i].n, name, nl) == 0) KEY_SYNTAX();
@@ -228,6 +233,10 @@ dkim2_pubkey_t *dkim2_dns_getkey(const char *selector, const char *domain,
     }
     if (ntxt == 0) {
         *statusp = DKIM2_PERMERROR; *errp = DKIM2_KEYERR_ABSENT; return NULL;
+    }
+    if (strlen(txt) != tpos) {          /* a NUL in the record: not a VALCHAR */
+        free(txt);
+        *statusp = DKIM2_PERMERROR; *errp = DKIM2_KEYERR_SYNTAX; return NULL;
     }
 
     dkim2_pubkey_t *key = parse_key_record(txt, statusp, errp);
