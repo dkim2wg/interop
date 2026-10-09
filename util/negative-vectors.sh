@@ -32,7 +32,7 @@ cd "$root"
 # or verifier is deliberately added, and so it CATCHES one being silently
 # dropped -- a runner that quietly covers less than it claims is worse than
 # no runner, because it still reads as proof.
-NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml duplicate-mi-version.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml null-body-forged-history.eml empty-body-forged-history.eml malformed-body-recipe-below-null.eml signature-gap.eml instance-gap.eml unkeyable-signature-no-i.eml unkeyable-signature-i-abc.eml lone-junk-signature.eml signature-i-33.eml signature-i-101.eml signature-i-huge.eml signature-m-huge.eml instance-m-huge.eml signature-m-malformed.eml instance-m-malformed.eml"
+NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml duplicate-mi-version.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml null-body-forged-history.eml empty-body-forged-history.eml malformed-body-recipe-below-null.eml signature-gap.eml instance-gap.eml unkeyable-signature-no-i.eml unkeyable-signature-i-abc.eml lone-junk-signature.eml signature-i-33.eml signature-i-101.eml signature-i-huge.eml signature-m-huge.eml instance-m-huge.eml signature-m-malformed.eml instance-m-malformed.eml recipe-duplicate-b-null-last.eml recipe-duplicate-b-null-first.eml recipe-duplicate-h-key.eml"
 POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml positive-control-nd-bridge.eml positive-control-unreferenced-lower-mi.eml positive-control-b-literal.eml positive-control-null-body.eml positive-control-null-body-over-recipe.eml positive-control-null-below.eml positive-control-empty-body-chain.eml"
 VERIFIERS="python go c perl js"
 n_vectors=0;   for _f in $NEG_VECTORS $POS_VECTORS; do n_vectors=$((n_vectors + 1));     done
@@ -53,7 +53,7 @@ want_text() {
     dup-hash-algorithm.eml)  echo "Message-Instance m=<x> has a duplicate hash algorithm" ;;
     dup-selector.eml)        echo "DKIM2-Signature i=<x> has a duplicate selector" ;;
     too-many-signatures.eml) echo "DKIM2-Signature i=<x> has more selectors than allowed" ;;
-    malformed-json-r.eml)    echo "Message-Instance m=<x> contains invalid JSON" ;;
+    malformed-json-r.eml|recipe-duplicate-*.eml) echo "Message-Instance m=<x> contains invalid JSON" ;;
     recipe-descending-ranges.eml)  echo "Message-Instance m=<x> has a malformed Recipe" ;;
     recipe-overlapping-ranges.eml) echo "Message-Instance m=<x> has a malformed Recipe" ;;
     null-body-forged-history.eml) echo "Message-Instance m=<x> does not match content (header hash)" ;;
@@ -105,6 +105,7 @@ run_vector() { # run_vector <file> <want: reject|accept>
             must=""
             case $file in
             unkeyable-signature-*.eml|lone-junk-signature.eml) must="missing or malformed i= tag" ;;
+            recipe-duplicate-*.eml) must="Message-Instance m=2 contains invalid JSON" ;;
             signature-i-*.eml|signature-m-*.eml|instance-m-*.eml)
                 # the expected text, less the "PERMERROR " the JS summary drops
                 must=$(want_text "$file" | sed 's/^PERMERROR //') ;;

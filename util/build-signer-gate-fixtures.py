@@ -268,6 +268,22 @@ FAKE_COVER = {
 }
 
 
+def build_recipe_duplicate_key():
+    """Valid i=1/m=1; an UNSIGNED m=2 (Subject tag, footer, real Recipes)
+    whose r= JSON is {"h":...,"b":[...],"b":null}.  A duplicate key is a
+    PERMERROR (invalid JSON) to every verifier, so every signer refuses, with
+    or without the option -- rather than C (first key wins) signing a real
+    body Recipe that Python, Go, Perl and JS (last wins) read as null."""
+    h1, b1 = bnv.load_base()
+    h2, b2 = bnv._subject_prefixed(h1, b"list"), b1 + b"footer\r\n"
+    mi1, sig1 = _signed_bottom(h1, b1)
+    mi2 = bnv.duplicate_key_mi(h1, b1, h2, b2, 2, "b-null-last")
+    msg = mi2.encode() + b"\r\n" + sig1.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+    for h in h2:
+        msg += h + b"\r\n"
+    return msg + b"\r\n" + b2
+
+
 def _nd_bridge(nd):
     """i=1 test1 -> test2, then test2's §9.3 bridge i=2 carrying nd=<nd>."""
     raw = open(bnv.SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
@@ -304,6 +320,7 @@ FIXTURES = {
     "mi-only-null.eml": build_mi_only_null,
     "nd-to-us.eml": build_nd_to_us,
     "nd-to-other.eml": build_nd_to_other,
+    "recipe-duplicate-key.eml": build_recipe_duplicate_key,
 }
 for _name, _fn in FAKE_COVER.items():
     FIXTURES[_name] = (lambda fn: lambda: _fake_cover(fn))(_fn)

@@ -76,6 +76,12 @@ Writes:
                                          (not 1*DIGIT); REJECT (PERMERROR)
   instance-m-malformed.eml         -- second hop's Message-Instance
                                          m=4294967297x; REJECT (PERMERROR)
+  recipe-duplicate-b-null-last.eml -- second hop's Recipe JSON is
+                                         {"h":...,"b":[...],"b":null}; REJECT
+                                         (PERMERROR invalid JSON), whichever
+                                         value a parser would have kept
+  recipe-duplicate-b-null-first.eml -- the same as {"b":null,"h":...,"b":[...]}
+  recipe-duplicate-h-key.eml       -- the same with one "h" key given twice
 """
 import base64
 import json
@@ -728,6 +734,75 @@ def build_instance_m_huge():
     return _gap_chain(sig2_seq=2, mi2_version=HUGE, sig2_m=2)
 
 
+# A duplicate key anywhere in the Recipe JSON is a PERMERROR ("contains
+# invalid JSON"): parsers disagree on which value wins (C took the first,
+# the others the last), so {"b":[...],"b":null} meant a null body Recipe to
+# some verifiers and gates and a real one to others.  Each vector is a
+# genuine two-hop chain (Subject tag + footer, real Recipes, signed i=2)
+# whose r= JSON text carries the duplicate; either reading of it verifies.
+def _recipe_json_with_duplicate(recipe, where):
+    """The Recipe as JSON text with one duplicated key (see above)."""
+    h = json.dumps(recipe["h"], separators=(",", ":"))
+    b = json.dumps(recipe["b"], separators=(",", ":"))
+    if where == "b-null-last":
+        return '{"h":%s,"b":%s,"b":null}' % (h, b)
+    if where == "b-null-first":
+        return '{"b":null,"h":%s,"b":%s}' % (h, b)
+    if where == "h":
+        k = next(iter(recipe["h"]))
+        v = json.dumps(recipe["h"][k], separators=(",", ":"))
+        inner = h[1:-1]
+        return '{"h":{%s,"%s":%s},"b":%s}' % (inner, k, v, b)
+    raise ValueError(where)
+
+
+def duplicate_key_mi(h1, b1, h2, b2, version, where):
+    """Message-Instance m=<version> over (h2, b2) with real Recipes back to
+    (h1, b1), its r= JSON carrying a duplicate key."""
+    recipe = ds._lowercase_recipe_keys(ds.build_recipes(h1, b1, h2, b2))
+    mi = ds.build_message_instance(h2, b2, version=version, algs=["sha256"],
+                                   recipe=recipe)
+    dup = base64.b64encode(
+        _recipe_json_with_duplicate(recipe, where).encode()).decode()
+    head, sep, _ = mi.partition("; r=")
+    assert sep
+    return f"{head}; r={dup}"
+
+
+def _duplicate_key_chain(where):
+    headers, body = load_base()
+    h2, b2 = _subject_prefixed(headers, b"list"), body + b"footer\r\n"
+    mi1 = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
+    priv1, alg1 = ds.load_private_key(key("sel1"))
+    sig1 = ds.build_dkim2_signature(
+        [], [], mi1, DOM, "sel1", priv1, alg1,
+        mailfrom=MF, rcptto=RT, seq=1, mi_version=1, timestamp=TS)
+    mi2 = duplicate_key_mi(headers, body, h2, b2, 2, where)
+    dom2 = "test2.dkim2.com"
+    priv2, alg2 = ds.load_private_key(key("sel1", dom2))
+    sig2 = ds.build_dkim2_signature(
+        [mi1], [sig1], mi2, dom2, "sel1", priv2, alg2,
+        mailfrom="relay@test2.dkim2.com", rcptto=["final@example.com"],
+        seq=2, mi_version=2, timestamp=TS + 100)
+    out = sig2.encode() + b"\r\n" + sig1.encode() + b"\r\n"
+    out += mi2.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+    for h in h2:
+        out += h + b"\r\n"
+    return out + b"\r\n" + b2
+
+
+def build_recipe_duplicate_b_null_last():
+    return _duplicate_key_chain("b-null-last")
+
+
+def build_recipe_duplicate_b_null_first():
+    return _duplicate_key_chain("b-null-first")
+
+
+def build_recipe_duplicate_h_key():
+    return _duplicate_key_chain("h")
+
+
 # Not 1*DIGIT: "4294967297x" is malformed, never its digit prefix (which the
 # browser verifier's parseInt and C's atoi took, and walked 1..max to).
 def build_signature_m_malformed():
@@ -772,6 +847,9 @@ FIXTURES = {
     "instance-m-huge.eml": build_instance_m_huge,
     "signature-m-malformed.eml": build_signature_m_malformed,
     "instance-m-malformed.eml": build_instance_m_malformed,
+    "recipe-duplicate-b-null-last.eml": build_recipe_duplicate_b_null_last,
+    "recipe-duplicate-b-null-first.eml": build_recipe_duplicate_b_null_first,
+    "recipe-duplicate-h-key.eml": build_recipe_duplicate_h_key,
 }
 
 

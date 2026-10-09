@@ -31,6 +31,8 @@
 #   nd-to-other          REFUSE   REFUSE   (nd= names another domain)
 #   signature-gap        REFUSE   REFUSE   (i=1 and i=3, no i=2)
 #   instance-gap         REFUSE   REFUSE   (m=1 and m=3, no m=2)
+#   recipe-duplicate-key REFUSE   REFUSE   (unsigned m=2 whose Recipe JSON has
+#                                           "b" twice, [...] then null)
 #
 # SIGN   = exit 0 and stdout carries a new DKIM2-Signature i=<N+1>.
 # REFUSE = non-zero exit and no new DKIM2-Signature on stdout.
@@ -48,7 +50,7 @@ cd "$root"
 # Single source of truth: the expected cell count is DERIVED from these lists,
 # so a silently dropped fixture/signer/mode shows up as a coverage shortfall.
 # fixture:plain-want:flag-want
-FIXTURES="fresh:sign:sign valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse null-top-signed:sign:sign null-below-unsigned-top:refuse:sign null-below-signed:sign:sign fake-cover-no-i:refuse:refuse fake-cover-i0:refuse:refuse fake-cover-i-abc:refuse:refuse fake-cover-m-rewritten:refuse:refuse fake-cover-unparseable:refuse:refuse mi-only:sign:sign mi-only-broken:refuse:refuse mi-only-null:refuse:sign nd-to-us:sign:sign nd-to-other:refuse:refuse signature-gap:refuse:refuse instance-gap:refuse:refuse"
+FIXTURES="fresh:sign:sign valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse null-top-signed:sign:sign null-below-unsigned-top:refuse:sign null-below-signed:sign:sign fake-cover-no-i:refuse:refuse fake-cover-i0:refuse:refuse fake-cover-i-abc:refuse:refuse fake-cover-m-rewritten:refuse:refuse fake-cover-unparseable:refuse:refuse mi-only:sign:sign mi-only-broken:refuse:refuse mi-only-null:refuse:sign nd-to-us:sign:sign nd-to-other:refuse:refuse signature-gap:refuse:refuse instance-gap:refuse:refuse recipe-duplicate-key:refuse:refuse"
 SIGNERS="python go c perl"
 MODES="plain flag"
 n=0; for _f in $FIXTURES; do n=$((n + 1)); done
