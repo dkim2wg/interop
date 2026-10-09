@@ -521,4 +521,78 @@ sub info_values {
     like(milter_log(), qr/verify .*injected verifier fault/, 'verifier fault: logged');
 }
 
+# --- 9. An out-of-range Message-Instance m= at the inbound MI step ---
+# Inbound, the milter computes a Message-Instance against its stored
+# snapshot, and used to strip the instances above the snapshot's top as the
+# range snap_max_v+1 .. max_v: m=99999999999999999999 died ("Range iterator
+# outside integer range") and m=4294967297 built a four-billion-element list.
+# Now the m= is bounded first: no Message-Instance is added, the message
+# passes with its Authentication-Results, and the milter keeps answering.
+# A fault inside the MI computation fails closed the same way (inbound: no
+# MI; outbound: not signed).
+{
+    my (undef, $sock_in) = spawn_milter(extra => ['--mode', 'inbound']);
+    ok(-S $sock_in, 'inbound milter is listening') or BAIL_OUT("milter never came up");
+    my $n = 0;
+    my $base = sub {
+        my ($id) = @_;
+        (my $m = $PLAIN) =~ s/^Message-Id: <post\@/Message-Id: <$id\@/m;
+        return $m;
+    };
+    for my $big ('99999999999999999999', '4294967297', '33') {
+        my $id = 'bigm' . $n++;
+        my ($verdict, $mods) = run_milter(sock => $sock_in,
+            from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'],
+            message => $base->($id));
+        my ($mi1) = inserted($mods, 'Message-Instance');
+        ok($mi1, "m=$big: first pass adds m=1 and stores a snapshot") or next;
+        my $first = assemble($base->($id), $mods);
+        # Only the headers the snapshot was taken over: drop the second info line.
+        (my $v1 = $mi1->{value}) =~ s/\r?\n/$EOL/g;
+        my ($ar)   = inserted($mods, 'Authentication-Results');
+        my @info   = inserted($mods, 'X-DKIM2-Info');
+        (my $i0 = $info[0]{value}) =~ s/\r?\n/$EOL/g;
+        my $msg2 = "Message-Instance: m=$big; h=sha256:AAAA:AAAA$EOL"
+                 . "Message-Instance: $v1$EOL"
+                 . "X-DKIM2-Info: $i0$EOL"
+                 . "Authentication-Results: $ar->{value}$EOL"
+                 . $base->($id);
+        $msg2 =~ s/Here's a test user!/a changed body/;
+        my $before = length milter_log();
+        my $t0 = time;
+        ($verdict, $mods) = eval { run_milter(sock => $sock_in,
+            from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'],
+            message => $msg2) };
+        is($@, '', "m=$big: the milter answers");
+        is($verdict, 'c', "m=$big: milter continues");
+        ok(time - $t0 < 15, "m=$big: promptly");
+        is(scalar(inserted($mods || [], 'Message-Instance')), 0, "m=$big: no Message-Instance added");
+        my $new = substr(milter_log(), $before);
+        unlike($new, qr/stripping broken MI/, "m=$big: m= never used as a range");
+        unlike($new, qr/Range iterator|Out of memory/, "m=$big: no exception");
+        is(scalar(inserted($mods || [], 'Authentication-Results')), 1,
+            "m=$big: the message passes with its Authentication-Results");
+    }
+
+    path("$dir/inject/DKIM2TestDieMI.pm")->spew(
+        "package DKIM2TestDieMI; require Mail::DKIM2::MessageInstance;\n"
+      . "no warnings 'redefine';\n"
+      . "*Mail::DKIM2::MessageInstance::calculate = sub { die \"injected MI fault\\n\" };\n1;\n");
+    for my $mode ('inbound', 'outbound') {
+        my (undef, $sock_m) = spawn_milter(perl => ["-I$dir/inject", '-MDKIM2TestDieMI'],
+                                          extra => ['--mode', $mode]);
+        my ($verdict, $mods) = eval { run_milter(sock => $sock_m,
+            from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+            message => $PLAIN) };
+        is($@, '', "MI fault ($mode): the milter answers");
+        is($verdict, 'c', "MI fault ($mode): milter continues");
+        is(scalar(inserted($mods || [], 'Message-Instance')), 0, "MI fault ($mode): no Message-Instance");
+        is(scalar(inserted($mods || [], 'DKIM2-Signature')), 0, "MI fault ($mode): not signed");
+        like(milter_log(), $mode eq 'inbound'
+                ? qr/dkim2-milter: no Message-Instance for <post\@test1\.dkim2\.com>: internal error: injected MI fault/
+                : qr/dkim2-milter: not signing <post\@test1\.dkim2\.com>: internal error computing the Message-Instance: injected MI fault/,
+            "MI fault ($mode): logged as a refusal");
+    }
+}
+
 done_testing;
