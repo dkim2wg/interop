@@ -238,8 +238,9 @@ static void expect_digest_only(const char *name, int allow_null, int want_sign) 
     }
 }
 
-/* An i= or m= above DKIM2_MAX_CHAIN_LENGTH is refused with the range
-   PERMERROR, by the gate and -- since the next i=/m= are computed from the
+/* An i= or m= that is not a chain number (malformed, above
+   DKIM2_MAX_CHAIN_NUMBER, or above DKIM2_MAX_CHAIN_LENGTH) is refused with
+   its PERMERROR, by the gate and -- since the next i=/m= are computed from the
    existing ones -- even with the gate skipped. */
 static void expect_range_refused(const char *prefix, const char *want, int skip) {
     char src[1024], path[1024];
@@ -326,15 +327,23 @@ int main(int argc, char **argv) {
     for (int skip = 0; skip <= 1; skip++) {
         expect_range_refused("DKIM2-Signature: i=99999999999999999999; m=2; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR DKIM2-Signature i= exceeds the maximum chain length of 32", skip);
+            "PERMERROR DKIM2-Signature i= exceeds the maximum chain number of 100", skip);
+        expect_range_refused("DKIM2-Signature: i=101; m=2; t=1; "
+            "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
+            "PERMERROR DKIM2-Signature i= exceeds the maximum chain number of 100", skip);
         expect_range_refused("DKIM2-Signature: i=33; m=2; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
             "PERMERROR DKIM2-Signature i= exceeds the maximum chain length of 32", skip);
         expect_range_refused("DKIM2-Signature: i=2; m=4294967297; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR DKIM2-Signature m= exceeds the maximum chain length of 32", skip);
+            "PERMERROR DKIM2-Signature m= exceeds the maximum chain number of 100", skip);
+        expect_range_refused("DKIM2-Signature: i=2; m=4294967297x; t=1; "
+            "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
+            "PERMERROR DKIM2-Signature has a malformed m= tag", skip);
         expect_range_refused("Message-Instance: m=99999999999999999999; h=sha256:AAAA:BBBB\r\n",
-            "PERMERROR Message-Instance m= exceeds the maximum chain length of 32", skip);
+            "PERMERROR Message-Instance m= exceeds the maximum chain number of 100", skip);
+        expect_range_refused("Message-Instance: m=4294967297x; h=sha256:AAAA:BBBB\r\n",
+            "PERMERROR Message-Instance has a malformed m= tag", skip);
     }
 
     expect_reuse_top_mi("valid-chain.eml");

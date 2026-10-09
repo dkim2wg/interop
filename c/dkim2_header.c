@@ -110,14 +110,9 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
             snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
         goto err;
     }
-    if (dkim2_chain_number_out_of_range(v)) {
-        if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m= exceeds the maximum chain length of %d",
-                DKIM2_MAX_CHAIN_LENGTH);
+    if (dkim2_chain_number_error("Message-Instance", "m", v, errbuf, errbufsz))
         goto err;
-    }
-    mi->m = atoi(v);
+    mi->m = atoi(v);   /* 1..DKIM2_MAX_CHAIN_LENGTH ASCII digits: exact */
     v = tag_get(tl, "h");
     if (!v) {
         /* mi->m is known from here on, so every remaining failure can
@@ -266,18 +261,42 @@ static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
     return 0;
 }
 
-int dkim2_chain_number_out_of_range(const char *v) {
-    if (!v || !*v) return 0;
-    for (const char *p = v; *p; p++)
-        if (*p < '0' || *p > '9') return 0;
-    if (strlen(v) > 2) return 1;
-    return atoi(v) > DKIM2_MAX_CHAIN_LENGTH;
+int dkim2_chain_number_error(const char *field, const char *tag, const char *v,
+                             char *errbuf, size_t errbufsz) {
+    if (!v) return 0;
+    int digits = *v != '\0', nonzero = 0;
+    for (const char *p = v; *p; p++) {
+        if (*p < '0' || *p > '9') { digits = 0; break; }
+        if (*p != '0') nonzero = 1;
+    }
+    if (!digits || !nonzero) {
+        if (errbuf && errbufsz) {
+            if (strcmp(tag, "i") == 0)
+                snprintf(errbuf, errbufsz, "PERMERROR %s has a missing or malformed i= tag", field);
+            else
+                snprintf(errbuf, errbufsz, "PERMERROR %s has a malformed %s= tag", field, tag);
+        }
+        return 1;
+    }
+    if (strlen(v) > 3 || atoi(v) > DKIM2_MAX_CHAIN_NUMBER) {
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR %s %s= exceeds the maximum chain number of %d",
+                     field, tag, DKIM2_MAX_CHAIN_NUMBER);
+        return 1;
+    }
+    if (atoi(v) > DKIM2_MAX_CHAIN_LENGTH) {
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR %s %s= exceeds the maximum chain length of %d",
+                     field, tag, DKIM2_MAX_CHAIN_LENGTH);
+        return 1;
+    }
+    return 0;
 }
 
 /* i= must be a positive integer in ASCII digits: atoi() alone would take
    "abc" as 0 and "+1" or " 1x" as 1. Positive means not all zeros; the
-   digits are not converted here (dkim2_chain_number_out_of_range bounds
-   them), so a value too big for an int cannot overflow. */
+   digits are not converted here (dkim2_chain_number_error bounds them), so
+   a value too big for an int cannot overflow. */
 static int valid_i(const char *v) {
     if (!v || !*v) return 0;
     int nonzero = 0;
@@ -297,14 +316,10 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
     const char *mv = tl ? tag_get(tl, "m") : NULL;
     if (!valid_i(iv))
         snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature has a missing or malformed i= tag");
-    else if (dkim2_chain_number_out_of_range(iv))
-        snprintf(errbuf, errbufsz,
-            "PERMERROR DKIM2-Signature i= exceeds the maximum chain length of %d",
-            DKIM2_MAX_CHAIN_LENGTH);
-    else if (dkim2_chain_number_out_of_range(mv))
-        snprintf(errbuf, errbufsz,
-            "PERMERROR DKIM2-Signature m= exceeds the maximum chain length of %d",
-            DKIM2_MAX_CHAIN_LENGTH);
+    else if (dkim2_chain_number_error("DKIM2-Signature", "i", iv, errbuf, errbufsz))
+        ;
+    else if (dkim2_chain_number_error("DKIM2-Signature", "m", mv, errbuf, errbufsz))
+        ;
     else
         snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature is malformed");
     if (tl) taglist_free(tl);
@@ -320,8 +335,9 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     if (!sig) { taglist_free(tl); return NULL; }
     const char *v;
 #define REQ(tag) do { v = tag_get(tl, tag); if (!v) goto err; } while(0)
-    REQ("i"); if (!valid_i(v) || dkim2_chain_number_out_of_range(v)) goto err; sig->i = atoi(v);
-    REQ("m"); if (dkim2_chain_number_out_of_range(v)) goto err; sig->m = atoi(v);
+    /* Chain numbers only: atoi() of "4294967297x" would be 4294967297. */
+    REQ("i"); if (!valid_i(v) || dkim2_chain_number_error("DKIM2-Signature", "i", v, NULL, 0)) goto err; sig->i = atoi(v);
+    REQ("m"); if (dkim2_chain_number_error("DKIM2-Signature", "m", v, NULL, 0)) goto err; sig->m = atoi(v);
     REQ("t"); sig->t = (uint64_t)strtoull(v, NULL, 10);
     REQ("d"); sig->d = strdup(v);
     /* draft-06 §8: either nd= or both mf=+rt=, never both forms. */

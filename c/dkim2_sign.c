@@ -235,15 +235,22 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     return 0;
 }
 
+/* Whether a parser error is one of dkim2_chain_number_error()'s. */
+static int chain_number_refusal(const char *e) {
+    return strstr(e, "exceeds the maximum chain") || strstr(e, "has a malformed m= tag")
+        || strstr(e, "has a missing or malformed i= tag");
+}
+
 int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     char **mi_out, char **sig_out) {
-    /* An out-of-range i=/m= (the parsers left it out of the lists) is
-       refused even with the gate skipped: the next i= and m= are computed
-       from the existing ones below. */
+    /* An i=/m= that is not a chain number (dkim2_chain_number_error; the
+       parsers left the field out of the lists) is refused even with the
+       gate skipped: the next i= and m= are computed from the existing ones
+       below. */
     {
-        const char *re = strstr(ctx->mi_error, "exceeds the maximum chain length")
+        const char *re = chain_number_refusal(ctx->mi_error)
             ? ctx->mi_error
-            : strstr(ctx->sig_error, "exceeds the maximum chain length")
+            : chain_number_refusal(ctx->sig_error)
             ? ctx->sig_error : NULL;
         if (re && cfg->skip_chain_check) {
             snprintf(ctx->errmsg, sizeof ctx->errmsg, "not signing: %.400s", re);

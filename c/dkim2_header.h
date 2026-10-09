@@ -4,12 +4,19 @@
 /* Every i= and m= names one hop, and a chain has at most this many. */
 #define DKIM2_MAX_CHAIN_LENGTH 32
 
-/* Non-zero when v is ASCII digits naming a number above
-   DKIM2_MAX_CHAIN_LENGTH, or longer than two digits (never converted, so it
-   cannot overflow). Anything else -- NULL, empty, non-digits -- is 0: left to
-   the syntax checks. The parsers below reject such an i= or m= with
-   "PERMERROR <field> <tag>= exceeds the maximum chain length of 32". */
-int dkim2_chain_number_out_of_range(const char *v);
+/* The largest number an i= or m= may be written as (at most three digits). */
+#define DKIM2_MAX_CHAIN_NUMBER 100
+
+/* 0 when v is a chain number, or NULL (an absent tag is left to the
+   callers). Otherwise non-zero, with the PERMERROR written to errbuf:
+   not 1*DIGIT in ASCII, or zero: "PERMERROR <field> has a malformed <tag>=
+   tag" ("has a missing or malformed i= tag" for i=); more than three digits
+   or above DKIM2_MAX_CHAIN_NUMBER: "PERMERROR <field> <tag>= exceeds the
+   maximum chain number of 100"; above DKIM2_MAX_CHAIN_LENGTH: "... exceeds
+   the maximum chain length of 32". "01" and "001" are 1; nothing is
+   converted that could overflow. errbuf/errbufsz may be NULL/0. */
+int dkim2_chain_number_error(const char *field, const char *tag, const char *v,
+                             char *errbuf, size_t errbufsz);
 
 /* Parse a Message-Instance header value (everything after "Message-Instance:").
    Returns allocated struct or NULL on parse error. */
@@ -35,9 +42,9 @@ char *dkim2_mi_format(const dkim2_mi_t *mi);
 dkim2_sig_t *dkim2_sig_parse(const char *value);
 /* As dkim2_sig_parse(); on failure errbuf gets the PERMERROR to report:
    "PERMERROR DKIM2-Signature has a missing or malformed i= tag" when i= is
-   missing or not a positive integer; "PERMERROR DKIM2-Signature i= (or m=)
-   exceeds the maximum chain length of 32" when one is out of range; else
-   "PERMERROR DKIM2-Signature is malformed". */
+   missing or not a positive integer; the dkim2_chain_number_error() text
+   when i= or m= is not a chain number; else "PERMERROR DKIM2-Signature is
+   malformed". */
 dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz);
 void dkim2_sig_free(dkim2_sig_t *sig);
 
