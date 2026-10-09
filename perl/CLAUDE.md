@@ -99,7 +99,7 @@ be refolded.
 `$current` (the newest message). Recipes describe how to reconstruct
 `$previous` from `$current`. The `$previous` message must have existing MI
 headers. Options (`IgnorePrefixes`, `Algs`, `UseEpilogue`,
-`EpilogueThreshold`) are CamelCase like every other option in the dist;
+`EpilogueThreshold`, `MaxRecipeLiterals`) are CamelCase like every other option in the dist;
 `verify` and `chain_verifies` take `IgnorePrefixes` too. There is no
 process-wide ignore list.
 
