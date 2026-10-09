@@ -2,7 +2,7 @@ package Mail::DKIM2::Gate;
 use strict;
 use warnings;
 
-our $VERSION = '0.16';
+our $VERSION = '0.17';
 
 use Email::MIME;
 use Mail::DKIM2::Common qw(extract_mi_version parse_mime valid_sequence chain_number_error);
@@ -118,6 +118,7 @@ sub check {
     my $verify_result = $o{VerifyResult};
     $verify_result = undef
         if defined $sd && length $sd && $has_dk2 && _top_has_nd(\@sigs);
+    my $own_walk = 0;
     if (!defined $verify_result) {
         if ($has_dk2) {
             my $v = Mail::DKIM2::Verifier->new(
@@ -130,13 +131,29 @@ sub check {
             $v->PRINT($message);
             $v->CLOSE();
             $verify_result = $v->result_detail();
+            $own_walk = 1;
         } else {
             $verify_result = 'none';
         }
     }
 
-    my ($chain_ok, $chain_why) = Mail::DKIM2::MessageInstance->chain_verifies($message,
-        ($o{IgnorePrefixes} ? (IgnorePrefixes => $o{IgnorePrefixes}) : ()));
+    # Our own Verifier run that ended in 'pass' has already walked the whole
+    # Message-Instance chain (Verifier::_verify_mi_chain, run in finish_body
+    # only on that path; we never set HeadersOnly or mid_process).  That walk
+    # is the same one chain_verifies does: same verify() per instance with
+    # the same IgnorePrefixes, the same undo(), the same switch to a
+    # header-only walk below a null-body Recipe, and the same up-front
+    # _chain_error check (verify() makes it on the first iteration).
+    # allow_unsigned_mi only suppresses the "MI m= not signed" PERMERROR
+    # earlier in finish_body; it does not change the walk.  So a 'pass'
+    # means chain_verifies would succeed, and walking again is wasted work.
+    # Without signatures, with a caller-supplied VerifyResult, or on any
+    # non-pass result the walk was not (fully) done, so run it here.
+    my ($chain_ok, $chain_why) = (1, undef);
+    unless ($own_walk && $verify_result =~ /^pass/) {
+        ($chain_ok, $chain_why) = Mail::DKIM2::MessageInstance->chain_verifies($message,
+            ($o{IgnorePrefixes} ? (IgnorePrefixes => $o{IgnorePrefixes}) : ()));
+    }
 
     my %by_v;
     for my $val (@mis) {
@@ -185,7 +202,7 @@ sub check {
         my $where = $unsigned_null == $top ? 'top ' : '';
         @r{qw(reason message)} = ('null-body-recipe',
             "unsigned ${where}Message-Instance m=$unsigned_null has a null body "
-            . 'Recipe (--allow-null-body-recipe not set)');
+            . 'Recipe (AllowNullBodyRecipe not set)');
     } else {
         $r{ok} = 1;
     }
