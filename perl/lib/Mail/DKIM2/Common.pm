@@ -240,7 +240,7 @@ sub decode_tag_json {
     # A key given twice in one object is invalid here: JSON parsers disagree
     # on which value wins (first or last), so {"b":[...],"b":null} would be a
     # null body Recipe to some verifiers and signers and a real one to others.
-    if (defined(my $k = json_duplicate_key($text))) {
+    if (defined(my $k = _json_duplicate_key($text))) {
         die "duplicate JSON object key \"$k\"\n";
     }
     return $data;
@@ -248,7 +248,7 @@ sub decode_tag_json {
 
 # The first key that appears twice in one JSON object of $text (already known
 # to be valid JSON), compared after unescaping, or undef.
-sub json_duplicate_key {
+sub _json_duplicate_key {
     my ($text) = @_;
     my $json = JSON->new->allow_nonref;
     my @stack;   # one entry per open container: undef for an array, a hash of keys for an object
