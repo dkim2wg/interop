@@ -476,7 +476,7 @@ def _get_version_from_mi(hdr: str) -> int:
     colon = hdr.find(":")
     value = hdr[colon + 1:] if colon != -1 else hdr
     m = _extract_tag(value, "m")
-    return int(m) if m else 0
+    return _chain_int(m)
 
 
 def _mi_hashes(hdr: str) -> str | None:
@@ -501,24 +501,50 @@ def _get_seq_from_sig(hdr: str) -> int:
     PERMERROR (see _sig_has_valid_i)."""
     colon = hdr.find(":")
     value = hdr[colon + 1:] if colon != -1 else hdr
-    v = _extract_tag(value, "i")
-    if v is None or not v.isascii() or not v.isdigit():
-        return 0
-    return int(v)
+    return _chain_int(_extract_tag(value, "i"))
 
 
 # Every i= and m= names one hop, and a chain has at most this many.
 MAX_CHAIN_LENGTH = 32
+# The largest number an i= or m= may be written as (at most three digits).
+MAX_CHAIN_NUMBER = 100
 
 
-def chain_number_in_range(v: str) -> bool:
-    """False for an ASCII-digit i=/m= value above MAX_CHAIN_LENGTH, or one
-    longer than two digits (so it is never turned into a huge number).
-    Values that are not digits are left to the other syntax checks."""
+def _is_ascii_digits(v: str) -> bool:
+    # str.isdigit() and int() also take "0_1", " 1", "\uff11" and "\u00b9".
+    return re.fullmatch(r"[0-9]+", v) is not None
+
+
+def _chain_int(v: str | None) -> int:
+    """An i=/m= value as a number, or 0 when it is missing or not 1*DIGIT
+    within MAX_CHAIN_NUMBER (chain_number_error says why). Never raises and
+    never returns a number big enough to be a loop bound."""
+    if v is None or not _is_ascii_digits(v) or len(v) > 3:
+        return 0
+    return int(v)
+
+
+def chain_number_error(field: str, tag: str, v: str | None) -> str | None:
+    """The PERMERROR for an i= or m= value that is not a chain number, or
+    None (also for a missing value, which is left to the callers).
+
+    1*DIGIT in ASCII, else malformed (also zero); at most three digits and
+    1..MAX_CHAIN_NUMBER, so "01" and "001" are 1; and no more than
+    MAX_CHAIN_LENGTH, since each number names one hop."""
+    if v is None:
+        return None
     v = v.strip()
-    if not v.isascii() or not v.isdigit():
-        return True
-    return len(v) <= 2 and int(v) <= MAX_CHAIN_LENGTH
+    if not _is_ascii_digits(v) or int(v) == 0:
+        if tag == "i":
+            return f"PERMERROR {field} has a missing or malformed i= tag"
+        return f"PERMERROR {field} has a malformed {tag}= tag"
+    if len(v) > 3 or int(v) > MAX_CHAIN_NUMBER:
+        return (f"PERMERROR {field} {tag}= exceeds the maximum chain "
+                f"number of {MAX_CHAIN_NUMBER}")
+    if int(v) > MAX_CHAIN_LENGTH:
+        return (f"PERMERROR {field} {tag}= exceeds the maximum chain "
+                f"length of {MAX_CHAIN_LENGTH}")
+    return None
 
 
 def _tag_of(hdr: str, tag: str) -> str | None:
@@ -527,22 +553,25 @@ def _tag_of(hdr: str, tag: str) -> str | None:
 
 
 def chain_range_error(mi_headers: list[str], sig_headers: list[str]) -> str | None:
-    """The PERMERROR for the first i= or m= above MAX_CHAIN_LENGTH, or None.
-    Checked before anything walks 1..max for gaps."""
+    """The PERMERROR for the first i= or m= that is not a chain number
+    (chain_number_error), or None. Checked before anything walks 1..max for
+    gaps."""
     for field, tag, hdrs in (("DKIM2-Signature", "i", sig_headers),
                              ("DKIM2-Signature", "m", sig_headers),
                              ("Message-Instance", "m", mi_headers)):
         for h in hdrs:
-            v = _tag_of(h, tag)
-            if v is not None and not chain_number_in_range(v):
-                return (f"PERMERROR {field} {tag}= exceeds the maximum chain "
-                        f"length of {MAX_CHAIN_LENGTH}")
+            e = chain_number_error(field, tag, _tag_of(h, tag))
+            if e:
+                return e
     return None
 
 
 def _sig_has_valid_i(hdr: str) -> bool:
-    """True iff the DKIM2-Signature has an i= that is a positive integer."""
-    return _get_seq_from_sig(hdr) > 0
+    """True iff the DKIM2-Signature has an i= that is a positive integer in
+    ASCII digits (of any size: one above MAX_CHAIN_NUMBER is keyable but out
+    of range, which chain_range_error reports)."""
+    v = _tag_of(hdr, "i")
+    return v is not None and _is_ascii_digits(v) and int(v) > 0
 
 
 def _get_mi_from_sig(hdr: str) -> int | None:
@@ -550,10 +579,7 @@ def _get_mi_from_sig(hdr: str) -> int | None:
     colon = hdr.find(":")
     value = hdr[colon + 1:] if colon != -1 else hdr
     v = _extract_tag(value, "m")
-    try:
-        return int(v) if v else None
-    except ValueError:
-        return None
+    return _chain_int(v) or None
 
 
 def compute_signature(mi_headers: list[str], sig_headers: list[str],
@@ -697,9 +723,11 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
                    signing_domain: str | None = None) -> None:
     """Refuse (SigningRefused) unless the chain already on the message checks
     out.  Runs the verifier in outbound mode: an unsigned top Message-Instance
-    is the one we are about to cover.  An UNSIGNED top instance (no
-    DKIM2-Signature has its m=) with a null body Recipe needs
-    allow_null_body_recipe as well; a signed one does not."""
+    is the one we are about to cover.  A signature with m=k covers instances
+    1..k; any Message-Instance with a null body Recipe above the highest m= of
+    a valid upstream signature (the top instance or one under it) needs
+    allow_null_body_recipe as well.  A null that an upstream signature
+    already covers does not."""
     import os
     # dkim2verify imports this module, so import it lazily.
     import dkim2verify

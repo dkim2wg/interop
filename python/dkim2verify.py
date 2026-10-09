@@ -773,20 +773,11 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     mi_headers = extract_mi_headers(headers)
     sig_headers = extract_sig_headers(headers)
 
-    seen_m = set()
     for h in mi_headers:
-        m_raw = _extract_tag(_get_header_value(h), "m")
-        if m_raw is None or not m_raw.strip().isascii() \
-                or not m_raw.strip().isdigit():
-            msg = "Message-Instance has a malformed m= tag"
+        if _extract_tag(_get_header_value(h), "m") is None:
+            msg = "PERMERROR Message-Instance has a malformed m= tag"
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
-        mv = _get_version_from_mi(h)
-        if mv in seen_m:
-            msg = f"duplicate Message-Instance m={mv}"
-            return VerifyResult(ok=False, status='permerror', failing_i=None,
-                                domain=None, message=msg, errors=[msg])
-        seen_m.add(mv)
 
     # A DKIM2-Signature without an i= that is a positive integer cannot be
     # placed in the chain or keyed.  It is a PERMERROR, never silently
@@ -798,12 +789,22 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
 
-    # Every i= and m= is bounded by MAX_CHAIN_LENGTH, before the gap loops
-    # below walk 1..max.
+    # Every i= and m= is a chain number (1*DIGIT, at most 3 digits, 1..100,
+    # and no more than MAX_CHAIN_LENGTH), before the gap loops below walk
+    # 1..max.
     range_error = chain_range_error(mi_headers, sig_headers)
     if range_error:
         return VerifyResult(ok=False, status='permerror', failing_i=None,
                             domain=None, message=range_error, errors=[range_error])
+
+    seen_m = set()
+    for h in mi_headers:
+        mv = _get_version_from_mi(h)
+        if mv in seen_m:
+            msg = f"duplicate Message-Instance m={mv}"
+            return VerifyResult(ok=False, status='permerror', failing_i=None,
+                                domain=None, message=msg, errors=[msg])
+        seen_m.add(mv)
 
     # spec-06 §7.1: Message-Instance m= and DKIM2-Signature i= values must be
     # contiguous from 1.  Structural, so checked before any crypto.  (A

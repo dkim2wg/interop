@@ -705,6 +705,10 @@ def build_signature_i_33():
     return _gap_chain(sig2_seq=33, mi2_version=2)
 
 
+def build_signature_i_101():
+    return _gap_chain(sig2_seq=101, mi2_version=2)
+
+
 def build_signature_i_huge():
     return _gap_chain(sig2_seq=HUGE, mi2_version=2)
 
@@ -714,7 +718,18 @@ def build_signature_m_huge():
 
 
 def build_instance_m_huge():
-    return _gap_chain(sig2_seq=2, mi2_version=HUGE)
+    # The signature says m=2, so the out-of-range number is the instance's.
+    return _gap_chain(sig2_seq=2, mi2_version=HUGE, sig2_m=2)
+
+
+# Not 1*DIGIT: "4294967297x" is malformed, never its digit prefix (which the
+# browser verifier's parseInt and C's atoi took, and walked 1..max to).
+def build_signature_m_malformed():
+    return _gap_chain(sig2_seq=2, mi2_version=2, sig2_m="4294967297x")
+
+
+def build_instance_m_malformed():
+    return _gap_chain(sig2_seq=2, mi2_version="4294967297x", sig2_m=2)
 
 
 FIXTURES = {
@@ -745,9 +760,12 @@ FIXTURES = {
     "unkeyable-signature-i-abc.eml": build_unkeyable_signature_i_abc,
     "lone-junk-signature.eml": build_lone_junk_signature,
     "signature-i-33.eml": build_signature_i_33,
+    "signature-i-101.eml": build_signature_i_101,
     "signature-i-huge.eml": build_signature_i_huge,
     "signature-m-huge.eml": build_signature_m_huge,
     "instance-m-huge.eml": build_instance_m_huge,
+    "signature-m-malformed.eml": build_signature_m_malformed,
+    "instance-m-malformed.eml": build_instance_m_malformed,
 }
 
 
