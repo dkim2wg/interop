@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -207,6 +208,18 @@ func validSequenceTag(raw string) bool {
 	return strings.TrimLeft(v, "0") != ""
 }
 
+// KnownSigAlg reports whether alg is a signature algorithm this verifier
+// implements (spec-06 §3, §8.9).  Algorithm names are tag values, so they are
+// case significant: "RSA-SHA256" is not "rsa-sha256".
+func KnownSigAlg(alg string) bool {
+	return alg == "rsa-sha256" || alg == "ed25519-sha256"
+}
+
+// sigSyntaxError is spec-06 §11.2's "PERMERROR DKIM2-Signature i=<x> syntax error".
+func sigSyntaxError(i int) error {
+	return fmt.Errorf("PERMERROR DKIM2-Signature i=%d syntax error", i)
+}
+
 func parseSig(raw string) (*DKIM2Signature, error) {
 	colon := strings.IndexByte(raw, ':')
 	if colon < 0 {
@@ -233,10 +246,17 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		}
 		sig.MIVersion = n
 	}
-	if v := tvl.get("t"); v != "" {
+	if tvl.has("t") {
+		// §8.4: sig-t-tag = %x74 [FWS] "=" [FWS] 1*DIGIT -- no sign, no
+		// exponent, no hex.  Not constrained to 32 bits; anything beyond
+		// int64 is saturated (it is far in the future either way).
+		v := tvl.get("t")
+		if !allASCIIDigits(v) {
+			return nil, sigSyntaxError(sig.Sequence)
+		}
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("DKIM2-Signature i=%d tag=t syntax error: %w", sig.Sequence, err)
+			n = math.MaxInt64
 		}
 		sig.Timestamp = n
 	}
@@ -269,10 +289,13 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 				return nil, fmt.Errorf("invalid s= item: %q", part)
 			}
 			item := SigItem{Selector: fields[0], Algorithm: fields[1]}
-			if fields[2] != "" {
+			// §3.4: an item whose algorithm is not implemented is ignored
+			// entirely, value included.  An implemented one MUST carry a
+			// non-empty base64 signature.
+			if KnownSigAlg(item.Algorithm) {
 				b, err := base64.StdEncoding.DecodeString(fields[2])
-				if err != nil {
-					return nil, fmt.Errorf("invalid sig value: %w", err)
+				if fields[2] == "" || err != nil {
+					return nil, sigSyntaxError(sig.Sequence)
 				}
 				item.Value = b
 			}

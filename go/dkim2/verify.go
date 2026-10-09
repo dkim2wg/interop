@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -128,6 +129,15 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			return []VerifyResult{{Domain: "MI-chain", Error: fmt.Errorf("unsigned top %w", mierr)}}, nil
 		}
 		return []VerifyResult{}, nil
+	}
+
+	// A self-describing PERMERROR from parsing a signature (bad t=, a known
+	// algorithm's item without a base64 value) is the result, rather than a
+	// knock-on "not contiguous" once that signature drops out of the walk.
+	for _, raw := range sigHeaders {
+		if _, err := parseSig(raw); err != nil && strings.HasPrefix(err.Error(), "PERMERROR") {
+			return nil, err
+		}
 	}
 
 	var topSig *DKIM2Signature
@@ -368,7 +378,9 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 
 		// §10.3 SHOULD: reject signatures more than 14 days old or in the future
-		if !skipTS && sig.Timestamp > 0 {
+		// t=0 is valid syntax and simply very old.  Compared without adding
+		// to t=, which may be as large as math.MaxInt64.
+		if !skipTS {
 			const tolerance = 300 // 5-minute clock-skew tolerance
 			const maxAge = 14 * 24 * 3600
 			if sig.Timestamp > now+tolerance {
@@ -376,7 +388,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 				results = append(results, res)
 				continue
 			}
-			if now > sig.Timestamp+maxAge {
+			if now-maxAge > sig.Timestamp {
 				res.Error = fmt.Errorf("i=%d: signature has expired (age > 14 days)", sig.Sequence)
 				results = append(results, res)
 				continue
@@ -473,55 +485,76 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 
 		digest := sha256.Sum256(sigInput)
 
-		// §10.6 MUST: verify ALL sig items; any crypto failure is an error
-		var itemErr error
-		verifiedAny := false
-		cryptoFail := false
-		for _, item := range sig.Sigs {
-			pubKey, keyAlg, fetchErr := fetcher.FetchPublicKey(item.Selector, sig.Domain)
-			if fetchErr != nil {
-				if itemErr == nil {
-					itemErr = fmt.Errorf("sel=%s: key fetch: %w", item.Selector, fetchErr)
-				}
-				continue
-			}
-			// §3.2: RSA keys MUST be at least 1024 bits; reject shorter keys.
-			if rk, ok := pubKey.(*rsa.PublicKey); ok && rk.N.BitLen() < 1024 {
-				itemErr = fmt.Errorf("sel=%s: RSA key too short (%d bits < 1024, §3.2)",
-					item.Selector, rk.N.BitLen())
-				continue
-			}
-			normAlg := strings.TrimSuffix(item.Algorithm, "-sha256")
-			normKeyAlg := strings.TrimSuffix(keyAlg, "-sha256")
-			if normAlg != normKeyAlg {
-				itemErr = fmt.Errorf("sel=%s: algorithm mismatch: sig=%s key=%s",
-					item.Selector, item.Algorithm, keyAlg)
-				continue
-			}
-			if verr := verifyDigest(pubKey, keyAlg, digest[:], item.Value); verr != nil {
-				// §10.6: a genuine crypto failure of a known, fetchable item is
-				// a hard error even if another item verifies.
-				res.Error = fmt.Errorf("i=%d: sel=%s: %w", sig.Sequence, item.Selector, verr)
-				cryptoFail = true
-				break
-			}
-			verifiedAny = true
-		}
-		// Items we could not process (unfetchable key, unknown algorithm,
-		// under-strength key) are SKIPPED, not failures: a future-algorithm
-		// item alongside a good one still passes.  Only report the skip reason
-		// when nothing verified.
-		if !cryptoFail && !verifiedAny {
-			if itemErr != nil {
-				res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, itemErr)
-			} else {
-				res.Error = fmt.Errorf("i=%d: no verifiable signature items", sig.Sequence)
-			}
-		}
+		res.Error = verifySigItems(sig, fetcher, digest[:])
 		results = append(results, res)
 	}
 
 	return results, nil
+}
+
+// verifySigItems decides one DKIM2-Signature's outcome from its s= items, in
+// the order the behaviour spec (2026-10-09 review fixes, section E) gives:
+//  1. unimplemented algorithms are ignored (§3.4); none left is FAIL;
+//  2. (an implemented item's value is a padded base64string -- parseSig);
+//  3. every implemented item's key is fetched: a DNS failure is TEMPERROR, a
+//     record that is present but unusable is PERMERROR for the whole
+//     signature (§11.5, §11.6), an absent record skips the item;
+//  4. every implemented item absent is PERMERROR "does not exist";
+//  5. every item with a key MUST verify (§11.6), else FAIL.
+func verifySigItems(sig *DKIM2Signature, fetcher KeyFetcher, digest []byte) error {
+	type keyed struct {
+		item SigItem
+		key  crypto.PublicKey
+	}
+	var usable []keyed
+	firstAbsent := ""
+	implemented := 0
+	for _, item := range sig.Sigs {
+		if !KnownSigAlg(item.Algorithm) {
+			continue
+		}
+		implemented++
+		pubKey, keyAlg, err := fetcher.FetchPublicKey(item.Selector, sig.Domain)
+		if err != nil {
+			if errors.Is(err, ErrKeyNotFound) {
+				if firstAbsent == "" {
+					firstAbsent = item.Selector
+				}
+				continue
+			}
+			if problem := keyRecordProblem(err); problem != "" {
+				return fmt.Errorf("PERMERROR DKIM2-Signature i=%d public key %s %s",
+					sig.Sequence, item.Selector, problem)
+			}
+			return fmt.Errorf("TEMPERROR DKIM2-Signature i=%d public key %s could not be fetched: %v",
+				sig.Sequence, item.Selector, err)
+		}
+		// §8.9: the key's k= must be the item's algorithm.
+		if keyAlg != item.Algorithm || !keyFitsAlg(pubKey, item.Algorithm) {
+			return fmt.Errorf("PERMERROR DKIM2-Signature i=%d public key %s algorithm mismatch",
+				sig.Sequence, item.Selector)
+		}
+		// §3.2: RSA keys MUST be at least 1024 bits.
+		if rk, ok := pubKey.(*rsa.PublicKey); ok && rk.N.BitLen() < 1024 {
+			return fmt.Errorf("PERMERROR DKIM2-Signature i=%d public key %s is too short (%d bits < 1024, §3.2)",
+				sig.Sequence, item.Selector, rk.N.BitLen())
+		}
+		usable = append(usable, keyed{item, pubKey})
+	}
+	if implemented == 0 {
+		return fmt.Errorf("FAIL DKIM2-Signature i=%d has no signature with a supported algorithm", sig.Sequence)
+	}
+	if len(usable) == 0 {
+		return fmt.Errorf("PERMERROR DKIM2-Signature i=%d public key %s does not exist",
+			sig.Sequence, firstAbsent)
+	}
+	for _, k := range usable {
+		if err := verifyDigest(k.key, k.item.Algorithm, digest, k.item.Value); err != nil {
+			return fmt.Errorf("FAIL DKIM2-Signature i=%d public key %s signature did not verify: %v",
+				sig.Sequence, k.item.Selector, err)
+		}
+	}
+	return nil
 }
 
 // checkSignatureDuplicates enforces spec-06 §8.9 duplicate/limit rules for
@@ -651,6 +684,17 @@ func relaxedDomainMatch(d1, d2 string) bool {
 	d1 = strings.ToLower(d1)
 	d2 = strings.ToLower(d2)
 	return d1 == d2 || strings.HasSuffix(d1, "."+d2)
+}
+
+// keyFitsAlg reports whether key is of the type alg signs with.
+func keyFitsAlg(key crypto.PublicKey, alg string) bool {
+	switch key.(type) {
+	case *rsa.PublicKey:
+		return alg == "rsa-sha256"
+	case ed25519.PublicKey:
+		return alg == "ed25519-sha256"
+	}
+	return false
 }
 
 func verifyDigest(key crypto.PublicKey, alg string, digest, sig []byte) error {
