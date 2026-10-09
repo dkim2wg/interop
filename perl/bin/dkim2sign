@@ -108,6 +108,7 @@ if ($dns_json) {
 }
 my $gate = Mail::DKIM2::Gate->check($raw, %gate_opts);
 unless ($gate->{ok}) {
+    $gate->{message} =~ s/AllowNullBodyRecipe not set/--allow-null-body-recipe not set/;
     print STDERR "dkim2sign: not signing: $gate->{message}\n";
     exit 1;
 }

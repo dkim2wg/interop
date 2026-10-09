@@ -414,6 +414,8 @@ sub cb_eom {
                       message => "internal error checking the upstream chain: $err" };
         }
         $verify_result = $gate->{verify_result};
+        $gate->{message} =~ s/AllowNullBodyRecipe not set/--allow-null-body-recipe not set/
+            if defined $gate->{message};
 
         if ($gate->{reason}
             && ($gate->{reason} eq 'upstream-chain' || $gate->{reason} eq 'error')) {

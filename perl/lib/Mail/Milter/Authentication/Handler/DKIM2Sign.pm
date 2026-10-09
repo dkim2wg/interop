@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Mail::Milter::Authentication::Pragmas;
 # ABSTRACT: Handler class for DKIM2 signing
-our $VERSION = '0.16';
+our $VERSION = '0.17';
 use base 'Mail::Milter::Authentication::Handler';
 
 use Mail::DKIM2::Common qw(extract_mi_version strip_mi_versions load_private_key fold_header parse_mime
@@ -285,6 +285,8 @@ sub addheader_callback {
         $self->check_timeout();
         unless ( $gate->{ok} ) {
             my $reason = $gate->{reason} // 'refused';
+            $gate->{message} =~ s/AllowNullBodyRecipe not set/allow_null_body_recipe not set/
+                if defined $gate->{message};
             $self->metric_count( 'dkim2_sign_total', { 'result' => $reason } );
             $self->dbgout( 'DKIM2Sign',
                 "Not signing for $sign_domain: $gate->{message}", LOG_INFO );

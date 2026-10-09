@@ -90,6 +90,8 @@ my %cb = (PubkeyCallback => DKIM2TestKeys::pubkey_callback());
     is($g->{reason}, 'null-body-recipe', 'unsigned null top: reason null-body-recipe');
     like($g->{message}, qr/unsigned top Message-Instance m=2 has a null body Recipe/,
         'unsigned null top: message says the null top is unsigned');
+    like($g->{message}, qr/\(AllowNullBodyRecipe not set\)/, 'library message names the library option');
+    unlike($g->{message}, qr/--allow/, 'library message has no CLI flag');
     is($g->{top_null}, 1, 'unsigned null top: top_null');
     is($g->{top_signed}, 0, 'unsigned null top: top_signed is 0 (i=1 covers only m=1)');
     $g = Mail::DKIM2::Gate->check($msg, %cb, AllowNullBodyRecipe => 1);
