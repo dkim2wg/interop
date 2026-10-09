@@ -20,6 +20,7 @@ use Mail::DKIM2::Common qw(
     valid_sequence
     UNKEYABLE_SIGNATURE_ERROR
     chain_number_error
+    mi_version_tag
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -57,8 +58,8 @@ sub finish_header {
             my ($val) = $header =~ /^Message-Instance:\s*(.*)/is;
             $val =~ s/\r\n$//;
             my $v = extract_mi_version($val);
-            # Above MAX_CHAIN_LENGTH: a PERMERROR to every verifier.
-            if (my $e = chain_number_error('Message-Instance', 'm', $v)) {
+            # Not a chain number: a PERMERROR to every verifier.
+            if (my $e = chain_number_error('Message-Instance', 'm', mi_version_tag($val))) {
                 $range //= $e;
                 next;
             }

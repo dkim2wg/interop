@@ -13,7 +13,7 @@ use Sendmail::PMilter 1.28 ':all';   # 1.27 never answered MAIL FROM:<>
 # source of truth in Mail::DKIM2::Common.
 use Mail::DKIM2::Common qw(
     parse_dkim_pubkey load_private_key fold_header extract_mi_version strip_mi_versions should_skip parse_mime
-    chain_number_error
+    chain_number_error mi_version_tag
     DKIM2_DRAFT DKIM2_REPO DKIM2_DATE
 );
 use constant DKIM2_SOFTWARE => 'dkim2-milter';
@@ -659,7 +659,7 @@ sub _compute_mi {
     # say so) and is never a range bound below: snap_max_v+1 .. max_v with
     # m=99999999999999999999 dies, and m=4294967297 is a four-billion
     # element list. Add no instance over such a chain.
-    if (my ($e) = grep { defined } map { chain_number_error('Message-Instance', 'm', extract_mi_version($_)) }
+    if (my ($e) = grep { defined } map { chain_number_error('Message-Instance', 'm', mi_version_tag($_)) }
                                     @mi_hdrs) {
         warn "dkim2-milter: not computing a Message-Instance: $e\n";
         return undef;

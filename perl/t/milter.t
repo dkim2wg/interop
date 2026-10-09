@@ -565,7 +565,7 @@ my $expected_dir = path("tests/expected");
     # Simulate: mailman added List-Id header BUT computed a broken MI v=2
     # (wrong hashes — all A's — doesn't describe the actual modification)
     my $bad_hash = 'A' x 43 . '=';   # 44-char base64 (32 bytes, all 0x00)
-    my $broken_mi2_val = "m=2 v=1 h=sha256:${bad_hash}:${bad_hash}";
+    my $broken_mi2_val = "m=2; h=sha256:${bad_hash}:${bad_hash}";
     my $modified = $signed_msg;
     $modified =~ s/\r//gs;
     $modified =~ s/\n/\r\n/gs;

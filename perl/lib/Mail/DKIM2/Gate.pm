@@ -5,7 +5,7 @@ use warnings;
 our $VERSION = '0.16';
 
 use Email::MIME;
-use Mail::DKIM2::Common qw(extract_mi_version parse_mime valid_sequence);
+use Mail::DKIM2::Common qw(extract_mi_version parse_mime valid_sequence chain_number_error);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Verifier;
@@ -162,7 +162,8 @@ sub check {
         my $sig = eval { Mail::DKIM2::Signature->parse($v) } or next;
         next unless valid_sequence($sig->sequence);
         my $m = $sig->version // next;
-        $covered = $m if $m =~ /\A[0-9]{1,2}\z/ && $m > $covered;
+        next if chain_number_error('DKIM2-Signature', 'm', $m);
+        $covered = 0 + $m if $m > $covered;
     }
     my $top_signed = ($top && $top <= $covered) ? 1 : 0;
     # The highest unsigned instance with a null body Recipe, the top's own or

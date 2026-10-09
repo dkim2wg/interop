@@ -26,6 +26,7 @@ use Mail::DKIM2::Common qw(
     valid_sequence
     UNKEYABLE_SIGNATURE_ERROR
     chain_number_error
+    mi_version_tag
 );
 use Email::MIME;
 use Mail::DKIM2::Signature;
@@ -126,9 +127,11 @@ sub handle_header {
 
     if ($lc_name eq 'message-instance') {
         eval {
+            my $raw = mi_version_tag($contents);
+            # Bounded here, before finish_body walks 1..m= for gaps. Keyed
+            # by number, so m=01 is m=1.
             my $v = extract_mi_version($contents);
-            # Bounded here, before finish_body walks 1..m= for gaps.
-            if (my $e = chain_number_error('Message-Instance', 'm', $v)) {
+            if (my $e = chain_number_error('Message-Instance', 'm', $raw)) {
                 $self->{_range_error} //= $e;
             }
             elsif ($v) {
@@ -346,7 +349,7 @@ sub finish_body {
         my $flags = $sig->flags // [];
 
         if (grep { $_ eq 'donotmodify' } @$flags) {
-            my $m = $sig->version || 0;
+            my $m = 0 + ($sig->version || 0);
             if ($m >= 1 && $mi_map{$m} && $mi_map{$m + 1}) {
                 # spec-06 §3.4/§7.3: an MI may carry several hash-sets. Only
                 # compare hash-sets whose algorithm we implement; if the two

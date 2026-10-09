@@ -29,6 +29,7 @@ our @EXPORT_OK = qw(
     fold_value
     build_signing_input
     extract_mi_version
+    mi_version_tag
     strip_mi_versions
     extract_domain
     to_rfc5321_path
@@ -40,6 +41,7 @@ our @EXPORT_OK = qw(
     DKIM2_REPO
     DKIM2_DATE
     MAX_CHAIN_LENGTH
+    MAX_CHAIN_NUMBER
     chain_length_error
     valid_sequence
     UNKEYABLE_SIGNATURE_ERROR
@@ -63,6 +65,12 @@ use constant DKIM2_DATE  => '2026-10-08';
 # DNS lookup, a signature check and an undo of the whole message, and the
 # sender chooses how many hops there are.
 use constant MAX_CHAIN_LENGTH => 32;
+
+# The largest number a DKIM2-Signature i= or m=, or a Message-Instance m=, may
+# be written as: at most three ASCII digits naming 1..100. Anything else is
+# malformed before it is ever compared with MAX_CHAIN_LENGTH, and is never
+# converted to a number big enough to be a loop bound.
+use constant MAX_CHAIN_NUMBER => 100;
 
 # Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-06 Section 4.
 # spec-05 narrowed the old /^arc-/ prefix to the three RFC 8617 field names and
@@ -136,19 +144,24 @@ sub valid_sequence {
     return (defined $i && $i =~ /\A[0-9]+\z/ && $i > 0) ? 1 : 0;
 }
 
-# The PERMERROR for an i= or m= value above MAX_CHAIN_LENGTH, or undef. Each
-# number names one hop and a chain has at most MAX_CHAIN_LENGTH of them, so a
-# bigger one is never valid -- and checking it before anything walks 1..max
-# keeps a value like 99999999999999999999 from being used as a loop bound.
-# Values longer than two digits are out of range without being treated as
-# numbers at all. Anything that is not ASCII digits is left to the callers'
-# own syntax checks.
+# The PERMERROR for an i= or m= value that is not a chain number, or undef
+# (also undef for a missing value, which is left to the callers). A value must
+# be 1*DIGIT in ASCII -- "4294967297x" is malformed, never its digit prefix --
+# with at most three digits naming 1..MAX_CHAIN_NUMBER, so "01" and "001" are
+# 1; and since each number names one hop, no more than MAX_CHAIN_LENGTH.
+# Checking this before anything walks 1..max keeps a value like
+# 99999999999999999999 from being used as a loop bound.
 sub chain_number_error {
     my ($field, $tag, $n) = @_;
-    return unless defined $n && $n =~ /\A[0-9]+\z/;
-    return if length($n) <= 2 && $n <= MAX_CHAIN_LENGTH;
+    return unless defined $n;
+    my $malformed = $tag eq 'i' ? UNKEYABLE_SIGNATURE_ERROR
+                  : "PERMERROR $field has a malformed $tag= tag";
+    return $malformed unless $n =~ /\A[0-9]+\z/ && $n =~ /[1-9]/;
+    return "PERMERROR $field $tag= exceeds the maximum chain number of "
+        . MAX_CHAIN_NUMBER if length($n) > 3 || $n > MAX_CHAIN_NUMBER;
     return "PERMERROR $field $tag= exceeds the maximum chain length of "
-        . MAX_CHAIN_LENGTH;
+        . MAX_CHAIN_LENGTH if $n > MAX_CHAIN_LENGTH;
+    return;
 }
 
 # The PERMERROR for the first number that appears twice among a field's
@@ -353,13 +366,29 @@ sub fold_value {
     return join("\r\n\t", @parts);
 }
 
-# Extract the revision number from a Message-Instance header value (m= tag)
-sub extract_mi_version {
+# The raw m= value of a Message-Instance header value (whitespace removed,
+# as MessageInstance->parse does), or undef if it has no m= tag.
+sub mi_version_tag {
     my ($header) = @_;
     $header = $header->[0] if ref($header) eq 'ARRAY';
     $header = $$header if ref($header);
-    return unless $header =~ m/^\s*m=([0-9]+)/;
-    return $1;
+    return unless defined $header;
+    for my $part (split /;/, $header) {
+        next unless $part =~ /\A\s*m\s*=(.*)\z/s;
+        (my $v = $1) =~ s/\s//g;
+        return $v;
+    }
+    return;
+}
+
+# The m= number of a Message-Instance header value, or undef when it has no
+# m= or the m= is not all ASCII digits (never a digit prefix). Numeric, so
+# "01" and "001" are 1. Callers check chain_number_error(mi_version_tag(...))
+# before using it as a bound.
+sub extract_mi_version {
+    my $v = mi_version_tag(@_);
+    return unless defined $v && $v =~ /\A[0-9]+\z/;
+    return length($v) <= 15 ? 0 + $v : $v;
 }
 
 # Strip Message-Instance headers with the given version numbers from a raw message string.
@@ -616,8 +645,13 @@ changed. Emitted in X-DKIM2-Info debug headers
 =head2 MAX_CHAIN_LENGTH
 
 32: a message carrying more Message-Instance or DKIM2-Signature fields
-than this is a PERMERROR, found before any key is fetched. Local policy,
-not spec.
+than this, or an C<i=> or C<m=> naming a larger number, is a PERMERROR,
+found before any key is fetched. Local policy, not spec.
+
+=head2 MAX_CHAIN_NUMBER
+
+100: the largest number an C<i=> or C<m=> may be written as (at most
+three digits). See L</chain_number_error($field, $tag, $n)>.
 
 =head1 CANONICALIZATION
 
@@ -651,8 +685,15 @@ in the value is removed rather than collapsed.
 
 =head2 extract_mi_version($header_value)
 
-The C<m=> number of a Message-Instance value, or undef. Accepts a string,
-a scalar ref, or an arrayref (first element).
+The C<m=> number of a Message-Instance value, as a number (so C<01> is
+1), or undef when there is no C<m=> or it is not all ASCII digits.
+Accepts a string, a scalar ref, or an arrayref (first element).
+
+=head2 mi_version_tag($header_value)
+
+The raw C<m=> value of a Message-Instance value with whitespace removed,
+or undef when there is none. Pass it to
+L</chain_number_error($field, $tag, $n)> before trusting it.
 
 =head2 strip_mi_versions($message, @m)
 
@@ -694,11 +735,16 @@ C<i=>, or one that does not parse.
 
 =head2 chain_number_error($field, $tag, $n)
 
-The PERMERROR string C<"PERMERROR $field $tag= exceeds the maximum chain
-length of 32"> when C<$n> is ASCII digits naming a number above
-L</MAX_CHAIN_LENGTH> (or more than two digits long), or undef. Every
+The PERMERROR string for an C<i=> or C<m=> value that is not a chain
+number, or undef (also for an undefined C<$n>, which is left to the
+caller). A value that is not 1*DIGIT in ASCII, or is zero, is malformed:
+L</UNKEYABLE_SIGNATURE_ERROR> for C<i=>, else
+C<"PERMERROR $field has a malformed $tag= tag">. More than three digits
+or above L</MAX_CHAIN_NUMBER> is C<"PERMERROR $field $tag= exceeds the
+maximum chain number of 100">. Above L</MAX_CHAIN_LENGTH> is
+C<"PERMERROR $field $tag= exceeds the maximum chain length of 32">: every
 C<i=> and C<m=> names one hop, so none can be larger than the chain.
-Values that are not digits are left to the caller's syntax checks.
+C<01> and C<001> are 1.
 
 =head2 duplicate_number_error($field, $tag, @numbers)
 

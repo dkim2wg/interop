@@ -5,7 +5,7 @@ use Path::Tiny;
 use Email::MIME;
 use lib 'lib';
 use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey parse_mime
-                           valid_sequence chain_number_error UNKEYABLE_SIGNATURE_ERROR);
+                           valid_sequence chain_number_error mi_version_tag UNKEYABLE_SIGNATURE_ERROR);
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
@@ -44,7 +44,7 @@ for my $h ($msg1->header_raw('DKIM2-Signature')) {
   die "$e\n" if $e;
 }
 for my $h ($msg1->header_raw('Message-Instance')) {
-  my $e = chain_number_error('Message-Instance', 'm', extract_mi_version($h));
+  my $e = chain_number_error('Message-Instance', 'm', mi_version_tag($h));
   die "$e\n" if $e;
 }
 
