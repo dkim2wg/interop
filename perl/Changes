@@ -1,5 +1,19 @@
 Revision history for Mail::DKIM2
 
+0.17    2026-10-08
+        - Mail::DKIM2::Gate: when the Gate runs the Verifier itself and it
+          passes, the Verifier has already walked the whole Message-Instance
+          chain, so the Gate no longer walks it a second time. It still does
+          when there are no signatures, when the caller supplied VerifyResult,
+          or when the Verifier did not pass.
+        - The Gate's null-body refusal now names the library option
+          (AllowNullBodyRecipe), not the CLI flag. dkim2sign and dkim2-milter
+          still show --allow-null-body-recipe, and the authentication_milter
+          DKIM2Sign handler shows allow_null_body_recipe.
+        - authentication_milter DKIM2Verify: for a message that already has
+          Message-Instance headers, skip the MessageInstance verify that only
+          picked the snapshot key when snapshot_directory is not set.
+
 0.16    2026-10-08
         - Mail::DKIM2::Gate's null body rule: a DKIM2-Signature with m=k
           covers Message-Instances 1..k, so without AllowNullBodyRecipe the
