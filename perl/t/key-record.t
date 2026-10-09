@@ -46,6 +46,7 @@ is(rec("v=DKIM1; k=rsa; k=rsa; p=$p"), 'has a syntax error', 'k= twice');
 is(rec("v=DKIM1; k=rsa"), 'has a syntax error', 'no p=');
 is(rec("v=DKIM1; p=!!!"), 'has a syntax error', 'p= not base64');
 is(rec("v=DKIM1; p=QUJDRA=="), 'has a syntax error', 'p= not a key');
+is(rec("v=DKIM1; p=" . substr($p, 0, -1)), 'has a syntax error', 'p= missing padding');
 is(rec("v=DKIM1; 1x=y; p=$p"), 'has a syntax error', 'bad tag name');
 is(rec(''), 'has a syntax error', 'empty record');
 

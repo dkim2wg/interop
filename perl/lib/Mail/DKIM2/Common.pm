@@ -202,7 +202,7 @@ sub dkim2_canonicalize_header {
     return "$name:$value\r\n";
 }
 
-# DKIM2 header canonicalization for SIGNATURE INPUT per spec-06 Section 8.5:
+# DKIM2 header canonicalization for SIGNATURE INPUT per spec-06 Section 9.6:
 # Same as header hash canonicalization except step 3 deletes ALL WSP
 # characters rather than collapsing to single SP.
 sub dkim2_canonicalize_sig_header {
@@ -553,6 +553,14 @@ sub build_signing_input {
 # its deadline. That includes Reflector, Split and Validate, so the promise
 # in Mail::DKIM2's CONVENTIONS holds without exceptions (review R16).
 
+# A base64string (spec-06 §2.13), FWS already removed: base64 characters,
+# padded with "=" to a multiple of four ("MUST be padded"). Internal.
+sub _is_base64string {
+    my ($s) = @_;
+    return defined $s && length $s && length($s) % 4 == 0
+        && $s =~ m{\A[A-Za-z0-9+/]+={0,2}\z};
+}
+
 # _check_options($what, \%opts, @known): croak on an option not in @known.
 # Every public constructor and class method taking named options calls this
 # first (Mail::DKIM2 CONVENTIONS: a misspelling is an error, not a silently
@@ -596,7 +604,7 @@ sub parse_dkim_key_record {
     return (undef, $syntax) unless exists $tag{p};
     (my $p = $tag{p}) =~ s/[ \t\r\n]//g;
     return (undef, 'has been revoked') unless length $p;
-    return (undef, $syntax) unless $p =~ m{\A[A-Za-z0-9+/]+={0,2}\z};
+    return (undef, $syntax) unless _is_base64string($p);
     my $k = $tag{k} // 'rsa';
     my $key = _key_from_p($k, $p);
     return $key if $key;

@@ -680,9 +680,9 @@ sub _verify_signature {
         my $alg = $signature->algorithm($idx) // '';
         next unless $IMPLEMENTED_ALG{$alg};
 
-        # A known algorithm's value must be a signature: non-empty base64.
+        # A known algorithm's value must be a signature: a padded base64string.
         my $sig_b64 = $signature->signature_value($idx) // '';
-        unless ($sig_b64 =~ m{\A[A-Za-z0-9+/]+={0,2}\z}) {
+        unless (Mail::DKIM2::Common::_is_base64string($sig_b64)) {
             $self->{result}  = 'permerror';
             $self->{details} = "DKIM2-Signature i=$i syntax error ($alg signature value is not base64)";
             return 0;

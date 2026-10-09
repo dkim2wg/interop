@@ -81,6 +81,8 @@ t/headerparser.t
 t/ignore-prefixes.t
 t/interop.t
 t/invalid-json.t
+t/key-record.t
+t/lib/DKIM2SignedFixture.pm
 t/lib/DKIM2TestKeys.pm
 t/lib/MockAuthMilter.pm
 t/load-private-key-data.t
@@ -91,6 +93,7 @@ t/mi-chain.t
 t/mi-hostile-header.t
 t/mi-null-header-history.t
 t/mi-null-recipe.t
+t/mi-tag-case.t
 t/milter-script.t
 t/milter-sign-gate.t
 t/milter.t
@@ -116,14 +119,19 @@ t/signature-nonce.t
 t/signer-result.t
 t/split-lmtp.t
 t/split.t
+t/synopsis.t
+t/tagvaluelist.t
+t/timestamp-syntax.t
 t/turscar.t
 t/undo-bounds.t
 t/undo-encoded-body.t
+t/unknown-options.t
 t/validate-cgi.t
 t/validate-cli.t
 t/validate-null-body.t
 t/validate-report.t
 t/verifier-accessors.t
+t/verifier-algorithms.t
 t/verifier-mi-coverage.t
 t/verifier-streaming.t
 t/verifier-unkeyable.t

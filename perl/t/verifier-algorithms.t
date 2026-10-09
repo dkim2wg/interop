@@ -39,6 +39,9 @@ run('unknown item beside a good one',
 run('known algorithm, value not base64',
     [['sel1', 'rsa-sha256', '!!notbase64!!']],
     qr/^permerror .*DKIM2-Signature i=1 syntax error/, 0);
+run('known algorithm, base64 missing its padding',
+    [['sel1', 'rsa-sha256', 'AAA']],
+    qr/^permerror .*DKIM2-Signature i=1 syntax error/, 0);
 run('unknown algorithm, value not base64: still ignored',
     [['sel2', 'future-alg', '!!x!!'], ['sel1', 'rsa-sha256']], qr/^pass/, 1);
 

@@ -117,12 +117,14 @@ sub nonce {
     return $self->get_tag('n');
 }
 
-# spec-06 §2.12: folding whitespace may appear anywhere inside a tag value and
-# "MUST be ignored when the value is used".  DKIM2 tag values are base64,
-# tokens, digits or domains and never carry significant internal whitespace, so
-# any WSP present came from a fold.  TagValueList::parse only trims the ends of
-# the whole value, which leaves a fold inside a comma-separated list glued to
-# the item that follows it -- so strip per item, before splitting on ':'.
+# Where the grammar allows FWS inside a value -- within a base64string
+# (§2.13: a signature value folded across lines), and around the "," and ":"
+# that separate s= items and their parts (§8.9's sig-set) -- it is not part
+# of the value. TagValueList::parse only trims the ends of the whole value,
+# which leaves a fold after a "," glued to the next item's Selector, so strip
+# per item, before splitting on ':'. This is lenient reading, not
+# validation: it would also accept whitespace the grammar does not allow
+# (inside a Selector or flag name), which no conforming signer emits.
 sub _strip_fws {
     my ($v) = @_;
     return $v unless defined $v;
