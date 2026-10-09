@@ -99,29 +99,11 @@ func keyFromTXTRecords(rrs [][]string, name string) (crypto.PublicKey, string, e
 
 func isKeyWSP(r rune) bool { return r == ' ' || r == '\t' || r == '\r' || r == '\n' }
 
-// validKeyTagName: ALPHA *(ALPHA / DIGIT / "_") (dns-00 §3.2).
-func validKeyTagName(n string) bool {
-	if n == "" {
-		return false
-	}
-	for i := 0; i < len(n); i++ {
-		c := n[i]
-		alpha := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-		if i == 0 && !alpha {
-			return false
-		}
-		if !alpha && !(c >= '0' && c <= '9') && c != '_' {
-			return false
-		}
-	}
-	return true
-}
-
 // parseDKIM1TXT validates a whole key record (dns-00 §3.2 tag-list, §3.4.1)
 // and returns its public key and the signature algorithm that key serves.
-// Tag names are case sensitive; a repeated tag, a v= that is not first or not
-// exactly DKIM1, or a missing/undecodable p= is a syntax error; an empty p= is
-// revoked; a k= other than rsa or ed25519 is an algorithm mismatch.  Unknown
+// Tag names are case sensitive; a value outside the tag-value grammar, a
+// repeated tag, a v= that is not first or not exactly DKIM1, or a
+// missing/undecodable p= is a syntax error; an empty p= is revoked; a k= other than rsa or ed25519 is an algorithm mismatch.  Unknown
 // and retired tags (h=, n=, s=, t=) are ignored.
 func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 	tags := make(map[string]string)
@@ -135,13 +117,18 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 			return nil, "", fmt.Errorf("%w: %q is not a tag=value", ErrKeySyntax, spec)
 		}
 		name := strings.TrimFunc(spec[:eq], isKeyWSP)
-		if !validKeyTagName(name) {
+		if !validTagName(name) {
 			return nil, "", fmt.Errorf("%w: bad tag name %q", ErrKeySyntax, name)
 		}
 		if _, dup := tags[name]; dup {
 			return nil, "", fmt.Errorf("%w: repeated tag %s=", ErrKeySyntax, name)
 		}
 		val := strings.TrimFunc(spec[eq+1:], isKeyWSP)
+		// Every value, known or ignored, is a tag-value (RFC 6376 §3.2):
+		// VALCHARs with FWS only between them; no NUL, DEL or 8-bit byte.
+		if !validTagValue(val) {
+			return nil, "", fmt.Errorf("%w: bad value for %s=", ErrKeySyntax, name)
+		}
 		if name == "v" && (idx != 0 || val != "DKIM1") {
 			return nil, "", fmt.Errorf("%w: v= must be the first tag and DKIM1", ErrKeySyntax)
 		}

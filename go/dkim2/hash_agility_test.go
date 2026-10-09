@@ -19,7 +19,10 @@ func TestHashAlgRegistry(t *testing.T) {
 }
 
 func TestParseHashSets(t *testing.T) {
-	got := parseHashSets("sha256:AAA:BBB,sha512:CCC:DDD")
+	got, err := parseHashSets("sha256:AAA:BBB,sha512:CCC:DDD")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 2 {
 		t.Fatalf("got %d hash-sets, want 2", len(got))
 	}
@@ -32,7 +35,10 @@ func TestParseHashSets(t *testing.T) {
 }
 
 func TestParseHashSetsLowercasesAlg(t *testing.T) {
-	got := parseHashSets("SHA512:AAA:BBB")
+	got, err := parseHashSets("SHA512:AAA:BBB")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got[0].Alg != "sha512" {
 		t.Errorf("alg = %q, want sha512 (RFC 5234 quoted strings are case-insensitive)", got[0].Alg)
 	}
