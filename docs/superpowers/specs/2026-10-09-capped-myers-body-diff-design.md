@@ -18,7 +18,8 @@ the previous body). Every generator today has unbounded worst-case cost:
 
 ## Rule
 
-- A body recipe may carry at most **1000 literal lines** (`MAX_RECIPE_LITERALS`).
+- A body recipe may carry at most **1000 literal lines** (`MAX_RECIPE_LITERALS`)
+  by default; every implementation lets the caller configure the cap.
   This counts lines the recipe outputs as literals, not input lines.
 - Over the cap (or over the work budget below) the diff reports TOO_BIG and the
   caller falls back:
@@ -42,7 +43,10 @@ existing splitter), `max_literals` (default 1000).
 4. Intern lines to integer ids. Discard lines that cannot be in the LCS:
    `a` lines whose id never occurs in `b` (pure deletions), `b` lines whose id
    never occurs in `a` (certain literals). Keep index maps back to `a`/`b`.
-   `u` = number of discarded `b` lines. If `u > max_literals`: TOO_BIG.
+   `u` = number of discarded `b` lines. Every discarded `b` line is a
+   literal, and so is each extra copy of a line `b` holds more often than
+   `a`: if `u + sum(max(0, cnt_b - cnt_a))` over lines `a` also holds exceeds
+   `max_literals`, TOO_BIG (the `floor` check in the pseudocode).
 5. Myers greedy forward search (O(ND), Myers 1986) over the reduced
    sequences `a'` (n'), `b'` (m'), storing V for each d for backtracking.
    - literals = m − LCS, and D = n' + m' − 2·LCS', so the literal cap gives an
@@ -135,9 +139,11 @@ Points of difference from textbook Myers, all deliberate:
 - **Perl** `MessageInstance.pm`: replace `_body_recipe_linediff`,
   `_body_recipe_flat`, `_recipe_for_region`, `_recipe_cost` and the
   Algorithm::Diff dependency with `_myers_body_recipe`. `calculate`:
-  default → TOO_BIG gives the null recipe; `EpilogueThreshold => N` uses
-  `min(N, 1000)` as the cap and goes to the epilogue on TOO_BIG; `UseEpilogue`
-  unchanged. Drop Algorithm::Diff from Makefile.PL/README/CLAUDE.md/POD.
+  default → TOO_BIG gives the null recipe, cap `MaxRecipeLiterals` (default
+  1000; dkim2-milter `--max-recipe-literals`, DKIM2Sign `max_recipe_literals`);
+  `EpilogueThreshold => N` is the cap on the epilogue path, as given, and goes
+  to the epilogue on TOO_BIG; `UseEpilogue` unchanged. A header-only signer
+  signs over its own null only with `allow_null_body_recipe`. Drop Algorithm::Diff from Makefile.PL/README/CLAUDE.md/POD.
 - **Mailman** `message_instance.py`: replace the difflib fallback in
   `compute_body_recipe`; TOO_BIG → `NULL_BODY_RECIPE`. Develop on `dkim2`,
   backport to `dkim2-3.3.10` and `dkim2-3.3.8`, re-export patches.
@@ -154,8 +160,10 @@ max_literals?, expect: "identical" | "too_big" | [steps]}` where a step is
 (`util/build-body-diff-vectors.pl`) and checked by every implementation's test
 suite, including: identical, prefix-only change, N removed + M added at the
 front, the `a,b,a,b`/`b,a,b,a` case (must be fast and small), exactly 1000
-literals (ok), 1001 literals (too_big), huge one-sided insert, all-repeated
-lines exceeding the work budget.
+literals (ok), 1001 literals (too_big), the line-count floor, and a pair
+either side of where the work budget runs out (a one-literal Recipe exists
+for both, so only the work count separates them). Large timing cases live
+in each implementation's own tests.
 
 ## Performance target
 

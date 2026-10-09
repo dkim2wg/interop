@@ -164,12 +164,36 @@ is_deeply(diff([qw(a b)], [qw(b a)], 1000), [[2, 2], 'a'],
         "Message-Instance: " . $mi->as_string . "\r\n" . $msg->as_string);
     ok($ok, 'epilogue chain verifies') or diag $err;
 
-    $msg = Mail::DKIM2::Common::parse_mime($big);
-    $mi = Mail::DKIM2::MessageInstance->calculate($msg, $prev,
-        EpilogueThreshold => 5000);
+    # MaxRecipeLiterals moves the default path's cap either way.
+    $mi = Mail::DKIM2::MessageInstance->calculate($small, $prev,
+        MaxRecipeLiterals => 100);
+    ok(Mail::DKIM2::MessageInstance->parse($mi->as_string)->unrecoverable,
+        'MaxRecipeLiterals 100, 200 literals: null');
+    my $big_old = $mi1 . "From: a\@example.com\r\nSubject: hi\r\n\r\nkept\r\n";
+    $mi = Mail::DKIM2::MessageInstance->calculate($big_old, $prev,
+        MaxRecipeLiterals => 2000);
     $p = Mail::DKIM2::MessageInstance->parse($mi->as_string);
-    ok(!$p->unrecoverable && @{ $p->{bits}{rb} } == 1,
-        'EpilogueThreshold above the 1000 cap: still the epilogue at 1200');
+    is(scalar(grep { !ref } @{ $p->{bits}{rb} }), 1200,
+        'MaxRecipeLiterals 2000, 1200 literals: a diff recipe');
+
+    # EpilogueThreshold is the cap on the epilogue path, as given.
+    $msg = Mail::DKIM2::Common::parse_mime($big_old);
+    $mi = Mail::DKIM2::MessageInstance->calculate($msg, $prev,
+        EpilogueThreshold => 2000);
+    $p = Mail::DKIM2::MessageInstance->parse($mi->as_string);
+    is(scalar(grep { !ref } @{ $p->{bits}{rb} }), 1200,
+        'EpilogueThreshold 2000, 1200 literals: a diff recipe');
+
+    for my $bad (-1, 'x', undef) {
+        eval { Mail::DKIM2::MessageInstance->calculate($small, $prev,
+            MaxRecipeLiterals => $bad) };
+        like($@, qr/MaxRecipeLiterals/, 'MaxRecipeLiterals '
+            . ($bad // 'undef') . ' croaks');
+    }
+    eval { Mail::DKIM2::MessageInstance->calculate($small, $prev,
+        MaxRecipeLiterals => 10, EpilogueThreshold => 10) };
+    like($@, qr/MaxRecipeLiterals.*EpilogueThreshold|EpilogueThreshold.*MaxRecipeLiterals/,
+        'MaxRecipeLiterals with EpilogueThreshold croaks');
 }
 
 done_testing;

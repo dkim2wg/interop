@@ -756,6 +756,17 @@ sub calculate {
     croak "BodyRecipe needs a previous message"
         if exists $opts{BodyRecipe} && !$previous;
 
+    # The literal-line cap on a diff body Recipe: MaxRecipeLiterals on the
+    # default path (over it, a null body Recipe), EpilogueThreshold on the
+    # epilogue path (over it, the epilogue).
+    for my $opt (qw(MaxRecipeLiterals EpilogueThreshold)) {
+        next unless exists $opts{$opt};
+        croak "$opt must be a non-negative integer"
+            unless defined $opts{$opt} && $opts{$opt} =~ /\A[0-9]+\z/;
+    }
+    croak "MaxRecipeLiterals and EpilogueThreshold are mutually exclusive"
+        if exists $opts{MaxRecipeLiterals} && exists $opts{EpilogueThreshold};
+
     my $body_hash;
     if (exists $opts{BodyHash}) {
         my $bh = $opts{BodyHash};
@@ -855,21 +866,21 @@ sub calculate {
         }
         elsif (defined $opts{EpilogueThreshold}) {
             # Use the epilogue only when the diff would need more literal
-            # lines than the threshold (never more than MAX_RECIPE_LITERALS).
-            # The diff has no side effects; the epilogue rewrites $current.
-            my $max = $opts{EpilogueThreshold};
-            $max = MAX_RECIPE_LITERALS if $max > MAX_RECIPE_LITERALS;
-            my $diff = _body_recipe($current->body_raw, $previous->body_raw, $max);
+            # lines than the threshold. The diff has no side effects; the
+            # epilogue rewrites $current.
+            my $diff = _body_recipe($current->body_raw, $previous->body_raw,
+                $opts{EpilogueThreshold});
             $rb_recipe = defined $diff && !ref $diff
                 ? _epilogue_recipe($current, $previous->body_raw)
                 : $diff;
         }
         else {
             # Default: a diff Recipe, which never modifies $current. A body
-            # the diff cannot rebuild within MAX_RECIPE_LITERALS lines is
-            # declared unrecoverable: a caller that may rewrite the body
-            # asks for the epilogue instead.
-            $rb_recipe = _body_recipe($current->body_raw, $previous->body_raw);
+            # the diff cannot rebuild within MaxRecipeLiterals lines (default
+            # MAX_RECIPE_LITERALS) is declared unrecoverable: a caller that
+            # may rewrite the body asks for the epilogue instead.
+            $rb_recipe = _body_recipe($current->body_raw, $previous->body_raw,
+                $opts{MaxRecipeLiterals});
             if (defined $rb_recipe && !ref $rb_recipe) {
                 $rb_recipe = undef;
                 $self->set_null_body_recipe;
@@ -1280,7 +1291,7 @@ algorithm's length (32 octets for C<sha256>, 64 for C<sha512>), or if the
 body is needed (a previous message without C<BodyRecipe>, which runs the
 body diff).
 
-=item UseEpilogue, EpilogueThreshold
+=item UseEpilogue, EpilogueThreshold, MaxRecipeLiterals
 
 C<calculate> with a previous message only; see below.
 
@@ -1299,15 +1310,16 @@ has 32 instances, its instances do not form a chain, or C<$previous> is
 not an earlier form of the same message.
 
 The body Recipe is a line diff by default: a Myers diff with the fewest
-literal lines, bounded at 1000 literal lines and a fixed amount of work.
-A body it cannot rebuild within those bounds gets the null body Recipe
-(the previous body is unrecoverable). With C<< UseEpilogue => 1 >>, the
+literal lines, bounded by C<< MaxRecipeLiterals => N >> literal lines (default 1000)
+and a fixed amount of work. A body it cannot rebuild within those bounds
+gets the null body Recipe (the previous body is unrecoverable). With C<< UseEpilogue => 1 >>, the
 previous body is instead appended after the final MIME boundary (the
 message is wrapped in a C<multipart/mixed> container if it is not already
 multipart) and the Recipe copies it from there; with C<< EpilogueThreshold
 => N >>, that happens only when the diff would need more than C<N> literal
-lines (or more than 1000, whichever is smaller), and an unchanged body
-gets no Recipe. Both epilogue forms modify C<$msg> in place, and the
+lines (or more work than the fixed bound), and an unchanged body gets no
+Recipe. C<EpilogueThreshold> and C<MaxRecipeLiterals> are mutually
+exclusive; both must be non-negative integers. Both epilogue forms modify C<$msg> in place, and the
 hashes cover the modified message.
 
 =head2 verify($msg, %options)
