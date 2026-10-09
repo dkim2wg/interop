@@ -34,9 +34,28 @@ type Recipe struct {
 	// BodyNull records that "b" was present and JSON null: §12.1.1's "null
 	// Recipe", the hop declaring that the previous body cannot be put back.
 	// It is deliberately distinct from an absent "b" (the body was not
-	// modified), which unmarshals to a nil Body just the same. Not encoded —
-	// nothing here signs a null Recipe, it is only ever read.
+	// modified), which unmarshals to a nil Body just the same. ComputeDiff
+	// sets it when the body diff exceeds MaxRecipeLiterals/MaxDiffWork, and
+	// MarshalJSON then emits "b": null.
 	BodyNull bool `json:"-"`
+}
+
+// MarshalJSON encodes "b" as JSON null when BodyNull is set, as the step
+// list when Body is non-nil (an empty list is the empty previous body), and
+// omits it when Body is nil (body unchanged).
+func (r Recipe) MarshalJSON() ([]byte, error) {
+	var w struct {
+		Headers map[string][]RecipeStep `json:"h,omitempty"`
+		Body    any                     `json:"b,omitempty"`
+	}
+	w.Headers = r.Headers
+	switch {
+	case r.BodyNull:
+		w.Body = json.RawMessage("null")
+	case r.Body != nil:
+		w.Body = r.Body
+	}
+	return json.Marshal(&w)
 }
 
 // errMalformedRecipe marks a Recipe that is well-formed JSON but breaks the
@@ -306,10 +325,31 @@ func encodeRecipe(r *Recipe) ([]byte, error) {
 	return json.Marshal(r)
 }
 
+// ComputeDiffOptions tunes ComputeDiffWithOptions.
+type ComputeDiffOptions struct {
+	// MaxLiterals caps the literal lines a body Recipe may carry; a diff
+	// needing more yields the null body Recipe (BodyNull). Zero or negative
+	// means the default, MaxRecipeLiterals.
+	MaxLiterals int
+}
+
 // ComputeDiff computes the Recipe that describes how afterHeaders/afterBody
-// differs from beforeHeaders/beforeBody. Returns nil if nothing changed.
+// differs from beforeHeaders/beforeBody, with the default literal cap
+// (MaxRecipeLiterals). Returns nil if nothing changed.
 func ComputeDiff(beforeHeaders []Header, beforeBody []byte,
 	afterHeaders []Header, afterBody []byte) (*Recipe, error) {
+	return ComputeDiffWithOptions(beforeHeaders, beforeBody, afterHeaders, afterBody, ComputeDiffOptions{})
+}
+
+// ComputeDiffWithOptions is ComputeDiff with tunables (see
+// ComputeDiffOptions). When the body diff exceeds the literal cap or
+// MaxDiffWork the Recipe has BodyNull set and no body steps.
+func ComputeDiffWithOptions(beforeHeaders []Header, beforeBody []byte,
+	afterHeaders []Header, afterBody []byte, opts ComputeDiffOptions) (*Recipe, error) {
+	maxLiterals := opts.MaxLiterals
+	if maxLiterals <= 0 {
+		maxLiterals = MaxRecipeLiterals
+	}
 	r := &Recipe{}
 	changed := false
 
@@ -317,7 +357,12 @@ func ComputeDiff(beforeHeaders []Header, beforeBody []byte,
 	afterLines := splitLines(afterBody)
 	if !equalStringSlices(beforeLines, afterLines) {
 		changed = true
-		r.Body = diffLines(beforeLines, afterLines)
+		steps, tooBig := bodyRecipeSteps(beforeLines, afterLines, maxLiterals)
+		if tooBig {
+			r.BodyNull = true // §12.1.1 null Recipe: "b": null
+		} else {
+			r.Body = steps
+		}
 	}
 
 	beforeByName := groupHeadersByName(beforeHeaders)
@@ -484,9 +529,27 @@ func recipeSteps(beforeKeys, beforeVals, afterKeys []string) []RecipeStep {
 	return steps
 }
 
-// diffLines builds the body Recipe (lines numbered top-down, §5.2).
-func diffLines(before, after []string) []RecipeStep {
-	return recipeSteps(before, before, after)
+// bodyRecipeSteps builds the body Recipe (lines numbered top-down, §5.2)
+// that rebuilds the before lines from the after lines, using the capped
+// Myers diff (bodyDiff) with at most maxLiterals literal lines. tooBig reports that no recipe
+// within the cap exists, so the caller must emit the null body Recipe.
+// Literal runs are grouped into "d"/"b" steps by appendLiteral. The steps are
+// never nil unless tooBig: an empty previous body is the empty list.
+func bodyRecipeSteps(before, after []string, maxLiterals int) (steps []RecipeStep, tooBig bool) {
+	flat, kind := bodyDiff(after, before, maxLiterals)
+	if kind == bodyDiffTooBig {
+		return nil, true
+	}
+	steps = []RecipeStep{}
+	for _, st := range flat {
+		if st.Lit {
+			steps = appendLiteral(steps, st.Line)
+			continue
+		}
+		c := [2]int{st.From, st.To}
+		steps = append(steps, RecipeStep{Copy: &c})
+	}
+	return steps, false
 }
 
 // headerRecipeSteps builds the Recipe for one header field name. Both sides

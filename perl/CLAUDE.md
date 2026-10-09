@@ -21,9 +21,9 @@
 
 The only non-core CPAN dependency for cryptography is CryptX (provides
 Crypt::PK::RSA, Crypt::PK::Ed25519, Crypt::Digest::SHA256). Net::DNS does the
-public-key lookup. There is no dependency on Mail::DKIM. Algorithm::Diff is a
-prerequisite (Recipe computation) but is loaded lazily, so a sign-or-verify
-path never pays for it.
+public-key lookup. There is no dependency on Mail::DKIM. Recipe computation
+uses a built-in capped Myers diff (MessageInstance::_body_diff), the same
+algorithm as the C, Python, Go and Mailman generators.
 
 ## Header folding rules
 

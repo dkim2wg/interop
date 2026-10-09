@@ -275,7 +275,10 @@ func TestDiffLinesDuplicates(t *testing.T) {
 	// first should be a copy, second should be a data step
 	before := []string{"foo", "foo"}
 	after := []string{"foo", "bar"}
-	steps := diffLines(before, after)
+	steps, tooBig := bodyRecipeSteps(before, after, MaxRecipeLiterals)
+	if tooBig {
+		t.Fatal("unexpected tooBig")
+	}
 	if len(steps) != 2 {
 		t.Fatalf("want 2 steps, got %d", len(steps))
 	}

@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import time
+from array import array
 from pathlib import Path
 from typing import IO, Union
 
@@ -374,20 +375,217 @@ def _body_lines(body: bytes) -> list[bytes]:
     return lines
 
 
-def build_body_recipe(previous: bytes, current: bytes) -> list[dict]:
-    """Recipe steps that rebuild the previous body from the current one (§5.2)."""
-    return _recipe_steps(_body_lines(current), _body_lines(previous),
-                         lambda line: line, lambda line: line)
+# ---------------------------------------------------------------------------
+# Capped Myers body diff (docs/superpowers/specs/2026-10-09-capped-myers-
+# body-diff-design.md, "Exact pseudocode (normative for every port)")
+# ---------------------------------------------------------------------------
+#
+# Every implementation runs the same algorithm with the same tie-break so
+# they all produce identical body recipes (vectors/body-diff.json).  The
+# literal cap and the work budget bound CPU and memory; over either, the
+# caller emits the null body Recipe instead.
+
+MAX_RECIPE_LITERALS = 1000
+MAX_DIFF_WORK = 4_000_000
+
+
+class _DiffResult:
+    __slots__ = ("name",)
+
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return self.name
+
+
+BODY_DIFF_IDENTICAL = _DiffResult("BODY_DIFF_IDENTICAL")
+BODY_DIFF_TOO_BIG = _DiffResult("BODY_DIFF_TOO_BIG")
+
+
+def body_diff(cur: list, prev: list, max_literals: int = MAX_RECIPE_LITERALS):
+    """Steps that rebuild `prev` from `cur`, or a sentinel.
+
+    Returns BODY_DIFF_IDENTICAL when the line lists are equal,
+    BODY_DIFF_TOO_BIG when the recipe would need more than `max_literals`
+    literal lines or the search exceeds MAX_DIFF_WORK, otherwise a flat list
+    whose items are [from, to] (1-based inclusive copy ranges into `cur`) or
+    a literal line from `prev`.
+    """
+    C, P, L = len(cur), len(prev), max_literals
+    pre = 0
+    while pre < C and pre < P and cur[pre] == prev[pre]:
+        pre += 1
+    if pre == C and pre == P:
+        return BODY_DIFF_IDENTICAL
+    suf = 0
+    while suf < C - pre and suf < P - pre and cur[C - 1 - suf] == prev[P - 1 - suf]:
+        suf += 1
+    a = cur[pre:C - suf]
+    b = prev[pre:P - suf]
+
+    cnt_a: dict = {}
+    for line in a:
+        cnt_a[line] = cnt_a.get(line, 0) + 1
+    cnt_b: dict = {}
+    for line in b:
+        cnt_b[line] = cnt_b.get(line, 0) + 1
+
+    ids: dict = {}
+    A: list[int] = []
+    ai: list[int] = []
+    for i, line in enumerate(a):
+        if line in cnt_b:
+            A.append(ids.setdefault(line, len(ids)))
+            ai.append(i)
+    B: list[int] = []
+    bj: list[int] = []
+    for j, line in enumerate(b):
+        if line in cnt_a:
+            B.append(ids.setdefault(line, len(ids)))
+            bj.append(j)
+    N, M = len(A), len(B)
+    u = len(b) - M
+    floor = u
+    for line, nb in cnt_b.items():
+        na = cnt_a.get(line, 0)
+        if na > 0 and nb > na:
+            floor += nb - na
+    if floor > L:
+        return BODY_DIFF_TOO_BIG
+
+    match = [-1] * M
+    if N > 0 and M > 0:
+        dmax = N - M + 2 * (L - u)
+        if dmax > N + M:
+            dmax = N + M
+        if dmax < 0:
+            return BODY_DIFF_TOO_BIG
+        off = dmax + 1                    # V[k] lives at V[k + off]
+        V = [0] * (2 * dmax + 3)
+        trace: list = []
+        work = 0
+        found = -1
+        for d in range(dmax + 1):
+            # Only k in [-d-1, d+1] is ever read back; T[k] is at T[k + d + 1].
+            trace.append(array("l", V[off - d - 1:off + d + 2]))
+            for k in range(-d, d + 1, 2):
+                kk = k + off
+                if k == -d or (k != d and V[kk - 1] < V[kk + 1]):
+                    x = V[kk + 1]                       # down
+                else:
+                    x = V[kk - 1] + 1                   # right
+                y = x - k
+                if x < N and y < M and A[x] == B[y]:
+                    x0 = x
+                    while x < N and y < M and A[x] == B[y]:
+                        x += 1
+                        y += 1
+                    work += x - x0
+                V[kk] = x
+                work += 1
+                if work > MAX_DIFF_WORK:
+                    return BODY_DIFF_TOO_BIG
+                if x == N and y == M:
+                    found = d
+                    break
+            if found >= 0:
+                break
+        if found < 0:
+            return BODY_DIFF_TOO_BIG
+
+        x, y = N, M
+        for d in range(found, 0, -1):
+            T = trace[d]
+            o = d + 1
+            k = x - y
+            down = k == -d or (k != d and T[k - 1 + o] < T[k + 1 + o])
+            pk = k + 1 if down else k - 1
+            px = T[pk + o]
+            py = px - pk
+            if down:
+                sx = px
+            else:
+                sx = px + 1
+            while x > sx:
+                x -= 1
+                y -= 1
+                match[y] = x
+            x, y = px, py
+        while x > 0:
+            x -= 1
+            y -= 1
+            match[y] = x
+
+    # src[j] for the middle previous lines: index into cur, or -1.
+    mid_src = [-1] * len(b)
+    for y in range(M):
+        if match[y] >= 0:
+            mid_src[bj[y]] = pre + ai[match[y]]
+
+    recipe: list = []
+    literals = 0
+    shift = C - P
+    for j in range(P):
+        if j < pre:
+            i = j
+        elif j >= P - suf:
+            i = j + shift
+        else:
+            i = mid_src[j - pre]
+        if i < 0:
+            recipe.append(prev[j])
+            literals += 1
+        elif recipe and isinstance(recipe[-1], list) and recipe[-1][1] == i:
+            recipe[-1][1] = i + 1
+        else:
+            recipe.append([i + 1, i + 1])
+    if literals > L:
+        return BODY_DIFF_TOO_BIG
+    return recipe
+
+
+def build_body_recipe(previous: bytes, current: bytes, *,
+                      max_literals: int = MAX_RECIPE_LITERALS) -> list[dict] | None:
+    """Recipe steps that rebuild the previous body from the current one (§5.2).
+
+    Uses the capped Myers diff above.  Returns None -- the null body Recipe,
+    "b": null on the wire -- when the recipe would exceed
+    `max_literals` literal lines (default MAX_RECIPE_LITERALS) or the diff
+    exceeds MAX_DIFF_WORK.
+    """
+    cur = _body_lines(current)
+    flat = body_diff(cur, _body_lines(previous), max_literals)
+    if flat is BODY_DIFF_TOO_BIG:
+        return None
+    if flat is BODY_DIFF_IDENTICAL:
+        # Same lines but different octets (line endings, say): copy it all.
+        return [{"c": [1, len(cur)]}] if cur else []
+    steps: list[dict] = []
+    pending: list[bytes] = []
+    for item in flat:
+        if isinstance(item, list):
+            if pending:
+                steps.extend(recipe_literal_steps(pending))
+                pending.clear()
+            steps.append({"c": item})
+        else:
+            pending.append(item)
+    if pending:
+        steps.extend(recipe_literal_steps(pending))
+    return steps
 
 
 def build_recipes(previous_headers: list[bytes], previous_body: bytes,
-                  current_headers: list[bytes], current_body: bytes) -> dict | None:
+                  current_headers: list[bytes], current_body: bytes, *,
+                  max_literals: int = MAX_RECIPE_LITERALS) -> dict | None:
     """The r= object for a hop that turned (previous_*) into (current_*).
 
     Only header field names whose instances changed get an "h" entry (an
     empty list where the name is new); "b" is present only if the body
-    changed.  Header fields excluded from the hash (§4) are never described.
-    Returns None when nothing relevant changed, so the caller omits r=.
+    changed -- JSON null (the null body Recipe) when the body diff is over
+    the literal cap (`max_literals`) or work budget.  Header fields excluded from the hash
+    (§4) are never described.  Returns None when nothing relevant changed, so the caller omits r=.
     """
     def by_name(headers):
         out: dict[bytes, list[bytes]] = {}
@@ -410,7 +608,8 @@ def build_recipes(previous_headers: list[bytes], previous_body: bytes,
     if h:
         recipes["h"] = h
     if compute_body_hash(previous_body) != compute_body_hash(current_body):
-        recipes["b"] = build_body_recipe(previous_body, current_body)
+        recipes["b"] = build_body_recipe(previous_body, current_body,
+                                         max_literals=max_literals)
     return recipes or None
 
 

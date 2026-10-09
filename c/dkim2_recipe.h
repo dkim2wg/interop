@@ -40,13 +40,52 @@ char *dkim2_apply_body_recipe(const char *r_json,
 char **dkim2_apply_header_recipe(const char *r_json,
     char **headers, int n, int *n_out);
 
-/* Generate a body Recipe JSON string (caller frees) that transforms
-   old_body into new_body. Returns NULL on error.
-   If the change cannot be expressed as a Recipe, sets *impossible = 1. */
+/* ---- Capped Myers body diff (docs/superpowers/specs/
+   2026-10-09-capped-myers-body-diff-design.md, "Exact pseudocode") ---- */
+
+#define DKIM2_MAX_RECIPE_LITERALS 1000
+#define DKIM2_MAX_DIFF_WORK       4000000
+
+/* One line (compared as an exact byte string, terminator included if the
+   caller's splitter keeps it). */
+typedef struct { const char *ptr; size_t len; } dkim2_line_t;
+
+/* A flat recipe step: lit == 0 is a copy of cur lines from..to (1-based,
+   inclusive); lit == 1 is previous-body line `from` (0-based) as a literal. */
+typedef struct { int lit; int from, to; } dkim2_diff_step_t;
+
+enum {
+    DKIM2_DIFF_ERROR     = -1,  /* allocation failure */
+    DKIM2_DIFF_OK        = 0,   /* *steps / *n_steps set (caller frees *steps) */
+    DKIM2_DIFF_IDENTICAL = 1,   /* cur == prev: no recipe */
+    DKIM2_DIFF_TOO_BIG   = 2    /* over max_literals or DKIM2_MAX_DIFF_WORK */
+};
+
+/* Recipe rebuilding prev[] from cur[] with at most max_literals literal
+   lines. *steps is only set (malloc'd, possibly with *n_steps == 0) on
+   DKIM2_DIFF_OK. */
+int dkim2_body_diff(const dkim2_line_t *cur, int n_cur,
+                    const dkim2_line_t *prev, int n_prev, int max_literals,
+                    dkim2_diff_step_t **steps, int *n_steps);
+
+/* Generate a body Recipe JSON string (caller frees) that rebuilds new_body
+   (the PREVIOUS body) from old_body (the CURRENT body). Lines keep their
+   terminators for comparison; literal text drops trailing CR/LF. Identical
+   bodies give "{}". When the diff needs more than DKIM2_MAX_RECIPE_LITERALS
+   (see dkim2_gen_body_recipe_ex for another cap) literal lines or exceeds DKIM2_MAX_DIFF_WORK, returns the null body Recipe
+   "{\"b\":null}" and sets *impossible = 1. Returns NULL (with
+   *impossible = 1) on allocation failure. */
 char *dkim2_gen_body_recipe(
     const char *old_body, size_t old_len,
     const char *new_body, size_t new_len,
     int *impossible);
+
+/* As dkim2_gen_body_recipe, with the literal-line cap given explicitly;
+   max_literals <= 0 means DKIM2_MAX_RECIPE_LITERALS. */
+char *dkim2_gen_body_recipe_ex(
+    const char *old_body, size_t old_len,
+    const char *new_body, size_t new_len,
+    int max_literals, int *impossible);
 
 /* Generate a header Recipe JSON string (caller frees) expressing
    how to transform old_fields into new_fields for the named header. */

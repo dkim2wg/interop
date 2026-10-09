@@ -46,7 +46,6 @@ cpanm --notest \
     CryptX \
     Email::MIME \
     JSON::XS \
-    Algorithm::Diff \
     MIME::Base64 \
     Sendmail::PMilter \
     Path::Tiny

@@ -32,7 +32,6 @@ From this directory:
 DEPENDENCIES
 
     Perl 5.20 or later
-    Algorithm::Diff
     CryptX
     Email::MIME
     JSON

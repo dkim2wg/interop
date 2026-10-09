@@ -14,5 +14,6 @@ tests/test_recipe
 tests/test_tagparse
 tests/test_verify
 tests/test_null_body
+tests/test_body_diff
 tests/test_signer_gate
 tests/.gate-fixtures
