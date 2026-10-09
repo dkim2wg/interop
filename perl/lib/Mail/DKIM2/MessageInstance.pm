@@ -747,6 +747,9 @@ sub _check_body_unchanged {
 
 sub calculate {
     my ($class, $current, $previous, %opts) = @_;
+    Mail::DKIM2::Common::_check_options("$class->calculate", \%opts,
+        qw(Algs BodyHash BodyRecipe EpilogueThreshold IgnorePrefixes
+           MaxRecipeLiterals UseEpilogue));
     croak "need a message" unless $current;
 
     my $self = bless {}, $class;
@@ -964,6 +967,8 @@ sub calculate {
 
 sub verify {
     my ($class, $msg, %opts) = @_;
+    Mail::DKIM2::Common::_check_options("$class->verify", \%opts,
+        qw(HeadersOnly IgnorePrefixes));
     croak "need a message" unless $msg;
     check_ignore_prefixes($opts{IgnorePrefixes});
 
@@ -1100,6 +1105,7 @@ sub _body_raw_set {
 
 sub undo {
     my ($class, $msg, %opts) = @_;
+    Mail::DKIM2::Common::_check_options("$class->undo", \%opts, qw(HeadersOnly));
     croak "need a message" unless $msg;
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
@@ -1152,6 +1158,8 @@ sub undo {
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
     my ($class, $msg, %opts) = @_;
+    Mail::DKIM2::Common::_check_options("$class->chain_verifies", \%opts,
+        qw(IgnorePrefixes));
     check_ignore_prefixes($opts{IgnorePrefixes});
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = parse_mime("$msg");

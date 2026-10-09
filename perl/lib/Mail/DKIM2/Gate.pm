@@ -105,6 +105,9 @@ sub _top_has_nd {
 
 sub check {
     my ($class, $message, %o) = @_;
+    Mail::DKIM2::Common::_check_options("$class->check", \%o,
+        qw(SigningDomain AllowNullBodyRecipe SkipTimestampCheck IgnorePrefixes
+           PubkeyCallback Resolver VerifyResult));
 
     my $msg = parse_mime($message);
     my @sigs = $msg->header_raw('DKIM2-Signature');

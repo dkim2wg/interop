@@ -133,6 +133,8 @@ sub _default_cb {
 # deploy/www/verify/verify.js's verifyMessage().
 sub report {
     my ($text, %opts) = @_;
+    Mail::DKIM2::Common::_check_options('Mail::DKIM2::Validate::report', \%opts,
+        qw(DnsPath PubkeyCallback SkipTimestampCheck));
     $text //= '';
 
     return _report_once($text, %opts);

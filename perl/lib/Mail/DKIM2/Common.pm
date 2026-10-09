@@ -301,6 +301,7 @@ sub parse_mime {
 
 sub fold_header {
     my ($line, $margin, %opts) = @_;
+    _check_options('fold_header', \%opts, qw(delimiters_only));
     $margin //= 72;
     # delimiters_only: break only after a ";" or a "," -- never at a space,
     # never mid-token. For X-DKIM2-Info (draft-gondwana-dkim2-debug-header-01
@@ -551,6 +552,20 @@ sub build_signing_input {
 # or MTA signalling a timeout, and swallowing it would let the caller run on
 # past its deadline. Reflector, Split and Validate are outside the rule --
 # they run the demo server and the web validator, never inside a host.
+
+# _check_options($what, \%opts, @known): croak on an option not in @known.
+# Every public constructor and class method taking named options calls this
+# first (Mail::DKIM2 CONVENTIONS: a misspelling is an error, not a silently
+# ignored setting -- Algz => ['sha512'] used to compute SHA-256). Internal.
+sub _check_options {
+    my ($what, $opts, @known) = @_;
+    my %known = map { $_ => 1 } @known;
+    local $Carp::CarpLevel = $Carp::CarpLevel + 1;    # blame our caller's caller
+    for my $k (sort keys %$opts) {
+        Carp::croak("unknown option $k for $what") unless $known{$k};
+    }
+    return;
+}
 
 # Parse and validate a key record (draft-ietf-dkim-dkim2-dns §3.2, §3.4.1;
 # spec-06 §11.5 says a Verifier MUST NOT use a malformed one). Returns the

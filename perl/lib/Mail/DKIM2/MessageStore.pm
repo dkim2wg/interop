@@ -11,6 +11,7 @@ use Carp;
 
 sub new {
     my ($class, %args) = @_;
+    Mail::DKIM2::Common::_check_options("$class->new", \%args, qw(directory));
     croak "directory required" unless $args{directory};
     my $self = bless \%args, $class;
     return $self;

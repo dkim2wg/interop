@@ -20,6 +20,9 @@ use constant SIG_VALUE     => 2;
 
 sub new {
     my ($class, %args) = @_;
+    Mail::DKIM2::Common::_check_options("$class->new", \%args,
+        qw(Domain Flags MailFrom NextDomain Nonce RcptTo Sequence Signatures
+           Timestamp Version));
 
     my $self = $class->SUPER::new();
     bless $self, $class;
@@ -457,8 +460,9 @@ C<NextDomain> suppresses C<MailFrom> and C<RcptTo>.
 =head2 parse($header_value)
 
 Parses a header value, with or without the leading C<DKIM2-Signature:>.
-Tag names keep their case and order so the header can be re-serialised
-byte for byte; lookups are case-insensitive.
+Tag names keep their case and order (whitespace around separators is
+normalised on output; see L<Mail::DKIM2::TagValueList>); lookups are
+case-insensitive. Always returns a new object.
 
 =head1 TAG ACCESSORS
 
