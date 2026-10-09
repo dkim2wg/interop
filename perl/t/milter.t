@@ -6,6 +6,7 @@ use Path::Tiny;
 use JSON;
 use Email::MIME;
 use File::Temp qw(tempdir);
+use File::Find ();
 
 # The Mail::Milter::Authentication framework is mocked (t/lib/MockAuthMilter.pm);
 # it must load before the handler modules.
@@ -19,7 +20,9 @@ use DKIM2TestKeys;
 # Helper: feed a raw message through milter verify callbacks
 sub run_verify {
     my ($raw, %opts) = @_;
-    my $config = {
+    # _bare: pass only the given options, as a config file that leaves the
+    # rest out would.
+    my $config = delete $opts{_bare} ? { %opts } : {
         hide_none => 0,
         dns_overrides => undef,
         add_message_instance => 0,
@@ -110,6 +113,40 @@ diag("=== DKIM2Verify milter tests ===");
     my @auth = @{$handler->{_auth_headers}};
     ok(@auth > 0, "verify signed: auth header added");
     is($auth[0]->{value}, 'pass', "verify signed: result is pass");
+}
+
+# Test 2: options left out of the config take their documented defaults.
+# The authentication_milter framework never merges default_config() into
+# the running config, so the handler applies its own: add_message_instance
+# is on unless set to 0.
+{
+    my $raw = path("tests/emails/brong-orig.eml")->slurp;
+    $raw =~ s/\r//gs;
+    $raw =~ s/\n/\r\n/gs;
+    my $signer = Mail::DKIM2::Signer->new(
+        Domain   => 'test1.dkim2.com',
+        Selector => 'rsa1024',
+        Key      => DKIM2TestKeys::private_key('test1.dkim2.com', 'rsa1024'),
+        MailFrom => 'sender@test1.dkim2.com',
+        RcptTo   => ['recipient@test2.dkim2.com'],
+    );
+    my $with_mi = "Message-Instance: "
+        . Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($raw))->as_string() . "\r\n" . $raw;
+    $signer->PRINT($with_mi);
+    $signer->CLOSE();
+    my $signed_msg = $signer->as_string() . "\r\n" . $with_mi;
+
+    my $snap = tempdir(CLEANUP => 1);
+    my $handler = run_verify($signed_msg, _bare => 1, snapshot_directory => $snap);
+    is($handler->{_auth_headers}[0]{value}, 'pass', 'defaults: verify passes');
+    my $files_in = sub { my @f; File::Find::find(sub { push @f, $File::Find::name if -f }, $_[0]); @f };
+    my @stored = $files_in->($snap);
+    ok(@stored, 'defaults: add_message_instance defaults on (snapshot stored)');
+
+    my $snap0 = tempdir(CLEANUP => 1);
+    run_verify($signed_msg, _bare => 1, snapshot_directory => $snap0, add_message_instance => 0);
+    my @none = $files_in->($snap0);
+    is(scalar @none, 0, 'defaults: an explicit add_message_instance => 0 still wins');
 }
 
 # Test 3: Message with no DKIM2-Signature

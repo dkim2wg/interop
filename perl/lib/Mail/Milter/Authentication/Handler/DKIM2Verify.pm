@@ -24,6 +24,18 @@ sub default_config {
     };
 }
 
+# The handler's configuration with default_config() filled in for every
+# option left out (or undef); an explicit 0 still wins. The framework does
+# not merge default_config() at runtime -- it only uses it to generate a
+# sample config -- so without this add_message_instance, documented as on
+# by default, was off unless set.
+sub _config {
+    my ($self) = @_;
+    my $given    = $self->handler_config() || {};
+    my $defaults = default_config();
+    return { %$given, map { $_ => $given->{$_} // $defaults->{$_} } keys %$defaults };
+}
+
 sub register_metrics {
     return {
         'dkim2_verify_total' => 'The number of emails processed for DKIM2 verification',
@@ -57,7 +69,7 @@ sub header_callback {
 sub eoh_callback {
     my ($self) = @_;
     return if $self->{'failmode'};
-    my $config = $self->handler_config();
+    my $config = $self->_config();
 
     unless ( $self->{'has_dkim2'} ) {
         $self->metric_count( 'dkim2_verify_total', { 'result' => 'none' } );
@@ -74,7 +86,7 @@ sub eoh_callback {
     my $verifier;
     eval {
         $verifier = Mail::DKIM2::Verifier->new(
-            IgnorePrefixes => $self->handler_config()->{'ignore_header_prefixes'},
+            IgnorePrefixes => $self->_config()->{'ignore_header_prefixes'},
         );
         $self->_setup_pubkey_callback($verifier);
         $self->set_object('dkim2_verifier', $verifier, 1);
@@ -151,7 +163,7 @@ sub eom_callback {
     return unless $self->{'has_dkim2'};
     return if $self->{'failmode'};
 
-    my $config = $self->handler_config();
+    my $config = $self->_config();
     my $verifier = $self->get_object('dkim2_verifier');
 
     eval {
@@ -194,7 +206,7 @@ sub eom_callback {
 
 sub _add_mi_and_store {
     my ($self) = @_;
-    my $config = $self->handler_config();
+    my $config = $self->_config();
 
     eval {
         my $EOL = "\015\012";
@@ -271,7 +283,7 @@ sub close_callback {
 
 sub _setup_pubkey_callback {
     my ( $self, $verifier ) = @_;
-    my $config = $self->handler_config();
+    my $config = $self->_config();
 
     # If dns_overrides is set (testing), load keys from that JSON file
     if ( $config->{'dns_overrides'} ) {
@@ -360,7 +372,10 @@ modifications made during local processing.
 
 =head2 default_config()
 
-Returns the default configuration hash for this handler.
+Returns the default configuration hash for this handler. The handler
+applies these itself to any option the configuration leaves out (the
+authentication_milter framework does not), so C<add_message_instance> is
+on unless set to 0.
 
 =head2 register_metrics()
 
