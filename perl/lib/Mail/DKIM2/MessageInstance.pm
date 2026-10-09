@@ -9,12 +9,6 @@ use Crypt::Digest::SHA256;
 use Crypt::Digest::SHA512 qw(sha512 sha512_b64);
 use Email::MIME;
 use MIME::Base64 qw(encode_base64 decode_base64);
-# Algorithm::Diff is loaded lazily by the two body-recipe builders below.
-# Recipes are only ever COMPUTED by a hop that modifies an already-signed
-# message; signing an originating message and verifying any message both
-# apply recipes without diffing. Keeping the load lazy means deployments
-# that only sign and verify -- which is all three Fastmail paths -- need
-# not install it at all.
 use List::Util qw(max);
 use B ();
 use Carp;
@@ -489,215 +483,144 @@ sub _hash_data_b64 {
 
 # --- Body Recipe computation ---
 
-# Straight line-level diff using Algorithm::Diff.
-sub _body_recipe_linediff {
-    require Algorithm::Diff;
-    my ($l1, $l2) = @_;
+# The capped Myers line diff, the same algorithm in every implementation in
+# this repository so they emit identical Recipes (docs/superpowers/specs/
+# 2026-10-09-capped-myers-body-diff-design.md).
+#
+# _body_diff(\@cur, \@prev, $max_literals) returns undef when the bodies are
+# identical, 'too_big' when rebuilding @prev would take more than
+# $max_literals literal lines or the search ran out of work budget, else the
+# Recipe: [from,to] copy ranges (1-based, into @cur) and literal lines, in
+# @prev order.
+#
+# The cap is on the Recipe's output, but it bounds the search exactly:
+# literals = M - LCS and edits D = N + M - 2*LCS, so at most L literals
+# means D <= N - M + 2L. MAX_DIFF_WORK bounds the rest -- CPU and trace
+# memory when N is much larger than M and that edit bound is loose.
+use constant MAX_RECIPE_LITERALS => 1000;
+use constant MAX_DIFF_WORK       => 4_000_000;
 
-    my $diff = Algorithm::Diff->new($l1, $l2);
-    $diff->Base(1);
+sub _body_diff {
+    my ($cur, $prev, $max) = @_;
+    $max //= MAX_RECIPE_LITERALS;
+    my ($C, $P) = (scalar @$cur, scalar @$prev);
 
-    my @list;
-    my $dirty = 0;
-    while ($diff->Next()) {
-        if ($diff->Same()) {
-            push @list, [$diff->Min(1), $diff->Max(1)];
-        } else {
-            $dirty = 1;
-            push @list, map { $_ } $diff->Items(2);
-        }
+    # 1. Trim the common prefix and suffix.
+    my $pre = 0;
+    $pre++ while $pre < $C && $pre < $P && $cur->[$pre] eq $prev->[$pre];
+    return undef if $pre == $C && $pre == $P;
+    my $suf = 0;
+    $suf++ while $suf < $C - $pre && $suf < $P - $pre
+        && $cur->[$C - 1 - $suf] eq $prev->[$P - 1 - $suf];
+
+    # 2. Intern the middle lines and discard those that cannot be in the
+    # LCS: a current line that never occurs in the previous middle is a pure
+    # deletion, a previous line that never occurs in the current middle is
+    # certainly a literal.
+    my (%id, %cnt_a, %cnt_b);
+    my @a_lines = @{$cur}[$pre .. $C - $suf - 1];
+    my @b_lines = @{$prev}[$pre .. $P - $suf - 1];
+    $cnt_b{$_}++ for @b_lines;
+    $cnt_a{$_}++ for @a_lines;
+    my (@A, @ai, @B, @bj);
+    for my $i (0 .. $#a_lines) {
+        my $l = $a_lines[$i];
+        next unless $cnt_b{$l};
+        push @A, $id{$l} //= scalar keys %id;
+        push @ai, $i;
     }
-
-    return (@list > 1 || $dirty) ? \@list : undef;
-}
-
-# Build a cumulative offset table: entry i is the flat byte offset
-# where line i starts.  Final entry is the total flat length.
-sub _line_offsets {
-    my ($lines) = @_;
-    my @offsets = (0);
-    for my $line (@$lines) {
-        push @offsets, $offsets[-1] + length($line);
+    for my $j (0 .. $#b_lines) {
+        my $l = $b_lines[$j];
+        next unless $cnt_a{$l};
+        push @B, $id{$l} //= scalar keys %id;
+        push @bj, $j;
     }
-    return \@offsets;
-}
+    my ($N, $M) = (scalar @A, scalar @B);
+    my $unique = @b_lines - $M;
 
-# Map a flat byte position to a 0-based line index.
-sub _flat_to_line {
-    my ($offsets, $byte_pos) = @_;
-    for my $i (0 .. $#$offsets - 1) {
-        return $i if $byte_pos < $offsets->[$i + 1];
+    # A previous line occurring more often than in the current body needs
+    # a literal for each extra copy: a lower bound on the literal count
+    # that costs nothing to check before searching.
+    my $floor = $unique;
+    for my $l (keys %cnt_b) {
+        my $extra = $cnt_b{$l} - ($cnt_a{$l} // 0);
+        $floor += $extra if $extra > 0 && $cnt_a{$l};
     }
-    return $#$offsets - 1;
-}
+    return 'too_big' if $floor > $max;
 
-# Build Recipe entries for a region, using line-level matching.
-sub _recipe_for_region {
-    require Algorithm::Diff;
-    my ($cur_lines, $cur_start, $cur_end,
-        $prev_lines, $prev_start, $prev_end) = @_;
-
-    my @cur_region  = @{$cur_lines}[$cur_start .. $cur_end - 1];
-    my @prev_region = @{$prev_lines}[$prev_start .. $prev_end - 1];
-
-    return () unless @prev_region;
-    if ("@cur_region" eq "@prev_region"
-        and @cur_region == @prev_region) {
-        # Check element-by-element since join could false-match.
-        my $match = 1;
-        for my $i (0 .. $#cur_region) {
-            if ($cur_region[$i] ne $prev_region[$i]) {
-                $match = 0;
-                last;
+    # 3. Myers' greedy O(ND) search over the reduced sequences, keeping each
+    # round's V (packed, 32 bits a diagonal) for the backtrack. x indexes
+    # @A (current), y indexes @B (previous); "down" takes a previous line as
+    # a literal, "right" skips a current line, a diagonal step is a match.
+    my @match;    # $match[$y] = $x for each matched @B line
+    if ($N && $M) {
+        my $dmax = $N - $M + 2 * ($max - $unique);
+        $dmax = $N + $M if $dmax > $N + $M;
+        return 'too_big' if $dmax < 0;
+        my $off = $dmax + 1;
+        my @v = (0) x (2 * $off + 1);
+        my @trace;
+        my $work = 0;
+        my ($found, $x, $y);
+        ROUND: for my $d (0 .. $dmax) {
+            push @trace, pack('N*', @v[$off - $d - 1 .. $off + $d + 1]);
+            for (my $k = -$d; $k <= $d; $k += 2) {
+                $x = ($k == -$d
+                      || ($k != $d && $v[$off + $k - 1] < $v[$off + $k + 1]))
+                    ? $v[$off + $k + 1]
+                    : $v[$off + $k - 1] + 1;
+                $y = $x - $k;
+                while ($x < $N && $y < $M && $A[$x] == $B[$y]) {
+                    $x++; $y++; $work++;
+                }
+                $v[$off + $k] = $x;
+                return 'too_big' if ++$work > MAX_DIFF_WORK;
+                if ($x == $N && $y == $M) { $found = $d; last ROUND }
             }
         }
-        return ([$cur_start + 1, $cur_end]) if $match;
+        return 'too_big' unless defined $found;
+
+        # Backtrack: trace[d] holds V as it stood before round d, for
+        # diagonals -d-1 .. d+1 (index k + d + 1).
+        for (my $d = $found; $d > 0; $d--) {
+            my $t = $trace[$d];
+            my $k = $x - $y;
+            my $down = $k == -$d
+                || ($k != $d && vec($t, $k - 1 + $d + 1, 32) < vec($t, $k + 1 + $d + 1, 32));
+            my $pk = $down ? $k + 1 : $k - 1;
+            my $px = vec($t, $pk + $d + 1, 32);
+            my $py = $px - $pk;
+            my ($sx, $sy) = $down ? ($px, $py + 1) : ($px + 1, $py);
+            while ($x > $sx) { $x--; $y--; $match[$y] = $x }
+            ($x, $y) = ($px, $py);
+        }
+        while ($x > 0) { $x--; $y--; $match[$y] = $x }
     }
 
-    my $diff = Algorithm::Diff->new(\@cur_region, \@prev_region);
-    $diff->Base(0);
-
+    # 4. Map back to whole-body indices and build the Recipe in @prev order,
+    # merging copies that are adjacent in both bodies.
+    my %src;
+    for my $y (0 .. $#match) {
+        next unless defined $match[$y];
+        $src{$pre + $bj[$y]} = $pre + $ai[$match[$y]];
+    }
     my @recipe;
-    while ($diff->Next()) {
-        if ($diff->Same()) {
-            push @recipe,
-                [$cur_start + $diff->Min(1) + 1,
-                 $cur_start + $diff->Max(1) + 1];
+    my $literals = 0;
+    for my $j (0 .. $P - 1) {
+        my $i = $j < $pre        ? $j
+              : $j >= $P - $suf  ? $j - $P + $C
+              :                    $src{$j};
+        if (!defined $i) {
+            push @recipe, $prev->[$j];
+            $literals++;
+        } elsif (@recipe && ref $recipe[-1] && $recipe[-1][1] == $i) {
+            $recipe[-1][1] = $i + 1;
         } else {
-            push @recipe, $diff->Items(2);
+            push @recipe, [$i + 1, $i + 1];
         }
     }
-    return @recipe;
-}
-
-# Estimate the wire cost of a Recipe.
-sub _recipe_cost {
-    my ($recipe) = @_;
-    return 999999 unless $recipe;
-    my $cost = 0;
-    for my $item (@$recipe) {
-        if (ref $item eq 'ARRAY') {
-            $cost += 8;    # [N, M] is cheap
-        } else {
-            $cost += length($item);
-        }
-    }
-    return $cost;
-}
-
-# Byte-level prefix/suffix matching strategy.
-# Flattens both bodies, finds common prefix and suffix, maps back
-# to line boundaries, then uses line-level matching on the middle.
-# The length of the common prefix (suffix) of $x and $y, at most $max:
-# compared a block at a time, each block one string comparison, and only the
-# block where they differ a character at a time.  A character-at-a-time loop
-# over the whole body cost ~50ns a byte, which a list manager pays for every
-# recipient's copy.
-use constant CMP_BLOCK => 4096;
-
-sub _common_prefix_len {
-    my ($x, $y, $max) = @_;
-    my $n = 0;
-    $n += CMP_BLOCK
-        while $n + CMP_BLOCK <= $max
-          and substr($x, $n, CMP_BLOCK) eq substr($y, $n, CMP_BLOCK);
-    $n++ while $n < $max and substr($x, $n, 1) eq substr($y, $n, 1);
-    return $n;
-}
-
-sub _common_suffix_len {
-    my ($x, $y, $max) = @_;
-    my ($lx, $ly) = (length $x, length $y);
-    my $n = 0;
-    $n += CMP_BLOCK
-        while $n + CMP_BLOCK <= $max
-          and substr($x, $lx - $n - CMP_BLOCK, CMP_BLOCK)
-           eq substr($y, $ly - $n - CMP_BLOCK, CMP_BLOCK);
-    $n++ while $n < $max and substr($x, -1 - $n, 1) eq substr($y, -1 - $n, 1);
-    return $n;
-}
-
-sub _body_recipe_flat {
-    my ($l1, $l2) = @_;
-
-    my $cur_flat  = join('', @$l1);
-    my $prev_flat = join('', @$l2);
-
-    # Find common prefix length.
-    my $min_len = length($cur_flat) < length($prev_flat)
-        ? length($cur_flat) : length($prev_flat);
-    my $prefix = _common_prefix_len($cur_flat, $prev_flat, $min_len);
-
-    # Find common suffix length (not overlapping prefix).
-    my $suffix = _common_suffix_len($cur_flat, $prev_flat, $min_len - $prefix);
-
-    # If no significant prefix or suffix, this strategy won't help.
-    return undef unless $prefix > 0 or $suffix > 0;
-
-    my $cur_offsets  = _line_offsets($l1);
-    my $prev_offsets = _line_offsets($l2);
-
-    # Find last complete line within the common prefix.
-    my $cur_prefix_end = 0;
-    for my $i (0 .. $#$l1) {
-        if ($cur_offsets->[$i + 1] <= $prefix) {
-            $cur_prefix_end = $i + 1;
-        } else {
-            last;
-        }
-    }
-    my $prev_prefix_end = 0;
-    for my $i (0 .. $#$l2) {
-        if ($prev_offsets->[$i + 1] <= $prefix) {
-            $prev_prefix_end = $i + 1;
-        } else {
-            last;
-        }
-    }
-
-    # Find first complete line within the common suffix.
-    my $cur_suffix_start = scalar @$l1;
-    if ($suffix > 0) {
-        my $tail_start = length($cur_flat) - $suffix;
-        for my $i (reverse 0 .. $#$l1) {
-            if ($cur_offsets->[$i] >= $tail_start) {
-                $cur_suffix_start = $i;
-            } else {
-                last;
-            }
-        }
-    }
-    my $prev_suffix_start = scalar @$l2;
-    if ($suffix > 0) {
-        my $tail_start = length($prev_flat) - $suffix;
-        for my $i (reverse 0 .. $#$l2) {
-            if ($prev_offsets->[$i] >= $tail_start) {
-                $prev_suffix_start = $i;
-            } else {
-                last;
-            }
-        }
-    }
-
-    # Ensure suffix doesn't overlap prefix.
-    $cur_suffix_start = $cur_prefix_end
-        if $cur_suffix_start < $cur_prefix_end;
-    $prev_suffix_start = $prev_prefix_end
-        if $prev_suffix_start < $prev_prefix_end;
-
-    # Build Recipe: prefix region + middle region + suffix region.
-    my @recipe;
-    push @recipe, _recipe_for_region(
-        $l1, 0, $cur_prefix_end,
-        $l2, 0, $prev_prefix_end);
-    push @recipe, _recipe_for_region(
-        $l1, $cur_prefix_end, $cur_suffix_start,
-        $l2, $prev_prefix_end, $prev_suffix_start);
-    push @recipe, _recipe_for_region(
-        $l1, $cur_suffix_start, scalar @$l1,
-        $l2, $prev_suffix_start, scalar @$l2);
-
-    return @recipe ? \@recipe : undef;
+    return 'too_big' if $literals > $max;
+    return \@recipe;
 }
 
 # --- Epilogue helpers ---
@@ -776,28 +699,14 @@ sub _add_epilogue {
 
 # --- Calculate helpers ---
 
-# Count literal string items in a Recipe (non-array items = lines not in current body).
-sub _recipe_literal_lines {
-    my ($recipe) = @_;
-    return 0 unless $recipe;
-    return scalar grep { !ref $_ } @$recipe;
-}
-
-# Return the cheaper of the two diff strategies for two raw body strings.
-# Returns undef if bodies are identical (no Recipe needed).
-sub _best_body_diff {
-    my ($cur_raw, $prev_raw) = @_;
+# The body Recipe rebuilding $prev_raw from $cur_raw (raw body strings):
+# undef when they are the same body, "too_big" over $max literal lines.
+# Lines split as the verifier rebuilds them, trailing line breaks dropped.
+sub _body_recipe {
+    my ($cur_raw, $prev_raw, $max) = @_;
     (my $s1 = $cur_raw)  =~ s/[\r\n]+$//;
     (my $s2 = $prev_raw) =~ s/[\r\n]+$//;
-    return undef if $s1 eq $s2;
-    my @l1 = split /\r?\n/, $s1;
-    my @l2 = split /\r?\n/, $s2;
-    my $line = _body_recipe_linediff(\@l1, \@l2);
-    my $flat = _body_recipe_flat(\@l1, \@l2);
-    return undef unless $line || $flat;
-    return $flat unless $line;
-    return $line unless $flat;
-    return _recipe_cost($flat) < _recipe_cost($line) ? $flat : $line;
+    return _body_diff([split /\r?\n/, $s1], [split /\r?\n/, $s2], $max);
 }
 
 # Store $old_body in the MIME epilogue of $current (modifying it in place),
@@ -945,20 +854,26 @@ sub calculate {
             $rb_recipe = _epilogue_recipe($current, $previous->body_raw);
         }
         elsif (defined $opts{EpilogueThreshold}) {
-            # Use epilogue only when the diff would exceed the threshold of
-            # literal (non-range) lines.  Compute diff first (no side effects),
-            # then fall back to epilogue if it is too large.
-            my $diff = _best_body_diff($current->body_raw, $previous->body_raw);
-            if (!defined $diff || _recipe_literal_lines($diff) > $opts{EpilogueThreshold}) {
-                $rb_recipe = _epilogue_recipe($current, $previous->body_raw);
-            }
-            else {
-                $rb_recipe = $diff;
-            }
+            # Use the epilogue only when the diff would need more literal
+            # lines than the threshold (never more than MAX_RECIPE_LITERALS).
+            # The diff has no side effects; the epilogue rewrites $current.
+            my $max = $opts{EpilogueThreshold};
+            $max = MAX_RECIPE_LITERALS if $max > MAX_RECIPE_LITERALS;
+            my $diff = _body_recipe($current->body_raw, $previous->body_raw, $max);
+            $rb_recipe = defined $diff && !ref $diff
+                ? _epilogue_recipe($current, $previous->body_raw)
+                : $diff;
         }
         else {
-            # Default: compute diff Recipe (does not modify $current).
-            $rb_recipe = _best_body_diff($current->body_raw, $previous->body_raw);
+            # Default: a diff Recipe, which never modifies $current. A body
+            # the diff cannot rebuild within MAX_RECIPE_LITERALS lines is
+            # declared unrecoverable: a caller that may rewrite the body
+            # asks for the epilogue instead.
+            $rb_recipe = _body_recipe($current->body_raw, $previous->body_raw);
+            if (defined $rb_recipe && !ref $rb_recipe) {
+                $rb_recipe = undef;
+                $self->set_null_body_recipe;
+            }
         }
     }
     else {
@@ -1383,14 +1298,17 @@ C<$previous> from it. Dies if the message cannot be processed: it already
 has 32 instances, its instances do not form a chain, or C<$previous> is
 not an earlier form of the same message.
 
-The body Recipe is a line diff by default. With C<< UseEpilogue => 1 >>,
-the previous body is instead appended after the final MIME boundary (the
+The body Recipe is a line diff by default: a Myers diff with the fewest
+literal lines, bounded at 1000 literal lines and a fixed amount of work.
+A body it cannot rebuild within those bounds gets the null body Recipe
+(the previous body is unrecoverable). With C<< UseEpilogue => 1 >>, the
+previous body is instead appended after the final MIME boundary (the
 message is wrapped in a C<multipart/mixed> container if it is not already
 multipart) and the Recipe copies it from there; with C<< EpilogueThreshold
-=> N >>, that happens only when the diff would carry more than C<N>
-literal lines. Both epilogue forms modify C<$msg> in place, and the hashes
-cover the modified message. Recipe computation uses L<Algorithm::Diff>,
-loaded on first use.
+=> N >>, that happens only when the diff would need more than C<N> literal
+lines (or more than 1000, whichever is smaller), and an unchanged body
+gets no Recipe. Both epilogue forms modify C<$msg> in place, and the
+hashes cover the modified message.
 
 =head2 verify($msg, %options)
 
