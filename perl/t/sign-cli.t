@@ -186,6 +186,7 @@ isnt($rc4, 0, 'missing --selector is an error');
     isnt($rc, 0, 'gate: null body Recipe refused by default');
     is($out, '', 'gate: nothing written for null body Recipe');
     like($err, qr/null body Recipe/, 'gate: reason names the null body Recipe');
+    like($err, qr/--allow-null-body-recipe not set/, 'gate: CLI message names its own flag');
     like($err, qr/unsigned top Message-Instance m=2/, 'gate: and says the null top is unsigned');
 
     ($out, $rc) = $run->($null_top->(), '--allow-null-body-recipe');
