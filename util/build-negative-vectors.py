@@ -62,14 +62,20 @@ Writes:
   signature-i-33.eml               -- two real hops, the second signed as i=33
                                          (one more than MAX_CHAIN_LENGTH, 32);
                                          REJECT (PERMERROR) before any gap check
+  signature-i-101.eml              -- the same with i=101 (one more than
+                                         MAX_CHAIN_NUMBER, 100); REJECT (PERMERROR)
   signature-i-huge.eml             -- the same with i=99999999999999999999;
                                          REJECT (PERMERROR), no overflow, no hang
   signature-m-huge.eml             -- second hop i=2 over Message-Instance m=2,
                                          but its signature says m=4294967297;
                                          REJECT (PERMERROR)
-  instance-m-huge.eml              -- second hop's Message-Instance (and the
-                                         signature covering it) m=99999999999999999999;
-                                         REJECT (PERMERROR)
+  instance-m-huge.eml              -- second hop's Message-Instance
+                                         m=99999999999999999999 (its signature
+                                         says m=2); REJECT (PERMERROR)
+  signature-m-malformed.eml        -- second hop's signature says m=4294967297x
+                                         (not 1*DIGIT); REJECT (PERMERROR)
+  instance-m-malformed.eml         -- second hop's Message-Instance
+                                         m=4294967297x; REJECT (PERMERROR)
 """
 import base64
 import json
@@ -691,9 +697,9 @@ def build_lone_junk_signature():
     return b"DKIM2-Signature: m=1; d=evil.example\r\n" + open(SRC, "rb").read()
 
 
-# Every i= and m= is bounded by MAX_CHAIN_LENGTH (32 in every implementation
-# here; Perl's Mail::DKIM2::Common has the constant).  A value above it, or
-# too long to be one, is a PERMERROR before any gap/contiguity check walks
+# Every i= and m= is a chain number: 1*DIGIT, at most three digits naming
+# 1..MAX_CHAIN_NUMBER (100), and no more than MAX_CHAIN_LENGTH (32), in every
+# implementation here.  Anything else is a PERMERROR before any gap/contiguity check walks
 # 1..max -- which, for i=99999999999999999999, crashed Perl ("Range iterator
 # outside integer range"), ran the browser verifier out of memory, and was
 # undefined behaviour in C's atoi().  These chains are otherwise genuinely

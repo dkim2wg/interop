@@ -32,7 +32,7 @@ cd "$root"
 # or verifier is deliberately added, and so it CATCHES one being silently
 # dropped -- a runner that quietly covers less than it claims is worse than
 # no runner, because it still reads as proof.
-NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml duplicate-mi-version.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml null-body-forged-history.eml empty-body-forged-history.eml malformed-body-recipe-below-null.eml signature-gap.eml instance-gap.eml unkeyable-signature-no-i.eml unkeyable-signature-i-abc.eml lone-junk-signature.eml signature-i-33.eml signature-i-huge.eml signature-m-huge.eml instance-m-huge.eml"
+NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml duplicate-mi-version.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml null-body-forged-history.eml empty-body-forged-history.eml malformed-body-recipe-below-null.eml signature-gap.eml instance-gap.eml unkeyable-signature-no-i.eml unkeyable-signature-i-abc.eml lone-junk-signature.eml signature-i-33.eml signature-i-101.eml signature-i-huge.eml signature-m-huge.eml instance-m-huge.eml signature-m-malformed.eml instance-m-malformed.eml"
 POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml positive-control-nd-bridge.eml positive-control-unreferenced-lower-mi.eml positive-control-b-literal.eml positive-control-null-body.eml positive-control-null-body-over-recipe.eml positive-control-null-below.eml positive-control-empty-body-chain.eml"
 VERIFIERS="python go c perl js"
 n_vectors=0;   for _f in $NEG_VECTORS $POS_VECTORS; do n_vectors=$((n_vectors + 1));     done
@@ -64,9 +64,12 @@ want_text() {
     unsigned-mi.eml)         echo "Message-Instance m=<x> is not signed" ;;
     duplicate-mi-version.eml) echo "Message-Instance m=<x> is duplicated" ;;
     unkeyable-signature-*.eml|lone-junk-signature.eml) echo "PERMERROR DKIM2-Signature has a missing or malformed i= tag" ;;
-    signature-i-*.eml)       echo "PERMERROR DKIM2-Signature i= exceeds the maximum chain length of 32" ;;
-    signature-m-huge.eml)    echo "PERMERROR DKIM2-Signature m= exceeds the maximum chain length of 32" ;;
-    instance-m-huge.eml)     echo "PERMERROR Message-Instance m= exceeds the maximum chain length of 32" ;;
+    signature-i-33.eml)      echo "PERMERROR DKIM2-Signature i= exceeds the maximum chain length of 32" ;;
+    signature-i-*.eml)       echo "PERMERROR DKIM2-Signature i= exceeds the maximum chain number of 100" ;;
+    signature-m-huge.eml)    echo "PERMERROR DKIM2-Signature m= exceeds the maximum chain number of 100" ;;
+    instance-m-huge.eml)     echo "PERMERROR Message-Instance m= exceeds the maximum chain number of 100" ;;
+    signature-m-malformed.eml) echo "PERMERROR DKIM2-Signature has a malformed m= tag" ;;
+    instance-m-malformed.eml)  echo "PERMERROR Message-Instance has a malformed m= tag" ;;
     nd-bridge-wrong-domain.eml) echo "DKIM2-Signature i=<x> nd= hop d=<domain> did not match RCPT TO" ;;
     esac
 }
@@ -102,8 +105,9 @@ run_vector() { # run_vector <file> <want: reject|accept>
             must=""
             case $file in
             unkeyable-signature-*.eml|lone-junk-signature.eml) must="missing or malformed i= tag" ;;
-            signature-i-*.eml|signature-m-huge.eml|instance-m-huge.eml)
-                must="exceeds the maximum chain length" ;;
+            signature-i-*.eml|signature-m-*.eml|instance-m-*.eml)
+                # the expected text, less the "PERMERROR " the JS summary drops
+                must=$(want_text "$file" | sed 's/^PERMERROR //') ;;
             esac
             if [ "$status" -ne 0 ] && [ -n "$must" ] && ! printf '%s' "$out" | grep -q "$must"; then
                 printf '  %-7s REJECTED, WRONG REASON (BUG!) : %s\n' "$impl" "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)"
