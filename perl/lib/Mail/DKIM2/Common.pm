@@ -547,11 +547,11 @@ sub build_signing_input {
     return $signing_input;
 }
 
-# Every eval a Signer or Verifier can reach rethrows a reference: the library
-# only ever dies with strings, so an object is the host's, typically a milter
-# or MTA signalling a timeout, and swallowing it would let the caller run on
-# past its deadline. Reflector, Split and Validate are outside the rule --
-# they run the demo server and the web validator, never inside a host.
+# Every eval in the library rethrows a reference: the library only ever dies
+# with strings, so an object is the host's, typically a milter or MTA
+# signalling a timeout, and swallowing it would let the caller run on past
+# its deadline. That includes Reflector, Split and Validate, so the promise
+# in Mail::DKIM2's CONVENTIONS holds without exceptions (review R16).
 
 # _check_options($what, \%opts, @known): croak on an option not in @known.
 # Every public constructor and class method taking named options calls this
