@@ -64,8 +64,8 @@ top Message-Instance is among them), C<unsigned_null> (the C<m=> of the
 highest Message-Instance above C<covered_m> with a null body Recipe -- the
 top or one under it -- or 0) and, when refusing, C<reason>
 (C<upstream-chain>, C<broken-mi-chain> or C<null-body-recipe>) and a
-human-readable C<message>. C<covered_m> and C<unsigned_null> are new in
-0.16; C<top_null> and C<top_signed> mean what they did.
+human-readable C<message>. C<top_signed>, C<covered_m> and C<unsigned_null>
+are new in 0.16; C<top_null> is as in 0.15.
 
 =head2 Null body Recipes
 

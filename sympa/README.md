@@ -49,8 +49,12 @@ there. Older packages are not supported.
 
 `Sympa::DKIM2` loads `Mail::DKIM2::MessageInstance` and
 `Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution, version 0.15
-or later (source in [`../perl`](../perl); `cpanm Mail::DKIM2` once 0.15 is
-on CPAN). It is loaded only for lists with the switch on; a list with the
+or later (`cpanm Mail::DKIM2`; source in [`../perl`](../perl)). Sympa uses
+only 0.15's API. 0.16 changes none of it, but its MessageInstance code is
+stricter about the upstream chain it builds on (an `m=` that is not a chain
+number, a duplicate key in a Recipe's JSON), so prefer it when it is on
+CPAN. The Gate fixes in 0.16 are for signers; Sympa does not use the Gate.
+Mail::DKIM2 is loaded only for lists with the switch on; a list with the
 switch on and no Mail::DKIM2, or one older than 0.15, logs an error and
 runs as stock. Nothing else is needed beyond what 6.2.78 itself requires.
 
