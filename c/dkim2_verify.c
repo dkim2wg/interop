@@ -434,7 +434,8 @@ static int verify_mi_hashes(
                    payload never surfaced as an error at all. Probe the decoded
                    JSON directly here, before either apply_*_recipe() call, so
                    that failure is reported specifically instead of vanishing. */
-                cJSON *probe = cJSON_Parse(rj);
+                /* dkim2_recipe_parse(): a duplicate key is invalid JSON too. */
+                cJSON *probe = dkim2_recipe_parse(rj);
                 if (!probe) {
                     free(r_json_bytes);
                     snprintf(errbuf, errbufsz,

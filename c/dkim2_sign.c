@@ -4,6 +4,7 @@
 #include "dkim2_crypto.h"
 #include "base64.h"
 #include "dkim2_verify.h"
+#include "dkim2_recipe.h"
 #include <cjson/cJSON.h>
 #include <time.h>
 #include <stdlib.h>
@@ -143,7 +144,7 @@ static int mi_null_body(const dkim2_mi_t *mi) {
     int null_body = 0;
     if (len > 0) {
         buf[len] = '\0';
-        cJSON *j = cJSON_Parse((const char *)buf);
+        cJSON *j = dkim2_recipe_parse((const char *)buf);
         if (j) {
             cJSON *b = cJSON_GetObjectItemCaseSensitive(j, "b");
             null_body = b && cJSON_IsNull(b);
