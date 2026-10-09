@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Mail::Milter::Authentication::Pragmas;
 # ABSTRACT: Handler class for DKIM2 signature verification
-our $VERSION = '0.16';
+our $VERSION = '0.17';
 use base 'Mail::Milter::Authentication::Handler';
 
 use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey fold_header parse_mime);
@@ -223,6 +223,9 @@ sub _add_mi_and_store {
             # Case 2: Message has existing MI header(s).
             # The topmost MI must match current content (already verified
             # by the DKIM2 chain check).  Use it as the snapshot key.
+            # Only the snapshot needs it: with no snapshot_directory there
+            # is nothing to store, so skip the verify entirely.
+            return unless $config->{'snapshot_directory'};
             my $mi_ver = Mail::DKIM2::MessageInstance->verify($msg,
                 IgnorePrefixes => $config->{'ignore_header_prefixes'});
             unless ( $mi_ver ) {

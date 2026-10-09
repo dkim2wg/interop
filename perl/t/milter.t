@@ -143,6 +143,20 @@ diag("=== DKIM2Verify milter tests ===");
     my @stored = $files_in->($snap);
     ok(@stored, 'defaults: add_message_instance defaults on (snapshot stored)');
 
+    # Without a snapshot_directory there is nothing to store, so the handler
+    # must not run MessageInstance->verify just to pick a key.
+    {
+        my $calls = 0;
+        no warnings 'redefine';
+        my $orig = \&Mail::DKIM2::MessageInstance::verify;
+        local *Mail::DKIM2::MessageInstance::verify = sub { $calls++; goto &$orig };
+        run_verify($signed_msg, _bare => 1);
+        my $without = $calls;
+        $calls = 0;
+        run_verify($signed_msg, _bare => 1, snapshot_directory => tempdir(CLEANUP => 1));
+        is($calls - $without, 1, 'no snapshot_directory: the snapshot-key verify is skipped');
+    }
+
     my $snap0 = tempdir(CLEANUP => 1);
     run_verify($signed_msg, _bare => 1, snapshot_directory => $snap0, add_message_instance => 0);
     my @none = $files_in->($snap0);
