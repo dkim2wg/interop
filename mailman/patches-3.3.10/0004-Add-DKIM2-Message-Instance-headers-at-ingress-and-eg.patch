@@ -141,22 +141,23 @@ charsets through a test list (interop util/charset-corpus.sh):
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- DKIM2-MESSAGE-INSTANCE.md                     |  268 ++
+ DKIM2-MESSAGE-INSTANCE.md                     |  276 ++
+ src/mailman/config/schema.cfg                 |    6 +
  src/mailman/handlers/decorate.py              |  129 +
  src/mailman/handlers/dmarc.py                 |    2 +
- src/mailman/handlers/message_instance.py      | 1090 ++++++++
+ src/mailman/handlers/message_instance.py      | 1225 ++++++++
  src/mailman/handlers/mime_delete.py           |    3 +
  src/mailman/handlers/tests/mi_support.py      |  316 +++
- .../handlers/tests/test_message_instance.py   | 2325 +++++++++++++++++
+ .../handlers/tests/test_message_instance.py   | 2523 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
- .../handlers/tests/test_mi_roundtrip.py       |  152 ++
+ .../handlers/tests/test_mi_roundtrip.py       |  152 +
  src/mailman/handlers/to_archive.py            |    7 +-
  src/mailman/handlers/to_usenet.py             |    8 +-
  src/mailman/mta/bulk.py                       |    5 +-
  src/mailman/mta/deliver.py                    |    5 +-
  src/mailman/mta/message_instance.py           |   31 +
  src/mailman/pipelines/builtin.py              |    2 +
- 15 files changed, 4371 insertions(+), 6 deletions(-)
+ 16 files changed, 4718 insertions(+), 6 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
  create mode 100644 src/mailman/handlers/tests/mi_support.py
@@ -167,10 +168,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..95fca8717
+index 000000000..7464ba4cf
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,276 @@
 +# DKIM2 Message-Instance Support
 +
 +This documents the changes that add DKIM2 Message-Instance header support
@@ -282,10 +283,14 @@ index 000000000..95fca8717
 +  `msgdata['dkim2-wrap']` and egress finds the original body's octets
 +  where the wrap put them, checks they are followed by that boundary,
 +  and counts line breaks for the single copy range, without splitting
-+  either body into lines.  Otherwise, when the previous body is one
-+  contiguous run of the current body (a pure append) the body Recipe is
-+  a single copy range found by a linear scan; only other changes run
-+  the line diff.  Both give the same Recipe.
++  either body into lines.  Otherwise the body Recipe comes from a line
++  diff every DKIM2 implementation runs the same way, so all of them give
++  the same Recipe: the common prefix and suffix are trimmed, lines only
++  one side has are set aside, and Myers' O(ND) search finds the rest.
++  It is capped: a Recipe restores at most 1000 previous lines as
++  literals by default (`message_instance_max_recipe_lines` sets it), and
++  the search stops after a fixed amount of work.  Past either limit the
++  body Recipe is `"b": null`, as below.
 +- A message that already carries an instance newer than the snapshot
 +  is left alone: a bulk delivery that failed temporarily is retried
 +  with the copy egress already stamped.
@@ -323,6 +328,10 @@ index 000000000..95fca8717
 +```
 +
 +The default is `no`.  When disabled, neither handler does any work.
++
++`message_instance_max_recipe_lines` (default 1000) is the
++most previous-body lines a body Recipe may carry as literal text; a
++body that would need more gets `"b": null`.
 +
 +## Files
 +
@@ -439,6 +448,23 @@ index 000000000..95fca8717
 +a standalone Python DKIM2 library exists, the first part can move there
 +and the handlers become a thin wrapper, as Sympa's implementation does
 +by delegating to `Mail::DKIM2::MessageInstance`.
+diff --git a/src/mailman/config/schema.cfg b/src/mailman/config/schema.cfg
+index 9c4403e01..b65d524c3 100644
+--- a/src/mailman/config/schema.cfg
++++ b/src/mailman/config/schema.cfg
+@@ -940,6 +940,12 @@ remove_dkim_headers: no
+ # draft-ietf-dkim-dkim2-spec-06 for details.
+ message_instance: no
+ 
++# The most previous-body lines a Message-Instance body Recipe may restore as
++# literal text.  When more would be needed (or the bodies take too long to
++# compare), the Recipe records the body as not recoverable ("b": null)
++# instead.
++message_instance_max_recipe_lines: 1000
++
+ # Where can we find the mail server specific configuration file?  The path can
+ # be either a file system path or a Python import path.  If the value starts
+ # with python: then it is a Python import path, otherwise it is a file system
 diff --git a/src/mailman/handlers/decorate.py b/src/mailman/handlers/decorate.py
 index e34b1ffdb..35d4928f1 100644
 --- a/src/mailman/handlers/decorate.py
@@ -614,10 +640,10 @@ index 95b1c9a3d..f4cd0fb1b 100644
  
 diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
 new file mode 100644
-index 000000000..82310f4ae
+index 000000000..c4ba1ba75
 --- /dev/null
 +++ b/src/mailman/handlers/message_instance.py
-@@ -0,0 +1,1090 @@
+@@ -0,0 +1,1225 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -651,7 +677,6 @@ index 000000000..82310f4ae
 +import re
 +
 +from contextlib import contextmanager
-+from difflib import SequenceMatcher
 +from email.generator import BytesGenerator
 +from io import BytesIO
 +from lazr.config import as_boolean
@@ -1142,56 +1167,194 @@ index 000000000..82310f4ae
 +    return steps
 +
 +
++# The body Recipe of an instance whose previous body cannot be rebuilt:
++# Mailman rewrote it (content filtering, DMARC wrap) before decoration, or
++# it differs from the current body by more than the body diff's limits.
++# Emitted as "b": null (spec-06 §4.2).
++NULL_BODY_RECIPE = object()
++
++# The body diff's limits, shared by the DKIM2 implementations: a body
++# Recipe restores at most MAX_RECIPE_LITERALS previous lines as literals
++# (by default; [mta] message_instance_max_recipe_lines sets it),
++# and the search gives up after MAX_DIFF_WORK units (one per diagonal
++# visited, one per line compared along a snake).  Over either, the previous
++# body is not recorded: the Recipe is "b": null.
++MAX_RECIPE_LITERALS = 1000
++MAX_DIFF_WORK = 4000000
++
++# _body_diff's results other than a flat recipe.
++BODY_IDENTICAL = object()
++BODY_TOO_BIG = object()
++
++
++def _body_diff(cur, prev, max_literals=MAX_RECIPE_LITERALS):
++    """Diff the current body lines against the previous ones.
++
++    Returns BODY_IDENTICAL, BODY_TOO_BIG (more than max_literals literal
++    lines would be needed, or the search ran over MAX_DIFF_WORK), or the
++    flat recipe that rebuilds prev from cur: [from, to] lists, 1-based and
++    inclusive copy ranges of cur, and literal str lines of prev, in prev
++    order.
++
++    Every DKIM2 implementation runs this same algorithm, step for step, so
++    that all of them produce the same recipe: trim the common prefix and
++    suffix, drop the lines that cannot match, then Myers' greedy O(ND)
++    search ("An O(ND) Difference Algorithm and Its Variations", 1986) with
++    a fixed tie-break.  The literal cap bounds the edit distance searched.
++    Lines compare exactly.
++    """
++    C, P = len(cur), len(prev)
++    pre = 0
++    while pre < C and pre < P and cur[pre] == prev[pre]:
++        pre += 1
++    if pre == C and pre == P:
++        return BODY_IDENTICAL
++    suf = 0
++    while (suf < C - pre and suf < P - pre
++           and cur[C - 1 - suf] == prev[P - 1 - suf]):
++        suf += 1
++    a = cur[pre:C - suf]
++    b = prev[pre:P - suf]
++    cnt_a, cnt_b = {}, {}
++    for line in a:
++        cnt_a[line] = cnt_a.get(line, 0) + 1
++    for line in b:
++        cnt_b[line] = cnt_b.get(line, 0) + 1
++    # Lines only in one body can never be matched: drop them, keeping the
++    # indexes of the rest.  Equal lines get equal ids.
++    ids = {}
++    A, ai = [], []
++    for i, line in enumerate(a):
++        if line in cnt_b:
++            A.append(ids.setdefault(line, len(ids)))
++            ai.append(i)
++    B, bj = [], []
++    for j, line in enumerate(b):
++        if line in cnt_a:
++            B.append(ids.setdefault(line, len(ids)))
++            bj.append(j)
++    N, M = len(A), len(B)
++    u = len(b) - M
++    # No alignment restores fewer lines than the surplus of each line in b.
++    floor = u + sum(max(0, cnt_b.get(line, 0) - count)
++                    for line, count in cnt_a.items())
++    if floor > max_literals:
++        return BODY_TOO_BIG
++    match = [None] * M
++    if N > 0 and M > 0:
++        dmax = N - M + 2 * (max_literals - u)
++        if dmax > N + M:
++            dmax = N + M
++        if dmax < 0:
++            return BODY_TOO_BIG
++        # V[k] lives at V[off + k], k in [-dmax-1, dmax+1].
++        off = dmax + 1
++        V = [0] * (2 * dmax + 3)
++        # trace[d] holds V[-d-1 .. d+1], the only part round d reads.
++        trace = []
++        work = 0
++        found = None
++        for d in range(dmax + 1):
++            trace.append(V[off - d - 1:off + d + 2])
++            for k in range(-d, d + 1, 2):
++                if k == -d or (k != d and V[off + k - 1] < V[off + k + 1]):
++                    x = V[off + k + 1]
++                else:
++                    x = V[off + k - 1] + 1
++                y = x - k
++                while x < N and y < M and A[x] == B[y]:
++                    x += 1
++                    y += 1
++                    work += 1
++                V[off + k] = x
++                work += 1
++                if work > MAX_DIFF_WORK:
++                    return BODY_TOO_BIG
++                if x == N and y == M:
++                    found = d
++                    break
++            if found is not None:
++                break
++        if found is None:
++            return BODY_TOO_BIG
++        x, y = N, M
++        for d in range(found, 0, -1):
++            T = trace[d]
++            # V[k] of round d is T[k + d + 1].
++            k = x - y
++            down = k == -d or (k != d and T[k + d] < T[k + d + 2])
++            pk = k + 1 if down else k - 1
++            px = T[pk + d + 1]
++            py = px - pk
++            if down:
++                sx, sy = px, py + 1
++            else:
++                sx, sy = px + 1, py
++            while x > sx:
++                x -= 1
++                y -= 1
++                match[y] = x
++            x, y = px, py
++        while x > 0:
++            x -= 1
++            y -= 1
++            match[y] = x
++    # Where each previous line comes from in cur (0-based), if anywhere.
++    src = [None] * P
++    for j in range(pre):
++        src[j] = j
++    for j in range(P - suf, P):
++        src[j] = j - P + C
++    for y, x in enumerate(match):
++        if x is not None:
++            src[pre + bj[y]] = pre + ai[x]
++    recipe = []
++    literals = 0
++    for j, i in enumerate(src):
++        if i is None:
++            recipe.append(prev[j])
++            literals += 1
++        elif recipe and isinstance(recipe[-1], list) and recipe[-1][1] == i:
++            recipe[-1][1] = i + 1
++        else:
++            recipe.append([i + 1, i + 1])
++    if literals > max_literals:
++        return BODY_TOO_BIG
++    return recipe
++
++
 +@public
-+def compute_body_recipe(current_lines, previous_lines):
++def compute_body_recipe(current_lines, previous_lines,
++                        max_literals=MAX_RECIPE_LITERALS):
 +    """Compute body recipe to undo current body back to previous.
 +
-+    Uses line-level diff.  Returns a list of Recipe steps (spec-06 §5):
++    Uses the capped line diff, _body_diff.  Returns a list of Recipe steps
++    (spec-06 §5):
 +    - {"c": [start, end]}: copy this range of lines from the current body
 +      (1-based, inclusive)
 +    - {"d": [line, ...]}: literal ASCII lines from the previous body
 +    - {"b": [base64, ...]}: literal 8-bit lines from the previous body,
 +      see _literal_steps
 +
-+    Returns None if bodies are identical.
++    Returns None if bodies are identical, and NULL_BODY_RECIPE if the
++    previous body would take more than max_literals literal lines to
++    restore, or more than MAX_DIFF_WORK to diff.
 +    """
-+    if current_lines == previous_lines:
++    flat = _body_diff(current_lines, previous_lines, max_literals)
++    if flat is BODY_IDENTICAL:
 +        return None
-+    # Fast path: pure append — previous body is a prefix of the current body.
-+    # Count the original lines and emit a single copy instruction.
-+    n = len(previous_lines)
-+    if n == 0:
-+        return []
-+    if len(current_lines) > n and current_lines[:n] == previous_lines:
-+        return [{'c': [1, n]}]
-+    # Fast path: the previous body is one contiguous run of the current
-+    # body -- the DKIM2 wrap puts it, unchanged, between a preamble and the
-+    # closing boundary.  The general diff is quadratic in repeated lines (a
-+    # zero-filled base64 attachment is thousands of identical ones); this
-+    # scan is linear in practice.
-+    first, last = previous_lines[0], previous_lines[-1]
-+    for k in range(len(current_lines) - n + 1):
-+        if (current_lines[k] == first
-+                and current_lines[k + n - 1] == last
-+                and current_lines[k:k + n] == previous_lines):
-+            return [{'c': [k + 1, k + n]}]
-+    sm = SequenceMatcher(None, current_lines, previous_lines, autojunk=False)
++    if flat is BODY_TOO_BIG:
++        return NULL_BODY_RECIPE
 +    recipe = []
 +    pending_data = []
-+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-+        if tag == 'equal':
-+            # Flush any pending data lines
-+            if pending_data:
-+                recipe.extend(_literal_steps(pending_data))
-+                pending_data = []
-+            # Reference lines in the current body (1-based, inclusive end).
-+            # Opcodes walk the current body forwards, so these ranges
-+            # ascend without overlapping as spec-06 §5.2 requires.
-+            recipe.append({'c': [i1 + 1, i2]})
-+        elif tag in ('replace', 'insert'):
-+            # Literal text from the previous body
-+            pending_data.extend(previous_lines[j1:j2])
-+        # 'delete': lines only in current, not needed for previous
++    for step in flat:
++        if isinstance(step, str):
++            pending_data.append(step)
++            continue
++        if pending_data:
++            recipe.extend(_literal_steps(pending_data))
++            pending_data = []
++        recipe.append({'c': step})
 +    if pending_data:
 +        recipe.extend(_literal_steps(pending_data))
 +    return recipe
@@ -1207,9 +1370,12 @@ index 000000000..82310f4ae
 +    first occurrence of the original body's octets (trailing empty lines
 +    off, as spec-06 §6.1 has it) in the wire body starts a line and is
 +    followed by that delimiter, it is the first run of current lines equal
-+    to the previous lines -- the copy range compute_body_recipe gives --
-+    and k and n are counts of CRLFs.  Returns None when the octets are not
-+    there as expected (the caller then diffs), or the body is empty.
++    to the previous lines, and k and n are counts of CRLFs.  (That is a
++    valid Recipe, though not always the one compute_body_recipe gives: when
++    the original body starts with a line the wrap's preamble also has, a
++    blank one say, the diff may copy that line from the preamble.)
++    Returns None when the octets are not there as expected (the caller
++    then diffs), or the body is empty.
 +    """
 +    start = _body_offset(snap_raw)
 +    end = _body_end(snap_raw, start)
@@ -1383,12 +1549,6 @@ index 000000000..82310f4ae
 +        if per_list is not None and not per_list:
 +            return False
 +    return True
-+
-+
-+# The body Recipe of an instance whose previous body cannot be rebuilt:
-+# Mailman rewrote it (content filtering, DMARC wrap) before decoration.
-+# Emitted as "b": null (spec-06 §4.2).
-+NULL_BODY_RECIPE = object()
 +
 +
 +@public
@@ -1694,7 +1854,8 @@ index 000000000..82310f4ae
 +                        wire, snap_raw, boundary)
 +                if body_recipe is None:
 +                    body_recipe = compute_body_recipe(
-+                        _body_lines_raw(wire), _body_lines_raw(snap_raw))
++                        _body_lines_raw(wire), _body_lines_raw(snap_raw),
++                        int(config.mta.message_instance_max_recipe_lines))
 +        if h_hash != snapshot['header_hash']:
 +            current_headers = _collect_headers(msg)
 +            header_recipe = compute_header_recipe(
@@ -2054,10 +2215,10 @@ index 000000000..d10182885
 +    return max_v
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..435ac6dac
+index 000000000..bf4e3572a
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,2325 @@
+@@ -0,0 +1,2523 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -2096,11 +2257,14 @@ index 000000000..435ac6dac
 +from mailman.email.message import Message
 +from mailman.handlers import decorate
 +from mailman.handlers.message_instance import (
++    BODY_IDENTICAL,
++    BODY_TOO_BIG,
 +    build_mi_header_value,
 +    compute_body_recipe,
 +    compute_header_hash,
 +    compute_header_recipe,
 +    get_max_mi_version,
++    NULL_BODY_RECIPE,
 +    verify_mi_raw,
 +    _b64,
 +    _fold_mi_value,
@@ -2111,6 +2275,7 @@ index 000000000..435ac6dac
 +    _should_exclude_header,
 +    _collect_headers,
 +    _body_lines_raw,
++    _body_diff,
 +    _hash_header_pairs,
 +    _serialize_msg,
 +    _wire_bytes,
@@ -2188,6 +2353,89 @@ index 000000000..435ac6dac
 +    that no other implementation can decode."""
 +    encoded = json.dumps(recipe, separators=(',', ':'))
 +    test.assertNotIn('\\udc', encoded, encoded)
++
++
++# A subset of the body diff vectors the DKIM2 implementations share:
++# (name, current lines, previous lines, max_literals, expected), where
++# expected is "identical", "too_big" or the flat recipe: [from, to]
++# copy ranges of the current lines and literal previous lines.
++BODY_DIFF_CASES = [
++    ('identical', ['a', 'b', 'c'], ['a', 'b', 'c'], 1000, 'identical'),
++    ('both empty', [], [], 1000, 'identical'),
++    ('line added at the top', ['x', 'a', 'b', 'c'], ['a', 'b', 'c'], 1000,
++     [[2, 4]]),
++    ('line removed at the end', ['a', 'b', 'c'], ['a', 'b', 'c', 'd'], 1000,
++     [[1, 3], 'd']),
++    ('changed middle line', ['a', 'B', 'c'], ['a', 'b', 'c'], 1000,
++     [[1, 1], 'b', [3, 3]]),
++    ('empty current body', [], ['a', 'b'], 1000, ['a', 'b']),
++    ('empty previous body', ['a', 'b'], [], 1000, []),
++    ('swap', ['a', 'b'], ['b', 'a'], 1000, [[2, 2], 'a']),
++    ('blank lines', ['', 'a', '', '', 'b', ''], ['', '', 'a', 'b', '', ''],
++     1000, [[1, 1], [3, 3], 'a', [5, 5], '', [6, 6]]),
++    ('list wrap', ['header', '--b', '', 'x', 'y', '--b--', 'footer'],
++     ['x', 'y'], 1000, [[4, 5]]),
++    ('cap 2 exceeded', ['a', 'b', 'c'], ['a', 'x', 'y', 'z', 'c'], 2,
++     'too_big'),
++    ('cap 3 met', ['a', 'b', 'c'], ['a', 'x', 'y', 'z', 'c'], 3,
++     [[1, 1], 'x', 'y', 'z', [3, 3]]),
++    ('line-count floor',
++     ['x', 'y', 'x', 'y', 'x', 'y', 'x', 'y', 'x', 'y', 'x', 'y', 'x', 'y',
++      'x', 'y', 'x', 'y', 'x', 'y'],
++     ['y', 'y', 'x', 'y', 'y', 'x', 'y', 'y', 'x', 'y', 'y', 'x', 'y', 'y',
++      'x', 'y', 'y', 'x', 'y', 'y', 'x', 'y', 'y', 'x', 'y', 'y', 'x', 'y',
++      'y', 'x'],
++     5, 'too_big'),
++    ('repeated block', ['a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c'],
++     ['c', 'b', 'a', 'c', 'b', 'a'], 1000,
++     [[3, 3], [5, 5], [7, 7], [9, 9], 'b', 'a']),
++    ('random 1', ['a', 'b', 'c', 'd', 'a', 'b', 'c'],
++     ['a', 'b', 'c', 'd', 'a', 'b', 'c', 'd', 'a', 'b', 'c', 'd', 'a', 'b',
++      'c'],
++     1000, [[1, 7], 'd', 'a', 'b', 'c', 'd', 'a', 'b', 'c']),
++    ('random 2', ['c', 'a', 'c', 'c', 'a', 'a', 'b', 'c', 'c', 'b', 'b', 'a'],
++     ['c', 'c', 'a', 'c', 'c', 'c', 'a', 'b', 'c'], 1000,
++     [[1, 1], 'c', [2, 4], 'c', [5, 5], [7, 8]]),
++    ('random 3', ['b', 'a', 'a', 'a'],
++     ['c', 'c', 'a', 'c', 'c', 'c', 'c', 'b', 'c'], 1000,
++     ['c', 'c', [2, 2], 'c', 'c', 'c', 'c', 'b', 'c']),
++    ('random 4', ['a', 'a', 'a', 'a'],
++     ['a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a'], 1000,
++     [[1, 4], 'a', 'a', 'a', 'a', 'a']),
++    ('random 5', ['b', 'a', 'c', 'a'],
++     ['c', 'b', 'a', 'a', 'a', 'b', 'c', 'b', 'c'], 1000,
++     ['c', [1, 2], [4, 4], 'a', 'b', 'c', 'b', 'c']),
++    ('random 6', ['a', 'b', 'c', 'b'],
++     ['a', 'a', 'b', 'a', 'a', 'c', 'c', 'a', 'a'], 1000,
++     [[1, 1], 'a', [2, 2], 'a', 'a', [3, 3], 'c', 'a', 'a']),
++    ('random 7', ['c', 'd', 'b', 'b'],
++     ['b', 'e', 'a', 'c', 'e', 'c', 'b', 'e', 'a'], 1000,
++     ['b', 'e', 'a', [1, 1], 'e', 'c', [3, 3], 'e', 'a']),
++    ('random 8', ['b', 'a', 'b', 'a'],
++     ['a', 'b', 'a', 'b', 'a', 'b', 'a', 'b', 'a'], 1000,
++     ['a', 'b', 'a', 'b', 'a', [1, 4]]),
++    ('random 9', ['c', 'b', 'd', 'b'],
++     ['d', 'b', 'b', 'c', 'b', 'a', 'd', 'b', 'a'], 1000,
++     ['d', 'b', 'b', [1, 2], 'a', [3, 4], 'a']),
++    ('random 10', ['b', 'a', 'b', 'a'],
++     ['a', 'b', 'a', 'b', 'a', 'b', 'a', 'b', 'a'], 2, 'too_big'),
++    ('random 11', ['b', 'a', 'b', 'a'],
++     ['a', 'b', 'a', 'b', 'a', 'b', 'a', 'b', 'a'], 1000,
++     ['a', 'b', 'a', 'b', 'a', [1, 4]]),
++    ('random 12', ['c', 'a', 'a', 'c'],
++     ['a', 'a', 'b', 'b', 'c', 'b', 'c', 'c', 'a'], 1000,
++     [[2, 3], 'b', 'b', [4, 4], 'b', 'c', 'c', 'a']),
++    ('random 13', ['e', 'c', 'c', 'd'],
++     ['e', 'c', 'a', 'c', 'd', 'c', 'a', 'a', 'b'], 1000,
++     [[1, 2], 'a', [3, 4], 'c', 'a', 'a', 'b']),
++    ('random 14', ['b', 'c', 'd', 'a'],
++     ['c', 'd', 'a', 'b', 'c', 'd', 'a', 'b', 'c'], 1000,
++     ['c', 'd', 'a', [1, 4], 'b', 'c']),
++    ('random 20', ['b', 'a', 'a', 'a'],
++     ['b', 'b', 'a', 'b', 'b', 'b', 'b', 'c', 'c'], 2, 'too_big'),
++    ('random 30', ['b', 'c', 'd', 'a'],
++     ['c', 'd', 'a', 'b', 'c', 'd', 'a', 'b', 'c'], 2, 'too_big'),
++]
 +
 +
 +# =====================================================================
@@ -2375,8 +2623,8 @@ index 000000000..435ac6dac
 +        self.assertIsNone(compute_body_recipe(lines, lines))
 +
 +    def test_pure_append(self):
-+        # Fast path: appended lines only — Recipe is a single copy of the
-+        # original N lines, no diff required.
++        # Appended lines only: the Recipe is a single copy of the original
++        # N lines, the common prefix the diff trims.
 +        recipe = compute_body_recipe(
 +            ['Hello', 'World', 'Footer appended by list'],
 +            ['Hello', 'World'])
@@ -2420,8 +2668,8 @@ index 000000000..435ac6dac
 +        self.assertEqual(recipe, [{'c': [6, 20005]}])
 +
 +    def test_non_contiguous_previous_uses_the_diff(self):
-+        # The previous lines are all there but not as one run: the
-+        # general diff, not the contiguous-run fast path.
++        # The previous lines are all there but not as one run: a copy
++        # range for each run.
 +        recipe = compute_body_recipe(
 +            ['x', 'a', 'y', 'b', 'c', 'z'], ['a', 'b', 'c'])
 +        self.assertEqual(recipe, [{'c': [2, 2]}, {'c': [4, 5]}])
@@ -2459,6 +2707,79 @@ index 000000000..435ac6dac
 +            {'d': ['three']},
 +        ])
 +        _assert_no_surrogates_in_json(self, recipe)
++
++
++class TestBodyDiff(unittest.TestCase):
++    """The capped Myers line diff behind compute_body_recipe."""
++
++    def test_shared_vectors(self):
++        for name, cur, prev, max_literals, expected in BODY_DIFF_CASES:
++            with self.subTest(name):
++                got = _body_diff(cur, prev, max_literals)
++                if got is BODY_IDENTICAL:
++                    got = 'identical'
++                elif got is BODY_TOO_BIG:
++                    got = 'too_big'
++                self.assertEqual(got, expected)
++
++    def test_alternating_lines_are_fast_and_small(self):
++        # a,b,a,b... against b,a,b,a...: one line moved from the front to
++        # the end, which an unbounded LCS takes quadratic time over.
++        cur = ['a', 'b'] * 2000
++        prev = ['b', 'a'] * 2000
++        start = time.monotonic()
++        flat = _body_diff(cur, prev)
++        self.assertLess(time.monotonic() - start, 0.5)
++        self.assertEqual(flat, [[2, 4000], 'a'])
++        self.assertEqual(compute_body_recipe(cur, prev),
++                         [{'c': [2, 4000]}, {'d': ['a']}])
++
++    def test_literal_bound_stops_the_search(self):
++        # 30000 x then 30000 y against the reverse needs 30000 literals; no
++        # line is unique to one side, so the search itself finds that out,
++        # stopping once it passes the edits 1000 literals allow.
++        cur = ['x'] * 30000 + ['y'] * 30000
++        prev = ['y'] * 30000 + ['x'] * 30000
++        start = time.monotonic()
++        self.assertIs(_body_diff(cur, prev), BODY_TOO_BIG)
++        self.assertLess(time.monotonic() - start, 10.0)
++        self.assertIs(compute_body_recipe(cur, prev), NULL_BODY_RECIPE)
++
++    def test_work_budget(self):
++        # The shared vectors' pair either side of where MAX_DIFF_WORK runs
++        # out: one literal line is enough for both, so only the work count
++        # separates them.
++        prev = ['z', 'x', 'y']
++        self.assertEqual(_body_diff(['x', 'y'] * 1413 + ['z'], prev),
++                         ['z', [1, 2]])
++        self.assertIs(_body_diff(['x', 'y'] * 1414 + ['z'], prev),
++                      BODY_TOO_BIG)
++
++    def test_1000_literals_is_a_recipe(self):
++        literals = ['old {}'.format(i) for i in range(1000)]
++        recipe = compute_body_recipe(['a', 'z'], ['a'] + literals + ['z'])
++        self.assertEqual(
++            recipe, [{'c': [1, 1]}, {'d': literals}, {'c': [2, 2]}])
++
++    def test_1001_literals_is_a_null_recipe(self):
++        literals = ['old {}'.format(i) for i in range(1001)]
++        recipe = compute_body_recipe(['a', 'z'], ['a'] + literals + ['z'])
++        self.assertIs(recipe, NULL_BODY_RECIPE)
++
++    def test_max_literals_lowers_the_cap(self):
++        prev = ['a', 'x', 'y', 'z', 'c']
++        self.assertIs(compute_body_recipe(['a', 'b', 'c'], prev, 2),
++                      NULL_BODY_RECIPE)
++        self.assertEqual(compute_body_recipe(['a', 'b', 'c'], prev, 3),
++                         [{'c': [1, 1]}, {'d': ['x', 'y', 'z']},
++                          {'c': [3, 3]}])
++
++    def test_max_literals_raises_the_cap(self):
++        literals = ['old {}'.format(i) for i in range(1001)]
++        recipe = compute_body_recipe(
++            ['a', 'z'], ['a'] + literals + ['z'], 5000)
++        self.assertEqual(
++            recipe, [{'c': [1, 1]}, {'d': literals}, {'c': [2, 2]}])
 +
 +
 +class TestHeaderRecipe(unittest.TestCase):
@@ -3872,6 +4193,44 @@ index 000000000..435ac6dac
 +        msg = self._filtered_and_egressed()
 +        self.assertEqual(undo_message_instance(msg), 2)
 +        self.assertIsNone(msg['subject'])
++
++
++class TestBodyRecipeLimit(unittest.TestCase):
++    """[mta]message_instance_max_recipe_lines caps the body Recipe."""
++
++    layer = ConfigLayer
++
++    RAW = (b'To: ant@example.com\r\nFrom: aperson@example.com\r\n'
++           b'Message-ID: <alpha>\r\nContent-Type: text/plain\r\n\r\n'
++           b'one\r\ntwo\r\nthree\r\n')
++
++    def setUp(self):
++        self._mlist = create_list('ant@example.com')
++
++    def _rewritten_and_egressed(self, max_lines):
++        config.push('test_mi_limit', """\
++        [mta]
++        message_instance: yes
++        message_instance_max_recipe_lines: {}
++        """.format(max_lines))
++        self.addCleanup(config.pop, 'test_mi_limit')
++        msg, msgdata = _msg_from_bytes(self.RAW), {}
++        msg.original_bytes = self.RAW
++        config.handlers['message-instance-ingress'].process(
++            self._mlist, msg, msgdata)
++        msg.set_payload('uno\r\ndos\r\ntres\r\n')
++        config.handlers['message-instance-egress'].process(
++            self._mlist, msg, msgdata)
++        return _recipe_at(msg, 2)
++
++    def test_within_the_limit_is_a_recipe(self):
++        recipe = self._rewritten_and_egressed(3)
++        self.assertEqual(recipe['b'], [{'d': ['one', 'two', 'three']}])
++
++    def test_over_the_limit_is_a_null_recipe(self):
++        recipe = self._rewritten_and_egressed(2)
++        self.assertIn('b', recipe)
++        self.assertIsNone(recipe['b'])
 +
 +
 +def _smtplib_wire(msg):

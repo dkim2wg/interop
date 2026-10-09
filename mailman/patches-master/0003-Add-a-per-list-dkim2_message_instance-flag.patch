@@ -26,12 +26,12 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  create mode 100644 src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
-index 95fca8717..efaae1c1e 100644
+index 7464ba4cf..962166a48 100644
 --- a/DKIM2-MESSAGE-INSTANCE.md
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -151,6 +151,11 @@ message_instance: yes
- 
- The default is `no`.  When disabled, neither handler does any work.
+@@ -159,6 +159,11 @@ The default is `no`.  When disabled, neither handler does any work.
+ most previous-body lines a body Recipe may carry as literal text; a
+ body that would need more gets `"b": null`.
  
 +Each list also has a `dkim2_message_instance` attribute (default
 +`True`, exposed through the REST list configuration resource) so
@@ -41,7 +41,7 @@ index 95fca8717..efaae1c1e 100644
  ## Files
  
  ### New
-@@ -162,6 +167,8 @@ The default is `no`.  When disabled, neither handler does any work.
+@@ -170,6 +175,8 @@ body that would need more gets `"b": null`.
    tests.
  - `src/mailman/mta/message_instance.py`: the delivery mixin, following
    the `ARCSigningMixin` pattern.
@@ -50,7 +50,7 @@ index 95fca8717..efaae1c1e 100644
  - `src/mailman/handlers/tests/test_message_instance.py`: hashing against
    interop vectors, Recipe shapes, folding and unfolding, the DKIM2 wrap,
    the null body Recipe, and full ingress/decorate/egress/undo round
-@@ -184,6 +191,9 @@ The default is `no`.  When disabled, neither handler does any work.
+@@ -192,6 +199,9 @@ body that would need more gets `"b": null`.
  - `src/mailman/config/schema.cfg`: the `[mta] message_instance` option.
  - `src/mailman/pipelines/builtin.py`: register the ingress handler.
  - `src/mailman/mta/deliver.py`, `src/mailman/mta/bulk.py`: call egress.
