@@ -171,11 +171,20 @@ of one that does not check out. All four signers (Python, Go, C, Perl) do this;
   `i=abc`, a field that does not parse — as a PERMERROR, never skip it. A
   verifier that ignores such a field while the gate reads its `m=` lets a
   junk `DKIM2-Signature: m=2` turn an unsigned null top into a "signed" one.
-- **Bound `i=` and `m=` before you loop.** Every `i=` and `m=` names one hop,
-  so a value above the chain length limit (32 here, `MAX_CHAIN_LENGTH`) — or
-  one too long to be one — is a PERMERROR found while parsing, before any
-  check walks 1..max looking for gaps. Do not convert first: `i=99999999999999999999`
-  overflows an `int`, and a loop to 4294967297 runs a browser out of memory.
+- **Bound `i=` and `m=` before you loop.** Every `i=` and `m=` must be
+  1*DIGIT in ASCII — `int()`, `atoi()`, `parseInt` and `strconv.Atoi` all
+  take something else (`"0_1"`, the digit prefix of `"4294967297x"`, `"+1"`)
+  — at most three digits naming 1..100 (`MAX_CHAIN_NUMBER`; `01` and `001`
+  are 1), and, since each names one hop, no more than the chain length limit
+  (32 here, `MAX_CHAIN_LENGTH`). Anything else is a PERMERROR found while
+  parsing, before any check walks 1..max looking for gaps. Do not convert
+  first: `i=99999999999999999999` overflows an `int`, and a loop to
+  4294967297 runs a browser out of memory.
+- **Refuse duplicate keys in Recipe JSON.** JSON parsers disagree on which
+  of two equal keys wins (cJSON keeps the first; Python, Go, Perl and JS
+  the last), so `{"b":[...],"b":null}` is a real body Recipe to one verifier
+  or gate and a null one to another. Treat a key given twice in any object
+  of the Recipe as invalid JSON.
 - **Message-Instance-only chains sign.** A list that adds unsigned
   Message-Instances but no DKIM2-Signature (Mailman does this for an unsigned
   post) gives a chain with m=1 and m=2 and no i=1. That is signable: verify

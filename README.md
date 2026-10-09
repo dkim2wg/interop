@@ -71,10 +71,13 @@ Selector, more selectors than allowed, malformed Recipe JSON, an unsigned
 top instance, a wrongly-keyed `nd=` bridge, and Recipe copy ranges that are
 out of order or overlap (§5.2), a duplicated Message-Instance `m=`, and a
 DKIM2-Signature with no usable `i=` (missing, or not a positive integer) on
-top of an otherwise valid chain or on its own, and an `i=` or `m=` above the
-chain length limit of 32 (`i=33`, `i=99999999999999999999`, a signature
-`m=4294967297`, a Message-Instance `m=99999999999999999999`), which must be a
-PERMERROR before any gap check walks up to it — plus positive controls (the same algorithm
+top of an otherwise valid chain or on its own, an `i=` or `m=` that is not
+a chain number — above the chain length limit of 32 (`i=33`), above the
+chain-number bound of 100 (`i=101`, `i=99999999999999999999`, a signature
+`m=4294967297`, a Message-Instance `m=99999999999999999999`), or not
+1*DIGIT (`m=4294967297x`) — which must be a PERMERROR before any gap check
+walks up to it, and a Recipe whose JSON gives a key twice (`"b"` as `[...]`
+and `null`, either order, or an `"h"` key twice) — plus positive controls (the same algorithm
 signed twice under distinct Selectors, which §8.9 explicitly permits; a
 Recipe on the bottom instance; a correct bridge; an unsigned lower Message-Instance under a signed higher one; and a Recipe whose `b`
 items restore non-UTF-8 octets) and feeds them all through every verifier's
