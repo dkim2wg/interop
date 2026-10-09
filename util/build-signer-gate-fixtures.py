@@ -17,9 +17,39 @@ that does not check out.
   null-top.eml           unsigned m=2 with a null body Recipe and a
                          valid header Recipe                      -> REFUSE,
                                        SIGN with --allow-null-body-recipe
+                         (i=1 covers only m=1: no signature has m=2,
+                         so this null is one THIS hop would introduce)
   null-top-forged.eml    like null-top but the header Recipe hides
                          a To: change                             -> REFUSE
                                        even with the flag
+  null-top-signed.eml    the list domain test2 made the null m=2 AND
+                         signed it (i=2, m=2, rt= the next hop); test3 just
+                         forwards it unchanged                    -> SIGN
+                                       (a signed null top needs no flag)
+  fake-cover-*.eml       null-top plus one extra DKIM2-Signature that claims
+                         m=2 but cannot be keyed or verified, so it must
+                         NOT count as covering the null top.  Every
+                         verifier must PERMERROR on it, so these are
+                                                                  -> REFUSE,
+                                       REFUSE even with the flag:
+    fake-cover-no-i         "m=2; d=evil.example" -- no i= at all
+    fake-cover-i0           i=0 (not a positive integer)
+    fake-cover-i-abc        i=abc (not an integer)
+    fake-cover-m-rewritten  the real i=1 signature with "i=1; m=1;"
+                            rewritten to "m=2;" (no i=)
+    fake-cover-unparseable  "m=2; i=2; garbage without equals" (not a
+                            tag-list)
+  null-below-unsigned-top.eml
+                         valid i=1/m=1, then an UNSIGNED null m=2, then an
+                         UNSIGNED ordinary m=3 on top (a hop that added its
+                         own instance over an unsigned null)      -> REFUSE,
+                                       SIGN with --allow-null-body-recipe
+                         (the null is not the top any more, but no
+                         signature covers it: highest valid m= is 1)
+  null-below-signed.eml  the null m=2 is covered by a valid i=2/m=2 (as in
+                         null-top-signed), then an UNSIGNED ordinary m=3
+                                                                  -> SIGN
+                                       (a covered null needs no flag)
   mi-only.eml            NO DKIM2-Signature: a list added unsigned m=1 and
                          unsigned m=2 (ordinary Recipe), as Mailman does
                                                                   -> SIGN
@@ -146,6 +176,114 @@ def build_null_top_forged():
                               b + b"rewritten by list\r\n", bnv._forged_recipe)
 
 
+def build_null_top_signed():
+    """i=1/m=1 by test1 (rt= test2), then the list domain test2 adds m=2 with
+    a Subject tag and a rewritten body (null body Recipe, valid header Recipe)
+    and SIGNS it: i=2, m=2, rt= user@test3.dkim2.com.  The next hop forwards
+    the message unchanged.  Its signature covers the null, so the forwarder
+    must sign without --allow-null-body-recipe."""
+    return bnv.build_positive_null_body()
+
+
+def _ordinary_hop(h2, b2):
+    """The state an ordinary hop makes from (h2, b2): a second Subject tag
+    and a footer, with real Recipes back to (h2, b2)."""
+    return bnv._subject_prefixed(h2, b"fwd"), b2 + b"footer\r\n"
+
+
+def build_null_below_unsigned_top():
+    """Valid i=1/m=1 by test1 (rt= the next hop); an UNSIGNED m=2 with a null
+    body Recipe (Subject tag, rewritten body); an UNSIGNED ordinary m=3 on
+    top of it (another Subject tag, a footer).  The null is no longer the
+    top instance, but no signature covers it (the highest valid m= is 1), so
+    whoever signs this is the first to vouch for it: REFUSE without the
+    option, exactly as for null-top."""
+    h1, b1 = bnv.load_base()
+    h2, b2 = bnv._subject_prefixed(h1, b"list"), b1 + b"rewritten by list\r\n"
+    h3, b3 = _ordinary_hop(h2, b2)
+    mi1, sig1 = _signed_bottom(h1, b1)
+    mi2 = ds.build_message_instance(h2, b2, version=2, algs=["sha256"],
+                                    recipe=bnv._null_body_recipe(h1, b1, h2, b2))
+    mi3 = ds.build_message_instance(h3, b3, version=3, algs=["sha256"],
+                                    recipe=ds.build_recipes(h2, b2, h3, b3))
+    msg = b"\r\n".join(x.encode() for x in (mi3, mi2, sig1, mi1)) + b"\r\n"
+    for h in h3:
+        msg += h + b"\r\n"
+    return msg + b"\r\n" + b3
+
+
+def build_null_below_signed():
+    """null-top-signed (the list domain test2 made the null m=2 and signed it
+    i=2/m=2, rt= user@test3.dkim2.com), then an UNSIGNED ordinary m=3 on top
+    (another Subject tag, a footer) for test3 to sign.  The null is covered
+    by a valid signature, so no option is needed: SIGN."""
+    signed = bnv.build_positive_null_body()
+    head, b2 = signed.split(b"\r\n\r\n", 1)
+    lines = head.split(b"\r\n")
+    # unfold, then split the DKIM2 fields off the content fields
+    fields = []
+    for ln in lines:
+        if ln[:1] in (b" ", b"\t"):
+            fields[-1] += b"\r\n" + ln
+        else:
+            fields.append(ln)
+    dkim2 = [f for f in fields if f.lower().startswith((b"dkim2-signature:", b"message-instance:"))]
+    h2 = [f for f in fields if f not in dkim2]
+    h3, b3 = _ordinary_hop(h2, b2)
+    mi3 = ds.build_message_instance(h3, b3, version=3, algs=["sha256"],
+                                    recipe=ds.build_recipes(h2, b2, h3, b3))
+    msg = mi3.encode() + b"\r\n" + b"\r\n".join(dkim2) + b"\r\n"
+    for h in h3:
+        msg += h + b"\r\n"
+    return msg + b"\r\n" + b3
+
+
+def _fake_cover(fake_sig_fn):
+    """null-top (unsigned null m=2 over a valid i=1/m=1) with one extra
+    DKIM2-Signature prepended that names m=2 but is not a signature any
+    verifier can key.  fake_sig_fn(sig1) returns that header (no CRLF)."""
+    h, b = bnv.load_base()
+    mi1, sig1 = _signed_bottom(h, b)
+    msg = build_null_top()
+    assert sig1.encode() in msg
+    fake = fake_sig_fn(sig1)
+    assert fake.startswith("DKIM2-Signature:")
+    return fake.encode() + b"\r\n" + msg
+
+
+def _m_rewritten(sig1):
+    out = sig1.replace("i=1; m=1;", "m=2;")
+    assert out != sig1
+    return out
+
+
+FAKE_COVER = {
+    "fake-cover-no-i.eml": lambda s: "DKIM2-Signature: m=2; d=evil.example",
+    "fake-cover-i0.eml":
+        lambda s: "DKIM2-Signature: i=0; m=2; t=1; d=evil.example; s=sel1:rsa-sha256:AAAA",
+    "fake-cover-i-abc.eml": lambda s: "DKIM2-Signature: i=abc; m=2; d=evil.example",
+    "fake-cover-m-rewritten.eml": _m_rewritten,
+    "fake-cover-unparseable.eml":
+        lambda s: "DKIM2-Signature: m=2; i=2; garbage without equals",
+}
+
+
+def build_recipe_duplicate_key():
+    """Valid i=1/m=1; an UNSIGNED m=2 (Subject tag, footer, real Recipes)
+    whose r= JSON is {"h":...,"b":[...],"b":null}.  A duplicate key is a
+    PERMERROR (invalid JSON) to every verifier, so every signer refuses, with
+    or without the option -- rather than C (first key wins) signing a real
+    body Recipe that Python, Go, Perl and JS (last wins) read as null."""
+    h1, b1 = bnv.load_base()
+    h2, b2 = bnv._subject_prefixed(h1, b"list"), b1 + b"footer\r\n"
+    mi1, sig1 = _signed_bottom(h1, b1)
+    mi2 = bnv.duplicate_key_mi(h1, b1, h2, b2, 2, "b-null-last")
+    msg = mi2.encode() + b"\r\n" + sig1.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+    for h in h2:
+        msg += h + b"\r\n"
+    return msg + b"\r\n" + b2
+
+
 def _nd_bridge(nd):
     """i=1 test1 -> test2, then test2's §9.3 bridge i=2 carrying nd=<nd>."""
     raw = open(bnv.SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
@@ -174,12 +312,18 @@ FIXTURES = {
     "broken-mi-chain.eml": build_broken_mi_chain,
     "null-top.eml": build_null_top,
     "null-top-forged.eml": build_null_top_forged,
+    "null-top-signed.eml": build_null_top_signed,
+    "null-below-unsigned-top.eml": build_null_below_unsigned_top,
+    "null-below-signed.eml": build_null_below_signed,
     "mi-only.eml": build_mi_only,
     "mi-only-broken.eml": build_mi_only_broken,
     "mi-only-null.eml": build_mi_only_null,
     "nd-to-us.eml": build_nd_to_us,
     "nd-to-other.eml": build_nd_to_other,
+    "recipe-duplicate-key.eml": build_recipe_duplicate_key,
 }
+for _name, _fn in FAKE_COVER.items():
+    FIXTURES[_name] = (lambda fn: lambda: _fake_cover(fn))(_fn)
 
 
 def main():

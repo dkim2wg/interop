@@ -13,7 +13,9 @@ Group=postfix
 ExecStartPre=+/usr/bin/install -d -m 750 -o dkim2 -g postfix /var/spool/postfix/var/run
 ExecStartPre=+/usr/bin/install -d -m 750 -o dkim2 -g postfix /var/spool/dkim2/snapshots
 # --allow-null-body-recipe: this unit is for list hosts. A list that rewrites
-# a body (content filtering, DMARC wrap) records a null body Recipe; sign it.
+# a body (content filtering, DMARC wrap) records a null body Recipe in an
+# unsigned Message-Instance; sign it. A host that only forwards does not need
+# it: a null that arrives already signed is signed without the option.
 ExecStart=/usr/local/bin/dkim2-milter \
     --mode outbound \
     --socket unix:/var/spool/postfix/var/run/dkim2-milter-out.sock \

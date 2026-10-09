@@ -1,5 +1,117 @@
 Revision history for Mail::DKIM2
 
+0.16    2026-10-08
+        - Mail::DKIM2::Gate's null body rule: a DKIM2-Signature with m=k
+          covers Message-Instances 1..k, so without AllowNullBodyRecipe the
+          gate refuses when any instance with a null body Recipe has m=
+          above the highest m= of the valid upstream signatures -- the top,
+          or one with another unsigned instance added over it: a null this
+          hop is the first to sign. A null an upstream domain already
+          declared and signed (a list post forwarded unchanged) is extended
+          without the option; the upstream chain must still verify and the
+          header history below the null must still check out. In 0.15 any
+          null top was refused, signed or not, and a null under an unsigned
+          top was never looked at (so the DKIM2Sign handler, recomputing
+          its own instance over a snapshot keyed by the null one, signed it
+          without the option). The refusal reads "unsigned top
+          Message-Instance m=N has a null body Recipe", or "unsigned
+          Message-Instance m=N ..." when it is not the top. The result gains
+          top_signed, covered_m and unsigned_null. bin/dkim2sign,
+          bin/dkim2-milter and the DKIM2Sign handler follow the Gate and add
+          the informational X-DKIM2-Info action=null-body-recipe when they
+          sign over either kind of null. (t/gate-null-top.t,
+          t/milter-sign-gate.t, t/sign-cli.t, t/milter-script.t;
+          signer-gate fixtures null-top-signed, null-below-unsigned-top,
+          null-below-signed)
+        - Behaviour change: Mail::DKIM2::Verifier reports a DKIM2-Signature
+          it cannot key -- no i=, an i= that is not a positive integer
+          (i=, i=0, i=abc, i=-1), or one that does not parse -- as
+          permerror, "PERMERROR DKIM2-Signature has a missing or malformed
+          i= tag", as the Python, Go, C and JS verifiers now all do. It used
+          to ignore such a field and verify the rest, so a junk
+          "DKIM2-Signature: m=2" prepended to a valid chain passed -- and
+          the Gate, counting coverage by m=, took it as signing an unsigned
+          null top. Mail::DKIM2::Signer likewise refuses to sign over such
+          a field (result fail with the same message), and only a signature
+          with a valid i= counts towards the Gate's coverage.
+          (t/verifier-unkeyable.t, t/gate-null-top.t)
+        - Behaviour change: every DKIM2-Signature i= and m=, and every
+          Message-Instance m=, must be a chain number: 1*DIGIT in ASCII
+          (else "PERMERROR <field> has a malformed <tag>= tag", or the
+          unkeyable message above for i=), at most three digits naming
+          1..MAX_CHAIN_NUMBER (100) (else "PERMERROR <field> <tag>= exceeds
+          the maximum chain number of 100"), and no more than
+          MAX_CHAIN_LENGTH (32) (else "... exceeds the maximum chain length
+          of 32"). "01" and "001" are 1, in all five verifiers and four
+          signers. Found while the header fields are read, before any gap
+          check: i=99999999999999999999 used to kill the Verifier ("Range
+          iterator outside integer range"), and m=4294967297x was read as
+          its digit prefix. The Signer refuses to sign over such a field.
+          Common exports chain_number_error(), MAX_CHAIN_NUMBER and
+          mi_version_tag() (the raw m= value, from any position in the
+          field); extract_mi_version() is now numeric and returns undef
+          unless the whole m= is ASCII digits. (t/chain-number-bound.t)
+        - The Verifier keyed Message-Instances by the m= string, so an
+          instance written m=01 read as "missing Message-Instance m=1" in
+          Perl alone; instances and the donotmodify check are keyed by
+          number now. (t/chain-number-bound.t)
+        - A duplicate key anywhere in a Recipe's JSON (at the top level or
+          inside "h") is invalid JSON: "PERMERROR Message-Instance m=N
+          contains invalid JSON". Parsers disagree on which value wins (C's
+          kept the first, the others the last), so {"b":[...],"b":null} was
+          a real body Recipe to some verifiers and gates and a null one to
+          others. Common::decode_tag_json refuses it, so the Verifier, the
+          Gate and the signers all do. (t/invalid-json.t; negative vectors
+          recipe-duplicate-*, signer-gate fixture recipe-duplicate-key)
+        - bin/dkim2-milter fails closed. Outbound, an exception in the Gate,
+          in computing the Message-Instance or in the Signer is logged and
+          the message goes on unsigned. Inbound, a Verifier exception gives
+          dkim2=temperror in Authentication-Results (never pass), and an
+          exception computing the Message-Instance is logged and adds no
+          Message-Instance; the message goes on with its
+          Authentication-Results. An out-of-range Message-Instance m= is
+          never used as a bound when stripping instances above a snapshot
+          (m=99999999999999999999 died there, m=4294967297 ran out of
+          memory). A Signer that declines is logged too. (t/milter-script.t)
+        - The DKIM2Sign handler (authentication_milter) follows the Gate, on
+          the message as it would sign it (its own Message-Instance
+          included), replacing its own chain_verifies() check. New config
+          allow_null_body_recipe (default 0) is the milter's
+          --allow-null-body-recipe. A refusal signs nothing and adds or
+          strips no Message-Instance; it is logged, counted in
+          dkim2_sign_total by reason, and (broken-mi-chain,
+          null-body-recipe) marked with X-DKIM2-Info
+          action=not-signed=<reason>. Upstream keys come from the milter's
+          resolver (dns_overrides and skip_timestamp_check for tests).
+          Mail is signed exactly as before when there is no upstream chain.
+          Gate->check takes Resolver and IgnorePrefixes. The test mock of
+          Mail::Milter::Authentication moved to t/lib/MockAuthMilter.pm.
+          (t/milter-sign-gate.t)
+        - Behaviour change: the DKIM2Sign and DKIM2Verify handlers apply
+          their own default_config() to any option the configuration leaves
+          out (or sets to null); an explicit 0 still wins.
+          authentication_milter only uses default_config() to generate a
+          sample config, so before this DKIM2Sign's sign_local,
+          sign_authenticated, add_message_instance and record_smtp_params,
+          and DKIM2Verify's add_message_instance, were off unless set. A
+          deployment that relied on leaving them out to keep them off must
+          now set them to 0. (t/milter-sign-gate.t, t/milter.t)
+        - The DKIM2Sign handler deletes the broken intermediate
+          Message-Instances it strips through the framework's
+          change_header() (SMFIR_CHGHEADER). It used to push them onto the
+          handler's remove_headers, which authentication_milter never
+          reads, so they stayed on the wire. (t/milter.t)
+        - Mail::DKIM2::Common exports valid_sequence() and
+          UNKEYABLE_SIGNATURE_ERROR.
+        - Signer POD: result() lists every fail cause.
+        - bin/validate.pl reports the header-level PERMERRORs (a
+          DKIM2-Signature with no usable i=, an i=/m= that is not a chain
+          number) before its walk. It used to pass a message whose only
+          DKIM2-Signature was junk. It also reads i=/m= with the tag-list
+          parser, so FWS around "=" no longer breaks its walk.
+          (t/validate-cli.t)
+        - DKIM2_DATE 2026-10-08.
+
 0.15    2026-10-08
         - MessageInstance->calculate takes BodyRecipe ('none', 'null' or a
           Recipe) and then skips the body diff; body_hash accessor;

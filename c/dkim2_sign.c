@@ -4,6 +4,7 @@
 #include "dkim2_crypto.h"
 #include "base64.h"
 #include "dkim2_verify.h"
+#include "dkim2_recipe.h"
 #include <cjson/cJSON.h>
 #include <time.h>
 #include <stdlib.h>
@@ -132,21 +133,18 @@ static unsigned char *build_sign_input(
     return (unsigned char *)buf;
 }
 
-/* 1 if the Message-Instance with the highest m= carries a null body Recipe
-   ("b": null, spec-06 §4.2): the previous body cannot be recreated. */
-static int top_mi_null_body(const dkim2_ctx_t *ctx) {
-    const dkim2_mi_t *top = NULL;
-    for (const dkim2_mi_t *m = ctx->mi_list; m; m = m->next)
-        if (!top || m->m >= top->m) top = m;
-    if (!top || !top->r_raw) return 0;
-    size_t n = strlen(top->r_raw);
+/* Non-zero if a Message-Instance's r= carries a null body Recipe ("b": null,
+   spec-06 §4.2: the previous body cannot be recreated). */
+static int mi_null_body(const dkim2_mi_t *mi) {
+    if (!mi->r_raw) return 0;
+    size_t n = strlen(mi->r_raw);
     unsigned char *buf = malloc(n * 3 / 4 + 5);
     if (!buf) return 0;
-    int len = (int)b64_decode(top->r_raw, buf, n * 3 / 4 + 4);
+    int len = (int)b64_decode(mi->r_raw, buf, n * 3 / 4 + 4);
     int null_body = 0;
     if (len > 0) {
         buf[len] = '\0';
-        cJSON *j = cJSON_Parse((const char *)buf);
+        cJSON *j = dkim2_recipe_parse((const char *)buf);
         if (j) {
             cJSON *b = cJSON_GetObjectItemCaseSensitive(j, "b");
             null_body = b && cJSON_IsNull(b);
@@ -155,6 +153,24 @@ static int top_mi_null_body(const dkim2_ctx_t *ctx) {
     }
     free(buf);
     return null_body;
+}
+
+/* The m= of the highest UNSIGNED Message-Instance with a null body Recipe,
+   else 0. A DKIM2-Signature with m=k covers instances 1..k (spec-06 §8.2),
+   so an instance is unsigned when its m= is above the highest m= of every
+   parsed (valid i=) signature -- whether it is the top, or another unsigned
+   instance was added over it. A null an upstream domain already signed is
+   not this hop's doing. *is_top says whether it is the top instance. */
+static int unsigned_null_body_mi(const dkim2_ctx_t *ctx, int *is_top) {
+    int covered = 0, top_m = 0, null_m = 0;
+    for (const dkim2_sig_t *s = ctx->sig_list; s; s = s->next)
+        if (s->m > covered) covered = s->m;
+    for (const dkim2_mi_t *m = ctx->mi_list; m; m = m->next) {
+        if (m->m > top_m) top_m = m->m;
+        if (m->m > covered && m->m > null_m && mi_null_body(m)) null_m = m->m;
+    }
+    *is_top = null_m && null_m == top_m;
+    return null_m;
 }
 
 /* Signer gate: before extending an existing DKIM2 chain, verify it in
@@ -167,7 +183,7 @@ static int top_mi_null_body(const dkim2_ctx_t *ctx) {
    the header Recipes) are still walked. */
 static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     if (cfg->skip_chain_check) return 0;
-    if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0])
+    if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0] && !ctx->sig_error[0])
         return 0;                       /* no existing chain: sign as always */
 
     /* spec-06 §9.3/§11.4: an nd= on the top signature names the domain that
@@ -209,17 +225,39 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
                 outcome, res.message);
         return -1;
     }
-    if (top_mi_null_body(ctx) && !cfg->allow_null_body_recipe) {
+    int is_top = 0;
+    int null_m = unsigned_null_body_mi(ctx, &is_top);
+    if (null_m && !cfg->allow_null_body_recipe) {
         snprintf(ctx->errmsg, sizeof ctx->errmsg,
-            "not signing: top Message-Instance has a null body Recipe "
-            "(--allow-null-body-recipe not set)");
+            "not signing: unsigned %sMessage-Instance m=%d has a null body Recipe "
+            "(--allow-null-body-recipe not set)", is_top ? "top " : "", null_m);
         return -1;
     }
     return 0;
 }
 
+/* Whether a parser error is one of dkim2_chain_number_error()'s. */
+static int chain_number_refusal(const char *e) {
+    return strstr(e, "exceeds the maximum chain") || strstr(e, "has a malformed m= tag")
+        || strstr(e, "has a missing or malformed i= tag");
+}
+
 int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     char **mi_out, char **sig_out) {
+    /* An i=/m= that is not a chain number (dkim2_chain_number_error; the
+       parsers left the field out of the lists) is refused even with the
+       gate skipped: the next i= and m= are computed from the existing ones
+       below. */
+    {
+        const char *re = chain_number_refusal(ctx->mi_error)
+            ? ctx->mi_error
+            : chain_number_refusal(ctx->sig_error)
+            ? ctx->sig_error : NULL;
+        if (re && cfg->skip_chain_check) {
+            snprintf(ctx->errmsg, sizeof ctx->errmsg, "not signing: %.400s", re);
+            return -1;
+        }
+    }
     if (sign_gate(ctx, cfg) < 0) return -1;
 
     /* spec-06 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash

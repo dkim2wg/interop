@@ -92,12 +92,44 @@ func TestGateBrokenMIChainRefused(t *testing.T) {
 	wantRefused(t, dropTopSig(t, m), false, "")
 }
 
+// An unsigned null top (i=1 covers only m=1) is one this hop would
+// introduce: refused unless the option is set.
 func TestGateNullTopRefusedUnlessAllowed(t *testing.T) {
-	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
-	wantRefused(t, m, false, "null")
-	wantRefused(t, dropTopSig(t, m), false, "null")
+	m := dropTopSig(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe))
+	wantRefused(t, m, false, "unsigned top Message-Instance m=2 has a null body Recipe")
 	wantSigned(t, m, true)
-	wantSigned(t, dropTopSig(t, m), true)
+}
+
+// A null top the upstream domain already signed (i=2, m=2) is extended
+// without the option: a forwarder relaying a list post unchanged.
+func TestGateSignedNullTopSigns(t *testing.T) {
+	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
+	wantSigned(t, m, false)
+	wantSigned(t, m, true)
+}
+
+// A signature with m=k covers instances 1..k.  An unsigned null m=2 under an
+// unsigned ordinary m=3 is not the top any more, but nothing covers it (the
+// highest valid m= is 1): refused without the option, like a null top.
+func TestGateNullBelowUnsignedTopRefusedUnlessAllowed(t *testing.T) {
+	m2 := dropTopSig(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe))
+	m := dropTopSig(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull))
+	wantRefused(t, m, false, "unsigned Message-Instance m=2 has a null body Recipe")
+	wantSigned(t, m, true)
+
+	// The walk still checks the history under both unsigned instances.
+	f2 := dropTopSig(t, nullHop(t, nullHopBase(t), forgeTo, "new body\r\n", subjRecipe))
+	f := dropTopSig(t, nullHop(t, f2, subjectTag2, "new body\r\n", ordinaryOverNull))
+	wantRefused(t, f, true, "")
+}
+
+// The null m=2 is covered by a valid i=2/m=2; only an ordinary m=3 is
+// unsigned on top of it: no option needed.
+func TestGateNullBelowSignedSigns(t *testing.T) {
+	m2 := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
+	m := dropTopSig(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull))
+	wantSigned(t, m, false)
+	wantSigned(t, m, true)
 }
 
 func TestGateForgedNullTopRefusedEvenWithOption(t *testing.T) {
@@ -189,5 +221,73 @@ func TestVerifyDuplicateMIVersion(t *testing.T) {
 	_, err := Verify(bytes.NewReader(dup), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
 	if err == nil || !strings.Contains(err.Error(), "duplicate Message-Instance m=1") {
 		t.Fatalf("want duplicate Message-Instance m=1, got %v", err)
+	}
+}
+
+// A DKIM2-Signature naming m=2 that no verifier can key (no i=, i=0, i=abc,
+// i=+1, the real i=1 signature with i= dropped and m= rewritten) is not
+// coverage of an unsigned null m=2: Verify PERMERRORs on it, so the signer
+// refuses with or without the option.
+func TestGateFakeCoverageRefused(t *testing.T) {
+	m := dropTopSig(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe))
+	i := bytes.Index(m, []byte("DKIM2-Signature: i=1; m=1;"))
+	if i < 0 {
+		t.Fatal("no i=1 signature")
+	}
+	j := i
+	for {
+		j += bytes.Index(m[j:], []byte("\r\n")) + 2
+		if m[j] != ' ' && m[j] != '\t' {
+			break
+		}
+	}
+	rewritten := bytes.Replace(m[i:j], []byte("i=1; m=1;"), []byte("m=2;"), 1)
+	fakes := map[string][]byte{
+		"no i=":       []byte("DKIM2-Signature: m=2; d=evil.example\r\n"),
+		"empty i=":    []byte("DKIM2-Signature: i=; m=2; d=evil.example\r\n"),
+		"i=0":         []byte("DKIM2-Signature: i=0; m=2; t=1; d=evil.example; s=sel1:rsa-sha256:AAAA\r\n"),
+		"i=abc":       []byte("DKIM2-Signature: i=abc; m=2; d=evil.example\r\n"),
+		"i=+1":        []byte("DKIM2-Signature: i=+1; m=2; d=evil.example\r\n"),
+		"FWS m = 2":   []byte("DKIM2-Signature: m = 2 ; d=evil.example\r\n"),
+		"m rewritten": rewritten,
+	}
+	for name, fake := range fakes {
+		msg := append(append([]byte{}, fake...), m...)
+		for _, allow := range []bool{false, true} {
+			out, err := gateSign(t, msg, allow)
+			if err == nil || len(out) != 0 {
+				t.Errorf("%s allow=%v: signed, want refusal", name, allow)
+				continue
+			}
+			// Refused by the gate's verifier (result=permerror) or, for an
+			// i= present but not a chain number, by the signer's own parse.
+			if !strings.Contains(err.Error(), "PERMERROR DKIM2-Signature has a missing or malformed i= tag") {
+				t.Errorf("%s allow=%v: error %q", name, allow, err)
+			}
+		}
+		_, err := Verify(bytes.NewReader(msg), &JSONKeyFetcher{Path: "../../dns.json"},
+			VerifyOptions{SkipTimestampCheck: true})
+		if err == nil || err.Error() != "PERMERROR DKIM2-Signature has a missing or malformed i= tag" {
+			t.Errorf("%s: Verify err = %v", name, err)
+		}
+	}
+}
+
+func TestValidSequenceTag(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"DKIM2-Signature: i=1; m=1":     true,
+		"DKIM2-Signature: i = 12 ; m=1": true,
+		"DKIM2-Signature: m=1":          false,
+		"DKIM2-Signature: i=; m=1":      false,
+		"DKIM2-Signature: i=0; m=1":     false,
+		"DKIM2-Signature: i=-1; m=1":    false,
+		"DKIM2-Signature: i=+1; m=1":    false,
+		"DKIM2-Signature: i=abc; m=1":   false,
+		"DKIM2-Signature: i=١; m=1":     false,
+		"no colon at all":               false,
+	} {
+		if got := validSequenceTag(raw); got != want {
+			t.Errorf("validSequenceTag(%q) = %v, want %v", raw, got, want)
+		}
 	}
 }

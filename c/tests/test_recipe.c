@@ -359,6 +359,30 @@ int main(void) {
         free(ok);
     }
 
+    /* A duplicate key anywhere in the Recipe JSON is invalid: cJSON keeps
+       the first of two equal keys and every other parser here the last, so
+       {"b":[...],"b":null} was a null body Recipe to some verifiers and a
+       real one to others. */
+    {
+        static const char *dup[] = {
+            "{\"b\":[{\"c\":[1,1]}],\"b\":null}",
+            "{\"b\":null,\"b\":[{\"c\":[1,1]}]}",
+            "{\"h\":{\"subject\":[],\"subject\":[]}}",
+            "{\"h\":{\"subject\":[]},\"h\":{}}",
+            "{\"h\":{\"subject\":[],\"subj\\u0065ct\":[]}}",
+            NULL };
+        for (int k = 0; dup[k]; k++) {
+            assert(dkim2_recipe_parse(dup[k]) == NULL);
+            assert(dkim2_validate_body_recipe(dup[k]) == -1);
+            size_t ol;
+            assert(dkim2_apply_body_recipe(dup[k], "a\r\n", 3, &ol) == NULL);
+        }
+        struct cJSON *ok = dkim2_recipe_parse(
+            "{\"h\":{\"subject\":[{\"d\":[\"b\"]}],\"to\":[]},\"b\":[{\"d\":[\"b\"]}]}");
+        assert(ok);
+        dkim2_recipe_free(ok);
+    }
+
     puts("recipe: all tests passed");
     return 0;
 }

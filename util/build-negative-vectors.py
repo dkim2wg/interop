@@ -52,6 +52,36 @@ Writes:
   instance-gap.eml                 -- m=1 and m=3, no m=2; otherwise valid; REJECT
   positive-control-nd-bridge.eml   -- the same §9.3 bridge made with a key for
                                          the domain the message DID arrive at
+  unkeyable-signature-no-i.eml     -- positive-control-null-body plus a junk
+                                         "DKIM2-Signature: m=2; d=evil.example"
+                                         (no i=); REJECT (PERMERROR)
+  unkeyable-signature-i-abc.eml    -- the same with i=abc; REJECT (PERMERROR)
+  lone-junk-signature.eml          -- an unsigned message whose only DKIM2 field
+                                         is "DKIM2-Signature: m=1; d=evil.example";
+                                         REJECT (PERMERROR, not "none")
+  signature-i-33.eml               -- two real hops, the second signed as i=33
+                                         (one more than MAX_CHAIN_LENGTH, 32);
+                                         REJECT (PERMERROR) before any gap check
+  signature-i-101.eml              -- the same with i=101 (one more than
+                                         MAX_CHAIN_NUMBER, 100); REJECT (PERMERROR)
+  signature-i-huge.eml             -- the same with i=99999999999999999999;
+                                         REJECT (PERMERROR), no overflow, no hang
+  signature-m-huge.eml             -- second hop i=2 over Message-Instance m=2,
+                                         but its signature says m=4294967297;
+                                         REJECT (PERMERROR)
+  instance-m-huge.eml              -- second hop's Message-Instance
+                                         m=99999999999999999999 (its signature
+                                         says m=2); REJECT (PERMERROR)
+  signature-m-malformed.eml        -- second hop's signature says m=4294967297x
+                                         (not 1*DIGIT); REJECT (PERMERROR)
+  instance-m-malformed.eml         -- second hop's Message-Instance
+                                         m=4294967297x; REJECT (PERMERROR)
+  recipe-duplicate-b-null-last.eml -- second hop's Recipe JSON is
+                                         {"h":...,"b":[...],"b":null}; REJECT
+                                         (PERMERROR invalid JSON), whichever
+                                         value a parser would have kept
+  recipe-duplicate-b-null-first.eml -- the same as {"b":null,"h":...,"b":[...]}
+  recipe-duplicate-h-key.eml       -- the same with one "h" key given twice
 """
 import base64
 import json
@@ -600,7 +630,7 @@ def build_positive_unreferenced_lower_mi():
     return out + b"\r\n" + b2
 
 
-def _gap_chain(sig2_seq, mi2_version):
+def _gap_chain(sig2_seq, mi2_version, sig2_m=None):
     """Two real hops (m=1/i=1 by test1, then a Subject-tag + footer hop by
     test2) built with the second hop's i= and m= forced to the given values.
     build_dkim2_signature takes seq/mi_version directly, so the second hop is
@@ -621,7 +651,8 @@ def _gap_chain(sig2_seq, mi2_version):
     sig2 = ds.build_dkim2_signature(
         [mi1], [sig1], mi2, dom2, "sel1", priv2, alg2,
         mailfrom="relay@test2.dkim2.com", rcptto=["final@example.com"],
-        seq=sig2_seq, mi_version=mi2_version, timestamp=TS + 100)
+        seq=sig2_seq, mi_version=mi2_version if sig2_m is None else sig2_m,
+        timestamp=TS + 100)
     out = sig2.encode() + b"\r\n" + sig1.encode() + b"\r\n"
     out += mi2.encode() + b"\r\n" + mi1.encode() + b"\r\n"
     for h in h2:
@@ -644,6 +675,142 @@ def build_instance_gap():
     hash checks, and i=2 (m=3) genuinely signs the headers present.  Only
     the missing m=2 is wrong.  MUST be rejected."""
     return _gap_chain(sig2_seq=2, mi2_version=3)
+
+
+def _with_unkeyable_signature(fake):
+    """POSITIVE CONTROL null-body chain (every signature and hash valid) with
+    one extra DKIM2-Signature prepended that names m=2 but has no i= a
+    verifier can key.  Silently skipping it would ACCEPT; it MUST be a
+    PERMERROR.  (A signer gate counting coverage by m= was fooled by exactly
+    this when the verifier ignored it.)"""
+    return fake + b"\r\n" + build_positive_null_body()
+
+
+def build_unkeyable_signature_no_i():
+    return _with_unkeyable_signature(b"DKIM2-Signature: m=2; d=evil.example")
+
+
+def build_unkeyable_signature_i_abc():
+    return _with_unkeyable_signature(b"DKIM2-Signature: i=abc; m=2; d=evil.example")
+
+
+def build_lone_junk_signature():
+    """NEGATIVE: an otherwise unsigned message whose only DKIM2 field is a
+    junk "DKIM2-Signature: m=1; d=evil.example" (no i=).  It is a PERMERROR
+    like any other unkeyable signature -- not "no DKIM2 here", and certainly
+    not a pass: a checker whose walk is driven by the i= values it can read
+    sees no chain at all and has nothing to fail."""
+    return b"DKIM2-Signature: m=1; d=evil.example\r\n" + open(SRC, "rb").read()
+
+
+# Every i= and m= is a chain number: 1*DIGIT, at most three digits naming
+# 1..MAX_CHAIN_NUMBER (100), and no more than MAX_CHAIN_LENGTH (32), in every
+# implementation here.  Anything else is a PERMERROR before any gap/contiguity check walks
+# 1..max -- which, for i=99999999999999999999, crashed Perl ("Range iterator
+# outside integer range"), ran the browser verifier out of memory, and was
+# undefined behaviour in C's atoi().  These chains are otherwise genuinely
+# signed: _gap_chain signs the second hop with exactly these numbers.
+HUGE = 99999999999999999999
+
+
+def build_signature_i_33():
+    return _gap_chain(sig2_seq=33, mi2_version=2)
+
+
+def build_signature_i_101():
+    return _gap_chain(sig2_seq=101, mi2_version=2)
+
+
+def build_signature_i_huge():
+    return _gap_chain(sig2_seq=HUGE, mi2_version=2)
+
+
+def build_signature_m_huge():
+    return _gap_chain(sig2_seq=2, mi2_version=2, sig2_m=4294967297)
+
+
+def build_instance_m_huge():
+    # The signature says m=2, so the out-of-range number is the instance's.
+    return _gap_chain(sig2_seq=2, mi2_version=HUGE, sig2_m=2)
+
+
+# A duplicate key anywhere in the Recipe JSON is a PERMERROR ("contains
+# invalid JSON"): parsers disagree on which value wins (C took the first,
+# the others the last), so {"b":[...],"b":null} meant a null body Recipe to
+# some verifiers and gates and a real one to others.  Each vector is a
+# genuine two-hop chain (Subject tag + footer, real Recipes, signed i=2)
+# whose r= JSON text carries the duplicate; either reading of it verifies.
+def _recipe_json_with_duplicate(recipe, where):
+    """The Recipe as JSON text with one duplicated key (see above)."""
+    h = json.dumps(recipe["h"], separators=(",", ":"))
+    b = json.dumps(recipe["b"], separators=(",", ":"))
+    if where == "b-null-last":
+        return '{"h":%s,"b":%s,"b":null}' % (h, b)
+    if where == "b-null-first":
+        return '{"b":null,"h":%s,"b":%s}' % (h, b)
+    if where == "h":
+        k = next(iter(recipe["h"]))
+        v = json.dumps(recipe["h"][k], separators=(",", ":"))
+        inner = h[1:-1]
+        return '{"h":{%s,"%s":%s},"b":%s}' % (inner, k, v, b)
+    raise ValueError(where)
+
+
+def duplicate_key_mi(h1, b1, h2, b2, version, where):
+    """Message-Instance m=<version> over (h2, b2) with real Recipes back to
+    (h1, b1), its r= JSON carrying a duplicate key."""
+    recipe = ds._lowercase_recipe_keys(ds.build_recipes(h1, b1, h2, b2))
+    mi = ds.build_message_instance(h2, b2, version=version, algs=["sha256"],
+                                   recipe=recipe)
+    dup = base64.b64encode(
+        _recipe_json_with_duplicate(recipe, where).encode()).decode()
+    head, sep, _ = mi.partition("; r=")
+    assert sep
+    return f"{head}; r={dup}"
+
+
+def _duplicate_key_chain(where):
+    headers, body = load_base()
+    h2, b2 = _subject_prefixed(headers, b"list"), body + b"footer\r\n"
+    mi1 = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
+    priv1, alg1 = ds.load_private_key(key("sel1"))
+    sig1 = ds.build_dkim2_signature(
+        [], [], mi1, DOM, "sel1", priv1, alg1,
+        mailfrom=MF, rcptto=RT, seq=1, mi_version=1, timestamp=TS)
+    mi2 = duplicate_key_mi(headers, body, h2, b2, 2, where)
+    dom2 = "test2.dkim2.com"
+    priv2, alg2 = ds.load_private_key(key("sel1", dom2))
+    sig2 = ds.build_dkim2_signature(
+        [mi1], [sig1], mi2, dom2, "sel1", priv2, alg2,
+        mailfrom="relay@test2.dkim2.com", rcptto=["final@example.com"],
+        seq=2, mi_version=2, timestamp=TS + 100)
+    out = sig2.encode() + b"\r\n" + sig1.encode() + b"\r\n"
+    out += mi2.encode() + b"\r\n" + mi1.encode() + b"\r\n"
+    for h in h2:
+        out += h + b"\r\n"
+    return out + b"\r\n" + b2
+
+
+def build_recipe_duplicate_b_null_last():
+    return _duplicate_key_chain("b-null-last")
+
+
+def build_recipe_duplicate_b_null_first():
+    return _duplicate_key_chain("b-null-first")
+
+
+def build_recipe_duplicate_h_key():
+    return _duplicate_key_chain("h")
+
+
+# Not 1*DIGIT: "4294967297x" is malformed, never its digit prefix (which the
+# browser verifier's parseInt and C's atoi took, and walked 1..max to).
+def build_signature_m_malformed():
+    return _gap_chain(sig2_seq=2, mi2_version=2, sig2_m="4294967297x")
+
+
+def build_instance_m_malformed():
+    return _gap_chain(sig2_seq=2, mi2_version="4294967297x", sig2_m=2)
 
 
 FIXTURES = {
@@ -670,6 +837,19 @@ FIXTURES = {
     "positive-control-empty-body-chain.eml": build_positive_empty_body,
     "empty-body-forged-history.eml": build_empty_body_forged_history,
     "malformed-body-recipe-below-null.eml": build_malformed_body_recipe_below_null,
+    "unkeyable-signature-no-i.eml": build_unkeyable_signature_no_i,
+    "unkeyable-signature-i-abc.eml": build_unkeyable_signature_i_abc,
+    "lone-junk-signature.eml": build_lone_junk_signature,
+    "signature-i-33.eml": build_signature_i_33,
+    "signature-i-101.eml": build_signature_i_101,
+    "signature-i-huge.eml": build_signature_i_huge,
+    "signature-m-huge.eml": build_signature_m_huge,
+    "instance-m-huge.eml": build_instance_m_huge,
+    "signature-m-malformed.eml": build_signature_m_malformed,
+    "instance-m-malformed.eml": build_instance_m_malformed,
+    "recipe-duplicate-b-null-last.eml": build_recipe_duplicate_b_null_last,
+    "recipe-duplicate-b-null-first.eml": build_recipe_duplicate_b_null_first,
+    "recipe-duplicate-h-key.eml": build_recipe_duplicate_h_key,
 }
 
 

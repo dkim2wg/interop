@@ -25,6 +25,30 @@ def test_malformed_recipe_json_is_reported_specifically():
     assert "PERMERROR Message-Instance m=2 contains invalid JSON" in errs, errs
 
 
+import pytest  # noqa: E402
+import dkim2undo  # noqa: E402
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"b":[{"c":[1,1]}],"b":null}', b'{"b":null,"b":[{"c":[1,1]}]}',
+    b'{"h":{"subject":[],"subject":[]}}', b'{"h":{"subject":[]},"h":{}}',
+    b'{"h":{"subject":[],"subj\\u0065ct":[]}}',
+])
+def test_duplicate_recipe_key_is_invalid_json(raw):
+    # Parsers disagree on which of two equal keys wins (C took the first,
+    # json.loads the last): {"b":[...],"b":null} was a null body Recipe to
+    # some verifiers and a real one to others. A duplicate is invalid JSON.
+    errs = verify_message_instance(_mi_with_r(raw), [b"From: a@b\r\n"], b"x\r\n")
+    assert "PERMERROR Message-Instance m=2 contains invalid JSON" in errs, errs
+    with pytest.raises(ValueError):
+        dkim2undo.decode_recipes(_mi_with_r(raw))
+
+
+def test_same_key_in_different_objects_is_fine():
+    raw = b'{"h":{"subject":[{"d":["b"]}],"to":[]},"b":[{"d":["b"]}]}'
+    assert dkim2undo.decode_recipes(_mi_with_r(raw))["b"] == [{"d": ["b"]}]
+
+
 def test_bad_base64_recipe_is_syntax_error_not_invalid_json():
     # spec-06 §11.2 ruling: base64 decode failure and JSON parse failure are
     # DIFFERENT errors and must stay distinct. "!!!!" is not valid base64

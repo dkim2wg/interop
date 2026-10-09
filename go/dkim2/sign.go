@@ -41,6 +41,23 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		return fmt.Errorf("reading body: %w", err)
 	}
 
+	// Out-of-range i=/m= are refused even with the gate bypassed: the next
+	// i= and m= are computed from them below.
+	{
+		var mis, sigs []string
+		for _, h := range headers {
+			switch strings.ToLower(h.Name) {
+			case "message-instance":
+				mis = append(mis, h.Raw)
+			case "dkim2-signature":
+				sigs = append(sigs, h.Raw)
+			}
+		}
+		if err := chainRangeError(mis, sigs); err != nil {
+			return fmt.Errorf("not signing: %w", err)
+		}
+	}
+
 	// Signer gate: never put our signature over a chain that does not check out.
 	if !opts.SkipUpstreamCheck {
 		if err := checkUpstream(raw, headers, opts); err != nil {
@@ -248,16 +265,27 @@ func LoadPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 }
 
 // checkUpstream is the signer gate.  A message with no DKIM2 headers passes.
-// Otherwise the existing chain is verified in outbound mode (an unsigned top
-// Message-Instance is allowed) and, unless opts.AllowNullBodyRecipe, the top
-// Message-Instance must not carry a null body Recipe.
+// Otherwise the existing chain is verified in outbound mode (unsigned
+// Message-Instances above the top signature are allowed) and, unless
+// opts.AllowNullBodyRecipe, no UNSIGNED Message-Instance may carry a null
+// body Recipe.  A DKIM2-Signature with m=k covers instances 1..k, so an
+// instance is unsigned when its m= is above the highest m= of every valid
+// (valid i=) upstream signature -- whether it is the top or another unsigned
+// instance was added over it.  A null an upstream domain already signed is
+// extended normally: that is a forwarder relaying, not this hop discarding.
 func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 	var mis []*MessageInstance
+	covered := 0 // highest m= of a valid upstream signature
 	chain := false
 	for _, h := range headers {
 		switch strings.ToLower(h.Name) {
 		case "dkim2-signature":
 			chain = true
+			// Only a signature with a valid i= can cover anything; the
+			// verifier below PERMERRORs on any other.
+			if sig, err := parseSig(h.Raw); err == nil && validSequenceTag(h.Raw) && sig.MIVersion > covered {
+				covered = sig.MIVersion
+			}
 		case "message-instance":
 			chain = true
 			if mi, err := parseMI(h.Raw); err == nil {
@@ -275,7 +303,11 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 	results, err := VerifyFull(bytes.NewReader(raw), fetcher,
 		VerifyOptions{SkipTimestampCheck: opts.SkipTimestampCheck, Outbound: true, Signer: opts.Domain})
 	if err != nil {
-		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail: %w", err)
+		status := "fail"
+		if strings.HasPrefix(err.Error(), "PERMERROR") {
+			status = "permerror"
+		}
+		return fmt.Errorf("not signing: upstream DKIM2 chain result=%s: %w", status, err)
 	}
 	for _, r := range results {
 		if r.Error == nil {
@@ -286,14 +318,29 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 		}
 		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail i=%d d=%s: %w", r.Sequence, r.Domain, r.Error)
 	}
-	var top *MessageInstance
+	if opts.AllowNullBodyRecipe {
+		return nil
+	}
+	topM := 0
 	for _, mi := range mis {
-		if top == nil || mi.Version > top.Version {
-			top = mi
+		if mi.Version > topM {
+			topM = mi.Version
 		}
 	}
-	if top != nil && top.Recipe != nil && top.Recipe.BodyNull && !opts.AllowNullBodyRecipe {
-		return fmt.Errorf("not signing: top Message-Instance m=%d has a null body Recipe (set allow-null-body-recipe to sign anyway)", top.Version)
+	// Report the highest unsigned null (the top's own, when it has one).
+	var null *MessageInstance
+	for _, mi := range mis {
+		if mi.Version > covered && mi.Recipe != nil && mi.Recipe.BodyNull &&
+			(null == nil || mi.Version > null.Version) {
+			null = mi
+		}
+	}
+	if null != nil {
+		where := ""
+		if null.Version == topM {
+			where = "top "
+		}
+		return fmt.Errorf("not signing: unsigned %sMessage-Instance m=%d has a null body Recipe (set allow-null-body-recipe to sign anyway)", where, null.Version)
 	}
 	return nil
 }

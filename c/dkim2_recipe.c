@@ -155,8 +155,31 @@ static int walk_literals(const cJSON *arr, int kind, int reject_nul,
     return 0;
 }
 
-int dkim2_validate_body_recipe(const char *r_json) {
+/* Non-zero if any object in the tree names a key twice (cJSON unescapes the
+   keys, so "subj\u0065ct" and "subject" are the same key). */
+static int has_duplicate_key(const cJSON *node) {
+    for (const cJSON *c = node ? node->child : NULL; c; c = c->next) {
+        if (cJSON_IsObject(node) && c->string)
+            for (const cJSON *d = c->next; d; d = d->next)
+                if (d->string && strcmp(c->string, d->string) == 0) return 1;
+        if (has_duplicate_key(c)) return 1;
+    }
+    return 0;
+}
+
+cJSON *dkim2_recipe_parse(const char *r_json) {
     cJSON *root = cJSON_Parse(r_json);
+    if (root && has_duplicate_key(root)) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+    return root;
+}
+
+void dkim2_recipe_free(cJSON *root) { cJSON_Delete(root); }
+
+int dkim2_validate_body_recipe(const char *r_json) {
+    cJSON *root = dkim2_recipe_parse(r_json);
     if (!root) return -1;
     cJSON *b = cJSON_GetObjectItemCaseSensitive(root, "b");
     if (!b || cJSON_IsNull(b)) { cJSON_Delete(root); return 0; }
@@ -188,7 +211,7 @@ static int body_literal(void *ctx, const unsigned char *s, size_t len) {
 
 char *dkim2_apply_body_recipe(const char *r_json,
     const char *body, size_t bodylen, size_t *out_len) {
-    cJSON *root = cJSON_Parse(r_json);
+    cJSON *root = dkim2_recipe_parse(r_json);
     if (!root) return NULL;
 
     cJSON *b = cJSON_GetObjectItemCaseSensitive(root, "b");
@@ -310,7 +333,7 @@ static int header_literal(void *ctx, const unsigned char *s, size_t len) {
 
 char **dkim2_apply_header_recipe(const char *r_json,
     char **headers, int n, int *n_out) {
-    cJSON *root = cJSON_Parse(r_json);
+    cJSON *root = dkim2_recipe_parse(r_json);
     if (!root) return NULL;
 
     cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");

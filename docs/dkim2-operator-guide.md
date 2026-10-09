@@ -219,13 +219,34 @@ Forwarders that do not modify the message can forward as-is; the original chain 
 still verify at the final destination, provided the final SMTP MAIL FROM matches the
 forwarder's domain (which it will if SRS is used correctly).
 
+Every signer here verifies the incoming chain before adding its own signature
+and refuses (delivering unsigned, in the milters) if it does not check out.
+One more refusal concerns a **null body Recipe** (`"b": null`: the hop that
+made the instance rewrote the body and could not record how). A
+DKIM2-Signature with `m=k` covers instances 1..k. If a Message-Instance
+above the highest `m=` of the upstream signatures has one — the top instance,
+or one with another unsigned instance added over it — no DKIM2-Signature
+covers it, this host is the one introducing the null, and it signs only with
+`--allow-null-body-recipe` (`dkim2-milter`, `dkim2sign`) or
+`"allow_null_body_recipe": 1` (the authentication_milter `DKIM2Sign`
+handler). That is a list host whose list manager rewrites
+bodies (content filtering, DMARC wrap) and adds an unsigned instance for the
+outbound signer; the [list host guide](dkim2-postfix-list-host-guide.md)
+covers it. A forwarder relaying such a post after the list host signed it
+needs nothing: a signed null is extended like any other valid chain.
+
 ---
 
 ## Milter integration
 
 Two Perl milters implement this for Postfix: the standalone `dkim2-milter`
 and the `DKIM2Sign`/`DKIM2Verify` handlers for Mail::Milter::Authentication.
-Both take MAIL FROM and RCPT TO from the MTA rather than from the message.
+Both take MAIL FROM and RCPT TO from the MTA rather than from the message,
+and both decide whether to sign with the same `Mail::DKIM2::Gate`: a message
+whose upstream chain or Message-Instance chain does not check out, or whose
+unsigned top instance has a null body Recipe (without the option above), is
+delivered unsigned, with `X-DKIM2-Info: ... action=not-signed=<reason>;`
+for the Message-Instance and null-body refusals.
 Installing either, and wiring Mailman 3 or Sympa to them, is the subject of
 the [Postfix mailing-list host guide](dkim2-postfix-list-host-guide.md).
 

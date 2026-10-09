@@ -12,6 +12,14 @@
    the verifier reports PERMERROR. The gen_* functions never emit a literal
    with 8-bit bytes as "d", nor a "c" range that breaks the ascending rule. */
 
+/* cJSON_Parse() of a Recipe, refusing (NULL) one in which any object names
+   a key twice: cJSON keeps the first of two equal keys and the other
+   implementations' parsers the last, so {"b":[...],"b":null} would be a null
+   body Recipe to some verifiers and signers and a real one to others. Every
+   Recipe parse here goes through it. Free with dkim2_recipe_free(). */
+struct cJSON *dkim2_recipe_parse(const char *r_json);
+void dkim2_recipe_free(struct cJSON *root);
+
 /* Structure-only validation of a body Recipe (same rules as apply, but no
    bounds check against a body, which may be unrecoverable below a null body
    Recipe). Returns 0 if well-formed (including null/absent "b"), -1 if not. */

@@ -152,12 +152,21 @@ what this guide wires up.
 
 **Null body Recipes.** A list that rewrites a body (content filtering, DMARC
 wrap) records a null body Recipe in its Message-Instance: the previous body is
-gone. `dkim2-milter` does not sign such a message unless started with
-`--allow-null-body-recipe`, which is off by default in the program. The
+gone. The list manager adds that instance unsigned, for the outbound milter
+to sign, and `dkim2-milter` does not sign an unsigned null (one no upstream
+signature covers, at the top or under another unsigned instance) unless started
+with `--allow-null-body-recipe`, which is off by default in the program. The
 outbound example unit turns it on, since it is for list hosts. With it on, the
 message is still signed only if the upstream signatures verify and the header
 history below the null Recipe checks out; the milter adds
-`X-DKIM2-Info: null-body-recipe` when it signs one.
+`X-DKIM2-Info: action=null-body-recipe;` when it signs one.
+
+The option is only for the host that introduces the null. A null that
+arrives already signed — a list post the list host signed, now relayed by a
+forwarder such as a mailbox provider, unchanged or with its own instance on
+top — is signed without it, since a DKIM2-Signature whose `m=` reaches that
+instance already vouches for it. The
+milter adds the same informational `action=null-body-recipe` tag then too.
 
 **Null senders.** `dkim2-milter` requires Sendmail::PMilter 1.28 or later
 and refuses to start with an older one. 1.27 never answered a `MAIL
@@ -202,7 +211,11 @@ blocks: put `DKIM2Verify` in the inbound instance's `"handlers"` object and
 name the same `snapshot_directory`, which is how the signer finds the copy
 the verifier kept. `sign_local` is what makes mail arriving on the loopback
 list listener get signed; `sign_authenticated` covers SASL submission if
-you have it.
+you have it. `allow_null_body_recipe` is the handler's
+`--allow-null-body-recipe` ("Null body Recipes" above): off by default in the
+handler, on in the example since it is for list hosts. The handler applies
+the same signing gate as `dkim2-milter` and marks a refusal or a signed null
+top with the same `X-DKIM2-Info` tags.
 
 One difference from 5a: `DKIM2Verify` stamps `m=1` only on mail whose
 chain verified, so an unsigned post gets its `m=1` from the list manager
@@ -502,7 +515,9 @@ middle part of a `multipart/mixed`, so the body Recipe is one copy range.
 the next `m=` to each copy. A body Sympa rewrites (txt, html, urlize and
 notice reception modes, full-body personalisation, S/MIME) gets a null
 body Recipe, so the outbound milter needs `--allow-null-body-recipe` (step
-5, "Null body Recipes"; the example outbound unit has it). Anonymous lists
+5, "Null body Recipes"; the example outbound unit has it), or
+`allow_null_body_recipe` in the `DKIM2Sign` handler (the example fragment
+has it). Anonymous lists
 and archive resends drop the upstream chain, and the outbound milter
 starts a new one. Sympa adds nothing to notifications, digests and direct
 sends; the outbound milter gives them `m=1`.

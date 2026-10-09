@@ -110,6 +110,110 @@ int main(void) {
     assert(sig->rt[0] != NULL && sig->rt[1] != NULL && sig->rt[2] == NULL);
     dkim2_sig_free(sig);
 
+    /* i= must be a positive integer in ASCII digits; anything else is a
+       PERMERROR saying so, and any other parse failure says "malformed". */
+    {
+        static const char *bad_i[] = {
+            "m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=0; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=abc; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=-1; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=+1; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "i=1x; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            NULL };
+        char eb[256];
+        for (int k = 0; bad_i[k]; k++) {
+            assert(dkim2_sig_parse(bad_i[k]) == NULL);
+            assert(dkim2_sig_parse_err(bad_i[k], eb, sizeof eb) == NULL);
+            assert(strcmp(eb, "PERMERROR DKIM2-Signature has a missing or malformed i= tag") == 0);
+        }
+        assert(dkim2_sig_parse_err("i=1; m=1; t=1; d=e.example", eb, sizeof eb) == NULL);
+        assert(strcmp(eb, "PERMERROR DKIM2-Signature is malformed") == 0);
+        dkim2_sig_t *ok = dkim2_sig_parse_err(
+            "i=3; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", eb, sizeof eb);
+        assert(ok && ok->i == 3 && eb[0] == '\0');
+        dkim2_sig_free(ok);
+    }
+
+    /* Every i= and m= is a chain number: 1*DIGIT in ASCII (atoi() alone
+       would take "4294967297x" as 4294967297 and " 1x" as 1), at most three
+       digits naming 1..DKIM2_MAX_CHAIN_NUMBER (100), so "01" and "001" are
+       1; and no more than DKIM2_MAX_CHAIN_LENGTH (32). Anything else is a
+       PERMERROR saying so -- never atoi()'d into an overflowed or truncated
+       number. */
+    {
+        assert(DKIM2_MAX_CHAIN_LENGTH == 32);
+        assert(DKIM2_MAX_CHAIN_NUMBER == 100);
+        static const char *ok_n[] = { "1", "9", "32", "01", "001", "032", NULL };
+        static const char *len_n[] = { "33", "99", "100", NULL };
+        static const char *num_n[] = { "101", "999", "0001", "4294967297",
+            "99999999999999999999", NULL };
+        static const char *mal_n[] = { "", "0", "000", "abc", "1x", "4294967297x",
+            "30000000x", "0_1", "+1", "-1", "\xef\xbc\x91", NULL };
+        char eb[256], v[256];
+        for (int k = 0; ok_n[k]; k++)
+            assert(dkim2_chain_number_error("Message-Instance", "m", ok_n[k], eb, sizeof eb) == 0);
+        assert(dkim2_chain_number_error("Message-Instance", "m", NULL, eb, sizeof eb) == 0);
+        for (int k = 0; len_n[k]; k++) {
+            assert(dkim2_chain_number_error("Message-Instance", "m", len_n[k], eb, sizeof eb) != 0);
+            assert(strcmp(eb, "PERMERROR Message-Instance m= exceeds the maximum chain length of 32") == 0);
+        }
+        for (int k = 0; mal_n[k]; k++) {
+            assert(dkim2_chain_number_error("Message-Instance", "m", mal_n[k], eb, sizeof eb) != 0);
+            assert(strcmp(eb, "PERMERROR Message-Instance has a malformed m= tag") == 0);
+
+            snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", mal_n[k]);
+            assert(dkim2_sig_parse(v) == NULL);
+            assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
+            assert(strcmp(eb, "PERMERROR DKIM2-Signature has a malformed m= tag") == 0);
+
+            snprintf(v, sizeof v, "m=%s; h=sha256:AAAA:BBBB", mal_n[k]);
+            assert(dkim2_mi_parse(v) == NULL);
+            assert(dkim2_mi_parse_err(v, eb, sizeof eb) == NULL);
+            assert(strcmp(eb, "PERMERROR Message-Instance has a malformed m= tag") == 0);
+        }
+        assert(dkim2_chain_number_error("DKIM2-Signature", "i", "abc", eb, sizeof eb) != 0);
+        assert(strcmp(eb, "PERMERROR DKIM2-Signature has a missing or malformed i= tag") == 0);
+
+        static const char *const *bad_sets[] = { len_n, num_n };
+        static const char *bad_why[] = { "length of 32", "number of 100" };
+        for (int b = 0; b < 2; b++) {
+            const char *const *bad_n = bad_sets[b];
+            char want[256];
+            for (int k = 0; bad_n[k]; k++) {
+                snprintf(v, sizeof v, "i=%s; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
+                assert(dkim2_sig_parse(v) == NULL);
+                assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
+                snprintf(want, sizeof want, "PERMERROR DKIM2-Signature i= exceeds the maximum chain %s", bad_why[b]);
+                assert(strcmp(eb, want) == 0);
+
+                snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
+                assert(dkim2_sig_parse(v) == NULL);
+                assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
+                snprintf(want, sizeof want, "PERMERROR DKIM2-Signature m= exceeds the maximum chain %s", bad_why[b]);
+                assert(strcmp(eb, want) == 0);
+
+                snprintf(v, sizeof v, "m=%s; h=sha256:AAAA:BBBB", bad_n[k]);
+                assert(dkim2_mi_parse(v) == NULL);
+                assert(dkim2_mi_parse_err(v, eb, sizeof eb) == NULL);
+                snprintf(want, sizeof want, "PERMERROR Message-Instance m= exceeds the maximum chain %s", bad_why[b]);
+                assert(strcmp(eb, want) == 0);
+            }
+        }
+        dkim2_sig_t *s32 = dkim2_sig_parse_err(
+            "i=32; m=32; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", eb, sizeof eb);
+        assert(s32 && s32->i == 32 && s32->m == 32 && eb[0] == '\0');
+        dkim2_sig_free(s32);
+        dkim2_sig_t *s001 = dkim2_sig_parse_err(
+            "i=001; m=01; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", eb, sizeof eb);
+        assert(s001 && s001->i == 1 && s001->m == 1 && eb[0] == '\0');
+        dkim2_sig_free(s001);
+        dkim2_mi_t *m001 = dkim2_mi_parse_err("m=001; h=sha256:AAAA:BBBB", eb, sizeof eb);
+        assert(m001 && m001->m == 1);
+        dkim2_mi_free(m001);
+    }
+
     /* Missing required tag → NULL */
     sig = dkim2_sig_parse("i=1; m=1; t=123; d=example.com; s=sel:rsa-sha256:XXX");
     assert(sig == NULL); /* neither nd= nor mf=+rt= present */

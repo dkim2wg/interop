@@ -476,7 +476,7 @@ def _get_version_from_mi(hdr: str) -> int:
     colon = hdr.find(":")
     value = hdr[colon + 1:] if colon != -1 else hdr
     m = _extract_tag(value, "m")
-    return int(m) if m else 0
+    return _chain_int(m)
 
 
 def _mi_hashes(hdr: str) -> str | None:
@@ -494,11 +494,92 @@ def _mi_hashes(hdr: str) -> str | None:
 
 
 def _get_seq_from_sig(hdr: str) -> int:
-    """Extract i= value from a DKIM2-Signature header string."""
+    """Extract i= value from a DKIM2-Signature header string.
+
+    0 when i= is missing or not a positive integer (ASCII digits): such a
+    signature cannot be keyed, and verify_message() reports it as a
+    PERMERROR (see _sig_has_valid_i)."""
     colon = hdr.find(":")
     value = hdr[colon + 1:] if colon != -1 else hdr
-    v = _extract_tag(value, "i")
-    return int(v) if v else 0
+    return _chain_int(_extract_tag(value, "i"))
+
+
+# Every i= and m= names one hop, and a chain has at most this many.
+MAX_CHAIN_LENGTH = 32
+# The largest number an i= or m= may be written as (at most three digits).
+MAX_CHAIN_NUMBER = 100
+
+
+def _is_ascii_digits(v: str) -> bool:
+    # str.isdigit() and int() also take "0_1", " 1", "\uff11" and "\u00b9".
+    return re.fullmatch(r"[0-9]+", v) is not None
+
+
+def _chain_int(v: str | None) -> int:
+    """An i=/m= value as a number, or 0 when it is missing or not 1*DIGIT
+    within MAX_CHAIN_NUMBER (chain_number_error says why). Never raises and
+    never returns a number big enough to be a loop bound."""
+    if v is None or not _is_ascii_digits(v) or len(v) > 3:
+        return 0
+    return int(v)
+
+
+def chain_number_error(field: str, tag: str, v: str | None) -> str | None:
+    """The PERMERROR for an i= or m= value that is not a chain number, or
+    None (also for a missing value, which is left to the callers).
+
+    1*DIGIT in ASCII, else malformed (also zero); at most three digits and
+    1..MAX_CHAIN_NUMBER, so "01" and "001" are 1; and no more than
+    MAX_CHAIN_LENGTH, since each number names one hop."""
+    if v is None:
+        return None
+    v = v.strip()
+    if not _is_ascii_digits(v) or int(v) == 0:
+        if tag == "i":
+            return f"PERMERROR {field} has a missing or malformed i= tag"
+        return f"PERMERROR {field} has a malformed {tag}= tag"
+    if len(v) > 3 or int(v) > MAX_CHAIN_NUMBER:
+        return (f"PERMERROR {field} {tag}= exceeds the maximum chain "
+                f"number of {MAX_CHAIN_NUMBER}")
+    if int(v) > MAX_CHAIN_LENGTH:
+        return (f"PERMERROR {field} {tag}= exceeds the maximum chain "
+                f"length of {MAX_CHAIN_LENGTH}")
+    return None
+
+
+def _tag_of(hdr: str, tag: str) -> str | None:
+    colon = hdr.find(":")
+    return _extract_tag(hdr[colon + 1:] if colon != -1 else hdr, tag)
+
+
+def chain_range_error(mi_headers: list[str], sig_headers: list[str]) -> str | None:
+    """The PERMERROR for the first i= or m= that is not a chain number
+    (chain_number_error), or None. Checked before anything walks 1..max for
+    gaps."""
+    for field, tag, hdrs in (("DKIM2-Signature", "i", sig_headers),
+                             ("DKIM2-Signature", "m", sig_headers),
+                             ("Message-Instance", "m", mi_headers)):
+        for h in hdrs:
+            e = chain_number_error(field, tag, _tag_of(h, tag))
+            if e:
+                return e
+    return None
+
+
+def _sig_has_valid_i(hdr: str) -> bool:
+    """True iff the DKIM2-Signature has an i= that is a positive integer in
+    ASCII digits (of any size: one above MAX_CHAIN_NUMBER is keyable but out
+    of range, which chain_range_error reports)."""
+    v = _tag_of(hdr, "i")
+    return v is not None and _is_ascii_digits(v) and int(v) > 0
+
+
+def _get_mi_from_sig(hdr: str) -> int | None:
+    """Extract m= (the Message-Instance it covers) from a DKIM2-Signature."""
+    colon = hdr.find(":")
+    value = hdr[colon + 1:] if colon != -1 else hdr
+    v = _extract_tag(value, "m")
+    return _chain_int(v) or None
 
 
 def compute_signature(mi_headers: list[str], sig_headers: list[str],
@@ -642,8 +723,11 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
                    signing_domain: str | None = None) -> None:
     """Refuse (SigningRefused) unless the chain already on the message checks
     out.  Runs the verifier in outbound mode: an unsigned top Message-Instance
-    is the one we are about to cover.  A top instance with a null body Recipe
-    needs allow_null_body_recipe as well."""
+    is the one we are about to cover.  A signature with m=k covers instances
+    1..k; any Message-Instance with a null body Recipe above the highest m= of
+    a valid upstream signature (the top instance or one under it) needs
+    allow_null_body_recipe as well.  A null that an upstream signature
+    already covers does not."""
     import os
     # dkim2verify imports this module, so import it lazily.
     import dkim2verify
@@ -687,13 +771,29 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
             f"not signing: upstream DKIM2 chain result={result.status} "
             f"{detail}")
 
-    top = max(existing_mi, key=_get_version_from_mi)
-    mi_json = _extract_mi_recipe(top)
-    if mi_json is not None and "b" in mi_json and mi_json["b"] is None \
-            and not allow_null_body_recipe:
-        raise SigningRefused(
-            "not signing: top Message-Instance has a null body Recipe "
-            "(--allow-null-body-recipe not set)")
+    # A null body Recipe is refused unless some valid upstream signature
+    # covers it.  A DKIM2-Signature with m=k covers instances 1..k, so every
+    # instance above the highest such m= is one no upstream domain vouched
+    # for: a null there is one THIS hop would be the first to sign (whether
+    # it is the top instance or another unsigned instance was added over it),
+    # which needs the option.  A null some upstream domain already declared
+    # and signed is extended normally (e.g. a forwarder relaying a list post).
+    # Only a signature with a valid i= can cover anything: one the verifier
+    # cannot key is a PERMERROR above, and never counts as coverage here.
+    covered = max((_get_mi_from_sig(s) or 0
+                   for s in existing_sig if _sig_has_valid_i(s)), default=0)
+    top_m = max(_get_version_from_mi(h) for h in existing_mi)
+    for mi in sorted(existing_mi, key=_get_version_from_mi, reverse=True):
+        m = _get_version_from_mi(mi)
+        if m <= covered:
+            break
+        mi_json = _extract_mi_recipe(mi)
+        if mi_json is not None and "b" in mi_json and mi_json["b"] is None \
+                and not allow_null_body_recipe:
+            where = "top " if m == top_m else ""
+            raise SigningRefused(
+                f"not signing: unsigned {where}Message-Instance m={m} has a "
+                f"null body Recipe (--allow-null-body-recipe not set)")
 
 
 def _extract_mi_recipe(mi_hdr: str):
@@ -719,8 +819,9 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
     A message that already carries a DKIM2 chain is verified first (outbound
     mode: an unsigned top Message-Instance is allowed); if the chain does not
-    check out, or its top Message-Instance has a null body Recipe and
-    allow_null_body_recipe is not set, SigningRefused is raised.  Keys come
+    check out, or a Message-Instance has a null body Recipe that no valid
+    upstream DKIM2-Signature covers (its m= is above every such signature's
+    m=) and allow_null_body_recipe is not set, SigningRefused is raised.  Keys come
     from dns_data, else the dns.json named by $DKIM2_DNS_JSON.
 
     skip_upstream_check=True bypasses the gate entirely.  It exists for test
@@ -744,6 +845,12 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
             existing_mi.append(hdr.decode("utf-8", errors="surrogateescape"))
         elif name == b"dkim2-signature":
             existing_sig.append(hdr.decode("utf-8", errors="surrogateescape"))
+
+    # Out-of-range numbers are refused even with the gate bypassed: the next
+    # i= and m= below are computed from them.
+    range_error = chain_range_error(existing_mi, existing_sig)
+    if range_error:
+        raise SigningRefused(f"not signing: {range_error}")
 
     if (existing_mi or existing_sig) and not skip_upstream_check:
         _gate_upstream(raw, headers, existing_mi, existing_sig, dns_data,
@@ -822,8 +929,10 @@ def main():
                         help="hash algorithm(s) for the Message-Instance h= tag "
                              "(spec-06 §3.1; default sha256)")
     parser.add_argument("--allow-null-body-recipe", action="store_true",
-                        help="sign even when the top Message-Instance has a "
-                             "null body Recipe (default: refuse)")
+                        help="sign even when a Message-Instance has a null "
+                             "body Recipe that no upstream signature covers "
+                             "(its m= is above every signature's m=; default: "
+                             "refuse; a signed null needs no option)")
     parser.add_argument("--dns-json",
                         default=os.environ.get("DKIM2_DNS_JSON"),
                         help="dns.json with keys to verify an existing chain "

@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 
 use Crypt::Digest::SHA256;
@@ -30,6 +30,8 @@ use Mail::DKIM2::Common qw(
     check_ignore_prefixes
     MAX_CHAIN_LENGTH
     chain_length_error
+    chain_number_error
+    mi_version_tag
     duplicate_number_error
 );
 
@@ -40,9 +42,12 @@ our $DEBUG = 0;
 sub _chain_error {
     my ($msg) = @_;
     my @mi = $msg->header_raw('Message-Instance');
+    my ($range) = grep { defined }
+                  map { chain_number_error('Message-Instance', 'm', mi_version_tag($_)) } @mi;
     return chain_length_error($msg)
-        // ((grep { !defined extract_mi_version($_) } @mi)
+        // ((grep { !defined mi_version_tag($_) } @mi)
                ? 'PERMERROR Message-Instance without m= tag' : undef)
+        // $range
         // duplicate_number_error('Message-Instance', 'm', map { extract_mi_version($_) } @mi);
 }
 

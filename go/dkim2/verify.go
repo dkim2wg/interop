@@ -40,6 +40,20 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 	}
 
+	// A DKIM2-Signature whose i= is missing or not a positive integer cannot
+	// be placed in the chain or keyed: PERMERROR, never silently skipped, so
+	// a junk "DKIM2-Signature: m=2" can never pass for coverage of m=2.
+	for _, raw := range sigHeaders {
+		if !validSequenceTag(raw) {
+			return nil, errUnkeyableSignature
+		}
+	}
+
+	// Every i= and m= is a chain number (chainNumberError), before any 1..max walk.
+	if err := chainRangeError(miHeaders, sigHeaders); err != nil {
+		return nil, err
+	}
+
 	noSigsOutbound := len(sigHeaders) == 0 && len(opts) > 0 && opts[0].Outbound
 	if len(sigHeaders) == 0 && !noSigsOutbound {
 		return nil, fmt.Errorf("no DKIM2-Signature headers found")
@@ -259,7 +273,10 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 
 	// Spec-06 §11: a Message-Instance whose m= is higher than every
 	// signature's is an error. A lower one no signature names is valid (a
-	// list's unsigned m=1 under a signature on m=2).
+	// list's unsigned m=1 under a signature on m=2).  Outbound, every
+	// instance above the top signature is one the caller is about to cover
+	// (its signature will name the top m=), so none of them is an error:
+	// the chain walk still checks each against the content and undoes it.
 	{
 		maxSigM := 0
 		for _, raw := range sigHeaders {
@@ -270,7 +287,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		}
 		for _, raw := range miHeaders {
 			mi, _ := parseMI(raw)
-			if mi != nil && mi.Version > maxSigM && !(unsignedTop && mi.Version == maxMIVersion) {
+			if mi != nil && mi.Version > maxSigM && !unsignedTop {
 				return nil, fmt.Errorf("Message-Instance m=%d has no referencing signature", mi.Version)
 			}
 		}

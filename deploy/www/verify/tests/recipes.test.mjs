@@ -166,3 +166,18 @@ test('applyRecipe validates the top level and leaves a null "b" body alone', () 
   malformed(() => applyRecipe({ b: 'lines' }, state));
   malformed(() => applyRecipe({ h: [] }, state));
 });
+
+// A duplicate key anywhere in the Recipe JSON is invalid JSON: parsers
+// disagree on which value wins (C's took the first, JSON.parse the last), so
+// {"b":[...],"b":null} was a null body Recipe to some verifiers and a real
+// one to others.
+test('decodeRecipe: a duplicate key is a SyntaxError (invalid JSON)', () => {
+  for (const raw of ['{"b":[{"c":[1,1]}],"b":null}', '{"b":null,"b":[{"c":[1,1]}]}',
+    '{"h":{"subject":[],"subject":[]}}', '{"h":{"subject":[]},"h":{}}',
+    '{"h":{"subject":[],"subj\\u0065ct":[]}}']) {
+    const b64 = Buffer.from(raw).toString('base64');
+    assert.throws(() => decodeRecipe(b64), SyntaxError, raw);
+  }
+  const ok = Buffer.from('{"h":{"subject":[{"d":["b"]}],"to":[]},"b":[{"d":["b"]}]}').toString('base64');
+  assert.deepEqual(decodeRecipe(ok).b, [{ d: ['b'] }]);
+});

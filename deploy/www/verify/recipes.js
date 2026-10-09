@@ -14,8 +14,41 @@ export class MalformedRecipe extends Error {
   }
 }
 
+// The first key named twice in one object of `text` (already known to be
+// valid JSON), compared after unescaping, or null.
+export function jsonDuplicateKey(text) {
+  const stack = []; // per open container: a Set of keys (object) or null (array)
+  let wantKey = false;
+  const re = /\s+|[{}[\],:]|"(?:[^"\\]|\\.)*"|[^\s,:[\]{}"]+/gy;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const t = m[0];
+    const top = stack[stack.length - 1];
+    if (t === '{') { stack.push(new Set()); wantKey = true; }
+    else if (t === '[') { stack.push(null); wantKey = false; }
+    else if (t === '}' || t === ']') { stack.pop(); wantKey = false; }
+    else if (t === ',') { wantKey = top instanceof Set; }
+    else if (t[0] === '"' && wantKey && top instanceof Set) {
+      const k = JSON.parse(t);
+      if (top.has(k)) return k;
+      top.add(k);
+      wantKey = false;
+    }
+    if (re.lastIndex >= text.length) break;
+  }
+  return null;
+}
+
+// A key named twice in one object is invalid JSON here (a SyntaxError, as
+// from JSON.parse): parsers disagree on which value wins, so
+// {"b":[...],"b":null} would be a null body Recipe to some verifiers and a
+// real one to others.
 export function decodeRecipe(rB64) {
-  return JSON.parse(b64ToString(rB64));
+  const text = b64ToString(rB64);
+  const obj = JSON.parse(text);
+  const dup = jsonDuplicateKey(text);
+  if (dup !== null) throw new SyntaxError(`duplicate JSON object key ${JSON.stringify(dup)}`);
+  return obj;
 }
 
 export function bodyToLines(body) {

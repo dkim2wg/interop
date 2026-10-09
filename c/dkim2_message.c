@@ -42,11 +42,15 @@ static void collect_dkim2_headers(dkim2_ctx_t *ctx) {
                 snprintf(ctx->mi_error, sizeof ctx->mi_error, "%s", errbuf);
             }
         } else if (strcmp(name, "dkim2-signature") == 0) {
-            dkim2_sig_t *sig = dkim2_sig_parse(valdup);
+            char errbuf[256];
+            dkim2_sig_t *sig = dkim2_sig_parse_err(valdup, errbuf, sizeof errbuf);
             if (sig) {
                 dkim2_sig_t **tail = &ctx->sig_list;
                 while (*tail) tail = &(*tail)->next;
                 *tail = sig;
+            } else if (!ctx->sig_error[0]) {
+                /* Never skipped silently: dkim2_do_verify() PERMERRORs. */
+                snprintf(ctx->sig_error, sizeof ctx->sig_error, "%s", errbuf);
             }
         }
         free(valdup);

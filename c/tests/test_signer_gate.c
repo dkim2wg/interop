@@ -1,7 +1,9 @@
 /* Signer gate: dkim2_sign_message / dkim2_do_sign must verify an existing
    DKIM2 chain (outbound mode: the unsigned top Message-Instance is the one
-   being signed) before extending it, and refuse a null body Recipe on top
-   unless allow_null_body_recipe is set.
+   being signed) before extending it, and refuse a null body Recipe on any
+   UNSIGNED instance (m= above every valid DKIM2-Signature's m=, top or not)
+   unless allow_null_body_recipe is set; a null already signed upstream
+   signs.
 
    Usage: test_signer_gate <fixture-dir> <dns.json> <key.pem>
    Fixtures come from util/build-signer-gate-fixtures.py. */
@@ -210,8 +212,13 @@ static void expect_digest_only(const char *name, int allow_null, int want_sign) 
                 dkim2_mi_t *mi = dkim2_mi_parse(v);
                 dkim2_mi_t **t = &ctx.mi_list; while (*t) t = &(*t)->next; *t = mi;
             } else if (!strncasecmp(h[i], "DKIM2-Signature", 15)) {
-                dkim2_sig_t *s = dkim2_sig_parse(v);
-                dkim2_sig_t **t = &ctx.sig_list; while (*t) t = &(*t)->next; *t = s;
+                char eb[256];
+                dkim2_sig_t *s = dkim2_sig_parse_err(v, eb, sizeof eb);
+                if (s) {
+                    dkim2_sig_t **t = &ctx.sig_list; while (*t) t = &(*t)->next; *t = s;
+                } else if (!ctx.sig_error[0]) {
+                    snprintf(ctx.sig_error, sizeof ctx.sig_error, "%s", eb);
+                }
             }
             free(v);
         }
@@ -231,6 +238,40 @@ static void expect_digest_only(const char *name, int allow_null, int want_sign) 
     }
 }
 
+/* An i= or m= that is not a chain number (malformed, above
+   DKIM2_MAX_CHAIN_NUMBER, or above DKIM2_MAX_CHAIN_LENGTH) is refused with
+   its PERMERROR, by the gate and -- since the next i=/m= are computed from the
+   existing ones -- even with the gate skipped. */
+static void expect_range_refused(const char *prefix, const char *want, int skip) {
+    char src[1024], path[1024];
+    snprintf(src, sizeof src, "%s/valid-chain.eml", g_dir);
+    snprintf(path, sizeof path, "%s/range-tmp.eml", g_dir);
+    FILE *in = fopen(src, "rb"), *f = fopen(path, "wb");
+    assert(in && f);
+    fputs(prefix, f);
+    int c;
+    while ((c = fgetc(in)) != EOF) fputc(c, f);
+    fclose(in); fclose(f);
+
+    FILE *out = tmpfile();
+    assert(out);
+    dkim2_sign_config_t cfg = {
+        .domain = "test3.dkim2.com", .selector = "sel1",
+        .privkey_path = (char *)g_key, .skip_timestamp_check = 1,
+        .skip_chain_check = skip,
+    };
+    char *rcpt[] = { "<subscriber@test4.dkim2.com>", NULL };
+    char err[512] = "";
+    int r = dkim2_sign_message(path, out, &cfg, "<list@test3.dkim2.com>", rcpt, err, sizeof err);
+    long n = ftell(out);
+    fclose(out);
+    remove(path);
+    int ok = r != 0 && n == 0 && strstr(err, "not signing") && strstr(err, want);
+    printf("  range %-40.40s skip=%d want refuse: %s : %s\n", prefix, skip,
+           ok ? "ok" : "FAIL", err);
+    if (!ok) g_fail = 1;
+}
+
 int main(int argc, char **argv) {
     if (argc != 4) { fprintf(stderr, "usage: %s fixtures dns.json key\n", argv[0]); return 2; }
     g_dir = argv[1]; g_key = argv[3];
@@ -245,16 +286,65 @@ int main(int argc, char **argv) {
     expect("broken-signature.eml", 1, 0, "not signing: upstream DKIM2 chain");
     expect("broken-mi-chain.eml",  0, 0, "not signing: Message-Instance chain");
     expect("broken-mi-chain.eml",  1, 0, "not signing: Message-Instance chain");
-    expect("null-top.eml",         0, 0, "null body Recipe");
+    expect("null-top.eml",         0, 0, "unsigned top Message-Instance m=2 has a null body Recipe");
     expect("null-top.eml",         1, 1, NULL);
     expect("null-top-forged.eml",  0, 0, "not signing");
     expect("null-top-forged.eml",  1, 0, "not signing");
+    /* the null m=2 is already signed i=2/m=2 upstream: no option needed */
+    expect("null-top-signed.eml",  0, 1, NULL);
+    expect("null-top-signed.eml",  1, 1, NULL);
+    /* A signature with m=k covers 1..k: an unsigned null m=2 under an
+       unsigned ordinary m=3 is still uncovered (highest valid m= is 1). */
+    expect("null-below-unsigned-top.eml", 0, 0, "unsigned Message-Instance m=2 has a null body Recipe");
+    expect("null-below-unsigned-top.eml", 1, 1, NULL);
+    expect("null-below-signed.eml", 0, 1, NULL);
+    expect("null-below-signed.eml", 1, 1, NULL);
+
+    /* A DKIM2-Signature naming m=2 that cannot be keyed is not coverage:
+       the verifier PERMERRORs on it, so these are refused with or without
+       the option. */
+    {
+        static const char *fake[] = {
+            "fake-cover-no-i.eml", "fake-cover-i0.eml", "fake-cover-i-abc.eml",
+            "fake-cover-m-rewritten.eml", "fake-cover-unparseable.eml", NULL };
+        for (int k = 0; fake[k]; k++) {
+            expect(fake[k], 0, 0, "result=permerror (PERMERROR DKIM2-Signature");
+            expect(fake[k], 1, 0, "result=permerror (PERMERROR DKIM2-Signature");
+            expect_digest_only(fake[k], 1, 0);
+        }
+    }
 
     expect_digest_only("valid-chain.eml", 0, 1);
     expect_digest_only("broken-mi-chain.eml", 0, 0);
     expect_digest_only("null-top.eml", 0, 0);
     expect_digest_only("null-top.eml", 1, 1);
     expect_digest_only("null-top-forged.eml", 1, 0);
+    expect_digest_only("null-top-signed.eml", 0, 1);
+    expect_digest_only("null-below-unsigned-top.eml", 0, 0);
+    expect_digest_only("null-below-unsigned-top.eml", 1, 1);
+    expect_digest_only("null-below-signed.eml", 0, 1);
+
+    for (int skip = 0; skip <= 1; skip++) {
+        expect_range_refused("DKIM2-Signature: i=99999999999999999999; m=2; t=1; "
+            "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
+            "PERMERROR DKIM2-Signature i= exceeds the maximum chain number of 100", skip);
+        expect_range_refused("DKIM2-Signature: i=101; m=2; t=1; "
+            "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
+            "PERMERROR DKIM2-Signature i= exceeds the maximum chain number of 100", skip);
+        expect_range_refused("DKIM2-Signature: i=33; m=2; t=1; "
+            "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
+            "PERMERROR DKIM2-Signature i= exceeds the maximum chain length of 32", skip);
+        expect_range_refused("DKIM2-Signature: i=2; m=4294967297; t=1; "
+            "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
+            "PERMERROR DKIM2-Signature m= exceeds the maximum chain number of 100", skip);
+        expect_range_refused("DKIM2-Signature: i=2; m=4294967297x; t=1; "
+            "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
+            "PERMERROR DKIM2-Signature has a malformed m= tag", skip);
+        expect_range_refused("Message-Instance: m=99999999999999999999; h=sha256:AAAA:BBBB\r\n",
+            "PERMERROR Message-Instance m= exceeds the maximum chain number of 100", skip);
+        expect_range_refused("Message-Instance: m=4294967297x; h=sha256:AAAA:BBBB\r\n",
+            "PERMERROR Message-Instance has a malformed m= tag", skip);
+    }
 
     expect_reuse_top_mi("valid-chain.eml");
     expect_reuse_top_mi("mi-only.eml");

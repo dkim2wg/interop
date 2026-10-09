@@ -2,6 +2,7 @@ package dkim2
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -62,8 +63,10 @@ type SignOptions struct {
 	// (nil = real DNS); SkipTimestampCheck relaxes the §10.3 age check.
 	Fetcher            KeyFetcher
 	SkipTimestampCheck bool
-	// AllowNullBodyRecipe lets Sign cover a top Message-Instance whose
-	// body Recipe is null ("b": null); by default that is refused.
+	// AllowNullBodyRecipe lets Sign cover an UNSIGNED Message-Instance (its
+	// m= above every valid upstream DKIM2-Signature's m=, top or not) whose
+	// body Recipe is null ("b": null); by default that is refused.  A null
+	// that an upstream signature already covers is signed without it.
 	AllowNullBodyRecipe bool
 	// SkipUpstreamCheck turns the gate off entirely (the caller built the
 	// chain itself).
@@ -99,6 +102,109 @@ type VerifyOptions struct {
 	// chain are checked as usual; of the Message-Instance content check, only
 	// the topmost instance's header hash can be, so only that is.
 	HeadersOnly bool
+}
+
+// errUnkeyableSignature is the PERMERROR for a DKIM2-Signature whose i= is
+// missing or not a positive integer (or that has no tag-list at all).
+var errUnkeyableSignature = errors.New("PERMERROR DKIM2-Signature has a missing or malformed i= tag")
+
+// MaxChainLength is the most hops a chain may have: every i= and m= names
+// one, so none may be larger.
+const MaxChainLength = 32
+
+// MaxChainNumber is the largest number an i= or m= may be written as (at
+// most three digits).  Anything bigger is out of range before it is ever a
+// chain number.
+const MaxChainNumber = 100
+
+func allASCIIDigits(v string) bool {
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// chainNumberError is the PERMERROR for an i= or m= value that is not a chain
+// number, or nil (also when the tag is absent, which is left to the callers).
+// 1*DIGIT in ASCII, else malformed (also zero): strconv.Atoi would take "+1".
+// At most three digits and 1..MaxChainNumber, so "01" and "001" are 1 (and
+// nothing is converted that could overflow), and no more than MaxChainLength.
+func chainNumberError(field, tag, v string, present bool) error {
+	if !present {
+		return nil
+	}
+	v = strings.TrimSpace(v)
+	if !allASCIIDigits(v) || strings.TrimLeft(v, "0") == "" {
+		if tag == "i" {
+			return fmt.Errorf("PERMERROR %s has a missing or malformed i= tag", field)
+		}
+		return fmt.Errorf("PERMERROR %s has a malformed %s= tag", field, tag)
+	}
+	if len(v) > 3 {
+		return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
+	}
+	n, _ := strconv.Atoi(v)
+	if n > MaxChainNumber {
+		return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
+	}
+	if n > MaxChainLength {
+		return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain length of %d", field, tag, MaxChainLength)
+	}
+	return nil
+}
+
+// chainRangeError is the PERMERROR for the first DKIM2-Signature i= or m=, or
+// Message-Instance m=, that is not a chain number (chainNumberError), or nil.
+// Raw fields, name included.  Checked before anything walks 1..max for gaps.
+func chainRangeError(miHeaders, sigHeaders []string) error {
+	type check struct {
+		field, tag string
+		raws       []string
+	}
+	for _, c := range []check{
+		{"DKIM2-Signature", "i", sigHeaders},
+		{"DKIM2-Signature", "m", sigHeaders},
+		{"Message-Instance", "m", miHeaders},
+	} {
+		for _, raw := range c.raws {
+			colon := strings.IndexByte(raw, ':')
+			if colon < 0 {
+				continue
+			}
+			tvl := parseTagValueList(raw[colon+1:])
+			if err := chainNumberError(c.field, c.tag, tvl.get(c.tag), tvl.has(c.tag)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validSequenceTag reports whether a raw DKIM2-Signature field carries an i=
+// that is a positive integer written in ASCII digits.  strconv.Atoi would
+// also take "+1", so only the digits are looked at.
+func validSequenceTag(raw string) bool {
+	colon := strings.IndexByte(raw, ':')
+	if colon < 0 {
+		return false
+	}
+	v := parseTagValueList(raw[colon+1:]).get("i")
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	// Positive: not all zeros.  Not converted, so a value too large for an
+	// int is still a sequence number here; chainRangeError bounds it.
+	return strings.TrimLeft(v, "0") != ""
 }
 
 func parseSig(raw string) (*DKIM2Signature, error) {

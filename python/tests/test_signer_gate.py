@@ -70,6 +70,80 @@ def test_null_top_signed_with_option():
     assert _top_i(_sign(fx.build_null_top(), allow_null_body_recipe=True)) == 2
 
 
+def test_null_top_refusal_says_unsigned():
+    # i=1 covers only m=1; the null m=2 is unsigned, so it is refused.
+    with pytest.raises(dkim2sign.SigningRefused,
+                       match="unsigned top Message-Instance m=2 has a null body Recipe"):
+        _sign(fx.build_null_top())
+
+
+def test_signed_null_top_signs_without_option():
+    # The list domain signed its null m=2 (i=2, m=2): a forwarder extends it.
+    out = _sign(fx.build_null_top_signed())
+    assert _top_i(out) == 3
+    first = out.split(b"\r\n", 1)[0].decode()
+    assert " m=2;" in first          # unchanged: no new Message-Instance
+    assert _top_i(_sign(fx.build_null_top_signed(),
+                        allow_null_body_recipe=True)) == 3
+
+
+def test_null_below_unsigned_top_refused_then_signed_with_option():
+    # Unsigned null m=2 under an unsigned ordinary m=3; i=1 covers only m=1.
+    # The null is not the top, but nothing covers it: refused like null-top.
+    with pytest.raises(dkim2sign.SigningRefused,
+                       match="unsigned Message-Instance m=2 has a null body Recipe"):
+        _sign(fx.build_null_below_unsigned_top())
+    assert _top_i(_sign(fx.build_null_below_unsigned_top(),
+                        allow_null_body_recipe=True)) == 2
+
+
+def test_null_below_signed_signs_without_option():
+    # The null m=2 is covered by a valid i=2/m=2; only an ordinary m=3 is
+    # unsigned on top of it.
+    out = _sign(fx.build_null_below_signed())
+    assert _top_i(out) == 3
+    assert _top_i(_sign(fx.build_null_below_signed(),
+                        allow_null_body_recipe=True)) == 3
+
+
+@pytest.mark.parametrize("name", sorted(fx.FAKE_COVER))
+@pytest.mark.parametrize("allow", [False, True])
+def test_fake_coverage_signature_refused(name, allow):
+    # null-top plus a DKIM2-Signature naming m=2 that cannot be keyed (no i=,
+    # i=0, i=abc, the real i=1 signature with m rewritten, unparseable): it
+    # is not coverage, and the chain itself is a PERMERROR, so the signer
+    # refuses with or without the option -- and never with a traceback.
+    msg = fx._fake_cover(fx.FAKE_COVER[name])
+    with pytest.raises(dkim2sign.SigningRefused, match="not signing"):
+        _sign(msg, allow_null_body_recipe=allow)
+
+
+@pytest.mark.parametrize("ival", ["", "0", "abc", "-1", "\u0661"])
+def test_verifier_permerror_on_unkeyable_signature(ival):
+    import dkim2verify
+    msg = (f"DKIM2-Signature: i={ival}; m=2; d=evil.example\r\n").encode() \
+        + fx.build_null_top_signed()
+    r = dkim2verify.verify_message(msg, DNS, full_chain=True,
+                                   skip_timestamp_check=True)
+    assert r.status == "permerror"
+    assert "malformed i= tag" in r.message
+
+
+def test_verifier_permerror_on_signature_without_i():
+    import dkim2verify
+    msg = b"DKIM2-Signature: m=2; d=evil.example\r\n" + fx.build_null_top_signed()
+    r = dkim2verify.verify_message(msg, DNS, full_chain=True,
+                                   skip_timestamp_check=True)
+    assert r.status == "permerror"
+    assert "missing or malformed i= tag" in r.message
+
+
+def test_get_seq_from_sig_never_raises():
+    assert dkim2sign._get_seq_from_sig("DKIM2-Signature: i=abc; m=1") == 0
+    assert dkim2sign._get_seq_from_sig("DKIM2-Signature: m=1") == 0
+    assert dkim2sign._get_seq_from_sig("DKIM2-Signature: i = 7 ; m=1") == 7
+
+
 def test_forged_null_top_refused_even_with_option():
     with pytest.raises(dkim2sign.SigningRefused):
         _sign(fx.build_null_top_forged(), allow_null_body_recipe=True)

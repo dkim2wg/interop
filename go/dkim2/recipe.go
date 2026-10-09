@@ -207,7 +207,64 @@ func validateRecipeSteps(steps []RecipeStep, count int) error {
 	return nil
 }
 
+// errDuplicateJSONKey is returned for Recipe JSON in which one object names
+// a key twice: parsers disagree on which value wins (encoding/json keeps the
+// last, C's parser kept the first), so {"b":[...],"b":null} would be a null
+// body Recipe to some verifiers and signers and a real one to others.
+var errDuplicateJSONKey = errors.New("duplicate JSON object key")
+
+// jsonDuplicateKey walks data's tokens and returns errDuplicateJSONKey for
+// the first object that names a key twice (compared after unescaping). It
+// returns nil for valid JSON without duplicates; invalid JSON is left to
+// json.Unmarshal to report.
+func jsonDuplicateKey(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	type frame struct {
+		keys    map[string]bool // nil for an array
+		wantKey bool
+	}
+	var stack []*frame
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		var top *frame
+		if len(stack) > 0 {
+			top = stack[len(stack)-1]
+		}
+		if top != nil && top.keys != nil && top.wantKey {
+			if k, ok := tok.(string); ok {
+				if top.keys[k] {
+					return fmt.Errorf("%w %q", errDuplicateJSONKey, k)
+				}
+				top.keys[k] = true
+				top.wantKey = false
+				continue
+			}
+		}
+		switch tok {
+		case json.Delim('{'):
+			stack = append(stack, &frame{keys: map[string]bool{}, wantKey: true})
+			continue
+		case json.Delim('['):
+			stack = append(stack, &frame{})
+			continue
+		case json.Delim('}'), json.Delim(']'):
+			stack = stack[:len(stack)-1]
+		}
+		// A value (or a closed container) completes a member of the object
+		// below: its next string token is a key again.
+		if len(stack) > 0 && stack[len(stack)-1].keys != nil {
+			stack[len(stack)-1].wantKey = true
+		}
+	}
+}
+
 func parseRecipe(data []byte) (*Recipe, error) {
+	if err := jsonDuplicateKey(data); err != nil {
+		return nil, err
+	}
 	// draft-06 §5.1: an explicit JSON null for "h" is no longer permitted
 	// (distinct from an absent "h", which means the headers were unchanged).
 	var r Recipe

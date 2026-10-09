@@ -145,12 +145,46 @@ of one that does not check out. All four signers (Python, Go, C, Perl) do this;
   the instance below. Any failure means refuse ("not signing: upstream DKIM2
   chain ..."), exit non-zero and emit no new signature. A message with no
   DKIM2 headers is just signed.
-- **Null body Recipe.** An unsigned top instance whose body Recipe is
+- **Null body Recipe.** An *unsigned* instance whose body Recipe is
   `"b": null` (the previous body is not recoverable) is refused by default,
-  because the signer would be vouching for a change it cannot check. The
-  operator opts in with `--allow-null-body-recipe` (Go: `-allow-null-body-recipe`).
-  The flag does not excuse a forged history: the header Recipe is still undone
-  and checked.
+  because the signer would be vouching for a change it cannot check. A
+  signature's `m=` is the highest instance at signing time (spec-06 §8.2), so
+  a DKIM2-Signature with `m=k` covers instances 1..k, and "unsigned" means an
+  instance whose `m=` is above the highest `m=` of every valid upstream
+  signature. Check every such instance, not only the top: a hop (or a list
+  manager in front of it) can add its own ordinary instance over an unsigned
+  null, and the null is still one nobody upstream vouched for
+  (`null-below-unsigned-top`). This hop is the one introducing the null. The
+  operator opts in with `--allow-null-body-recipe`
+  (Go: `-allow-null-body-recipe`). A null that arrived already signed —
+  a list host declared it and signed it, and this hop forwards the message,
+  unchanged or with its own ordinary instance on top (`null-below-signed`) —
+  is extended without the option: the domain that made the change
+  vouched for it. So only a host that introduces a null body Recipe and signs
+  it itself (a list host whose list manager adds an unsigned instance) needs
+  the option; a forwarder needs nothing. Either way the upstream signatures
+  must verify, and the flag does not excuse a forged history: the header
+  Recipe is still undone and checked.
+- **Only a keyable signature is coverage.** Count a signature towards
+  "the top is signed" only if its `i=` is a positive integer, and have the
+  verifier report any DKIM2-Signature it cannot key — no `i=`, `i=0`,
+  `i=abc`, a field that does not parse — as a PERMERROR, never skip it. A
+  verifier that ignores such a field while the gate reads its `m=` lets a
+  junk `DKIM2-Signature: m=2` turn an unsigned null top into a "signed" one.
+- **Bound `i=` and `m=` before you loop.** Every `i=` and `m=` must be
+  1*DIGIT in ASCII — `int()`, `atoi()`, `parseInt` and `strconv.Atoi` all
+  take something else (`"0_1"`, the digit prefix of `"4294967297x"`, `"+1"`)
+  — at most three digits naming 1..100 (`MAX_CHAIN_NUMBER`; `01` and `001`
+  are 1), and, since each names one hop, no more than the chain length limit
+  (32 here, `MAX_CHAIN_LENGTH`). Anything else is a PERMERROR found while
+  parsing, before any check walks 1..max looking for gaps. Do not convert
+  first: `i=99999999999999999999` overflows an `int`, and a loop to
+  4294967297 runs a browser out of memory.
+- **Refuse duplicate keys in Recipe JSON.** JSON parsers disagree on which
+  of two equal keys wins (cJSON keeps the first; Python, Go, Perl and JS
+  the last), so `{"b":[...],"b":null}` is a real body Recipe to one verifier
+  or gate and a null one to another. Treat a key given twice in any object
+  of the Recipe as invalid JSON.
 - **Message-Instance-only chains sign.** A list that adds unsigned
   Message-Instances but no DKIM2-Signature (Mailman does this for an unsigned
   post) gives a chain with m=1 and m=2 and no i=1. That is signable: verify

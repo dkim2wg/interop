@@ -41,6 +41,8 @@ from dkim2sign import (
     _tag_names,
     _get_version_from_mi,
     _get_seq_from_sig,
+    _sig_has_valid_i,
+    chain_range_error,
     b64,
     b64json,
     Source,
@@ -48,6 +50,7 @@ from dkim2sign import (
 from dkim2undo import (
     MalformedRecipe,
     decode_recipes,
+    loads_recipe,
     reconstruct_body,
     reconstruct_headers,
     validate_recipes,
@@ -398,7 +401,7 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
             )
         else:
             try:
-                recipes = json.loads(r_bytes)
+                recipes = loads_recipe(r_bytes)
             except ValueError:
                 # json.JSONDecodeError, and UnicodeDecodeError for a payload
                 # that is not valid UTF-8 (a Perl producer writes Recipe
@@ -771,14 +774,32 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     mi_headers = extract_mi_headers(headers)
     sig_headers = extract_sig_headers(headers)
 
-    seen_m = set()
     for h in mi_headers:
-        m_raw = _extract_tag(_get_header_value(h), "m")
-        if m_raw is None or not m_raw.strip().isascii() \
-                or not m_raw.strip().isdigit():
-            msg = "Message-Instance has a malformed m= tag"
+        if _extract_tag(_get_header_value(h), "m") is None:
+            msg = "PERMERROR Message-Instance has a malformed m= tag"
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
+
+    # A DKIM2-Signature without an i= that is a positive integer cannot be
+    # placed in the chain or keyed.  It is a PERMERROR, never silently
+    # skipped: a signer gate counting "coverage" by m= must not be fooled by
+    # a junk signature that names an m= but signs nothing.
+    for h in sig_headers:
+        if not _sig_has_valid_i(h):
+            msg = "PERMERROR DKIM2-Signature has a missing or malformed i= tag"
+            return VerifyResult(ok=False, status='permerror', failing_i=None,
+                                domain=None, message=msg, errors=[msg])
+
+    # Every i= and m= is a chain number (1*DIGIT, at most 3 digits, 1..100,
+    # and no more than MAX_CHAIN_LENGTH), before the gap loops below walk
+    # 1..max.
+    range_error = chain_range_error(mi_headers, sig_headers)
+    if range_error:
+        return VerifyResult(ok=False, status='permerror', failing_i=None,
+                            domain=None, message=range_error, errors=[range_error])
+
+    seen_m = set()
+    for h in mi_headers:
         mv = _get_version_from_mi(h)
         if mv in seen_m:
             msg = f"duplicate Message-Instance m={mv}"

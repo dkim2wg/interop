@@ -434,7 +434,8 @@ static int verify_mi_hashes(
                    payload never surfaced as an error at all. Probe the decoded
                    JSON directly here, before either apply_*_recipe() call, so
                    that failure is reported specifically instead of vanishing. */
-                cJSON *probe = cJSON_Parse(rj);
+                /* dkim2_recipe_parse(): a duplicate key is invalid JSON too. */
+                cJSON *probe = dkim2_recipe_parse(rj);
                 if (!probe) {
                     free(r_json_bytes);
                     snprintf(errbuf, errbufsz,
@@ -567,6 +568,12 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
        before that crypto path is ever reached. */
     if (ctx->mi_error[0])
         SETSTATUS(DKIM2_PERMERROR, "%s", ctx->mi_error);
+
+    /* Likewise a DKIM2-Signature that did not parse (no i=, an i= that is
+       not a positive integer, a missing required tag): a PERMERROR, never
+       verified around as if it were absent. */
+    if (ctx->sig_error[0])
+        SETSTATUS(DKIM2_PERMERROR, "%s", ctx->sig_error);
 
     /* §7.3/§10.7: each Message-Instance m= value appears once. Check it
        explicitly (inbound and outbound), before any crypto, rather than

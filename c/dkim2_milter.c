@@ -19,7 +19,7 @@ static struct {
     char *privkey_path;
     char *alg;
     char *authservid;    /* for Authentication-Results */
-    int   allow_null_body_recipe; /* sign a chain whose top MI has a null body Recipe */
+    int   allow_null_body_recipe; /* sign a chain with an UNSIGNED MI with a null body Recipe */
 } g_cfg;
 
 /* Per-message state */
@@ -102,11 +102,15 @@ static sfsistat cb_header(SMFICTX *ctx, char *name, char *value) {
             snprintf(c->mi_error, sizeof c->mi_error, "%s", errbuf);
         }
     } else if (strcasecmp(name, "DKIM2-Signature") == 0) {
-        dkim2_sig_t *sig = dkim2_sig_parse(value);
+        char errbuf[256];
+        dkim2_sig_t *sig = dkim2_sig_parse_err(value, errbuf, sizeof errbuf);
         if (sig) {
             dkim2_sig_t **tail = &c->sig_list;
             while (*tail) tail = &(*tail)->next;
             *tail = sig;
+        } else if (!c->sig_error[0]) {
+            /* Never skipped silently: dkim2_do_verify() PERMERRORs. */
+            snprintf(c->sig_error, sizeof c->sig_error, "%s", errbuf);
         }
     }
     return SMFIS_CONTINUE;
@@ -174,8 +178,8 @@ static sfsistat cb_eom(SMFICTX *ctx) {
         char *mi_val = NULL, *sig_val = NULL;
         if (dkim2_do_sign(c, &cfg, &mi_val, &sig_val) != 0) {
             /* Signer gate: an existing DKIM2 chain that does not verify (or a
-               null body Recipe on top, without allow_null_body_recipe) is
-               never extended. Deliver the message unsigned, as the Perl
+               null body Recipe on an unsigned instance, without
+               allow_null_body_recipe) is never extended. Deliver the message unsigned, as the Perl
                milter does -- refusing to sign is not grounds to bounce mail.
                (This milter emits no X-DKIM2-Info header, so log only.)
                Limitation: the milter keeps only the body digest, so body

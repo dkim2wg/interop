@@ -1,6 +1,7 @@
 package dkim2
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -74,5 +75,26 @@ func TestNullHeaderRecipeStaysDistinctFromInvalidJSON(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "null header recipe") {
 		t.Errorf("got %q, want it to name the null header recipe", err.Error())
+	}
+}
+
+// A duplicate key anywhere in the Recipe JSON is invalid JSON: parsers
+// disagree on which value wins (C's took the first, encoding/json the last),
+// so {"b":[...],"b":null} was a null body Recipe to some verifiers and a real
+// one to others.
+func TestDuplicateRecipeKeyIsInvalidJSON(t *testing.T) {
+	for _, raw := range []string{
+		`{"b":[{"c":[1,1]}],"b":null}`, `{"b":null,"b":[{"c":[1,1]}]}`,
+		`{"h":{"subject":[],"subject":[]}}`, `{"h":{"subject":[]},"h":{}}`,
+		`{"h":{"subject":[],"subj\u0065ct":[]}}`,
+	} {
+		r := base64.StdEncoding.EncodeToString([]byte(raw))
+		_, err := parseMI("Message-Instance: m=2; h=sha256:AAA:BBB; r=" + r + ";")
+		if err == nil || err.Error() != "PERMERROR Message-Instance m=2 contains invalid JSON" {
+			t.Errorf("%s: err = %v", raw, err)
+		}
+	}
+	if _, err := parseRecipe([]byte(`{"h":{"subject":[{"d":["b"]}],"to":[]},"b":[{"d":["b"]}]}`)); err != nil {
+		t.Errorf("the same key in different objects: %v", err)
 	}
 }
