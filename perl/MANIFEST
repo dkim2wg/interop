@@ -77,6 +77,7 @@ t/gate-null-top.t
 t/gate-one-walk.t
 t/guide-links.t
 t/hash-agility.t
+t/header-recipe-scaling.t
 t/headerparser.t
 t/ignore-prefixes.t
 t/interop.t
@@ -120,6 +121,7 @@ t/signer-result.t
 t/split-lmtp.t
 t/split.t
 t/synopsis.t
+t/syntax-strict.t
 t/tagvaluelist.t
 t/timestamp-syntax.t
 t/turscar.t
