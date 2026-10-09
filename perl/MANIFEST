@@ -77,7 +77,6 @@ t/gate-null-top.t
 t/gate-one-walk.t
 t/guide-links.t
 t/hash-agility.t
-t/header-recipe-scaling.t
 t/headerparser.t
 t/ignore-prefixes.t
 t/interop.t

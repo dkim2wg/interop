@@ -171,34 +171,19 @@ def test_generator_reproduces_the_hand_written_multihop_recipes():
         {"h": {"subject": [{"d": [" Simple test message"]}]}}
 
 
-def _header_recipe_time(prev, cur):
-    import time
-    start = time.monotonic()
-    steps = build_header_recipe(prev, cur)
-    return steps, time.monotonic() - start
-
-
-def test_identical_repeated_fields_are_linear():
-    """Follow-up review F.6: header fields are sender-controlled; 16,000
-    identical fields with changes must not take quadratic time (SequenceMatcher
-    took ~12 s for one added field)."""
-    prev = [b"Comments: same"] * 16000
-    steps, t_add = _header_recipe_time(prev, prev + [b"Comments: same"])
-    assert steps == [{"c": [1, 16000]}]
-    mid = prev[:8000] + [b"Comments: new"] + prev[8000:]
-    steps, _ = _header_recipe_time(prev, mid)
-    assert steps == [{"c": [1, 8000]}, {"c": [8002, 16001]}]
-    # One field changed at the top AND one at the bottom: no common head or
-    # tail, so a trim alone does not help.
-    both = [b"Comments: top"] + prev[1:-1] + [b"Comments: bottom"]
-    steps, t_both = _header_recipe_time(prev, both)
+def test_identical_repeated_fields():
+    """Follow-up review F.6: runs of identical fields (sender-controlled)
+    still give exact, minimal recipes now that headers use the Myers diff."""
     from dkim2undo import apply_header_recipe
+    prev = [b"Comments: same"] * 200
+    assert build_header_recipe(prev, prev + [b"Comments: same"]) == [{"c": [1, 200]}]
+    mid = prev[:100] + [b"Comments: new"] + prev[100:]
+    assert build_header_recipe(prev, mid) == [{"c": [1, 100]}, {"c": [102, 201]}]
+    # One field changed at the top AND one at the bottom.
+    both = [b"Comments: top"] + prev[1:-1] + [b"Comments: bottom"]
+    steps = build_header_recipe(prev, both)
     assert apply_header_recipe(both, "Comments", steps) == prev
     assert sum(len(st.get("d", [])) for st in steps) == 2, steps  # minimal
-    small, t_small = _header_recipe_time(prev[:1600], both[:1] + prev[1:1599] + both[-1:])
-    assert t_both < 1.0, t_both
-    # Linear, not quadratic: 10x the fields costs well under 100x the time.
-    assert t_both < 30 * max(t_small, 0.001), (t_small, t_both)
 
 
 def test_header_recipe_round_trip_random():

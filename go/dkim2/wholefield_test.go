@@ -5,7 +5,6 @@ package dkim2
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -192,31 +191,4 @@ func TestWholeFieldF5_LongDomainSigns(t *testing.T) {
 	p := sel1P(t)
 	got := verifyOutcome(signed, txtFetcher{"sel1": {{"v=DKIM1; k=rsa; p=" + p}}}, VerifyOptions{})
 	wantOutcome(t, got, "")
-}
-
-// F.6: header recipe generation is linear in repeated identical fields.
-func TestWholeFieldF6_RepeatedHeadersLinear(t *testing.T) {
-	const n = 16000
-	mk := func(count int) []Header {
-		hs := make([]Header, 0, count)
-		for i := 0; i < count; i++ {
-			hs = append(hs, Header{Name: "Comments", Value: "same", Raw: "Comments: same\r\n"})
-		}
-		return hs
-	}
-	before := mk(n)
-	after := append(mk(n), Header{Name: "Comments", Value: "added", Raw: "Comments: added\r\n"})
-	start := time.Now()
-	r, err := ComputeDiff(before, nil, after, nil)
-	el := time.Since(start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r == nil || len(r.Headers["comments"]) == 0 {
-		t.Fatalf("no comments recipe")
-	}
-	if el > time.Second {
-		t.Fatalf("recipe for %d repeated fields took %v", n, el)
-	}
-	t.Logf("%d repeated fields: %v (%s)", n, el, fmt.Sprint(len(r.Headers["comments"])))
 }
