@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -39,58 +40,158 @@ func (f *JSONKeyFetcher) FetchPublicKey(selector, domain string) (crypto.PublicK
 
 	domainRecs, ok := db[domain]
 	if !ok {
-		return nil, "", fmt.Errorf("domain %q not found in dns.json", domain)
+		return nil, "", fmt.Errorf("%w: domain %q not in dns.json", ErrKeyNotFound, domain)
 	}
 	key := selector + "._domainkey"
 	recs, ok := domainRecs[key]
 	if !ok {
-		return nil, "", fmt.Errorf("selector %q not found for %q in dns.json", key, domain)
+		return nil, "", fmt.Errorf("%w: %q not in dns.json for %q", ErrKeyNotFound, key, domain)
 	}
+	// Each TXT entry is one RR (its strings already joined).
+	var rrs [][]string
 	for _, rec := range recs {
 		if strings.ToLower(rec[0]) == "txt" {
-			return parseDKIM1TXT(rec[1])
+			rrs = append(rrs, []string{rec[1]})
 		}
 	}
-	return nil, "", fmt.Errorf("no TXT record for %s.%s", key, domain)
+	return keyFromTXTRecords(rrs, key+"."+domain)
 }
 
-// parseDKIM1TXT parses a DKIM1 TXT record and returns the public key.
-func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
-	tags := make(map[string]string)
-	for _, part := range strings.Split(txt, ";") {
-		part = strings.TrimSpace(part)
-		if eq := strings.IndexByte(part, '='); eq >= 0 {
-			k := strings.TrimSpace(part[:eq])
-			v := strings.TrimSpace(part[eq+1:])
-			tags[k] = v
+// Key-record outcomes (spec-06 §11.5).  A KeyFetcher wraps one of these
+// (errors.Is): ErrKeyNotFound for an absent record (the item is skipped), the
+// others for a record that is present but unusable ("PERMERROR
+// DKIM2-Signature i=<x> public key <selector> <problem>").  Any other fetch
+// error is a DNS failure: TEMPERROR ... could not be fetched.
+var (
+	// ErrKeyNotFound: no key record (NXDOMAIN, or no TXT RR at the name).
+	ErrKeyNotFound = errors.New("does not exist")
+
+	ErrKeyMultipleRecords   = errors.New("has multiple records")
+	ErrKeySyntax            = errors.New("has a syntax error")
+	ErrKeyRevoked           = errors.New("has been revoked")
+	ErrKeyAlgorithmMismatch = errors.New("algorithm mismatch")
+)
+
+// keyRecordProblem returns the §11.5 wording for a key-record error, or "".
+func keyRecordProblem(err error) string {
+	for _, e := range []error{ErrKeyMultipleRecords, ErrKeySyntax, ErrKeyRevoked, ErrKeyAlgorithmMismatch} {
+		if errors.Is(err, e) {
+			return e.Error()
 		}
 	}
+	return ""
+}
 
-	keyType := tags["k"]
-	if keyType == "" {
+// keyFromTXTRecords turns the TXT RRset at a key's name into a public key.
+// Each RR is its list of character-strings, concatenated with nothing between
+// them (dns-00 §3.4.2.2); more than one RR is an error.  An empty RRset keeps
+// the "no record" behaviour of an absent key.
+func keyFromTXTRecords(rrs [][]string, name string) (crypto.PublicKey, string, error) {
+	switch len(rrs) {
+	case 0:
+		return nil, "", fmt.Errorf("%w: no TXT record at %s", ErrKeyNotFound, name)
+	case 1:
+		return parseDKIM1TXT(strings.Join(rrs[0], ""))
+	default:
+		return nil, "", fmt.Errorf("%w (%d TXT records at %s)", ErrKeyMultipleRecords, len(rrs), name)
+	}
+}
+
+func isKeyWSP(r rune) bool { return r == ' ' || r == '\t' || r == '\r' || r == '\n' }
+
+// validKeyTagName: ALPHA *(ALPHA / DIGIT / "_") (dns-00 §3.2).
+func validKeyTagName(n string) bool {
+	if n == "" {
+		return false
+	}
+	for i := 0; i < len(n); i++ {
+		c := n[i]
+		alpha := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		if i == 0 && !alpha {
+			return false
+		}
+		if !alpha && !(c >= '0' && c <= '9') && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// parseDKIM1TXT validates a whole key record (dns-00 §3.2 tag-list, §3.4.1)
+// and returns its public key and the signature algorithm that key serves.
+// Tag names are case sensitive; a repeated tag, a v= that is not first or not
+// exactly DKIM1, or a missing/undecodable p= is a syntax error; an empty p= is
+// revoked; a k= other than rsa or ed25519 is an algorithm mismatch.  Unknown
+// and retired tags (h=, n=, s=, t=) are ignored.
+func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
+	tags := make(map[string]string)
+	idx := 0
+	for _, spec := range strings.Split(txt, ";") {
+		if strings.TrimFunc(spec, isKeyWSP) == "" {
+			continue // empty spec, e.g. after a trailing ";"
+		}
+		eq := strings.IndexByte(spec, '=')
+		if eq < 0 {
+			return nil, "", fmt.Errorf("%w: %q is not a tag=value", ErrKeySyntax, spec)
+		}
+		name := strings.TrimFunc(spec[:eq], isKeyWSP)
+		if !validKeyTagName(name) {
+			return nil, "", fmt.Errorf("%w: bad tag name %q", ErrKeySyntax, name)
+		}
+		if _, dup := tags[name]; dup {
+			return nil, "", fmt.Errorf("%w: repeated tag %s=", ErrKeySyntax, name)
+		}
+		val := strings.TrimFunc(spec[eq+1:], isKeyWSP)
+		if name == "v" && (idx != 0 || val != "DKIM1") {
+			return nil, "", fmt.Errorf("%w: v= must be the first tag and DKIM1", ErrKeySyntax)
+		}
+		tags[name] = val
+		idx++
+	}
+
+	pubB64, ok := tags["p"]
+	if !ok {
+		return nil, "", fmt.Errorf("%w: no p= tag", ErrKeySyntax)
+	}
+	pubB64 = strings.Map(func(r rune) rune {
+		if isKeyWSP(r) {
+			return -1
+		}
+		return r
+	}, pubB64)
+	if pubB64 == "" {
+		return nil, "", ErrKeyRevoked
+	}
+
+	keyType, ok := tags["k"]
+	if !ok {
 		keyType = "rsa"
 	}
-	pubB64 := tags["p"]
-	pubBytes, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(pubB64, "="))
+	if keyType != "rsa" && keyType != "ed25519" {
+		return nil, "", fmt.Errorf("%w: unsupported key type k=%s", ErrKeyAlgorithmMismatch, keyType)
+	}
+
+	// A base64string, padded to a multiple of four (spec-06 §2.13).
+	pubBytes, err := base64.StdEncoding.DecodeString(pubB64)
 	if err != nil {
-		return nil, "", fmt.Errorf("decoding public key: %w", err)
+		return nil, "", fmt.Errorf("%w: p= is not padded base64", ErrKeySyntax)
 	}
 
 	switch keyType {
 	case "ed25519":
-		if len(pubBytes) == 32 {
+		if len(pubBytes) == ed25519.PublicKeySize {
 			return ed25519.PublicKey(pubBytes), "ed25519-sha256", nil
 		}
 		key, err := x509.ParsePKIXPublicKey(pubBytes)
 		if err != nil {
-			return nil, "", fmt.Errorf("parsing ed25519 public key: %w", err)
+			return nil, "", fmt.Errorf("%w: parsing ed25519 public key: %v", ErrKeySyntax, err)
 		}
 		edKey, ok := key.(ed25519.PublicKey)
 		if !ok {
-			return nil, "", fmt.Errorf("expected ed25519 key, got %T", key)
+			return nil, "", fmt.Errorf("%w: k=ed25519 but p= is a %T", ErrKeySyntax, key)
 		}
 		return edKey, "ed25519-sha256", nil
-	case "rsa", "rsa-sha256":
+	default: // rsa
 		key, err := x509.ParsePKIXPublicKey(pubBytes)
 		if err != nil {
 			// Some DKIM keys are published as bare PKCS#1 (RSAPublicKey)
@@ -98,15 +199,13 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 			if k1, e1 := x509.ParsePKCS1PublicKey(pubBytes); e1 == nil {
 				return k1, "rsa-sha256", nil
 			}
-			return nil, "", fmt.Errorf("parsing RSA public key: %w", err)
+			return nil, "", fmt.Errorf("%w: parsing RSA public key: %v", ErrKeySyntax, err)
 		}
 		rsaKey, ok := key.(*rsa.PublicKey)
 		if !ok {
-			return nil, "", fmt.Errorf("expected RSA key, got %T", key)
+			return nil, "", fmt.Errorf("%w: k=rsa but p= is a %T", ErrKeySyntax, key)
 		}
 		return rsaKey, "rsa-sha256", nil
-	default:
-		return nil, "", fmt.Errorf("unsupported key type: %q", keyType)
 	}
 }
 
@@ -117,12 +216,17 @@ func (f *NetKeyFetcher) FetchPublicKey(selector, domain string) (crypto.PublicKe
 	fqdn := selector + "._domainkey." + domain
 	txts, err := net.DefaultResolver.LookupTXT(context.Background(), fqdn)
 	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return nil, "", fmt.Errorf("%w: %s", ErrKeyNotFound, fqdn)
+		}
 		return nil, "", fmt.Errorf("DNS lookup for %s: %w", fqdn, err)
 	}
-	for _, txt := range txts {
-		if strings.Contains(txt, "v=DKIM1") {
-			return parseDKIM1TXT(txt)
-		}
+	// LookupTXT returns one string per RR, the RR's character-strings
+	// already concatenated with nothing between them.
+	rrs := make([][]string, len(txts))
+	for i, txt := range txts {
+		rrs[i] = []string{txt}
 	}
-	return nil, "", fmt.Errorf("no DKIM1 TXT record at %s", fqdn)
+	return keyFromTXTRecords(rrs, fqdn)
 }

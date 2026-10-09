@@ -27,52 +27,45 @@ algorithm as the C, Python, Go and Mailman generators.
 
 ## Header folding rules
 
-This is critical to get right. Misunderstanding folding breaks signatures.
+Two different canonicalizations are involved, and they treat folding
+whitespace differently. Keep them apart.
 
-### Three categories of headers
+1. **Header hash** (the `h=` header hash in a Message-Instance; Common's
+   `dkim2_canonicalize_header`): covers ordinary header fields --
+   everything except Message-Instance, DKIM2-Signature, X-* and the other
+   fields `should_skip` lists. It unfolds and collapses each WSP run to a
+   single space. So re-folding at an existing run of whitespace leaves the
+   hash alone, but inserting a fold where there was no whitespace adds a
+   space and breaks every Message-Instance that hashed that field.
 
-1. **A header we are creating right now**: We can fold anywhere we want,
-   because nobody has signed it yet. The fold positions become part of the
-   header's raw bytes from this point forward. Per RFC 5322 Section 2.1.1,
-   lines SHOULD be no more than 78 characters and MUST be no more than 998.
-   We target 72 characters.
+2. **Signing input** (spec-06 §9.6; Common's
+   `dkim2_canonicalize_sig_header`): covers only the Message-Instance and
+   DKIM2-Signature fields. It unfolds and then deletes ALL WSP. Folding these
+   two fields anywhere -- at creation or later -- cannot change any
+   signature, and they are not in any header hash.
 
-2. **A header we received from elsewhere** (disk, network, previous hop):
-   We can only re-fold at positions where whitespace already exists. Relaxed
-   header canonicalization collapses WSP runs to a single space, so inserting
-   `\r\n` before existing whitespace doesn't change the canonical form.
-   Inserting a fold where there is no existing whitespace adds a space to the
-   canonical form and will break any signature that covers this header.
+### What that means in practice
 
-3. **Headers in a signing input**: Used as-is. Canonicalization handles any
-   existing folding. Never modify.
+- **A field we are creating** (a Message-Instance, a DKIM2-Signature): fold
+  wherever is convenient. Per RFC 5322 §2.1.1 lines SHOULD be at most 78
+  characters and MUST be at most 998; we target 72 (`fold_header()` breaks
+  at `; ` tag boundaries first).
+- **An ordinary field we received** (disk, network, previous hop): re-fold
+  only at existing whitespace, or not at all -- rule 1.
+- **A Message-Instance or DKIM2-Signature we received**: re-folding would not
+  break a signature (rule 2), but we still never rewrite one. Keeping their
+  bytes as they arrived is a discipline -- byte-stable fixtures, raw fields
+  that match what other implementations logged -- not a cryptographic
+  requirement.
 
-### DKIM2-Signature — the header we create
+### DKIM2-Signature signing order
 
-Folding = inserting `\r\n ` whitespace into long lines (primarily base64
-values). It must happen **before** signature computation. The signer:
-
-1. Constructs the DKIM2-Signature with empty `s=` values
-2. Folds it at 72 chars (`as_folded_string_without_data()`)
-3. Uses the folded form as the signing input (passed to
-   `build_signing_input()` via the `signing_header` parameter)
-4. Computes the signature over the canonicalized folded form
-5. Inserts the real `s=` values and folds the complete header
-   (`as_folded_string()`) for insertion into the message
-
-The verifier reads the header from the message (already folded) and uses
-`as_string_without_data()` (unfolded) — canonicalization collapses the
-whitespace, producing the same canonical form either way.
-
-After the header is inserted into the message, it must never be refolded.
-The next hop's signer will include its raw bytes in a new signing input.
-
-### Message-Instance headers
-
-MI headers are created before DKIM2-Signature signing. They can be folded
-freely at creation time (using `fold_header()` at tag boundaries). Once
-created and in the message, they become category 2 headers and must not
-be refolded.
+The signer builds the field with empty `s=` values, folds it
+(`as_folded_string_without_data()`), canonicalizes that as the signing
+input (`build_signing_input()`'s `signing_header`), signs, then inserts the
+real `s=` values and folds the complete field (`as_folded_string()`). The
+verifier rebuilds the input from the unfolded form
+(`as_string_without_data()`); rule 2 makes the two identical.
 
 ### Implementation
 

@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.17';
+our $VERSION = '0.18';
 
 
 use Crypt::Digest::SHA256;
@@ -290,17 +290,23 @@ sub parse {
     # Strip leading whitespace
     $header =~ s/^\s+//;
 
-    # Parse tag-value format: m=N; h=...; r=...
-    my %tags;
+    # Parse tag-value format: m=N; h=...; r=... Tag identifiers are case
+    # insignificant and there MUST be only one of each kind (spec-06 §7), so
+    # names are lowercased, and a repeat in any case is a syntax error --
+    # never a silent overwrite, which let a wrong h= ahead of the right one
+    # pass (review R5).
+    my (%tags, $dup);
     for my $part (split /\s*;\s*/, $header) {
         next unless $part =~ /^(\w+)\s*=\s*(.*)/s;
-        my ($name, $val) = ($1, $2);
+        my ($name, $val) = (lc $1, $2);
         $val =~ s/\s//gs;
+        $dup = 1 if exists $tags{$name};
         $tags{$name} = $val;
     }
 
     die "missing m= tag in Message-Instance header"
         unless exists $tags{m};
+    die "PERMERROR Message-Instance m=$tags{m} syntax error\n" if $dup;
     $self->{bits}{m} = $tags{m};
 
     # spec-06 §7.3: h= is a list of hash-sets
@@ -741,6 +747,9 @@ sub _check_body_unchanged {
 
 sub calculate {
     my ($class, $current, $previous, %opts) = @_;
+    Mail::DKIM2::Common::_check_options("$class->calculate", \%opts,
+        qw(Algs BodyHash BodyRecipe EpilogueThreshold IgnorePrefixes
+           MaxRecipeLiterals UseEpilogue));
     croak "need a message" unless $current;
 
     my $self = bless {}, $class;
@@ -958,6 +967,8 @@ sub calculate {
 
 sub verify {
     my ($class, $msg, %opts) = @_;
+    Mail::DKIM2::Common::_check_options("$class->verify", \%opts,
+        qw(HeadersOnly IgnorePrefixes));
     croak "need a message" unless $msg;
     check_ignore_prefixes($opts{IgnorePrefixes});
 
@@ -1094,6 +1105,7 @@ sub _body_raw_set {
 
 sub undo {
     my ($class, $msg, %opts) = @_;
+    Mail::DKIM2::Common::_check_options("$class->undo", \%opts, qw(HeadersOnly));
     croak "need a message" unless $msg;
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
@@ -1146,6 +1158,8 @@ sub undo {
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
     my ($class, $msg, %opts) = @_;
+    Mail::DKIM2::Common::_check_options("$class->chain_verifies", \%opts,
+        qw(IgnorePrefixes));
     check_ignore_prefixes($opts{IgnorePrefixes});
     unless (ref($msg) && $msg->isa('Email::MIME')) {
         $msg = parse_mime("$msg");

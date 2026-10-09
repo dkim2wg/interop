@@ -96,7 +96,7 @@ type mapKeyFetcher struct{ dns map[string]string }
 func (f *mapKeyFetcher) FetchPublicKey(selector, domain string) (crypto.PublicKey, string, error) {
 	txt, ok := f.dns[selector+"._domainkey."+domain]
 	if !ok {
-		return nil, "", os.ErrNotExist
+		return nil, "", ErrKeyNotFound
 	}
 	return parseDKIM1TXT(txt)
 }

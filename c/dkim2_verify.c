@@ -116,29 +116,62 @@ static int relaxed_domain_match(const char *d, const char *mf_domain) {
    case-insensitive for both: algorithm names are RFC 5234 ABNF quoted
    strings, and a Selector is a Domain (§3.5) -- DNS names are
    case-insensitive. Returns 0 if clean, -1 with errbuf filled otherwise. */
-int dkim2_sig_check_duplicates(const dkim2_sig_t *sig, char *errbuf, size_t errbufsz) {
-    for (int i = 0; i < sig->n_ssets; i++) {
-        for (int j = i + 1; j < sig->n_ssets; j++) {
-            if (strcasecmp(sig->ssets[i].selector, sig->ssets[j].selector) == 0) {
-                snprintf(errbuf, errbufsz,
-                    "PERMERROR DKIM2-Signature i=%d has a duplicate selector", sig->i);
-                return -1;
-            }
-        }
-    }
+static const dkim2_sigset_t *g_cmp_ssets; /* qsort context (single-threaded use) */
 
-    for (int i = 0; i < sig->n_ssets; i++) {
-        int cnt = 0;
-        for (int j = 0; j < sig->n_ssets; j++)
-            if (strcasecmp(sig->ssets[i].alg, sig->ssets[j].alg) == 0) cnt++;
-        if (cnt > 2) {
+static int cmp_sel(const void *a, const void *b) {
+    return strcasecmp(g_cmp_ssets[*(const int *)a].selector,
+                      g_cmp_ssets[*(const int *)b].selector);
+}
+static int cmp_alg(const void *a, const void *b) {
+    return strcasecmp(g_cmp_ssets[*(const int *)a].alg,
+                      g_cmp_ssets[*(const int *)b].alg);
+}
+
+/* Sorted, not pairwise: an s= with thousands of items stays O(n log n). */
+int dkim2_sig_check_duplicates(const dkim2_sig_t *sig, char *errbuf, size_t errbufsz) {
+    int n = sig->n_ssets;
+    if (n < 2) return 0;
+    int *idx = malloc((size_t)n * sizeof *idx);
+    if (!idx) {
+        snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature i=%d syntax error", sig->i);
+        return -1;
+    }
+    int rc = 0;
+    for (int i = 0; i < n; i++) idx[i] = i;
+    g_cmp_ssets = sig->ssets;
+    qsort(idx, (size_t)n, sizeof *idx, cmp_sel);
+    for (int i = 1; i < n; i++)
+        if (strcasecmp(sig->ssets[idx[i - 1]].selector, sig->ssets[idx[i]].selector) == 0) {
+            snprintf(errbuf, errbufsz,
+                "PERMERROR DKIM2-Signature i=%d has a duplicate selector", sig->i);
+            rc = -1; goto out;
+        }
+
+    qsort(idx, (size_t)n, sizeof *idx, cmp_alg);
+    for (int i = 0, run = 1; i < n; i++, run++) {
+        if (i == 0 || strcasecmp(sig->ssets[idx[i - 1]].alg, sig->ssets[idx[i]].alg) != 0)
+            run = 1;
+        if (run > 2) {
             snprintf(errbuf, errbufsz,
                 "PERMERROR DKIM2-Signature i=%d has more selectors than allowed", sig->i);
-            return -1;
+            rc = -1; goto out;
         }
     }
+out:
+    g_cmp_ssets = NULL;
+    free(idx);
+    return rc;
+}
 
-    return 0;
+/* spec-06 §3.4/§8.9: the signing algorithms we implement, by exact
+   (case-significant) name. Anything else is ignored. */
+static int known_sig_alg(const char *alg) {
+    return strcmp(alg, "rsa-sha256") == 0 || strcmp(alg, "ed25519-sha256") == 0;
+}
+
+/* The key type an implemented algorithm needs (dkim2_pubkey_t.alg). */
+static const char *sig_alg_key_type(const char *alg) {
+    return strcmp(alg, "rsa-sha256") == 0 ? "rsa" : "ed25519";
 }
 
 /* Build signing input for the verifier — same structure as §8.5 signing,
@@ -217,19 +250,28 @@ static char *blank_sig_values(const char *raw_val) {
     return out;
 }
 
-static void append_canon(char *buf, size_t *pos, size_t bufsz,
-                         const char *hdr_name, const char *val) {
+/* Append the canonical form of "hdr_name: val" to *buf, growing it.
+   Returns 0, or -1 on allocation failure. */
+static int append_canon(char **buf, size_t *pos, size_t *bufsz,
+                        const char *hdr_name, const char *val) {
     size_t vl = strlen(val);
     char *full = malloc(vl + strlen(hdr_name) + 5);
-    if (!full) return;
+    if (!full) return -1;
     sprintf(full, "%s: %s\r\n", hdr_name, val);
     char *canon = canon_for_sig(full);
     free(full);
-    if (canon) {
-        size_t cl = strlen(canon);
-        if (*pos + cl < bufsz) { memcpy(buf + *pos, canon, cl); *pos += cl; }
-        free(canon);
+    if (!canon) return -1;
+    size_t cl = strlen(canon);
+    if (*pos + cl > *bufsz) {
+        size_t nsz = (*pos + cl) * 2;
+        char *nb = realloc(*buf, nsz);
+        if (!nb) { free(canon); return -1; }
+        *buf = nb; *bufsz = nsz;
     }
+    memcpy(*buf + *pos, canon, cl);
+    *pos += cl;
+    free(canon);
+    return 0;
 }
 
 static unsigned char *build_verify_input(
@@ -261,13 +303,16 @@ static unsigned char *build_verify_input(
         sig_arr[j+1] = key;
     }
 
-    char *buf = malloc(65536);
+    size_t bufsz = 65536;
+    char *buf = malloc(bufsz);
     if (!buf) return NULL;
     size_t pos = 0;
 
     /* MI headers ascending m= */
     for (int i = 0; i < n_mi; i++)
-        append_canon(buf, &pos, 65536, "message-instance", mi_arr[i]->raw_value);
+        if (append_canon(&buf, &pos, &bufsz, "message-instance", mi_arr[i]->raw_value) < 0) {
+            free(buf); return NULL;
+        }
 
     /* DKIM2-Signature headers ascending i= */
     for (int i = 0; i < n_sig; i++) {
@@ -277,9 +322,10 @@ static unsigned char *build_verify_input(
             to_use = blank_sig_values(sig->raw_value);
         else
             to_use = strdup(sig->raw_value);
-        if (!to_use) continue;
-        append_canon(buf, &pos, 65536, "dkim2-signature", to_use);
+        if (!to_use) { free(buf); return NULL; }
+        int ar = append_canon(&buf, &pos, &bufsz, "dkim2-signature", to_use);
         free(to_use);
+        if (ar < 0) { free(buf); return NULL; }
     }
 
     *out_len = pos;
@@ -747,63 +793,109 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 SETSTATUS(DKIM2_PERMERROR, "%s", dup_errbuf);
         }
 
-        /* Verify all s= items for this signature */
-        int any_pass = 0;
+        /* The outcome of this signature's s= items (behaviour spec E):
+           1. unimplemented algorithms are ignored; none implemented: FAIL.
+           2. an implemented item's value must be a padded base64string
+              (FWS already removed by the parser): else PERMERROR syntax
+              error, before any key lookup.
+           3. fetch every implemented item's key: DNS failure is TEMPERROR;
+              a present but unusable record is PERMERROR for the whole
+              signature, even if another item verifies; absent is skipped.
+           4. all absent: PERMERROR naming the first.
+           5. verify every item that has a key; any failure is FAIL. */
+        int n_known = 0;
         for (int j = 0; j < sig->n_ssets; j++) {
+            if (!known_sig_alg(sig->ssets[j].alg)) continue;
+            n_known++;
+            if (!b64_is_strict(sig->ssets[j].sig_b64))
+                SETSTATUS(DKIM2_PERMERROR,
+                    "PERMERROR DKIM2-Signature i=%d syntax error", sig->i);
+        }
+        if (n_known == 0)
+            SETSTATUS(DKIM2_FAIL,
+                "FAIL DKIM2-Signature i=%d has no signature with a supported algorithm", sig->i);
+
+        dkim2_pubkey_t **keys = calloc((size_t)sig->n_ssets, sizeof *keys);
+        if (!keys)
+            SETSTATUS(DKIM2_TEMPERROR, "TEMPERROR: out of memory");
+        const char *first_absent = NULL;
+        int n_keys = 0;
+        dkim2_status_t key_status = DKIM2_OK;
+        for (int j = 0; j < sig->n_ssets && key_status == DKIM2_OK; j++) {
             dkim2_sigset_t *sset = &sig->ssets[j];
+            if (!known_sig_alg(sset->alg)) continue;
 
             dkim2_status_t dns_status;
             const char *dns_err = NULL;
             dkim2_pubkey_t *pubkey = dkim2_dns_getkey(
                 sset->selector, sig->d, &dns_status, &dns_err);
+            const char *why = NULL;
 
-            if (!pubkey) {
-                if (dns_status == DKIM2_TEMPERROR)
-                    SETSTATUS(DKIM2_TEMPERROR,
-                        "TEMPERROR: DNS lookup for %s._domainkey.%s: %s",
-                        sset->selector, sig->d, dns_err ? dns_err : "unknown");
-                continue; /* PERMERROR for this sset — try next */
-            }
-            if (pubkey->revoked) {
+            if (!pubkey || pubkey->revoked) {
                 dkim2_pubkey_free(pubkey);
-                continue;
+                pubkey = NULL;
+                if (dns_err == DKIM2_KEYERR_ABSENT) {
+                    if (!first_absent) first_absent = sset->selector;
+                    continue;
+                }
+                if (dns_status == DKIM2_TEMPERROR) {
+                    key_status = DKIM2_TEMPERROR;
+                    snprintf(result->message, sizeof result->message,
+                        "TEMPERROR DKIM2-Signature i=%d public key %s %s",
+                        sig->i, sset->selector, dns_err ? dns_err : DKIM2_KEYERR_FETCH);
+                    break;
+                }
+                why = dns_err ? dns_err : DKIM2_KEYERR_SYNTAX;
+            } else if (strcmp(pubkey->alg, sig_alg_key_type(sset->alg)) != 0) {
+                why = DKIM2_KEYERR_ALG;                     /* §8.9 */
+            } else if (strcmp(sset->alg, "rsa-sha256") == 0 &&
+                       EVP_PKEY_bits(pubkey->pkey) < 1024) {
+                why = "is shorter than 1024 bits";          /* §3.2 */
             }
-
-            if (strcmp(sset->alg, "rsa-sha256") != 0 &&
-                strcmp(sset->alg, "ed25519-sha256") != 0) {
+            if (why) {
                 dkim2_pubkey_free(pubkey);
-                continue;
+                key_status = DKIM2_PERMERROR;
+                snprintf(result->message, sizeof result->message,
+                    "PERMERROR DKIM2-Signature i=%d public key %s %s",
+                    sig->i, sset->selector, why);
+                break;
             }
-
-            /* §3.2: RSA keys MUST be at least 1024 bits; skip weaker keys so
-               they cannot verify a signature. */
-            if (strcmp(sset->alg, "rsa-sha256") == 0 &&
-                EVP_PKEY_bits(pubkey->pkey) < 1024) {
-                dkim2_pubkey_free(pubkey);
-                continue;
-            }
-
-            size_t sign_input_len;
-            unsigned char *sign_input = build_verify_input(
-                ctx->mi_list, ctx->sig_list, sig, j, &sign_input_len);
-
-            if (!sign_input) {
-                dkim2_pubkey_free(pubkey);
-                SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: Failed to build signing input for DKIM2-Signature i=%d", sig->i);
-            }
-
-            int vr = dkim2_verify(pubkey->pkey, sset->alg,
-                sign_input, sign_input_len, sset->sig_b64);
-            dkim2_pubkey_free(pubkey);
-            free(sign_input);
-
-            if (vr == 0) { any_pass = 1; break; }
+            keys[j] = pubkey;
+            n_keys++;
         }
 
-        if (!any_pass)
+        const char *failed_sel = NULL;
+        int build_failed = 0;
+        if (key_status == DKIM2_OK && n_keys > 0) {
+            for (int j = 0; j < sig->n_ssets && !failed_sel && !build_failed; j++) {
+                if (!keys[j]) continue;
+                size_t sign_input_len;
+                unsigned char *sign_input = build_verify_input(
+                    ctx->mi_list, ctx->sig_list, sig, j, &sign_input_len);
+                if (!sign_input) { build_failed = 1; break; }
+                if (dkim2_verify(keys[j]->pkey, sig->ssets[j].alg,
+                        sign_input, sign_input_len, sig->ssets[j].sig_b64) != 0)
+                    failed_sel = sig->ssets[j].selector;
+                free(sign_input);
+            }
+        }
+        for (int j = 0; j < sig->n_ssets; j++) dkim2_pubkey_free(keys[j]);
+        free(keys);
+
+        if (key_status != DKIM2_OK) {
+            result->status = key_status;
+            return;
+        }
+        if (n_keys == 0)
+            SETSTATUS(DKIM2_PERMERROR,
+                "PERMERROR DKIM2-Signature i=%d public key %s %s",
+                sig->i, first_absent, DKIM2_KEYERR_ABSENT);
+        if (build_failed)
+            SETSTATUS(DKIM2_PERMERROR,
+                "PERMERROR: Failed to build signing input for DKIM2-Signature i=%d", sig->i);
+        if (failed_sel)
             SETSTATUS(DKIM2_FAIL,
-                "FAIL: DKIM2-Signature i=%d signature verification failed", sig->i);
+                "FAIL DKIM2-Signature i=%d %s incorrect signature", sig->i, failed_sel);
     }
 
     /* §8.2: Inter-sig Chain of Custody — mf= domain of sig[N] must relaxed-match

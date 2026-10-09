@@ -36,7 +36,8 @@ static void test_canon_append(char *buf, size_t *pos,
 
 static char *g_dns_txt = NULL;
 
-static char *test_dns_override(const char *qname) {
+static char *test_dns_override(const char *qname, int *n_records) {
+    (void)n_records;
     if (strcmp(qname, "test._domainkey.example.com") == 0 && g_dns_txt)
         return strdup(g_dns_txt);
     return NULL;
@@ -198,7 +199,7 @@ int main(void) {
         raw_headers, 3, body, mi_val, tampered_sig);
     assert(st == DKIM2_FAIL);
 
-    /* --- Error: DNS lookup fails (unknown Selector) → FAIL (no passing ssets) --- */
+    /* --- Error: DNS lookup fails (unknown Selector) → no passing ssets --- */
     char *orig_dns = g_dns_txt;
     g_dns_txt = NULL; /* DNS override returns NULL → live DNS would fail */
     /* Replace Selector with one that won't match the override */
@@ -223,7 +224,11 @@ int main(void) {
         g_dns_txt = NULL;
         st = verify_test_message(mail_from, rcpts, raw_headers, 3, body, mi2, sig2);
         g_dns_txt = saved_txt;
-        assert(st == DKIM2_FAIL); /* no passing ssets */
+        /* No passing ssets. This lookup reaches live DNS, where
+           example.com publishes a wildcard revoked key ("v=DKIM1; p="):
+           that is PERMERROR "public key badsel has been revoked" (spec-06
+           §11.5); an absent record would be FAIL. Never a pass. */
+        assert(st == DKIM2_FAIL || st == DKIM2_PERMERROR);
         free(mi2); free(sig2);
     }
 

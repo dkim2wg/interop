@@ -159,6 +159,12 @@ func parseMI(raw string) (*MessageInstance, error) {
 		return nil, fmt.Errorf("invalid m= tag: %w", err)
 	}
 
+	// §7: tag names are case insignificant and each kind appears once;
+	// "h=..; H=.." or "m=1; M=1" is a syntax error, never first/last-wins.
+	if tvl.duplicate != "" {
+		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+	}
+
 	h := stripB64WSP(tvl.get("h"))
 	hashes := parseHashSets(h)
 	if len(hashes) == 0 {

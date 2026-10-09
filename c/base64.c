@@ -55,3 +55,14 @@ int b64_decode(const char *in, unsigned char *out, size_t outlen) {
     if (n >= 3) { if (j >= outlen) return -1; out[j++] = (unsigned char)((buf[1] << 4) | (buf[2] >> 2)); }
     return (int)j;
 }
+
+int b64_is_strict(const char *in) {
+    size_t n = 0, pad = 0;
+    for (; *in; in++) {
+        if (*in == ' ' || *in == '\t' || *in == '\r' || *in == '\n') continue;
+        if (*in == '=') { pad++; n++; continue; }
+        if (pad || dec_char(*in) < 0) return 0;
+        n++;
+    }
+    return n > 0 && pad <= 2 && n % 4 == 0;
+}

@@ -104,7 +104,7 @@ func TestSignatureParseErrorsCarryISequence(t *testing.T) {
 		{
 			name: "invalid t= (i= already known)",
 			raw:  "DKIM2-Signature: i=1; m=1; t=abc;",
-			want: "DKIM2-Signature i=1 tag=t syntax error",
+			want: "PERMERROR DKIM2-Signature i=1 syntax error",
 		},
 		{
 			name: "missing d= (i= already known)",

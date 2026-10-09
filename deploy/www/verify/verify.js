@@ -30,15 +30,28 @@ function signedFields(fields) {
   return fields.filter((f) => !isUnsignedHeader(f.name) && !SIG_MI_NAMES.has(f.name.toLowerCase()));
 }
 
-// Parse the s= sig-set list into [{selector, alg, sig}].
+// Parse the s= sig-set list into [{selector, alg, sig}], once per signature.
+// The algorithm name is kept byte-for-byte: tag values are case significant
+// (§8), so "RSA-SHA256" is an unknown algorithm, not rsa-sha256. The
+// signature value has its FWS removed (parseTagList already strips WSP).
 function parseSigSets(sValue) {
   return (sValue || '').split(',').map((set) => {
     const [selector, alg, sig] = set.split(':');
-    return { selector: (selector || '').trim(), alg: (alg || '').trim().toLowerCase(), sig: (sig || '').trim() };
+    return { selector: (selector || '').trim(), alg: (alg || '').trim(), sig: (sig || '').replace(/[ \t\r\n]+/g, '') };
   });
 }
 
+// §3.4: the implemented signature algorithms, exactly as written (§8.9).
 const SUPPORTED_ALGS = new Set(['rsa-sha256', 'ed25519-sha256']);
+// A message-sig is a base64string (§8.9).
+// A base64string: non-empty, padded with "=" to a multiple of four (§2.13).
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/;
+
+// The raw value of a parsed tag (parseTagList strips ALL whitespace from
+// .value; some rules need to see internal WSP), trimmed of surrounding WSP.
+function rawTagValue(tag) {
+  return tag.raw.slice(tag.raw.indexOf('=') + 1).replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+}
 
 // spec-06 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag: a
 // Selector MUST NOT appear more than once, and the same signing algorithm may
@@ -220,15 +233,21 @@ async function verifyOnce(raw, opts = {}) {
   for (const m of miNums) {
     const mi = instances[m];
     for (const t of ['m', 'h']) if (!(t in mi.map)) structErr.push(`Message-Instance m=${m} tag=${t} missing`);
-    // §7: tags may appear in any order but MUST be only one of each kind.
-    const dupM = duplicateTag(mi.tags);
-    if (dupM) structErr.push(`Message-Instance m=${m} tag=${dupM} appears more than once`);
+    // §7: tag identifiers are case insignificant and there MUST be only one
+    // of each kind: h= twice, or h= and H=, is a syntax error (never first-
+    // or last-one-wins).
+    if (duplicateTag(mi.tags)) structErr.push(`PERMERROR Message-Instance m=${m} syntax error`);
   }
   for (const i of sigNums) {
     const s = signatures[i];
     // §8: tags may appear in any order but MUST be only one of each kind.
     const dupS = duplicateTag(s.tags);
     if (dupS) structErr.push(`DKIM2-Signature i=${i} tag=${dupS} appears more than once`);
+    // §8.4: t= is 1*DIGIT. Checked here, whether or not the age check runs
+    // (opts.skipTimestamp). Read the raw value: parseTagList strips internal
+    // WSP, which would turn "12 34" into "1234".
+    const tTag = s.tags.find((t) => t.tag === 't');
+    if (tTag && !/^[0-9]+$/.test(rawTagValue(tTag))) structErr.push(`PERMERROR DKIM2-Signature i=${i} syntax error`);
     // §8.3: the n= nonce value MUST NOT exceed 64 characters.
     if ('n' in s.map && s.map.n.length > 64) structErr.push(`DKIM2-Signature i=${i} n= nonce exceeds 64 characters`);
   }
@@ -441,14 +460,13 @@ async function verifyOnce(raw, opts = {}) {
     // the crypto (matching the reference /validate/ behaviour). The upgrade to
     // 'warn' happens only if the signature otherwise passes (see below).
     let expired = false;
-    if (!opts.skipTimestamp && sig.map.t) {
+    // t= is 1*DIGIT (checked in §11.2 above); 10^12 and beyond fit a double.
+    if (!opts.skipTimestamp) {
       const t = parseInt(sig.map.t, 10);
-      if (Number.isFinite(t)) {
-        const ageDays = (now - t) / 86400;
-        if (ageDays > 14) {
-          expired = true;
-          level.timestamp = { ok: false, status: 'expired', detail: `signature more than 14 days old (${Math.floor(ageDays)}d)` };
-        }
+      const ageDays = (now - t) / 86400;
+      if (ageDays > 14) {
+        expired = true;
+        level.timestamp = { ok: false, status: 'expired', detail: `signature more than 14 days old (${Math.floor(ageDays)}d)` };
       }
     }
 
@@ -528,50 +546,75 @@ async function verifyOnce(raw, opts = {}) {
       levels.push(level);
       continue;
     }
-    let anyChecked = false, allPass = true;
-    for (const ss of sigSets) {
-      if (!SUPPORTED_ALGS.has(ss.alg)) continue; // §3.4 ignore unknown
-      anyChecked = true;
-      let ok = false, detail = '';
+    // §3.4: an item naming an algorithm we do not implement is ignored
+    // entirely -- no key lookup, never verified. §8.9: every item we do
+    // implement must carry a non-empty base64 signature; checked for all of
+    // them before any key lookup.
+    const known = sigSets.filter((ss) => SUPPORTED_ALGS.has(ss.alg));
+    if (known.some((ss) => !BASE64.test(ss.sig))) {
+      level.result = 'permerror';
+      level.detail = `PERMERROR DKIM2-Signature i=${i} syntax error`;
+      bump('permerror');
+      levels.push(level);
+      continue;
+    }
+    // §E: an absent key (NXDOMAIN / no TXT) skips that item; a present but
+    // unusable record (multiple, syntax, revoked, mismatch) is a PERMERROR
+    // for the whole signature even if another item verifies. If every
+    // implemented item is absent, PERMERROR naming the first absent one.
+    let anyChecked = known.length > 0, allPass = true;
+    const absent = [];
+    for (const ss of known) {
+      let ok = false, detail = '', status;
       try {
         const key = await fetchKey(ss.selector, sig.map.d);
         const sigBytes = b64ToBytes(ss.sig);
-        if (ss.alg === 'ed25519-sha256') {
-          if (key.k !== 'ed25519') { detail = 'algorithm mismatch'; level.itemPerm = true; }
-          else ok = await verifyEd25519(key.p, sigBytes, inputHash);
-        } else { // rsa-sha256
-          if (key.k !== 'rsa') { detail = 'algorithm mismatch'; level.itemPerm = true; }
-          else ok = await verifyRsa(key.p, sigBytes, inputBytes);
-        }
+        // §8.9/§11.5: the key must be of the algorithm's type (k= is case
+        // significant; an unknown k= is never read as RSA).
+        const want = ss.alg === 'ed25519-sha256' ? 'ed25519' : 'rsa';
+        if (key.k !== want) throw new Error('key-mismatch');
+        ok = ss.alg === 'ed25519-sha256'
+          ? await verifyEd25519(key.p, sigBytes, inputHash)
+          : await verifyRsa(key.p, sigBytes, inputBytes);
       } catch (e) {
-        detail = keyErrorDetail(e);
-        // §11.5/§11.6: a permanent key problem (not found, syntax, revoked,
-        // too small) is a permerror; a fetch failure is a temperror.
-        if (e.message === 'key-temperror') { level.itemTemp = true; }
-        else if (e.message === 'key-tooshort') { detail = `RSA public key size too small, ${e.bits} bits`; level.itemPerm = true; }
+        detail = keyErrorDetail(e, ss.selector);
+        if (e.message === 'key-notfound') {
+          absent.push(ss.selector);
+          level.items.push({ selector: ss.selector, algorithm: ss.alg, result: detail, absent: true });
+          continue;
+        }
+        // §11.5/§11.6: a present but unusable key (multiple records, syntax,
+        // revoked, algorithm mismatch, too small) is a permerror; a fetch
+        // failure is a temperror.
+        if (e.message === 'key-temperror') { level.itemTemp = true; status = 'temp'; }
+        else if (e.message === 'key-tooshort') { detail = `public key ${ss.selector} RSA key size too small, ${e.bits} bits`; level.itemPerm = true; status = 'perm'; }
         else if (e.message === 'ed25519-unsupported') { detail = 'ed25519 unsupported in this browser'; }
-        else if (['key-notfound', 'key-multiple', 'key-syntax', 'key-revoked'].includes(e.message)) { level.itemPerm = true; }
+        else if (['key-multiple', 'key-syntax', 'key-revoked', 'key-mismatch'].includes(e.message)) { level.itemPerm = true; status = 'perm'; }
       }
       if (!ok) allPass = false;
-      level.items.push({ selector: ss.selector, algorithm: ss.alg, result: ok ? 'pass' : (detail || 'fail') });
+      level.items.push({ selector: ss.selector, algorithm: ss.alg, result: ok ? 'pass' : (detail || 'fail'), status });
     }
-    if (!anyChecked) {
+    if (anyChecked && absent.length === known.length) {
+      level.result = 'permerror';
+      level.detail = `PERMERROR DKIM2-Signature i=${i} public key ${absent[0]} does not exist`;
+      bump('permerror');
+    } else if (!anyChecked) {
       // No verifiable signature set (no supported algorithm, or none parsed):
       // this signature cannot be trusted — fail it (matches algorithm_only
       // _future=fail). §3.4 only lets us IGNORE unknown algs alongside a known
       // one, not accept a signature we cannot check at all.
       level.result = 'fail';
-      if (!level.detail) level.detail = `DKIM2-Signature i=${i} has no supported signature algorithm`;
+      if (!level.detail) level.detail = `DKIM2-Signature i=${i} has no signature with a supported algorithm`;
       bump('fail');
     } else if (!allPass) {
-      if (level.itemPerm) { level.result = 'permerror'; level.detail = `DKIM2-Signature i=${i} public key ${level.items.map((it) => it.result).find((r) => r !== 'pass') || 'error'}`; bump('permerror'); }
-      else if (level.itemTemp) { level.result = 'temperror'; level.detail = `DKIM2-Signature i=${i} ${(level.items.find((it) => it.result !== 'pass') || {}).result || 'public key could not be fetched'}`; bump('temperror'); }
+      if (level.itemPerm) { level.result = 'permerror'; level.detail = `PERMERROR DKIM2-Signature i=${i} ${level.items.find((it) => it.status === 'perm').result}`; bump('permerror'); }
+      else if (level.itemTemp) { level.result = 'temperror'; level.detail = `TEMPERROR DKIM2-Signature i=${i} ${level.items.find((it) => it.status === 'temp').result}`; bump('temperror'); }
       else {
         // §11.6: report the Selector(s) involved rather than the algorithm. When
         // some signatures pass and others fail, name both sides — a Verifier that
         // can see the split is well placed to spot an attack on the weaker one.
         const passed = level.items.filter((it) => it.result === 'pass').map((it) => it.selector);
-        const failed = level.items.filter((it) => it.result !== 'pass').map((it) => it.selector);
+        const failed = level.items.filter((it) => it.result !== 'pass' && !it.absent).map((it) => it.selector);
         level.result = 'fail';
         level.detail = passed.length
           ? `DKIM2-Signature i=${i} ${passed.join(', ')} signature passed, ${failed.join(', ')} signature failed`
@@ -599,15 +642,17 @@ async function verifyOnce(raw, opts = {}) {
   return { overall, summary, levels };
 }
 
-function keyErrorDetail(e) {
+// spec-06 §11.5 wording, naming the Selector.
+function keyErrorDetail(e, selector) {
   const map = {
-    'key-notfound': 'public key does not exist',
-    'key-multiple': 'public key has multiple records',
-    'key-syntax': 'public key has a syntax error',
-    'key-revoked': 'public key has been revoked',
-    'key-temperror': 'public key could not be fetched',
+    'key-notfound': 'does not exist',
+    'key-multiple': 'has multiple records',
+    'key-syntax': 'has a syntax error',
+    'key-revoked': 'has been revoked',
+    'key-mismatch': 'algorithm mismatch',
+    'key-temperror': 'could not be fetched',
   };
-  return map[e.message] || String(e.message || e);
+  return e.message in map ? `public key ${selector} ${map[e.message]}` : String(e.message || e);
 }
 
 // §11.4: inter-signature mf/rt match + d=/mf= relaxed match + nd= handling.
