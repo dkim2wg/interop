@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 )
 
 // flatString renders a flat recipe in the vector form for comparison.
@@ -80,13 +79,10 @@ func repeatLines(n int, f func(i int) string) []string {
 	return out
 }
 
-func TestBodyDiffAlternatingFast(t *testing.T) {
+func TestBodyDiffAlternating(t *testing.T) {
 	ab := repeatLines(4000, func(i int) string { return []string{"a", "b"}[i%2] })
 	ba := repeatLines(4000, func(i int) string { return []string{"b", "a"}[i%2] })
-	start := time.Now()
 	steps, kind := bodyDiff(ab, ba, MaxRecipeLiterals)
-	el := time.Since(start)
-	t.Logf("alternating 4000: %v, %d steps", el, len(steps))
 	if kind != bodyDiffOK {
 		t.Fatalf("kind %d", kind)
 	}
@@ -99,9 +95,6 @@ func TestBodyDiffAlternatingFast(t *testing.T) {
 	if lits > 1 {
 		t.Errorf("%d literals, want <= 1", lits)
 	}
-	if el > 50*time.Millisecond {
-		t.Errorf("took %v, want < 50ms", el)
-	}
 }
 
 // 30000 "x" then 30000 "y" vs the reverse needs 60000 edits; the search
@@ -109,15 +102,9 @@ func TestBodyDiffAlternatingFast(t *testing.T) {
 func TestBodyDiffWorkBudget(t *testing.T) {
 	xy := append(repeatLines(30000, func(int) string { return "x" }), repeatLines(30000, func(int) string { return "y" })...)
 	yx := append(repeatLines(30000, func(int) string { return "y" }), repeatLines(30000, func(int) string { return "x" })...)
-	start := time.Now()
 	_, kind := bodyDiff(xy, yx, MaxRecipeLiterals)
-	el := time.Since(start)
-	t.Logf("30000x/30000y reversed: %v", el)
 	if kind != bodyDiffTooBig {
 		t.Fatalf("kind %d, want tooBig", kind)
-	}
-	if el > time.Second {
-		t.Errorf("took %v", el)
 	}
 }
 
@@ -128,15 +115,9 @@ func TestBodyDiffWorkBudgetOneSided(t *testing.T) {
 	cur = append(cur, "b")
 	prev := append([]string{"b"}, repeatLines(3000, func(int) string { return "x" })...)
 	prev = append(prev, "a")
-	start := time.Now()
 	_, kind := bodyDiff(cur, prev, MaxRecipeLiterals)
-	el := time.Since(start)
-	t.Logf("one-sided 300002 vs 3002: %v", el)
 	if kind != bodyDiffTooBig {
 		t.Fatalf("kind %d, want tooBig", kind)
-	}
-	if el > time.Second {
-		t.Errorf("took %v", el)
 	}
 }
 

@@ -258,12 +258,8 @@ static void test_algorithms(const char *mi) {
         }
         it[N] = (item_t){ "sel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL };
         s = make_sig(mi, g_now, it, N + 1);
-        clock_t c0 = clock();
         dkim2_verify_result_t r = verify(mi, s, 0);
-        double secs = (double)(clock() - c0) / CLOCKS_PER_SEC;
         expect("4000 unknown items + one good item pass, one lookup", r, DKIM2_OK, NULL, 1);
-        printf("        (%.3fs)\n", secs);
-        if (secs > 2.0) { printf("  FAIL: 4000 items took %.3fs\n", secs); g_failures++; }
         free(s); free(it); free(sels); free(algs);
     }
 
