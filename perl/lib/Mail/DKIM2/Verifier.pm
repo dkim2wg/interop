@@ -864,6 +864,10 @@ sub _verify_chain {
 # TEMPERROR: spec-06 §10 makes a DNS failure retryable, never a permanent "no
 # verifiable signature items", and emphatically never a 'fail', which reads as
 # a forged signature. _verify_signature's eval maps the die to temperror.
+# A record that is there but unusable dies with "PERMERROR: <why>" instead
+# (spec-06 §11.5): more than one TXT record, a record that does not validate
+# (parse_dkim_key_record), revoked, or a key type that is not the signature
+# algorithm's -- mapped to permerror, with the selector.
 #
 # A PubkeyCallback replaces this; it is called as ($signature, $idx, $verifier)
 # so a callback that only overrides some keys can fall back to
@@ -886,11 +890,20 @@ sub fetch_public_key {
         return if $err =~ /^(?:NXDOMAIN|NOERROR|NODATA)\s*$/i;
         croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
     }
-    for my $rr ($reply->answer) {
-        next unless $rr->type eq 'TXT';
-        return Mail::DKIM2::Common::parse_dkim_pubkey(join('', $rr->txtdata));
-    }
-    return;
+    # One TXT RR may hold several strings, joined with nothing between;
+    # several RRs for one selector are an error (spec-06 §11.5).
+    my @txt = map { join '', $_->txtdata } grep { $_->type eq 'TXT' } $reply->answer;
+    return unless @txt;
+    croak "PERMERROR: has multiple records\n" if @txt > 1;
+    my ($key, $why) = Mail::DKIM2::Common::parse_dkim_key_record($txt[0]);
+    $why = 'algorithm mismatch'
+        if $why && $why eq 'has an unsupported key type';
+    croak "PERMERROR: $why\n" if $why;
+    # §8.9: the key's type must be the signature's algorithm's.
+    my $alg = $signature->algorithm($idx) // '';
+    croak "PERMERROR: algorithm mismatch\n"
+        if $IMPLEMENTED_ALG{$alg} && !$key->isa($IMPLEMENTED_ALG{$alg});
+    return $key;
 }
 
 sub resolver {
@@ -1132,6 +1145,13 @@ anything else, including a resolver error string it has never seen. The
 verifier maps that die to C<temperror>: spec-06 section 10 makes a DNS
 failure retryable, never a C<fail>, which would read as a forged
 signature.
+
+A record that is present but unusable dies with C<PERMERROR: E<lt>whyE<gt>>,
+which the verifier reports as C<permerror> naming the selector (spec-06
+section 11.5): C<has multiple records> (more than one TXT RR; several
+strings in one RR are joined), C<has a syntax error> and C<has been
+revoked> (see L<Mail::DKIM2::Common/parse_dkim_key_record>), or
+C<algorithm mismatch> (a C<k=> that is not the signature algorithm's).
 
 =head2 resolver([$resolver]), set_pubkey_callback(\&cb), skip_timestamp_check([$bool]), allow_unsigned_mi([$bool]), next_domain_ok([$domain]), mid_process([$bool]), headers_only([$bool])
 

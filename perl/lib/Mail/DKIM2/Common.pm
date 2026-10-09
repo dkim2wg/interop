@@ -35,6 +35,7 @@ our @EXPORT_OK = qw(
     to_rfc5321_path
     relaxed_domain_match
     parse_dkim_pubkey
+    parse_dkim_key_record
     load_private_key
     load_private_key_data
     DKIM2_DRAFT
@@ -551,18 +552,52 @@ sub build_signing_input {
 # past its deadline. Reflector, Split and Validate are outside the rule --
 # they run the demo server and the web validator, never inside a host.
 
-# Parse a DKIM TXT record and return the appropriate key object.
-# For RSA keys: returns a Crypt::PK::RSA object.
-# For ed25519 keys: returns a Crypt::PK::Ed25519 object.
-# Returns undef if the key record can't be parsed.
+# Parse and validate a key record (draft-ietf-dkim-dkim2-dns §3.2, §3.4.1;
+# spec-06 §11.5 says a Verifier MUST NOT use a malformed one). Returns the
+# key object, or (undef, $why) where $why completes "public key <selector>
+# ...": "has a syntax error", "has been revoked" or "has an unsupported key
+# type". The whole record is checked, not searched: a repeated tag (an empty
+# p= before a good one, say) makes it invalid, and v=, if present, must be
+# the first tag and exactly DKIM1. Tag names are case sensitive here, as in
+# DKIM1. Unknown and retired tags (h=, n=, s=, t=) are ignored.
+sub parse_dkim_key_record {
+    my ($txt) = @_;
+    my $syntax = 'has a syntax error';
+    return (undef, $syntax) unless defined $txt;
+    my (%tag, @order);
+    for my $spec (split /;/, $txt, -1) {
+        next if $spec =~ /\A[ \t\r\n]*\z/;    # empty spec, e.g. after a trailing ";"
+        my ($name, $value) = $spec =~ /\A[ \t\r\n]*([A-Za-z][A-Za-z0-9_]*)[ \t\r\n]*=(.*)\z/s
+            or return (undef, $syntax);
+        return (undef, $syntax) if exists $tag{$name};
+        $value =~ s/\A[ \t\r\n]+|[ \t\r\n]+\z//g;
+        $tag{$name} = $value;
+        push @order, $name;
+    }
+    return (undef, $syntax) unless @order;
+    if (exists $tag{v}) {
+        return (undef, $syntax) unless $order[0] eq 'v' && $tag{v} eq 'DKIM1';
+    }
+    return (undef, $syntax) unless exists $tag{p};
+    (my $p = $tag{p}) =~ s/[ \t\r\n]//g;
+    return (undef, 'has been revoked') unless length $p;
+    return (undef, $syntax) unless $p =~ m{\A[A-Za-z0-9+/]+={0,2}\z};
+    my $k = $tag{k} // 'rsa';
+    my $key = _key_from_p($k, $p);
+    return $key if $key;
+    return (undef, $k eq 'rsa' || $k eq 'ed25519' ? $syntax : 'has an unsupported key type');
+}
+
+# A key object from a valid record: the key, or nothing (a key type this
+# library does not implement, or p= that is not a key of that type).
 sub parse_dkim_pubkey {
     my ($key_txt) = @_;
-    return unless $key_txt;
-    my ($k) = $key_txt =~ /\bk=([^;\s]+)/;
-    $k //= 'rsa';  # default per RFC 6376
-    # h= (hash algorithm list) MUST be ignored per spec-06 Section 10.3
-    my ($p) = $key_txt =~ /\bp=([A-Za-z0-9+\/=]+)/;
-    return unless $p;
+    my ($key) = parse_dkim_key_record($key_txt);
+    return $key;
+}
+
+sub _key_from_p {
+    my ($k, $p) = @_;
     if ($k eq 'ed25519') {
         # RFC 8463 publishes the raw 32-byte key in p=, but some signers
         # publish a DER SubjectPublicKeyInfo (as RSA does). Accept either, and
@@ -582,6 +617,8 @@ sub parse_dkim_pubkey {
         die $@ if ref $@;
         return $key;
     }
+    # Any other key type is unrecognised, and ignored: never read as RSA.
+    return unless $k eq 'rsa';
     # RSA: p= is base64-encoded SubjectPublicKeyInfo DER
     my $der = decode_base64($p);
     my $rsa = eval { Crypt::PK::RSA->new(\$der) };
@@ -841,11 +878,38 @@ The same from key material in memory: PEM, or bare base64 DER as some key
 stores keep it. Returns undef rather than dying, so a signer of live mail
 can log and carry on.
 
+=head2 parse_dkim_key_record($txt_record)
+
+Validates a whole key record (draft-ietf-dkim-dkim2-dns sections 3.2 and
+3.4.1) and returns the public key object: a C<Crypt::PK::RSA> for C<k=rsa>
+(the default) or a C<Crypt::PK::Ed25519> for C<k=ed25519>, accepted as the
+raw 32 bytes of RFC 8463 or as DER. Otherwise returns C<(undef, $why)>,
+where C<$why> completes "public key E<lt>selectorE<gt> ...":
+
+=over
+
+=item C<has a syntax error>
+
+Not a tag-list; a tag given twice; C<v=> present but not the first tag or
+not exactly C<DKIM1>; no C<p=>; C<p=> not base64, or not a key of its type.
+
+=item C<has been revoked>
+
+An empty C<p=>.
+
+=item C<has an unsupported key type>
+
+A C<k=> other than C<rsa> or C<ed25519>.
+
+=back
+
+Unknown tags and the retired C<h=>, C<n=>, C<s=> and C<t=> are ignored.
+Tag names are case sensitive, as in DKIM1.
+
 =head2 parse_dkim_pubkey($txt_record)
 
-The public key object from a DKIM TXT record (C<k=> and C<p=>; C<h=> is
-ignored per section 10.3). Ed25519 keys are accepted as the raw 32 bytes
-of RFC 8463 or as DER. Returns undef for a record it cannot parse.
+The key object from C<parse_dkim_key_record>, or undef for a record that
+gives no usable key.
 
 =head1 TAG ENCODING
 
