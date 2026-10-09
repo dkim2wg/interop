@@ -57,4 +57,11 @@ sub pubkey_callback {
     };
 }
 
+# The TXT record text for $selector at $domain in the shared dns.json.
+sub dns_txt {
+    my ($domain, $selector) = @_;
+    my $entry = decode_json($DNS_JSON->slurp)->{$domain}{"${selector}._domainkey"};
+    return $entry && $entry->[0] ? $entry->[0][1] : undef;
+}
+
 1;

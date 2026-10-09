@@ -203,9 +203,19 @@ sub rcpt_to {
 
 # --- Convenience methods for signature items ---
 
+# The s= items, parsed once per s= value: selector(), algorithm() and
+# signature_value() take an index, and the verifier calls them for every
+# item, so reparsing the whole list each time was quadratic in its length
+# (review R1). The cache is keyed on the raw value, so set_tag('s', ...)
+# invalidates it.
 sub _sig_items {
     my ($self) = @_;
-    return $self->signatures_data;
+    my $s = $self->get_tag('s');
+    my $c = $self->{_sig_cache};
+    return $c->[1] if $c && defined $s && defined $c->[0] && $c->[0] eq $s;
+    my $items = $self->signatures_data;
+    $self->{_sig_cache} = [$s, $items];
+    return $items;
 }
 
 sub selector {

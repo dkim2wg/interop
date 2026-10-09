@@ -32,6 +32,13 @@ use Email::MIME;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 
+# The signing algorithms this verifier implements (spec-06 §3.2, §3.3), and
+# the key class each needs. Every other s= item is ignored (§3.4).
+my %IMPLEMENTED_ALG = (
+    'rsa-sha256'     => 'Crypt::PK::RSA',
+    'ed25519-sha256' => 'Crypt::PK::Ed25519',
+);
+
 sub _extract_mi_hash_sets {
     my ($raw) = @_;
     $raw =~ s/^[^:]+://;        # strip "Message-Instance:" field name
@@ -660,8 +667,20 @@ sub _verify_signature {
 
     my $verified_any = 0;
     for my $idx (0 .. $sig_count - 1) {
-        my $sig_b64 = $signature->signature_value($idx);
-        next unless $sig_b64;
+        # §3.4: an algorithm this verifier does not implement is ignored --
+        # before any key lookup, so a list of unknown names costs nothing.
+        # Names match exactly: tag values are case significant (§8), and a
+        # name that is merely like a known one must never be verified as it.
+        my $alg = $signature->algorithm($idx) // '';
+        next unless $IMPLEMENTED_ALG{$alg};
+
+        # A known algorithm's value must be a signature: non-empty base64.
+        my $sig_b64 = $signature->signature_value($idx) // '';
+        unless ($sig_b64 =~ m{\A[A-Za-z0-9+/]+={0,2}\z}) {
+            $self->{result}  = 'permerror';
+            $self->{details} = "DKIM2-Signature i=$i syntax error ($alg signature value is not base64)";
+            return 0;
+        }
 
         # Get the public key for this signature item.  The fetch is eval'd
         # whichever way the key is sourced: a pubkey callback may end in
@@ -676,32 +695,45 @@ sub _verify_signature {
                 : $self->fetch_public_key($signature, $idx);
             1;
         };
+        my $sel = $signature->selector($idx) // '?';
         unless ($fetched) {
             die $@ if ref $@;
-            # A transient DNS failure is a TEMPERROR per spec-06 §10 —
-            # retryable, not a permanent "no verifiable signature items", and
-            # emphatically not a 'fail', which reads as a forged signature.
-            my $sel = $signature->selector($idx) // '?';
             # Drop croak's " at FILE line N." tail: this reason is reported in
             # Authentication-Results on mail we send out, and our source paths
             # are nobody else's business.
             (my $why = $@) =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*\z//;
             $why =~ s/\s+\z//;
+            # A key record that is there but unusable (spec-06 §11.5:
+            # several records, a syntax error, revoked, the wrong key type).
+            if ($why =~ /\APERMERROR:\s*(.*)\z/s) {
+                $self->{result}  = 'permerror';
+                $self->{details} = "DKIM2-Signature i=$i public key $sel $1";
+                return 0;
+            }
+            # A transient DNS failure is a TEMPERROR per spec-06 §10 —
+            # retryable, not a permanent "no verifiable signature items", and
+            # emphatically not a 'fail', which reads as a forged signature.
             $self->{result}  = 'temperror';
             $self->{details} = "DKIM2-Signature i=$i public key $sel could not be fetched ($why)";
             return 0;
         }
 
         unless ($pubkey) {
-            # Can't fetch key for this algorithm — skip it
+            # No key for this item -- skip it
             next;
         }
 
-        my $alg = $signature->algorithm($idx) || 'unknown';
+        # §8.9: the key must be of the signature's algorithm. A
+        # PubkeyCallback hands back any key object, so check what it is.
+        unless ($pubkey->isa($IMPLEMENTED_ALG{$alg})) {
+            $self->{result}  = 'permerror';
+            $self->{details} = "DKIM2-Signature i=$i public key $sel algorithm mismatch";
+            return 0;
+        }
 
         # §3.2: RSA keys MUST be at least 1024 bits; reject shorter keys
         # (permerror) rather than trusting a weak signature.
-        if ($alg !~ /^ed25519/ && $pubkey->can('size')) {
+        if ($alg eq 'rsa-sha256') {
             my $bits = $pubkey->size * 8;
             if ($bits < 1024) {
                 $self->{result}  = 'permerror';
@@ -712,7 +744,7 @@ sub _verify_signature {
 
         my $sig_raw = decode_base64($sig_b64);
         my $verified = eval {
-            if ($alg =~ /^ed25519/) {
+            if ($alg eq 'ed25519-sha256') {
                 # Ed25519-SHA256: SHA-256 hash first, then verify with PureEdDSA
                 my $digest = sha256($signing_input);
                 $pubkey->verify_message($sig_raw, $digest);
