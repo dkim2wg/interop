@@ -80,13 +80,29 @@ function isName(field, name) {
 
 // Every i= and m= names one hop, and a chain has at most this many.
 export const MAX_CHAIN_LENGTH = 32;
+// The largest number an i= or m= may be written as (at most three digits).
+// Anything bigger is out of range before it is ever a chain number.
+export const MAX_CHAIN_NUMBER = 100;
 
-// False for an ASCII-digit i=/m= value above MAX_CHAIN_LENGTH, or one longer
-// than two digits (never converted, so never a huge loop bound). Anything
-// that is not digits is left to the other syntax checks.
-export function chainNumberInRange(v) {
-  if (typeof v !== 'string' || !/^[0-9]+$/.test(v)) return true;
-  return v.length <= 2 && parseInt(v, 10) <= MAX_CHAIN_LENGTH;
+// The PERMERROR summary for an i= or m= value that is not a chain number, or
+// null. A value must be 1*DIGIT (ASCII): parseInt would take the digit prefix
+// of "4294967297x" and run the 1..max loops to it. Then at most three digits
+// and 1..MAX_CHAIN_NUMBER (so "01" and "001" are 1), and no more than
+// MAX_CHAIN_LENGTH. A missing value (undefined) is left to the callers.
+export function chainNumberError(field, tag, v) {
+  if (v === undefined) return null;
+  const malformed = tag === 'i'
+    ? `${field} has a missing or malformed i= tag`
+    : `${field} has a malformed ${tag}= tag`;
+  if (typeof v !== 'string' || !/^[0-9]+$/.test(v)) return malformed;
+  if (/^0+$/.test(v)) return malformed;
+  if (v.length > 3 || parseInt(v, 10) > MAX_CHAIN_NUMBER) {
+    return `${field} ${tag}= exceeds the maximum chain number of ${MAX_CHAIN_NUMBER}`;
+  }
+  if (parseInt(v, 10) > MAX_CHAIN_LENGTH) {
+    return `${field} ${tag}= exceeds the maximum chain length of ${MAX_CHAIN_LENGTH}`;
+  }
+  return null;
 }
 
 export function collectLevels(headers) {
@@ -100,17 +116,16 @@ export function collectLevels(headers) {
   // ASCII digits: no verifier can place or key one, so verifyOnce() reports
   // a PERMERROR rather than verifying around it.
   let unkeyableSignatures = 0;
-  // The first i= or m= above MAX_CHAIN_LENGTH, as a PERMERROR summary; such a
-  // field is not placed in instances/signatures, so nothing loops up to it.
+  // The first i= or m= that is not a chain number (chainNumberError), as a
+  // PERMERROR summary; such a field is not placed in instances/signatures,
+  // so nothing loops up to it.
   let rangeError = null;
-  const outOfRange = (field, tag) => {
-    rangeError = rangeError || `${field} ${tag}= exceeds the maximum chain length of ${MAX_CHAIN_LENGTH}`;
-  };
   for (const f of headers) {
     if (isName(f, 'message-instance')) {
       miFields.push(f);
       const parsed = parseTagList(f.value);
-      if (!chainNumberInRange(parsed.map.m)) { outOfRange('Message-Instance', 'm'); continue; }
+      const err = chainNumberError('Message-Instance', 'm', parsed.map.m);
+      if (err) { rangeError = rangeError || err; continue; }
       const m = parseInt(parsed.map.m, 10);
       if (!Number.isNaN(m) && instances[m]) dupInstances.push(m);
       if (!Number.isNaN(m)) instances[m] = { field: f, tags: parsed.tags, map: parsed.map };
@@ -120,8 +135,9 @@ export function collectLevels(headers) {
       const iv = parsed.map.i;
       const i = /^[0-9]+$/.test(iv || '') ? parseInt(iv, 10) : NaN;
       if (Number.isNaN(i) || i < 1) { unkeyableSignatures++; continue; }
-      if (!chainNumberInRange(iv)) { outOfRange('DKIM2-Signature', 'i'); continue; }
-      if (!chainNumberInRange(parsed.map.m)) { outOfRange('DKIM2-Signature', 'm'); continue; }
+      const err = chainNumberError('DKIM2-Signature', 'i', iv)
+               || chainNumberError('DKIM2-Signature', 'm', parsed.map.m);
+      if (err) { rangeError = rangeError || err; continue; }
       if (signatures[i]) dupSignatures.push(i);
       signatures[i] = { field: f, tags: parsed.tags, map: parsed.map };
     }

@@ -166,8 +166,9 @@ async function verifyOnce(raw, opts = {}) {
              summary: 'DKIM2-Signature has a missing or malformed i= tag', levels: [] };
   }
 
-  // An i= or m= above MAX_CHAIN_LENGTH: a PERMERROR before the §11.2 loops
-  // below walk 1..max (4294967297 used to run this page out of memory).
+  // An i= or m= that is not a chain number (not 1*DIGIT, out of range, or
+  // above MAX_CHAIN_LENGTH): a PERMERROR before the §11.2 loops below walk
+  // 1..max (4294967297, or 4294967297x, used to run this page out of memory).
   if (rangeError) {
     return { overall: 'permerror', summary: rangeError, levels: [] };
   }
@@ -199,6 +200,13 @@ async function verifyOnce(raw, opts = {}) {
   // (i= hop count and m= do not necessarily track together).
   const maxSigM = Math.max(...sigNums.map((i) => parseInt(signatures[i].map.m, 10)));
   if (maxM > maxSigM) structErr.push(`Message-Instance m=${maxM} is not signed`);
+  // The top signature's m= must name a Message-Instance that exists (as in
+  // the other implementations): a signature over an instance that is not
+  // there signs nothing a receiver can check.
+  const topSigM = signatures[maxI].map.m;
+  if (topSigM !== undefined && !instances[parseInt(topSigM, 10)]) {
+    structErr.push(`top signature i=${maxI} covers m=${parseInt(topSigM, 10)} but no Message-Instance m=${parseInt(topSigM, 10)} exists`);
+  }
   for (const i of sigNums) {
     const s = signatures[i];
     for (const t of ['i', 'm', 't', 'd', 's']) if (!(t in s.map)) structErr.push(`DKIM2-Signature i=${i} tag=${t} missing`);

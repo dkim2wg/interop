@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMessage, parseTagList, collectLevels, MAX_CHAIN_LENGTH, chainNumberInRange } from '../parse.js';
+import { parseMessage, parseTagList, collectLevels, MAX_CHAIN_LENGTH, MAX_CHAIN_NUMBER, chainNumberError } from '../parse.js';
 
 const MSG =
   'Message-Instance: m=1; h=sha256:AA=:BB=\r\n' +
@@ -100,8 +100,24 @@ test('collectLevels counts DKIM2-Signatures with no valid i= as unkeyable', () =
   assert.deepEqual(Object.keys(signatures), ['1']);
 });
 
-test('chainNumberInRange bounds i=/m= at MAX_CHAIN_LENGTH without converting long values', () => {
+test('chainNumberError: i=/m= is 1*DIGIT, at most 3 digits and 1..100, then at most 32', () => {
   assert.equal(MAX_CHAIN_LENGTH, 32);
-  for (const v of ['1', '9', '32', '01', 'abc', '']) assert.equal(chainNumberInRange(v), true, v);
-  for (const v of ['33', '99', '001', '4294967297', '99999999999999999999']) assert.equal(chainNumberInRange(v), false, v);
+  assert.equal(MAX_CHAIN_NUMBER, 100);
+  for (const v of ['1', '9', '32', '01', '001', '032']) assert.equal(chainNumberError('DKIM2-Signature', 'm', v), null, v);
+  for (const v of ['33', '99', '100', '099'])
+    assert.equal(chainNumberError('DKIM2-Signature', 'm', v), 'DKIM2-Signature m= exceeds the maximum chain length of 32', v);
+  for (const v of ['101', '999', '0001', '4294967297', '99999999999999999999'])
+    assert.equal(chainNumberError('Message-Instance', 'm', v), 'Message-Instance m= exceeds the maximum chain number of 100', v);
+  for (const v of ['', '0', '00', '000', 'abc', '1x', '4294967297x', '30000000x', '0_1', '\uFF11', '+1', '-1', ' 1'])
+    assert.equal(chainNumberError('Message-Instance', 'm', v), 'Message-Instance has a malformed m= tag', JSON.stringify(v));
+  assert.equal(chainNumberError('DKIM2-Signature', 'i', 'abc'), 'DKIM2-Signature has a missing or malformed i= tag');
+  assert.equal(chainNumberError('DKIM2-Signature', 'm', undefined), null, 'missing is left to the callers');
+});
+
+test('collectLevels keys i=/m= numerically (01 and 001 are 1)', () => {
+  const msg = 'Message-Instance: m=001; h=x\r\nDKIM2-Signature: i=01; m=001; d=a.example\r\nFrom: a@b\r\n\r\nbody\r\n';
+  const { instances, signatures, rangeError } = collectLevels(parseMessage(msg).headers);
+  assert.equal(rangeError, null);
+  assert.deepEqual(Object.keys(instances), ['1']);
+  assert.deepEqual(Object.keys(signatures), ['1']);
 });
