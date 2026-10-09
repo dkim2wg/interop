@@ -64,6 +64,72 @@ existing splitter), `max_literals` (default 1000).
 
 The recipe it produces has minimal literal lines (Myers yields an LCS).
 
+### Exact pseudocode (normative for every port)
+
+Lines compare as exact byte strings. Indices are 0-based except in the output.
+
+```
+body_diff(cur[C], prev[P], L):            # L = max literal lines
+  pre = 0; while pre < C and pre < P and cur[pre] == prev[pre]: pre++
+  if pre == C and pre == P: return IDENTICAL
+  suf = 0; while suf < C-pre and suf < P-pre and cur[C-1-suf] == prev[P-1-suf]: suf++
+  a = cur[pre .. C-suf)        b = prev[pre .. P-suf)
+  cnt_a[line], cnt_b[line] = occurrence counts in a, b
+  A, ai = ids/indices of the a lines with cnt_b[line] > 0, in order
+  B, bj = ids/indices of the b lines with cnt_a[line] > 0, in order
+          (id = any interning where equal lines get equal ids)
+  N = |A|; M = |B|; u = |b| - M
+  floor = u + sum over distinct lines with cnt_a > 0 of max(0, cnt_b - cnt_a)
+  if floor > L: return TOO_BIG
+  match[0..M) = none
+  if N > 0 and M > 0:
+    dmax = N - M + 2*(L - u); if dmax > N + M: dmax = N + M
+    if dmax < 0: return TOO_BIG
+    V[k] for k in [-dmax-1, dmax+1], all 0
+    trace = []; work = 0
+    for d in 0 .. dmax:
+      trace[d] = copy of V            # (only k in [-d-1, d+1] is ever read)
+      for k in -d, -d+2, .., d:
+        if k == -d or (k != d and V[k-1] < V[k+1]): x = V[k+1]      # down
+        else:                                       x = V[k-1] + 1  # right
+        y = x - k
+        while x < N and y < M and A[x] == B[y]: x++; y++; work++
+        V[k] = x
+        work++; if work > MAX_DIFF_WORK (4000000): return TOO_BIG
+        if x == N and y == M: goto FOUND(d)
+    return TOO_BIG
+  FOUND(D):  (x, y) = (N, M)
+    for d in D down to 1:
+      T = trace[d]; k = x - y
+      down = (k == -d or (k != d and T[k-1] < T[k+1]))
+      pk = down ? k+1 : k-1;  px = T[pk];  py = px - pk
+      (sx, sy) = down ? (px, py+1) : (px+1, py)
+      while x > sx: x--; y--; match[y] = x
+      (x, y) = (px, py)
+    while x > 0: x--; y--; match[y] = x
+  src[j] for previous-body line j (0-based, whole body):
+    j < pre        -> j
+    j >= P - suf   -> j - P + C
+    otherwise      -> pre + ai[match[y]] if j == pre + bj[y] has a match, else none
+  recipe = []; literals = 0
+  for j in 0 .. P-1:
+    i = src[j]
+    if i is none: append literal prev[j]; literals++
+    elif last step is a copy [f,t] and t == i: extend it to [f, i+1]
+    else: append copy [i+1, i+1]
+  if literals > L: return TOO_BIG          # cannot happen; belt and braces
+  return recipe
+```
+
+Points of difference from textbook Myers, all deliberate:
+- Points off the grid (x > N or y > M) are kept in V, not clamped; the snake
+  guard and the exact `x == N and y == M` test make that safe, and it keeps
+  the tie-breaking identical everywhere.
+- `work` counts one per snake step and one per diagonal visited, and is
+  checked after each diagonal.
+- Literal runs are then grouped into the implementation's `d`/`b` literal
+  steps exactly as before; the vectors compare the flat list above.
+
 ## Per-implementation changes
 
 - **Perl** `MessageInstance.pm`: replace `_body_recipe_linediff`,
