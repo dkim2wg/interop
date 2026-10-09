@@ -41,15 +41,20 @@ whitespace differently. Keep them apart.
 2. **Signing input** (spec-06 §9.6; Common's
    `dkim2_canonicalize_sig_header`): covers only the Message-Instance and
    DKIM2-Signature fields. It unfolds and then deletes ALL WSP. Folding these
-   two fields anywhere -- at creation or later -- cannot change any
-   signature, and they are not in any header hash.
+   two fields -- at creation or later -- cannot change any signature, and
+   they are not in any header hash. That makes a fold cryptographically
+   invariant, not syntactically valid: the field still has to parse, and
+   the grammar allows FWS only in some places (see `fold_header()` below).
 
 ### What that means in practice
 
 - **A field we are creating** (a Message-Instance, a DKIM2-Signature): fold
-  wherever is convenient. Per RFC 5322 §2.1.1 lines SHOULD be at most 78
-  characters and MUST be at most 998; we target 72 (`fold_header()` breaks
-  at `; ` tag boundaries first).
+  where the grammar allows FWS -- after a tag's `;`, inside a base64 value,
+  beside the `:`s of an `s=` or `h=` item, after a list comma (not in
+  `s=`) -- and never inside a Domain, selector,
+  algorithm or hash name. Per RFC 5322 §2.1.1 lines SHOULD be at most 78
+  characters and MUST be at most 998; we target 72, and a token that cannot
+  fold (a long `d=` domain) stays whole on a longer line.
 - **An ordinary field we received** (disk, network, previous hop): re-fold
   only at existing whitespace, or not at all -- rule 1.
 - **A Message-Instance or DKIM2-Signature we received**: re-folding would not
@@ -79,8 +84,10 @@ verifier rebuilds the input from the unfolded form
   ready for insertion. Only called from `Signer::as_string()`.
 - `build_signing_input()` accepts an optional `signing_header` parameter.
   The signer passes the folded form; the verifier omits it (uses unfolded).
-- `fold_header()` — folds at `; ` tag boundaries first, then breaks long
-  segments at character positions. Only for headers we are creating.
+- `fold_header()` — folds at `; ` tag boundaries first, then at the latest
+  point before the margin that `_dkim2_fold_ok()` accepts (base64 interiors,
+  item colons, list commas), else the first one after it; never mid-token. Croaks rather
+  than emit a line over 998. Only for headers we are creating.
 - Milter handlers fold MI values at insertion time via `_format_mi()`.
 - Headers read from disk or the network are **never** refolded.
 
