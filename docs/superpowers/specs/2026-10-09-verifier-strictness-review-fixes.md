@@ -93,3 +93,32 @@ passes; `m=1; h=sha256:AAAA:AAAA; h=<correct>` (signed) does NOT pass.
 
 - Header field names in recipe JSON are lowercase-only (spec-06 §5); that is
   already enforced and is a different rule from C above.
+
+## E. Outcome of a signature's items (consolidation, 2026-10-09)
+
+The first round left the implementations disagreeing on edge cases. Every
+verifier applies these, in this order, to one DKIM2-Signature's s= items:
+
+1. Items with an unimplemented algorithm are ignored (A). If NO item names
+   an implemented algorithm: `FAIL DKIM2-Signature i=<x> has no signature
+   with a supported algorithm`. (§11.6: "If all signatures that can be
+   checked fail then FAIL MUST be reported" -- vacuously; this is also the
+   Turscar vector algorithm_only_future's expected state.)
+2. A known algorithm's value must be a base64string: non-empty, base64
+   characters, padded with "=" to a multiple of four (§2.13 "MUST be
+   padded"). Else `PERMERROR ... syntax error` (before any key lookup).
+   The same strictness applies to a key record's p= (after FWS removal).
+3. For each implemented item, fetch the key:
+   - DNS failure: `TEMPERROR ... public key <sel> could not be fetched`.
+   - Record present but unusable (multiple records, syntax error, revoked,
+     algorithm mismatch): `PERMERROR ... public key <sel> <why>` for the
+     whole signature -- even if another item verifies. §11.6: all
+     signatures MUST be checked and an error SHOULD be reported if any
+     fails; a revoked key is not a key we may skip.
+   - Record absent (NXDOMAIN / no TXT): skip this item.
+4. If every implemented item was skipped as absent: `PERMERROR
+   DKIM2-Signature i=<x> public key <first absent sel> does not exist`
+   (§11.5: "a DNS result that indicates the key is absent MUST be reported
+   as a PERMERROR").
+5. Verify each item that has a key. Any failure: `FAIL` (naming the
+   selector). Otherwise pass.
