@@ -1,5 +1,38 @@
 Revision history for Mail::DKIM2
 
+0.19    2026-10-09
+        Fixes from a follow-up review of 0.18. Malformed fields that used to
+        verify are now errors; well-formed mail verifies as before, and
+        signatures fold where they did, except as below.
+        - Behaviour change: a DKIM2-Signature or Message-Instance must parse
+          as a whole tag list (spec-06 sections 7, 8, 11.2). A fragment that
+          is not name=value ("junk", "9bad=foo"), or a value with a byte
+          outside printable ASCII or a ";", is PERMERROR "syntax error"; it
+          used to be dropped and the rest verified. Well-formed unknown tags
+          are still ignored and still signed.
+          Mail::DKIM2::TagValueList gains split_tag_list() and syntax_error().
+        - Behaviour change: whitespace inside an s= selector or algorithm, or
+          an h= hash name, is a syntax error. "rsa- sha256" used to be read
+          as rsa-sha256. FWS around the item's colons and commas and inside
+          base64 is still accepted. An h= hash-set missing a digest is a
+          syntax error rather than skipped; parse_hash_sets() returns undef
+          for a malformed value.
+        - Behaviour change: every value in a key record, unknown tags'
+          included, must fit the tag-list grammar; a NUL, DEL or 8-bit byte
+          makes the record a syntax error.
+        - Fix: the signer split a long d= domain (two 40-character labels)
+          across lines, and the verifier then failed the MAIL FROM/d= match.
+          fold_header() now folds a DKIM2 field only where its grammar allows
+          FWS -- base64 interiors, beside s= and h= item colons, list commas
+          other than in s= -- leaving an unbreakable token whole on a longer
+          line, and croaks rather than emit a line over 998 characters.
+        - Fix: header recipe generation was quadratic in repeated identical
+          fields (16,000 took ~3s); it is linear, with identical recipes.
+        - Fix: load() rethrows a host's exception object from the input's
+          can() instead of replacing it with a "cannot read" croak.
+        - Docs: Signature.pm comments describe the empty s= value and
+          spec-06 9.6's WSP deletion.
+
 0.18    2026-10-09
         Fixes from an external review against spec-06. Several are
         behaviour changes for messages that are malformed or adversarial;

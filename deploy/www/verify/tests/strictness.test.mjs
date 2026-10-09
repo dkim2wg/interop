@@ -363,3 +363,97 @@ test('E3: a DNS failure is TEMPERROR naming the selector', async () => {
   assert.equal(rep.overall, 'temperror', rep.summary);
   assert.equal(sigLevel(rep).detail, 'TEMPERROR DKIM2-Signature i=1 public key rsa could not be fetched');
 });
+
+// --- F. whole-field syntax (follow-up review) --------------------------------
+// Each message below is genuinely signed over the field as written, so a
+// verifier that skips or normalises the bad part would PASS it.
+
+const SIG_TAGS = ` i=1; m=1; t=${T}; d=example.com; mf=${MF}; rt=${RT}`;
+const MI_OK = (hh, bh) => ` m=1; h=sha256:${hh}:${bh}`;
+
+for (const [name, extra] of [
+  ['a fragment that is not a tag (junk)', ' junk'],
+  ['a tag name starting with a digit (9bad=foo)', ' 9bad=foo'],
+  ['a fragment with no tag name (=v)', ' =v'],
+  ['a NUL in an unknown tag value', ' x=a\x00b'],
+  ['a DEL in an unknown tag value', ' x=a\x7fb'],
+  ['an 8-bit byte in an unknown tag value', ' x=a\xe9b'],
+  ['a NUL in a known tag value (n=)', ' n=a\x00b'],
+]) {
+  test(`F1: DKIM2-Signature with ${name} is a syntax error`, async () => {
+    const rep = await verify(await signed({ sigTags: `${SIG_TAGS};${extra}` }));
+    assert.equal(rep.overall, 'permerror', rep.summary);
+    assert.match(rep.summary, /PERMERROR DKIM2-Signature i=1 syntax error/);
+  });
+  test(`F1: Message-Instance with ${name} is a syntax error`, async () => {
+    const rep = await verify(await signed({ mi: (hh, bh) => `${MI_OK(hh, bh)};${extra}` }));
+    assert.equal(rep.overall, 'permerror', rep.summary);
+    assert.match(rep.summary, /PERMERROR Message-Instance m=1 syntax error/);
+  });
+}
+
+test('F1: empty fragments and well-formed unknown tags (FWS inside, empty value) pass', async () => {
+  const rep = await verify(await signed({
+    sigTags: ` i=1;; m=1; x_1 = a b\r\n\tc ; y=; t=${T}; d=example.com; mf=${MF}; rt=${RT}`,
+    mi: (hh, bh) => ` m=1;; Zz9 =\tq ;h=sha256:${hh}:${bh};`,
+  }));
+  assert.equal(rep.overall, 'pass', rep.summary);
+});
+
+for (const [name, items, mutate] of [
+  ['FWS inside the algorithm (rsa- sha256)', [{ sel: 'rsa', alg: 'rsa- sha256', key: 'rsa' }]],
+  ['a fold inside the algorithm', [{ sel: 'rsa', alg: 'rsa-\r\n\tsha256', key: 'rsa' }]],
+  ['FWS inside the selector (r sa)', [{ sel: 'r sa', alg: 'rsa-sha256', key: 'rsa' }]],
+  ['a bad selector character', [{ sel: 'r$a', alg: 'rsa-sha256', key: 'rsa' }]],
+  ['an empty selector label', [{ sel: 'rsa..x', alg: 'rsa-sha256', key: 'rsa' }]],
+  ['a bad algorithm character', [{ sel: 'sel2', alg: 'future*alg', sig: 'AAAA' }, { sel: 'rsa', alg: 'rsa-sha256', key: 'rsa' }]],
+  ['an item with only two parts', null, (raw) => raw.replace('s=rsa:', 's=sel2:future-alg,rsa:')],
+  ['an item with four parts', null, (raw) => raw.replace('s=rsa:', 's=sel2:future-alg:AAAA:AAAA,rsa:')],
+]) {
+  test(`F2: s= with ${name} is a syntax error, before any lookup`, async () => {
+    const calls = [];
+    let raw = await signed(items ? { items } : {});
+    if (mutate) raw = mutate(raw);
+    const rep = await verify(raw, { calls });
+    assert.equal(rep.overall, 'permerror', rep.summary);
+    assert.equal(sigLevel(rep).detail, 'PERMERROR DKIM2-Signature i=1 syntax error');
+    assert.deepEqual(calls, []);
+  });
+}
+
+test('F2: FWS around the s= comma and colons and inside the signature passes', async () => {
+  const raw = (await signed({ items: [
+    { sel: 'sel2.sub ', alg: '\r\n\tfuture_alg ', sig: ' AA\r\n AA ' },
+    { sel: '\r\n rsa\t', alg: ' rsa-sha256\r\n ', key: 'rsa' }] }))
+    .replace(/(s=.*?rsa-sha256\r\n :.{30})/s, '$1\r\n\t');
+  const rep = await verify(raw);
+  assert.equal(rep.overall, 'pass', rep.summary);
+});
+
+for (const [name, mi] of [
+  ['FWS inside the hash name (sha 256)', (hh, bh) => ` m=1; h=sha 256:${hh}:${bh}`],
+  ['a fold inside the hash name', (hh, bh) => ` m=1; h=sha\r\n 256:${hh}:${bh}`],
+  ['a set with no body hash', (hh, bh) => ` m=1; h=sha256:${hh}:${bh},sha512:AAAA`],
+  ['a set with an empty body hash', (hh, bh) => ` m=1; h=sha256:${hh}:${bh},sha512:AAAA:`],
+  ['a set with four parts', (hh, bh) => ` m=1; h=sha256:${hh}:${bh},sha512:AAAA:AAAA:AAAA`],
+  ['an empty set', (hh, bh) => ` m=1; h=sha256:${hh}:${bh},`],
+]) {
+  test(`F3: h= with ${name} is a syntax error`, async () => {
+    const rep = await verify(await signed({ mi }));
+    assert.equal(rep.overall, 'permerror', rep.summary);
+    assert.match(rep.summary, /PERMERROR Message-Instance m=1 syntax error/);
+  });
+}
+
+test('F3: FWS around the hash name and colons and inside the digests passes', async () => {
+  const rep = await verify(await signed({ mi: (hh, bh) =>
+    ` m=1; h=\r\n sha256 :${hh.slice(0, 10)}\r\n\t${hh.slice(10)}\t:\r\n ${bh.slice(0, 5)} ${bh.slice(5)} , x-new\t: AAAA :AAAA` }));
+  assert.equal(rep.overall, 'pass', rep.summary);
+});
+
+keyCase('F4: a NUL in an unknown tag value is a syntax error', 'v=DKIM1; n=a\x00b; k=rsa; p=<rsa>', 'has a syntax error');
+keyCase('F4: a DEL in an unknown tag value is a syntax error', 'v=DKIM1; n=a\x7fb; k=rsa; p=<rsa>', 'has a syntax error');
+keyCase('F4: an 8-bit byte in an unknown tag value is a syntax error', 'v=DKIM1; n=caf\xe9; k=rsa; p=<rsa>', 'has a syntax error');
+keyCase('F4: a NUL in p= is a syntax error', 'v=DKIM1; k=rsa; p=\x00<rsa>', 'has a syntax error');
+keyCase('F4: a NUL in k= is a syntax error', 'v=DKIM1; k=rsa\x00; p=<rsa>', 'has a syntax error');
+keyCase('F4: WSP between VALCHARs in an unknown tag is fine', 'v=DKIM1; n=hello \t world ; k=rsa; p=<rsa>', 'pass');

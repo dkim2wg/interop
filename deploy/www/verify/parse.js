@@ -35,6 +35,14 @@ export function parseMessage(raw) {
   return { headers, body };
 }
 
+// spec-06 §7, §8 x-tag: `[FWS] name [FWS] "=" [FWS] [value] [FWS]`, name
+// ALPHA *(ALPHA / DIGIT / "_"), value x-tag-char *([FWS] x-tag-char) with
+// x-tag-char %x21-3A / %x3C-7E. The value is unfolded, so FWS is WSP here.
+const TAG_SPEC = /^[ \t\r\n]*[A-Za-z][A-Za-z0-9_]*[ \t\r\n]*=[ \t\r\n]*(?:[\x21-\x3a\x3c-\x7e](?:[ \t\r\n]*[\x21-\x3a\x3c-\x7e])*)?[ \t\r\n]*$/;
+
+// syntaxError is set when any non-empty fragment is not a well-formed tag
+// (`junk`, `9bad=foo`, `=v`, a NUL/DEL/8-bit byte in any value): the whole
+// field is then a syntax error (§11.2), never verified around the fragment.
 export function parseTagList(value) {
   // value is a header value as produced by parseMessage: fold CRLFs are
   // already stripped, so this only needs to guard against a literal \r\n
@@ -43,8 +51,10 @@ export function parseTagList(value) {
   const flat = value.replace(/\r\n/g, ''); // drop folding
   const tags = [];
   const map = {};
+  let syntaxError = false;
   for (const seg of flat.split(';')) {
-    if (seg.trim() === '') continue;
+    if (/^[ \t\r\n]*$/.test(seg)) continue;
+    if (!TAG_SPEC.test(seg)) syntaxError = true;
     const eq = seg.indexOf('=');
     if (eq < 0) continue;
     const name = seg.slice(0, eq).trim().toLowerCase();
@@ -58,18 +68,25 @@ export function parseTagList(value) {
     tags.push({ tag: name, value: val, raw: seg });
     if (!(name in map)) map[name] = val;
   }
-  return { tags, map };
+  return { tags, map, syntaxError };
 }
 
 // spec-06 §7.3: h= is hash-set *("," hash-set). Hash names are lowercased —
-// RFC 5234 makes ABNF quoted strings case-insensitive. parseTagList has
-// already stripped all FWS from the value.
+// RFC 5234 makes ABNF quoted strings case-insensitive. h is the RAW value
+// (FWS intact): FWS is allowed around the hash name and colons and inside
+// the digests (removed), never inside the hash name. A set that is not
+// exactly name:digest:digest, with both digests present, throws
+// Error('h-syntax') -- never skipped.
 export function parseHashSets(h) {
   const out = [];
   for (const item of (h || '').split(',')) {
-    const parts = item.trim().split(':');
-    if (parts.length !== 3) continue;
-    out.push({ alg: parts[0].trim().toLowerCase(), headerHash: parts[1], bodyHash: parts[2] });
+    const parts = item.split(':');
+    if (parts.length !== 3) throw new Error('h-syntax');
+    const alg = parts[0].replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+    const headerHash = parts[1].replace(/[ \t\r\n]+/g, '');
+    const bodyHash = parts[2].replace(/[ \t\r\n]+/g, '');
+    if (!/^[A-Za-z0-9_-]+$/.test(alg) || !headerHash || !bodyHash) throw new Error('h-syntax');
+    out.push({ alg: alg.toLowerCase(), headerHash, bodyHash });
   }
   return out;
 }
@@ -128,7 +145,7 @@ export function collectLevels(headers) {
       if (err) { rangeError = rangeError || err; continue; }
       const m = parseInt(parsed.map.m, 10);
       if (!Number.isNaN(m) && instances[m]) dupInstances.push(m);
-      if (!Number.isNaN(m)) instances[m] = { field: f, tags: parsed.tags, map: parsed.map };
+      if (!Number.isNaN(m)) instances[m] = { field: f, tags: parsed.tags, map: parsed.map, syntaxError: parsed.syntaxError };
     } else if (isName(f, 'dkim2-signature')) {
       sigFields.push(f);
       const parsed = parseTagList(f.value);
@@ -139,7 +156,7 @@ export function collectLevels(headers) {
                || chainNumberError('DKIM2-Signature', 'm', parsed.map.m);
       if (err) { rangeError = rangeError || err; continue; }
       if (signatures[i]) dupSignatures.push(i);
-      signatures[i] = { field: f, tags: parsed.tags, map: parsed.map };
+      signatures[i] = { field: f, tags: parsed.tags, map: parsed.map, syntaxError: parsed.syntaxError };
     }
   }
   return { instances, signatures, miFields, sigFields, dupInstances, dupSignatures,

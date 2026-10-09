@@ -27,6 +27,8 @@
 #define ED_PEM  "/tmp/dkim2_strict_ed.pem"
 #define RSA_PEM "/tmp/dkim2_strict_rsa.pem"
 #define EML     "/tmp/dkim2_strict.eml"
+/* Two 40-character labels + .example.com (behaviour spec F.5). */
+#define LONG_DOMAIN "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.example.com"
 
 static const char *MAIL_FROM = "<sender@example.com>";
 static char *RCPTS[] = { "<rcpt@example.org>", NULL };
@@ -59,6 +61,8 @@ static char *fake_dns(const char *qname, int *n_records) {
     char want[256];
     for (int i = 0; i < g_nkeys; i++) {
         snprintf(want, sizeof want, "%s._domainkey.example.com", g_keys[i].sel);
+        if (strcmp(qname, want) == 0) return strdup(g_keys[i].txt);
+        snprintf(want, sizeof want, "%s._domainkey.%s", g_keys[i].sel, LONG_DOMAIN);
         if (strcmp(qname, want) == 0) return strdup(g_keys[i].txt);
     }
     /* Never fall through to live DNS from a unit test: anything else is
@@ -124,17 +128,18 @@ static void canon_append(char *buf, size_t *pos, const char *name, const char *v
    otherwise lit is written verbatim. */
 typedef struct { const char *sel, *alg; EVP_PKEY *key; const char *sign_alg; const char *lit; } item_t;
 
-/* Build and sign "i=1; m=1; t=<t>; d=example.com; mf=..; rt=..; s=<items>;"
+/* Build and sign "i=1; m=1; t=<t>; d=example.com; mf=..; rt=..; <g_sig_extra>s=<items>;"
    over mi_val. Returns a malloc'd header value. */
+static const char *g_sig_extra = "";
 static char *make_sig(const char *mi_val, const char *t, const item_t *items, int n) {
     char mf[128], rt[128];
     b64_encode((const unsigned char *)MAIL_FROM, strlen(MAIL_FROM), mf, sizeof mf);
     b64_encode((const unsigned char *)RCPTS[0], strlen(RCPTS[0]), rt, sizeof rt);
-    size_t cap = 256 + (size_t)n * 64;
+    size_t cap = 256 + strlen(g_sig_extra) + (size_t)n * 64;
     for (int i = 0; i < n; i++) cap += strlen(items[i].sel) + strlen(items[i].alg) + 800
                                        + (items[i].lit ? strlen(items[i].lit) : 0);
     char *inc = malloc(cap), *fin = malloc(cap);
-    int ip = snprintf(inc, cap, "i=1; m=1; t=%s; d=example.com; mf=%s; rt=%s; s=", t, mf, rt);
+    int ip = snprintf(inc, cap, "i=1; m=1; t=%s; d=example.com; mf=%s; rt=%s; %ss=", t, mf, rt, g_sig_extra);
     for (int i = 0; i < n; i++)
         ip += snprintf(inc + ip, cap - (size_t)ip, "%s%s:%s:", i ? "," : "", items[i].sel, items[i].alg);
     snprintf(inc + ip, cap - (size_t)ip, ";");
@@ -144,7 +149,7 @@ static char *make_sig(const char *mi_val, const char *t, const item_t *items, in
     canon_append(input, &pos, "message-instance", mi_val);
     canon_append(input, &pos, "dkim2-signature", inc);
 
-    int fp = snprintf(fin, cap, "i=1; m=1; t=%s; d=example.com; mf=%s; rt=%s; s=", t, mf, rt);
+    int fp = snprintf(fin, cap, "i=1; m=1; t=%s; d=example.com; mf=%s; rt=%s; %ss=", t, mf, rt, g_sig_extra);
     for (int i = 0; i < n; i++) {
         char *v = items[i].key
             ? dkim2_sign(items[i].key, items[i].sign_alg, (unsigned char *)input, pos)
@@ -475,6 +480,161 @@ static void test_timestamps(const char *mi) {
     free(s);
 }
 
+/* Insert ins into s at byte offset at (malloc'd). */
+static char *insert_at(const char *s, size_t at, const char *ins) {
+    size_t n = strlen(s), k = strlen(ins);
+    char *out = malloc(n + k + 1);
+    memcpy(out, s, at); memcpy(out + at, ins, k); strcpy(out + at + k, s + at);
+    return out;
+}
+
+static void test_field_syntax(const char *mi) {
+    printf("F.1 tag-list syntax\n");
+    const char *SIG_SYNTAX = "PERMERROR DKIM2-Signature i=1 syntax error";
+    const char *MI_SYNTAX = "PERMERROR Message-Instance m=1 syntax error";
+    const char *bad[] = { "junk; ", "9bad=foo; ", "=v; ", "x=a\x7f" "b; ", "x=caf\xc3\xa9; ",
+                          "n=\x80; ", "x=a\x01; ", "x y=1; ", NULL };
+    const char *good[] = { "x=unknown value; ", ";; ", "x=; ", " X_9 = a=b ; ", NULL };
+    char *s, *m2, what[128];
+    for (int i = 0; bad[i]; i++) {
+        g_sig_extra = bad[i];
+        s = sig1(mi, "sel1", "rsa-sha256", g_rsa, "rsa-sha256");
+        snprintf(what, sizeof what, "DKIM2-Signature fragment '%.20s' is a syntax error", bad[i]);
+        expect(what, verify(mi, s, 0), DKIM2_PERMERROR, SIG_SYNTAX, 0);
+        free(s);
+    }
+    for (int i = 0; good[i]; i++) {
+        g_sig_extra = good[i];
+        s = sig1(mi, "sel1", "rsa-sha256", g_rsa, "rsa-sha256");
+        snprintf(what, sizeof what, "DKIM2-Signature fragment '%.20s' is fine", good[i]);
+        expect(what, verify(mi, s, 0), DKIM2_OK, NULL, 1);
+        free(s);
+    }
+    g_sig_extra = "";
+    for (int i = 0; bad[i]; i++) {
+        char frag[64];
+        snprintf(frag, sizeof frag, "%sh=", bad[i]);
+        m2 = subst(mi, "h=", frag);
+        s = sig1(m2, "sel1", "rsa-sha256", g_rsa, "rsa-sha256");
+        snprintf(what, sizeof what, "Message-Instance fragment '%.20s' is a syntax error", bad[i]);
+        expect(what, verify(m2, s, 0), DKIM2_PERMERROR, MI_SYNTAX, -1);
+        free(s); free(m2);
+    }
+    for (int i = 0; good[i]; i++) {
+        char frag[64];
+        snprintf(frag, sizeof frag, "%sh=", good[i]);
+        m2 = subst(mi, "h=", frag);
+        s = sig1(m2, "sel1", "rsa-sha256", g_rsa, "rsa-sha256");
+        snprintf(what, sizeof what, "Message-Instance fragment '%.20s' is fine", good[i]);
+        expect(what, verify(m2, s, 0), DKIM2_OK, NULL, 1);
+        free(s); free(m2);
+    }
+
+    printf("F.2 s= items\n");
+    struct { const char *sel, *alg; int ok; } items[] = {
+        { "sel1", "rsa- sha256", 0 },
+        { "sel1", "rsa-\r\n\tsha256", 0 },
+        { "se l1", "rsa-sha256", 0 },
+        { "se\r\n l1", "rsa-sha256", 0 },
+        { "a..b", "rsa-sha256", 0 },
+        { ".sel1", "rsa-sha256", 0 },
+        { "sel1.", "rsa-sha256", 0 },
+        { "sel!", "rsa-sha256", 0 },
+        { "sel1", "rsa+sha256", 0 },
+        { "sel1", "", 0 },
+        { "", "rsa-sha256", 0 },
+        { " sel1 ", " rsa-sha256\r\n\t", 1 },
+        { "\r\n sel1", "rsa-sha256 ", 1 },
+    };
+    for (size_t i = 0; i < sizeof items / sizeof items[0]; i++) {
+        s = sig1(mi, items[i].sel, items[i].alg, g_rsa, "rsa-sha256");
+        snprintf(what, sizeof what, "s= item sel '%s' alg '%s' %s", items[i].sel, items[i].alg,
+                 items[i].ok ? "passes" : "is a syntax error");
+        if (items[i].ok) expect(what, verify(mi, s, 0), DKIM2_OK, NULL, 1);
+        else expect(what, verify(mi, s, 0), DKIM2_PERMERROR, SIG_SYNTAX, 0);
+        free(s);
+    }
+    {   /* FWS around the comma, after a colon and inside the base64 value */
+        item_t two[2] = { { "zz", "future-alg", NULL, NULL, "AAAA" },
+                          { "sel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL } };
+        s = make_sig(mi, g_now, two, 2);
+        char *s2 = subst(s, ",sel1:rsa-sha256:", " \r\n\t, sel1 :\r\n rsa-sha256 : ");
+        const char *v = strstr(s2, "rsa-sha256 : ") + 13;
+        char *s3 = insert_at(s2, (size_t)(v - s2) + 20, "\r\n\t");
+        char *s4 = insert_at(s3, strlen(s3) - 30, " ");   /* and a space */
+        expect("FWS around , and : and inside base64 is fine", verify(mi, s4, 0), DKIM2_OK, NULL, 1);
+        free(s2); free(s3); free(s4);
+        s2 = subst(s, "zz:future-alg:AAAA", "zz:future-alg");
+        expect("an item with two parts is a syntax error", verify(mi, s2, 0), DKIM2_PERMERROR, SIG_SYNTAX, 0);
+        free(s2);
+        s2 = subst(s, "zz:future-alg:AAAA", "zz:future-alg:AA:AA");
+        expect("an item with four parts is a syntax error", verify(mi, s2, 0), DKIM2_PERMERROR, SIG_SYNTAX, 0);
+        free(s2);
+        s2 = subst(s, "zz:future-alg:AAAA,", "zz:future-alg:AAAA,,");
+        expect("an empty item is a syntax error", verify(mi, s2, 0), DKIM2_PERMERROR, SIG_SYNTAX, 0);
+        free(s2);
+        free(s);
+    }
+
+    printf("F.3 h= hash-sets\n");
+    struct { const char *from, *to; int ok; } hs[] = {
+        { "h=sha256:", "h=sha 256:", 0 },
+        { "h=sha256:", "h=sha\r\n 256:", 0 },
+        { "h=sha256:", "h=sha512:AAAA:,sha256:", 0 },
+        { "h=sha256:", "h=sha512::AAAA,sha256:", 0 },
+        { "h=sha256:", "h=sha512:AAAA,sha256:", 0 },
+        { "h=sha256:", "h=,sha256:", 0 },
+        { "h=sha256:", "h=sh+a:AAAA:AAAA,sha256:", 0 },
+        { "h=sha256:", "h= \r\n sha256 :\r\n ", 1 },
+        { "h=sha256:", "h=future-hash:AAAA:AAAA , sha256: ", 1 },
+    };
+    for (size_t i = 0; i < sizeof hs / sizeof hs[0]; i++) {
+        m2 = subst(mi, hs[i].from, hs[i].to);
+        if (hs[i].ok) {   /* also fold inside the first digest's base64 */
+            const char *d = strstr(m2, "sha256");
+            d = strchr(d, ':') + 1;
+            while (*d == ' ' || *d == '\r' || *d == '\n') d++;
+            char *m3 = insert_at(m2, (size_t)(d - m2) + 10, "\r\n\t");
+            free(m2); m2 = m3;
+        }
+        s = sig1(m2, "sel1", "rsa-sha256", g_rsa, "rsa-sha256");
+        snprintf(what, sizeof what, "h= '%s' %s", hs[i].to, hs[i].ok ? "passes" : "is a syntax error");
+        if (hs[i].ok) expect(what, verify(m2, s, 0), DKIM2_OK, NULL, 1);
+        else expect(what, verify(m2, s, 0), DKIM2_PERMERROR, MI_SYNTAX, -1);
+        free(s); free(m2);
+    }
+}
+
+/* F.5: the C signer never folds, so a long Domain stays whole; it must sign
+   and verify with mf= in that domain. */
+static void test_long_domain(void) {
+    printf("F.5 long d=\n");
+    const char *mf = "<sender@" LONG_DOMAIN ">";
+    dkim2_ctx_t ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.headers = (char **)HEADERS;
+    ctx.n_headers = 3;
+    dkim2_body_hash_raw(BODY, strlen(BODY), ctx.body_digests.d[0]);
+    ctx.mail_from = (char *)mf;
+    ctx.rcpt_to = RCPTS;
+    dkim2_sign_config_t cfg = { .domain = LONG_DOMAIN, .selector = "ed",
+        .privkey_path = ED_PEM, .alg = "ed25519-sha256" };
+    char *mi = NULL, *sig = NULL;
+    assert(dkim2_do_sign(&ctx, &cfg, &mi, &sig) == 0);
+    int whole = strstr(sig, "d=" LONG_DOMAIN ";") != NULL && !strpbrk(sig, "\r\n");
+    printf("  %s: d= of %zu chars is unbroken\n", whole ? "ok" : "FAIL", strlen(LONG_DOMAIN));
+    if (!whole) g_failures++;
+    FILE *f = fopen(EML, "wb");
+    assert(f);
+    fprintf(f, "DKIM2-Signature: %s\r\nMessage-Instance: %s\r\n", sig, mi);
+    for (int i = 0; i < 3; i++) fputs(HEADERS[i], f);
+    fprintf(f, "\r\n%s", BODY);
+    fclose(f);
+    g_lookups = 0;
+    expect("signs and verifies", dkim2_verify_message(EML, mf, RCPTS, 0), DKIM2_OK, NULL, 1);
+    free(mi); free(sig);
+}
+
 int main(void) {
     make_keys();
     set_key("sel1", "v=DKIM1; k=rsa; p=%s", g_rsa_b64);
@@ -488,6 +648,8 @@ int main(void) {
     test_outcome(mi);
     test_mi_tags(mi);
     test_timestamps(mi);
+    test_field_syntax(mi);
+    test_long_domain();
     free(mi);
 
     EVP_PKEY_free(g_ed); EVP_PKEY_free(g_rsa);

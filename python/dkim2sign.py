@@ -8,7 +8,6 @@ message with Message-Instance and DKIM2-Signature headers on stdout.
 
 import argparse
 import base64
-import difflib
 import hashlib
 import io
 import json
@@ -320,31 +319,39 @@ def _recipe_steps(current: list, previous: list, keys, literal) -> list[dict]:
 
     `keys(x)` gives the comparison form of an item (equal keys mean a copy
     is hash-equivalent); `literal(x)` gives the octets to emit when an item
-    must be written out.  Matched runs become "c" ranges; since the matcher
-    walks both lists in order, every "c" start is greater than the previous
-    "c" end (§5.1/§5.2).  An item of `previous` that does not match anything
-    after the last copied item -- a reordered duplicate, say -- is emitted
-    literally rather than as an out-of-order range.
+    must be written out.  Alignment is the same capped Myers diff as body
+    Recipes (body_diff below): O((N+M)D), so a long run of identical,
+    sender-controlled fields with a few changes stays linear.  Matched runs
+    become "c" ranges; the diff is monotone, so every "c" start is greater
+    than the previous "c" end (§5.1/§5.2).  An item of `previous` that does
+    not match anything after the last copied item -- a reordered duplicate,
+    say -- is emitted literally rather than as an out-of-order range.
+
+    Header Recipes cannot be null, so there is no literal cap; if the diff
+    exceeds MAX_DIFF_WORK every previous item is written out literally.
     """
     cur_keys = [keys(x) for x in current]
     prev_keys = [keys(x) for x in previous]
-    sm = difflib.SequenceMatcher(None, cur_keys, prev_keys, autojunk=False)
+    flat = body_diff(cur_keys, prev_keys, max_literals=len(prev_keys))
+    if flat is BODY_DIFF_IDENTICAL:
+        return [{"c": [1, len(current)]}] if current else []
+    if flat is BODY_DIFF_TOO_BIG:
+        return recipe_literal_steps([literal(x) for x in previous])
     steps: list[dict] = []
     pending: list[bytes] = []
-
-    def flush():
-        if pending:
-            steps.extend(recipe_literal_steps(pending))
-            pending.clear()
-
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == "equal":
-            flush()
-            steps.append({"c": [i1 + 1, i2]})
-        elif tag in ("insert", "replace"):
-            pending.extend(literal(x) for x in previous[j1:j2])
-        # "delete": items only in the current message are simply not emitted
-    flush()
+    j = 0                           # index into `previous`
+    for item in flat:
+        if isinstance(item, list):
+            if pending:
+                steps.extend(recipe_literal_steps(pending))
+                pending.clear()
+            steps.append({"c": item})
+            j += item[1] - item[0] + 1
+        else:
+            pending.append(literal(previous[j]))
+            j += 1
+    if pending:
+        steps.extend(recipe_literal_steps(pending))
     return steps
 
 

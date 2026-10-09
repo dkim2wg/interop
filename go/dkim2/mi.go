@@ -24,20 +24,29 @@ type HashSet struct {
 	BodyHash   string // base64, FWS already stripped
 }
 
-func parseHashSets(h string) []HashSet {
+// parseHashSets parses an h= value (FWS still present).  Each hash-set is
+// exactly name:header-hash:body-hash with both digests present; FWS is
+// allowed around the name and the colons and inside the digests, but not
+// inside the name ("sha 256" is a syntax error, never "sha256").
+func parseHashSets(h string) ([]HashSet, error) {
 	var out []HashSet
 	for _, item := range strings.Split(h, ",") {
-		parts := strings.Split(strings.TrimSpace(item), ":")
+		parts := strings.Split(item, ":")
 		if len(parts) != 3 {
-			continue
+			return nil, fmt.Errorf("bad hash-set %q", item)
+		}
+		name := trimFWS(parts[0])
+		hh, bh := stripB64WSP(parts[1]), stripB64WSP(parts[2])
+		if !validToken(name) || hh == "" || bh == "" {
+			return nil, fmt.Errorf("bad hash-set %q", item)
 		}
 		out = append(out, HashSet{
-			Alg:        strings.ToLower(strings.TrimSpace(parts[0])),
-			HeaderHash: strings.TrimSpace(parts[1]),
-			BodyHash:   strings.TrimSpace(parts[2]),
+			Alg:        strings.ToLower(name),
+			HeaderHash: hh,
+			BodyHash:   bh,
 		})
 	}
-	return out
+	return out, nil
 }
 
 // hashSetsEqual reports whether two hash-set lists cover the same content:
@@ -165,10 +174,17 @@ func parseMI(raw string) (*MessageInstance, error) {
 		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
 	}
 
-	h := stripB64WSP(tvl.get("h"))
-	hashes := parseHashSets(h)
-	if len(hashes) == 0 {
-		return nil, fmt.Errorf("invalid h= tag: %q", h)
+	// §7: a fragment that is not a well-formed tag=value, or an h= that is
+	// not a list of whole hash-sets (§7.3), is a syntax error.
+	if tvl.syntaxErr {
+		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+	}
+	if !tvl.has("h") {
+		return nil, fmt.Errorf("invalid h= tag: %q", "")
+	}
+	hashes, err := parseHashSets(tvl.get("h"))
+	if err != nil {
+		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
 	}
 
 	// spec-06 §7.3: an algorithm MUST NOT be present more than once.

@@ -81,13 +81,18 @@ class KeyRecordError(Exception):
 
 _KEY_TAG_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 _WSP = " \t\r\n"
+# RFC 6376 §3.2 tag-value: VALCHARs, with WSP/FWS only between them. Every
+# value is checked, including tags that are otherwise ignored, so a NUL, DEL
+# or 8-bit byte anywhere makes the record a syntax error (spec-06 §11.5).
+_KEY_TAG_VALUE = re.compile(r"(?:[\x21-\x3a\x3c-\x7e]+(?:[ \t\r\n]+[\x21-\x3a\x3c-\x7e]+)*)?")
 
 
 def parse_key_record(txt: str) -> dict | None:
     """Parse a key record as a whole tag-list (dkim2-dns-00 §3.2, §3.4.1).
 
     Returns tag -> value, or None if the record is not a valid tag-list: a
-    spec that is not `name = value`, a bad tag name, a repeated tag, or a v=
+    spec that is not `name = value`, a bad tag name, a value outside the
+    tag-value grammar, a repeated tag, or a v=
     that is not the first tag or not exactly "DKIM1". Empty specs (e.g. after
     a trailing ';') are skipped. Tag names are case sensitive.
     """
@@ -99,9 +104,11 @@ def parse_key_record(txt: str) -> dict | None:
             return None
         name, val = spec.split("=", 1)
         name = name.strip(_WSP)
-        if not _KEY_TAG_NAME.fullmatch(name) or name in tags:
+        val = val.strip(_WSP)
+        if (not _KEY_TAG_NAME.fullmatch(name) or name in tags
+                or not _KEY_TAG_VALUE.fullmatch(val)):
             return None
-        tags[name] = val.strip(_WSP)
+        tags[name] = val
     if "v" in tags and (next(iter(tags)) != "v" or tags["v"] != "DKIM1"):
         return None
     return tags
@@ -295,6 +302,65 @@ def _strip_fws(s: str) -> str:
 
 
 _FWS_TABLE = {ord(c): None for c in " \t\r\n"}
+
+
+# spec-06 §7 / §8 tag-list syntax, checked over the whole field (follow-up
+# review F.1). FWS is any WSP, with each CRLF followed by WSP; written so it
+# cannot be split ambiguously (no backtracking blow-up on a bad field).
+_FWS_RE = r"[ \t]*(?:\r\n[ \t]+)*"
+_X_TAG_CHAR = r"[\x21-\x3a\x3c-\x7e]"
+_TAG_SPEC = re.compile(
+    rf"{_FWS_RE}[A-Za-z][A-Za-z0-9_]*{_FWS_RE}={_FWS_RE}"
+    rf"(?:{_X_TAG_CHAR}(?:{_FWS_RE}{_X_TAG_CHAR})*)?{_FWS_RE}")
+_EMPTY_SPEC = re.compile(_FWS_RE)
+# §3.5 selector (labels joined by '.'); §8.9 sig-name and §7.3 hash-name.
+# No FWS inside either: "rsa- sha256" is not normalised to a known name.
+_SELECTOR_RE = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*")
+_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _tag_list_ok(value: str) -> bool:
+    """Every ';'-separated fragment is empty or a well-formed tag-spec.
+
+    A junk fragment, a bad tag name or a NUL/DEL/8-bit byte in any value
+    (known or unknown tag) makes the whole field a syntax error; it is never
+    skipped so the rest can be verified."""
+    return all(_EMPTY_SPEC.fullmatch(f) or _TAG_SPEC.fullmatch(f)
+               for f in value.split(";"))
+
+
+def _sig_syntax_ok(value: str) -> bool:
+    """§8 tag-list plus §8.9 s= items: each exactly selector:algorithm:value.
+
+    FWS is allowed (trimmed) around the ',' and ':'s and inside the base64
+    value, but not inside the selector or algorithm name."""
+    if not _tag_list_ok(value):
+        return False
+    s_tag = _extract_tag(value, "s")
+    if s_tag is None:
+        return True  # reported as a missing tag
+    for item in s_tag.split(","):
+        parts = [p.strip(_WSP) for p in item.split(":")]
+        if (len(parts) != 3 or not _SELECTOR_RE.fullmatch(parts[0])
+                or not _NAME_RE.fullmatch(parts[1])):
+            return False
+    return True
+
+
+def _mi_syntax_ok(value: str) -> bool:
+    """§7 tag-list plus §7.3 h= hash-sets: each exactly name:hash:hash, with
+    no FWS inside the hash name and both digests present."""
+    if not _tag_list_ok(value):
+        return False
+    h_tag = _extract_tag(value, "h")
+    if h_tag is None:
+        return True  # reported as a missing tag
+    for item in h_tag.split(","):
+        parts = [p.strip(_WSP) for p in item.split(":")]
+        if (len(parts) != 3 or not _NAME_RE.fullmatch(parts[0])
+                or not _strip_fws(parts[1]) or not _strip_fws(parts[2])):
+            return False
+    return True
 
 
 def _sig_flags(sig_hdr: str) -> list[str]:
@@ -899,6 +965,22 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     if range_error:
         return VerifyResult(ok=False, status='permerror', failing_i=None,
                             domain=None, message=range_error, errors=[range_error])
+
+    # spec-06 §7, §8: the whole field must be a well-formed tag-list, with
+    # well-formed s= items and h= hash-sets (follow-up review F.1-F.3).
+    for h in mi_headers:
+        if not _mi_syntax_ok(_get_header_value(h)):
+            msg = (f"PERMERROR Message-Instance "
+                   f"m={_extract_tag(_get_header_value(h), 'm')} syntax error")
+            return VerifyResult(ok=False, status='permerror', failing_i=None,
+                                domain=None, message=msg, errors=[msg])
+    for h in sig_headers:
+        if not _sig_syntax_ok(_get_header_value(h)):
+            i_val = _extract_tag(_get_header_value(h), "i")
+            msg = f"PERMERROR DKIM2-Signature i={i_val} syntax error"
+            return VerifyResult(ok=False, status='permerror',
+                                failing_i=_get_seq_from_sig(h),
+                                domain=None, message=msg, errors=[msg])
 
     seen_m = set()
     for h in mi_headers:

@@ -215,6 +215,31 @@ func KnownSigAlg(alg string) bool {
 	return alg == "rsa-sha256" || alg == "ed25519-sha256"
 }
 
+// validToken: 1*(ALPHA / DIGIT / "_" / "-"), an algorithm or hash name
+// (§7.3, §8.9) or one label of a selector.
+func validToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// validSelector: validToken labels joined by "." (§3.5 selector = Domain).
+func validSelector(s string) bool {
+	for _, label := range strings.Split(s, ".") {
+		if !validToken(label) {
+			return false
+		}
+	}
+	return true
+}
+
 // sigSyntaxError is spec-06 §11.2's "PERMERROR DKIM2-Signature i=<x> syntax error".
 func sigSyntaxError(i int) error {
 	return fmt.Errorf("PERMERROR DKIM2-Signature i=%d syntax error", i)
@@ -238,6 +263,11 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 			return nil, fmt.Errorf("DKIM2-Signature tag=i syntax error: %w", err)
 		}
 		sig.Sequence = n
+	}
+	// §7/§8: a fragment that is not a well-formed tag=value makes the whole
+	// field a syntax error; it is never skipped to verify the rest.
+	if tvl.syntaxErr {
+		return nil, sigSyntaxError(sig.Sequence)
 	}
 	if v := tvl.get("m"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -280,21 +310,25 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	}
 	if v := tvl.get("s"); v != "" {
 		for _, part := range strings.Split(v, ",") {
-			// §2.12: strip folding whitespace before splitting, not after.
-			// A fold may land between the Selector colon and the algorithm
-			// token, in which case splitting first leaves the CRLF+WSP
-			// attached to the algorithm name and the comparison fails.
-			fields := strings.SplitN(stripB64WSP(part), ":", 3)
+			// §8.9 sig-set: exactly three parts.  FWS is allowed around the
+			// comma and each colon (trimmed) and inside the base64 value
+			// (removed), never inside the selector or algorithm name: "rsa-
+			// sha256" is a syntax error, not a fold to undo.
+			fields := strings.Split(part, ":")
 			if len(fields) != 3 {
-				return nil, fmt.Errorf("invalid s= item: %q", part)
+				return nil, sigSyntaxError(sig.Sequence)
 			}
-			item := SigItem{Selector: fields[0], Algorithm: fields[1]}
+			item := SigItem{Selector: trimFWS(fields[0]), Algorithm: trimFWS(fields[1])}
+			if !validSelector(item.Selector) || !validToken(item.Algorithm) {
+				return nil, sigSyntaxError(sig.Sequence)
+			}
+			value := stripB64WSP(fields[2])
 			// §3.4: an item whose algorithm is not implemented is ignored
 			// entirely, value included.  An implemented one MUST carry a
 			// non-empty base64 signature.
 			if KnownSigAlg(item.Algorithm) {
-				b, err := base64.StdEncoding.DecodeString(fields[2])
-				if fields[2] == "" || err != nil {
+				b, err := base64.StdEncoding.DecodeString(value)
+				if value == "" || err != nil {
 					return nil, sigSyntaxError(sig.Sequence)
 				}
 				item.Value = b

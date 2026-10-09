@@ -122,3 +122,46 @@ verifier applies these, in this order, to one DKIM2-Signature's s= items:
    as a PERMERROR").
 5. Verify each item that has a key. Any failure: `FAIL` (naming the
    selector). Otherwise pass.
+
+## F. Whole-field syntax and folding (follow-up review, 2026-10-09)
+
+From docs/reviews/2026-10-09-perl-spec-06-fix-review.md (F1-F5). Perl
+(`fa4f7bc`) is done; every implementation applies the same rules.
+
+1. **Tag lists** (spec-06 §7, §8 `x-tag`; §11.2). A DKIM2-Signature or
+   Message-Instance value is split on `;`. Empty fragments (`;;`, a trailing
+   `;`) are skipped. Every other fragment must be
+   `[FWS] name [FWS] "=" [FWS] [value] [FWS]` with name
+   `ALPHA *(ALPHA / DIGIT / "_")` and value
+   `x-tag-char *([FWS] x-tag-char)`, x-tag-char = `%x21-3A / %x3C-7E`.
+   Anything else (`junk`, `9bad=foo`, `=v`, a NUL/DEL/8-bit byte in any
+   value, known or unknown tag) makes the field a syntax error:
+   `PERMERROR DKIM2-Signature i=<x> syntax error` /
+   `PERMERROR Message-Instance m=<x> syntax error`. Never skip the fragment
+   and verify the rest. A well-formed unknown tag is ignored for meaning
+   but stays in the signing input as before.
+2. **s= items** (§8.9). Split on `,`, then each item into exactly three
+   parts on `:`. FWS is allowed (trimmed) around the comma, around each
+   colon, and inside the base64 value (removed). It is NOT allowed inside the
+   selector or algorithm name: `rsa- sha256`, `rsa-\r\n\tsha256`, `se l1`
+   are syntax errors (whole signature PERMERROR), never normalised to a
+   known name. Selector: `[A-Za-z0-9_-]+` labels joined by `.`; algorithm:
+   `[A-Za-z0-9_-]+`. An item with fewer than three parts is a syntax error.
+3. **h= hash-sets** (§7.3). Same rule: hash name has no internal FWS
+   (`sha 256` is a syntax error), FWS allowed around it and inside the base64
+   digests; a set without both digests is a syntax error, not skipped.
+4. **Key records** (RFC 6376 §3.2 tag-list, spec-06 §11.5). Every value,
+   including unknown/ignored tags, must match the value grammar
+   (`VALCHAR = %x21-3A / %x3C-7E`, WSP/FWS only between VALCHARs). A NUL,
+   DEL or 8-bit byte anywhere makes the record `has a syntax error`.
+5. **Signer folding** (§8.8 Domain, §8.9, §2.13). A signer folds its own
+   DKIM2-Signature / Message-Instance only where the grammar allows FWS:
+   after a tag's `;`, inside a base64 value (mf=, rt=, r=, h= digests, s=
+   signature values), beside the `:`s of an s= or h= item, after a list
+   comma (not in s=). Never inside a Domain (d=, nd=), selector, algorithm
+   or hash name: such a token stays whole on a line longer than 78, up to
+   RFC 5322's 998. Test: d= of two 40-char labels + `.example.com` must sign
+   and verify (mf= in that domain).
+6. **Header recipe generation** must be linear in repeated identical
+   fields: 16,000 identical `Comments:` fields plus one added must not take
+   quadratic time (Perl went from 2.9 s to 0.06 s).

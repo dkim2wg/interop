@@ -14,29 +14,44 @@ static char *strdup_trim(const char *s, const char *end) {
     return r;
 }
 
+static int is_fws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+static int is_alpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+
+/* spec-06 §7, §8: split on ';'. An empty fragment (";;", a trailing ';')
+   is skipped; any other must be
+     [FWS] name [FWS] "=" [FWS] [value] [FWS]
+   with name = ALPHA *(ALPHA / DIGIT / "_") and value =
+   x-tag-char *([FWS] x-tag-char), x-tag-char = %x21-3A / %x3C-7E. Anything
+   else sets tl->syntax_error: the caller rejects the whole field. A
+   fragment that is not even name "=" is left out of the list. */
 taglist_t *tagparse(const char *input, const char **errp) {
     taglist_t *tl = calloc(1, sizeof *tl);
     if (!tl) return NULL;
     tag_entry_t **tail = &tl->head;
     const char *p = input;
     while (*p) {
-        /* Skip leading whitespace */
-        while (isspace((unsigned char)*p)) p++;
-        if (!*p) break;
-        /* Find '=' */
-        const char *name_start = p;
-        while (*p && *p != '=' && *p != ';') p++;
-        if (*p != '=') {
-            /* bare semicolons or trailing whitespace — skip */
-            if (*p == ';') { p++; continue; }
-            break;
-        }
-        const char *name_end = p++;
-        /* Find end of value (next unquoted ';' or end of string) */
-        const char *val_start = p;
+        const char *frag = p;
         while (*p && *p != ';') p++;
-        const char *val_end = p;
+        const char *fend = p;
         if (*p == ';') p++;
+
+        const char *q = frag;
+        while (q < fend && is_fws(*q)) q++;
+        if (q == fend) continue;                    /* empty fragment */
+        const char *name_start = q;
+        if (!is_alpha(*q)) { tl->syntax_error = 1; continue; }
+        while (q < fend && (is_alpha(*q) || (*q >= '0' && *q <= '9') || *q == '_')) q++;
+        const char *name_end = q;
+        while (q < fend && is_fws(*q)) q++;
+        if (q == fend || *q != '=') { tl->syntax_error = 1; continue; }
+        const char *val_start = ++q;
+        int bad = 0;
+        for (; q < fend; q++)
+            if (!is_fws(*q) && !((unsigned char)*q >= 0x21 && (unsigned char)*q <= 0x7E)) bad = 1;
+        /* A bad value is still recorded, so a caller can name the tag
+           (e.g. "malformed m= tag") -- the field is rejected either way. */
+        if (bad) tl->syntax_error = 1;
+        const char *val_end = fend;
 
         tag_entry_t *e = calloc(1, sizeof *e);
         if (!e) { taglist_free(tl); return NULL; }

@@ -17,6 +17,46 @@ static void strip_fws(char *s) {
     *w = '\0';
 }
 
+static char *trim_fws(char *s) {
+    while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+    size_t n = strlen(s);
+    while (n && (s[n-1] == ' ' || s[n-1] == '\t' || s[n-1] == '\r' || s[n-1] == '\n'))
+        s[--n] = '\0';
+    return s;
+}
+
+/* An algorithm or hash name: [A-Za-z0-9_-]+. With labels, a Selector:
+   such labels joined by '.'. No FWS inside either. */
+static int name_ok(const char *s, int labels) {
+    int len = 0;
+    for (; *s; s++) {
+        if ((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') ||
+            (*s >= '0' && *s <= '9') || *s == '_' || *s == '-') len++;
+        else if (labels && *s == '.' && len) len = 0;
+        else return 0;
+    }
+    return len > 0;
+}
+
+/* Split one s= or h= item into exactly three parts on ':' (spec-06 §7.3,
+   §8.9). FWS is trimmed from around the first two (it may sit beside a
+   colon or a list comma) and removed from inside the third (a base64
+   value); a name with FWS inside it is left for name_ok() to reject. */
+static int split3(char *item, char **p1, char **p2, char **p3) {
+    char *c1 = strchr(item, ':');
+    if (!c1) return -1;
+    *c1++ = '\0';
+    char *c2 = strchr(c1, ':');
+    if (!c2) return -1;
+    *c2++ = '\0';
+    if (strchr(c2, ':')) return -1;
+    *p1 = trim_fws(item);
+    *p2 = trim_fws(c1);
+    strip_fws(c2);
+    *p3 = c2;
+    return 0;
+}
+
 /* Parse h= value: "sha256:hhash:bhash,sha256:hhash:bhash,..."
    Returns 0 on success, -1 on malloc/syntax failure, -2 if an algorithm
    name is present more than once (spec-06 §7.3; case-insensitive per
@@ -29,18 +69,17 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
     *n = 0;
     char *copy = strdup(h);
     if (!copy) { free(*out); *out = NULL; return -1; }
-    /* Strip all FWS from the copy so folded hashes parse correctly */
-    strip_fws(copy);
-    char *saveptr = NULL, *tok = strtok_r(copy, ",", &saveptr);
+    /* An empty set (",,") or one without both digests is a syntax error,
+       never skipped; the hash name may not contain FWS ("sha 256"). */
+    char *tok = copy, *next;
     int dup = 0;
-    while (tok) {
-        char *c1 = strchr(tok, ':');
-        if (!c1) { free(copy); return -1; }
-        *c1++ = '\0';
-        char *c2 = strchr(c1, ':');
-        if (!c2) { free(copy); return -1; }
-        *c2++ = '\0';
-
+    for (; tok; tok = next) {
+        next = strchr(tok, ',');
+        if (next) *next++ = '\0';
+        char *c1, *c2;
+        if (split3(tok, &tok, &c1, &c2) < 0 || !name_ok(tok, 0) || !*c1 || !*c2) {
+            free(copy); return -1;
+        }
         /* §7.3: an algorithm MUST NOT be present more than once. Check
            against every entry already stored -- this must run before any
            hash is computed or compared. */
@@ -71,7 +110,6 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
             free(copy); return -1;
         }
         (*n)++;
-        tok = strtok_r(NULL, ",", &saveptr);
     }
     free(copy);
     return dup ? -2 : 0;
@@ -117,7 +155,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
        and "MUST be only one of each kind" -- a repeat in any case
        combination (h=..; H=.., m=1; M=1) is a syntax error, never
        first- or last-one-wins. */
-    if (tl->duplicate) {
+    if (tl->duplicate || tl->syntax_error) {
         if (errbuf && errbufsz)
             snprintf(errbuf, errbufsz,
                 "PERMERROR Message-Instance m=%d syntax error", mi->m);
@@ -240,32 +278,30 @@ static char **parse_flags(const char *f_val, int *n_out) {
     return out;
 }
 
-/* Parse s= value: comma-separated "selector:alg:sig" triples */
+/* Parse s= value: comma-separated "selector:alg:sig" triples (spec-06
+   §8.9). FWS may sit around the comma and the colons and inside the base64
+   value, never inside the Selector or algorithm name (no "rsa- sha256"
+   normalised to rsa-sha256); an item that is not exactly three parts, or
+   an empty item, is a syntax error. */
 static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
     int cnt = 1;
     for (const char *p = s; *p; p++) if (*p == ',') cnt++;
     *out = calloc((size_t)cnt, sizeof(dkim2_sigset_t));
     if (!*out) return -1;
     *n = 0;
-    char *copy = strdup(s), *saveptr = NULL, *tok;
+    char *copy = strdup(s), *tok, *next;
     if (!copy) { free(*out); *out = NULL; return -1; }
-    tok = strtok_r(copy, ",", &saveptr);
-    while (tok) {
-        /* Strip FWS before splitting: a fold may land between the Selector
-           colon and the algorithm token, which would otherwise leave CRLF+WSP
-           attached to the algorithm name. */
-        strip_fws(tok);
-        char *c1 = strchr(tok, ':');
-        if (!c1) { free(copy); return -1; }
-        *c1++ = '\0';
-        char *c2 = strchr(c1, ':');
-        if (!c2) { free(copy); return -1; }
-        *c2++ = '\0';
+    for (tok = copy; tok; tok = next) {
+        next = strchr(tok, ',');
+        if (next) *next++ = '\0';
+        char *alg, *val;
+        if (split3(tok, &tok, &alg, &val) < 0 || !name_ok(tok, 1) || !name_ok(alg, 0)) {
+            free(copy); return -1;
+        }
         (*out)[*n].selector = strdup(tok);
-        (*out)[*n].alg      = strdup(c1);
-        (*out)[*n].sig_b64  = strdup(c2);
+        (*out)[*n].alg      = strdup(alg);
+        (*out)[*n].sig_b64  = strdup(val);
         (*n)++;
-        tok = strtok_r(NULL, ",", &saveptr);
     }
     free(copy);
     return 0;
@@ -332,6 +368,15 @@ static int parse_t(const char *v, uint64_t *out) {
     return 0;
 }
 
+/* Non-zero if an s= value is present and does not parse. */
+static int s_syntax_error(const char *v) {
+    dkim2_sigset_t *ss = NULL;
+    int n = 0, bad = v && parse_ssets(v, &ss, &n) < 0;
+    for (int i = 0; i < n; i++) { free(ss[i].selector); free(ss[i].alg); free(ss[i].sig_b64); }
+    free(ss);
+    return bad;
+}
+
 dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz) {
     if (errbuf && errbufsz) errbuf[0] = '\0';
     dkim2_sig_t *sig = dkim2_sig_parse(value);
@@ -345,7 +390,8 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
         ;
     else if (dkim2_chain_number_error("DKIM2-Signature", "m", mv, errbuf, errbufsz))
         ;
-    else if (tl && tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0)
+    else if (tl && (tl->syntax_error || s_syntax_error(tag_get(tl, "s")) ||
+                    (tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0)))
         snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature i=%d syntax error", atoi(iv));
     else
         snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature is malformed");
@@ -357,7 +403,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     taglist_t *tl = tagparse(value, NULL);
     if (!tl) return NULL;
     /* §8: "there MUST be only one of each kind" of tag. */
-    if (tl->duplicate) { taglist_free(tl); return NULL; }
+    if (tl->duplicate || tl->syntax_error) { taglist_free(tl); return NULL; }
     dkim2_sig_t *sig = calloc(1, sizeof *sig);
     if (!sig) { taglist_free(tl); return NULL; }
     const char *v;
