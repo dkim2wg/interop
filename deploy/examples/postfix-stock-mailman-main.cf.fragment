@@ -1,0 +1,14 @@
+# DKIM2 for stock Mailman: main.cf settings. See
+# docs/dkim2-postfix-stock-mailman-guide.md.
+#
+# Only the DKIM2 lists' traffic reaches a DKIM2 milter; it is routed there by
+# the two maps below. Port 25 (smtpd_milters) gets no DKIM2 milter.
+#
+# transport_maps: the DKIM2 list map FIRST, then whatever you have now
+# (Mailman's postfix_lmtp map, as Mailman's postfix config generates it; it
+# may be regexp: rather than hash: on your host -- keep its type).
+transport_maps = hash:/etc/postfix/dkim2-lists, hash:/var/lib/mailman3/data/postfix_lmtp
+
+# Never rewrite a signed body on the way out (8bit -> 7bit would change
+# Content-Transfer-Encoding after signing).
+disable_mime_output_conversion = yes

@@ -16,9 +16,11 @@ sub slurp { my $f = shift; open my $fh, '<', $f or die "$f: $!"; local $/; <$fh>
 
 ok(-f "$ex/$_", "$_ exists") for qw(dkim2-milter-inbound.service dkim2-milter-outbound.service
     dkim2-milter.service dkim2-split.service postfix-main.cf.fragment postfix-master.cf.fragment
-    authentication_milter.json.fragment sympa-sendmail);
+    authentication_milter.json.fragment sympa-sendmail
+    postfix-stock-mailman-main.cf.fragment postfix-stock-mailman-master.cf.fragment
+    postfix-dkim2-lists postfix-dkim2-list-senders dkim2-milter-wrap.service);
 
-for my $u (qw(dkim2-milter-inbound dkim2-milter-outbound dkim2-milter)) {
+for my $u (qw(dkim2-milter-inbound dkim2-milter-outbound dkim2-milter dkim2-milter-wrap)) {
     my $t = slurp("$ex/$u.service");
     like($t, qr{^ExecStart=/usr/local/bin/dkim2-milter\b}m, "$u runs the installed program");
     unlike($t, qr{/root/|/opt/dkim2|-I/}m, "$u names no checkout path");
@@ -58,5 +60,22 @@ like($main, qr/append|existing/i, 'main fragment says to merge with existing mil
 
 is(system($^X, '-c', "$ex/sympa-sendmail") >> 8, 0, 'sympa-sendmail compiles');
 like(slurp("$ex/sympa-sendmail"), qr/DKIM2_SIGN_PORT/, '  ... and takes its port from the environment');
+
+my $wrap = slurp("$ex/dkim2-milter-wrap.service");
+like($wrap, qr/--mode inbound/, 'wrap unit is an inbound milter');
+like($wrap, qr/--wrap-single-part/, '  ... that wraps');
+like($wrap, qr{dkim2-milter-wrap\.sock}, '  ... on its own socket');
+my $smaster = slurp("$ex/postfix-stock-mailman-master.cf.fragment");
+for my $port (qw(10025 10026 10587)) {
+    like($smaster, qr/^127\.0\.0\.1:$port inet/m, "stock master fragment defines 127.0.0.1:$port");
+}
+like($smaster, qr/content_filter=lmtp:\[127\.0\.0\.1\]:8024/, 'the wrap listener hands every message to Mailman');
+like($smaster, qr/dkim2-list-senders/, 'the Mailman submission listener routes by sender');
+like($smaster, qr/myhostname=/, 'loopback hops use a distinct myhostname');
+my $smain = slurp("$ex/postfix-stock-mailman-main.cf.fragment");
+like($smain, qr/^transport_maps = hash:\/etc\/postfix\/dkim2-lists,/m, 'the DKIM2 list map comes before Mailman\'s');
+unlike($smain, qr/^smtpd_milters\s*=\s*\S/m, 'port 25 runs no DKIM2 milter');
+like(slurp("$ex/postfix-dkim2-list-senders"), qr/FILTER smtp:\[127\.0\.0\.1\]:10587/, 'sender map filters to the signer');
+like(slurp("$ex/postfix-dkim2-lists"), qr/smtp:\[127\.0\.0\.1\]:10026/, 'transport map sends to the wrap listener');
 
 done_testing;

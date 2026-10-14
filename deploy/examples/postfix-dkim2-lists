@@ -1,0 +1,4 @@
+# DKIM2 lists: the posting address of each list that gets DKIM2, routed to
+# the wrapping inbound milter's listener (postfix-stock-mailman-master.cf.fragment).
+# One line per list; then: postmap /etc/postfix/dkim2-lists && postfix reload
+dkim2-test@lists.example.org    smtp:[127.0.0.1]:10026
