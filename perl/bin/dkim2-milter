@@ -59,6 +59,7 @@ use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Gate;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
+use Mail::DKIM2::Wrap qw(wrap_single_part);
 use Email::MIME;
 
 # --- Command-line options ---
@@ -78,6 +79,7 @@ GetOptions(\%opts,
     'use-epilogue',
     'epilogue-threshold=i',
     'max-recipe-literals=i',
+    'wrap-single-part',
     'help|h',
 ) or pod2usage(2);
 
@@ -100,6 +102,11 @@ $opts{mode}      //= 'both';
 
 unless ($opts{mode} =~ /^(inbound|outbound|both)$/) {
     die "Invalid --mode: must be inbound, outbound, or both\n";
+}
+
+if ($opts{'wrap-single-part'}) {
+    die "--wrap-single-part needs --mode inbound\n" unless $opts{mode} eq 'inbound';
+    die "--wrap-single-part needs --snapshot-dir\n" unless $opts{'snapshot-dir'};
 }
 
 my $do_verify = $opts{mode} eq 'inbound' || $opts{mode} eq 'both';
@@ -133,6 +140,7 @@ if ($can_sign_keydir) {
     warn "dkim2-milter: signing enabled via keydir $opts{keydir}\n";
 }
 warn "dkim2-milter: mode=$opts{mode}\n";
+warn "dkim2-milter: wrapping single-part posts\n" if $opts{'wrap-single-part'};
 
 # Preload DNS overrides if specified
 my $dns_data;
@@ -335,7 +343,9 @@ sub cb_eom {
         my $ar_value = "localhost; dkim2=$result";
         my $info_value = _dkim2_info("verify=$result");
         my $ar_raw = "Authentication-Results: $ar_value$EOL";
-        my $info_raw = "X-DKIM2-Info: $info_value$EOL";
+        # _dkim2_info() folds with bare LF (the milter wire form); the
+        # message we stamp, snapshot and may wrap is CRLF throughout.
+        my $info_raw = "X-DKIM2-Info: " . ($info_value =~ s/\r?\n/$EOL/gr) . $EOL;
         my $message_with_ar = $info_raw . $ar_raw . $message;
 
         # Insert the headers into the milter output
@@ -367,6 +377,57 @@ sub cb_eom {
                 hc => $mi_info{hc}, hn => $mi_info{hn},
                 snaps => $mi_info{snaps}), 0);
             warn "dkim2-milter: added MI header for $msgid\n";
+        }
+
+        # --wrap-single-part: stock Mailman pastes a footer into a single-part
+        # body (re-encoding it); a multipart/mixed gets the footer as an extra
+        # part instead. Wrap here, record the wrap as its own unsigned
+        # instance, and snapshot the wrapped message for the outbound diff.
+        # Everything is computed before anything is sent, so any failure
+        # leaves the message unwrapped with only its arrival headers.
+        if ($opts{'wrap-single-part'}) {
+            my $current = ($mi_header ? "Message-Instance: $mi_header$EOL" : '') . $message_with_ar;
+            my ($wrap, $wrap_mi, %wrap_info);
+            if (!$mi_info{snaps}) {
+                warn "dkim2-milter: not wrapping $msgid: no arrival snapshot\n";
+            } else {
+                my $ok = eval {
+                    $wrap = wrap_single_part($current);
+                    warn "dkim2-milter: not wrapping $msgid: already multipart\n" unless $wrap;
+                    $wrap_mi = _compute_mi($wrap->{message}, \%wrap_info) if $wrap;
+                    1;
+                };
+                if (!$ok) {
+                    warn "dkim2-milter: not wrapping $msgid: internal error: " . _error_text($@) . "\n";
+                    $wrap = undef;
+                } elsif ($wrap && !$wrap_mi) {
+                    warn "dkim2-milter: not wrapping $msgid: no Message-Instance for the wrap\n";
+                    $wrap = undef;
+                } elsif ($wrap && $wrap_info{strip_mi_versions}) {
+                    # The inbound side never removes instances; a diff that
+                    # wants to is not one to put on the wire.
+                    warn "dkim2-milter: not wrapping $msgid: the wrap's diff would strip instances\n";
+                    $wrap = undef;
+                }
+            }
+            if ($wrap) {
+                for my $e (@{$wrap->{edits}}) {
+                    if    ($e->{op} eq 'delete') { $ctx->chgheader($e->{name}, $e->{index}, '') }
+                    elsif ($e->{op} eq 'change') { $ctx->chgheader($e->{name}, $e->{index}, $e->{value}) }
+                    else                         { $ctx->addheader($e->{name}, $e->{value}) }
+                }
+                my $body = $wrap->{body};
+                for (my $o = 0; $o < length $body; $o += 65535) {
+                    $ctx->replacebody(substr($body, $o, 65535));
+                }
+                $ctx->insheader('Message-Instance', _milter_value($wrap_mi), 0);
+                my ($wrap_ver) = $wrap_mi =~ /m=(\d+)/;
+                $ctx->insheader('X-DKIM2-Info', _milter_value(_dkim2_info("wrap-single-part")), 0);
+                $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$wrap_ver",
+                    hc => $wrap_info{hc}, hn => $wrap_info{hn},
+                    snapf => $wrap_info{snapf}, snaps => $wrap_info{snaps}), 0);
+                warn "dkim2-milter: wrapped $msgid as m=$wrap_ver\n";
+            }
         }
     }
 
@@ -417,14 +478,42 @@ sub cb_eom {
         # nd= bridge: when the top signature carries nd= we may extend it only
         # if nd= names the domain we sign as, so tell the gate which. (The
         # gate ignores this unless the top signature has nd=.)
+        #
+        # The gate judges the message as it will be signed: with this hop's
+        # own Message-Instance (the diff against the snapshot) on top and any
+        # broken intermediate instances removed. A list manager that changed
+        # the message without recording an instance (stock Mailman: the
+        # snapshot diff is its instance) leaves a top instance that no longer
+        # matches; gating before the diff refused every such copy.
+        # DKIM2Sign has always computed first and gated second.
+        my $mi_header;
+        my %mi_info;
+        if ($snapshot_store) {
+            # Fail closed: an exception computing the instance means no
+            # Message-Instance and no signature.
+            my $ok = eval { $mi_header = _compute_mi($message, \%mi_info); 1 };
+            unless ($ok) {
+                warn "dkim2-milter: not signing $msgid: internal error computing the "
+                   . "Message-Instance: " . _error_text($@) . "\n";
+                return SMFIS_CONTINUE;
+            }
+            warn "dkim2-milter: computed MI for $msgid\n" if $mi_header;
+        }
+        my $sign_msg = $mi_info{strip_mi_versions}
+            ? strip_mi_versions($message, @{$mi_info{strip_mi_versions}})
+            : $message;
+        $sign_msg = "Message-Instance: $mi_header$EOL" . $sign_msg if $mi_header;
+
         my $gate_sd = $sign_config->{domain};
         # Fail closed: an exception anywhere in the gate (a crafted message
         # must never take the callback down with it) is a logged refusal.
+        # The inbound verdict (mode both) still describes the message only if
+        # this hop added and removed nothing.
         my $gate = eval {
-            Mail::DKIM2::Gate->check($message,
+            Mail::DKIM2::Gate->check($sign_msg,
                 (defined $gate_sd ? (SigningDomain => $gate_sd) : ()),
                 AllowNullBodyRecipe => $opts{'allow-null-body-recipe'},
-                ($do_verify ? (VerifyResult => $verify_result) : ()),
+                ($do_verify && $sign_msg eq $message ? (VerifyResult => $verify_result) : ()),
                 _gate_pubkey_cb());
         };
         unless ($gate) {
@@ -450,93 +539,66 @@ sub cb_eom {
                 _milter_value(_dkim2_info("not-signed=null-body-recipe")), 0);
         } else {
             # Chain is valid (or there is no upstream chain) — proceed.
-            my $mi_header;
-            my %mi_info;
-            my $mi_failed;
-            if ($snapshot_store) {
-                # Fail closed, as for the gate: an exception computing the
-                # instance means no Message-Instance and no signature.
-                my $ok = eval { $mi_header = _compute_mi($message, \%mi_info); 1 };
-                unless ($ok) {
-                    warn "dkim2-milter: not signing $msgid: internal error computing the "
-                       . "Message-Instance: " . _error_text($@) . "\n";
-                    $mi_header = undef;
-                    %mi_info = ();
-                    $mi_failed = 1;
-                }
-                if ($mi_header) {
-                    warn "dkim2-milter: computed MI for $msgid\n";
-                    $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
-                    my ($mi_ver) = $mi_header =~ /m=(\d+)/;
-                    $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$mi_ver",
-                        hc => $mi_info{hc}, hn => $mi_info{hn},
-                        snapf => $mi_info{snapf}, snaps => $mi_info{snaps}), 0);
-                    warn "dkim2-milter: added MI header for $msgid\n";
-                }
-                # If _compute_mi stripped broken intermediate MI headers, delete them
-                # from the wire message and log a warning.
-                if ($mi_info{strip_mi_versions}) {
-                    for my $v (@{$mi_info{strip_mi_versions}}) {
-                        my $count = 0;
-                        my $del_idx = 0;
-                        for my $hdr (@{$priv->{headers}}) {
-                            if (lc($hdr->[0]) eq 'message-instance') {
-                                $count++;
-                                my $val = $hdr->[1];
-                                $val =~ s/^\s+//;
-                                if ((extract_mi_version($val) // 0) == $v) {
-                                    $del_idx = $count;
-                                    last;
-                                }
+            if ($mi_header) {
+                $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
+                my ($mi_ver) = $mi_header =~ /m=(\d+)/;
+                $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$mi_ver",
+                    hc => $mi_info{hc}, hn => $mi_info{hn},
+                    snapf => $mi_info{snapf}, snaps => $mi_info{snaps}), 0);
+                warn "dkim2-milter: added MI header for $msgid\n";
+            }
+            # If _compute_mi stripped broken intermediate MI headers, delete them
+            # from the wire message and log a warning.
+            if ($mi_info{strip_mi_versions}) {
+                for my $v (@{$mi_info{strip_mi_versions}}) {
+                    my $count = 0;
+                    my $del_idx = 0;
+                    for my $hdr (@{$priv->{headers}}) {
+                        if (lc($hdr->[0]) eq 'message-instance') {
+                            $count++;
+                            my $val = $hdr->[1];
+                            $val =~ s/^\s+//;
+                            if ((extract_mi_version($val) // 0) == $v) {
+                                $del_idx = $count;
+                                last;
                             }
                         }
-                        if ($del_idx) {
-                            $ctx->chgheader('Message-Instance', $del_idx, '');
-                            warn "dkim2-milter: deleted broken MI m=$v from wire message\n";
-                        }
                     }
-                    my $stripped_str = join(',', map { "m=$_" } @{$mi_info{strip_mi_versions}});
-                    my $recomp_from  = $mi_info{strip_mi_versions}[0] - 1;
-                    $ctx->insheader('X-DKIM2-Info',
-                        _dkim2_info("stripped-broken-mi=$stripped_str,recomputed-from=m$recomp_from"), 0);
+                    if ($del_idx) {
+                        $ctx->chgheader('Message-Instance', $del_idx, '');
+                        warn "dkim2-milter: deleted broken MI m=$v from wire message\n";
+                    }
                 }
+                my $stripped_str = join(',', map { "m=$_" } @{$mi_info{strip_mi_versions}});
+                my $recomp_from  = $mi_info{strip_mi_versions}[0] - 1;
+                $ctx->insheader('X-DKIM2-Info',
+                    _dkim2_info("stripped-broken-mi=$stripped_str,recomputed-from=m$recomp_from"), 0);
             }
 
-            if ($mi_failed) {
-                # logged above
-            } else {
-                # Log domain alignment: signing domain vs envelope-from and From:
-                my ($env_domain) = ($priv->{env_from} || '') =~ /\@(.+)$/;
-                $env_domain = lc($env_domain // '');
-                my $env_aligned  = ($env_domain  eq lc($sign_config->{domain})) ? 'yes' : 'no';
-                my $from_aligned = ($from_hdr_domain eq lc($sign_config->{domain})) ? 'yes' : 'no';
-                warn "dkim2-milter: domain alignment $msgid"
-                   . " signing=$sign_config->{domain}"
-                   . " env_from=$env_domain aligned=$env_aligned"
-                   . " from_hdr=$from_hdr_domain aligned=$from_aligned\n";
-                # Build the signing message: strip any broken MIs, then prepend the new MI
-                my $sign_msg = $mi_info{strip_mi_versions}
-                    ? strip_mi_versions($message, @{$mi_info{strip_mi_versions}})
-                    : $message;
-                if ($mi_header) {
-                    $sign_msg = "Message-Instance: $mi_header$EOL" . $sign_msg;
-                }
+            # Log domain alignment: signing domain vs envelope-from and From:
+            my ($env_domain) = ($priv->{env_from} || '') =~ /\@(.+)$/;
+            $env_domain = lc($env_domain // '');
+            my $env_aligned  = ($env_domain  eq lc($sign_config->{domain})) ? 'yes' : 'no';
+            my $from_aligned = ($from_hdr_domain eq lc($sign_config->{domain})) ? 'yes' : 'no';
+            warn "dkim2-milter: domain alignment $msgid"
+               . " signing=$sign_config->{domain}"
+               . " env_from=$env_domain aligned=$env_aligned"
+               . " from_hdr=$from_hdr_domain aligned=$from_aligned\n";
 
-                my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
-                if ($sig_header) {
-                    $ctx->insheader('DKIM2-Signature', _milter_value($sig_header), 0);
-                    $ctx->insheader('X-DKIM2-Info',
-                        _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
-                    warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
-                       . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
-                    # Informational: we signed over a null body Recipe --
-                    # a null top, whether it arrived signed (no option
-                    # needed) or is our own, or any unsigned null under the
-                    # top (the option was set).
-                    $ctx->insheader('X-DKIM2-Info',
-                        _milter_value(_dkim2_info("null-body-recipe")), 0)
-                        if $gate->{top_null} || $gate->{unsigned_null};
-                }
+            my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
+            if ($sig_header) {
+                $ctx->insheader('DKIM2-Signature', _milter_value($sig_header), 0);
+                $ctx->insheader('X-DKIM2-Info',
+                    _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
+                warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
+                   . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
+                # Informational: we signed over a null body Recipe --
+                # a null top, whether it arrived signed (no option
+                # needed) or is our own, or any unsigned null under the
+                # top (the option was set).
+                $ctx->insheader('X-DKIM2-Info',
+                    _milter_value(_dkim2_info("null-body-recipe")), 0)
+                    if $gate->{top_null} || $gate->{unsigned_null};
             }
         }
     }
@@ -994,6 +1056,18 @@ needs no option: the domain that declared the null signed it, and the milter
 extends the chain as for any other valid one.  Whenever the milter signs over
 a null top, in either case, or over an unsigned null under the top (with the
 option), it adds the informational C<X-DKIM2-Info: action=null-body-recipe;>.
+
+=item B<--wrap-single-part>
+
+Inbound mode only, and needs C<--snapshot-dir>. After verifying, stamping and
+keeping the arrival snapshot, wrap a message that is not C<multipart/*> into a
+one-part C<multipart/mixed> (its C<Content-*> fields and body unchanged, see
+L<Mail::DKIM2::Wrap>), record the wrap as a new unsigned Message-Instance, and
+keep the wrapped message as the snapshot the outbound milter diffs against.
+For stock Mailman, whose footer then becomes an extra MIME part instead of
+re-encoding the body. A message whose arrival snapshot could not be kept (an
+upstream instance that does not match) is not wrapped. Adds
+C<X-DKIM2-Info: action=wrap-single-part;>.
 
 =item B<--use-epilogue>
 

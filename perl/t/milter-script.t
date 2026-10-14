@@ -27,6 +27,7 @@ use Email::MIME;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;
+use Mail::DKIM2::MessageStore;
 use DKIM2TestKeys;
 
 plan skip_all => 'Sendmail::PMilter 1.28 or later not installed (1.27 never answered MAIL FROM:<>)'
@@ -249,8 +250,9 @@ my $PLAIN = join($EOL,
     '');
 
 sub originator_signed {
-    my $mi  = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($PLAIN));
-    my $msg = "Message-Instance: " . $mi->as_string . $EOL . $PLAIN;
+    my $plain = shift // $PLAIN;
+    my $mi  = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($plain));
+    my $msg = "Message-Instance: " . $mi->as_string . $EOL . $plain;
     my $signer = Mail::DKIM2::Signer->new(
         Domain => 'test1.dkim2.com', Selector => 'sel1',
         Key => DKIM2TestKeys::private_key('test1.dkim2.com', 'sel1'),
@@ -653,5 +655,131 @@ like(`$^X -I$LIB $SCRIPT --max-recipe-literals -1 2>&1`,
         or diag(explain($mods));
     like(milter_log(), qr/no signing key for .* from=list-bounces\@nokey\.example/, 'no key: logged');
 }
+
+# --- Inbound --wrap-single-part (stock Mailman) ---
+my ($in_pid, $in_sock) = spawn_milter(mode => 'inbound', extra => ['--wrap-single-part']);
+ok(-S $in_sock, 'wrapping inbound milter is listening');
+
+sub verify_unsigned_top {
+    my ($raw) = @_;
+    my $v = Mail::DKIM2::Verifier->new;
+    $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
+    $v->allow_unsigned_mi(1);
+    $v->PRINT($raw); $v->CLOSE;
+    return $v;
+}
+sub mi_numbers { my ($raw) = @_; sort { $a <=> $b } $raw =~ /^Message-Instance:.*?\bm=(\d+)/msig }
+
+# What stock Mailman's decorator does to a multipart/mixed: the footer as an
+# extra text/plain part before the close delimiter, plus list headers.
+sub stock_decorate {
+    my ($raw) = @_;
+    my ($b) = $raw =~ /boundary="([^"]+)"/ or die 'no boundary';
+    $raw =~ s/^Subject: /Subject: [list] /m;
+    $raw =~ s/^(From: )/List-Id: <list.test2.dkim2.com>$EOL$1/m;
+    my $footer = "--$b$EOL"
+        . "Content-Type: text/plain; charset=\"us-ascii\"$EOL" . "MIME-Version: 1.0$EOL"
+        . "Content-Transfer-Encoding: 7bit$EOL" . "Content-Disposition: inline$EOL$EOL"
+        . "list footer$EOL" . "--$b--$EOL";
+    $raw =~ s/--\Q$b\E--$EOL\z/$footer/ or die 'no close delimiter';
+    return $raw;
+}
+
+# 1. Signed single-part post: m=2 records the wrap and undoes to the signed m=1.
+{
+    my $signed = originator_signed();
+    my ($verdict, $mods) = run_milter(sock => $in_sock,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $signed);
+    is($verdict, 'c', 'wrap: milter continues');
+    my $wire = apply_mods($signed, $mods);
+    like($wire, qr/^Content-Type: multipart\/mixed; boundary="=_dkim2_[0-9a-f]+"\r?$/m, 'wrap: outer is multipart/mixed');
+    is_deeply([mi_numbers($wire)], [1, 2], 'wrap: m=1 (sender) and m=2 (the wrap)');
+    like(join(' ', map { $_->{value} } inserted($mods, 'X-DKIM2-Info')), qr/action=wrap-single-part;/,
+         'wrap: X-DKIM2-Info records it');
+    my $v = verify_unsigned_top($wire);
+    is($v->result, 'pass', 'wrap: m=2 undoes to the signed m=1') or diag($v->result_detail);
+
+    # The snapshot for m=2 is the wrapped message itself.
+    my ($m2) = grep { /\bm=2\b/ } map { $_->{value} } inserted($mods, 'Message-Instance');
+    my $snap = Mail::DKIM2::MessageStore->new(directory => "$dir/snap")->fetch($m2);
+    ok($snap, 'wrap: snapshot stored for m=2');
+    my ($snap_body) = $snap =~ /\r\n\r\n(.*)\z/s;
+    my ($wire_body) = $wire =~ /\r\n\r\n(.*)\z/s;
+    is($snap_body, $wire_body, 'wrap: snapshot body is the wrapped body');
+
+    # Stock decoration, then the outbound milter: m=3 and i=2 over the whole chain.
+    my $decorated = stock_decorate($wire);
+    my ($v2, $omods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'], message => $decorated);
+    my $out = assemble($decorated, $omods);
+    is_deeply([mi_numbers($out)], [1, 2, 3], 'wrap: list changes are m=3')
+        or diag(join "\n", (split /\n/, milter_log())[-8 .. -1]);
+    my $rv = verify($out);
+    is($rv->result, 'pass', 'wrap: full chain verifies at a receiver') or diag($rv->result_detail);
+    like($rv->result_detail, qr/i=1\.\.2/, 'wrap: both signatures verified');
+}
+
+# 2. Unsigned single-part post: m=1 stamped, m=2 wrap; the outbound milter
+#    signs the unchanged message as i=1 over both.
+{
+    my ($verdict, $mods) = run_milter(sock => $in_sock,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $PLAIN);
+    my $wire = apply_mods($PLAIN, $mods);
+    is_deeply([mi_numbers($wire)], [1, 2], 'unsigned wrap: m=1 and m=2');
+    my ($v2, $omods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'], message => $wire);
+    my $rv = verify(assemble($wire, $omods));
+    is($rv->result, 'pass', 'unsigned wrap: signed copy verifies') or diag($rv->result_detail);
+}
+
+# 3. Multipart is left alone: no body, no header change, only the arrival headers.
+{
+    my $mp = join($EOL, 'MIME-Version: 1.0', 'Message-Id: <mp@test1.dkim2.com>',
+        'From: Author <author@test1.dkim2.com>', 'To: list@test2.dkim2.com', 'Subject: mp',
+        'Content-Type: multipart/alternative; boundary="x"', '', '--x',
+        'Content-Type: text/plain', '', 'plain', '--x', 'Content-Type: text/html', '', '<p>html</p>', '--x--', '');
+    my ($verdict, $mods) = run_milter(sock => $in_sock,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $mp);
+    is_deeply([grep { $_->{op} ne 'insert' } @$mods], [], 'multipart: nothing changed, only inserts');
+    is_deeply([mi_numbers(assemble($mp, $mods))], [1], 'multipart: only the arrival m=1');
+}
+
+# 4. Upstream top instance that does not match (no arrival snapshot): not wrapped.
+#    Its own Message-Id: snapshots are keyed by the instance value, and test 1
+#    already stored one for originator_signed()'s m=1 -- the tampered copy
+#    would find it and look like a local change.
+{
+    (my $other = $PLAIN) =~ s/<post\@test1/<tampered\@test1/;
+    my $broken = originator_signed($other);
+    $broken =~ s/Here's a test user!/Here's a tampered user!/;
+    my ($verdict, $mods) = run_milter(sock => $in_sock,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $broken);
+    is($verdict, 'c', 'broken upstream: milter continues');
+    ok(!grep({ $_->{op} eq 'body' || $_->{op} eq 'change' || $_->{op} eq 'add' } @$mods),
+       'broken upstream: not wrapped');
+    like(milter_log(), qr/not wrapping .*no arrival snapshot/, 'broken upstream: logged');
+}
+
+# 5. A body over one milter packet (65535 bytes) is replaced in several
+#    chunks and reassembles exactly.
+{
+    my $big = $PLAIN;
+    $big =~ s/Here's a test user!/join($EOL, map { "line $_ " . ('x' x 70) } 1 .. 2000)/e;
+    my ($verdict, $mods) = run_milter(sock => $in_sock,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $big);
+    cmp_ok(scalar(grep { $_->{op} eq 'body' } @$mods), '>', 1, 'big body: several replace-body packets');
+    my $wire = apply_mods($big, $mods);
+    my ($orig_body) = $big =~ /\r\n\r\n(.*)\z/s;
+    ok(index($wire, $orig_body) > 0, 'big body: original body carried whole');
+    my ($v2, $omods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'], message => $wire);
+    is(verify(assemble($wire, $omods))->result, 'pass', 'big body: signed copy verifies');
+}
+
+# 6. Startup checks.
+like(`$^X -I$LIB $SCRIPT --mode outbound --keydir $dir/keys --snapshot-dir $dir/snap --wrap-single-part 2>&1`,
+     qr/--wrap-single-part needs --mode inbound/, 'wrap refused in outbound mode');
+like(`$^X -I$LIB $SCRIPT --mode inbound --wrap-single-part 2>&1`,
+     qr/--wrap-single-part needs --snapshot-dir/, 'wrap refused without a snapshot directory');
 
 done_testing;
