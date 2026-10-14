@@ -23,7 +23,8 @@ gateway" below: 10587 fans each message out per recipient, then 10589 signs each
 copy, so a `DKIM2-Signature` `rt=` never names anyone but its own recipient).
 
 **Mailman's outbound route (since 2026-10-14):** Mailman submits on
-`127.0.0.1:10025` (`smtp_port`), a listener with no milter whose
+`127.0.0.1:10572` (`smtp_port`), a listener whose only milter is OpenDKIM
+(`-o smtpd_milters=inet:localhost:8891`, not the DKIM2 inbound milter) and whose
 `check_sender_access regexp:/etc/postfix/dkim2-list-senders` FILTERs every
 `@mailman.dkim2.com` sender to the signer on `127.0.0.1:10587` (which now
 carries `-o myhostname=dkim2-sign.localhost`, or the FILTER hop is refused as
@@ -465,7 +466,7 @@ outgoing: mailman.mta.deliver.deliver
 lmtp_host: 127.0.0.1
 lmtp_port: 8024
 smtp_host: localhost
-smtp_port: 10025        # routing listener; FILTERs list senders to the signer on 10587
+smtp_port: 10572        # routing listener; FILTERs list senders to the signer on 10587
 message_instance: yes   # global DKIM2 MI enable
 max_recipients: 1       # one recipient per transaction -> one address per rt=
 
@@ -960,14 +961,21 @@ and the size/recipient/implicit-destination holds are off, as for
 reload`.
 
 Inbound: `transport_maps` starts with `hash:/etc/postfix/dkim2-lists`, which
-sends their posting addresses to `127.0.0.1:10026`. That listener runs
+sends their posting addresses to `127.0.0.1:10571`. That listener runs
 `dkim2-milter-wrap.service` (`--wrap-single-part`, socket
 `dkim2-milter-wrap.sock`, sharing `/var/spool/dkim2/snapshots` with the
 outbound milter) and hands every message to Mailman's LMTP with
 `content_filter=lmtp:[127.0.0.1]:8024`. On this box port 25 also runs the
 normal inbound milter, so their posts carry two `Authentication-Results`;
 the second milter finds `m=1` already matching and only wraps. Outbound
-goes the 10025 → 10587 route above.
+goes the 10572 → 10587 route above.
+
+The milters find snapshots only through the `X-DKIM2-Snapshot` token the
+inbound milters add (port 25's and the 10571 wrap milter's); every milter
+strips that header on sight, so it never reaches a recipient of list mail.
+Mail delivered locally on this box (the capture Maildir, reflector input)
+still carries the port-25 milter's token; it means nothing outside this
+host.
 
 A subscriber copy of a DKIM2-signed post carries `m=1` (sender), `m=2` (the
 wrap, `X-DKIM2-Info: ... action=wrap-single-part;`), `m=3` (the list, from
@@ -976,7 +984,8 @@ the snapshot diff) and `i=2` (`d=dkim2.com`). Smoke test:
 `dkim2stockcorpus@` is the third list of `deploy/dkim2-corpus-inject.sh`.
 
 Backups of the pre-change files: `/etc/postfix/{main,master}.cf.bak-2026-10-14`,
-`/etc/mailman3/mailman.cfg.bak-2026-10-14`.
+`/etc/mailman3/mailman.cfg.bak-2026-10-14` (and `master.cf.bak-2026-10-14b`
+from the move to 10571/10572).
 
 ## Updating Code on the Server
 
