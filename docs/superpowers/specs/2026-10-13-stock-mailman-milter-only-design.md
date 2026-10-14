@@ -60,18 +60,28 @@ Then, only if the snapshot was stored and the message is not `multipart/*`
 
   An original with no `Content-*` fields gives a part with no headers,
   which MIME reads as `text/plain; charset=us-ascii`, the same default.
-- Outer headers: every `Content-*` field deleted; `Content-Type:
-  multipart/mixed; boundary="BOUNDARY"` added; `MIME-Version: 1.0` added
-  if absent.
+- Outer headers: the first `Content-Type` is changed in place to
+  `multipart/mixed; boundary="BOUNDARY"` (added if there was none); every
+  other `Content-*` field is deleted; `MIME-Version: 1.0` is added if
+  absent.
 - The boundary is random and checked not to occur in the body.
-- The wrap adds no `Message-Instance` of its own. The top instance no
-  longer matches the content, but the outbound milter diffs against the
-  arrival snapshot and records the wrap and all of Mailman's changes in one
-  instance, `m=k+1`. One instance per host, as with the patched build.
-- An `X-DKIM2-Info: action=wrap-single-part;` line records the wrap.
-- Registration adds `SMFIF_CHGHDRS` and `SMFIF_CHGBODY`.
-- Fail closed: any error while wrapping leaves the message unwrapped (it
-  still flows; its footer will be inline and its Recipe may be null).
+- The wrap gets its own instance. The milter computes `m=k+1` for the
+  wrapped message against the arrival snapshot (the same snapshot diff the
+  outbound side uses), adds it unsigned, and stores the wrapped message as
+  the snapshot keyed by `m=k+1`. The outbound milter then finds that
+  snapshot and records only Mailman's changes as `m=k+2`. One extra header,
+  but the wrap and the list's changes can each be inspected on their own
+  (`dkim2.com/validate/` shows each hop's undo). The outbound gate already
+  allows several unsigned instances above the top signature, and still
+  checks that every one of them undoes cleanly.
+- `X-DKIM2-Info: action=wrap-single-part;` and the usual `mi-m=` line
+  record the wrap.
+- Registration adds `SMFIF_CHGHDRS` and `SMFIF_CHGBODY`. The new body goes
+  out in replace-body packets of at most 65535 bytes.
+- Fail closed: if the arrival snapshot was not stored, or `m=k+1` cannot be
+  computed, or anything else fails, the message is left unwrapped and only
+  the arrival headers are added (it still flows; its footer will be inline
+  and its Recipe may be null).
 
 The wrap itself is a pure function in the library (`Mail::DKIM2::Wrap`,
 taking header fields and body, returning header edits and the new body) so
@@ -162,10 +172,15 @@ templates, the master.cf fragment and the inbound unit variant.
   `Content-*` order and folding kept; no trailing CRLF; no `Content-*`
   fields; boundary collision; any `multipart/*` left alone; a
   `Content-Type` with a broken or missing boundary parameter left alone.
-- `t/milter.t` (or a new milter test): `--wrap-single-part` wraps a
-  single-part post, keeps the arrival snapshot, leaves multipart alone;
-  startup errors for the bad option combinations; outbound with no key
-  adds nothing.
+- `t/milter-script.t` (the real program over a milter socket):
+  `--wrap-single-part` wraps a single-part post and adds `m=k+1` whose
+  undo rebuilds the arrival message byte for byte; the snapshot keyed by
+  `m=k+1` is the wrapped message; a stock-style footer part appended to it
+  and run through the outbound milter gives `m=k+2` and a signature that
+  verifies over the whole chain; multipart posts are left alone; a broken
+  upstream top instance (no arrival snapshot) is left unwrapped; startup
+  errors for the bad option combinations; outbound with no key adds
+  nothing.
 - Stock decoration, real code: run stock Mailman 3.3.10's
   `decorate.process` (in a venv, a small Python driver with a stand-in
   list carrying a header and footer) over the inbound milter's output for
@@ -174,7 +189,11 @@ templates, the master.cf fragment and the inbound unit variant.
   also passes here, with a non-null body Recipe.
 - Acceptance on dkim2.com: a new list with `dkim2_message_instance: false`
   (the patched Mailman then behaves exactly as stock), routed by the new
-  maps and listeners. Post plain and DKIM2-signed mail, check
+  maps and listeners. Mailman's `smtp_port` moves to 10025 and the sender
+  map sends every `@mailman.dkim2.com` list sender to 10587, so the
+  existing lists exercise the new outbound hop too; the existing list
+  smoke test (`deploy/dkim2-list-smoke.sh`) must still pass. The corpus
+  sample is replayed through the new list as a third corpus list. Post plain and DKIM2-signed mail, check
   `dkim2verify` and the reflectors; check a list not in the maps comes
   through with no DKIM2 headers at all.
 
