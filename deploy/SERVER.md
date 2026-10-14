@@ -957,11 +957,17 @@ ssh dkim2 'cd /root/interop && git pull --ff-only && deploy/deploy.sh'
 Created 2026-10-14 to run `docs/dkim2-postfix-stock-mailman-guide.md` on this
 box. Both have `dkim2_message_instance: false`, so the patched Mailman
 behaves exactly as stock for them (inline footer logic, no Message-Instance
-of its own). Their members are only `dkim2capture@dkim2.com`; archiving is
-off (`archive_policy=never`, HyperKitty disabled); nonmembers are accepted
-and the size/recipient/implicit-destination holds are off, as for
-`dkim2corpus@` (below). Created over REST, then `mailman aliases && postfix
-reload`.
+of its own). Created over REST, then `mailman aliases && postfix reload`.
+
+- `dkim2stock@` is the public demo list (since 2026-10-14, linked from
+  dkim2.com): `advertised=True`, `subscription_policy=confirm`,
+  `default_nonmember_action=hold`, `archive_policy=public`, and the
+  standard size/recipient/implicit-destination holds, like `test@`.
+  `dkim2capture@dkim2.com` stays a member, so the smoke test still posts.
+- `dkim2stockcorpus@` replays other people's mail, so it stays hidden:
+  members only `dkim2capture@dkim2.com`, `advertised=False`,
+  `archive_policy=never`, HyperKitty disabled, nonmembers accepted and the
+  holds off, as for `dkim2corpus@` (below).
 
 Inbound: `transport_maps` starts with `hash:/etc/postfix/dkim2-lists`, which
 sends their posting addresses to `127.0.0.1:10571`. That listener runs

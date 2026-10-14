@@ -82,6 +82,23 @@
         <li><a href="https://mailman.dkim2.com/">Mailman</a> (this host)</li>
         <li><a href="https://sympa.dkim2.com/sympa">Sympa</a> (this host)</li>
       </ul>
+      <p>Subscribe to any of these lists to receive DKIM2-signed list mail
+        and see how each kind of list change is recorded:</p>
+      <ul>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/test.mailman.dkim2.com/">test@mailman.dkim2.com</a>
+          — subject prefix and footer</li>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/test-subject-only.mailman.dkim2.com/">test-subject-only@mailman.dkim2.com</a>
+          — subject prefix only</li>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/test-body-only.mailman.dkim2.com/">test-body-only@mailman.dkim2.com</a>
+          — footer only</li>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/test-passthrough.mailman.dkim2.com/">test-passthrough@mailman.dkim2.com</a>
+          — no changes</li>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/dkim2stock.mailman.dkim2.com/">dkim2stock@mailman.dkim2.com</a>
+          — unpatched Mailman behaviour, signed by the Postfix milter route
+          (<a href="https://github.com/dkim2wg/interop/blob/master/docs/dkim2-postfix-stock-mailman-guide.md">guide</a>)</li>
+        <li><a href="https://sympa.dkim2.com/sympa/info/test">test@sympa.dkim2.com</a>
+          — Sympa</li>
+      </ul>
     </section>
 
     <section id="other-implementations">
