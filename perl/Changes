@@ -1,5 +1,12 @@
 Revision history for Mail::DKIM2
 
+0.21    2026-10-14
+        - Mail::DKIM2::Wrap::wrap_single_part, in list context, also returns
+          why it wrapped nothing: multipart (the normal case), no-header-end,
+          unparsable-header or boundary. Scalar context is unchanged.
+        - dkim2-milter --wrap-single-part logs that reason; it logged every
+          case as "already multipart".
+
 0.20    2026-10-14
         DKIM2 for stock Mailman, with dkim2-milter and Postfix routing only.
         - New: dkim2-milter --wrap-single-part (inbound mode, needs
@@ -10,9 +17,7 @@ Revision history for Mail::DKIM2
           against. Stock Mailman then adds its footer as an extra part
           rather than re-encoding the body. See
           docs/dkim2-postfix-stock-mailman-guide.md in the interop repository.
-        - New: Mail::DKIM2::Wrap (wrap_single_part). In list context it
-          also returns why it wrapped nothing (multipart, no-header-end,
-          unparsable-header, boundary); dkim2-milter logs that reason.
+        - New: Mail::DKIM2::Wrap (wrap_single_part).
         - Behaviour change: dkim2-milter in outbound mode adds no
           Message-Instance to mail it does not sign (no key for the sender,
           a refused chain, a signer failure), and removes every
