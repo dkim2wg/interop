@@ -45,6 +45,10 @@ FROM=dkim2capture@dkim2.com
 SIGN_KEY=/etc/dkim2/reflector/sel1.key
 MAILMAN_LIST=dkim2corpus@mailman.dkim2.com
 SYMPA_LIST=dkim2corpus@sympa.dkim2.com
+# The stock-Mailman route (docs/dkim2-postfix-stock-mailman-guide.md):
+# dkim2_message_instance false, posts wrapped by the 10026 milter, Mailman's
+# changes recorded by the outbound milter's snapshot diff. Created 2026-10-14.
+STOCK_LIST=dkim2stockcorpus@mailman.dkim2.com
 # Injection listener: port 25's behaviour (inbound milter, header-preserving
 # cleanup) without Postfix's local-client header rewriting -- see SERVER.md
 # "DKIM2 charset corpus lists". Injecting on port 25 from this host had
@@ -69,7 +73,9 @@ mm_members=$(curl -s -u "$RESTAUTH" "$REST/lists/${MAILMAN_LIST/@/.}/roster/memb
 # `sympa review` prints a "N member(s) in list x@y." banner first; keep only
 # lines that are a bare address.
 sy_members=$(sudo -u sympa sympa review "$SYMPA_LIST" 2>/dev/null | grep -E '^[^[:space:]]+@[^[:space:]]+$')
-for who in "mailman:$mm_members" "sympa:$sy_members"; do
+st_members=$(curl -s -u "$RESTAUTH" "$REST/lists/${STOCK_LIST/@/.}/roster/member" \
+  | python3 -c 'import json,sys; print("\n".join(e["email"] for e in json.load(sys.stdin).get("entries",[])))')
+for who in "mailman:$mm_members" "sympa:$sy_members" "stock:$st_members"; do
   tag=${who%%:*}; list=${who#*:}
   [ -n "$list" ] || { echo "   ABORT: $tag roster is empty or unreadable"; exit 2; }
   bad=$(printf '%s\n' "$list" | grep -v '^dkim2capture@' || true)
@@ -94,7 +100,7 @@ for f in "$SAMPLES"/*.eml; do
   src="$work/src.eml"
   { printf 'X-DKIM2-Corpus: %s\r\n' "$id"; cat "$f"; } \
     | perl -pe 'BEGIN { $run = shift; $id = shift } s/^Message-ID:[ \t]*(.*)$/Message-ID: <$id.$run\@corpus.dkim2.com>\r\nX-DKIM2-Corpus-Message-ID: $1/i' "$RUN" "$id" > "$src"
-  for L in "$MAILMAN_LIST" "$SYMPA_LIST"; do
+  for L in "$MAILMAN_LIST" "$SYMPA_LIST" "$STOCK_LIST"; do
     signed="$work/signed.eml"
     if ! perl -I"$LIB" "$REPO/perl/bin/dkim2sign" -s sel1 -d dkim2.com -k "$SIGN_KEY" \
           --mailfrom "<$FROM>" --rcptto "<$L>" "$src" > "$signed" 2> "$work/sign.err"; then
@@ -116,7 +122,7 @@ for f in "$SAMPLES"/*.eml; do
     fi
   done
 done
-echo ">> injected $n samples x 2 lists: $nsign sign failures, $nsmtp SMTP rejections"
+echo ">> injected $n samples x 3 lists: $nsign sign failures, $nsmtp SMTP rejections"
 
 # --- Wait for the pipelines to drain ------------------------------------------
 # Done when the capture count has not changed for `quiet` seconds, capped.
@@ -131,7 +137,7 @@ echo ">> captured $last copies after ${waited}s"
 
 # --- Collect ------------------------------------------------------------------
 # Name each copy by its sample id and list so the collector needn't parse much:
-#   <id>.<mailman|sympa>.<n>.eml
+#   <id>.<mailman|sympa|stock>.<n>.eml
 python3 - "$CAP" "$OUT" <<'PY'
 import os, re, sys
 cap, out = sys.argv[1], sys.argv[2]
@@ -143,7 +149,8 @@ for name in sorted(os.listdir(cap)):
     sid = m.group(1).decode() if m else 'unmatched'
     m = re.search(rb'^List-Id:.*?<([^>]+)>', hdr, re.M | re.I | re.S)
     lid = m.group(1).decode() if m else ''
-    which = 'mailman' if 'mailman' in lid else 'sympa' if 'sympa' in lid else 'unknown'
+    which = ('stock' if lid.startswith('dkim2stockcorpus.') else 'mailman' if 'mailman' in lid
+             else 'sympa' if 'sympa' in lid else 'unknown')
     k = (sid, which); seen[k] = seen.get(k, 0) + 1
     open(os.path.join(out, f'{sid}.{which}.{seen[k]}.eml'), 'wb').write(data)
 print(f'>> wrote {sum(seen.values())} captures to {out}')

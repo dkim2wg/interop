@@ -10,6 +10,11 @@
   standalone milter. The authentication_milter path
   has not been tested end to end.
 
+Running Mailman as released, without the patches below, and want DKIM2 on
+some lists only? See [DKIM2 for stock Mailman](dkim2-postfix-stock-mailman-guide.md):
+the milters do all the DKIM2 work and Postfix routes only those lists
+through them.
+
 This guide builds the host in order. Each step ends with a check you can
 run. For what DKIM2 is and why, read the [operator
 guide](dkim2-operator-guide.md) first; this document assumes it.
@@ -349,6 +354,8 @@ Check: `postfix check` is quiet; `ss -ltnp | grep 10587` shows the
 listener.
 
 ## 7. Mailman 3
+
+(Stock Mailman, no patches: see [DKIM2 for stock Mailman](dkim2-postfix-stock-mailman-guide.md) instead.)
 
 Mailman adds the `Message-Instance` headers; the milter signs. The
 changes are three patches, described in `mailman/README.md`, carried on
