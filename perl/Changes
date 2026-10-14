@@ -1,5 +1,30 @@
 Revision history for Mail::DKIM2
 
+0.20    2026-10-14
+        DKIM2 for stock Mailman, with dkim2-milter and Postfix routing only.
+        - New: dkim2-milter --wrap-single-part (inbound mode, needs
+          --snapshot-dir). A single-part post is wrapped as a one-part
+          multipart/mixed (its Content-* fields and body unchanged), the
+          wrap recorded as its own unsigned Message-Instance, and the
+          wrapped message kept as the snapshot the outbound milter diffs
+          against. Stock Mailman then adds its footer as an extra part
+          rather than re-encoding the body. See
+          docs/dkim2-postfix-stock-mailman-guide.md in the interop repository.
+        - New: Mail::DKIM2::Wrap (wrap_single_part).
+        - Behaviour change: dkim2-milter in outbound mode adds nothing --
+          no Message-Instance, no X-DKIM2-Info -- to mail from a sender it
+          has no key for. It used to add an unsigned Message-Instance,
+          which receivers report as permerror.
+        - Fix: dkim2-milter in outbound mode computes its own
+          Message-Instance (the diff against the snapshot) before checking
+          the upstream chain, and checks the message as it will be signed.
+          It used to check first, so a list manager that changed a message
+          without recording an instance of its own -- every list copy
+          whose changes only the snapshot diff records -- was refused.
+        - Fix: dkim2-milter registers SMFIF_CHGHDRS, so removing a broken
+          intermediate Message-Instance (which calls chgheader) no longer
+          dies in Sendmail::PMilter.
+
 0.19    2026-10-09
         Fixes from a follow-up review of 0.18. Malformed fields that used to
         verify are now errors; well-formed mail verifies as before, and
