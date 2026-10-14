@@ -1,5 +1,5 @@
 # DKIM2 lists, outbound: the envelope senders Mailman uses for each DKIM2 list
 # (the list itself, its -bounces address, VERP'd -bounces+...), sent to the
-# signing listener. One line per list; then: postfix reload (pcre maps need no
+# signing listener. One line per list; then: postfix reload (regexp maps need no
 # postmap). Only on the loopback listener Mailman submits to -- never port 25.
 /^dkim2-test(-bounces(\+.*)?)?@lists\.example\.org$/    FILTER smtp:[127.0.0.1]:10587

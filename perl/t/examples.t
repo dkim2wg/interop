@@ -70,7 +70,7 @@ for my $port (qw(10025 10026 10587)) {
     like($smaster, qr/^127\.0\.0\.1:$port inet/m, "stock master fragment defines 127.0.0.1:$port");
 }
 like($smaster, qr/content_filter=lmtp:\[127\.0\.0\.1\]:8024/, 'the wrap listener hands every message to Mailman');
-like($smaster, qr/dkim2-list-senders/, 'the Mailman submission listener routes by sender');
+like($smaster, qr/check_sender_access,regexp:\/etc\/postfix\/dkim2-list-senders/, 'the Mailman submission listener routes by sender (regexp: needs no extra package)');
 like($smaster, qr/myhostname=/, 'loopback hops use a distinct myhostname');
 my $smain = slurp("$ex/postfix-stock-mailman-main.cf.fragment");
 like($smain, qr/^transport_maps = hash:\/etc\/postfix\/dkim2-lists,/m, 'the DKIM2 list map comes before Mailman\'s');

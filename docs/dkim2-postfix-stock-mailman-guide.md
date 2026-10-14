@@ -170,8 +170,8 @@ matching the envelope senders Mailman uses for it: the list address, its
 postmap /etc/postfix/dkim2-lists
 ```
 
-(PCRE maps need no `postmap`; `apt-get install postfix-pcre` if `postconf
--m` does not list `pcre`.)
+(The sender map is a `regexp:` table, built into every Postfix, and needs
+no `postmap`.)
 
 ### master.cf
 

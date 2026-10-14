@@ -1,0 +1,6 @@
+# dkim2.com: Mailman submits on 127.0.0.1:10025 (smtp_port). Every Mailman
+# list on this box is a DKIM2 list -- patched ones record their own instance,
+# the dkim2stock* ones rely on the snapshot diff -- so every
+# @mailman.dkim2.com sender goes to the signer on 10587. Anything else Mailman
+# sends (none expected) goes out unsigned. Installed by deploy/deploy.sh.
+/@mailman\.dkim2\.com$/    FILTER smtp:[127.0.0.1]:10587

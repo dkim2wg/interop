@@ -61,6 +61,7 @@ rm -f /usr/local/bin/calculate-dkim2.pl /usr/local/bin/calculate-mailversion.pl 
 #     operator gets (deploy/examples/); the box runs exactly those.
 install -m 644 "$REPO"/deploy/examples/dkim2-milter-inbound.service \
                "$REPO"/deploy/examples/dkim2-milter-outbound.service \
+               "$REPO"/deploy/examples/dkim2-milter-wrap.service \
                "$REPO"/deploy/examples/dkim2-split.service /etc/systemd/system/
 systemctl daemon-reload
 install -m 755 "$REPO/deploy/examples/sympa-sendmail" /usr/local/bin/sympa-sendmail
@@ -100,6 +101,13 @@ postmap /etc/postfix/dkim2-transport
 #     installed map in sync with the repo.
 install -m 644 "$REPO/deploy/postfix-dkim2-delayedbounce" /etc/postfix/dkim2-delayedbounce
 postmap /etc/postfix/dkim2-delayedbounce
+# 3c. Stock-Mailman routing (docs/dkim2-postfix-stock-mailman-guide.md): the
+#     lists whose posts go through the wrapping milter, and the Mailman
+#     senders FILTERed to the signer. The listeners and the transport_maps
+#     hookup are one-time manual steps (see SERVER.md).
+install -m 644 "$REPO/deploy/postfix-dkim2-lists" /etc/postfix/dkim2-lists
+postmap /etc/postfix/dkim2-lists
+install -m 644 "$REPO/deploy/postfix-dkim2-list-senders" /etc/postfix/dkim2-list-senders
 postfix reload
 
 # 3b. The installed library must be the one in this checkout -- the exact gap
@@ -114,6 +122,8 @@ echo ">> installed Mail::DKIM2 $have matches the checkout"
 #    (The reflector wrapper and validator CGI run per-invocation, so they pick
 #    up the new lib without a restart — but the milters are daemons.)
 systemctl restart dkim2-milter-inbound dkim2-milter-outbound
+systemctl enable --now dkim2-milter-wrap
+systemctl restart dkim2-milter-wrap
 # The Bcc-safe split daemon is also long-running; restart it if installed (it
 # uses the freshly-installed Mail::DKIM2::Split). try-restart is a no-op if the
 # service isn't set up on this host.

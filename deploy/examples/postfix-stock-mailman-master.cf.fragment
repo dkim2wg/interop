@@ -28,7 +28,7 @@ cleanup-dkim2 unix n     -       y       -       0       cleanup
   -o smtpd_milters=
   -o local_header_rewrite_clients=
   -o smtpd_client_restrictions=permit_mynetworks,reject
-  -o smtpd_sender_restrictions=check_sender_access,pcre:/etc/postfix/dkim2-list-senders
+  -o smtpd_sender_restrictions=check_sender_access,regexp:/etc/postfix/dkim2-list-senders
   -o smtpd_relay_restrictions=permit_mynetworks,reject
 #
 # 3. The signer: DKIM2 list copies only (from listener 2's FILTER).
