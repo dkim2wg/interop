@@ -78,10 +78,9 @@ taking header fields and body, returning header edits and the new body) so
 it is unit-tested without a milter. `X-DKIM2-Info` is excluded from the
 hash, so where it sits never matters.
 
-**authentication_milter:** `DKIM2Verify` gets the same option only if
-Mail::Milter::Authentication lets a handler replace the body. If it does
-not, the guide documents the stock-Mailman setup with `dkim2-milter` only
-and says so.
+**authentication_milter:** not part of this setup. The wrap is a
+`dkim2-milter` option only, and the guide says the stock-Mailman setup uses
+`dkim2-milter`.
 
 ### 2. Outbound: add nothing without a key
 
