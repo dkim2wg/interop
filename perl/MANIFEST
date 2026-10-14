@@ -27,6 +27,7 @@ lib/Mail/DKIM2/Split.pm
 lib/Mail/DKIM2/TagValueList.pm
 lib/Mail/DKIM2/Validate.pm
 lib/Mail/DKIM2/Verifier.pm
+lib/Mail/DKIM2/Wrap.pm
 lib/Mail/Milter/Authentication/Handler/DKIM2Sign.pm
 lib/Mail/Milter/Authentication/Handler/DKIM2Verify.pm
 spec-review-notes.md
@@ -140,6 +141,7 @@ t/verifier_flags.t
 t/verify-cli.t
 t/verify-mi-hash.t
 t/version.t
+t/wrap.t
 tests/emails/brong-final.eml
 tests/emails/brong-mm.eml
 tests/emails/brong-mm2.eml
