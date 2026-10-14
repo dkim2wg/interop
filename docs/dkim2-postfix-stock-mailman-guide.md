@@ -3,8 +3,12 @@
 - **Spec:** draft-ietf-dkim-dkim2-spec-06
 - **Audience:** a Postfix operator who runs Mailman 3 as released (3.3.8 or
   3.3.10, no patches, no plugins) and wants DKIM2 on some lists only
-- **Status (2026-10-14):** built and tested against the program's own test
-  suite; end-to-end acceptance on dkim2.com is in progress.
+- **Status (2026-10-14):** the dkim2.com host runs this route for two
+  lists whose Mailman behaves as stock (Ubuntu 25.10, Postfix 3.10, Mailman
+  3.3.10, Mail::DKIM2 0.20): plain and DKIM2-signed posts verify
+  downstream, and 316 of 317 real archive messages in assorted charsets and
+  encodings came out verifying with five independent verifiers (the other
+  one Mailman itself bounces, patched or not).
 
 This guide turns DKIM2 on for chosen lists of a stock Mailman. Mailman is
 not changed: two DKIM2 milters do all the DKIM2 work, and Postfix routes

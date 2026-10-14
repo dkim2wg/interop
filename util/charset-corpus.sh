@@ -129,7 +129,7 @@ fi
 
 # ---------------------------------------------------------------- lists -----
 if has_stage lists; then
-  echo "== lists: replaying through dkim2corpus@{mailman,sympa}.dkim2.com on $HOST"
+  echo "== lists: replaying through dkim2corpus@{mailman,sympa}.dkim2.com and dkim2stockcorpus@mailman.dkim2.com on $HOST"
   remote=/root/dkim2-corpus
   ssh "$HOST" "mkdir -p $remote" || { echo "ssh $HOST failed"; exit 1; }
   rsync -a --delete "$CACHE/sample/" "$HOST:$remote/sample/" || { echo "rsync to $HOST failed"; exit 1; }
@@ -208,18 +208,18 @@ inject = [l.rstrip('\n').split('\t') for l in open(sys.argv[3])]
 sent = defaultdict(set)
 for l in inject:
     if l[0] == 'SENT':
-        sent[l[1]].add('mailman' if 'mailman' in l[2] else 'sympa')
+        sent[l[1]].add('stock' if l[2].startswith('dkim2stockcorpus@') else 'mailman' if 'mailman' in l[2] else 'sympa')
 got = defaultdict(lambda: defaultdict(list))
 for r in rows:
     ok = r['perl'] == 'pass' and r['chain'] == 'i=1..2' and all(r[v] == 'ok' for v in ('python', 'go', 'c', 'js'))
     got[r['id']][r['list']].append(ok)
 by = defaultdict(lambda: defaultdict(int))
 print(f"\n== lists summary: {len(idx)} samples, {len(rows)} captured copies")
-print(f"{'charset':<22}{'cte':<18}{'n':>3}  {'mailman':<14}{'sympa':<14} (ok / fail / missing)")
+print(f"{'charset':<22}{'cte':<18}{'n':>3}  {'mailman':<14}{'sympa':<14}{'stock':<14} (ok / fail / missing)")
 for sid, meta in sorted(idx.items()):
     k = (meta['charset'], meta['cte'])
     by[k]['n'] += 1
-    for lst in ('mailman', 'sympa'):
+    for lst in ('mailman', 'sympa', 'stock'):
         res = got[sid].get(lst, [])
         if lst not in sent[sid]:
             by[k][lst + '_notsent'] += 1
@@ -233,7 +233,7 @@ for (cs, cte), v in sorted(by.items()):
     def cell(l):
         s = f"{v[l+'_ok']}/{v[l+'_fail']}/{v[l+'_missing']}"
         return s + (f"+{v[l+'_notsent']}unsent" if v[l+'_notsent'] else '')
-    print(f"{cs:<22}{cte:<18}{v['n']:>3}  {cell('mailman'):<14}{cell('sympa'):<14}")
+    print(f"{cs:<22}{cte:<18}{v['n']:>3}  {cell('mailman'):<14}{cell('sympa'):<14}{cell('stock'):<14}")
 bad = [l for l in inject if l[0] != 'SENT']
 if bad:
     print(f"\n{len(bad)} injection problems (see capture/inject.log):")

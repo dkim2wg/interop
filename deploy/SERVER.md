@@ -22,9 +22,23 @@ from lists via port 10587, the DKIM2 **split gateway** (see "Split outbound
 gateway" below: 10587 fans each message out per recipient, then 10589 signs each
 copy, so a `DKIM2-Signature` `rt=` never names anyone but its own recipient).
 
+**Mailman's outbound route (since 2026-10-14):** Mailman submits on
+`127.0.0.1:10025` (`smtp_port`), a listener with no milter whose
+`check_sender_access regexp:/etc/postfix/dkim2-list-senders` FILTERs every
+`@mailman.dkim2.com` sender to the signer on `127.0.0.1:10587` (which now
+carries `-o myhostname=dkim2-sign.localhost`, or the FILTER hop is refused as
+"loops back to myself"). This is the stock-Mailman routing from
+`docs/dkim2-postfix-stock-mailman-guide.md`, exercised by every Mailman list
+on the box; Sympa still submits to 10587 directly. See "Stock-Mailman test
+lists" below for the inbound half.
+
 **Config files:**
 - `/etc/postfix/main.cf` — main configuration
 - `/etc/postfix/master.cf` — process table (includes listserv entry)
+- `/etc/postfix/dkim2-lists` (hash, from `deploy/postfix-dkim2-lists`) and
+  `/etc/postfix/dkim2-list-senders` (regexp, from
+  `deploy/postfix-dkim2-list-senders`) — the stock-Mailman routing maps,
+  installed by `deploy/deploy.sh`
 
 **Key `main.cf` settings:**
 ```
@@ -451,7 +465,7 @@ outgoing: mailman.mta.deliver.deliver
 lmtp_host: 127.0.0.1
 lmtp_port: 8024
 smtp_host: localhost
-smtp_port: 10587        # the DKIM2 signing listener (outbound milter only)
+smtp_port: 10025        # routing listener; FILTERs list senders to the signer on 10587
 message_instance: yes   # global DKIM2 MI enable
 max_recipients: 1       # one recipient per transaction -> one address per rt=
 
@@ -933,6 +947,36 @@ ssh dkim2 'cd /root/interop && git pull --ff-only && deploy/deploy.sh'
 ```
 
 ---
+
+## Stock-Mailman test lists (`dkim2stock@`, `dkim2stockcorpus@mailman.dkim2.com`)
+
+Created 2026-10-14 to run `docs/dkim2-postfix-stock-mailman-guide.md` on this
+box. Both have `dkim2_message_instance: false`, so the patched Mailman
+behaves exactly as stock for them (inline footer logic, no Message-Instance
+of its own). Their members are only `dkim2capture@dkim2.com`; archiving is
+off (`archive_policy=never`, HyperKitty disabled); nonmembers are accepted
+and the size/recipient/implicit-destination holds are off, as for
+`dkim2corpus@` (below). Created over REST, then `mailman aliases && postfix
+reload`.
+
+Inbound: `transport_maps` starts with `hash:/etc/postfix/dkim2-lists`, which
+sends their posting addresses to `127.0.0.1:10026`. That listener runs
+`dkim2-milter-wrap.service` (`--wrap-single-part`, socket
+`dkim2-milter-wrap.sock`, sharing `/var/spool/dkim2/snapshots` with the
+outbound milter) and hands every message to Mailman's LMTP with
+`content_filter=lmtp:[127.0.0.1]:8024`. On this box port 25 also runs the
+normal inbound milter, so their posts carry two `Authentication-Results`;
+the second milter finds `m=1` already matching and only wraps. Outbound
+goes the 10025 → 10587 route above.
+
+A subscriber copy of a DKIM2-signed post carries `m=1` (sender), `m=2` (the
+wrap, `X-DKIM2-Info: ... action=wrap-single-part;`), `m=3` (the list, from
+the snapshot diff) and `i=2` (`d=dkim2.com`). Smoke test:
+`bash deploy/dkim2-list-smoke.sh dkim2stock@mailman.dkim2.com dkim2test@sympa.dkim2.com`.
+`dkim2stockcorpus@` is the third list of `deploy/dkim2-corpus-inject.sh`.
+
+Backups of the pre-change files: `/etc/postfix/{main,master}.cf.bak-2026-10-14`,
+`/etc/mailman3/mailman.cfg.bak-2026-10-14`.
 
 ## Updating Code on the Server
 

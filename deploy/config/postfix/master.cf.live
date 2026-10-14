@@ -199,6 +199,7 @@ dkim2-delayedbounce unix  -     n       n       -       -       pipe
 #    Message-Instance before it is signed. Loopback only. If you also sign
 #    with DKIM (OpenDKIM, rspamd), append that milter after the DKIM2 one.
 127.0.0.1:10587 inet n  -       y       -       -       smtpd
+  -o myhostname=dkim2-sign.localhost
   -o cleanup_service_name=cleanup-dkim2
   -o local_header_rewrite_clients=
   -o syslog_name=postfix/dkim2-list
@@ -218,3 +219,25 @@ dkim2-delayedbounce unix  -     n       n       -       -       pipe
   -o cleanup_service_name=cleanup-dkim2
   -o local_header_rewrite_clients=
   -o smtpd_client_restrictions=permit_mynetworks,reject
+#
+# Stock-Mailman routing (interop docs/dkim2-postfix-stock-mailman-guide.md),
+# added 2026-10-14. 10026: posts to the lists in /etc/postfix/dkim2-lists go
+# through the wrapping inbound milter, then straight to Mailman LMTP.
+127.0.0.1:10026 inet n  -       y       -       -       smtpd
+  -o syslog_name=postfix/dkim2-wrap
+  -o myhostname=dkim2-wrap.localhost
+  -o cleanup_service_name=cleanup-dkim2
+  -o smtpd_milters=unix:var/run/dkim2-milter-wrap.sock
+  -o content_filter=lmtp:[127.0.0.1]:8024
+  -o smtpd_client_restrictions=permit_mynetworks,reject
+  -o smtpd_relay_restrictions=permit_mynetworks,reject
+  -o receive_override_options=no_address_mappings,no_unknown_recipient_checks,no_header_body_checks
+# 10025: Mailman submits here (smtp_port); senders in
+# /etc/postfix/dkim2-list-senders are FILTERed to the signer on 10587.
+127.0.0.1:10025 inet n  -       y       -       -       smtpd
+  -o syslog_name=postfix/mailman-out
+  -o smtpd_milters=
+  -o local_header_rewrite_clients=
+  -o smtpd_client_restrictions=permit_mynetworks,reject
+  -o smtpd_sender_restrictions=check_sender_access,regexp:/etc/postfix/dkim2-list-senders
+  -o smtpd_relay_restrictions=permit_mynetworks,reject
