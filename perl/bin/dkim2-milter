@@ -233,7 +233,7 @@ sub _keydir_lookup {
 my $milter = Sendmail::PMilter->new();
 $milter->setconn($opts{socket});
 
-# We need to add/insert headers
+# Insert, change and delete headers; replace the body (--wrap-single-part).
 $milter->register('dkim2-milter', {
     envfrom => \&cb_envfrom,
     envrcpt => \&cb_envrcpt,
@@ -242,7 +242,7 @@ $milter->register('dkim2-milter', {
     body    => \&cb_body,
     eom     => \&cb_eom,
     close   => \&cb_close,
-}, SMFIF_ADDHDRS);
+}, SMFIF_ADDHDRS | SMFIF_CHGHDRS | SMFIF_CHGBODY);
 
 warn "dkim2-milter: listening on $opts{socket}\n";
 $milter->main();
@@ -372,6 +372,25 @@ sub cb_eom {
 
     # --- Outbound: compute MI diff if needed, then sign ---
     if ($do_sign) {
+        # No key for this sender: this message is not ours to sign, so it
+        # leaves exactly as it came -- no Message-Instance (unsigned, a
+        # receiver reports it as permerror), no X-DKIM2-Info, no snapshot.
+        # The From: domain is the null-sender fallback for the key lookup,
+        # and is logged for alignment below.
+        my $from_hdr_domain = '';
+        for my $hdr (@{$priv->{headers}}) {
+            if (lc($hdr->[0]) eq 'from') {
+                ($from_hdr_domain) = $hdr->[1] =~ /\@([\w.-]+)/;
+                $from_hdr_domain = lc($from_hdr_domain // '');
+                last;
+            }
+        }
+        my $sign_config = _get_sign_config($priv->{env_from}, $from_hdr_domain);
+        unless ($sign_config) {
+            warn "dkim2-milter: no signing key for $msgid from=$priv->{env_from}\n";
+            return SMFIS_CONTINUE;
+        }
+
         # If there are upstream DKIM2-Signature headers we must verify the
         # chain before extending it.  In mode=both the verify block already
         # ran; in mode=outbound we run it now on demand.
@@ -398,19 +417,7 @@ sub cb_eom {
         # nd= bridge: when the top signature carries nd= we may extend it only
         # if nd= names the domain we sign as, so tell the gate which. (The
         # gate ignores this unless the top signature has nd=.)
-        my $gate_sd;
-        {
-            my $gd = '';
-            for my $hdr (@{$priv->{headers}}) {
-                if (lc($hdr->[0]) eq 'from') {
-                    ($gd) = $hdr->[1] =~ /\@([\w.-]+)/;
-                    $gd = lc($gd // '');
-                    last;
-                }
-            }
-            my $gc = _get_sign_config($priv->{env_from}, $gd);
-            $gate_sd = $gc->{domain} if $gc;
-        }
+        my $gate_sd = $sign_config->{domain};
         # Fail closed: an exception anywhere in the gate (a crafted message
         # must never take the callback down with it) is a logged refusal.
         my $gate = eval {
@@ -495,21 +502,9 @@ sub cb_eom {
                 }
             }
 
-            # From: domain — needed for the null-sender signing fallback and for
-            # alignment logging below.
-            my $from_hdr_domain = '';
-            for my $hdr (@{$priv->{headers}}) {
-                if (lc($hdr->[0]) eq 'from') {
-                    ($from_hdr_domain) = $hdr->[1] =~ /\@([\w.-]+)/;
-                    $from_hdr_domain = lc($from_hdr_domain // '');
-                    last;
-                }
-            }
-            my $sign_config = $mi_failed ? undef
-                            : _get_sign_config($priv->{env_from}, $from_hdr_domain);
             if ($mi_failed) {
                 # logged above
-            } elsif ($sign_config) {
+            } else {
                 # Log domain alignment: signing domain vs envelope-from and From:
                 my ($env_domain) = ($priv->{env_from} || '') =~ /\@(.+)$/;
                 $env_domain = lc($env_domain // '');
@@ -542,8 +537,6 @@ sub cb_eom {
                         _milter_value(_dkim2_info("null-body-recipe")), 0)
                         if $gate->{top_null} || $gate->{unsigned_null};
                 }
-            } else {
-                warn "dkim2-milter: no signing key for $msgid from=$priv->{env_from}\n";
             }
         }
     }

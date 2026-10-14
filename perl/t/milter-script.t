@@ -67,7 +67,7 @@ sub spawn_milter {
         open STDERR, '>>', $log or die $!;
         open STDOUT, '>>', $log or die $!;
         exec $^X, "-I$LIB", @{ $o{perl} || [] }, $SCRIPT,
-            '--mode', 'outbound',
+            '--mode', ($o{mode} // 'outbound'),
             '--socket', "unix:$sock",
             '--keydir', "$dir/keys",
             '--dns-json', "$DNS_JSON",
@@ -131,6 +131,8 @@ sub read_verdict {
             my ($idx, $rest) = (unpack('N', $data), substr($data, 4));
             my ($name, $value) = split /\0/, $rest;
             push @$mods, { op => 'change', idx => $idx, name => $name, value => $value // '' };
+        } elsif ($code eq 'b') {           # SMFIR_REPLBODY: one chunk of the new body
+            push @$mods, { op => 'body', value => $data };
         } elsif ($code eq 'p') {           # progress
             next;
         } else {
@@ -186,6 +188,37 @@ sub assemble {
         $out = "$m->{name}: $v$EOL" . $out;
     }
     return $out;
+}
+
+# The message as Postfix leaves it: insert at idx, change/delete the idx-th
+# field of that name (case-insensitive, 1-based), add at the end, and the
+# replace-body chunks concatenated.
+sub apply_mods {
+    my ($message, $mods) = @_;
+    my ($hdr, $body) = split /$EOL$EOL/, $message, 2;
+    my @h = map { [ (/^([^:\s]+):/)[0], "$_$EOL" ] } split /$EOL(?!\s)/, $hdr;
+    my $new_body;
+    for my $m (@$mods) {
+        my $v = $m->{value} // '';
+        $v =~ s/\r?\n/$EOL/g;
+        if ($m->{op} eq 'insert') {
+            splice @h, $m->{idx}, 0, [$m->{name}, "$m->{name}: $v$EOL"];
+        } elsif ($m->{op} eq 'add') {
+            push @h, [$m->{name}, "$m->{name}: $v$EOL"];
+        } elsif ($m->{op} eq 'change') {
+            my ($n, $pos) = (0);
+            for my $i (0 .. $#h) {
+                next unless lc $h[$i][0] eq lc $m->{name};
+                if (++$n == $m->{idx}) { $pos = $i; last }
+            }
+            next unless defined $pos;
+            if ($v eq '') { splice @h, $pos, 1 }
+            else          { $h[$pos] = [$h[$pos][0], "$h[$pos][0]: $v$EOL"] }
+        } elsif ($m->{op} eq 'body') {
+            $new_body .= $m->{value};
+        }
+    }
+    return join('', map { $_->[1] } @h) . $EOL . ($new_body // $body);
 }
 
 sub verify {
@@ -604,5 +637,21 @@ for my $c ([qw(--use-epilogue)], [qw(--epilogue-threshold 5)]) {
 }
 like(`$^X -I$LIB $SCRIPT --max-recipe-literals -1 2>&1`,
     qr/--max-recipe-literals must not be negative/, 'negative cap refused');
+
+# --- Outbound with no key for the sender: add nothing at all ---
+# A list host's single outbound listener carries every list; a list whose
+# domain has no key must leave exactly as it came, not with an unsigned
+# Message-Instance a receiver reports as permerror.
+# A plain post is the case that bit: the milter stamped m=1 before it looked
+# for a key.
+{
+    my ($verdict, $mods) = run_milter(
+        from => 'list-bounces@nokey.example', rcpt => ['subscriber@example.org'],
+        message => $PLAIN);
+    is($verdict, 'c', 'no key: milter continues');
+    is_deeply($mods, [], 'no key: no header added, changed or removed')
+        or diag(explain($mods));
+    like(milter_log(), qr/no signing key for .* from=list-bounces\@nokey\.example/, 'no key: logged');
+}
 
 done_testing;
