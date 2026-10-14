@@ -20,7 +20,9 @@ Revision history for Mail::DKIM2
           It used to add an unsigned Message-Instance and leave the others,
           which receivers report as permerror ("m=N is not signed"). An
           unsigned post now leaves with no DKIM2 at all, and a signed one
-          fails honestly against the sender's signature.
+          fails honestly against the sender's signature. DKIM2Sign does the
+          same on a refusal, a domain with no signing configuration, or a
+          Signer failure.
         - Fix: dkim2-milter in outbound mode computes its own
           Message-Instance (the diff against the snapshot) before checking
           the upstream chain, and checks the message as it will be signed.
@@ -38,7 +40,10 @@ Revision history for Mail::DKIM2
           Every mode strips X-DKIM2-Snapshot from the mail it sees, so a
           token neither comes from outside nor leaves the host. The inbound
           and outbound milters must share --snapshot-dir (as before) and be
-          upgraded together.
+          upgraded together. The authentication_milter handlers do the same:
+          DKIM2Verify names its snapshot in X-DKIM2-Snapshot (and removes
+          any that arrives), DKIM2Sign finds it only through that token, and
+          both must be upgraded together.
         - Behaviour change: since the outbound milter's own diff instance is
           now gated as an unsigned instance, a diff that falls back to a null
           body Recipe is signed only with --allow-null-body-recipe.
