@@ -131,7 +131,8 @@ finds the wrapped post. The sockets are
 
 The outbound unit runs with `--allow-null-body-recipe`, for a list that
 rewrites bodies itself (section 9). The signing milter adds nothing at all
-to mail from a sender it has no key for.
+to mail from a sender it has no key for, beyond removing instances no
+signature covers (section 7).
 
 Check: `journalctl -u dkim2-milter-wrap -n 5` shows `wrapping single-part
 posts`; `journalctl -u dkim2-milter-outbound -n 5` shows `signing enabled
@@ -286,8 +287,11 @@ announce@lists.example.org    smtp:[127.0.0.1]:10571
 ```
 
 then `postmap /etc/postfix/dkim2-lists && postfix reload`. To remove it,
-delete both lines and do the same. A list whose domain has no key in
-`/etc/dkim2/keys` is wrapped but not signed; add the key first.
+delete both lines and do the same. Add the key first: a list whose domain
+has no key in `/etc/dkim2/keys` is wrapped but not signed, and the signing
+milter removes the wrap milter's unsigned instances from its copies
+(`X-DKIM2-Info: ... action=removed-unsigned-mi=...;`), so they leave
+without DKIM2 rather than with promises no signature keeps.
 
 Keep every DKIM2 list in both maps. The signing milter can only record
 Mailman's changes against a snapshot the wrap milter kept, so a list in

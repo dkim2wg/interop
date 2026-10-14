@@ -861,4 +861,42 @@ like(`$^X -I$LIB $SCRIPT --mode inbound --wrap-single-part 2>&1`,
         or diag($v->result_detail);
 }
 
+# --- Not signing: remove the instances no signature covers ---
+# Instances this host's hops added for a signature that is not going to be
+# made are false promises ("m=N is not signed" at every receiver). When the
+# outbound milter does not sign, it removes every Message-Instance above the
+# highest m= any DKIM2-Signature covers.
+sub info_has { my ($mods, $re) = @_; scalar grep { $_->{value} =~ $re } inserted($mods, 'X-DKIM2-Info') }
+{
+    # Unsigned post, wrapped (m=1 stamped + m=2 wrap), list with no key.
+    (my $p = $PLAIN) =~ s/<post\@test1/<nokey-wrap\@test1/;
+    my ($iv, $imods) = run_milter(sock => $in_sock,
+        from => 'author@test1.dkim2.com', rcpt => ['list@nokey.example'], message => $p);
+    my $listed = stock_decorate(apply_mods($p, $imods));
+    my ($v, $mods) = run_milter(
+        from => 'list-bounces@nokey.example', rcpt => ['subscriber@example.org'], message => $listed);
+    my $out = apply_mods($listed, $mods);
+    is_deeply([mi_numbers($out)], [], 'no key: our unsigned m=1 and m=2 removed');
+    ok(info_has($mods, qr/removed-unsigned-mi=m=1,m=2;/), 'no key: removal recorded in X-DKIM2-Info');
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'no key: not signed');
+}
+{
+    # Signed post, wrapped (m=2), then a refusal: the token names no snapshot,
+    # so the list's change cannot be described. The sender's m=1 stays (i=1
+    # covers it); our m=2 goes.
+    (my $p = $PLAIN) =~ s/<post\@test1/<refused-wrap\@test1/;
+    my $signed = originator_signed($p);
+    my ($iv, $imods) = run_milter(sock => $in_sock,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $signed);
+    my $wire = apply_mods($signed, $imods);
+    $wire =~ s/^(X-DKIM2-Snapshot:[ \t]*)\S+/${1}ffeeddccbbaa99887766554433221100/m;
+    my $listed = stock_decorate($wire);
+    my ($v, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'], message => $listed);
+    my $out = apply_mods($listed, $mods);
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'refused: not signed');
+    is_deeply([mi_numbers($out)], [1], 'refused: only the signed m=1 is left');
+    ok(info_has($mods, qr/removed-unsigned-mi=m=2;/), 'refused: removal recorded');
+}
+
 done_testing;
