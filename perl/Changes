@@ -11,10 +11,16 @@ Revision history for Mail::DKIM2
           rather than re-encoding the body. See
           docs/dkim2-postfix-stock-mailman-guide.md in the interop repository.
         - New: Mail::DKIM2::Wrap (wrap_single_part).
-        - Behaviour change: dkim2-milter in outbound mode adds nothing --
-          no Message-Instance, no X-DKIM2-Info -- to mail from a sender it
-          has no key for. It used to add an unsigned Message-Instance,
-          which receivers report as permerror.
+        - Behaviour change: dkim2-milter in outbound mode adds no
+          Message-Instance to mail it does not sign (no key for the sender,
+          a refused chain, a signer failure), and removes every
+          Message-Instance no DKIM2-Signature covers -- instances hops on
+          this host added for a signature that is not going to be made --
+          recording it as X-DKIM2-Info: action=removed-unsigned-mi=...;.
+          It used to add an unsigned Message-Instance and leave the others,
+          which receivers report as permerror ("m=N is not signed"). An
+          unsigned post now leaves with no DKIM2 at all, and a signed one
+          fails honestly against the sender's signature.
         - Fix: dkim2-milter in outbound mode computes its own
           Message-Instance (the diff against the snapshot) before checking
           the upstream chain, and checks the message as it will be signed.

@@ -474,6 +474,7 @@ sub cb_eom {
         my $sign_config = _get_sign_config($priv->{env_from}, $from_hdr_domain);
         unless ($sign_config) {
             warn "dkim2-milter: no signing key for $msgid from=$priv->{env_from}\n";
+            _remove_unsigned_instances($ctx, $priv, $msgid);
             return SMFIS_CONTINUE;
         }
 
@@ -531,6 +532,7 @@ sub cb_eom {
             unless ($ok) {
                 warn "dkim2-milter: not signing $msgid: internal error computing the "
                    . "Message-Instance: " . _error_text($@) . "\n";
+                _remove_unsigned_instances($ctx, $priv, $msgid);
                 return SMFIS_CONTINUE;
             }
             warn "dkim2-milter: computed MI for $msgid\n" if $mi_header;
@@ -565,55 +567,19 @@ sub cb_eom {
             && ($gate->{reason} eq 'upstream-chain' || $gate->{reason} eq 'error')) {
             # Upstream chain is broken — don't extend it with a new signature.
             warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
+            _remove_unsigned_instances($ctx, $priv, $msgid);
         } elsif ($gate->{reason} && $gate->{reason} eq 'broken-mi-chain') {
             warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
             $ctx->insheader('X-DKIM2-Info',
                 _milter_value(_dkim2_info("not-signed=broken-mi-chain")), 0);
+            _remove_unsigned_instances($ctx, $priv, $msgid);
         } elsif ($gate->{reason}) {
             warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
             $ctx->insheader('X-DKIM2-Info',
                 _milter_value(_dkim2_info("not-signed=null-body-recipe")), 0);
+            _remove_unsigned_instances($ctx, $priv, $msgid);
         } else {
             # Chain is valid (or there is no upstream chain) — proceed.
-            # If _compute_mi stripped broken intermediate MI headers, delete them
-            # from the wire message and log a warning. Deletes go first: their
-            # indexes count the Message-Instance fields as received, and an
-            # MTA that counts fields inserted earlier in this end-of-message
-            # would otherwise delete one place off (our own new instance).
-            if ($mi_info{strip_mi_versions}) {
-                for my $v (@{$mi_info{strip_mi_versions}}) {
-                    my $count = 0;
-                    my $del_idx = 0;
-                    for my $hdr (@{$priv->{headers}}) {
-                        if (lc($hdr->[0]) eq 'message-instance') {
-                            $count++;
-                            my $val = $hdr->[1];
-                            $val =~ s/^\s+//;
-                            if ((extract_mi_version($val) // 0) == $v) {
-                                $del_idx = $count;
-                                last;
-                            }
-                        }
-                    }
-                    if ($del_idx) {
-                        $ctx->chgheader('Message-Instance', $del_idx, '');
-                        warn "dkim2-milter: deleted broken MI m=$v from wire message\n";
-                    }
-                }
-                my $stripped_str = join(',', map { "m=$_" } @{$mi_info{strip_mi_versions}});
-                my $recomp_from  = $mi_info{strip_mi_versions}[0] - 1;
-                $ctx->insheader('X-DKIM2-Info',
-                    _dkim2_info("stripped-broken-mi=$stripped_str,recomputed-from=m$recomp_from"), 0);
-            }
-            if ($mi_header) {
-                $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
-                my ($mi_ver) = $mi_header =~ /m=(\d+)/;
-                $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$mi_ver",
-                    hc => $mi_info{hc}, hn => $mi_info{hn},
-                    snapf => $mi_info{snapf}), 0);
-                warn "dkim2-milter: added MI header for $msgid\n";
-            }
-
             # Log domain alignment: signing domain vs envelope-from and From:
             my ($env_domain) = ($priv->{env_from} || '') =~ /\@(.+)$/;
             $env_domain = lc($env_domain // '');
@@ -624,8 +590,51 @@ sub cb_eom {
                . " env_from=$env_domain aligned=$env_aligned"
                . " from_hdr=$from_hdr_domain aligned=$from_aligned\n";
 
+            # Sign before touching the headers, so a signer failure leaves no
+            # instance of ours behind.
             my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
-            if ($sig_header) {
+            unless ($sig_header) {
+                _remove_unsigned_instances($ctx, $priv, $msgid);
+            } else {
+                # If _compute_mi stripped broken intermediate MI headers, delete them
+                # from the wire message and log a warning. Deletes go first: their
+                # indexes count the Message-Instance fields as received, and an
+                # MTA that counts fields inserted earlier in this end-of-message
+                # would otherwise delete one place off (our own new instance).
+                if ($mi_info{strip_mi_versions}) {
+                    for my $v (@{$mi_info{strip_mi_versions}}) {
+                        my $count = 0;
+                        my $del_idx = 0;
+                        for my $hdr (@{$priv->{headers}}) {
+                            if (lc($hdr->[0]) eq 'message-instance') {
+                                $count++;
+                                my $val = $hdr->[1];
+                                $val =~ s/^\s+//;
+                                if ((extract_mi_version($val) // 0) == $v) {
+                                    $del_idx = $count;
+                                    last;
+                                }
+                            }
+                        }
+                        if ($del_idx) {
+                            $ctx->chgheader('Message-Instance', $del_idx, '');
+                            warn "dkim2-milter: deleted broken MI m=$v from wire message\n";
+                        }
+                    }
+                    my $stripped_str = join(',', map { "m=$_" } @{$mi_info{strip_mi_versions}});
+                    my $recomp_from  = $mi_info{strip_mi_versions}[0] - 1;
+                    $ctx->insheader('X-DKIM2-Info',
+                        _dkim2_info("stripped-broken-mi=$stripped_str,recomputed-from=m$recomp_from"), 0);
+                }
+                if ($mi_header) {
+                    $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
+                    my ($mi_ver) = $mi_header =~ /m=(\d+)/;
+                    $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$mi_ver",
+                        hc => $mi_info{hc}, hn => $mi_info{hn},
+                        snapf => $mi_info{snapf}), 0);
+                    warn "dkim2-milter: added MI header for $msgid\n";
+                }
+
                 $ctx->insheader('DKIM2-Signature', _milter_value($sig_header), 0);
                 $ctx->insheader('X-DKIM2-Info',
                     _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
@@ -820,6 +829,33 @@ sub _compute_mi {
         Mail::DKIM2::MessageInstance->calculate($work_msg, $snap_msg, %mi_opts);
     };
     return $mi ? _format_mi($mi) : undef;
+}
+
+# Not signing: remove every Message-Instance no DKIM2-Signature on the
+# message covers (m= above every signature's m=). Those are instances hops on
+# this host added for a signature that is not going to be made; left in,
+# every receiver reports "m=N is not signed". Without them an unsigned post
+# has no DKIM2 at all, and a signed one fails honestly against the last
+# signature (a hop changed it without signing). Deletes go last first, by
+# index among the fields as received; nothing of ours has been inserted.
+sub _remove_unsigned_instances {
+    my ($ctx, $priv, $msgid) = @_;
+    my $covered = 0;
+    for my $h (grep { lc $_->[0] eq 'dkim2-signature' } @{$priv->{headers}}) {
+        my ($m) = $h->[1] =~ /(?:\A|;)\s*m\s*=\s*(\d+)/;
+        $covered = $m if defined $m && $m > $covered;
+    }
+    my @mi = grep { lc $_->[0] eq 'message-instance' } @{$priv->{headers}};
+    my @gone;
+    for my $i (0 .. $#mi) {
+        my $v = extract_mi_version($mi[$i][1] =~ s/^\s+//r) // 0;
+        push @gone, [$i + 1, $v] if $v > $covered;
+    }
+    return unless @gone;
+    $ctx->chgheader('Message-Instance', $_->[0], '') for reverse @gone;
+    my $list = join(',', map { "m=$_->[1]" } sort { $a->[1] <=> $b->[1] } @gone);
+    $ctx->insheader('X-DKIM2-Info', _milter_value(_dkim2_info("removed-unsigned-mi=$list")), 0);
+    warn "dkim2-milter: not signing $msgid: removed unsigned $list\n";
 }
 
 # The snapshot store key for an X-DKIM2-Snapshot token.
@@ -1084,6 +1120,14 @@ matches is explained by a diff against the snapshot that token names, and
 nothing else.  Every mode removes any C<X-DKIM2-Snapshot> a message arrives
 with (inbound then adds its own), so a token can neither come from outside
 nor leave the host.  Both milters must share the directory.
+
+=item Not signing
+
+Whenever the outbound milter does not sign (no key for the sender, a
+refused upstream chain, a signer failure), it adds no Message-Instance and
+removes every Message-Instance no DKIM2-Signature on the message covers (an
+C<m=> above every signature's C<m=>), with
+C<X-DKIM2-Info: action=removed-unsigned-mi=...;>.
 
 =item B<--allow-null-body-recipe>
 
