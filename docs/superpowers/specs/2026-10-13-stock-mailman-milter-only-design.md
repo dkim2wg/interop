@@ -113,10 +113,10 @@ Port 25 runs no DKIM2 milter.
 transport_maps = hash:/etc/postfix/dkim2-lists, hash:/var/lib/mailman3/data/postfix_lmtp
 
 # /etc/postfix/dkim2-lists: one line per DKIM2 list posting address
-dkim2-test@lists.example.org   smtp:[127.0.0.1]:10026
+dkim2-test@lists.example.org   smtp:[127.0.0.1]:10571
 ```
 
-`master.cf` listener `127.0.0.1:10026`: `smtpd_milters` = inbound milter
+`master.cf` listener `127.0.0.1:10571`: `smtpd_milters` = inbound milter
 socket, `content_filter=lmtp:[127.0.0.1]:8024` (Mailman's LMTP, every
 message here goes to Mailman), `cleanup_service_name=cleanup-dkim2`,
 `receive_override_options=no_address_mappings,no_unknown_recipient_checks,no_header_body_checks`,
@@ -126,7 +126,7 @@ Transport is chosen per recipient, so a co-recipient of a list post is
 never wrapped or stamped.
 
 **Outbound, per envelope sender.** Mailman submits to a loopback-only
-listener `127.0.0.1:10025` with no milter. Its restrictions include
+listener `127.0.0.1:10572` with no milter. Its restrictions include
 `check_sender_access pcre:/etc/postfix/dkim2-list-senders`:
 
 ```
@@ -148,7 +148,7 @@ setup (no `non_smtpd_milters`); the guide says so.
 
 ```ini
 [mta]
-smtp_port: 10025
+smtp_port: 10572
 max_recipients: 1
 ```
 
@@ -157,7 +157,7 @@ max_recipients: 1
 `docs/dkim2-postfix-stock-mailman-guide.md`, for the mailop audience. It
 refers to the existing list-host guide for keys, DNS and installing
 Mail::DKIM2, and covers: why the wrap; the two milter units (inbound with
-`--wrap-single-part` on the 10026 socket, outbound on 10587); the Postfix
+`--wrap-single-part` on the 10571 socket, outbound on 10587); the Postfix
 maps and listeners; the two `mailman.cfg` lines; adding and removing a
 list (one line in each map, `postmap`, reload); what subscribers see
 (footer as its own part, as for HTML mail today); what it does not cover
@@ -165,6 +165,20 @@ list (one line in each map, `postmap`, reload); what subscribers see
 and need `--allow-null-body-recipe`, on in the example unit); checks. The
 existing guide gets a pointer to it. `deploy/examples/` gets the map
 templates, the master.cf fragment and the inbound unit variant.
+
+### 5. Snapshot binding (added after review)
+
+Snapshots are found only through an `X-DKIM2-Snapshot` token, never by
+`Message-Instance` value (a replayed instance over an edited body would
+otherwise find another message's snapshot and have the edit signed as this
+host's own). The inbound milter takes a snapshot only when it stamps `m=1`
+or the top instance matches the content, stores it under a random 128-bit
+token and adds the token as `X-DKIM2-Snapshot`; after a wrap the token names
+the wrapped snapshot. Every mode strips any `X-DKIM2-Snapshot` on sight; the
+outbound milter diffs only against the snapshot its token names, and checks
+that the snapshot's instances are the message's lower ones. Ports moved to
+10571/10572 to stay clear of amavis's 10024-10026; Mailman's listener keeps
+the host's own `smtpd_milters`.
 
 ## Testing
 
@@ -183,7 +197,7 @@ templates, the master.cf fragment and the inbound unit variant.
   nothing.
 - Acceptance on dkim2.com: a new list with `dkim2_message_instance: false`
   (the patched Mailman then behaves exactly as stock), routed by the new
-  maps and listeners. Mailman's `smtp_port` moves to 10025 and the sender
+  maps and listeners. Mailman's `smtp_port` moves to 10572 and the sender
   map sends every `@mailman.dkim2.com` list sender to 10587, so the
   existing lists exercise the new outbound hop too; the existing list
   smoke test (`deploy/dkim2-list-smoke.sh`) must still pass. The corpus

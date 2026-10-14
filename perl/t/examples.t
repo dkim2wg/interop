@@ -66,16 +66,23 @@ like($wrap, qr/--mode inbound/, 'wrap unit is an inbound milter');
 like($wrap, qr/--wrap-single-part/, '  ... that wraps');
 like($wrap, qr{dkim2-milter-wrap\.sock}, '  ... on its own socket');
 my $smaster = slurp("$ex/postfix-stock-mailman-master.cf.fragment");
-for my $port (qw(10025 10026 10587)) {
+for my $port (qw(10571 10572 10587)) {
     like($smaster, qr/^127\.0\.0\.1:$port inet/m, "stock master fragment defines 127.0.0.1:$port");
 }
 like($smaster, qr/content_filter=lmtp:\[127\.0\.0\.1\]:8024/, 'the wrap listener hands every message to Mailman');
 like($smaster, qr/check_sender_access,regexp:\/etc\/postfix\/dkim2-list-senders/, 'the Mailman submission listener routes by sender (regexp: needs no extra package)');
 like($smaster, qr/myhostname=/, 'loopback hops use a distinct myhostname');
+unlike($smaster, qr/^127\.0\.0\.1:1002[456] /m, 'no listener on the content-filter ports 10024-10026');
+{
+    my %block = map { /^127\.0\.0\.1:(\d+) inet/ ? ($1 => $_) : () } split /\n(?=\S)/, $smaster;
+    like($block{10571}, qr/local_header_rewrite_clients=$/m, 'the wrap listener does not rewrite headers');
+    unlike($block{10572}, qr/smtpd_milters=/, 'Mailman\'s listener keeps the host\'s own milters');
+    like($block{10587}, qr/content_filter=$/m, 'the signer sends nothing round a content filter again');
+}
 my $smain = slurp("$ex/postfix-stock-mailman-main.cf.fragment");
 like($smain, qr/^transport_maps = hash:\/etc\/postfix\/dkim2-lists,/m, 'the DKIM2 list map comes before Mailman\'s');
 unlike($smain, qr/^smtpd_milters\s*=\s*\S/m, 'port 25 runs no DKIM2 milter');
 like(slurp("$ex/postfix-dkim2-list-senders"), qr/FILTER smtp:\[127\.0\.0\.1\]:10587/, 'sender map filters to the signer');
-like(slurp("$ex/postfix-dkim2-lists"), qr/smtp:\[127\.0\.0\.1\]:10026/, 'transport map sends to the wrap listener');
+like(slurp("$ex/postfix-dkim2-lists"), qr/smtp:\[127\.0\.0\.1\]:10571/, 'transport map sends to the wrap listener');
 
 done_testing;

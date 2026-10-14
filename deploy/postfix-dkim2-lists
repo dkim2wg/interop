@@ -1,7 +1,7 @@
 # dkim2.com: Mailman lists run the stock-Mailman way
 # (docs/dkim2-postfix-stock-mailman-guide.md): their posts go through the
-# wrapping inbound milter on 127.0.0.1:10026 before Mailman's LMTP. Both are
+# wrapping inbound milter on 127.0.0.1:10571 before Mailman's LMTP. Both are
 # dkim2_message_instance: false, so the patched Mailman behaves as stock.
 # Installed by deploy/deploy.sh (postmap'd there).
-dkim2stock@mailman.dkim2.com        smtp:[127.0.0.1]:10026
-dkim2stockcorpus@mailman.dkim2.com  smtp:[127.0.0.1]:10026
+dkim2stock@mailman.dkim2.com        smtp:[127.0.0.1]:10571
+dkim2stockcorpus@mailman.dkim2.com  smtp:[127.0.0.1]:10571

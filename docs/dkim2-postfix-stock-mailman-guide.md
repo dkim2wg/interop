@@ -13,7 +13,8 @@
 This guide turns DKIM2 on for chosen lists of a stock Mailman. Mailman is
 not changed: two DKIM2 milters do all the DKIM2 work, and Postfix routes
 only the chosen lists' mail through them. Every other list, domain and
-message on the host is handled exactly as it is today.
+message on the host goes through Postfix as it does today, with whatever
+milters (DKIM signing, ARC, spam filtering) you already run.
 
 If you can install a patched Mailman, the [Postfix mailing-list host
 guide](dkim2-postfix-list-host-guide.md) is the other route: there Mailman
@@ -26,10 +27,10 @@ for what DKIM2 is and why; this document assumes it.
 
 ```
   Internet ──▶ Postfix :25 (no DKIM2 milter)
-                 ├─ post to a DKIM2 list ──▶ 127.0.0.1:10026 ──▶ wrap milter ──▶ Mailman LMTP
+                 ├─ post to a DKIM2 list ──▶ 127.0.0.1:10571 ──▶ wrap milter ──▶ Mailman LMTP
                  └─ everything else ───────▶ as today
 
-  Mailman ──▶ 127.0.0.1:10025 (no milter)
+  Mailman ──▶ 127.0.0.1:10572 (your existing milters)
                  ├─ a DKIM2 list's copy ──▶ FILTER ──▶ 127.0.0.1:10587 ──▶ signing milter ──▶ out
                  └─ everything else ───────────────────────────────────────────────────────▶ out
 ```
@@ -39,13 +40,18 @@ A post to a DKIM2 list arrives, and the **wrap milter**:
 1. verifies any DKIM2 chain it carries and adds `Authentication-Results`;
 2. stamps `Message-Instance` `m=1` if the post has none (a sender that
    does not sign DKIM2);
-3. keeps a snapshot of the post exactly as it arrived;
+3. if the post's chain verified (or it had none), keeps a snapshot of it;
 4. if the post is a single part, wraps it (section 2) and records the wrap
-   as the next `Message-Instance`, keeping a snapshot of the wrapped post.
+   as the next `Message-Instance`, keeping a snapshot of the wrapped post
+   instead;
+5. names that snapshot in an `X-DKIM2-Snapshot` header: a random token,
+   meaningful only to this host. Any `X-DKIM2-Snapshot` a post arrives with
+   is removed first.
 
 Mailman then does what it always does: subject prefix, `List-*` headers,
 footer. Each copy goes back to Postfix, and the **signing milter**
-compares it with the wrapped snapshot, records Mailman's changes as one
+finds the snapshot by that token, removes the header, compares the copy
+with the snapshot, records Mailman's changes as one
 more `Message-Instance`, and adds a `DKIM2-Signature` for your list
 domain. A receiver that verifies DKIM2 can undo each step back to what the
 sender signed.
@@ -150,7 +156,18 @@ that rewrites `Content-Transfer-Encoding` after signing and breaks the
 signature.
 
 Leave `smtpd_milters` and `non_smtpd_milters` as they are: no DKIM2 milter
-goes on port 25 or on locally submitted mail.
+goes on port 25 or on locally submitted mail. Do point your port 25 smtpd
+at the header-keeping cleanup, by adding
+
+```
+  -o cleanup_service_name=cleanup-dkim2
+```
+
+under the `smtp inet ... smtpd` line in `master.cf`. Postfix's default
+cleanup removes `Bcc`, `Resent-Bcc` and `Content-Length`, which DKIM2
+hashes, so a signed post carrying one of them would fail at the wrap
+milter and go out unwrapped and unsigned. (On mail you send yourself, Bcc
+is removed on submission as before.)
 
 ### The maps
 
@@ -158,7 +175,7 @@ goes on port 25 or on locally submitted mail.
 one line per DKIM2 list, its posting address:
 
 ```
-dkim2-test@lists.example.org    smtp:[127.0.0.1]:10026
+dkim2-test@lists.example.org    smtp:[127.0.0.1]:10571
 ```
 
 `/etc/postfix/dkim2-list-senders` (from
@@ -183,37 +200,54 @@ Append `deploy/examples/postfix-stock-mailman-master.cf.fragment`. It
 defines `cleanup-dkim2` (skip it if you have it from the list-host guide)
 and three loopback listeners:
 
-- **10026, the wrap listener.** `transport_maps` sends the DKIM2 lists'
+- **10571, the wrap listener.** `transport_maps` sends the DKIM2 lists'
   posts here. Its milter is the wrap milter, and `content_filter` hands
   every message it accepts straight to Mailman's LMTP (`127.0.0.1:8024`,
   Mailman's default; use your `lmtp_host`/`lmtp_port`). Transport is chosen
   per recipient, so if a post is addressed to a DKIM2 list and to someone
   else on this host, only the list's copy comes through here.
-- **10025, Mailman's submission listener.** No milter. Its
+- **10572, Mailman's submission listener.** It keeps `main.cf`'s
+  `smtpd_milters`, so the DKIM signing, ARC or filtering your lists get
+  today still applies to every list, DKIM2 or not. (If your
+  `smtpd_milters` includes a DKIM2 milter, from the list-host guide, set
+  `-o smtpd_milters=` on this listener to the others.) Its
   `check_sender_access` sends a DKIM2 list's copies to the signer and lets
   everything else go out as it does today.
 - **10587, the signer.** The signing milter, for the DKIM2 lists' copies
-  only.
+  only. `content_filter=` is empty here, so a host-wide content filter does
+  not send a copy round again after it is signed.
 
-The sender map is on 10025 only, a listener nothing but this host can
+The ports are free loopback ports clear of the 10024–10026 that amavis and
+similar content filters conventionally use. Any others do, as long as the
+transport map, the sender map and `mailman.cfg` agree.
+
+The sender map is on 10572 only, a listener nothing but this host can
 reach. On port 25 it would let anyone put a list's bounce address in
-`MAIL FROM` and have the host sign their mail.
+`MAIL FROM` and have the host sign their mail. Anything that can connect to
+10572 or 10587 on this host can still have mail signed as a DKIM2 list's,
+so on a host shared with untrusted local users, firewall those ports to the
+Mailman and Postfix users.
 
 The wrap listener and the signer each set their own `myhostname`. Each of
 those hops is Postfix's SMTP client talking to Postfix's own smtpd, and
 without a distinct name in the greeting the client refuses the delivery as
-"mail for [127.0.0.1]:10026 loops back to myself".
+"mail for [127.0.0.1]:10571 loops back to myself".
 
 The signer and the wrap listener use `cleanup-dkim2`, which keeps
 `Bcc`, `Resent-Bcc` and `Content-Length` on mail that is signed (see the
-list-host guide, "Keep Bcc, Resent-Bcc and Content-Length").
+list-host guide, "Keep Bcc, Resent-Bcc and Content-Length"), and turn off
+Postfix's header rewriting for local clients
+(`local_header_rewrite_clients=`): each hop's client is Postfix itself on
+127.0.0.1, which counts as local, and the rewriting (qualifying addresses,
+adding `Resent-` fields) would change a signed post before the milter
+checks it.
 
 ```bash
 postfix check && postfix reload
 ```
 
-Check: `postconf -M | grep -E '127.0.0.1:(10025|10026|10587)'` shows the
-three listeners; `ss -ltn | grep -E ':(10025|10026|10587) '` shows them
+Check: `postconf -M | grep -E '127.0.0.1:(10572|10571|10587)'` shows the
+three listeners; `ss -ltn | grep -E ':(10572|10571|10587) '` shows them
 listening.
 
 ## 6. Mailman
@@ -224,7 +258,7 @@ config parser keeps an inline comment as part of the value):
 ```ini
 [mta]
 # The routing listener (section 5).
-smtp_port: 10025
+smtp_port: 10572
 # One recipient per transaction.
 max_recipients: 1
 ```
@@ -247,7 +281,7 @@ DKIM2 list because it is in the two maps.
 To add `announce@lists.example.org`: one line in each map,
 
 ```
-announce@lists.example.org    smtp:[127.0.0.1]:10026
+announce@lists.example.org    smtp:[127.0.0.1]:10571
 /^announce(-bounces(\+.*)?)?@lists\.example\.org$/    FILTER smtp:[127.0.0.1]:10587
 ```
 
@@ -300,16 +334,17 @@ Then post to a list that is not in the maps: its copies carry no
   rewrites the body, and the list's instance then has a null body Recipe.
   The outbound unit's `--allow-null-body-recipe` signs it; a receiver can
   verify the chain up to the list but not undo the body change.
-- **A post whose DKIM2 chain is already broken** when it arrives is not
-  wrapped (`not wrapping ...: no arrival snapshot` in the wrap milter's
+- **A post whose DKIM2 chain is already broken** when it arrives (damaged in
+  transit, or someone's edit of a signed post) gets no snapshot and is not
+  wrapped (`not wrapping ...: arrival result fail` in the wrap milter's
   log). It is still delivered; its footer is pasted inline, and its copies
-  are not signed.
+  go out unsigned: the host never signs a change it cannot account for.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `loops back to myself` in the mail log | A loopback listener greets with your own `myhostname` | Keep the `-o myhostname=` lines on 10026 and 10587 |
+| `loops back to myself` in the mail log | A loopback listener greets with your own `myhostname` | Keep the `-o myhostname=` lines on 10571 and 10587 |
 | A DKIM2 list's copies go out unsigned; `no signing key for` in `journalctl -u dkim2-milter-outbound` | No key directory for the envelope sender's domain | Add `/etc/dkim2/keys/<domain>/<selector>.key` and restart the milter |
-| A DKIM2 list's copies have no `Message-Instance` at all | The copy did not go through 10587 | Check `smtp_port: 10025` and the sender map's pattern for that list |
-| Posts reach Mailman without the wrap | The post did not go through 10026 | Check `dkim2-lists`, `postmap`, and that it comes first in `transport_maps` |
+| A DKIM2 list's copies have no `Message-Instance` at all | The copy did not go through 10587 | Check `smtp_port: 10572` and the sender map's pattern for that list |
+| Posts reach Mailman without the wrap | The post did not go through 10571 | Check `dkim2-lists`, `postmap`, and that it comes first in `transport_maps` |
 | Copies fail with a body-hash mismatch at some hosts | 8bit converted to 7bit after signing | `disable_mime_output_conversion = yes` |
 | Every subscriber's address in `rt=` | Many recipients per transaction | `max_recipients: 1` |

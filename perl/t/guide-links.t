@@ -55,8 +55,10 @@ for my $path ($stext =~ /`((?:perl|deploy|mailman|sympa|util|docs)\/[A-Za-z0-9_.
     ok(-e "$root/$path", "stock guide path $path exists in the repo");
 }
 like($stext, qr/max_recipients: 1/, 'stock guide: one recipient per transaction');
-like($stext, qr/smtp_port: 10025/, 'stock guide: Mailman submits to the routing listener');
+like($stext, qr/smtp_port: 10572/, 'stock guide: Mailman submits to the routing listener');
 like($stext, qr/--wrap-single-part/, 'stock guide: the wrapping milter');
+like($stext, qr/X-DKIM2-Snapshot/, 'stock guide: explains the snapshot token');
+like($stext, qr/cleanup_service_name=cleanup-dkim2/, 'stock guide: port 25 keeps the hashed headers');
 like($stext, qr/disable_mime_output_conversion = yes/, 'stock guide: warns about transport conversion');
 unlike($stext, qr{/root/interop|/opt/dkim2}, 'stock guide: no dkim2.com box paths');
 unlike($stext, qr/^(?:smtp_port|max_recipients):[^\n#]*#/m, 'stock guide: no inline mailman.cfg comments');

@@ -1,42 +1,55 @@
 # DKIM2 for stock Mailman: master.cf listeners. See
 # docs/dkim2-postfix-stock-mailman-guide.md.
 #
+# Ports 10571/10572 are chosen to stay clear of the 10024-10026 that amavis
+# and other content filters conventionally use; any free loopback ports do,
+# as long as /etc/postfix/dkim2-lists, the sender map and mailman.cfg agree.
+#
 # cleanup-dkim2 keeps Bcc/Resent-Bcc/Content-Length on mail that is, or will
 # be, signed (the list-host guide, "Keep Bcc, Resent-Bcc and Content-Length").
+# Point your port 25 smtpd at it too (-o cleanup_service_name=cleanup-dkim2),
+# or a signed post carrying one of those fields is broken before the wrap
+# milter sees it.
 cleanup-dkim2 unix n     -       y       -       0       cleanup
   -o message_drop_headers=return-path
 #
 # 1. Inbound for DKIM2 lists (transport_maps sends their posts here): verify,
 #    stamp, snapshot, wrap single-part posts, then hand every message to
 #    Mailman's LMTP. A distinct myhostname, or Postfix's SMTP client refuses
-#    the hop as "loops back to myself".
-127.0.0.1:10026 inet n  -       y       -       -       smtpd
+#    the hop as "loops back to myself"; no local header rewriting, or Postfix
+#    edits the post (and breaks its DKIM2 chain) before the milter sees it.
+127.0.0.1:10571 inet n  -       y       -       -       smtpd
   -o syslog_name=postfix/dkim2-wrap
   -o myhostname=dkim2-wrap.localhost
   -o cleanup_service_name=cleanup-dkim2
+  -o local_header_rewrite_clients=
   -o smtpd_milters=unix:var/run/dkim2-milter-wrap.sock
   -o content_filter=lmtp:[127.0.0.1]:8024
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_relay_restrictions=permit_mynetworks,reject
   -o receive_override_options=no_address_mappings,no_unknown_recipient_checks,no_header_body_checks
 #
-# 2. Mailman's submission listener (mailman.cfg smtp_port: 10025). No milter;
-#    a DKIM2 list's mail is FILTERed to the signer, everything else is
-#    delivered as it is today.
-127.0.0.1:10025 inet n  -       y       -       -       smtpd
+# 2. Mailman's submission listener (mailman.cfg smtp_port: 10572). It keeps
+#    main.cf's smtpd_milters -- your DKIM signer, ARC, whatever list mail
+#    passes through today -- so every list is handled as before. (If those
+#    include a DKIM2 milter, set -o smtpd_milters= to the others here.) A DKIM2
+#    list's copies are FILTERed to the signer; everything else is delivered.
+127.0.0.1:10572 inet n  -       y       -       -       smtpd
   -o syslog_name=postfix/mailman-out
-  -o smtpd_milters=
   -o local_header_rewrite_clients=
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_sender_restrictions=check_sender_access,regexp:/etc/postfix/dkim2-list-senders
   -o smtpd_relay_restrictions=permit_mynetworks,reject
 #
-# 3. The signer: DKIM2 list copies only (from listener 2's FILTER).
+# 3. The signer: DKIM2 list copies only (from listener 2's FILTER). No
+#    content_filter: a global one would send the copy round again after it
+#    is signed.
 127.0.0.1:10587 inet n  -       y       -       -       smtpd
   -o syslog_name=postfix/dkim2-sign
   -o myhostname=dkim2-sign.localhost
   -o cleanup_service_name=cleanup-dkim2
   -o local_header_rewrite_clients=
+  -o content_filter=
   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_relay_restrictions=permit_mynetworks,reject
