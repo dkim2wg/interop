@@ -28,7 +28,10 @@ copy, so a `DKIM2-Signature` `rt=` never names anyone but its own recipient).
 `check_sender_access regexp:/etc/postfix/dkim2-list-senders` FILTERs every
 `@mailman.dkim2.com` sender to the signer on `127.0.0.1:10587` (which now
 carries `-o myhostname=dkim2-sign.localhost`, or the FILTER hop is refused as
-"loops back to myself"). This is the stock-Mailman routing from
+"loops back to myself", plus `content_filter=` and `no_address_mappings` --
+10572 has already mapped the recipient, and a second pass could add an
+`always_bcc` recipient to the signed `rt=`; Sympa's direct submissions there
+need no mapping either). This is the stock-Mailman routing from
 `docs/dkim2-postfix-stock-mailman-guide.md`, exercised by every Mailman list
 on the box; Sympa still submits to 10587 directly. See "Stock-Mailman test
 lists" below for the inbound half.
@@ -985,7 +988,8 @@ the snapshot diff) and `i=2` (`d=dkim2.com`). Smoke test:
 
 Backups of the pre-change files: `/etc/postfix/{main,master}.cf.bak-2026-10-14`,
 `/etc/mailman3/mailman.cfg.bak-2026-10-14` (and `master.cf.bak-2026-10-14b`
-from the move to 10571/10572).
+from the move to 10571/10572, `master.cf.bak-2026-10-14c` before
+`no_address_mappings` on 10587).
 
 ## Updating Code on the Server
 

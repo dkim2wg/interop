@@ -216,7 +216,11 @@ and three loopback listeners:
   everything else go out as it does today.
 - **10587, the signer.** The signing milter, for the DKIM2 lists' copies
   only. `content_filter=` is empty here, so a host-wide content filter does
-  not send a copy round again after it is signed.
+  not send a copy round again after it is signed, and `no_address_mappings`
+  leaves the recipient alone: 10572 already applied your canonical and
+  virtual maps, and a second pass would let `always_bcc` or
+  `recipient_bcc_maps` add a recipient to the transaction, which the
+  signature's `rt=` would then name.
 
 The ports are free loopback ports clear of the 10024–10026 that amavis and
 similar content filters conventionally use. Any others do, as long as the
@@ -334,10 +338,16 @@ Then post to a list that is not in the maps: its copies carry no
   setup (no `non_smtpd_milters`). The list-host guide's
   `internal_mail_filter_classes = bounce` setup signs them, at the cost of
   running the signing milter on all locally generated mail.
-- **Content filtering.** A list that strips attachments or converts HTML
-  rewrites the body, and the list's instance then has a null body Recipe.
-  The outbound unit's `--allow-null-body-recipe` signs it; a receiver can
-  verify the chain up to the list but not undo the body change.
+- **Content filtering.** A list with content filtering on
+  (`filter_content`) loses the wrap. Mailman's filter turns a
+  `multipart/mixed` with one part back into that part
+  (`mime_delete.recast_multipart`), before the footer is added, so the
+  footer is pasted inline after all. Stripping attachments or converting
+  HTML rewrites the body anyway. Either way the list's instance has a null
+  body Recipe. The outbound unit's `--allow-null-body-recipe` signs it; a
+  receiver can verify the chain up to the list but not undo the body
+  change. Turn content filtering off on a DKIM2 list if subscribers should
+  be able to see what the sender wrote.
 - **A post whose DKIM2 chain is already broken** when it arrives (damaged in
   transit, or someone's edit of a signed post) gets no snapshot and is not
   wrapped (`not wrapping ...: arrival result fail` in the wrap milter's

@@ -207,7 +207,7 @@ dkim2-delayedbounce unix  -     n       n       -       -       pipe
   -o smtpd_milters=unix:var/run/dkim2-milter-out.sock
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_relay_restrictions=permit_mynetworks,reject
-  -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
+  -o receive_override_options=no_address_mappings,no_unknown_recipient_checks,no_header_body_checks
 
 # Charset-corpus injection (deploy/dkim2-corpus-inject.sh): port 25 exactly
 # (main.cf smtpd_milters = the inbound milter, header-preserving cleanup), but
