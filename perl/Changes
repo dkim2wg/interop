@@ -10,7 +10,9 @@ Revision history for Mail::DKIM2
           against. Stock Mailman then adds its footer as an extra part
           rather than re-encoding the body. See
           docs/dkim2-postfix-stock-mailman-guide.md in the interop repository.
-        - New: Mail::DKIM2::Wrap (wrap_single_part).
+        - New: Mail::DKIM2::Wrap (wrap_single_part). In list context it
+          also returns why it wrapped nothing (multipart, no-header-end,
+          unparsable-header, boundary); dkim2-milter logs that reason.
         - Behaviour change: dkim2-milter in outbound mode adds no
           Message-Instance to mail it does not sign (no key for the sender,
           a refused chain, a signer failure), and removes every
