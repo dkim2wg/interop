@@ -21,9 +21,26 @@ Revision history for Mail::DKIM2
           It used to check first, so a list manager that changed a message
           without recording an instance of its own -- every list copy
           whose changes only the snapshot diff records -- was refused.
+        - Security fix: dkim2-milter no longer finds snapshots by
+          Message-Instance value. A post that replayed a sender's genuine
+          m=1 over an edited body found the genuine post's snapshot, and
+          the edit was recorded and signed as this host's own change. The
+          inbound milter now snapshots only a message it stamps m=1 or
+          whose top instance matches the content, stores the snapshot under
+          a random token and names it in a new X-DKIM2-Snapshot header; the
+          outbound milter diffs only against the snapshot that token names.
+          Every mode strips X-DKIM2-Snapshot from the mail it sees, so a
+          token neither comes from outside nor leaves the host. The inbound
+          and outbound milters must share --snapshot-dir (as before) and be
+          upgraded together.
+        - Behaviour change: since the outbound milter's own diff instance is
+          now gated as an unsigned instance, a diff that falls back to a null
+          body Recipe is signed only with --allow-null-body-recipe.
         - Fix: dkim2-milter registers SMFIF_CHGHDRS, so removing a broken
           intermediate Message-Instance (which calls chgheader) no longer
-          dies in Sendmail::PMilter.
+          dies in Sendmail::PMilter. The removals now go out before the new
+          Message-Instance is inserted, so an MTA that counts inserted
+          fields in a header index still removes the right one.
 
 0.19    2026-10-09
         Fixes from a follow-up review of 0.18. Malformed fields that used to
