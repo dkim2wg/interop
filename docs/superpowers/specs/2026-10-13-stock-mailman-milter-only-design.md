@@ -181,12 +181,6 @@ templates, the master.cf fragment and the inbound unit variant.
   upstream top instance (no arrival snapshot) is left unwrapped; startup
   errors for the bad option combinations; outbound with no key adds
   nothing.
-- Stock decoration, real code: run stock Mailman 3.3.10's
-  `decorate.process` (in a venv, a small Python driver with a stand-in
-  list carrying a header and footer) over the inbound milter's output for
-  the 88-message charset corpus, then the outbound milter, then every
-  verifier in the repo. Bar: every message that the patched build passes
-  also passes here, with a non-null body Recipe.
 - Acceptance on dkim2.com: a new list with `dkim2_message_instance: false`
   (the patched Mailman then behaves exactly as stock), routed by the new
   maps and listeners. Mailman's `smtp_port` moves to 10025 and the sender
