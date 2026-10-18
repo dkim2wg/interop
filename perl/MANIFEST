@@ -14,6 +14,7 @@ bin/validate.pl
 build-fraud-test.pl
 contrib/strip.pl
 lib/Mail/DKIM2.pm
+lib/Mail/DKIM2/BodyPlan.pm
 lib/Mail/DKIM2/Common.pm
 lib/Mail/DKIM2/DSN.pm
 lib/Mail/DKIM2/Gate.pm
@@ -34,6 +35,8 @@ spec-review-notes.md
 t/body-canon.t
 t/body-diff-vectors.t
 t/body-diff.t
+t/body-plan-corpus.t
+t/body-plan.t
 t/chain-length.t
 t/chain-number-bound.t
 t/common.t
@@ -83,6 +86,7 @@ t/ignore-prefixes.t
 t/interop.t
 t/invalid-json.t
 t/key-record.t
+t/lib/BodyPlanReference.pm
 t/lib/DKIM2SignedFixture.pm
 t/lib/DKIM2TestKeys.pm
 t/lib/MockAuthMilter.pm
@@ -135,6 +139,7 @@ t/validate-report.t
 t/verifier-accessors.t
 t/verifier-algorithms.t
 t/verifier-mi-coverage.t
+t/verifier-stream-body.t
 t/verifier-streaming.t
 t/verifier-unkeyable.t
 t/verifier_flags.t

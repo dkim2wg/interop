@@ -31,6 +31,7 @@ use Mail::DKIM2::Common qw(
 use Email::MIME;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
+use Mail::DKIM2::BodyPlan;
 
 # The signing algorithms this verifier implements (spec-06 §3.2, §3.3), and
 # the key class each needs. Every other s= item is ignored (§3.4).
@@ -49,7 +50,7 @@ sub _extract_mi_hash_sets {
 
 sub known_options {
     return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
-              PubkeyCallback Resolver IgnorePrefixes NextDomainOK);
+              PubkeyCallback Resolver IgnorePrefixes NextDomainOK StreamBody);
 }
 
 sub init {
@@ -61,7 +62,8 @@ sub init {
     $self->{result}              = undef;
     $self->{details}             = undef;
     # Options the constructor was given stay; the rest get their defaults.
-    $self->{$_} //= 0 for qw(SkipTimestampCheck MidProcess AllowUnsignedMI HeadersOnly);
+    $self->{$_} //= 0 for qw(SkipTimestampCheck MidProcess AllowUnsignedMI HeadersOnly
+                             StreamBody);
     check_ignore_prefixes($self->{IgnorePrefixes});
 }
 
@@ -122,6 +124,14 @@ sub headers_only {
     my ($self, $val) = @_;
     $self->{HeadersOnly} = $val if defined $val;
     return $self->{HeadersOnly};
+}
+
+# stream_body: hash every instance's body as the body arrives
+# (Mail::DKIM2::BodyPlan) instead of keeping it and undoing each instance.
+sub stream_body {
+    my ($self, $val) = @_;
+    $self->{StreamBody} = $val if defined $val;
+    return $self->{StreamBody};
 }
 
 sub handle_header {
@@ -206,7 +216,30 @@ sub finish_header {
     unless (%{$self->{_dk2_headers}}) {
         $self->finish_body;
         $self->stop;
+        return;
     }
+
+    $self->_start_body_plan if $self->{StreamBody} && !$self->{HeadersOnly};
+}
+
+# StreamBody: plan each instance's body from the body Recipes, highest m=
+# first, and hash the body as it arrives rather than keeping it. The plan
+# stops above an instance that does not parse; the chain walk reports that
+# instance in its own words before it wants a body below it.
+sub _start_body_plan {
+    my ($self) = @_;
+    my $mi = $self->{_mi_headers};
+    my @parsed;
+    for my $v (sort { $b <=> $a } keys %$mi) {
+        (my $value = $mi->{$v}) =~ s/\A[^:]*://;
+        $value =~ s/\r?\n\z//;
+        my $obj = eval { Mail::DKIM2::MessageInstance->parse($value) };
+        die $@ if ref $@;
+        last unless $obj;
+        push @parsed, $obj;
+    }
+    my $plan = $self->{_body_plan} = Mail::DKIM2::BodyPlan->new(@parsed);
+    $self->{_body_sink} = sub { $plan->add($_[0]) };
 }
 
 sub finish_body {
@@ -461,6 +494,12 @@ sub _verify_top_mi_headers {
 sub _verify_mi_chain {
     my ($self) = @_;
 
+    # With a BodyPlan the body was hashed as it arrived and is not here: the
+    # walk checks and undoes the headers, and takes each body hash, and each
+    # body Recipe's verdict, from the plan.
+    my $plan = $self->{_body_plan};
+    $plan->finish if $plan;
+
     my $raw = join('', @{$self->{headers}}) . "\r\n" . ($self->{_buf} // '');
     my $msg = parse_mime($raw);
 
@@ -471,9 +510,14 @@ sub _verify_mi_chain {
         my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
         last unless $num;
 
+        my %body = (HeadersOnly => $headers_only);
+        if ($plan && !$headers_only) {
+            my %hashes = map { my $h = $plan->body_hash($num, $_); defined $h ? ($_ => $h) : () }
+                         keys %{ Mail::DKIM2::MessageInstance::hash_algs() };
+            %body = %hashes ? (BodyHashes => \%hashes) : (HeadersOnly => 1);
+        }
         my ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg,
-            IgnorePrefixes => $self->{IgnorePrefixes},
-            HeadersOnly    => $headers_only);
+            IgnorePrefixes => $self->{IgnorePrefixes}, %body);
         unless ($ok) {
             # A malformed instance is a PERMERROR in its own words (§11.2
             # names the strings); a hash that does not match is a fail.
@@ -497,7 +541,10 @@ sub _verify_mi_chain {
         $headers_only = 1 if $mi_obj->unrecoverable;
 
         my $prev = eval {
-            Mail::DKIM2::MessageInstance->undo($msg, HeadersOnly => $headers_only)
+            if ($plan && (my $e = $plan->recipe_error($num))) {
+                die $e;
+            }
+            Mail::DKIM2::MessageInstance->undo($msg, HeadersOnly => $headers_only || $plan)
         };
         die $@ if ref $@;
         if ($@ || !$prev) {
@@ -1095,6 +1142,12 @@ signatures stripped (as the validator does walking the chain top-down), so
 the highest remaining signature is not the true top and the checks that
 apply only to the top are suppressed. Implies C<AllowUnsignedMI>.
 
+=item StreamBody
+
+Hash every Message-Instance's body as the body arrives, in one pass, with
+L<Mail::DKIM2::BodyPlan>, instead of keeping the body and rebuilding each
+previous one in turn. The verdicts are the same; the body is never held.
+
 =item HeadersOnly
 
 The message has no body, as with the returned original in a DSN's
@@ -1187,7 +1240,7 @@ strings in one RR are joined), C<has a syntax error> and C<has been
 revoked> (see L<Mail::DKIM2::Common/parse_dkim_key_record>), or
 C<algorithm mismatch> (a C<k=> that is not the signature algorithm's).
 
-=head2 resolver([$resolver]), set_pubkey_callback(\&cb), skip_timestamp_check([$bool]), allow_unsigned_mi([$bool]), next_domain_ok([$domain]), mid_process([$bool]), headers_only([$bool])
+=head2 resolver([$resolver]), set_pubkey_callback(\&cb), skip_timestamp_check([$bool]), allow_unsigned_mi([$bool]), next_domain_ok([$domain]), mid_process([$bool]), headers_only([$bool]), stream_body([$bool])
 
 Get or set the constructor options of the same names.
 

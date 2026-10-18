@@ -989,7 +989,7 @@ sub calculate {
 sub verify {
     my ($class, $msg, %opts) = @_;
     Mail::DKIM2::Common::_check_options("$class->verify", \%opts,
-        qw(HeadersOnly IgnorePrefixes));
+        qw(HeadersOnly IgnorePrefixes BodyHashes));
     croak "need a message" unless $msg;
     check_ignore_prefixes($opts{IgnorePrefixes});
 
@@ -1038,7 +1038,9 @@ sub verify {
         # HeadersOnly: below a null body Recipe the body this instance
         # hashed is gone; its header hashes are still checkable.
         next if $opts{HeadersOnly};
-        my $bd = b_digest($msg, $alg);
+        # BodyHashes: computed already (Mail::DKIM2::BodyPlan), from a body
+        # $msg does not carry.
+        my $bd = $opts{BodyHashes} ? $opts{BodyHashes}{$alg} // '' : b_digest($msg, $alg);
         if ($b1 ne $bd) {
             return wantarray ? (0, "$alg body hash mismatch ($b1 != $bd)") : 0;
         }
@@ -1366,6 +1368,10 @@ scalar context and C<(0, $reason)> in list context. Never dies.
 With C<HeadersOnly =E<gt> 1> only the header hashes are checked and the body
 hash is skipped; this is how instances below a null body Recipe are checked,
 since the body they hashed is gone.
+
+With C<BodyHashes =E<gt> { $alg =E<gt> $base64, ... }> the body hashes are
+those given, computed elsewhere (L<Mail::DKIM2::BodyPlan>), not those of
+C<$msg>'s body.
 
 =head2 undo($msg, %options)
 
