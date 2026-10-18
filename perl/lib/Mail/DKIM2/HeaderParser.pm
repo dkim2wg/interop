@@ -109,7 +109,12 @@ sub PRINT {
             $self->{_header_scan} = $scanned > 0 ? $scanned : 0;
         }
     }
-    # Body data accumulates in buffer until CLOSE
+    # Body data accumulates in buffer until CLOSE, unless a subclass has
+    # set a sink in finish_header to take it as it comes.
+    if (!$self->{_in_header} && $self->{_body_sink} && length $self->{_buf}) {
+        $self->{_body_sink}->($self->{_buf});
+        $self->{_buf} = '';
+    }
     return 1;
 }
 
