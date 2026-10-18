@@ -62,7 +62,7 @@ export function linesToBody(lines) {
   return lines.map((l) => l + '\r\n').join('');
 }
 
-function isPlainObject(v) {
+export function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
@@ -99,16 +99,19 @@ function decodeDItem(item, where) {
 }
 
 // Walk one step list against `count` current items (header field instances
-// of one name, or body lines) and yield what it emits, in Recipe order:
-// {copy: n} for item number n (1-based) or {literal: binaryString}.
-// Validates as it goes (§5, extended):
+// of one name, or body lines) and yield what it emits, in Recipe order, a
+// range at a time: {range: [start, end]} for items start..end (1-based) or
+// {literal: binaryString}. Validates as it goes (§5, extended):
 //  - a step is an object with exactly one key, "c", "d" or "b";
 //  - "c" is exactly two integers, 1 <= start <= end <= count, and each
 //    start is greater than the end of every preceding "c" step;
 //  - "d" and "b" arrays are non-empty (schema minItems 1); "d" items are
 //    strings without CR/LF; "b" items canonical base64 of octets without
 //    CR/LF.
-function* walkSteps(steps, count, where, structuralOnly = false) {
+// The undo walk below expands ranges item by item (walkSteps); the planned
+// walk (plan.js) takes them whole. Both see the same checks in the same
+// order, so a Recipe is malformed to one exactly when it is to the other.
+export function* walkRanges(steps, count, where, structuralOnly = false) {
   if (!Array.isArray(steps)) throw new MalformedRecipe(`${where}: steps are not an array`);
   let prevEnd = 0;
   for (const step of steps) {
@@ -128,7 +131,7 @@ function* walkSteps(steps, count, where, structuralOnly = false) {
       if (start <= prevEnd) {
         throw new MalformedRecipe(`${where}: "c" range [${start}, ${end}] does not follow the previous copy (ended at ${prevEnd})`);
       }
-      if (!structuralOnly) for (let n = start; n <= end; n++) yield { copy: n };
+      if (!structuralOnly) yield { range: [start, end] };
       prevEnd = end;
     } else if (kind === 'd') {
       if (!Array.isArray(step.d) || step.d.length === 0) throw new MalformedRecipe(`${where}: "d" is not a non-empty array`);
@@ -139,6 +142,15 @@ function* walkSteps(steps, count, where, structuralOnly = false) {
     } else {
       throw new MalformedRecipe(`${where}: unknown step "${kind}"`);
     }
+  }
+}
+
+// walkRanges, one item at a time: {copy: n} for item number n (1-based) or
+// {literal: binaryString}.
+export function* walkSteps(steps, count, where, structuralOnly = false) {
+  for (const item of walkRanges(steps, count, where, structuralOnly)) {
+    if ('range' in item) for (let n = item.range[0]; n <= item.range[1]; n++) yield { copy: n };
+    else yield item;
   }
 }
 
@@ -225,4 +237,23 @@ export function applyRecipe(recipe, state) {
   if (Array.isArray(recipe.b)) bodyLines = applyBodyRecipe(state.bodyLines, recipe.b);
   else if (recipe.b !== undefined && recipe.b !== null) throw new MalformedRecipe('"b" is neither steps nor null');
   return { fields, bodyLines };
+}
+
+// spec-06 §11.2: classify a decodeRecipe() failure so the two error kinds
+// stay distinct, per the ruling that base64 and JSON failures are different
+// errors:
+//  - a bad base64 r= value (atob throws, typically DOMException) is a
+//    syntax error (§11.2 lists this explicitly for malformed field
+//    content) -- the payload never even reached JSON parsing.
+//  - a JSON.parse failure (SyntaxError) on the successfully-decoded bytes
+//    is the more specific "contains invalid JSON" case.
+//  - valid JSON that is not a valid Recipe (§5: a "c" range out of bounds
+//    or not ascending, a non-base64 "b" item, CR/LF in a literal...) is
+//    "has a malformed Recipe" -- recipes.js throws MalformedRecipe.
+// Anything else is a generic, non-specific Recipe-decode failure.
+export function classifyRecipeDecodeError(e) {
+  if (e instanceof MalformedRecipe) return 'malformed';
+  if (e instanceof SyntaxError) return 'invalid-json';
+  if (e instanceof DOMException) return 'syntax-error';
+  return 'broken';
 }

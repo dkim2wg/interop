@@ -33,7 +33,7 @@ function unfold(value) {
 }
 
 // §6.2 canonical line for one header field.
-function hashLine(field) {
+export function hashLine(field) {
   let v = unfold(field.value);
   v = v.replace(/[ \t]+/g, ' '); // collapse WSP runs to single SP
   v = v.replace(/ +$/, '');      // delete trailing WSP
