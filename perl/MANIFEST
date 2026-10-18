@@ -140,6 +140,7 @@ t/validate-null-body.t
 t/validate-report.t
 t/verifier-accessors.t
 t/verifier-algorithms.t
+t/verifier-key-prefetch.t
 t/verifier-mi-coverage.t
 t/verifier-stream-body.t
 t/verifier-streaming.t

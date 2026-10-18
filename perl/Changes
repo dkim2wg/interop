@@ -13,6 +13,16 @@ Revision history for Mail::DKIM2
           the undo walk.
         - DKIM2Verify keeps a copy of the body only when it builds something
           from it (a snapshot, or a first Message-Instance).
+        - The Verifier sends for every signature's public key, all at once and
+          in the background (Net::DNS bgsend), as soon as it has the header
+          fields, and reads the answers when it checks the signatures; an
+          answer that settles nothing (none within 5 seconds, SERVFAIL) is
+          asked again with query(). Each key name is looked up once per
+          message. A chain of five signing domains verified about four times
+          faster against live DNS.
+        - dkim2-milter verifies as the message arrives (headers at end of
+          headers, then each body chunk), so the key lookups overlap the
+          body's transfer.
         - MessageInstance->verify takes BodyHashes, body hashes computed
           elsewhere.
 

@@ -9,6 +9,7 @@ use Crypt::Digest::SHA256 qw(sha256);
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 use POSIX qw();
+use Time::HiRes ();
 
 use Mail::DKIM2::Common qw(
     parse_mime
@@ -40,6 +41,12 @@ my %IMPLEMENTED_ALG = (
     'rsa-sha256'     => 'Crypt::PK::RSA',
     'ed25519-sha256' => 'Crypt::PK::Ed25519',
 );
+
+# How long a key lookup sent in the background at the end of the headers is
+# waited for, from when it was sent, before it is asked again the ordinary
+# way (with the resolver's retries and other servers): Net::DNS's own first
+# retransmit interval.
+our $PREFETCH_WAIT = 5;
 
 sub _extract_mi_hash_sets {
     my ($raw) = @_;
@@ -221,6 +228,8 @@ sub finish_header {
         $self->stop;
         return;
     }
+
+    $self->_prefetch_keys;
 
     $self->_start_plans if $self->{StreamBody} && !$self->{HeadersOnly};
 }
@@ -1019,14 +1028,10 @@ sub fetch_public_key {
     my $dom = $signature->domain;
     croak "missing selector or domain" unless $sel && $dom;
 
-    my $resolver = $self->{Resolver} //= do {
-        require Net::DNS::Resolver;
-        Net::DNS::Resolver->new;
-    };
     my $fqdn = "$sel._domainkey.$dom";
-    my $reply = $resolver->query($fqdn, 'TXT');
+    my ($reply, $err) = @{ $self->{_key_replies}{lc $fqdn} //= $self->_key_reply($fqdn) };
     unless ($reply) {
-        my $err = $resolver->errorstring // '';
+        $err //= '';
         return if $err =~ /^(?:NXDOMAIN|NOERROR|NODATA)\s*$/i;
         croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
     }
@@ -1044,6 +1049,66 @@ sub fetch_public_key {
     croak "PERMERROR: algorithm mismatch\n"
         if $IMPLEMENTED_ALG{$alg} && !$key->isa($IMPLEMENTED_ALG{$alg});
     return $key;
+}
+
+sub _resolver {
+    my ($self) = @_;
+    return $self->{Resolver} //= do {
+        require Net::DNS::Resolver;
+        Net::DNS::Resolver->new;
+    };
+}
+
+# Every key the signatures name, asked for at once, in the background, as
+# soon as the header fields are in: the answers come back while the body
+# arrives and is hashed. Only with a resolver that can (Net::DNS's bgsend),
+# and not when a PubkeyCallback fetches the keys. Never fatal: a key not
+# asked for here is asked for when it is wanted.
+sub _prefetch_keys {
+    my ($self) = @_;
+    return if $self->{PubkeyCallback};
+    my $resolver = $self->_resolver;
+    return unless $resolver->can('bgsend');
+    for my $entry (sort { $b->{sig}->sequence <=> $a->{sig}->sequence }
+                   values %{$self->{_dk2_headers}}) {
+        my $sig = $entry->{sig};
+        eval {
+            my $dom = $sig->domain or return;
+            for my $idx (0 .. ($sig->sig_count || 0) - 1) {
+                next unless $IMPLEMENTED_ALG{$sig->algorithm($idx) // ''};
+                my $sel = $sig->selector($idx) or next;
+                my $fqdn = "$sel._domainkey.$dom";
+                next if $self->{_key_queries}{lc $fqdn};
+                my $handle = $resolver->bgsend($fqdn, 'TXT') or next;
+                $self->{_key_queries}{lc $fqdn} =
+                    [$handle, Time::HiRes::time() + $PREFETCH_WAIT];
+            }
+        };
+        die $@ if ref $@;
+    }
+}
+
+# The DNS answer for $fqdn as [$reply] or [undef, $error], query()'s
+# results: from the background query if it gave one that settles it (an
+# answer, NXDOMAIN, or NOERROR with none), else from query().
+sub _key_reply {
+    my ($self, $fqdn) = @_;
+    my $resolver = $self->_resolver;
+    if (my $q = delete $self->{_key_queries}{lc $fqdn}) {
+        my $ready = 1;
+        while ($resolver->bgbusy($q->[0])) {    # may swap in a TCP handle
+            next if Time::HiRes::time() < $q->[1];
+            $ready = 0;
+            last;
+        }
+        if (my $packet = $ready && $resolver->bgread($q->[0])) {
+            my $rcode = $packet->header->rcode;
+            return [$packet] if $packet->header->ancount;
+            return [undef, $rcode] if $rcode eq 'NXDOMAIN' || $rcode eq 'NOERROR';
+        }
+    }
+    my $reply = $resolver->query($fqdn, 'TXT');
+    return [$reply, $reply ? undef : $resolver->errorstring];
 }
 
 sub resolver {
@@ -1159,6 +1224,15 @@ construction; C<PubkeyCallback> has C<set_pubkey_callback>.
 A L<Net::DNS::Resolver> (or anything with the same C<query> and
 C<errorstring> methods) for the default public-key lookup. Created on
 demand if not given. A milter host passes its own so its timeouts apply.
+
+If it also has Net::DNS's C<bgsend>, C<bgbusy> and C<bgread>, every key
+the signatures name is asked for at once, in the background, as soon as
+the header fields are in, and the answers are read when the signatures
+are checked: the lookups overlap each other, the body's arrival and the
+hashing. An answer that settles nothing -- none within
+C<$Mail::DKIM2::Verifier::PREFETCH_WAIT> seconds (5) of being sent, or
+SERVFAIL -- is asked again with C<query>, so the verdicts are those of
+one C<query> at a time. Not with a C<PubkeyCallback>.
 
 =item PubkeyCallback
 
@@ -1287,7 +1361,9 @@ C<header.d> and C<header.i> for Authentication-Results.
 =head2 fetch_public_key($signature, $index)
 
 The default key source: a TXT lookup of
-C<< <selector>._domainkey.<d=> >> through the C<Resolver>. Returns a key
+C<< <selector>._domainkey.<d=> >> through the C<Resolver> (the answer to
+the background lookup sent at the end of the headers, if there was one; see
+C<Resolver>). Each name is looked up once per message. Returns a key
 object, undef when the answer positively says there is no such record
 (NXDOMAIN, NOERROR or NODATA), and dies with a C<TEMPERROR:> message for
 anything else, including a resolver error string it has never seen. The
