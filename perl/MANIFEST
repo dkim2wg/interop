@@ -19,6 +19,7 @@ lib/Mail/DKIM2/Common.pm
 lib/Mail/DKIM2/DSN.pm
 lib/Mail/DKIM2/Gate.pm
 lib/Mail/DKIM2/HeaderParser.pm
+lib/Mail/DKIM2/HeaderPlan.pm
 lib/Mail/DKIM2/MessageInstance.pm
 lib/Mail/DKIM2/MessageStore.pm
 lib/Mail/DKIM2/Reflector.pm
@@ -81,6 +82,7 @@ t/gate-null-top.t
 t/gate-one-walk.t
 t/guide-links.t
 t/hash-agility.t
+t/header-plan.t
 t/headerparser.t
 t/ignore-prefixes.t
 t/interop.t
