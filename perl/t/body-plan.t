@@ -7,7 +7,7 @@ use lib "$FindBin::Bin/../lib", "$FindBin::Bin/lib";
 use MIME::Base64 qw(encode_base64);
 use JSON::PP;
 use Mail::DKIM2::BodyPlan;
-use BodyPlanReference qw(reference_walk plan_walk);
+use ChainPlanReference qw(reference_walk plan_walk);
 
 # BodyPlan computes every Message-Instance's body hash in one forward pass
 # over the current body, from the body Recipes alone. Each case here is
@@ -127,6 +127,11 @@ same('everything copied out of an empty body is out of range',
 same('a lone CR is part of its line',
     message([mi(2, { b => [{ c => [1, 2] }] }), mi(1)],
             "a\rb\r\n", "\r\r\n", "c\r\n"));
+
+same('instances numbered with leading zeros',
+    message([mi('02', { b => [{ c => [1, 1] }], h => { subject => [{ d => ['x'] }] } }),
+             mi('001')],
+            "a\r\n", "b\r\n"));
 
 same('a recipe that rebuilds nothing',
     message([mi(2, { b => [] }), mi(1)], "a\r\n"));

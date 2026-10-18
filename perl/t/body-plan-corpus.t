@@ -5,7 +5,7 @@ use Test::More;
 use FindBin;
 use lib "$FindBin::Bin/../lib", "$FindBin::Bin/lib";
 use Path::Tiny;
-use BodyPlanReference qw(reference_walk plan_walk);
+use ChainPlanReference qw(reference_walk plan_walk);
 
 # BodyPlan against the undo walk on real signed mail: the generated chain
 # fixtures, and, in the interop repository, the charset corpus as it came

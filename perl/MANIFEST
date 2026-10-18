@@ -86,7 +86,7 @@ t/ignore-prefixes.t
 t/interop.t
 t/invalid-json.t
 t/key-record.t
-t/lib/BodyPlanReference.pm
+t/lib/ChainPlanReference.pm
 t/lib/DKIM2SignedFixture.pm
 t/lib/DKIM2TestKeys.pm
 t/lib/MockAuthMilter.pm

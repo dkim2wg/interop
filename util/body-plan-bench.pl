@@ -21,7 +21,7 @@ use JSON qw(decode_json encode_json);
 use MIME::Base64 qw(encode_base64);
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Common qw(parse_dkim_pubkey);
-use BodyPlanReference qw(reference_walk plan_walk);
+use ChainPlanReference qw(reference_walk plan_walk);
 
 GetOptions('only=s' => \my $only, 'size=f' => \(my $size = 10),
            'scenario=s' => \my $scenario) or die "bad options\n";

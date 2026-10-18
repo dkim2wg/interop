@@ -32,6 +32,7 @@ use Email::MIME;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::BodyPlan;
+use Mail::DKIM2::HeaderPlan;
 
 # The signing algorithms this verifier implements (spec-06 §3.2, §3.3), and
 # the key class each needs. Every other s= item is ignored (§3.4).
@@ -62,8 +63,8 @@ sub init {
     $self->{result}              = undef;
     $self->{details}             = undef;
     # Options the constructor was given stay; the rest get their defaults.
-    $self->{$_} //= 0 for qw(SkipTimestampCheck MidProcess AllowUnsignedMI HeadersOnly
-                             StreamBody);
+    $self->{$_} //= 0 for qw(SkipTimestampCheck MidProcess AllowUnsignedMI HeadersOnly);
+    $self->{StreamBody} //= 1;
     check_ignore_prefixes($self->{IgnorePrefixes});
 }
 
@@ -126,8 +127,10 @@ sub headers_only {
     return $self->{HeadersOnly};
 }
 
-# stream_body: hash every instance's body as the body arrives
-# (Mail::DKIM2::BodyPlan) instead of keeping it and undoing each instance.
+# stream_body: hash every instance's body as the body arrives, and work out
+# every header hash from the fields as received (Mail::DKIM2::BodyPlan and
+# HeaderPlan), instead of keeping the body and undoing each instance. On by
+# default; off is the undo walk, kept to check the plans against.
 sub stream_body {
     my ($self, $val) = @_;
     $self->{StreamBody} = $val if defined $val;
@@ -219,25 +222,35 @@ sub finish_header {
         return;
     }
 
-    $self->_start_body_plan if $self->{StreamBody} && !$self->{HeadersOnly};
+    $self->_start_plans if $self->{StreamBody} && !$self->{HeadersOnly};
 }
 
-# StreamBody: plan each instance's body from the body Recipes, highest m=
-# first, and hash the body as it arrives rather than keeping it. The plan
-# stops above an instance that does not parse; the chain walk reports that
-# instance in its own words before it wants a body below it.
-sub _start_body_plan {
+# StreamBody: from the header fields, parsed once as the undo walk's parser
+# parses them, work out every instance's header hash (HeaderPlan) and plan
+# its body (BodyPlan), then hash the body as it arrives rather than keeping
+# it. The instances are parsed once, highest m= first, stopping at one that
+# does not parse; the chain walk reports that one in verify()'s words.
+sub _start_plans {
     my ($self) = @_;
-    my $mi = $self->{_mi_headers};
-    my @parsed;
-    for my $v (sort { $b <=> $a } keys %$mi) {
-        (my $value = $mi->{$v}) =~ s/\A[^:]*://;
-        $value =~ s/\r?\n\z//;
-        my $obj = eval { Mail::DKIM2::MessageInstance->parse($value) };
+    my $hplan  = Mail::DKIM2::HeaderPlan->new($self->{headers},
+        IgnorePrefixes => $self->{IgnorePrefixes});
+    my @values = $hplan->values('Message-Instance');
+    my %by_v   = map { (extract_mi_version($_) // 0) => $_ } @values;
+
+    my (@parsed, %parsed, %parse_error);
+    for my $v (sort { $b <=> $a } grep { $_ } keys %by_v) {
+        my $obj = eval { Mail::DKIM2::MessageInstance->parse($by_v{$v}) };
         die $@ if ref $@;
-        last unless $obj;
+        unless ($obj) {
+            $parse_error{$v} = Mail::DKIM2::MessageInstance::_parse_error($@);
+            last;
+        }
         push @parsed, $obj;
+        $parsed{$v} = $obj;
     }
+    $self->{_planned} = { values => \@values, by_v => \%by_v,
+                          parsed => \%parsed, parse_error => \%parse_error };
+    $self->{_header_plan} = $hplan->plan(@parsed);
     my $plan = $self->{_body_plan} = Mail::DKIM2::BodyPlan->new(@parsed);
     $self->{_body_sink} = sub { $plan->add($_[0]) };
 }
@@ -499,6 +512,9 @@ sub _verify_mi_chain {
     # body Recipe's verdict, from the plan.
     my $plan = $self->{_body_plan};
     $plan->finish if $plan;
+    my $hplan = $self->{_header_plan};
+    return $self->_verify_mi_chain_planned
+        if $hplan && !$hplan->rewrites_instances;
 
     my $raw = join('', @{$self->{headers}}) . "\r\n" . ($self->{_buf} // '');
     my $msg = parse_mime($raw);
@@ -518,19 +534,7 @@ sub _verify_mi_chain {
         }
         my ($ok, $err) = Mail::DKIM2::MessageInstance->verify($msg,
             IgnorePrefixes => $self->{IgnorePrefixes}, %body);
-        unless ($ok) {
-            # A malformed instance is a PERMERROR in its own words (§11.2
-            # names the strings); a hash that does not match is a fail.
-            if (($err // '') =~ /^PERMERROR/) {
-                $self->{result}  = 'permerror';
-                $self->{details} = $err;
-                return 0;
-            }
-            $self->{result}  = 'fail';
-            $self->{details} = "Message-Instance m=$num does not match content"
-                             . ($err ? " ($err)" : '');
-            return 0;
-        }
+        return $self->_mi_mismatch($num, $err) unless $ok;
 
         last if $num <= 1;
 
@@ -547,16 +551,71 @@ sub _verify_mi_chain {
             Mail::DKIM2::MessageInstance->undo($msg, HeadersOnly => $headers_only || $plan)
         };
         die $@ if ref $@;
-        if ($@ || !$prev) {
-            $self->{result}  = 'fail';
-            $self->{details} = "Message-Instance m=$num did not undo cleanly"
-                             . ($@ ? ": $@" : '');
-            return 0;
-        }
+        return $self->_mi_undo_failed($num, $@) if $@ || !$prev;
         $msg = $prev;
     }
 
     return 1;
+}
+
+# _verify_mi_chain with both plans: the same walk and the same verdicts,
+# but every hash and every Recipe's verdict is the plans' -- nothing is
+# rebuilt. (Unless a header Recipe names Message-Instance, which changes
+# the instances below it: _verify_mi_chain walks that itself.)
+sub _verify_mi_chain_planned {
+    my ($self) = @_;
+    my ($plan, $hplan) = @{$self}{qw(_body_plan _header_plan)};
+    my $p = $self->{_planned};
+    my @nums = sort { $b <=> $a } grep { $_ } keys %{$p->{by_v}};
+    return 1 unless @nums;
+
+    if (my $err = Mail::DKIM2::MessageInstance::_chain_error_fields($p->{values},
+            $self->{_chain_counts}{'dkim2-signature'} // 0)) {
+        return $self->_mi_mismatch($nums[0], $err);
+    }
+
+    my $headers_only = 0;
+    for my $num (@nums) {
+        my $mi = $p->{parsed}{$num};
+        my ($ok, $err) = $mi
+            ? $mi->_check_hashes($num,
+                  sub { $hplan->header_hash($num, $_[0]) // '' },
+                  $headers_only ? undef : sub { $plan->body_hash($num, $_[0]) // '' })
+            : (0, $p->{parse_error}{$num});
+        return $self->_mi_mismatch($num, $err) unless $ok;
+
+        last if $num <= 1;
+
+        $headers_only = 1 if $mi->unrecoverable;
+        if (my $e = $plan->recipe_error($num) // $hplan->recipe_error($num)) {
+            return $self->_mi_undo_failed($num, $e);
+        }
+    }
+    return 1;
+}
+
+# Instance $num does not match the content it describes.
+sub _mi_mismatch {
+    my ($self, $num, $err) = @_;
+    # A malformed instance is a PERMERROR in its own words (§11.2 names the
+    # strings); a hash that does not match is a fail.
+    if (($err // '') =~ /^PERMERROR/) {
+        $self->{result}  = 'permerror';
+        $self->{details} = $err;
+        return 0;
+    }
+    $self->{result}  = 'fail';
+    $self->{details} = "Message-Instance m=$num does not match content"
+                     . ($err ? " ($err)" : '');
+    return 0;
+}
+
+sub _mi_undo_failed {
+    my ($self, $num, $err) = @_;
+    $self->{result}  = 'fail';
+    $self->{details} = "Message-Instance m=$num did not undo cleanly"
+                     . ($err ? ": $err" : '');
+    return 0;
 }
 
 sub _verify_signature {
@@ -1144,9 +1203,12 @@ apply only to the top are suppressed. Implies C<AllowUnsignedMI>.
 
 =item StreamBody
 
-Hash every Message-Instance's body as the body arrives, in one pass, with
-L<Mail::DKIM2::BodyPlan>, instead of keeping the body and rebuilding each
-previous one in turn. The verdicts are the same; the body is never held.
+On (the default): hash every Message-Instance's body as the body arrives,
+in one pass (L<Mail::DKIM2::BodyPlan>), and every header hash from the
+fields as received (L<Mail::DKIM2::HeaderPlan>); the body is never held
+and no previous version of the message is rebuilt. Off (C<0>): keep the
+body and undo each instance in turn. The verdicts, and their words, are
+the same.
 
 =item HeadersOnly
 

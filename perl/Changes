@@ -1,5 +1,21 @@
 Revision history for Mail::DKIM2
 
+0.22    (unreleased)
+        - The Verifier checks the Message-Instance chain without rebuilding
+          any previous version of the message. New: Mail::DKIM2::BodyPlan
+          composes the body Recipes into, for each instance, the runs of
+          current body lines and Recipe literals its body was, and hashes
+          every instance's body in one pass as the body arrives; the body is
+          not kept. New: Mail::DKIM2::HeaderPlan does the same for header
+          fields, canonicalizing each hashed value once. Same verdicts, in
+          the same words; about 40% less time on list mail, all of it in
+          the chain check. Verifier option StreamBody (on by default); 0 is
+          the undo walk.
+        - DKIM2Verify keeps a copy of the body only when it builds something
+          from it (a snapshot, or a first Message-Instance).
+        - MessageInstance->verify takes BodyHashes, body hashes computed
+          elsewhere.
+
 0.21    2026-10-14
         - Mail::DKIM2::Wrap::wrap_single_part, in list context, also returns
           why it wrapped nothing: multipart (the normal case), no-header-end,

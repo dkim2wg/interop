@@ -55,7 +55,7 @@ sub new {
     for my $mi (@mi) {
         my $hashes = $mi->get_tag('hashes') || {};
         my $inst = {
-            m      => $mi->get_tag('m'),
+            m      => 0 + $mi->get_tag('m'),    # m=01 is 1
             rb     => $mi->get_tag('rb'),
             null   => $mi->unrecoverable,
             algs   => [ sort grep { $impl->{$_} } keys %$hashes ],
@@ -77,7 +77,7 @@ sub new {
             $segs = undef;
         } elsif (defined $inst->{rb}) {
             my $ok = eval { Mail::DKIM2::MessageInstance::_check_recipe('body', $inst->{rb}); 1 };
-            $segs = $ok ? $self->_compose($segs, $inst->{rb}) : undef;
+            $segs = $ok ? compose($segs, $inst->{rb}, $self->{literals}) : undef;
         }
     }
     return $self;
@@ -95,17 +95,19 @@ sub _new_group {
     };
 }
 
-# The segment list for the body $recipe rebuilds from a body whose list is
-# $segs. The copy ranges are known to ascend; one past the end of $segs is
-# cut short here and reported by finish(), which knows the body's length.
-sub _compose {
-    my ($self, $segs, $recipe) = @_;
+# compose($segs, $recipe, \@literals): the segment list for the lines (or
+# fields) $recipe rebuilds from those $segs lists, its literals appended to
+# @literals. The copy ranges are known to ascend; one past the end of $segs
+# is cut short here, for the caller to report against the real length.
+# Mail::DKIM2::HeaderPlan uses it for each field name's values.
+sub compose {
+    my ($segs, $recipe, $literals) = @_;
     my @out;
     my ($i, $before) = (0, 0);    # $segs->[$i] starts at line $before + 1
     for my $step (@$recipe) {
         unless (ref $step) {
-            push @{$self->{literals}}, $step;
-            _append(\@out, 1, $#{$self->{literals}}, $#{$self->{literals}});
+            push @$literals, $step;
+            _append(\@out, 1, $#$literals, $#$literals);
             next;
         }
         my ($from, $to) = @$step;
@@ -297,7 +299,7 @@ sub finish {
 sub body_hash {
     my ($self, $m, $alg) = @_;
     croak "BodyPlan: body_hash before finish" unless $self->{done};
-    my $inst = $self->{by_m}{$m} or return undef;
+    my $inst = $self->{by_m}{0 + $m} or return undef;
     my $g = $inst->{group} or return undef;
     return $g->{hash}{lc $alg};
 }
@@ -306,7 +308,7 @@ sub body_hash {
 sub recipe_error {
     my ($self, $m) = @_;
     croak "BodyPlan: recipe_error before finish" unless $self->{done};
-    my $inst = $self->{by_m}{$m} or return undef;
+    my $inst = $self->{by_m}{0 + $m} or return undef;
     return $inst->{error};
 }
 
@@ -360,6 +362,16 @@ C<StreamBody> option uses a BodyPlan in place of the undo walk's bodies.
 The L<Mail::DKIM2::MessageInstance> objects of the chain, highest C<m=>
 first, each the parent of the next. Hashes are computed for each
 instance's C<h=> algorithms that are implemented.
+
+=head2 compose($segments, $recipe, \@literals)
+
+A function, not a method: the segment list for what C<$recipe> (copy
+ranges and literals, as L<Mail::DKIM2::MessageInstance/parse> gives them)
+rebuilds from C<$segments>, appending its literals to C<@literals>. A
+segment is C<[0, $from, $to]>, a run of the original lines (or values), or
+C<[1, $from, $to]>, a run of C<@literals>. Copy ranges must already be
+known to ascend; one past the end is cut short. L<Mail::DKIM2::HeaderPlan>
+uses it too.
 
 =head2 add($bytes)
 

@@ -10,7 +10,7 @@ use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Common qw(parse_dkim_pubkey);
 use DKIM2TestKeys;
 
-# StreamBody: the Verifier hashes every instance's body as the body arrives
+# StreamBody (the default): the Verifier hashes every instance's body as the body arrives
 # (Mail::DKIM2::BodyPlan) instead of keeping it and undoing each instance.
 # Same verdicts, same words, as the undo walk; and the body is not kept.
 
@@ -39,6 +39,12 @@ sub verify {
     return ($v->result . ': ' . $v->result_detail, $kept);
 }
 
+# A Subject changed.
+sub tamper_header {
+    my ($raw) = @_;
+    return $raw =~ s/^(Subject:[ \t]*)/${1}x/mi ? $raw : undef;
+}
+
 # A body byte changed: the first letter after the header block.
 sub tamper {
     my ($raw) = @_;
@@ -56,11 +62,13 @@ push @files, sort($capture->children(qr/\.eml\z/)) if $capture->is_dir;
 my $kept_max;
 for my $file (@files) {
     (my $raw = $file->slurp_raw) =~ s/\r?\n/\r\n/g;
-    for my $case ([$file->basename, $raw], ['tampered ' . $file->basename, tamper($raw)]) {
+    for my $case ([$file->basename, $raw],
+                  ['tampered body ' . $file->basename, tamper($raw)],
+                  ['tampered header ' . $file->basename, tamper_header($raw)]) {
         my ($name, $msg) = @$case;
         next unless defined $msg;
-        my ($want)        = verify($msg);
-        my ($have, $kept) = verify($msg, StreamBody => 1);
+        my ($want)        = verify($msg, StreamBody => 0);
+        my ($have, $kept) = verify($msg);
         is($have, $want, $name);
         $kept_max = $kept if !defined $kept_max || $kept > $kept_max;
     }
