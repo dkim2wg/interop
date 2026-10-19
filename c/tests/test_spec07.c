@@ -479,6 +479,40 @@ static void test_json_keys(void) {
     }
 }
 
+/* An instance with no r= (-07 §9: r= is optional; §12.1) records no
+   change: the state below it is the same message. */
+static void test_no_recipe(void) {
+    {
+        msg_t m;
+        base_signed(&m, "a@example.com");
+        add_mi(&m, NULL);
+        add_sig(&m, 2, 2, "example.org", "<l@lists.example.org>", "<r@dest.example>", NULL);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_PASS(res);
+        msg_free(&m);
+    }
+    {   /* a change the missing Recipe does not record: a hash mismatch */
+        msg_t m;
+        base_signed(&m, "a@example.com");
+        msg_set(&m, "Subject", "[list] test");
+        add_mi(&m, NULL);
+        add_sig(&m, 2, 2, "example.org", "<l@lists.example.org>", "<r@dest.example>", NULL);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "FAIL: Message-Instance m=1 header hash sha256 mismatch");
+        msg_free(&m);
+    }
+    {
+        msg_t m;
+        base_signed(&m, "a@example.com");
+        snprintf(m.body, sizeof m.body, "Hello\r\nworld\r\nfooter\r\n");
+        add_mi(&m, NULL);
+        add_sig(&m, 2, 2, "example.org", "<l@lists.example.org>", "<r@dest.example>", NULL);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "FAIL: Message-Instance m=1 body hash sha256 mismatch");
+        msg_free(&m);
+    }
+}
+
 static void test_flags(void) {
     /* F1: donotmodify is just a flag now */
     {
@@ -1035,6 +1069,7 @@ int main(void) {
 
     test_u_steps();
     test_json_keys();
+    test_no_recipe();
     test_flags();
     test_custody();
     test_from_authentic();

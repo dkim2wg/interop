@@ -208,10 +208,10 @@ static long long hdr_lit_add(void *ctx, const dkim2_recipe_op_t *op) {
     return p->n_hlit++;
 }
 
-/* The undo walk matches a Recipe key exactly against each field's
-   lowercased name, and names of 128 bytes or more never match. Groups are
-   named that way (lowercase, no ':'), so a key with upper case or a ':'
-   finds no group; only the length needs checking here. */
+/* The undo walk matches a Recipe key (lowercased by dkim2_recipe_parse)
+   exactly against each field's lowercased name, and names of 128 bytes or
+   more never match. Groups are named that way (lowercase, no ':'), so a key
+   with a ':' finds no group; only the length needs checking here. */
 static int key_matchable(const char *k) {
     return strlen(k) < 128;
 }
