@@ -399,7 +399,7 @@ int main(void) {
     }
 
     /* --- Error: Chain of Custody nd= adjacency mismatch (§11.4) → PERMERROR,
-       canonical spec-06 message (verbatim "MAIL nd=" typo, per spec-06).
+       canonical -07 message (§14.4).
        The C signer cannot emit nd= itself, so hop i=1 is hand-signed here:
        its own DKIM2-Signature header (with a genuine nd= tag) is covered by
        its own signature, so tampering it after the fact would invalidate the
@@ -478,7 +478,7 @@ int main(void) {
         dkim2_do_verify(&vctx, &res);
         assert(res.status == DKIM2_PERMERROR);
         assert(strstr(res.message,
-            "DKIM2-Signature i=1 MAIL nd= does not match") != NULL);
+            "PERMERROR: DKIM2-Signature i=1 nd= does not match") != NULL);
 
         dkim2_mi_free(vctx.mi_list);
         dkim2_sig_free(vctx.sig_list); /* frees sig1_parsed + chained sig2_parsed */
@@ -486,19 +486,17 @@ int main(void) {
         free(sig2_out);
     }
 
-    /* --- Error: inter-signature Chain of Custody break (§8.2) → FAIL,
-       canonical spec-06 message (matches Perl Verifier.pm's _verify_chain:
-       "DKIM2-Signature i=%d MAIL FROM %s did not match"). Both hops are
-       produced by the normal signer (no nd= involved this time), chained
-       via ctx2.sig_list so hop i=2 gets a real, independently-verifiable
-       signature. hop1's rt= is scoped to a subdomain (sub.example.com)
-       while hop2's mf= is the parent domain (example.com) — both fall
-       under the same d=example.com (so DNS-key lookup and the §7.7 d=/mf=
-       check both succeed for hop2 and crypto passes for both hops), but
-       relaxed-domain-match requires the *previous* rt= to be equal-or-
-       parent of the *current* mf=, and "sub.example.com" is not a parent
-       of "example.com" — so the custody check (which runs after per-sig
-       crypto verification) is the one that fires. */
+    /* --- Error: inter-signature Chain of Custody break (-07 §14.4) → PERMERROR,
+       canonical -07 message "DKIM2-Signature i=2 mf= does not match the
+       rt= of i=1". Both hops are produced by the normal signer (no nd=
+       involved this time), chained via ctx2.sig_list so hop i=2 gets a
+       real, independently-verifiable signature. hop1's rt= is scoped to a
+       subdomain (sub.example.com) while hop2's mf= is the parent domain
+       (example.com) — both fall under the same d=example.com (so the
+       mf=/d= check succeeds for hop2 and crypto passes for both hops), but
+       the relaxed domain match (-07 §7.2) shortens only Parameter1, the mf=
+       domain: "example.com" never becomes "sub.example.com" -- so the
+       custody check is the one that fires. */
     {
         char *hop1_rcpts[] = { "<mid@sub.example.com>", NULL };
         char *mi1_out = NULL, *sig1_out = NULL;
@@ -541,9 +539,9 @@ int main(void) {
 
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);
-        assert(res.status == DKIM2_FAIL);
+        assert(res.status == DKIM2_PERMERROR);
         assert(strstr(res.message,
-            "DKIM2-Signature i=2 MAIL FROM <attacker@example.com> did not match") != NULL);
+            "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1") != NULL);
 
         dkim2_mi_free(vctx.mi_list);
         dkim2_sig_free(vctx.sig_list); /* frees sig1_parsed + chained sig2_parsed */

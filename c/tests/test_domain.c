@@ -54,7 +54,7 @@ int main(void) {
     CHECK(alabel_is("\xe4\xbb\x96\xe4\xbb\xac\xe4\xb8\xba\xe4\xbb\x80\xe4\xb9\x88"
                     "\xe4\xb8\x8d\xe8\xaf\xb4\xe4\xb8\xad\xe6\x96\x87",
                     "xn--ihqwcrb4cv8a8dqg056pqjye"));
-    /* RFC 3492 §7.1 (S) -> $1.00 <- (mixed basic) */
+    /* Japanese "konnichiwa" */
     CHECK(alabel_is("\xe3\x81\x93\xe3\x82\x93\xe3\x81\xab\xe3\x81\xa1\xe3\x81\xaf",
                     "xn--28j2a3ar1p"));
     {

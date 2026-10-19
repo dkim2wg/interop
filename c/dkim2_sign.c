@@ -5,6 +5,7 @@
 #include "base64.h"
 #include "dkim2_verify.h"
 #include "dkim2_recipe.h"
+#include "dkim2_domain.h"
 #include <cjson/cJSON.h>
 #include <time.h>
 #include <stdlib.h>
@@ -14,14 +15,37 @@
 #include <ctype.h>
 #include <openssl/evp.h>
 
-/* RFC5321 path for mf=/rt= (spec 7.5/7.6): brackets MUST be present.
+/* RFC5321 path for mf=/rt= (-07 §10.5/§10.6): brackets MUST be present, and
+ * a domain with non-ASCII (U-label) labels is recorded as A-labels (§18).
  * Returns a malloc'd string the caller frees. NULL/empty -> "<>". */
 static char *to_rfc5321_path(const char *addr) {
     if (!addr || !*addr) return strdup("<>");
     size_t n = strlen(addr);
-    if (addr[0] == '<' && addr[n-1] == '>') return strdup(addr);
+    int bracketed = addr[0] == '<' && addr[n-1] == '>';
+    const char *inner = bracketed ? addr + 1 : addr;
+    size_t in_len = bracketed ? n - 2 : n;
+    const char *at = NULL;                          /* the last '@' */
+    for (size_t i = in_len; i > 0 && !at; i--)
+        if (inner[i - 1] == '@') at = inner + i - 1;
+    char dom[512];
+    if (at && (size_t)(inner + in_len - at - 1) < sizeof dom) {
+        size_t dl = (size_t)(inner + in_len - at - 1);
+        memcpy(dom, at + 1, dl);
+        dom[dl] = '\0';
+        int non_ascii = 0;
+        for (size_t i = 0; i < dl; i++) if ((unsigned char)dom[i] >= 0x80) non_ascii = 1;
+        char alabel[512];
+        if (non_ascii && dom[0] != '[' && dkim2_to_alabel(dom, alabel, sizeof alabel) == 0) {
+            size_t ll = (size_t)(at - inner), al = strlen(alabel);
+            char *out = malloc(ll + al + 4);
+            if (!out) return NULL;
+            snprintf(out, ll + al + 4, "<%.*s@%s>", (int)ll, inner, alabel);
+            return out;
+        }
+    }
+    if (bracketed) return strdup(addr);
     char *out = malloc(n + 3);
-    snprintf(out, n + 3, "<%s>", addr);
+    if (out) snprintf(out, n + 3, "<%s>", addr);
     return out;
 }
 

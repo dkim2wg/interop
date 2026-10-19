@@ -6,7 +6,9 @@
 #include "dkim2_recipe.h"
 #include "dkim2_plan.h"
 #include "dkim2_prefetch.h"
+#include "dkim2_domain.h"
 #include "base64.h"
+#include <strings.h>
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,23 +54,6 @@ static char *canon_for_sig(const char *hdr) {
     return out;
 }
 
-/* Extract domain from an RFC 5321 address string like "<local@domain>" or "local@domain".
-   Returns malloc'd lowercase domain string, or NULL. */
-static char *addr_domain(const char *addr) {
-    const char *at = strrchr(addr, '@');
-    if (!at) return NULL;
-    at++;
-    /* end is exclusive: start at one past the string, walk back past > and \0 */
-    const char *end = at + strlen(at); /* points to \0 */
-    /* Trim trailing '>' characters (address may be "<local@domain>") */
-    while (end > at && end[-1] == '>') end--;
-    size_t dlen = (size_t)(end - at);
-    char *d = malloc(dlen + 1);
-    if (!d) return NULL;
-    for (size_t i = 0; i < dlen; i++) d[i] = (char)tolower((unsigned char)at[i]);
-    d[dlen] = '\0';
-    return d;
-}
 
 /* Strip optional RFC5321 angle brackets into out (NUL-terminated). */
 static void unbracket(const char *s, char *out, size_t outsz) {
@@ -95,15 +80,72 @@ static int env_addr_eq(const char *a, const char *b) {
     return strcasecmp(aat + 1, bat + 1) == 0;           /* domain: case-insensitive */
 }
 
-/* Relaxed domain match: d must be equal to or a parent domain of mf_domain. */
-static int relaxed_domain_match(const char *d, const char *mf_domain) {
-    if (strcasecmp(mf_domain, d) == 0) return 1;
-    const char *p = mf_domain;
-    while (*p) {
-        const char *dot = strchr(p, '.');
-        if (!dot) break;
-        p = dot + 1;
-        if (strcasecmp(p, d) == 0) return 1;
+static int is_null_path(const char *path) { return path && strcmp(path, "<>") == 0; }
+
+/* Some rt= address of p whose (A-label) domain relaxed-matches p2 as
+   Parameter1 (-07 §7.2: a domain literal never matches). */
+static int rt_matches(const dkim2_sig_t *p, const char *p2) {
+    for (int j = 0; p->rt && p->rt[j]; j++) {
+        char rd[512];
+        if (dkim2_addr_alabel(p->rt[j], rd, sizeof rd, NULL) == 0 && dkim2_relaxed_match(rd, p2))
+            return 1;
+    }
+    return 0;
+}
+
+/* Some rt= address of p whose domain is relaxed-matched by p1 (Parameter1). */
+static int matches_rt(const char *p1, const dkim2_sig_t *p) {
+    for (int j = 0; p->rt && p->rt[j]; j++) {
+        char rd[512];
+        if (dkim2_addr_alabel(p->rt[j], rd, sizeof rd, NULL) == 0 && dkim2_relaxed_match(p1, rd))
+            return 1;
+    }
+    return 0;
+}
+
+/* -07 Chain of Custody (§7.1 items 1 and 2, §14.4; contract C4) over the
+   signatures in ascending i= order. 0, or -1 with the PERMERROR in msg.
+   Every signature after the first is checked against the one before it:
+   after an nd= hop its d= must be that nd=; an nd= hop, or a null mf=, needs
+   an rt= domain of the previous hop that relaxed-matches its d= (rt= is
+   Parameter1); otherwise its mf= domain must relaxed-match an rt= domain of
+   the previous hop (mf= is Parameter1). Then every signature with a
+   non-null mf= (and so no nd=) needs its mf= domain to relaxed-match its d=.
+   mf=/rt= domains are compared as A-labels (§18). */
+static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t msgsz) {
+    for (int k = 1; k < n_sigs; k++) {
+        const dkim2_sig_t *s = sig_arr[k], *p = sig_arr[k - 1];
+        if (p->nd) {
+            if (!s->d || strcasecmp(p->nd, s->d) != 0) {
+                snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d nd= does not match", p->i);
+                return -1;
+            }
+            continue;
+        }
+        if (s->nd || !s->mf || is_null_path(s->mf)) {
+            if (!s->d || !rt_matches(p, s->d)) {
+                snprintf(msg, msgsz,
+                    "PERMERROR: DKIM2-Signature i=%d d= does not match the rt= of i=%d", s->i, p->i);
+                return -1;
+            }
+            continue;
+        }
+        char md[512];
+        if (dkim2_addr_alabel(s->mf, md, sizeof md, NULL) != 0 || !matches_rt(md, p)) {
+            snprintf(msg, msgsz,
+                "PERMERROR: DKIM2-Signature i=%d mf= does not match the rt= of i=%d", s->i, p->i);
+            return -1;
+        }
+    }
+    for (int k = 0; k < n_sigs; k++) {
+        const dkim2_sig_t *s = sig_arr[k];
+        if (s->nd || !s->mf || is_null_path(s->mf)) continue;
+        char md[512];
+        if (dkim2_addr_alabel(s->mf, md, sizeof md, NULL) != 0 || !s->d ||
+            !dkim2_relaxed_match(md, s->d)) {
+            snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d MAIL FROM and d= do not match", s->i);
+            return -1;
+        }
     }
     return 0;
 }
@@ -801,6 +843,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         }
     }
 
+    /* -07 §14.4: the Chain of Custody, from the tags alone (before any DNS
+       or crypto work). */
+    {
+        char cmsg[256];
+        if (check_custody(sig_arr, n_sigs, cmsg, sizeof cmsg) < 0)
+            SETSTATUS(DKIM2_PERMERROR, "%s", cmsg);
+    }
+
     /* §10.6: Verify ALL signatures i=1..N */
     for (int si = 0; si < n_sigs; si++) {
         dkim2_sig_t *sig = sig_arr[si];
@@ -832,17 +882,6 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 SETSTATUS(DKIM2_PERMERROR,
                     "PERMERROR: DKIM2-Signature i=%d: rt= entry is not a "
                     "bracketed RFC5321 forward-path (spec 7.6)", sig->i);
-        }
-
-        /* §7.7: d= must cover mf= domain (relaxed match) */
-        if (sig->mf && strcmp(sig->mf, "<>") != 0) {
-            char *mf_d = addr_domain(sig->mf);
-            int dm = mf_d ? relaxed_domain_match(sig->d, mf_d) : 0;
-            free(mf_d);
-            if (!dm)
-                SETSTATUS(DKIM2_PERMERROR,
-                    "DKIM2-Signature i=%d MAIL FROM and d= do not match",
-                    sig->i);
         }
 
         /* spec-06 §8.9: reject duplicate/limit violations before any DNS or
@@ -957,65 +996,6 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         if (failed_sel)
             SETSTATUS(DKIM2_FAIL,
                 "FAIL DKIM2-Signature i=%d %s incorrect signature", sig->i, failed_sel);
-    }
-
-    /* §8.2: Inter-sig Chain of Custody — mf= domain of sig[N] must relaxed-match
-       at least one rt= domain of sig[N-1] */
-    for (int k = 1; k < n_sigs; k++) {
-        dkim2_sig_t *cur  = sig_arr[k];
-        dkim2_sig_t *prev = sig_arr[k - 1];
-
-        /* draft-06 §11.4: an nd= hop declares the next sig's signing domain;
-           nd= MUST exactly match that signature's d=. */
-        if (prev->nd) {
-            if (!cur->d || strcasecmp(prev->nd, cur->d) != 0)
-                SETSTATUS(DKIM2_PERMERROR,
-                    "DKIM2-Signature i=%d MAIL nd= does not match",
-                    prev->i);
-            continue;
-        }
-
-        if (!prev->rt)
-            SETSTATUS(DKIM2_PERMERROR,
-                "DKIM2-Signature i=%d RCPT TO <> did not match", prev->i);
-
-        /* draft-06 §9.3: an nd= hop after a real one is a Forwarder bridging
-           the gap between the domain it received the message at and the
-           domain it sends from, and §9.3 requires it to be made with a key
-           for a domain in the RCPT TO the message arrived with. So what has
-           to match the previous rt= here is the hop's d=, since it has no
-           mf=. */
-        if (cur->nd) {
-            int nd_match = 0;
-            for (int j = 0; prev->rt[j] && !nd_match; j++) {
-                char *rt_d = addr_domain(prev->rt[j]);
-                if (rt_d && cur->d && relaxed_domain_match(rt_d, cur->d))
-                    nd_match = 1;
-                free(rt_d);
-            }
-            if (!nd_match)
-                SETSTATUS(DKIM2_FAIL,
-                    "DKIM2-Signature i=%d nd= hop d=%s did not match RCPT TO",
-                    cur->i, cur->d ? cur->d : "");
-            continue;
-        }
-
-        if (!cur->mf)
-            SETSTATUS(DKIM2_PERMERROR,
-                "DKIM2-Signature i=%d MAIL FROM <> did not match", cur->i);
-
-        char *cur_mf_d = addr_domain(cur->mf);
-        int match = 0;
-        for (int j = 0; prev->rt[j] && !match; j++) {
-            char *rt_d = addr_domain(prev->rt[j]);
-            if (rt_d && cur_mf_d && relaxed_domain_match(rt_d, cur_mf_d))
-                match = 1;
-            free(rt_d);
-        }
-        free(cur_mf_d);
-        if (!match)
-            SETSTATUS(DKIM2_FAIL,
-                "DKIM2-Signature i=%d MAIL FROM %s did not match", cur->i, cur->mf);
     }
 
     /* §10.7: Verify all MI body+header hashes, undoing Recipes for inner hops. */
