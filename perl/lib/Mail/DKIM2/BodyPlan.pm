@@ -91,7 +91,6 @@ sub _new_group {
         digest  => {},
         pending => 0,    # blank lines not yet hashed: they may be trailing
         lines   => 0,    # lines in the body so far, blank or not
-        kept    => 0,    # lines up to the last non-blank one
     };
 }
 
@@ -237,7 +236,6 @@ sub _span {
     _emit($g, $g->{pending} ? ("\r\n" x $g->{pending}) . substr($span, 0, $end)
                             : substr($span, 0, $end));
     $g->{pending} = $blank;
-    $g->{kept} = $g->{lines} - $blank;
 }
 
 sub _literal {
@@ -249,7 +247,6 @@ sub _literal {
     }
     _emit($g, ("\r\n" x $g->{pending}) . "$text\r\n");
     $g->{pending} = 0;
-    $g->{kept} = $g->{lines};
 }
 
 sub _emit {
@@ -286,7 +283,7 @@ sub finish {
     for my $inst (@{$self->{instances}}) {
         delete $inst->{group} if $broken;
         next unless defined $inst->{rb};
-        my $lines = $inst->{group} ? $inst->{group}{kept} : undef;
+        my $lines = $inst->{group} ? $inst->{group}{lines} : undef;
         eval { Mail::DKIM2::MessageInstance::_check_recipe('body', $inst->{rb}, $lines); 1 }
             or ($inst->{error} = $@, $broken = 1);
     }

@@ -644,7 +644,9 @@ errors and verdict text with the undo walk: no differences.
   trailing blank lines included** (`split_lines` counts them). So a copy into
   trailing blank lines is *not* an error in C. An implementation that bounds
   by the canonical body (trailing blanks dropped) would reject such a Recipe.
-  This is a possible cross-impl divergence; no real mail hits it.
+  Perl used to be the one that did (2026-10-18); it now counts trailing
+  blank lines too, so all five verifiers (C, Go, Python, JS, Perl) agree. No
+  real mail hits it. Spec-06 §5.2 does not say; worth a line in the draft.
 - The undo walk applies the header Recipe to the content fields only:
   `Message-Instance` and `DKIM2-Signature` are not among them. A Recipe key
   `message-instance` therefore never changes the MIs the walk checks (a copy

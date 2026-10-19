@@ -25,6 +25,11 @@ Revision history for Mail::DKIM2
           body's transfer.
         - MessageInstance->verify takes BodyHashes, body hashes computed
           elsewhere.
+        - Behaviour change: a body Recipe may copy the body's trailing blank
+          lines. They are not hashed (spec-06 section 6.1), but they are lines,
+          as C, Go, Python and the browser verifier already number them; undo
+          used to stop counting at the last non-blank line and refuse such a
+          copy.
 
 0.21    2026-10-14
         - Mail::DKIM2::Wrap::wrap_single_part, in list context, also returns

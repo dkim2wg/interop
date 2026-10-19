@@ -82,7 +82,7 @@ same('blank literals at the end of the body are trailing blanks',
     message([mi(2, { b => [{ c => [1, 1] }, { d => ['', ''] }] }), mi(1)],
             "a\r\n", "b\r\n"));
 
-same('a copy into the trailing blank lines is out of range',
+same('a copy into the trailing blank lines (they are lines)',
     message([mi(2, { b => [{ c => [1, 3] }] }), mi(1)],
             "a\r\n", "b\r\n", "\r\n", "\r\n"));
 

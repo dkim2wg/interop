@@ -1175,7 +1175,12 @@ sub undo {
     my $rh = $self->get_tag('rh');
 
     if ($rb && !$opts{HeadersOnly}) {
-        my @old = split /\r?\n/, $msg->body_raw;
+        # Every line, trailing blank ones too: they are not hashed (§6.1),
+        # but a Recipe may number and copy them, as the other
+        # implementations in the interop set allow. Only the empty piece
+        # after the last line break is not a line.
+        my @old = split /\r?\n/, $msg->body_raw, -1;
+        pop @old if @old && $old[-1] eq '';
         my @new = _apply_recipe('body', $rb, \@old);
         _body_raw_set($msg, join("\r\n", @new, ''));
     } elsif ($rb) {
