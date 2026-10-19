@@ -267,6 +267,19 @@ forwarder that passes the message on unchanged leaves From alone.
   `"<sender> via DKIM2 reflector" <reflector-<mode>@dkim2.com>` whenever it
   originates or changes the message.
 
+**The posting address must be in the signing domain.** The rewritten From
+is only Authentic if the list's posting-address domain is equal to, or a
+subdomain of, the domain the outbound milter signs that list's mail with:
+`list@lists.example.org` signed with `d=lists.example.org` or
+`d=example.org` works, `list@example.org` signed with
+`d=lists.example.org` does not. Otherwise the signer refuses every rewritten
+post (`From header field is not Authentic for d=...`), and a post that
+arrived with a DKIM2-Signature is answered `550 5.7.1` (see "Milter
+integration"), which the list manager counts as a bounce. Check this for
+every DKIM2 list when you set it up. Both milters log the two domains on
+such a refusal: `From domain <posting domain> is not d=<signing domain> or
+below it`.
+
 A list manager that sends one copy per subscriber also marks each copy with
 `X-DKIM2-Exploded: yes`; the signing milter turns that into `f=exploded` on
 its signature (-07 §12.5) and removes the header.
@@ -307,7 +320,8 @@ next depends on whether it already carries an upstream DKIM2-Signature:
   option. A list host's MTA reports such a reject to the list manager as a
   bounce for that recipient, so watch for refusals before they bounce-disable
   subscribers; with the patched list managers, which rewrite From, they
-  should not happen for list traffic.
+  should not happen for list traffic as long as each list's posting address
+  is in the signing domain (see "From rewriting").
 - **Without one**, it is delivered unsigned as before, with this host's own
   unsigned Message-Instances removed and
   `X-DKIM2-Info: ... action=not-signed=<reason>;` for the Message-Instance

@@ -223,6 +223,23 @@ operator gets; they run `/usr/local/bin/dkim2-milter`, so nothing under
   copies they change or originate (-07 §11); the stock-Mailman lists need
   `dmarc_mitigate_action=munge_from` + `dmarc_mitigate_unconditionally=True`
   (see "Stock-Mailman test lists").
+- **Posting domain vs signing domain.** Each DKIM2 list's posting-address
+  domain must be equal to, or a subdomain of, the domain the outbound milter
+  signs that list's mail with (the key directory it finds for the envelope
+  sender, walking up parent domains). Otherwise the signer refuses every
+  rewritten post, and with an upstream DKIM2-Signature it answers
+  `550 5.7.1` (above), so the list bounces signed posts back per recipient.
+  The same `550` covers every local-policy refusal of a signed post, such as
+  `null-body-recipe`. The milters log `From domain <X> is not d=<Y> or below
+  it` on each such refusal.
+- **T9 deploy check: posting domains.** For every DKIM2 list (Mailman:
+  `mailman lists`; Sympa: `/etc/sympa/*/` list configs; stock-Mailman:
+  `/etc/postfix/dkim2-lists`), confirm the posting address's domain is a
+  directory under `/etc/dkim2/keys/` or below one (`list@lists.dkim2.com`
+  needs `/etc/dkim2/keys/lists.dkim2.com/` or `/etc/dkim2/keys/dkim2.com/`),
+  then post a signed message to each list and check that
+  `journalctl -u dkim2-milter-outbound --since -10min | grep -E 'From domain|550 5\.7\.1'`
+  prints nothing.
 
 **Update process:**
 ```bash

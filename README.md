@@ -102,10 +102,18 @@ chain (with the `rt=` recorded as `<list@Lists.Test2.DKIM2.com.>`); an `nd=`
 hop under a subdomain `rt=`; a folded RFC 2047 From; a list that rewrote From
 into its own domain, with or without a signature under the rewrite (an
 author's From replaced before the first signature is never checked, -07 §11);
-and a Recipe with upper-case keys. The runner feeds them
+and a Recipe with upper-case keys. Multi-fault vectors carry two faults
+each and pin which error comes first (contract C9, -07 §14 section order): a
+From changed after signing is the §14.7 header hash FAIL, not the §14.8 From
+PERMERROR; an expired signature comes before a custody mismatch, custody
+before a bad signature, a bad signature before a hash mismatch; a malformed
+Recipe before an expired signature, but a Recipe that only fails against the
+message (a copy past the end) after it. The runner feeds them
 all through every verifier's real CLI entry point and asserts each negative
-vector is REJECTED with the exact -07 error string (contract C6, matched as a
-substring) and each positive control is ACCEPTED (55 vectors, 275 cells):
+vector is REJECTED with the exact -07 error string as the verifier's
+PRIMARY error (its first `STATE: text` line, compared exactly) and the
+matching state, and each positive control is ACCEPTED (65 vectors, 325
+cells):
 
     ./util/negative-vectors.sh
 
@@ -119,8 +127,12 @@ unrelated signature failure.
 
 <https://github.com/croessner/dkim2> is the other actively developed DKIM2
 implementation (Go, tracking `draft-ietf-dkim-dkim2-spec-06` when this runner
-was written; `util/croessner-process.py` pins that draft). To feed his
-verifier everything this repo can produce:
+was written; `util/croessner-process.py` pins that draft). The runner now
+checks that -06 peer against our -07 implementations, so disagreements are
+expected wherever -07 changed the rules (the "u" Recipe step, Chain of
+Custody, From Authentic, the error strings); read its output as a diff
+between the drafts, not as a pass/fail gate. To feed his verifier everything
+this repo can produce:
 
     ./util/croessner-verify.sh
 

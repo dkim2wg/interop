@@ -39,6 +39,7 @@ our @EXPORT_OK = qw(
     to_alabel
     from_domain
     from_authentic
+    from_refusal_note
     to_rfc5321_path
     relaxed_domain_match
     parse_dkim_pubkey
@@ -762,6 +763,27 @@ sub from_authentic {
     return defined $dom && relaxed_domain_match($dom, $d) ? 1 : 0;
 }
 
+# from_refusal_note($d, @values): for the log of a signer's From refusal,
+# the From domain against the signing domain $d, with what to do about it
+# (final review I3): a DKIM2 list rewrites From to its posting address, and
+# a milter signing with a domain that is not that one's, or above it,
+# refuses every post.
+sub from_refusal_note {
+    my ($d, @values) = @_;
+    my $from = from_domain(@values);
+    unless (defined $from) {
+        if (@values == 1 && defined $values[0]) {
+            (my $text = $values[0]) =~ s/[\r\n]+/ /g;
+            $text =~ s/\A\s+|\s+\z//g;
+            $from = '(not one mailbox: ' . substr($text, 0, 100) . ')';
+        } else {
+            $from = '(' . scalar(@values) . ' From fields)';
+        }
+    }
+    return "From domain $from is not d=" . ($d // '(none)') . " or below it: a DKIM2 "
+         . "list's posting address must be in the domain this milter signs with";
+}
+
 # relaxed_domain_match($p1, $p2): the relaxed domain match of -07 section
 # 7.2. Both are compared as A-labels, without regard to case, and without
 # one trailing dot. A domain literal on either side never matches. Otherwise
@@ -1173,6 +1195,13 @@ comments are skipped; C<< Name <addr> >> and a bare C<addr> both work. New in
 
 True if C<from_domain(@values)> gives a domain and it relaxed-matches the
 signing domain C<$d>. New in 0.23.
+
+=head2 from_refusal_note($d, @values)
+
+For the log of a signer that refused a From not Authentic for C<$d>: a line
+naming the From domain (as L</from_domain> finds it, or what is wrong with
+the field) and C<$d>, and saying that a DKIM2 list's posting address must be
+in the domain the milter signs with. Both milters log it. New in 0.23.
 
 =head2 relaxed_domain_match($p1, $p2)
 

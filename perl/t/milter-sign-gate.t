@@ -337,6 +337,9 @@ expect_refuse('mi-only-broken (allow_null_body_recipe)',
     is(scalar(fields($mock2, 'DKIM2-Signature')), 0, 'no munge: not signed');
     ok((grep { /not Authentic for d=test2\.dkim2\.com/ } map { $_->[1] // '' } @{$h2->{_log}}),
        'no munge: the Signer\'s refusal is logged');
+    ok((grep { /From domain test1\.dkim2\.com is not d=test2\.dkim2\.com or below it/ }
+            map { $_->[1] // '' } @{$h2->{_log}}),
+       'no munge: the log names the From domain and d= (final review I3)');
 }
 expect_refuse('mi-only-null', list_post(null => 1, unsigned => 1), 'test2.dkim2.com',
     'null-body-recipe');

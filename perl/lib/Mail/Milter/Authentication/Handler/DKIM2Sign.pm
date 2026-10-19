@@ -8,7 +8,7 @@ our $VERSION = '0.23';
 use base 'Mail::Milter::Authentication::Handler';
 
 use Mail::DKIM2::Common qw(extract_mi_version strip_mi_versions load_private_key fold_header parse_mime
-    parse_dkim_pubkey chain_number_error mi_version_tag DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
+    parse_dkim_pubkey chain_number_error mi_version_tag from_refusal_note DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
 use Mail::DKIM2::Gate;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
@@ -391,6 +391,12 @@ sub addheader_callback {
             # carrying an upstream DKIM2-Signature is not sent on (section 13).
             $self->metric_count( 'dkim2_sign_total', { 'result' => 'error' } );
             $self->log_error( "DKIM2 signing failed: " . ($signer->result_detail // 'no result') );
+            # A list posting domain that is not the signing domain (or
+            # below it) has every rewritten post refused here: say which.
+            if ( ( $signer->details // '' ) =~ /From header field is not Authentic/ ) {
+                my @from = map { /\AFrom[ \t]*:(.*)\z/is ? $1 : () } @{ $self->{'headers'} || [] };
+                $self->log_error( from_refusal_note( $sign_domain, @from ) );
+            }
             if ( grep { /\ADKIM2-Signature[ \t]*:/i } @{ $self->{'headers'} || [] } ) {
                 ( my $text = 'not signing: ' . ( $signer->details // 'signer refused' ) ) =~ s/[\r\n]+/ /g;
                 $self->reject_mail( "550 5.7.1 $text" );

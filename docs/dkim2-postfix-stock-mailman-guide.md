@@ -312,6 +312,20 @@ A DKIM2-signed post whose From the list leaves alone stays Authentic for
 the sender's `i=1` and is signed either way; a munged From on it is
 Authentic for the list's own signature.
 
+The munged From is the list's posting address, so it is Authentic only if
+that address's domain is equal to, or a subdomain of, the domain the
+signing milter signs the list's mail with (the domain of the key it finds
+for the list's envelope sender): `list@lists.example.org` with
+`d=lists.example.org` or `d=example.org` works, `list@example.org` with
+`d=lists.example.org` does not. Otherwise the milter refuses every munged
+copy; one whose post arrived DKIM2-signed is answered `550 5.7.1`, which
+Mailman counts as a bounce against the subscriber. That `550` answers every
+other refusal of a signed post too, local-policy ones included (a null body
+Recipe without `--allow-null-body-recipe`). The milter logs both domains:
+`From domain <posting domain> is not d=<signing domain> or below it`.
+Check each DKIM2 list's posting address against its signing domain when you
+add it to the maps.
+
 Otherwise a list is a DKIM2 list because it is in the two maps.
 
 ## 7. Adding and removing a list

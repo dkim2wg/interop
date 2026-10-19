@@ -63,4 +63,18 @@ ok(!Mail::DKIM2::Common::should_skip('ARC-Something-Else'), 'spec-06 §4: the AR
     ok(!relaxed_domain_match('xample.org', 'example.org'), 'relaxed: whole labels only');
 }
 
+# from_refusal_note: the milters' log line for a From refusal (final review I3).
+{
+    use Mail::DKIM2::Common qw(from_refusal_note);
+    is(from_refusal_note('lists.example.org', '"A via list" <list@lists.example.net>'),
+       "From domain lists.example.net is not d=lists.example.org or below it: a DKIM2 "
+       . "list's posting address must be in the domain this milter signs with",
+       'from_refusal_note: names the From domain and d=');
+    like(from_refusal_note('example.org', "A a\@example.org\r\n"),
+         qr/\AFrom domain \(not one mailbox: A a\@example\.org\) is not d=example\.org /,
+         'from_refusal_note: a From that is not one mailbox, as one line');
+    like(from_refusal_note('example.org', 'a@example.org', 'b@example.org'),
+         qr/\AFrom domain \(2 From fields\) is not/, 'from_refusal_note: two From fields');
+}
+
 done_testing;

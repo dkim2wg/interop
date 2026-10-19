@@ -9,7 +9,9 @@
        f=exploded, is left out of the signed header fields and deleted;
        two recipients at i > 1 set f=exploded without it. */
 #define main dkim2_milter_main
+#define syslog test_syslog          /* records what the milter logs */
 #include "../dkim2_milter.c"
+#undef syslog
 #undef main
 
 #include "../dkim2_dns.h"
@@ -17,6 +19,7 @@
 #include "../dkim2_crypto.h"
 #include "../base64.h"
 #include <openssl/pem.h>
+#include <stdarg.h>
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); g_fail++; } } while (0)
@@ -54,6 +57,25 @@ int smfi_chgheader(SMFICTX *c, char *n, int i, char *v) {
 int smfi_setconn(char *s) { (void)s; return MI_SUCCESS; }
 int smfi_register(struct smfiDesc d) { (void)d; return MI_SUCCESS; }
 int smfi_main(void) { return MI_SUCCESS; }
+
+/* ---- the log ---- */
+
+static char g_log[8][512];
+static int g_n_log;
+
+void test_syslog(int prio, const char *fmt, ...) {
+    (void)prio;
+    va_list ap;
+    va_start(ap, fmt);
+    if (g_n_log < 8) vsnprintf(g_log[g_n_log++], sizeof g_log[0], fmt, ap);
+    va_end(ap);
+}
+
+static int logged(const char *needle) {
+    for (int i = 0; i < g_n_log; i++)
+        if (strstr(g_log[i], needle)) return 1;
+    return 0;
+}
 
 /* ---- keys and DNS ---- */
 
@@ -144,6 +166,15 @@ int main(void) {
     CHECK(c.rcode[0] == '\0');
     CHECK(c.n_add == 0);
     CHECK(c.n_chg == 1 && strcmp(c.chg[0], "X-DKIM2-Exploded[1]=(delete)") == 0);
+    /* ...and the log names the From domain against d= (final review I3) */
+    CHECK(logged("From domain example.com is not d=example.net or below it"));
+    g_n_log = 0;
+    {   /* display text with no angle brackets: the field is logged */
+        hdr_t bare[] = { { "From", "A a@example.com" }, { "Subject", "hi" }, { NULL, NULL } };
+        CHECK(run(&c, "<a@example.net>", one, bare, body) == SMFIS_ACCEPT);
+        CHECK(logged("From domain (not one mailbox: A a@example.com) is not d=example.net"));
+        g_n_log = 0;
+    }
 
     /* sign mode, i=1 by example.com (the hint is ignored at i=1) */
     set_mode('s', "example.com");

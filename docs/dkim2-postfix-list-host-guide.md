@@ -97,6 +97,32 @@ walking up parent domains until it finds a key directory, so one key for
 
 Check: `dig +short TXT sel1._domainkey.lists.example.org` returns the record.
 
+### Each list's posting address must be in the signing domain
+
+A DKIM2 list rewrites From to the list's posting address on every copy it
+changes, so that From stays Authentic (-07 §11). That works only when the
+posting address's domain is equal to, or a subdomain of, the domain the
+outbound milter signs the list's mail with (the key directory it finds for
+the envelope sender, above). `list@lists.example.org` with
+`d=lists.example.org`, or with `d=example.org`, is fine;
+`list@example.org` with `d=lists.example.org` is not.
+
+When it is not, the outbound signer refuses every rewritten post with
+`From header field is not Authentic for d=...`. A post that arrived with a
+DKIM2-Signature is then rejected `550 5.7.1` (-07 §13: it must not be sent
+on as it is), and the list manager sees a bounce for every subscriber; a
+plain post goes out unsigned. The same `550` answers every other refusal of
+a signed post, local-policy ones included, such as a null body Recipe
+without `--allow-null-body-recipe` (`null-body-recipe`). Both milters log
+the two domains when they refuse a From:
+
+```
+dkim2-milter: <msgid>: From domain example.org is not d=lists.example.org or below it: ...
+```
+
+Check every DKIM2 list's posting address against its signing domain before
+you turn DKIM2 on for it.
+
 ## 4. Install Mail::DKIM2
 
 The Perl distribution carries the library, both milters and the

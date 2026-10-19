@@ -11,6 +11,7 @@
 #include "dkim2_header.h"
 #include "dkim2_plan.h"
 #include "dkim2_prefetch.h"
+#include "dkim2_domain.h"
 
 /* Global config */
 static struct {
@@ -170,6 +171,35 @@ static sfsistat cb_body(SMFICTX *ctx, unsigned char *bodyp, size_t bodylen) {
 
 /* smfi_setreply() text: printable, no CR/LF, and a '%' doubled (a single
    one makes libmilter ignore the text). */
+/* For the log of a From refusal: the message's From domain (the A-label
+   domain of its one mailbox), or what is wrong with the From fields, with
+   the field's text cut short and made one line. */
+static void from_for_log(const dkim2_ctx_t *c, char *out, size_t outsz) {
+    int n = 0;
+    const char *v = NULL;
+    for (int i = 0; i < c->n_headers; i++) {
+        const char *h = c->headers[i];
+        if (!h || strncasecmp(h, "from", 4) != 0) continue;
+        const char *p = h + 4;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != ':') continue;
+        n++;
+        v = p + 1;
+    }
+    if (n != 1) {
+        snprintf(out, outsz, "(%d From fields)", n);
+        return;
+    }
+    if (dkim2_from_domain(v, out, outsz) == 0) return;
+    char text[101];
+    size_t k = 0;
+    for (const char *p = v; *p && k < sizeof text - 1; p++)
+        text[k++] = (*p == '\r' || *p == '\n') ? ' ' : *p;
+    while (k && text[k - 1] == ' ') k--;
+    text[k] = '\0';
+    snprintf(out, outsz, "(not one mailbox:%s)", text);
+}
+
 static void set_reply(SMFICTX *ctx, const char *rcode, const char *xcode, const char *text) {
     char buf[1024];
     size_t o = 0;
@@ -256,6 +286,17 @@ static sfsistat cb_eom(SMFICTX *ctx) {
                ever cover them. */
             if (strncmp(c->errmsg, "not signing:", 12) == 0) {
                 syslog(LOG_WARNING, "dkim2-milter: %s", c->errmsg);
+                /* A list whose posting domain is not this signing domain
+                   (or below it) has every rewritten post refused here
+                   (final review I3): name both, so the log says which. */
+                if (strstr(c->errmsg, "From header field is not Authentic")) {
+                    char from[256];
+                    from_for_log(c, from, sizeof from);
+                    syslog(LOG_WARNING,
+                        "dkim2-milter: From domain %s is not d=%s or below it: a DKIM2 list's "
+                        "posting address must be in the domain this milter signs with",
+                        from, g_cfg.domain ? g_cfg.domain : "(none)");
+                }
                 if (s->n_sig_fields > 0) {
                     set_reply(ctx, "550", "5.7.1", c->errmsg);
                     return SMFIS_REJECT;

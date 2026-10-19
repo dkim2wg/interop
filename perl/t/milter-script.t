@@ -320,6 +320,8 @@ sub list_modified {
     is(scalar(inserted($mods, 'Message-Instance')), 0, 'foreign From: no Message-Instance');
     like(milter_log(), qr/From header field is not Authentic for d=test2\.dkim2\.com/,
         'foreign From: the refusal is logged');
+    like(milter_log(), qr/From domain test1\.dkim2\.com is not d=test2\.dkim2\.com or below it/,
+        'foreign From: the log names the From domain and d= (final review I3)');
 }
 
 # --- 2. THE BUG: signed upstream + list's unsigned m=2 -> must sign i=2 ---
