@@ -373,11 +373,24 @@ sub reflect {
     my $will_sign = ($basis ne 'none');
 
     # 3. Transform (always, except damage which mutates after signing).
-    my $prev_text = $incoming;
-    my $cur_text  = ($mode eq 'damage') ? $incoming : _transform_text($incoming, $mode);
+    #    Originating (no DKIM2 chain to continue, so our signature is i=1):
+    #    with no DKIM2-Signature on it, the message starts again at m=1
+    #    (-07 section 13) -- the inbound milter's m=1 holds the sender's From,
+    #    which can never be Authentic for us.
+    my $originate = $basis ne 'dkim2';
+    my $prev_text = ($originate && !_has_field($incoming, 'DKIM2-Signature'))
+                  ? _without_field($incoming, 'Message-Instance') : $incoming;
+    my $cur_text  = ($mode eq 'damage') ? $prev_text : _transform_text($prev_text, $mode);
 
-    # 4. Message-Instance for our change — ALWAYS for changing modes (raw/damage
-    #    reuse the top m=). Emitted whether or not we sign.
+    # 3a. From (-07 section 11, the contract's decision 3): a reflector that
+    #     originates the message or changes it sends it From its own domain,
+    #     the sender's From kept as Reply-To. Only raw mode continuing a
+    #     DKIM2 chain sends the message on as it came.
+    $cur_text = _rewrite_from($cur_text, $mode, $a{domain})
+        if $originate || $mode ne 'raw';
+
+    # 4. Message-Instance for our change — whenever the message changed (raw
+    #    continuing a chain reuses the top m=). Emitted whether or not we sign.
     my $mi = _build_mi($cur_text, $prev_text, $mode);
     if ($mi) {
         my $val = fold_header("Message-Instance: " . $mi->as_string);
@@ -520,14 +533,72 @@ sub _transform_text {
     return "$head\r\n\r\n$body";
 }
 
-# Returns a MessageInstance object (new MI) or undef (reuse top m=).
+# Returns a MessageInstance object (new MI) or undef (reuse top m=): none
+# when the message did not change, m=1 when it carries no instance (an
+# originating reflector started it again), else the next m= with Recipes
+# back to $prev_text -- for redacted, a null body Recipe.
 sub _build_mi {
     my ($cur_text, $prev_text, $mode) = @_;
-    return undef if $mode eq 'raw' || $mode eq 'damage';
-    my $mi = Mail::DKIM2::MessageInstance->calculate(
-        parse_mime($cur_text), parse_mime($prev_text));
+    return undef if $cur_text eq $prev_text;
+    my $prev = parse_mime($prev_text);
+    return Mail::DKIM2::MessageInstance->calculate(parse_mime($cur_text))
+        unless $prev->header_raw('Message-Instance');
+    my $mi = Mail::DKIM2::MessageInstance->calculate(parse_mime($cur_text), $prev);
     $mi->set_null_body_recipe if $mode eq 'redacted';
     return $mi;
+}
+
+# True if the header block of $text has a $name field.
+sub _has_field {
+    my ($text, $name) = @_;
+    my ($head) = _split($text);
+    return $head =~ /^\Q$name\E[ \t]*:/mi ? 1 : 0;
+}
+
+# $text without any $name field in its header block.
+sub _without_field {
+    my ($text, $name) = @_;
+    my ($head, $body) = _split($text);
+    $head =~ s/^\Q$name\E[ \t]*:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*(?:\r\n|\z)//mig;
+    $head =~ s/\r\n\z//;
+    return "$head\r\n\r\n$body";
+}
+
+# $text with its From replaced by
+#   "<sender's display name, or address> via DKIM2 reflector" <reflector-<mode>@<domain>>
+# and, when it has no Reply-To, a Reply-To holding the sender's From as it
+# was. The display name is quoted if ASCII, RFC 2047 encoded otherwise.
+sub _rewrite_from {
+    my ($text, $mode, $domain) = @_;
+    my ($head, $body) = _split($text);
+    my ($old) = $head =~ /^From[ \t]*:[ \t]*([^\r\n]*(?:\r\n[ \t][^\r\n]*)*)/mi;
+    my $name = 'unknown sender';
+    if (defined $old) {
+        my $decoded = eval { parse_mime("From: $old\r\n\r\n")->header_str('From') } // $old;
+        die $@ if ref $@;
+        $decoded =~ s/\s+/ /g;
+        if ($decoded =~ /\A\s*(.*?)\s*<([^<>]*)>\s*\z/) {
+            my ($phrase, $addr) = ($1, $2);
+            $phrase =~ s/\A"(.*)"\z/$1/;
+            $phrase =~ s/\\(.)/$1/g;
+            $name = length $phrase ? $phrase : $addr;
+        } elsif ($decoded =~ /\S/) {
+            ($name = $decoded) =~ s/\A\s+|\s+\z//g;
+        }
+    }
+    my $phrase = "$name via DKIM2 reflector";
+    if ($phrase =~ /[^\x20-\x7E]/) {
+        require Encode;
+        $phrase = Encode::encode('MIME-Q', $phrase) =~ s/\r?\n/\r\n/gr;
+    } else {
+        $phrase = '"' . ($phrase =~ s/(["\\])/\\$1/gr) . '"';
+    }
+    my $from = "From: $phrase <reflector-$mode\@$domain>";
+    my $reply = (defined $old && $head !~ /^Reply-To[ \t]*:/mi) ? "\r\nReply-To: $old" : '';
+    unless ($head =~ s/^From[ \t]*:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*/$from$reply/mi) {
+        $head .= "\r\n$from";
+    }
+    return "$head\r\n\r\n$body";
 }
 
 sub _sign {
@@ -572,7 +643,11 @@ See C<docs/superpowers/specs/2026-06-18-dkim2-reflector-design.md>.
 =head2 reflect(%args)
 
 Verifies and transforms C<message> per C<mode>, signing as C<domain> /
-C<selector> with C<key> or C<keyfile>. Returns a hashref with C<message>,
+C<selector> with C<key> or C<keyfile>. When it originates the message (no
+DKIM2 chain to continue: the message starts again at C<m=1>) or changes it
+(any mode but C<raw>), the From becomes C<< "E<lt>sender's nameE<gt> via DKIM2
+reflector" E<lt>reflector-E<lt>modeE<gt>@E<lt>domainE<gt>E<gt> >>, with the sender's From kept as
+Reply-To if there is none (-07 section 11). Returns a hashref with C<message>,
 C<auth>, C<dkim1>, C<basis>, C<signed> and C<mode>.
 
 =head2 generate(%args)

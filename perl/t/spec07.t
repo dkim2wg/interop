@@ -111,6 +111,19 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     }
 }
 
+# --- No r= at m=2: no change (-07 sections 9 and 12.1) ---------------------------
+{
+    (my $no_r = mi_with_recipe($HOP1_TEXT, '{}')) =~ s/; r=[^;]*;/;/;
+    unlike($no_r, qr/^Message-Instance: m=2;[^\r\n]*r=/m, 'no-change MI: no r= tag');
+    is_pass(add_sig($no_r, %HOP2), 'no-change MI at m=2 passes');
+    is_pass(add_sig($no_r, %HOP2), 'no-change MI at m=2 passes (undo walk)', StreamBody => 0);
+    # The same instance over a changed message: m=1 then fails its hash.
+    (my $changed = $HOP1_TEXT) =~ s/^Subject: test/Subject: other/m;
+    (my $lie = mi_with_recipe($changed, '{}')) =~ s/; r=[^;]*;/;/;
+    is_error(add_sig($lie, %HOP2), 'fail', 'FAIL: Message-Instance m=1 header hash sha256 mismatch',
+        'a no-change MI over a change');
+}
+
 # --- F1: donotmodify is just a flag now -----------------------------------------
 {
     my $t1 = add_sig(add_mi(message()), %HOP1, f => ['donotmodify']);
