@@ -16,10 +16,10 @@ func stripB64WSP(s string) string {
 type tagValueList struct {
 	order     []string
 	vals      map[string]string
-	duplicate string // lowercased tag name seen more than once (spec-06 §8), if any
+	duplicate string // lowercased tag name seen more than once (§8), if any
 	// syntaxErr: a non-empty fragment that is not [FWS] name [FWS] "="
-	// [FWS] [value] [FWS] (spec-06 §7, §8 x-tag).  The whole field is then
-	// a syntax error (§11.2); the fragment is never just skipped.
+	// [FWS] [value] [FWS] (§8 tag-spec).  The whole field is then
+	// a syntax error (§14.2); the fragment is never just skipped.
 	syntaxErr bool
 }
 
@@ -30,7 +30,7 @@ func trimFWS(s string) string { return strings.Trim(s, " \t\r\n") }
 func isWSPByte(c byte) bool { return c == ' ' || c == '\t' }
 
 // validTagValue: tag-char *([FWS] tag-char), tag-char = %x21-3A / %x3C-7E
-// (spec-06 §7 x-tag-value; RFC 6376 §3.2 tval/VALCHAR), for a value that
+// (§8 tag-value; RFC 6376 §3.2 tval/VALCHAR), for a value that
 // trimFWS has already trimmed.  A CR or LF is only allowed as part of a
 // fold (CRLF, or a bare LF, followed by WSP); any other control, DEL or
 // 8-bit byte is a syntax error.
@@ -50,7 +50,7 @@ func validTagValue(v string) bool {
 	return true
 }
 
-// validTagName: ALPHA *(ALPHA / DIGIT / "_") (spec-06 §7 x-tag-name).
+// validTagName: ALPHA *(ALPHA / DIGIT / "_") (§8 tag-name).
 func validTagName(n string) bool {
 	if n == "" {
 		return false
@@ -73,10 +73,17 @@ func parseTagValueList(s string) *tagValueList {
 	seen := make(map[string]bool)
 	// Tag names keep their ORIGINAL case and order so the header can be
 	// re-serialized byte-for-byte for signing-input reconstruction; get/has
-	// below do the case-insensitive lookup required by spec-06 §8.
-	for _, part := range strings.Split(s, ";") {
+	// below do the case-insensitive lookup required by §8 and decision 2 of the -07 upgrade.
+	parts := strings.Split(s, ";")
+	for i, part := range parts {
 		part = trimFWS(part)
 		if part == "" {
+			// §8: tag-spec *( ";" tag-spec ) [ ";" ] -- only the tag-list's
+			// end may be empty (one optional trailing ";"); ";;" or a
+			// leading ";" is a syntax error.
+			if i != len(parts)-1 {
+				tvl.syntaxErr = true
+			}
 			continue
 		}
 		eq := strings.IndexByte(part, '=')
@@ -91,7 +98,7 @@ func parseTagValueList(s string) *tagValueList {
 		}
 		lk := strings.ToLower(k)
 		if seen[lk] {
-			tvl.duplicate = lk // §8: "there MUST be only one of each kind"
+			tvl.duplicate = lk // §8: a duplicate makes the whole tag-list invalid
 		}
 		seen[lk] = true
 		if _, exists := tvl.vals[k]; !exists {
@@ -102,7 +109,7 @@ func parseTagValueList(s string) *tagValueList {
 	return tvl
 }
 
-// get and has treat tag identifiers case-insensitively (spec-06 §8): exact
+// get and has treat tag identifiers case-insensitively (§8): exact
 // match first (the common case), then a case-insensitive scan.
 func (t *tagValueList) get(key string) string {
 	if v, ok := t.vals[key]; ok {

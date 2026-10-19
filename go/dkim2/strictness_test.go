@@ -1,11 +1,11 @@
 package dkim2
 
-// Verifier strictness from the spec-06 review (R1, R3-R8): see
+// Verifier strictness from the 2026-10-09 review (R1, R3-R8): see
 // docs/superpowers/specs/2026-10-09-verifier-strictness-review-fixes.md.
-//   A. signature algorithms (§3.4, §8.9)
-//   B. key records (§11.5, dns-00 §3.2/§3.4.1/§3.4.2.2)
-//   C. Message-Instance tag case and repeats (§7)
-//   D. t= syntax (§8.4, §11.2)
+//   A. signature algorithms (§3.5, §10.9)
+//   B. key records (§14.5, dns-00 §3.2/§3.4.1/§3.4.2.2)
+//   C. Message-Instance tag case and repeats (§8, §9)
+//   D. t= syntax (§10.4, §14.2)
 
 import (
 	"bytes"
@@ -143,7 +143,7 @@ func TestStrictA_UnknownAlgorithmNeverVerified(t *testing.T) {
 			if got == "" {
 				t.Fatalf("RSA-signed item declaring %q passed", alg)
 			}
-			if want := "FAIL DKIM2-Signature i=1 has no signature with a supported algorithm"; !strings.Contains(got, want) {
+			if want := "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm"; !strings.Contains(got, want) {
 				t.Errorf("error %q, want %q", got, want)
 			}
 			if f.n != 0 {
@@ -201,7 +201,7 @@ func TestStrictA_KnownAlgorithmBadValue(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			msg := resign(t, withS(t, sigLine, s), miLine, rest)
 			got := verifyOutcome(msg, jsonFetcher(), skipTS)
-			if !strings.Contains(got, "PERMERROR DKIM2-Signature i=1 syntax error") {
+			if !strings.Contains(got, "PERMERROR: DKIM2-Signature i=1 syntax error") {
 				t.Errorf("got %q, want PERMERROR DKIM2-Signature i=1 syntax error", got)
 			}
 		})
@@ -213,7 +213,7 @@ func TestStrictA_KeyTypeMismatch(t *testing.T) {
 	// sel1 publishes an RSA key; an ed25519-sha256 item naming it mismatches.
 	msg := resign(t, withS(t, sigLine, "sel1:ed25519-sha256:{SIG}"), miLine, rest)
 	got := verifyOutcome(msg, jsonFetcher(), skipTS)
-	want := "PERMERROR DKIM2-Signature i=1 public key sel1 algorithm mismatch"
+	want := "PERMERROR: DKIM2-Signature i=1 public key sel1 algorithm mismatch"
 	if !strings.Contains(got, want) {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -241,7 +241,7 @@ func TestStrictB_KeyRecords(t *testing.T) {
 	msg := sigLine + "\r\n" + miLine + "\r\n" + rest
 	p := sel1P(t)
 	ed := "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=" // RFC 8463 example
-	const pfx = "PERMERROR DKIM2-Signature i=1 public key sel1 "
+	const pfx = "PERMERROR: DKIM2-Signature i=1 public key sel1 "
 	cases := []struct {
 		name string
 		rrs  [][]string
@@ -314,11 +314,11 @@ func TestStrictC_MessageInstanceTagCase(t *testing.T) {
 		{"H=", "Message-Instance: m=1; H=" + hval + ";", ""},
 		{"M=", "Message-Instance: M=1; h=" + hval + ";", ""},
 		{"h= twice", "Message-Instance: m=1; h=sha256:AAAA:AAAA; h=" + hval + ";",
-			"PERMERROR Message-Instance m=1 syntax error"},
+			"PERMERROR: Message-Instance m=1 syntax error"},
 		{"h= then H=", "Message-Instance: m=1; h=" + hval + "; H=" + hval + ";",
-			"PERMERROR Message-Instance m=1 syntax error"},
+			"PERMERROR: Message-Instance m=1 syntax error"},
 		{"m= then M=", "Message-Instance: m=1; M=1; h=" + hval + ";",
-			"PERMERROR Message-Instance m=1 syntax error"},
+			"PERMERROR: Message-Instance m=1 syntax error"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -355,7 +355,7 @@ func TestStrictD_TimestampSyntax(t *testing.T) {
 		t.Run("t="+tv, func(t *testing.T) {
 			msg := resign(t, strings.Replace(tmpl, "t=1740000000", "t="+tv, 1), miLine, rest)
 			got := verifyOutcome(msg, jsonFetcher(), skipTS)
-			if !strings.Contains(got, "PERMERROR DKIM2-Signature i=1 syntax error") {
+			if !strings.Contains(got, "PERMERROR: DKIM2-Signature i=1 syntax error") {
 				t.Errorf("got %q, want PERMERROR DKIM2-Signature i=1 syntax error", got)
 			}
 		})
@@ -435,23 +435,23 @@ func TestStrictE_ItemOutcomes(t *testing.T) {
 	}{
 		{"unusable key beside a good item", "sel1:rsa-sha256:{SIG},sel2:rsa-sha256:AAAA",
 			txtFetcher{"sel1": good, "sel2": {{"v=DKIM1; k=rsa; p="}}},
-			"PERMERROR DKIM2-Signature i=1 public key sel2 has been revoked"},
+			"PERMERROR: DKIM2-Signature i=1 public key sel2 has been revoked"},
 		{"multiple records beside a good item", "sel2:rsa-sha256:AAAA,sel1:rsa-sha256:{SIG}",
 			txtFetcher{"sel1": good, "sel2": {good[0], good[0]}},
-			"PERMERROR DKIM2-Signature i=1 public key sel2 has multiple records"},
+			"PERMERROR: DKIM2-Signature i=1 public key sel2 has multiple records"},
 		{"absent key beside a good item", "sel9:rsa-sha256:AAAA,sel1:rsa-sha256:{SIG}",
 			txtFetcher{"sel1": good}, ""},
 		{"all keys absent", "sel9:rsa-sha256:AAAA,sel8:ed25519-sha256:{SIG},sel7:future-alg:AAAA",
 			txtFetcher{"sel1": good},
-			"PERMERROR DKIM2-Signature i=1 public key sel9 does not exist"},
+			"PERMERROR: DKIM2-Signature i=1 public key sel9 does not exist"},
 		{"all keys absent (dns.json)", "sel9:rsa-sha256:{SIG}", jsonFetcher(),
-			"PERMERROR DKIM2-Signature i=1 public key sel9 does not exist"},
+			"PERMERROR: DKIM2-Signature i=1 public key sel9 does not exist"},
 		{"DNS failure", "sel1:rsa-sha256:{SIG}", errFetcher{},
-			"TEMPERROR DKIM2-Signature i=1 public key sel1 could not be fetched"},
+			"TEMPERROR: DKIM2-Signature i=1 public key sel1 could not be fetched"},
 		{"bad signature", "sel1:rsa-sha256:AAAA", txtFetcher{"sel1": good},
-			"FAIL DKIM2-Signature i=1 public key sel1"},
+			"FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature"},
 		{"bad signature beside a good one", "sel1:rsa-sha256:{SIG},ed25519:ed25519-sha256:AAAA",
-			jsonFetcher(), "FAIL DKIM2-Signature i=1 public key ed25519"},
+			jsonFetcher(), "FAIL: DKIM2-Signature i=1 signature sel1 signature ed25519 failed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

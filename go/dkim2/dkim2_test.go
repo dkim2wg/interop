@@ -853,12 +853,9 @@ func TestVerifyGap3DomainSuffix(t *testing.T) {
 	// Replace d=test1.dkim2.com with d=evil.com in the signed output
 	tampered := strings.ReplaceAll(signed.String(), "d=test1.dkim2.com", "d=evil.com")
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
-	results, err := Verify(strings.NewReader(tampered), f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) == 0 || results[0].Error == nil {
-		t.Error("expected domain suffix mismatch error")
+	_, err = Verify(strings.NewReader(tampered), f)
+	if err == nil || !strings.Contains(err.Error(), "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match") {
+		t.Errorf("expected domain suffix mismatch error, got %v", err)
 	}
 }
 
@@ -1119,8 +1116,8 @@ func TestVerifyChainCustodyBreak(t *testing.T) {
 	if tampered == string(doubleMsg) {
 		t.Skip("could not find mf= to tamper (base64 may differ)")
 	}
-	// Canonical form matches Perl's Task 3.1 (§8.2/§11.4 custody break):
-	// "DKIM2-Signature i=%d MAIL FROM %s did not match".
+	// -07 §14.4 custody break:
+	// "DKIM2-Signature i=<x> mf= does not match the rt= of i=<y>".
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	results, err := Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})
 	var got string
@@ -1137,7 +1134,7 @@ func TestVerifyChainCustodyBreak(t *testing.T) {
 	if got == "" {
 		t.Fatal("expected failure for chain-of-custody break, but all results passed")
 	}
-	const wantSubstr = "DKIM2-Signature i=2 MAIL FROM <attacker@evil.com> did not match"
+	const wantSubstr = "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1"
 	if !strings.Contains(got, wantSubstr) {
 		t.Errorf("error message = %q, want substring %q", got, wantSubstr)
 	}

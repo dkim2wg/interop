@@ -61,6 +61,19 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	return plan.walk(results)
 }
 
+// chainLevelError is the VerifyResult error for a lower Message-Instance
+// that does not check out against the message its Recipes rebuild: a hash
+// that does not match is the §14.7 FAIL itself; anything else keeps the
+// walk's own wording, as a PERMERROR.  The planned and undo walks both use
+// it, so they report the same.
+func chainLevelError(err error) error {
+	var hm *hashMismatchError
+	if errors.As(err, &hm) {
+		return hm
+	}
+	return fmt.Errorf("PERMERROR: MI chain validation failed: %w", err)
+}
+
 // recordingReader keeps a copy of everything read through it until off.
 type recordingReader struct {
 	r   io.Reader
@@ -89,7 +102,7 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 		return results, err
 	}
 
-	// §12.1.2: with no body there is nothing to undo a lower instance into, so
+	// §16.3: with no body there is nothing to undo a lower instance into, so
 	// Verify's top-instance header-hash check is as far as the chain walk goes.
 	if len(opts) > 0 && opts[0].HeadersOnly {
 		return results, nil
@@ -123,7 +136,7 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 			}
 			results = append(results, VerifyResult{
 				Domain: fmt.Sprintf("MI-chain v=%d", target),
-				Error:  fmt.Errorf("MI chain validation failed: %w", err),
+				Error:  chainLevelError(err),
 			})
 			break
 		}

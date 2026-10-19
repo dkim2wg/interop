@@ -65,7 +65,7 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		}
 	}
 
-	// 2. Determine the hash algorithm(s) to sign with (spec-06 §3.1). Default
+	// 2. Determine the hash algorithm(s) to sign with (§3.1). Default
 	// stays sha256-only: the signer default MUST NOT change.
 	algs := opts.HashAlgs
 	if len(algs) == 0 {
@@ -103,7 +103,7 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 	}
 
 	// 4. Header/body hashes for every requested algorithm (excludes
-	// MI/DKIM2-Sig/etc per §5.2; body per §5.1), in the requested order.
+	// MI/DKIM2-Sig/etc per §6.2; body per §6.1), in the requested order.
 	var newHashes []HashSet
 	for _, alg := range algs {
 		hHash, err := hashHeaders(headers, alg)
@@ -123,10 +123,10 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 
 	// 5. Build new MI header — unless this hop changed nothing.
 	//
-	// draft-06 §9.1/§9.2.5: a forwarder that leaves both hashes unchanged adds
+	// §12.1: a forwarder that leaves both hashes unchanged adds
 	// no new Message-Instance; it signs against the existing top instance and
 	// reuses its m=.  An instance with identical hashes and no Recipe is not
-	// forbidden, but §9.1 still calls it "most likely to be pointless and a
+	// forbidden, but §12.1 still calls it "most likely to be pointless and a
 	// waste of time and energy"; this implementation avoids it by default,
 	// and verifiers must still tolerate one from elsewhere.
 	addMI := true
@@ -150,10 +150,10 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		return err
 	}
 
-	// 7. Build incomplete DKIM2-Signature (s= values empty per §8.5).
+	// 7. Build incomplete DKIM2-Signature (s= values empty per §10.9).
 	incomplete := buildIncomplete(sigSeq, miVersion, ts,
 		opts.Domain, opts.MailFrom, opts.RcptTo,
-		opts.NextDomain, opts.Selector, algorithm)
+		opts.NextDomain, signFlags(sigSeq, opts), opts.Selector, algorithm)
 
 	// 8. Build the signing input: existing MIs (incl. new) ascending, existing
 	//    sigs ascending, then the incomplete sig.
@@ -264,7 +264,25 @@ func LoadPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 	return key, nil
 }
 
-// checkUpstream is the signer gate.  A message with no DKIM2 headers passes.
+// checkSignerFrom is §12.4 for a signer about to sign as d: when it is
+// signing the original message (no upstream signature covers anything) or
+// an unsigned Message-Instance (m= above covered) changed From, the current
+// From must be Authentic for d (§11).
+func checkSignerFrom(headers []Header, mis []*MessageInstance, covered int, d string) error {
+	need := covered == 0
+	for _, mi := range mis {
+		if _, changed := fromRecipe(mi); changed && mi.Version > covered {
+			need = true
+		}
+	}
+	if need && !fromAuthentic(fromFields(headers), d) {
+		return fmt.Errorf("not signing: From header field is not Authentic for d=%s", d)
+	}
+	return nil
+}
+
+// checkUpstream is the signer gate.  A message with no DKIM2 headers must
+// have a From that is Authentic for the signing domain, and passes.
 // Otherwise the existing chain is verified in outbound mode (unsigned
 // Message-Instances above the top signature are allowed) and, unless
 // opts.AllowNullBodyRecipe, no UNSIGNED Message-Instance may carry a null
@@ -294,7 +312,7 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 		}
 	}
 	if !chain {
-		return nil
+		return checkSignerFrom(headers, mis, covered, opts.Domain)
 	}
 	fetcher := opts.Fetcher
 	if fetcher == nil {
@@ -317,6 +335,9 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 			return fmt.Errorf("not signing: Message-Instance chain does not undo cleanly: %w", r.Error)
 		}
 		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail i=%d d=%s: %w", r.Sequence, r.Domain, r.Error)
+	}
+	if err := checkSignerFrom(headers, mis, covered, opts.Domain); err != nil {
+		return err
 	}
 	if opts.AllowNullBodyRecipe {
 		return nil

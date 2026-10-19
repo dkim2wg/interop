@@ -18,7 +18,7 @@ func TestDuplicateSelectorIsPermerror(t *testing.T) {
 		{Selector: "sel1", Algorithm: "rsa-sha256"},
 		{Selector: "sel1", Algorithm: "ed25519-sha256"},
 	}, 3)
-	want := "PERMERROR DKIM2-Signature i=3 has a duplicate selector"
+	want := "PERMERROR: DKIM2-Signature i=3 has a duplicate selector"
 	if len(errs) != 1 || errs[0] != want {
 		t.Errorf("got %v, want [%q]", errs, want)
 	}
@@ -40,7 +40,7 @@ func TestSameAlgorithmTwiceAllowed(t *testing.T) {
 		{Selector: "sel2", Algorithm: "rsa-sha256"},
 	}, 1)
 	if len(errs) != 0 {
-		t.Errorf("spec-06 §8.9 allows one additional same-algorithm signature with a distinct Selector; got %v", errs)
+		t.Errorf("§10.9 allows one additional same-algorithm signature with a distinct Selector; got %v", errs)
 	}
 }
 
@@ -80,6 +80,6 @@ func TestDuplicateSelectorAndExcessSelectorAreIndependent(t *testing.T) {
 func TestDuplicateHashAlgorithmIsPermerror(t *testing.T) {
 	_, err := parseMI("Message-Instance: m=4; h=sha256:AAA:BBB,sha256:CCC:DDD;")
 	if err == nil || !strings.Contains(err.Error(), "has a duplicate hash algorithm") {
-		t.Errorf("got %v, want a duplicate-hash-algorithm PERMERROR (spec-06 §7.3)", err)
+		t.Errorf("got %v, want a duplicate-hash-algorithm PERMERROR (§9.3)", err)
 	}
 }

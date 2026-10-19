@@ -7,7 +7,7 @@ import (
 )
 
 // TestVerifyCanonicalErrorStrings asserts that verify.go's custody/mismatch
-// messages fire in the exact byte-for-byte spec-06 canonical forms (see
+// messages fire in the exact byte-for-byte -07 §14 forms (see
 // docs/superpowers/plans/2026-07-05-dkim2-spec-04-upgrade.md, Task 3.3).
 func TestVerifyCanonicalErrorStrings(t *testing.T) {
 	t.Run("MAIL FROM mismatch", func(t *testing.T) {
@@ -38,23 +38,17 @@ func TestVerifyCanonicalErrorStrings(t *testing.T) {
 
 	t.Run("d= vs mf= domain mismatch", func(t *testing.T) {
 		msg := buildSignedMsg(t) // signed d=test1.dkim2.com, mf=sender@test1.dkim2.com
-		// Tamper d= to a domain unrelated to the mf= domain (per §7.7).
+		// Tamper d= to a domain unrelated to the mf= domain (per §14.4).
 		tampered := strings.ReplaceAll(string(msg), "d=test1.dkim2.com", "d=evil.com")
 		f := &JSONKeyFetcher{Path: "../../dns.json"}
-		results, err := Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})
-		if err != nil {
-			t.Fatalf("Verify error: %v", err)
-		}
-		if len(results) == 0 || results[0].Error == nil {
-			t.Fatal("expected a per-signature error")
-		}
-		want := "DKIM2-Signature i=1 MAIL FROM and d= do not match"
-		if !strings.Contains(results[0].Error.Error(), want) {
-			t.Fatalf("want error containing %q, got %v", want, results[0].Error)
+		_, err := Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})
+		want := "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match"
+		if err == nil || err.Error() != want {
+			t.Fatalf("want error %q, got %v", want, err)
 		}
 	})
 
-	t.Run("nd= adjacency mismatch (verbatim MAIL typo)", func(t *testing.T) {
+	t.Run("nd= adjacency mismatch", func(t *testing.T) {
 		raw := ndTestRaw(t)
 
 		// i=1: promises nd=wrong-nd.example.com, but the next hop won't honor it.
@@ -66,9 +60,9 @@ func TestVerifyCanonicalErrorStrings(t *testing.T) {
 			"test2.dkim2.com", "recipient@test2.dkim2.com", []string{"final@test2.dkim2.com"}, "")
 
 		_, err := Verify(bytes.NewReader(top), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
-		want := "DKIM2-Signature i=1 MAIL nd= does not match"
+		want := "PERMERROR: DKIM2-Signature i=1 nd= does not match"
 		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("want error containing %q (verbatim spec-06 typo), got %v", want, err)
+			t.Fatalf("want error containing %q, got %v", want, err)
 		}
 	})
 }
@@ -89,22 +83,22 @@ func TestSignatureParseErrorsCarryISequence(t *testing.T) {
 		{
 			name: "no colon at all",
 			raw:  "i=1; m=1; t=1;",
-			want: "DKIM2-Signature: no colon found",
+			want: "PERMERROR: DKIM2-Signature syntax error (no colon found)",
 		},
 		{
 			name: "invalid i= (sequence itself malformed, no i= prefix possible)",
 			raw:  "DKIM2-Signature: i=abc; m=1; t=1;",
-			want: "DKIM2-Signature tag=i syntax error",
+			want: "PERMERROR: DKIM2-Signature has a missing or malformed i= tag",
 		},
 		{
 			name: "invalid m= (i= already known)",
 			raw:  "DKIM2-Signature: i=1; m=abc; t=1;",
-			want: "DKIM2-Signature i=1 tag=m syntax error",
+			want: "PERMERROR: DKIM2-Signature i=1 syntax error",
 		},
 		{
 			name: "invalid t= (i= already known)",
 			raw:  "DKIM2-Signature: i=1; m=1; t=abc;",
-			want: "PERMERROR DKIM2-Signature i=1 syntax error",
+			want: "PERMERROR: DKIM2-Signature i=1 syntax error",
 		},
 		{
 			name: "missing d= (i= already known)",

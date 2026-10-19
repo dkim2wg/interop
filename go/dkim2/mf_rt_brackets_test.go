@@ -97,8 +97,8 @@ func TestBareMFFailsVerify(t *testing.T) {
 		base64.StdEncoding.EncodeToString([]byte("sender@test1.dkim2.com")), 1)
 	res, _ := Verify(strings.NewReader(bad), testFetcher(t), VerifyOptions{SkipTimestampCheck: true})
 	if len(res) == 0 || res[len(res)-1].Error == nil ||
-		!strings.Contains(res[len(res)-1].Error.Error(), "7.5") {
-		t.Fatalf("expected 7.5 bracket failure, got %+v", res)
+		res[len(res)-1].Error.Error() != "PERMERROR: DKIM2-Signature i=1 syntax error" {
+		t.Fatalf("expected the unbracketed mf= syntax error, got %+v", res)
 	}
 }
 
@@ -110,8 +110,8 @@ func TestBareRTFailsVerify(t *testing.T) {
 		base64.StdEncoding.EncodeToString([]byte("rcpt@test2.dkim2.com")), 1)
 	res, _ := Verify(strings.NewReader(bad), testFetcher(t), VerifyOptions{SkipTimestampCheck: true})
 	if len(res) == 0 || res[len(res)-1].Error == nil ||
-		!strings.Contains(res[len(res)-1].Error.Error(), "7.6") {
-		t.Fatalf("expected 7.6 bracket failure, got %+v", res)
+		res[len(res)-1].Error.Error() != "PERMERROR: DKIM2-Signature i=1 syntax error" {
+		t.Fatalf("expected the unbracketed rt= syntax error, got %+v", res)
 	}
 }
 

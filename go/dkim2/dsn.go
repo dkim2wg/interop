@@ -18,10 +18,10 @@ type PropagateOptions struct {
 	Domain          string
 	Timestamp       int64
 
-	// Fetcher authenticates the inbound DSN (§12.1.2) before it is
+	// Fetcher authenticates the inbound DSN (§16.3) before it is
 	// propagated. Required unless SkipAuthentication is set.
 	Fetcher KeyFetcher
-	// SkipAuthentication propagates without the §12.1.2 check, for a caller
+	// SkipAuthentication propagates without the §16.3 check, for a caller
 	// that has authenticated already (or is exercising the rebuild machinery
 	// on a fixture, as dsn_test.go does).
 	SkipAuthentication bool
@@ -117,19 +117,19 @@ func parseReport(raw []byte) (*dsnReport, error) {
 
 // AuthResult is what Authenticate found out about an inbound DSN.
 type AuthResult struct {
-	OK          bool            // every §12.1.2 check that could run did pass
+	OK          bool            // every §16.3 check that could run did pass
 	Reason      error           // why it did not, when OK is false
 	Top         *DKIM2Signature // highest-i signature of the returned original, nil if unsigned
 	DSNSig      *DKIM2Signature // the DSN's own originating (i=1) signature, nil if unsigned
 	DSNError    error           // why the DSN's own chain did not verify, if it did not
-	Alignment   string          // §12.1.2 point 1: "pass", "fail" or "none"
+	Alignment   string          // §16.3 point 1: "pass", "fail" or "none"
 	AlignDetail string          // what that alignment decision was based on
 	HeadersOnly bool            // the DSN carried header fields only
 	Embedded    []byte          // the returned original as it arrived
 	Results     []VerifyResult  // per-signature detail from Verify
 }
 
-// checkAlignment applies spec-06 §12.1.2 point 1: "The DSN's DKIM2-Signature
+// checkAlignment applies §16.3 point 1: "The DSN's DKIM2-Signature
 // will have a signing domain that is aligned with the recipient of the message
 // that is being returned. The recipient's address is located in the rt= tag of
 // the last (highest i= tag) DKIM2-Signature in the returned message."
@@ -139,7 +139,7 @@ type AuthResult struct {
 // verified — anyone can write d=. Authenticate therefore verifies the DSN as
 // well, and only compares the d= it has proved.
 //
-// The direction is §9.4's: labels come off the left of the ADDRESS domain, so
+// The direction is §7.2's: labels come off the left of the ADDRESS domain, so
 // d= may be equal to or a parent of the rt= domain, never a child of it. A
 // system with a dedicated bounce domain signs as its organizational domain
 // (d=example.com) and puts the bounce address on the subdomain
@@ -157,11 +157,11 @@ func checkAlignment(dsnSig, origTop *DKIM2Signature) (string, string) {
 		return "none", "returned message's top signature has no rt= to align with"
 	}
 	for _, r := range origTop.RcptTo {
-		rd := domainFromAddr(r)
-		if rd == "" {
+		rd, lit := domainOf(r)
+		if rd == "" || lit {
 			continue
 		}
-		if relaxedDomainMatch(rd, d) {
+		if relaxedMatch(rd, d) {
 			return "pass", fmt.Sprintf("DSN d=%s is aligned with rt= %s", d, r)
 		}
 	}
@@ -169,8 +169,8 @@ func checkAlignment(dsnSig, origTop *DKIM2Signature) (string, string) {
 		d, strings.Join(origTop.RcptTo, ", "))
 }
 
-// Authenticate authenticates an inbound DSN before it is propagated (spec-06
-// §12.1.2):
+// Authenticate authenticates an inbound DSN before it is propagated
+// (§16.3):
 //
 //   - the returned original's DKIM2 chain must verify, from its header fields
 //     alone when the DSN carries only headers (point 3);
@@ -180,7 +180,7 @@ func checkAlignment(dsnSig, origTop *DKIM2Signature) (string, string) {
 //   - deciding whether Top is a signature the caller itself made (d= and mf=)
 //     is left to the caller (point 2), since only it knows its own domains.
 //
-// A DSN carrying no DKIM2-Signature at all is not what §12.1.2 is about ("When
+// A DSN carrying no DKIM2-Signature at all is not what §16.3 is about ("When
 // a system receives a DKIM2 signed DSN"), so it comes back with DSNSig nil and
 // Alignment "none" rather than failed.
 //
@@ -264,15 +264,15 @@ func Authenticate(raw []byte, fetcher KeyFetcher, opts ...VerifyOptions) (*AuthR
 	return res, nil
 }
 
-// Propagate returns a DKIM2 DSN propagated upstream (RFC 6522 / draft-06
-// §12.1.1): the Forwarder rebuilds the enclosed original to its
+// Propagate returns a DKIM2 DSN propagated upstream (RFC 6522 /
+// §16.2): the Forwarder rebuilds the enclosed original to its
 // forwarded-outward state (undoing its Message-Instance modification, which
 // also drops the DKIM2-Signature it added), then re-signs the whole DSN as a
 // new message (MAIL FROM <>, one Message-Instance, one DKIM2-Signature).
 // Returns the propagated DSN bytes and the upstream MAIL FROM it should be
 // sent to.
 //
-// §12.1.2 is not optional here: "If the verification fails then the DSN MUST
+// §16.3 is not optional here: "If the verification fails then the DSN MUST
 // NOT be propagated any further", so the DSN is authenticated first and an
 // error returned rather than re-signing one that could not be authenticated.
 // That needs opts.Fetcher, unless opts.SkipAuthentication says the caller has
@@ -281,7 +281,7 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	if !opts.SkipAuthentication {
 		if opts.Fetcher == nil {
 			return nil, "", fmt.Errorf("propagate: need a Fetcher to authenticate the DSN " +
-				"(§12.1.2), or SkipAuthentication if it has been authenticated already")
+				"(§16.3), or SkipAuthentication if it has been authenticated already")
 		}
 		auth, aerr := Authenticate(raw, opts.Fetcher,
 			VerifyOptions{SkipTimestampCheck: opts.SkipTimestampCheck})
@@ -290,7 +290,7 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 		}
 		if !auth.OK {
 			return nil, "", fmt.Errorf(
-				"propagate: DSN did not authenticate (§12.1.2), not propagating: %w", auth.Reason)
+				"propagate: DSN did not authenticate (§16.3), not propagating: %w", auth.Reason)
 		}
 	}
 
@@ -308,7 +308,7 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	//
 	//    The target is the upstream signature's m=, NOT simply "highest MI - 1":
 	//    a forwarder that changed nothing adds no Message-Instance at all and
-	//    reuses the existing m= (§9.1/§9.2.5), so both signatures share one
+	//    reuses the existing m= (§12.1), so both signatures share one
 	//    instance and there is no MI to unwind — unwinding by version anyway
 	//    would strip the upstream's own signature along with the forwarder's.
 	//    In that case we only drop the forwarder's signature.
@@ -330,10 +330,10 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 			embeddedFinal = rebuilt.Bytes()
 			undone = true
 		case errors.Is(err, ErrUnrecoverable):
-			// §12.1.1: the upstream declared the previous body unrecoverable,
+			// §16.2: the upstream declared the previous body unrecoverable,
 			// so the returned original goes back as header fields only. Our
 			// own instance goes with our hop — leaving it would put an
-			// instance above the top remaining signature (§11 "is not
+			// instance above the top remaining signature (§14.2 "is not
 			// signed") for whoever receives this.
 			headersOnly = true
 			stripped, serr := stripTopMI(embedded)
@@ -364,6 +364,11 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	// §16: "If this value has no address ("<>") then a DSN MUST NOT be sent."
+	if upstream == "" || isNullPath(upstream) {
+		return nil, "", fmt.Errorf("propagate: the returned message's top signature has mf=<>, " +
+			"so no DSN may be sent (§16)")
+	}
 
 	// 3. Splice the rebuilt original back into the part and reassemble the body.
 	//    splitPartHeaders trims the CRLF that ends the boundary DELIMITER line
@@ -390,12 +395,20 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	// 4. Reassemble the DSN and re-sign it as a NEW message with MAIL FROM <>.
 	//    The inbound DSN's OWN instance and signature are dropped here: they
 	//    belong to the DSN we received, which has already been authenticated
-	//    (§12.1.2) and is not being continued. Leaving them makes the new
+	//    (§16.3) and is not being continued. Leaving them makes the new
 	//    instance m=2 on a chain whose i=1 is somebody else's.
+	//    The propagated DSN is this Forwarder's new message, so its From must
+	//    be Authentic for opts.Domain (§11, §12.4); the downstream reporter's
+	//    From field(s) are replaced by this domain's MAILER-DAEMON when not.
+	rewriteFrom := !fromAuthentic(fromFields(headers), opts.Domain)
 	var assembled bytes.Buffer
+	if rewriteFrom {
+		assembled.WriteString("From: MAILER-DAEMON@" + opts.Domain + "\r\n")
+	}
 	for _, h := range headers {
 		if strings.EqualFold(h.Name, "message-instance") ||
-			strings.EqualFold(h.Name, "dkim2-signature") {
+			strings.EqualFold(h.Name, "dkim2-signature") ||
+			(rewriteFrom && strings.EqualFold(h.Name, "from")) {
 			continue
 		}
 		assembled.WriteString(h.Raw)
@@ -470,7 +483,7 @@ func topMIVersion(raw []byte) (int, bool) {
 // message. Used with stripTopSig when the Forwarder's whole hop comes off but
 // undo could not run: the instance goes with the signature that covered it, or
 // the returned message carries an instance above its own top signature, which
-// is the spec-06 §11 "is not signed" PERMERROR for whoever receives it.
+// is the §14.2 "is not signed" PERMERROR for whoever receives it.
 func stripTopMI(raw []byte) ([]byte, error) {
 	headers, bodyReader, err := parseHeaders(bytes.NewReader(raw))
 	if err != nil {
@@ -513,7 +526,7 @@ func stripTopSig(raw []byte) ([]byte, error) {
 	body.ReadFrom(bodyReader)
 
 	// Collect the sequence numbers present, then decide which to drop: the
-	// highest, and then any nd= signature left on top, since a §9.3 bridge
+	// highest, and then any nd= signature left on top, since a §12.3 bridge
 	// belongs to the hop it was made for and an nd= signature is never valid
 	// as the top of a chain.
 	bySeq := map[int]*DKIM2Signature{}
@@ -575,7 +588,7 @@ func topSig(raw []byte) (*DKIM2Signature, error) {
 }
 
 // originSig returns the LOWEST-sequence DKIM2-Signature of a raw message. For
-// a DSN that is the signature of the system that generated it: §12.1.1 makes a
+// a DSN that is the signature of the system that generated it: §16.2 makes a
 // DSN a new message with exactly one signature, and if that DSN is itself
 // forwarded onwards, i=1 is still its originator.
 func originSig(raw []byte) (*DKIM2Signature, error) {

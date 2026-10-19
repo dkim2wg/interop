@@ -1,5 +1,5 @@
-// Command dkim2dsn propagates a received DKIM2 DSN upstream (draft-06 §12.1.1),
-// or with -authenticate checks an inbound one first (draft-06 §12.1.2).
+// Command dkim2dsn propagates a received DKIM2 DSN upstream (-07 §16.2),
+// or with -authenticate checks an inbound one first (§16.3).
 package main
 
 import (
@@ -16,11 +16,11 @@ func main() {
 	domain := flag.String("domain", "", "signing domain for the propagated DSN (required)")
 	selector := flag.String("selector", "", "DKIM2 selector (required)")
 	keyFile := flag.String("key", "", "PKCS#8 PEM private key (required)")
-	auth := flag.Bool("authenticate", false, "§12.1.2: check the returned original instead of propagating")
+	auth := flag.Bool("authenticate", false, "§16.3: check the returned original instead of propagating")
 	dnsFile := flag.String("dns", "", "Path to dns.json key file (required to authenticate)")
 	skipAuth := flag.Bool("skip-authentication", false,
-		"Propagate without the §12.1.2 check (already done by the caller)")
-	ignoreTS := flag.Bool("ignore-timestamps", false, "Disable the §10.3 timestamp (14-day/future) check")
+		"Propagate without the §16.3 check (already done by the caller)")
+	ignoreTS := flag.Bool("ignore-timestamps", false, "Disable the §14.3 timestamp (14-day/1-day future) check")
 	flag.Parse()
 
 	if *auth {
@@ -35,7 +35,7 @@ func main() {
 	}
 	if *dnsFile == "" && !*skipAuth {
 		fmt.Fprintln(os.Stderr, "ERROR: propagating requires -dns to authenticate the DSN "+
-			"(§12.1.2), or -skip-authentication")
+			"(§16.3), or -skip-authentication")
 		os.Exit(1)
 	}
 	pem, err := os.ReadFile(*keyFile)
@@ -72,7 +72,7 @@ func main() {
 }
 
 // authenticate reports whether the DSN on stdin returns a message that
-// verifies (§12.1.2). It prints the top signature's d= and mf= so the caller
+// verifies (§16.3). It prints the top signature's d= and mf= so the caller
 // can apply point 2 -- deciding whether that signature is one of its own --
 // which only the system receiving the DSN can do.
 func authenticate(dnsFile string, ignoreTS bool) {

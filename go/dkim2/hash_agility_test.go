@@ -10,7 +10,7 @@ import (
 func TestHashAlgRegistry(t *testing.T) {
 	for _, n := range []string{"sha256", "sha512", "SHA256", "SHA512"} {
 		if _, ok := HashAlg(n); !ok {
-			t.Errorf("HashAlg(%q) must be supported (spec-06 §3)", n)
+			t.Errorf("HashAlg(%q) must be supported (§3.1)", n)
 		}
 	}
 	if _, ok := HashAlg("x-whirlpool"); ok {
@@ -57,9 +57,9 @@ func TestParseMIWithBothAlgorithms(t *testing.T) {
 
 // --- Review round 1 findings (Finding 2: verifyMIHashes/Verify coverage) ---
 
-// TestVerifyMIHashesFailsClosedOnUnimplementedAlgorithm covers the §3.4
+// TestVerifyMIHashesFailsClosedOnUnimplementedAlgorithm covers the §3.5
 // fail-closed path: an h= tag naming only an algorithm this build does not
-// implement must be rejected with the exact spec-06 message, not silently
+// implement must be rejected with the exact PERMERROR, not silently
 // accepted (which is what happens if the "usable == 0" check is ever lost).
 func TestVerifyMIHashesFailsClosedOnUnimplementedAlgorithm(t *testing.T) {
 	mi := &MessageInstance{
@@ -72,7 +72,7 @@ func TestVerifyMIHashesFailsClosedOnUnimplementedAlgorithm(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a fail-closed error, got nil (pass)")
 	}
-	want := "Message-Instance m=1 no supported hash algorithm"
+	want := "PERMERROR: Message-Instance m=1 has no supported hash algorithm"
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
 	}

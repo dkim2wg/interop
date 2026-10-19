@@ -10,7 +10,7 @@ import (
 )
 
 // ErrUnrecoverable reports that the previous body cannot be reconstructed *by
-// design*: §12.1.1's "null Recipe", a hop declaring that it cannot be put
+// design*: §5.2's "null Recipe", a hop declaring that it cannot be put
 // back (see Recipe.BodyNull). Distinct from every other Undo failure, which
 // means the reconstruction itself went wrong — DSN propagation answers the
 // first by returning the header fields alone and must not answer the second
@@ -29,7 +29,7 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 
 // undo is Undo's body. With walkPastNull set (the verification path), a null
 // body Recipe does not stop the walk: from that instance down only the header
-// history is rebuilt and checked (spec-06: the previous body cannot be
+// history is rebuilt and checked (§5.2: the previous body cannot be
 // recreated, but header Recipes are mandatory and so the header history can).
 // The reconstructed body is then meaningless, so nothing is written to w for
 // such a walk beyond what the caller discards.
