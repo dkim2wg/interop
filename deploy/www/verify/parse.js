@@ -1,4 +1,4 @@
-// RFC5322 message parsing and DKIM2 tag-value parsing. Built from spec-06.
+// RFC5322 message parsing and DKIM2 tag-value parsing. Built from draft-ietf-dkim-dkim2-spec-07.
 import { bytesToBinary } from './b64.js';
 
 function toCRLF(raw) {
@@ -111,19 +111,19 @@ function parseHeaderBlock(headerBlock) {
   return headers;
 }
 
-// spec-06 §7, §8 x-tag: `[FWS] name [FWS] "=" [FWS] [value] [FWS]`, name
+// §8 tag-spec: `[FWS] name [FWS] "=" [FWS] [value] [FWS]`, name
 // ALPHA *(ALPHA / DIGIT / "_"), value x-tag-char *([FWS] x-tag-char) with
 // x-tag-char %x21-3A / %x3C-7E. The value is unfolded, so FWS is WSP here.
 const TAG_SPEC = /^[ \t\r\n]*[A-Za-z][A-Za-z0-9_]*[ \t\r\n]*=[ \t\r\n]*(?:[\x21-\x3a\x3c-\x7e](?:[ \t\r\n]*[\x21-\x3a\x3c-\x7e])*)?[ \t\r\n]*$/;
 
 // syntaxError is set when any non-empty fragment is not a well-formed tag
 // (`junk`, `9bad=foo`, `=v`, a NUL/DEL/8-bit byte in any value): the whole
-// field is then a syntax error (§11.2), never verified around the fragment.
+// field is then a syntax error (§14.2), never verified around the fragment.
 export function parseTagList(value) {
   // value is a header value as produced by parseMessage: fold CRLFs are
   // already stripped, so this only needs to guard against a literal \r\n
   // reaching us directly (e.g. from `raw`). Semicolons only ever separate
-  // tags (spec §7/§8).
+  // tags (§8).
   const flat = value.replace(/\r\n/g, ''); // drop folding
   const tags = [];
   const map = {};
@@ -147,7 +147,7 @@ export function parseTagList(value) {
   return { tags, map, syntaxError };
 }
 
-// spec-06 §7.3: h= is hash-set *("," hash-set). Hash names are lowercased —
+// §9.3: h= is hash-set *("," hash-set). Hash names are lowercased —
 // RFC 5234 makes ABNF quoted strings case-insensitive. h is the RAW value
 // (FWS intact): FWS is allowed around the hash name and colons and inside
 // the digests (removed), never inside the hash name. A set that is not

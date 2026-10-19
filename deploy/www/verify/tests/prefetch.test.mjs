@@ -135,7 +135,7 @@ test('no prefetch with an override key source', async () => {
   assert.equal(asked.length, NAMES.length);
 });
 
-test('no prefetch for algorithms not implemented, or a message that fails §11.2', async () => {
+test('no prefetch for algorithms not implemented, or a message that fails §14.2', async () => {
   const bin = bytesToBinary(MSG).replace('s=sel2:ed25519-sha256:', 's=sel2:rsa-sha1:');
   const doh = fakeDoh();
   await verifyMessage(Uint8Array.from(bin, (c) => c.charCodeAt(0)), { now: NOW, dohFetch: doh.fetch });

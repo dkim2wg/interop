@@ -25,7 +25,7 @@ function makeFetchKey(extraDns = {}) {
   };
 }
 
-// Pick a deterministic clock PER VECTOR so that the §11.3 "older than 14 days"
+// Pick a deterministic clock PER VECTOR so that the §14.3 "older than 14 days"
 // rule never spuriously expires a well-formed sample: use the newest t= across
 // all DKIM2-Signature headers in the message + 1h. None of the current vectors
 // is about timestamp expiry, so this cannot mask a genuine expiry vector; if

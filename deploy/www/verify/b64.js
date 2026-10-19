@@ -21,7 +21,7 @@ export function bytesToB64(u8) {
 
 export function b64ToString(s) { return bytesToString(b64ToBytes(s)); }
 
-// A message is a sequence of octets (spec-06 §6). Inside the verifier it
+// A message is a sequence of octets (§6). Inside the verifier it
 // travels as a "binary string": one code unit per byte (0..255), so the RFC
 // 5322 structure can be handled with ordinary string and regex tools while
 // every byte -- a raw Big5 Subject, a Latin-1 body -- reaches the hash

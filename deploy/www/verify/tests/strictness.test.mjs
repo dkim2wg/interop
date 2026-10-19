@@ -1,8 +1,8 @@
 // Verifier strictness (docs/superpowers/specs/2026-10-09-verifier-strictness-
 // review-fixes.md, sections A-D) through the REAL verifyMessage() entry
 // point, on genuinely signed one-hop messages: A signature algorithms
-// (spec-06 §3.4, §8.9), B key records (§11.5, dns-00 §3.2/§3.4.1),
-// C Message-Instance tag case and repeats (§7), D t= syntax (§8.4).
+// (§3.5, §10.9), B key records (§14.5, dns-00 §3.2/§3.4.1),
+// C Message-Instance tag case and repeats (§8), D t= syntax (§10.4).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyMessage } from '../verify.js';

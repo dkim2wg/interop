@@ -1,4 +1,4 @@
-// DKIM2 verification orchestrator per spec-06 §10/§11. Built from spec.
+// DKIM2 verification orchestrator per draft-ietf-dkim-dkim2-spec-07 §13/§14. Built from spec.
 import { parseMessage, collectLevels, parseTagList, parseHashSets } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
@@ -38,7 +38,7 @@ function signedFields(fields) {
 }
 
 // Parse the RAW s= value (FWS intact) into [{selector, alg, sig}], once per
-// signature, or null on a §8.9 syntax error. Each item is exactly three
+// signature, or null on a §10.9 syntax error. Each item is exactly three
 // parts on ":"; FWS around the comma and colons is trimmed and FWS inside
 // the signature value removed, but none may sit inside the selector
 // ([A-Za-z0-9_-]+ labels joined by ".") or the algorithm ([A-Za-z0-9_-]+):
@@ -61,10 +61,10 @@ function parseSigSets(sValue) {
   return out;
 }
 
-// §3.4: the implemented signature algorithms, exactly as written (§8.9).
+// §3.2/§3.3: the implemented signature algorithms, exactly as written (§10.9).
 const SUPPORTED_ALGS = new Set(['rsa-sha256', 'ed25519-sha256']);
-// A message-sig is a base64string (§8.9).
-// A base64string: non-empty, padded with "=" to a multiple of four (§2.13).
+// A message-sig is a base64string (§10.9).
+// A base64string: non-empty, padded with "=" to a multiple of four (§2.14).
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/;
 
 // The raw value of a parsed tag (parseTagList strips ALL whitespace from
@@ -73,10 +73,10 @@ function rawTagValue(tag) {
   return tag.raw.slice(tag.raw.indexOf('=') + 1).replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
 }
 
-// spec-06 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag: a
+// §10.9 duplicate/limit rules for one DKIM2-Signature s= tag: a
 // Selector MUST NOT appear more than once, and the same signing algorithm may
 // appear at most twice, and only with distinct Selectors. Both comparisons
-// are case-insensitive (a Selector is a Domain, §3.5; algorithm names are
+// are case-insensitive (a Selector is a Domain, §3.6; algorithm names are
 // ABNF quoted strings, RFC 5234). items is the parsed LIST of {selector, alg}
 // sig-sets (never a deduplicated map — a second occurrence must stay visible).
 export function checkSignatureDuplicates(items, i) {
@@ -183,7 +183,7 @@ function recipeSummary(rec) {
 }
 
 // Return the (lowercased) name of the first tag that appears more than once in
-// a parsed tag list, or null. Tag names are case-insensitive (§7/§8), and
+// a parsed tag list, or null. Tag names are case-insensitive (§8), and
 // parseTagList already lowercases them.
 function duplicateTag(tags) {
   const seen = new Set();
@@ -340,7 +340,7 @@ async function verifyOnce(raw, opts = {}) {
     || undoChain(headers, body, instances, maxM);
   const { undoBroken, undoBrokenReason, nullBodyAt, nullBodyInstances } = chain;
 
-  // --- §11.7 MI hash checks (top-down) ----------------------------------
+  // --- §14.7 MI hash checks (top-down) ----------------------------------
   for (let m = maxM; m >= 1; m--) {
     const mi = instances[m];
     const level = {
@@ -363,7 +363,7 @@ async function verifyOnce(raw, opts = {}) {
       continue;
     }
     if (m === 1 && 'r' in mi.map) {
-      // spec-06 §9.1: the bottom instance MAY carry Recipes too ("if it is
+      // §12.1: the bottom instance MAY carry Recipes too ("if it is
       // wished to record any changes made to a message as it enters the
       // DKIM2 ecosystem"); it never participates in the reconstruction loop
       // above (there is no earlier state to undo to, so a malformed r=
@@ -382,7 +382,7 @@ async function verifyOnce(raw, opts = {}) {
     }
     try {
       const sets = parseHashSets(rawTagValue(mi.tags.find((t) => t.tag === 'h')));
-      // spec-06 §7.3: an algorithm MUST NOT be present more than once. This
+      // §9.3: an algorithm MUST NOT be present more than once. This
       // must run before any hash is computed or compared, over the parsed
       // LIST (never a deduplicated map, or a second occurrence would be
       // silently overwritten and go undetected).
@@ -432,7 +432,7 @@ async function verifyOnce(raw, opts = {}) {
     if (m >= 2 && undoBroken === m) level.undo = 'failed';
     else if (m >= 2 && nullBodyInstances.has(m)) level.undo = 'unrecoverable';
 
-    // Recipe breakdown (§5/§7.2): decode r= and show what it changed — a
+    // Recipe breakdown (§5/§9.2): decode r= and show what it changed — a
     // readable summary in the r= tag, the decoded Recipe JSON, and per-header
     // current<-previous values (matching the /validate/ display).
     if ('r' in mi.map) {
@@ -734,7 +734,7 @@ function prefetchKeys(signatures, sigNums, dohOpts) {
   };
 }
 
-// spec-06 §11.5 wording, naming the Selector.
+// §14.5 wording, naming the Selector.
 function keyErrorDetail(e, selector) {
   const map = {
     'key-notfound': 'does not exist',

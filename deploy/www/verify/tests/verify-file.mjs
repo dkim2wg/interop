@@ -39,7 +39,7 @@ function fetchKey(selector, domain) {
 }
 
 // Same "newest t= + 1h" deterministic clock as vectors.test.mjs, so a
-// well-formed sample never spuriously trips the §11.3 14-day-old rule.
+// well-formed sample never spuriously trips the §14.3 14-day-old rule.
 function pickNow(msg) {
   const ts = [...bytesToBinary(msg).matchAll(/[;\s]t=(\d+)/gi)].map((m) => parseInt(m[1], 10));
   const max = ts.filter(Number.isFinite).reduce((a, b) => Math.max(a, b), 0);

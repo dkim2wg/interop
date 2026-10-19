@@ -12,7 +12,7 @@ import { stringToBytes, bytesToB64 } from '../b64.js';
 
 // A real, single-hop signed sample (mailfrom_case vector) whose Message-Instance
 // sha256 hashes and RSA signature genuinely verify against the shared dns.json
-// key. Using it lets the §11.4 envelope / §11.3 timestamp checks be the sole
+// key. Using it lets the §14.4 envelope / §14.3 timestamp checks be the sole
 // determinant of the outcome (MI + crypto both pass on their own).
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..', '..');
@@ -24,7 +24,7 @@ const realFetchKey = async (selector, domain) => {
   return parseKeyRecord(rec);
 };
 const SAMPLE_T = 1782394336;      // t= in the sample
-const FRESH_NOW = SAMPLE_T + 3600; // well within the §11.3 14-day window
+const FRESH_NOW = SAMPLE_T + 3600; // well within the §14.3 14-day window
 
 test('no DKIM2-Signature yields overall=none', async () => {
   const rep = await verifyMessage('From: a@example.com\r\nSubject: x\r\n\r\nhi\r\n');
@@ -159,7 +159,7 @@ const bridgedRaw = (bridgeDomain) =>
     'mf=PHNyczA9eEBib3VuY2UudGVzdDMuZGtpbTIuY29tPg==; rt=PGRlc3RAdGVzdDUuZGtpbTIuY29tPg==\r\n' +
   '\r\nhi\r\n';
 
-test('a §9.3 bridge made with a key for the receiving domain keeps custody', async () => {
+test('a §12.3 bridge made with a key for the receiving domain keeps custody', async () => {
   const rep = await verifyMessage(bridgedRaw('test2.dkim2.com'),
     { now: 1000000, fetchKey: stubKey });
   const sig2 = rep.levels.find((l) => l.kind === 'signature' && l.i === 2);
@@ -170,7 +170,7 @@ test('a §9.3 bridge made with a key for the receiving domain keeps custody', as
   assert.equal(sig3.custody.ok, true, sig3.custody.detail);
 });
 
-test('a §9.3 bridge from a domain the mail never reached fails custody', async () => {
+test('a §12.3 bridge from a domain the mail never reached fails custody', async () => {
   const rep = await verifyMessage(bridgedRaw('test4.dkim2.com'),
     { now: 1000000, fetchKey: stubKey });
   const sig2 = rep.levels.find((l) => l.kind === 'signature' && l.i === 2);
@@ -178,8 +178,8 @@ test('a §9.3 bridge from a domain the mail never reached fails custody', async 
   assert.equal(sig2.custody.detail, 'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1');
 });
 
-// --- §11.4 top-hop envelope exact-match ---------------------------------
-test('envelope match with differing domain case is not a permerror (§11.4)', async () => {
+// --- §14.4 top-hop envelope exact-match ---------------------------------
+test('envelope match with differing domain case is not a permerror (§14.4)', async () => {
   // mf/rt domains are lower-cased before comparison, so an upper-case delivery
   // domain must still match. With the real key the whole message verifies.
   const rep = await verifyMessage(SIGNED_SAMPLE, {
@@ -194,7 +194,7 @@ test('envelope match with differing domain case is not a permerror (§11.4)', as
   assert.equal(sig.custody.ok, true);
 });
 
-test('wrong MAIL FROM is PERMERROR with a MAIL FROM detail (§11.4)', async () => {
+test('wrong MAIL FROM is PERMERROR with a MAIL FROM detail (§14.4)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<attacker@evil.example>',
@@ -207,7 +207,7 @@ test('wrong MAIL FROM is PERMERROR with a MAIL FROM detail (§11.4)', async () =
   assert.equal(sig.result, 'permerror');
 });
 
-test('a used RCPT TO absent from rt= is PERMERROR (§11.4)', async () => {
+test('a used RCPT TO absent from rt= is PERMERROR (§14.4)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<sender@test.dkim2.eu>',
@@ -218,7 +218,7 @@ test('a used RCPT TO absent from rt= is PERMERROR (§11.4)', async () => {
   assert.match(rep.summary, /RCPT TO .*did not match/);
 });
 
-test('local-part case is significant in the envelope match (§11.4)', async () => {
+test('local-part case is significant in the envelope match (§14.4)', async () => {
   // rt= carries recipient@example.com; a differently-cased local part must NOT
   // match (only the domain is lower-cased).
   const rep = await verifyMessage(SIGNED_SAMPLE, {
@@ -231,7 +231,7 @@ test('local-part case is significant in the envelope match (§11.4)', async () =
   assert.match(rep.summary, /RCPT TO .*did not match/);
 });
 
-test('omitting the envelope skips the §11.4 check (browser paste case)', async () => {
+test('omitting the envelope skips the §14.4 check (browser paste case)', async () => {
   // No mailFrom/rcptTo: the envelope check must not fire, so no envelope-based
   // permerror; the message otherwise verifies cleanly.
   const rep = await verifyMessage(SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
@@ -260,7 +260,7 @@ test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary 
   assert.match(rep.summary, /MAIL FROM and d= do not match/);
 });
 
-// --- recipe breakdown display (§5/§7.2): per-header current<-previous + JSON ---
+// --- recipe breakdown display (§5/§9.2): per-header current<-previous + JSON ---
 test('MI levels expose the decoded recipe breakdown (header current<-previous, summary, JSON)', async () => {
   // A real 6-hop chain message (m=1..5) with header + body recipes at each hop.
   // Keys are irrelevant to the recipe breakdown, so use a stub resolver.
@@ -305,7 +305,7 @@ test('an instance with no r= recipe has no recipe_json', async () => {
 // literal name Received-SPF, and stripping a header excluded from the hash
 // cannot change the hash, so it was provably a no-op once §4 landed; same
 // removal in Mail::DKIM2::Validate::report()).
-test('a Received-SPF prepended by the receiver verifies cleanly (spec-06 §4)', async () => {
+test('a Received-SPF prepended by the receiver verifies cleanly (§4)', async () => {
   const polluted = 'Received-SPF: pass\r\n (test.example: 1.2.3.4 authorized)\r\n' + SIGNED_SAMPLE;
   const rep = await verifyMessage(polluted, {
     fetchKey: realFetchKey,
@@ -332,7 +332,7 @@ test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly'
   assert.equal(rep.overall, 'pass');
 });
 
-// --- spec-06 §11.2: malformed r= JSON is a specific PERMERROR ------------
+// --- §14.2: malformed r= JSON is a specific PERMERROR ------------
 //
 // This builds a REAL, validly Ed25519-signed two-hop message (genuine
 // crypto over the actual canonicalized signing input, using this module's
@@ -345,8 +345,8 @@ test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly'
 // the parser. Before this fix, the catch around decodeRecipe() in the
 // state-reconstruction loop lumped a JSON syntax error in with every other
 // "undo broke" cause, producing a generic "state unavailable" fail instead
-// of the specific §11.2 PERMERROR text.
-test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR through the real verifier entry point', async () => {
+// of the specific §14.2 PERMERROR text.
+test('§14.2: malformed r= JSON is reported as the specific PERMERROR through the real verifier entry point', async () => {
   const { subtle } = globalThis.crypto;
   const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
@@ -414,17 +414,17 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
   const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi1, 'm=1 instance level present');
   // Exact match (not just Contains/match): proves the text reaching this
-  // level is the verbatim §11.2 string, with no extra decoration.
+  // level is the verbatim §14.2 string, with no extra decoration.
   assert.equal(mi1.detail, 'PERMERROR: Message-Instance m=2 contains invalid JSON');
 });
 
-// spec-06 §11.2 ruling: a bad-base64 r= value is a DIFFERENT error from a
+// §14.2 ruling: a bad-base64 r= value is a DIFFERENT error from a
 // post-decode JSON parse failure, and must stay distinct: base64 failure ->
-// "syntax error" (§11.2 lists this explicitly for malformed field content),
+// "syntax error" (§14.2 lists this explicitly for malformed field content),
 // never "contains invalid JSON" (the payload here never even reaches JSON
 // parsing). Same real two-hop construction as the test above, "!!!!" (not
 // valid base64) in place of the truncated-JSON r= value.
-test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", distinct from "contains invalid JSON"', async () => {
+test('§14.2: a bad-base64 r= value is reported as "syntax error", distinct from "contains invalid JSON"', async () => {
   const { subtle } = globalThis.crypto;
   const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
@@ -483,14 +483,14 @@ test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", disti
   assert.doesNotMatch(mi1.detail, /invalid JSON/);
 });
 
-// spec-06 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it is
+// §12.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it is
 // wished to record any changes made to a message as it enters the DKIM2
 // ecosystem"). It never participates in the reconstruction loop (there is
 // no earlier state to undo to), so before this fix it was never checked at
 // all -- a single-instance (m=1 only) message, so m=1 is both the topmost
 // AND the bottom instance, hand-signed so its own signature legitimately
 // covers the malformed r=.
-test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejected too, not silently ignored', async () => {
+test('§12.1/§14.2: a malformed r= on the BOTTOM (m=1) instance is rejected too, not silently ignored', async () => {
   const { subtle } = globalThis.crypto;
   const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
