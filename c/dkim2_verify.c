@@ -377,13 +377,19 @@ static const char *sig_alg_key_type(const char *alg) {
 static char *blank_sig_values(const char *raw_val) {
     size_t rlen = strlen(raw_val);
 
-    /* Find the s= tag at a tag boundary (start, or after ';'/WSP), matching
-       the tag name case-insensitively per -07 §10. */
-    const char *s_tag = NULL;
+    /* Find the s= tag at a tag boundary (start, or after ';'/FWS), matching
+       the tag name case-insensitively per -07 §10.  FWS may sit between the
+       tag name and '=' ("s = sel:alg:sig", Turscar tags_whitespace). */
+    const char *s_tag = NULL, *s_eq = NULL;
     for (const char *p = raw_val; *p; p++) {
-        if ((p[0] == 's' || p[0] == 'S') && p[1] == '=') {
-            if (p == raw_val || p[-1] == ';' || p[-1] == ' ' || p[-1] == '\t') {
+        if ((p[0] == 's' || p[0] == 'S')
+            && (p == raw_val || p[-1] == ';' || p[-1] == ' ' || p[-1] == '\t'
+                || p[-1] == '\n')) {
+            const char *q = p + 1;
+            while (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n') q++;
+            if (*q == '=') {
                 s_tag = p;
+                s_eq = q;
                 break;
             }
         }
@@ -395,13 +401,13 @@ static char *blank_sig_values(const char *raw_val) {
     if (!out) return NULL;
     size_t pos = 0;
 
-    /* Copy prefix up to and including "s=" */
-    size_t prefix_len = (size_t)(s_tag - raw_val) + 2;
+    /* Copy prefix up to and including the "=" of s= */
+    size_t prefix_len = (size_t)(s_eq - raw_val) + 1;
     memcpy(out, raw_val, prefix_len);
     pos = prefix_len;
 
     /* Parse comma-separated selector:alg:sigval entries */
-    const char *p = s_tag + 2;
+    const char *p = s_eq + 1;
     int first = 1;
     while (*p && *p != ';') {
         while (*p == ' ' || *p == '\t') p++;

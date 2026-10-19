@@ -159,6 +159,21 @@ int main(void) {
         mail_from, rcpts, raw_headers, 3, body, mi_val, sig_val);
     assert(st == DKIM2_OK);
 
+    /* --- FWS between the s tag name and '=' ("s = sel:alg:sig"): the
+       signature bytes must still be blanked for the signing input (Turscar
+       tags_whitespace; the blanker used to look only for "s=") --- */
+    {
+        const char *at = strstr(sig_val, " s=");
+        assert(at != NULL);
+        size_t off = (size_t)(at - sig_val);
+        char ws_sig[strlen(sig_val) + 8];
+        memcpy(ws_sig, sig_val, off);
+        strcpy(ws_sig + off, "\t s \t= ");
+        strcat(ws_sig, at + 3);
+        st = verify_test_message(mail_from, rcpts, raw_headers, 3, body, mi_val, ws_sig);
+        assert(st == DKIM2_OK);
+    }
+
     /* --- Error: tampered body → hash mismatch → FAIL --- */
     st = verify_test_message(mail_from, rcpts, raw_headers, 3,
         "TAMPERED body!\r\n", mi_val, sig_val);
