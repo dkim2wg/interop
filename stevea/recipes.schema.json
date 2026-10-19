@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dkim2.org/schemas/recipe-v1",
+  "title": "DKIM2 recipes",
+  "description": "see draft-dkim-dkim2-spec",
+  "type": "object",
+  "properties": {
+    "h": {
+      "description":
+        "recipes to recreate header fields. keys are header field names matched case-insensitively and there MUST NOT be keys that differ only in case"
+      ,
+      "oneOf": [
+        {
+          "description": "per-field-name recipe arrays",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/recipe-steps"
+          }
+        },
+        {
+          "description": "previous header state cannot be recreated",
+          "type": "null"
+        }
+      ]
+    },
+    "b": {
+      "description": "recipes to recreate the body",
+      "oneOf": [
+        {
+          "description": "body recipes",
+          "$ref": "#/$defs/recipe-steps"
+        },
+        {
+          "description": "previous body state cannot be recreated",
+          "type": "null"
+        },
+        {
+          "description": "body was truncated (DSN)",
+          "type": "object",
+          "properties": {
+            "z": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "z"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "h"
+      ]
+    },
+    {
+      "required": [
+        "b"
+      ]
+    }
+  ],
+  "$defs": {
+    "recipe-steps": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "description": "copy lines/fields, start to end inclusive",
+            "type": "object",
+            "properties": {
+              "c": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            },
+            "required": [
+              "c"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "description": "data lines/values to emit",
+            "type": "object",
+            "properties": {
+              "d": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "d"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  }
+}

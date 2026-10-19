@@ -1,0 +1,21 @@
+ErrMessageInstanceMissing: PERMERROR Message-Instance m=<x> missing
+ErrMessageInstanceSyntaxError(Header, Detail, Err): PERMERROR Message-Instance m=<x> syntax error
+ErrMessageInstanceTagMissing(Header): PERMERROR Message-Instance m=<x> tag=<y> missing
+ErrMessageInstanceIsNotSigned: PERMERROR Message-Instance m=<x> is not signed
+ErrSignatureMissing: PERMERROR DKIM2-Signature i=<x> missing
+ErrSignatureSyntaxError(Header, Err): PERMERROR DKIM2-Signature i=<x> syntax error
+ErrSignatureTagMissing(Header): PERMERROR DKIM2-Signature i=<x> tag=<y> missing
+ErrSignatureExpired: PERMERROR DKIM2-Signature i=<x> signature expired
+ErrMailFromValueDidNotMatch: PERMERROR: MAIL FROM <value> did not match
+ErrRcptToValueDidNotMatch: PERMERROR: RCPT TO <value> did not match
+ErrMailFromAndDoNotMatch: PERMERROR: MAIL FROM and d= do not match
+ErrTempSignaturePublicKeyValueCouldNotBeFetched(Err): TEMPERROR: DKIM2-Signature i=<x> public key <value> could not be fetched
+ErrSignaturePublicKeyValueDoesNotExist: PERMERROR: DKIM2-Signature i=<x> public key <value> does not exist
+ErrSignaturePublicKeyValueHasMultipleRecords: PERMERROR: DKIM2-Signature i=<x> public key <value> has multiple records
+ErrSignaturePublicKeyValueHasASyntaxError(Err,Detail): PERMERROR: DKIM2-Signature i=<x> public key <value> has a syntax error
+ErrSignaturePublicKeyValueAlgorithmMismatch: PERMERROR: DKIM2-Signature i=<x> public key <value> algorithm mismatch
+ErrSignaturePublicKeyValueHasBeenRevoked: PERMERROR: DKIM2-Signature i=<x> public key <value> has been revoked
+ErrFailSignaturePublicKeyValueIncorrectSignature(Detail,Err): FAIL: DKIM2-Signature i=<x> public key <value> incorrect signature
+ErrFailMessageInstanceHeaderHashValueMismatch(Detail): FAIL: Message Instance m=<x> header hash <value> mismatch
+ErrFailMessageInstanceBodyHashValueMismatch(Detail): FAIL: Message Instance m=<x> body hash <value> mismatch
+ErrFailSignatureValidationFailed(Detail): FAIL: DKIM2-Signature i=<x> validation failed
