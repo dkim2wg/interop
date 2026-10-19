@@ -575,7 +575,10 @@ func TestPropagateStripsTheBridgeWithItsHop(t *testing.T) {
 // (as §12.1.1 makes it: MAIL FROM <>, one Message-Instance, one signature).
 func signedDSNAround(t *testing.T, embedded []byte, domain string) []byte {
 	t.Helper()
-	return signOnce(t, dsnAround(t, embedded, false),
+	// The reporter's own postmaster, so the DSN's From is Authentic (§11).
+	dsn := bytes.Replace(dsnAround(t, embedded, false), []byte("From: postmaster@test3.dkim2.com\r\n"),
+		[]byte("From: postmaster@"+domain+"\r\n"), 1)
+	return signOnce(t, dsn,
 		"../../keys/sel1._domainkey."+domain+".pem", "sel1", domain,
 		"", []string{"user@test2.dkim2.com"})
 }

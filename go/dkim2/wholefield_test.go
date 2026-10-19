@@ -168,6 +168,7 @@ func TestWholeFieldF5_LongDomainSigns(t *testing.T) {
 		t.Fatal(err)
 	}
 	domain := strings.Repeat("a", 40) + "." + strings.Repeat("b", 40) + ".example.com"
+	raw = bytes.Replace(raw, []byte("From: sender@test1.dkim2.com"), []byte("From: sender@"+domain), 1)
 	var out bytes.Buffer
 	if err := Sign(bytes.NewReader(raw), &out, strictKey(t, "sel1"), SignOptions{
 		Selector:  "sel1",

@@ -332,6 +332,23 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		if err := checkChainOfCustody(parsedSigs); err != nil {
 			return nil, err
 		}
+
+		// §14.8: every From that the Recipes show, against its signature.
+		// Outbound, the unsigned instances above the top signature are the
+		// signer's own to answer for (Sign checks them itself).
+		mis := make(map[int]*MessageInstance, len(miHeaders))
+		for _, raw := range miHeaders {
+			if mi, err := parseMI(raw); err == nil {
+				mis[mi.Version] = mi
+			}
+		}
+		limit := maxMIVersion
+		if unsignedTop {
+			limit = topSig.MIVersion
+		}
+		if err := checkFromAuthentic(contentHeaders, mis, maxMIVersion, limit, parsedSigs); err != nil {
+			return nil, err
+		}
 	}
 
 	skipTS := len(opts) > 0 && opts[0].SkipTimestampCheck
@@ -630,6 +647,71 @@ func checkChainOfCustody(sigs []*DKIM2Signature) error {
 			if mf, lit := domainOf(s.MailFrom); lit || !relaxedMatch(mf, s.Domain) {
 				errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d MAIL FROM and d= do not match", s.Sequence))
 			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// fromRecipe returns MI mi's header Recipe for From (its key matched
+// without regard to case), and whether it has one.
+func fromRecipe(mi *MessageInstance) ([]RecipeStep, bool) {
+	if mi == nil || mi.Recipe == nil {
+		return nil, false
+	}
+	for k, steps := range mi.Recipe.Headers {
+		if lowerName(k) == "from" {
+			return steps, true
+		}
+	}
+	return nil, false
+}
+
+// checkFromAuthentic is §14.8 (§11).  State k is the message as it was when
+// Message-Instance m=k was the highest: state top is the content as received,
+// and state k-1 is state k with m=k's From Recipe undone.  The From at state
+// 1 must be Authentic for the i=1 signature, and for each k >= 2 whose header
+// Recipe has a "from" key, the From at state k must be Authentic for the
+// lowest i whose m= is k or more.  States above limit are not checked.  A
+// From Recipe that cannot be applied stops the walk: the chain walk reports
+// it.  sigs are in ascending i= order.
+func checkFromAuthentic(content []Header, mis map[int]*MessageInstance, top, limit int, sigs []*DKIM2Signature) error {
+	sigFor := func(k int) *DKIM2Signature {
+		for _, s := range sigs {
+			if s != nil && s.MIVersion >= k {
+				return s
+			}
+		}
+		return nil
+	}
+	failed := map[int]bool{}
+	from := fromFields(content)
+	for k := top; k >= 1; k-- {
+		steps, changed := fromRecipe(mis[k])
+		if k <= limit && (k == 1 || changed) {
+			var s *DKIM2Signature
+			if k == 1 {
+				if len(sigs) > 0 && sigs[0] != nil && sigs[0].Sequence == 1 {
+					s = sigs[0]
+				}
+			} else {
+				s = sigFor(k)
+			}
+			if s != nil && !fromAuthentic(from, s.Domain) {
+				failed[s.Sequence] = true
+			}
+		}
+		if changed && k > 1 {
+			prev, err := applyHeaderRecipe(from, "From", steps)
+			if err != nil {
+				break
+			}
+			from = prev
+		}
+	}
+	var errs []error
+	for _, s := range sigs {
+		if s != nil && failed[s.Sequence] {
+			errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d matching From is not authentic", s.Sequence))
 		}
 	}
 	return errors.Join(errs...)

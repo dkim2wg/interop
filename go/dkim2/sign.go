@@ -264,7 +264,25 @@ func LoadPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 	return key, nil
 }
 
-// checkUpstream is the signer gate.  A message with no DKIM2 headers passes.
+// checkSignerFrom is §12.4 for a signer about to sign as d: when it is
+// signing the original message (no upstream signature covers anything) or
+// an unsigned Message-Instance (m= above covered) changed From, the current
+// From must be Authentic for d (§11).
+func checkSignerFrom(headers []Header, mis []*MessageInstance, covered int, d string) error {
+	need := covered == 0
+	for _, mi := range mis {
+		if _, changed := fromRecipe(mi); changed && mi.Version > covered {
+			need = true
+		}
+	}
+	if need && !fromAuthentic(fromFields(headers), d) {
+		return fmt.Errorf("not signing: From header field is not Authentic for d=%s", d)
+	}
+	return nil
+}
+
+// checkUpstream is the signer gate.  A message with no DKIM2 headers must
+// have a From that is Authentic for the signing domain, and passes.
 // Otherwise the existing chain is verified in outbound mode (unsigned
 // Message-Instances above the top signature are allowed) and, unless
 // opts.AllowNullBodyRecipe, no UNSIGNED Message-Instance may carry a null
@@ -294,7 +312,7 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 		}
 	}
 	if !chain {
-		return nil
+		return checkSignerFrom(headers, mis, covered, opts.Domain)
 	}
 	fetcher := opts.Fetcher
 	if fetcher == nil {
@@ -317,6 +335,9 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 			return fmt.Errorf("not signing: Message-Instance chain does not undo cleanly: %w", r.Error)
 		}
 		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail i=%d d=%s: %w", r.Sequence, r.Domain, r.Error)
+	}
+	if err := checkSignerFrom(headers, mis, covered, opts.Domain); err != nil {
+		return err
 	}
 	if opts.AllowNullBodyRecipe {
 		return nil

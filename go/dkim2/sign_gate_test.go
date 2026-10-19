@@ -67,7 +67,7 @@ func dropTopSig(t *testing.T, msg []byte) []byte {
 }
 
 func TestGateFreshSigns(t *testing.T) {
-	wantSigned(t, []byte("From: a@test1.dkim2.com\r\nTo: b@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n"), false)
+	wantSigned(t, []byte("From: a@test3.dkim2.com\r\nTo: b@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n"), false)
 }
 
 func TestGateValidChainSigns(t *testing.T) {
@@ -142,7 +142,9 @@ func TestGateForgedNullTopRefusedEvenWithOption(t *testing.T) {
 // DKIM2-Signature at all.  The signer still checks the MI chain.
 func miOnly(t *testing.T, recipe, body string) []byte {
 	t.Helper()
-	orig := []byte("From: Sender <sender@test1.dkim2.com>\r\nTo: user@test2.dkim2.com\r\nSubject: hello\r\n\r\nbody line\r\n")
+	// The list host (test3) originates the post as i=1, so From is its own
+	// (§12.4).
+	orig := []byte("From: Sender <sender@test3.dkim2.com>\r\nTo: user@test2.dkim2.com\r\nSubject: hello\r\n\r\nbody line\r\n")
 	m1 := dropAllSigs(t, signOnce(t, orig, "../../keys/sel1._domainkey.test1.dkim2.com.pem",
 		"sel1", "test1.dkim2.com", "<sender@test1.dkim2.com>", []string{"<user@test2.dkim2.com>"}))
 	return dropAllSigs(t, nullHop(t, m1, subjectTag, body, recipe))

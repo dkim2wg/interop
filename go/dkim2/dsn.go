@@ -364,6 +364,11 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	// §16: "If this value has no address ("<>") then a DSN MUST NOT be sent."
+	if upstream == "" || isNullPath(upstream) {
+		return nil, "", fmt.Errorf("propagate: the returned message's top signature has mf=<>, " +
+			"so no DSN may be sent (§16)")
+	}
 
 	// 3. Splice the rebuilt original back into the part and reassemble the body.
 	//    splitPartHeaders trims the CRLF that ends the boundary DELIMITER line
@@ -392,10 +397,18 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 	//    belong to the DSN we received, which has already been authenticated
 	//    (§12.1.2) and is not being continued. Leaving them makes the new
 	//    instance m=2 on a chain whose i=1 is somebody else's.
+	//    The propagated DSN is this Forwarder's new message, so its From must
+	//    be Authentic for opts.Domain (§11, §12.4); the downstream reporter's
+	//    From field(s) are replaced by this domain's MAILER-DAEMON when not.
+	rewriteFrom := !fromAuthentic(fromFields(headers), opts.Domain)
 	var assembled bytes.Buffer
+	if rewriteFrom {
+		assembled.WriteString("From: MAILER-DAEMON@" + opts.Domain + "\r\n")
+	}
 	for _, h := range headers {
 		if strings.EqualFold(h.Name, "message-instance") ||
-			strings.EqualFold(h.Name, "dkim2-signature") {
+			strings.EqualFold(h.Name, "dkim2-signature") ||
+			(rewriteFrom && strings.EqualFold(h.Name, "from")) {
 			continue
 		}
 		assembled.WriteString(h.Raw)
