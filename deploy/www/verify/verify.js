@@ -2,7 +2,7 @@
 import { parseMessage, collectLevels, parseTagList, parseHashSets } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
-import { fetchKey as dohFetchKey } from './doh.js';
+import { fetchKey as dohFetchKey, keyName, DEFINITIVE_KEY_ERRORS } from './doh.js';
 import { decodeRecipe, classifyRecipeDecodeError, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe, MalformedRecipe } from './recipes.js';
 import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
 import { planChain } from './plan.js';
@@ -160,7 +160,6 @@ export async function verifyMessage(raw, opts = {}) {
 }
 
 async function verifyOnce(raw, opts = {}) {
-  const fetchKey = opts.fetchKey || dohFetchKey;
   const now = opts.now || Math.floor(Date.now() / 1000);
   const { headers, body } = parseMessage(raw);
   const { instances, signatures, dupInstances, dupSignatures, unkeyableSignatures, rangeError } =
@@ -256,6 +255,11 @@ async function verifyOnce(raw, opts = {}) {
   if (structErr.length) {
     return { overall: 'permerror', summary: structErr.join('; '), levels: [] };
   }
+
+  // Start every public-key lookup now, so they overlap each other and the
+  // hashing below; each signature check awaits its own.
+  const fetchKey = opts.fetchKey
+    || prefetchKeys(signatures, sigNums, { fetch: opts.dohFetch, dohUrl: opts.dohUrl });
 
   // --- the chain of message states, one per instance (top-down) ----------
   // The planned walk (plan.js) works out every instance's hash input from
@@ -671,6 +675,40 @@ export function undoChain(headers, body, instances, maxM) {
     bodyHash: (m, alg) => hashB64(binaryToBytes(canonBody(linesToBody(states[m].bodyLines))), alg),
     headerValues: (m, name) => headerValues(states[m].fields, name),
     checkBottom: (recipe) => { applyRecipe(recipe, states[1]); },
+  };
+}
+
+// Start the DoH lookup of every distinct selector._domainkey.domain the
+// DKIM2-Signatures name for an algorithm we implement, all at once, and
+// return a fetchKey(selector, domain) that answers from them. A prefetched
+// answer that is definitive (a key, NXDOMAIN, no TXT record, an unusable
+// record) is used as it is; anything else (a timeout, SERVFAIL, a network
+// error) is looked up again the ordinary way, so every verdict is what it
+// would have been without the prefetch.
+function prefetchKeys(signatures, sigNums, dohOpts) {
+  const pending = new Map();
+  for (const i of sigNums) {
+    const sig = signatures[i];
+    const sTag = sig.tags.find((t) => t.tag === 's');
+    const sets = sTag && parseSigSets(rawTagValue(sTag));
+    if (!sets || sig.map.d === undefined) continue;
+    for (const ss of sets) {
+      if (!SUPPORTED_ALGS.has(ss.alg)) continue;
+      const name = keyName(ss.selector, sig.map.d);
+      if (pending.has(name)) continue;
+      // Settled into an outcome, so an unawaited failure is never unhandled.
+      pending.set(name, dohFetchKey(ss.selector, sig.map.d, dohOpts)
+        .then((key) => ({ key }), (err) => ({ err })));
+    }
+  }
+  return async (selector, domain) => {
+    const p = pending.get(keyName(selector, domain));
+    if (p) {
+      const { key, err } = await p;
+      if (!err) return key;
+      if (err instanceof Error && DEFINITIVE_KEY_ERRORS.has(err.message)) throw err;
+    }
+    return dohFetchKey(selector, domain, dohOpts);
   };
 }
 
