@@ -15,9 +15,8 @@ type Header struct {
 }
 
 // parseHeaders reads headers from r up to the blank line separator.
-// Returns the headers and an io.Reader positioned at the start of the body.
-// Line endings are normalised to CRLF.
-func parseHeaders(r io.Reader) ([]Header, io.Reader, error) {
+// Returns the headers and the body, its line endings normalised to CRLF.
+func parseHeaders(r io.Reader) ([]Header, *bytes.Buffer, error) {
 	br := bufio.NewReader(r)
 	headers, err := readHeaderFields(br)
 	if err != nil {
@@ -104,20 +103,43 @@ func readHeaderFields(br *bufio.Reader) ([]Header, error) {
 // any run of CRs before the LF, or none at all on the last line) normalised
 // to CRLF.  chainPlan.Write splits a streamed body exactly the same way.
 func readBody(br *bufio.Reader) (*bytes.Buffer, error) {
-	bodyBuf := &bytes.Buffer{}
-	for {
-		chunk, err := br.ReadString('\n')
-		if len(chunk) > 0 {
-			line := strings.TrimRight(chunk, "\r\n")
-			bodyBuf.WriteString(line)
-			bodyBuf.WriteString("\r\n") // intentional: DKIM2 always hashes CRLF-normalised bodies
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
+	raw := &bytes.Buffer{}
+	if _, err := br.WriteTo(raw); err != nil {
+		return nil, err
 	}
-	return bodyBuf, nil
+	return bytes.NewBuffer(normalizeBody(raw.Bytes())), nil
+}
+
+// normalizeBody returns b with every line ending made CRLF, as readBody
+// describes: b itself when every line already ends in exactly one CRLF,
+// else a copy built from whole runs of b with only the endings rewritten.
+func normalizeBody(b []byte) []byte {
+	var out []byte    // nil until some line needs rewriting
+	done, pos := 0, 0 // b[:done] is in out
+	for pos < len(b) {
+		lf := bytes.IndexByte(b[pos:], '\n')
+		if lf < 0 {
+			lf = len(b)
+		} else {
+			lf += pos
+		}
+		t := lf
+		for t > pos && b[t-1] == '\r' {
+			t--
+		}
+		if lf < len(b) && lf-t == 1 {
+			pos = lf + 1
+			continue
+		}
+		if out == nil {
+			out = make([]byte, 0, len(b)+len(b)/8+2)
+		}
+		out = append(append(append(out, b[done:pos]...), b[pos:t]...), crlf...)
+		pos = min(lf+1, len(b))
+		done = pos
+	}
+	if out == nil {
+		return b
+	}
+	return append(out, b[done:]...)
 }

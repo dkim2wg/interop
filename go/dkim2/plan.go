@@ -24,7 +24,8 @@ import (
 //     Recipe.  An instance with no body Recipe shares its parent's list, so
 //     identical bodies share one set of digests.  Then ONE pass over the
 //     received body, which may arrive in chunks cut anywhere (Write), feeds
-//     each line to the digest of every list that holds it.
+//     each line to the digest of every list that holds it -- a run of lines
+//     between two segment boundaries in one write, sliced from the chunk.
 //   - Headers: the fields are split once; per field name and per instance
 //     the plan keeps the list of values (received or literal), numbered
 //     bottom-up as Recipes number them.  A value is canonicalized at most
@@ -61,9 +62,15 @@ type chainPlan struct {
 	next    int // the line at which some list's segment begins or ends
 	active  []*bodyAcc
 	part    []byte // a line not yet ended by LF
+	norm    []byte // lines whose endings needed rewriting to CRLF, not yet hashed
 	tooLong bool   // a body line too long to hash: Verify fails "body hash"
 	closed  bool
 }
+
+// normFlush is how many rewritten bytes chainPlan.lines gathers in norm
+// before hashing them: a body with bare-LF endings is hashed in chunks of
+// about this size rather than line by line.
+const normFlush = 64 * 1024
 
 type planInstance struct {
 	mi        *MessageInstance
@@ -138,11 +145,28 @@ func (a *bodyAcc) line(text []byte) {
 	a.wrote = true
 }
 
-// span hashes whole non-blank lines, each already ending CRLF.
-func (a *bodyAcc) span(b []byte) {
-	a.flush()
-	a.h.Write(b)
-	a.wrote = true
+// span hashes a run of whole lines, each ending in exactly one CRLF, of
+// which the last trailing are blank (see trailingBlank).  Everything
+// before those goes to the digest in one write; they are held back.
+func (a *bodyAcc) span(b []byte, trailing int) {
+	if end := len(b) - 2*trailing; end > 0 {
+		a.flush()
+		a.h.Write(b[:end])
+		a.wrote = true
+	}
+	a.pending += trailing
+}
+
+// trailingBlank counts the blank lines that end b, a run of lines each
+// ending in exactly one CRLF, scanning back from the end.  (A line's text
+// never ends in CR, so "\r\n" preceded by LF or the start is a blank line.)
+func trailingBlank(b []byte) int {
+	n, end := 0, len(b)
+	for end >= 2 && (end == 2 || b[end-3] == '\n') {
+		end -= 2
+		n++
+	}
+	return n
 }
 
 func (a *bodyAcc) sum() []byte {
@@ -252,6 +276,30 @@ func newChainPlan(headers []Header) *chainPlan {
 	}
 	p.advance(1)
 	return p
+}
+
+// hashBodyStream hashes the body read from r for every algorithm in algs
+// in one pass: the planned walk's body pass with the received body as its
+// only list, so lines are split, their endings made CRLF and the body
+// canonicalized exactly as there, and each digest is fed whole runs of
+// lines straight from what r delivers.  A line too long to hash fails with
+// bufio.ErrTooLong.
+func hashBodyStream(r io.Reader, algs []string) (map[string][]byte, error) {
+	l := &bodyList{segs: []bodySeg{{false, 1, math.MaxInt}}, lines: -1, accs: map[string]*bodyAcc{}}
+	for _, alg := range algs {
+		newHash, ok := HashAlg(alg)
+		if !ok {
+			return nil, fmt.Errorf("unsupported hash algorithm: %q", alg)
+		}
+		l.accs[alg] = &bodyAcc{h: newHash()}
+	}
+	p := &chainPlan{top: 1, inst: []*planInstance{nil, {body: l}}, lists: []*bodyList{l}}
+	p.advance(1)
+	if _, err := io.Copy(p, r); err != nil {
+		return nil, err
+	}
+	p.close()
+	return p.topHashes(algs)
 }
 
 // undoHeaders applies one header Recipe to the per-name value lists hdr,
@@ -388,31 +436,84 @@ func trimCRs(b []byte) []byte {
 	return b
 }
 
-// line takes one body line, its ending already stripped.
-func (p *chainPlan) line(text []byte) {
-	if len(text)+2 > maxCanonLine {
-		p.tooLong = true
+// spanOut hashes run, whole lines each ending in exactly one CRLF, into
+// every active digest.
+func (p *chainPlan) spanOut(run []byte) {
+	if len(run) == 0 {
 		return
 	}
-	ln := p.n + 1
-	if ln == p.next {
-		p.advance(ln)
-	}
+	k := trailingBlank(run)
 	for _, a := range p.active {
-		a.line(text)
-	}
-	p.n = ln
-}
-
-func (p *chainPlan) spanOut(b []byte) {
-	for _, a := range p.active {
-		a.span(b)
+		a.span(run, k)
 	}
 }
 
-// Write takes the next piece of the raw body.  Lines are split as readBody
-// splits them.  A run of ordinary lines ("text CRLF") between two segment
-// boundaries goes to each digest in one write.  It never fails.
+// lines takes the complete lines at the start of b, split as readBody
+// splits them, and returns the rest: a line not yet ended by LF.  Between
+// two segment boundaries a run of lines that already end in one CRLF goes
+// to each digest in one write, sliced from b; a line ending otherwise
+// (bare LF, CRs piled up before the LF) is rewritten into p.norm, which
+// then gathers the lines after it until a boundary or normFlush bytes.
+func (p *chainPlan) lines(b []byte) []byte {
+	run, pos := -1, 0 // b[run:pos] is a run not yet hashed
+	for {
+		i := bytes.IndexByte(b[pos:], '\n')
+		if i < 0 {
+			break
+		}
+		lf := pos + i
+		t := lf // the end of the line's text
+		for t > pos && b[t-1] == '\r' {
+			t--
+		}
+		if t-pos+2 > maxCanonLine {
+			p.tooLong = true
+			return nil
+		}
+		ln := p.n + 1
+		if ln == p.next {
+			if run >= 0 {
+				p.spanOut(b[run:pos])
+				run = -1
+			}
+			p.flushNorm()
+			p.advance(ln)
+		}
+		switch {
+		case lf-t == 1 && len(p.norm) == 0:
+			if run < 0 {
+				run = pos
+			}
+		case lf-t == 1:
+			p.norm = append(p.norm, b[pos:lf+1]...)
+		default:
+			if run >= 0 {
+				p.spanOut(b[run:pos])
+				run = -1
+			}
+			p.norm = append(append(p.norm, b[pos:t]...), crlf...)
+		}
+		if len(p.norm) >= normFlush {
+			p.flushNorm()
+		}
+		p.n = ln
+		pos = lf + 1
+	}
+	if run >= 0 {
+		p.spanOut(b[run:pos])
+	}
+	p.flushNorm()
+	return b[pos:]
+}
+
+func (p *chainPlan) flushNorm() {
+	p.spanOut(p.norm)
+	p.norm = p.norm[:0]
+}
+
+// Write takes the next piece of the raw body, cut anywhere.  Only a line
+// the cut splits is copied, to be finished by the next piece.  It never
+// fails.
 func (p *chainPlan) Write(b []byte) (int, error) {
 	n := len(b)
 	if p.tooLong {
@@ -425,57 +526,45 @@ func (p *chainPlan) Write(b []byte) (int, error) {
 			p.tooLong = len(trimCRs(p.part))+2 > maxCanonLine
 			return n, nil
 		}
-		p.part = append(p.part, b[:i]...)
-		p.line(trimCRs(p.part))
+		p.part = append(p.part, b[:i+1]...)
+		p.lines(p.part)
 		p.part = p.part[:0]
 		b = b[i+1:]
 	}
-	span, pos := -1, 0
-	for !p.tooLong {
-		i := bytes.IndexByte(b[pos:], '\n')
-		if i < 0 {
-			break
-		}
-		raw := b[pos : pos+i]
-		text := trimCRs(raw)
-		ln := p.n + 1
-		switch {
-		case len(text)+2 > maxCanonLine:
-			p.tooLong = true
-			continue
-		case ln == p.next:
-			if span >= 0 {
-				p.spanOut(b[span:pos])
-				span = -1
-			}
-			p.advance(ln)
-		}
-		if len(text) > 0 && len(raw) == len(text)+1 {
-			if span < 0 {
-				span = pos
-			}
-		} else {
-			if span >= 0 {
-				p.spanOut(b[span:pos])
-				span = -1
-			}
-			for _, a := range p.active {
-				a.line(text)
-			}
-		}
-		p.n = ln
-		pos += i + 1
+	if !p.tooLong {
+		b = p.lines(b)
 	}
 	if p.tooLong {
-		p.part = nil
+		p.part, p.norm = nil, nil
 		return n, nil
 	}
-	if span >= 0 {
-		p.spanOut(b[span:pos])
-	}
-	p.part = append(p.part, b[pos:]...)
+	p.part = append(p.part, b...)
 	p.tooLong = len(trimCRs(p.part))+2 > maxCanonLine
 	return n, nil
+}
+
+// readChunk is the piece size ReadFrom reads the body in.
+const readChunk = 256 * 1024
+
+// ReadFrom reads the rest of the body from r in large pieces; io.Copy uses
+// it when r cannot write itself out (a bytes.Reader hands Write the whole
+// body in one slice instead).
+func (p *chainPlan) ReadFrom(r io.Reader) (int64, error) {
+	buf := make([]byte, readChunk)
+	var total int64
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			p.Write(buf[:n])
+			total += int64(n)
+		}
+		if err == io.EOF {
+			return total, nil
+		}
+		if err != nil {
+			return total, err
+		}
+	}
 }
 
 // close ends the body: an unterminated last line is a line, the literal
@@ -486,7 +575,7 @@ func (p *chainPlan) close() {
 	}
 	p.closed = true
 	if !p.tooLong && len(p.part) > 0 {
-		p.line(trimCRs(p.part))
+		p.lines(append(p.part, '\n'))
 	}
 	p.part = nil
 	for _, l := range p.lists {

@@ -236,6 +236,7 @@ type planCase struct {
 
 func planCases() []planCase {
 	big := strings.Repeat("x", 1<<20)
+	mixed := strings.Repeat("lf line\n\nnext\r\n", 6000) // 18000 lines, > normFlush
 	h := planHdr
 	return []planCase{
 		{name: "no recipe", levels: []planLevel{
@@ -397,6 +398,9 @@ func planCases() []planCase {
 		{name: "body line just short enough", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "a\r\n" + big[:1<<20-2] + "\r\n", `{"b":[{"c":[1,1]}]}`}}},
+		{name: "mixed endings past the rewrite buffer", levels: []planLevel{
+			{h, mixed, ""},
+			{h, "head\n" + mixed + "\n\r\nfoot\r\r\n", `{"b":[{"c":[2,18001]}]}`}}},
 	}
 }
 

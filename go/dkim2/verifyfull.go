@@ -43,7 +43,13 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	}
 	rec.buf, rec.off = nil, true
 
-	if _, err := br.WriteTo(plan); err != nil {
+	// The body: what br already holds, then the rest straight from r (in
+	// one slice from a bytes.Reader, else in plan.ReadFrom's large pieces).
+	if n := br.Buffered(); n > 0 {
+		b, _ := br.Peek(n)
+		plan.Write(b)
+	}
+	if _, err := io.Copy(plan, r); err != nil {
 		return nil, err
 	}
 	plan.close()

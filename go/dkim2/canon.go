@@ -81,36 +81,6 @@ func hashBody(r io.Reader, alg string) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// hashBodyMulti computes the body hash for every algorithm in algs in a
-// single streaming pass over r — the body is canonicalised once and fanned
-// out to one hash.Hash per (deduplicated) algorithm via io.MultiWriter, so r
-// is never buffered regardless of how many algorithms are requested. algs
-// may be empty (r is still drained; an empty map is returned).
-func hashBodyMulti(r io.Reader, algs []string) (map[string][]byte, error) {
-	hashers := make(map[string]hash.Hash, len(algs))
-	writers := make([]io.Writer, 0, len(algs))
-	for _, alg := range algs {
-		if _, exists := hashers[alg]; exists {
-			continue
-		}
-		newHash, ok := HashAlg(alg)
-		if !ok {
-			return nil, fmt.Errorf("unsupported hash algorithm: %q", alg)
-		}
-		h := newHash()
-		hashers[alg] = h
-		writers = append(writers, h)
-	}
-	if err := writeCanonicalBody(io.MultiWriter(writers...), r); err != nil {
-		return nil, err
-	}
-	out := make(map[string][]byte, len(hashers))
-	for alg, h := range hashers {
-		out[alg] = h.Sum(nil)
-	}
-	return out, nil
-}
-
 // Unsigned header fields per spec-06 §4, §4.1.
 var excludedHeaderNames = map[string]bool{
 	"apparently-to": true, "arc-authentication-results": true,

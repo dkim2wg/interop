@@ -1,6 +1,7 @@
 package dkim2
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -33,14 +34,11 @@ func Undo(r io.Reader, w io.Writer, targetVersion int) error {
 // The reconstructed body is then meaningless, so nothing is written to w for
 // such a walk beyond what the caller discards.
 func undo(r io.Reader, w io.Writer, targetVersion int, walkPastNull bool) error {
-	headers, bodyReader, err := parseHeaders(r)
+	headers, bodyBuf, err := parseHeaders(r)
 	if err != nil {
 		return fmt.Errorf("parsing headers: %w", err)
 	}
-	body, err := io.ReadAll(bodyReader)
-	if err != nil {
-		return fmt.Errorf("reading body: %w", err)
-	}
+	body := bodyBuf.Bytes()
 
 	var miList []undoMI
 	var sigRaws []string
@@ -318,28 +316,63 @@ func applyHeaderRecipe(current []Header, fieldName string, steps []RecipeStep) (
 // Body is in CRLF format; returned value is also CRLF. The error wraps
 // errMalformedRecipe when a step breaks the §5.2 rules against the current
 // body (a "c" range past the last line, say).
+//
+// Lines are split as splitLines splits them, but not copied out one by
+// one: when every line of body ends in exactly one CRLF (always so for a
+// body readBody or this function produced), a copied range is one slice of
+// body.
 func undoBodyRecipe(body []byte, steps []RecipeStep) ([]byte, error) {
-	lines := splitLines(body)
-	if err := validateRecipeSteps(steps, len(lines)); err != nil {
+	// start[i] is where line i+1 begins, end[i] where its text ends;
+	// start[n] is len(body).
+	var start, end []int
+	plain := true // every line is text CRLF
+	for pos := 0; pos < len(body); {
+		start = append(start, pos)
+		lf := bytes.IndexByte(body[pos:], '\n')
+		if lf < 0 {
+			end = append(end, len(body))
+			plain = false
+			pos = len(body)
+			break
+		}
+		lf += pos
+		t := lf
+		if t > pos && body[t-1] == '\r' {
+			t--
+		}
+		plain = plain && t == lf-1
+		end = append(end, t)
+		pos = lf + 1
+	}
+	start = append(start, len(body))
+	if err := validateRecipeSteps(steps, len(end)); err != nil {
 		return nil, fmt.Errorf("body: %w", err)
 	}
 
-	var result []string
+	result := make([]byte, 0, len(body))
 	for _, step := range steps {
 		if step.Copy != nil {
-			start, end := step.Copy[0], step.Copy[1]
-			result = append(result, lines[start-1:end]...)
+			a, b := step.Copy[0]-1, step.Copy[1]-1
+			if plain {
+				result = append(result, body[start[a]:start[b+1]]...)
+				continue
+			}
+			for i := a; i <= b; i++ {
+				result = append(append(result, body[start[i]:end[i]]...), crlf...)
+			}
 			continue
 		}
 		vals, err := step.literals() // already validated above
 		if err != nil {
 			return nil, fmt.Errorf("body: %w", err)
 		}
-		result = append(result, vals...)
+		for _, v := range vals {
+			result = append(append(result, v...), crlf...)
+		}
 	}
 
 	if len(result) == 0 {
 		return []byte("\r\n"), nil
 	}
-	return []byte(strings.Join(result, "\r\n") + "\r\n"), nil
+	return result, nil
 }
