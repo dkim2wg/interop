@@ -43,6 +43,12 @@
 # not parse (tighten both after the recapture). Do not delete the -06 set
 # before the recapture.
 #
+# draft -07 also has a signer refuse a From that is not Authentic for its d=
+# (§12.4), so both stages sign a copy of each sample whose From ADDRESS has
+# been moved into the signing domain (util/corpus-authentic-from.py; display
+# name, other fields and body byte for byte): test1.dkim2.com for `matrix`,
+# dkim2.com for the upstream signature `lists` makes on the box.
+#
 # Nothing under corpus/ is committed (see .gitignore). The upstream archives
 # are the source of truth; the sampler is deterministic over them, so a
 # failing message is named by its id and can be re-fetched. Promote a message
@@ -92,7 +98,11 @@ if has_stage matrix; then
   echo "== matrix: $(ls "$CACHE"/sample/*.eml | wc -l | tr -d ' ') samples x ($SIGNERS) signers x ($VERIFIERS) verifiers"
   rm -rf "$RES/fail"; mkdir -p "$RES/fail"
   printf 'id\tsigner\tverifier\tresult\n' > "$RES/matrix.tsv"
-  for f in "$CACHE"/sample/*.eml; do
+  # -07 §12.4: a signer refuses a From that is not Authentic for its d=, so
+  # sign a copy whose From address is in $DOM (display name and all other
+  # bytes unchanged; see util/corpus-authentic-from.py).
+  python3 -I util/corpus-authentic-from.py "$DOM" "$CACHE/sample" "$tmp/authentic" || exit 1
+  for f in "$tmp"/authentic/*.eml; do
     id=$(basename "$f" .eml)
     line="$id"
     for signer in $SIGNERS; do
@@ -142,7 +152,10 @@ if has_stage lists; then
   echo "== lists: replaying through dkim2corpus@{mailman,sympa}.dkim2.com and dkim2stockcorpus@mailman.dkim2.com on $HOST"
   remote=/root/dkim2-corpus
   ssh "$HOST" "mkdir -p $remote" || { echo "ssh $HOST failed"; exit 1; }
-  rsync -a --delete "$CACHE/sample/" "$HOST:$remote/sample/" || { echo "rsync to $HOST failed"; exit 1; }
+  # The box signs each sample upstream as dkim2.com (-07 §12.4: the From must
+  # be Authentic for that d=), so send a copy with the From address moved there.
+  python3 -I util/corpus-authentic-from.py dkim2.com "$CACHE/sample" "$tmp/authentic-box" || exit 1
+  rsync -a --delete "$tmp/authentic-box/" "$HOST:$remote/sample/" || { echo "rsync to $HOST failed"; exit 1; }
   scp -q deploy/dkim2-corpus-inject.sh "$HOST:$remote/inject.sh"
   ssh "$HOST" "bash $remote/inject.sh $remote/sample $remote/capture" || rc=1
   rm -rf "$RES/capture"; mkdir -p "$RES/capture"
