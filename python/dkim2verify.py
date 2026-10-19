@@ -3,7 +3,13 @@
 DKIM2 verifier - draft-ietf-dkim-dkim2-spec-06
 
 Takes a signed email and verifies its DKIM2 signatures using public keys
-from a dns.json file or DNS TXT records.
+from a dns.json file or DNS TXT records (dkim2dns; looked up in the
+background as soon as the header fields are known).
+
+The chain is checked by the planned walk (dkim2plan): every instance's
+header and body hashes come from one pass over the message, without
+rebuilding any previous version.  --undo-walk rebuilds each version from
+the Recipes instead (dkim2undo); the two give the same verdicts.
 
 Exits 0 if all signatures verify, non-zero otherwise.
 """
@@ -56,6 +62,8 @@ from dkim2undo import (
     reconstruct_headers,
     validate_recipes,
 )
+from dkim2plan import BodyPass, plan_chain, recipe_actions
+from dkim2dns import DNSTempError, LiveDNS
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +122,11 @@ def parse_key_record(txt: str) -> dict | None:
     return tags
 
 
-def lookup_public_key(domain: str, selector: str, dns_data: dict):
-    """Look up and validate a public key from dns.json.
+def lookup_public_key(domain: str, selector: str, dns_data):
+    """Look up and validate a public key.
+
+    dns_data is either a dns.json dict or a live key source (dkim2dns
+    LiveDNS / MessageKeys: anything with txt_records(name)).
 
     dns.json maps domain -> "<selector>._domainkey" -> list of [type, value]
     records. A TXT value may be a string, or a list of strings: the
@@ -124,8 +135,15 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
 
     Returns (key_object, key_type) with key_type "rsa" or "ed25519".
     Raises KeyError if there is no record (absent key), KeyRecordError if
-    the record exists but MUST NOT be used.
+    the record exists but MUST NOT be used, DNSTempError if a live lookup
+    could not be completed.
     """
+    if not isinstance(dns_data, dict):
+        txts = dns_data.txt_records(f"{selector}._domainkey.{domain}")
+        if len(txts) > 1:
+            raise KeyRecordError("has multiple records")
+        return _parse_key_txt(txts[0])
+
     domain_records = dns_data.get(domain)
     if not domain_records:
         raise KeyError(f"Domain {domain!r} not found in dns.json")
@@ -140,8 +158,11 @@ def lookup_public_key(domain: str, selector: str, dns_data: dict):
         raise KeyError(f"No TXT record found for {selector_key}.{domain}")
     if len(txts) > 1:
         raise KeyRecordError("has multiple records")
-    txt = txts[0] if isinstance(txts[0], str) else "".join(txts[0])
+    return _parse_key_txt(txts[0] if isinstance(txts[0], str) else "".join(txts[0]))
 
+
+def _parse_key_txt(txt: str):
+    """Validate one key record's text: (key_object, key_type)."""
     tags = parse_key_record(txt)
     if tags is None or "p" not in tags:
         raise KeyRecordError("has a syntax error")
@@ -496,6 +517,16 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
     returned original in a DSN's text/rfc822-headers part (spec-06 §12.1.2) --
     so only the header hash is compared and body is ignored.
     """
+    return check_message_instance(
+        mi_hdr, lambda alg: compute_header_hash(headers, alg),
+        lambda alg: compute_body_hash(body, alg), headers_only)
+
+
+def check_message_instance(mi_hdr: str, header_hash, body_hash,
+                           headers_only: bool = False) -> list[str]:
+    """verify_message_instance() with the message's hashes supplied by
+    header_hash(alg) and body_hash(alg) (the planned walk has no message
+    to give it)."""
     errors = []
     value = _get_header_value(mi_hdr)
     m_val = _extract_tag(value, "m")
@@ -580,7 +611,7 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
                 f"not valid base64 (got {h_val!r})"
             )
         else:
-            expected = compute_header_hash(headers, alg)
+            expected = header_hash(alg)
             if expected != h_actual:
                 errors.append(
                     f"Message-Instance: {alg} header hash mismatch\n"
@@ -598,7 +629,7 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
                 f"not valid base64 (got {b_val!r})"
             )
         else:
-            expected = compute_body_hash(body, alg)
+            expected = body_hash(alg)
             if expected != b_actual:
                 errors.append(
                     f"Message-Instance: {alg} body hash mismatch\n"
@@ -663,7 +694,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         sig_hdr: The DKIM2-Signature header string to verify
         mi_headers: All Message-Instance headers in the message
         other_sig_headers: All DKIM2-Signature headers with lower i= values
-        dns_data: DNS records dict from dns.json
+        dns_data: DNS records dict from dns.json, or a live key source
         skip_timestamp_check: if True, skip §10.3 14-day expiry check
 
     Returns a list of errors (empty = success).
@@ -804,6 +835,9 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             public_key, key_type = lookup_public_key(d_val, selector, dns_data)
         except KeyRecordError as e:
             return [f"PERMERROR DKIM2-Signature i={i_val} public key {selector} {e.what}"]
+        except DNSTempError:
+            return [f"TEMPERROR DKIM2-Signature i={i_val} public key {selector} "
+                    f"could not be fetched"]
         except KeyError:
             if first_absent is None:
                 first_absent = selector
@@ -903,36 +937,59 @@ def _make_result(errors: list[str], top_sig_i: int, top_domain: str) -> VerifyRe
     )
 
 
-def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
-                   verbose: bool = False,
-                   skip_timestamp_check: bool = False,
-                   mail_from: str | None = None,
-                   rcpt_to: list[str] | None = None,
-                   headers_only: bool = False,
-                   allow_unsigned_mi: bool = False) -> "VerifyResult":
-    """Verify all DKIM2 signatures in a message.
+@dataclass
+class _Options:
+    dns_data: object
+    full_chain: bool = False
+    verbose: bool = False
+    skip_timestamp_check: bool = False
+    mail_from: str | None = None
+    rcpt_to: list[str] | None = None
+    headers_only: bool = False
+    allow_unsigned_mi: bool = False
+    walk: str = "plan"
+    walk_trace: list | None = None
 
-    If full_chain is True, walks backwards through MI versions, undoing
-    recipes at each step and verifying that each MI's hashes match the
-    reconstructed message state, and each DKIM2-Signature verifies against
-    the MI/sig headers that existed at that point.
 
-    If headers_only is True the message has no body, as with the returned
-    original in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures
-    and the chain are checked as usual, but of the Message-Instance content
-    check only the top instance's header hash can be, so only that is --
-    nothing further down the chain can be undone without a body to undo into,
-    which is why headers_only overrides full_chain.
+@dataclass
+class _Context:
+    """What the header-field checks leave for the content and chain checks."""
+    mi_headers: list[str]
+    sig_headers: list[str]
+    top_sig: str | None
+    content_headers: list[bytes]
+    all_errors: list[str]
+    keys: object
 
-    If allow_unsigned_mi is True (outbound mode, used by the signer gate) a
-    Message-Instance above the top DKIM2-Signature's m= is allowed: it is the
-    instance the caller is about to sign.  It is still checked against the
-    content and undone like any other; every signature must still verify.
 
-    Returns a VerifyResult (ok=True on success).
-    """
-    raw = _to_bytes(source)
-    headers, body = parse_message(raw)
+def _message_keys(dns_data):
+    """The key source for one message: a dns.json dict as it is, a live
+    source's per-message view (which prefetches)."""
+    return dns_data.for_message() if hasattr(dns_data, "for_message") else dns_data
+
+
+def _key_names(sig_headers: list[str]) -> list[str]:
+    """Every distinct selector._domainkey.domain the signatures name, for the
+    implemented algorithms only."""
+    names = []
+    for h in sig_headers:
+        value = _get_header_value(h)
+        d_val = _extract_tag(value, "d")
+        s_tag = _extract_tag(value, "s")
+        if not d_val or not s_tag:
+            continue
+        for item in s_tag.split(","):
+            parts = [_strip_fws(f) for f in item.split(":", 2)]
+            if len(parts) == 3 and parts[1] in SIG_ALGS:
+                name = f"{parts[0]}._domainkey.{d_val}".lower()
+                if name not in names:
+                    names.append(name)
+    return names
+
+
+def _check_headers(headers: list[bytes], o: _Options):
+    """Every check that needs only the header fields: a VerifyResult if one
+    of them settles the verdict, else a _Context for the rest."""
     all_errors = []
 
     mi_headers = extract_mi_headers(headers)
@@ -1005,7 +1062,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                                     failing_i=None, domain=None,
                                     message=msg, errors=[msg])
 
-    mi_only = allow_unsigned_mi and not sig_headers and bool(mi_headers)
+    mi_only = o.allow_unsigned_mi and not sig_headers and bool(mi_headers)
     if not sig_headers and not mi_only:
         return VerifyResult(ok=False, status='none', failing_i=None, domain=None,
                             message='no DKIM2-Signature headers',
@@ -1026,7 +1083,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         top_sig_m = _extract_tag(top_sig_value, "m")
         top_sig_m_int = int(top_sig_m) if top_sig_m else 0
         if top_sig_m_int != max_mi_version and not (
-                allow_unsigned_mi and top_sig_m_int < max_mi_version):
+                o.allow_unsigned_mi and top_sig_m_int < max_mi_version):
             top_sig_i = _get_seq_from_sig(top_sig)
             top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
             msg = (f"top signature i={top_sig_seq} m={top_sig_m_int} does not cover "
@@ -1038,7 +1095,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         # nd= only ever legitimately appears together with a subsequent, higher-i=
         # signature that takes over custody; a top-of-chain nd= means the chain
         # is incomplete/tampered, so reject before any further checks run.
-        if _extract_tag(top_sig_value, "nd") and not allow_unsigned_mi:
+        if _extract_tag(top_sig_value, "nd") and not o.allow_unsigned_mi:
             top_i = _get_seq_from_sig(top_sig)
             msg = f"DKIM2-Signature i={top_sig_seq} unexpected nd= tag"
             return VerifyResult(ok=False, status='permerror', failing_i=top_i,
@@ -1050,7 +1107,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
     # lowercased, local-part case-sensitive. Applies regardless of
     # full_chain/simple mode. rt= MAY carry extra recipients beyond what was
     # actually delivered; every delivered RCPT TO must be present in the set.
-    if (mail_from is not None or rcpt_to) and top_sig is not None:
+    if (o.mail_from is not None or o.rcpt_to) and top_sig is not None:
         top_i = _get_seq_from_sig(top_sig)
         top_mf_b64 = _extract_tag(top_sig_value, "mf")
         top_rt_raw = _extract_tag(top_sig_value, "rt")
@@ -1061,12 +1118,12 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
             for rt in (top_rt_raw.split(",") if top_rt_raw else []) if rt.strip()
         ]
 
-        if mail_from is not None:
-            if top_mf is None or not _envelope_addr_equal(mail_from, top_mf):
+        if o.mail_from is not None:
+            if top_mf is None or not _envelope_addr_equal(o.mail_from, top_mf):
                 all_errors.append(
-                    f"DKIM2-Signature i={top_i} MAIL FROM {mail_from} did not match"
+                    f"DKIM2-Signature i={top_i} MAIL FROM {o.mail_from} did not match"
                 )
-        for rcpt in (rcpt_to or []):
+        for rcpt in (o.rcpt_to or []):
             if not any(_envelope_addr_equal(rcpt, rt) for rt in top_rts):
                 all_errors.append(
                     f"DKIM2-Signature i={top_i} RCPT TO {rcpt} did not match"
@@ -1079,56 +1136,123 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         if name not in (b"message-instance", b"dkim2-signature"):
             content_headers.append(hdr)
 
-    if not full_chain or headers_only:
-        # Simple mode: verify highest MI against current message, verify all sigs
-        if headers_only:
-            top_mi = max(mi_headers, key=_get_version_from_mi)
-            all_errors.extend(verify_message_instance(
-                top_mi, content_headers, b"", headers_only=True))
-        else:
-            for mi_hdr in mi_headers:
-                errs = verify_message_instance(mi_hdr, content_headers, body)
-                all_errors.extend(errs)
+    # Start fetching every public key now, while the body arrives (a no-op
+    # for a dns.json source).
+    keys = _message_keys(o.dns_data)
+    if hasattr(keys, "prefetch"):
+        keys.prefetch(_key_names(sig_headers))
 
-        sig_by_seq = sorted(sig_headers, key=_get_seq_from_sig)
+    return _Context(mi_headers, sig_headers, top_sig, content_headers,
+                    all_errors, keys)
 
-        # §8.2/§11.4: inter-sig chain custody (nd= or mf=/rt=)
-        all_errors.extend(_chain_custody_errors(sig_by_seq))
-        # §11.8: donotmodify/donotexplode enforcement
-        all_errors.extend(_flag_enforcement_errors(sig_by_seq, mi_headers))
-        # §7.5/§7.6: mf=/rt= MUST be bracketed RFC5321 paths
-        all_errors.extend(_bracket_errors(sig_by_seq))
 
-        for idx, sig_hdr in enumerate(sig_by_seq):
-            prior_sigs = sig_by_seq[:idx]
-            errs = verify_dkim2_signature(sig_hdr, mi_headers, prior_sigs, dns_data,
-                                          skip_timestamp_check=skip_timestamp_check)
+def _verify_simple(ctx: _Context, body: bytes, o: _Options) -> VerifyResult:
+    """Simple mode: verify every MI against the current message (or, with
+    headers_only, the top MI's header hash), and every signature."""
+    all_errors = ctx.all_errors
+    mi_headers, sig_headers = ctx.mi_headers, ctx.sig_headers
+    if o.headers_only:
+        top_mi = max(mi_headers, key=_get_version_from_mi)
+        all_errors.extend(verify_message_instance(
+            top_mi, ctx.content_headers, b"", headers_only=True))
+    else:
+        for mi_hdr in mi_headers:
+            errs = verify_message_instance(mi_hdr, ctx.content_headers, body)
             all_errors.extend(errs)
-
-        top_sig_i = _get_seq_from_sig(top_sig)
-        top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
-        return _make_result(all_errors, top_sig_i, top_domain)
-
-    # Full chain validation: walk backwards through MI versions
-    mi_by_version = {}
-    for mi_hdr in mi_headers:
-        v = _get_version_from_mi(mi_hdr)
-        mi_by_version[v] = mi_hdr
 
     sig_by_seq = sorted(sig_headers, key=_get_seq_from_sig)
 
-    # §8.2/§11.4: inter-sig chain custody check (full-chain mode)
+    # §8.2/§11.4: inter-sig chain custody (nd= or mf=/rt=)
     all_errors.extend(_chain_custody_errors(sig_by_seq))
     # §11.8: donotmodify/donotexplode enforcement
     all_errors.extend(_flag_enforcement_errors(sig_by_seq, mi_headers))
     # §7.5/§7.6: mf=/rt= MUST be bracketed RFC5321 paths
     all_errors.extend(_bracket_errors(sig_by_seq))
 
-    versions = sorted(mi_by_version.keys(), reverse=True)
-    highest = versions[0]
+    for idx, sig_hdr in enumerate(sig_by_seq):
+        prior_sigs = sig_by_seq[:idx]
+        errs = verify_dkim2_signature(sig_hdr, mi_headers, prior_sigs, ctx.keys,
+                                      skip_timestamp_check=o.skip_timestamp_check)
+        all_errors.extend(errs)
 
-    current_content_headers = list(content_headers)
-    current_body = body
+    top_sig_i = _get_seq_from_sig(ctx.top_sig)
+    top_domain = _extract_tag(_get_header_value(ctx.top_sig), 'd') or ''
+    return _make_result(all_errors, top_sig_i, top_domain)
+
+
+class _UndoWalk:
+    """The reference walk: rebuild each previous message from the Recipes."""
+
+    def __init__(self, content_headers: list[bytes], body: bytes):
+        self.headers = list(content_headers)
+        self.body = body
+
+    def mi_errors(self, version, mi_hdr, headers_only):
+        return verify_message_instance(mi_hdr, self.headers, self.body,
+                                       headers_only=headers_only)
+
+    def digests(self, version, with_body):
+        return (compute_header_hash(self.headers),
+                compute_body_hash(self.body) if with_body else None)
+
+    def undo_headers(self, version, h_recipes):
+        self.headers = reconstruct_headers(self.headers, h_recipes)
+
+    def undo_body(self, version, b_recipes):
+        self.body = reconstruct_body(self.body, b_recipes)
+
+
+class _PlannedWalk:
+    """The planned walk (dkim2plan): every instance's hashes are already
+    known; undoing a Recipe only reports what the plan found."""
+
+    def __init__(self, plan):
+        self.plan = plan
+
+    def mi_errors(self, version, mi_hdr, headers_only):
+        hstate, segs = self.plan.state[version]
+        return check_message_instance(
+            mi_hdr, lambda alg: self.plan.headers.digest(hstate, alg),
+            lambda alg: self.plan.body.digest(segs, alg), headers_only)
+
+    def digests(self, version, with_body):
+        hstate, segs = self.plan.state[version]
+        return (self.plan.headers.digest(hstate, "sha256"),
+                self.plan.body.digest(segs, "sha256") if with_body else None)
+
+    def undo_headers(self, version, h_recipes):
+        if version in self.plan.bad:
+            raise MalformedRecipe(f"header Recipe at m={version}")
+
+    def undo_body(self, version, b_recipes):
+        if self.plan.recipe_error(version):
+            raise MalformedRecipe(f"body Recipe at m={version}")
+
+
+def _walk_order(ctx: _Context):
+    mi_by_version = {}
+    for mi_hdr in ctx.mi_headers:
+        v = _get_version_from_mi(mi_hdr)
+        mi_by_version[v] = mi_hdr
+    return mi_by_version, sorted(mi_by_version.keys(), reverse=True)
+
+
+def _verify_chain(ctx: _Context, walk, o: _Options) -> VerifyResult:
+    """Full chain validation: walk backwards through MI versions, checking
+    each instance against the message as `walk` says it was then."""
+    all_errors = ctx.all_errors
+    verbose = o.verbose
+    mi_by_version, versions = _walk_order(ctx)
+
+    sig_by_seq = sorted(ctx.sig_headers, key=_get_seq_from_sig)
+
+    # §8.2/§11.4: inter-sig chain custody check (full-chain mode)
+    all_errors.extend(_chain_custody_errors(sig_by_seq))
+    # §11.8: donotmodify/donotexplode enforcement
+    all_errors.extend(_flag_enforcement_errors(sig_by_seq, ctx.mi_headers))
+    # §7.5/§7.6: mf=/rt= MUST be bracketed RFC5321 paths
+    all_errors.extend(_bracket_errors(sig_by_seq))
+
     # spec-06 §5: once an instance's body Recipe is null the previous body
     # cannot be recreated, so every lower instance is checked on its header
     # hash only (header Recipes are mandatory, so header history still is).
@@ -1141,9 +1265,10 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
             print(f"Verifying MI v={version}...", file=sys.stderr)
 
         # Verify this MI's hashes against the current message state
-        errs = verify_message_instance(
-            mi_hdr, current_content_headers, current_body,
-            headers_only=body_unchecked_below is not None)
+        errs = walk.mi_errors(version, mi_hdr, body_unchecked_below is not None)
+        if o.walk_trace is not None:
+            o.walk_trace.append(
+                (version,) + walk.digests(version, body_unchecked_below is None))
         if errs:
             for e in errs:
                 # A self-describing PERMERROR already names its own m=
@@ -1171,8 +1296,8 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                                if v <= version]
                 prior_sigs = sig_by_seq[:idx]
                 errs = verify_dkim2_signature(
-                    sig_hdr, relevant_mi, prior_sigs, dns_data,
-                    skip_timestamp_check=skip_timestamp_check,
+                    sig_hdr, relevant_mi, prior_sigs, ctx.keys,
+                    skip_timestamp_check=o.skip_timestamp_check,
                 )
                 if errs:
                     all_errors.extend(errs)
@@ -1182,28 +1307,29 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         # If there's a lower version, undo Recipes to reconstruct previous state
         if version > versions[-1]:
             # A malformed r= is already reported (as the specific §11.2
-            # invalid-JSON PERMERROR) by the verify_message_instance() call
-            # above; don't let the same failure crash decode_recipes() here
-            # with an uncaught exception.
+            # invalid-JSON PERMERROR) by the mi_errors() call above; don't
+            # let the same failure crash decode_recipes() here with an
+            # uncaught exception.
             try:
                 recipes = decode_recipes(mi_hdr)
             except (ValueError, TypeError):
                 recipes = None
             if recipes is not None:
+                null_h, h_recipes, null_b, b_recipes = recipe_actions(recipes)
                 # draft-06 §5.1: a present "h" that is JSON null is a syntax
                 # error (distinct from an absent "h", which means headers
                 # were unchanged); mirrors dkim2undo.py's rejection.
-                if "h" in recipes and recipes["h"] is None:
+                if null_h:
                     all_errors.append(
                         f"v={version}: header recipe is null: not permitted"
                     )
                 # A Recipe that cannot be applied (§5: a "c" range past the
                 # items present, or any structural fault the hash check
                 # above already named) is the §11.2 malformed-Recipe
-                # PERMERROR; verify_message_instance() may have reported
-                # the structural part already, so don't list it twice. The
-                # reconstruction stops here: the lower instances cannot be
-                # checked against a state we could not rebuild.
+                # PERMERROR; mi_errors() may have reported the structural
+                # part already, so don't list it twice. The reconstruction
+                # stops here: the lower instances cannot be checked against
+                # a state we could not rebuild.
                 def _malformed(e):
                     msg = _malformed_recipe_error(version)
                     if msg not in all_errors:
@@ -1212,12 +1338,9 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                         print(f"  Malformed Recipe in m={version}: {e}",
                               file=sys.stderr)
 
-                h_recipes = recipes.get("h")
-                if h_recipes and isinstance(h_recipes, dict) and len(h_recipes) > 0:
+                if h_recipes is not None:
                     try:
-                        current_content_headers = reconstruct_headers(
-                            current_content_headers, h_recipes
-                        )
+                        walk.undo_headers(version, h_recipes)
                         if verbose:
                             print(f"  Undid header recipes for v={version}",
                                   file=sys.stderr)
@@ -1229,20 +1352,16 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                             f"v={version}: failed to undo header recipes: {e}"
                         )
 
-                b_recipes = recipes.get("b")
-                if "b" in recipes and b_recipes is None:
+                if null_b:
                     # Null body Recipe: header history is still walked.
                     if body_unchecked_below is None:
                         body_unchecked_below = version
                         if verbose:
                             print(f"  Body not checked below m={version}: "
                                   f"null body Recipe", file=sys.stderr)
-                elif (b_recipes and isinstance(b_recipes, list)
-                      and body_unchecked_below is None):
+                elif b_recipes is not None and body_unchecked_below is None:
                     try:
-                        current_body = reconstruct_body(
-                            current_body, b_recipes
-                        )
+                        walk.undo_body(version, b_recipes)
                         if verbose:
                             print(f"  Undid body recipes for v={version}",
                                   file=sys.stderr)
@@ -1254,6 +1373,7 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
                             f"v={version}: failed to undo body recipes: {e}"
                         )
 
+    top_sig = ctx.top_sig
     top_sig_i = _get_seq_from_sig(top_sig) if top_sig else 0
     top_domain = (_extract_tag(_get_header_value(top_sig), 'd') or '') if top_sig else ''
     result = _make_result(all_errors, top_sig_i, top_domain)
@@ -1261,6 +1381,194 @@ def verify_message(source: "Source", dns_data: dict, full_chain: bool = False,
         result.message += (f" (body not checked below m={body_unchecked_below}: "
                            f"null body Recipe)")
     return result
+
+
+def _normalise_crlf(data: bytes) -> bytes:
+    """parse_message()'s line-ending rule (CRLF, lone CR and lone LF are all
+    one line break, written CRLF), for a piece that does not end in CR."""
+    n = data.count(b"\n")
+    if data.count(b"\r") == n and data.count(b"\r\n") == n:
+        return data
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n").replace(b"\n", b"\r\n")
+
+
+class MessageVerifier:
+    """Incremental verify_message(): feed() the raw message in chunks cut
+    anywhere, then close() for the VerifyResult.
+
+    The header fields are checked (and, with a live key source, every
+    public key looked up in the background) as soon as the blank line after
+    them arrives.  In full-chain mode the planned walk (dkim2plan) hashes
+    the body as it arrives and holds only a partial line; otherwise (simple
+    mode, headers_only, walk="undo", or a message the plan hands back to the
+    undo walk) the body is kept and checked at close().
+    """
+
+    def __init__(self, dns_data, full_chain: bool = False, verbose: bool = False,
+                 skip_timestamp_check: bool = False,
+                 mail_from: str | None = None,
+                 rcpt_to: list[str] | None = None,
+                 headers_only: bool = False,
+                 allow_unsigned_mi: bool = False,
+                 walk: str = "plan",
+                 walk_trace: list | None = None):
+        if walk not in ("plan", "undo"):
+            raise ValueError(f"walk must be 'plan' or 'undo', not {walk!r}")
+        self.o = _Options(dns_data, full_chain, verbose, skip_timestamp_check,
+                          mail_from, rcpt_to, headers_only, allow_unsigned_mi,
+                          walk, walk_trace)
+        self._held_cr = False       # a CR that may be the start of a CRLF
+        self._head = bytearray()    # normalised header block, until it ends
+        self._scanned = 0
+        self._result = None         # settled by the header fields alone
+        self._ctx = None
+        self._plan = None
+        self._pass = None           # BodyPass, or None to keep the body
+        self._body = bytearray()
+
+    def _normalise(self, data: bytes) -> bytes:
+        if self._held_cr:
+            data = b"\r" + data
+            self._held_cr = False
+        if data.endswith(b"\r"):
+            data = data[:-1]
+            self._held_cr = True
+        return _normalise_crlf(data)
+
+    def feed(self, data: bytes) -> None:
+        if not data:
+            return
+        data = self._normalise(data)
+        if self._head is not None:
+            self._head += data
+            idx = self._head.find(b"\r\n\r\n", max(0, self._scanned - 3))
+            if idx < 0:
+                self._scanned = len(self._head)
+                return
+            rest = bytes(self._head[idx + 4:])
+            self._end_of_headers(bytes(self._head[:idx]))
+            data = rest
+        self._body_data(data)
+
+    def _body_data(self, data: bytes) -> None:
+        if self._result is not None or not data:
+            return
+        if self._pass is not None:
+            self._pass.feed(data)
+        else:
+            self._body += data
+
+    def _end_of_headers(self, header_block: bytes) -> None:
+        self._head = None
+        headers, _ = parse_message(header_block)
+        checked = _check_headers(headers, self.o)
+        if isinstance(checked, VerifyResult):
+            self._result = checked
+            return
+        self._ctx = checked
+        o = self.o
+        if o.full_chain and not o.headers_only and o.walk == "plan":
+            mi_by_version, versions = _walk_order(checked)
+            self._plan = plan_chain(
+                checked.content_headers, mi_by_version, versions,
+                ("sha256",) if o.walk_trace is not None else ())
+            if self._plan is not None:
+                self._pass = BodyPass(self._plan.body)
+
+    def close(self) -> VerifyResult:
+        tail = b"\r\n" if self._held_cr else b""
+        self._held_cr = False
+        if self._head is not None:
+            # No blank line yet: the CR held back may complete one.
+            self._head += tail
+            idx = self._head.find(b"\r\n\r\n")
+            if idx < 0:
+                self._end_of_headers(bytes(self._head))
+            else:
+                rest = bytes(self._head[idx + 4:])
+                self._end_of_headers(bytes(self._head[:idx]))
+                self._body_data(rest)
+        else:
+            self._body_data(tail)
+        if self._result is not None:
+            return self._result
+        o, ctx = self.o, self._ctx
+        if not o.full_chain or o.headers_only:
+            return _verify_simple(ctx, bytes(self._body), o)
+        if self._pass is not None:
+            self._pass.close()
+            return _verify_chain(ctx, _PlannedWalk(self._plan), o)
+        return _verify_chain(ctx, _UndoWalk(ctx.content_headers,
+                                            bytes(self._body)), o)
+
+
+def _chunks(source: "Source", size: int = 1 << 16):
+    if isinstance(source, (bytes, bytearray)):
+        yield bytes(source)
+        return
+    if isinstance(source, (str, Path)):
+        with open(source, "rb") as fh:
+            yield from iter(lambda: fh.read(size), b"")
+        return
+    yield from iter(lambda: source.read(size), b"")
+
+
+def verify_message(source: "Source", dns_data, full_chain: bool = False,
+                   verbose: bool = False,
+                   skip_timestamp_check: bool = False,
+                   mail_from: str | None = None,
+                   rcpt_to: list[str] | None = None,
+                   headers_only: bool = False,
+                   allow_unsigned_mi: bool = False,
+                   walk: str = "plan",
+                   walk_trace: list | None = None) -> "VerifyResult":
+    """Verify all DKIM2 signatures in a message.
+
+    dns_data is a dns.json dict or a live key source (dkim2dns.LiveDNS).
+
+    If full_chain is True, walks backwards through MI versions, verifying
+    that each MI's hashes match the message as it was at that point, and
+    each DKIM2-Signature verifies against the MI/sig headers that existed at
+    that point.  walk="plan" (the default) works the previous versions' hashes
+    out in one pass over the message (dkim2plan); walk="undo" rebuilds each
+    previous message from the Recipes (dkim2undo) -- the reference the
+    planned walk is tested against.  Both give the same verdict.  walk_trace,
+    if a list, gets (m, sha256 header hash, sha256 body hash or None) for
+    every instance the walk checks.
+
+    If headers_only is True the message has no body, as with the returned
+    original in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures
+    and the chain are checked as usual, but of the Message-Instance content
+    check only the top instance's header hash can be, so only that is --
+    nothing further down the chain can be undone without a body to undo into,
+    which is why headers_only overrides full_chain.
+
+    If allow_unsigned_mi is True (outbound mode, used by the signer gate) a
+    Message-Instance above the top DKIM2-Signature's m= is allowed: it is the
+    instance the caller is about to sign.  It is still checked against the
+    content and undone like any other; every signature must still verify.
+
+    Returns a VerifyResult (ok=True on success).
+    """
+    o = _Options(dns_data, full_chain, verbose, skip_timestamp_check,
+                 mail_from, rcpt_to, headers_only, allow_unsigned_mi,
+                 walk, walk_trace)
+    if full_chain and not headers_only and walk == "plan":
+        v = MessageVerifier(dns_data, full_chain, verbose, skip_timestamp_check,
+                            mail_from, rcpt_to, headers_only, allow_unsigned_mi,
+                            walk, walk_trace)
+        for chunk in _chunks(source):
+            v.feed(chunk)
+        return v.close()
+
+    raw = _to_bytes(source)
+    headers, body = parse_message(raw)
+    checked = _check_headers(headers, o)
+    if isinstance(checked, VerifyResult):
+        return checked
+    if not full_chain or headers_only:
+        return _verify_simple(checked, body, o)
+    return _verify_chain(checked, _UndoWalk(checked.content_headers, body), o)
 
 
 # ---------------------------------------------------------------------------
@@ -1271,8 +1579,16 @@ def main():
     parser = argparse.ArgumentParser(
         description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-06)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
-    parser.add_argument("--dns-json", required=True,
-                        help="Path to dns.json with public keys")
+    parser.add_argument("--dns-json",
+                        help="Path to dns.json with public keys (default: "
+                             "look the keys up in DNS)")
+    parser.add_argument("--no-prefetch", action="store_true",
+                        help="With DNS keys, look each one up only when its "
+                             "signature is checked")
+    parser.add_argument("--undo-walk", action="store_true",
+                        help="Check the chain by rebuilding every previous "
+                             "version (the reference walk) instead of the "
+                             "planned walk")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Print detailed verification results")
     parser.add_argument("--full-chain", action="store_true",
@@ -1294,9 +1610,13 @@ def main():
     else:
         raw = Path(args.message).read_bytes()
 
-    dns_data = load_dns_json(args.dns_json)
+    if args.dns_json:
+        dns_data = load_dns_json(args.dns_json)
+    else:
+        dns_data = LiveDNS(prefetch=not args.no_prefetch)
     # Full-chain validation is the default; --full-chain kept for compatibility.
     result = verify_message(raw, dns_data, full_chain=True,
+                            walk="undo" if args.undo_walk else "plan",
                             verbose=args.verbose,
                             skip_timestamp_check=args.skip_timestamp_check,
                             mail_from=args.mail_from,
