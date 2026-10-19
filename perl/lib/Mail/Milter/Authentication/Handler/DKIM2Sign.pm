@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Mail::Milter::Authentication::Pragmas;
 # ABSTRACT: Handler class for DKIM2 signing
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 use base 'Mail::Milter::Authentication::Handler';
 
 use Mail::DKIM2::Common qw(extract_mi_version strip_mi_versions load_private_key fold_header parse_mime
@@ -148,6 +148,13 @@ sub addheader_callback {
     $self->change_header( 'X-DKIM2-Snapshot', $_, q{} ) for reverse 1 .. @tokens;
     $self->{'_snapshot_token'} = ( @tokens == 1 && $tokens[0] =~ /\A[0-9a-f]{32}\z/ ) ? $tokens[0] : undef;
 
+    # X-DKIM2-Exploded: a list manager on this host (Mailman, Sympa) marks
+    # each distribution copy, asking for the -07 "exploded" flag (section
+    # 12.5). Its presence, whatever the value, is the request. It never
+    # leaves either.
+    my $exploded = grep { /\AX-DKIM2-Exploded[ \t]*:/i } @{ $self->{'headers'} || [] };
+    $self->change_header( 'X-DKIM2-Exploded', $_, q{} ) for reverse 1 .. $exploded;
+
     # Determine if we should sign this message
     my $should_sign = 0;
     if ( $config->{'sign_authenticated'} && $self->is_authenticated() ) {
@@ -209,8 +216,9 @@ sub addheader_callback {
             $message_data .= _fmtheader($h);
         }
 
-        # Original headers (less X-DKIM2-Snapshot, removed above)
-        foreach my $chunk (grep { !/\AX-DKIM2-Snapshot[ \t]*:/i } @{$self->{'headers'} || []}) {
+        # Original headers (less X-DKIM2-Snapshot and X-DKIM2-Exploded,
+        # removed above)
+        foreach my $chunk (grep { !/\AX-DKIM2-(?:Snapshot|Exploded)[ \t]*:/i } @{$self->{'headers'} || []}) {
             $message_data .= $chunk;
         }
 
@@ -256,6 +264,7 @@ sub addheader_callback {
             Domain   => $sign_domain,
             Selector => $selector,
             Key      => $key,
+            ( $exploded ? ( Exploded => 1 ) : () ),
         );
 
         # Pin t= when configured.  Only the test suite sets this, so that the
@@ -301,6 +310,14 @@ sub addheader_callback {
             $self->metric_count( 'dkim2_sign_total', { 'result' => $reason } );
             $self->dbgout( 'DKIM2Sign',
                 "Not signing for $sign_domain: $gate->{message}", LOG_INFO );
+            # -07 section 13: a message carrying an upstream DKIM2-Signature
+            # that this hop cannot sign MUST NOT be sent on. As
+            # bin/dkim2-milter: 550 5.7.1 with the reason (section 13.2).
+            if ( grep { /\ADKIM2-Signature[ \t]*:/i } @{ $self->{'headers'} || [] } ) {
+                ( my $text = "not signing: $gate->{message}" ) =~ s/[\r\n]+/ /g;
+                $self->reject_mail( "550 5.7.1 $text" );
+                return;
+            }
             # As bin/dkim2-milter: a broken upstream chain is already reported
             # by the verifier's Authentication-Results; the two refusals that
             # are this hop's own business are flagged on the message.
@@ -359,11 +376,18 @@ sub addheader_callback {
                 . ( $over_null ? ' over a null body Recipe' : '' ), LOG_INFO );
         }
         else {
-            # The Signer refuses (result fail) rather than dying, e.g. over a
+            # The Signer refuses (result fail) rather than dying: a From that
+            # is not Authentic for this domain (-07 section 11), or a
             # DKIM2-Signature it cannot key -- which the gate has already
-            # refused.  Either way nothing is added to the message.
+            # refused.  Either way nothing is added to the message, and one
+            # carrying an upstream DKIM2-Signature is not sent on (section 13).
             $self->metric_count( 'dkim2_sign_total', { 'result' => 'error' } );
             $self->log_error( "DKIM2 signing failed: " . ($signer->result_detail // 'no result') );
+            if ( grep { /\ADKIM2-Signature[ \t]*:/i } @{ $self->{'headers'} || [] } ) {
+                ( my $text = 'not signing: ' . ( $signer->details // 'signer refused' ) ) =~ s/[\r\n]+/ /g;
+                $self->reject_mail( "550 5.7.1 $text" );
+                return;
+            }
             $self->_remove_unsigned_instances($handler);
         }
     };
@@ -700,7 +724,10 @@ broken intermediate Message-Instances on the way, it deletes those fields from
 the message once it has signed, through the framework's C<change_header()>
 (an empty value: C<SMFIR_CHGHEADER> in milter mode).
 
-On a refusal nothing is signed and no Message-Instance is added; every
+On a refusal nothing is signed and no Message-Instance is added. A refused
+message that carries an upstream DKIM2-Signature is rejected with
+C<reject_mail("550 5.7.1 not signing: E<lt>reasonE<gt>")> (-07 sections 13
+and 13.2: it must not be sent on; new in 0.23). Otherwise every
 Message-Instance no DKIM2-Signature covers (an C<m=> above every signature's
 C<m=>) is removed, with C<X-DKIM2-Info: ... action=removed-unsigned-mi=...;>,
 as also when the domain has no signing configuration or the Signer fails.
@@ -712,8 +739,12 @@ When it signs over a null body Recipe (a null top, or an unsigned null under
 the top) it prepends C<X-DKIM2-Info: ... action=null-body-recipe;>.  If the Signer itself refuses
 (result C<fail>, e.g. over a DKIM2-Signature it cannot key, which the gate has
 already refused), nothing is added and the failure is logged as an error.
+That includes a From that is not Authentic for the signing domain when
+this hop originates the message or a Message-Instance it signs changed
+From (-07 section 11): the message then goes on unsigned, or, when it
+carries an upstream DKIM2-Signature, is rejected C<550 5.7.1> as above.
 
-This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.
@@ -732,7 +763,7 @@ origination and each copy carries a disclosed recipient set.  But at
 B<origination / submission>, a message with undisclosed (Bcc) recipients —
 envelope recipients that do not appear in the C<To:>/C<Cc:> headers — will have
 those Bcc addresses recorded in C<rt=>, visible to every recipient.  That
-B<leaks the Bcc>, contrary to draft-ietf-dkim-dkim2-spec-06, whose C<rt=>
+B<leaks the Bcc>, contrary to draft-ietf-dkim-dkim2-spec-07, whose C<rt=>
 description requires that Bcc recipients not be revealed to other recipients.
 
 The milter cannot fix this itself: the Postfix milter protocol modifies a
@@ -797,7 +828,10 @@ diff-based MI is computed capturing header and body changes made during local
 processing.  A message whose top Message-Instance does not match and that has
 no such snapshot gets no new MI (and the gate refuses it); one with no
 Message-Instance at all gets C<m=1>.  The handler removes C<X-DKIM2-Snapshot>
-from every message it sees, signed or not.  A snapshot diff whose body Recipe would need more
+from every message it sees, signed or not, and C<X-DKIM2-Exploded> too: a
+message that carried one (Mailman and Sympa mark each distribution copy
+C<X-DKIM2-Exploded: yes>) is signed with the C<exploded> flag (-07 section
+12.5), as is one with more than one recipient, never at C<i=1>.  A snapshot diff whose body Recipe would need more
 than C<max_recipe_literals> literal lines declares the body unrecoverable
 (a null body Recipe): this handler only adds header fields, so it cannot
 move the old body into the MIME epilogue.  Like any null this hop adds, it is

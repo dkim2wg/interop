@@ -45,7 +45,7 @@ $cur->body_set($cur->body_raw . "footer line\r\n");
     $bad->header_raw_prepend('Message-Instance', "m=2; h=sha256:$hh:$bh;");
     my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($bad->as_string);
     ok(!$ok, 'non-reversible chain is rejected');
-    like($why, qr/m=1 does not match|did not undo/, 'failure names the broken instance');
+    like($why, qr/\APERMERROR: Message-Instance m=2 contains invalid JSON\z|\AFAIL: Message-Instance m=1 (?:header|body) hash sha256 mismatch\z/, 'failure names the broken instance');
 }
 
 # --- Recipe-less m=2 over UNCHANGED content: legal, and must be accepted ---

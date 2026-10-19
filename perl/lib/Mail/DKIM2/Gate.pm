@@ -2,7 +2,7 @@ package Mail::DKIM2::Gate;
 use strict;
 use warnings;
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use Email::MIME;
 use Mail::DKIM2::Common qw(extract_mi_version parse_mime valid_sequence chain_number_error);
@@ -53,6 +53,9 @@ The upstream DKIM2-Signatures are verified with a Verifier that allows an
 unsigned Message-Instance above the top signature (the one the caller is about
 to sign), and the Message-Instance chain must match the content and undo
 cleanly down to m=1, including the header history below a null body Recipe.
+Every From the signed instances have had must be Authentic (-07 section
+11); a From changed in an instance no upstream signature covers is not
+checked here but by L<Mail::DKIM2::Signer>, against the C<d=> it signs with.
 
 The result has C<ok> (true to sign), C<verify_result> (C<none> without a
 DKIM2-Signature), C<has_chain>, C<top_null> (the top Message-Instance has a
@@ -174,7 +177,7 @@ sub check {
     } keys %by_v;
     my $top_null = ($top && $null{$top}) ? 1 : 0;
     # How far up the upstream signatures reach: a DKIM2-Signature with m=k
-    # covers instances 1..k (spec-06 §8.2), so the highest m= of any of them
+    # covers instances 1..k (-07 §10.2), so the highest m= of any of them
     # is the top covered instance, and every instance above it is unsigned --
     # this hop will be the first to vouch for it. Only a signature with a
     # valid i= counts: one the Verifier cannot key is a PERMERROR there (so

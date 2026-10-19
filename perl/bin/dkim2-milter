@@ -323,6 +323,11 @@ sub cb_eom {
     # leaves: every mode removes it on sight (inbound adds a fresh one).
     my @snapshot_tokens = _strip_snapshot_header($ctx, $priv, \$message);
 
+    # X-DKIM2-Exploded: a list manager on this host (Mailman, Sympa) marks each
+    # distribution copy, asking the signer for the -07 "exploded" flag. Only
+    # a signing milter acts on it, and it never leaves: removed before signing.
+    $priv->{exploded} = _strip_exploded_header($ctx, $priv, \$message) if $do_sign;
+
     # Extract message-id for logging
     my $msgid = '';
     for my $hdr (@{$priv->{headers}}) {
@@ -494,8 +499,8 @@ sub cb_eom {
         # allow_unsigned_mi: the message may carry a Message-Instance above the
         # top signature that is OURS to sign. A list manager on this host
         # (Mailman, Sympa) records its changes as a new m= and hands the
-        # message to us unsigned; the milter is the step that signs it. spec-06
-        # §11's "Message-Instance m=<x> is not signed" PERMERROR is a receiver's
+        # message to us unsigned; the milter is the step that signs it. -07
+        # §14's "Message-Instance m=<x> is not signed" PERMERROR is a receiver's
         # rule about mail on the wire, and applying it here refused to sign
         # every list post whose upstream chain was signed. The opt-out does not
         # loosen the chain gate: i=1..n still have to verify, and
@@ -572,6 +577,17 @@ sub cb_eom {
         $gate->{message} =~ s/AllowNullBodyRecipe not set/--allow-null-body-recipe not set/
             if defined $gate->{message};
 
+        # -07 section 13: a message that carries DKIM2 header fields but is
+        # not one this hop can sign MUST NOT be sent on -- so a refusal of a
+        # message with an upstream DKIM2-Signature is a 550 5.7.1 with the
+        # reason (section 13.2). One with no signature (only instances this
+        # host's list manager added, which are removed) goes on unsigned.
+        if ($gate->{reason}
+            && grep { lc $_->[0] eq 'dkim2-signature' } @{$priv->{headers}}) {
+            warn "dkim2-milter: not signing $msgid: $gate->{message} (rejected 550 5.7.1)\n";
+            return _reject($ctx, "not signing: $gate->{message}");
+        }
+
         if ($gate->{reason}
             && ($gate->{reason} eq 'upstream-chain' || $gate->{reason} eq 'error')) {
             # Upstream chain is broken — don't extend it with a new signature.
@@ -601,7 +617,12 @@ sub cb_eom {
 
             # Sign before touching the headers, so a signer failure leaves no
             # instance of ours behind.
-            my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
+            my ($sig_header, $sign_why) = _do_sign($sign_msg, $priv, $sign_config);
+            # As for a gate refusal: with an upstream DKIM2-Signature on it
+            # (and this hop's change unsigned) the message is not sent on.
+            return _reject($ctx, "not signing: $sign_why")
+                if !$sig_header
+                && grep { lc $_->[0] eq 'dkim2-signature' } @{$priv->{headers}};
             unless ($sig_header) {
                 _remove_unsigned_instances($ctx, $priv, $msgid);
             } else {
@@ -661,6 +682,17 @@ sub cb_eom {
     }
 
     return SMFIS_CONTINUE;
+}
+
+# Refuse the message with 550 5.7.1 and $reason as the reply text (-07
+# section 13.2), one line, with sendmail's "%" expansion escaped.
+sub _reject {
+    my ($ctx, $reason) = @_;
+    (my $text = $reason // 'not signing') =~ s/[\r\n]+/ /g;
+    $text =~ s/%/%%/g;
+    $text = substr($text, 0, 900) if length $text > 900;
+    $ctx->setreply('550', '5.7.1', $text);
+    return SMFIS_REJECT;
 }
 
 sub cb_close {
@@ -892,17 +924,33 @@ sub _snapshot_key { "X-DKIM2-Snapshot:$_[0]" }
 # the reconstructed message. Returns the tokens that were there.
 sub _strip_snapshot_header {
     my ($ctx, $priv, $message_ref) = @_;
-    my @tok = map { $_->[1] =~ s/^\s+|\s+$//gr }
-              grep { lc $_->[0] eq 'x-dkim2-snapshot' } @{$priv->{headers}};
-    return () unless @tok;
-    $ctx->chgheader('X-DKIM2-Snapshot', $_, '') for reverse 1 .. @tok;
+    return _strip_header($ctx, $priv, $message_ref, 'X-DKIM2-Snapshot');
+}
+
+# Remove every X-DKIM2-Exploded field, as above. True if there was one: the
+# -07 contract makes its presence, whatever its value, the request.
+sub _strip_exploded_header {
+    my ($ctx, $priv, $message_ref) = @_;
+    my @values = _strip_header($ctx, $priv, $message_ref, 'X-DKIM2-Exploded');
+    return @values ? 1 : 0;
+}
+
+# Remove every $name field from the wire (deleted last first, by index among
+# the fields as received, before anything is inserted) and from the
+# reconstructed message. Returns the values that were there, trimmed.
+sub _strip_header {
+    my ($ctx, $priv, $message_ref, $name) = @_;
+    my @val = map { $_->[1] =~ s/^\s+|\s+$//gr }
+              grep { lc $_->[0] eq lc $name } @{$priv->{headers}};
+    return () unless @val;
+    $ctx->chgheader($name, $_, '') for reverse 1 .. @val;
     my $sep = index($$message_ref, "\015\012\015\012");
     if ($sep >= 0) {
         my $head = substr($$message_ref, 0, $sep + 2);
-        $head =~ s/^X-DKIM2-Snapshot[ \t]*:[^\r\n]*\r\n(?:[ \t][^\r\n]*\r\n)*//mig;
+        $head =~ s/^\Q$name\E[ \t]*:[^\r\n]*\r\n(?:[ \t][^\r\n]*\r\n)*//mig;
         substr($$message_ref, 0, $sep + 2) = $head;
     }
-    return @tok;
+    return @val;
 }
 
 sub _format_mi {
@@ -934,21 +982,23 @@ sub _do_sign {
             Algorithm => $config->{algorithm},
             MailFrom  => ( length($priv->{env_from} // '') ? $priv->{env_from} : '<>' ),
             RcptTo    => $priv->{env_rcpt},
+            ($priv->{exploded} ? (Exploded => 1) : ()),
         );
         $signer->PRINT($message);
         $signer->CLOSE();
         1;
     };
     unless ($ok) {
-        warn "dkim2-milter: not signing: internal error in the signer: "
-           . _error_text($@) . "\n";
-        return;
+        my $why = "internal error in the signer: " . _error_text($@);
+        warn "dkim2-milter: not signing: $why\n";
+        return (undef, $why);
     }
 
     unless (($signer->result // '') eq 'signed') {
+        my $why = $signer->details // $signer->result // 'no result';
         warn "dkim2-milter: not signing: signer result="
            . ($signer->result_detail // $signer->result // 'none') . "\n";
-        return;
+        return (undef, $why);
     }
 
     my $header = $signer->as_string();
@@ -1027,7 +1077,23 @@ auto-detected from the key type (RSA or Ed25519).
 
 =back
 
-This program implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>.
+When signing, a message carrying an C<X-DKIM2-Exploded> header field (any
+value; Mailman and Sympa add C<X-DKIM2-Exploded: yes> to every
+distribution copy) is signed with the C<exploded> flag (-07 section 12.5),
+which a signature also gets whenever the message has more than one
+recipient; never at C<i=1>. The field is removed from the message before
+it is signed and never leaves.
+
+When the signing gate (L<Mail::DKIM2::Gate>) refuses a message that carries
+an upstream DKIM2-Signature, the milter rejects it with C<550 5.7.1> and the
+reason (-07 sections 13 and 13.2: a message with DKIM2 header fields that
+is not Validly Signed must not be sent on). A refused message with no
+signature goes on unsigned, the Message-Instances this host added removed.
+The same goes for a message the Signer refuses, such as one whose From is
+not Authentic for the signing domain (-07 section 11). New in 0.23;
+before, every refused message went on.
+
+This program implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>.
 
 =head1 KEY DIRECTORY LAYOUT
 

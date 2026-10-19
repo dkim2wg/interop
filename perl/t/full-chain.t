@@ -273,7 +273,7 @@ diag("=== Negative tests ===");
 
     my ($result, $error) = Mail::DKIM2::MessageInstance->verify($msg);
     is($result, 0, "MI verify returns 0 on tampered header");
-    like($error, qr/header hash mismatch/, "MI verify reports hash mismatch");
+    like($error, qr/header hash sha256 mismatch/, "MI verify reports hash mismatch");
 }
 
 # Tamper with the signature and verify DKIM2 fails

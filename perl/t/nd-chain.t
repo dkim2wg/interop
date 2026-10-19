@@ -173,8 +173,8 @@ sub _strip_t {
         { domain => 'test3.dkim2.com', mailfrom => 'srs0=x@bounce.test3.dkim2.com', rcptto => ['dest@test5.dkim2.com'] },
     );
     my $v = verify_text($msg->as_string);
-    is($v->result, 'fail', 'a bridge from a domain the mail never reached fails');
-    like($v->result_detail, qr/i=2 nd= hop d=test4\.dkim2\.com did not match RCPT TO/,
+    is($v->result, 'permerror', 'a bridge from a domain the mail never reached fails');
+    is($v->details, 'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1',
         'correct detail for a mismatched bridge');
 }
 
@@ -188,7 +188,9 @@ sub _strip_t {
         { domain => 'test3.dkim2.com', mailfrom => 'srs0=x@bounce.test3.dkim2.com', rcptto => ['dest@test5.dkim2.com'] },
     );
     my $v = verify_text($msg->as_string);
-    is($v->result, 'fail', 'an unbridged forward from another domain fails custody');
+    is($v->result, 'permerror', 'an unbridged forward from another domain fails custody');
+    is($v->details, 'PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1',
+        'correct detail for an unbridged forward');
 }
 
 done_testing;

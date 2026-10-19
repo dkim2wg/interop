@@ -53,7 +53,7 @@ like($@, qr/Domain required/, '  ... naming the option');
     ok(eval { $s->PRINT($too_many); $s->CLOSE; 1 }, 'PRINT/CLOSE do not die on an over-long chain')
         or diag($@);
     is($s->result, 'fail', '  ... the result is fail');
-    like($s->details, qr/^PERMERROR more than @{[MAX_CHAIN_LENGTH]} DKIM2-Signature fields/,
+    like($s->details, qr/^PERMERROR: more than @{[MAX_CHAIN_LENGTH]} DKIM2-Signature fields/,
         '  ... with the reason in details');
     is($s->as_string, '', '  ... and there is no header to add');
     like($s->result_detail, qr/^fail \(PERMERROR/, '  ... result_detail wraps both');

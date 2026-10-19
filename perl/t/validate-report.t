@@ -193,8 +193,8 @@ sub signed_input_nd {
     my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i} == 2 } @{$rep->{levels}};
     ok($sig2, 'nd= mismatch: i=2 level present');
     ok(!$sig2->{custody}{ok}, 'nd= mismatch: custody flagged not ok');
-    is($sig2->{custody}{detail}, 'DKIM2-Signature i=1 MAIL nd= does not match',
-       'nd= adjacency custody detail matches the canonical spec-06 wording');
+    is($sig2->{custody}{detail}, 'PERMERROR: DKIM2-Signature i=1 nd= does not match',
+       'nd= adjacency custody detail matches the -07 wording');
 }
 
 # 1d-bis) A Forwarder's §9.3 bridge after a real hop: the message arrived at
@@ -242,7 +242,7 @@ sub signed_input_nd {
     my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i} == 2 } @{$rep->{levels}};
     ok(!$sig2->{custody}{ok}, 'a bridge from a domain the mail never reached is flagged');
     is($sig2->{custody}{detail},
-       'DKIM2-Signature i=2 nd= hop d=test4.dkim2.com did not match RCPT TO',
+       'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1',
        'and the detail is the same wording Verifier.pm reports');
 }
 
@@ -260,8 +260,8 @@ sub signed_input_nd {
     my ($sig2) = grep { $_->{kind} eq 'signature' && $_->{i} == 2 } @{$rep->{levels}};
     ok($sig2, 'custody break: i=2 level present');
     ok(!$sig2->{custody}{ok}, 'custody break: custody flagged not ok');
-    is($sig2->{custody}{detail}, 'DKIM2-Signature i=2 MAIL FROM <sender@test2.dkim2.com> did not match',
-       'custody-break detail matches the canonical spec-06 wording');
+    is($sig2->{custody}{detail}, 'PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1',
+       'custody-break detail matches the -07 wording');
 }
 
 # 2) Post-sign body tamper (damage)
@@ -358,7 +358,7 @@ sub signed_input_nd {
     my $rep = Mail::DKIM2::Validate::report($signed, %ropt);
     my ($lvl) = grep { ($_->{result}//'') eq 'fail' } @{$rep->{levels}};
     ok($lvl, 'validator reports a failing level for bare mf=');
-    like($lvl->{detail}, qr/mf=.*7\.5|bracket/i, 'detail names the mf= bracket rule');
+    like($lvl->{detail}, qr/PERMERROR: DKIM2-Signature i=1 syntax error/, 'detail: an unbracketed mf= is a syntax error');
 }
 
 # 8) per-hop details: signature From/To + recovered MI Recipe values

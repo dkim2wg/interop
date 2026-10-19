@@ -67,9 +67,12 @@ sub signed_m1 {
 }
 
 # m=1 alone, unsigned (a list manager that adds instances but never signs).
+# The signer that comes after it is i=1, so (-07 section 11) the From has
+# to be in its domain from m=1 on: the list rewrote it already.
 sub unsigned_m1 {
-    my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($PLAIN));
-    return "Message-Instance: " . $mi->as_string . $EOL . $PLAIN;
+    (my $plain = $PLAIN) =~ s/^From: [^\r\n]*/From: List <list\@test2.dkim2.com>/m;
+    my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($plain));
+    return "Message-Instance: " . $mi->as_string . $EOL . $plain;
 }
 
 # The list at test2 tags the subject and adds a footer, recording unsigned m=2.
@@ -145,9 +148,20 @@ sub expect_refuse {
     my ($h, $mock) = gate_sign($raw, $dom, %cfg);
     is(scalar(fields($mock, 'DKIM2-Signature')), 0, "$name: not signed");
     is(scalar(fields($mock, 'Message-Instance')), 0, "$name: no Message-Instance added");
+    my $p = parse_mime($raw);
+    my ($logged) = grep { /^Not signing for \Q$dom\E: / } map { $_->[1] // '' } @{$h->{_log}};
+    ok($logged, "$name: refusal logged") or diag(explain($h->{_log}));
+    diag($logged) if $ENV{GATE_DIAG};
+    # -07 section 13: with an upstream DKIM2-Signature on it, the message is
+    # not sent on: 550 5.7.1 with the reason, and nothing else done to it.
+    if ($p->header_raw('DKIM2-Signature')) {
+        like($h->{_reject} // '', qr/\A550 5\.7\.1 not signing: \S/, "$name: rejected 550 5.7.1");
+        is_deeply($mock->{pre_headers}, [], "$name: nothing added");
+        return ($h, $mock);
+    }
+    ok(!defined $h->{_reject}, "$name: not rejected (no upstream signature)");
     # Not signing: every Message-Instance no DKIM2-Signature covers (m=
     # above every signature's m=) is removed, and the removal recorded.
-    my $p = parse_mime($raw);
     my $covered = 0;
     for ($p->header_raw('DKIM2-Signature')) {
         my ($m) = /(?:\A|;)\s*m\s*=\s*(\d+)/;
@@ -170,9 +184,6 @@ sub expect_refuse {
         like($other[0] // '', qr/\baction=not-signed=\Q$reason\E;/,
             "$name: X-DKIM2-Info not-signed=$reason");
     }
-    my ($logged) = grep { /^Not signing for \Q$dom\E: / } map { $_->[1] // '' } @{$h->{_log}};
-    ok($logged, "$name: refusal logged") or diag(explain($h->{_log}));
-    diag($logged) if $ENV{GATE_DIAG};
     return ($h, $mock);
 }
 
@@ -372,6 +383,28 @@ expect_sign('mi-only-null (allow_null_body_recipe)', list_post(null => 1, unsign
     my $other = sign_as(signed_m1(), 'test2.dkim2.com', undef, undef,
         NextDomain => 'test4.dkim2.com');
     expect_refuse('nd-to-other', $other, 'test3.dkim2.com', 'upstream-chain');
+}
+
+# --- X-DKIM2-Exploded: the list manager's request for the exploded flag (-07) ----------
+{
+    my $flags = sub {
+        my ($mock) = @_;
+        my ($sig) = fields($mock, 'DKIM2-Signature');
+        return $sig && $sig->{value} =~ /\bf=([^;]*)/ ? $1 =~ s/\s+//gr : '';
+    };
+    my $post = "X-DKIM2-Exploded: yes$EOL" . list_post();
+    my ($h, $mock) = expect_sign('exploded hint', $post, 'test2.dkim2.com', 2);
+    is($flags->($mock), 'exploded', 'exploded hint: f=exploded');
+    is_deeply([ grep { $_->{field} eq 'X-DKIM2-Exploded' } @{$h->{_changed_headers} // []} ],
+              [ { field => 'X-DKIM2-Exploded', index => 1, value => '' } ],
+              'exploded hint: the hint is removed');
+    ($h, $mock) = expect_sign('no hint', list_post(), 'test2.dkim2.com', 2);
+    is($flags->($mock), '', 'no hint, one recipient: no f=');
+    # Ignored at i=1 (an originating hop never explodes).
+    ($h, $mock) = run_sign("X-DKIM2-Exploded: yes$EOL$PLAIN",
+        domains => { 'test1.dkim2.com' => { selector => 'sel1',
+            key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'sel1') } });
+    is($flags->($mock), '', 'exploded hint at i=1: no f=');
 }
 
 done_testing;

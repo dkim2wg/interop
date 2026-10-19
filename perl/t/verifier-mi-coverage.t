@@ -90,7 +90,7 @@ sign_msg($msg,
 
     my $v = verify_msg($tampered);
     # spec-06 §11 classes this as PERMERROR, not fail, and gives the wording:
-    # "PERMERROR Message-Instance m=<x> is not signed".
+    # "PERMERROR: Message-Instance m=<x> is not signed".
     is($v->result, 'permerror', 'uncovered MI m=2 prepended without new signature must be permerror');
     like($v->result_detail, qr/m=2 is not signed/, 'result_detail uses the spec wording');
 }

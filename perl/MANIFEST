@@ -94,6 +94,7 @@ t/lib/ChainPlanReference.pm
 t/lib/DKIM2SignedFixture.pm
 t/lib/DKIM2TestKeys.pm
 t/lib/MockAuthMilter.pm
+t/lib/Spec07Fixture.pm
 t/load-private-key-data.t
 t/malformed-content-type.t
 t/mf-rt-brackets.t
@@ -111,11 +112,11 @@ t/null-mailfrom.t
 t/outbound-header-set.t
 t/pod-coverage.t
 t/pod.t
-t/recipe-base64.t
 t/recipe-empty-header.t
 t/recipe-integers.t
 t/recipe-lowercase.t
 t/recipe-order.t
+t/recipe-u-step.t
 t/reflector-cli.t
 t/reflector-dkim1.t
 t/reflector.t
@@ -126,6 +127,7 @@ t/signature-flags.t
 t/signature-nd.t
 t/signature-nonce.t
 t/signer-result.t
+t/spec07.t
 t/split-lmtp.t
 t/split.t
 t/synopsis.t
@@ -147,7 +149,6 @@ t/verifier-mi-coverage.t
 t/verifier-stream-body.t
 t/verifier-streaming.t
 t/verifier-unkeyable.t
-t/verifier_flags.t
 t/verify-cli.t
 t/verify-mi-hash.t
 t/version.t

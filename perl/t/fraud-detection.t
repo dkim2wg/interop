@@ -38,11 +38,11 @@ sub validate {
 # Each forgery must be rejected, and for the right reason (a reconstruction
 # hash mismatch, not a signature or parse failure).
 for my $case (
-    ['chain-fraud-header.eml',        qr/header hash mismatch/,
+    ['chain-fraud-header.eml',        qr/header hash sha256 mismatch/,
         'header lie: recipe omits an added Reply-To'],
-    ['chain-fraud-body.eml',          qr/body hash mismatch/,
+    ['chain-fraud-body.eml',          qr/body hash sha256 mismatch/,
         'body lie: body changed, recipe declares no body change'],
-    ['chain-fraud-body-truncate.eml', qr/body hash mismatch/,
+    ['chain-fraud-body-truncate.eml', qr/body hash sha256 mismatch/,
         'body lie: innocent-looking truncating copy-range hides an edited line'],
 ) {
     my ($file, $re, $desc) = @$case;

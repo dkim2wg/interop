@@ -45,4 +45,22 @@ ok(Mail::DKIM2::Common::should_skip('ARC-Message-Signature'), 'spec-06 §4: ARC-
 ok(Mail::DKIM2::Common::should_skip('ARC-Authentication-Results'), 'spec-06 §4: ARC-Authentication-Results is unsigned');
 ok(!Mail::DKIM2::Common::should_skip('ARC-Something-Else'), 'spec-06 §4: the ARC- prefix match is gone');
 
+# -07 section 7.2 and 18: address domains, A-labels, the relaxed match.
+{
+    use Mail::DKIM2::Common qw(domain_of to_alabel relaxed_domain_match);
+    is_deeply([domain_of('<A@Example.COM.>')], ['example.com', 0], 'domain_of: lowercased, one trailing dot off');
+    is_deeply([domain_of('"a@b"@c.example')], ['c.example', 0], 'domain_of: after the last @');
+    is_deeply([domain_of('<x@[192.0.2.1]>')], ['[192.0.2.1]', 1], 'domain_of: a domain literal is marked');
+    is_deeply([domain_of('<>')], [], 'domain_of: the null path has none');
+    is(to_alabel("b\xc3\xbccher.Example"), 'xn--bcher-kva.Example', 'to_alabel: only the non-ASCII label');
+    is(to_alabel("B\xc3\x9cCHER.example"), 'xn--bcher-kva.example', 'to_alabel: lowercased first');
+    is(to_alabel("bad\xff.example"), "bad\xff.example", 'to_alabel: not UTF-8, left alone');
+    ok(relaxed_domain_match('mail.example.org', 'example.org'), 'relaxed: p1 below p2');
+    ok(!relaxed_domain_match('example.org', 'mail.example.org'), 'relaxed: only p1 is shortened');
+    ok(relaxed_domain_match('Example.ORG.', 'example.org'), 'relaxed: case and a trailing dot');
+    ok(!relaxed_domain_match('[192.0.2.1]', '[192.0.2.1]'), 'relaxed: a literal never matches');
+    ok(relaxed_domain_match("u.b\xc3\xbccher.example", 'xn--bcher-kva.example'), 'relaxed: compared as A-labels');
+    ok(!relaxed_domain_match('xample.org', 'example.org'), 'relaxed: whole labels only');
+}
+
 done_testing;
