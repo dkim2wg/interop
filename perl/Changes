@@ -1,6 +1,6 @@
 Revision history for Mail::DKIM2
 
-0.22    (unreleased)
+0.22    2026-10-18
         - The Verifier checks the Message-Instance chain without rebuilding
           any previous version of the message. New: Mail::DKIM2::BodyPlan
           composes the body Recipes into, for each instance, the runs of
