@@ -171,6 +171,12 @@ Revision history for Mail::DKIM2
         Validate.pm reports Chain of Custody by the -07 rules and the same
         strings, and grades a timestamp over a day ahead as "future".
 
+        Fixed: the DKIM2Verify handler's close_callback did not delete
+        has_mi (added in 0.22), so authentication_milter logged "did not
+        clean up data for key has_mi" and killed the child after every
+        message. A new test checks both handlers leave no per-message key
+        behind after close_callback.
+
 0.22    2026-10-18
         - Message hashes (every Message-Instance's header and body hashes)
           go through the new Mail::DKIM2::Digest: OpenSSL's SHA-2, through

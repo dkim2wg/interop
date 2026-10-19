@@ -310,6 +310,7 @@ sub close_callback {
     delete $self->{'carry'};
     delete $self->{'keep_body'};
     delete $self->{'has_dkim2'};
+    delete $self->{'has_mi'};
     delete $self->{'env_from'};
     $self->destroy_object('dkim2_verifier');
 }

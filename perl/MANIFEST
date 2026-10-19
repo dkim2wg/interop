@@ -83,6 +83,7 @@ t/gate-mime-warn.t
 t/gate-null-top.t
 t/gate-one-walk.t
 t/guide-links.t
+t/handler-close-cleanup.t
 t/hash-agility.t
 t/header-plan.t
 t/headerparser.t
