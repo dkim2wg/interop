@@ -139,7 +139,7 @@ type AuthResult struct {
 // verified — anyone can write d=. Authenticate therefore verifies the DSN as
 // well, and only compares the d= it has proved.
 //
-// The direction is §9.4's: labels come off the left of the ADDRESS domain, so
+// The direction is §7.2's: labels come off the left of the ADDRESS domain, so
 // d= may be equal to or a parent of the rt= domain, never a child of it. A
 // system with a dedicated bounce domain signs as its organizational domain
 // (d=example.com) and puts the bounce address on the subdomain
@@ -157,11 +157,11 @@ func checkAlignment(dsnSig, origTop *DKIM2Signature) (string, string) {
 		return "none", "returned message's top signature has no rt= to align with"
 	}
 	for _, r := range origTop.RcptTo {
-		rd := domainFromAddr(r)
-		if rd == "" {
+		rd, lit := domainOf(r)
+		if rd == "" || lit {
 			continue
 		}
-		if relaxedDomainMatch(rd, d) {
+		if relaxedMatch(rd, d) {
 			return "pass", fmt.Sprintf("DSN d=%s is aligned with rt= %s", d, r)
 		}
 	}

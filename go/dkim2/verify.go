@@ -322,8 +322,9 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		}
 	}
 
-	// §8.2/§11.4 MUST: Chain of Custody between consecutive signatures.
-	if len(sigHeaders) > 1 {
+	// §14.4: the Chain of Custody, every signature's mf= against its d=
+	// and each signature against the one below it.
+	{
 		parsedSigs := make([]*DKIM2Signature, len(sigHeaders))
 		for i, raw := range sigHeaders {
 			parsedSigs[i], _ = parseSig(raw)
@@ -393,18 +394,6 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 			res.Error = fmt.Errorf("%s", strings.Join(dupErrs, "; "))
 			results = append(results, res)
 			continue
-		}
-
-		// §7.7 MUST: d= must be a suffix of (i.e. relaxed match against) the mf= domain
-		if sig.MailFrom != "" && sig.MailFrom != "<>" {
-			if mfDomain := domainFromAddr(sig.MailFrom); mfDomain != "" {
-				if !relaxedDomainMatch(mfDomain, strings.ToLower(sig.Domain)) {
-					res.Error = fmt.Errorf("DKIM2-Signature i=%d MAIL FROM and d= do not match",
-						sig.Sequence)
-					results = append(results, res)
-					continue
-				}
-			}
 		}
 
 		// Find the MI for this signature's MI version
@@ -569,10 +558,11 @@ func checkSignatureDuplicates(items []SigItem, i int) []string {
 	return errs
 }
 
-// normAddr normalises an email address for §10.4 exact-match comparison:
-// surrounding RFC5321 angle brackets (if any) are stripped, domain part is
-// lowercased, local-part case is preserved. VerifyOptions.MailFrom/RcptTo are
-// bare SMTP-level addresses; topSig.MailFrom/RcptTo are bracketed per §7.5/7.6.
+// normAddr normalises an email address for the §14.4 exact match with the
+// SMTP envelope: surrounding RFC 5321 angle brackets (if any) are stripped,
+// the domain is lowercased and mapped to A-labels (§18), the local-part's
+// case is preserved. VerifyOptions.MailFrom/RcptTo are bare SMTP-level
+// addresses; topSig.MailFrom/RcptTo are bracketed per §10.5/§10.6.
 func normAddr(addr string) string {
 	addr = strings.TrimPrefix(addr, "<")
 	addr = strings.TrimSuffix(addr, ">")
@@ -580,87 +570,69 @@ func normAddr(addr string) string {
 	if at < 0 {
 		return strings.ToLower(addr)
 	}
-	return addr[:at+1] + strings.ToLower(addr[at+1:])
-}
-
-// domainFromAddr extracts the domain from an email address (with or without angle brackets).
-func domainFromAddr(addr string) string {
-	addr = strings.TrimLeft(addr, "<")
-	addr = strings.TrimRight(addr, ">")
-	if at := strings.LastIndexByte(addr, '@'); at >= 0 {
-		return strings.ToLower(addr[at+1:])
+	d := strings.ToLower(addr[at+1:])
+	if !strings.HasPrefix(d, "[") {
+		d = toALabel(d)
 	}
-	return ""
+	return addr[:at+1] + d
 }
 
-// checkChainOfCustody validates the §8.2/§11.4 chain across consecutive
-// signatures (ascending i= order). For each adjacent pair, either the lower
-// signature carries nd= (which MUST exactly match the higher signature's d=),
-// or the higher signature's mf= domain MUST relaxed-match an rt= domain of the
-// lower one. A null-sender (DSN) hop skips the mf=/rt= check.
+// isNullPath reports whether a decoded mf= is the null reverse-path "<>".
+func isNullPath(mf string) bool {
+	return trimFWS(mf) == "<>"
+}
+
+// checkChainOfCustody is §14.4 over the signatures in ascending i= order
+// (§7.1 items 1 and 2).  Every failure is PERMERROR; all of them are
+// reported, joined, in the order found.
 //
-// A §9.3 bridge — an nd= signature after a real hop, made by a Forwarder to
-// span the gap between the domain it received the message at and the domain it
-// sends from — has no mf=, so for it the value that MUST relaxed-match the
-// lower hop's rt= is its d=: the key §9.3 requires it to be made with.
-func checkChainOfCustody(parsedSigs []*DKIM2Signature) error {
-	for idx := 1; idx < len(parsedSigs); idx++ {
-		cur := parsedSigs[idx]
-		prev := parsedSigs[idx-1]
-		if cur == nil || prev == nil {
+//   - Every signature S with a non-null mf= and no nd=: the mf= domain
+//     relaxed-matches S's d=.
+//   - For each S above i=1, with P the signature below it:
+//     P has nd=: S's d= equals it (caseless), and nothing more is checked
+//     for S; else S has nd= or a null mf=: some rt= domain of P
+//     relaxed-matches S's d=; else S's mf= domain relaxed-matches some rt=
+//     domain of P.
+func checkChainOfCustody(sigs []*DKIM2Signature) error {
+	var errs []error
+	for idx, s := range sigs {
+		if s == nil {
 			continue
 		}
-		if prev.NextDomain != "" {
-			// draft-06 §11.4: nd= MUST exactly match the next sig's d=.
-			if !strings.EqualFold(prev.NextDomain, cur.Domain) {
-				return fmt.Errorf("DKIM2-Signature i=%d MAIL nd= does not match",
-					prev.Sequence)
-			}
-			continue
-		}
-		if cur.NextDomain != "" {
-			curD := strings.ToLower(cur.Domain)
-			matched := false
-			for _, rt := range prev.RcptTo {
-				if rtDomain := domainFromAddr(rt); rtDomain != "" {
-					if relaxedDomainMatch(curD, rtDomain) {
+		if idx > 0 && sigs[idx-1] != nil {
+			p := sigs[idx-1]
+			switch {
+			case p.NextDomain != "":
+				if !strings.EqualFold(p.NextDomain, s.Domain) {
+					errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d nd= does not match", p.Sequence))
+				}
+			case s.NextDomain != "" || isNullPath(s.MailFrom):
+				if !addrMatches(p.RcptTo, s.Domain) {
+					errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d d= does not match the rt= of i=%d",
+						s.Sequence, p.Sequence))
+				}
+			default:
+				mf, lit := domainOf(s.MailFrom)
+				matched := false
+				for _, r := range p.RcptTo {
+					if rd, rlit := domainOf(r); !lit && !rlit && relaxedMatch(mf, rd) {
 						matched = true
 						break
 					}
 				}
-			}
-			if !matched {
-				return fmt.Errorf("DKIM2-Signature i=%d nd= hop d=%s did not match RCPT TO",
-					cur.Sequence, curD)
-			}
-			continue
-		}
-		curMFDomain := domainFromAddr(cur.MailFrom)
-		if curMFDomain == "" {
-			continue // null sender (DSN) — no chain check required
-		}
-		matched := false
-		for _, rt := range prev.RcptTo {
-			if rtDomain := domainFromAddr(rt); rtDomain != "" {
-				if relaxedDomainMatch(curMFDomain, rtDomain) {
-					matched = true
-					break
+				if !matched {
+					errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d mf= does not match the rt= of i=%d",
+						s.Sequence, p.Sequence))
 				}
 			}
 		}
-		if !matched {
-			return fmt.Errorf("DKIM2-Signature i=%d MAIL FROM %s did not match",
-				cur.Sequence, cur.MailFrom)
+		if s.NextDomain == "" && !isNullPath(s.MailFrom) {
+			if mf, lit := domainOf(s.MailFrom); lit || !relaxedMatch(mf, s.Domain) {
+				errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d MAIL FROM and d= do not match", s.Sequence))
+			}
 		}
 	}
-	return nil
-}
-
-// relaxedDomainMatch reports whether d1 is equal to d2 or a subdomain of d2.
-func relaxedDomainMatch(d1, d2 string) bool {
-	d1 = strings.ToLower(d1)
-	d2 = strings.ToLower(d2)
-	return d1 == d2 || strings.HasSuffix(d1, "."+d2)
+	return errors.Join(errs...)
 }
 
 // keyFitsAlg reports whether key is of the type alg signs with.

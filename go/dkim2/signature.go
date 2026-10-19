@@ -25,16 +25,24 @@ type DKIM2Signature struct {
 	Duplicate  string // lowercased tag name that appeared more than once (§8), if any
 }
 
-// toRFC5321Path wraps an address as an RFC5321 path for mf=/rt= (spec 7.5/7.6):
-// angle brackets MUST be present. "" -> "<>"; already-bracketed unchanged.
+// toRFC5321Path wraps an address as an RFC5321 path for mf=/rt= (§10.5,
+// §10.6): angle brackets MUST be present. "" -> "<>"; already-bracketed
+// unchanged.  A domain holding U-labels is recorded as A-labels (§18); the
+// local part is left as it is.
 func toRFC5321Path(a string) string {
 	if a == "" {
 		return "<>"
 	}
-	if strings.HasPrefix(a, "<") && strings.HasSuffix(a, ">") {
-		return a
+	if !(strings.HasPrefix(a, "<") && strings.HasSuffix(a, ">")) {
+		a = "<" + a + ">"
 	}
-	return "<" + a + ">"
+	if at := strings.LastIndexByte(a, '@'); at >= 0 && !isASCII(a[at+1:]) {
+		d := a[at+1 : len(a)-1]
+		if !strings.HasPrefix(d, "[") {
+			a = a[:at+1] + toALabel(d) + ">"
+		}
+	}
+	return a
 }
 
 // SigItem is one sel:alg:value entry in the s= tag.

@@ -58,7 +58,7 @@ func TestNDChainMatch(t *testing.T) {
 	// i=1 declares nd=mx.dest.example; i=2 is signed by that domain → OK.
 	sigs := []*DKIM2Signature{
 		{Sequence: 1, Domain: "fwd.example", NextDomain: "mx.dest.example"},
-		{Sequence: 2, Domain: "mx.dest.example", MailFrom: "a@x.example",
+		{Sequence: 2, Domain: "mx.dest.example", MailFrom: "a@mx.dest.example",
 			RcptTo: []string{"b@y.example"}},
 	}
 	if err := checkChainOfCustody(sigs); err != nil {
