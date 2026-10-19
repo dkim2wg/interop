@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include "dkim2_internal.h"
 
-/* Planned Message-Instance chain walk (§10.7) -- the default verification
+/* Planned Message-Instance chain walk (-07 §14.7) -- the default verification
    path. Same verdicts and error texts as the undo walk in dkim2_verify.c
    (verify_mi_hashes, still reachable with ctx->undo_walk), without
    rebuilding any earlier message:
@@ -59,7 +59,7 @@ dkim2_plan_t *dkim2_plan_new_ctx(const dkim2_ctx_t *ctx, int normalise);
 int dkim2_plan_body_update(dkim2_plan_t *p, const char *data, size_t len);
 int dkim2_plan_body_final(dkim2_plan_t *p);
 
-/* The §10.7 verdict (after body_final): 0 when every instance verifies,
+/* The -07 §14.7 verdict (after body_final): 0 when every instance verifies,
    -1 with errbuf set exactly as the undo walk would set it, or 1 when the
    message needs the undo walk (see above). */
 int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz);

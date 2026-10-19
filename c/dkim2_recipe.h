@@ -13,7 +13,8 @@
    Keys are matched without regard to case (lowercase is emitted). A Recipe
    that breaks the schema is rejected by dkim2_recipe_parse() (the verifier's
    "contains invalid JSON"); one that only fails against the message (a copy
-   past the last item) makes the apply_* functions return NULL. The gen_*
+   past the last item) makes the apply_* functions return NULL -- reported
+   as "contains invalid JSON" as well. The gen_*
    functions emit "d" for every UTF-8 literal and "u" for the rest, and never
    a "c" range that breaks the ascending rule. */
 

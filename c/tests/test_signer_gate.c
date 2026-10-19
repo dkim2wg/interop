@@ -308,8 +308,8 @@ int main(int argc, char **argv) {
             "fake-cover-no-i.eml", "fake-cover-i0.eml", "fake-cover-i-abc.eml",
             "fake-cover-m-rewritten.eml", "fake-cover-unparseable.eml", NULL };
         for (int k = 0; fake[k]; k++) {
-            expect(fake[k], 0, 0, "result=permerror (PERMERROR DKIM2-Signature");
-            expect(fake[k], 1, 0, "result=permerror (PERMERROR DKIM2-Signature");
+            expect(fake[k], 0, 0, "result=permerror (PERMERROR: DKIM2-Signature");
+            expect(fake[k], 1, 0, "result=permerror (PERMERROR: DKIM2-Signature");
             expect_digest_only(fake[k], 1, 0);
         }
     }

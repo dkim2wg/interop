@@ -6,7 +6,7 @@
 int main(void) {
     char out[64];
 
-    /* §5.1 body hash: trailing empty lines stripped, then hash "\r\n" appended */
+    /* -07 §6.1 body hash: trailing empty lines stripped, then hash "\r\n" appended */
 
     /* Empty body → SHA256 of "\r\n" */
     assert(dkim2_body_hash("", 0, out, sizeof out) == 0);
@@ -34,7 +34,7 @@ int main(void) {
     assert(dkim2_body_hash("Other\r\n", 7, h5, sizeof h5) == 0);
     assert(strcmp(h2, h5) != 0);
 
-    /* §5.2 header hash: ignored headers, lowercased names, sorted */
+    /* -07 §6.2 header hash: ignored headers, lowercased names, sorted */
 
     /* Ignored headers don't affect hash */
     const char *hdrs_a[] = {
@@ -79,7 +79,7 @@ int main(void) {
     assert(dkim2_header_hash(hdrs_f, 1, hf, sizeof hf) == 0);
     assert(strcmp(he, hf) == 0);
 
-    /* §6.2 steps 3+6: a header folded IMMEDIATELY after the colon must
+    /* -07 §6.2 steps 3+6: a header folded IMMEDIATELY after the colon must
        canonicalize identically to the unfolded form. The leading WSP has to be
        deleted AFTER unfolding — the space that opens the continuation line
        becomes leading WSP of the value only once the CRLF is removed. Mailman
@@ -95,7 +95,7 @@ int main(void) {
     assert(strcmp(hg, hh) == 0);
     assert(strcmp(hi, hh) == 0);
 
-    /* spec-06 §4: HDRMAINT-survey names are unsigned */
+    /* -07 §4: HDRMAINT-survey names are unsigned */
     const char *hdrs_05[] = {
         "From: sender@example.com\r\n",
         "Subject: Test\r\n",
@@ -136,7 +136,7 @@ int main(void) {
     assert(dkim2_header_hash(hdrs_arcx, 3, harcx, sizeof harcx) == 0);
     assert(strcmp(harcx, hb) != 0);
 
-    /* spec-06 §3: both hashing algorithms are implemented */
+    /* -07 §3: both hashing algorithms are implemented */
     assert(dkim2_hash_alg_index("sha256") == 0);
     assert(dkim2_hash_alg_index("sha512") == 1);
     assert(dkim2_hash_alg_index("SHA512") == 1);   /* RFC 5234: case-insensitive */

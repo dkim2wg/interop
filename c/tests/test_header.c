@@ -32,7 +32,7 @@ int main(void) {
     assert(strcmp(mi->hsets[1].hdr_hash, "hh2") == 0);
     dkim2_mi_free(mi);
 
-    /* spec-06 §7.3: an algorithm MUST NOT be present more than once */
+    /* -07 §9.3: an algorithm MUST NOT be present more than once */
     assert(dkim2_mi_parse("m=1; h=sha256:AAA:BBB,sha256:CCC:DDD;") == NULL);
     /* ...detected case-insensitively (RFC 5234) */
     assert(dkim2_mi_parse("m=1; h=sha256:AAA:BBB,SHA256:CCC:DDD;") == NULL);
@@ -66,7 +66,7 @@ int main(void) {
     assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
     dkim2_sig_free(sig);
 
-    /* Folding whitespace inside tag values (spec-06 §2.12): FWS may appear
+    /* Folding whitespace inside tag values (-07 §2.12): FWS may appear
        inside a base64 string and around the colons of an s= item, and MUST be
        ignored when the value is used.  A fold between the Selector colon and
        the algorithm token used to leave CRLF+TAB glued to the algorithm name. */
@@ -261,7 +261,7 @@ int main(void) {
     }
     dkim2_sig_free(sig);
 
-    /* --- spec-06 §8.9: DKIM2-Signature s= duplicate/limit checks --- */
+    /* --- -07 §10.9: DKIM2-Signature s= duplicate/limit checks --- */
     char errbuf[256];
 
     /* clean signature list has no errors */
@@ -283,7 +283,7 @@ int main(void) {
     assert(strcmp(errbuf, "PERMERROR: DKIM2-Signature i=3 has a duplicate selector") == 0);
     dkim2_sig_free(sig);
 
-    /* ...detected case-insensitively (Selector is a Domain, §3.5) */
+    /* ...detected case-insensitively (Selector is a Domain, -07 §3.6) */
     sig = dkim2_sig_parse(
         "i=1; m=1; t=1; d=ex.example; "
         "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "

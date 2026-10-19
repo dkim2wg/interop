@@ -49,7 +49,7 @@ static char *to_rfc5321_path(const char *addr) {
     return out;
 }
 
-/* §8.5 canonicalization for signature input:
+/* -07 §12.8 canonicalization for signature input:
    lowercase name, unfold (remove CRLF+following WSP), delete ALL remaining WSP,
    re-add trailing CRLF.
    Input: "Name: folded value\r\n"
@@ -96,7 +96,7 @@ static char *canon_for_sig(const char *hdr) {
     return out;
 }
 
-/* Build the §8.5 signing input:
+/* Build the -07 §12.8 signing input:
    Canonicalized MI headers (ascending m=), then DKIM2-Signature headers
    (ascending i=), then the incomplete new signature header (empty sig values).
    Returns malloc'd buffer and sets *out_len. */
@@ -179,7 +179,7 @@ static unsigned char *build_sign_input(
 }
 
 /* Non-zero if a Message-Instance's r= carries a null body Recipe ("b": null,
-   spec-06 §4.2: the previous body cannot be recreated). */
+   -07 §5.2: the previous body cannot be recreated). */
 static int mi_null_body(const dkim2_mi_t *mi) {
     if (!mi->r_raw) return 0;
     size_t n = strlen(mi->r_raw);
@@ -201,7 +201,7 @@ static int mi_null_body(const dkim2_mi_t *mi) {
 }
 
 /* The m= of the highest UNSIGNED Message-Instance with a null body Recipe,
-   else 0. A DKIM2-Signature with m=k covers instances 1..k (spec-06 §8.2),
+   else 0. A DKIM2-Signature with m=k covers instances 1..k (-07 §10.2),
    so an instance is unsigned when its m= is above the highest m= of every
    parsed (valid i=) signature -- whether it is the top, or another unsigned
    instance was added over it. A null an upstream domain already signed is
@@ -231,7 +231,7 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0] && !ctx->sig_error[0])
         return 0;                       /* no existing chain: sign as always */
 
-    /* spec-06 §9.3/§11.4: an nd= on the top signature names the domain that
+    /* -07 §12.3/§14.4: an nd= on the top signature names the domain that
        signs next. We may extend the chain only if that is us; the verifier's
        blanket "top signature carries nd=" rejection is lifted in outbound
        mode because this is the check that replaces it. */
@@ -325,7 +325,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     if (sign_gate(ctx, cfg) < 0) return -1;
     if (!cfg->skip_chain_check && from_refusal(ctx, cfg) < 0) return -1;
 
-    /* spec-06 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
+    /* -07 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
        NULL) is sha256 only, so default output stays byte-identical to before
        hash agility existed. "--hash both" emits sha256 first, then sha512. */
     int sel_algs[DKIM2_N_HASH_ALGS];
@@ -340,7 +340,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
         sel_algs[n_sel++] = a;
     }
 
-    /* §8.3/§8.4: body hash already computed incrementally (both algorithms);
+    /* -07 §9.3: body hash already computed incrementally (both algorithms);
        header hash computed here per selected algorithm. */
     dkim2_hashset_t hs[DKIM2_N_HASH_ALGS];
     char hh_b64[DKIM2_N_HASH_ALGS][DKIM2_MAX_HASH_LEN * 2];
@@ -398,7 +398,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     for (dkim2_sig_t *sig = ctx->sig_list; sig; sig = sig->next)
         if (sig->i >= new_i) new_i = sig->i + 1;
 
-    /* Base64-encode mf= — normalized to a bracketed RFC5321 path (spec §7.5) */
+    /* Base64-encode mf= — normalized to a bracketed RFC5321 path (-07 §10.5) */
     char *mfp = to_rfc5321_path(ctx->mail_from);
     size_t mf_b64_len = ((strlen(mfp) + 2) / 3) * 4 + 2;
     char *mf_b64 = malloc(mf_b64_len);
@@ -406,7 +406,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     free(mfp);
 
     /* Base64-encode each rt= value, comma-separated — each normalized to a
-       bracketed RFC5321 path (spec §7.6) */
+       bracketed RFC5321 path (-07 §10.6) */
     /* Estimate size: each rcpt ~64 chars encoded */
     size_t rt_buf_size = 4096;
     char *rt_b64 = calloc(1, rt_buf_size);

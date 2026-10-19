@@ -15,7 +15,7 @@
 #include "../dkim2_message.h"
 #include "../base64.h"
 
-/* Mirror of the production §8.5 canonicalization used by both the signer
+/* Mirror of the production -07 §12.8 canonicalization used by both the signer
    (dkim2_sign.c: canon_for_sig) and the verifier (dkim2_verify.c:
    canon_for_sig / append_canon): lowercase header name, strip all
    whitespace from the value, terminate with CRLF. Used here only to
@@ -164,7 +164,7 @@ int main(void) {
         "TAMPERED body!\r\n", mi_val, sig_val);
     assert(st == DKIM2_FAIL);
 
-    /* --- Error: wrong MAIL FROM → PERMERROR, canonical spec-06 message --- */
+    /* --- Error: wrong MAIL FROM → PERMERROR, canonical -07 message --- */
     {
         dkim2_verify_result_t res;
         verify_test_message_full("<wrong@example.com>", rcpts,
@@ -175,7 +175,7 @@ int main(void) {
         st = res.status;
     }
 
-    /* --- Error: wrong RCPT TO → PERMERROR, canonical spec-06 message --- */
+    /* --- Error: wrong RCPT TO → PERMERROR, canonical -07 message --- */
     char *wrong_rcpts[] = { "<wrong@example.org>", NULL };
     {
         dkim2_verify_result_t res;
@@ -226,8 +226,8 @@ int main(void) {
         g_dns_txt = saved_txt;
         /* No passing ssets. This lookup reaches live DNS, where
            example.com publishes a wildcard revoked key ("v=DKIM1; p="):
-           that is PERMERROR "public key badsel has been revoked" (spec-06
-           §11.5); an absent record would be FAIL. Never a pass. */
+           that is PERMERROR "public key badsel has been revoked" (-07
+           §14.5); an absent record would be FAIL. Never a pass. */
         assert(st == DKIM2_FAIL || st == DKIM2_PERMERROR);
         free(mi2); free(sig2);
     }
@@ -326,7 +326,7 @@ int main(void) {
     }
 
     /* --- Error: d= does not relaxed-match mf= domain → PERMERROR,
-       canonical spec-06 message (§7.7 check fires before crypto, so
+       canonical -07 message (the -07 §14.4 check fires before crypto, so
        tampering d= post-signature doesn't need to preserve validity). --- */
     {
         char *d_tag = strstr(sig_val, "d=example.com");
@@ -372,7 +372,7 @@ int main(void) {
 
     /* --- Regression: non-top nd= (legitimate hand-off hop) must NOT be
        rejected by the new top-nd= check. The existing adjacency match
-       (prev->nd must equal cur->d, §11.4) still governs it, and the sig
+       (prev->nd must equal cur->d, -07 §14.4) still governs it, and the sig
        chain proceeds to later checks instead of being killed here. --- */
     {
         dkim2_sig_t *s1 = dkim2_sig_parse(
@@ -398,7 +398,7 @@ int main(void) {
         dkim2_sig_free(vctx.sig_list);
     }
 
-    /* --- Error: Chain of Custody nd= adjacency mismatch (§11.4) → PERMERROR,
+    /* --- Error: Chain of Custody nd= adjacency mismatch (-07 §14.4) → PERMERROR,
        canonical -07 message (§14.4).
        The C signer cannot emit nd= itself, so hop i=1 is hand-signed here:
        its own DKIM2-Signature header (with a genuine nd= tag) is covered by
@@ -552,7 +552,7 @@ int main(void) {
     }
 
     /* --- Regression (fix round 1): a duplicate hash algorithm in a
-       Message-Instance h= must be reported as the exact spec-06 §7.3
+       Message-Instance h= must be reported as the exact -07 §9.3
        PERMERROR through the REAL ingestion path, not just detected by
        dkim2_mi_parse() in isolation. Before this fix, dkim2_message.c's
        collect_dkim2_headers() (and dkim2_milter.c's cb_header(), same
@@ -624,7 +624,7 @@ int main(void) {
         remove(path);
     }
 
-    /* --- spec-06 §11.2 end-to-end: a malformed r= JSON payload on a real,
+    /* --- -07 §14.2 end-to-end: a malformed r= JSON payload on a real,
        validly-signed two-hop message must be reported as the specific
        "contains invalid JSON" PERMERROR by dkim2_do_verify() -- the same
        function dkim2_verify_message() (the CLI/milter entry point) calls --
@@ -642,7 +642,7 @@ int main(void) {
        over both Message-Instance headers (m=1 unmodified, m=2 carrying the
        malformed r=) and both DKIM2-Signature headers, then signed directly
        with the test keypair already registered in the DNS override. This
-       drives the complete real §10.6 crypto verification and §10.7 MI-hash/
+       drives the complete real -07 §14.6 crypto verification and §14.7 MI-hash/
        undo logic in dkim2_do_verify(), not just dkim2_apply_*_recipe() or
        cJSON_Parse() in isolation. */
     {
@@ -732,9 +732,9 @@ int main(void) {
         free(sig1_out);
     }
 
-    /* --- spec-06 §11.2 ruling: a bad-base64 r= value is a DIFFERENT error
+    /* --- -07 §14.2 ruling: a bad-base64 r= value is a DIFFERENT error
        from a post-decode JSON parse failure, and must stay distinct:
-       "PERMERROR ... syntax error" (§11.2 lists this explicitly for
+       "PERMERROR ... syntax error" (-07 §14.2 lists this explicitly for
        malformed field content), never "contains invalid JSON" -- the
        payload here never even reaches JSON parsing. Same two-hop
        construction as the invalid-JSON test above, just with "!!!!"
@@ -823,7 +823,7 @@ int main(void) {
         free(sig1_out);
     }
 
-    /* --- spec-06 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too
+    /* --- -07 §12.1: the BOTTOM (m=1) instance MAY carry Recipes too
        ("if it is wished to record any changes made to a message as it
        enters the DKIM2 ecosystem"). It never participates in the undo walk
        (there is no earlier state to reconstruct), so before this fix the

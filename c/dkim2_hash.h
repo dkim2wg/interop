@@ -5,7 +5,7 @@
 #define DKIM2_MAX_HASH_LEN 64  /* SHA-512 output bytes — sizes every buffer */
 #define DKIM2_N_HASH_ALGS   2
 
-/* spec-06 §3.1: sha256 (index 0) and sha512 (index 1). Verifiers MUST
+/* -07 §3.1: sha256 (index 0) and sha512 (index 1). Verifiers MUST
    implement both. Lookup is case-insensitive per RFC 5234. */
 int         dkim2_hash_alg_index(const char *name); /* -1 if unimplemented */
 const char *dkim2_hash_alg_name(int idx);
@@ -52,10 +52,10 @@ int dkim2_body_hash_raw_alg(const char *body, size_t bodylen, int alg,
                             unsigned char *digest);
 int dkim2_body_hash(const char *body, size_t bodylen, char *out, size_t outlen);
 
-/* ── Header hash §5.2 ────────────────────────────────────────────────────── */
-/* 1 if the lowercase field name (nlen bytes) is never hashed (spec-06 §4). */
+/* ── Header hash -07 §6.2 ────────────────────────────────────────────────── */
+/* 1 if the lowercase field name (nlen bytes) is never hashed (-07 §4). */
 int dkim2_hdr_ignored(const char *lname, size_t nlen);
-/* The §5.2 canonical line ("name:value\r\n") of one "Name: value\r\n"
+/* The -07 §6.2 canonical line ("name:value\r\n") of one "Name: value\r\n"
    field, malloc'd; NULL when the field has no colon or is not hashed. */
 char *dkim2_header_canon(const char *hdr);
 

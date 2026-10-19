@@ -7,7 +7,7 @@
 int main(void) {
     size_t out_len;
 
-    /* spec-06 §5 schema: "c" items are integers >= 1. A copy range given as
+    /* -07 §5 schema: "c" items are integers >= 1. A copy range given as
        JSON strings -- {"c":["1","1"]}, which one list manager emitted -- or
        with a zero/negative/non-integer bound is a malformed Recipe and must be
        rejected, not applied. cJSON reports valueint 0 for a string, so the
@@ -157,7 +157,7 @@ int main(void) {
     for (int i = 0; i < n_multi; i++) free(red[i]);
     free(red);
 
-    /* ---- "c" range ordering (spec-06 §5.1, extended to body lists) and
+    /* ---- "c" range ordering (-07 §5.1, extended to body lists) and
        end-of-list bounds. Each start must exceed the previous end; an end
        past the last item is a rejection, not a clamp. ---- */
     {

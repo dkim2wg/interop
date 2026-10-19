@@ -984,11 +984,11 @@ static void test_error_strings(void) {
         CHECK_MSG(res, "PERMERROR: Message-Instance m=1 tag=h missing");
         msg_free(&m);
     }
-    /* every error carries "STATE: " */
-    {
-        dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,9]}]}");
-        CHECK(strncmp(r.message, "PERMERROR: ", 11) == 0);
-    }
+    /* every Recipe error is "contains invalid JSON", including a copy past
+       the end of the body or of a header field's instances */
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,9]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{\"subject\":[{\"c\":[1,2]}]}}"); CHECK_MSG(r, INVALID_JSON_M2); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{\"cc\":[{\"c\":[1,1]}]}}"); CHECK_MSG(r, INVALID_JSON_M2); }
 }
 
 static void test_tag_lists(void) {

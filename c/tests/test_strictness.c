@@ -1,9 +1,9 @@
 /* Verifier strictness (docs/superpowers/specs/2026-10-09-verifier-strictness-
  * review-fixes.md), end to end through dkim2_verify_message():
- *   A. signature algorithms  (spec-06 §3.4, §8.9)
- *   B. key-record errors as reported by the verifier (spec-06 §11.5)
- *   C. Message-Instance tag case and repeats (spec-06 §7)
- *   D. t= syntax (spec-06 §8.4, §11.2)
+ *   A. signature algorithms  (-07 §3.5, §10.9)
+ *   B. key-record errors as reported by the verifier (-07 §14.5)
+ *   C. Message-Instance tag case and repeats (-07 §9)
+ *   D. t= syntax (-07 §10.4, §14.2)
  * Key-record parsing itself is covered in test_dns.c.
  */
 #include <stdio.h>
@@ -113,7 +113,7 @@ static char *good_mi(void) {
     return mi;
 }
 
-/* The verifier's §9.6 canonicalization: lowercase name, value with all WSP
+/* The verifier's -07 §12.8 canonicalization: lowercase name, value with all WSP
    removed, CRLF. */
 static void canon_append(char *buf, size_t *pos, const char *name, const char *value) {
     for (const char *h = name; *h; h++) buf[(*pos)++] = (char)tolower((unsigned char)*h);

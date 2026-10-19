@@ -38,7 +38,7 @@ static int name_ok(const char *s, int labels) {
     return len > 0;
 }
 
-/* Split one s= or h= item into exactly three parts on ':' (spec-06 §7.3,
+/* Split one s= or h= item into exactly three parts on ':' (-07 §9.3,
    §8.9). FWS is trimmed from around the first two (it may sit beside a
    colon or a list comma) and removed from inside the third (a base64
    value); a name with FWS inside it is left for name_ok() to reject. */
@@ -59,7 +59,7 @@ static int split3(char *item, char **p1, char **p2, char **p3) {
 
 /* Parse h= value: "sha256:hhash:bhash,sha256:hhash:bhash,..."
    Returns 0 on success, -1 on malloc/syntax failure, -2 if an algorithm
-   name is present more than once (spec-06 §7.3; case-insensitive per
+   name is present more than once (-07 §9.3; case-insensitive per
    RFC 5234, since ABNF quoted strings are case-insensitive). */
 static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
     int cnt = 1;
@@ -80,7 +80,7 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
         if (split3(tok, &tok, &c1, &c2) < 0 || !name_ok(tok, 0) || !*c1 || !*c2) {
             free(copy); return -1;
         }
-        /* §7.3: an algorithm MUST NOT be present more than once. Check
+        /* -07 §9.3: an algorithm MUST NOT be present more than once. Check
            against every entry already stored -- this must run before any
            hash is computed or compared. */
         for (int i = 0; i < *n; i++) {
@@ -122,7 +122,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
         /* Malloc failure or syntax error inside tagparse() itself -- no
            tag, including m=, was ever read, so the instance number is
            genuinely unknowable. This is the surviving sibling of the
-           silent-drop bug already fixed for the §7.3 duplicate-hash (-2)
+           silent-drop bug already fixed for the -07 §9.3 duplicate-hash (-2)
            case: before this, a -1 failure here vanished with no error at
            all. Report the same generic wording used below for the other
            unattributable case, without an m=N -- there is nothing more
@@ -151,10 +151,10 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
     if (dkim2_chain_number_error("Message-Instance", "m", v, errbuf, errbufsz))
         goto err;
     mi->m = atoi(v);   /* 1..DKIM2_MAX_CHAIN_LENGTH ASCII digits: exact */
-    /* spec-06 §7: tag names are case insignificant (tagparse() folds them)
-       and "MUST be only one of each kind" -- a repeat in any case
-       combination (h=..; H=.., m=1; M=1) is a syntax error, never
-       first- or last-one-wins. */
+    /* -07 §9 wants lowercase tag names; any case is accepted (contract
+       decision 2: tagparse() folds them), and §8 forbids duplicates -- a
+       repeat in any case combination (h=..; H=.., m=1; M=1) is a syntax
+       error, never first- or last-one-wins. */
     if (tl->duplicate || tl->syntax_error) {
         if (errbuf && errbufsz)
             snprintf(errbuf, errbufsz,
@@ -173,7 +173,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
     {
         int hr = parse_hsets(v, &mi->hsets, &mi->n_hsets);
         if (hr == -2) {
-            /* spec-06 §7.3: duplicate hash algorithm -- a specific,
+            /* -07 §9.3: duplicate hash algorithm -- a specific,
                reportable parse failure, not a plain "MI absent". mi->m is
                already populated at this point, so the message can name it. */
             if (errbuf && errbufsz)
@@ -185,7 +185,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
         if (hr < 0) {
             /* -1: either a malformed hash-set entry or a malloc/strdup
                failure inside parse_hsets(). Both are folded into the same
-               "syntax error" wording (the §11.2 precedent used for a bad
+               "syntax error" wording (the -07 §14.2 precedent used for a bad
                r= payload elsewhere in this file/dkim2_verify.c) -- a
                permanent parse failure isn't usefully distinguished from an
                allocation failure to the remote party either way, and this
@@ -254,7 +254,7 @@ static char **parse_rt(const char *rt_val, int *n_out) {
     return out;
 }
 
-/* Parse f= value: comma-separated plain flag tokens (draft-06 §8.10).
+/* Parse f= value: comma-separated plain flag tokens (-07 §10.10).
    Flags are an open list; tokens are stored verbatim with WSP trimmed. */
 static char **parse_flags(const char *f_val, int *n_out) {
     int cnt = 1;
@@ -278,8 +278,8 @@ static char **parse_flags(const char *f_val, int *n_out) {
     return out;
 }
 
-/* Parse s= value: comma-separated "selector:alg:sig" triples (spec-06
-   §8.9). FWS may sit around the comma and the colons and inside the base64
+/* Parse s= value: comma-separated "selector:alg:sig" triples (-07
+   §10.9). FWS may sit around the comma and the colons and inside the base64
    value, never inside the Selector or algorithm name (no "rsa- sha256"
    normalised to rsa-sha256); an item that is not exactly three parts, or
    an empty item, is a syntax error. */
@@ -353,7 +353,7 @@ static int valid_i(const char *v) {
     return nonzero;
 }
 
-/* spec-06 §8.4: t= is 1*DIGIT (the value's surrounding WSP is already
+/* -07 §10.4: t= is 1*DIGIT (the value's surrounding WSP is already
    trimmed by tagparse()). Values beyond 2^64-1 saturate rather than wrap --
    they are far in the future either way. Returns 0, or -1 if not digits. */
 static int parse_t(const char *v, uint64_t *out) {
@@ -449,7 +449,7 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
 dkim2_sig_t *dkim2_sig_parse(const char *value) {
     taglist_t *tl = tagparse(value, NULL);
     if (!tl) return NULL;
-    /* §8: "there MUST be only one of each kind" of tag. */
+    /* -07 §8: "Tags with duplicate names MUST NOT occur". */
     if (tl->duplicate || tl->syntax_error) { taglist_free(tl); return NULL; }
     dkim2_sig_t *sig = calloc(1, sizeof *sig);
     if (!sig) { taglist_free(tl); return NULL; }
@@ -460,7 +460,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     REQ("m"); if (dkim2_chain_number_error("DKIM2-Signature", "m", v, NULL, 0)) goto err; sig->m = atoi(v);
     REQ("t"); if (parse_t(v, &sig->t) < 0) goto err;
     REQ("d"); sig->d = strdup(v);
-    /* draft-06 §8: either nd= or both mf=+rt=, never both forms. */
+    /* -07 §10.7: either nd= or both mf=+rt=, never both forms. */
     {   const char *nd = tag_get(tl, "nd");
         const char *mf = tag_get(tl, "mf");
         const char *rt = tag_get(tl, "rt");
@@ -481,7 +481,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
 #undef REQ
     v = tag_get(tl, "n");
     if (v) {
-        if (strlen(v) > 64) goto err;  /* §8.3: n= must not exceed 64 chars */
+        if (strlen(v) > 64) goto err;  /* -07 §10.3: n= must not exceed 64 chars */
         sig->n = strdup(v);
     }
     v = tag_get(tl, "f");
@@ -537,7 +537,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     int pos = snprintf(buf, 8192, "i=%d; m=%d; t=%llu; d=%s",
         sig->i, sig->m, (unsigned long long)sig->t, sig->d);
     if (sig->nd) {
-        /* draft-06 §9.3: imaginary hop carries nd= instead of mf=/rt= */
+        /* -07 §12.3: imaginary hop carries nd= instead of mf=/rt= */
         pos += snprintf(buf + pos, 8192 - pos, "; nd=%s", sig->nd);
     } else {
         char mf_b64[512];
@@ -561,7 +561,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     }
     if (sig->n)
         pos += snprintf(buf + pos, 8192 - pos, "; n=%s", sig->n);
-    /* f= flags (draft-06 §8.10), e.g. feedback, feedhere — preserved verbatim */
+    /* f= flags (-07 §10.10), e.g. feedback, feedhere — preserved verbatim */
     if (sig->flags && sig->flags[0]) {
         pos += snprintf(buf + pos, 8192 - pos, "; f=");
         for (int i = 0; sig->flags[i]; i++) {

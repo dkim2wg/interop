@@ -254,13 +254,13 @@ static void body_cases(void) {
          { H2, "a\r\nfoot\r\n", "{" RSUB ",\"b\":[{\"c\":[1,1]},{\"d\":[\"\",\"\"]}]}" });
     CASE("copy into trailing blanks", NULL, NULL, { H1, "a\r\n\r\n\r\n" },
          { H2, "a\r\n\r\n\r\n", "{" RSUB ",\"b\":[{\"c\":[1,3]}]}" });
-    CASE("copy past end", NULL, "malformed body Recipe", { H1, B },
+    CASE("copy past end", NULL, "contains invalid JSON", { H1, B },
          { H2, B, "{" RSUB ",\"b\":[{\"c\":[1,9]}]}" });
-    CASE("copy past end of a rebuilt body", NULL, "m=2 has a malformed body Recipe",
+    CASE("copy past end of a rebuilt body", NULL, "m=2 contains invalid JSON",
          { H1, "x\r\ny\r\nq\r\n" },
          { H2, "x\r\ny\r\n", "{" RSUB ",\"b\":[{\"c\":[1,3]}]}" },
          { H3, "x\r\ny\r\nz\r\n", "{" RSUB3 ",\"b\":[{\"c\":[1,2]}]}" });
-    CASE("copy past end of an all-literal body", NULL, "m=2 has a malformed body Recipe",
+    CASE("copy past end of an all-literal body", NULL, "m=2 contains invalid JSON",
          { H1, "x\r\ny\r\nq\r\n" },
          { H2, "p\r\nq\r\n", "{" RSUB ",\"b\":[{\"c\":[1,3]}]}" },
          { H3, "z\r\n", "{" RSUB3 ",\"b\":[{\"d\":[\"p\",\"q\"]}]}" });
@@ -301,7 +301,7 @@ static void body_cases(void) {
          { H3, "a\r\nb", "{" RSUB3 ",\"b\":[{\"c\":[1,2]},{\"d\":[\"x\",\"q\"]}]}" });
     CASE("empty body", NULL, "PASS", { H1, "x\r\n" },
          { H2, "", "{" RSUB ",\"b\":[{\"d\":[\"x\"]}]}" });
-    CASE("copy from an empty body", NULL, "malformed body Recipe", { H1, "x\r\n" },
+    CASE("copy from an empty body", NULL, "contains invalid JSON", { H1, "x\r\n" },
          { H2, "", "{" RSUB ",\"b\":[{\"c\":[1,1]}]}" });
     CASE("body of only blank lines", NULL, "PASS", { H1, "\r\n\r\nq\r\n" },
          { H2, "\r\n\r\n", "{" RSUB ",\"b\":[{\"c\":[1,2]},{\"d\":[\"q\"]}]}" });
@@ -364,21 +364,21 @@ static void header_cases(void) {
          { H1 "X-Foo: 1\r\n", B },
          { H2 "X-Foo: 2\r\n", B,
            "{\"h\":{\"received\":[{\"c\":[1,1]}],\"x-foo\":[{\"d\":[\"1\"]}],\"subject\":[{\"d\":[\"hi\"]}]}}" });
-    CASE("skipped field copy past end", "Received: one\r\n", "malformed header Recipe",
+    CASE("skipped field copy past end", "Received: one\r\n", "contains invalid JSON",
          { H1, B }, { H2, B, "{\"h\":{\"received\":[{\"c\":[1,2]}]}}" });
-    CASE("header copy past end", NULL, "m=2 has a malformed header Recipe", { H1, B },
+    CASE("header copy past end", NULL, "m=2 contains invalid JSON", { H1, B },
          { H2, B, "{\"h\":{\"subject\":[{\"c\":[1,2]}]}}" });
-    CASE("missing field", NULL, "malformed header Recipe", { H1, B },
+    CASE("missing field", NULL, "contains invalid JSON", { H1, B },
          { H2, B, "{\"h\":{\"cc\":[{\"c\":[1,1]}]}}" });
     CASE("header copies out of order", NULL, "contains invalid JSON",
          { H1 "Comments: a\r\nComments: b\r\n", B },
          { H1 "Comments: a\r\nComments: b\r\n", B,
            "{\"h\":{\"comments\":[{\"c\":[2,2]},{\"c\":[1,1]}]}}" });
-    CASE("first bad name in key order", NULL, "malformed header Recipe", { H1, B },
+    CASE("first bad name in key order", NULL, "contains invalid JSON", { H1, B },
          { H2, B, "{\"h\":{\"zz\":[{\"c\":[1,1]}],\"aa\":[{\"c\":[1,1]}],\"subject\":[{\"d\":[\"hi\"]}]}}" });
-    CASE("body error before header error", NULL, "m=2 has a malformed body Recipe",
+    CASE("body error before header error", NULL, "m=2 contains invalid JSON",
          { H1, B }, { H2, B, "{\"b\":[{\"c\":[1,99]}],\"h\":{\"cc\":[{\"c\":[1,1]}]}}" });
-    CASE("header Recipes below a null", NULL, "m=2 has a malformed header Recipe",
+    CASE("header Recipes below a null", NULL, "m=2 contains invalid JSON",
          { H1, B }, { H2, "two\r\n", "{\"h\":{\"cc\":[{\"c\":[1,1]}]}}" },
          { H3, "new\r\n", "{" RSUB3 ",\"b\":null}" });
     CASE("header hash mismatch below a null", NULL, "m=1 header hash sha256 mismatch",
@@ -391,7 +391,7 @@ static void header_cases(void) {
          { H2, B, "{\"h\":{\"to\":5,\"subject\":[{\"x\":1},{\"d\":[\"hi\",7]}]}}" });
     CASE("message-instance key, literal", NULL, "PASS", { H1, B },
          { H2, B, "{\"h\":{\"message-instance\":[{\"d\":[\"m=9\"]}]," "\"subject\":[{\"d\":[\"hi\"]}]}}" });
-    CASE("message-instance key, copy", NULL, "malformed header Recipe", { H1, B },
+    CASE("message-instance key, copy", NULL, "contains invalid JSON", { H1, B },
          { H2, B, "{\"h\":{\"message-instance\":[{\"c\":[1,1]}]}}" });
     CASE("u literal header", NULL, "PASS",
          { "From: a@example.com\r\nSubject: caf\xc3\xa9\r\n", B },

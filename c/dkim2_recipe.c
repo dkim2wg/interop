@@ -52,7 +52,7 @@ static int buf_append(char **buf, size_t *pos, size_t *cap,
 
 /* A "c" step is exactly two integers with 1 <= start <= end <= n_items, and
    its start MUST be greater than the end of every preceding "c" step in the
-   same list (spec-06 §5.1; the same ascending/non-overlapping rule is applied
+   same list (-07 §5.1; the same ascending/non-overlapping rule is applied
    to body lists -- WG extension, 2026-10). `prev_end` is the end of the
    previous "c" step, 0 when there is none.
 
@@ -482,7 +482,7 @@ char **dkim2_apply_header_recipe(const char *r_json,
 
     cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
     if (h && cJSON_IsNull(h)) {
-        /* draft-06 §5.1: a null header Recipe is no longer permitted. */
+        /* -07 §5.1: a null header Recipe is no longer permitted. */
         cJSON_Delete(root);
         return NULL;
     }
@@ -950,7 +950,7 @@ char *dkim2_gen_header_recipe(const char *field_name,
                 val++;
                 while (*val == ' ') val++;
                 /* A literal is one unfolded value: drop every CR/LF (the
-                   §6.2 header hash unfolds and collapses WSP, so this is
+                   -07 §6.2 header hash unfolds and collapses WSP, so this is
                    hash-neutral) and the terminator with them. */
                 size_t vl = strlen(val);
                 char *s = malloc(vl + 1);

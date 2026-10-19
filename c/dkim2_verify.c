@@ -22,7 +22,7 @@
     snprintf(result->message, sizeof result->message, fmt, ##__VA_ARGS__); \
     return; } while(0)
 
-/* §8.5 canonicalization — same as in dkim2_sign.c.
+/* -07 §12.8 canonicalization — same as in dkim2_sign.c.
    Forward-declare to avoid duplicating code; share via static inline or header.
    Here we duplicate for self-containment. */
 static char *canon_for_sig(const char *hdr) {
@@ -65,7 +65,7 @@ static void unbracket(const char *s, char *out, size_t outsz) {
     out[n] = '\0';
 }
 
-/* §7.7/§10.4 envelope comparison: local-part case-sensitive, domain
+/* -07 §14.4 envelope comparison: local-part case-sensitive, domain
    case-insensitive, angle brackets ignored; two null senders (<>) are equal. */
 static int env_addr_eq(const char *a, const char *b) {
     char ab[512], bb[512];
@@ -299,7 +299,7 @@ static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t ms
     return 0;
 }
 
-/* spec-06 §8.9: a Selector MUST NOT appear more than once within a single
+/* -07 §10.9: a Selector MUST NOT appear more than once within a single
    s= tag; the same signing algorithm MAY appear a second time, but only
    with a distinct Selector -- three or more occurrences of the same
    algorithm means "more selectors than allowed". The two checks are
@@ -307,7 +307,7 @@ static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t ms
    duplicate-selector error, not a selector-count error (the count is 2,
    not 3+). Matching is
    case-insensitive for both: algorithm names are RFC 5234 ABNF quoted
-   strings, and a Selector is a Domain (§3.5) -- DNS names are
+   strings, and a Selector is a Domain (-07 §3.6) -- DNS names are
    case-insensitive. Returns 0 if clean, -1 with errbuf filled otherwise. */
 static const dkim2_sigset_t *g_cmp_ssets; /* qsort context (single-threaded use) */
 
@@ -356,7 +356,7 @@ out:
     return rc;
 }
 
-/* spec-06 §3.4/§8.9: the signing algorithms we implement, by exact
+/* -07 §3.5/§10.9: the signing algorithms we implement, by exact
    (case-significant) name. Anything else is ignored. */
 static int known_sig_alg(const char *alg) {
     return strcmp(alg, "rsa-sha256") == 0 || strcmp(alg, "ed25519-sha256") == 0;
@@ -367,7 +367,7 @@ static const char *sig_alg_key_type(const char *alg) {
     return strcmp(alg, "rsa-sha256") == 0 ? "rsa" : "ed25519";
 }
 
-/* Build signing input for the verifier — same structure as §8.5 signing,
+/* Build signing input for the verifier — same structure as -07 §12.8 signing,
    but for the signature being verified, substitute empty string for its sig value.
    The sig_value_to_empty is the sig_b64 we want to blank out.
    We reconstruct an "incomplete" signature value by using dkim2_sig_format. */
@@ -378,7 +378,7 @@ static char *blank_sig_values(const char *raw_val) {
     size_t rlen = strlen(raw_val);
 
     /* Find the s= tag at a tag boundary (start, or after ';'/WSP), matching
-       the tag name case-insensitively per spec-06 §8. */
+       the tag name case-insensitively per -07 §10. */
     const char *s_tag = NULL;
     for (const char *p = raw_val; *p; p++) {
         if ((p[0] == 's' || p[0] == 'S') && p[1] == '=') {
@@ -473,7 +473,7 @@ static unsigned char *build_verify_input(
     size_t *out_len) {
     /* Build signing input for target_sig: include only MI headers with m <=
        target_sig->m, and only DKIM2-Signature headers with i <= target_sig->i.
-       The email stores them newest-first; spec §9.5 requires ascending order. */
+       The email stores them newest-first; -07 §12.8 requires ascending order. */
     const int MAX = 64;
     dkim2_mi_t *mi_arr[MAX]; int n_mi = 0;
     dkim2_sig_t *sig_arr[MAX]; int n_sig = 0;
@@ -574,8 +574,8 @@ static int undo_walk(
     }
 
     int ret = 0;
-    /* spec-06 §4.2: a null body Recipe means the previous body cannot be
-       recreated -- but header Recipes are mandatory (§5.1), so the header
+    /* -07 §5.2: a null body Recipe means the previous body cannot be
+       recreated -- but header Recipes are mandatory (-07 §5.1), so the header
        history can still be walked. Once set (sticky), every lower instance
        is checked on its header hashes only and body Recipes are not applied. */
     int body_gone = 0;
@@ -595,7 +595,7 @@ static int undo_walk(
         int n_checked = 0;
         for (int hi = 0; !trace && hi < mi->n_hsets; hi++) {
             int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
-            if (alg < 0) continue;          /* §3.4: ignore what we don't implement */
+            if (alg < 0) continue;          /* -07 §3.5: ignore what we don't implement */
             size_t alen = dkim2_hash_alg_len(alg);
             n_checked++;
 
@@ -646,7 +646,7 @@ static int undo_walk(
             ret = -1; goto done;
         }
 
-        /* spec-06 §9.1: even the bottom (m=1) instance MAY carry Recipes
+        /* -07 §12.1: even the bottom (m=1) instance MAY carry Recipes
            ("if it is wished to record any changes made to a message as it
            enters the DKIM2 ecosystem"), so a malformed r= there must be
            reported exactly like on any other instance -- this check is NOT
@@ -662,7 +662,7 @@ static int undo_walk(
             } else {
                 int r_json_len = (int)b64_decode(mi->r_raw, r_json_bytes, decoded_max);
                 if (r_json_len <= 0) {
-                    /* spec-06 §11.2: a malformed r= base64 payload is a
+                    /* -07 §14.2: a malformed r= base64 payload is a
                        syntax error -- distinct from, and reported before,
                        a post-decode JSON parse failure. This used to
                        silently `continue`, the same silent-drop shape as
@@ -678,7 +678,7 @@ static int undo_walk(
                 r_json_bytes[r_json_len] = '\0';
                 const char *rj = (const char *)r_json_bytes;
 
-                /* spec-06 §11.2: "errors in a JSON object specifying Recipes
+                /* -07 §14.2: "errors in a JSON object specifying Recipes
                    should be called out specifically". dkim2_apply_body_recipe()
                    and dkim2_apply_header_recipe() both return NULL on a
                    cJSON_Parse() failure with no way to distinguish that from
@@ -712,7 +712,8 @@ static int undo_walk(
                     /* The JSON parsed and met the schema above, so a NULL
                        from either apply_* call now means the Recipe does not
                        fit the message (a copy past the last line or field).
-                       Report it as such rather than fall through to a hash
+                       That is "contains invalid JSON" too (every Recipe error
+                       is, by the -07 ruling), not a fall-through to a hash
                        mismatch on the un-undone content. */
                     if (null_body) {
                         /* Previous body is unrecoverable: stop checking
@@ -726,7 +727,7 @@ static int undo_walk(
                         if (dkim2_validate_body_recipe(rj) != 0) {
                             free(r_json_bytes);
                             snprintf(errbuf, errbufsz,
-                                "PERMERROR: Message-Instance m=%d has a malformed body Recipe", mi->m);
+                                "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
                             if (trace) trace[vi].body_err = 1;
                             ret = -1; goto done;
                         }
@@ -736,7 +737,7 @@ static int undo_walk(
                         if (!new_body) {
                             free(r_json_bytes);
                             snprintf(errbuf, errbufsz,
-                                "PERMERROR: Message-Instance m=%d has a malformed body Recipe", mi->m);
+                                "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
                             if (trace) trace[vi].body_err = 1;
                             ret = -1; goto done;
                         }
@@ -751,7 +752,7 @@ static int undo_walk(
                     if (!new_content) {
                         free(r_json_bytes);
                         snprintf(errbuf, errbufsz,
-                            "PERMERROR: Message-Instance m=%d has a malformed header Recipe", mi->m);
+                            "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
                         if (trace) trace[vi].hdr_err = 1;
                         ret = -1; goto done;
                     }
@@ -797,7 +798,7 @@ int dkim2_undo_walk_trace(dkim2_mi_t **mi_arr, int n_mi, char **hdrs, int n_hdrs
                      errbuf, errbufsz, trace);
 }
 
-/* §10.7 over ctx->mi_list, sorted by m=. The planned walk (dkim2_plan.c) by
+/* -07 §14.7 over ctx->mi_list, sorted by m=. The planned walk (dkim2_plan.c) by
    default: on the plan the caller fed (ctx->plan, e.g. the milter's
    streamed body), else on one made here from ctx->body. The undo walk when
    asked (ctx->undo_walk), when there are no body bytes at all (digest-only
@@ -838,7 +839,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = 0;
     result->domain[0] = '\0';
 
-    /* spec-06 §7.3: a Message-Instance header that failed to parse --
+    /* -07 §9.3: a Message-Instance header that failed to parse --
        whether with a specific reportable cause (duplicate hash algorithm in
        h=, the -2 case) or a plain syntax/malloc failure (-1: a missing
        required tag, a malformed h= entry, or an allocation failure) -- never
@@ -852,10 +853,10 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
        error, describing the wrong problem).
 
        The bottom-MI case matters in its own right: nothing else in this
-       function or in verify_mi_hashes() (§10.7, below) independently checks
+       function or in verify_mi_hashes() (-07 §14.7, below) independently checks
        for a dropped m=1 -- the only thing that happens to catch it today is
        that m=1's raw bytes are always part of every covering signature's
-       §10.6 crypto input (mi->m is always <= any sig's target m), so a drop
+       -07 §14.6 crypto input (mi->m is always <= any sig's target m), so a drop
        usually surfaces as an incidental "signature verification failed"
        instead. A hand-built message whose signatures were computed to match
        the verifier's already-missing-m=1 reconstruction (see
@@ -879,7 +880,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     if (ctx->sig_error[0])
         SETSTATUS(DKIM2_PERMERROR, "%s", ctx->sig_error);
 
-    /* §7.3/§10.7: each Message-Instance m= value appears once. Check it
+    /* -07 §9.1/§14.7: each Message-Instance m= value appears once. Check it
        explicitly (inbound and outbound), before any crypto, rather than
        leaving it to an incidental signature or hash failure. */
     for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next)
@@ -968,7 +969,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         SETSTATUS(DKIM2_PERMERROR,
             "PERMERROR: Message-Instance m=%d missing", latest->m);
 
-    /* §10.2: No MI with m= higher than latest->m should exist unsigned */
+    /* -07 §14.2: No MI with m= higher than latest->m should exist unsigned */
     for (dkim2_mi_t *m = ctx->mi_list; m; m = m->next) {
         /* Outbound mode: the unsigned top instance is the one the signer is
            about to cover (e.g. a list manager's own m=), so it is allowed. */
@@ -977,7 +978,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "PERMERROR: Message-Instance m=%d is not signed", m->m);
     }
 
-    /* §10.4: Envelope MAIL FROM must match top sig's mf= (domain
+    /* -07 §14.4: Envelope MAIL FROM must match top sig's mf= (domain
        case-insensitive, local-part case-sensitive, null sender aware). */
     if (!ctx->outbound && ctx->mail_from && latest->mf) {
         if (!env_addr_eq(ctx->mail_from, latest->mf))
@@ -986,7 +987,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 latest->i, ctx->mail_from);
     }
 
-    /* RCPT TO: every envelope recipient must appear in rt= (§7.7 domains
+    /* RCPT TO: every envelope recipient must appear in rt= (-07 §14.4: domains
        match case-insensitively). */
     if (!ctx->outbound && ctx->rcpt_to && latest->rt) {
         for (int i = 0; ctx->rcpt_to[i]; i++) {
@@ -1008,7 +1009,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
             SETSTATUS(DKIM2_PERMERROR, "%s", cmsg);
     }
 
-    /* §10.6: Verify ALL signatures i=1..N */
+    /* -07 §14.6: Verify ALL signatures i=1..N */
     for (int si = 0; si < n_sigs; si++) {
         dkim2_sig_t *sig = sig_arr[si];
         result->sig_i = sig->i;
@@ -1026,7 +1027,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                     "PERMERROR: DKIM2-Signature i=%d signature expired", sig->i);
         }
 
-        /* spec-06 §8.9: reject duplicate/limit violations before any DNS or
+        /* -07 §10.9: reject duplicate/limit violations before any DNS or
            crypto work. */
         {
             char dup_errbuf[256];
@@ -1090,7 +1091,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 }
                 why = dns_err ? dns_err : DKIM2_KEYERR_SYNTAX;
             } else if (strcmp(pubkey->alg, sig_alg_key_type(sset->alg)) != 0) {
-                why = DKIM2_KEYERR_ALG;                     /* §8.9 */
+                why = DKIM2_KEYERR_ALG;                     /* -07 §10.9 */
             } else if (strcmp(sset->alg, "rsa-sha256") == 0 &&
                        EVP_PKEY_bits(pubkey->pkey) < 1024) {
                 why = "is shorter than 1024 bits";          /* §3.2 */
@@ -1151,7 +1152,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 "FAIL: DKIM2-Signature i=%d selector %s incorrect signature", sig->i, failed_sel);
     }
 
-    /* §10.7: Verify all MI body+header hashes, undoing Recipes for inner hops. */
+    /* -07 §14.7: Verify all MI body+header hashes, undoing Recipes for inner hops. */
     {
         char mi_errbuf[512];
         if (verify_ctx_mi_chain(ctx, mi_errbuf, sizeof mi_errbuf) < 0)
