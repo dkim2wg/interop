@@ -792,6 +792,14 @@ int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz) {
             if (alg < 0) continue;
             size_t alen = dkim2_hash_alg_len(alg);
             n_checked++;
+            /* Header hash before body hash (contract C9, as the undo walk). */
+            unsigned char stored_h[DKIM2_MAX_HASH_LEN];
+            int hl = (int)b64_decode(mi->hsets[hi].hdr_hash, stored_h, sizeof stored_h);
+            if (hl != (int)alen || memcmp(lv->hdr.d[alg], stored_h, alen) != 0) {
+                snprintf(errbuf, errbufsz,
+                    "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
+                return -1;
+            }
             if (!lv->gone) {
                 unsigned char stored[DKIM2_MAX_HASH_LEN];
                 int bl = (int)b64_decode(mi->hsets[hi].body_hash, stored, sizeof stored);
@@ -804,13 +812,6 @@ int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz) {
                         "FAIL: Message-Instance m=%d body hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
                     return -1;
                 }
-            }
-            unsigned char stored[DKIM2_MAX_HASH_LEN];
-            int hl = (int)b64_decode(mi->hsets[hi].hdr_hash, stored, sizeof stored);
-            if (hl != (int)alen || memcmp(lv->hdr.d[alg], stored, alen) != 0) {
-                snprintf(errbuf, errbufsz,
-                    "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
-                return -1;
             }
         }
         if (n_checked == 0) {

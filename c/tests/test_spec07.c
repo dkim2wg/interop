@@ -949,6 +949,16 @@ static void test_check_order(void) {
         CHECK(res.status == DKIM2_FAIL);
         msg_free(&m);
     }
+    {   /* within §14.7: header hash before body hash, as the other four do */
+        msg_t m;
+        base_signed(&m, "A <a@example.com>");
+        msg_set(&m, "Subject", "tampered");
+        snprintf(m.body, sizeof m.body, "tampered body\r\n");
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "FAIL: Message-Instance m=1 header hash sha256 mismatch");
+        CHECK(res.status == DKIM2_FAIL);
+        msg_free(&m);
+    }
     {   /* §14.3 before §14.4: expired, and mf= not under d= */
         msg_t m;
         msg_init(&m, "a@example.com", "test", "Hello\r\n");

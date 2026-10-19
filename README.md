@@ -112,7 +112,7 @@ message (a copy past the end) after it. The runner feeds them
 all through every verifier's real CLI entry point and asserts each negative
 vector is REJECTED with the exact -07 error string as the verifier's
 PRIMARY error (its first `STATE: text` line, compared exactly) and the
-matching state, and each positive control is ACCEPTED (65 vectors, 325
+matching state, and each positive control is ACCEPTED (66 vectors, 330
 cells):
 
     ./util/negative-vectors.sh

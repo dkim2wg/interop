@@ -618,6 +618,21 @@ static int undo_walk(
             size_t alen = dkim2_hash_alg_len(alg);
             n_checked++;
 
+            /* Header hash before body hash (contract C9: the same primary
+               error as the other verifiers when both are wrong). */
+            unsigned char computed_hh[DKIM2_MAX_HASH_LEN];
+            if (dkim2_header_hash_raw_alg((const char **)content, n_content, alg, computed_hh) < 0) {
+                snprintf(errbuf, errbufsz, "PERMERROR: header hash computation failed");
+                ret = -1; goto done;
+            }
+            unsigned char stored_hh[DKIM2_MAX_HASH_LEN];
+            int hh_len = (int)b64_decode(mi->hsets[hi].hdr_hash, stored_hh, sizeof stored_hh);
+            if (hh_len != (int)alen || memcmp(computed_hh, stored_hh, alen) != 0) {
+                snprintf(errbuf, errbufsz,
+                    "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
+                ret = -1; goto done;
+            }
+
             if (!body_gone) {
             unsigned char stored_bh[DKIM2_MAX_HASH_LEN];
             int bh_len = (int)b64_decode(mi->hsets[hi].body_hash, stored_bh, sizeof stored_bh);
@@ -634,28 +649,14 @@ static int undo_walk(
             } else {
                 have_body_hash = 0;          /* no body bytes for inner MIs */
             }
-            /* Only the BODY comparison is skipped without body bytes: the
-               header hash below is still checked (it used to be skipped
-               with it, so a digest-only caller never saw a bad inner
-               header history). */
+            /* Only the BODY comparison is skipped without body bytes; the
+               header hash above is always checked (a digest-only caller
+               still sees a bad inner header history). */
             if (have_body_hash && memcmp(computed_bh, stored_bh, alen) != 0) {
                 snprintf(errbuf, errbufsz,
                     "FAIL: Message-Instance m=%d body hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
                 ret = -1; goto done;
             }
-            }
-
-            unsigned char computed_hh[DKIM2_MAX_HASH_LEN];
-            if (dkim2_header_hash_raw_alg((const char **)content, n_content, alg, computed_hh) < 0) {
-                snprintf(errbuf, errbufsz, "PERMERROR: header hash computation failed");
-                ret = -1; goto done;
-            }
-            unsigned char stored_hh[DKIM2_MAX_HASH_LEN];
-            int hh_len = (int)b64_decode(mi->hsets[hi].hdr_hash, stored_hh, sizeof stored_hh);
-            if (hh_len != (int)alen || memcmp(computed_hh, stored_hh, alen) != 0) {
-                snprintf(errbuf, errbufsz,
-                    "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
-                ret = -1; goto done;
             }
         }
         /* Fail closed: an MI naming no implemented algorithm is unverifiable. */

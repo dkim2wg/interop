@@ -115,6 +115,9 @@ contract C9 (final review I1/I2), two faults each; the runner pins the
 PRIMARY error (first in -07 §14 section order) and its state exactly:
   multi-from-tampered.eml          -- From changed after signing: §14.7 hash
                                          FAIL before the §14.8 From PERMERROR
+  multi-header-and-body-tampered.eml -- Subject and body both changed: the
+                                         header hash FAIL comes before the
+                                         body hash FAIL (within §14.7)
   multi-expired-custody.eml        -- expired (§14.3) + mf= not under d= (§14.4)
   multi-custody-bad-signature.eml  -- mf= not under d= (§14.4) + bad signature (§14.6)
   multi-bad-signature-header-hash.eml -- bad signature (§14.6) + Subject
@@ -1125,6 +1128,15 @@ def build_multi_from_tampered():
     return _replace_header(build_positive_control(), b"From", b"brong@evil.example")
 
 
+def build_multi_header_and_body_tampered():
+    """A validly signed message whose Subject AND body were then changed.
+    Both m=1 hashes fail; within §14.7 every verifier checks the header
+    hash first, so the primary error is the header hash FAIL."""
+    msg = _replace_header(build_positive_control(), b"Subject", b"tampered")
+    head, sep, _body = msg.partition(b"\r\n\r\n")
+    return head + sep + b"tampered body\r\n"
+
+
 def build_multi_expired_custody():
     """i=1 made 30 days ago (expired, §14.3) whose mf= is not under its d=
     (Chain of Custody, §14.4).  The primary error is "signature expired".
@@ -1259,6 +1271,7 @@ FIXTURES = {
     "recipe-case-duplicate-key.eml": build_recipe_case_duplicate_key,
     "from-display-no-brackets.eml": build_from_display_no_brackets,
     "multi-from-tampered.eml": build_multi_from_tampered,
+    "multi-header-and-body-tampered.eml": build_multi_header_and_body_tampered,
     "multi-expired-custody.eml": build_multi_expired_custody,
     "multi-custody-bad-signature.eml": build_multi_custody_bad_signature,
     "multi-bad-signature-header-hash.eml": build_multi_bad_signature_header_hash,
