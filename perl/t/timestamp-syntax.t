@@ -5,7 +5,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib";
 use DKIM2SignedFixture;
 
-# spec-06 §8.4: t= is 1*DIGIT, an unsigned decimal; §11.2 says validate the
+# -07 §10.4: t= is 1*DIGIT, an unsigned decimal; §14.2 says validate the
 # format. A malformed t= is a syntax error whether or not the age check
 # runs (review R6) -- it used to numify to 0 and skip the age check.
 

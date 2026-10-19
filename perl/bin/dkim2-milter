@@ -96,6 +96,13 @@ if (defined $opts{'max-recipe-literals'}
 if (defined $opts{'max-recipe-literals'} && $opts{'max-recipe-literals'} < 0) {
     die "--max-recipe-literals must not be negative\n";
 }
+# Disabled (final review M5): the Message-Instance is computed over the
+# message rewritten with the epilogue, but the original bytes are signed,
+# and that mail fails verification.
+if ($opts{'use-epilogue'} || defined $opts{'epilogue-threshold'}) {
+    die "--use-epilogue and --epilogue-threshold are disabled in this release: "
+      . "they produce mail that fails verification (Mail::DKIM2 0.23 Changes)\n";
+}
 
 $opts{socket}    //= 'unix:/var/run/dkim2-milter.sock';
 $opts{algorithm} //= 'rsa-sha256';
@@ -1099,18 +1106,6 @@ dkim2-milter - Standalone DKIM2 milter for Postfix
         --keydir /etc/dkim2/keys \
         --snapshot-dir /var/spool/dkim2/snapshots
 
-    # Epilogue-based MI (body in MIME epilogue, compact header)
-    dkim2-milter --socket unix:/var/run/dkim2.sock \
-        --keydir /etc/dkim2/keys \
-        --snapshot-dir /var/spool/dkim2/snapshots \
-        --use-epilogue
-
-    # Auto-switch to epilogue when diff exceeds 5 literal lines
-    dkim2-milter --socket unix:/var/run/dkim2.sock \
-        --keydir /etc/dkim2/keys \
-        --snapshot-dir /var/spool/dkim2/snapshots \
-        --epilogue-threshold 5
-
     # Testing with dns.json instead of real DNS
     dkim2-milter --socket inet:8891@localhost \
         --keydir keys \
@@ -1331,12 +1326,18 @@ C<X-DKIM2-Info: action=wrap-single-part;>.
 
 =item B<--use-epilogue>
 
+B<Disabled in this release:> the milter refuses to start with it. The
+Message-Instance is computed over the message rewritten with the epilogue
+while the original bytes are signed, so the mail fails verification.
+
 When computing a diff-based MI, always store the previous message body in
 the MIME epilogue rather than as inline diff lines.  This keeps MI headers
 small regardless of how much the body changed, at the cost of increasing
 the transmitted message size.  Cannot be combined with C<--epilogue-threshold>.
 
 =item B<--epilogue-threshold> I<N>
+
+B<Disabled in this release,> as B<--use-epilogue>.
 
 When computing a diff-based MI, switch to epilogue storage only when the
 diff recipe would contain more than I<N> literal (non-range) lines.  Small

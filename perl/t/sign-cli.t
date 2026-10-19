@@ -239,7 +239,7 @@ isnt($rc4, 0, 'missing --selector is an error');
         or die 'no nd=';
     ($out, $rc) = $run->($ws, '--ignore-timestamps');
     is($rc, 0, 'gate: "nd = x" with whitespace around "=" is recognised and signed');
-    # Not a tampering hole: spec-06 canonicalises a DKIM2-Signature field by
+    # Not a tampering hole: -07 §12.8 canonicalises a DKIM2-Signature field by
     # removing all whitespace before hashing it, so adding FWS around "=" does
     # not change what i=1's b= covers. The countersigned chain verifies, while
     # changing the domain really does break i=1 (next test).

@@ -8,7 +8,7 @@ use DKIM2SignedFixture;
 use DKIM2TestKeys;
 use Mail::DKIM2::Verifier;
 
-# spec-06 §3.4: Verifiers MUST ignore signatures using algorithms they do
+# -07 §3.5: Verifiers MUST ignore signatures using algorithms they do
 # not implement. Only the exact names rsa-sha256 and ed25519-sha256 are
 # implemented (tag values are case significant, §8); anything else is
 # skipped before any key lookup, and is never verified as RSA.
@@ -44,7 +44,7 @@ run('known algorithm, base64 missing its padding',
 run('unknown algorithm, value not base64: still ignored',
     [['sel2', 'future-alg', '!!x!!'], ['sel1', 'rsa-sha256']], qr/^pass/, 1);
 
-# spec-06 §11.5: an absent key is a PERMERROR when nothing else can be
+# -07 §14.5: an absent key is a PERMERROR when nothing else can be
 # checked; an item with no key beside one that verifies is skipped.
 {
     my $absent = sub { $calls++; return undef };

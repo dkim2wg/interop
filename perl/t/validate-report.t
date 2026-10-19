@@ -140,7 +140,7 @@ my %ropt = (PubkeyCallback=>$cb, SkipTimestampCheck=>1);
 }
 
 # 1c) top-level nd=: the highest-numbered DKIM2-Signature carries nd= instead
-# of mf=/rt=. Local policy (spec-06, stricter than the letter of the draft;
+# of mf=/rt=. Local policy (-07 §13.1, §14.4, stricter than the letter of the draft;
 # matches the Verifier.pm permerror added for Task 2.1) rejects this: the
 # report must surface a failing level whose detail matches the same message
 # as the Verifier's permerror.
@@ -181,7 +181,7 @@ sub signed_input_nd {
 # and only ever sub-verifies one signature at a time against a partial
 # message view, so it never sees both i=1 and i=2 together the way
 # Verifier.pm's whole-chain _verify_chain() does). It must use the exact
-# same canonical spec-06 wording as Task 3.1's Verifier.pm permerror
+# same canonical -07 wording as Task 3.1's Verifier.pm permerror
 # (verbatim "MAIL nd=" typo preserved), keyed on the *previous* hop's i=.
 {
     my $msg = build_chain(
@@ -331,10 +331,10 @@ sub signed_input_nd {
     is(Mail::DKIM2::Validate::report($good, %ropt)->{overall}, 'pass', 'clean reflected verifies');
 
     # a folded Received-SPF prepended by the receiver does not pollute the
-    # header hash at all: it verifies cleanly (spec-06 §4).
+    # header hash at all: it verifies cleanly (-07 §4).
     my $polluted = "Received-SPF: pass\r\n (test.example: 1.2.3.4 authorized)\r\n" . $good;
     my $rep = Mail::DKIM2::Validate::report($polluted, %ropt);
-    is($rep->{overall}, 'pass', 'a Received-SPF prepended by the receiver verifies cleanly (spec-06 §4)');
+    is($rep->{overall}, 'pass', 'a Received-SPF prepended by the receiver verifies cleanly (-07 §4)');
 
     # a genuinely broken message must still fail even with Received-SPF present
     my $broken = $good; $broken =~ s/orig body/evil body/;

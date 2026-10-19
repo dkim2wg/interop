@@ -763,11 +763,34 @@ sub _check_body_unchanged {
 
 # --- Calculate ---
 
+# UseEpilogue and EpilogueThreshold are disabled (final review M5): the
+# instance is computed over the message rewritten with the epilogue, but a
+# caller holding the message as a string, as both milters do, signs and
+# sends the original bytes, and that mail fails verification. Until that is
+# fixed they croak. $ENABLE_BROKEN_EPILOGUE is for this distribution's own
+# tests of the epilogue code, which hand in an Email::MIME and keep the
+# rewritten object; it is not an interface.
+our $ENABLE_BROKEN_EPILOGUE = 0;
+use constant EPILOGUE_DISABLED =>
+    "UseEpilogue and EpilogueThreshold are disabled in Mail::DKIM2 0.23: the "
+  . "Message-Instance would be computed over the message rewritten with the "
+  . "epilogue while the original bytes are signed, and the mail fails "
+  . "verification. Leave them out (the default is a diff body Recipe, or a "
+  . "null body Recipe over MaxRecipeLiterals)";
+
+sub _check_epilogue {
+    my (%opts) = @_;
+    croak EPILOGUE_DISABLED
+        if !$ENABLE_BROKEN_EPILOGUE && ($opts{UseEpilogue} || exists $opts{EpilogueThreshold});
+    return;
+}
+
 sub calculate {
     my ($class, $current, $previous, %opts) = @_;
     Mail::DKIM2::Common::_check_options("$class->calculate", \%opts,
         qw(Algs BodyHash BodyRecipe EpilogueThreshold IgnorePrefixes
            MaxRecipeLiterals UseEpilogue));
+    _check_epilogue(%opts);
     croak "need a message" unless $current;
 
     my $self = bless {}, $class;
@@ -996,6 +1019,7 @@ sub calculate_first {
     my ($class, $current, $previous, %opts) = @_;
     Mail::DKIM2::Common::_check_options("$class->calculate_first", \%opts,
         qw(Algs EpilogueThreshold IgnorePrefixes MaxRecipeLiterals UseEpilogue));
+    _check_epilogue(%opts);
     croak "need a message" unless $current;
     croak "need a previous message" unless $previous;
 
@@ -1425,7 +1449,11 @@ body diff).
 
 =item UseEpilogue, EpilogueThreshold, MaxRecipeLiterals
 
-C<calculate> with a previous message only; see below.
+C<calculate> with a previous message only; see below. B<UseEpilogue> (true)
+and B<EpilogueThreshold> are disabled in 0.23: they croak. The instance would
+be computed over the message rewritten with the epilogue while a caller that
+holds the message as a string signs the original bytes, and that mail fails
+verification.
 
 =back
 
@@ -1445,7 +1473,8 @@ not an earlier form of the same message.
 The body Recipe is a line diff by default: a Myers diff with the fewest
 literal lines, bounded by C<< MaxRecipeLiterals => N >> literal lines (default 1000)
 and a fixed amount of work. A body it cannot rebuild within those bounds
-gets the null body Recipe (the previous body is unrecoverable). With C<< UseEpilogue => 1 >>, the
+gets the null body Recipe (the previous body is unrecoverable). (Disabled
+in 0.23, see above:) With C<< UseEpilogue => 1 >>, the
 previous body is instead appended after the final MIME boundary (the
 message is wrapped in a C<multipart/mixed> container if it is not already
 multipart) and the Recipe copies it from there; with C<< EpilogueThreshold

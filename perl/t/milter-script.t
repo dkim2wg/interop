@@ -754,6 +754,14 @@ for my $c ([qw(--use-epilogue)], [qw(--epilogue-threshold 5)]) {
 }
 like(`$^X -I$LIB $SCRIPT --max-recipe-literals -1 2>&1`,
     qr/--max-recipe-literals must not be negative/, 'negative cap refused');
+# The epilogue options are disabled in this release (final review M5): the
+# milter refuses to start with either.
+for my $c ([qw(--use-epilogue)], [qw(--epilogue-threshold 5)]) {
+    my $err = `$^X -I$LIB $SCRIPT @$c 2>&1`;
+    isnt($? >> 8, 0, "@$c: the milter does not start");
+    like($err, qr/--use-epilogue and --epilogue-threshold are disabled in this release: they produce mail that fails verification/,
+        "@$c: refused, saying why");
+}
 
 # --- Outbound with no key for the sender: add nothing at all ---
 # A list host's single outbound listener carries every list; a list whose

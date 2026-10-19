@@ -9,8 +9,8 @@ use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 
 # Whole-field syntax (follow-up review F3-F5). Unknown tags are ignored only
-# once they parse: spec-06 §7/§8 give every tag the shape
-# ALPHA *(ALPHA / DIGIT / "_") [FWS] "=" [FWS] [value], and §11.2 makes a
+# once they parse: -07 §8 gives every tag the shape
+# ALPHA *(ALPHA / DIGIT / "_") [FWS] "=" [FWS] [value], and §14.2 makes a
 # field that does not parse a syntax error. Lenient extraction let a fragment
 # that is not a tag at all ride along on a passing signature.
 

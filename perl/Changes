@@ -186,6 +186,37 @@ Revision history for Mail::DKIM2
         "Message-Instance m=101 exceeds ..."). Common::chain_number_error
         takes the field's own number as a fourth argument.
 
+        Check order and the primary result (interop contract C9)
+        - The Verifier runs its checks in -07 section 14 order, each over
+          every signature from i=1 up: field syntax (14.2), timestamps
+          (14.3), Chain of Custody (14.4), keys (14.5), signatures (14.6),
+          hashes and the chain walk (14.7), From (14.8). The first error is
+          the result, as in the other four interop verifiers. What changes:
+          a Chain of Custody error now comes before a signature that does
+          not verify (was the FAIL), a key error of any signature before
+          another's bad signature, and an unexpected top nd= after the
+          timestamps. A From changed after signing stays "FAIL:
+          Message-Instance m=1 header hash sha256 mismatch".
+        - Every Message-Instance's Recipe copy ranges are checked for
+          order and overlap with its other field errors, before any
+          signature (new MessageInstance::recipe_order_error); one past the
+          end of the message is still found by the chain walk.
+        - Common::from_domain: display text with no angle brackets ("Name
+          a@b") is not one mailbox, so not Authentic.
+        - bin/validate.pl prints the primary error on a line of its own.
+        - dkim2-milter and the DKIM2Sign handler log, when the Signer
+          refuses a From, "From domain X is not d=Y or below it" (new
+          Common::from_refusal_note): a DKIM2 list's posting address must
+          be in the domain the milter signs with.
+
+        Disabled: MessageInstance->calculate and ->calculate_first croak on
+        UseEpilogue (true) or EpilogueThreshold, and dkim2-milter refuses
+        to start with --use-epilogue or --epilogue-threshold. The instance
+        was computed over the message rewritten with the epilogue while the
+        caller signed the original bytes, so that mail failed verification.
+        The default path (a diff body Recipe, or a null one over
+        MaxRecipeLiterals) is unaffected.
+
         Fixed: the DKIM2Verify handler's close_callback did not delete
         has_mi (added in 0.22), so authentication_milter logged "did not
         clean up data for key has_mi" and killed the child after every
