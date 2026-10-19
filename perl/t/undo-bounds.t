@@ -69,7 +69,7 @@ sub undo_error {
 my @bogus = (
     [ [[1, 1000000000]],     qr/^body Recipe copies lines 1-1000000000 of 3$/,
       'a range past the end' ],
-    [ [[0, 1]],              qr/^body Recipe copies lines 0-1 of 3$/,
+    [ [[0, 1]],              qr/^PERMERROR: Message-Instance m=2 contains invalid JSON$/,
       'a range from line 0' ],
     [ [[3, 2]],              qr/^body Recipe copies lines 3-2 of 3$/,
       'a range that runs backwards' ],
@@ -77,13 +77,13 @@ my @bogus = (
       'the same range twice' ],
     [ [[2, 3], [1, 2]],      qr/^body Recipe copies lines 2-2 twice$/,
       'ranges that overlap by one line, out of order' ],
-    [ [[-1, 2]],             qr/^body Recipe has a malformed copy range$/,
+    [ [[-1, 2]],             qr/^PERMERROR: Message-Instance m=2 contains invalid JSON$/,
       'a negative line number' ],
-    [ [[1.5, 2]],            qr/^body Recipe has a malformed copy range$/,
+    [ [[1.5, 2]],            qr/^PERMERROR: Message-Instance m=2 contains invalid JSON$/,
       'a fractional line number' ],
-    [ [[1, 2, 3]],           qr/^body Recipe has a malformed copy range$/,
+    [ [[1, 2, 3]],           qr/^PERMERROR: Message-Instance m=2 contains invalid JSON$/,
       'a range of three numbers' ],
-    [ [[1]],                 qr/^body Recipe has a malformed copy range$/,
+    [ [[1]],                 qr/^PERMERROR: Message-Instance m=2 contains invalid JSON$/,
       'a range of one number' ],
 );
 

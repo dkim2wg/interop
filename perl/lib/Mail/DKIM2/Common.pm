@@ -6,6 +6,8 @@ use warnings;
 our $VERSION = '0.22';
 
 use Carp ();
+use B ();
+use Encode ();
 use MIME::Base64 qw(encode_base64 decode_base64);
 use JSON;
 use Crypt::PK::RSA;
@@ -234,22 +236,63 @@ sub encode_tag_json {
     return encode_base64(JSON->new->canonical(1)->encode($data), '');
 }
 
-# Decode a base64 JSON tag value
+# Decode a base64 JSON tag value. The JSON text must be UTF-8 (RFC 8259
+# section 8.1; -07 section 5): anything else dies. Every string in the
+# result, object keys included, is UTF-8 octets, as the message's own
+# header values and body lines are, so a literal compares and hashes
+# byte for byte; a string holding a lone surrogate (a "\ud800" escape) is
+# not UTF-8 and dies too.
 sub decode_tag_json {
     my ($b64) = @_;
-    my $text = decode_base64($b64);
+    my $octets = decode_base64($b64);
+    my $text = eval { Encode::decode('UTF-8', $octets, Encode::FB_CROAK() | Encode::LEAVE_SRC()) };
+    die $@ if ref $@;
+    die "JSON text is not UTF-8\n" unless defined $text;
     my $data = JSON->new->decode($text);
     # A key given twice in one object is invalid here: JSON parsers disagree
     # on which value wins (first or last), so {"b":[...],"b":null} would be a
     # null body Recipe to some verifiers and signers and a real one to others.
+    # Keys are matched without regard to case (the -07 contract, decision 2),
+    # so "Subject" and "subject" in one object are a duplicate too.
     if (defined(my $k = _json_duplicate_key($text))) {
-        die "duplicate JSON object key \"$k\"\n";
+        die "duplicate JSON object key\n";
     }
-    return $data;
+    return _json_octets($data);
+}
+
+# A decoded JSON value with every string -- object keys included --
+# turned into UTF-8 octets. Numbers and booleans are returned untouched:
+# MessageInstance tells a JSON integer from a JSON string by its flags.
+sub _json_octets {
+    my ($v) = @_;
+    return { map { _json_octet_string($_) => _json_octets($v->{$_}) } keys %$v }
+        if ref $v eq 'HASH';
+    return [ map { _json_octets($_) } @$v ] if ref $v eq 'ARRAY';
+    return $v if !defined $v || ref $v;
+    return $v unless B::svref_2object(\$v)->FLAGS & B::SVf_POK;
+    return _json_octet_string($v);
+}
+
+sub _json_octet_string {
+    my ($s) = @_;
+    die "JSON string is not UTF-8\n" if $s =~ /[\x{D800}-\x{DFFF}]/;
+    utf8::encode($s);
+    return $s;
+}
+
+# True if $octets is valid UTF-8 (ASCII included): strict, so no surrogate,
+# nothing above U+10FFFF, no overlong form. Internal.
+sub _is_utf8_octets {
+    my ($octets) = @_;
+    return 1 unless $octets =~ /[^\x00-\x7F]/;
+    my $ok = eval { Encode::decode('UTF-8', $octets, Encode::FB_CROAK() | Encode::LEAVE_SRC()); 1 };
+    die $@ if ref $@;
+    return $ok ? 1 : 0;
 }
 
 # The first key that appears twice in one JSON object of $text (already known
-# to be valid JSON), compared after unescaping, or undef.
+# to be valid JSON), compared after unescaping and without regard to case,
+# or undef.
 sub _json_duplicate_key {
     my ($text) = @_;
     my $json = JSON->new->allow_nonref;
@@ -265,7 +308,7 @@ sub _json_duplicate_key {
         if ($text =~ /\G:/gc) { next }
         if ($text =~ /\G("(?:[^"\\]|\\.)*")/gcs) {
             if ($want_key && ref $stack[-1]) {
-                my $k = $json->decode($1);
+                my $k = lc $json->decode($1);
                 return $k if $stack[-1]{$k}++;
                 $want_key = 0;
             }
@@ -1022,8 +1065,10 @@ gives no usable key.
 
 =head2 encode_tag_json($data), decode_tag_json($base64)
 
-Canonical JSON in base64, the encoding of the C<r=> Recipe tag. C<decode_tag_json> dies on invalid JSON, including an object that gives
-the same key twice (parsers disagree on which value wins).
+Canonical JSON in base64, the encoding of the C<r=> Recipe tag. C<decode_tag_json> dies on invalid JSON, including JSON text that is not
+UTF-8 and an object that gives the same key twice, compared without regard
+to case (parsers disagree on which value wins). Every string it returns,
+object keys included, is UTF-8 octets.
 
 =head2 digest64($digest_object)
 

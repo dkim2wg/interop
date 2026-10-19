@@ -180,7 +180,10 @@ for my $range ([0, 2], [3, 1]) {
     my $r = "[@$range]";
     ok(!$ok, "body Recipe $r below a null is caught");
     unlike($why // '', qr/\bof\s*(?:$|\))/, "$r: no empty 'of' in reason") or diag $why;
-    like($why // '', qr/m=2 did not undo cleanly.*\Q$range->[0]-$range->[1]\E/, "$r: reason names the range") or diag $why;
+    # A copy from 0 is outside the -07 schema (minimum 1): invalid JSON.
+    like($why // '', $range->[0] ? qr/m=2 did not undo cleanly.*\Q$range->[0]-$range->[1]\E/
+                                 : qr/m=2 contains invalid JSON/,
+        "$r: reason names the range") or diag $why;
     is_deeply(\@warn, [], "$r: no warnings") or diag @warn;
 }
 

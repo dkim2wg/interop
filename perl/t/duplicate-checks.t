@@ -61,13 +61,13 @@ ok($dup, 'duplicate hash algorithm detected case-insensitively in parse_hash_set
 eval {
     Mail::DKIM2::MessageInstance->parse('m=7; h=sha256:AAA:BBB,sha256:CCC:DDD;');
 };
-like($@, qr/^PERMERROR Message-Instance m=7 has a duplicate hash algorithm/,
+like($@, qr/^PERMERROR: Message-Instance m=7 has a duplicate hash algorithm/,
      'spec-06 §7.3: MessageInstance::parse dies with the exact PERMERROR string on a duplicate');
 
 eval {
     Mail::DKIM2::MessageInstance->parse('m=7; h=sha256:AAA:BBB,SHA256:CCC:DDD;');
 };
-like($@, qr/^PERMERROR Message-Instance m=7 has a duplicate hash algorithm/,
+like($@, qr/^PERMERROR: Message-Instance m=7 has a duplicate hash algorithm/,
      'spec-06 §7.3: duplicate hash algorithm detected case-insensitively via parse()');
 
 my $ok_mi = Mail::DKIM2::MessageInstance->parse('m=7; h=sha256:AAA:BBB,sha512:CCC:DDD;');
