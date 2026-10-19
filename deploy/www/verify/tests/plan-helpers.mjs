@@ -4,7 +4,7 @@ import { parseMessage, collectLevels } from '../parse.js';
 import { decodeRecipe } from '../recipes.js';
 import { verifyMessage, undoChain } from '../verify.js';
 import { planChain } from '../plan.js';
-import { textToBinary, bytesToBinary } from '../b64.js';
+import { textToBinary, bytesToBinary, binaryToBytes } from '../b64.js';
 
 const b64json = (obj) => Buffer.from(typeof obj === 'string' ? obj : JSON.stringify(obj), 'utf8').toString('base64');
 
@@ -29,10 +29,10 @@ export function mkMsg(spec) {
 
 function parts(raw) {
   const bin = typeof raw === 'string' ? textToBinary(raw) : bytesToBinary(raw);
-  const { headers, body } = parseMessage(bin);
+  const { headers, body, lines } = parseMessage(binaryToBytes(bin));
   const { instances } = collectLevels(headers);
   const maxM = Math.max(...Object.keys(instances).map(Number));
-  return { bin, headers, body, instances, maxM };
+  return { bin, headers, body, lines, instances, maxM };
 }
 
 // Rewrite the placeholder h= values with the hashes the undo walk computes,
@@ -89,10 +89,10 @@ export async function snapshot(chain, instances, maxM, names) {
 
 // { plan, undo, fallback } snapshots for one message.
 export async function compareChains(raw) {
-  const { headers, body, instances, maxM } = parts(raw);
+  const { headers, body, lines, instances, maxM } = parts(raw);
   const names = new Set([...recipeNames(instances), ...headers.map((f) => f.name.toLowerCase())]);
   const undo = await snapshot(undoChain(headers, body, instances, maxM), instances, maxM, names);
-  const p = planChain(headers, body, instances, maxM);
+  const p = planChain(headers, body, instances, maxM, lines);
   const plan = p ? await snapshot(p, instances, maxM, names) : null;
   return { undo, plan, fallback: !p };
 }

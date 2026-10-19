@@ -46,8 +46,12 @@ export function binaryToBytes(bin) {
 // for Recipe "d" literals, which are JSON strings. A lone surrogate in
 // U+DC80..U+DCFF stands for the raw byte 0x80..0xFF: that is how a Python
 // signer (Mailman, dkim2sign.py) carries a non-UTF-8 octet through JSON
-// ("surrogateescape"); TextEncoder alone would make it U+FFFD.
+// ("surrogateescape"); TextEncoder alone would make it U+FFFD. Text with
+// no such code unit (nearly all of it) is ASCII, already its own binary
+// string, or encoded whole.
 export function textToBinary(text) {
+  if (/^[\x00-\x7f]*$/.test(text)) return text;
+  if (!/[\udc80-\udcff]/.test(text)) return bytesToBinary(enc.encode(text));
   let out = '';
   for (const ch of text) {
     const c = ch.charCodeAt(0);

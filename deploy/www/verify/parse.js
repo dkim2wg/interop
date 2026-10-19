@@ -1,7 +1,61 @@
 // RFC5322 message parsing and DKIM2 tag-value parsing. Built from spec-06.
+import { bytesToBinary } from './b64.js';
 
 function toCRLF(raw) {
   return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');
+}
+
+// The number of LFs in `u8` when every line end in it is already a CRLF
+// (every CR followed by LF, every LF preceded by CR), else -1. Four octets
+// at a time: a word with no CR or LF in it (most of them) is passed over
+// whole, by the "has a zero byte" test on the word XOR each.
+export function crlfCount(u8) {
+  const n = u8.length;
+  let lfs = 0;
+  // 1 for a CRLF's LF, 0 for an octet that is no line end, -1 for a bare one.
+  const at = (i) => {
+    const b = u8[i];
+    if (b === 10) return i > 0 && u8[i - 1] === 13 ? 1 : -1;
+    if (b === 13) return u8[i + 1] === 10 ? 0 : -1;
+    return 0;
+  };
+  let i = 0;
+  const head = Math.min(n, (4 - (u8.byteOffset & 3)) & 3);
+  for (; i < head; i++) { const r = at(i); if (r < 0) return -1; lfs += r; }
+  const words = (n - i) >> 2;
+  const w32 = words ? new Uint32Array(u8.buffer, u8.byteOffset + i, words) : null;
+  for (let k = 0; k < words; k++) {
+    const w = w32[k];
+    const lf = w ^ 0x0a0a0a0a, cr = w ^ 0x0d0d0d0d;
+    if ((((lf - 0x01010101) & ~lf) | ((cr - 0x01010101) & ~cr)) & 0x80808080) {
+      for (let p = i + (k << 2), e = p + 4; p < e; p++) { const r = at(p); if (r < 0) return -1; lfs += r; }
+    }
+  }
+  for (i += words << 2; i < n; i++) { const r = at(i); if (r < 0) return -1; lfs += r; }
+  return lfs;
+}
+
+// Every line end a CRLF, as toCRLF() makes them, in octets: the octets
+// themselves (no copy) when they already are, as in nearly all mail;
+// otherwise a normalized copy. With the number of LFs in them.
+function crlfOctets(u8) {
+  const count = crlfCount(u8);
+  if (count >= 0) return { oct: u8, lfs: count };
+  const n = u8.length;
+  const out = new Uint8Array(n * 2);
+  let o = 0, lfs = 0;
+  for (let i = 0; i < n; i++) {
+    const b = u8[i];
+    if (b === 13) {
+      out[o++] = 13; out[o++] = 10; lfs++;
+      if (u8[i + 1] === 10) i++;
+    } else if (b === 10) {
+      out[o++] = 13; out[o++] = 10; lfs++;
+    } else {
+      out[o++] = b;
+    }
+  }
+  return { oct: out.subarray(0, o), lfs };
 }
 
 // Field = { name: string, value: string, raw: string }
@@ -11,12 +65,34 @@ function toCRLF(raw) {
 // in `value` — only the fold-boundary whitespace (the continuation line's
 // leading WSP) remains. No leading colon, no trailing CRLF. Use `raw` if you
 // need the literal folded bytes.
+//
+// raw is a binary string (body: a binary string) or a Uint8Array of the
+// message octets (body: a Uint8Array, a view into them when their line ends
+// are already CRLF, and lines: the number of lines bodyToLines() would give
+// for it). Only the header block is ever made a string: the body goes from
+// input to digest as octets.
 export function parseMessage(raw) {
+  if (typeof raw !== 'string') {
+    const { oct, lfs } = crlfOctets(raw);
+    let sep = -1;
+    for (let i = oct.indexOf(13); i >= 0; i = oct.indexOf(13, i + 1)) {
+      if (oct[i + 1] === 10 && oct[i + 2] === 13 && oct[i + 3] === 10) { sep = i; break; }
+    }
+    if (sep < 0) return { headers: parseHeaderBlock(bytesToBinary(oct)), body: oct.subarray(0, 0), lines: 0 };
+    let bodyLfs = lfs;
+    for (let i = 0; i < sep + 4; i++) if (oct[i] === 10) bodyLfs--;
+    const body = oct.subarray(sep + 4);
+    const lines = body.length === 0 || body[body.length - 1] === 10 ? bodyLfs : bodyLfs + 1;
+    return { headers: parseHeaderBlock(bytesToBinary(oct.subarray(0, sep + 2))), body, lines };
+  }
   const text = toCRLF(raw);
   const sep = text.indexOf('\r\n\r\n');
   const headerBlock = sep < 0 ? text : text.slice(0, sep + 2); // include final CRLF
   const body = sep < 0 ? '' : text.slice(sep + 4);
+  return { headers: parseHeaderBlock(headerBlock), body };
+}
 
+function parseHeaderBlock(headerBlock) {
   // Split header block into physical lines (each ends with CRLF).
   const physical = headerBlock.match(/[^\r\n]*\r\n/g) || [];
   const headers = [];
@@ -32,7 +108,7 @@ export function parseMessage(raw) {
       headers.push({ name: m[1].trim(), value: m[2], raw: line });
     }
   }
-  return { headers, body };
+  return headers;
 }
 
 // spec-06 §7, §8 x-tag: `[FWS] name [FWS] "=" [FWS] [value] [FWS]`, name

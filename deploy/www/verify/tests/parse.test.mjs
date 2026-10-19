@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMessage, parseTagList, collectLevels, MAX_CHAIN_LENGTH, MAX_CHAIN_NUMBER, chainNumberError } from '../parse.js';
+import { parseMessage, crlfCount, parseTagList, collectLevels, MAX_CHAIN_LENGTH, MAX_CHAIN_NUMBER, chainNumberError } from '../parse.js';
 
 const MSG =
   'Message-Instance: m=1; h=sha256:AA=:BB=\r\n' +
@@ -29,6 +29,40 @@ test('parseMessage normalizes bare LF to CRLF', () => {
   const { headers, body } = parseMessage('From: a@b\nSubject: x\n\nhi\n');
   assert.equal(headers.length, 2);
   assert.equal(body, 'hi\r\n');
+});
+
+test('parseMessage on octets: body octets as the string path, line count, view when already CRLF', () => {
+  const bin = (u8) => String.fromCharCode(...u8);
+  const cases = [
+    MSG, 'From: a@b\nSubject: x\n\nhi\n', 'A: 1\r\n\r\n', 'A: 1\r\n\r\nx', 'A: 1\r\n\r\n\r\n\r\n',
+    'A: 1\r\rb\r\r\nc\n\rd', 'A: 1\r\nB: 2\r\n', '\r\n\r\nbody\r\n', 'A: 1\r\n\r\na\r\nb\nc\r',
+    // long enough for the four-octets-at-a-time scan, line ends at every offset
+    'A: 1\r\n\r\n' + 'abc\r\nde\r\nf\r\n\r\nghijk\r\n'.repeat(20) + 'tail',
+    'A: 1\r\n\r\n' + 'abc\r\nde\r\nf\r\n\r\nghijk\r\n'.repeat(20) + 'bare\nlf\r\n',
+  ];
+  for (const raw of cases) {
+    const s = parseMessage(raw);
+    const u8 = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    const o = parseMessage(u8);
+    assert.deepEqual(o.headers, s.headers, JSON.stringify(raw));
+    assert.equal(bin(o.body), s.body, JSON.stringify(raw));
+    const lines = s.body === '' ? 0 : s.body.split('\r\n').length - (s.body.endsWith('\r\n') ? 1 : 0);
+    assert.equal(o.lines, lines, JSON.stringify(raw));
+    if (!/\r(?!\n)|(?<!\r)\n/.test(raw) && s.body !== '') assert.equal(o.body.buffer, u8.buffer, 'a view, not a copy');
+  }
+});
+
+test('crlfCount at every alignment', () => {
+  const text = 'abc\r\nde\r\nf\r\n\r\nghijk\r\n'.repeat(5);
+  const u8 = Uint8Array.from('...' + text + '...', (c) => c.charCodeAt(0));
+  for (let off = 0; off < 4; off++) {
+    for (let len = 0; len + off <= u8.length; len += 3) {
+      const v = u8.subarray(off, off + len);
+      const s = String.fromCharCode(...v);
+      const want = /\r(?!\n)|(?<!\r)\n/.test(s) ? -1 : (s.match(/\n/g) || []).length;
+      assert.equal(crlfCount(v), want, `${off}+${len}`);
+    }
+  }
 });
 
 test('parseTagList parses tags case-insensitively, values case-significant', () => {
