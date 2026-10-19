@@ -23,7 +23,7 @@ typedef struct { seg_t *s; int n, cap; } seglist_t;
 /* All the fields with one lowercase name, as received. */
 typedef struct {
     char *name;         /* lowercase bytes before the first ':' */
-    int hashed;         /* not on the §4 skip list */
+    int hashed;         /* not on the -07 §4 skip list */
     char **rv;          /* received fields, bottom-up (as Recipes number them) */
     char **rv_canon;    /* canonical lines, made on first use (hashed only) */
     int n_rv;
@@ -50,7 +50,7 @@ typedef struct {
     unsigned algs;
     EVP_MD_CTX *md[DKIM2_N_HASH_ALGS];
     int seg;                /* next segment of list to consume */
-    long long pending;      /* blank lines held back (§6.1) */
+    long long pending;      /* blank lines held back (-07 §6.1) */
     int emitted, last_crlf;
     int active;             /* takes the current run of body lines */
     dkim2_digests_t out;
@@ -208,10 +208,10 @@ static long long hdr_lit_add(void *ctx, const dkim2_recipe_op_t *op) {
     return p->n_hlit++;
 }
 
-/* The undo walk matches a Recipe key exactly against each field's
-   lowercased name, and names of 128 bytes or more never match. Groups are
-   named that way (lowercase, no ':'), so a key with upper case or a ':'
-   finds no group; only the length needs checking here. */
+/* The undo walk matches a Recipe key (lowercased by dkim2_recipe_parse)
+   exactly against each field's lowercased name, and names of 128 bytes or
+   more never match. Groups are named that way (lowercase, no ':'), so a key
+   with a ':' finds no group; only the length needs checking here. */
 static int key_matchable(const char *k) {
     return strlen(k) < 128;
 }
@@ -362,7 +362,7 @@ static int cmp_group(const void *a, const void *b) {
     return strcmp(g_sort_groups[*(const int *)a].name, g_sort_groups[*(const int *)b].name);
 }
 
-/* Header hash (§5.2) of one level: hashed names in byte order, each name's
+/* Header hash (-07 §6.2) of one level: hashed names in byte order, each name's
    fields bottom-up -- what dkim2_header_hash_raw_alg makes of the fields. */
 static int hdr_digest(dkim2_plan_t *p, const int *order, level_t *lv, unsigned algs) {
     static const EVP_MD *(*const mds[DKIM2_N_HASH_ALGS])(void) = { EVP_sha256, EVP_sha512 };
@@ -534,7 +534,7 @@ static void acc_blanks(acc_t *a) {
     }
 }
 
-/* One line (terminator included) into a body digest. §6.1: a run of blank
+/* One line (terminator included) into a body digest. -07 §6.1: a run of blank
    lines is held back until a non-blank line follows; at the end it is
    dropped. The run carries across body lines and literals alike. */
 static void acc_emit(acc_t *a, const unsigned char *s, size_t len) {
@@ -801,7 +801,7 @@ int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz) {
                 }
                 if (lv->acc >= 0 && memcmp(p->acc[lv->acc].out.d[alg], stored, alen) != 0) {
                     snprintf(errbuf, errbufsz,
-                        "FAIL: Message-Instance m=%d body hash mismatch", mi->m);
+                        "FAIL: Message-Instance m=%d body hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
                     return -1;
                 }
             }
@@ -809,32 +809,32 @@ int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz) {
             int hl = (int)b64_decode(mi->hsets[hi].hdr_hash, stored, sizeof stored);
             if (hl != (int)alen || memcmp(lv->hdr.d[alg], stored, alen) != 0) {
                 snprintf(errbuf, errbufsz,
-                    "FAIL: Message-Instance m=%d header hash mismatch", mi->m);
+                    "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
                 return -1;
             }
         }
         if (n_checked == 0) {
             snprintf(errbuf, errbufsz,
-                "FAIL: Message-Instance m=%d no supported hash algorithm", mi->m);
+                "PERMERROR: Message-Instance m=%d no supported hash algorithm", mi->m);
             return -1;
         }
         if (lv->r_err == 1) {
-            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance m=%d syntax error", mi->m);
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance m=%d syntax error", mi->m);
             return -1;
         }
         if (lv->r_err == 2) {
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d contains invalid JSON", mi->m);
+                "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
             return -1;
         }
         if (lv->body_err) {
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d has a malformed body Recipe", mi->m);
+                "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
             return -1;
         }
         if (lv->hdr_err) {
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d has a malformed header Recipe", mi->m);
+                "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
             return -1;
         }
     }

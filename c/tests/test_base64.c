@@ -12,7 +12,7 @@ int main(void) {
     assert(n > 0);
     assert(strcmp(out, "SGVsbG8sIFdvcmxkIQ==") == 0);
 
-    /* Decode ignoring FWS per §2.14 */
+    /* Decode ignoring FWS per -07 §2.14 */
     unsigned char dec[64];
     int m = b64_decode("SGVs bG8s\r\n IFdv\tcmxkIQ==", dec, sizeof dec);
     assert(m == 13);

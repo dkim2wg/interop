@@ -90,7 +90,7 @@ static void test_garbage_rejected(void) {
     printf("  ok: non-key p= rejected (%s)\n", err ? err : "(no message)");
 }
 
-/* ---- Key-record validation (spec-06 §11.5; dns-00 §3.2, §3.4.1) ---- */
+/* ---- Key-record validation (-07 §14.5; dns-00 §3.2, §3.4.1) ---- */
 
 static char g_rsa_b64[2048];
 

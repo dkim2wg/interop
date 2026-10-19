@@ -32,7 +32,7 @@ int main(void) {
     assert(strcmp(mi->hsets[1].hdr_hash, "hh2") == 0);
     dkim2_mi_free(mi);
 
-    /* spec-06 §7.3: an algorithm MUST NOT be present more than once */
+    /* -07 §9.3: an algorithm MUST NOT be present more than once */
     assert(dkim2_mi_parse("m=1; h=sha256:AAA:BBB,sha256:CCC:DDD;") == NULL);
     /* ...detected case-insensitively (RFC 5234) */
     assert(dkim2_mi_parse("m=1; h=sha256:AAA:BBB,SHA256:CCC:DDD;") == NULL);
@@ -66,7 +66,7 @@ int main(void) {
     assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
     dkim2_sig_free(sig);
 
-    /* Folding whitespace inside tag values (spec-06 §2.12): FWS may appear
+    /* Folding whitespace inside tag values (-07 §2.12): FWS may appear
        inside a base64 string and around the colons of an s= item, and MUST be
        ignored when the value is used.  A fold between the Selector colon and
        the algorithm token used to leave CRLF+TAB glued to the algorithm name. */
@@ -111,7 +111,7 @@ int main(void) {
     dkim2_sig_free(sig);
 
     /* i= must be a positive integer in ASCII digits; anything else is a
-       PERMERROR saying so, and any other parse failure says "malformed". */
+       PERMERROR saying so; a missing required tag is "tag=<y> missing" (-07 §14.2). */
     {
         static const char *bad_i[] = {
             "m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
@@ -126,10 +126,10 @@ int main(void) {
         for (int k = 0; bad_i[k]; k++) {
             assert(dkim2_sig_parse(bad_i[k]) == NULL);
             assert(dkim2_sig_parse_err(bad_i[k], eb, sizeof eb) == NULL);
-            assert(strcmp(eb, "PERMERROR DKIM2-Signature has a missing or malformed i= tag") == 0);
+            assert(strcmp(eb, "PERMERROR: DKIM2-Signature has a missing or malformed i= tag") == 0);
         }
         assert(dkim2_sig_parse_err("i=1; m=1; t=1; d=e.example", eb, sizeof eb) == NULL);
-        assert(strcmp(eb, "PERMERROR DKIM2-Signature is malformed") == 0);
+        assert(strcmp(eb, "PERMERROR: DKIM2-Signature i=1 tag=s missing") == 0);
         dkim2_sig_t *ok = dkim2_sig_parse_err(
             "i=3; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", eb, sizeof eb);
         assert(ok && ok->i == 3 && eb[0] == '\0');
@@ -157,24 +157,24 @@ int main(void) {
         assert(dkim2_chain_number_error("Message-Instance", "m", NULL, eb, sizeof eb) == 0);
         for (int k = 0; len_n[k]; k++) {
             assert(dkim2_chain_number_error("Message-Instance", "m", len_n[k], eb, sizeof eb) != 0);
-            assert(strcmp(eb, "PERMERROR Message-Instance m= exceeds the maximum chain length of 32") == 0);
+            assert(strcmp(eb, "PERMERROR: Message-Instance m= exceeds the maximum chain length of 32") == 0);
         }
         for (int k = 0; mal_n[k]; k++) {
             assert(dkim2_chain_number_error("Message-Instance", "m", mal_n[k], eb, sizeof eb) != 0);
-            assert(strcmp(eb, "PERMERROR Message-Instance has a malformed m= tag") == 0);
+            assert(strcmp(eb, "PERMERROR: Message-Instance has a malformed m= tag") == 0);
 
             snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", mal_n[k]);
             assert(dkim2_sig_parse(v) == NULL);
             assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
-            assert(strcmp(eb, "PERMERROR DKIM2-Signature has a malformed m= tag") == 0);
+            assert(strcmp(eb, "PERMERROR: DKIM2-Signature has a malformed m= tag") == 0);
 
             snprintf(v, sizeof v, "m=%s; h=sha256:AAAA:BBBB", mal_n[k]);
             assert(dkim2_mi_parse(v) == NULL);
             assert(dkim2_mi_parse_err(v, eb, sizeof eb) == NULL);
-            assert(strcmp(eb, "PERMERROR Message-Instance has a malformed m= tag") == 0);
+            assert(strcmp(eb, "PERMERROR: Message-Instance has a malformed m= tag") == 0);
         }
         assert(dkim2_chain_number_error("DKIM2-Signature", "i", "abc", eb, sizeof eb) != 0);
-        assert(strcmp(eb, "PERMERROR DKIM2-Signature has a missing or malformed i= tag") == 0);
+        assert(strcmp(eb, "PERMERROR: DKIM2-Signature has a missing or malformed i= tag") == 0);
 
         static const char *const *bad_sets[] = { len_n, num_n };
         static const char *bad_why[] = { "length of 32", "number of 100" };
@@ -185,19 +185,19 @@ int main(void) {
                 snprintf(v, sizeof v, "i=%s; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
                 assert(dkim2_sig_parse(v) == NULL);
                 assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
-                snprintf(want, sizeof want, "PERMERROR DKIM2-Signature i= exceeds the maximum chain %s", bad_why[b]);
+                snprintf(want, sizeof want, "PERMERROR: DKIM2-Signature i= exceeds the maximum chain %s", bad_why[b]);
                 assert(strcmp(eb, want) == 0);
 
                 snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
                 assert(dkim2_sig_parse(v) == NULL);
                 assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
-                snprintf(want, sizeof want, "PERMERROR DKIM2-Signature m= exceeds the maximum chain %s", bad_why[b]);
+                snprintf(want, sizeof want, "PERMERROR: DKIM2-Signature m= exceeds the maximum chain %s", bad_why[b]);
                 assert(strcmp(eb, want) == 0);
 
                 snprintf(v, sizeof v, "m=%s; h=sha256:AAAA:BBBB", bad_n[k]);
                 assert(dkim2_mi_parse(v) == NULL);
                 assert(dkim2_mi_parse_err(v, eb, sizeof eb) == NULL);
-                snprintf(want, sizeof want, "PERMERROR Message-Instance m= exceeds the maximum chain %s", bad_why[b]);
+                snprintf(want, sizeof want, "PERMERROR: Message-Instance m= exceeds the maximum chain %s", bad_why[b]);
                 assert(strcmp(eb, want) == 0);
             }
         }
@@ -243,25 +243,25 @@ int main(void) {
         "s=sel1:rsa-sha256:AAAA");
     assert(sig == NULL);
 
-    /* draft-03 §8.10: f= flags parsed and round-tripped (incl. feedhere) */
+    /* -07 §10.10: f= flags parsed and round-tripped (incl. feedhere) */
     sig = dkim2_sig_parse(
         "i=1; m=1; t=1; d=ex.example; "
         "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
-        "f=donotmodify,feedhere; s=sel1:rsa-sha256:AAAA");
+        "f=exploded,feedhere; s=sel1:rsa-sha256:AAAA");
     assert(sig != NULL);
     assert(sig->flags != NULL);
-    assert(sig->flags[0] && strcmp(sig->flags[0], "donotmodify") == 0);
+    assert(sig->flags[0] && strcmp(sig->flags[0], "exploded") == 0);
     assert(sig->flags[1] && strcmp(sig->flags[1], "feedhere") == 0);
     assert(sig->flags[2] == NULL);
     {
         char *out = dkim2_sig_format(sig, 1);
         assert(out != NULL);
-        assert(strstr(out, "f=donotmodify,feedhere") != NULL);
+        assert(strstr(out, "f=exploded,feedhere") != NULL);
         free(out);
     }
     dkim2_sig_free(sig);
 
-    /* --- spec-06 §8.9: DKIM2-Signature s= duplicate/limit checks --- */
+    /* --- -07 §10.9: DKIM2-Signature s= duplicate/limit checks --- */
     char errbuf[256];
 
     /* clean signature list has no errors */
@@ -280,10 +280,10 @@ int main(void) {
         "s=sel1:rsa-sha256:AAA,sel1:ed25519-sha256:BBB");
     assert(sig != NULL);
     assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == -1);
-    assert(strcmp(errbuf, "PERMERROR DKIM2-Signature i=3 has a duplicate selector") == 0);
+    assert(strcmp(errbuf, "PERMERROR: DKIM2-Signature i=3 has a duplicate selector") == 0);
     dkim2_sig_free(sig);
 
-    /* ...detected case-insensitively (Selector is a Domain, §3.5) */
+    /* ...detected case-insensitively (Selector is a Domain, -07 §3.6) */
     sig = dkim2_sig_parse(
         "i=1; m=1; t=1; d=ex.example; "
         "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
@@ -309,7 +309,7 @@ int main(void) {
         "s=sel1:rsa-sha256:AAA,sel2:rsa-sha256:BBB,sel3:rsa-sha256:CCC");
     assert(sig != NULL);
     assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == -1);
-    assert(strcmp(errbuf, "PERMERROR DKIM2-Signature i=2 has more selectors than allowed") == 0);
+    assert(strcmp(errbuf, "PERMERROR: DKIM2-Signature i=2 has more selectors than allowed") == 0);
     dkim2_sig_free(sig);
 
     /* duplicate-selector and excess-selector are independent: two sigs

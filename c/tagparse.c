@@ -17,8 +17,9 @@ static char *strdup_trim(const char *s, const char *end) {
 static int is_fws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 static int is_alpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
-/* spec-06 §7, §8: split on ';'. An empty fragment (";;", a trailing ';')
-   is skipped; any other must be
+/* -07 §8: split on ';'. The text after a final ';' may be empty (the
+   optional trailing ";"); any other empty fragment (";;", a leading ';') is
+   a syntax error. Every non-empty fragment must be
      [FWS] name [FWS] "=" [FWS] [value] [FWS]
    with name = ALPHA *(ALPHA / DIGIT / "_") and value =
    x-tag-char *([FWS] x-tag-char), x-tag-char = %x21-3A / %x3C-7E. Anything
@@ -37,7 +38,13 @@ taglist_t *tagparse(const char *input, const char **errp) {
 
         const char *q = frag;
         while (q < fend && is_fws(*q)) q++;
-        if (q == fend) continue;                    /* empty fragment */
+        if (q == fend) {
+            /* Only the text after a final ';' may be empty (the optional
+               trailing ";" of -07 §8); ";;" or a leading ';' is not a
+               tag-list. */
+            if (*fend) tl->syntax_error = 1;
+            continue;
+        }
         const char *name_start = q;
         if (!is_alpha(*q)) { tl->syntax_error = 1; continue; }
         while (q < fend && (is_alpha(*q) || (*q >= '0' && *q <= '9') || *q == '_')) q++;
@@ -60,7 +67,7 @@ taglist_t *tagparse(const char *input, const char **errp) {
         if (!e->name || !e->value) { free(e->name); free(e->value); free(e); taglist_free(tl); return NULL; }
         /* Lowercase name in-place */
         for (char *c = e->name; *c; c++) *c = (char)tolower((unsigned char)*c);
-        /* §8: "there MUST be only one of each kind" — flag any repeat. */
+        /* -07 §8: "Tags with duplicate names MUST NOT occur" — flag any repeat. */
         for (tag_entry_t *o = tl->head; o; o = o->next)
             if (strcmp(o->name, e->name) == 0) { tl->duplicate = 1; break; }
         *tail = e;
