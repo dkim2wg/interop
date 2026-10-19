@@ -43,6 +43,12 @@ int dkim2_body_hash_raw_alg(const char *body, size_t bodylen, int alg,
 int dkim2_body_hash(const char *body, size_t bodylen, char *out, size_t outlen);
 
 /* ── Header hash §5.2 ────────────────────────────────────────────────────── */
+/* 1 if the lowercase field name (nlen bytes) is never hashed (spec-06 §4). */
+int dkim2_hdr_ignored(const char *lname, size_t nlen);
+/* The §5.2 canonical line ("name:value\r\n") of one "Name: value\r\n"
+   field, malloc'd; NULL when the field has no colon or is not hashed. */
+char *dkim2_header_canon(const char *hdr);
+
 int dkim2_header_hash_raw(const char **headers, int n_headers,
                           unsigned char digest[DKIM2_HASH_LEN]);
 int dkim2_header_hash_raw_alg(const char **headers, int n_headers, int alg,

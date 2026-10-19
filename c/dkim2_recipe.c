@@ -179,6 +179,63 @@ cJSON *dkim2_recipe_parse(const char *r_json) {
 
 void dkim2_recipe_free(cJSON *root) { cJSON_Delete(root); }
 
+typedef struct { dkim2_recipe_op_t *ops; int n, cap; } ops_acc_t;
+
+static int ops_push(ops_acc_t *a, dkim2_recipe_op_t op) {
+    if (a->n >= a->cap) {
+        int nc = a->cap ? a->cap * 2 : 8;
+        dkim2_recipe_op_t *no = realloc(a->ops, (size_t)nc * sizeof *no);
+        if (!no) return -1;
+        a->ops = no;
+        a->cap = nc;
+    }
+    a->ops[a->n++] = op;
+    return 0;
+}
+
+static int ops_literal(void *ctx, const unsigned char *s, size_t len) {
+    unsigned char *c = malloc(len + 1);
+    if (!c) return -1;
+    memcpy(c, s, len);
+    c[len] = '\0';
+    dkim2_recipe_op_t op = { 1, 0, 0, c, len };
+    if (ops_push(ctx, op) != 0) { free(c); return -1; }
+    return 0;
+}
+
+void dkim2_recipe_ops_free(dkim2_recipe_op_t *ops, int n_ops) {
+    for (int i = 0; i < n_ops; i++) free(ops[i].s);
+    free(ops);
+}
+
+int dkim2_recipe_ops(const cJSON *list, int reject_nul,
+                     dkim2_recipe_op_t **ops, int *n_ops) {
+    ops_acc_t a = { NULL, 0, 0 };
+    int prev_end = 0;
+    const cJSON *step;
+    *ops = NULL;
+    *n_ops = 0;
+    cJSON_ArrayForEach(step, list) {
+        const cJSON *arr;
+        int kind = step_kind(step, &arr);
+        if (kind == 'c') {
+            int st, en;
+            if (copy_range(arr, -1, prev_end, &st, &en) != 0) goto fail;
+            dkim2_recipe_op_t op = { 0, st, en, NULL, 0 };
+            if (ops_push(&a, op) != 0) goto fail;
+            prev_end = en;
+        } else if (kind) {
+            if (walk_literals(arr, kind, reject_nul, ops_literal, &a) != 0) goto fail;
+        }
+    }
+    *ops = a.ops;
+    *n_ops = a.n;
+    return 0;
+fail:
+    dkim2_recipe_ops_free(a.ops, a.n);
+    return -1;
+}
+
 int dkim2_validate_body_recipe(const char *r_json) {
     cJSON *root = dkim2_recipe_parse(r_json);
     if (!root) return -1;

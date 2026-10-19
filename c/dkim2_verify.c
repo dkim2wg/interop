@@ -4,6 +4,8 @@
 #include "dkim2_crypto.h"
 #include "dkim2_dns.h"
 #include "dkim2_recipe.h"
+#include "dkim2_plan.h"
+#include "dkim2_prefetch.h"
 #include "base64.h"
 #include <time.h>
 #include <stdlib.h>
@@ -332,15 +334,19 @@ static unsigned char *build_verify_input(
     return (unsigned char *)buf;
 }
 
-/* Verify all MI body+header hashes, walking from highest to lowest version
-   and applying Recipes to reconstruct earlier message states.
-   Returns 0 on success, sets errbuf on failure. */
-static int verify_mi_hashes(
+/* The undo walk (the reference for the planned walk in dkim2_plan.c, which
+   is the default; ctx->undo_walk selects this one): verify all MI
+   body+header hashes, walking from highest to lowest version and applying
+   Recipes to rebuild each earlier message. Returns 0 on success, sets errbuf
+   on failure. With trace (n_mi entries) it records what each instance
+   hashed to, every algorithm, and carries on past hash mismatches: only a
+   Recipe error stops it (parity tests). */
+static int undo_walk(
     dkim2_mi_t **mi_arr, int n_mi,
     char **all_hdrs, int n_all_hdrs,
     const char *initial_body, size_t initial_body_len,
     const dkim2_ctx_t *ctx,
-    char *errbuf, size_t errbufsz)
+    char *errbuf, size_t errbufsz, dkim2_plan_level_t *trace)
 {
     /* Build content-headers array (exclude Message-Instance and DKIM2-Signature). */
     char **content = malloc((size_t)n_all_hdrs * sizeof(char *));
@@ -385,8 +391,18 @@ static int verify_mi_hashes(
     for (int vi = n_mi - 1; vi >= 0; vi--) {
         dkim2_mi_t *mi = mi_arr[vi];
 
+        if (trace) {
+            dkim2_plan_level_t *t = &trace[vi];
+            t->reached = 1;
+            t->have_body = !body_gone && cur_body;
+            for (int a = 0; a < DKIM2_N_HASH_ALGS; a++) {
+                if (t->have_body)
+                    dkim2_body_hash_raw_alg(cur_body, cur_body_len, a, t->body.d[a]);
+                dkim2_header_hash_raw_alg((const char **)content, n_content, a, t->hdr.d[a]);
+            }
+        }
         int n_checked = 0;
-        for (int hi = 0; hi < mi->n_hsets; hi++) {
+        for (int hi = 0; !trace && hi < mi->n_hsets; hi++) {
             int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
             if (alg < 0) continue;          /* §3.4: ignore what we don't implement */
             size_t alen = dkim2_hash_alg_len(alg);
@@ -433,7 +449,7 @@ static int verify_mi_hashes(
             }
         }
         /* Fail closed: an MI naming no implemented algorithm is unverifiable. */
-        if (n_checked == 0) {
+        if (n_checked == 0 && !trace) {
             snprintf(errbuf, errbufsz,
                 "FAIL: Message-Instance m=%d no supported hash algorithm", mi->m);
             ret = -1; goto done;
@@ -465,6 +481,7 @@ static int verify_mi_hashes(
                     free(r_json_bytes);
                     snprintf(errbuf, errbufsz,
                         "PERMERROR Message-Instance m=%d syntax error", mi->m);
+                    if (trace) trace[vi].r_err = 1;
                     ret = -1; goto done;
                 }
                 r_json_bytes[r_json_len] = '\0';
@@ -486,6 +503,7 @@ static int verify_mi_hashes(
                     free(r_json_bytes);
                     snprintf(errbuf, errbufsz,
                         "PERMERROR Message-Instance m=%d contains invalid JSON", mi->m);
+                    if (trace) trace[vi].r_err = 2;
                     ret = -1; goto done;
                 }
                 int null_body = 0;
@@ -519,6 +537,7 @@ static int verify_mi_hashes(
                             free(r_json_bytes);
                             snprintf(errbuf, errbufsz,
                                 "PERMERROR Message-Instance m=%d has a malformed body Recipe", mi->m);
+                            if (trace) trace[vi].body_err = 1;
                             ret = -1; goto done;
                         }
                     } else if (cur_body) {
@@ -528,6 +547,7 @@ static int verify_mi_hashes(
                             free(r_json_bytes);
                             snprintf(errbuf, errbufsz,
                                 "PERMERROR Message-Instance m=%d has a malformed body Recipe", mi->m);
+                            if (trace) trace[vi].body_err = 1;
                             ret = -1; goto done;
                         }
                         free(cur_body);
@@ -542,6 +562,7 @@ static int verify_mi_hashes(
                         free(r_json_bytes);
                         snprintf(errbuf, errbufsz,
                             "PERMERROR Message-Instance m=%d has a malformed header Recipe", mi->m);
+                        if (trace) trace[vi].hdr_err = 1;
                         ret = -1; goto done;
                     }
                     if (content_owned) {
@@ -565,17 +586,57 @@ done:
     return ret;
 }
 
-/* §10.7 over ctx->mi_list: sort by m=, then verify_mi_hashes(). Returns 0, or
-   -1 with errbuf set ("FAIL..." / "PERMERROR..."). */
+static int verify_mi_hashes(
+    dkim2_mi_t **mi_arr, int n_mi,
+    char **all_hdrs, int n_all_hdrs,
+    const char *initial_body, size_t initial_body_len,
+    const dkim2_ctx_t *ctx,
+    char *errbuf, size_t errbufsz) {
+    return undo_walk(mi_arr, n_mi, all_hdrs, n_all_hdrs, initial_body,
+                     initial_body_len, ctx, errbuf, errbufsz, NULL);
+}
+
+int dkim2_undo_walk_trace(dkim2_mi_t **mi_arr, int n_mi, char **hdrs, int n_hdrs,
+                          const char *body, size_t body_len,
+                          dkim2_plan_level_t *trace, char *errbuf, size_t errbufsz) {
+    dkim2_ctx_t ctx;
+    memset(&ctx, 0, sizeof ctx);
+    memset(trace, 0, (size_t)n_mi * sizeof *trace);
+    errbuf[0] = '\0';
+    return undo_walk(mi_arr, n_mi, hdrs, n_hdrs, body, body_len, &ctx,
+                     errbuf, errbufsz, trace);
+}
+
+/* §10.7 over ctx->mi_list, sorted by m=. The planned walk (dkim2_plan.c) by
+   default: on the plan the caller fed (ctx->plan, e.g. the milter's
+   streamed body), else on one made here from ctx->body. The undo walk when
+   asked (ctx->undo_walk), when there are no body bytes at all (digest-only
+   callers: the top body hash is checked, inner ones cannot be), and for the
+   one case the plan does not model. Returns 0, or -1 with errbuf set
+   ("FAIL..." / "PERMERROR..."). */
 static int verify_ctx_mi_chain(const dkim2_ctx_t *ctx, char *errbuf, size_t errbufsz) {
     const int MAX_MI = 64;
-    dkim2_mi_t *mi_sorted[MAX_MI]; int n_mi = 0;
-    for (dkim2_mi_t *m = ctx->mi_list; m && n_mi < MAX_MI; m = m->next)
-        mi_sorted[n_mi++] = m;
-    for (int i = 1; i < n_mi; i++) {
-        dkim2_mi_t *key = mi_sorted[i]; int j = i - 1;
-        while (j >= 0 && mi_sorted[j]->m > key->m) { mi_sorted[j+1] = mi_sorted[j]; j--; }
-        mi_sorted[j+1] = key;
+    dkim2_mi_t *mi_sorted[MAX_MI];
+    int n_mi = dkim2_mi_sorted(ctx->mi_list, mi_sorted, MAX_MI);
+    if (!ctx->undo_walk && (ctx->plan || ctx->body)) {
+        dkim2_plan_t *plan = ctx->plan;
+        if (!plan) {
+            plan = dkim2_plan_new(mi_sorted, n_mi, ctx->headers, ctx->n_headers, 0, 0);
+            if (plan && (dkim2_plan_body_update(plan, ctx->body, ctx->body_len) < 0 ||
+                         dkim2_plan_body_final(plan) < 0)) {
+                dkim2_plan_free(plan);
+                plan = NULL;
+            }
+        } else if (dkim2_plan_body_final(plan) < 0) {
+            plan = NULL;
+        }
+        if (!plan) {
+            snprintf(errbuf, errbufsz, "PERMERROR: OOM");
+            return -1;
+        }
+        int rc = dkim2_plan_check(plan, errbuf, errbufsz);
+        if (plan != ctx->plan) dkim2_plan_free(plan);
+        if (rc <= 0) return rc;
     }
     return verify_mi_hashes(mi_sorted, n_mi, ctx->headers, ctx->n_headers,
                             ctx->body, ctx->body_len, ctx, errbuf, errbufsz);
@@ -827,7 +888,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
 
             dkim2_status_t dns_status;
             const char *dns_err = NULL;
-            dkim2_pubkey_t *pubkey = dkim2_dns_getkey(
+            /* From the prefetched answer when it settles the lookup. */
+            dkim2_pubkey_t *pubkey = dkim2_prefetch_getkey(ctx->prefetch,
                 sset->selector, sig->d, &dns_status, &dns_err);
             const char *why = NULL;
 

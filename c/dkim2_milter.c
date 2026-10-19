@@ -9,6 +9,8 @@
 #include "dkim2_sign.h"
 #include "dkim2_verify.h"
 #include "dkim2_header.h"
+#include "dkim2_plan.h"
+#include "dkim2_prefetch.h"
 
 /* Global config */
 static struct {
@@ -32,6 +34,8 @@ static void state_reset(conn_state_t *s) {
     for (int i = 0; i < c->n_headers; i++) free(c->headers[i]);
     free(c->headers);
     dkim2_body_hasher_free(c->body_hasher);
+    dkim2_plan_free(c->plan);
+    dkim2_prefetch_free(c->prefetch);
     free(c->mail_from);
     if (c->rcpt_to) {
         for (int i = 0; i < c->n_rcpt; i++) free(c->rcpt_to[i]);
@@ -121,6 +125,15 @@ static sfsistat cb_eoh(SMFICTX *ctx) {
     dkim2_ctx_t *c = &s->ctx;
     c->body_hasher = dkim2_body_hasher_new();
     if (!c->body_hasher) return SMFIS_TEMPFAIL;
+    /* The header fields are all known: start the key lookups, and plan the
+       Message-Instance chain walk so the body is checked as it streams in
+       (both verifying and the signer gate use them). The body itself is
+       never kept. */
+    if (c->mi_list || c->sig_list) {
+        c->prefetch = dkim2_prefetch_start(c);
+        c->plan = dkim2_plan_new_ctx(c, 1);
+        if (!c->plan) return SMFIS_TEMPFAIL;
+    }
     return SMFIS_CONTINUE;
 }
 
@@ -128,6 +141,8 @@ static sfsistat cb_body(SMFICTX *ctx, unsigned char *bodyp, size_t bodylen) {
     conn_state_t *s = smfi_getpriv(ctx);
     dkim2_ctx_t *c = &s->ctx;
     if (dkim2_body_hasher_update(c->body_hasher, (const char *)bodyp, bodylen) < 0)
+        return SMFIS_TEMPFAIL;
+    if (c->plan && dkim2_plan_body_update(c->plan, (const char *)bodyp, bodylen) < 0)
         return SMFIS_TEMPFAIL;
     return SMFIS_CONTINUE;
 }
@@ -182,9 +197,8 @@ static sfsistat cb_eom(SMFICTX *ctx) {
                allow_null_body_recipe) is never extended. Deliver the message unsigned, as the Perl
                milter does -- refusing to sign is not grounds to bounce mail.
                (This milter emits no X-DKIM2-Info header, so log only.)
-               Limitation: the milter keeps only the body digest, so body
-               hashes of inner Message-Instances are not re-checked here; the
-               signatures, the top body hash and every header hash are. */
+               Every Message-Instance's body and header hashes are checked,
+               by the plan fed in cb_body. */
             if (strncmp(c->errmsg, "not signing:", 12) == 0) {
                 syslog(LOG_WARNING, "dkim2-milter: %s", c->errmsg);
                 return SMFIS_ACCEPT;

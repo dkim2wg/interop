@@ -607,6 +607,78 @@ list and requires `i=1..2`.
 
 ---
 
+## 22. Chain walk without rebuilding; keys looked up from the end of headers (C-specific)
+
+**What changed:** `dkim2_do_verify` used to check the Message-Instance chain
+(§10.7) by literally rebuilding each earlier message: apply the top MI's
+Recipes to the body and header array, hash, repeat. That walk is still there
+(`undo_walk` in `dkim2_verify.c`; `ctx->undo_walk`, `dkim2verify
+--undo-walk`) as the reference, but the default is now the planned walk in
+`dkim2_plan.c`:
+
+- **Body**: each instance's body is a list of segments, runs of lines of the
+  current body or runs of one shared table of Recipe literal lines. Below the
+  top (`[1, ∞)` of the current body), each list is the one above composed with
+  that MI's body Recipe. An MI with no body Recipe shares the list above it.
+  The current body is then read **once**, in chunks cut anywhere, and each
+  line goes to the digest of every distinct list holding it. Trailing blank
+  lines (§6.1) are a held-back count per digest, carried across body lines and
+  literals alike.
+- **Headers**: fields are grouped by lowercase name once. Per instance, each
+  name has a segment list over [received fields | literal values] that is
+  shared while unchanged, and a hashed value is canonicalised once.
+- The milter now feeds body chunks to the plan as they arrive (plan made in
+  `cb_eoh`), so it checks every instance's body hash without keeping the
+  body. Before this it kept only the top body digest and skipped inner body
+  hashes altogether. The CLI keeps the body only for the fallback below.
+
+**Same verdicts, same texts.** `tests/test_plan` (75 hand-built chains, every
+two-chunk split and byte-at-a-time) and `tests/test_plan_corpus` (the Perl
+fixtures and the 1584 captured Mailman/Sympa messages, each also with one body
+byte and the Subject changed, 4777 in all) compare per-instance hashes, Recipe
+errors and verdict text with the undo walk: no differences.
+
+**Things the plan has to copy from this walk exactly:**
+
+- **Copy ranges are bounded by every line of the body they apply to,
+  trailing blank lines included** (`split_lines` counts them). So a copy into
+  trailing blank lines is *not* an error in C. An implementation that bounds
+  by the canonical body (trailing blanks dropped) would reject such a Recipe.
+  This is a possible cross-impl divergence; no real mail hits it.
+- The undo walk applies the header Recipe to the content fields only:
+  `Message-Instance` and `DKIM2-Signature` are not among them. A Recipe key
+  `message-instance` therefore never changes the MIs the walk checks (a copy
+  of one is out of range, a literal adds an unhashed field), so the plan needs
+  no fallback for it.
+- Keys are matched case-sensitively against lowercased field names. A
+  mixed-case key matches nothing and adds fields; keys differing only in case
+  apply in turn. Field names of 128 bytes or more are never matched.
+- **Not modelled**: a current body whose last line has no terminator, copied
+  and followed by a literal, then has *another* Recipe applied. The rebuilt
+  body has the two as one line, so line numbers below differ.
+  `dkim2_plan_check()` returns 1 and the caller runs the undo walk (on
+  `ctx->body`; the milter, which has no body, falls back to the digest-only
+  walk it used before). SMTP bodies always end in CRLF.
+
+**Prefetch** (`dkim2_prefetch.c`): at end of headers every distinct
+`selector._domainkey.domain` the signatures name (implemented algorithms only)
+is looked up in a detached thread (`res_ninit`/`res_nquery` each). A signature
+check waits for its answer until 5 s after the query was sent. A definitive
+answer (records, NXDOMAIN, NOERROR without TXT) is used. No reply, SERVFAIL or
+any other failure means the ordinary synchronous lookup, so verdicts and
+temperror texts are unchanged (`tests/test_prefetch`, fake resolvers). Not
+done when keys come from `dns.json` / `dkim2_dns_override`.
+
+**Measured once (macOS, M-series):** over the captured corpus plus the
+fixtures (4777 messages), the chain walk alone took 0.120 s (undo) vs 0.114 s
+(planned), and the whole verify 0.65 s vs 0.63 s. List mail is small, and
+hashing each distinct list costs what hashing each rebuilt body did; the gain
+is in not building copies, and in the milter not needing the body.
+`chain-hop6-unchanged-re-sign.eml` (6 signatures, 5 distinct keys, live DNS):
+0.37–0.71 s with synchronous lookups, 0.08 s with prefetch.
+
+---
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
@@ -784,6 +856,7 @@ message, fixed timestamp, known key, showing every intermediate value.
 | 18 | §11.9 replay detection unimplemented | Won't do (scale) | Conformant (SHOULD) |
 | 20 | Failed undo returned the message with a warning | Fixed (Python raises) | High (fail-open) |
 | 21 | Outbound milter applied §11 PERMERROR to its own unsigned m= | Fixed (`allow_unsigned_mi`) | Critical (list mail left unsigned) |
+| 22 | Chain walk rebuilt every message; keys looked up one by one | Planned walk + prefetch (undo walk kept as reference) | Performance; milter now checks inner body hashes |
 | S1 | Trailing `;` should be normative | Spec issue | Critical for interop |
 | S2 | `ed25519-sha256` prehash semantics unstated | Spec issue | Critical for interop |
 | S3 | §5.2 vs §8.5 WSP rules not cross-referenced | Spec issue | High |

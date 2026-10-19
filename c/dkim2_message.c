@@ -2,6 +2,8 @@
 #include "dkim2_internal.h"
 #include "dkim2_header.h"
 #include "eml_parse.h"
+#include "dkim2_plan.h"
+#include "dkim2_prefetch.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -9,7 +11,7 @@
 
 /* Scan header array, parse any Message-Instance and DKIM2-Signature headers
    into ctx->mi_list and ctx->sig_list. */
-static void collect_dkim2_headers(dkim2_ctx_t *ctx) {
+void dkim2_ctx_collect(dkim2_ctx_t *ctx) {
     for (int i = 0; i < ctx->n_headers; i++) {
         const char *hdr = ctx->headers[i];
         const char *colon = strchr(hdr, ':');
@@ -79,7 +81,7 @@ int dkim2_sign_message(const char *eml_path, FILE *out,
     ctx.mail_from = (char *)mail_from;
     ctx.rcpt_to   = rcpt_to;
 
-    collect_dkim2_headers(&ctx);
+    dkim2_ctx_collect(&ctx);
 
     char *mi_val = NULL, *sig_val = NULL;
     int r = dkim2_do_sign(&ctx, cfg, &mi_val, &sig_val);
@@ -117,6 +119,18 @@ dkim2_verify_result_t dkim2_verify_message(const char *eml_path,
                                             char **rcpt_to,
                                             int skip_timestamp_check)
 {
+    return dkim2_verify_message_opts(eml_path, mail_from, rcpt_to,
+                                     skip_timestamp_check, NULL);
+}
+
+dkim2_verify_result_t dkim2_verify_message_opts(const char *eml_path,
+                                                 const char *mail_from,
+                                                 char **rcpt_to,
+                                                 int skip_timestamp_check,
+                                                 const dkim2_verify_opts_t *opts)
+{
+    static const dkim2_verify_opts_t defaults = { 0 };
+    if (!opts) opts = &defaults;
     dkim2_verify_result_t result = {DKIM2_PERMERROR, "failed to parse message", 0, ""};
 
     char **headers = NULL;
@@ -132,10 +146,31 @@ dkim2_verify_result_t dkim2_verify_message(const char *eml_path,
     ctx.mail_from            = (char *)mail_from;
     ctx.rcpt_to              = rcpt_to;
     ctx.skip_timestamp_check = skip_timestamp_check;
+    ctx.undo_walk            = opts->undo_walk;
 
-    collect_dkim2_headers(&ctx);
+    dkim2_ctx_collect(&ctx);
+
+    /* End of headers: the key lookups start, and the chain is planned and
+       hashed while they are under way. ctx.body stays for the one case the
+       plan hands back to the undo walk. */
+    if (!opts->no_prefetch) ctx.prefetch = dkim2_prefetch_start(&ctx);
+    if (!opts->undo_walk) {
+        ctx.plan = dkim2_plan_new_ctx(&ctx, 0);
+        if (ctx.plan) {
+            size_t step = opts->chunk ? opts->chunk : ctx.body_len;
+            int rc = 0;
+            for (size_t at = 0; at < ctx.body_len && rc == 0; at += step)
+                rc = dkim2_plan_body_update(ctx.plan, ctx.body + at,
+                    ctx.body_len - at < step ? ctx.body_len - at : step);
+            if (rc == 0) rc = dkim2_plan_body_final(ctx.plan);
+            if (rc < 0) { dkim2_plan_free(ctx.plan); ctx.plan = NULL; }
+        }
+    }
+
     dkim2_do_verify(&ctx, &result);
 
+    dkim2_plan_free(ctx.plan);
+    dkim2_prefetch_free(ctx.prefetch);
     dkim2_mi_free(ctx.mi_list);
     dkim2_sig_free(ctx.sig_list);
     free(ctx.body);

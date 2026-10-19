@@ -25,6 +25,27 @@ void dkim2_recipe_free(struct cJSON *root);
    Recipe). Returns 0 if well-formed (including null/absent "b"), -1 if not. */
 int dkim2_validate_body_recipe(const char *r_json);
 
+/* One step of a Recipe list, flattened: lit == 0 copies items from..to
+   (1-based, inclusive) of the list it applies to; lit == 1 is one literal
+   line/value (s, len: its octets, without CR/LF, NUL-terminated as well). */
+typedef struct {
+    int lit;
+    int from, to;
+    unsigned char *s;
+    size_t len;
+} dkim2_recipe_op_t;
+
+/* Flatten one Recipe list -- a body "b" array or one header field's array --
+   exactly as the apply_* functions read it (same step classification, same
+   literal and copy-range rules), but with no bounds check: the caller
+   compares the last copy's end against the list the Recipe applies to.
+   reject_nul: refuse a "b" literal with an embedded NUL (header values).
+   Returns 0 with *ops (malloc'd, free with dkim2_recipe_ops_free) and
+   *n_ops set, or -1 for a malformed list (*ops NULL). */
+int dkim2_recipe_ops(const struct cJSON *list, int reject_nul,
+                     dkim2_recipe_op_t **ops, int *n_ops);
+void dkim2_recipe_ops_free(dkim2_recipe_op_t *ops, int n_ops);
+
 /* Apply a body Recipe (JSON string) to reconstruct the original body.
    body/bodylen: current (possibly modified) body.
    out_len: set to reconstructed body length.

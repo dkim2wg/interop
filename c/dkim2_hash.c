@@ -171,7 +171,7 @@ int dkim2_body_hash(const char *body, size_t bodylen, char *out, size_t outlen) 
    spec-05 narrowed the old "arc-" prefix to the three RFC 8617 names and
    added a "received-" prefix rule. Note x400-received / x400-trace match
    neither the "x-" nor the "received-" prefix and need their own entries. */
-static int hdr_ignore(const char *lname, size_t nlen) {
+int dkim2_hdr_ignored(const char *lname, size_t nlen) {
     static const struct { const char *s; size_t l; } skip[] = {
         {"apparently-to",              13},
         {"arc-authentication-results", 26},
@@ -203,7 +203,7 @@ static int hdr_ignore(const char *lname, size_t nlen) {
    Steps: lowercase name; unfold; collapse WSP; trim trailing WSP;
    delete WSP around colon; keep final CRLF.
    Returns malloc'd string or NULL if header should be ignored. */
-static char *canon_header_for_hash(const char *hdr) {
+char *dkim2_header_canon(const char *hdr) {
     const char *colon = strchr(hdr, ':');
     if (!colon) return NULL;
 
@@ -214,7 +214,7 @@ static char *canon_header_for_hash(const char *hdr) {
         lname[i] = (char)tolower((unsigned char)hdr[i]);
     lname[namelen] = '\0';
 
-    if (hdr_ignore(lname, namelen)) { free(lname); return NULL; }
+    if (dkim2_hdr_ignored(lname, namelen)) { free(lname); return NULL; }
 
     /* Allocate output buffer — can't be larger than input + 4 */
     size_t vallen = strlen(colon + 1);
@@ -271,7 +271,7 @@ int dkim2_header_hash_raw_alg(const char **headers, int n_headers, int alg,
     int nc = 0;
 
     for (int i = n_headers - 1; i >= 0; i--) {
-        char *c = canon_header_for_hash(headers[i]);
+        char *c = dkim2_header_canon(headers[i]);
         if (c) canon[nc++] = c;
     }
 

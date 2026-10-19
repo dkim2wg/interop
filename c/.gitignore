@@ -18,3 +18,6 @@ tests/test_body_diff
 tests/test_strictness
 tests/test_signer_gate
 tests/.gate-fixtures
+tests/test_plan
+tests/test_plan_corpus
+tests/test_prefetch
