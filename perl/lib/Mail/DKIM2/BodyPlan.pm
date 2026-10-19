@@ -6,8 +6,7 @@ our $VERSION = '0.22';
 
 use Carp;
 use MIME::Base64 qw(encode_base64);
-use Crypt::Digest::SHA256;
-use Crypt::Digest::SHA512;
+use Mail::DKIM2::Digest;
 use Mail::DKIM2::MessageInstance;
 
 # Every Message-Instance's body hash in one forward pass over the current
@@ -23,11 +22,6 @@ use Mail::DKIM2::MessageInstance;
 # body is read once, front to back, each line going to every instance whose
 # list holds it. Instances with the same list (no body Recipe: an unchanged
 # body) share one set of digests.
-
-my %DIGEST_CLASS = (
-    sha256 => 'Crypt::Digest::SHA256',
-    sha512 => 'Crypt::Digest::SHA512',
-);
 
 # The top instance's body: every line, however many there turn out to be.
 use constant ALL_LINES => 2**52;
@@ -66,7 +60,7 @@ sub new {
                 push @{$self->{groups}}, _new_group($segs);
                 $self->{groups}[-1];
             };
-            $g->{digest}{$_} //= $DIGEST_CLASS{$_}->new for @{$inst->{algs}};
+            $g->{digest}{$_} //= Mail::DKIM2::Digest->new($_) for @{$inst->{algs}};
             $inst->{group} = $g;
         }
         push @{$self->{instances}}, $inst;

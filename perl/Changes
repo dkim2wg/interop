@@ -1,5 +1,17 @@
 Revision history for Mail::DKIM2
 
+0.23    (unreleased)
+        - Message hashes (every Message-Instance's header and body hashes)
+          go through the new Mail::DKIM2::Digest: OpenSSL's SHA-2, through
+          Net::SSLeay, when that is installed (recommended, not required),
+          else CryptX's as before. The digests are the same; OpenSSL uses
+          the CPU's SHA instructions where there are some -- about 7 times
+          CryptX's speed on an Apple M-series, 1.8 times on an older x86.
+        - The body is hashed where it lies, in whole runs, with fewer
+          copies: load() normalises line endings only when there is a bare
+          LF and never changes the caller's string; PRINT hands body chunks
+          straight to the Verifier's body plan.
+
 0.22    2026-10-18
         - The Verifier checks the Message-Instance chain without rebuilding
           any previous version of the message. New: Mail::DKIM2::BodyPlan

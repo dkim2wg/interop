@@ -5,8 +5,7 @@ use warnings;
 our $VERSION = '0.22';
 
 
-use Crypt::Digest::SHA256;
-use Crypt::Digest::SHA512 qw(sha512 sha512_b64);
+use Mail::DKIM2::Digest;
 use Email::MIME;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use List::Util qw(max);
@@ -56,11 +55,12 @@ sub _chain_error_fields {
 }
 
 # spec-06 §3.1: two hashing algorithms are defined. Verifiers MUST implement
-# both; Signers MAY implement either or both (we default to sha256).
-my %HASH_ALGS = (
-    sha256 => \&Crypt::Digest::SHA256::sha256,
-    sha512 => \&Crypt::Digest::SHA512::sha512,
-);
+# both; Signers MAY implement either or both (we default to sha256). Each
+# is a function of the data to its raw digest, by Mail::DKIM2::Digest.
+my %HASH_ALGS = map {
+    my $alg = $_;
+    $alg => sub { Mail::DKIM2::Digest::digest_data($alg, $_[0]) };
+} qw(sha256 sha512);
 
 sub hash_algs { return { %HASH_ALGS } }
 
@@ -147,17 +147,13 @@ sub body_hash { return $_[0]->{bits}{b1} }
 # Streams the body through the digest a megabyte at a time (each piece
 # ending at a LF, so a CRLF is never split): a large body is never copied
 # whole.
-my %DIGEST_CLASS = (
-    sha256 => 'Crypt::Digest::SHA256',
-    sha512 => 'Crypt::Digest::SHA512',
-);
 use constant BODY_CHUNK => 1 << 20;
 
 sub body_digest_raw {
     # Through a reference: "my ($body) = @_" would copy the body.
     my $bref = defined $_[0] ? \$_[0] : \'';
     my $alg = lc($_[1] // 'sha256');
-    my $class = $DIGEST_CLASS{$alg} or croak "unsupported hash algorithm: $alg";
+    my $d = Mail::DKIM2::Digest->new($alg);    # croaks on an unknown $alg
     my $len = length $$bref;
 
     # $end: the body without its trailing line breaks, each a LF with an
@@ -168,7 +164,6 @@ sub body_digest_raw {
         $end-- if $end > 0 && substr($$bref, $end - 1, 1) eq "\r";
     }
 
-    my $d = $class->new;
     for (my $pos = 0; $pos < $end; ) {
         my $n = $end - $pos;
         if ($n > BODY_CHUNK) {

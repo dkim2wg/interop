@@ -17,6 +17,7 @@ lib/Mail/DKIM2.pm
 lib/Mail/DKIM2/BodyPlan.pm
 lib/Mail/DKIM2/Common.pm
 lib/Mail/DKIM2/DSN.pm
+lib/Mail/DKIM2/Digest.pm
 lib/Mail/DKIM2/Gate.pm
 lib/Mail/DKIM2/HeaderParser.pm
 lib/Mail/DKIM2/HeaderPlan.pm
@@ -67,6 +68,7 @@ t/data/keys/sel3._domainkey.test2.dkim2.com.pem
 t/data/keys/sel3._domainkey.test3.dkim2.com.pem
 t/data/keys/sel3._domainkey.test4.dkim2.com.pem
 t/data/keys/sel3._domainkey.test5.dkim2.com.pem
+t/digest.t
 t/dns-temperror.t
 t/dsn.t
 t/duplicate-checks.t
