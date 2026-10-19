@@ -15,10 +15,11 @@ func main() {
 	rcptToStr := flag.String("rcpt-to", "", "Comma-separated SMTP RCPT TO for §10.4 envelope check (optional)")
 	ignoreTS := flag.Bool("ignore-timestamps", false, "Disable the §10.3 timestamp (14-day/future) check")
 	flag.Bool("full-chain", false, "Accepted for compatibility; full-chain validation is the default")
+	undoWalk := flag.Bool("undo-walk", false, "Check the lower Message-Instances by rebuilding each previous message (the reference walk) instead of the planned walk")
 	flag.Parse()
 
 	if *dnsFile == "" {
-		fmt.Fprintln(os.Stderr, "usage: dkim2verify -dns DNS.json [-ignore-timestamps] [-mail-from ADDR] [-rcpt-to ADDR,...] < message")
+		fmt.Fprintln(os.Stderr, "usage: dkim2verify -dns DNS.json [-ignore-timestamps] [-undo-walk] [-mail-from ADDR] [-rcpt-to ADDR,...] < message")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -29,7 +30,7 @@ func main() {
 			rcptTo = append(rcptTo, r)
 		}
 	}
-	opt := dkim2.VerifyOptions{MailFrom: *mailFrom, RcptTo: rcptTo, SkipTimestampCheck: *ignoreTS}
+	opt := dkim2.VerifyOptions{MailFrom: *mailFrom, RcptTo: rcptTo, SkipTimestampCheck: *ignoreTS, UndoWalk: *undoWalk}
 
 	fetcher := &dkim2.JSONKeyFetcher{Path: *dnsFile}
 	results, err := dkim2.VerifyFull(os.Stdin, fetcher, opt)

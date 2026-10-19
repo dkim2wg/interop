@@ -89,7 +89,19 @@ func implementedAlgs(hashes []HashSet) []string {
 // skipped per §3.4. Fails closed with the spec-06 message when none of the
 // hash-sets name an implemented algorithm.
 func verifyMIHashesPrecomputed(mi *MessageInstance, headers []Header, bodyHashes map[string][]byte) error {
-	if err := verifyMIHeaderHashes(mi, headers); err != nil {
+	return checkMIHashes(mi, headerHasher(headers), bodyHashes)
+}
+
+// headerHasher hashes headers on demand, per algorithm.
+func headerHasher(headers []Header) func(alg string) ([]byte, error) {
+	return func(alg string) ([]byte, error) { return hashHeaders(headers, alg) }
+}
+
+// checkMIHashes is verifyMIHashesPrecomputed with the header hash supplied
+// per algorithm by headerHash -- the planned chain walk (plan.go) has it
+// already, for an instance it never rebuilds.
+func checkMIHashes(mi *MessageInstance, headerHash func(string) ([]byte, error), bodyHashes map[string][]byte) error {
+	if err := checkMIHeaderHashes(mi, headerHash); err != nil {
 		return err
 	}
 	for _, hs := range mi.Hashes {
@@ -111,6 +123,12 @@ func verifyMIHashesPrecomputed(mi *MessageInstance, headers []Header, bodyHashes
 // fails-closed "no supported hash algorithm" check lives here because it is
 // about the hash-sets themselves, not about which content is available.
 func verifyMIHeaderHashes(mi *MessageInstance, headers []Header) error {
+	return checkMIHeaderHashes(mi, headerHasher(headers))
+}
+
+// checkMIHeaderHashes is verifyMIHeaderHashes with the header hash supplied
+// per algorithm by headerHash.
+func checkMIHeaderHashes(mi *MessageInstance, headerHash func(string) ([]byte, error)) error {
 	usable := 0
 	for _, hs := range mi.Hashes {
 		if _, ok := HashAlg(hs.Alg); !ok {
@@ -118,7 +136,7 @@ func verifyMIHeaderHashes(mi *MessageInstance, headers []Header) error {
 		}
 		usable++
 
-		gotH, err := hashHeaders(headers, hs.Alg)
+		gotH, err := headerHash(hs.Alg)
 		if err != nil {
 			return err
 		}

@@ -42,12 +42,7 @@ func undo(r io.Reader, w io.Writer, targetVersion int, walkPastNull bool) error 
 		return fmt.Errorf("reading body: %w", err)
 	}
 
-	type miEntry struct {
-		version int
-		raw     string
-		parsed  *MessageInstance
-	}
-	var miList []miEntry
+	var miList []undoMI
 	var sigRaws []string
 	var contentHeaders []Header
 
@@ -58,7 +53,7 @@ func undo(r io.Reader, w io.Writer, targetVersion int, walkPastNull bool) error 
 			if err != nil {
 				return fmt.Errorf("parsing MI: %w", err)
 			}
-			miList = append(miList, miEntry{mi.Version, h.Raw, mi})
+			miList = append(miList, undoMI{mi.Version, h.Raw, mi})
 		case "dkim2-signature":
 			sigRaws = append(sigRaws, h.Raw)
 		default:
@@ -87,55 +82,16 @@ func undo(r io.Reader, w io.Writer, targetVersion int, walkPastNull bool) error 
 			targetVersion, highestVersion)
 	}
 
-	currentContent := make([]Header, len(contentHeaders))
-	copy(currentContent, contentHeaders)
-	currentBody := body
-	bodyGone := false // sticky: a null body Recipe was undone above
-
-	for version := highestVersion; version > targetVersion; version-- {
-		var entry *miEntry
-		for i := range miList {
-			if miList[i].version == version {
-				entry = &miList[i]
-				break
-			}
-		}
-		if entry == nil {
-			return fmt.Errorf("Message-Instance v=%d not found", version)
-		}
-
-		if entry.parsed.Recipe == nil {
-			continue
-		}
-
-		recipe := entry.parsed.Recipe
-		if recipe.BodyNull {
-			if !walkPastNull {
-				return fmt.Errorf("v=%d: %w", version, ErrUnrecoverable)
-			}
-			bodyGone = true
-		}
-		// A Recipe that breaks the §5 rules against the message it is
-		// applied to (parse-time checks cannot know the item counts) is
-		// the same PERMERROR parseMI reports for a structurally bad one.
-		if recipe.Headers != nil {
-			currentContent, err = undoHeaderRecipes(currentContent, recipe.Headers)
-			if err != nil {
-				return undoRecipeError(version, err)
-			}
-		}
-		if recipe.Body != nil && !bodyGone {
-			currentBody, err = undoBodyRecipe(currentBody, recipe.Body)
-			if err != nil {
-				return undoRecipeError(version, err)
-			}
-		}
+	currentContent, currentBody, bodyGone, err := rebuildTo(miList, highestVersion, targetVersion,
+		contentHeaders, body, walkPastNull)
+	if err != nil {
+		return err
 	}
 
 	// Verify reconstructed state against target MI hashes.
 	// targetVersion=0 means pre-signing; no MI v=0 exists to verify against.
 	if targetVersion >= 1 {
-		var targetMI *miEntry
+		var targetMI *undoMI
 		for i := range miList {
 			if miList[i].version == targetVersion {
 				targetMI = &miList[i]
@@ -191,6 +147,68 @@ func undo(r io.Reader, w io.Writer, targetVersion int, walkPastNull bool) error 
 	}
 
 	return nil
+}
+
+// undoMI is one Message-Instance header as the undo walk holds it.
+type undoMI struct {
+	version int
+	raw     string
+	parsed  *MessageInstance
+}
+
+// rebuildTo applies the Recipes of instances highest down to target+1 to
+// the content headers and body, returning the rebuilt content, the rebuilt
+// body, and whether a null body Recipe was undone on the way (bodyGone: the
+// body returned is then meaningless).  With walkPastNull unset a null body
+// Recipe is an error wrapping ErrUnrecoverable instead.
+func rebuildTo(miList []undoMI, highest, target int, content []Header, body []byte,
+	walkPastNull bool) ([]Header, []byte, bool, error) {
+	currentContent := make([]Header, len(content))
+	copy(currentContent, content)
+	currentBody := body
+	bodyGone := false // sticky: a null body Recipe was undone above
+	var err error
+
+	for version := highest; version > target; version-- {
+		var entry *undoMI
+		for i := range miList {
+			if miList[i].version == version {
+				entry = &miList[i]
+				break
+			}
+		}
+		if entry == nil {
+			return nil, nil, false, fmt.Errorf("Message-Instance v=%d not found", version)
+		}
+
+		if entry.parsed.Recipe == nil {
+			continue
+		}
+
+		recipe := entry.parsed.Recipe
+		if recipe.BodyNull {
+			if !walkPastNull {
+				return nil, nil, false, fmt.Errorf("v=%d: %w", version, ErrUnrecoverable)
+			}
+			bodyGone = true
+		}
+		// A Recipe that breaks the §5 rules against the message it is
+		// applied to (parse-time checks cannot know the item counts) is
+		// the same PERMERROR parseMI reports for a structurally bad one.
+		if recipe.Headers != nil {
+			currentContent, err = undoHeaderRecipes(currentContent, recipe.Headers)
+			if err != nil {
+				return nil, nil, false, undoRecipeError(version, err)
+			}
+		}
+		if recipe.Body != nil && !bodyGone {
+			currentBody, err = undoBodyRecipe(currentBody, recipe.Body)
+			if err != nil {
+				return nil, nil, false, undoRecipeError(version, err)
+			}
+		}
+	}
+	return currentContent, currentBody, bodyGone, nil
 }
 
 // undoRecipeError reports a failure applying Message-Instance m=version's
