@@ -1,7 +1,8 @@
-// A null body Recipe ("b": null, spec-06 §5.2) means the previous BODY cannot
-// be recreated, but header Recipes are mandatory so the header history below
-// it is still checked (header hashes only; the body is not-checked).
-// Vectors come from util/build-negative-vectors.py, as in negative-vectors.sh.
+// A null body Recipe ("b": null, §5.2) means the previous BODY cannot be
+// recreated, but header Recipes are mandatory so the header history below it
+// is still checked (header hashes only; the body is not-checked).
+// Vectors come from build-null-fixtures.py, over the chain builder of
+// util/build-negative-vectors.py (as in negative-vectors.sh).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -22,7 +23,6 @@ const fetchKey = (selector, domain) => {
   return parseKeyRecord(rec);
 };
 const tmp = mkdtempSync(join(tmpdir(), 'nullbody-'));
-execFileSync('python3', [join(repoRoot, 'util', 'build-negative-vectors.py'), tmp], { stdio: 'ignore' });
 execFileSync('python3', [join(here, 'build-null-fixtures.py'), tmp], { stdio: 'ignore' });
 
 async function run(file) {
@@ -92,11 +92,14 @@ test('empty body, ordinary header-only Recipe passes; hidden To: fails', async (
   assert.match(bad.summary, /m=1 .*header hash mismatch/);
 });
 
-for (const f of ['bad-body-int-below-null.eml', 'bad-body-steps-below-null.eml']) {
-  test(`malformed body Recipe below a null is a malformed-Recipe PERMERROR (${f})`, async () => {
+for (const [f, want] of [
+  ['bad-body-int-below-null.eml', /PERMERROR: Message-Instance m=2 contains invalid JSON/],
+  ['bad-body-steps-below-null.eml', /PERMERROR: Message-Instance m=2 has a malformed Recipe/],
+]) {
+  test(`a bad body Recipe below a null is a PERMERROR (${f})`, async () => {
     const rep = await run(f);
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.match(rep.summary, /PERMERROR Message-Instance m=2 has a malformed Recipe/);
+    assert.match(rep.summary, want);
     assert.equal(lv(rep, 2).undo, 'failed');
     assert.equal(lv(rep, 1).undo, 'failed');
   });
@@ -105,7 +108,7 @@ for (const f of ['bad-body-int-below-null.eml', 'bad-body-steps-below-null.eml']
 test('a header Recipe that does not apply below the null (re-signed) is a malformed-Recipe PERMERROR', async () => {
   const rep = await run('bad-header-below-null.eml');
   assert.equal(rep.overall, 'permerror', rep.summary);
-  assert.match(rep.summary, /PERMERROR Message-Instance m=2 has a malformed Recipe/);
+  assert.match(rep.summary, /PERMERROR: Message-Instance m=2 has a malformed Recipe/);
   assert.equal(lv(rep, 2).undo, 'failed');
   assert.equal(lv(rep, 1).undo, 'failed');
 });

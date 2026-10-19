@@ -3,7 +3,7 @@ import { parseMessage, collectLevels, parseTagList, parseHashSets } from './pars
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
 import { fetchKey as dohFetchKey, keyName, DEFINITIVE_KEY_ERRORS } from './doh.js';
-import { decodeRecipe, classifyRecipeDecodeError, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe, MalformedRecipe } from './recipes.js';
+import { decodeRecipe, classifyRecipeDecodeError, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe } from './recipes.js';
 import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
 import { planChain } from './plan.js';
 
@@ -115,9 +115,8 @@ function headerValues(fields, name) {
 // A short human-readable summary of a decoded Recipe (§5), e.g.
 // "headers: subject; body: 1 step" — mirrors the /validate/ r= tag display.
 function recipeSummary(rec) {
-  if (rec == null) return 'null (previous state not recoverable)';
   const parts = [];
-  if (rec.h && Object.keys(rec.h).length) parts.push('headers: ' + Object.keys(rec.h).sort().join(', '));
+  if (rec.h) parts.push('headers: ' + Object.keys(rec.h).sort().join(', '));
   if (rec.b === null) parts.push('body: null (not recoverable)');
   else if (Array.isArray(rec.b)) parts.push('body: ' + rec.b.length + ' step' + (rec.b.length === 1 ? '' : 's'));
   return parts.length ? parts.join('; ') : 'none';
@@ -294,7 +293,7 @@ async function verifyOnce(raw, opts = {}) {
         // is permerror rather than being clobbered by a downstream fail.
         const suffix = recipeErrorSuffix(undoBrokenReason);
         level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
-        level.detail = `PERMERROR Message-Instance m=${undoBroken} ${suffix}`;
+        level.detail = `PERMERROR: Message-Instance m=${undoBroken} ${suffix}`;
         bump('permerror');
       } else {
         level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
@@ -319,7 +318,7 @@ async function verifyOnce(raw, opts = {}) {
         const suffix = recipeErrorSuffix(reason);
         if (suffix) {
           level.result = 'fail';
-          level.detail = `PERMERROR Message-Instance m=1 ${suffix}`;
+          level.detail = `PERMERROR: Message-Instance m=1 ${suffix}`;
           bump('permerror');
           levels.push(level);
           continue;
@@ -384,10 +383,10 @@ async function verifyOnce(raw, opts = {}) {
     if ('r' in mi.map) {
       let rec;
       try { rec = decodeRecipe(mi.map.r); } catch (e) { rec = undefined; }
-      // Only a JSON object is a Recipe (§5); anything else was already
-      // reported as malformed above and has nothing to break down.
-      if (rec !== null && typeof rec === 'object' && !Array.isArray(rec)) {
-        const hasH = rec.h !== null && typeof rec.h === 'object' && Object.keys(rec.h).length > 0;
+      // An r= that does not decode to a valid Recipe (§5) was already
+      // reported above and has nothing to break down.
+      if (rec !== undefined) {
+        const hasH = 'h' in rec;
         level.recipe = rec.b === null ? 'null' : (hasH || Array.isArray(rec.b)) ? 'diff' : 'none';
         level.body_recipe = rec.b === null ? 'null' : (Array.isArray(rec.b) ? 'diff' : 'none');
         level.recipe_json = rec;
@@ -641,15 +640,14 @@ export function undoChain(headers, body, instances, maxM) {
       break;
     }
     try {
+      // decodeRecipe() has checked the §5 schema.
       if (states[m].noBody) {
         // Below a null body Recipe the body is gone: apply the header Recipe
-        // only (still validated as a Recipe object) and carry on.
-        if (recipe === null || typeof recipe !== 'object' || Array.isArray(recipe)) throw new MalformedRecipe('Recipe is not a JSON object');
-        if (!('h' in recipe) && !('b' in recipe)) throw new MalformedRecipe('Recipe has neither "h" nor "b"');
-        validateBodyRecipe(recipe.b); // structure still checked; body not applied
+        // only and carry on.
+        validateBodyRecipe(recipe.b); // "c" order still checked; body not applied
         states[m - 1] = { fields: 'h' in recipe ? applyHeaderRecipe(states[m].fields, recipe.h) : states[m].fields, bodyLines: states[m].bodyLines, noBody: true };
         if (recipe.b === null) nullBodyInstances.add(m);
-      } else if (recipe !== null && typeof recipe === 'object' && recipe.b === null) {
+      } else if (recipe.b === null) {
         // §5.2 null "b": the previous body cannot be recreated, but the
         // header Recipe is mandatory and the header history is still
         // checkable. Sticky: every lower instance is header-hash-only.
@@ -661,7 +659,7 @@ export function undoChain(headers, body, instances, maxM) {
       }
     } catch (e) {
       undoBroken = m;
-      undoBrokenReason = e instanceof MalformedRecipe ? 'malformed' : 'broken';
+      undoBrokenReason = classifyRecipeDecodeError(e);
       break;
     }
   }

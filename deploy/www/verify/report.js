@@ -13,17 +13,17 @@ function tagGrid(tags) {
   return g;
 }
 
-// Decoded view of the Recipe's "b" steps (base64 literals for octets that
-// are not JSON text, §5 extension): one line per item, as text with U+FFFD
-// where the octets are not UTF-8. The JSON view above keeps the base64.
-function bStepLines(rec) {
+// Decoded view of the Recipe's "u" steps (base64 literals for octets that
+// are not UTF-8, §5): one line per item, as text with U+FFFD where the
+// octets are not UTF-8. The JSON view above keeps the base64.
+function uStepLines(rec) {
   const lines = [];
   const dec = new TextDecoder();
   const add = (where, steps) => {
     if (!Array.isArray(steps)) return;
     steps.forEach((st) => {
-      if (!st || typeof st !== 'object' || !Array.isArray(st.b)) return;
-      st.b.forEach((item) => {
+      if (!st || typeof st !== 'object' || !Array.isArray(st.u)) return;
+      st.u.forEach((item) => {
         let text;
         try { text = dec.decode(Uint8Array.from(atob(String(item)), (c) => c.charCodeAt(0))); } catch (e) { text = '(not base64)'; }
         lines.push(where + ': "' + text + '"');
@@ -61,7 +61,7 @@ export function renderReport(rep, out) {
       if (lvl.recipe_json !== undefined) {
         card.appendChild(kv('recipe (decoded)', ''));
         card.appendChild(el('pre', 'recipejson', JSON.stringify(lvl.recipe_json, null, 2)));
-        bStepLines(lvl.recipe_json).forEach((line) => card.appendChild(kv('recipe "b" (decoded)', line)));
+        uStepLines(lvl.recipe_json).forEach((line) => card.appendChild(kv('recipe "u" (decoded)', line)));
       }
       card.appendChild(kv('undo', lvl.undo));
     }

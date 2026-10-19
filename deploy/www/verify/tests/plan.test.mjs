@@ -49,8 +49,10 @@ const cases = {
   'body of only blank lines, copied': { maxM: 2, body: '\r\n\r\n', recipes: { 2: { b: [{ c: [1, 2] }] } } },
   'lone CR and bare LF in the body': { maxM: 2, body: 'a\rb\r\nc\nd\r\n', recipes: { 2: { b: [{ c: [2, 3] }] } } },
   'empty body Recipe []': { maxM: 2, body: 'a\r\n', recipes: { 2: { b: [] } } },
-  '"b" step and surrogate-escaped "d"': {
-    maxM: 2, body: 'a\r\n', recipes: { 2: { b: [{ b: [b64('caf\xe9')] }, { d: ['x\udce9y'] }, { c: [1, 1] }] } } },
+  '"u" step and a UTF-8 "d"': {
+    maxM: 2, body: 'a\r\n', recipes: { 2: { b: [{ u: [b64('caf\xe9')] }, { d: ['x\u00e9y'] }, { c: [1, 1] }] } } },
+  'a lone surrogate in "d"': { maxM: 2, body: 'a\r\n', recipes: { 2: '{"b":[{"d":["x\\udce9y"]}]}' }, expect: 2 },
+  'upper-case step and top-level keys': { maxM: 2, body: 'a\r\nb\r\n', recipes: { 2: { B: [{ C: [1, 1] }, { U: [b64('caf\xe9')] }] } } },
   // headers
   'subject tag removed': { maxM: 2, headers: H, recipes: { 2: { h: { subject: [{ d: ['hi'] }] } } } },
   'fields removed': { maxM: 2, headers: [...H, ['List-Id', '<l.example.com>']], recipes: { 2: { h: { 'list-id': [] } } } },
@@ -68,7 +70,7 @@ const cases = {
     maxM: 2, headers: [['From', 'a@example.com'], ['SUBJECT', 'one'], ['subject', 'two'], ['Subject', 'three']],
     recipes: { 2: { h: { subject: [{ c: [2, 3] }] } } } },
   'mixed-case Recipe keys': { maxM: 2, headers: H, recipes: { 2: { h: { Subject: [{ d: ['hi'] }], TO: [{ c: [1, 1] }] } } } },
-  'Recipe keys differing only in case': { maxM: 2, headers: H, recipes: { 2: { h: { Subject: [{ d: ['x'] }], SUBJECT: [{ d: ['y'] }] } } } },
+  'Recipe keys differing only in case': { maxM: 2, headers: H, recipes: { 2: { h: { Subject: [{ d: ['x'] }], SUBJECT: [{ d: ['y'] }] } } }, expect: 2 },
   'skipped fields with Recipes': {
     maxM: 2, headers: [...H, ['Received', 'from a'], ['Received', 'from b'], ['X-Mailer', 'm']],
     recipes: { 2: { h: { received: [{ c: [1, 1] }], 'x-mailer': [], 'dkim2-signature': [] } } } },

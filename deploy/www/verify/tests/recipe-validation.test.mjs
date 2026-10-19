@@ -6,11 +6,11 @@ import { canonHeaderHash, canonBody, signingInput } from '../canon.js';
 import { hashB64, sha256Bytes } from '../crypto.js';
 import { stringToBytes, bytesToB64, binaryToBytes } from '../b64.js';
 
-// Recipe validation (§5, with the proposed "b" step) through the REAL
-// verifyMessage() entry point, on genuinely Ed25519-signed two-hop messages.
-// Every message here is built as a binary string (one code unit per byte,
-// see b64.js) and handed over as bytes, so a Subject or body line can carry
-// octets that are not UTF-8 -- the whole reason the "b" step exists.
+// Recipe validation (§5) through the REAL verifyMessage() entry point, on
+// genuinely Ed25519-signed two-hop messages. Every message here is built as
+// a binary string (one code unit per byte, see b64.js) and handed over as
+// bytes, so a Subject or body line can carry octets that are not UTF-8 --
+// the whole reason the "u" step exists.
 //
 // Hop 1 (m=1, i=1) signs the "previous" message; hop 2 (m=2, i=2) changes
 // it and records the change in an r= Recipe. Content and chain of custody
@@ -24,7 +24,7 @@ async function keyFetcher() {
   return async () => ({ k: 'ed25519', p });
 }
 
-// base64 of a binary string's octets (what a "b" item carries).
+// base64 of a binary string's octets (what a "u" item carries).
 const b64bin = (bin) => bytesToB64(binaryToBytes(bin));
 const b64text = (text) => bytesToB64(stringToBytes(text));
 const recipeTag = (recipe) => b64text(JSON.stringify(recipe));
@@ -82,7 +82,7 @@ async function verify(msg) {
 
 // Unchanged content between hops, two body lines: the canvas for the
 // malformed-"c" cases (a correct Recipe would be {"b":[{"c":[1,2]}]}).
-const twoLineFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' hi' }];
+const twoLineFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' hi' }];
 const twoLineBody = 'hello\r\nworld\r\n';
 const unchanged = (recipe) => twoHop({
   prevFields: twoLineFields, prevBody: twoLineBody,
@@ -94,55 +94,60 @@ test('control: a well-formed copy Recipe over unchanged content passes end to en
   assert.equal(rep.overall, 'pass', rep.summary);
 });
 
-const MALFORMED = /PERMERROR Message-Instance m=2 has a malformed Recipe/;
+const MALFORMED = 'PERMERROR: Message-Instance m=2 has a malformed Recipe';
+const INVALID = 'PERMERROR: Message-Instance m=2 contains invalid JSON';
 
-function rejects(name, recipe) {
-  test(`malformed Recipe rejected through verifyMessage(): ${name}`, async () => {
+function rejects(name, recipe, want) {
+  test(`bad Recipe rejected through verifyMessage(): ${name}`, async () => {
     const rep = await verify(await unchanged(recipe));
     assert.notEqual(rep.overall, 'pass');
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.match(rep.summary, MALFORMED);
+    assert.ok(rep.summary.includes(want), rep.summary);
     const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
-    assert.equal(mi1.detail, 'PERMERROR Message-Instance m=2 has a malformed Recipe');
+    assert.equal(mi1.detail, want);
     const mi2 = rep.levels.find((l) => l.kind === 'instance' && l.m === 2);
     assert.equal(mi2.undo, 'failed');
   });
 }
 
-rejects('descending "c" ranges', { b: [{ c: [2, 2] }, { c: [1, 1] }] });
-rejects('overlapping "c" ranges', { b: [{ c: [1, 2] }, { c: [2, 2] }] });
-rejects('"c" start of 0', { b: [{ c: [0, 1] }] });
-rejects('"c" end beyond the line count', { b: [{ c: [1, 3] }] });
-rejects('"c" bounds as strings', { b: [{ c: ['1', '2'] }] });
-rejects('"c" bound 1.5', { b: [{ c: [1, 1.5] }] });
-rejects('"c" end beyond the header instance count', { h: { subject: [{ c: [1, 2] }] } });
-rejects('invalid base64 in "b"', { b: [{ b: ['!!!!'] }] });
-rejects('"b" item outside the base64 alphabet', { b: [{ b: ['QUJD-QUJD'] }] });
-rejects('unpadded "b" item (not canonical RFC 4648 §4)', { b: [{ b: ['QUI'] }] });
-rejects('empty "d" array', { b: [{ d: [] }] });
-rejects('CR LF inside a decoded "b" item', { b: [{ b: [b64bin('a\r\nb')] }] });
-rejects('LF inside a decoded header "b" item', { h: { subject: [{ b: [b64bin('x\ny')] }] } });
-rejects('unknown step kind', { b: [{ z: [1, 2] }] });
-rejects('Recipe is a JSON array, not an object', [{ c: [1, 2] }]);
+// A schema-valid Recipe whose "c" ranges do not fit the message.
+rejects('descending "c" ranges', { b: [{ c: [2, 2] }, { c: [1, 1] }] }, MALFORMED);
+rejects('overlapping "c" ranges', { b: [{ c: [1, 2] }, { c: [2, 2] }] }, MALFORMED);
+rejects('"c" end beyond the line count', { b: [{ c: [1, 3] }] }, MALFORMED);
+rejects('"c" end beyond the header instance count', { h: { subject: [{ c: [1, 2] }] } }, MALFORMED);
+// What the §5 schema does not allow.
+rejects('"c" start of 0', { b: [{ c: [0, 1] }] }, INVALID);
+rejects('"c" bounds as strings', { b: [{ c: ['1', '2'] }] }, INVALID);
+rejects('"c" bound 1.5', { b: [{ c: [1, 1.5] }] }, INVALID);
+rejects('invalid base64 in "u"', { b: [{ u: ['!!!!'] }] }, INVALID);
+rejects('"u" item outside the base64 alphabet', { b: [{ u: ['QUJD-QUJD'] }] }, INVALID);
+rejects('unpadded "u" item', { b: [{ u: ['QUI'] }] }, INVALID);
+rejects('"u" item with non-zero pad bits', { b: [{ u: ['QUJ='] }] }, INVALID);
+rejects('empty "d" array', { b: [{ d: [] }] }, INVALID);
+rejects('CR LF inside a decoded "u" item', { b: [{ u: [b64bin('a\r\nb')] }] }, INVALID);
+rejects('LF inside a decoded header "u" item', { h: { subject: [{ u: [b64bin('x\ny')] }] } }, INVALID);
+rejects('unknown step kind', { b: [{ z: [1, 2] }] }, INVALID);
+rejects('the old "b" step', { b: [{ b: [b64bin('hello')] }, { c: [2, 2] }] }, INVALID);
+rejects('Recipe is a JSON array, not an object', [{ c: [1, 2] }], INVALID);
 
-test('a malformed Recipe never escapes as an exception, whatever the JSON shape', async () => {
+test('a bad Recipe never escapes as an exception, whatever the JSON shape', async () => {
   for (const recipe of [null, 7, 'x', { b: 'lines' }, { h: null }, { h: { subject: null } }, { b: [null] }, { b: [{ c: null }] }]) {
     const rep = await verify(await unchanged(recipe));
     assert.notEqual(rep.overall, 'pass', JSON.stringify(recipe));
   }
 });
 
-test('"b" steps restore a Subject and a body line of non-UTF-8 octets and the chain verifies', async () => {
+test('"u" steps restore a Subject and a body line of non-UTF-8 octets and the chain verifies', async () => {
   // At m=1 the Subject is Latin-1 "café" and the body has a Big5 line and
   // a Latin-1 line -- none of it valid UTF-8, so no "d" step could carry it.
-  const prevFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' caf\xe9' }];
+  const prevFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' caf\xe9' }];
   const prevBody = '\xb1\xa4 line one\r\ncaf\xe9 au lait\r\n';
   // Hop 2 tags the Subject, edits line two and appends a footer.
-  const curFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' [list] hello' }];
+  const curFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' [list] hello' }];
   const curBody = '\xb1\xa4 line one\r\n[list] edited\r\n-- footer\r\n';
   const recipe = {
-    h: { subject: [{ b: [b64bin('caf\xe9')] }] },
-    b: [{ c: [1, 1] }, { b: [b64bin('caf\xe9 au lait')] }],
+    h: { subject: [{ u: [b64bin('caf\xe9')] }] },
+    b: [{ c: [1, 1] }, { u: [b64bin('caf\xe9 au lait')] }],
   };
   const msg = await twoHop({ prevFields, prevBody, curFields, curBody, recipe });
   const rep = await verify(msg);
@@ -150,17 +155,17 @@ test('"b" steps restore a Subject and a body line of non-UTF-8 octets and the ch
   const mi2 = rep.levels.find((l) => l.kind === 'instance' && l.m === 2);
   assert.equal(mi2.undo, 'clean');
   // The report shows the Recipe as decoded text: U+FFFD for the stray byte,
-  // never a crash, and the "b" item stays base64 in the decoded JSON.
+  // never a crash, and the "u" item stays base64 in the decoded JSON.
   const subj = mi2.header_recipes.find((r) => r.name === 'subject');
   assert.equal(subj.current, '[list] hello');
   assert.equal(subj.previous, 'caf�');
-  assert.equal(mi2.recipe_json.h.subject[0].b[0], b64bin('caf\xe9'));
+  assert.equal(mi2.recipe_json.h.subject[0].u[0], b64bin('caf\xe9'));
 });
 
-test('the same restoration with "d" instead of "b" cannot verify (why "b" exists)', async () => {
-  const prevFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' caf\xe9' }];
+test('the same restoration with "d" instead of "u" cannot verify (why "u" exists)', async () => {
+  const prevFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' caf\xe9' }];
   const prevBody = 'line one\r\n';
-  const curFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' [list] hello' }];
+  const curFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' [list] hello' }];
   // "d" is JSON text: the best it can say is U+00E9, which UTF-8 encodes as
   // two bytes, not the single 0xE9 that was hashed at m=1.
   const recipe = { h: { subject: [{ d: ['café'] }] } };

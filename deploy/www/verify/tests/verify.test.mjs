@@ -420,12 +420,12 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
   const rep = await verifyMessage(raw, { now: t + 10, fetchKey: stubEd25519Key });
 
   assert.equal(rep.overall, 'permerror');
-  assert.match(rep.summary, /PERMERROR Message-Instance m=2 contains invalid JSON/);
+  assert.match(rep.summary, /PERMERROR: Message-Instance m=2 contains invalid JSON/);
   const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi1, 'm=1 instance level present');
   // Exact match (not just Contains/match): proves the text reaching this
   // level is the verbatim §11.2 string, with no extra decoration.
-  assert.equal(mi1.detail, 'PERMERROR Message-Instance m=2 contains invalid JSON');
+  assert.equal(mi1.detail, 'PERMERROR: Message-Instance m=2 contains invalid JSON');
 });
 
 // spec-06 §11.2 ruling: a bad-base64 r= value is a DIFFERENT error from a
@@ -489,7 +489,7 @@ test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", disti
   assert.equal(rep.overall, 'permerror');
   const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi1, 'm=1 instance level present');
-  assert.equal(mi1.detail, 'PERMERROR Message-Instance m=2 syntax error');
+  assert.equal(mi1.detail, 'PERMERROR: Message-Instance m=2 syntax error');
   assert.doesNotMatch(mi1.detail, /invalid JSON/);
 });
 
@@ -537,7 +537,7 @@ test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejec
   assert.equal(rep.overall, 'permerror');
   const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi1, 'm=1 instance level present');
-  assert.equal(mi1.detail, 'PERMERROR Message-Instance m=1 contains invalid JSON');
+  assert.equal(mi1.detail, 'PERMERROR: Message-Instance m=1 contains invalid JSON');
 });
 
 // --- §11.6 signature-failure strings name the Selector -------------------
