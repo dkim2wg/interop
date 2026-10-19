@@ -1,4 +1,4 @@
-"""Folding whitespace inside DKIM2 tag values (spec-06 §2.12).
+"""Folding whitespace inside DKIM2 tag values (-07 §2.12).
 
 FWS may appear inside a base64 string and around the colons of an s= item, and
 "MUST be ignored when the value is used".
@@ -93,14 +93,17 @@ def test_all_folds_at_once_verify():
 
 
 def test_long_domain_is_never_folded():
-    """Follow-up review F.5 (§8.8): a Domain is never broken by a fold, even
+    """Follow-up review F.5 (§10.8): a Domain is never broken by a fold, even
     when it makes the line longer than 78. This signer emits each field on
     one line; the d= of two 40-character labels must sign and verify."""
     dom = "a" * 40 + "." + "b" * 40 + ".example.com"
     with open(DNS) as fh:
         dns_data = json.load(fh)
     dns_data[dom] = {"sel1._domainkey": dns_data["test1.dkim2.com"]["sel1._domainkey"]}
-    signed = sign_message(BASE, "sel1", dom, KEY,
+    # From must be Authentic for d= (-07 §11).
+    base = BASE.replace(b"From: sender@test1.dkim2.com", f"From: sender@{dom}".encode())
+    assert base != BASE
+    signed = sign_message(base, "sel1", dom, KEY,
                           mailfrom=f"<sender@{dom}>", rcptto=["<rcpt@test2.dkim2.com>"],
                           timestamp=1740000000)
     head = signed.split(b"\r\n\r\n", 1)[0].decode()

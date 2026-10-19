@@ -18,9 +18,30 @@ from dkim2verify import MessageVerifier, verify_message  # noqa: E402
 
 with open(os.path.join(ROOT, "dns.json")) as fh:
     DNS = json.load(fh)
-with open(os.path.join(ROOT, "perl", "tests", "expected",
-                       "chain-hop6-unchanged-re-sign.eml"), "rb") as fh:
-    RAW = fh.read()
+
+
+def _five_key_chain() -> bytes:
+    """A five-hop chain, each hop signed with a different key (test1..test5),
+    built here so its From is Authentic for i=1 (-07 §11)."""
+    import gate_env  # noqa: F401  (old timestamps are fine for the gate)
+    from dkim2sign import sign_message
+    msg = (b"From: Sender <sender@test1.dkim2.com>\r\nTo: a@test2.dkim2.com\r\n"
+           b"Subject: five keys\r\n\r\nbody\r\n")
+    hops = [("test1", "sel1"), ("test2", "sel2"), ("test3", "ed25519"),
+            ("test4", "sel3"), ("test5", "sel1")]
+    mailfrom = "sender@test1.dkim2.com"
+    for n, (dom, sel) in enumerate(hops):
+        nxt = hops[n + 1][0] if n + 1 < len(hops) else "test1"
+        msg = sign_message(
+            msg, sel, f"{dom}.dkim2.com",
+            os.path.join(ROOT, "keys", f"{sel}._domainkey.{dom}.dkim2.com.pem"),
+            mailfrom=mailfrom, rcptto=[f"r@{nxt}.dkim2.com"],
+            timestamp=1740000000 + n, dns_data=DNS)
+        mailfrom = f"r@{nxt}.dkim2.com"
+    return msg
+
+
+RAW = _five_key_chain()
 KW = dict(full_chain=True, skip_timestamp_check=True)
 
 
@@ -144,7 +165,7 @@ def test_temperror_is_the_ordinary_lookups_temperror():
         got = _verify(FakeResolver(first={"*": how}, later={"*": how}))
         assert got == _sync(FakeResolver(first={"*": how}, later={"*": how}))
         assert got[1] == "temperror", got
-        assert "TEMPERROR DKIM2-Signature i=" in got[2]
+        assert "TEMPERROR: DKIM2-Signature i=" in got[2]
         assert got[2].endswith("could not be fetched"), got[2]
     # Timed out on the prefetch, then SERVFAIL on the ordinary lookup.
     fake = FakeResolver(first={"*": "block"}, later={"*": "SERVFAIL"})
@@ -207,8 +228,11 @@ def test_dnspython_answers_mapped():
 def test_dns_json_mode_needs_no_dnspython():
     """The util/*.sh runners call the CLI with --dns-json and a bare
     python3: dnspython must matter only for live DNS."""
-    fixture = os.path.join(ROOT, "perl", "tests", "expected",
-                           "chain-hop6-unchanged-re-sign.eml")
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix=".eml", delete=False)
+    tmp.write(RAW)
+    tmp.close()
+    fixture = tmp.name
     code = ("import sys, runpy; sys.modules['dns'] = None; "
             "sys.argv = ['dkim2verify.py'] + sys.argv[1:]; "
             "runpy.run_path(%r, run_name='__main__')"
@@ -220,6 +244,7 @@ def test_dns_json_mode_needs_no_dnspython():
     live = subprocess.run([sys.executable, "-c", code, fixture,
                            "--ignore-timestamps"], capture_output=True, text=True)
     assert live.returncode == 2 and "needs dnspython" in live.stderr, live.stderr
+    os.unlink(fixture)
 
 
 if __name__ == "__main__":

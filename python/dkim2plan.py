@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 planned chain walk - draft-ietf-dkim-dkim2-spec-06
+DKIM2 planned chain walk - draft-ietf-dkim-dkim2-spec-07
 
 The verifier checks every Message-Instance in the chain: the top one against
 the message, then each lower one against the message as the Recipes above it
@@ -160,7 +160,7 @@ class HeaderPlan:
         return data
 
     def digest(self, state: dict, alg: str) -> bytes:
-        """Header hash of one instance (spec-06 §6.2): names in byte order,
+        """Header hash of one instance (-07 §6.2): names in byte order,
         each name's fields bottom-up; skip-listed names are not hashed."""
         key = (id(state), alg)
         hit = self._digests.get(key)

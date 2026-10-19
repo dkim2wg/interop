@@ -1,9 +1,9 @@
 """Verifier strictness (docs/superpowers/specs/2026-10-09-verifier-strictness-review-fixes.md).
 
-A. signature algorithms (spec-06 §3.4, §8.9)
-B. key records (spec-06 §11.5, dkim2-dns-00 §3.2, §3.4.1, §3.4.2.2)
-C. Message-Instance tag case and duplicates (spec-06 §7)
-D. t= syntax (spec-06 §8.4, §11.2)
+A. signature algorithms (-07 §3.5, §10.9)
+B. key records (-07 §14.5, dkim2-dns-00 §3.2, §3.4.1, §3.4.2.2)
+C. Message-Instance tag case and duplicates (-07 §8, §9)
+D. t= syntax (-07 §10.4, §14.2)
 
 Messages are signed here by hand (rather than through sign_message) so each
 test controls the exact s= list, Message-Instance text and t= value. Key
@@ -96,8 +96,8 @@ def test_unknown_algorithm_with_good_rsa_signature_does_not_pass(alg, lookups):
     r = verify(make([("sel1", alg, "SIGN:sel1")]))
     assert not r.ok
     # E.1: no implemented algorithm at all is FAIL
-    assert r.message == "FAIL DKIM2-Signature i=1 has no signature with a supported algorithm", r
-    assert r.status == "fail", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm", r
+    assert r.status == "permerror", r
     assert lookups == [], "unknown algorithm must be ignored before key lookup"
 
 
@@ -119,7 +119,7 @@ def test_many_unknown_items_cost_one_lookup(lookups):
 @pytest.mark.parametrize("val", ["", "!!!!", "AAA", "####"])
 def test_known_algorithm_bad_base64_is_syntax_error(val, lookups):
     r = verify(make([("sel1", "rsa-sha256", val)]))
-    assert r.message == "PERMERROR DKIM2-Signature i=1 syntax error", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 syntax error", r
     assert r.status == "permerror"
 
 
@@ -134,11 +134,11 @@ def test_signature_value_with_fws_still_verifies():
 def test_key_type_must_match_algorithm():
     # ed25519-sha256 item naming an RSA key
     r = verify(make([("sel1", "ed25519-sha256", "SIGN:ed25519")]))
-    assert r.message == "PERMERROR DKIM2-Signature i=1 public key sel1 algorithm mismatch", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel1 algorithm mismatch", r
     assert r.status == "permerror"
     # rsa-sha256 item naming an Ed25519 key
     r = verify(make([("ed25519", "rsa-sha256", "SIGN:sel1")]))
-    assert r.message == "PERMERROR DKIM2-Signature i=1 public key ed25519 algorithm mismatch", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key ed25519 algorithm mismatch", r
 
 
 # --- B. key records ----------------------------------------------------------
@@ -158,7 +158,7 @@ def _rsa_with(*records):
                   _dns_with([["txt", r] for r in records]))
 
 
-SYNTAX = "PERMERROR DKIM2-Signature i=1 public key sel1 has a syntax error"
+SYNTAX = "PERMERROR: DKIM2-Signature i=1 public key sel1 has a syntax error"
 
 
 @pytest.mark.parametrize("rec", [
@@ -195,18 +195,18 @@ def test_good_key_record_passes(rec):
 
 def test_unknown_key_type_is_algorithm_mismatch():
     r = _rsa_with(f"v=DKIM1; k=unknown; p={RSA_P}")
-    assert r.message == "PERMERROR DKIM2-Signature i=1 public key sel1 algorithm mismatch", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel1 algorithm mismatch", r
     assert r.status == "permerror"
 
 
 def test_k_ed25519_for_rsa_signature_is_algorithm_mismatch():
     r = _rsa_with(f"v=DKIM1; k=ed25519; p={ED_P}")
-    assert r.message == "PERMERROR DKIM2-Signature i=1 public key sel1 algorithm mismatch", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel1 algorithm mismatch", r
 
 
 def test_empty_p_is_revoked():
     r = _rsa_with("v=DKIM1; k=rsa; p=")
-    assert r.message == "PERMERROR DKIM2-Signature i=1 public key sel1 has been revoked", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel1 has been revoked", r
     assert r.status == "permerror"
 
 
@@ -214,7 +214,7 @@ def test_two_txt_records_is_multiple_records():
     rec = f"v=DKIM1; k=rsa; p={RSA_P}"
     for pair in ([rec, rec], [rec, "v=spf1 -all"]):
         r = _rsa_with(*pair)
-        assert r.message == "PERMERROR DKIM2-Signature i=1 public key sel1 has multiple records", r
+        assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel1 has multiple records", r
         assert r.status == "permerror"
 
 
@@ -235,7 +235,7 @@ def test_ed25519_bad_length_is_syntax_error():
     bad = b64(b"\x00" * 40)
     r = verify(make([("ed25519", "ed25519-sha256", "SIGN:ed25519")]),
                _dns_with([["txt", f"v=DKIM1; k=ed25519; p={bad}"]], "ed25519"))
-    assert r.message == "PERMERROR DKIM2-Signature i=1 public key ed25519 has a syntax error", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key ed25519 has a syntax error", r
 
 
 # --- C. Message-Instance tag case and duplicates -----------------------------
@@ -265,7 +265,7 @@ def test_mi_duplicate_tag_is_syntax_error(mk, full_chain):
     mi = mk(_good_mi_value())
     r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=full_chain)
     assert not r.ok, mi
-    assert "PERMERROR Message-Instance m=1 syntax error" in r.errors, (mi, r)
+    assert "PERMERROR: Message-Instance m=1 syntax error" in r.errors, (mi, r)
     assert r.status == "permerror"
 
 
@@ -277,7 +277,7 @@ def test_mi_duplicate_tag_is_syntax_error(mk, full_chain):
 def test_bad_t_is_syntax_error(t, skip):
     r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], t=t),
                skip_timestamp_check=skip)
-    assert r.message == "PERMERROR DKIM2-Signature i=1 syntax error", (t, r)
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 syntax error", (t, r)
     assert r.status == "permerror"
 
 
@@ -315,12 +315,12 @@ def test_e_unusable_record_on_any_item_is_permerror_even_if_other_verifies():
             items = [("sel1", "rsa-sha256", "SIGN:sel1"), ("sel2", "rsa-sha256", "SIGN:sel2")]
             items = [items[i] for i in order]
             r = verify(make(items), _dns_with([["txt", rec]], "sel2"))
-            assert r.message == f"PERMERROR DKIM2-Signature i=1 public key sel2 {why}", (rec, r)
+            assert r.message == f"PERMERROR: DKIM2-Signature i=1 public key sel2 {why}", (rec, r)
             assert r.status == "permerror"
     rec = [v for t, v in DNS[D]["sel2._domainkey"] if t == "txt"][0]
     r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1"), ("sel2", "rsa-sha256", "SIGN:sel2")]),
                _dns_with([["txt", rec], ["txt", rec]], "sel2"))
-    assert r.message == "PERMERROR DKIM2-Signature i=1 public key sel2 has multiple records", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel2 has multiple records", r
 
 
 def test_e_absent_key_item_is_skipped():
@@ -332,7 +332,7 @@ def test_e_all_keys_absent_is_does_not_exist():
     r = verify(make([("nosuch", "rsa-sha256", "SIGN:sel1"),
                      ("gone", "ed25519-sha256", "SIGN:ed25519"),
                      ("x", "future-alg", "AAAA")]))
-    assert r.message == "PERMERROR DKIM2-Signature i=1 public key nosuch does not exist", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key nosuch does not exist", r
     assert r.status == "permerror"
 
 
@@ -340,7 +340,10 @@ def test_e_any_crypto_failure_is_fail_naming_selector():
     # sel2 item carries sel1's signature: verifies with neither key it names
     r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1"), ("sel2", "rsa-sha256", "SIGN:sel1")]))
     assert r.status == "fail", r
-    assert r.message.startswith("FAIL DKIM2-Signature i=1 sel2 "), r
+    # -07 §14.6: sel1 passed, sel2 failed.
+    assert r.message == "FAIL: DKIM2-Signature i=1 signature sel1 signature sel2 failed", r
+    r = verify(make([("sel1", "rsa-sha256", "SIGN:sel2"), ("sel2", "rsa-sha256", "SIGN:sel1")]))
+    assert r.message == "FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature", r
 
 
 def test_e_p_must_be_padded():
@@ -348,7 +351,7 @@ def test_e_p_must_be_padded():
     assert unpadded != ED_P
     r = verify(make([("ed25519", "ed25519-sha256", "SIGN:ed25519")]),
                _dns_with([["txt", f"v=DKIM1; k=ed25519; p={unpadded}"]], "ed25519"))
-    assert r.message == "PERMERROR DKIM2-Signature i=1 public key ed25519 has a syntax error", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key ed25519 has a syntax error", r
 
 
 def test_e_signature_value_must_be_padded():
@@ -357,7 +360,7 @@ def test_e_signature_value_must_be_padded():
     val, tail = rest.split(b";", 1)
     assert val.endswith(b"=")
     r = verify(head + b"s=ed25519:ed25519-sha256:" + val.rstrip(b"=") + b";" + tail)
-    assert r.message == "PERMERROR DKIM2-Signature i=1 syntax error", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 syntax error", r
 
 
 
@@ -379,19 +382,19 @@ def test_e_short_rsa_key_is_permerror_even_if_other_verifies():
                   [("sel1", "rsa-sha256", "SIGN:sel1"), ("sel2", "rsa-sha256", "SIGN:sel2")],
                   [("sel2", "rsa-sha256", "SIGN:sel2"), ("sel1", "rsa-sha256", "SIGN:sel1")]):
         r = verify(make(items), dns)
-        assert r.message == "PERMERROR DKIM2-Signature i=1 public key sel2 is shorter than 1024 bits", (items, r)
+        assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel2 is shorter than 1024 bits", (items, r)
         assert r.status == "permerror"
 
 # --- F. whole-field syntax (follow-up review) --------------------------------
 
-SIG_SYNTAX = "PERMERROR DKIM2-Signature i=1 syntax error"
-MI_SYNTAX = "PERMERROR Message-Instance m=1 syntax error"
+SIG_SYNTAX = "PERMERROR: DKIM2-Signature i=1 syntax error"
+MI_SYNTAX = "PERMERROR: Message-Instance m=1 syntax error"
 GOOD = [("sel1", "rsa-sha256", "SIGN:sel1")]
 
 
 @pytest.mark.parametrize("extra", [
     "junk; ", "9bad=foo; ", "=v; ", "x=a\x00b; ", "x=a\x7fb; ", "x=café; ",
-    "n=café; ", "x-y=1; ",
+    "n=café; ", "x-y=1; ", ";; ",
 ])
 def test_f1_bad_sig_tag_fragment_is_syntax_error(extra):
     r = verify(make(GOOD, extra=extra))
@@ -400,7 +403,7 @@ def test_f1_bad_sig_tag_fragment_is_syntax_error(extra):
 
 
 @pytest.mark.parametrize("extra", [
-    "x_y=foo bar; ", "x=; ", ";; ", " x =\r\n\t1 ; ", "x=a\r\n\tb; ",
+    "x_y=foo bar; ", "x=; ", " x =\r\n\t1 ; ", "x=a\r\n\tb; ",
 ])
 def test_f1_wellformed_sig_fragments_pass(extra):
     r = verify(make(GOOD, extra=extra))
@@ -423,9 +426,11 @@ def test_f1_bad_mi_tag_fragment_is_syntax_error(mk, full_chain):
 
 
 def test_f1_wellformed_mi_unknown_tag_and_empty_fragments_pass():
-    mi = _good_mi_value() + " x_y=a b;;"
+    mi = _good_mi_value() + " x_y=a b;"
     assert verify(make(GOOD, mi)).ok
     assert verify(make(GOOD, mi), full_chain=True).ok
+    # -07 §8: an empty tag-spec (";;") is not a tag-list.
+    assert verify(make(GOOD, mi + ";")).message == MI_SYNTAX
 
 
 @pytest.mark.parametrize("items", [

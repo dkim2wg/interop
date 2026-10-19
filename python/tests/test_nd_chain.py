@@ -94,11 +94,11 @@ def test_legit_nd_chain_still_passes():
 
 
 def _bridged_chain(bridge_domain: str, skip_upstream_check: bool = False) -> bytes:
-    """A Forwarder's §9.3 bridge after a real hop.
+    """A Forwarder's §12.3 bridge after a real hop.
 
     The message arrives at test2 (i=1 rt=); test2 sends it on from test3, and
     bridges the gap with an nd= hop made with a key for `bridge_domain` before
-    signing the real hop as test3. §9.3 requires that key to belong to a
+    signing the real hop as test3. §12.3 requires that key to belong to a
     domain in the RCPT TO the message arrived with, so a bridge_domain other
     than test2.dkim2.com must be rejected.
     """
@@ -133,9 +133,9 @@ def test_bridge_from_a_domain_the_mail_never_reached_fails():
     # Built over a deliberately broken bridge, so skip the signer gate.
     raw = _bridged_chain("test4.dkim2.com", skip_upstream_check=True)
     result = dkim2verify.verify_message(raw, DNS_DATA, skip_timestamp_check=True)
-    assert result.status == 'fail', result
-    assert 'i=2 nd= hop d=test4.dkim2.com did not match RCPT TO' in result.message, \
-        result.message
+    assert result.status == 'permerror', result
+    assert result.message == ('PERMERROR: DKIM2-Signature i=2 d= does not match '
+                              'the rt= of i=1'), result.message
 
 
 def test_unbridged_forward_from_another_domain_fails_custody():
@@ -153,7 +153,9 @@ def test_unbridged_forward_from_another_domain_fails_custody():
         mailfrom="srs0=x@bounce.test3.dkim2.com", rcptto=["dest@test5.dkim2.com"],
         timestamp=1740000000)
     result = dkim2verify.verify_message(raw, DNS_DATA, skip_timestamp_check=True)
-    assert result.status == 'fail', result
+    assert result.status == 'permerror', result
+    assert result.message == ('PERMERROR: DKIM2-Signature i=2 mf= does not match '
+                              'the rt= of i=1'), result.message
 
 
 if __name__ == "__main__":

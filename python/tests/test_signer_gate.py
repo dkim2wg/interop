@@ -3,7 +3,6 @@
 Fixtures come from util/build-signer-gate-fixtures.py (messages as they arrive
 at the next hop, test3.dkim2.com, which is about to sign).
 """
-import importlib.util
 import json
 import os
 import sys
@@ -15,13 +14,14 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.dirname(HERE))
 import dkim2sign  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location(
-    "build_signer_gate_fixtures",
-    os.path.join(ROOT, "util", "build-signer-gate-fixtures.py"))
-fx = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(fx)
+sys.path.insert(0, HERE)
+from util_fixtures import fx  # noqa: E402  (From Authentic for test1)
 
 KEY = os.path.join(ROOT, "keys", "sel1._domainkey.test3.dkim2.com.pem")
+# The fixtures' From is brong@test1.dkim2.com: a hop that signs it first (or
+# changes From) must sign as test1 for it to be Authentic (-07 §12.4).
+KEY1 = os.path.join(ROOT, "keys", "sel1._domainkey.test1.dkim2.com.pem")
+NOT_AUTHENTIC = "From header field is not Authentic for d=test3.dkim2.com"
 with open(os.path.join(ROOT, "dns.json")) as _fh:
     DNS = json.load(_fh)
 
@@ -42,9 +42,17 @@ def _top_i(out):
 
 def test_fresh_signs_without_any_dns():
     out = dkim2sign.sign_message(
-        fx.build_fresh(), "sel1", "test3.dkim2.com", KEY,
-        mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
+        fx.build_fresh(), "sel1", "test1.dkim2.com", KEY1,
+        mailfrom="<brong@test1.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
     assert _top_i(out) == 1
+
+
+def test_fresh_refused_when_from_is_not_authentic():
+    with pytest.raises(dkim2sign.SigningRefused) as e:
+        dkim2sign.sign_message(
+            fx.build_fresh(), "sel1", "test3.dkim2.com", KEY,
+            mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
+    assert str(e.value) == NOT_AUTHENTIC
 
 
 def test_valid_chain_signs():
@@ -126,7 +134,7 @@ def test_verifier_permerror_on_unkeyable_signature(ival):
     r = dkim2verify.verify_message(msg, DNS, full_chain=True,
                                    skip_timestamp_check=True)
     assert r.status == "permerror"
-    assert "malformed i= tag" in r.message
+    assert r.message == f"PERMERROR: DKIM2-Signature i={ival} syntax error"
 
 
 def test_verifier_permerror_on_signature_without_i():
@@ -135,7 +143,7 @@ def test_verifier_permerror_on_signature_without_i():
     r = dkim2verify.verify_message(msg, DNS, full_chain=True,
                                    skip_timestamp_check=True)
     assert r.status == "permerror"
-    assert "missing or malformed i= tag" in r.message
+    assert r.message == "PERMERROR: DKIM2-Signature i=None tag=i missing"
 
 
 def test_get_seq_from_sig_never_raises():
@@ -166,11 +174,17 @@ def test_dns_json_env_honoured(monkeypatch):
 
 
 def test_mi_only_signs_without_keys(monkeypatch):
+    # No signature yet, so this hop is i=1 and From must be Authentic for it.
     monkeypatch.delenv("DKIM2_DNS_JSON", raising=False)
     out = dkim2sign.sign_message(
-        fx.build_mi_only(), "sel1", "test3.dkim2.com", KEY,
-        mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
+        fx.build_mi_only(), "sel1", "test1.dkim2.com", KEY1,
+        mailfrom="<list@test1.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
     assert _top_i(out) == 1
+    with pytest.raises(dkim2sign.SigningRefused) as e:
+        dkim2sign.sign_message(
+            fx.build_mi_only(), "sel1", "test3.dkim2.com", KEY,
+            mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
+    assert str(e.value) == NOT_AUTHENTIC
 
 
 def test_mi_only_broken_refused_for_the_chain_not_the_signature():
@@ -182,7 +196,11 @@ def test_mi_only_broken_refused_for_the_chain_not_the_signature():
 def test_mi_only_null_refused_then_signed_with_option():
     with pytest.raises(dkim2sign.SigningRefused, match="null body Recipe"):
         _sign(fx.build_mi_only_null())
-    assert _top_i(_sign(fx.build_mi_only_null(), allow_null_body_recipe=True)) == 1
+    out = dkim2sign.sign_message(
+        fx.build_mi_only_null(), "sel1", "test1.dkim2.com", KEY1,
+        mailfrom="<list@test1.dkim2.com>", rcptto=["<s@test4.dkim2.com>"],
+        dns_data=DNS, skip_timestamp_check=True, allow_null_body_recipe=True)
+    assert _top_i(out) == 1
 
 
 def _nd_top_chain(nd):

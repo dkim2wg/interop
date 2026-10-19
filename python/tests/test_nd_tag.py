@@ -34,12 +34,12 @@ def test_missing_t_tag():
     assert any("tag=t missing" in e for e in errs), errs
 
 
-# --- Chain of Custody (draft-03 §11.4) ---
+# --- Chain of Custody (-07 §7.1, §14.4) ---
 
 def test_chain_nd_match():
     sigs = [
         _sig("i=1; m=1; t=1; d=fwd.example; nd=mx.dest.example; s=s:rsa-sha256:AAAA"),
-        _sig("i=2; m=2; t=1; d=mx.dest.example; mf=PA==; rt=PA==; s=s:rsa-sha256:AAAA"),
+        _sig("i=2; m=2; t=1; d=mx.dest.example; mf=PGFAbXguZGVzdC5leGFtcGxlPg==; rt=PA==; s=s:rsa-sha256:AAAA"),
     ]
     assert _chain_custody_errors(sigs) == []
 
@@ -53,7 +53,7 @@ def test_chain_nd_mismatch():
     assert any("nd= does not match" in e for e in errs), errs
 
 
-# --- signer emit (draft-03 §9.3) ---
+# --- signer emit (-07 §12.3) ---
 
 def test_emit_nd():
     from cryptography.hazmat.primitives.asymmetric import ed25519
