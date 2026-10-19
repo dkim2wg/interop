@@ -1,6 +1,7 @@
 package dkim2
 
 import (
+	"bufio"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
@@ -19,12 +20,33 @@ import (
 // implemented algorithm the topmost Message-Instance's h= tag names (see
 // hashBodyMulti), even when that names more than one algorithm.
 // An optional VerifyOptions may be passed to enable §10.4 envelope matching.
+//
+// With real DNS keys (NetKeyFetcher) every key the signatures name is
+// looked up in the background as soon as the header fields are read (see
+// prefetchKeys), while the body is still being read and hashed.
 func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
-	headers, bodyReader, err := parseHeaders(r)
+	br := bufio.NewReader(r)
+	headers, err := readHeaderFields(br)
 	if err != nil {
 		return nil, fmt.Errorf("parsing headers: %w", err)
 	}
+	fetcher = prefetchKeys(headers, fetcher, opts...)
+	bodyReader, err := readBody(br)
+	if err != nil {
+		return nil, fmt.Errorf("parsing headers: %w", err)
+	}
+	return verifyFields(headers, func(algs []string) (map[string][]byte, error) {
+		return hashBodyMulti(bodyReader, algs)
+	}, fetcher, opts...)
+}
 
+// verifyFields is Verify once the header fields are parsed.  bodyHashes
+// returns the body hash for each algorithm named (those of the topmost
+// Message-Instance this build implements); it is called at most once, and
+// not at all with HeadersOnly or when an earlier check already failed.
+func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][]byte, error),
+	fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
+	var err error
 	// Separate MI, sig, and content headers; preserve original Raw for signing input
 	var miHeaders []string  // raw strings from h.Raw (include CRLF)
 	var sigHeaders []string // raw strings from h.Raw (include CRLF)
@@ -102,13 +124,13 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 	// implements — see hashBodyMulti/HashAlg, §3.4). Only the topmost MI's
 	// hashes are ever checked against the body (see the per-signature loop
 	// below), so that is the only hash-set that needs consulting here.
-	var bodyHashes map[string][]byte
+	var topBodyHashes map[string][]byte
 	if !headersOnly {
 		var neededAlgs []string
 		if topMI != nil {
 			neededAlgs = implementedAlgs(topMI.Hashes)
 		}
-		bodyHashes, err = hashBodyMulti(bodyReader, neededAlgs)
+		topBodyHashes, err = bodyHashes(neededAlgs)
 		if err != nil {
 			return nil, fmt.Errorf("body hash: %w", err)
 		}
@@ -123,7 +145,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		if headersOnly {
 			mierr = verifyMIHeaderHashes(topMI, contentHeaders)
 		} else {
-			mierr = verifyMIHashesPrecomputed(topMI, contentHeaders, bodyHashes)
+			mierr = verifyMIHashesPrecomputed(topMI, contentHeaders, topBodyHashes)
 		}
 		if mierr != nil {
 			return []VerifyResult{{Domain: "MI-chain", Error: fmt.Errorf("unsigned top %w", mierr)}}, nil
@@ -175,7 +197,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 	// chain walk checks it); the unsigned one is checked against the content.
 	unsignedTop := outbound && topSig != nil && topSig.MIVersion < maxMIVersion
 	if unsignedTop && !headersOnly {
-		if mierr := verifyMIHashesPrecomputed(topMI, contentHeaders, bodyHashes); mierr != nil {
+		if mierr := verifyMIHashesPrecomputed(topMI, contentHeaders, topBodyHashes); mierr != nil {
 			return []VerifyResult{{
 				Sequence: topSig.Sequence, Domain: topSig.Domain,
 				Error: fmt.Errorf("i=%d: unsigned top %w", topSig.Sequence, mierr),
@@ -453,7 +475,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 			if headersOnly {
 				mierr = verifyMIHeaderHashes(thisMI, contentHeaders)
 			} else {
-				mierr = verifyMIHashesPrecomputed(thisMI, contentHeaders, bodyHashes)
+				mierr = verifyMIHashesPrecomputed(thisMI, contentHeaders, topBodyHashes)
 			}
 			if mierr != nil {
 				res.Error = fmt.Errorf("i=%d: %w", sig.Sequence, mierr)

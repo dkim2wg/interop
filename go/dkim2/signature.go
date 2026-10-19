@@ -103,6 +103,15 @@ type VerifyOptions struct {
 	// chain are checked as usual; of the Message-Instance content check, only
 	// the topmost instance's header hash can be, so only that is.
 	HeadersOnly bool
+
+	// UndoWalk makes VerifyFull check the lower Message-Instances by
+	// rebuilding each previous version of the message (Undo), the
+	// reference the default planned walk (plan.go) is held to.
+	UndoWalk bool
+
+	// NoKeyPrefetch turns off the background key lookups Verify and
+	// VerifyFull start, with real DNS keys, once the header fields are read.
+	NoKeyPrefetch bool
 }
 
 // errUnkeyableSignature is the PERMERROR for a DKIM2-Signature whose i= is

@@ -196,12 +196,33 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 	}
 }
 
-// NetKeyFetcher looks up real DNS TXT records via net.LookupTXT.
-type NetKeyFetcher struct{}
+// TXTResolver looks up the TXT records at a name; *net.Resolver is one.
+type TXTResolver interface {
+	LookupTXT(ctx context.Context, name string) ([]string, error)
+}
+
+// NetKeyFetcher looks up real DNS TXT records via Resolver
+// (net.DefaultResolver when nil).  It is the one KeyFetcher whose keys
+// Verify and VerifyFull prefetch (see prefetchKeys).
+type NetKeyFetcher struct {
+	Resolver TXTResolver
+}
+
+func (f *NetKeyFetcher) resolver() TXTResolver {
+	if f.Resolver != nil {
+		return f.Resolver
+	}
+	return net.DefaultResolver
+}
 
 func (f *NetKeyFetcher) FetchPublicKey(selector, domain string) (crypto.PublicKey, string, error) {
 	fqdn := selector + "._domainkey." + domain
-	txts, err := net.DefaultResolver.LookupTXT(context.Background(), fqdn)
+	txts, err := f.resolver().LookupTXT(context.Background(), fqdn)
+	return keyFromLookup(fqdn, txts, err)
+}
+
+// keyFromLookup turns the outcome of a TXT lookup of fqdn into a key.
+func keyFromLookup(fqdn string, txts []string, err error) (crypto.PublicKey, string, error) {
 	if err != nil {
 		var dnsErr *net.DNSError
 		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {

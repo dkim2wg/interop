@@ -1,6 +1,7 @@
 package dkim2
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -8,11 +9,70 @@ import (
 	"strings"
 )
 
-// VerifyFull verifies the signature chain and the top Message-Instance (via
-// Verify), then validates every lower Message-Instance by reconstructing it
-// with Undo (which checks that level's recorded header/body hashes). A
-// reconstruction or hash failure is reported as an extra failing VerifyResult.
+// VerifyFull verifies the signature chain and the top Message-Instance (as
+// Verify does), then validates every lower Message-Instance against the
+// version of the message its Recipes rebuild.  A Recipe or hash failure is
+// reported as an extra failing VerifyResult ("MI-chain v=N"); a Recipe that
+// breaks the §5 rules against the message is the verbatim PERMERROR.
+//
+// The lower instances are checked by the planned walk (plan.go): the message
+// is read once, its body streamed in the chunks r delivers into one pass that
+// hashes every instance's body at once, and nothing is rebuilt.  The undo
+// walk -- rebuilding each previous message with Undo -- gives the same
+// verdicts; it is used with UndoWalk set, with HeadersOnly, and for the rare
+// message the plan declines (see newChainPlan).
+//
+// With real DNS keys every key the signatures name is looked up in the
+// background as soon as the header fields are read (see prefetchKeys).
 func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
+	if len(opts) > 0 && (opts[0].UndoWalk || opts[0].HeadersOnly) {
+		return verifyFullUndo(r, fetcher, opts...)
+	}
+
+	// Keep what is read until the plan is known: the undo walk needs it all.
+	rec := &recordingReader{r: r}
+	br := bufio.NewReader(rec)
+	headers, err := readHeaderFields(br)
+	if err != nil {
+		return nil, err
+	}
+	fetcher = prefetchKeys(headers, fetcher, opts...)
+	plan := newChainPlan(headers)
+	if plan == nil {
+		return verifyFullUndo(io.MultiReader(bytes.NewReader(rec.buf), r), fetcher, opts...)
+	}
+	rec.buf, rec.off = nil, true
+
+	if _, err := br.WriteTo(plan); err != nil {
+		return nil, err
+	}
+	plan.close()
+
+	results, err := verifyFields(headers, plan.topHashes, fetcher, opts...)
+	if err != nil {
+		return results, err
+	}
+	return plan.walk(results)
+}
+
+// recordingReader keeps a copy of everything read through it until off.
+type recordingReader struct {
+	r   io.Reader
+	buf []byte
+	off bool
+}
+
+func (rr *recordingReader) Read(p []byte) (int, error) {
+	n, err := rr.r.Read(p)
+	if !rr.off {
+		rr.buf = append(rr.buf, p[:n]...)
+	}
+	return n, err
+}
+
+// verifyFullUndo is VerifyFull by the undo walk: Verify, then each lower
+// instance rebuilt with Undo, which checks that level's recorded hashes.
+func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 	buf, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err

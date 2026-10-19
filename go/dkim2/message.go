@@ -19,7 +19,20 @@ type Header struct {
 // Line endings are normalised to CRLF.
 func parseHeaders(r io.Reader) ([]Header, io.Reader, error) {
 	br := bufio.NewReader(r)
+	headers, err := readHeaderFields(br)
+	if err != nil {
+		return nil, nil, err
+	}
+	body, err := readBody(br)
+	if err != nil {
+		return nil, nil, err
+	}
+	return headers, body, nil
+}
 
+// readHeaderFields reads the header fields from br up to and including the
+// blank line that ends them, leaving br at the first byte of the body.
+func readHeaderFields(br *bufio.Reader) ([]Header, error) {
 	var rawLines []string // one entry per logical line (not yet joined)
 
 	for {
@@ -40,7 +53,7 @@ func parseHeaders(r io.Reader) ([]Header, io.Reader, error) {
 			break
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
@@ -84,9 +97,13 @@ func parseHeaders(r io.Reader) ([]Header, io.Reader, error) {
 		}
 	}
 	flush()
+	return headers, nil
+}
 
-	// Rebuild body with normalised CRLF from whatever the bufio reader has left
-	// plus any bytes still buffered in br.
+// readBody reads the rest of br as the body, each line's ending (LF, CRLF,
+// any run of CRs before the LF, or none at all on the last line) normalised
+// to CRLF.  chainPlan.Write splits a streamed body exactly the same way.
+func readBody(br *bufio.Reader) (*bytes.Buffer, error) {
 	bodyBuf := &bytes.Buffer{}
 	for {
 		chunk, err := br.ReadString('\n')
@@ -99,9 +116,8 @@ func parseHeaders(r io.Reader) ([]Header, io.Reader, error) {
 			break
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-
-	return headers, bodyBuf, nil
+	return bodyBuf, nil
 }
