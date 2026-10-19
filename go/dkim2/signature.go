@@ -16,11 +16,11 @@ type DKIM2Signature struct {
 	MIVersion  int
 	Timestamp  int64
 	Domain     string
-	NextDomain string // nd= tag (draft-06 §8.7); empty if absent
+	NextDomain string // nd= tag (§10.7); empty if absent
 	MailFrom   string
 	RcptTo     []string
-	Nonce      string   // n= tag (optional); max 64 ASCII chars per §8.3
-	Flags      []string // f= tag (optional); comma-separated flags per §8.10
+	Nonce      string   // n= tag (optional); max 64 ASCII chars per §10.3
+	Flags      []string // f= tag (optional); comma-separated flags per §10.10
 	Sigs       []SigItem
 	Duplicate  string // lowercased tag name that appeared more than once (§8), if any
 }
@@ -49,7 +49,7 @@ func toRFC5321Path(a string) string {
 type SigItem struct {
 	Selector  string
 	Algorithm string
-	Value     []byte // nil means empty (signing input placeholder per §8.5)
+	Value     []byte // nil means empty (signing input placeholder per §10.9)
 }
 
 // SignOptions carries per-message signing parameters.
@@ -58,10 +58,10 @@ type SignOptions struct {
 	Domain     string
 	MailFrom   string
 	RcptTo     []string
-	NextDomain string // nd= (draft-06 §9.3); when set, emit nd= instead of mf=/rt=
+	NextDomain string // nd= (§12.3); when set, emit nd= instead of mf=/rt=
 	Timestamp  int64  // 0 = use time.Now()
 	// HashAlgs selects the algorithm(s) used for the new Message-Instance's
-	// h= tag (spec-06 §3.1/§7.3), in emission order. nil/empty means
+	// h= tag (§3.1/§9.3), in emission order. nil/empty means
 	// []string{"sha256"} — the signer default, which MUST NOT change.
 	HashAlgs []string
 
@@ -69,7 +69,7 @@ type SignOptions struct {
 	// chain, Sign verifies that chain (outbound mode: an unsigned top
 	// Message-Instance is the one this hop is about to cover) and refuses
 	// if it does not check out.  Fetcher supplies the verification keys
-	// (nil = real DNS); SkipTimestampCheck relaxes the §10.3 age check.
+	// (nil = real DNS); SkipTimestampCheck relaxes the §14.3 timestamp check.
 	Fetcher            KeyFetcher
 	SkipTimestampCheck bool
 	// AllowNullBodyRecipe lets Sign cover an UNSIGNED Message-Instance (its
@@ -97,12 +97,12 @@ type VerifyResult struct {
 	Error    error // nil = pass
 }
 
-// VerifyOptions carries optional envelope values for §10.4 exact-match checking.
+// VerifyOptions carries optional envelope values for the §14.4 exact-match check.
 // Zero value means no envelope checks are performed.
 type VerifyOptions struct {
 	MailFrom           string   // SMTP MAIL FROM; empty = skip check
 	RcptTo             []string // SMTP RCPT TO values; nil = skip check
-	SkipTimestampCheck bool     // disable §10.3 14-day expiry check (for testing)
+	SkipTimestampCheck bool     // disable the §14.3 timestamp checks (for testing)
 
 	// Outbound verifies a message as its next signer sees it: a top
 	// Message-Instance that no signature covers yet (m= above every
@@ -111,11 +111,11 @@ type VerifyOptions struct {
 	Outbound bool
 
 	// Signer is the domain about to sign, in Outbound mode: a top signature
-	// whose nd= names it (a §9.3 bridge) is accepted; any other nd= is not.
+	// whose nd= names it (a §12.3 bridge) is accepted; any other nd= is not.
 	Signer string
 
 	// HeadersOnly says the message has no body, as with the returned original
-	// in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures and the
+	// in a DSN's text/rfc822-headers part (§16.3). Signatures and the
 	// chain are checked as usual; of the Message-Instance content check, only
 	// the topmost instance's header hash can be, so only that is.
 	HeadersOnly bool
@@ -247,14 +247,14 @@ func validSequenceTag(raw string) bool {
 }
 
 // KnownSigAlg reports whether alg is a signature algorithm this verifier
-// implements (spec-06 §3, §8.9).  Algorithm names are tag values, so they are
+// implements (§3, §10.9).  Algorithm names are tag values, so they are
 // case significant: "RSA-SHA256" is not "rsa-sha256".
 func KnownSigAlg(alg string) bool {
 	return alg == "rsa-sha256" || alg == "ed25519-sha256"
 }
 
 // validToken: 1*(ALPHA / DIGIT / "_" / "-"), an algorithm or hash name
-// (§7.3, §8.9) or one label of a selector.
+// (§9.3, §10.9) or one label of a selector.
 func validToken(s string) bool {
 	if s == "" {
 		return false
@@ -268,7 +268,7 @@ func validToken(s string) bool {
 	return true
 }
 
-// validSelector: validToken labels joined by "." (§3.5 selector = Domain).
+// validSelector: validToken labels joined by "." (§3.6 selector = Domain).
 func validSelector(s string) bool {
 	for _, label := range strings.Split(s, ".") {
 		if !validToken(label) {
@@ -308,7 +308,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		}
 		sig.Sequence = n
 	}
-	// §7/§8: a fragment that is not a well-formed tag=value makes the whole
+	// §8: a fragment that is not a well-formed tag=value makes the whole
 	// field a syntax error; it is never skipped to verify the rest.
 	if tvl.syntaxErr {
 		return nil, sigSyntaxError(sig.Sequence)
@@ -321,7 +321,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		sig.MIVersion = n
 	}
 	if tvl.has("t") {
-		// §8.4: sig-t-tag = %x74 [FWS] "=" [FWS] 1*DIGIT -- no sign, no
+		// §10.4: sig-t-tag = %x74 [FWS] "=" [FWS] 1*DIGIT -- no sign, no
 		// exponent, no hex.  Not constrained to 32 bits; anything beyond
 		// int64 is saturated (it is far in the future either way).
 		v := tvl.get("t")
@@ -354,7 +354,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	}
 	if v := tvl.get("s"); v != "" {
 		for _, part := range strings.Split(v, ",") {
-			// §8.9 sig-set: exactly three parts.  FWS is allowed around the
+			// §10.9 sig-set: exactly three parts.  FWS is allowed around the
 			// comma and each colon (trimmed) and inside the base64 value
 			// (removed), never inside the selector or algorithm name: "rsa-
 			// sha256" is a syntax error, not a fold to undo.
@@ -367,7 +367,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 				return nil, sigSyntaxError(sig.Sequence)
 			}
 			value := stripB64WSP(fields[2])
-			// §3.4: an item whose algorithm is not implemented is ignored
+			// §3.5: an item whose algorithm is not implemented is ignored
 			// entirely, value included.  An implemented one MUST carry a
 			// non-empty base64 signature.
 			if KnownSigAlg(item.Algorithm) {
@@ -394,7 +394,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 			}
 		}
 	}
-	// draft-06 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+	// §10: i= m= t= d= s= MUST be present; plus either nd= or both
 	// mf= and rt=. nd= and mf=/rt= are mutually exclusive.
 	for _, tag := range []string{"i", "m", "t"} {
 		if !tvl.has(tag) {
@@ -442,7 +442,7 @@ func (sig *DKIM2Signature) String() string {
 	}
 	s := strings.Join(sParts, ",")
 
-	// draft-06 §8: an nd= signature carries nd= instead of mf=/rt=.
+	// §10.7: an nd= signature carries nd= instead of mf=/rt=.
 	var chain string
 	if sig.NextDomain != "" {
 		chain = fmt.Sprintf("nd=%s", sig.NextDomain)
@@ -454,7 +454,7 @@ func (sig *DKIM2Signature) String() string {
 		"DKIM2-Signature: i=%d; m=%d; t=%d; d=%s; %s; s=%s;",
 		sig.Sequence, sig.MIVersion, sig.Timestamp, sig.Domain, chain, s,
 	)
-	// f= flags (draft-06 §8.10), e.g. feedback, feedhere — preserved verbatim.
+	// f= flags (§10.10), e.g. feedback, feedhere — preserved verbatim.
 	if len(sig.Flags) > 0 {
 		out += " f=" + strings.Join(sig.Flags, ",") + ";"
 	}
@@ -463,13 +463,13 @@ func (sig *DKIM2Signature) String() string {
 
 // reSTag matches the s= tag at a tag boundary — the start of the header value
 // or after a ";" — case-insensitively and tolerating FWS around "=". This is
-// independent of tag order (s= may be first) and case (S=), per spec-06 §8.
+// independent of tag order (s= may be first) and case (S=), per §8.
 // Base64 cannot contain ";" so the value runs to the next ";".
 var reSTag = regexp.MustCompile(`(?i)(^|;)\s*s\s*=`)
 
 // incompleteForm takes the original raw header value (after the field name)
 // and returns it with each s= item's signature value replaced by empty string
-// (per §8.5), preserving every other byte — tag order, case, whitespace, and
+// (per §14.6), preserving every other byte — tag order, case, whitespace, and
 // folding — so the reconstruction canonicalizes to exactly what was signed.
 func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
 	// Operate on the value after the field-name colon so a leading s= (no
@@ -507,10 +507,10 @@ func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
 }
 
 // buildIncomplete builds a fresh incomplete DKIM2-Signature header (s= values
-// are empty per §8.5), for use as the signing input when creating a new sig.
+// are empty per §14.6), for use as the signing input when creating a new sig.
 func buildIncomplete(seq, miVer int, ts int64, domain, mailFrom string,
 	rcptTo []string, nextDomain string, flags []string, selector, algorithm string) string {
-	// draft-06 §9.3: an imaginary-hop signature carries nd= instead of mf=/rt=.
+	// §12.3: an imaginary-hop signature carries nd= instead of mf=/rt=.
 	var chain string
 	if nextDomain != "" {
 		chain = fmt.Sprintf("nd=%s", nextDomain)

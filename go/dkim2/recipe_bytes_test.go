@@ -225,7 +225,7 @@ func TestVerifyRejectsMalformedRecipe(t *testing.T) {
 	}
 }
 
-// Valid JSON of the wrong shape above step level keeps the §11.2 "contains
+// Valid JSON of the wrong shape above step level keeps the §14.2 "contains
 // invalid JSON" classification; and a well-formed Recipe still parses.
 func TestMalformedRecipeStaysDistinctFromInvalidJSON(t *testing.T) {
 	msg := string(buildSignedMsg(t))

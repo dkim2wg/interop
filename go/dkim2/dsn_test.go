@@ -187,7 +187,7 @@ func TestPropagateEmitsAWellFormedReport(t *testing.T) {
 	}
 }
 
-// --- §12.1.1's null Recipe: an upstream that declares the previous body
+// --- §5.2's null Recipe: an upstream that declares the previous body
 // unrecoverable gets the header fields back, not a body we cannot rebuild. ---
 
 // nullRecipeChain builds a two-hop message whose m=2 carries "b": null.
@@ -290,7 +290,7 @@ func TestPropagateNullRecipeReturnsHeadersOnly(t *testing.T) {
 
 	// The forwarder's whole hop comes off: its instance goes with the
 	// signature that covered it, or the returned message carries an instance
-	// above its own top signature (§11 "is not signed") upstream.
+	// above its own top signature (§14.2 "is not signed") upstream.
 	rep, err := parseReport(out)
 	if err != nil {
 		t.Fatalf("parse propagated DSN: %v", err)
@@ -346,7 +346,7 @@ func TestPropagateRefusesWhenUndoSimplyFails(t *testing.T) {
 	}
 }
 
-// --- Authenticate: §12.1.2, the returned original's chain must verify -------
+// --- Authenticate: §16.3, the returned original's chain must verify -------
 
 // The fixtures above never verify (hop 1 signs d=test1.dkim2.com over a
 // sender@origin.example envelope, which the d=/mf= rule rejects), which the
@@ -418,7 +418,7 @@ func TestAuthenticateIntactTwoHop(t *testing.T) {
 	if res.HeadersOnly {
 		t.Fatal("HeadersOnly set for a message/rfc822 DSN")
 	}
-	// The forwarder recognises i=2 as its own by d= (§12.1.2 point 2).
+	// The forwarder recognises i=2 as its own by d= (§16.3 point 2).
 	if res.Top == nil || res.Top.Sequence != 2 || res.Top.Domain != "test2.dkim2.com" {
 		t.Fatalf("Top = %+v, want i=2 d=test2.dkim2.com", res.Top)
 	}
@@ -486,7 +486,7 @@ func TestAuthenticateUnsignedOriginal(t *testing.T) {
 	}
 }
 
-// --- Propagate: a Forwarder's §9.3 bridge goes with its hop ----------------
+// --- Propagate: a Forwarder's §12.3 bridge goes with its hop ----------------
 
 // bridgedChain: test1 -> user@test2; test2 bridges with nd= and sends the real
 // hop from test3.
@@ -566,13 +566,13 @@ func TestPropagateStripsTheBridgeWithItsHop(t *testing.T) {
 	}
 }
 
-// --- §12.1.2 point 1: the DSN's own signing domain must be aligned with the
+// --- §16.3 point 1: the DSN's own signing domain must be aligned with the
 // rt= of the returned message's top signature — i.e. the bounce came from the
 // system we handed the message to. Checked only on a d= we have verified: an
 // unverified d= is whatever the forger typed. -------------------------------
 
 // signedDSNAround wraps embedded in a DSN and signs the DSN as a new message
-// (as §12.1.1 makes it: MAIL FROM <>, one Message-Instance, one signature).
+// (as §16.2 makes it: MAIL FROM <>, one Message-Instance, one signature).
 func signedDSNAround(t *testing.T, embedded []byte, domain string) []byte {
 	t.Helper()
 	// The reporter's own postmaster, so the DSN's From is Authentic (§11).
@@ -640,7 +640,7 @@ func TestAuthenticateMisalignedDSN(t *testing.T) {
 // above.
 func TestCheckAlignmentDomainRelationships(t *testing.T) {
 	rtTest3 := &DKIM2Signature{RcptTo: []string{"<dest@test3.dkim2.com>"}}
-	// §9.4's direction: labels come off the ADDRESS domain, so d= may be the
+	// §7.2's direction: labels come off the ADDRESS domain, so d= may be the
 	// delivery domain or a parent of it.
 	for _, d := range []string{"test3.dkim2.com", "dkim2.com"} {
 		state, detail := checkAlignment(&DKIM2Signature{Domain: d}, rtTest3)
@@ -688,7 +688,7 @@ func TestAuthenticateBrokenDSNSignature(t *testing.T) {
 
 func TestAuthenticateUnsignedDSNIsReportedNotFailed(t *testing.T) {
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
-	// An unsigned DSN is not what §12.1.2 is about ("when a system receives a
+	// An unsigned DSN is not what §16.3 is about ("when a system receives a
 	// DKIM2 signed DSN"), so it is reported, not failed.
 	res, err := Authenticate(dsnAround(t, verifiableTwoHop(t), false), f,
 		VerifyOptions{SkipTimestampCheck: true})
@@ -706,7 +706,7 @@ func TestAuthenticateUnsignedDSNIsReportedNotFailed(t *testing.T) {
 	}
 }
 
-// --- §12.1.2: "If the verification fails then the DSN MUST NOT be propagated
+// --- §16.3: "If the verification fails then the DSN MUST NOT be propagated
 // any further" — Propagate enforces that itself. ---------------------------
 
 func TestPropagateNeedsTheMeansToAuthenticate(t *testing.T) {
@@ -754,7 +754,7 @@ func TestPropagateAFullyAuthenticatedDSN(t *testing.T) {
 		t.Fatalf("upstream = %q, want <sender@test1.dkim2.com>", upstream)
 	}
 
-	// The inbound DSN was itself signed — the only kind §12.1.2 is about — so
+	// The inbound DSN was itself signed — the only kind §16.3 is about — so
 	// its own instance and signature must not survive into ours.
 	headers, _, err := parseHeaders(bytes.NewReader(out))
 	if err != nil {

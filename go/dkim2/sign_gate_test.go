@@ -195,7 +195,7 @@ func TestGateNdToOtherRefused(t *testing.T) {
 	wantRefused(t, ndBridgeTop(t, "test5.dkim2.com"), false, "names another domain")
 }
 
-// Spec-06 §11: only an MI whose m= is higher than every signature's is an
+// §14.2: only an MI whose m= is higher than every signature's is an
 // error; a lower unreferenced MI is valid.
 func TestVerifyUnreferencedLowerMIValid(t *testing.T) {
 	raw := ndTestRaw(t)

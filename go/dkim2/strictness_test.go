@@ -1,11 +1,11 @@
 package dkim2
 
-// Verifier strictness from the spec-06 review (R1, R3-R8): see
+// Verifier strictness from the 2026-10-09 review (R1, R3-R8): see
 // docs/superpowers/specs/2026-10-09-verifier-strictness-review-fixes.md.
-//   A. signature algorithms (§3.4, §8.9)
-//   B. key records (§11.5, dns-00 §3.2/§3.4.1/§3.4.2.2)
-//   C. Message-Instance tag case and repeats (§7)
-//   D. t= syntax (§8.4, §11.2)
+//   A. signature algorithms (§3.5, §10.9)
+//   B. key records (§14.5, dns-00 §3.2/§3.4.1/§3.4.2.2)
+//   C. Message-Instance tag case and repeats (§8, §9)
+//   D. t= syntax (§10.4, §14.2)
 
 import (
 	"bytes"

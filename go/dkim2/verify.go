@@ -21,7 +21,7 @@ import (
 // implemented algorithm the topmost Message-Instance's h= tag names (see
 // hashBodyStream), even when that names more than one algorithm.  It is
 // read only when a body hash is needed.
-// An optional VerifyOptions may be passed to enable §10.4 envelope matching.
+// An optional VerifyOptions may be passed to enable §14.4 envelope matching.
 //
 // With real DNS keys (NetKeyFetcher) every key the signatures name is
 // looked up in the background as soon as the header fields are read (see
@@ -109,14 +109,14 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		}
 	}
 
-	// §12.1.2: with HeadersOnly there is no body to hash — the caller handed us
+	// §16.3: with HeadersOnly there is no body to hash — the caller handed us
 	// the header fields alone, as echoed back in a DSN's text/rfc822-headers
 	// part — so the body pass is skipped and only header hashes are checked.
 	headersOnly := len(opts) > 0 && opts[0].HeadersOnly
 
 	// Body is never buffered: hash it in a single streaming pass, fanned out
 	// to every algorithm the topmost MI's h= tag names (that this build
-	// implements — see hashBodyMulti/HashAlg, §3.4). Only the topmost MI's
+	// implements — see hashBodyMulti/HashAlg, §3.5). Only the topmost MI's
 	// hashes are ever checked against the body (see the per-signature loop
 	// below), so that is the only hash-set that needs consulting here.
 	var topBodyHashes map[string][]byte

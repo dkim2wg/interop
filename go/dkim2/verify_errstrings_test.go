@@ -38,7 +38,7 @@ func TestVerifyCanonicalErrorStrings(t *testing.T) {
 
 	t.Run("d= vs mf= domain mismatch", func(t *testing.T) {
 		msg := buildSignedMsg(t) // signed d=test1.dkim2.com, mf=sender@test1.dkim2.com
-		// Tamper d= to a domain unrelated to the mf= domain (per §7.7).
+		// Tamper d= to a domain unrelated to the mf= domain (per §14.4).
 		tampered := strings.ReplaceAll(string(msg), "d=test1.dkim2.com", "d=evil.com")
 		f := &JSONKeyFetcher{Path: "../../dns.json"}
 		_, err := Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})

@@ -57,7 +57,7 @@ func (f *JSONKeyFetcher) FetchPublicKey(selector, domain string) (crypto.PublicK
 	return keyFromTXTRecords(rrs, key+"."+domain)
 }
 
-// Key-record outcomes (spec-06 §11.5).  A KeyFetcher wraps one of these
+// Key-record outcomes (§14.5).  A KeyFetcher wraps one of these
 // (errors.Is): ErrKeyNotFound for an absent record (the item is skipped), the
 // others for a record that is present but unusable ("PERMERROR
 // DKIM2-Signature i=<x> public key <selector> <problem>").  Any other fetch
@@ -72,7 +72,7 @@ var (
 	ErrKeyAlgorithmMismatch = errors.New("algorithm mismatch")
 )
 
-// keyRecordProblem returns the §11.5 wording for a key-record error, or "".
+// keyRecordProblem returns the §14.5 wording for a key-record error, or "".
 func keyRecordProblem(err error) string {
 	for _, e := range []error{ErrKeyMultipleRecords, ErrKeySyntax, ErrKeyRevoked, ErrKeyAlgorithmMismatch} {
 		if errors.Is(err, e) {
@@ -158,7 +158,7 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 		return nil, "", fmt.Errorf("%w: unsupported key type k=%s", ErrKeyAlgorithmMismatch, keyType)
 	}
 
-	// A base64string, padded to a multiple of four (spec-06 §2.13).
+	// A base64string, padded to a multiple of four (§2.14).
 	pubBytes, err := base64.StdEncoding.DecodeString(pubB64)
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: p= is not padded base64", ErrKeySyntax)

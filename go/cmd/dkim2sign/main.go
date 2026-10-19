@@ -17,9 +17,9 @@ func main() {
 	rcptToStr := flag.String("rcpt-to", "", "Comma-separated RCPT TO addresses")
 	keyFile := flag.String("key", "", "Path to PKCS#8 PEM private key file (required)")
 	timestamp := flag.Int64("timestamp", 0, "Signature timestamp (0 = now)")
-	nextDomain := flag.String("nd", "", "nd= next-domain for an imaginary forwarding hop (draft-03 §9.3); omits mf=/rt=")
+	nextDomain := flag.String("nd", "", "nd= next-domain for an imaginary forwarding hop (§12.3); omits mf=/rt=")
 	hashAlgs := flag.String("hash", "sha256",
-		"hash algorithm(s) for the Message-Instance h= tag: sha256, sha512 or both (spec-05 §3.1)")
+		"hash algorithm(s) for the Message-Instance h= tag: sha256, sha512 or both (§3.1)")
 	allowNull := flag.Bool("allow-null-body-recipe", false,
 		"sign even when a Message-Instance has a null body Recipe that no upstream signature covers (its m= is above every signature's m=; default: refuse; a signed null needs no option)")
 	dnsJSON := flag.String("dns-json", os.Getenv("DKIM2_DNS_JSON"),
@@ -27,7 +27,7 @@ func main() {
 	exploded := flag.Bool("exploded", false,
 		"this hop sends copies to more than one address: set the exploded flag (§12.5; implied by more than one -rcpt-to, never set at i=1)")
 	ignoreTS := flag.Bool("ignore-timestamps", false,
-		"skip the §10.3 timestamp check when verifying the upstream chain")
+		"skip the §14.3 timestamp check when verifying the upstream chain")
 	flag.Parse()
 
 	if *selector == "" || *domain == "" || *keyFile == "" {

@@ -31,7 +31,7 @@ type Recipe struct {
 	Headers map[string][]RecipeStep `json:"h,omitempty"`
 	Body    []RecipeStep            `json:"b,omitempty"`
 
-	// BodyNull records that "b" was present and JSON null: §12.1.1's "null
+	// BodyNull records that "b" was present and JSON null: §5.2's "null
 	// Recipe", the hop declaring that the previous body cannot be put back.
 	// It is deliberately distinct from an absent "b" (the body was not
 	// modified), which unmarshals to a nil Body just the same. ComputeDiff
@@ -415,7 +415,7 @@ func parseRecipe(data []byte) (*Recipe, error) {
 }
 
 func encodeRecipe(r *Recipe) ([]byte, error) {
-	// spec-06 §5.1: header field names in the JSON Recipes MUST be lower
+	// §5: the JSON keys, header field names included, MUST be lower
 	// case (matching against the message stays case-insensitive).
 	if len(r.Headers) > 0 {
 		lower := make(map[string][]RecipeStep, len(r.Headers))
@@ -463,7 +463,7 @@ func ComputeDiffWithOptions(beforeHeaders []Header, beforeBody []byte,
 		changed = true
 		steps, tooBig := bodyRecipeSteps(beforeLines, afterLines, maxLiterals)
 		if tooBig {
-			r.BodyNull = true // §12.1.1 null Recipe: "b": null
+			r.BodyNull = true // §5.2 null Recipe: "b": null
 		} else {
 			r.Body = steps
 		}

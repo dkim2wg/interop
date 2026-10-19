@@ -11,21 +11,21 @@ import (
 	"strings"
 )
 
-// spec-06 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+// §3.1: two hashing algorithms are defined. Verifiers MUST implement
 // both; Signers MAY implement either or both (we default to sha256).
 var hashAlgs = map[string]func() hash.Hash{
 	"sha256": sha256.New,
 	"sha512": sha512.New,
 }
 
-// HashAlg resolves a spec-06 §7.3 hash-name to its constructor. Matching is
+// HashAlg resolves a §9.3 hash-name to its constructor. Matching is
 // case-insensitive: RFC 5234 makes ABNF quoted strings case-insensitive.
 func HashAlg(name string) (func() hash.Hash, bool) {
 	f, ok := hashAlgs[strings.ToLower(name)]
 	return f, ok
 }
 
-// writeCanonicalBody streams the §5.1 body canonicalisation of r into w:
+// writeCanonicalBody streams the §6.1 body canonicalisation of r into w:
 // strip all trailing empty lines, ensure exactly one trailing CRLF. The
 // pending-CRLF counter accumulates consecutive empty lines and flushes them
 // only when a non-empty line follows, so trailing empty lines are discarded.
@@ -68,7 +68,7 @@ func writeCanonicalBody(w io.Writer, r io.Reader) error {
 	return nil
 }
 
-// hashBody computes the hash (per alg) of the canonicalised message body per §5.1.
+// hashBody computes the hash (per alg) of the canonicalised message body per §6.1.
 func hashBody(r io.Reader, alg string) ([]byte, error) {
 	newHash, ok := HashAlg(alg)
 	if !ok {
@@ -81,7 +81,7 @@ func hashBody(r io.Reader, alg string) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// Unsigned header fields per spec-06 §4, §4.1.
+// Unsigned header fields per §4, §4.1.
 var excludedHeaderNames = map[string]bool{
 	"apparently-to": true, "arc-authentication-results": true,
 	"arc-message-signature": true, "arc-seal": true,
@@ -110,7 +110,7 @@ func shouldExcludeHeader(name string) bool {
 	return false
 }
 
-// collapseWSP folds each run of WSP (SP / HTAB, spec-06 §2.12) to one SP.
+// collapseWSP folds each run of WSP (SP / HTAB, §2.12) to one SP.
 // It walks BYTES, not runes: a header value is a sequence of octets (§6.2) and
 // may well not be valid UTF-8 (a raw EUC-KR or Big5 Subject). Ranging over
 // the string would decode every such byte to U+FFFD and hash the replacement
@@ -160,7 +160,7 @@ func canonicalizeHeader(h Header) string {
 	return name + ":" + value
 }
 
-// hashHeaders computes the hash (per alg) of canonicalised, sorted headers per §5.2.
+// hashHeaders computes the hash (per alg) of canonicalised, sorted headers per §6.2.
 func hashHeaders(headers []Header, alg string) ([]byte, error) {
 	newHash, ok := HashAlg(alg)
 	if !ok {
@@ -201,7 +201,7 @@ func hashHeaders(headers []Header, alg string) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// canonicalizeSigHeader applies §9.5 canonicalization: unfold, lowercase name,
+// canonicalizeSigHeader applies §12.8 canonicalization: unfold, lowercase name,
 // delete ALL WSP from value. Returns the canonical form ending in \r\n.
 func canonicalizeSigHeader(raw string) []byte {
 	// Unfold

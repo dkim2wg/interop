@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestVerifyReportsInvalidRecipeJSON asserts that spec-06 §11.2 ("errors in
+// TestVerifyReportsInvalidRecipeJSON asserts that §14.2 ("errors in
 // a JSON object specifying Recipes should be called out specifically") is
 // honoured end to end: feeding a complete, validly-signed message whose r=
 // payload decodes to malformed JSON through the real verifier entry point
@@ -75,9 +75,9 @@ func TestVerifyReportsInvalidRecipeJSON(t *testing.T) {
 	}
 }
 
-// TestVerifyReportsBadBase64RecipeAsSyntaxError asserts the §11.2 ruling
+// TestVerifyReportsBadBase64RecipeAsSyntaxError asserts the §14.2 ruling
 // that a bad-base64 r= value and a post-decode JSON parse failure are
-// different errors: base64 failure -> "syntax error" (§11.2 lists this
+// different errors: base64 failure -> "syntax error" (§14.2 lists this
 // explicitly for malformed field content), never mislabelled as "contains
 // invalid JSON" -- the payload never even reached JSON parsing.
 func TestVerifyReportsBadBase64RecipeAsSyntaxError(t *testing.T) {
