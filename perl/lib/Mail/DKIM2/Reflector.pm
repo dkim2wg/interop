@@ -153,11 +153,12 @@ sub generate {
 }
 
 # generate_dsn(%args) — return a Delivery Status Notification for the incoming
-# message, addressed back to the sender. Used by the reflector-dsn address,
-# which bounces every message regardless of whether it arrived DKIM2-signed
-# (draft-06 §12.1). The DSN is a fresh DKIM2 message signed as new: MAIL FROM
-# <>, one Message-Instance and one DKIM2-Signature on the top message,
-# embedding the original as a message/rfc822 part.
+# message, addressed back to the sender. Used by the reflector-dsn address.
+# The DSN is a fresh DKIM2 message signed as new: MAIL FROM <>, one
+# Message-Instance and one DKIM2-Signature on the top message, embedding the
+# original as a message/rfc822 part. -07 section 16: only for a message that
+# is Provisionally Verified and whose top mf= is not <>; otherwise returns
+# undef, and in list context (undef, $why). Keys from pubkey_cb, else DNS.
 sub generate_dsn {
     my (%a) = @_;
     croak "need a sender" unless $a{sender};
@@ -165,6 +166,11 @@ sub generate_dsn {
     $a{domain}   //= 'dkim2.com';
     $a{selector} //= 'sel1';
     my $now = $a{now} // time();
+
+    my %keys = (($a{pubkey_cb} ? (PubkeyCallback => $a{pubkey_cb}) : ()),
+                ($a{skip_timestamp_check} ? (SkipTimestampCheck => 1) : ()));
+    my ($may, $why) = Mail::DKIM2::DSN->may_generate(Message => $a{message}, %keys);
+    return wantarray ? (undef, $why) : undef unless $may;
 
     my %sa = (Domain => $a{domain}, Selector => $a{selector}, MailFrom => '<>',
               Timestamp => $now);
@@ -179,6 +185,7 @@ sub generate_dsn {
         ReportingMTA => $a{domain},
         Reason       => $a{reason}
             // 'message accepted then returned by the reflector-dsn demo address',
+        %keys,
     );
     return $out->{raw};
 }
@@ -660,7 +667,9 @@ A fresh signed message to C<sender>.
 
 =head2 generate_dsn(%args)
 
-A signed DSN returning C<message> to C<sender>, via L<Mail::DKIM2::DSN>.
+A signed DSN returning C<message> to C<sender>, via L<Mail::DKIM2::DSN>:
+only for a Provisionally Verified message whose top C<mf=> is not C<< <> >>
+(-07 section 16); otherwise undef, or C<(undef, $why)> in list context.
 
 =head2 generate_brand(%args)
 

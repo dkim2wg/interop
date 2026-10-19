@@ -148,9 +148,20 @@ sub expect_refuse {
     my ($h, $mock) = gate_sign($raw, $dom, %cfg);
     is(scalar(fields($mock, 'DKIM2-Signature')), 0, "$name: not signed");
     is(scalar(fields($mock, 'Message-Instance')), 0, "$name: no Message-Instance added");
+    my $p = parse_mime($raw);
+    my ($logged) = grep { /^Not signing for \Q$dom\E: / } map { $_->[1] // '' } @{$h->{_log}};
+    ok($logged, "$name: refusal logged") or diag(explain($h->{_log}));
+    diag($logged) if $ENV{GATE_DIAG};
+    # -07 section 13: with an upstream DKIM2-Signature on it, the message is
+    # not sent on: 550 5.7.1 with the reason, and nothing else done to it.
+    if ($p->header_raw('DKIM2-Signature')) {
+        like($h->{_reject} // '', qr/\A550 5\.7\.1 not signing: \S/, "$name: rejected 550 5.7.1");
+        is_deeply($mock->{pre_headers}, [], "$name: nothing added");
+        return ($h, $mock);
+    }
+    ok(!defined $h->{_reject}, "$name: not rejected (no upstream signature)");
     # Not signing: every Message-Instance no DKIM2-Signature covers (m=
     # above every signature's m=) is removed, and the removal recorded.
-    my $p = parse_mime($raw);
     my $covered = 0;
     for ($p->header_raw('DKIM2-Signature')) {
         my ($m) = /(?:\A|;)\s*m\s*=\s*(\d+)/;
@@ -173,9 +184,6 @@ sub expect_refuse {
         like($other[0] // '', qr/\baction=not-signed=\Q$reason\E;/,
             "$name: X-DKIM2-Info not-signed=$reason");
     }
-    my ($logged) = grep { /^Not signing for \Q$dom\E: / } map { $_->[1] // '' } @{$h->{_log}};
-    ok($logged, "$name: refusal logged") or diag(explain($h->{_log}));
-    diag($logged) if $ENV{GATE_DIAG};
     return ($h, $mock);
 }
 

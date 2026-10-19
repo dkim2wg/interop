@@ -577,6 +577,17 @@ sub cb_eom {
         $gate->{message} =~ s/AllowNullBodyRecipe not set/--allow-null-body-recipe not set/
             if defined $gate->{message};
 
+        # -07 section 13: a message that carries DKIM2 header fields but is
+        # not one this hop can sign MUST NOT be sent on -- so a refusal of a
+        # message with an upstream DKIM2-Signature is a 550 5.7.1 with the
+        # reason (section 13.2). One with no signature (only instances this
+        # host's list manager added, which are removed) goes on unsigned.
+        if ($gate->{reason}
+            && grep { lc $_->[0] eq 'dkim2-signature' } @{$priv->{headers}}) {
+            warn "dkim2-milter: not signing $msgid: $gate->{message} (rejected 550 5.7.1)\n";
+            return _reject($ctx, "not signing: $gate->{message}");
+        }
+
         if ($gate->{reason}
             && ($gate->{reason} eq 'upstream-chain' || $gate->{reason} eq 'error')) {
             # Upstream chain is broken — don't extend it with a new signature.
@@ -606,7 +617,12 @@ sub cb_eom {
 
             # Sign before touching the headers, so a signer failure leaves no
             # instance of ours behind.
-            my $sig_header = _do_sign($sign_msg, $priv, $sign_config);
+            my ($sig_header, $sign_why) = _do_sign($sign_msg, $priv, $sign_config);
+            # As for a gate refusal: with an upstream DKIM2-Signature on it
+            # (and this hop's change unsigned) the message is not sent on.
+            return _reject($ctx, "not signing: $sign_why")
+                if !$sig_header
+                && grep { lc $_->[0] eq 'dkim2-signature' } @{$priv->{headers}};
             unless ($sig_header) {
                 _remove_unsigned_instances($ctx, $priv, $msgid);
             } else {
@@ -666,6 +682,17 @@ sub cb_eom {
     }
 
     return SMFIS_CONTINUE;
+}
+
+# Refuse the message with 550 5.7.1 and $reason as the reply text (-07
+# section 13.2), one line, with sendmail's "%" expansion escaped.
+sub _reject {
+    my ($ctx, $reason) = @_;
+    (my $text = $reason // 'not signing') =~ s/[\r\n]+/ /g;
+    $text =~ s/%/%%/g;
+    $text = substr($text, 0, 900) if length $text > 900;
+    $ctx->setreply('550', '5.7.1', $text);
+    return SMFIS_REJECT;
 }
 
 sub cb_close {
@@ -962,15 +989,16 @@ sub _do_sign {
         1;
     };
     unless ($ok) {
-        warn "dkim2-milter: not signing: internal error in the signer: "
-           . _error_text($@) . "\n";
-        return;
+        my $why = "internal error in the signer: " . _error_text($@);
+        warn "dkim2-milter: not signing: $why\n";
+        return (undef, $why);
     }
 
     unless (($signer->result // '') eq 'signed') {
+        my $why = $signer->details // $signer->result // 'no result';
         warn "dkim2-milter: not signing: signer result="
            . ($signer->result_detail // $signer->result // 'none') . "\n";
-        return;
+        return (undef, $why);
     }
 
     my $header = $signer->as_string();
@@ -1055,6 +1083,15 @@ distribution copy) is signed with the C<exploded> flag (-07 section 12.5),
 which a signature also gets whenever the message has more than one
 recipient; never at C<i=1>. The field is removed from the message before
 it is signed and never leaves.
+
+When the signing gate (L<Mail::DKIM2::Gate>) refuses a message that carries
+an upstream DKIM2-Signature, the milter rejects it with C<550 5.7.1> and the
+reason (-07 sections 13 and 13.2: a message with DKIM2 header fields that
+is not Validly Signed must not be sent on). A refused message with no
+signature goes on unsigned, the Message-Instances this host added removed.
+The same goes for a message the Signer refuses, such as one whose From is
+not Authentic for the signing domain (-07 section 11). New in 0.23;
+before, every refused message went on.
 
 This program implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>.
 

@@ -1093,6 +1093,63 @@ sub details {
     return $self->{details};
 }
 
+# provisionally_verified(): -07 section 13.1. After CLOSE, true when the
+# highest i= DKIM2-Signature is correct and the highest m= Message-Instance's
+# hashes match the message -- the initial assessment that lets a receiver
+# accept a message, and the only kind of message a DSN may be sent for
+# (section 16.1). A pass is; otherwise the top signature and the top
+# instance are checked on their own, whatever went wrong lower down. A top
+# signature with nd=, or one that does not cover the top instance, is not.
+# The verdict (result, details, diagnostic) is left as it was.
+sub provisionally_verified {
+    my ($self) = @_;
+    return $self->{_provisional} //= $self->_provisionally_verified ? 1 : 0;
+}
+
+sub _provisionally_verified {
+    my ($self) = @_;
+    return 1 if ($self->{result} // '') eq 'pass';
+    return 0 if $self->{_stopped} && !$self->{result};
+    my %dk2 = %{ $self->{_dk2_headers} || {} };
+    my %mi  = %{ $self->{_mi_headers}  || {} };
+    my ($max_i) = sort { $b <=> $a } keys %dk2;
+    my ($top_m) = sort { $b <=> $a } keys %mi;
+    return 0 unless $max_i && $top_m;
+    my $sig = $dk2{$max_i}{sig};
+    my $nd  = $sig->next_domain;
+    return 0 if defined $nd && length $nd;
+    return 0 unless ($sig->version // '') =~ /\A[0-9]+\z/ && $sig->version == $top_m;
+
+    local @{$self}{qw(result details diagnostic)};
+    my $sig_ok = eval { $self->_verify_signature($max_i) };
+    die $@ if ref $@;
+    return 0 unless $sig_ok;
+
+    (my $value = $mi{$top_m}) =~ s/\A[^:]*:[ \t]*//;
+    my $obj = eval { Mail::DKIM2::MessageInstance->parse($value) };
+    die $@ if ref $@;
+    return 0 unless $obj;
+
+    my ($header_cb, $body_cb);
+    if (my $hplan = $self->{_header_plan}) {
+        $header_cb = sub { $hplan->header_hash($top_m, $_[0]) // '' };
+    } else {
+        my $msg = parse_mime(join('', @{$self->{headers}}) . "\r\n");
+        $header_cb = sub { Mail::DKIM2::MessageInstance::h_digest($msg, $_[0], $self->{IgnorePrefixes}) };
+    }
+    if ($self->{HeadersOnly}) {
+        $body_cb = undef;
+    } elsif (my $plan = $self->{_body_plan}) {
+        $plan->finish;
+        $body_cb = sub { $plan->body_hash($top_m, $_[0]) // '' };
+    } else {
+        my $body = $self->{_buf} // '';
+        $body_cb = sub { Mail::DKIM2::MessageInstance::body_digest_raw($body, $_[0]) };
+    }
+    my ($ok) = $obj->_check_hashes($top_m, $header_cb, $body_cb);
+    return $ok ? 1 : 0;
+}
+
 # More about the reason, for a log, where there is more: the resolver's
 # error behind a key that could not be fetched, the copy range behind a
 # Recipe that does not undo. Never part of the -07 string in details().
@@ -1299,6 +1356,17 @@ More about the reason, for a log, when there is more; undef otherwise:
 the resolver's error behind C<TEMPERROR: ... could not be fetched>, the
 copy range behind a Recipe that does not undo. Never part of C<details>.
 New in 0.23 (0.22 appended the resolver's error to the key-fetch reason).
+
+=head2 provisionally_verified()
+
+After C<CLOSE>: true when the message is Provisionally Verified (-07
+section 13.1) -- the highest C<i=> DKIM2-Signature is correct and the
+highest C<m=> Message-Instance matches the message -- whatever else went
+wrong. A receiver may accept such a message and decide later; a DSN may
+only be sent for one (section 16.1, L<Mail::DKIM2::DSN>). A C<pass> is
+always Provisionally Verified; a top signature with C<nd=>, or one that does
+not cover the top instance, never is. Leaves C<result>, C<details> and
+C<diagnostic> as they were. New in 0.23.
 
 =head2 result_detail()
 

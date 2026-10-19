@@ -310,6 +310,14 @@ sub addheader_callback {
             $self->metric_count( 'dkim2_sign_total', { 'result' => $reason } );
             $self->dbgout( 'DKIM2Sign',
                 "Not signing for $sign_domain: $gate->{message}", LOG_INFO );
+            # -07 section 13: a message carrying an upstream DKIM2-Signature
+            # that this hop cannot sign MUST NOT be sent on. As
+            # bin/dkim2-milter: 550 5.7.1 with the reason (section 13.2).
+            if ( grep { /\ADKIM2-Signature[ \t]*:/i } @{ $self->{'headers'} || [] } ) {
+                ( my $text = "not signing: $gate->{message}" ) =~ s/[\r\n]+/ /g;
+                $self->reject_mail( "550 5.7.1 $text" );
+                return;
+            }
             # As bin/dkim2-milter: a broken upstream chain is already reported
             # by the verifier's Authentication-Results; the two refusals that
             # are this hop's own business are flagged on the message.
@@ -368,11 +376,18 @@ sub addheader_callback {
                 . ( $over_null ? ' over a null body Recipe' : '' ), LOG_INFO );
         }
         else {
-            # The Signer refuses (result fail) rather than dying, e.g. over a
+            # The Signer refuses (result fail) rather than dying: a From that
+            # is not Authentic for this domain (-07 section 11), or a
             # DKIM2-Signature it cannot key -- which the gate has already
-            # refused.  Either way nothing is added to the message.
+            # refused.  Either way nothing is added to the message, and one
+            # carrying an upstream DKIM2-Signature is not sent on (section 13).
             $self->metric_count( 'dkim2_sign_total', { 'result' => 'error' } );
             $self->log_error( "DKIM2 signing failed: " . ($signer->result_detail // 'no result') );
+            if ( grep { /\ADKIM2-Signature[ \t]*:/i } @{ $self->{'headers'} || [] } ) {
+                ( my $text = 'not signing: ' . ( $signer->details // 'signer refused' ) ) =~ s/[\r\n]+/ /g;
+                $self->reject_mail( "550 5.7.1 $text" );
+                return;
+            }
             $self->_remove_unsigned_instances($handler);
         }
     };
@@ -709,7 +724,10 @@ broken intermediate Message-Instances on the way, it deletes those fields from
 the message once it has signed, through the framework's C<change_header()>
 (an empty value: C<SMFIR_CHGHEADER> in milter mode).
 
-On a refusal nothing is signed and no Message-Instance is added; every
+On a refusal nothing is signed and no Message-Instance is added. A refused
+message that carries an upstream DKIM2-Signature is rejected with
+C<reject_mail("550 5.7.1 not signing: E<lt>reasonE<gt>")> (-07 sections 13
+and 13.2: it must not be sent on; new in 0.23). Otherwise every
 Message-Instance no DKIM2-Signature covers (an C<m=> above every signature's
 C<m=>) is removed, with C<X-DKIM2-Info: ... action=removed-unsigned-mi=...;>,
 as also when the domain has no signing configuration or the Signer fails.
@@ -721,6 +739,10 @@ When it signs over a null body Recipe (a null top, or an unsigned null under
 the top) it prepends C<X-DKIM2-Info: ... action=null-body-recipe;>.  If the Signer itself refuses
 (result C<fail>, e.g. over a DKIM2-Signature it cannot key, which the gate has
 already refused), nothing is added and the failure is logged as an error.
+That includes a From that is not Authentic for the signing domain when
+this hop originates the message or a Message-Instance it signs changed
+From (-07 section 11): the message then goes on unsigned, or, when it
+carries an upstream DKIM2-Signature, is rejected C<550 5.7.1> as above.
 
 This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and

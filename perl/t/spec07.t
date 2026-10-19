@@ -15,6 +15,7 @@ use lib 'lib', 't/lib';
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Gate;
 use Mail::DKIM2::DSN;
+use Email::MIME;
 use Spec07Fixture;
 
 *message        = \&Spec07Fixture::message;
@@ -179,6 +180,16 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
 
     my $c2 = add_sig($HOP1_TEXT, d => 'other.net', mf => '<>', rt => ['<a@example.com>']);
     is_error($c2, 'permerror', 'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1', 'C2');
+    # -07 section 13.1: the top signature and top instance are fine, so it
+    # is Provisionally Verified all the same.
+    my $pv = verify($c2);
+    ok($pv->provisionally_verified, 'C2: still Provisionally Verified');
+    is($pv->details, 'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1',
+        'C2: ... and the verdict is left alone');
+    (my $bad_top = $c2) =~ s/^Subject: test/Subject: changed/m;
+    ok(!verify($bad_top)->provisionally_verified, 'a top instance that does not match: not PV');
+    ok(!verify(add_sig($HOP1_TEXT, d => 'example.org', nd => 'x.example'))->provisionally_verified,
+        'a top nd=: not PV');
 
     my $base3 = add_sig(add_mi(message()), d => 'example.com', mf => '<a@example.com>',
                         rt => ['<x@mail.example.org>']);
@@ -300,6 +311,26 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     my $out = Mail::DKIM2::DSN->generate(Message => $HOP1_TEXT, %dsn);
     is($out->{send_to}, '<a@example.com>', 'the DSN goes to the top mf=');
     is_pass($out->{raw}, 'the DSN verifies');
+
+    # Propagation: once the forwarder's hop is stripped, the mf= the DSN
+    # would go to is <>.
+    my $bounce = add_sig(add_mi(message()), d => 'example.com', mf => '<>', rt => ['<fwd@example.org>']);
+    $bounce = add_sig($bounce, d => 'example.org', mf => '<fwd@example.org>', rt => ['<dest@example.net>']);
+    my $report = Email::MIME->create(
+        attributes => { content_type => 'multipart/report', encoding => '7bit' },
+        header_str => [ From => 'postmaster@example.net', To => 'fwd@example.org', Subject => 'failure' ],
+        parts => [
+            Email::MIME->create(attributes => { content_type => 'text/plain', encoding => '7bit' },
+                                body => "failed\r\n"),
+            Email::MIME->create(attributes => { content_type => 'message/delivery-status' },
+                                body => "Reporting-MTA: dns; example.net\r\n"),
+            Email::MIME->create(attributes => { content_type => 'message/rfc822' }, body => $bounce),
+        ])->as_string;
+    ok(!eval { Mail::DKIM2::DSN->propagate(Message => $report, ForwarderDomain => 'example.org',
+        Signer => Mail::DKIM2::Signer->new(Domain => 'example.org', Selector => 'sel1',
+                      Key => Spec07Fixture::key(), MailFrom => '<>'),
+        SkipAuthentication => 1); 1 }, 'D1: propagate refuses');
+    like($@, qr/mf= is <>/, 'D1: ... because the upstream mf= is <>');
 }
 
 # --- Review focus: the signer gate ------------------------------------------------------

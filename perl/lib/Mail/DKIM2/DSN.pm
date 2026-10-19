@@ -112,29 +112,60 @@ sub _set_report_type {
 # Args: Message (inbound message), Signer (MailFrom => '<>'), To (envelope
 # sender to bounce to; if omitted, derived from the top DKIM2-Signature mf= or
 # From:), ReportingMTA, Status, Reason.
+# may_generate(Message => $raw, PubkeyCallback|Resolver, SkipTimestampCheck):
+# whether a DSN may be sent for this message at all (-07 section 16): its
+# top DKIM2-Signature's mf= is not <>, and it is Provisionally Verified
+# (section 13.1: the top signature is correct and the top Message-Instance
+# matches). Returns ($ok, $why); $why says what is missing.
+sub may_generate {
+    my ($class, %args) = @_;
+    Mail::DKIM2::Common::_check_options("$class->may_generate", \%args,
+        qw(Message PubkeyCallback Resolver SkipTimestampCheck));
+    my $raw = $args{Message} // croak "may_generate: need Message";
+    (my $text = $raw) =~ s/\r?\n/\r\n/g;
+    my $top = eval { _top_sig(parse_mime($text)) };
+    die $@ if ref $@;
+    return (0, 'the message has no DKIM2-Signature, so it is not Provisionally Verified')
+        unless $top;
+    my $mf = $top->mail_from;
+    return (0, 'the top DKIM2-Signature mf= is <>, so no DSN may be sent')
+        if !defined $mf || $mf =~ /\A<\s*>\z/;
+    my $v = Mail::DKIM2::Verifier->new(
+        map { exists $args{$_} ? ($_ => $args{$_}) : () } qw(PubkeyCallback Resolver));
+    $v->skip_timestamp_check(1) if $args{SkipTimestampCheck};
+    $v->load($text);
+    return (0, 'the message is not Provisionally Verified ('
+             . ($v->details // $v->result) . ')')
+        unless $v->provisionally_verified;
+    return (1, undef);
+}
+
 sub generate {
     my ($class, %args) = @_;
     Mail::DKIM2::Common::_check_options("$class->generate", \%args,
-        qw(Message Signer To ReportingMTA Status Reason FinalRecipient));
+        qw(Message Signer To ReportingMTA Status Reason FinalRecipient
+           PubkeyCallback Resolver SkipTimestampCheck));
     my $raw    = $args{Message}    or croak "generate: need Message";
     my $signer = $args{Signer} or croak "generate: need Signer";
     my $mta    = $args{ReportingMTA} // 'dkim2.com';
     my $status = $args{Status}        // '5.7.1';
     my $reason = $args{Reason}        // 'message rejected by reflector-dsn (demo bounce)';
 
+    # -07 section 16: never for a message with a null top mf=, nor for one
+    # that is not Provisionally Verified.
+    my ($may, $why) = $class->may_generate(Message => $raw,
+        map { exists $args{$_} ? ($_ => $args{$_}) : () }
+            qw(PubkeyCallback Resolver SkipTimestampCheck));
+    croak "generate: not sending a DSN: $why" unless $may;
+
     my $orig = parse_mime($raw);
 
-    # Where to send the bounce: explicit envelope sender, else top sig mf=,
-    # else the From: header.
+    # Where to send the bounce: the explicit envelope sender, else the top
+    # signature's mf= (section 16). Never the From: header field.
     my $to = $args{To};
     if (!defined $to || !length $to || $to eq '<>') {
-        my $top = _top_sig($orig);
-        $to = $top->mail_from if $top;
+        $to = _top_sig($orig)->mail_from;
     }
-    if (!defined $to || !length $to || $to eq '<>') {
-        $to = $orig->header('From');
-    }
-    croak "generate: cannot determine bounce destination" unless defined $to && length $to;
 
     my $final_rcpt = $args{FinalRecipient} // $orig->header('To') // $to;
 
@@ -430,6 +461,9 @@ sub propagate {
     my $upstream = $top ? $top->mail_from : undef;
     croak "propagate: no remaining DKIM2-Signature to derive upstream MAIL FROM"
         unless defined $upstream;
+    # -07 section 16: no DSN goes to a null MAIL FROM.
+    croak "propagate: the now-top DKIM2-Signature mf= is <>, so no DSN may be sent"
+        if $upstream =~ /\A<\s*>\z/;
 
     # 4. Rebuild the embedded part. If the body is unrecoverable, emit
     #    text/rfc822-headers (headers only); otherwise message/rfc822.
@@ -491,7 +525,7 @@ Mail::DKIM2::DSN - DKIM2-signed Delivery Status Notifications
         Status       => '5.7.1',
         Reason       => 'rejected by policy',
     );
-    # $out->{raw}, $out->{to}
+    # $out->{raw}, $out->{send_to}
 
     # Is this DSN about a message we forwarded, and genuine?
     my $auth = Mail::DKIM2::DSN->authenticate(
@@ -532,11 +566,26 @@ message that is not an RFC 6522 DSN or on a missing required argument.
 =head2 generate(%args)
 
 Builds a three-part C<multipart/report> DSN returning C<Message>, signed
-by C<Signer> (which must have C<< MailFrom => '<>' >>). C<To> is the
-envelope sender to bounce to; if omitted it is taken from the top
-DKIM2-Signature's C<mf=>, failing that from C<From:>. C<ReportingMTA>,
+by C<Signer> (which must have C<< MailFrom => '<>' >>), From
+C<postmaster@> the signer's C<Domain> (-07 section 11). C<To> is the
+envelope sender to bounce to; if omitted it is the top DKIM2-Signature's
+C<mf=> (never the C<From:> header field, as before 0.23). C<ReportingMTA>,
 C<Status> (default C<5.7.1>) and C<Reason> fill the delivery-status part.
-Returns C<< { raw => $bytes, to => $address } >>.
+Returns C<< { raw => $bytes, send_to => $address } >>.
+
+Croaks, sending nothing, unless C<may_generate> allows it: never for a
+message whose top C<mf=> is C<< <> >>, nor for one that is not
+Provisionally Verified (-07 section 16), checked with C<PubkeyCallback> or
+C<Resolver> (DNS when neither is given) and C<SkipTimestampCheck>, which
+are new in 0.23.
+
+=head2 may_generate(%args)
+
+Whether a DSN may be sent for C<Message> at all: its top DKIM2-Signature's
+C<mf=> is not C<< <> >>, and it is Provisionally Verified (see
+L<Mail::DKIM2::Verifier/provisionally_verified()>), with keys from
+C<PubkeyCallback> or C<Resolver> and C<SkipTimestampCheck> as above.
+Returns C<(1, undef)>, or C<(0, $why)>. New in 0.23.
 
 =head2 authenticate(%args)
 
@@ -572,6 +621,8 @@ says such a DSN MUST NOT be propagated; C<PubkeyCallback> and C<Resolver>
 are passed to C<authenticate>. C<ForwarderDomain> is the C<d=> of the hop
 to strip, and must be the C<d=> of the returned original's top
 DKIM2-Signature: propagate croaks rather than strip another domain's hop.
+Croaks rather than propagate towards a null C<mf=> (C<< <> >>, -07 section
+16). The propagated DSN is From C<postmaster@> the signer's C<Domain>.
 Returns C<< { raw => $bytes, upstream_mailfrom => $address } >>.
 
 =head1 AUTHOR

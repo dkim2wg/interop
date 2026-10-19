@@ -274,4 +274,21 @@ isnt($rc4, 0, 'missing --selector is an error');
     is($rc, 0, 'gate: --ignore-timestamps accepted');
 }
 
+# --exploded (-07 section 12.5): f=exploded from i=2 on, never at i=1.
+{
+    my $f = sub { my ($sig) = Email::MIME->new($_[0])->header_raw('DKIM2-Signature');
+                  $sig =~ /\bf=([^;]*)/ ? $1 =~ s/\s+//gr : '' };
+    my ($hop1, $rc1) = sign($src, '-s', 'sel1', '-d', 'test1.dkim2.com', '-k', $keyfile,
+        '--mailfrom', '<sender@test1.dkim2.com>', '--rcptto', '<list@test2.dkim2.com>', '--exploded');
+    is($rc1, 0, 'exploded at i=1: signs');
+    is($f->($hop1), '', 'exploded at i=1: no f=');
+    my $in = path($dir)->child('hop1.eml');
+    $in->spew_raw($hop1);
+    my ($hop2, $rc2) = sign($in, '-s', 'sel1', '-d', 'test2.dkim2.com', '-k', $keyfile2,
+        '--mailfrom', '<list@test2.dkim2.com>', '--rcptto', '<a@test3.dkim2.com>', '--exploded');
+    is($rc2, 0, 'exploded at i=2: signs');
+    my ($top) = sort { $b cmp $a } Email::MIME->new($hop2)->header_raw('DKIM2-Signature');
+    like($top, qr/\bf=exploded\b/, 'exploded at i=2: f=exploded');
+}
+
 done_testing();
