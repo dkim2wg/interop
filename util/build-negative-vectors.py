@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build hand-crafted §8.9/§11.2 negative (and one positive-control) fixture
+"""Build hand-crafted negative (and positive-control) fixture
 messages for util/negative-vectors.sh (Task 21).
 
 Each negative fixture is constructed so it is otherwise cryptographically
@@ -23,16 +23,16 @@ Writes:
   dup-selector.eml                 -- s= repeats a Selector (sel1 twice)
   too-many-signatures.eml          -- s= has one algorithm 3+ times
   malformed-json-r.eml             -- r= decodes to malformed JSON
-  nd-bridge-wrong-domain.eml       -- a §9.3 nd= bridge made with a key for a
+  nd-bridge-wrong-domain.eml       -- a §12.3 nd= bridge made with a key for a
                                          domain the message never arrived at
   positive-control-two-selectors.eml -- s= has one algorithm twice with
                                          DISTINCT selectors (sel1, sel2);
-                                         §8.9 explicitly permits this
+                                         §10.9 explicitly permits this
   recipe-descending-ranges.eml     -- body Recipe copy ranges out of order
   recipe-overlapping-ranges.eml    -- body Recipe copy ranges overlap
-  positive-control-b-literal.eml   -- Recipe "b" items carry non-UTF-8 octets
+  positive-control-u-literal.eml   -- Recipe "u" items carry non-UTF-8 octets
   positive-control-bottom-recipe.eml -- m=1 (bottom) Message-Instance
-                                         carries a VALID r= Recipe; §9.1
+                                         carries a VALID r= Recipe; §12.1
                                          explicitly permits this
   positive-control-null-body.eml   -- list hop with a null body Recipe ("b": null)
                                          and a real header Recipe; ACCEPT
@@ -50,7 +50,7 @@ Writes:
                                          (with Recipe) covered by i=1; ACCEPT
   signature-gap.eml                -- i=1 and i=3, no i=2; otherwise valid; REJECT
   instance-gap.eml                 -- m=1 and m=3, no m=2; otherwise valid; REJECT
-  positive-control-nd-bridge.eml   -- the same §9.3 bridge made with a key for
+  positive-control-nd-bridge.eml   -- the same §12.3 bridge made with a key for
                                          the domain the message DID arrive at
   unkeyable-signature-no-i.eml     -- positive-control-null-body plus a junk
                                          "DKIM2-Signature: m=2; d=evil.example"
@@ -82,6 +82,27 @@ Writes:
                                          value a parser would have kept
   recipe-duplicate-b-null-first.eml -- the same as {"b":null,"h":...,"b":[...]}
   recipe-duplicate-h-key.eml       -- the same with one "h" key given twice
+
+draft -07 (shared tests in .superpowers/sdd/2026-10-18-dkim2-spec-07/common.md):
+  positive-control-custody-bounce.eml -- C1: i=2 mf=<> by the domain of i=1's
+                                         rt= (recorded <list@Lists.Test2.DKIM2.com.>)
+  custody-bounce-d-mismatch.eml    -- C2: the same bounce signed by test3; REJECT
+  positive-control-nd-subdomain-rt.eml -- C3: rt= mail.test2, nd= hop by test2
+  nd-subdomain-swapped.eml         -- C3 swapped: rt= test2, nd= hop by
+                                         mail.test2 (only p1 is shortened); REJECT
+  nd-next-hop-mismatch.eml         -- C4: i=3 is not the nd= domain; REJECT
+  custody-mf-domain-literal.eml    -- C5: rt=/mf= domain literals; REJECT
+  mf-d-mismatch.eml                -- C6: i=1 mf= not under d=; REJECT
+  from-not-authentic.eml           -- A1: From test1, i=1 d=test2; REJECT
+  positive-control-from-folded-2047.eml -- A1: folded RFC 2047 From, one mailbox
+  positive-control-from-changed.eml -- A2: list under test2 rewrites From, signs m=2
+  from-changed-not-authentic.eml   -- A2: the rewrite goes to test5; REJECT
+  positive-control-u-literal.eml   -- U2: "u" steps (incl. "Y2Fm6Q==")
+  recipe-u-nonzero-pad.eml         -- U3: {"u":["QR=="]}; REJECT
+  recipe-b-step.eml, recipe-two-step-keys.eml, recipe-empty-step.eml
+                                   -- U4: bad step objects; REJECT
+  positive-control-recipe-uppercase-keys.eml -- K1: "H"/"Subject"/"D" keys
+  recipe-case-duplicate-key.eml    -- K2: "Subject" and "subject"; REJECT
 """
 import base64
 import json
@@ -111,7 +132,7 @@ def build_multi_sig(mi_headers_full, sig_headers, seq, mi_version, timestamp,
     the signing input for a multi-entry s= tag by blanking ALL entries'
     signature bytes simultaneously into ONE incomplete header, then checking
     each entry's signature against that same blob -- so build that blob once
-    and sign it separately with each selector's own key (spec-06 §8.9
+    and sign it separately with each selector's own key (-07 §10.9
     multi-signature dexterity: e.g. overlapping old/new selector during a
     key rotation)."""
     mf_b64 = ds.b64(ds.to_rfc5321_path(mailfrom).encode("utf-8"))
@@ -192,7 +213,7 @@ def build_malformed_json():
     """r= decodes to malformed JSON. The bad r= is baked in BEFORE hashing
     and signing (not patched in afterwards), so the resulting two-hop
     message is genuinely, cryptographically valid throughout -- only the
-    §11.2 JSON-validity check can catch it. (A post-hoc corruption would
+    §14.2 JSON-validity check can catch it. (A post-hoc corruption would
     also break the i=2 crypto signature, since r= sits inside the signed MI
     header, and would mask whether the invalid-JSON check itself is
     reachable -- exactly the "unreachable but correct" bug class this task
@@ -260,7 +281,7 @@ CUR_BODY = b"alpha\r\nbeta\r\ngamma\r\n"
 
 
 def build_recipe_descending():
-    """Body Recipe whose copy ranges are out of order. spec-06 §5.2: "The
+    """Body Recipe whose copy ranges are out of order. -07 §5.2: "The
     start value of each "c" step MUST be in ascending order and MUST be
     greater than the end value of all preceding "c" steps." The previous
     body was [gamma, alpha, beta]; the current is [alpha, beta, gamma], so
@@ -286,27 +307,27 @@ def build_recipe_overlapping():
                     {"b": [{"c": [1, 2]}, {"c": [2, 3]}]})
 
 
-def build_positive_b_literal():
-    """POSITIVE CONTROL for the "b" Recipe step: literals whose octets are
-    not UTF-8 -- a Latin-1 e-acute, an EUC-KR Hangul pair, plus a valid UTF-8
-    CJK character -- carried as base64 of the raw bytes inside the JSON
-    string, for one header value and one body line that the hop removed.
-    "d" cannot carry them: JSON text is Unicode, and the three producers we
-    had disagreed (raw octets, \\udcXX surrogate escapes, U+FFFD). MUST be
-    accepted, with the exact bytes restored."""
+def build_positive_u_literal():
+    """POSITIVE CONTROL for the "u" Recipe step (-07 §5, shared test U2):
+    literals whose octets are not UTF-8 -- a Latin-1 e-acute, an EUC-KR
+    Hangul pair, plus a valid UTF-8 CJK character -- carried as canonical
+    base64 of the raw octets, for one header value and two body lines the hop
+    removed (one of them exactly the U2 line 63 61 66 E9, "Y2Fm6Q==").
+    "d" cannot carry them: JSON text is Unicode.  MUST be accepted, with the
+    exact bytes restored."""
     headers, _ = load_base()
     octets = b"caf\xe9 \xb1\xa4 \xe4\xb8\xad"
     b = base64.b64encode(octets).decode()
     prev_headers = headers + [b"Comments: " + octets]
-    prev_body = octets + b"\r\n" + CUR_BODY
+    prev_body = b"caf\xe9\r\n" + octets + b"\r\n" + CUR_BODY
     return _two_hop(prev_headers, prev_body, headers, CUR_BODY,
-                    {"h": {"comments": [{"b": [b]}]},
-                     "b": [{"b": [b]}, {"c": [1, 3]}]})
+                    {"h": {"comments": [{"u": [b]}]},
+                     "b": [{"u": ["Y2Fm6Q==", b]}, {"c": [1, 3]}]})
 
 
 def build_positive_control():
     """POSITIVE CONTROL: rsa-sha256 twice, with DISTINCT selectors (sel1,
-    sel2) -- §8.9 explicitly permits this (e.g. key-rotation overlap). MUST
+    sel2) -- §10.9 explicitly permits this (e.g. key-rotation overlap). MUST
     be accepted."""
     headers, body = load_base()
     mi_hdr = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
@@ -320,7 +341,7 @@ def build_positive_control():
 
 def build_positive_bottom_recipe():
     """POSITIVE CONTROL: the m=1 (bottom) Message-Instance carries a VALID
-    r= Recipe. spec-06 §9.1 explicitly permits this ("if it is wished to
+    r= Recipe. -07 §12.1 explicitly permits this ("if it is wished to
     record any changes made to a message as it enters the DKIM2 ecosystem"),
     e.g. an origin MSA stripping a header before the message ever entered
     the DKIM2 chain. This never gets "undone" -- there is no earlier state
@@ -345,7 +366,7 @@ def build_positive_bottom_recipe():
 
 def build_unsigned_mi():
     """An extra Message-Instance above a fully valid chain, covered by no
-    signature: spec-06 §11's "there MUST NOT be a Message-Instance field with
+    signature: -07 §14's "there MUST NOT be a Message-Instance field with
     a higher m= value than occurs in any DKIM2-Signature field", reported as
     "PERMERROR Message-Instance m=<x> is not signed".
 
@@ -369,11 +390,11 @@ def build_unsigned_mi():
 
 
 def _bridged_chain(bridge_domain):
-    """A Forwarder's §9.3 bridge after a real hop.
+    """A Forwarder's §12.3 bridge after a real hop.
 
     The message arrives at test2 (i=1 rt=); test2 sends it on from test3, and
     bridges the gap with an nd= hop before signing the real hop as test3.
-    §9.3 requires that extra header to be made with a key for a domain in the
+    §12.3 requires that extra header to be made with a key for a domain in the
     RCPT TO the message arrived with, so `bridge_domain` is what decides
     whether the chain holds.
     """
@@ -392,7 +413,7 @@ def _bridged_chain(bridge_domain):
 
 
 def build_nd_bridge_wrong_domain():
-    """A §9.3 bridge made with a key for a domain the message never arrived
+    """A §12.3 bridge made with a key for a domain the message never arrived
     at: the nd= hop is signed by test4.dkim2.com while i=1's rt= says the
     message went to test2.dkim2.com.
 
@@ -406,7 +427,7 @@ def build_nd_bridge_wrong_domain():
 
 def build_positive_nd_bridge():
     """The same shape with the bridge made by test2.dkim2.com, the domain the
-    message actually arrived at. §9.3 explicitly provides for this, so it MUST
+    message actually arrived at. §12.3 explicitly provides for this, so it MUST
     be accepted: a verifier that demands an mf= from an nd= hop rejects every
     legitimately bridged forward."""
     return _bridged_chain("test2.dkim2.com")
@@ -435,7 +456,7 @@ def _null_body_chain(hops):
     or None).  Instance N is signed i=N by test<N>.dkim2.com (sel1), rt= the
     next domain, so every signature is valid and the only thing under test is
     what the verifier does with the Recipes.  DKIM2-Signatures cover only
-    Message-Instance and DKIM2-Signature fields (§9.6), so nothing else
+    Message-Instance and DKIM2-Signature fields (§12.8), so nothing else
     protects the header Recipe."""
     mis, sigs = [], []
     for n, hop in enumerate(hops, 1):
@@ -613,7 +634,7 @@ def build_positive_unreferenced_lower_mi():
     """POSITIVE CONTROL: what Mailman emits for an unsigned post: an unsigned
     m=1 over the message as received and an m=2 (with a real Recipe) over the
     list's output, and a single signature i=1 that covers m=2.  m=1 is
-    referenced by no signature, but spec-06 §11 forbids only an instance whose
+    referenced by no signature, but -07 §14 forbids only an instance whose
     m= is HIGHER than every signature's m=.  MUST be accepted."""
     headers, body = load_base()
     h2, b2 = _subject_prefixed(headers, b"list"), body + b"footer\r\n"
@@ -813,6 +834,197 @@ def build_instance_m_malformed():
     return _gap_chain(sig2_seq=2, mi2_version="4294967297x", sig2_m=2)
 
 
+# ---------------------------------------------------------------------------
+# draft -07 vectors (shared tests C1-C6, A1/A2, U2-U4, K1/K2 in common.md).
+# Test domains map: example.com -> test1.dkim2.com, example.org ->
+# test2.dkim2.com, lists.example.org -> lists.test2.dkim2.com, mail.example.org
+# -> mail.test2.dkim2.com (dns.json carries test2's sel1 key for it),
+# fwd.example.net -> test3.dkim2.com, other.net/other.example -> test3/test4,
+# elsewhere.net -> test5.dkim2.com.
+# ---------------------------------------------------------------------------
+
+def _mi_raw(headers, body, m, recipe=None):
+    """Message-Instance m=<m> over (headers, body).  `recipe` is a dict
+    (encoded as given: key case is preserved) or raw JSON text."""
+    hh = ds.b64(ds.compute_header_hash(headers, "sha256"))
+    bh = ds.b64(ds.compute_body_hash(body, "sha256"))
+    v = f"Message-Instance: m={m}; h=sha256:{hh}:{bh}"
+    if recipe is not None:
+        text = recipe if isinstance(recipe, str) else json.dumps(recipe, separators=(",", ":"))
+        v += f"; r={base64.b64encode(text.encode()).decode()}"
+    return v + ";"
+
+
+def _chain(states, hops):
+    """A chain over message states.  states[k-1] is (headers, body, recipe)
+    for m=k.  hops[i-1] is a dict for DKIM2-Signature i: d, m, and either
+    mf + rt (a list) or nd; "key" names the key's domain when it differs from
+    d.  Every hash and signature is valid; only custody/From is under test."""
+    mis = [_mi_raw(h, b, k, r) for k, (h, b, r) in enumerate(states, 1)]
+    sigs = []
+    for i, hop in enumerate(hops, 1):
+        m = hop["m"]
+        priv, alg = ds.load_private_key(key("sel1", hop.get("key", hop["d"])))
+        sigs.append(ds.build_dkim2_signature(
+            mis[:m - 1], sigs, mis[m - 1], hop["d"], "sel1", priv, alg,
+            mailfrom=hop.get("mf", ""), rcptto=hop.get("rt"), seq=i,
+            mi_version=m, timestamp=TS + 100 * (i - 1),
+            next_domain=hop.get("nd")))
+    top_h, top_b = states[-1][0], states[-1][1]
+    out = b"".join(x.encode() + b"\r\n" for x in reversed(sigs))
+    out += b"".join(x.encode() + b"\r\n" for x in reversed(mis))
+    for h in top_h:
+        out += h + b"\r\n"
+    return out + b"\r\n" + top_b
+
+
+def _one_state():
+    h, b = load_base()
+    return [(h, b, None)]
+
+
+def _bounce(d2):
+    """C1/C2: i=1 test1 -> a list address under test2 (uppercase, trailing
+    dot, as Postfix may record it); i=2 by <d2> with mf=<> back to the
+    author (a bounce)."""
+    return _chain(_one_state(), [
+        dict(d=DOM, m=1, mf=MF, rt=["<list@Lists.Test2.DKIM2.com.>"]),
+        dict(d=d2, m=1, mf="", rt=[MF]),
+    ])
+
+
+def build_positive_custody_bounce():
+    return _bounce("test2.dkim2.com")
+
+
+def build_custody_bounce_d_mismatch():
+    return _bounce("test3.dkim2.com")
+
+
+def _nd_hops(rt1, d2, d3):
+    """C3/C4: i=1 test1 rt=<rt1>; i=2 an nd= hop by <d2> naming
+    test3.dkim2.com; i=3 by <d3>."""
+    return _chain(_one_state(), [
+        dict(d=DOM, m=1, mf=MF, rt=[rt1]),
+        dict(d=d2, key="test2.dkim2.com", m=1, nd="test3.dkim2.com"),
+        dict(d=d3, m=1, mf=f"b@{d3}", rt=["dest@test5.dkim2.com"]),
+    ])
+
+
+def build_positive_nd_subdomain_rt():
+    return _nd_hops("x@mail.test2.dkim2.com", "test2.dkim2.com", "test3.dkim2.com")
+
+
+def build_nd_subdomain_swapped():
+    return _nd_hops("x@test2.dkim2.com", "mail.test2.dkim2.com", "test3.dkim2.com")
+
+
+def build_nd_next_hop_mismatch():
+    return _nd_hops("x@mail.test2.dkim2.com", "test2.dkim2.com", "test4.dkim2.com")
+
+
+def build_custody_mf_domain_literal():
+    """C5: i=1 rt=<x@[192.0.2.1]>, i=2 mf=<y@[192.0.2.1]>: a domain literal
+    never relaxed-matches anything."""
+    return _chain(_one_state(), [
+        dict(d=DOM, m=1, mf=MF, rt=["x@[192.0.2.1]"]),
+        dict(d="test2.dkim2.com", m=1, mf="y@[192.0.2.1]", rt=["final@test5.dkim2.com"]),
+    ])
+
+
+def build_mf_d_mismatch():
+    """C6: i=1 d=test1 with mf= in test2."""
+    return _chain(_one_state(), [
+        dict(d=DOM, m=1, mf="a@test2.dkim2.com", rt=RT),
+    ])
+
+
+def build_from_not_authentic():
+    """A1: From brong@test1.dkim2.com, but i=1 is d=test2.dkim2.com."""
+    return _chain(_one_state(), [
+        dict(d="test2.dkim2.com", m=1, mf="x@test2.dkim2.com", rt=["user@test3.dkim2.com"]),
+    ])
+
+
+def build_positive_from_folded_2047():
+    """A1 review focus: a From folded over two lines with an RFC 2047
+    display name and an angle-addr is one mailbox, Authentic for test1."""
+    h, b = load_base()
+    h = [b"From: =?utf-8?q?Caf=C3=A9?=\r\n <brong@test1.dkim2.com>"
+         if x.lower().startswith(b"from:") else x for x in h]
+    return _chain([(h, b, None)], [dict(d=DOM, m=1, mf=MF, rt=RT)])
+
+
+def _from_changed(new_from):
+    """A2: i=1 test1; a list under test2 rewrites From in m=2 (Recipe has a
+    "from" key) and signs i=2 d=test2.dkim2.com m=2."""
+    h1, b1 = load_base()
+    h2 = [b"From: " + new_from if x.lower().startswith(b"from:") else x for x in h1]
+    return _chain([(h1, b1, None), (h2, b1, ds.build_recipes(h1, b1, h2, b1))], [
+        dict(d=DOM, m=1, mf=MF, rt=["list@lists.test2.dkim2.com"]),
+        dict(d="test2.dkim2.com", m=2, mf="list-bounces@lists.test2.dkim2.com",
+             rt=["user@test5.dkim2.com"]),
+    ])
+
+
+def build_positive_from_changed():
+    return _from_changed(b"\"Bron Gondwana via list\" <list@lists.test2.dkim2.com>")
+
+
+def build_from_changed_not_authentic():
+    return _from_changed(b"x@test5.dkim2.com")
+
+
+def build_recipe_u_nonzero_pad():
+    """U3: "QR==" fails the zero-pad-bits pattern (it would decode to "A")."""
+    headers, _ = load_base()
+    return _two_hop(headers, b"A\r\n" + CUR_BODY, headers, CUR_BODY,
+                    {"b": [{"u": ["QR=="]}, {"c": [1, 3]}]})
+
+
+def build_recipe_b_step():
+    """U4: the -06 "b" step key is now an unknown key."""
+    headers, _ = load_base()
+    return _two_hop(headers, b"x\r\n" + CUR_BODY, headers, CUR_BODY,
+                    {"b": [{"b": ["eA=="]}, {"c": [1, 3]}]})
+
+
+def build_recipe_two_step_keys():
+    """U4: a step object with two keys."""
+    headers, _ = load_base()
+    return _two_hop(headers, b"alpha\r\nx\r\nbeta\r\ngamma\r\n", headers, CUR_BODY,
+                    {"b": [{"c": [1, 1], "d": ["x"]}, {"c": [2, 3]}]})
+
+
+def build_recipe_empty_step():
+    """U4: an empty step object."""
+    headers, _ = load_base()
+    return _two_hop(headers, CUR_BODY, headers, CUR_BODY,
+                    {"b": [{}, {"c": [1, 3]}]})
+
+
+def _subject_hop():
+    h1, b1 = load_base()
+    h2 = _subject_prefixed(h1, b"list")
+    return h1, b1, h2, ds.build_recipes(h1, b1, h2, b1)
+
+
+def build_positive_recipe_uppercase_keys():
+    """K1: the same Recipe with every key in upper/mixed case ("H",
+    "Subject", "D") verifies exactly like the lowercase form."""
+    h1, b1, h2, r = _subject_hop()
+    up = {"H": {name.title(): [{k.upper(): v for k, v in step.items()} for step in steps]
+                for name, steps in r["h"].items()}}
+    return _two_hop(h1, b1, h2, b1, up)
+
+
+def build_recipe_case_duplicate_key():
+    """K2: "Subject" and "subject" in one "h" object are a duplicate."""
+    h1, b1, h2, r = _subject_hop()
+    steps = next(iter(r["h"].values()))
+    return _two_hop(h1, b1, h2, b1, {"h": {"Subject": steps, "subject": []}})
+
+
 FIXTURES = {
     "signature-gap.eml": build_signature_gap,
     "instance-gap.eml": build_instance_gap,
@@ -828,7 +1040,7 @@ FIXTURES = {
     "positive-control-bottom-recipe.eml": build_positive_bottom_recipe,
     "recipe-descending-ranges.eml": build_recipe_descending,
     "recipe-overlapping-ranges.eml": build_recipe_overlapping,
-    "positive-control-b-literal.eml": build_positive_b_literal,
+    "positive-control-u-literal.eml": build_positive_u_literal,
     "positive-control-nd-bridge.eml": build_positive_nd_bridge,
     "positive-control-null-body.eml": build_positive_null_body,
     "positive-control-null-body-over-recipe.eml": build_positive_null_body_over_recipe,
@@ -850,6 +1062,23 @@ FIXTURES = {
     "recipe-duplicate-b-null-last.eml": build_recipe_duplicate_b_null_last,
     "recipe-duplicate-b-null-first.eml": build_recipe_duplicate_b_null_first,
     "recipe-duplicate-h-key.eml": build_recipe_duplicate_h_key,
+    "positive-control-custody-bounce.eml": build_positive_custody_bounce,
+    "custody-bounce-d-mismatch.eml": build_custody_bounce_d_mismatch,
+    "positive-control-nd-subdomain-rt.eml": build_positive_nd_subdomain_rt,
+    "nd-subdomain-swapped.eml": build_nd_subdomain_swapped,
+    "nd-next-hop-mismatch.eml": build_nd_next_hop_mismatch,
+    "custody-mf-domain-literal.eml": build_custody_mf_domain_literal,
+    "mf-d-mismatch.eml": build_mf_d_mismatch,
+    "from-not-authentic.eml": build_from_not_authentic,
+    "positive-control-from-folded-2047.eml": build_positive_from_folded_2047,
+    "positive-control-from-changed.eml": build_positive_from_changed,
+    "from-changed-not-authentic.eml": build_from_changed_not_authentic,
+    "recipe-u-nonzero-pad.eml": build_recipe_u_nonzero_pad,
+    "recipe-b-step.eml": build_recipe_b_step,
+    "recipe-two-step-keys.eml": build_recipe_two_step_keys,
+    "recipe-empty-step.eml": build_recipe_empty_step,
+    "positive-control-recipe-uppercase-keys.eml": build_positive_recipe_uppercase_keys,
+    "recipe-case-duplicate-key.eml": build_recipe_case_duplicate_key,
 }
 
 

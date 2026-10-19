@@ -9,7 +9,10 @@
 # each signer CLI twice: plain, and with --allow-null-body-recipe.  Expected:
 #
 #   fixture              plain    with flag
-#   fresh                SIGN     SIGN
+#   fresh                SIGN     SIGN     (no chain; From in the signer's domain)
+#   fresh-from-not-authentic REFUSE REFUSE (no chain; From in test1: -07 §11)
+#   from-rewritten-us    SIGN     SIGN     (unsigned m=2 rewrote From into test3)
+#   from-rewritten-other REFUSE   REFUSE   (unsigned m=2 rewrote From into test2)
 #   valid-chain          SIGN     SIGN
 #   broken-signature     REFUSE   REFUSE
 #   broken-mi-chain      REFUSE   REFUSE
@@ -34,6 +37,10 @@
 #   recipe-duplicate-key REFUSE   REFUSE   (unsigned m=2 whose Recipe JSON has
 #                                           "b" twice, [...] then null)
 #
+# The From refusals must also SAY why: stderr carries the -07 signer string
+# "From header field is not Authentic for d=test3.dkim2.com" (contract C5);
+# a refusal for any other reason is WRONG-REASON.
+#
 # SIGN   = exit 0 and stdout carries a new DKIM2-Signature i=<N+1>.
 # REFUSE = non-zero exit and no new DKIM2-Signature on stdout.
 # A refusal caused by the signer not knowing the flag at all is reported as
@@ -50,7 +57,7 @@ cd "$root"
 # Single source of truth: the expected cell count is DERIVED from these lists,
 # so a silently dropped fixture/signer/mode shows up as a coverage shortfall.
 # fixture:plain-want:flag-want
-FIXTURES="fresh:sign:sign valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse null-top-signed:sign:sign null-below-unsigned-top:refuse:sign null-below-signed:sign:sign fake-cover-no-i:refuse:refuse fake-cover-i0:refuse:refuse fake-cover-i-abc:refuse:refuse fake-cover-m-rewritten:refuse:refuse fake-cover-unparseable:refuse:refuse mi-only:sign:sign mi-only-broken:refuse:refuse mi-only-null:refuse:sign nd-to-us:sign:sign nd-to-other:refuse:refuse signature-gap:refuse:refuse instance-gap:refuse:refuse recipe-duplicate-key:refuse:refuse"
+FIXTURES="fresh:sign:sign fresh-from-not-authentic:refuse:refuse from-rewritten-us:sign:sign from-rewritten-other:refuse:refuse valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse null-top-signed:sign:sign null-below-unsigned-top:refuse:sign null-below-signed:sign:sign fake-cover-no-i:refuse:refuse fake-cover-i0:refuse:refuse fake-cover-i-abc:refuse:refuse fake-cover-m-rewritten:refuse:refuse fake-cover-unparseable:refuse:refuse mi-only:sign:sign mi-only-broken:refuse:refuse mi-only-null:refuse:sign nd-to-us:sign:sign nd-to-other:refuse:refuse signature-gap:refuse:refuse instance-gap:refuse:refuse recipe-duplicate-key:refuse:refuse"
 SIGNERS="python go c perl"
 MODES="plain flag"
 n=0; for _f in $FIXTURES; do n=$((n + 1)); done
@@ -110,6 +117,14 @@ max_i() {
          END{print m+0}' "$1"
 }
 
+# want_reason <fixture>: text a refusal's stderr must contain (empty: any).
+want_reason() {
+    case $1 in
+    fresh-from-not-authentic|from-rewritten-other)
+        echo "From header field is not Authentic for d=$DOM" ;;
+    esac
+}
+
 for spec in $FIXTURES; do
     fx=${spec%%:*}; rest=${spec#*:}
     want_plain=${rest%%:*}; want_flag=${rest#*:}
@@ -145,6 +160,10 @@ for spec in $FIXTURES; do
             flagerr) desc="FLAG-ERR (exit $status)" ;;
             weird)   desc="INCONSISTENT (exit $status, max i=$got_i)" ;;
             esac
+            reason=$(want_reason "$fx")
+            if [ "$got" = refuse ] && [ -n "$reason" ] && ! grep -qF "$reason" "$out.err"; then
+                got=wrongreason; desc="REFUSED, WRONG REASON (exit $status)"
+            fi
             if [ "$got" = "$want" ]; then verdict="ok     "; else verdict="BUG!   "; rc=1; fi
             printf '  %-6s %-7s want %-6s: %s %s%s\n' "$mode" "$impl" "$want" "$verdict" "$desc" "${err:+ : $err}"
         done

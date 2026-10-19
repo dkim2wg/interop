@@ -1,6 +1,8 @@
 # DKIM2 for a Postfix mailing-list host
 
-- **Spec:** draft-ietf-dkim-dkim2-spec-06
+- **Spec:** draft-ietf-dkim-dkim2-spec-07 (the patch series and
+  Mail::DKIM2 0.23 implement -07; the status line below describes the -06
+  deployment until the -07 one is in)
 - **Audience:** a Postfix operator who runs Mailman 3 or Sympa and wants list
   mail to verify as DKIM2 downstream
 - **Status (2026-10-08):** the dkim2.com host runs this configuration: Ubuntu
@@ -172,6 +174,34 @@ forwarder such as a mailbox provider, unchanged or with its own instance on
 top — is signed without it, since a DKIM2-Signature whose `m=` reaches that
 instance already vouches for it. The
 milter adds the same informational `action=null-body-recipe` tag then too.
+
+**From and the exploded hint (-07 §11, §12.5).** A list copy is signed by the
+list domain, so its From must be in that domain: the patched Mailman and
+Sympa (steps 7 and 8) rewrite From to the list address on every copy they
+change or originate, keeping the author in Reply-To. Each copy they
+distribute also carries `X-DKIM2-Exploded: yes`; the outbound milter treats
+that header as a request to set `f=exploded` (from `i=2` up; never at
+`i=1`), deletes it, and signs. A message whose From is not Authentic for
+the signing domain is refused with
+`From header field is not Authentic for d=<domain>`.
+
+One open problem on Mailman: for a post from a sender that does not sign
+DKIM2, the inbound milter's `m=1` holds the author's From and the list's
+signature is `i=1`. The -07 verifiers here compare the From in `m=1` with
+`i=1`, so such a copy fails `matching From is not authentic` unless the
+author is in the list's signing domain, even though Mailman rewrote From.
+(Sympa avoids it: an unsigned post leaves with a single `m=1` over the
+rewritten copy, with a Recipe back to the post as received.) Whether -07 §11
+requires that comparison is recorded as an open question in
+`c/INTEROP-NOTES.md` (-07).
+
+**Refusals.** When the outbound milter refuses to sign a message that
+already carries an upstream DKIM2-Signature (broken upstream chain, an
+unsigned null without the option, a From that is not Authentic), it
+rejects it with `550 5.7.1 <reason>` instead of sending it on; Postfix then
+reports a bounce for that recipient to the list manager. Watch for these in
+the outbound journal before they bounce-disable subscribers. A refused
+message with no upstream signature is still delivered unsigned.
 
 **Null senders.** `dkim2-milter` requires Sendmail::PMilter 1.28 or later
 and refuses to start with an older one. 1.27 never answered a `MAIL
@@ -430,6 +460,14 @@ the message with the baseline and, if anything changed, adds `m=2` with a
 Recipe for the subject prefix, the list headers and the footer. Each
 instance gets an `X-DKIM2-Info` line beside it saying what Mailman did.
 
+On a DKIM2 list Mailman also rewrites From to the list address
+(`"Author via List" <list@lists.example.org>`, the author in Reply-To)
+whenever it changes or originates the copy, whatever the list's DMARC
+settings say, so From is Authentic for the list's signature (-07 §11); in
+practice that is every post, since the List-* headers alone are a change.
+The Recipe's `from` entry records the author's From. Every distribution
+copy also gets `X-DKIM2-Exploded: yes` for the outbound milter (step 5a).
+
 On such a list a header or footer is always added by MIME-wrapping: the
 body exactly as it arrived becomes the middle part of a `multipart/mixed`,
 with the list header and footer as `text/plain` parts around it, so the
@@ -519,7 +557,10 @@ pseudo-header that travels with it through the spools. A header or footer
 is added by MIME-wrapping: the body exactly as it arrived becomes the
 middle part of a `multipart/mixed`, so the body Recipe is one copy range.
 `ProcessOutgoing`, after all transformations and before DKIM signing, adds
-the next `m=` to each copy. A body Sympa rewrites (txt, html, urlize and
+the next `m=` to each copy, rewrites From to the list address whenever the
+copy is changed or Sympa originates it (-07 §11; the list's `other_email` /
+`anonymous_sender`, if set, must be in the list's signing domain), and adds
+`X-DKIM2-Exploded: yes` for the outbound milter. A body Sympa rewrites (txt, html, urlize and
 notice reception modes, full-body personalisation, S/MIME) gets a null
 body Recipe, so the outbound milter needs `--allow-null-body-recipe` (step
 5, "Null body Recipes"; the example outbound unit has it), or
@@ -593,6 +634,8 @@ signing key for`. Mailman: the mailman3 journal (`journalctl -u mailman3`). Symp
 | Copies to some hosts fail with a body-hash mismatch; `Content-Transfer-Encoding` differs from what you sent | Postfix converted 8bit to 7bit after signing | `disable_mime_output_conversion = yes` (step 6) |
 | `dkim2=temperror` | A key lookup failed for a transient reason: timeout, SERVFAIL, refused | Retryable; check the resolver and the record |
 | `dkim2=fail (... timestamp ...)` on old mail | Signatures are valid for 14 days from `t=` | Expected; verifiers may relax it locally |
+| `permerror ... matching From is not authentic` on a list copy | The list did not rewrite From into the list's signing domain | Use the -07 patch series (steps 7 and 8); on stock Mailman, `munge_from` unconditionally (stock Mailman guide) |
+| The list manager sees `550 5.7.1 From header field is not Authentic for d=...` bounces | The outbound milter refused to sign a copy with an upstream DKIM2-Signature whose From is not in the list domain | As above |
 | `permerror Message-Instance m=2 is not signed` | The list stamped `m=2` but no signature was added over it: the copy did not go through the signing listener | Point the list manager's submission at `127.0.0.1:10587` (steps 7 and 8) |
 | Bounces go out unsigned; Postfix logs a 30 second milter timeout on `MAIL FROM:<>` | Sendmail::PMilter older than 1.28 | `cpanm Sendmail::PMilter`, restart the milters (step 5a) |
 | Every subscriber's address visible in `rt=` | Many recipients per transaction | `max_recipients: 1` / `nrcpt 1`, or the split gateway (step 6) |
@@ -600,7 +643,7 @@ signing key for`. Mailman: the mailman3 journal (`journalctl -u mailman3`). Symp
 ## 11. What this guide does not cover
 
 The reflector addresses, the web validator, DSN propagation
-(spec section 12) and the `test1`..`test5.dkim2.com` domains are the
+(-07 section 16) and the `test1`..`test5.dkim2.com` domains are the
 dkim2.com demonstration machinery; `deploy/SERVER.md` describes that host.
 The C, Go and Python implementations in the repository are for
 interoperability testing and are not deployed on a list host.

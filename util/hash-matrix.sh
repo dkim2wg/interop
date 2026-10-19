@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cross-implementation hash-agility matrix (spec-06 §3.1, §7.3).
+# Cross-implementation hash-agility matrix (-07 §3.1, §9.3).
 #
 #   ./util/hash-matrix.sh
 #

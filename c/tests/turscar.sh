@@ -50,13 +50,13 @@ json.dump(dns, open(dnspath, "w"))
 print("\n".join(lines))
 PY
 
-known_skip="tags_whitespace"   # upstream vector has an empty s= signature value
+known_skip=""   # none at present: dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf)
 
 fail=0; gated=0; skipped=0
 while IFS='|' read -r name expected signed mf rt; do
     [ -n "$signed" ] || continue
     case " $known_skip " in *" $name "*)
-        echo "skip $name (known-divergence: empty s= signature value)"; skipped=$((skipped+1)); continue;; esac
+        echo "skip $name (known-divergence)"; skipped=$((skipped+1)); continue;; esac
     set -- "$tests/$signed" --dns-json "$dns" --ignore-timestamps
     [ -n "$mf" ] && set -- "$@" --mailfrom "$mf"
     OLDIFS=$IFS; IFS=,

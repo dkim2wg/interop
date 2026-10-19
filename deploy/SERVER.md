@@ -202,6 +202,28 @@ operator gets; they run `/usr/local/bin/dkim2-milter`, so nothing under
 
 **Snapshots:** `/var/spool/dkim2/snapshots/`
 
+**-07 behaviour (Mail::DKIM2 0.23) — deployment notes:**
+- **Refusals with an upstream signature are rejected, not forwarded.** When the
+  outbound milter (or the `DKIM2Sign` handler) refuses to sign a message that
+  already carries an upstream DKIM2-Signature, it now answers
+  `550 5.7.1 <reason>` instead of passing the message on unsigned (-07 §12
+  "MUST NOT sign" + §13 "MUST NOT be sent"). That includes the local-policy
+  refusals (an unsigned null body Recipe without `--allow-null-body-recipe`)
+  as well as a broken chain and a From that is not Authentic
+  (`From header field is not Authentic for d=<D>`). On this box the list
+  managers see these as bounces per recipient, which can bounce-disable
+  subscribers: check `journalctl -u dkim2-milter-outbound` for `550` after a
+  deploy. A refused message with no upstream signature is still delivered
+  unsigned, as before.
+- **Exploded hint.** Mailman and Sympa add `X-DKIM2-Exploded: yes` to every
+  distribution copy. The outbound milter treats it as a request for
+  `f=exploded` (only above `i=1`) and deletes the header before signing, so
+  it never reaches a subscriber.
+- **From Authentic.** The list managers rewrite From to the list address on
+  copies they change or originate (-07 §11); the stock-Mailman lists need
+  `dmarc_mitigate_action=munge_from` + `dmarc_mitigate_unconditionally=True`
+  (see "Stock-Mailman test lists").
+
 **Update process:**
 ```bash
 ssh dkim2
@@ -754,6 +776,18 @@ incoming DKIM2 chain verified. For interop testing of chain behaviour.
 | `reflector-dsn@dkim2.com` | returns a fresh DKIM2-signed DSN (`multipart/report`) for the message, regardless of whether it arrived signed (draft-03 §12.1) — verifies as a new one-hop message |
 | `reflector-brand-nd@dkim2.com` | like `reflector-brand`, but the i=1 brand hop uses the `nd=` "imaginary hop" encoding (draft-03 §9.3) instead of `mf=`/`rt=`; the chain still verifies (nd= matches i=2's d=) |
 
+**From (since 0.23, -07 §11):** whenever the reflector originates the message
+(the incoming chain did not verify, or there was none, so its signature is
+`i=1`) or changes it (every mode except `raw`), it rewrites From to
+`"<sender name or address> via DKIM2 reflector" <reflector-<mode>@dkim2.com>`
+(RFC 2047 if the name is not ASCII), and adds a `Reply-To` with the sender's
+From when the message has none. Originating without a DKIM2-Signature drops
+the inbound Message-Instances and starts again at `m=1`, since the inbound
+`m=1` carries the sender's From. `reflector-raw` on a verified chain keeps
+From. `reflector-dsn` and the DSN path send a DSN only for a message that is
+Provisionally Verified and whose top `mf=` is not `<>` (-07 §16); the DSN is
+From `postmaster@dkim2.com`.
+
 > **Not part of this table:** `reflector-delayedbounce@dkim2.com` is a
 > separate demo address — a genuinely **Postfix-originated** delayed bounce,
 > not a `dkim2-reflect` pipe transform. See "Signing Postfix-generated
@@ -929,9 +963,9 @@ the message body never leaves the browser and never touches this server.
 
 **Components:**
 - **Page:** static `index.html` + `verify.css` + `main.js` + the verifier
-  modules (`parse.js`, `canon.js`, `recipes.js`, `crypto.js`, `b64.js`,
-  `doh.js`, `report.js`) under `/var/www/dkim2.com/verify/` (source in
-  `deploy/www/verify/`).
+  modules (`verify.js`, `plan.js`, `domain.js`, `parse.js`, `canon.js`,
+  `recipes.js`, `crypto.js`, `b64.js`, `doh.js`, `report.js`) under
+  `/var/www/dkim2.com/verify/` (source in `deploy/www/verify/`).
 - **No CGI, no fastcgi, no backend process.** Unlike `/validate/api`, there
   is nothing for nginx to proxy and no `fcgiwrap` route to add — the page is
   pure static assets served the same way as `index.html`/`style.css`.
@@ -991,6 +1025,14 @@ wrap, `X-DKIM2-Info: ... action=wrap-single-part;`), `m=3` (the list, from
 the snapshot diff) and `i=2` (`d=dkim2.com`). Smoke test:
 `bash deploy/dkim2-list-smoke.sh dkim2stock@mailman.dkim2.com dkim2test@sympa.dkim2.com`.
 `dkim2stockcorpus@` is the third list of `deploy/dkim2-corpus-inject.sh`.
+
+Under -07 both lists need Mailman to rewrite From (stock Mailman cannot do
+it in code): set `dmarc_mitigate_action=munge_from` and
+`dmarc_mitigate_unconditionally=True` on each over REST at the -07 deploy
+(`docs/dkim2-postfix-stock-mailman-guide.md`, section 6). Plain posts from
+authors outside `dkim2.com` may still fail From Authentic (on this route and
+on the patched Mailman lists); see that guide's section 9 and
+`c/INTEROP-NOTES.md` (-07).
 
 Backups of the pre-change files: `/etc/postfix/{main,master}.cf.bak-2026-10-14`,
 `/etc/mailman3/mailman.cfg.bak-2026-10-14` (and `master.cf.bak-2026-10-14b`
@@ -1216,7 +1258,7 @@ The operator-facing version is in the list-host guide, section 6.
 ## DKIM2 list smoke test (Mailman + Sympa, no-spam local capture)
 
 Confirm both list managers stamp the current spec draft (`Mail::DKIM2::Common`'s
-`DKIM2_DRAFT`, currently `ietf-dkim-dkim2-spec-06`) end-to-end and produce
+`DKIM2_DRAFT`, currently `ietf-dkim-dkim2-spec-07`) end-to-end and produce
 chains that verify, **without emailing real subscribers**. Run on the box:
 
 ```bash
@@ -1229,7 +1271,11 @@ milter-signed copies locally, and asserts the current draft (read from
 
 1. **Unsigned upstream** — a plain message from the capture address. The
    inbound milter stamps `m=1`, the list records `m=2`, the outbound milter
-   originates `i=1`. Expected chain `i=1..1`.
+   originates `i=1`. Expected chain `i=1..1`. (-07: the verifiers compare
+   the From in `m=1` with `i=1`. It passes here because the capture address
+   is in `dkim2.com`, the domain the lists sign as; a plain post from an
+   outside author would not — see the open question in `c/INTEROP-NOTES.md`
+   (-07).)
 2. **DKIM2-signed upstream** — the same message first signed as
    `dkim2.com`/`sel1` (`/etc/dkim2/reflector/sel1.key`) and delivered over raw
    SMTP, as a post from a signing sender arrives. The list records `m=2`

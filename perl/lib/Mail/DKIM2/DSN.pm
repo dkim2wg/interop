@@ -104,14 +104,6 @@ sub _set_report_type {
     $msg->header_str_set('Content-Type', $ct);
 }
 
-# Generate a fresh DKIM2-signed DSN for an inbound message, sent back to the
-# original sender (RFC 6522 three-part multipart/report structure; DKIM2
-# -07 §16.1). Used by the reflector-dsn address, which
-# bounces every message regardless of whether it arrived DKIM2-signed.
-#
-# Args: Message (inbound message), Signer (MailFrom => '<>'), To (envelope
-# sender to bounce to; if omitted, derived from the top DKIM2-Signature mf= or
-# From:), ReportingMTA, Status, Reason.
 # may_generate(Message => $raw, PubkeyCallback|Resolver, SkipTimestampCheck):
 # whether a DSN may be sent for this message at all (-07 section 16): its
 # top DKIM2-Signature's mf= is not <>, and it is Provisionally Verified
@@ -140,6 +132,14 @@ sub may_generate {
     return (1, undef);
 }
 
+# Generate a fresh DKIM2-signed DSN for an inbound message, sent back to the
+# original sender (RFC 6522 three-part multipart/report structure; DKIM2
+# -07 §16.1). Used by the reflector-dsn address, which
+# bounces every message regardless of whether it arrived DKIM2-signed.
+#
+# Args: Message (inbound message), Signer (MailFrom => '<>'), To (envelope
+# sender to bounce to; if omitted, the top DKIM2-Signature's mf=, never the
+# From: header field), ReportingMTA, Status, Reason.
 sub generate {
     my ($class, %args) = @_;
     Mail::DKIM2::Common::_check_options("$class->generate", \%args,
@@ -545,7 +545,7 @@ Mail::DKIM2::DSN - DKIM2-signed Delivery Status Notifications
 
 =head1 DESCRIPTION
 
-Spec-06 section 12 describes how a DSN (RFC 3464, structured per RFC 6522)
+-07 section 16 describes how a DSN (RFC 3464, structured per RFC 6522)
 is signed, checked and passed back along the chain. A forwarder that
 receives a DSN for a message it forwarded rebuilds the enclosed original
 to the state it was in when it went out (undoing its own Message-Instance
@@ -589,7 +589,7 @@ Returns C<(1, undef)>, or C<(0, $why)>. New in 0.23.
 
 =head2 authenticate(%args)
 
-Checks C<Message>, a DSN, per section 12.1.2: the returned original's
+Checks C<Message>, a DSN, per -07 section 16.3: the returned original's
 chain verifies (from its headers alone if that is all the DSN carries),
 the DSN's own signature verifies, and the DSN's C<d=> is aligned with the
 returned original's top C<rt=>. Keys come from C<PubkeyCallback> if given,
@@ -616,7 +616,7 @@ your own.
 
 Authenticates C<Message> as above (pass C<< SkipAuthentication => 1 >> if
 the caller already has), then rebuilds and re-signs it as described. Croaks
-rather than propagate a DSN that does not authenticate: section 12.1.2
+rather than propagate a DSN that does not authenticate: -07 section 16.3
 says such a DSN MUST NOT be propagated; C<PubkeyCallback> and C<Resolver>
 are passed to C<authenticate>. C<ForwarderDomain> is the C<d=> of the hop
 to strip, and must be the C<d=> of the returned original's top

@@ -7,7 +7,7 @@ vector's ExpectedState.
 
 The vectors are written against draft-02; the tag rules (case-insensitive
 identifiers, any order, single occurrence, FWS) and the >=1024-bit key
-requirement are unchanged in draft-06, so they apply to us directly.
+requirement are unchanged in draft-07, so they apply to us directly.
 
 Run:  python3 tests/test_turscar.py     (exit 0 = all match)
 Skips cleanly if the submodule is not checked out.
@@ -24,14 +24,8 @@ TESTS_DIR = os.path.join(REPO_ROOT, "dkim2tests", "tests")
 
 # Upstream vectors we knowingly diverge from, with the reason.  These are not
 # counted as failures.
-KNOWN_DIVERGENCE = {
-    # Steve's signer emitted an EMPTY s= signature value here (both the .signed
-    # file and the toml SignedMessage end "...s = rsa2048:rsa-sha256:" with no
-    # bytes) -- apparently its own signature-insertion tripped over the header
-    # whitespace this test exercises.  With no signature present, ExpectedState
-    # 'pass' is unachievable by any conformant verifier.
-    "tags_whitespace": "upstream vector has an empty s= signature value",
-}
+# (None at present: dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf).)
+KNOWN_DIVERGENCE: dict[str, str] = {}
 
 
 def dns_from_toml(d):

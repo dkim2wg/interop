@@ -492,7 +492,7 @@ The L<Mail::DKIM2::Signature> object, available after C<CLOSE>.
 =head2 sign_for_recipient($rcpt)
 
 Re-signs for a different envelope recipient (one address or an arrayref of
-them) and returns the folded header. Spec-06 section 9.6 signs only the
+them) and returns the folded header. -07 section 12.8 signs only the
 Message-Instance and DKIM2-Signature fields, so the body and header hashes
 in the Message-Instance are the same for every recipient and only C<rt=>
 changes; an extra recipient costs one signature over a few hundred bytes,

@@ -454,12 +454,12 @@ Signing domain.
 =item C<mf=>, C<rt=>
 
 The envelope of this hop: MAIL FROM, and a comma-separated list of RCPT TO,
-each a base64-encoded RFC 5321 path with angle brackets (section 7.5 and
-7.6). C<< <> >> is the null sender.
+each a base64-encoded RFC 5321 path with angle brackets (-07 section 10.5 and
+10.6). C<< <> >> is the null sender.
 
 =item C<nd=>
 
-For an imaginary forwarding hop (section 9.3), the C<d=> of the hop that
+For an imaginary forwarding hop (-07 section 12.3), the C<d=> of the hop that
 signs next. Replaces C<mf=> and C<rt=>.
 
 =item C<n=>

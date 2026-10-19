@@ -42,15 +42,15 @@ def _top_i(out):
 
 def test_fresh_signs_without_any_dns():
     out = dkim2sign.sign_message(
-        fx.build_fresh(), "sel1", "test1.dkim2.com", KEY1,
-        mailfrom="<brong@test1.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
+        fx.build_fresh(), "sel1", "test3.dkim2.com", KEY,
+        mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
     assert _top_i(out) == 1
 
 
 def test_fresh_refused_when_from_is_not_authentic():
     with pytest.raises(dkim2sign.SigningRefused) as e:
         dkim2sign.sign_message(
-            fx.build_fresh(), "sel1", "test3.dkim2.com", KEY,
+            fx.build_fresh_from_not_authentic(), "sel1", "test3.dkim2.com", KEY,
             mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
     assert str(e.value) == NOT_AUTHENTIC
 
@@ -176,15 +176,16 @@ def test_dns_json_env_honoured(monkeypatch):
 def test_mi_only_signs_without_keys(monkeypatch):
     # No signature yet, so this hop is i=1 and From must be Authentic for it.
     monkeypatch.delenv("DKIM2_DNS_JSON", raising=False)
+    # The list rewrote From into test3.dkim2.com.
     out = dkim2sign.sign_message(
-        fx.build_mi_only(), "sel1", "test1.dkim2.com", KEY1,
-        mailfrom="<list@test1.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
+        fx.build_mi_only(), "sel1", "test3.dkim2.com", KEY,
+        mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
     assert _top_i(out) == 1
     with pytest.raises(dkim2sign.SigningRefused) as e:
         dkim2sign.sign_message(
-            fx.build_mi_only(), "sel1", "test3.dkim2.com", KEY,
-            mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
-    assert str(e.value) == NOT_AUTHENTIC
+            fx.build_mi_only(), "sel1", "test1.dkim2.com", KEY1,
+            mailfrom="<list@test1.dkim2.com>", rcptto=["<s@test4.dkim2.com>"])
+    assert str(e.value) == "From header field is not Authentic for d=test1.dkim2.com"
 
 
 def test_mi_only_broken_refused_for_the_chain_not_the_signature():
@@ -197,8 +198,8 @@ def test_mi_only_null_refused_then_signed_with_option():
     with pytest.raises(dkim2sign.SigningRefused, match="null body Recipe"):
         _sign(fx.build_mi_only_null())
     out = dkim2sign.sign_message(
-        fx.build_mi_only_null(), "sel1", "test1.dkim2.com", KEY1,
-        mailfrom="<list@test1.dkim2.com>", rcptto=["<s@test4.dkim2.com>"],
+        fx.build_mi_only_null(), "sel1", "test3.dkim2.com", KEY,
+        mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"],
         dns_data=DNS, skip_timestamp_check=True, allow_null_body_recipe=True)
     assert _top_i(out) == 1
 

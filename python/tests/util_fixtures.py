@@ -1,11 +1,9 @@
 """The shared fixture builders in util/, loaded for this suite.
 
 util/build-negative-vectors.py (bnv) and util/build-signer-gate-fixtures.py
-(fx) build their chains from perl/tests/emails/brong-orig.eml, whose From is
-brong@fastmailteam.com while i=1 signs as test1.dkim2.com.  Under -07 §11
-that From is not Authentic, so every chain built from it is a PERMERROR.
-This suite points the builders at tests/emails/brong-orig.eml instead: the
-same message with From: brong@test1.dkim2.com.
+(fx) have hyphens in their names, so they are loaded by path.  Both build
+their chains from perl/tests/emails/brong-orig.eml, whose From
+(brong@test1.dkim2.com) is Authentic for i=1 (-07 §11).
 """
 import importlib.util
 import os
@@ -23,6 +21,4 @@ def _load(name, filename):
 
 
 bnv = _load("bnv", "build-negative-vectors.py")
-bnv.SRC = os.path.join(HERE, "emails", "brong-orig.eml")
 fx = _load("build_signer_gate_fixtures", "build-signer-gate-fixtures.py")
-fx.bnv.SRC = bnv.SRC

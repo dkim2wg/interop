@@ -21,13 +21,8 @@ import (
 )
 
 // Upstream vectors we knowingly diverge from, with the reason (not gated).
-var turscarKnownDivergence = map[string]string{
-	// Steve's signer emitted an EMPTY s= signature value here (the .signed
-	// file ends "...s = rsa2048:rsa-sha256:" with no bytes) — its own signature
-	// insertion tripped over the header whitespace this test exercises. With no
-	// signature present, ExpectedState "pass" is unachievable.
-	"tags_whitespace": "upstream vector has an empty s= signature value",
-}
+// (None at present: dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf).)
+var turscarKnownDivergence = map[string]string{}
 
 var reScalar = regexp.MustCompile(`(?m)^([A-Za-z]+)\s*=\s*'([^']*)'`)
 var reListItem = regexp.MustCompile(`'([^']*)'`)

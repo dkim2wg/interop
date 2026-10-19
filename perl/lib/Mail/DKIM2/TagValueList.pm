@@ -129,7 +129,7 @@ A semicolon-separated list of C<tag=value> pairs (-07 section 2.12 and
 8). Tag names keep their original case and order, and values their
 internal whitespace; serialisation joins C<name=value> pairs with C<; >, so
 the whitespace around C<=> and C<;> and a trailing C<;> are normalised
-(harmless for signing input, which section 9.6 strips of all whitespace).
+(harmless for signing input, which -07 section 12.8 strips of all whitespace).
 Lookups are case-insensitive. L<Mail::DKIM2::Signature> is a subclass.
 
 =head1 CONSTRUCTORS

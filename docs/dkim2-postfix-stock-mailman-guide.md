@@ -1,6 +1,7 @@
 # DKIM2 for stock Mailman on Postfix
 
-- **Spec:** draft-ietf-dkim-dkim2-spec-06
+- **Spec:** draft-ietf-dkim-dkim2-spec-07 (the status line below describes
+  the -06 deployment until the -07 one is in)
 - **Audience:** a Postfix operator who runs Mailman 3 as released (3.3.8 or
   3.3.10, no patches, no plugins) and wants DKIM2 on some lists only
 - **Status (2026-10-14):** the dkim2.com host runs this route for two
@@ -278,8 +279,30 @@ when each one carries one list's copy to one subscriber.
 systemctl restart mailman3
 ```
 
-Nothing else changes in Mailman, and nothing is set per list: a list is a
-DKIM2 list because it is in the two maps.
+Nothing else changes in Mailman's code. One per-list setting is needed on
+every DKIM2 list under -07: From must be Authentic for the list's signature
+(-07 §11), and stock Mailman cannot rewrite From in code, so have its DMARC
+mitigation do it on every post:
+
+```bash
+curl -u restadmin:PASSWORD -X PATCH -H 'Content-Type: application/json' \
+     http://localhost:8001/3.1/lists/LIST.DOMAIN/config \
+     -d '{"dmarc_mitigate_action": "munge_from", "dmarc_mitigate_unconditionally": true}'
+```
+
+(or, in Postorius, the list's DMARC mitigation settings: "Replace From:
+with list address", and "DMARC Mitigate unconditionally"). Copies then carry
+`From: "Author via List" <list@lists.example.org>` with the author in
+`Reply-To`. It matters for posts from senders that do not sign DKIM2,
+where the list's signature is the first (`i=1`): without it the signing
+milter refuses to originate a copy whose From is not in the list domain
+(`From header field is not Authentic for d=...`) and the copy goes out
+unsigned (but see "Posts from senders that do not sign DKIM2" in section 9).
+A DKIM2-signed post whose From the list leaves alone stays Authentic for
+the sender's `i=1` and is signed either way; a munged From on it is
+Authentic for the list's own signature.
+
+Otherwise a list is a DKIM2 list because it is in the two maps.
 
 ## 7. Adding and removing a list
 
@@ -348,6 +371,15 @@ Then post to a list that is not in the maps: its copies carry no
   receiver can verify the chain up to the list but not undo the body
   change. Turn content filtering off on a DKIM2 list if subscribers should
   be able to see what the sender wrote.
+- **Posts from senders that do not sign DKIM2 (-07).** The wrap milter's
+  `m=1` records the post with the author's From, and the list's signature
+  is then `i=1`. The -07 implementations here (contract C5) check the From
+  at `m=1` against `i=1`, so such a copy fails with `matching From is not
+  authentic` even with `munge_from`, or is refused by the signer. Whether
+  the spec's §11 requires that pair (its text compares the From current
+  when `i=1` was created) is an open question recorded in
+  `c/INTEROP-NOTES.md` (-07); until it is settled, expect plain posts on
+  this route not to verify.
 - **A post whose DKIM2 chain is already broken** when it arrives (damaged in
   transit, or someone's edit of a signed post) gets no snapshot and is not
   wrapped (`not wrapping ...: arrival result fail` in the wrap milter's
@@ -362,3 +394,4 @@ Then post to a list that is not in the maps: its copies carry no
 | Posts reach Mailman without the wrap | The post did not go through 10571 | Check `dkim2-lists`, `postmap`, and that it comes first in `transport_maps` |
 | Copies fail with a body-hash mismatch at some hosts | 8bit converted to 7bit after signing | `disable_mime_output_conversion = yes` |
 | Every subscriber's address in `rt=` | Many recipients per transaction | `max_recipients: 1` |
+| `550 5.7.1 From header field is not Authentic for d=...` bounces, or `matching From is not authentic` downstream | The list does not rewrite From | `dmarc_mitigate_action: munge_from` and `dmarc_mitigate_unconditionally: true` (section 6) |

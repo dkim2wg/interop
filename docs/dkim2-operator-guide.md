@@ -1,6 +1,6 @@
 # DKIM2 Operator Guide
 
-- **Spec:** draft-ietf-dkim-dkim2-spec-06
+- **Spec:** draft-ietf-dkim-dkim2-spec-07
 - **Audience:** MTA operators and postmasters deploying DKIM2
 - **Installing it:** see the [Postfix mailing-list host guide](dkim2-postfix-list-host-guide.md),
   or [DKIM2 for stock Mailman](dkim2-postfix-stock-mailman-guide.md) for
@@ -139,7 +139,24 @@ The `d=` signing domain must be the same as or a parent of the MAIL FROM domain.
 `d=example.com` can sign for `sender@example.com` or `sender@sub.example.com`.
 It cannot sign for `sender@other.com`.
 
-For DSN messages (null sender `<>`), this check is skipped.
+For DSN messages (null sender `<>`) there is no MAIL FROM domain, so under
+-07 the signing domain must instead match a RCPT TO domain of the hop
+before: a bounce travels back along the chain.
+
+### The `d=` / From relationship (-07 §11)
+
+From must also be Authentic: its domain must be `d=` or a subdomain of it.
+A verifier checks this against signature i=1, and again against the first
+signature over any hop that changed From. Your signer checks it whenever it
+originates a message (no DKIM2-Signature on it yet) or signs over an
+unsigned change of From, and otherwise refuses with:
+
+```
+From header field is not Authentic for d=yourdomain.example
+```
+
+In practice: sign your own users' mail only with a domain that covers their
+From addresses, and see "From rewriting" below for lists and forwarders.
 
 ---
 
@@ -149,7 +166,7 @@ When your MTA delivers an inbound message, the DKIM2 verifier needs:
 
 - The full message (headers + body)
 - The SMTP MAIL FROM and RCPT TO from the final delivery session (optional but
-  recommended — enables §10.4 envelope integrity check)
+  recommended — enables the -07 §14.4 envelope integrity check)
 - Access to DNS for public key lookup
 
 The verifier checks:
@@ -158,11 +175,21 @@ The verifier checks:
    sequences
 2. The top signature covers the topmost MI
 3. Every signature in the chain verifies cryptographically
-4. Each signature's timestamp is within 14 days
-5. The Chain of Custody is intact (each relay's MAIL FROM domain matches a RCPT TO
-   domain from the previous relay)
-6. If MAIL FROM / RCPT TO are available: the top signature's `mf=` and `rt=` exactly
+4. Each signature's timestamp is no more than 14 days old and no more than
+   1 day in the future
+5. The Chain of Custody is intact: each signature's MAIL FROM domain is under
+   its `d=`, each relay's MAIL FROM domain matches a RCPT TO domain from the
+   previous relay (a bounce's `d=` does), and a hop after an `nd=` bridge is
+   the `nd=` domain
+6. Every From the chain introduces is Authentic for the signature that
+   introduced it
+7. If MAIL FROM / RCPT TO are available: the top signature's `mf=` and `rt=` exactly
    match the envelope values
+
+Every failure carries an exact -07 reason, e.g.
+`PERMERROR: DKIM2-Signature i=1 matching From is not authentic` or
+`FAIL: Message-Instance m=1 header hash sha256 mismatch`, which the milters
+put in the Authentication-Results comment.
 
 Possible verification outcomes:
 
@@ -170,13 +197,13 @@ Possible verification outcomes:
 |--------|---------|
 | `pass` | All signatures verified, chain intact |
 | `fail` | A signature failed or the chain is broken |
-| `none` | No DKIM2-Signature headers present |
+| `none` | No DKIM2 header fields at all (no error) |
 | `permerror` | Structural problem (missing headers, bad format, no usable key) |
 | `temperror` | Transient failure (DNS lookup error) |
 
 ### What a result does not tell you
 
-Per §11.1, these states report only whether the message reached you without
+Per -07 §14.1, these states report only whether the message reached you without
 being modified or replayed in a way the specification disallows.  They say
 nothing about whether the message is wanted, whether it is spam, or whether
 any modification a relay declared in its Recipe was benign.
@@ -221,8 +248,32 @@ Forwarders that do not modify the message can forward as-is; the original chain 
 still verify at the final destination, provided the final SMTP MAIL FROM matches the
 forwarder's domain (which it will if SRS is used correctly).
 
+### From rewriting (-07 §11)
+
+A list host or forwarder that **changes** a message, or **originates** one
+(its hop becomes i=1, e.g. because the post arrived without a DKIM2
+signature), must rewrite From into its own signing domain, typically
+`"Author Name via List" <list@lists.example.org>` with the author's address
+kept in Reply-To. Without that the verifier reports
+`matching From is not authentic` and your own signer refuses to sign. A
+forwarder that passes the message on unchanged leaves From alone.
+
+- **Patched Mailman / Sympa** from this project rewrite From in code on every
+  list copy they change.
+- **Stock Mailman** cannot; set `dmarc_mitigate_action = munge_from` with
+  `dmarc_mitigate_unconditionally = True` on each DKIM2 list (see the
+  [stock Mailman guide](dkim2-postfix-stock-mailman-guide.md)).
+- **The dkim2.com reflector** rewrites From to
+  `"<sender> via DKIM2 reflector" <reflector-<mode>@dkim2.com>` whenever it
+  originates or changes the message.
+
+A list manager that sends one copy per subscriber also marks each copy with
+`X-DKIM2-Exploded: yes`; the signing milter turns that into `f=exploded` on
+its signature (-07 §12.5) and removes the header.
+
 Every signer here verifies the incoming chain before adding its own signature
-and refuses (delivering unsigned, in the milters) if it does not check out.
+and refuses if it does not check out (see "Milter integration" for what the
+milters do with a refused message).
 One more refusal concerns a **null body Recipe** (`"b": null`: the hop that
 made the instance rewrote the body and could not record how). A
 DKIM2-Signature with `m=k` covers instances 1..k. If a Message-Instance
@@ -246,9 +297,26 @@ and the `DKIM2Sign`/`DKIM2Verify` handlers for Mail::Milter::Authentication.
 Both take MAIL FROM and RCPT TO from the MTA rather than from the message,
 and both decide whether to sign with the same `Mail::DKIM2::Gate`: a message
 whose upstream chain or Message-Instance chain does not check out, or whose
-unsigned top instance has a null body Recipe (without the option above), is
-delivered unsigned, with `X-DKIM2-Info: ... action=not-signed=<reason>;`
-for the Message-Instance and null-body refusals.
+unsigned top instance has a null body Recipe (without the option above), or
+whose From is not Authentic for the signing domain, is refused. What happens
+next depends on whether it already carries an upstream DKIM2-Signature:
+
+- **With one**, the milter rejects it: `550 5.7.1 <reason>` (-07 §12 says it
+  MUST NOT be signed, and §13 that it MUST NOT be sent on as it is). This
+  covers local-policy refusals too, such as a null body Recipe without the
+  option. A list host's MTA reports such a reject to the list manager as a
+  bounce for that recipient, so watch for refusals before they bounce-disable
+  subscribers; with the patched list managers, which rewrite From, they
+  should not happen for list traffic.
+- **Without one**, it is delivered unsigned as before, with this host's own
+  unsigned Message-Instances removed and
+  `X-DKIM2-Info: ... action=not-signed=<reason>;` for the Message-Instance
+  and null-body refusals.
+
+The C milter in this repo (`c/dkim2_milter.c`, not the one deployed on
+dkim2.com) is stricter: it rejects every signer refusal with
+`550 5.7.1 <reason>`, with or without an upstream signature, and verify-mode
+rejections likewise (TEMPERROR gives `451 4.7.5`).
 Installing either, and wiring Mailman 3 or Sympa to them, is the subject of
 the [Postfix mailing-list host guide](dkim2-postfix-list-host-guide.md).
 

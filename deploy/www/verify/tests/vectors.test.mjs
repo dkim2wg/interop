@@ -39,12 +39,8 @@ function pickNow(msg) {
 const files = readdirSync(testsDir).filter((f) => f.endsWith('.toml'));
 
 // Upstream vectors we cannot honour because the fixture itself is broken.
-// tags_whitespace: the generator (dkim2tests commit 9c48edf) emitted an EMPTY
-// s= signature value ("...s = rsa2048:rsa-sha256:" with no bytes) while still
-// labelling ExpectedState='pass'; no conformant verifier can accept a signature
-// that is not present, so this is a fixture bug, not a rule to implement. (The
-// repo's other reference runners skip it for the same reason.)
-const BROKEN_VECTORS = new Set(['tags_whitespace']);
+// (None at present: dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf).)
+const BROKEN_VECTORS = new Set([]);
 
 // Vectors whose expected state this repo's -07 contract settles differently.
 // Both are a reject; only the state differs. algorithm_only_future: a

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Cross-implementation interop matrix for two spec-06 behaviours that only show
+# Cross-implementation interop matrix for two behaviours that only show
 # up when implementations meet each other:
 #
 #   1. Folding whitespace in tag values (§2.12).  FWS may appear inside a base64
@@ -9,7 +9,7 @@
 #      not break any verifier.  The awkward position is a fold between the
 #      selector colon and the algorithm token.
 #
-#   2. Recipe-less Message-Instance (§9.1/§9.2.5).  A hop that leaves both
+#   2. Recipe-less Message-Instance (-07 §12.1).  A hop that leaves both
 #      hashes unchanged adds no Message-Instance at all and reuses the existing
 #      m=.  A recipe-less instance is legal to receive (it asserts no change),
 #      so every verifier must accept one, but no signer should produce one.
@@ -151,7 +151,7 @@ fold_at "h= hashes"    '(h=sha256:)([A-Za-z0-9+/=]{6})' '\1\2\r\n\t'
 # 2. Recipe-less Message-Instance: no signer emits one on an unchanged relay,
 #    and every verifier accepts one that arrives anyway.
 # ---------------------------------------------------------------------------
-echo "== §9.1/§9.2.5 unchanged hop reuses the instance =="
+echo "== §12.1 unchanged hop reuses the instance =="
 
 count_hdr() { grep -ci "^$1:" "$2" | tr -d ' '; }
 

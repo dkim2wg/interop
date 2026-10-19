@@ -33,6 +33,16 @@
 #   captures  Re-verify the captures already pulled back by `lists` (after a
 #           verifier fix) without touching the box. Implied by `lists`.
 #
+# draft -07: the captures in corpus/results/capture/ were taken under -06, so
+# their Recipes carry "b" steps (now invalid JSON) and their From is the
+# author's, not the list's (not Authentic, -07 §11). Every -07 verifier
+# rejects them, so `captures` on the -06 set reports failures that are not
+# bugs. Re-run `lists` (a recapture) after the -07 deploy before reading the
+# results. Until then python/tests/test_plan_corpus.py tolerates those two
+# errors and perl/t/lib/ChainPlanReference.pm stops at an instance that does
+# not parse (tighten both after the recapture). Do not delete the -06 set
+# before the recapture.
+#
 # Nothing under corpus/ is committed (see .gitignore). The upstream archives
 # are the source of truth; the sampler is deterministic over them, so a
 # failing message is named by its id and can be re-fetched. Promote a message

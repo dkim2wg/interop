@@ -7,7 +7,14 @@ DKIM2 chain must verify it first (outbound mode: the unsigned top
 Message-Instance is the one about to be signed) and refuse to sign a chain
 that does not check out.
 
-  fresh.eml              no chain at all                          -> SIGN
+  fresh.eml              no chain at all, From in test3           -> SIGN
+  fresh-from-not-authentic.eml
+                         no chain at all, From in test1           -> REFUSE
+                         ("From header field is not Authentic for d=test3.dkim2.com")
+  from-rewritten-us.eml  valid i=1/m=1; unsigned m=2 rewrote From to
+                         list@test3 (Recipe has "from")           -> SIGN
+  from-rewritten-other.eml
+                         the same, From rewritten to list@test2   -> REFUSE (A3)
   valid-chain.eml        i=1/m=1 signed; unsigned m=2 with an
                          ordinary Recipe (Subject tag + footer)   -> SIGN
   broken-signature.eml   i=1 signature does not verify (t= altered
@@ -51,14 +58,15 @@ that does not check out.
                                                                   -> SIGN
                                        (a covered null needs no flag)
   mi-only.eml            NO DKIM2-Signature: a list added unsigned m=1 and
-                         unsigned m=2 (ordinary Recipe), as Mailman does
+                         unsigned m=2 (ordinary Recipe, From rewritten
+                         into test3), as Mailman does
                                                                   -> SIGN
   mi-only-broken.eml     like mi-only, m=2's Recipe hides a To: change
                                                                   -> REFUSE
   mi-only-null.eml       like mi-only, m=2 has a null body Recipe -> REFUSE,
                                        SIGN with --allow-null-body-recipe
 
-  nd-to-us.eml           i=1 (test1, rt= test2) then a §9.3 bridge i=2 made by
+  nd-to-us.eml           i=1 (test1, rt= test2) then a §12.3 bridge i=2 made by
                          test2 with nd=test3.dkim2.com: the next hop IS the
                          signer                                   -> SIGN
   nd-to-other.eml        same, but nd=test4.dkim2.com: the bridge names some
@@ -84,6 +92,16 @@ ds = bnv.ds
 
 NEXT_DOM = "test3.dkim2.com"
 LIST_RT = f"list@{NEXT_DOM}"
+
+
+def _with_from(headers, addr):
+    """headers with From replaced (-07 §11: a list that changes a message
+    rewrites From into its own signing domain)."""
+    return [b"From: " + addr if h.lower().startswith(b"from:") else h
+            for h in headers]
+
+
+OUR_FROM = b'"Bron Gondwana via list" <list@test3.dkim2.com>'
 
 
 def _signed_bottom(headers, body):
@@ -122,26 +140,57 @@ def _mi_only(headers1, body1, headers2, body2, recipe_fn):
     return msg + b"\r\n" + body2
 
 
+# The mi-only list also rewrites From into test3.dkim2.com (-07 §11): with no
+# DKIM2-Signature yet, the signer's From must be Authentic for its own d=.
 def build_mi_only():
     h, b = bnv.load_base()
-    return _mi_only(h, b, bnv._subject_prefixed(h, b"list"),
+    return _mi_only(h, b, _with_from(bnv._subject_prefixed(h, b"list"), OUR_FROM),
                     b + b"footer\r\n", ds.build_recipes)
 
 
 def build_mi_only_broken():
     h, b = bnv.load_base()
-    return _mi_only(h, b, bnv._to_changed(bnv._subject_prefixed(h, b"list")),
+    return _mi_only(h, b, _with_from(bnv._to_changed(bnv._subject_prefixed(h, b"list")), OUR_FROM),
                     b + b"footer\r\n", bnv._forged_plain_recipe)
 
 
 def build_mi_only_null():
     h, b = bnv.load_base()
-    return _mi_only(h, b, bnv._subject_prefixed(h, b"list"),
+    return _mi_only(h, b, _with_from(bnv._subject_prefixed(h, b"list"), OUR_FROM),
                     b + b"rewritten by list\r\n", bnv._null_body_recipe)
 
 
-def build_fresh():
+def _src():
     return open(bnv.SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+
+
+def build_fresh():
+    """An unsigned message test3 originates: From is in test3.dkim2.com."""
+    return _src().replace(b'From: "Bron Gondwana" <brong@test1.dkim2.com>',
+                          b'From: "Bron Gondwana" <brong@test3.dkim2.com>', 1)
+
+
+def build_fresh_from_not_authentic():
+    """The same, but From is in test1.dkim2.com: originating it as test3
+    would make From not Authentic (A3)."""
+    return _src()
+
+
+def _from_rewritten(addr):
+    """Valid i=1/m=1 (test1, rt= the list at test3); an UNSIGNED m=2 where
+    the list tagged Subject, added a footer and rewrote From to <addr>
+    (its Recipe has a "from" key)."""
+    h, b = bnv.load_base()
+    return _with_unsigned_top(h, b, _with_from(bnv._subject_prefixed(h, b"list"), addr),
+                              b + b"footer\r\n", ds.build_recipes)
+
+
+def build_from_rewritten_us():
+    return _from_rewritten(OUR_FROM)
+
+
+def build_from_rewritten_other():
+    return _from_rewritten(b"list@test2.dkim2.com")
 
 
 def build_valid_chain():
@@ -285,7 +334,7 @@ def build_recipe_duplicate_key():
 
 
 def _nd_bridge(nd):
-    """i=1 test1 -> test2, then test2's §9.3 bridge i=2 carrying nd=<nd>."""
+    """i=1 test1 -> test2, then test2's §12.3 bridge i=2 carrying nd=<nd>."""
     raw = open(bnv.SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
     msg = ds.sign_message(raw, "sel1", "test1.dkim2.com", bnv.key("sel1", "test1.dkim2.com"),
                           mailfrom="sender@test1.dkim2.com",
@@ -307,6 +356,9 @@ FIXTURES = {
     "signature-gap.eml": bnv.build_signature_gap,
     "instance-gap.eml": bnv.build_instance_gap,
     "fresh.eml": build_fresh,
+    "fresh-from-not-authentic.eml": build_fresh_from_not_authentic,
+    "from-rewritten-us.eml": build_from_rewritten_us,
+    "from-rewritten-other.eml": build_from_rewritten_other,
     "valid-chain.eml": build_valid_chain,
     "broken-signature.eml": build_broken_signature,
     "broken-mi-chain.eml": build_broken_mi_chain,

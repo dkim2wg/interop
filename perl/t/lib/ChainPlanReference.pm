@@ -40,7 +40,10 @@ sub reference_walk {
     while (1) {
         my ($num, $field) = _top_mi($msg);
         last unless $num;
-        my $mi = Mail::DKIM2::MessageInstance->parse($field);
+        # An instance that does not parse ends the walk, as in plan_walk.
+        # (The -06 charset corpus carries "b" Recipe steps, which -07 parses
+        # as invalid JSON; it needs recapturing after the -07 deploy.)
+        my $mi = eval { Mail::DKIM2::MessageInstance->parse($field) } or last;
         my $hashes = $mi->get_tag('hashes') || {};
         for my $alg (grep { $hashes->{$_} } @ALGS) {
             $out{heads}{$num}{$alg} =
