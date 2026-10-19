@@ -1,13 +1,13 @@
 # DKIM2 Message-Instance support for Sympa 6.2.78
 
-Three patches that make Sympa record, in a `Message-Instance` header, what
+Five patches that make Sympa record, in a `Message-Instance` header, what
 it changed about each message it redistributes, so a DKIM2 verifier
 downstream can undo the list's changes and check the signatures of earlier
 hops. Sympa adds only `Message-Instance` (and `X-DKIM2-Info`); the
 `DKIM2-Signature` is added by the MTA (see the [Postfix mailing-list host
 guide](../docs/dkim2-postfix-list-host-guide.md)).
 
-The same three commits are the `dkim2` branch of
+The same five commits are the `dkim2` branch of
 <https://github.com/brong/sympa>, which is what these patches are exported
 from. The design is described in that branch's `DKIM2-MESSAGE-INSTANCE.md`,
 which patch 2 adds.
@@ -35,6 +35,21 @@ which patch 2 adds.
 3. **Add the X-DKIM2-Info debug header.** One above every Message-Instance
    Sympa adds, naming the draft, implementation date, action and hashed
    header fields, so an interop problem can be diagnosed from the message.
+4. **DKIM2 draft -07: From rewrite, exploded hint, unsigned posts start a
+   chain.** Draft -07 requires From to be Authentic (section 11), so on a
+   DKIM2 list `dmarc_protect` always rewrites From to the list address,
+   whatever `dmarc_protection.mode` says (`ToList` and `DoForward` shelve
+   it); the original From goes in the header Recipe. Every copy
+   carries `X-DKIM2-Exploded: yes`, asking the outbound signer for
+   `f=exploded`. `dmarc_protection.other_email` and `anonymous_sender`
+   must be in the list's domain (a notice is logged otherwise). Needs
+   Mail::DKIM2 0.23.
+5. **An unsigned post leaves with one m=1, Recipe back to the original.**
+   A post that arrived without a `DKIM2-Signature` leaves with a single
+   `m=1` (replacing the one it arrived with or ingress added) that hashes
+   the rewritten, decorated copy and carries a Recipe back to the message
+   as received, original From included; the list host signs it as `i=1`
+   (-07 section 12.1). Patch 4 removed the chain for such posts instead.
 
 The series before the always-wrap rework (encoding-preserving decoration,
 a `.mi_orig` spool file, Recipes by diff) is kept as the tag
@@ -48,14 +63,12 @@ there. Older packages are not supported.
 ## Dependencies
 
 `Sympa::DKIM2` loads `Mail::DKIM2::MessageInstance` and
-`Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution, version 0.15
-or later (`cpanm Mail::DKIM2`; source in [`../perl`](../perl)). Sympa uses
-only 0.15's API. 0.16 changes none of it, but its MessageInstance code is
-stricter about the upstream chain it builds on (an `m=` that is not a chain
-number, a duplicate key in a Recipe's JSON), so prefer it when it is on
-CPAN. The Gate fixes in 0.16 are for signers; Sympa does not use the Gate.
+`Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution, version 0.23
+or later (`cpanm Mail::DKIM2`; source in [`../perl`](../perl)): 0.23
+implements draft -07 (the `"u"` Recipe step, the From-Authentic checks,
+the `exploded` flag). The outbound signer needs a -07 Mail::DKIM2 too.
 Mail::DKIM2 is loaded only for lists with the switch on; a list with the
-switch on and no Mail::DKIM2, or one older than 0.15, logs an error and
+switch on and no Mail::DKIM2, or one older than 0.23, logs an error and
 runs as stock. Nothing else is needed beyond what 6.2.78 itself requires.
 
 ## Installing
@@ -92,10 +105,12 @@ patches do not carry):
 src/lib/Sympa/Config/Schema.pm
 src/lib/Sympa/DKIM2.pm                     (new)
 src/lib/Sympa/Message.pm
+src/lib/Sympa/Spindle/DoForward.pm
 src/lib/Sympa/Spindle/ProcessArchive.pm
 src/lib/Sympa/Spindle/ProcessIncoming.pm
 src/lib/Sympa/Spindle/ProcessOutgoing.pm
 src/lib/Sympa/Spindle/ResendArchive.pm
+src/lib/Sympa/Spindle/ToList.pm
 ```
 
 Then in `sympa.conf`:
@@ -127,7 +142,11 @@ dkim2_message_instance on
 ```
 
 The same line in `robot.conf` or `sympa.conf` sets the default for a robot
-or the whole site. A message already in a spool when the switch is turned
+or the whole site. On such a list every post goes out with From rewritten
+to the list address (draft -07 requires From to be in the signing domain).
+If the list sets `dmarc_protection.other_email` or `anonymous_sender`, use
+an address in the list's domain, or the outbound signer will refuse the
+mail. A message already in a spool when the switch is turned
 on has no saved header block and goes out without a new instance.
 
 ## Regenerating the series
