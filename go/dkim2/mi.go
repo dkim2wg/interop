@@ -83,7 +83,7 @@ func implementedAlgs(hashes []HashSet) []string {
 // verifyMIHashesPrecomputed checks every implemented hash-set in mi against
 // a freshly computed header hash (per algorithm; headers is an in-memory
 // slice, so recomputing per algorithm is cheap) and the already-computed
-// bodyHashes (one streaming pass over the body — see hashBodyMulti — must
+// bodyHashes (one streaming pass over the body — see hashBodyStream — must
 // have produced an entry for every algorithm implementedAlgs(mi.Hashes)
 // names). All implemented hash-sets MUST match; unimplemented algorithms are
 // skipped per §3.4. Fails closed with the spec-06 message when none of the
@@ -154,10 +154,10 @@ func checkMIHeaderHashes(mi *MessageInstance, headerHash func(string) ([]byte, e
 // verifyMIHashes is the buffered-body convenience form of
 // verifyMIHashesPrecomputed, for callers (Undo) that already hold the whole
 // body in memory. It still hashes the body in a single streaming pass across
-// all implemented algorithms (hashBodyMulti), it just reads that pass from a
-// bytes.Reader over the already-buffered body rather than from a live stream.
+// all implemented algorithms (hashBodyStream), handed the whole body as one
+// slice rather than read from a live stream.
 func verifyMIHashes(mi *MessageInstance, headers []Header, body []byte) error {
-	bodyHashes, err := hashBodyMulti(bytes.NewReader(body), implementedAlgs(mi.Hashes))
+	bodyHashes, err := hashBodyStream(bytes.NewReader(body), implementedAlgs(mi.Hashes))
 	if err != nil {
 		return err
 	}

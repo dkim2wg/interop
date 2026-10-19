@@ -18,7 +18,8 @@ import (
 // Returns one VerifyResult per signature. Body is never buffered: it is
 // canonicalised in a single streaming pass, fanned out to one hash.Hash per
 // implemented algorithm the topmost Message-Instance's h= tag names (see
-// hashBodyMulti), even when that names more than one algorithm.
+// hashBodyStream), even when that names more than one algorithm.  It is
+// read only when a body hash is needed.
 // An optional VerifyOptions may be passed to enable §10.4 envelope matching.
 //
 // With real DNS keys (NetKeyFetcher) every key the signatures name is
@@ -31,12 +32,8 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 		return nil, fmt.Errorf("parsing headers: %w", err)
 	}
 	fetcher = prefetchKeys(headers, fetcher, opts...)
-	bodyReader, err := readBody(br)
-	if err != nil {
-		return nil, fmt.Errorf("parsing headers: %w", err)
-	}
 	return verifyFields(headers, func(algs []string) (map[string][]byte, error) {
-		return hashBodyMulti(bodyReader, algs)
+		return hashBodyStream(br, algs)
 	}, fetcher, opts...)
 }
 
