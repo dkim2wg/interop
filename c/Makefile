@@ -1,5 +1,5 @@
 CC      = cc
-CFLAGS  = -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -g -MMD -MP \
+CFLAGS  = -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -O2 -g -MMD -MP \
           $(shell pkg-config --cflags openssl) \
           $(shell PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig pkg-config --cflags libcjson)
 LDFLAGS = $(shell pkg-config --libs openssl) \
