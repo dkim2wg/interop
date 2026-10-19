@@ -36,3 +36,14 @@ dkim2_pubkey_t *dkim2_dns_getkey(const char *selector, const char *domain,
     dkim2_status_t *statusp, const char **errp);
 
 void dkim2_pubkey_free(dkim2_pubkey_t *k);
+
+/* The answer-handling half of dkim2_dns_getkey: a TXT answer (answer,
+   anslen as res_query returns them; anslen < 0 with herr the h_errno of a
+   failed query) to a key, with the same outcomes. */
+dkim2_pubkey_t *dkim2_dns_key_from_answer(const unsigned char *answer, int anslen,
+    int herr, dkim2_status_t *statusp, const char **errp);
+
+/* Whether an answer settles a lookup: it parses (records or none), or the
+   name does not exist / has no data. A SERVFAIL, a timeout or any other
+   failure does not. */
+int dkim2_dns_answer_settles(const unsigned char *answer, int anslen, int herr);

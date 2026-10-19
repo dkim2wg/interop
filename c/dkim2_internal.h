@@ -86,7 +86,8 @@ typedef struct dkim2_ctx {
     dkim2_body_hasher_t *body_hasher;           /* non-NULL during body accumulation */
 
     /* Optional: CRLF-normalised body bytes for full-chain MI hash verification.
-       If NULL, only the topmost MI's body hash is checked (via body_digests). */
+       If NULL and there is no plan either, only the topmost MI's body hash is
+       checked (via body_digests). */
     char *body;
     size_t body_len;
 
@@ -95,7 +96,18 @@ typedef struct dkim2_ctx {
     char **rcpt_to;         /* NULL-terminated array of "<addr>" */
     int n_rcpt;
 
+    /* Optional: the planned chain walk, made at end of headers and fed the
+       body as it arrives (dkim2_plan.h; the milter). Owned by the caller.
+       If NULL, dkim2_do_verify plans from ctx->body itself. */
+    struct dkim2_plan *plan;
+
+    /* Optional: key lookups started at end of headers (dkim2_prefetch.h).
+       Owned by the caller; NULL = look every key up when it is needed. */
+    struct dkim2_prefetch *prefetch;
+
     /* Verifier options */
+    int undo_walk;             /* 1 = check the chain with the undo walk (the
+                                  reference) instead of the planned walk */
     int skip_timestamp_check;  /* 1 = skip t= expiry check (for testing) */
     int outbound;              /* 1 = signer gate: an unsigned top Message-Instance
                                   is allowed, and the envelope in mail_from/rcpt_to

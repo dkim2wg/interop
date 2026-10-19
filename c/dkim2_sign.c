@@ -177,10 +177,10 @@ static int unsigned_null_body_mi(const dkim2_ctx_t *ctx, int *is_top) {
    outbound mode (the unsigned top Message-Instance is the one we are about to
    cover). Returns 0 to go ahead and sign, -1 to refuse with ctx->errmsg set.
 
-   When ctx->body is NULL (the milter only keeps a body digest) the topmost
-   instance's body hash is checked against the digest, but body Recipes cannot
-   be undone to check inner instances' body hashes; their header hashes (and
-   the header Recipes) are still walked. */
+   Every instance's body hash is checked when the body is known -- as bytes
+   (ctx->body) or streamed into ctx->plan (the milter). With neither, only
+   the topmost instance's body hash is checked, against the digest; inner
+   instances' header hashes (and the header Recipes) are still walked. */
 static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     if (cfg->skip_chain_check) return 0;
     if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0] && !ctx->sig_error[0])

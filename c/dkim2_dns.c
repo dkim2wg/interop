@@ -186,10 +186,21 @@ dkim2_pubkey_t *dkim2_dns_getkey(const char *selector, const char *domain,
     int anslen = dkim2_dns_query_hook
         ? dkim2_dns_query_hook(qname, answer, (int)sizeof answer)
         : res_query(qname, ns_c_in, ns_t_txt, answer, (int)sizeof answer);
+    return dkim2_dns_key_from_answer(answer, anslen, h_errno, statusp, errp);
+}
+
+int dkim2_dns_answer_settles(const unsigned char *answer, int anslen, int herr) {
+    if (anslen < 0) return herr == HOST_NOT_FOUND || herr == NO_DATA;
+    ns_msg msg;
+    return ns_initparse(answer, anslen, &msg) == 0;
+}
+
+dkim2_pubkey_t *dkim2_dns_key_from_answer(const unsigned char *answer, int anslen,
+    int herr, dkim2_status_t *statusp, const char **errp) {
     if (anslen < 0) {
         /* §11.5: NXDOMAIN / no data is "absent" (PERMERROR); anything else
            (SERVFAIL, timeout, refused) could not be fetched (TEMPERROR). */
-        if (h_errno == HOST_NOT_FOUND || h_errno == NO_DATA) {
+        if (herr == HOST_NOT_FOUND || herr == NO_DATA) {
             *statusp = DKIM2_PERMERROR; *errp = DKIM2_KEYERR_ABSENT;
         } else {
             *statusp = DKIM2_TEMPERROR; *errp = DKIM2_KEYERR_FETCH;

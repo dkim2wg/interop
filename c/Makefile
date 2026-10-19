@@ -4,7 +4,7 @@ CFLAGS  = -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -g -MMD -MP \
           $(shell PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig pkg-config --cflags libcjson)
 LDFLAGS = $(shell pkg-config --libs openssl) \
           $(shell PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig pkg-config --libs libcjson) \
-          -lresolv
+          -lresolv -pthread
 
 MILTER_SRC  = /tmp/sendmail-8.18.2
 MILTER_INC  = -I$(MILTER_SRC)/include -I$(MILTER_SRC)/include/libmilter
@@ -13,7 +13,8 @@ MILTER_DEFS = -DDARWIN=250000 -DBIND_8_COMPAT -DNETINET6
 
 CORE_SRCS = base64.c tagparse.c dkim2_hash.c dkim2_header.c \
             dkim2_recipe.c dkim2_dns.c dkim2_crypto.c \
-            dkim2_sign.c dkim2_verify.c dkim2_message.c dkim2_dnsjson.c
+            dkim2_sign.c dkim2_verify.c dkim2_message.c dkim2_dnsjson.c \
+            dkim2_plan.c dkim2_prefetch.c
 CORE_OBJS = $(CORE_SRCS:.c=.o)
 
 all: dkim2-milter dkim2sign dkim2verify
@@ -40,13 +41,23 @@ dkim2_milter.o: dkim2_milter.c
 TESTS = tests/test_base64 tests/test_tagparse tests/test_hash \
         tests/test_header tests/test_recipe tests/test_crypto \
         tests/test_dns tests/test_verify tests/test_null_body \
-        tests/test_body_diff tests/test_strictness
+        tests/test_body_diff tests/test_strictness \
+        tests/test_plan tests/test_prefetch
 
 GATE_FIXTURES = tests/.gate-fixtures
 
 test: $(TESTS)
 	@for t in $(TESTS); do echo "Running $$t..."; $$t || exit 1; done
+	$(MAKE) test-plan-corpus
 	$(MAKE) test-signer-gate
+
+# Planned walk vs undo walk on real mail: the Perl fixtures and, when this
+# checkout has it, the captured list corpus (CORPUS=... to point elsewhere).
+CORPUS ?= ../corpus/results
+test-plan-corpus: tests/test_plan_corpus
+	@echo "Running tests/test_plan_corpus..."
+	@tests/test_plan_corpus ../dns.json ../perl/tests/expected \
+	    $(CORPUS)/dns-live.json $(CORPUS)/capture
 
 # Signer gate: needs the fixtures from util/build-signer-gate-fixtures.py.
 test-signer-gate: tests/test_signer_gate
@@ -84,6 +95,15 @@ tests/test_dns: tests/test_dns.c dkim2_dns.o dkim2_dnsjson.o tagparse.o base64.o
 tests/test_verify: tests/test_verify.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+tests/test_prefetch: tests/test_prefetch.c eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+tests/test_plan_corpus: tests/test_plan_corpus.c eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+tests/test_plan: tests/test_plan.c eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 tests/test_strictness: tests/test_strictness.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -102,4 +122,5 @@ dkim2verify: dkim2verify_cli.o eml_parse.o $(CORE_OBJS)
 -include $(CORE_SRCS:.c=.d) dkim2_milter.d dkim2sign_cli.d dkim2verify_cli.d eml_parse.d
 
 clean:
-	rm -f *.o *.d dkim2-milter dkim2sign dkim2verify $(TESTS) tests/test_signer_gate
+	rm -f *.o *.d dkim2-milter dkim2sign dkim2verify $(TESTS) tests/test_signer_gate \
+	      tests/test_plan_corpus
