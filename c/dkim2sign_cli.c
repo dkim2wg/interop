@@ -11,11 +11,14 @@ static void usage(const char *prog) {
         "       [--mailfrom ADDR] [--rcptto ADDR]... [--timestamp N]\n"
         "       [--hash sha256|sha512|both]\n"
         "       [--allow-null-body-recipe] [--dns-json PATH] [--ignore-timestamps]\n"
+        "       [--exploded]\n"
         "A message already carrying a DKIM2 chain is verified first (keys from\n"
         "--dns-json or $DKIM2_DNS_JSON, else DNS) and is not signed if it fails;\n"
         "a null body Recipe on an UNSIGNED Message-Instance (m= above every\n"
         "signature's m=, top or not) is refused unless --allow-null-body-recipe;\n"
-        "a null an upstream signature already covers is signed without it.\n",
+        "a null an upstream signature already covers is signed without it.\n"
+        "--exploded: this hop sends copies to more than one address (f=exploded\n"
+        "when i > 1; set anyway when there is more than one --rcptto).\n",
         prog);
     exit(1);
 }
@@ -33,7 +36,7 @@ int main(int argc, char *argv[]) {
     long long timestamp = -1;
     const char *hash = NULL;
     const char *dns_json = getenv("DKIM2_DNS_JSON");
-    int allow_null = 0, ignore_ts = 0;
+    int allow_null = 0, ignore_ts = 0, exploded = 0;
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc)
@@ -52,6 +55,8 @@ int main(int argc, char *argv[]) {
             allow_null = 1;
         else if (strcmp(argv[i], "--ignore-timestamps") == 0)
             ignore_ts = 1;
+        else if (strcmp(argv[i], "--exploded") == 0)
+            exploded = 1;
         else if (strcmp(argv[i], "--dns-json") == 0 && i + 1 < argc)
             dns_json = argv[++i];
         else if (strcmp(argv[i], "--hash") == 0 && i + 1 < argc) {
@@ -78,6 +83,7 @@ int main(int argc, char *argv[]) {
         .hash         = hash,
         .allow_null_body_recipe = allow_null,
         .skip_timestamp_check   = ignore_ts,
+        .exploded               = exploded,
     };
     if (dns_json && *dns_json) {
         char jerr[256];

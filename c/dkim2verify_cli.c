@@ -59,7 +59,11 @@ int main(int argc, char *argv[]) {
     dkim2_verify_result_t result = dkim2_verify_message_opts(
         eml_path, mailfrom, n_rcpt > 0 ? rcptto : NULL, no_timestamp, &opts);
 
-    if (verbose || result.status != DKIM2_OK)
+    /* No DKIM2 header fields: the result is "none", with no error string
+       (not a pass either). */
+    if (result.status == DKIM2_NONE)
+        fprintf(stderr, "none\n");
+    else if (verbose || result.status != DKIM2_OK)
         fprintf(stderr, "%s\n", result.message);
 
     dkim2_dns_json_free();

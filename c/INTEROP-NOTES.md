@@ -700,6 +700,92 @@ The streaming body hasher (milter) was rewritten on the same lines and a bug
 fell out: a lone CR emitted its CRLF at once instead of holding it back, so a
 body ending `"\r\r"` or `"\r\r\n"` hashed one CRLF too many.
 
+## 23. Draft -07 (2026-10-18): rulings and what the matrices turned up
+
+All five implementations moved to draft-ietf-dkim-dkim2-spec-07 together
+(contract: `docs/superpowers/specs/2026-10-18-dkim2-spec-07-design.md`).
+Rulings made during that work, which every implementation and harness
+follows:
+
+- **";;" in a tag-list is a syntax error** (-07 §8: every tag-spec needs a
+  tag-name). `PERMERROR: DKIM2-Signature i=<x> syntax error` /
+  `Message-Instance m=<x> syntax error`.
+- **Every Recipe error is "contains invalid JSON".** JSON syntax, a
+  duplicate key (including two keys equal ignoring case), an unknown, missing
+  or second step key (the -06 `"b"` step is now unknown), `"h": {}`, bad copy
+  ranges (past the end, overlapping, descending) and bad `"u"`/`"d"` literals
+  all give `PERMERROR: Message-Instance m=<x> contains invalid JSON`. The
+  browser verifier's old "has a malformed Recipe" is gone.
+- **An absent `r=` means no change**: state m−1 is state m; differing hashes
+  then show as a FAIL hash mismatch on the lower instance.
+- **Turscar `algorithm_only_future`** (a signature whose only `s=` item uses
+  an unknown algorithm) is a PERMERROR here (a local check with no -07 text),
+  where the vector expects another reject state. Every runner gates on
+  accept/reject; the JS runner records the contract state explicitly.
+- **No DKIM2 header fields at all** is result `none` with no error string
+  (Perl keeps the informational detail "no DKIM2-Signature headers found").
+- **A propagated DSN's From** is rewritten to
+  `MAILER-DAEMON@<forwarder domain>` (Perl: `postmaster@`) when it is not
+  Authentic for the forwarder, which signs it as a new `i=1`.
+- **Perl milters reply `550 5.7.1 <reason>`** when they refuse to sign a
+  message that carries an upstream DKIM2-Signature (-07 §12 MUST NOT sign,
+  §13 MUST NOT send), including local-policy refusals such as an unsigned
+  null body Recipe without the option. Without an upstream signature the
+  message is still delivered unsigned. The C milter does the same (it
+  rejected every refusal until fix round 1).
+  Deployment note in `deploy/SERVER.md` and the operator guide.
+- **Stock Mailman cannot rewrite From in code**: DKIM2 lists on that route set
+  `dmarc_mitigate_action=munge_from` and `dmarc_mitigate_unconditionally=True`.
+- **Exploded hint header**: `X-DKIM2-Exploded: yes`, added by Mailman and
+  Sympa to every distribution copy, consumed and deleted by the signing
+  milters (Perl and C), which set `f=exploded` above `i=1`.
+
+What the cross-implementation runs found:
+
+- **C did not blank `s = sel:alg:sig`** (FWS between the tag name and `=`).
+  `blank_sig_values` looked only for `s=`, so the signing input kept the
+  signature bytes and every such signature failed. Turscar's
+  `tags_whitespace`, broken upstream until dkim2tests a382236 (it had an empty
+  `s=` value at 9c48edf, so every runner skipped it), exposed it once fixed.
+  Fixed in `dkim2_verify.c`, regression test in `tests/test_verify.c`; the
+  `tags_whitespace` skip is gone from all five runners.
+- **Error strings for i=/m= numbers are now one wording in all five**
+  (they differed after the first -07 pass). A missing `i=`:
+  `PERMERROR: DKIM2-Signature i= tag=i missing`; one that is not a positive
+  integer: `... i=<as written> syntax error`; a signature's malformed `m=`:
+  `... i=<i> syntax error`; a Message-Instance's: `Message-Instance
+  m=<as written> syntax error`; out of range: `DKIM2-Signature i=33 exceeds
+  the maximum chain length of 32`, `DKIM2-Signature i=2 m=4294967297 exceeds
+  the maximum chain number of 100`, `Message-Instance m=101 exceeds ...`; a
+  duplicate `m=`: `Message-Instance m=1 appears more than once`.
+  `util/negative-vectors.sh` requires exactly one string per vector.
+- **RESOLVED (Ruling 19): From at m=1 against i=1 when From changed before
+  the first signature.** The first contract C5 paired the From at state 1
+  with signature i=1. For a Message-Instance-only chain, as Mailman and the
+  stock-Mailman wrap milter produced for a post from a sender that does not
+  sign DKIM2 (unsigned `m=1` with the author's From, the list's `m=2`
+  rewriting From, the list signing `i=1` over `m=2`), every signer signed and
+  every verifier then rejected it with `i=1 matching From is not authentic`.
+  -07 §11 compares i=1 with the From "not altered since ... the i=1
+  DKIM2-Signature field was created". C5 now checks the From in effect when
+  each signature was made: state m(i=1) against i=1, and state m(i) against
+  i when an instance in (m(i-1), m(i)] replaced From. A From replaced
+  before any signature covered it is never checked (-07 §13.3 leaves that
+  original-form check to the receiver as an optional assessment). All five
+  verifiers implement it; `util/negative-vectors.sh` has
+  `positive-control-ingress-from-rewritten` and
+  `from-not-authentic-at-signed-state`.
+  Independently (Ruling 17), Mailman, Sympa and the Perl outbound milter now
+  send an unsigned post as a single `m=1` over the copy as sent, with a
+  Recipe back to the post as received; the Perl reflector restarts at `m=1`
+  too. Both shapes verify under the corrected C5.
+- **The charset corpus captures are -06 list mail** (`"b"` steps, author
+  From) and fail -07; they must be recaptured after the -07 deploy
+  (`util/charset-corpus.sh --stage lists`). Python's `test_plan_corpus.py`
+  tolerates those two errors and Perl's `t/lib/ChainPlanReference.pm` stops
+  at an instance that does not parse until then.
+- `util/croessner-verify.sh` (network, his daemon pinned to -06) was not run.
+
 ---
 
 ## Spec Quality Issues
@@ -880,6 +966,7 @@ message, fixed timestamp, known key, showing every intermediate value.
 | 20 | Failed undo returned the message with a warning | Fixed (Python raises) | High (fail-open) |
 | 21 | Outbound milter applied §11 PERMERROR to its own unsigned m= | Fixed (`allow_unsigned_mi`) | Critical (list mail left unsigned) |
 | 22 | Chain walk rebuilt every message; keys looked up one by one | Planned walk + prefetch (undo walk kept as reference) | Performance; milter now checks inner body hashes |
+| 23 | -07: `s = ...` not blanked (C); local-check wording differed; From at m=1 vs i=1 on MI-only chains | All fixed (C blanker; one wording; C5 Ruling 19) | Critical (was: Mailman posts from outside authors failed -07) |
 | S1 | Trailing `;` should be normative | Spec issue | Critical for interop |
 | S2 | `ed25519-sha256` prehash semantics unstated | Spec issue | Critical for interop |
 | S3 | §5.2 vs §8.5 WSP rules not cross-referenced | Spec issue | High |

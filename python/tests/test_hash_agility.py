@@ -11,7 +11,7 @@ from dkim2verify import parse_hash_sets, verify_message_instance  # noqa: E402
 
 
 def test_registry_has_both_algorithms():
-    # spec-06 §3: Verifiers MUST implement all four algorithms
+    # -07 §3: Verifiers MUST implement all four algorithms
     assert set(HASH_ALGS) == {"sha256", "sha512"}
 
 
@@ -63,13 +63,12 @@ def test_duplicate_algorithm_detected_case_insensitively():
 # --- Review round 1 findings -------------------------------------------------
 
 def test_malformed_base64_hash_value_is_permerror_not_crash():
-    # §11.2: verifiers MUST meticulously validate format and values. A
+    # §14.2: verifiers MUST meticulously validate format and values. A
     # hostile/corrupt h= value must not raise an uncaught exception.
     headers = [b"From: a@b\r\n"]
     body = b"x\r\n"
     errs = verify_message_instance(_mi("sha256:!!!notb64!!!:AAAA"), headers, body)
-    assert any("PERMERROR" in e and "not valid base64" in e and "sha256" in e
-               for e in errs)
+    assert errs[0] == "PERMERROR: Message-Instance m=1 syntax error", errs
 
 
 def test_mixed_hash_sets_sha512_wrong_fails_and_names_sha512():

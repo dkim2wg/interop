@@ -10,7 +10,7 @@ import (
 // ndSignHop signs `in` (the message produced by the previous hop, or the raw
 // fixture for the first hop) with the given key/Selector/domain, producing
 // the next i=/m= layer. Exactly one of (mf/rt) or nd should be set per
-// draft-06 §8 (nd= excludes mf=/rt=), matching the real Sign() constraint.
+// §10 (nd= excludes mf=/rt=), matching the real Sign() constraint.
 func ndSignHop(t *testing.T, in []byte, keyFile, sel, dom, mf string, rt []string, nd string) []byte {
 	t.Helper()
 	keyPEM, err := os.ReadFile("../../keys/" + keyFile)
@@ -46,7 +46,7 @@ func ndTestRaw(t *testing.T) []byte {
 }
 
 // TestTopNdRejected builds a 2-hop chain whose HIGHEST (top) DKIM2-Signature
-// carries nd= instead of mf=/rt=. Per local policy (stricter than spec-06),
+// carries nd= instead of mf=/rt=: -07 §14.4 "unexpected nd= tag".
 // the only legitimate nd= producer emits the nd= signature together with the
 // matching higher-i= signature at the same time, so nd= must never appear on
 // the top signature. Verify must reject it.
@@ -97,7 +97,7 @@ func TestNonTopNdChainVerifies(t *testing.T) {
 	}
 }
 
-// TestBridgeFromUnrelatedDomainRejected is the §9.3 requirement behind the
+// TestBridgeFromUnrelatedDomainRejected is the §12.3 requirement behind the
 // case above: the extra DKIM2-Signature has to be made with a key for a domain
 // in the RCPT TO the message arrived with. Here the bridge is signed by
 // test4.dkim2.com, which the message never reached, so the chain must fail.
@@ -117,7 +117,7 @@ func TestBridgeFromUnrelatedDomainRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("a bridge from a domain the mail never reached was accepted")
 	}
-	if !strings.Contains(err.Error(), "i=2 nd= hop d=test4.dkim2.com did not match RCPT TO") {
+	if !strings.Contains(err.Error(), "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1") {
 		t.Fatalf("err = %v, want the nd= hop d= mismatch", err)
 	}
 }
@@ -138,7 +138,7 @@ func TestUnbridgedForwardBreaksCustody(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unbridged forward from another domain kept custody")
 	}
-	if !strings.Contains(err.Error(), "did not match") {
+	if !strings.Contains(err.Error(), "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1") {
 		t.Fatalf("err = %v, want a chain-of-custody failure", err)
 	}
 }

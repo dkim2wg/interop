@@ -249,7 +249,7 @@ func planCases() []planCase {
 			{h, "--x\r\nContent-Type: text/plain\r\n\r\nhello\r\nworld\r\n--x--\r\n", `{"b":[{"c":[4,5]}]}`}}},
 		{name: "literals around copies", levels: []planLevel{
 			{h, "A\r\nb\r\nC\r\nd\r\nE\r\n", ""},
-			{h, "b\r\nd\r\n", `{"b":[{"d":["A"]},{"c":[1,1]},{"d":["C"]},{"c":[2,2]},{"b":["RQ=="]}]}`}}},
+			{h, "b\r\nd\r\n", `{"b":[{"d":["A"]},{"c":[1,1]},{"d":["C"]},{"c":[2,2]},{"u":["RQ=="]}]}`}}},
 		{name: "three levels copying a literal", levels: []planLevel{
 			{h, "X\r\n", ""},
 			{h, "X\r\nb\r\n", `{"b":[{"c":[1,1]}]}`},
@@ -268,26 +268,26 @@ func planCases() []planCase {
 		{name: "copy into trailing blank lines", levels: []planLevel{
 			{h, "a\r\n\r\nq\r\n", ""},
 			{h, "a\r\n\r\n\r\n", `{"b":[{"c":[1,2]},{"d":["q"]}]}`}}},
-		{name: "copy past end", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "copy past end", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\nb\r\n", ""},
 			{h, "a\r\n", `{"b":[{"c":[1,3]}]}`}}},
-		{name: "copy past end of a rebuilt body", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "copy past end of a rebuilt body", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\nb\r\n", ""},
 			{h, "a\r\n", `{"b":[{"c":[1,2]}]}`},
 			{h, "a\r\nb\r\n", `{"b":[{"c":[1,1]}]}`}}},
-		{name: "out of order copies", noPlan: true, want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "out of order copies", noPlan: true, want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "b\r\na\r\n", ""},
 			{h, "a\r\nb\r\n", `{"b":[{"c":[2,2]},{"c":[1,1]}]}`}}},
-		{name: "overlapping copies", noPlan: true, want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "overlapping copies", noPlan: true, want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\nb\r\nb\r\nc\r\n", ""},
 			{h, "a\r\nb\r\nc\r\n", `{"b":[{"c":[1,2]},{"c":[2,3]}]}`}}},
 		{name: "null body recipe", levels: []planLevel{
 			{h, "whatever\r\n", ""},
 			{strings.Replace(h, "hello", "[l] hello", 1), "new\r\n", `{"h":{"subject":[{"d":["hello"]}]},"b":null}`}}},
-		{name: "null body recipe, header mismatch below", want: "body not checked below a null body Recipe", levels: []planLevel{
+		{name: "null body recipe, header mismatch below", want: "FAIL: Message-Instance m=1 header hash sha256 mismatch", levels: []planLevel{
 			{strings.Replace(h, "hello", "other", 1), "whatever\r\n", ""},
 			{strings.Replace(h, "hello", "[l] hello", 1), "new\r\n", `{"h":{"subject":[{"d":["hello"]}]},"b":null}`}}},
-		{name: "header recipes checked below a null body recipe", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "header recipes checked below a null body recipe", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "b\r\n", `{"h":{"subject":[{"c":[1,2]}]},"b":[{"c":[1,5]}]}`},
 			{h, "c\r\n", `{"b":null}`}}},
@@ -307,7 +307,7 @@ func planCases() []planCase {
 			{h, "\r\n", ""},
 			{h, "", `{"b":[{"c":[1,1]}]}`},
 			{h, "foot\r\n", `{"b":[]}`}}},
-		{name: "copy from an empty body", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "copy from an empty body", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "\r\n", ""},
 			{h, "", `{"b":[{"c":[1,1]}]}`}}},
 		{name: "only blank lines", levels: []planLevel{
@@ -319,7 +319,7 @@ func planCases() []planCase {
 		{name: "bare LF", levels: []planLevel{
 			{h, "b\n", ""},
 			{h, "a\nb\n\n", `{"b":[{"c":[2,2]}]}`}}},
-		{name: "body hash mismatch", want: "m=1: sha256 body hash mismatch", levels: []planLevel{
+		{name: "body hash mismatch", want: "FAIL: Message-Instance m=1 body hash sha256 mismatch", levels: []planLevel{
 			{h, "a\r\nX\r\n", ""},
 			{h, "a\r\nb\r\n", `{"b":[{"c":[1,1]},{"d":["Y"]}]}`}}},
 		{name: "subject tag removed", levels: []planLevel{
@@ -354,36 +354,36 @@ func planCases() []planCase {
 			{h + "Received: from a\r\nX-Foo: bar\r\n", "a\r\n", ""},
 			{"Received: from b\r\n" + h + "Received: from a\r\nX-Other: 1\r\n", "a\r\n",
 				`{"h":{"received":[{"c":[1,1]}],"x-foo":[{"d":["bar"]}],"x-other":[]}}`}}},
-		{name: "skipped field copy past end", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "skipped field copy past end", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h + "Received: from a\r\n", "a\r\n", `{"h":{"received":[{"c":[1,2]}]}}`}}},
-		{name: "header copy past end", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "header copy past end", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "a\r\n", `{"h":{"subject":[{"c":[1,2]}]}}`}}},
-		{name: "header copy of a missing field", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "header copy of a missing field", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "a\r\n", `{"h":{"keywords":[{"c":[1,1]}]}}`}}},
-		{name: "header copies out of order", noPlan: true, want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "header copies out of order", noPlan: true, want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h + "Comments: 1\r\nComments: 2\r\n", "a\r\n", `{"h":{"comments":[{"c":[2,2]},{"c":[1,1]}]}}`}}},
-		{name: "first bad name in key order", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "first bad name in key order", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "a\r\n", `{"h":{"to":[{"c":[1,3]}],"keywords":[{"c":[1,1]}],"subject":[{"c":[2,2]}]}}`}}},
-		{name: "body error before header error", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "body error before header error", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "a\r\n", `{"h":{"subject":[{"c":[1,2]}]},"b":[{"c":[1,9]}]}`}}},
-		{name: "upper error wins over lower", want: "PERMERROR Message-Instance m=3 has a malformed Recipe", levels: []planLevel{
+		{name: "upper error wins over lower", want: "PERMERROR: Message-Instance m=3 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "a\r\n", `{"h":{"subject":[{"c":[1,2]}]}}`},
 			{h, "a\r\n", `{"b":[{"c":[1,4]}]}`}}},
-		{name: "hash mismatch above a recipe error", want: "target v=2", levels: []planLevel{
+		{name: "hash mismatch above a recipe error", want: "FAIL: Message-Instance m=2 header hash sha256 mismatch", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{strings.Replace(h, "hello", "zz", 1), "a\r\n", `{"h":{"subject":[{"c":[1,2]}]}}`},
 			{h, "a\r\n", `{"b":[{"c":[1,1]}]}`}}},
 		{name: "message-instance named by a header recipe", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "a\r\n", `{"h":{"message-instance":[{"d":["m=7; h=sha256:AA==:AA=="]}]}}`}}},
-		{name: "message-instance copied by a header recipe", want: "PERMERROR Message-Instance m=2 has a malformed Recipe", levels: []planLevel{
+		{name: "message-instance copied by a header recipe", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "a\r\n", `{"h":{"message-instance":[{"c":[1,1]}]}}`}}},
 		{name: "m=01", m01: true, levels: []planLevel{

@@ -1,4 +1,4 @@
-# Mail::DKIM2 — Perl implementation of draft-ietf-dkim-dkim2-spec-06
+# Mail::DKIM2 — Perl implementation of draft-ietf-dkim-dkim2-spec-07
 
 ## Project structure
 
@@ -15,7 +15,7 @@
 - `../dns.json` — shared DNS key records for interop testing
 - `../keys/` — shared private keys for interop testing
 - `../python/` — Python DKIM2 implementation (separate, for interop testing)
-- `../spec/` — draft-ietf-dkim-dkim2-spec-06.txt
+- `../spec/` — draft-ietf-dkim-dkim2-spec-07.txt
 
 ## Dependencies
 
@@ -38,7 +38,7 @@ whitespace differently. Keep them apart.
    hash alone, but inserting a fold where there was no whitespace adds a
    space and breaks every Message-Instance that hashed that field.
 
-2. **Signing input** (spec-06 §9.6; Common's
+2. **Signing input** (-07 §12.8; Common's
    `dkim2_canonicalize_sig_header`): covers only the Message-Instance and
    DKIM2-Signature fields. It unfolds and then deletes ALL WSP. Folding these
    two fields -- at creation or later -- cannot change any signature, and
@@ -102,6 +102,14 @@ headers. Options (`IgnorePrefixes`, `Algs`, `UseEpilogue`,
 `EpilogueThreshold`, `MaxRecipeLiterals`) are CamelCase like every other option in the dist;
 `verify` and `chain_verifies` take `IgnorePrefixes` too. There is no
 process-wide ignore list.
+
+`UseEpilogue` and `EpilogueThreshold` are **disabled since 0.23**: `calculate`
+and `calculate_first` croak if either is set (UseEpilogue true), and
+`bin/dkim2-milter` refuses to start with `--use-epilogue` or
+`--epilogue-threshold`. The instance was computed over the message rewritten
+with the epilogue while the caller signed the original bytes, so that mail
+failed verification. Re-enable only together with a fix that signs the bytes
+the instance describes.
 
 ## Interop testing
 

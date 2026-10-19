@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { verifyMessage, relaxedDomainMatch, domainOf } from '../verify.js';
+import { verifyMessage } from '../verify.js';
 import { parseKeyRecord } from '../doh.js';
 import { parseMessage, collectLevels } from '../parse.js';
 import { canonHeaderHash, canonBody, signingInput } from '../canon.js';
@@ -12,7 +12,7 @@ import { stringToBytes, bytesToB64 } from '../b64.js';
 
 // A real, single-hop signed sample (mailfrom_case vector) whose Message-Instance
 // sha256 hashes and RSA signature genuinely verify against the shared dns.json
-// key. Using it lets the §11.4 envelope / §11.3 timestamp checks be the sole
+// key. Using it lets the §14.4 envelope / §14.3 timestamp checks be the sole
 // determinant of the outcome (MI + crypto both pass on their own).
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..', '..');
@@ -24,21 +24,10 @@ const realFetchKey = async (selector, domain) => {
   return parseKeyRecord(rec);
 };
 const SAMPLE_T = 1782394336;      // t= in the sample
-const FRESH_NOW = SAMPLE_T + 3600; // well within the §11.3 14-day window
-
-test('relaxedDomainMatch strips labels from the left of the from-domain', () => {
-  assert.equal(relaxedDomainMatch('bounce.a.example.com', 'example.com'), true);
-  assert.equal(relaxedDomainMatch('example.com', 'example.com'), true);
-  assert.equal(relaxedDomainMatch('example.com', 'other.com'), false);
-});
-
-test('domainOf extracts the domain from a reverse/forward path', () => {
-  assert.equal(domainOf('<bob@Sub.Example.COM>'), 'sub.example.com');
-  assert.equal(domainOf('<>'), '');
-});
+const FRESH_NOW = SAMPLE_T + 3600; // well within the §14.3 14-day window
 
 test('no DKIM2-Signature yields overall=none', async () => {
-  const rep = await verifyMessage('From: a@b\r\nSubject: x\r\n\r\nhi\r\n');
+  const rep = await verifyMessage('From: a@example.com\r\nSubject: x\r\n\r\nhi\r\n');
   assert.equal(rep.overall, 'none');
 });
 
@@ -46,7 +35,7 @@ test('verifyMessage returns a levels array (shape contract)', async () => {
   // Real crypto verification of signed messages is covered end-to-end in
   // Task 9's vectors.test.mjs conformance harness. Here we only assert the
   // report shape contract: `levels` is always an array.
-  const rep = await verifyMessage('From: a@b\r\nSubject: x\r\n\r\nhi\r\n');
+  const rep = await verifyMessage('From: a@example.com\r\nSubject: x\r\n\r\nhi\r\n');
   assert.ok(Array.isArray(rep.levels));
 });
 
@@ -61,7 +50,7 @@ test('DKIM2-Signature with NO Message-Instance yields permerror (fix #3)', async
   // Message-Instance header, so this test would regress to a non-permerror
   // (or wrong-reason) result if that guard were removed.
   const raw =
-    'From: a@b\r\n' +
+    'From: a@example.com\r\n' +
     'DKIM2-Signature: i=1; m=1; t=1000000; d=test.dkim2.eu; ' +
     's=sel:rsa-sha256:AAAA; mf=PHNlbmRlckB0ZXN0LmRraW0yLmV1Pg==; rt=PHJlY2lwaWVudEBleGFtcGxlLmNvbT4=\r\n' +
     '\r\nhi\r\n';
@@ -70,60 +59,61 @@ test('DKIM2-Signature with NO Message-Instance yields permerror (fix #3)', async
   assert.match(rep.summary, /Message-Instance/);
 });
 
-test('signature with only an unsupported algorithm fails, overall=fail (fix #2a)', async () => {
-  // Isolate the algorithm path: use a non-sha256 MI hash-set (so the MI hash
-  // check is skipped and stays pass), nd= for trivially-ok top-hop custody,
-  // a fresh timestamp, and an s= whose only sig-set uses `banana`.
+// mf=<sender@example.com>, rt=<rcpt@example.com>: custody that holds for
+// a one-hop d=example.com signature.
+const ENV = 'mf=PHNlbmRlckBleGFtcGxlLmNvbT4=; rt=PHJjcHRAZXhhbXBsZS5jb20+';
+
+test('signature with only an unsupported algorithm is PERMERROR, never a pass (fix #2a)', async () => {
+  // Isolate the algorithm path: custody that holds, a fresh timestamp, and
+  // an s= whose only sig-set uses `banana`. (The MI's unsupported hash is a
+  // PERMERROR of its own; the signature's level is what is under test.)
   const raw =
-    'From: a@b\r\n' +
+    'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
-    'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; nd=example.net\r\n' +
+    `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${ENV}\r\n` +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
   assert.ok(sig, 'signature level present');
-  assert.equal(sig.result, 'fail');
-  assert.equal(rep.overall, 'fail');
+  assert.equal(sig.result, 'permerror');
+  assert.equal(sig.detail, 'PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm');
+  assert.equal(rep.overall, 'permerror');
 });
 
-test('present but invalid-base64 mf= does not throw; custody fails (fix #5a)', async () => {
-  // `@@@` is not valid base64; b64ToString throws a DOMException. The
-  // orchestrator must catch it and fail the custody check, not propagate.
-  const raw =
-    'From: a@b\r\n' +
-    'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
-    'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; mf=@@@; rt=AAAA\r\n' +
-    '\r\nhi\r\n';
-  let rep;
-  await assert.doesNotReject(async () => { rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey }); });
-  const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
-  assert.ok(sig, 'signature level present');
-  assert.equal(sig.custody.ok, false);
-  // fix #4: a custody failure must surface into level.detail (and hence the
-  // top-level summary), not just level.custody.detail.
-  assert.match(sig.detail, /mf\/rt malformed/);
-  assert.match(rep.summary, /mf\/rt malformed/);
+test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, never an exception', async () => {
+  for (const env of ['mf=@@@; rt=PHJjcHRAZXhhbXBsZS5jb20+', 'mf=PHNlbmRlckBleGFtcGxlLmNvbT4=; rt=AAAA',
+    'mf=c2VuZGVyQGV4YW1wbGUuY29t; rt=PHJjcHRAZXhhbXBsZS5jb20+']) {
+    const raw =
+      'From: a@example.com\r\n' +
+      'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+      `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${env}\r\n` +
+      '\r\nhi\r\n';
+    let rep;
+    await assert.doesNotReject(async () => { rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey }); });
+    assert.equal(rep.overall, 'permerror', env);
+    assert.equal(rep.summary, 'PERMERROR: DKIM2-Signature i=1 syntax error', env);
+  }
 });
 
-// --- §11.3 expired signature is PERMERROR, not fail --------------------
-test('an old-but-otherwise-valid signature (>14 days) is a soft WARN, not a failure (§11.3/§8.4)', async () => {
+
+// --- §14.3 an expired signature is PERMERROR --------------------------
+test('an old-but-otherwise-valid signature (>14 days) is PERMERROR, and the crypto still shows (§14.3)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<sender@test.dkim2.eu>',
     rcptTo: ['<recipient@example.com>'],
     now: SAMPLE_T + 20 * 86400, // 20 days after the signature timestamp
   });
-  // Crypto/hashes are fine; only the age is stale — overall must be 'warn'
-  // (the reference /validate/ grades age as a soft warning), NOT a hard error.
-  assert.equal(rep.overall, 'warn');
-  assert.match(rep.summary, /more than 14 days old/);
+  assert.equal(rep.overall, 'permerror');
+  assert.equal(rep.summary, 'PERMERROR: DKIM2-Signature i=1 signature expired');
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
-  assert.equal(sig.result, 'warn');
+  assert.equal(sig.result, 'permerror');
   assert.equal(sig.timestamp.ok, false);
   assert.equal(sig.timestamp.status, 'expired');
+  assert.equal(sig.items[0].result, 'pass');
 });
 
-test('a signature within 14 days is a clean pass (no age warning)', async () => {
+test('a signature within 14 days is a clean pass (no age error)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<sender@test.dkim2.eu>',
@@ -136,22 +126,22 @@ test('a signature within 14 days is a clean pass (no age warning)', async () => 
   assert.equal(sig.timestamp.ok, true);
 });
 
-// --- §11.7 MI hash fails closed when no supported hash algorithm ---------
-test('MI with no supported hash algorithm fails closed (§11.7)', async () => {
+// --- §14.7 MI hash fails closed when no supported hash algorithm ---------
+test('MI with no supported hash algorithm fails closed (§14.7)', async () => {
   // h= names only `blake` (no sha256). The instance MUST NOT stay at pass.
   const raw =
-    'From: a@b\r\n' +
+    'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
-    'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:rsa-sha256:AAA; nd=example.net\r\n' +
+    `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:rsa-sha256:AAA; ${ENV}\r\n` +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const mi = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi, 'instance level present');
-  assert.equal(mi.result, 'fail');
-  assert.match(mi.detail, /no supported hash algorithm/);
+  assert.equal(mi.result, 'permerror');
+  assert.equal(mi.detail, 'PERMERROR: Message-Instance m=1 no supported hash algorithm');
 });
 
-// --- §9.3 a Forwarder's nd= bridge after a real hop ---------------------
+// --- §12.3 a Forwarder's nd= bridge after a real hop --------------------
 //
 // The message arrives at test2 (i=1 rt=); test2 sends it on from test3, and
 // bridges the gap with an nd= hop before signing the real hop as test3. Only
@@ -159,7 +149,7 @@ test('MI with no supported hash algorithm fails closed (§11.7)', async () => {
 // runs regardless of whether the signature bytes verify, and the assertions
 // are on the per-level custody fields rather than the overall verdict.
 const bridgedRaw = (bridgeDomain) =>
-  'From: a@b\r\n' +
+  'From: a@example.com\r\n' +
   'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
   'DKIM2-Signature: i=1; m=1; t=1000000; d=test1.dkim2.com; s=sel:rsa-sha256:AAA; ' +
     'mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+; rt=PHVzZXJAdGVzdDIuZGtpbTIuY29tPg==\r\n' +
@@ -169,7 +159,7 @@ const bridgedRaw = (bridgeDomain) =>
     'mf=PHNyczA9eEBib3VuY2UudGVzdDMuZGtpbTIuY29tPg==; rt=PGRlc3RAdGVzdDUuZGtpbTIuY29tPg==\r\n' +
   '\r\nhi\r\n';
 
-test('a §9.3 bridge made with a key for the receiving domain keeps custody', async () => {
+test('a §12.3 bridge made with a key for the receiving domain keeps custody', async () => {
   const rep = await verifyMessage(bridgedRaw('test2.dkim2.com'),
     { now: 1000000, fetchKey: stubKey });
   const sig2 = rep.levels.find((l) => l.kind === 'signature' && l.i === 2);
@@ -180,16 +170,16 @@ test('a §9.3 bridge made with a key for the receiving domain keeps custody', as
   assert.equal(sig3.custody.ok, true, sig3.custody.detail);
 });
 
-test('a §9.3 bridge from a domain the mail never reached fails custody', async () => {
+test('a §12.3 bridge from a domain the mail never reached fails custody', async () => {
   const rep = await verifyMessage(bridgedRaw('test4.dkim2.com'),
     { now: 1000000, fetchKey: stubKey });
   const sig2 = rep.levels.find((l) => l.kind === 'signature' && l.i === 2);
   assert.equal(sig2.custody.ok, false);
-  assert.match(sig2.custody.detail, /i=2 nd= hop d=test4\.dkim2\.com did not match i=1 rt=/);
+  assert.equal(sig2.custody.detail, 'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1');
 });
 
-// --- §11.4 top-hop envelope exact-match ---------------------------------
-test('envelope match with differing domain case is not a permerror (§11.4)', async () => {
+// --- §14.4 top-hop envelope exact-match ---------------------------------
+test('envelope match with differing domain case is not a permerror (§14.4)', async () => {
   // mf/rt domains are lower-cased before comparison, so an upper-case delivery
   // domain must still match. With the real key the whole message verifies.
   const rep = await verifyMessage(SIGNED_SAMPLE, {
@@ -204,7 +194,7 @@ test('envelope match with differing domain case is not a permerror (§11.4)', as
   assert.equal(sig.custody.ok, true);
 });
 
-test('wrong MAIL FROM is PERMERROR with a MAIL FROM detail (§11.4)', async () => {
+test('wrong MAIL FROM is PERMERROR with a MAIL FROM detail (§14.4)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<attacker@evil.example>',
@@ -217,7 +207,7 @@ test('wrong MAIL FROM is PERMERROR with a MAIL FROM detail (§11.4)', async () =
   assert.equal(sig.result, 'permerror');
 });
 
-test('a used RCPT TO absent from rt= is PERMERROR (§11.4)', async () => {
+test('a used RCPT TO absent from rt= is PERMERROR (§14.4)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<sender@test.dkim2.eu>',
@@ -228,7 +218,7 @@ test('a used RCPT TO absent from rt= is PERMERROR (§11.4)', async () => {
   assert.match(rep.summary, /RCPT TO .*did not match/);
 });
 
-test('local-part case is significant in the envelope match (§11.4)', async () => {
+test('local-part case is significant in the envelope match (§14.4)', async () => {
   // rt= carries recipient@example.com; a differently-cased local part must NOT
   // match (only the domain is lower-cased).
   const rep = await verifyMessage(SIGNED_SAMPLE, {
@@ -241,7 +231,7 @@ test('local-part case is significant in the envelope match (§11.4)', async () =
   assert.match(rep.summary, /RCPT TO .*did not match/);
 });
 
-test('omitting the envelope skips the §11.4 check (browser paste case)', async () => {
+test('omitting the envelope skips the §14.4 check (browser paste case)', async () => {
   // No mailFrom/rcptTo: the envelope check must not fire, so no envelope-based
   // permerror; the message otherwise verifies cleanly.
   const rep = await verifyMessage(SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
@@ -250,17 +240,17 @@ test('omitting the envelope skips the §11.4 check (browser paste case)', async 
 });
 
 test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary (fix #4)', async () => {
-  // mf= decodes to a domain that does not relaxed-match d=, so custodyCheck's
-  // normal (non-exception) `if (!level.custody.ok)` branch fires. Timestamp
+  // mf= decodes to a domain that does not relaxed-match d=, so
+  // custodyErrors() reports it. Timestamp
   // is fresh and the MI hash-set uses a non-sha256 alg so the MI check is
   // skipped (stays pass); the sig-set alg is unsupported so no real crypto
   // is needed. custody is the only reason this signature is unusable, so its
   // detail must be the one that reaches the summary.
   const raw =
-    'From: a@b\r\n' +
+    'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
     'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; ' +
-    's=sel:banana:AAA; mf=PHNlbmRlckB3cm9uZy5leGFtcGxlPg==; rt=AAAA\r\n' +
+    's=sel:banana:AAA; mf=PHNlbmRlckB3cm9uZy5leGFtcGxlPg==; rt=PHJjcHRAZXhhbXBsZS5jb20+\r\n' +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
@@ -270,7 +260,7 @@ test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary 
   assert.match(rep.summary, /MAIL FROM and d= do not match/);
 });
 
-// --- recipe breakdown display (§5/§7.2): per-header current<-previous + JSON ---
+// --- recipe breakdown display (§5/§9.2): per-header current<-previous + JSON ---
 test('MI levels expose the decoded recipe breakdown (header current<-previous, summary, JSON)', async () => {
   // A real 6-hop chain message (m=1..5) with header + body recipes at each hop.
   // Keys are irrelevant to the recipe breakdown, so use a stub resolver.
@@ -315,7 +305,7 @@ test('an instance with no r= recipe has no recipe_json', async () => {
 // literal name Received-SPF, and stripping a header excluded from the hash
 // cannot change the hash, so it was provably a no-op once §4 landed; same
 // removal in Mail::DKIM2::Validate::report()).
-test('a Received-SPF prepended by the receiver verifies cleanly (spec-06 §4)', async () => {
+test('a Received-SPF prepended by the receiver verifies cleanly (§4)', async () => {
   const polluted = 'Received-SPF: pass\r\n (test.example: 1.2.3.4 authorized)\r\n' + SIGNED_SAMPLE;
   const rep = await verifyMessage(polluted, {
     fetchKey: realFetchKey,
@@ -342,7 +332,7 @@ test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly'
   assert.equal(rep.overall, 'pass');
 });
 
-// --- spec-06 §11.2: malformed r= JSON is a specific PERMERROR ------------
+// --- §14.2: malformed r= JSON is a specific PERMERROR ------------
 //
 // This builds a REAL, validly Ed25519-signed two-hop message (genuine
 // crypto over the actual canonicalized signing input, using this module's
@@ -355,8 +345,8 @@ test('Received-SPF on an LF-only paste (browser textarea) also verifies cleanly'
 // the parser. Before this fix, the catch around decodeRecipe() in the
 // state-reconstruction loop lumped a JSON syntax error in with every other
 // "undo broke" cause, producing a generic "state unavailable" fail instead
-// of the specific §11.2 PERMERROR text.
-test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR through the real verifier entry point', async () => {
+// of the specific §14.2 PERMERROR text.
+test('§14.2: malformed r= JSON is reported as the specific PERMERROR through the real verifier entry point', async () => {
   const { subtle } = globalThis.crypto;
   const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
@@ -365,7 +355,7 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
   // Content is identical between hops (a legal, recipe-less/unchanged MI is
   // accepted everywhere), so m=1 and m=2 share the same genuinely correct
   // header/body hashes; only m=2 additionally carries the malformed r=.
-  const contentFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' hi' }];
+  const contentFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' hi' }];
   const body = 'hello\r\n';
   const hh = await hashB64(stringToBytes(canonHeaderHash(contentFields)), 'sha256');
   const bh = await hashB64(stringToBytes(canonBody(body)), 'sha256');
@@ -385,7 +375,7 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
   const draft1 =
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:;\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers: headers1 } = parseMessage(draft1);
   const { instances: mi1map, signatures: sig1map } = collectLevels(headers1);
   const input1 = stringToBytes(signingInput(
@@ -401,7 +391,7 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
     `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers: headers2 } = parseMessage(draft2);
   const { instances, signatures } = collectLevels(headers2);
   const input2 = stringToBytes(signingInput(
@@ -415,32 +405,32 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
     `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
 
   const rep = await verifyMessage(raw, { now: t + 10, fetchKey: stubEd25519Key });
 
   assert.equal(rep.overall, 'permerror');
-  assert.match(rep.summary, /PERMERROR Message-Instance m=2 contains invalid JSON/);
+  assert.match(rep.summary, /PERMERROR: Message-Instance m=2 contains invalid JSON/);
   const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi1, 'm=1 instance level present');
   // Exact match (not just Contains/match): proves the text reaching this
-  // level is the verbatim §11.2 string, with no extra decoration.
-  assert.equal(mi1.detail, 'PERMERROR Message-Instance m=2 contains invalid JSON');
+  // level is the verbatim §14.2 string, with no extra decoration.
+  assert.equal(mi1.detail, 'PERMERROR: Message-Instance m=2 contains invalid JSON');
 });
 
-// spec-06 §11.2 ruling: a bad-base64 r= value is a DIFFERENT error from a
+// §14.2 ruling: a bad-base64 r= value is a DIFFERENT error from a
 // post-decode JSON parse failure, and must stay distinct: base64 failure ->
-// "syntax error" (§11.2 lists this explicitly for malformed field content),
+// "syntax error" (§14.2 lists this explicitly for malformed field content),
 // never "contains invalid JSON" (the payload here never even reaches JSON
 // parsing). Same real two-hop construction as the test above, "!!!!" (not
 // valid base64) in place of the truncated-JSON r= value.
-test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", distinct from "contains invalid JSON"', async () => {
+test('§14.2: a bad-base64 r= value is reported as "syntax error", distinct from "contains invalid JSON"', async () => {
   const { subtle } = globalThis.crypto;
   const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
   const stubEd25519Key = async () => ({ k: 'ed25519', p: pubB64 });
 
-  const contentFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' hi' }];
+  const contentFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' hi' }];
   const body = 'hello\r\n';
   const hh = await hashB64(stringToBytes(canonHeaderHash(contentFields)), 'sha256');
   const bh = await hashB64(stringToBytes(canonBody(body)), 'sha256');
@@ -455,7 +445,7 @@ test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", disti
   const draft1 =
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:;\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers: headers1 } = parseMessage(draft1);
   const { instances: mi1map, signatures: sig1map } = collectLevels(headers1);
   const input1 = stringToBytes(signingInput(
@@ -468,7 +458,7 @@ test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", disti
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
     `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers: headers2 } = parseMessage(draft2);
   const { instances, signatures } = collectLevels(headers2);
   const input2 = stringToBytes(signingInput(
@@ -482,31 +472,31 @@ test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", disti
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
     `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
 
   const rep = await verifyMessage(raw, { now: t + 10, fetchKey: stubEd25519Key });
 
   assert.equal(rep.overall, 'permerror');
   const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi1, 'm=1 instance level present');
-  assert.equal(mi1.detail, 'PERMERROR Message-Instance m=2 syntax error');
+  assert.equal(mi1.detail, 'PERMERROR: Message-Instance m=2 syntax error');
   assert.doesNotMatch(mi1.detail, /invalid JSON/);
 });
 
-// spec-06 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it is
+// §12.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it is
 // wished to record any changes made to a message as it enters the DKIM2
 // ecosystem"). It never participates in the reconstruction loop (there is
 // no earlier state to undo to), so before this fix it was never checked at
 // all -- a single-instance (m=1 only) message, so m=1 is both the topmost
 // AND the bottom instance, hand-signed so its own signature legitimately
 // covers the malformed r=.
-test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejected too, not silently ignored', async () => {
+test('§12.1/§14.2: a malformed r= on the BOTTOM (m=1) instance is rejected too, not silently ignored', async () => {
   const { subtle } = globalThis.crypto;
   const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
   const stubEd25519Key = async () => ({ k: 'ed25519', p: pubB64 });
 
-  const contentFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' hi' }];
+  const contentFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' hi' }];
   const body = 'hello\r\n';
   const hh = await hashB64(stringToBytes(canonHeaderHash(contentFields)), 'sha256');
   const bh = await hashB64(stringToBytes(canonBody(body)), 'sha256');
@@ -519,7 +509,7 @@ test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejec
   const draft =
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:;\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers } = parseMessage(draft);
   const { instances, signatures } = collectLevels(headers);
   const input = stringToBytes(signingInput(
@@ -530,21 +520,20 @@ test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejec
   const raw =
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
 
   const rep = await verifyMessage(raw, { now: t + 10, fetchKey: stubEd25519Key });
 
   assert.equal(rep.overall, 'permerror');
   const mi1 = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi1, 'm=1 instance level present');
-  assert.equal(mi1.detail, 'PERMERROR Message-Instance m=1 contains invalid JSON');
+  assert.equal(mi1.detail, 'PERMERROR: Message-Instance m=1 contains invalid JSON');
 });
 
-// --- §11.6 signature-failure strings name the Selector -------------------
-// draft-06 replaced the algorithm-based failure text with Selector-based
-// wording: "<selector> incorrect signature", and a two-Selector variant for
-// when some signatures pass and others fail.
-test('spec-06 §11.6: a broken signature names the failing Selector', async () => {
+// --- §14.6 signature-failure strings name the Selector -------------------
+// "selector <s1> incorrect signature", and a two-Selector variant for when
+// some signatures pass and others fail.
+test('§14.6: a broken signature names the failing Selector', async () => {
   // Corrupt one base64 character inside the s= signature value. The value stays
   // valid base64, so RSA verification returns false rather than throwing — that
   // is the plain-FAIL branch, not the key-permerror branch.
@@ -561,11 +550,11 @@ test('spec-06 §11.6: a broken signature names the failing Selector', async () =
   });
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
   assert.equal(sig.result, 'fail');
-  assert.equal(sig.detail, 'DKIM2-Signature i=1 rsa2048 incorrect signature');
+  assert.equal(sig.detail, 'FAIL: DKIM2-Signature i=1 selector rsa2048 incorrect signature');
 });
 
 // A DKIM2-Signature the verifier cannot key (no i=, or an i= that is not a
-// positive integer) is a PERMERROR, never silently skipped: a junk
+// positive integer) is a syntax error, never silently skipped: a junk
 // "DKIM2-Signature: m=1" on top of a chain that verifies must not pass, and
 // on its own must not read as 'none'.
 for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
@@ -576,44 +565,45 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
     assert.equal(ok.overall, 'pass');
     const rep = await verifyMessage(junk + SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
     assert.equal(rep.overall, 'permerror');
-    assert.equal(rep.summary, 'DKIM2-Signature has a missing or malformed i= tag');
-    const alone = await verifyMessage(junk + 'From: a@b\r\n\r\nhi\r\n');
+    assert.equal(rep.summary, ival === null ? 'PERMERROR: DKIM2-Signature i= tag=i missing'
+      : `PERMERROR: DKIM2-Signature i=${ival} syntax error`);
+    const alone = await verifyMessage(junk + 'From: a@example.com\r\n\r\nhi\r\n');
     assert.equal(alone.overall, 'permerror');
   });
 }
 
 // Every DKIM2-Signature i= and m=, and every Message-Instance m=, is 1*DIGIT:
-// anything else is a malformed tag. At most 3 digits and 1..100
+// anything else is a syntax error. At most 3 digits and 1..100
 // (MAX_CHAIN_NUMBER), else out of range; and a chain has at most 32
 // (MAX_CHAIN_LENGTH) hops, so a number above that is a PERMERROR too. All of
-// it before the §11.2 contiguity loops walk 1..max: i=/m= of 4294967297 (or
+// it before the §14.2 contiguity loops walk 1..max: i=/m= of 4294967297 (or
 // 4294967297x, which parseInt took as 4294967297) used to run this page out
 // of memory.
 {
   const LEN = 'exceeds the maximum chain length of 32';
   const NUM = 'exceeds the maximum chain number of 100';
   const cases = [
-    ['signature i=33', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=33;', `DKIM2-Signature i= ${LEN}`],
-    ['signature i=101', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=101;', `DKIM2-Signature i= ${NUM}`],
-    ['signature i=2^32+1', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=4294967297;', `DKIM2-Signature i= ${NUM}`],
-    ['signature i=huge', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=99999999999999999999;', `DKIM2-Signature i= ${NUM}`],
-    ['signature m=huge', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297;', `DKIM2-Signature m= ${NUM}`],
-    ['signature m=33', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=33;', `DKIM2-Signature m= ${LEN}`],
-    ['signature m=4294967297x', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297x;', 'DKIM2-Signature has a malformed m= tag'],
-    ['signature m=abc', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=abc;', 'DKIM2-Signature has a malformed m= tag'],
-    ['signature m=0', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=0;', 'DKIM2-Signature has a malformed m= tag'],
-    ['signature m=fullwidth 1', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=\uFF11;', 'DKIM2-Signature has a malformed m= tag'],
-    ['instance m=huge', 'Message-Instance: m=1;', 'Message-Instance: m=99999999999999999999;', `Message-Instance m= ${NUM}`],
-    ['instance m=101', 'Message-Instance: m=1;', 'Message-Instance: m=101;', `Message-Instance m= ${NUM}`],
-    ['instance m=33', 'Message-Instance: m=1;', 'Message-Instance: m=33;', `Message-Instance m= ${LEN}`],
-    ['instance m=4294967297x', 'Message-Instance: m=1;', 'Message-Instance: m=4294967297x;', 'Message-Instance has a malformed m= tag'],
-    ['instance m=30000000x', 'Message-Instance: m=1;', 'Message-Instance: m=30000000x;', 'Message-Instance has a malformed m= tag'],
-    ['instance m=0_1', 'Message-Instance: m=1;', 'Message-Instance: m=0_1;', 'Message-Instance has a malformed m= tag'],
+    ['signature i=33', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=33;', `PERMERROR: DKIM2-Signature i=33 ${LEN}`],
+    ['signature i=101', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=101;', `PERMERROR: DKIM2-Signature i=101 ${NUM}`],
+    ['signature i=2^32+1', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=4294967297;', `PERMERROR: DKIM2-Signature i=4294967297 ${NUM}`],
+    ['signature i=huge', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=99999999999999999999;', `PERMERROR: DKIM2-Signature i=99999999999999999999 ${NUM}`],
+    ['signature m=huge', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297;', `PERMERROR: DKIM2-Signature i=1 m=4294967297 ${NUM}`],
+    ['signature m=33', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=33;', `PERMERROR: DKIM2-Signature i=1 m=33 ${LEN}`],
+    ['signature m=4294967297x', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297x;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
+    ['signature m=abc', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=abc;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
+    ['signature m=0', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=0;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
+    ['signature m=fullwidth 1', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=１;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
+    ['instance m=huge', 'Message-Instance: m=1;', 'Message-Instance: m=99999999999999999999;', `PERMERROR: Message-Instance m=99999999999999999999 ${NUM}`],
+    ['instance m=101', 'Message-Instance: m=1;', 'Message-Instance: m=101;', `PERMERROR: Message-Instance m=101 ${NUM}`],
+    ['instance m=33', 'Message-Instance: m=1;', 'Message-Instance: m=33;', `PERMERROR: Message-Instance m=33 ${LEN}`],
+    ['instance m=4294967297x', 'Message-Instance: m=1;', 'Message-Instance: m=4294967297x;', 'PERMERROR: Message-Instance m=4294967297x syntax error'],
+    ['instance m=30000000x', 'Message-Instance: m=1;', 'Message-Instance: m=30000000x;', 'PERMERROR: Message-Instance m=30000000x syntax error'],
+    ['instance m=0_1', 'Message-Instance: m=1;', 'Message-Instance: m=0_1;', 'PERMERROR: Message-Instance m=0_1 syntax error'],
     // The top signature's m= must name a Message-Instance that exists.
     ['signature m=32 (no such instance)', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=32;',
-     'top signature i=1 covers m=32 but no Message-Instance m=32 exists'],
+     'PERMERROR: Message-Instance m=32 missing'],
     ['signature m=2 over m=1 only', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=2;',
-     'top signature i=1 covers m=2 but no Message-Instance m=2 exists'],
+     'PERMERROR: Message-Instance m=2 missing'],
   ];
   for (const [label, from, to, want] of cases) {
     test(`out-of-range or malformed ${label} is permerror`, async () => {
@@ -627,6 +617,6 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
     const rep = await verifyMessage('DKIM2-Signature: i=99999999999999999999; m=2; d=evil.example\r\n' + SIGNED_SAMPLE,
       { fetchKey: realFetchKey, now: FRESH_NOW });
     assert.equal(rep.overall, 'permerror');
-    assert.equal(rep.summary, `DKIM2-Signature i= ${NUM}`);
+    assert.equal(rep.summary, `PERMERROR: DKIM2-Signature i=99999999999999999999 ${NUM}`);
   });
 }

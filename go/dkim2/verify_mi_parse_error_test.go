@@ -9,10 +9,10 @@ import (
 // cannot be parsed, the verifier reports *that* failure rather than silently
 // dropping the header and inferring a bogus MI-numbering complaint.
 //
-// The MI here carries r={"h":null}, which parseRecipe rejects per draft-06
-// §5.1. Skipping it while computing the topmost MI version leaves the top
+// The MI here carries r={"h":null}, which parseRecipe rejects per the -07
+// §5 schema. Skipping it while computing the topmost MI version leaves the top
 // signature (m=1) apparently covering "MI m=0", which is a misleading
-// diagnostic for a message whose real defect is the null header Recipe.
+// diagnostic for a message whose real defect is its invalid Recipe JSON.
 func TestVerifyReportsMIParseError(t *testing.T) {
 	msg := string(buildSignedMsg(t))
 
@@ -45,7 +45,7 @@ func TestVerifyReportsMIParseError(t *testing.T) {
 	if strings.Contains(got, "does not cover topmost MI") {
 		t.Errorf("MI parse failure was swallowed and misreported as an MI-numbering problem: %s", got)
 	}
-	if !strings.Contains(got, "null header recipe") {
-		t.Errorf("want error naming the null header recipe, got: %s", got)
+	if got != "PERMERROR: Message-Instance m=1 contains invalid JSON" {
+		t.Errorf("want the invalid-JSON PERMERROR, got: %s", got)
 	}
 }

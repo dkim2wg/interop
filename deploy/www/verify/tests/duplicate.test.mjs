@@ -9,14 +9,14 @@ test('clean signature list has no errors', () => {
 });
 
 test('duplicate selector is permerror', () => {
-  // spec-06 §8.9: a Selector MUST NOT be present more than once
+  // §10.9: a Selector MUST NOT be present more than once
   const items = [{ selector: 'sel1', alg: 'rsa-sha256' }, { selector: 'sel1', alg: 'ed25519-sha256' }];
   assert.deepEqual(checkSignatureDuplicates(items, 3),
-    ['PERMERROR DKIM2-Signature i=3 has a duplicate selector']);
+    ['PERMERROR: DKIM2-Signature i=3 has a duplicate selector']);
 });
 
 test('duplicate selector is case-insensitive', () => {
-  // Selector is a Domain (§3.5); DNS names are case-insensitive
+  // Selector is a Domain (§3.6); DNS names are case-insensitive
   const items = [{ selector: 'Sel1', alg: 'rsa-sha256' }, { selector: 'sel1', alg: 'ed25519-sha256' }];
   const errs = checkSignatureDuplicates(items, 1);
   assert.equal(errs.length, 1);
@@ -24,7 +24,7 @@ test('duplicate selector is case-insensitive', () => {
 });
 
 test('same algorithm twice with distinct selectors is allowed', () => {
-  // spec-06 §8.9: one additional signature using the same algorithm MAY be
+  // §10.9: one additional signature using the same algorithm MAY be
   // present provided a different Selector is used
   const items = [{ selector: 'sel1', alg: 'rsa-sha256' }, { selector: 'sel2', alg: 'rsa-sha256' }];
   assert.deepEqual(checkSignatureDuplicates(items, 1), []);
@@ -37,7 +37,7 @@ test('same algorithm three times has excess selectors', () => {
     { selector: 'sel3', alg: 'rsa-sha256' },
   ];
   assert.deepEqual(checkSignatureDuplicates(items, 2),
-    ['PERMERROR DKIM2-Signature i=2 has more selectors than allowed']);
+    ['PERMERROR: DKIM2-Signature i=2 has more selectors than allowed']);
 });
 
 test('duplicate selector and excess-selector are independent', () => {
@@ -50,7 +50,7 @@ test('duplicate selector and excess-selector are independent', () => {
 });
 
 test('parseHashSets keeps duplicate algorithms visible as a list', () => {
-  // spec-06 §7.3: h= duplicate-algorithm detection must run over the parsed
+  // §9.3: h= duplicate-algorithm detection must run over the parsed
   // LIST, never a deduplicated map (a map would silently overwrite the
   // second occurrence and make the duplicate undetectable).
   const sets = parseHashSets('sha256:AAA:BBB,sha256:CCC:DDD');
@@ -62,7 +62,7 @@ test('parseHashSets keeps duplicate algorithms visible as a list', () => {
 import { verifyMessage } from '../verify.js';
 
 test('duplicate Message-Instance m= is permerror', async () => {
-  // spec-06: exactly one Message-Instance per m= value
+  // Exactly one Message-Instance per m= value
   const raw = 'From: a@example.com\r\nTo: b@example.com\r\n' +
     'Message-Instance: m=1; h=sha256:AAA:BBB\r\n' +
     'Message-Instance: m=1; h=sha256:AAA:BBB\r\n' +

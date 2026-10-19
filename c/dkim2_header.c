@@ -38,7 +38,7 @@ static int name_ok(const char *s, int labels) {
     return len > 0;
 }
 
-/* Split one s= or h= item into exactly three parts on ':' (spec-06 §7.3,
+/* Split one s= or h= item into exactly three parts on ':' (-07 §9.3,
    §8.9). FWS is trimmed from around the first two (it may sit beside a
    colon or a list comma) and removed from inside the third (a base64
    value); a name with FWS inside it is left for name_ok() to reject. */
@@ -59,7 +59,7 @@ static int split3(char *item, char **p1, char **p2, char **p3) {
 
 /* Parse h= value: "sha256:hhash:bhash,sha256:hhash:bhash,..."
    Returns 0 on success, -1 on malloc/syntax failure, -2 if an algorithm
-   name is present more than once (spec-06 §7.3; case-insensitive per
+   name is present more than once (-07 §9.3; case-insensitive per
    RFC 5234, since ABNF quoted strings are case-insensitive). */
 static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
     int cnt = 1;
@@ -80,7 +80,7 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
         if (split3(tok, &tok, &c1, &c2) < 0 || !name_ok(tok, 0) || !*c1 || !*c2) {
             free(copy); return -1;
         }
-        /* §7.3: an algorithm MUST NOT be present more than once. Check
+        /* -07 §9.3: an algorithm MUST NOT be present more than once. Check
            against every entry already stored -- this must run before any
            hash is computed or compared. */
         for (int i = 0; i < *n; i++) {
@@ -122,43 +122,43 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
         /* Malloc failure or syntax error inside tagparse() itself -- no
            tag, including m=, was ever read, so the instance number is
            genuinely unknowable. This is the surviving sibling of the
-           silent-drop bug already fixed for the §7.3 duplicate-hash (-2)
+           silent-drop bug already fixed for the -07 §9.3 duplicate-hash (-2)
            case: before this, a -1 failure here vanished with no error at
            all. Report the same generic wording used below for the other
            unattributable case, without an m=N -- there is nothing more
            specific to name (compare dkim2_verify.c's own unattributable
            "PERMERROR: No DKIM2-Signature header"). */
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance syntax error");
         return NULL;
     }
     dkim2_mi_t *mi = calloc(1, sizeof *mi);
     if (!mi) {
         /* OOM allocating the MI struct itself -- same unattributable case. */
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance syntax error");
         taglist_free(tl);
         return NULL;
     }
     const char *v;
     v = tag_get(tl, "m");
     if (!v) {
-        /* No m= tag at all -- still unattributable. */
+        /* No m= tag at all (C6: tag=m missing, with no m= to name). */
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance m= tag=m missing");
         goto err;
     }
-    if (dkim2_chain_number_error("Message-Instance", "m", v, errbuf, errbufsz))
+    if (dkim2_chain_number_error("Message-Instance", "m", v, v, errbuf, errbufsz))
         goto err;
     mi->m = atoi(v);   /* 1..DKIM2_MAX_CHAIN_LENGTH ASCII digits: exact */
-    /* spec-06 §7: tag names are case insignificant (tagparse() folds them)
-       and "MUST be only one of each kind" -- a repeat in any case
-       combination (h=..; H=.., m=1; M=1) is a syntax error, never
-       first- or last-one-wins. */
+    /* -07 §9 wants lowercase tag names; any case is accepted (contract
+       decision 2: tagparse() folds them), and §8 forbids duplicates -- a
+       repeat in any case combination (h=..; H=.., m=1; M=1) is a syntax
+       error, never first- or last-one-wins. */
     if (tl->duplicate || tl->syntax_error) {
         if (errbuf && errbufsz)
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d syntax error", mi->m);
+                "PERMERROR: Message-Instance m=%d syntax error", mi->m);
         goto err;
     }
     v = tag_get(tl, "h");
@@ -167,32 +167,32 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
            name it. */
         if (errbuf && errbufsz)
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d syntax error", mi->m);
+                "PERMERROR: Message-Instance m=%d tag=h missing", mi->m);
         goto err;
     }
     {
         int hr = parse_hsets(v, &mi->hsets, &mi->n_hsets);
         if (hr == -2) {
-            /* spec-06 §7.3: duplicate hash algorithm -- a specific,
+            /* -07 §9.3: duplicate hash algorithm -- a specific,
                reportable parse failure, not a plain "MI absent". mi->m is
                already populated at this point, so the message can name it. */
             if (errbuf && errbufsz)
                 snprintf(errbuf, errbufsz,
-                    "PERMERROR Message-Instance m=%d has a duplicate hash algorithm",
+                    "PERMERROR: Message-Instance m=%d has a duplicate hash algorithm",
                     mi->m);
             goto err;
         }
         if (hr < 0) {
             /* -1: either a malformed hash-set entry or a malloc/strdup
                failure inside parse_hsets(). Both are folded into the same
-               "syntax error" wording (the §11.2 precedent used for a bad
+               "syntax error" wording (the -07 §14.2 precedent used for a bad
                r= payload elsewhere in this file/dkim2_verify.c) -- a
                permanent parse failure isn't usefully distinguished from an
                allocation failure to the remote party either way, and this
                is what "vanished with no error at all" must become. */
             if (errbuf && errbufsz)
                 snprintf(errbuf, errbufsz,
-                    "PERMERROR Message-Instance m=%d syntax error", mi->m);
+                    "PERMERROR: Message-Instance m=%d syntax error", mi->m);
             goto err;
         }
     }
@@ -254,7 +254,7 @@ static char **parse_rt(const char *rt_val, int *n_out) {
     return out;
 }
 
-/* Parse f= value: comma-separated plain flag tokens (draft-06 §8.10).
+/* Parse f= value: comma-separated plain flag tokens (-07 §10.10).
    Flags are an open list; tokens are stored verbatim with WSP trimmed. */
 static char **parse_flags(const char *f_val, int *n_out) {
     int cnt = 1;
@@ -278,8 +278,8 @@ static char **parse_flags(const char *f_val, int *n_out) {
     return out;
 }
 
-/* Parse s= value: comma-separated "selector:alg:sig" triples (spec-06
-   §8.9). FWS may sit around the comma and the colons and inside the base64
+/* Parse s= value: comma-separated "selector:alg:sig" triples (-07
+   §10.9). FWS may sit around the comma and the colons and inside the base64
    value, never inside the Selector or algorithm name (no "rsa- sha256"
    normalised to rsa-sha256); an item that is not exactly three parts, or
    an empty item, is a syntax error. */
@@ -308,32 +308,36 @@ static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
 }
 
 int dkim2_chain_number_error(const char *field, const char *tag, const char *v,
-                             char *errbuf, size_t errbufsz) {
+                             const char *ident, char *errbuf, size_t errbufsz) {
     if (!v) return 0;
+    if (!ident) ident = v;
+    const char *ident_tag = strcmp(field, "Message-Instance") == 0 ? "m" : "i";
+    char who[160];
     int digits = *v != '\0', nonzero = 0;
     for (const char *p = v; *p; p++) {
         if (*p < '0' || *p > '9') { digits = 0; break; }
         if (*p != '0') nonzero = 1;
     }
+    snprintf(who, sizeof who, "%s %s=%.40s", field, ident_tag, ident);
     if (!digits || !nonzero) {
-        if (errbuf && errbufsz) {
-            if (strcmp(tag, "i") == 0)
-                snprintf(errbuf, errbufsz, "PERMERROR %s has a missing or malformed i= tag", field);
-            else
-                snprintf(errbuf, errbufsz, "PERMERROR %s has a malformed %s= tag", field, tag);
-        }
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR: %s syntax error", who);
         return 1;
+    }
+    if (strcmp(tag, ident_tag) != 0) {
+        size_t wl = strlen(who);
+        snprintf(who + wl, sizeof who - wl, " %s=%.40s", tag, v);
     }
     if (strlen(v) > 3 || atoi(v) > DKIM2_MAX_CHAIN_NUMBER) {
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR %s %s= exceeds the maximum chain number of %d",
-                     field, tag, DKIM2_MAX_CHAIN_NUMBER);
+            snprintf(errbuf, errbufsz, "PERMERROR: %s exceeds the maximum chain number of %d",
+                     who, DKIM2_MAX_CHAIN_NUMBER);
         return 1;
     }
     if (atoi(v) > DKIM2_MAX_CHAIN_LENGTH) {
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR %s %s= exceeds the maximum chain length of %d",
-                     field, tag, DKIM2_MAX_CHAIN_LENGTH);
+            snprintf(errbuf, errbufsz, "PERMERROR: %s exceeds the maximum chain length of %d",
+                     who, DKIM2_MAX_CHAIN_LENGTH);
         return 1;
     }
     return 0;
@@ -353,7 +357,7 @@ static int valid_i(const char *v) {
     return nonzero;
 }
 
-/* spec-06 §8.4: t= is 1*DIGIT (the value's surrounding WSP is already
+/* -07 §10.4: t= is 1*DIGIT (the value's surrounding WSP is already
    trimmed by tagparse()). Values beyond 2^64-1 saturate rather than wrap --
    they are far in the future either way. Returns 0, or -1 if not digits. */
 static int parse_t(const char *v, uint64_t *out) {
@@ -377,6 +381,49 @@ static int s_syntax_error(const char *v) {
     return bad;
 }
 
+/* An mf= or rt= value: comma-separated base64 items, each decoding to a
+   bracketed RFC 5321 path (-07 §10.5/§10.6: "The angle brackets MUST be
+   included"). */
+static int paths_ok(const char *v) {
+    char *copy = strdup(v), *save = NULL;
+    int ok = copy != NULL, any = 0;
+    for (char *tok = copy ? strtok_r(copy, ",", &save) : NULL; tok && ok;
+         tok = strtok_r(NULL, ",", &save)) {
+        unsigned char dec[512];
+        int n = b64_decode(tok, dec, sizeof dec - 1);
+        ok = n >= 2 && dec[0] == '<' && dec[n - 1] == '>';
+        any = 1;
+    }
+    free(copy);
+    return ok && any;
+}
+
+/* -07 §14.2: a required tag that is absent ("tag=<y> missing"), or mf=/rt=
+   together with nd= ("tag=<y> was unexpected", §10.7). 1 with errbuf set,
+   or 0. */
+static int missing_tag(const taglist_t *tl, char *errbuf, size_t errbufsz, int i) {
+    static const char *req[] = { "m", "t", "d", "s", NULL };
+    for (int k = 0; req[k]; k++)
+        if (!tag_get(tl, req[k])) {
+            snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d tag=%s missing", i, req[k]);
+            return 1;
+        }
+    int nd = tag_get(tl, "nd") != NULL;
+    static const char *path[] = { "mf", "rt", NULL };
+    for (int k = 0; path[k]; k++) {
+        int has = tag_get(tl, path[k]) != NULL;
+        if (nd && has) {
+            snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d tag=%s was unexpected", i, path[k]);
+            return 1;
+        }
+        if (!nd && !has) {
+            snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d tag=%s missing", i, path[k]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz) {
     if (errbuf && errbufsz) errbuf[0] = '\0';
     dkim2_sig_t *sig = dkim2_sig_parse(value);
@@ -384,17 +431,23 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
     taglist_t *tl = tagparse(value, NULL);
     const char *iv = tl ? tag_get(tl, "i") : NULL;
     const char *mv = tl ? tag_get(tl, "m") : NULL;
-    if (!valid_i(iv))
-        snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature has a missing or malformed i= tag");
-    else if (dkim2_chain_number_error("DKIM2-Signature", "i", iv, errbuf, errbufsz))
+    if (!iv)
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i= tag=i missing");
+    else if (!valid_i(iv))
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%.40s syntax error", iv);
+    else if (dkim2_chain_number_error("DKIM2-Signature", "i", iv, iv, errbuf, errbufsz))
         ;
-    else if (dkim2_chain_number_error("DKIM2-Signature", "m", mv, errbuf, errbufsz))
+    else if (dkim2_chain_number_error("DKIM2-Signature", "m", mv, iv, errbuf, errbufsz))
         ;
-    else if (tl && (tl->syntax_error || s_syntax_error(tag_get(tl, "s")) ||
-                    (tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0)))
-        snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature i=%d syntax error", atoi(iv));
+    else if (tl && (tl->syntax_error || tl->duplicate || s_syntax_error(tag_get(tl, "s")) ||
+                    (tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0) ||
+                    (tag_get(tl, "mf") && !paths_ok(tag_get(tl, "mf"))) ||
+                    (tag_get(tl, "rt") && !paths_ok(tag_get(tl, "rt")))))
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d syntax error", atoi(iv));
+    else if (tl && missing_tag(tl, errbuf, errbufsz, atoi(iv)))
+        ;
     else
-        snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature is malformed");
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature is malformed");
     if (tl) taglist_free(tl);
     return NULL;
 }
@@ -402,24 +455,26 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
 dkim2_sig_t *dkim2_sig_parse(const char *value) {
     taglist_t *tl = tagparse(value, NULL);
     if (!tl) return NULL;
-    /* §8: "there MUST be only one of each kind" of tag. */
+    /* -07 §8: "Tags with duplicate names MUST NOT occur". */
     if (tl->duplicate || tl->syntax_error) { taglist_free(tl); return NULL; }
     dkim2_sig_t *sig = calloc(1, sizeof *sig);
     if (!sig) { taglist_free(tl); return NULL; }
     const char *v;
 #define REQ(tag) do { v = tag_get(tl, tag); if (!v) goto err; } while(0)
     /* Chain numbers only: atoi() of "4294967297x" would be 4294967297. */
-    REQ("i"); if (!valid_i(v) || dkim2_chain_number_error("DKIM2-Signature", "i", v, NULL, 0)) goto err; sig->i = atoi(v);
-    REQ("m"); if (dkim2_chain_number_error("DKIM2-Signature", "m", v, NULL, 0)) goto err; sig->m = atoi(v);
+    REQ("i"); if (!valid_i(v) || dkim2_chain_number_error("DKIM2-Signature", "i", v, NULL, NULL, 0)) goto err; sig->i = atoi(v);
+    REQ("m"); if (dkim2_chain_number_error("DKIM2-Signature", "m", v, NULL, NULL, 0)) goto err; sig->m = atoi(v);
     REQ("t"); if (parse_t(v, &sig->t) < 0) goto err;
     REQ("d"); sig->d = strdup(v);
-    /* draft-06 §8: either nd= or both mf=+rt=, never both forms. */
+    /* -07 §10.7: either nd= or both mf=+rt=, never both forms. */
     {   const char *nd = tag_get(tl, "nd");
         const char *mf = tag_get(tl, "mf");
         const char *rt = tag_get(tl, "rt");
         if (nd && (mf || rt)) goto err;      /* nd= excludes mf=/rt= */
         if (!nd && !(mf && rt)) goto err;    /* need nd= or both mf=+rt= */
         if (nd) sig->nd = strdup(nd);
+        /* Bracketed paths only (a syntax error otherwise). */
+        if ((mf && !paths_ok(mf)) || (rt && !paths_ok(rt))) goto err;
         if (mf) {
             unsigned char dec[512]; int n = b64_decode(mf, dec, sizeof dec);
             if (n < 0) goto err;
@@ -432,7 +487,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
 #undef REQ
     v = tag_get(tl, "n");
     if (v) {
-        if (strlen(v) > 64) goto err;  /* §8.3: n= must not exceed 64 chars */
+        if (strlen(v) > 64) goto err;  /* -07 §10.3: n= must not exceed 64 chars */
         sig->n = strdup(v);
     }
     v = tag_get(tl, "f");
@@ -488,7 +543,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     int pos = snprintf(buf, 8192, "i=%d; m=%d; t=%llu; d=%s",
         sig->i, sig->m, (unsigned long long)sig->t, sig->d);
     if (sig->nd) {
-        /* draft-06 §9.3: imaginary hop carries nd= instead of mf=/rt= */
+        /* -07 §12.3: imaginary hop carries nd= instead of mf=/rt= */
         pos += snprintf(buf + pos, 8192 - pos, "; nd=%s", sig->nd);
     } else {
         char mf_b64[512];
@@ -512,7 +567,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     }
     if (sig->n)
         pos += snprintf(buf + pos, 8192 - pos, "; n=%s", sig->n);
-    /* f= flags (draft-06 §8.10), e.g. feedback, feedhere — preserved verbatim */
+    /* f= flags (-07 §10.10), e.g. feedback, feedhere — preserved verbatim */
     if (sig->flags && sig->flags[0]) {
         pos += snprintf(buf + pos, 8192 - pos, "; f=");
         for (int i = 0; sig->flags[i]; i++) {

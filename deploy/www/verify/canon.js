@@ -1,4 +1,4 @@
-// Canonicalization per draft-ietf-dkim-dkim2-spec-06 §6.1, §6.2, §9.6.
+// Canonicalization per draft-ietf-dkim-dkim2-spec-07 §6.1, §6.2, §12.8.
 
 // Unsigned header fields per §4, §4.1. message-instance and dkim2-signature
 // are also filtered upstream in signedFields(); they are listed here so this
@@ -73,7 +73,7 @@ export function blankSignatureValues(rawValue) {
     .join(';');
 }
 
-// §9.6 canonical line for the signing input: delete ALL WSP, keep colon + CRLF.
+// §12.8 canonical line for the signing input: delete ALL WSP, keep colon + CRLF.
 function signLine(name, value) {
   const v = unfold(value).replace(/[ \t]/g, '');
   return name.toLowerCase() + ':' + v + '\r\n';

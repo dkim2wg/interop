@@ -6,7 +6,7 @@
 #include <ctype.h>
 #include <openssl/evp.h>
 
-/* spec-06 §3.1: implemented hash algorithms, in wire/index order. */
+/* -07 §3.1: implemented hash algorithms, in wire/index order. */
 static const struct {
     const char *name;
     const EVP_MD *(*md)(void);
@@ -165,7 +165,7 @@ static int digest_buf(const void **parts, const size_t *lens, int nparts, int al
     return ok ? 0 : -1;
 }
 
-/* §5.1: strip all trailing empty lines (\r\n), ensure one trailing \r\n, then hash */
+/* -07 §6.1: strip all trailing empty lines (\r\n), ensure one trailing \r\n, then hash */
 int dkim2_body_hash_raw_alg(const char *body, size_t bodylen, int alg,
                             unsigned char *digest) {
     const char *end = body + bodylen;
@@ -190,7 +190,7 @@ int dkim2_body_hash(const char *body, size_t bodylen, char *out, size_t outlen) 
     return b64_encode(digest, DKIM2_HASH_LEN, out, outlen) >= 0 ? 0 : -1;
 }
 
-/* Returns 1 if this lowercase header name is unsigned per spec-06 §4.
+/* Returns 1 if this lowercase header name is unsigned per -07 §4.
    spec-05 narrowed the old "arc-" prefix to the three RFC 8617 names and
    added a "received-" prefix rule. Note x400-received / x400-trace match
    neither the "x-" nor the "received-" prefix and need their own entries. */
@@ -222,7 +222,7 @@ int dkim2_hdr_ignored(const char *lname, size_t nlen) {
     return 0;
 }
 
-/* Canonicalize one header for hashing per §5.2.
+/* Canonicalize one header for hashing per -07 §6.2.
    Steps: lowercase name; unfold; collapse WSP; trim trailing WSP;
    delete WSP around colon; keep final CRLF.
    Returns malloc'd string or NULL if header should be ignored. */
@@ -248,7 +248,7 @@ char *dkim2_header_canon(const char *hdr) {
     /* Lowercase name (no surrounding WSP) */
     memcpy(p, lname, namelen); p += namelen;
     free(lname);
-    /* Colon (no surrounding whitespace per §5.2) */
+    /* Colon (no surrounding whitespace per -07 §6.2) */
     *p++ = ':';
 
     /* Process value: unfold, collapse WSP sequences to single SP, trim leading/trailing WSP */
@@ -257,7 +257,7 @@ char *dkim2_header_canon(const char *hdr) {
     size_t vl = vallen;
     while (vl >= 2 && v[vl-2] == '\r' && v[vl-1] == '\n') vl -= 2;
     while (vl >= 1 && (v[vl-1] == '\r' || v[vl-1] == '\n')) vl--;
-    /* §5.2 step 6 (delete WSP at the start of the value) must be applied AFTER
+    /* -07 §6.2 step 6 (delete WSP at the start of the value) must be applied AFTER
        unfolding, not before: for a header folded immediately after the colon
        ("Message-ID:\r\n <x@y>") the leading WSP is the space that opens the
        continuation line, which only becomes leading once the CRLF is gone.
@@ -277,17 +277,17 @@ char *dkim2_header_canon(const char *hdr) {
     }
     /* Trim trailing SP we may have emitted */
     while (p > buf && p[-1] == ' ') p--;
-    /* Re-add CRLF per §5.2 "MUST NOT remove the CRLF at the end" */
+    /* Re-add CRLF per -07 §6.2 "MUST NOT remove the CRLF at the end" */
     *p++ = '\r'; *p++ = '\n'; *p = '\0';
     return buf;
 }
 
-/* §5.2 header hash — raw digest */
+/* -07 §6.2 header hash — raw digest */
 int dkim2_header_hash_raw_alg(const char **headers, int n_headers, int alg,
                               unsigned char *digest) {
     if (alg < 0 || alg >= DKIM2_N_HASH_ALGS) return -1;
 
-    /* Process in reverse order (bottom-up per §5.2), then stable-sort alphabetically.
+    /* Process in reverse order (bottom-up per -07 §6.2), then stable-sort alphabetically.
        Reversing first ensures same-name headers appear in bottom-up order after sort. */
     char **canon = calloc((size_t)n_headers, sizeof(char *));
     if (!canon) return -1;

@@ -60,15 +60,20 @@ sign() { # sign <impl> <alg> <out>
 # The file path must be absolute: the Perl and JS tools chdir before opening it.
 VERIFIERS="python go c perl js"
 
+#
+# The §14.3 timestamp check is off by default (the fixtures carry fixed
+# t= values); VERIFY_REAL_CLOCK=1 turns it on, against the real clock.
 verify() { # verify <impl> <file>
     local dns=${DNS_JSON:-dns.json}
     case $dns in /*) ;; *) dns="$PWD/$dns" ;; esac
+    local its=--ignore-timestamps gts=-ignore-timestamps jsclock=
+    if [ -n "${VERIFY_REAL_CLOCK:-}" ]; then its=; gts=; jsclock=--real-clock; fi
     case $1 in
-    python) python3 python/dkim2verify.py "$2" --dns-json "$dns" --ignore-timestamps ;;
-    go)     ./go/dkim2verify -dns "$dns" -ignore-timestamps < "$2" ;;
-    c)      ./c/dkim2verify "$2" --dns-json "$dns" --ignore-timestamps ;;
-    perl)   (cd perl && perl -Ilib bin/validate.pl --ignore-timestamps --dns-json "$dns" "$2") ;;
-    js)     (cd deploy/www/verify && node tests/verify-file.mjs "$2" "$dns") ;;
+    python) python3 python/dkim2verify.py "$2" --dns-json "$dns" $its ;;
+    go)     ./go/dkim2verify -dns "$dns" $gts < "$2" ;;
+    c)      ./c/dkim2verify "$2" --dns-json "$dns" $its ;;
+    perl)   (cd perl && perl -Ilib bin/validate.pl $its --dns-json "$dns" "$2") ;;
+    js)     (cd deploy/www/verify && node tests/verify-file.mjs "$2" "$dns" $jsclock) ;;
     *)      echo "verify: unknown implementation '$1'" >&2; return 1 ;;
     esac
 }

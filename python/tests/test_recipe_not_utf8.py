@@ -4,7 +4,7 @@ Found 2026-10-04: the Perl producer (Sympa, dkim2-milter) writes Recipe
 literals as raw octets, so a Latin-1 or EUC-KR header or body line makes the
 base64-decoded JSON undecodable as UTF-8.  json.loads() then raised
 UnicodeDecodeError -- a ValueError, but not a JSONDecodeError -- and the
-verifier died with a traceback instead of reporting §11.2's "contains invalid
+verifier died with a traceback instead of reporting §14.2's "contains invalid
 JSON".
 """
 

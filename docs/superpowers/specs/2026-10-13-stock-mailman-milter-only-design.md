@@ -74,6 +74,14 @@ Then, only if the snapshot was stored and the message is not `multipart/*`
   (`dkim2.com/validate/` shows each hop's undo). The outbound gate already
   allows several unsigned instances above the top signature, and still
   checks that every one of them undoes cleanly.
+- -07 update (2026-10-18, ruling 17): a post that arrived with no
+  DKIM2-Signature cannot keep `m=1` (author From) under the list's `i=1`,
+  since -07 C5 checks the From at `m=1` against `i=1`. The outbound milter
+  (and the DKIM2Sign handler) replace all its unsigned instances (the
+  arrival stamp, the wrap, any list instance) with ONE `m=1`: hashes of the
+  copy sent, Recipes back to the post as it arrived (-07 §12.1), with
+  `X-DKIM2-Info: action=restarted-unsigned-mi=m=1,...;`. Signed posts
+  still get `m=k+2`.
 - `X-DKIM2-Info: action=wrap-single-part;` and the usual `mi-m=` line
   record the wrap.
 - Registration adds `SMFIF_CHGHDRS` and `SMFIF_CHGBODY`. The new body goes

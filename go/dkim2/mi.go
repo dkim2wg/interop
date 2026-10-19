@@ -3,8 +3,6 @@ package dkim2
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -17,7 +15,7 @@ type MessageInstance struct {
 	Recipe  *Recipe // nil if no r= tag
 }
 
-// HashSet is one spec-06 §7.3 hash-set: alg:header-hash:body-hash.
+// HashSet is one §9.3 hash-set: alg:header-hash:body-hash.
 type HashSet struct {
 	Alg        string // lowercased
 	HeaderHash string // base64, FWS already stripped
@@ -69,7 +67,7 @@ func hashSetsEqual(a, b []HashSet) bool {
 }
 
 // implementedAlgs returns the algorithms in hashes that this build implements
-// (per §3.4, i.e. resolve via HashAlg), in the order they appear.
+// (per §3.5, i.e. resolve via HashAlg), in the order they appear.
 func implementedAlgs(hashes []HashSet) []string {
 	var algs []string
 	for _, hs := range hashes {
@@ -86,7 +84,7 @@ func implementedAlgs(hashes []HashSet) []string {
 // bodyHashes (one streaming pass over the body — see hashBodyStream — must
 // have produced an entry for every algorithm implementedAlgs(mi.Hashes)
 // names). All implemented hash-sets MUST match; unimplemented algorithms are
-// skipped per §3.4. Fails closed with the spec-06 message when none of the
+// skipped per §3.5. Fails closed with a PERMERROR when none of the
 // hash-sets name an implemented algorithm.
 func verifyMIHashesPrecomputed(mi *MessageInstance, headers []Header, bodyHashes map[string][]byte) error {
 	return checkMIHashes(mi, headerHasher(headers), bodyHashes)
@@ -106,20 +104,31 @@ func checkMIHashes(mi *MessageInstance, headerHash func(string) ([]byte, error),
 	}
 	for _, hs := range mi.Hashes {
 		if _, ok := HashAlg(hs.Alg); !ok {
-			continue // §3.4: skip unimplemented algorithms
+			continue // §3.5: skip unimplemented algorithms
 		}
 		gotB := bodyHashes[hs.Alg]
 		wantB, err := base64.StdEncoding.DecodeString(hs.BodyHash)
 		if err != nil || !bytes.Equal(gotB, wantB) {
-			return fmt.Errorf("m=%d: %s body hash mismatch", mi.Version, hs.Alg)
+			return &hashMismatchError{m: mi.Version, alg: hs.Alg, part: "body"}
 		}
 	}
 	return nil
 }
 
+// hashMismatchError is §14.7's "FAIL: Message-Instance m=<x> header hash
+// <alg> mismatch" (or body hash).
+type hashMismatchError struct {
+	m         int
+	alg, part string
+}
+
+func (e *hashMismatchError) Error() string {
+	return fmt.Sprintf("FAIL: Message-Instance m=%d %s hash %s mismatch", e.m, e.part, e.alg)
+}
+
 // verifyMIHeaderHashes is the header half of verifyMIHashesPrecomputed, and
 // all of it that can run against a message with no body — the returned
-// original in a DSN's text/rfc822-headers part (spec-06 §12.1.2). The
+// original in a DSN's text/rfc822-headers part (§16.3). The
 // fails-closed "no supported hash algorithm" check lives here because it is
 // about the hash-sets themselves, not about which content is available.
 func verifyMIHeaderHashes(mi *MessageInstance, headers []Header) error {
@@ -132,7 +141,7 @@ func checkMIHeaderHashes(mi *MessageInstance, headerHash func(string) ([]byte, e
 	usable := 0
 	for _, hs := range mi.Hashes {
 		if _, ok := HashAlg(hs.Alg); !ok {
-			continue // §3.4: skip unimplemented algorithms
+			continue // §3.5: skip unimplemented algorithms
 		}
 		usable++
 
@@ -142,11 +151,11 @@ func checkMIHeaderHashes(mi *MessageInstance, headerHash func(string) ([]byte, e
 		}
 		wantH, err := base64.StdEncoding.DecodeString(hs.HeaderHash)
 		if err != nil || !bytes.Equal(gotH, wantH) {
-			return fmt.Errorf("m=%d: %s header hash mismatch", mi.Version, hs.Alg)
+			return &hashMismatchError{m: mi.Version, alg: hs.Alg, part: "header"}
 		}
 	}
 	if usable == 0 {
-		return fmt.Errorf("Message-Instance m=%d no supported hash algorithm", mi.Version)
+		return fmt.Errorf("PERMERROR: Message-Instance m=%d has no supported hash algorithm", mi.Version)
 	}
 	return nil
 }
@@ -179,37 +188,37 @@ func parseMI(raw string) (*MessageInstance, error) {
 
 	mStr := tvl.get("m")
 	if mStr == "" {
-		return nil, fmt.Errorf("missing m= tag")
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m= tag=m missing")
 	}
 	m, err := strconv.Atoi(mStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid m= tag: %w", err)
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%s syntax error", strings.TrimSpace(mStr))
 	}
 
-	// §7: tag names are case insignificant and each kind appears once;
+	// §8, §9: tag names are case insignificant and each kind appears once;
 	// "h=..; H=.." or "m=1; M=1" is a syntax error, never first/last-wins.
 	if tvl.duplicate != "" {
-		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d syntax error", m)
 	}
 
-	// §7: a fragment that is not a well-formed tag=value, or an h= that is
-	// not a list of whole hash-sets (§7.3), is a syntax error.
+	// §8: a fragment that is not a well-formed tag=value, or an h= that is
+	// not a list of whole hash-sets (§9.3), is a syntax error.
 	if tvl.syntaxErr {
-		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d syntax error", m)
 	}
 	if !tvl.has("h") {
-		return nil, fmt.Errorf("invalid h= tag: %q", "")
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d tag=h missing", m)
 	}
 	hashes, err := parseHashSets(tvl.get("h"))
 	if err != nil {
-		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d syntax error", m)
 	}
 
-	// spec-06 §7.3: an algorithm MUST NOT be present more than once.
+	// §9.3: an algorithm MUST NOT be present more than once.
 	seen := map[string]bool{}
 	for _, hs := range hashes {
 		if seen[hs.Alg] {
-			return nil, fmt.Errorf("PERMERROR Message-Instance m=%d has a duplicate hash algorithm", m)
+			return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d has a duplicate hash algorithm", m)
 		}
 		seen[hs.Alg] = true
 	}
@@ -219,33 +228,21 @@ func parseMI(raw string) (*MessageInstance, error) {
 	if rB64 := stripB64WSP(tvl.get("r")); rB64 != "" {
 		rJSON, err := base64.StdEncoding.DecodeString(rB64)
 		if err != nil {
-			// §11.2: a bad base64 r= value is a syntax error -- distinct
+			// §14.2: a bad base64 r= value is a syntax error -- distinct
 			// from, and reported before, a post-decode JSON parse failure
 			// (below): the payload never even reached JSON parsing.
-			return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+			return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d syntax error", m)
 		}
 		recipe, err := parseRecipe(rJSON)
 		if err != nil {
-			// spec-06 §11.2: "errors in a JSON object specifying Recipes
-			// should be called out specifically" -- a malformed r= payload
-			// is reported distinctly from a generic syntax error. This
-			// covers actual JSON syntax/type errors; other parseRecipe
-			// failures (e.g. the §5.1 null-header-Recipe rejection) already
-			// carry their own specific message and are left as-is.
-			//
-			// Well-formed JSON whose steps break the §5 rules (see
-			// errMalformedRecipe) is the agreed "has a malformed Recipe"
-			// PERMERROR instead; validateRecipeSteps at parse time catches
-			// everything but the item-count checks, which Undo applies.
-			if errors.Is(err, errMalformedRecipe) {
-				return nil, &malformedRecipeError{m: m}
-			}
-			var syntaxErr *json.SyntaxError
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) || errors.Is(err, errDuplicateJSONKey) {
-				return nil, fmt.Errorf("PERMERROR Message-Instance m=%d contains invalid JSON", m)
-			}
-			return nil, fmt.Errorf("invalid recipe JSON: %w", err)
+			// §14.2: "errors in a JSON object specifying Recipes SHOULD be
+			// called out specifically" -- a bad r= payload is reported
+			// distinctly from a generic syntax error.  JSON syntax and type
+			// errors, duplicate keys, and breaches of the §5 schema and
+			// step rules are all "contains invalid JSON"; validateRecipeSteps
+			// at parse time catches everything but the item-count checks,
+			// which the chain walk applies (with the same error).
+			return nil, &malformedRecipeError{m: m}
 		}
 		mi.Recipe = recipe
 	}

@@ -15,8 +15,18 @@
        hashing, and signature cryptography all run locally.
        <a href="/">About DKIM2</a> · <a href="/validate/">server validator</a></p>
     <p class="caveat">A result reports only whether the message travelled here
-       unmodified and unreplayed (§11.1). It says nothing about whether the
+       unmodified and unreplayed (§14.1). It says nothing about whether the
        message is wanted, or whether any declared modification was benign.</p>
+    <p class="caveat">Checks follow draft-ietf-dkim-dkim2-spec-07. New in -07:
+       the <code>From:</code> must be Authentic (its domain matches the
+       <code>d=</code> of the signature that vouches for it, including after a
+       list rewrites it); the Chain of Custody is checked hop by hop, with
+       <code>mf=&lt;&gt;</code> and <code>nd=</code> hops matched against the
+       previous <code>rt=</code>; Recipes carry lines that are not UTF-8 as
+       <code>"u"</code> steps; and errors use the -07 wording
+       (<code>PERMERROR: …</code>). A pasted message has no delivery time, so
+       timestamps are checked against now: a signature more than 14 days old
+       shows as <code>signature expired</code>.</p>
     <p class="privacy">Public keys are fetched over DNS-over-HTTPS from Cloudflare
        (<code>cloudflare-dns.com</code>), so the signing domains and selectors in
        your message are sent to Cloudflare. The message body never leaves your browser.</p>

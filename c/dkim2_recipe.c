@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <strings.h>
 
 typedef dkim2_line_t line_t;
 
@@ -51,7 +52,7 @@ static int buf_append(char **buf, size_t *pos, size_t *cap,
 
 /* A "c" step is exactly two integers with 1 <= start <= end <= n_items, and
    its start MUST be greater than the end of every preceding "c" step in the
-   same list (spec-06 §5.1; the same ascending/non-overlapping rule is applied
+   same list (-07 §5.1; the same ascending/non-overlapping rule is applied
    to body lists -- WG extension, 2026-10). `prev_end` is the end of the
    previous "c" step, 0 when there is none.
 
@@ -82,25 +83,59 @@ static int is_b64_char(char ch) {
            (ch >= '0' && ch <= '9') || ch == '+' || ch == '/';
 }
 
-/* A "b" item is a JSON string holding the literal's raw octets as standard
-   alphabet base64 (RFC 4648 §4): alphabet characters followed by at most two
-   '=' and nothing else (no whitespace, no URL-safe alphabet). It is applied
-   exactly like a "d" item once decoded. Returns the malloc'd octets and their
-   length, or NULL for anything that is not clean base64 or whose decoded
-   octets contain CR or LF (a literal is one line/value; a line break inside
-   it would change the line numbering the rest of the Recipe depends on).
-   The octets are otherwise arbitrary, so callers must carry `*len_out` and
-   never strlen() the result. */
-static unsigned char *decode_b_item(const cJSON *item, size_t *len_out) {
-    if (!cJSON_IsString(item) || !item->valuestring) return NULL;
-    const char *s = item->valuestring;
+/* Strict UTF-8 (RFC 3629): no overlong forms, no surrogates, nothing above
+   U+10FFFF. JSON strings are UTF-8, and -07 §5.1/§5.2 make "u" the step
+   for anything else. */
+static int utf8_valid(const unsigned char *s, size_t n) {
+    for (size_t i = 0; i < n; ) {
+        unsigned char c = s[i];
+        size_t len;
+        unsigned cp;
+        if (c < 0x80) { i++; continue; }
+        else if (c >= 0xC2 && c <= 0xDF) { len = 2; cp = c & 0x1F; }
+        else if (c >= 0xE0 && c <= 0xEF) { len = 3; cp = c & 0x0F; }
+        else if (c >= 0xF0 && c <= 0xF4) { len = 4; cp = c & 0x07; }
+        else return 0;
+        if (i + len > n) return 0;
+        for (size_t k = 1; k < len; k++) {
+            if ((s[i + k] & 0xC0) != 0x80) return 0;
+            cp = (cp << 6) | (s[i + k] & 0x3F);
+        }
+        if ((len == 3 && cp < 0x800) || (len == 4 && (cp < 0x10000 || cp > 0x10FFFF)) ||
+            (cp >= 0xD800 && cp <= 0xDFFF)) return 0;
+        i += len;
+    }
+    return 1;
+}
+
+/* The -07 §5 "base64-line" patterns: ^[A-Za-z0-9+/]*={0,2}$, ^(.{4})*$
+   and ^([^=]*|.*[AQgw]==|.*[AEIMQUYcgkosw048]=)$ -- the standard alphabet,
+   padded to a multiple of four, no whitespace, and zero pad bits ("QR==" is
+   not canonical: its pad bits are not zero). */
+static int b64_canonical(const char *s) {
     size_t sl = strlen(s), i = 0, npad = 0;
     while (i < sl && is_b64_char(s[i])) i++;
+    size_t ndata = i;
     while (i < sl && s[i] == '=') { i++; npad++; }
-    /* Canonical §4 form only: padded to a multiple of four ("QUI" is
-       rejected, "QUI=" accepted), so every verifier decodes the same set. */
-    if (i != sl || npad > 2 || sl % 4 != 0) return NULL;
+    if (i != sl || npad > 2 || sl % 4 != 0) return 0;
+    if (npad == 2 && !strchr("AQgw", s[ndata - 1])) return 0;
+    if (npad == 1 && !strchr("AEIMQUYcgkosw048", s[ndata - 1])) return 0;
+    return 1;
+}
 
+/* A "u" item (-07 §5.1/§5.2) is a JSON string holding the literal's raw
+   octets as canonical base64 (b64_canonical). It is applied exactly like a
+   "d" item once decoded. Returns the malloc'd octets and their length, or
+   NULL for anything that is not canonical base64 or whose decoded octets
+   contain CR or LF (a literal is one line/value; a line break inside it
+   would change the line numbering the rest of the Recipe depends on). The
+   octets are otherwise arbitrary, so callers must carry `*len_out` and
+   never strlen() the result. */
+static unsigned char *decode_u_item(const cJSON *item, size_t *len_out) {
+    if (!cJSON_IsString(item) || !item->valuestring) return NULL;
+    const char *s = item->valuestring;
+    if (!b64_canonical(s)) return NULL;
+    size_t sl = strlen(s);
     size_t cap = sl / 4 * 3 + 3;
     unsigned char *out = malloc(cap);
     if (!out) return NULL;
@@ -112,41 +147,45 @@ static unsigned char *decode_b_item(const cJSON *item, size_t *len_out) {
     return out;
 }
 
-/* Classify one Recipe step the same way for every walker: a "c" member wins,
-   then a "d" array, then a "b" array. Returns 'c', 'd', 'b', or 0 for a step
-   that carries none of them (silently ignored). *arr is the "c" value or the
-   literal array. */
+/* Classify one Recipe step (-07 §5.1/§5.2: "a JSON object with exactly one
+   key"): 'c', 'd' or 'u', with *arr the "c" value or the literal array; -1
+   for anything else -- not an object, no key, two keys, any other key, a
+   "d"/"u" that is not an array. The key is matched without regard to case
+   (dkim2_recipe_parse() has lowercased it anyway). */
 static int step_kind(const cJSON *step, const cJSON **arr) {
-    const cJSON *c = cJSON_GetObjectItemCaseSensitive(step, "c");
-    const cJSON *d = cJSON_GetObjectItemCaseSensitive(step, "d");
-    const cJSON *bl = cJSON_GetObjectItemCaseSensitive(step, "b");
-    if (c) { *arr = c; return 'c'; }
-    if (d && cJSON_IsArray(d)) { *arr = d; return 'd'; }
-    if (bl && cJSON_IsArray(bl)) { *arr = bl; return 'b'; }
-    return 0;
+    if (!cJSON_IsObject(step)) return -1;
+    const cJSON *only = step->child;
+    if (!only || only->next || !only->string || strlen(only->string) != 1) return -1;
+    int k = tolower((unsigned char)only->string[0]);
+    if (k != 'c' && k != 'd' && k != 'u') return -1;
+    if (k != 'c' && !cJSON_IsArray(only)) return -1;
+    *arr = only;
+    return k;
 }
 
-/* Receives one literal's octets (not NUL-terminated for "b"); nonzero = fail. */
+/* Receives one literal's octets (not NUL-terminated for "u"); nonzero = fail. */
 typedef int (*literal_fn)(void *ctx, const unsigned char *s, size_t len);
 
-/* Validate every item of a "d" (kind 'd') or "b" (kind 'b') literal array and
-   hand each to `fn` (NULL: validate only). Rejects (-1) an empty array
-   (schema minItems 1), a "d" string containing CR/LF (§5.1/§5.2), a "b" item
-   that is not clean base64 or decodes to CR/LF, and -- if `reject_nul` -- a
-   "b" item with an embedded NUL. Non-string "d" items are skipped. */
+/* Validate every item of a "d" (kind 'd') or "u" (kind 'u') literal array
+   and hand each to `fn` (NULL: validate only). Rejects (-1) an empty array
+   (schema minItems 1), a "d" item that is not a string, is not valid UTF-8
+   or contains CR/LF (§5.1/§5.2), a "u" item that is not canonical base64 or
+   decodes to CR/LF, and -- if `reject_nul` -- a "u" item with an embedded
+   NUL. */
 static int walk_literals(const cJSON *arr, int kind, int reject_nul,
                          literal_fn fn, void *ctx) {
     if (cJSON_GetArraySize(arr) == 0) return -1;
     const cJSON *item;
     cJSON_ArrayForEach(item, arr) {
         if (kind == 'd') {
-            if (!cJSON_IsString(item)) continue;
+            if (!cJSON_IsString(item) || !item->valuestring) return -1;
             const char *s = item->valuestring;
-            if (strpbrk(s, "\r\n")) return -1;
-            if (fn && fn(ctx, (const unsigned char *)s, strlen(s)) != 0) return -1;
+            size_t sl = strlen(s);
+            if (strpbrk(s, "\r\n") || !utf8_valid((const unsigned char *)s, sl)) return -1;
+            if (fn && fn(ctx, (const unsigned char *)s, sl) != 0) return -1;
         } else {
             size_t dl;
-            unsigned char *dec = decode_b_item(item, &dl);
+            unsigned char *dec = decode_u_item(item, &dl);
             if (!dec) return -1;
             if ((reject_nul && memchr(dec, '\0', dl)) ||
                 (fn && fn(ctx, dec, dl) != 0)) { free(dec); return -1; }
@@ -156,21 +195,60 @@ static int walk_literals(const cJSON *arr, int kind, int reject_nul,
     return 0;
 }
 
-/* Non-zero if any object in the tree names a key twice (cJSON unescapes the
-   keys, so "subj\u0065ct" and "subject" are the same key). */
+/* Non-zero if any object in the tree names a key twice. Keys are compared
+   without regard to case (decision 2 of the -07 contract: emit lowercase,
+   accept any case, so "Subject" and "subject" in one object are the same
+   key), after cJSON's unescaping ("subj\u0065ct" is "subject"). */
 static int has_duplicate_key(const cJSON *node) {
     for (const cJSON *c = node ? node->child : NULL; c; c = c->next) {
         if (cJSON_IsObject(node) && c->string)
             for (const cJSON *d = c->next; d; d = d->next)
-                if (d->string && strcmp(c->string, d->string) == 0) return 1;
+                if (d->string && strcasecmp(c->string, d->string) == 0) return 1;
         if (has_duplicate_key(c)) return 1;
     }
+    return 0;
+}
+
+/* Lowercase (ASCII) every object key, so every lookup below -- the
+   top-level "h"/"b", header names, step keys -- matches without regard to
+   case. */
+static void lowercase_keys(cJSON *node) {
+    for (cJSON *c = node ? node->child : NULL; c; c = c->next) {
+        if (cJSON_IsObject(node) && c->string && !(c->type & cJSON_StringIsConst))
+            for (char *p = c->string; *p; p++) *p = (char)tolower((unsigned char)*p);
+        lowercase_keys(c);
+    }
+}
+
+static int validate_list(const cJSON *list, int reject_nul);
+
+/* The -07 §5 schema: an object with "h" and/or "b"; "h" an object with at
+   least one property, each a list of steps; "b" null or a list of steps.
+   Every step and literal is checked as the appliers read it (copy ranges
+   ascending, literals well-formed), without a bound against any message.
+   Unknown top-level keys are ignored. */
+static int validate_schema(const cJSON *root) {
+    if (!cJSON_IsObject(root)) return -1;
+    const cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
+    const cJSON *b = cJSON_GetObjectItemCaseSensitive(root, "b");
+    if (!h && !b) return -1;
+    if (h) {
+        if (!cJSON_IsObject(h) || !h->child) return -1;
+        for (const cJSON *f = h->child; f; f = f->next)
+            if (validate_list(f, 1) != 0) return -1;
+    }
+    if (b && !cJSON_IsNull(b) && validate_list(b, 0) != 0) return -1;
     return 0;
 }
 
 cJSON *dkim2_recipe_parse(const char *r_json) {
     cJSON *root = cJSON_Parse(r_json);
     if (root && has_duplicate_key(root)) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+    lowercase_keys(root);
+    if (root && validate_schema(root) != 0) {
         cJSON_Delete(root);
         return NULL;
     }
@@ -208,6 +286,14 @@ void dkim2_recipe_ops_free(dkim2_recipe_op_t *ops, int n_ops) {
     free(ops);
 }
 
+static int validate_list(const cJSON *list, int reject_nul) {
+    dkim2_recipe_op_t *ops;
+    int n_ops;
+    if (!cJSON_IsArray(list) || dkim2_recipe_ops(list, reject_nul, &ops, &n_ops) != 0) return -1;
+    dkim2_recipe_ops_free(ops, n_ops);
+    return 0;
+}
+
 int dkim2_recipe_ops(const cJSON *list, int reject_nul,
                      dkim2_recipe_op_t **ops, int *n_ops) {
     ops_acc_t a = { NULL, 0, 0 };
@@ -224,8 +310,8 @@ int dkim2_recipe_ops(const cJSON *list, int reject_nul,
             dkim2_recipe_op_t op = { 0, st, en, NULL, 0 };
             if (ops_push(&a, op) != 0) goto fail;
             prev_end = en;
-        } else if (kind) {
-            if (walk_literals(arr, kind, reject_nul, ops_literal, &a) != 0) goto fail;
+        } else if (kind < 0 || walk_literals(arr, kind, reject_nul, ops_literal, &a) != 0) {
+            goto fail;
         }
     }
     *ops = a.ops;
@@ -251,8 +337,8 @@ int dkim2_validate_body_recipe(const char *r_json) {
             int st, en;
             if (copy_range(arr, -1, prev_end, &st, &en) != 0) { rc = -1; break; }
             prev_end = en;
-        } else if (kind) {
-            if (walk_literals(arr, kind, 0, NULL, NULL) != 0) { rc = -1; break; }
+        } else if (kind < 0 || walk_literals(arr, kind, 0, NULL, NULL) != 0) {
+            rc = -1; break;
         }
     }
     cJSON_Delete(root);
@@ -303,8 +389,8 @@ char *dkim2_apply_body_recipe(const char *r_json,
             for (int i = start - 1; i <= end_i - 1 && ok; i++)
                 ok = (buf_append(&acc.out, &acc.pos, &acc.cap, lines[i].ptr, lines[i].len) == 0);
             prev_end = end_i;
-        } else if (kind) {
-            ok = (walk_literals(arr, kind, 0, body_literal, &acc) == 0);
+        } else {
+            ok = kind > 0 && walk_literals(arr, kind, 0, body_literal, &acc) == 0;
         }
         if (!ok) break;
     }
@@ -355,7 +441,7 @@ static char **headers_for_name(char **headers, int n, const char *lname,
 }
 
 /* "Name: value\r\n" from an explicit-length value (which may hold 8-bit
-   octets from a "b" item, so no printf-family formatting of the value). */
+   octets from a "u" item, so no printf-family formatting of the value). */
 static char *make_field(const char *fname, const unsigned char *val, size_t vlen) {
     size_t nl = strlen(fname);
     char *hdr = malloc(nl + 2 + vlen + 3);
@@ -396,7 +482,7 @@ char **dkim2_apply_header_recipe(const char *r_json,
 
     cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
     if (h && cJSON_IsNull(h)) {
-        /* draft-06 §5.1: a null header Recipe is no longer permitted. */
+        /* -07 §5.1: a null header Recipe is no longer permitted. */
         cJSON_Delete(root);
         return NULL;
     }
@@ -444,11 +530,11 @@ char **dkim2_apply_header_recipe(const char *r_json,
                 for (int i = start - 1; i <= end_i - 1; i++)
                     if (push_val(&new_vals, &n_new, &new_cap, strdup(field_hdrs[i])) != 0) goto fail;
                 prev_end = end_i;
-            } else if (kind) {
+            } else {
                 hdr_acc_t ha = { fname, &new_vals, &n_new, &new_cap };
                 /* Header fields travel as NUL-terminated strings through this
-                   API, so an embedded NUL in a "b" item cannot be represented. */
-                if (walk_literals(arr, kind, 1, header_literal, &ha) != 0) goto fail;
+                   API, so an embedded NUL in a "u" item cannot be represented. */
+                if (kind < 0 || walk_literals(arr, kind, 1, header_literal, &ha) != 0) goto fail;
             }
         }
         free(field_hdrs);
@@ -502,26 +588,24 @@ fail:
 
 /* Append one literal (a body line or a header value, without its line
    terminator) to `steps`, coalescing with the previous step when that is a
-   literal step of the same kind. Any byte >= 0x80 forces a "b" item (base64
-   of the raw octets): cJSON would otherwise copy the bytes straight into the
-   JSON text, which has to stay 7-bit clean. Pure-ASCII literals stay "d".
-   `*cur` is the open literal array (NULL after a "c" step), `*cur_is_b` its
-   kind. */
-static void add_literal(cJSON *steps, cJSON **cur, int *cur_is_b,
+   literal step of the same kind. A literal that is valid UTF-8 is a "d"
+   item (-07 §5: "u" SHOULD NOT be used when "d" would suffice); anything
+   else -- and a literal holding a NUL, which a cJSON string cannot carry --
+   is a "u" item, the canonical base64 of the raw octets. `*cur` is the open
+   literal array (NULL after a "c" step), `*cur_is_u` its kind. */
+static void add_literal(cJSON *steps, cJSON **cur, int *cur_is_u,
                         const char *p, size_t l) {
-    int is_b = 0;
-    for (size_t i = 0; i < l; i++)
-        if ((unsigned char)p[i] >= 0x80) { is_b = 1; break; }
+    int is_u = !utf8_valid((const unsigned char *)p, l) || memchr(p, '\0', l) != NULL;
 
-    if (!*cur || *cur_is_b != is_b) {
+    if (!*cur || *cur_is_u != is_u) {
         cJSON *step = cJSON_CreateObject();
         *cur = cJSON_CreateArray();
-        cJSON_AddItemToObject(step, is_b ? "b" : "d", *cur);
+        cJSON_AddItemToObject(step, is_u ? "u" : "d", *cur);
         cJSON_AddItemToArray(steps, step);
-        *cur_is_b = is_b;
+        *cur_is_u = is_u;
     }
 
-    if (is_b) {
+    if (is_u) {
         size_t cap = (l + 2) / 3 * 4 + 1;
         char *enc = malloc(cap);
         if (!enc) return;
@@ -772,7 +856,7 @@ char *dkim2_gen_body_recipe_ex(
         cJSON *root = cJSON_CreateObject();
         cJSON *steps = cJSON_CreateArray();
         cJSON_AddItemToObject(root, "b", steps);
-        cJSON *cur = NULL; int cur_is_b = 0;
+        cJSON *cur = NULL; int cur_is_u = 0;
         for (int s = 0; s < nds; s++) {
             if (!ds[s].lit) {
                 add_copy(steps, &cur, ds[s].from, ds[s].to);
@@ -780,7 +864,7 @@ char *dkim2_gen_body_recipe_ex(
                 const char *p = new_lines[ds[s].from].ptr;
                 size_t l = new_lines[ds[s].from].len;
                 while (l > 0 && (p[l-1] == '\n' || p[l-1] == '\r')) l--;
-                add_literal(steps, &cur, &cur_is_b, p, l);
+                add_literal(steps, &cur, &cur_is_u, p, l);
             }
         }
         json = cJSON_PrintUnformatted(root);
@@ -842,7 +926,7 @@ char *dkim2_gen_header_recipe(const char *field_name,
         free(oend); free(nend); cJSON_Delete(root); return NULL;
     }
     int ni = 0, prev_end = 0;
-    cJSON *cur = NULL; int cur_is_b = 0;
+    cJSON *cur = NULL; int cur_is_u = 0;
     while (ni < n_new) {
         int best_old = -1, best_len_found = 0;
         for (int oi = prev_end; oi < n_old && best_len_found < n_new - ni; ) {
@@ -866,7 +950,7 @@ char *dkim2_gen_header_recipe(const char *field_name,
                 val++;
                 while (*val == ' ') val++;
                 /* A literal is one unfolded value: drop every CR/LF (the
-                   §6.2 header hash unfolds and collapses WSP, so this is
+                   -07 §6.2 header hash unfolds and collapses WSP, so this is
                    hash-neutral) and the terminator with them. */
                 size_t vl = strlen(val);
                 char *s = malloc(vl + 1);
@@ -874,7 +958,7 @@ char *dkim2_gen_header_recipe(const char *field_name,
                     size_t k = 0;
                     for (size_t j = 0; j < vl; j++)
                         if (val[j] != '\r' && val[j] != '\n') s[k++] = val[j];
-                    add_literal(steps, &cur, &cur_is_b, s, k);
+                    add_literal(steps, &cur, &cur_is_u, s, k);
                     free(s);
                 }
             }

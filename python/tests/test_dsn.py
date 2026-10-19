@@ -30,7 +30,7 @@ def _two_hop_embedded():
     says the footer was added, so it cannot get back to the m=1 body, which is
     exactly what every implementation's undo now reports as an error.
     """
-    raw = (b"From: sender@origin.example\r\n"
+    raw = (b"From: sender@test1.dkim2.com\r\n"
            b"To: user@test1.dkim2.com\r\n"
            b"Subject: hello\r\n\r\nbody line\r\n")
     hop1 = dkim2sign.sign_message(
@@ -103,7 +103,7 @@ def _wrap_dsn_no_delivery_status(embedded: bytes) -> bytes:
     return report.as_bytes()
 
 
-# propagate() authenticates the DSN first (§12.1.2) unless told it has been
+# propagate() authenticates the DSN first (§16.3) unless told it has been
 # done already. The fixtures below deliberately do NOT verify (hop 1 signs
 # d=test1.dkim2.com over a sender@origin.example envelope, which the d=/mf=
 # rule rejects), because they exist to exercise the rebuild machinery -- so
@@ -162,11 +162,11 @@ def test_propagate_basic():
 def _null_recipe_embedded():
     """A two-hop message whose m=2 declares the previous body unrecoverable.
 
-    §12.1.1's "null Recipe": the forwarder says the m=1 body cannot be put
+    §16.2's "null Recipe": the forwarder says the m=1 body cannot be put
     back, so propagate must return the header fields alone rather than a body
     it cannot reconstruct.
     """
-    raw = (b"From: sender@origin.example\r\n"
+    raw = (b"From: sender@test1.dkim2.com\r\n"
            b"To: user@test1.dkim2.com\r\n"
            b"Subject: hello\r\n\r\nbody line\r\n")
     hop1 = dkim2sign.sign_message(
@@ -226,7 +226,7 @@ def test_propagate_refuses_when_undo_simply_fails():
     # No Recipe at all for a body that did change: undo cannot get back to the
     # m=1 body and does not claim to. That is a defect, not a declaration, so
     # there is nothing truthful to return and propagate must not invent one.
-    raw = (b"From: sender@origin.example\r\n"
+    raw = (b"From: sender@test1.dkim2.com\r\n"
            b"To: user@test1.dkim2.com\r\n"
            b"Subject: hello\r\n\r\nbody line\r\n")
     hop1 = dkim2sign.sign_message(
@@ -263,7 +263,7 @@ def test_propagate_refuses_when_undo_simply_fails():
         assert "hash mismatch after undo" in str(e), str(e)
 
 
-# --- authenticate: §12.1.2, the returned original's chain must verify -------
+# --- authenticate: §16.3, the returned original's chain must verify -------
 
 # The fixture above never verifies (hop 1 signs d=test1.dkim2.com over a
 # sender@origin.example envelope, which the d=/mf= rule rejects), which the
@@ -315,7 +315,7 @@ def test_authenticate_intact_two_hop():
                                  skip_timestamp_check=True)
     assert auth["ok"], auth["message"]
     assert auth["headers_only"] is False
-    # The forwarder recognises i=2 as its own by d= (§12.1.2 point 2).
+    # The forwarder recognises i=2 as its own by d= (§16.3 point 2).
     assert auth["top"]["i"] == 2, auth["top"]
     assert auth["top"]["d"] == "test2.dkim2.com", auth["top"]
     assert auth["top"]["mf"] == "<user@test2.dkim2.com>", auth["top"]
@@ -337,7 +337,7 @@ def test_authenticate_rejects_tampered_headers():
         auth = dkim2dsn.authenticate(wrap(tampered), DNS_DATA,
                                      skip_timestamp_check=True)
         assert not auth["ok"], f"{wrap.__name__} should not authenticate"
-        assert any("header hash mismatch" in e for e in auth["errors"]), auth["errors"]
+        assert any("header hash sha256 mismatch" in e for e in auth["errors"]), auth["errors"]
 
 
 def test_authenticate_unsigned_original_reports_none():
@@ -349,7 +349,7 @@ def test_authenticate_unsigned_original_reports_none():
     assert auth["top"] is None
 
 
-# --- propagate: a Forwarder's §9.3 bridge goes with its hop ----------------
+# --- propagate: a Forwarder's §12.3 bridge goes with its hop ----------------
 
 def _bridged_twohop() -> bytes:
     """test1 -> user@test2; test2 bridges with nd= and sends from test3."""
@@ -377,7 +377,7 @@ def test_authenticate_bridged_chain():
 
 
 def test_propagate_strips_the_bridge_with_its_hop():
-    # This chain verifies, so propagate can do its own §12.1.2 authentication
+    # This chain verifies, so propagate can do its own §16.3 authentication
     # rather than being told to skip it.
     out = dkim2dsn.propagate(
         _wrap_dsn(_bridged_twohop()), forwarder_domain="test3.dkim2.com",
@@ -407,18 +407,21 @@ def test_authenticate_rejects_non_dsn():
         assert "multipart/report" in str(e), str(e)
 
 
-# --- §12.1.2 point 1: the DSN's own signing domain must be aligned with the
+# --- §16.3 point 1: the DSN's own signing domain must be aligned with the
 # rt= of the returned message's top signature -- i.e. the bounce came from the
 # system we handed the message to. Checked only on a d= we have verified: an
 # unverified d= is whatever the forger typed. --------------------------------
 
 def _signed_dsn_around(embedded: bytes, domain: str,
                        headers_only: bool = False) -> bytes:
-    """Wrap `embedded` in a DSN and sign the DSN as a new message (as §12.1.1
+    """Wrap `embedded` in a DSN and sign the DSN as a new message (as §16.2
     makes it: MAIL FROM <>, one Message-Instance, one DKIM2-Signature)."""
     wrap = _wrap_dsn_headers_only if headers_only else _wrap_dsn
+    # The reporting system is `domain`: its From is Authentic for it (-07 §11).
+    dsn = wrap(embedded).replace(b"From: postmaster@test3.dkim2.com",
+                                 f"From: postmaster@{domain}".encode(), 1)
     return dkim2sign.sign_message(
-        wrap(embedded), "sel1", domain, _key("sel1", domain),
+        dsn, "sel1", domain, _key("sel1", domain),
         mailfrom="<>", rcptto=["user@test2.dkim2.com"], timestamp=1740000000)
 
 
@@ -456,7 +459,7 @@ def test_check_alignment_domain_relationships():
     # reject behaviour through the real entry point is covered above; this
     # pins the direction question, which is what would otherwise be guessed.
     rt_test3 = {"rt": ["<dest@test3.dkim2.com>"]}
-    # §9.4's direction: labels come off the ADDRESS domain, so d= may be the
+    # §7.2's direction: labels come off the ADDRESS domain, so d= may be the
     # delivery domain or a parent of it.
     for d in ("test3.dkim2.com", "dkim2.com"):
         state, detail = dkim2dsn._check_alignment({"d": d}, rt_test3)
@@ -485,7 +488,7 @@ def test_authenticate_broken_dsn_signature():
 
 
 def test_authenticate_unsigned_dsn_is_reported_not_failed():
-    # An unsigned DSN is not what §12.1.2 is about ("when a system receives a
+    # An unsigned DSN is not what §16.3 is about ("when a system receives a
     # DKIM2 signed DSN"), so it is reported, not failed.
     auth = dkim2dsn.authenticate(_wrap_dsn(_verifiable_twohop()), DNS_DATA,
                                  skip_timestamp_check=True)
@@ -495,7 +498,7 @@ def test_authenticate_unsigned_dsn_is_reported_not_failed():
     assert auth["ok"]
 
 
-# --- §12.1.2: "If the verification fails then the DSN MUST NOT be propagated
+# --- §16.3: "If the verification fails then the DSN MUST NOT be propagated
 # any further" -- propagate enforces that itself. ---------------------------
 
 def test_propagate_needs_the_means_to_authenticate():
@@ -545,7 +548,7 @@ def test_propagate_a_fully_authenticated_dsn():
         dns_data=DNS_DATA, skip_timestamp_check=True)
     assert out["upstream_mailfrom"] == "<sender@test1.dkim2.com>", out["upstream_mailfrom"]
 
-    # The inbound DSN was itself signed -- the only kind §12.1.2 is about --
+    # The inbound DSN was itself signed -- the only kind §16.3 is about --
     # so its own instance and signature must not survive into ours.
     headers, _ = dkim2sign.parse_message(out["raw"])
     mis = [h for h in headers if dkim2sign._header_name(h) == b"message-instance"]

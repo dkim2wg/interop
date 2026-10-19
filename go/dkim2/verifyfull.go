@@ -13,7 +13,9 @@ import (
 // Verify does), then validates every lower Message-Instance against the
 // version of the message its Recipes rebuild.  A Recipe or hash failure is
 // reported as an extra failing VerifyResult ("MI-chain v=N"); a Recipe that
-// breaks the §5 rules against the message is the verbatim PERMERROR.
+// breaks the §5 rules against the message is the verbatim PERMERROR, ranked
+// with §14.7 (contract C9).  The §14.8 From check comes last, when nothing
+// else failed.
 //
 // The lower instances are checked by the planned walk (plan.go): the message
 // is read once, its body streamed in the chunks r delivers into one pass that
@@ -58,7 +60,21 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	if err != nil {
 		return results, err
 	}
-	return plan.walk(results)
+	results, err = plan.walk(results)
+	return fromLast(headers, results, err, opts...)
+}
+
+// chainLevelError is the VerifyResult error for a lower Message-Instance
+// that does not check out against the message its Recipes rebuild: a hash
+// that does not match is the §14.7 FAIL itself; anything else keeps the
+// walk's own wording, as a PERMERROR.  The planned and undo walks both use
+// it, so they report the same.
+func chainLevelError(err error) error {
+	var hm *hashMismatchError
+	if errors.As(err, &hm) {
+		return hm
+	}
+	return fmt.Errorf("PERMERROR: MI chain validation failed: %w", err)
 }
 
 // recordingReader keeps a copy of everything read through it until off.
@@ -84,22 +100,17 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 		return nil, err
 	}
 
-	results, err := Verify(bytes.NewReader(buf), fetcher, opts...)
+	headers, results, err := verifyNoFrom(bytes.NewReader(buf), fetcher, opts...)
 	if err != nil {
 		return results, err
 	}
 
-	// §12.1.2: with no body there is nothing to undo a lower instance into, so
+	// §16.3: with no body there is nothing to undo a lower instance into, so
 	// Verify's top-instance header-hash check is as far as the chain walk goes.
 	if len(opts) > 0 && opts[0].HeadersOnly {
-		return results, nil
+		return fromLast(headers, results, nil, opts...)
 	}
 
-	// Highest MI version present.
-	headers, _, perr := parseHeaders(bytes.NewReader(buf))
-	if perr != nil {
-		return results, nil // Verify already covered parse-level issues
-	}
 	highest := 0
 	for _, h := range headers {
 		if strings.ToLower(h.Name) == "message-instance" {
@@ -114,20 +125,26 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 	for target := highest - 1; target >= 1; target-- {
 		if err := undo(bytes.NewReader(buf), io.Discard, target, true); err != nil {
 			// A Recipe that only fails against the real item counts is
-			// found here, not in parseMI; report it the way Verify reports
-			// a structurally malformed one -- the verbatim PERMERROR, as
-			// the top-level error, and the message is not accepted.
+			// found here, not in parseMI: the verbatim PERMERROR, as Verify
+			// reports a structurally malformed one, but found by the walk,
+			// so it ranks with §14.7 (C9) -- after the hash checks of the
+			// instances above it.
 			var mre *malformedRecipeError
 			if errors.As(err, &mre) {
-				return results, mre
+				results = append(results, VerifyResult{
+					Domain:  fmt.Sprintf("MI-chain v=%d", mre.m),
+					Error:   mre,
+					section: 7,
+				})
+				break
 			}
 			results = append(results, VerifyResult{
 				Domain: fmt.Sprintf("MI-chain v=%d", target),
-				Error:  fmt.Errorf("MI chain validation failed: %w", err),
+				Error:  chainLevelError(err),
 			})
 			break
 		}
 	}
 
-	return results, nil
+	return fromLast(headers, results, nil, opts...)
 }

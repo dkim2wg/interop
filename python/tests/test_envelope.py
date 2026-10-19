@@ -58,7 +58,7 @@ def test_mail_from_param_mismatch():
         mail_from="wrong@test1.dkim2.com")
     assert not res.ok
     assert any(
-        "DKIM2-Signature i=1 MAIL FROM wrong@test1.dkim2.com did not match" == e
+        "PERMERROR: DKIM2-Signature i=1 MAIL FROM wrong@test1.dkim2.com did not match" == e
         for e in res.errors
     ), res.errors
 
@@ -73,7 +73,7 @@ def test_rcpt_to_param_mismatch():
         rcpt_to=["other@test2.dkim2.com"])
     assert not res.ok
     assert any(
-        "DKIM2-Signature i=1 RCPT TO other@test2.dkim2.com did not match" == e
+        "PERMERROR: DKIM2-Signature i=1 RCPT TO other@test2.dkim2.com did not match" == e
         for e in res.errors
     ), res.errors
 
@@ -123,7 +123,8 @@ def test_null_h_recipe_rejected_full_chain():
     res = dkim2verify.verify_message(raw, DNS_DATA, full_chain=True,
                                      skip_timestamp_check=True)
     assert not res.ok
-    assert any("header recipe is null" in e for e in res.errors), res.errors
+    # -07 §5.1: the null header Recipe breaks the schema.
+    assert "PERMERROR: Message-Instance m=2 contains invalid JSON" in res.errors, res.errors
 
 
 if __name__ == "__main__":

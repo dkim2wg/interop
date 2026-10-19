@@ -1,7 +1,7 @@
 # DKIM2 Interop Status Report
 
-**Spec:** draft-ietf-dkim-dkim2-spec-06  
-**Date:** 2026-05-01  
+**Spec:** draft-ietf-dkim-dkim2-spec-07  
+**Date:** 2026-10-18 (-07 upgrade; earlier sections of this report date from 2026-05-01)  
 **Audience:** DKIM2 Working Group participants, hackathon attendees
 
 ---
@@ -16,6 +16,7 @@ Four independent implementations exist in this repository:
 | Perl | `perl/` | ✅ | ✅ | `Mail::DKIM2`; streaming object API |
 | Go | `go/` | ✅ | ✅ | Library + CLI; streaming, zero-copy body |
 | C | `c/` | ✅ | ✅ | Low-level; libmilter integration included |
+| JS | `deploy/www/verify/` | — | ✅ | Browser verifier, live at <https://dkim2.com/verify/> |
 
 A fifth implementation (`hs/`) contains Hannah Stern's worked example signature
 and key material used for interop testing, but is not a complete sign/verify
@@ -25,24 +26,33 @@ implementation.
 
 ## Spec sections implemented
 
+Section numbers are -07's. All five verifiers (the four below plus the
+browser JS verifier) implement every verifier row.
+
 | Section | Topic | Py | Perl | Go | C |
 |---------|-------|----|------|----|---|
-| §5.1 | Body hash (SHA-256, simple canon) | ✅ | ✅ | ✅ | ✅ |
-| §5.2 | Header hash (sorted, canonicalized) | ✅ | ✅ | ✅ | ✅ |
-| §6 | Message-Instance header format | ✅ | ✅ | ✅ | ✅ |
-| §6 | MI Recipe field (`r=`) — undo support | ✅ | ✅ | ✅ | ✅ |
-| §7 | DKIM2-Signature header format | ✅ | ✅ | ✅ | ✅ |
-| §7.1 | i= and m= sequence contiguity check | ✅ | ✅ | ✅ | ✅ |
-| §7.3 | n= nonce ≤ 64 characters | ✅ | ✅ | ✅ | ✅ |
-| §7.7 | d= must be suffix of mf= domain | ✅ | ✅ | ✅ | ✅ |
-| §8 | Signing flow | ✅ | ✅ | ✅ | ✅ |
-| §8.2 | Inter-sig chain custody (mf=/rt= domain match) | ✅ | ✅ | ✅ | ✅ |
-| §9.5 | Signing input construction | ✅ | ✅ | ✅ | ✅ |
-| §10.3 | Timestamp: reject >14 days old or in future | ✅ | ✅ | ✅ | ✅ |
-| §10.4 | Envelope exact-match (MAIL FROM / RCPT TO) | ✅ | ✅ | ✅ | ✅ |
-| §10.6 | Verify all s= items (algorithm agility) | ✅ | ✅ | ✅ | ✅ |
-| §10.7 | Verify MI body + header hashes | ✅ | ✅ | ✅ | ✅ |
-| §10 | Full chain walk with Recipe undo | ✅ | ✅ | ✅ | ✅ |
+| §5, §5.1, §5.2 | Recipes: `c`/`d`/`u` steps (`u` replaced -06's `b`), lowercase keys emitted, keys matched case-insensitively, case-insensitive duplicates rejected | ✅ | ✅ | ✅ | ✅ |
+| §6.1 | Body hash (SHA-256/SHA-512, simple canon) | ✅ | ✅ | ✅ | ✅ |
+| §6.2 | Header hash (sorted, canonicalized) | ✅ | ✅ | ✅ | ✅ |
+| §7 | Relaxed domain match (asymmetric; A-labels; domain literals never match) | ✅ | ✅ | ✅ | ✅ |
+| §8 | Tag=Value lists (any-case tag names, duplicates and `;;` rejected) | ✅ | ✅ | ✅ | ✅ |
+| §9 | Message-Instance header format, `r=` (absent `r=` = no change) | ✅ | ✅ | ✅ | ✅ |
+| §10 | DKIM2-Signature header format, i=/m= contiguity, n= ≤ 64 | ✅ | ✅ | ✅ | ✅ |
+| §10.10, §12.5 | `f=` flags; `exploded` above i=1 (hint header `X-DKIM2-Exploded: yes`) | ✅ | ✅ | ✅ | ✅ |
+| §11, §12.4, §14.8 | From must be Authentic (verifier check and signer refusal) | ✅ | ✅ | ✅ | ✅ |
+| §12.3 | `nd=` imaginary hops | ✅ | ✅ | ✅ | ✅ |
+| §12.8 | Signing input construction | ✅ | ✅ | ✅ | ✅ |
+| §14.1–§14.8 | Exact -07 error strings (`STATE: text`) | ✅ | ✅ | ✅ | ✅ |
+| §14.3 | Timestamps: > 14 days old or > 1 day in the future is PERMERROR | ✅ | ✅ | ✅ | ✅ |
+| §14.4 | Chain of Custody (mf=/d=, mf=/rt=, bounce d=/rt=, nd= checks) and envelope exact match | ✅ | ✅ | ✅ | ✅ |
+| §14.6 | Verify all s= items (algorithm agility) | ✅ | ✅ | ✅ | ✅ |
+| §14 | Full chain walk with Recipe undo | ✅ | ✅ | ✅ | ✅ |
+| §16 | DSNs: none for a null top `mf=` or a message not Provisionally Verified | ✅ | ✅ | ✅ | ✅ |
+| §3.4 | MLDSA44-Ed25519-SHA512 | — | — | — | — |
+
+MLDSA44-Ed25519-SHA512 is not implemented anywhere here yet: DKIMKEYS
+defines no `k=`/`p=` for it, so an `s=` item using it is disregarded like
+any unknown algorithm.
 
 ---
 
@@ -78,6 +88,17 @@ All four implementations verify all 10 emails.
 The Perl `t/interop.t` test verifies all Python expected emails.  The Python
 `tests/run_tests.sh` verifies Python-generated emails with the Python verifier.
 The Go test suite includes verification of the shared test vectors.
+
+The cross-implementation runners in `util/` (see the README), all green on
+the -07 tree (2026-10-18):
+
+| Runner | Cells | What it checks |
+|--------|-------|----------------|
+| `util/negative-vectors.sh` | 275 | 40 negative vectors rejected with the exact -07 string, 15 positive controls accepted, by all five verifiers |
+| `util/signer-gate.sh` | 200 | 25 chain shapes through the four signers, plain and with `--allow-null-body-recipe` |
+| `util/hash-matrix.sh` | 60 | 4 signers × sha256/sha512/both × 5 verifiers |
+| `util/interop-fold-mi.sh` | 57 | FWS in tag values, recipe-less instances |
+| `util/turscar-all.sh` | 42 × 5 | Steve Atkins' dkim2tests (a382236) |
 
 ---
 
@@ -215,10 +236,11 @@ These have not been resolved and should be addressed in a future draft revision:
 ## Shared test infrastructure
 
 ```
-dns.json       DNS TXT records for all test domains (test1..test5.dkim2.com)
+dns.json       DNS TXT records for all test domains (test1..test5.dkim2.com,
+               and mail.test2.dkim2.com for the -07 Chain of Custody vectors)
 keys/          Private key files for all selectors, all test domains
                Format: <selector>._domainkey.<domain>.pem  (PKCS#8 PEM)
-spec/          draft-ietf-dkim-dkim2-spec-06.txt
+spec/          draft-ietf-dkim-dkim2-spec-07.txt (and the earlier drafts)
 ```
 
 Test domains: `test1.dkim2.com` through `test5.dkim2.com`  

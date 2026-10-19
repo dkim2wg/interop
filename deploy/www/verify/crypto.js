@@ -1,9 +1,9 @@
-// WebCrypto wrappers for DKIM2. Built from spec-06 §3.
+// WebCrypto wrappers for DKIM2. Built from draft-ietf-dkim-dkim2-spec-07 §3.
 import { b64ToBytes, bytesToB64 } from './b64.js';
 
 const subtle = globalThis.crypto.subtle;
 
-// spec-06 §3.1: two hashing algorithms are defined; Verifiers MUST implement
+// §3.1: two hashing algorithms are defined; Verifiers MUST implement
 // both. Values are WebCrypto SubtleCrypto digest names.
 export const HASH_ALGS = { sha256: 'SHA-256', sha512: 'SHA-512' };
 
@@ -31,7 +31,7 @@ export async function verifyRsa(keyB64, sigBytes, msgBytes) {
   // (PKIX, RFC 5280) or as a bare PKCS#1 RSAPublicKey (RFC 8017). WebCrypto
   // only imports SPKI, so wrap a bare PKCS#1 key before importing (§3.2).
   const spki = isPkcs1RsaPublicKey(der) ? pkcs1ToSpki(der) : der;
-  // §11.5: a p= that does not import as an RSA key (garbage, or a key of
+  // §14.5: a p= that does not import as an RSA key (garbage, or a key of
   // another type) is a malformed key record: a syntax error, never a plain
   // signature failure.
   let key;
@@ -93,7 +93,7 @@ export async function verifyEd25519(rawPubB64, sigBytes, hashBytes) {
     key = await subtle.importKey('raw', rawPub, { name: 'Ed25519' }, false, ['verify']);
   } catch (e) {
     if (e.name === 'NotSupportedError') throw new Error('ed25519-unsupported');
-    // §11.5: a p= that is not a raw Ed25519 key is a malformed key record.
+    // §14.5: a p= that is not a raw Ed25519 key is a malformed key record.
     throw new Error('key-syntax', { cause: e });
   }
   // §3.3: Ed25519 signs the SHA-256 hash value as its message.

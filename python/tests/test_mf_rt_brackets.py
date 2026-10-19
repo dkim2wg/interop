@@ -58,7 +58,8 @@ def test_bare_mf_fails_verification():
     assert bad != signed
     res = dkim2verify.verify_message(bad, DNS_DATA, skip_timestamp_check=True)
     assert not res.ok
-    assert any("7.5" in e or "bracket" in e for e in res.errors)
+    # -07 §10.5: an unbracketed mf= is a syntax error.
+    assert "PERMERROR: DKIM2-Signature i=1 syntax error" in res.errors, res.errors
 
 
 if __name__ == "__main__":

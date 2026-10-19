@@ -8,9 +8,9 @@ typedef struct tag_entry {
 
 typedef struct {
     tag_entry_t *head;
-    int duplicate; /* nonzero if a tag name appeared more than once (spec-06 §8) */
+    int duplicate; /* nonzero if a tag name appeared more than once (-07 §8) */
     int syntax_error; /* nonzero if a non-empty fragment is not a well-formed
-                         tag-spec (spec-06 §7, §8 x-tag) */
+                         tag-spec (-07 §8) */
 } taglist_t;
 
 /* Parse "name=value; name=value; ..." tag list.

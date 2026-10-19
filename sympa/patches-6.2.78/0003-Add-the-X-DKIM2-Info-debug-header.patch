@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Thu, 8 Oct 2026 14:08:36 -0400
-Subject: [PATCH 3/3] Add the X-DKIM2-Info debug header
+Subject: [PATCH 3/5] Add the X-DKIM2-Info debug header
 
 Every Message-Instance Sympa adds (m=1 at ingress, m=N at egress) is
 accompanied by an X-DKIM2-Info field directly above it, in the

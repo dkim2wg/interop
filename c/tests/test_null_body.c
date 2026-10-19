@@ -1,4 +1,4 @@
-/* Null body Recipe ("b": null, spec-06 §4.2): the previous BODY cannot be
+/* Null body Recipe ("b": null, -07 §5.2): the previous BODY cannot be
    recreated, but header Recipes are mandatory (§5.1) so the header history
    below the null must still be walked and checked.
 
@@ -88,7 +88,7 @@ int main(void) {
         dkim2_mi_t *m[3] = { mkmi(1, h1, 3, B1, NULL), mkmi(2, h2, 3, "bad\r\n", r2),
                              mkmi(3, h3, 3, B3, r3b) };
         assert(run(m, 3, h3, 3, B3, err, sizeof err) != 0);
-        assert(strstr(err, "m=2 body hash mismatch"));
+        assert(strstr(err, "m=2 body hash sha256 mismatch"));
         for (int i = 0; i < 3; i++) dkim2_mi_free(m[i]);
     }
     /* forged history below the null: To changed, hidden from header Recipe */
@@ -96,7 +96,7 @@ int main(void) {
         const char *hf[] = { F, T2, S2 };
         dkim2_mi_t *m[2] = { mkmi(1, h1, 3, B1, NULL), mkmi(2, hf, 3, B2, r2) };
         assert(run(m, 2, hf, 3, B2, err, sizeof err) != 0);
-        assert(strstr(err, "m=1 header hash mismatch"));
+        assert(strstr(err, "m=1 header hash sha256 mismatch"));
         dkim2_mi_free(m[0]); dkim2_mi_free(m[1]);
     }
     /* header Recipe that does not apply below the null -> failure */
@@ -110,7 +110,7 @@ int main(void) {
     {
         dkim2_mi_t *m[2] = { mkmi(1, h1, 3, B1, NULL), mkmi(2, h2, 3, "x\r\n", r2) };
         assert(run(m, 2, h2, 3, B2, err, sizeof err) != 0);
-        assert(strstr(err, "m=2 body hash mismatch"));
+        assert(strstr(err, "m=2 body hash sha256 mismatch"));
         dkim2_mi_free(m[0]); dkim2_mi_free(m[1]);
     }
     /* EMPTY top body: clean chain (m=2 header-only Recipe) -> pass */
@@ -126,7 +126,7 @@ int main(void) {
         const char *r = "{\"h\":{\"subject\":[{\"d\":[\"hi\"]}]}}";
         dkim2_mi_t *m[2] = { mkmi(1, h1, 3, "", NULL), mkmi(2, hf, 3, "", r) };
         assert(run(m, 2, hf, 3, "", err, sizeof err) != 0);
-        assert(strstr(err, "m=1 header hash mismatch"));
+        assert(strstr(err, "m=1 header hash sha256 mismatch"));
         dkim2_mi_free(m[0]); dkim2_mi_free(m[1]);
     }
     /* null BELOW an ordinary instance: m=3 ordinary (header Recipe only,
@@ -142,10 +142,10 @@ int main(void) {
         dkim2_mi_t *f[3] = { mkmi(1, h1, 3, B1, NULL), mkmi(2, hf2, 3, B2, r2),
                              mkmi(3, hf3, 3, B2, r3) };
         assert(run(f, 3, hf3, 3, B2, err, sizeof err) != 0);
-        assert(strstr(err, "m=1 header hash mismatch"));
+        assert(strstr(err, "m=1 header hash sha256 mismatch"));
         for (int i = 0; i < 3; i++) dkim2_mi_free(f[i]);
     }
-    /* malformed body Recipe on an instance BELOW a null -> PERMERROR */
+    /* malformed body Recipe on an instance BELOW a null -> PERMERROR (invalid JSON) */
     {
         const char *bads[] = {
             "{\"h\":{\"subject\":[{\"d\":[\"[L] hi\"]}]},\"b\":5}",
@@ -158,7 +158,7 @@ int main(void) {
             /* m=3 is null, m=2 (below it) carries the malformed Recipe; its
                header Recipe is valid, so only structure validation can reject */
             assert(run(m, 3, h3, 3, B3, err, sizeof err) != 0);
-            assert(strstr(err, "m=2 has a malformed body Recipe"));
+            assert(strstr(err, "m=2 contains invalid JSON"));
             for (int i = 0; i < 3; i++) dkim2_mi_free(m[i]);
         }
     }

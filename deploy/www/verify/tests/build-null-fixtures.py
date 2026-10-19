@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Build re-signed null-body-Recipe fixtures for null-body.test.mjs.
 Usage: build-null-fixtures.py <outdir>.  Reuses the chain builder in
-util/build-negative-vectors.py (imported, not modified)."""
+util/build-negative-vectors.py (imported, not modified), with the base
+message's From rewritten into the i=1 signing domain (test1.dkim2.com), so
+that From is Authentic (spec-07 §11) and the Recipes are all that is under
+test."""
 import importlib.util, os, sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), *[".."] * 4))
@@ -10,6 +13,17 @@ spec = importlib.util.spec_from_file_location(
 bnv = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bnv)
 ds = bnv.ds
+
+_load_base = bnv.load_base
+
+
+def load_base():
+    headers, body = _load_base()
+    return [b'From: "Bron Gondwana" <brong@test1.dkim2.com>'
+            if h[:5].lower() == b"from:" else h for h in headers], body
+
+
+bnv.load_base = load_base
 chain, nullr, forged, plain = bnv._null_body_chain, bnv._null_body_recipe, bnv._forged_recipe, bnv._footer_recipe
 sub, tochg = bnv._subject_prefixed, bnv._to_changed
 
@@ -68,6 +82,9 @@ def bad_header_below_null():
 
 
 FIX = {
+    "positive-control-null-body.eml": bnv.build_positive_null_body,
+    "positive-control-null-body-over-recipe.eml": bnv.build_positive_null_body_over_recipe,
+    "null-body-forged-history.eml": bnv.build_null_body_forged_history,
     "null-below-ordinary.eml": lambda: null_below_ordinary(False),
     "null-below-ordinary-forged.eml": lambda: null_below_ordinary(True),
     "empty-body-null.eml": lambda: empty_body(True, False),

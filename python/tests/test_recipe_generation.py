@@ -1,11 +1,12 @@
 """Recipe generation (dkim2sign.build_recipes and friends).
 
-Producer rules, spec-06 §5 plus the extension proposed to the WG:
+Producer rules, draft -07 §5:
 
-  * a literal whose octets include a byte >= 0x80 is emitted as a "b" item
-    (base64 of the raw octets), never as "d" -- and never via Python's
-    surrogateescape, which would put \\udcXX escapes in the JSON;
-  * pure-ASCII literals stay "d"; consecutive literals of one kind coalesce;
+  * a literal that is not valid UTF-8 is emitted as a "u" item (base64 of
+    the raw octets), never as "d" -- and never via Python's surrogateescape,
+    which would put \\udcXX escapes in the JSON;
+  * valid UTF-8 literals (ASCII included) stay "d"; consecutive literals of
+    one kind coalesce;
   * a "c" range never goes backwards: a header instance that is still
     present but now in a different position is written out literally.
 """
@@ -31,9 +32,11 @@ def b64_of(octets: bytes) -> str:
     return base64.b64encode(octets).decode()
 
 
-def test_8bit_literals_become_b_items_and_ascii_stays_d():
+def test_non_utf8_literals_become_u_items_and_utf8_stays_d():
     steps = recipe_literal_steps([b"a", b"b", b"caf\xe9", b"\xb1\xa4", b"z"])
-    assert steps == [{"d": ["a", "b"]}, {"b": ["Y2Fm6Q==", "saQ="]}, {"d": ["z"]}]
+    assert steps == [{"d": ["a", "b"]}, {"u": ["Y2Fm6Q==", "saQ="]}, {"d": ["z"]}]
+    steps = recipe_literal_steps(["café".encode(), b"a", "naïve".encode()])
+    assert steps == [{"d": ["café", "a", "naïve"]}]
 
 
 def test_literal_with_cr_or_lf_is_refused():
@@ -50,8 +53,8 @@ def test_emitted_json_carries_no_surrogate_escapes():
                            [b"Subject: cafe"], b"replaced\r\n")
     text = json.dumps(recipe)
     assert "\\udc" not in text, text
-    assert recipe == {"h": {"subject": [{"b": ["IGNhZuk="]}]},
-                      "b": [{"b": ["saQ="]}]}
+    assert recipe == {"h": {"subject": [{"u": ["IGNhZuk="]}]},
+                      "b": [{"u": ["saQ="]}]}
     # And the signer's own encoding of it is plain ASCII base64 of plain JSON.
     assert b"\\udc" not in base64.b64decode(b64json(recipe))
 
@@ -88,13 +91,13 @@ def test_body_recipe_copies_runs_and_writes_the_rest():
     prev = b"l1\r\ncaf\xe9\r\nl3\r\nl4\r\n"
     cur = b"l1\r\nX\r\nl3\r\nl4\r\nfooter\r\n"
     steps = build_body_recipe(prev, cur)
-    assert steps == [{"c": [1, 1]}, {"b": ["Y2Fm6Q=="]}, {"c": [3, 4]}]
+    assert steps == [{"c": [1, 1]}, {"u": ["Y2Fm6Q=="]}, {"c": [3, 4]}]
     assert compute_body_hash(reconstruct_body(cur, steps)) == compute_body_hash(prev)
 
 
 def test_header_recipe_for_a_removed_field_is_all_literals():
     assert build_header_recipe([b"Subject: a", b"Subject: \xe9"], []) == \
-        [{"b": ["IOk="]}, {"d": [" a"]}]
+        [{"u": ["IOk="]}, {"d": [" a"]}]
 
 
 def test_added_field_gets_an_empty_recipe_and_unchanged_fields_none():
@@ -143,8 +146,8 @@ def test_generated_recipe_verifies_end_to_end():
     modify(headers, body)
     recipe = captured["recipe"]
     assert "\\udc" not in json.dumps(recipe)
-    assert recipe["h"]["subject"] == [{"b": [b64_of(b" \xb1\xa4 original")]}]
-    assert recipe["b"][-1] == {"b": [b64_of(b"\xb1\xa4")]}
+    assert recipe["h"]["subject"] == [{"u": [b64_of(b" \xb1\xa4 original")]}]
+    assert recipe["b"][-1] == {"u": [b64_of(b"\xb1\xa4")]}
     result = verify(two_hop(original, modify, recipe=recipe))
     assert result.ok, result.errors
 

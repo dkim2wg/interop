@@ -20,11 +20,11 @@ func TestFlagsRoundTrip(t *testing.T) {
 	sig := &DKIM2Signature{
 		Sequence: 1, MIVersion: 1, Timestamp: 1, Domain: "ex.example",
 		MailFrom: "a@x.example", RcptTo: []string{"b@y.example"},
-		Flags: []string{"donotmodify", "feedhere"},
+		Flags: []string{"exploded", "feedhere"},
 		Sigs:  []SigItem{{Selector: "sel", Algorithm: "rsa-sha256"}},
 	}
 	out := sig.String()
-	if !strings.Contains(out, "f=donotmodify,feedhere") {
+	if !strings.Contains(out, "f=exploded,feedhere") {
 		t.Fatalf("serialized form missing flags: %s", out)
 	}
 }

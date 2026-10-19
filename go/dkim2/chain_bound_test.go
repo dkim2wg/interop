@@ -16,32 +16,40 @@ func TestChainNumberError(t *testing.T) {
 	if MaxChainLength != 32 || MaxChainNumber != 100 {
 		t.Fatalf("MaxChainLength = %d, MaxChainNumber = %d", MaxChainLength, MaxChainNumber)
 	}
-	const (
-		mal = "PERMERROR Message-Instance has a malformed m= tag"
-		ln  = "PERMERROR Message-Instance m= exceeds the maximum chain length of 32"
-		num = "PERMERROR Message-Instance m= exceeds the maximum chain number of 100"
-	)
 	for v, want := range map[string]string{
 		"1": "", "9": "", "32": "", "01": "", "001": "", "032": "",
-		"33": ln, "99": ln, "100": ln,
-		"101": num, "0001": num, "4294967297": num, "99999999999999999999": num,
-		"": mal, "0": mal, "000": mal, "abc": mal, "1x": mal, "4294967297x": mal,
-		"0_1": mal, "\uff11": mal, "+1": mal, "-1": mal,
+		"33": "ln", "99": "ln", "100": "ln",
+		"101": "num", "0001": "num", "4294967297": "num", "99999999999999999999": "num",
+		"": "mal", "0": "mal", "000": "mal", "abc": "mal", "1x": "mal", "4294967297x": "mal",
+		"0_1": "mal", "\uff11": "mal", "+1": "mal", "-1": "mal",
 	} {
+		switch want {
+		case "mal":
+			want = "PERMERROR: Message-Instance m=" + strings.TrimSpace(v) + " syntax error"
+		case "ln":
+			want = "PERMERROR: Message-Instance m=" + v + " exceeds the maximum chain length of 32"
+		case "num":
+			want = "PERMERROR: Message-Instance m=" + v + " exceeds the maximum chain number of 100"
+		}
 		got := ""
-		if err := chainNumberError("Message-Instance", "m", v, true); err != nil {
+		if err := chainNumberError("Message-Instance", "m", v, v, true); err != nil {
 			got = err.Error()
 		}
 		if got != want {
 			t.Errorf("chainNumberError(%q) = %q, want %q", v, got, want)
 		}
 	}
-	if err := chainNumberError("Message-Instance", "m", "", false); err != nil {
+	if err := chainNumberError("Message-Instance", "m", "", "", false); err != nil {
 		t.Errorf("missing m= is left to the callers, got %v", err)
 	}
-	if err := chainNumberError("DKIM2-Signature", "i", "abc", true); err == nil ||
-		err.Error() != "PERMERROR DKIM2-Signature has a missing or malformed i= tag" {
+	if err := chainNumberError("DKIM2-Signature", "i", "abc", "abc", true); err == nil ||
+		err.Error() != "PERMERROR: DKIM2-Signature i=abc syntax error" {
 		t.Errorf("malformed i=: %v", err)
+	}
+	// A signature's m= is named by its i=.
+	if err := chainNumberError("DKIM2-Signature", "m", "4294967297", "2", true); err == nil ||
+		err.Error() != "PERMERROR: DKIM2-Signature i=2 m=4294967297 exceeds the maximum chain number of 100" {
+		t.Errorf("signature m=: %v", err)
 	}
 }
 
@@ -53,20 +61,20 @@ func TestChainNumberBound(t *testing.T) {
 		name, from, to, want string
 		prepend              bool
 	}{
-		{"signature i=33", "DKIM2-Signature: i=1;", "DKIM2-Signature: i=33;", "PERMERROR DKIM2-Signature i= " + rng, false},
-		{"signature i=101", "DKIM2-Signature: i=1;", "DKIM2-Signature: i=101;", "PERMERROR DKIM2-Signature i= " + num, false},
-		{"signature i=huge", "DKIM2-Signature: i=1;", "DKIM2-Signature: i=99999999999999999999;", "PERMERROR DKIM2-Signature i= " + num, false},
-		{"signature i=2^32+1", "DKIM2-Signature: i=1;", "DKIM2-Signature: i=4294967297;", "PERMERROR DKIM2-Signature i= " + num, false},
-		{"signature m=huge", "DKIM2-Signature: i=1; m=1;", "DKIM2-Signature: i=1; m=99999999999999999999;", "PERMERROR DKIM2-Signature m= " + num, false},
-		{"signature m=4294967297x", "DKIM2-Signature: i=1; m=1;", "DKIM2-Signature: i=1; m=4294967297x;", "PERMERROR DKIM2-Signature has a malformed m= tag", false},
-		{"signature m=abc", "DKIM2-Signature: i=1; m=1;", "DKIM2-Signature: i=1; m=abc;", "PERMERROR DKIM2-Signature has a malformed m= tag", false},
-		{"signature m=+1", "DKIM2-Signature: i=1; m=1;", "DKIM2-Signature: i=1; m=+1;", "PERMERROR DKIM2-Signature has a malformed m= tag", false},
-		{"instance m=huge", "Message-Instance: m=1;", "Message-Instance: m=99999999999999999999;", "PERMERROR Message-Instance m= " + num, false},
-		{"instance m=33", "Message-Instance: m=1;", "Message-Instance: m=33;", "PERMERROR Message-Instance m= " + rng, false},
-		{"instance m=101", "Message-Instance: m=1;", "Message-Instance: m=101;", "PERMERROR Message-Instance m= " + num, false},
-		{"instance m=+1", "Message-Instance: m=1;", "Message-Instance: m=+1;", "PERMERROR Message-Instance has a malformed m= tag", false},
-		{"instance m=4294967297x", "Message-Instance: m=1;", "Message-Instance: m=4294967297x;", "PERMERROR Message-Instance has a malformed m= tag", false},
-		{"extra junk i=huge", "", "DKIM2-Signature: i=99999999999999999999; m=2; d=evil.example\r\n", "PERMERROR DKIM2-Signature i= " + num, true},
+		{"signature i=33", "DKIM2-Signature: i=1;", "DKIM2-Signature: i=33;", "PERMERROR: DKIM2-Signature i=33 " + rng, false},
+		{"signature i=101", "DKIM2-Signature: i=1;", "DKIM2-Signature: i=101;", "PERMERROR: DKIM2-Signature i=101 " + num, false},
+		{"signature i=huge", "DKIM2-Signature: i=1;", "DKIM2-Signature: i=99999999999999999999;", "PERMERROR: DKIM2-Signature i=99999999999999999999 " + num, false},
+		{"signature i=2^32+1", "DKIM2-Signature: i=1;", "DKIM2-Signature: i=4294967297;", "PERMERROR: DKIM2-Signature i=4294967297 " + num, false},
+		{"signature m=huge", "DKIM2-Signature: i=1; m=1;", "DKIM2-Signature: i=1; m=99999999999999999999;", "PERMERROR: DKIM2-Signature i=1 m=99999999999999999999 " + num, false},
+		{"signature m=4294967297x", "DKIM2-Signature: i=1; m=1;", "DKIM2-Signature: i=1; m=4294967297x;", "PERMERROR: DKIM2-Signature i=1 syntax error", false},
+		{"signature m=abc", "DKIM2-Signature: i=1; m=1;", "DKIM2-Signature: i=1; m=abc;", "PERMERROR: DKIM2-Signature i=1 syntax error", false},
+		{"signature m=+1", "DKIM2-Signature: i=1; m=1;", "DKIM2-Signature: i=1; m=+1;", "PERMERROR: DKIM2-Signature i=1 syntax error", false},
+		{"instance m=huge", "Message-Instance: m=1;", "Message-Instance: m=99999999999999999999;", "PERMERROR: Message-Instance m=99999999999999999999 " + num, false},
+		{"instance m=33", "Message-Instance: m=1;", "Message-Instance: m=33;", "PERMERROR: Message-Instance m=33 " + rng, false},
+		{"instance m=101", "Message-Instance: m=1;", "Message-Instance: m=101;", "PERMERROR: Message-Instance m=101 " + num, false},
+		{"instance m=+1", "Message-Instance: m=1;", "Message-Instance: m=+1;", "PERMERROR: Message-Instance m=+1 syntax error", false},
+		{"instance m=4294967297x", "Message-Instance: m=1;", "Message-Instance: m=4294967297x;", "PERMERROR: Message-Instance m=4294967297x syntax error", false},
+		{"extra junk i=huge", "", "DKIM2-Signature: i=99999999999999999999; m=2; d=evil.example\r\n", "PERMERROR: DKIM2-Signature i=99999999999999999999 " + num, true},
 	}
 	for _, c := range cases {
 		var msg []byte

@@ -14,7 +14,7 @@ MILTER_DEFS = -DDARWIN=250000 -DBIND_8_COMPAT -DNETINET6
 CORE_SRCS = base64.c tagparse.c dkim2_hash.c dkim2_header.c \
             dkim2_recipe.c dkim2_dns.c dkim2_crypto.c \
             dkim2_sign.c dkim2_verify.c dkim2_message.c dkim2_dnsjson.c \
-            dkim2_plan.c dkim2_prefetch.c
+            dkim2_plan.c dkim2_prefetch.c dkim2_domain.c
 CORE_OBJS = $(CORE_SRCS:.c=.o)
 
 all: dkim2-milter dkim2sign dkim2verify
@@ -42,7 +42,8 @@ TESTS = tests/test_base64 tests/test_tagparse tests/test_hash \
         tests/test_header tests/test_recipe tests/test_crypto \
         tests/test_dns tests/test_verify tests/test_null_body \
         tests/test_body_diff tests/test_strictness \
-        tests/test_plan tests/test_prefetch
+        tests/test_plan tests/test_prefetch \
+        tests/test_domain tests/test_spec07 tests/test_milter
 
 GATE_FIXTURES = tests/.gate-fixtures
 
@@ -97,6 +98,17 @@ tests/test_verify: tests/test_verify.c eml_parse.o $(CORE_OBJS)
 
 tests/test_prefetch: tests/test_prefetch.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+tests/test_domain: tests/test_domain.c dkim2_domain.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+tests/test_spec07: tests/test_spec07.c eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# The milter's callbacks against a fake libmilter (tests/stub), so this
+# runs where sendmail's libmilter is not installed.
+tests/test_milter: tests/test_milter.c dkim2_milter.c tests/stub/libmilter/mfapi.h eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -Itests/stub -o $@ tests/test_milter.c eml_parse.o $(CORE_OBJS) $(LDFLAGS)
 
 tests/test_plan_corpus: tests/test_plan_corpus.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -11,9 +12,9 @@ import (
 
 func main() {
 	dnsFile := flag.String("dns", "", "Path to dns.json key file (required)")
-	mailFrom := flag.String("mail-from", "", "SMTP MAIL FROM for §10.4 envelope check (optional)")
-	rcptToStr := flag.String("rcpt-to", "", "Comma-separated SMTP RCPT TO for §10.4 envelope check (optional)")
-	ignoreTS := flag.Bool("ignore-timestamps", false, "Disable the §10.3 timestamp (14-day/future) check")
+	mailFrom := flag.String("mail-from", "", "SMTP MAIL FROM for the §14.4 envelope check (optional)")
+	rcptToStr := flag.String("rcpt-to", "", "Comma-separated SMTP RCPT TO for the §14.4 envelope check (optional)")
+	ignoreTS := flag.Bool("ignore-timestamps", false, "Disable the §14.3 timestamp (14-day/1-day future) check")
 	flag.Bool("full-chain", false, "Accepted for compatibility; full-chain validation is the default")
 	undoWalk := flag.Bool("undo-walk", false, "Check the lower Message-Instances by rebuilding each previous message (the reference walk) instead of the planned walk")
 	flag.Parse()
@@ -34,11 +35,21 @@ func main() {
 
 	fetcher := &dkim2.JSONKeyFetcher{Path: *dnsFile}
 	results, err := dkim2.VerifyFull(os.Stdin, fetcher, opt)
+	if errors.Is(err, dkim2.ErrNone) {
+		// No DKIM2 header fields at all: the result is "none", which is
+		// neither a pass nor an error (-07 §14.2).
+		fmt.Fprintln(os.Stdout, "dkim2=none")
+		os.Exit(1)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Contract C9: the primary error is the first "STATE: text" line.
+	if p := dkim2.PrimaryResult(results); p != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", p.Error)
+	}
 	allPass := true
 	for _, r := range results {
 		if r.Error != nil {

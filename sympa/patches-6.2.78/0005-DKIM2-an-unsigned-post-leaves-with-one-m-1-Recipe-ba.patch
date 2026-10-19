@@ -1,0 +1,286 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Sun, 18 Oct 2026 21:20:04 -0800
+Subject: [PATCH 5/5] DKIM2: an unsigned post leaves with one m=1, Recipe back
+ to the original
+
+A post that arrived without a DKIM2-Signature is no longer stripped of
+its chain at egress.  Each copy leaves with a single Message-Instance,
+m=1, carrying the hashes of the rewritten, decorated copy and a Recipe
+back to the message as received: the original From in the header
+Recipe, the wrap's copy range (or none/null as for any copy) in the body
+Recipe.  -07 section 12.1 lets the first instance record the changes made
+as the message enters DKIM2, and the From-Authentic check pairs i=1 with
+the From of that first state, which is the rewritten one.  The instance
+replaces the one(s) the message arrived with; if it cannot be calculated
+the chain is removed and the outbound signer starts it.
+
+egress_context marks such a context "unsigned"; egress_add calculates
+against the saved header block as for any copy and numbers the result 1
+(the hashes and Recipes do not cover Message-Instance fields).
+
+Also: X-DKIM2-Exploded goes on every copy from a DKIM2 list, with or
+without an egress context, and DoForward's From-rewrite shelving has a
+test.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ DKIM2-MESSAGE-INSTANCE.md                | 19 +++++----
+ src/lib/Sympa/DKIM2.pm                   | 52 ++++++++++++++++--------
+ src/lib/Sympa/Spindle/ProcessOutgoing.pm |  6 ++-
+ t/DKIM2.t                                | 45 ++++++++++++++++++--
+ 4 files changed, 93 insertions(+), 29 deletions(-)
+
+diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
+index 4501d4b2e..74b5e667b 100644
+--- a/DKIM2-MESSAGE-INSTANCE.md
++++ b/DKIM2-MESSAGE-INSTANCE.md
+@@ -75,7 +75,8 @@ Anonymous lists skip ingress entirely: nothing about the original sender is
+ kept (see the table below).
+ 
+ A message that arrived without a `DKIM2-Signature` goes through ingress
+-like any other, but at egress its chain is removed (see From rewriting).
++like any other; at egress its instance is replaced by a single `m=1` (see
++From rewriting).
+ 
+ ## Decoration: always-wrap
+ 
+@@ -248,10 +249,13 @@ or moderators (where `dmarc_protect` knows the message is one of those, the
+ - A post that arrived without a `DKIM2-Signature`: the list host's
+   signature will be `i=1`, and `i=1` is checked against the From of the
+   first instance. Keeping the `m=1` added at ingress (with the author's
+-  From) and recording the rewrite in `m=2` would fail that check, so the
+-  chain is removed at egress, as for anonymous lists, and the outbound
+-  signer starts a new one with the rewritten From. The original From is
+-  in `X-Original-From` only.
++  From) and recording the rewrite in `m=2` would fail that check. So the
++  copy leaves with a single instance, `m=1`, carrying the hashes of the
++  rewritten, decorated copy and a Recipe back to the message as received:
++  the original From in the header Recipe, the wrap's copy range in the body
++  Recipe (-07 section 12.1 lets the first instance record changes made as
++  the message enters DKIM2). It replaces the instance(s) the message
++  arrived with. The list host signs it as `i=1`.
+ - Resends from the archive: the chain is removed (as before) and From is
+   rewritten.
+ - Anonymous lists: From is `anonymous_sender`, as stock, and the chain is
+@@ -266,7 +270,8 @@ refuse the message.
+ ### X-DKIM2-Exploded
+ 
+ Every copy of a DKIM2 list's distribution carries `X-DKIM2-Exploded: yes`,
+-added in `ProcessOutgoing` after the per-recipient changes. It asks the
++added in `ProcessOutgoing` after the per-recipient changes, whether or not
++Sympa added an instance to it. It asks the
+ outbound signer to set the `exploded` flag (`f=exploded`, draft -07
+ section 12.5) in its `DKIM2-Signature`; the signer removes it. As an `X-`
+ field it is outside the DKIM2 hashes. At `i=1` the flag is never set.
+@@ -282,7 +287,7 @@ field it is outside the DKIM2 hashes. At `i=1` the flag is never set.
+ | Footer-only personalisation (`personalization.mail_apply_on footer`) | wrap; the copies differ only in the trailing part |
+ | Anonymous list | no pseudo-header at ingress, stock decoration; egress removes `DKIM2-Signature`, `Message-Instance` and `X-DKIM2-Info`, and the outbound signer starts a new chain with `m=1`; `anonymous_sender` must be in the list's domain |
+ | Resend from archive | on a DKIM2 list, From is rewritten and the chain is removed as for anonymous lists |
+-| Post that arrived without a `DKIM2-Signature` | From is rewritten and the chain is removed at egress; the outbound signer's `i=1` starts it |
++| Post that arrived without a `DKIM2-Signature` | From is rewritten; the copy leaves with one `m=1` whose Recipe goes back to the message as received; the outbound signer's `i=1` signs it |
+ | Digests, notifications, auto-replies, direct sends, bounces | no saved header block; Sympa adds nothing (the outbound signer adds `m=1`) |
+ | Messages embedded in a digest | content, left alone |
+ | VERP, DSN tracking | envelope only; the instance is still computed per copy (below) |
+diff --git a/src/lib/Sympa/DKIM2.pm b/src/lib/Sympa/DKIM2.pm
+index 427205274..bbfb98c29 100644
+--- a/src/lib/Sympa/DKIM2.pm
++++ b/src/lib/Sympa/DKIM2.pm
+@@ -72,7 +72,7 @@ sub anonymous {
+ # list host signs i=1, or when its hop changes the message.  Sympa's hop
+ # always changes a list post (Sender, Precedence, List-Id ...), and a
+ # post that arrived unsigned, a resend from the archive and an anonymous
+-# list all start a new chain.  Anonymous lists set From to anonymous_sender
++# list all leave the list host as i=1.  Anonymous lists set From to anonymous_sender
+ # themselves, so they are left out here.
+ sub rewrites_from {
+     my $list = shift;
+@@ -143,12 +143,13 @@ sub egress_context {
+             $message);
+         return undef;
+     }
+-    # Arrived unsigned: the list host's signature will be i=1, so the From
+-    # it sees has to be Authentic in state 1 too (-07 section 11).  Sympa
+-    # rewrites From, so the received instance cannot be kept; the outbound
+-    # signer starts the chain.
+-    return {strip => 1}
+-        unless $message->{'dkim2_headers'} =~ /^DKIM2-Signature:/mi;
++    # Arrived unsigned: the list host's signature will be i=1, and i=1 is
++    # checked against the From of state 1 (-07 section 11), which Sympa
++    # rewrites.  So the copy leaves with a single instance, m=1, describing
++    # it as sent, with a Recipe back to the message as received (-07
++    # section 12.1: the first instance may record changes made as the
++    # message enters DKIM2); see egress_add.
++    my $unsigned = $message->{'dkim2_headers'} !~ /^DKIM2-Signature:/mi;
+     my $ctx = eval {
+         (my $prev = $message->{'dkim2_headers'} . "\n") =~ s/\r?\n/\r\n/g;
+         my ($ok, $why) =
+@@ -160,6 +161,7 @@ sub egress_context {
+             Mail::DKIM2::MessageInstance::body_digest_raw($message->{_body})
+             eq $top->body_hash;
+         {   prev      => $prev,
++            ($unsigned ? (unsigned => 1) : ()),
+             unchanged => ($unchanged ? 1 : 0),
+             body_hash => $top->body_hash,
+             ($unchanged ? (orig_body => $message->{_body} // '') : ())
+@@ -234,11 +236,24 @@ sub egress_add {
+             and $br eq 'none'
+             and !$mi->get_tag('rh')
+             and !$mi->get_tag('rb');
++        if ($ctx->{unsigned}) {
++            # The one instance of a chain the list host's i=1 starts:
++            # m=1, replacing the one(s) the message arrived with.  Header
++            # and body hashes and Recipes do not cover Message-Instance
++            # fields, so only the number changes.
++            $mi->set_tag('m', 1);
++            _strip_chain($message);
++        }
+         _prepend_instance($message, $mi);
+         1;
+-    } or $log->syslog('err',
+-        'DKIM2: Message-Instance for %s failed: %s; sent without it',
+-        $message, $EVAL_ERROR);
++    } or do {
++        $log->syslog('err',
++            'DKIM2: Message-Instance for %s failed: %s; sent without it',
++            $message, $EVAL_ERROR);
++        # An instance describing the message as received would not match
++        # it: let the outbound signer start the chain.
++        eval { _strip_chain($message) } if $ctx->{unsigned};
++    };
+ }
+ 
+ # True if the copy Recipe $br ([] or [[first, last]], from wrap()) applied
+@@ -320,8 +335,9 @@ sub _same_bytes {
+     return 1;
+ }
+ 
+-# Anonymous lists, resends from the archive and posts that arrived unsigned
+-# start a new chain: the outbound signer then adds a fresh m=1.
++# Anonymous lists and resends from the archive start a new chain: the
++# outbound signer then adds a fresh m=1.  Posts that arrived unsigned get
++# their own m=1 in place of the chain (egress_add).
+ sub _strip_chain {
+     my $message = shift;
+     $message->delete_header($_)
+@@ -638,10 +654,11 @@ Run once per packet in ProcessOutgoing, before any per-recipient change.
+ Returns C<undef> if nothing is to be added (switch off, no saved header
+ block, or a saved block that does not verify; a missing block is logged at
+ C<info> if the message carries a DKIM2 chain, else at C<debug>), C<< {strip =E<gt> 1} >> for
+-anonymous lists, resends from the archive and messages that arrived without
+-a DKIM2-Signature (the outbound signer's i=1 starts the chain), or a context for
++anonymous lists and resends from the archive, or a context for
+ L</egress_add>: the saved block, whether the body is still the one the top
+-instance hashed, and that hash.
++instance hashed, and that hash.  For a message that arrived without a
++DKIM2-Signature the context is marked C<unsigned>: the list host's
++signature will be i=1.
+ 
+ =item egress_add ( $message, $context, [ body_rewritten =E<gt> 1 ] )
+ 
+@@ -649,7 +666,10 @@ Run for each copy, after every other transformation and before DKIM and
+ ARC signing.  With a C<strip> context removes C<DKIM2-Signature>,
+ C<Message-Instance> and C<X-DKIM2-Info>.  Otherwise removes C<Bcc> and
+ C<Resent-Bcc> and adds the next Message-Instance, with its C<X-DKIM2-Info>
+-above it.  The body Recipe is null if the body changed before the packet,
++above it.  With an C<unsigned> context the instance is C<m=1> and replaces
++the instances the message arrived with: one instance whose Recipe goes back
++to the message as received (the original From included), for the list
++host's i=1 to sign.  The body Recipe is null if the body changed before the packet,
+ C<body_rewritten> is set, or decoration fell back to editing the body;
+ otherwise it is the copy range recorded by L</wrap>, or none, provided that
+ it really gives back the received body.  Adds nothing if nothing changed.
+diff --git a/src/lib/Sympa/Spindle/ProcessOutgoing.pm b/src/lib/Sympa/Spindle/ProcessOutgoing.pm
+index b6ffa3108..db69e9d2b 100644
+--- a/src/lib/Sympa/Spindle/ProcessOutgoing.pm
++++ b/src/lib/Sympa/Spindle/ProcessOutgoing.pm
+@@ -271,8 +271,10 @@ sub __twist_one {
+             (($personalize_all or $smime_sign or $smime_encrypt) ? 1 : 0));
+     # The hint for the outbound signer: this copy is one of many, so its
+     # DKIM2-Signature gets the "exploded" flag (-07 section 12.5).  An X-
+-    # field, so outside the DKIM2 hashes; the signer removes it.
+-    $message->replace_header('X-DKIM2-Exploded', 'yes') if $dkim2;
++    # field, so outside the DKIM2 hashes; the signer removes it.  Every
++    # copy from a DKIM2 list, with or without an instance added.
++    $message->replace_header('X-DKIM2-Exploded', 'yes')
++        if $dkim2 or Sympa::DKIM2::enabled($that);
+ 
+     if ($message->{shelved}{dkim_sign} or %arc) {
+         # apply DKIM signature AFTER any other message transformation.
+diff --git a/t/DKIM2.t b/t/DKIM2.t
+index 8e44f8bd3..82d2777ef 100644
+--- a/t/DKIM2.t
++++ b/t/DKIM2.t
+@@ -1064,6 +1064,12 @@ subtest '-07: every distribution copy carries X-DKIM2-Exploded: yes' => sub {
+     my $off = Sympa::Message->new($plain, context => list(dkim2_message_instance => 'off'));
+     ($stored) = twist_one($off, Sympa::DKIM2::egress_context($off));
+     unlike $stored->[0]->as_string, qr/^X-DKIM2-Exploded:/m, 'switch off: none';
++
++    # A DKIM2 list's copy with no egress context (no saved header block).
++    my $nb = Sympa::Message->new($plain, context => $l);
++    ($stored) = twist_one($nb, undef);
++    like $stored->[0]->as_string, qr/^X-DKIM2-Exploded: yes$/m,
++        'no context: hint all the same';
+ };
+ 
+ subtest '-07: DKIM2 lists rewrite From to the list address' => sub {
+@@ -1099,14 +1105,36 @@ subtest '-07: From rewrite is shelved on DKIM2 lists' => sub {
+     }
+ };
+ 
+-subtest '-07: unsigned post: From rewritten, the MTA starts the chain' => sub {
++subtest '-07: DoForward shelves the From rewrite on DKIM2 lists' => sub {
++    require Sympa::Spindle::DoForward;
++    no warnings qw(redefine once);
++    my @stored;
++    local *Sympa::Spindle::DoForward::_splicing_to = sub { 'Sympa::Spindle::DoForward' };
++    local *Sympa::List::get_admins_email = sub { ('owner@example.net') };
++    local *Sympa::Spool::Outgoing::new = sub { bless {}, shift };
++    local *Sympa::Spool::Outgoing::store = sub { push @stored, $_[1]; 1 };
++    for my $c ([on => list(), 1], [off => list(dkim2_message_instance => 'off'), 0]) {
++        my ($name, $l, $want) = @$c;
++        my $m = Sympa::Message->new($plain, context => $l);
++        @$m{qw(listtype spam_status sender)} = ('owner', 'ham', 'a@example.org');
++        my $spindle = bless {}, 'Sympa::Spindle::DoForward';
++        my $ok;
++        { local *STDERR; open STDERR, '>', \my $err or die; $ok = $spindle->_twist($m) }
++        ok $ok, "$name: forwarded";
++        is !!$m->{shelved}{dmarc_protect}, !!$want, "$name: From rewrite "
++            . ($want ? 'shelved' : 'not shelved');
++    }
++    is scalar(@stored), 2, 'both stored';
++};
++
++subtest '-07: unsigned post: From rewritten, one m=1 with a Recipe back' => sub {
+     local %FILES;
+     set_file('message_footer', "-- \nfooter\n");
+     my $l = list();
+     my $m = Sympa::Message->new($unsigned, context => $l);
+     Sympa::DKIM2::ingress($m);
+     my $b = Sympa::Message->new($m->to_string, context => $l);
+-    is_deeply Sympa::DKIM2::egress_context($b), {strip => 1}, 'chain stripped at egress';
++    ok Sympa::DKIM2::egress_context($b)->{unsigned}, 'context marked unsigned';
+ 
+     # Unchanged From: the list host may not sign it (From not Authentic).
+     my $w = through($unsigned, undef);
+@@ -1115,9 +1143,18 @@ subtest '-07: unsigned post: From rewritten, the MTA starts the chain' => sub {
+         'author From: the MTA refuses';
+ 
+     $w = through($unsigned, sub { $_[0]->dmarc_protect });
+-    unlike $w, qr/^(Message-Instance|X-DKIM2-Info|DKIM2-Signature):/mi,
+-        'no instance: the i=1 hop originates the chain';
++    my @mi = $w =~ /^Message-Instance: (m=\d+);/mg;
++    is_deeply \@mi, ['m=1'], 'exactly one instance, m=1';
++    is scalar(() = $w =~ /^X-DKIM2-Info: /mg), 1, 'one X-DKIM2-Info';
++    like $w, qr/\AX-DKIM2-Info: (?:[^\r\n]|\r\n[ \t])*?action=mi-m=1;.*?\r\nMessage-Instance: m=1;/s,
++        'X-DKIM2-Info above it';
+     like from_of($w), qr/<test\@mail\.example\.org>$/, 'From is the list address';
++    my ($v) = $w =~ /^Message-Instance: (m=1;.*?)\r\n(?![ \t])/ms;
++    my $mi1 = Mail::DKIM2::MessageInstance->parse($v);
++    ok !$mi1->unrecoverable, 'body Recipe: the wrap copy range';
++    my $prev = Mail::DKIM2::MessageInstance->undo($w)->as_string;
++    like $prev, qr/^From: a\@example\.org\r$/m, 'Recipe restores the original From';
++    like $prev, qr/\r\n\r\nhello\r\n\z/, 'and the original body';
+     list_hop_ok($w, 'i=1');
+ };
+ 

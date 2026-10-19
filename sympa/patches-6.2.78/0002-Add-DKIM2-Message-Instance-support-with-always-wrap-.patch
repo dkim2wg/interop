@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Thu, 8 Oct 2026 14:08:30 -0400
-Subject: [PATCH 2/3] Add DKIM2 Message-Instance support with always-wrap
+Subject: [PATCH 2/5] Add DKIM2 Message-Instance support with always-wrap
  decoration
 
 On lists with dkim2_message_instance on, record what Sympa changed in

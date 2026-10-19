@@ -67,7 +67,7 @@ func dropTopSig(t *testing.T, msg []byte) []byte {
 }
 
 func TestGateFreshSigns(t *testing.T) {
-	wantSigned(t, []byte("From: a@test1.dkim2.com\r\nTo: b@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n"), false)
+	wantSigned(t, []byte("From: a@test3.dkim2.com\r\nTo: b@test2.dkim2.com\r\nSubject: hi\r\n\r\nbody\r\n"), false)
 }
 
 func TestGateValidChainSigns(t *testing.T) {
@@ -142,7 +142,9 @@ func TestGateForgedNullTopRefusedEvenWithOption(t *testing.T) {
 // DKIM2-Signature at all.  The signer still checks the MI chain.
 func miOnly(t *testing.T, recipe, body string) []byte {
 	t.Helper()
-	orig := []byte("From: Sender <sender@test1.dkim2.com>\r\nTo: user@test2.dkim2.com\r\nSubject: hello\r\n\r\nbody line\r\n")
+	// The list host (test3) originates the post as i=1, so From is its own
+	// (§12.4).
+	orig := []byte("From: Sender <sender@test3.dkim2.com>\r\nTo: user@test2.dkim2.com\r\nSubject: hello\r\n\r\nbody line\r\n")
 	m1 := dropAllSigs(t, signOnce(t, orig, "../../keys/sel1._domainkey.test1.dkim2.com.pem",
 		"sel1", "test1.dkim2.com", "<sender@test1.dkim2.com>", []string{"<user@test2.dkim2.com>"}))
 	return dropAllSigs(t, nullHop(t, m1, subjectTag, body, recipe))
@@ -193,7 +195,7 @@ func TestGateNdToOtherRefused(t *testing.T) {
 	wantRefused(t, ndBridgeTop(t, "test5.dkim2.com"), false, "names another domain")
 }
 
-// Spec-06 §11: only an MI whose m= is higher than every signature's is an
+// §14.2: only an MI whose m= is higher than every signature's is an
 // error; a lower unreferenced MI is valid.
 func TestVerifyUnreferencedLowerMIValid(t *testing.T) {
 	raw := ndTestRaw(t)
@@ -219,8 +221,8 @@ func TestVerifyDuplicateMIVersion(t *testing.T) {
 	}
 	dup := append(append(append([]byte{}, hop1[:j]...), hop1[i:j]...), hop1[j:]...)
 	_, err := Verify(bytes.NewReader(dup), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
-	if err == nil || !strings.Contains(err.Error(), "duplicate Message-Instance m=1") {
-		t.Fatalf("want duplicate Message-Instance m=1, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "PERMERROR: Message-Instance m=1 appears more than once") {
+		t.Fatalf("want Message-Instance m=1 appears more than once, got %v", err)
 	}
 }
 
@@ -251,6 +253,17 @@ func TestGateFakeCoverageRefused(t *testing.T) {
 		"FWS m = 2":   []byte("DKIM2-Signature: m = 2 ; d=evil.example\r\n"),
 		"m rewritten": rewritten,
 	}
+	// C6: a missing i= is "i= tag=i missing", one that is not a positive
+	// integer "i=<as written> syntax error".
+	want := map[string]string{
+		"no i=":       "PERMERROR: DKIM2-Signature i= tag=i missing",
+		"empty i=":    "PERMERROR: DKIM2-Signature i= syntax error",
+		"i=0":         "PERMERROR: DKIM2-Signature i=0 syntax error",
+		"i=abc":       "PERMERROR: DKIM2-Signature i=abc syntax error",
+		"i=+1":        "PERMERROR: DKIM2-Signature i=+1 syntax error",
+		"FWS m = 2":   "PERMERROR: DKIM2-Signature i= tag=i missing",
+		"m rewritten": "PERMERROR: DKIM2-Signature i= tag=i missing",
+	}
 	for name, fake := range fakes {
 		msg := append(append([]byte{}, fake...), m...)
 		for _, allow := range []bool{false, true} {
@@ -261,13 +274,13 @@ func TestGateFakeCoverageRefused(t *testing.T) {
 			}
 			// Refused by the gate's verifier (result=permerror) or, for an
 			// i= present but not a chain number, by the signer's own parse.
-			if !strings.Contains(err.Error(), "PERMERROR DKIM2-Signature has a missing or malformed i= tag") {
+			if !strings.Contains(err.Error(), want[name]) {
 				t.Errorf("%s allow=%v: error %q", name, allow, err)
 			}
 		}
 		_, err := Verify(bytes.NewReader(msg), &JSONKeyFetcher{Path: "../../dns.json"},
 			VerifyOptions{SkipTimestampCheck: true})
-		if err == nil || err.Error() != "PERMERROR DKIM2-Signature has a missing or malformed i= tag" {
+		if err == nil || err.Error() != want[name] {
 			t.Errorf("%s: Verify err = %v", name, err)
 		}
 	}

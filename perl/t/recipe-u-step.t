@@ -1,16 +1,17 @@
 #!/usr/bin/perl -w
 #
-# Recipe literals with any octet >= 0x80 travel as {"b": ["<base64>", ...]}
-# steps (RFC 4648 section 4 alphabet); pure-ASCII literals stay {"d": [...]}.
+# Recipe literals that are not UTF-8 travel as {"u": ["<base64>", ...]}
+# steps (draft -07 section 5); UTF-8 literals, ASCII included, stay
+# {"d": [...]}.
 #
 # A Recipe literal is the raw octets of a header value or body line, and
 # real mail carries ISO-2022-JP, GB18030, Big5 and Latin-1 in both. JSON
 # text is UTF-8, so those octets cannot be written into a "d" step
-# unchanged; base64 carries them exactly. Verifiers reject a "b" item that
-# is not valid base64 or that decodes to something containing CR or LF, and
-# a "d" item containing CR or LF (spec-06 §5.1/§5.2 MUST NOT).
-#
-# Agreed extension to spec-06 section 5, proposed to the WG 2026-10.
+# unchanged; base64 carries them exactly. Verifiers reject a "u" item that
+# is not canonical base64 or that decodes to something containing CR or LF,
+# and a "d" item containing CR or LF, as "contains invalid JSON" (-07
+# sections 5, 5.1, 5.2). The "b" step of our 0.13 to 0.22 releases, which
+# -07 adopted as "u", is now an unknown step key: invalid as well.
 
 use 5.020;
 use strict;
@@ -106,7 +107,7 @@ sub with_recipe {
     return $mi_text;
 }
 
-# --- round trip: calculate emits "b", undo and the Verifier rebuild the bytes ---
+# --- round trip: calculate emits "u", undo and the Verifier rebuild the bytes ---
 {
     my ($current, $previous, $mi2_text) = two_hops();
     my $json = recipe_json($mi2_text);
@@ -114,10 +115,10 @@ sub with_recipe {
     unlike($json, qr/[\x80-\xff]/, 'recipe JSON is pure ASCII');
     my $hdr_b64  = encode_base64($HDR_BYTES, '');
     my $body_b64 = encode_base64($BODY_BYTES, '');
-    like($json, qr/"comments":\[\{"b":\["\Q$hdr_b64\E"\]\}\]/,
-        'the 8-bit header value is a "b" item');
-    like($json, qr/"b":\[\{"c":\[1,1\]\},\{"b":\["\Q$body_b64\E"\]\},\{"c":\[2,2\]\}\]/,
-        'the 8-bit body line is a "b" item between the two copy ranges');
+    like($json, qr/"comments":\[\{"u":\["\Q$hdr_b64\E"\]\}\]/,
+        'the 8-bit header value is a "u" item');
+    like($json, qr/"b":\[\{"c":\[1,1\]\},\{"u":\["\Q$body_b64\E"\]\},\{"c":\[2,2\]\}\]/,
+        'the 8-bit body line is a "u" item between the two copy ranges');
     unlike($json, qr/"d":/, 'nothing is a "d" item here');
 
     my $undone = Mail::DKIM2::MessageInstance->undo(Email::MIME->new($current->as_string));
@@ -134,71 +135,71 @@ sub with_recipe {
 
 # --- mixed runs: literals of each kind coalesce, kinds alternate ---
 {
-    my $list = ['plain', 'ascii', "\xe9", "\xb1\xa4", [3, 4], 'tail'];
+    # UTF-8 (the second item) is a "d" literal; Latin-1 and Big5 are not.
+    my $list = ['plain', "na\xc3\xafve", "\xe9", "\xb1\xa4", [3, 4], 'tail'];
     my $enc = Mail::DKIM2::MessageInstance::_encode_recipe_list($list);
     is_deeply($enc, [
-        { d => ['plain', 'ascii'] },
-        { b => [encode_base64("\xe9", ''), encode_base64("\xb1\xa4", '')] },
+        { d => ['plain', "na\xc3\xafve"] },
+        { u => [encode_base64("\xe9", ''), encode_base64("\xb1\xa4", '')] },
         { c => [3, 4] },
         { d => ['tail'] },
     ], 'consecutive literals of one kind share a step; kinds alternate');
-    my $dec = Mail::DKIM2::MessageInstance::_decode_recipe_list($enc, 2);
+    my $dec = Mail::DKIM2::MessageInstance::_decode_recipe_list($enc, "invalid\n");
     is_deeply($dec, $list, 'and the decoder gives the list back');
 }
 
-# --- parse accepts a hand-built "b" and gives back the octets ---
+# --- parse accepts a hand-built "u" and gives back the octets ---
 {
-    my $b64 = encode_base64('{"b":[{"b":["' . encode_base64("\xe9", '') . '"]}]}', '');
+    my $b64 = encode_base64('{"b":[{"u":["' . encode_base64("\xe9", '') . '"]}]}', '');
     my $mi = Mail::DKIM2::MessageInstance->parse("m=2; h=sha256:x:y; r=$b64;");
-    is_deeply($mi->get_tag('rb'), ["\xe9"], '"b" item decodes to the raw octets');
+    is_deeply($mi->get_tag('rb'), ["\xe9"], '"u" item decodes to the raw octets');
+    $b64 = encode_base64(qq({"b":[{"d":["na\xc3\xafve"]},{"D":["\\u00e9"]}]}), '');
+    $mi = Mail::DKIM2::MessageInstance->parse("m=2; h=sha256:x:y; r=$b64;");
+    is_deeply($mi->get_tag('rb'), ["na\xc3\xafve", "\xc3\xa9"],
+        '"d" text comes back as UTF-8 octets, escaped or not');
 }
 
-# --- reject: bad "b" items make the instance fail, never throw out of the Verifier ---
+# --- reject: bad steps make the instance fail, never throw out of the Verifier ---
+my $INVALID = qr/\APERMERROR: Message-Instance m=2 contains invalid JSON\z/;
 my @bad = (
-    [ { b => [ { b => ['not base64!'] } ] },
-      qr/malformed base64 literal/, 'characters outside the alphabet' ],
-    [ { b => [ { b => ['QUJD='] } ] },
-      qr/malformed base64 literal/, 'wrong padding' ],
-    [ { b => [ { b => ['QQ'] } ] },
-      qr/malformed base64 literal/, 'missing padding' ],
-    [ { b => [ { b => [ 'QUJD', 7 ] } ] },
-      qr/malformed base64 literal/, 'a non-string item' ],
-    [ { b => [ { b => 'QUJD' } ] },
-      qr/malformed base64 literal/, '"b" that is not an array' ],
-    [ { b => [ { b => [ encode_base64("a\r\nb", '') ] } ] },
-      qr/literal contains CR or LF/, 'CRLF in the decoded octets' ],
-    [ { b => [ { b => [ encode_base64("a\nb", '') ] } ] },
-      qr/literal contains CR or LF/, 'bare LF in the decoded octets' ],
-    [ { h => { comments => [ { b => [ encode_base64("x\ry", '') ] } ] } },
-      qr/literal contains CR or LF/, 'bare CR in a header literal' ],
-    # spec-06 §5.1/§5.2: "d" text MUST NOT contain CR or LF either
-    [ { b => [ { d => [ "a\r\nb" ] } ] },
-      qr/literal contains CR or LF/, 'CRLF in a "d" body line' ],
-    [ { b => [ { d => [ "a\nb" ] } ] },
-      qr/literal contains CR or LF/, 'bare LF in a "d" body line' ],
-    [ { h => { comments => [ { d => [ "x\ry" ] } ] } },
-      qr/literal contains CR or LF/, 'bare CR in a "d" header value' ],
+    [ { b => [ { u => ['not base64!'] } ] },              'characters outside the alphabet' ],
+    [ { b => [ { u => ['QUJD='] } ] },                    'wrong padding' ],
+    [ { b => [ { u => ['QQ'] } ] },                       'missing padding' ],
+    [ { b => [ { u => ['QR=='] } ] },                     'pad bits that are not zero' ],
+    [ { b => [ { u => ['QUJD QUJD'] } ] },                'FWS inside the value' ],
+    [ { b => [ { u => [ 'QUJD', 7 ] } ] },                'a non-string item' ],
+    [ { b => [ { u => 'QUJD' } ] },                       '"u" that is not an array' ],
+    [ { b => [ { u => [ encode_base64("a\r\nb", '') ] } ] }, 'CRLF in the decoded octets' ],
+    [ { b => [ { u => [ encode_base64("a\nb", '') ] } ] },   'bare LF in the decoded octets' ],
+    [ { h => { comments => [ { u => [ encode_base64("x\ry", '') ] } ] } },
+      'bare CR in a header literal' ],
+    [ { b => [ { b => [ encode_base64("\xe9", '') ] } ] }, 'the old "b" step' ],
+    # -07 sections 5.1/5.2: "d" text MUST NOT contain CR or LF either
+    [ { b => [ { d => [ "a\r\nb" ] } ] },                 'CRLF in a "d" body line' ],
+    [ { b => [ { d => [ "a\nb" ] } ] },                   'bare LF in a "d" body line' ],
+    [ { h => { comments => [ { d => [ "x\ry" ] } ] } },   'bare CR in a "d" header value' ],
     [ { h => { comments => [ { d => [ "ok", "x\ny" ] } ] } },
-      qr/literal contains CR or LF/, 'LF in the second of two "d" header values' ],
-    # schema: "d" and "b" have minItems 1
-    [ { b => [ { b => [] } ] },
-      qr/empty literal step/, 'an empty "b" array' ],
-    [ { b => [ { d => [] } ] },
-      qr/empty literal step/, 'an empty "d" array' ],
-    [ { h => { comments => [ { d => [] } ] } },
-      qr/empty literal step/, 'an empty "d" array in a header Recipe' ],
-    [ { b => [ { d => 'x' } ] },
-      qr/empty literal step/, '"d" that is not an array' ],
+      'LF in the second of two "d" header values' ],
+    [ { b => [ { d => [ 5 ] } ] },                        'a number in a "d" step' ],
+    # schema: "d" and "u" have minItems 1
+    [ { b => [ { u => [] } ] },                           'an empty "u" array' ],
+    [ { b => [ { d => [] } ] },                           'an empty "d" array' ],
+    [ { h => { comments => [ { d => [] } ] } },           'an empty "d" array in a header Recipe' ],
+    [ { b => [ { d => 'x' } ] },                          '"d" that is not an array' ],
+    [ { b => [ 'bare string' ] },                         'a bare string step' ],
+    [ { b => [ [1, 1] ] },                                'a bare array step' ],
+    [ { b => [ { z => JSON::true } ] },                   'an unknown step key' ],
 );
 
 for my $case (@bad) {
-    my ($recipe, $error, $name) = @$case;
+    my ($recipe, $name) = @$case;
     my ($current) = two_hops(sub { with_recipe($_[0], $recipe) });
     my $text = $current->as_string;
 
     my $err = eval { Mail::DKIM2::MessageInstance->parse(
         ($current->header_raw('Message-Instance'))[0]); 1 } ? '' : $@;
-    like($err, qr/^PERMERROR Message-Instance m=2 Recipe .*$error/, "parse refuses $name");
+    chomp $err;
+    like($err, $INVALID, "parse refuses $name");
 
     my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($text);
     ok(!$ok, "... chain_verifies does not pass");
@@ -206,7 +207,7 @@ for my $case (@bad) {
     my ($result, $details) = verify_result($text);
     isnt($result, 'died', "... the Verifier does not throw");
     is($result, 'permerror', "... and reports permerror") or diag($details);
-    like($details, $error, "... naming the problem");
+    like($details, $INVALID, "... naming the problem");
 }
 
 done_testing;

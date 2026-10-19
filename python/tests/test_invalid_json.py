@@ -18,11 +18,11 @@ def _mi_with_r(raw_json: bytes) -> str:
 
 
 def test_malformed_recipe_json_is_reported_specifically():
-    # spec-06 §11.2: JSON errors are called out specifically, not as a
+    # -07 §14.2: JSON errors are called out specifically, not as a
     # generic syntax error. Exact match (not just Contains): proves the
-    # emitted text really is the verbatim §11.2 string.
+    # emitted text really is the verbatim §14.2 string.
     errs = verify_message_instance(_mi_with_r(b'{"h": '), [b"From: a@b\r\n"], b"x\r\n")
-    assert "PERMERROR Message-Instance m=2 contains invalid JSON" in errs, errs
+    assert "PERMERROR: Message-Instance m=2 contains invalid JSON" in errs, errs
 
 
 import pytest  # noqa: E402
@@ -39,7 +39,7 @@ def test_duplicate_recipe_key_is_invalid_json(raw):
     # json.loads the last): {"b":[...],"b":null} was a null body Recipe to
     # some verifiers and a real one to others. A duplicate is invalid JSON.
     errs = verify_message_instance(_mi_with_r(raw), [b"From: a@b\r\n"], b"x\r\n")
-    assert "PERMERROR Message-Instance m=2 contains invalid JSON" in errs, errs
+    assert "PERMERROR: Message-Instance m=2 contains invalid JSON" in errs, errs
     with pytest.raises(ValueError):
         dkim2undo.decode_recipes(_mi_with_r(raw))
 
@@ -50,13 +50,13 @@ def test_same_key_in_different_objects_is_fine():
 
 
 def test_bad_base64_recipe_is_syntax_error_not_invalid_json():
-    # spec-06 §11.2 ruling: base64 decode failure and JSON parse failure are
+    # -07 §14.2 ruling: base64 decode failure and JSON parse failure are
     # DIFFERENT errors and must stay distinct. "!!!!" is not valid base64
     # (never even reaches JSON parsing), so this must be the "syntax error"
     # PERMERROR, never mislabelled as "contains invalid JSON".
     mi_hdr = "Message-Instance: m=2; h=sha256:AAA:BBB; r=!!!!;"
     errs = verify_message_instance(mi_hdr, [b"From: a@b\r\n"], b"x\r\n")
-    assert "PERMERROR Message-Instance m=2 syntax error" in errs, errs
+    assert "PERMERROR: Message-Instance m=2 syntax error" in errs, errs
     assert not any("invalid JSON" in e for e in errs), errs
 
 
@@ -161,7 +161,7 @@ def test_end_to_end_malformed_recipe_json_rejected_by_verify_message():
 
     res = dkim2verify.verify_message(corrupted, dns_data, skip_timestamp_check=True)
     assert not res.ok
-    want = "PERMERROR Message-Instance m=2 contains invalid JSON"
+    want = "PERMERROR: Message-Instance m=2 contains invalid JSON"
     # Exact membership (not just Contains): simple mode never adds any
     # prefix, so this was already exact.
     assert want in res.errors, res.errors
@@ -170,8 +170,8 @@ def test_end_to_end_malformed_recipe_json_rejected_by_verify_message():
     # which separately decodes the r= payload to undo Recipes; it must not
     # crash on the same bad input. This path used to prefix every MI error
     # with "v=<version>: ", which would have doubled up the m= already
-    # embedded in a self-describing PERMERROR and stopped it from being the
-    # verbatim §11.2 string -- assert the exact, unprefixed text here too.
+    # embedded in a self-describing PERMERROR: and stopped it from being the
+    # verbatim §14.2 string -- assert the exact, unprefixed text here too.
     res_full = dkim2verify.verify_message(
         corrupted, dns_data, full_chain=True, skip_timestamp_check=True)
     assert not res_full.ok
@@ -190,7 +190,7 @@ def _build_single_hop_message() -> bytes:
 
 
 def test_end_to_end_malformed_recipe_json_on_bottom_mi_rejected():
-    # spec-06 §9.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it
+    # -07 §12.1: the BOTTOM (m=1) instance MAY carry Recipes too ("if it
     # is wished to record any changes made to a message as it enters the
     # DKIM2 ecosystem") -- confirm it is checked like any other instance,
     # not just non-bottom ones that participate in the undo walk.
@@ -205,4 +205,4 @@ def test_end_to_end_malformed_recipe_json_on_bottom_mi_rejected():
 
     res = dkim2verify.verify_message(corrupted, dns_data, skip_timestamp_check=True)
     assert not res.ok
-    assert "PERMERROR Message-Instance m=1 contains invalid JSON" in res.errors, res.errors
+    assert "PERMERROR: Message-Instance m=1 contains invalid JSON" in res.errors, res.errors

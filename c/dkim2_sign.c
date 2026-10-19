@@ -5,6 +5,7 @@
 #include "base64.h"
 #include "dkim2_verify.h"
 #include "dkim2_recipe.h"
+#include "dkim2_domain.h"
 #include <cjson/cJSON.h>
 #include <time.h>
 #include <stdlib.h>
@@ -14,18 +15,41 @@
 #include <ctype.h>
 #include <openssl/evp.h>
 
-/* RFC5321 path for mf=/rt= (spec 7.5/7.6): brackets MUST be present.
+/* RFC5321 path for mf=/rt= (-07 §10.5/§10.6): brackets MUST be present, and
+ * a domain with non-ASCII (U-label) labels is recorded as A-labels (§18).
  * Returns a malloc'd string the caller frees. NULL/empty -> "<>". */
 static char *to_rfc5321_path(const char *addr) {
     if (!addr || !*addr) return strdup("<>");
     size_t n = strlen(addr);
-    if (addr[0] == '<' && addr[n-1] == '>') return strdup(addr);
+    int bracketed = addr[0] == '<' && addr[n-1] == '>';
+    const char *inner = bracketed ? addr + 1 : addr;
+    size_t in_len = bracketed ? n - 2 : n;
+    const char *at = NULL;                          /* the last '@' */
+    for (size_t i = in_len; i > 0 && !at; i--)
+        if (inner[i - 1] == '@') at = inner + i - 1;
+    char dom[512];
+    if (at && (size_t)(inner + in_len - at - 1) < sizeof dom) {
+        size_t dl = (size_t)(inner + in_len - at - 1);
+        memcpy(dom, at + 1, dl);
+        dom[dl] = '\0';
+        int non_ascii = 0;
+        for (size_t i = 0; i < dl; i++) if ((unsigned char)dom[i] >= 0x80) non_ascii = 1;
+        char alabel[512];
+        if (non_ascii && dom[0] != '[' && dkim2_to_alabel(dom, alabel, sizeof alabel) == 0) {
+            size_t ll = (size_t)(at - inner), al = strlen(alabel);
+            char *out = malloc(ll + al + 4);
+            if (!out) return NULL;
+            snprintf(out, ll + al + 4, "<%.*s@%s>", (int)ll, inner, alabel);
+            return out;
+        }
+    }
+    if (bracketed) return strdup(addr);
     char *out = malloc(n + 3);
-    snprintf(out, n + 3, "<%s>", addr);
+    if (out) snprintf(out, n + 3, "<%s>", addr);
     return out;
 }
 
-/* §8.5 canonicalization for signature input:
+/* -07 §12.8 canonicalization for signature input:
    lowercase name, unfold (remove CRLF+following WSP), delete ALL remaining WSP,
    re-add trailing CRLF.
    Input: "Name: folded value\r\n"
@@ -72,20 +96,40 @@ static char *canon_for_sig(const char *hdr) {
     return out;
 }
 
-/* Build the §8.5 signing input:
+/* Build the -07 §12.8 signing input:
    Canonicalized MI headers (ascending m=), then DKIM2-Signature headers
    (ascending i=), then the incomplete new signature header (empty sig values).
    Returns malloc'd buffer and sets *out_len. */
 static unsigned char *build_sign_input(
     dkim2_mi_t *mi_list, dkim2_sig_t *sig_list,
     const char *new_sig_value, size_t *out_len) {
+    /* The lists are in header order -- newest first in a received message --
+       so sort them: the signing input is ascending m=, then ascending i=
+       (taking the lists as given signed any chain with two or more existing
+       instances or signatures in the wrong order). */
+    enum { MAXF = 64 };
+    dkim2_mi_t *mis[MAXF];
+    dkim2_sig_t *sigs[MAXF];
+    int n_mi = 0, n_sig = 0;
+    for (dkim2_mi_t *mi = mi_list; mi && n_mi < MAXF; mi = mi->next) mis[n_mi++] = mi;
+    for (dkim2_sig_t *s = sig_list; s && n_sig < MAXF; s = s->next) sigs[n_sig++] = s;
+    for (int i = 1; i < n_mi; i++)
+        for (int j = i; j > 0 && mis[j - 1]->m > mis[j]->m; j--) {
+            dkim2_mi_t *t = mis[j]; mis[j] = mis[j - 1]; mis[j - 1] = t;
+        }
+    for (int i = 1; i < n_sig; i++)
+        for (int j = i; j > 0 && sigs[j - 1]->i > sigs[j]->i; j--) {
+            dkim2_sig_t *t = sigs[j]; sigs[j] = sigs[j - 1]; sigs[j - 1] = t;
+        }
+
     char *buf = malloc(65536);
     if (!buf) return NULL;
     size_t pos = 0;
 
     /* MI headers ascending m= — use raw_value when available (existing MIs),
        else format from struct (newly created MI with no raw_value yet) */
-    for (dkim2_mi_t *mi = mi_list; mi; mi = mi->next) {
+    for (int k = 0; k < n_mi; k++) {
+        dkim2_mi_t *mi = mis[k];
         char *mi_val = mi->raw_value ? NULL : dkim2_mi_format(mi);
         const char *use_val = mi->raw_value ? mi->raw_value : mi_val;
         if (!use_val) { free(buf); return NULL; }
@@ -103,7 +147,8 @@ static unsigned char *build_sign_input(
     }
 
     /* Existing DKIM2-Signature headers ascending i= */
-    for (dkim2_sig_t *sig = sig_list; sig; sig = sig->next) {
+    for (int k = 0; k < n_sig; k++) {
+        dkim2_sig_t *sig = sigs[k];
         /* Use raw_value which is the complete original header value */
         size_t rv_len = strlen(sig->raw_value);
         char *full = malloc(rv_len + 24);
@@ -134,7 +179,7 @@ static unsigned char *build_sign_input(
 }
 
 /* Non-zero if a Message-Instance's r= carries a null body Recipe ("b": null,
-   spec-06 §4.2: the previous body cannot be recreated). */
+   -07 §5.2: the previous body cannot be recreated). */
 static int mi_null_body(const dkim2_mi_t *mi) {
     if (!mi->r_raw) return 0;
     size_t n = strlen(mi->r_raw);
@@ -156,7 +201,7 @@ static int mi_null_body(const dkim2_mi_t *mi) {
 }
 
 /* The m= of the highest UNSIGNED Message-Instance with a null body Recipe,
-   else 0. A DKIM2-Signature with m=k covers instances 1..k (spec-06 §8.2),
+   else 0. A DKIM2-Signature with m=k covers instances 1..k (-07 §10.2),
    so an instance is unsigned when its m= is above the highest m= of every
    parsed (valid i=) signature -- whether it is the top, or another unsigned
    instance was added over it. A null an upstream domain already signed is
@@ -186,7 +231,7 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0] && !ctx->sig_error[0])
         return 0;                       /* no existing chain: sign as always */
 
-    /* spec-06 §9.3/§11.4: an nd= on the top signature names the domain that
+    /* -07 §12.3/§14.4: an nd= on the top signature names the domain that
        signs next. We may extend the chain only if that is us; the verifier's
        blanket "top signature carries nd=" rejection is lifted in outbound
        mode because this is the check that replaces it. */
@@ -236,10 +281,32 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     return 0;
 }
 
-/* Whether a parser error is one of dkim2_chain_number_error()'s. */
+/* -07 §12.4: when this signature is the first (no DKIM2-Signature yet), or
+   an instance no signature covers yet changed From, the From header field
+   must be Authentic for our d=. Returns 0 to sign, -1 to refuse with
+   ctx->errmsg set. */
+static int from_refusal(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
+    int signed_m = 0, need = !ctx->sig_list;
+    for (const dkim2_sig_t *s = ctx->sig_list; s; s = s->next)
+        if (s->m > signed_m) signed_m = s->m;
+    for (const dkim2_mi_t *m = ctx->mi_list; m && !need; m = m->next)
+        if (m->m > signed_m && dkim2_mi_changes_from(m)) need = 1;
+    if (need && !dkim2_from_authentic(ctx->headers, ctx->n_headers, cfg->domain)) {
+        snprintf(ctx->errmsg, sizeof ctx->errmsg,
+            "not signing: From header field is not Authentic for d=%.200s",
+            cfg->domain ? cfg->domain : "");
+        return -1;
+    }
+    return 0;
+}
+
+/* Whether a parser error is one of dkim2_chain_number_error()'s, or a
+   missing or malformed i=/m= (the field is then left out of the lists, so
+   the next i= and m= cannot be computed). A field syntax error of any
+   other kind is included: refusing it costs nothing. */
 static int chain_number_refusal(const char *e) {
-    return strstr(e, "exceeds the maximum chain") || strstr(e, "has a malformed m= tag")
-        || strstr(e, "has a missing or malformed i= tag");
+    return strstr(e, "exceeds the maximum chain") || strstr(e, " syntax error")
+        || strstr(e, "tag=i missing") || strstr(e, "tag=m missing");
 }
 
 int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
@@ -259,8 +326,9 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
         }
     }
     if (sign_gate(ctx, cfg) < 0) return -1;
+    if (!cfg->skip_chain_check && from_refusal(ctx, cfg) < 0) return -1;
 
-    /* spec-06 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
+    /* -07 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
        NULL) is sha256 only, so default output stays byte-identical to before
        hash agility existed. "--hash both" emits sha256 first, then sha512. */
     int sel_algs[DKIM2_N_HASH_ALGS];
@@ -275,7 +343,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
         sel_algs[n_sel++] = a;
     }
 
-    /* §8.3/§8.4: body hash already computed incrementally (both algorithms);
+    /* -07 §9.3: body hash already computed incrementally (both algorithms);
        header hash computed here per selected algorithm. */
     dkim2_hashset_t hs[DKIM2_N_HASH_ALGS];
     char hh_b64[DKIM2_N_HASH_ALGS][DKIM2_MAX_HASH_LEN * 2];
@@ -333,7 +401,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     for (dkim2_sig_t *sig = ctx->sig_list; sig; sig = sig->next)
         if (sig->i >= new_i) new_i = sig->i + 1;
 
-    /* Base64-encode mf= — normalized to a bracketed RFC5321 path (spec §7.5) */
+    /* Base64-encode mf= — normalized to a bracketed RFC5321 path (-07 §10.5) */
     char *mfp = to_rfc5321_path(ctx->mail_from);
     size_t mf_b64_len = ((strlen(mfp) + 2) / 3) * 4 + 2;
     char *mf_b64 = malloc(mf_b64_len);
@@ -341,7 +409,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     free(mfp);
 
     /* Base64-encode each rt= value, comma-separated — each normalized to a
-       bracketed RFC5321 path (spec §7.6) */
+       bracketed RFC5321 path (-07 §10.6) */
     /* Estimate size: each rcpt ~64 chars encoded */
     size_t rt_buf_size = 4096;
     char *rt_b64 = calloc(1, rt_buf_size);
@@ -386,12 +454,20 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     /* Use configured timestamp or current time */
     uint64_t now = cfg->timestamp ? cfg->timestamp : (uint64_t)time(NULL);
 
-    /* Format incomplete DKIM2-Signature value (empty sig per §8.5) */
+    /* -07 §12.5: an intermediary (i > 1) sending copies to more than one
+       address sets "exploded" -- when the caller says so (a list that sends
+       each recipient its own copy), or when this one copy goes to several
+       rt= addresses. Never on i=1. */
+    int n_rt = 0;
+    for (int i = 0; ctx->rcpt_to && ctx->rcpt_to[i]; i++) n_rt++;
+    const char *flags = (new_i > 1 && (cfg->exploded || n_rt > 1)) ? " f=exploded;" : "";
+
+    /* Format incomplete DKIM2-Signature value (empty sig per -07 §12.8) */
     char incomplete_sig[4096];
     snprintf(incomplete_sig, sizeof incomplete_sig,
-        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s; s=%s:%s:;",
+        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s;%s s=%s:%s:;",
         new_i, new_m, (unsigned long long)now,
-        cfg->domain, mf_b64, rt_b64,
+        cfg->domain, mf_b64, rt_b64, flags,
         cfg->selector, alg);
 
     /* Build MI list to sign: existing + new (if new_m > any existing) */
@@ -451,9 +527,9 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     /* Format complete DKIM2-Signature value */
     char complete_sig[4096];
     snprintf(complete_sig, sizeof complete_sig,
-        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s; s=%s:%s:%s;",
+        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s;%s s=%s:%s:%s;",
         new_i, new_m, (unsigned long long)now,
-        cfg->domain, mf_b64, rt_b64,
+        cfg->domain, mf_b64, rt_b64, flags,
         cfg->selector, alg, sig_b64);
     free(sig_b64);
 

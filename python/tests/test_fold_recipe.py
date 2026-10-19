@@ -1,4 +1,4 @@
-"""Folding whitespace inside an r= Recipe value (spec-06 §2.12).
+"""Folding whitespace inside an r= Recipe value (-07 §2.12).
 
 A list manager's Message-Instance m=2 carries a base64 r= value several
 hundred characters long, which it folds with CRLF+HTAB to stay within RFC 5322

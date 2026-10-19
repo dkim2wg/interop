@@ -21,7 +21,7 @@ export function bytesToB64(u8) {
 
 export function b64ToString(s) { return bytesToString(b64ToBytes(s)); }
 
-// A message is a sequence of octets (spec-06 §6). Inside the verifier it
+// A message is a sequence of octets (§6). Inside the verifier it
 // travels as a "binary string": one code unit per byte (0..255), so the RFC
 // 5322 structure can be handled with ordinary string and regex tools while
 // every byte -- a raw Big5 Subject, a Latin-1 body -- reaches the hash
@@ -43,20 +43,11 @@ export function binaryToBytes(bin) {
 }
 
 // Text -> binary string, by UTF-8 encoding. Used for a pasted message and
-// for Recipe "d" literals, which are JSON strings. A lone surrogate in
-// U+DC80..U+DCFF stands for the raw byte 0x80..0xFF: that is how a Python
-// signer (Mailman, dkim2sign.py) carries a non-UTF-8 octet through JSON
-// ("surrogateescape"); TextEncoder alone would make it U+FFFD. Text with
-// no such code unit (nearly all of it) is ASCII, already its own binary
-// string, or encoded whole.
+// for Recipe "d" literals, which are JSON strings. ASCII text is already its
+// own binary string. (Octets that are not UTF-8 travel in a Recipe as a "u"
+// step, spec-07 §5; a "d" string holding a lone surrogate is refused before
+// it gets here.)
 export function textToBinary(text) {
   if (/^[\x00-\x7f]*$/.test(text)) return text;
-  if (!/[\udc80-\udcff]/.test(text)) return bytesToBinary(enc.encode(text));
-  let out = '';
-  for (const ch of text) {
-    const c = ch.charCodeAt(0);
-    if (ch.length === 1 && c >= 0xdc80 && c <= 0xdcff) out += String.fromCharCode(c & 0xff);
-    else out += bytesToBinary(enc.encode(ch));
-  }
-  return out;
+  return bytesToBinary(enc.encode(text));
 }
