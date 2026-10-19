@@ -160,7 +160,9 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
     const cur = states[m];
-    if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
+    // §9/§12.1: r= is optional; with no Recipes the previous instance is
+    // this same message, sharing its header and body digests.
+    if (!('r' in mi.map)) { states[m - 1] = cur; continue; }
     let recipe;
     try {
       recipe = decodeRecipe(mi.map.r);

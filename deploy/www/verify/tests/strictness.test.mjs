@@ -394,12 +394,29 @@ for (const [name, extra] of [
   });
 }
 
-test('F1: empty fragments and well-formed unknown tags (FWS inside, empty value) pass', async () => {
+test('F1: well-formed unknown tags (FWS inside, empty value) and one trailing ";" pass', async () => {
   const rep = await verify(await signed({
-    sigTags: ` i=1;; m=1; x_1 = a b\r\n\tc ; y=; t=${T}; d=example.com; mf=${MF}; rt=${RT}`,
-    mi: (hh, bh) => ` m=1;; Zz9 =\tq ;h=sha256:${hh}:${bh};`,
+    sigTags: ` i=1; m=1; x_1 = a b\r\n\tc ; y=; t=${T}; d=example.com; mf=${MF}; rt=${RT}`,
+    mi: (hh, bh) => ` m=1; Zz9 =\tq ;h=sha256:${hh}:${bh};`,
   }));
   assert.equal(rep.overall, 'pass', rep.summary);
+});
+
+// §8: a tag-list is tag-spec *(";" tag-spec) [";"]: only one trailing ";"
+// may go without a tag-spec, so an empty one in the middle (";;") is a
+// syntax error.
+test('F1: an empty tag-spec (";;") in a DKIM2-Signature is a syntax error', async () => {
+  const rep = await verify(await signed({ sigTags: ` i=1;; m=1; t=${T}; d=example.com; mf=${MF}; rt=${RT}` }));
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.match(rep.summary, /PERMERROR: DKIM2-Signature i=1 syntax error/);
+});
+
+test('F1: an empty tag-spec (";;") in a Message-Instance is a syntax error', async () => {
+  for (const mi of [(hh, bh) => ` m=1;; h=sha256:${hh}:${bh}`, (hh, bh) => ` m=1; h=sha256:${hh}:${bh};;`]) {
+    const rep = await verify(await signed({ mi }));
+    assert.equal(rep.overall, 'permerror', rep.summary);
+    assert.match(rep.summary, /PERMERROR: Message-Instance m=1 syntax error/);
+  }
 });
 
 for (const [name, items, mutate] of [

@@ -1,28 +1,20 @@
 // Recipe application (undo) per draft-ietf-dkim-dkim2-spec-07 §5 and §9.2.
 import { b64ToBytes, b64ToString, bytesToBinary, textToBinary } from './b64.js';
 
-// A Recipe that is valid JSON but not what the §5 schema allows: not an
-// object, neither "h" nor "b", an empty "h", a step that is not exactly one
-// of "c", "d" or "u", a "c" that is not two integers of at least 1, an empty
-// "d"/"u" array, a "d" string with CR/LF or a lone surrogate, a "u" string
-// that is not canonical base64 or decodes to CR/LF. verify.js reports it as
-// "PERMERROR: Message-Instance m=<N> contains invalid JSON", the same as a
-// JSON syntax error or a duplicate key.
+// A Recipe that is valid JSON but not one this message's previous state can
+// be recreated from: what the §5 schema does not allow (not an object,
+// neither "h" nor "b", an empty "h", a step that is not exactly one of "c",
+// "d" or "u", a "c" that is not two integers of at least 1, an empty "d"/"u"
+// array, a "d" string with CR/LF or a lone surrogate, a "u" string that is
+// not canonical base64 or decodes to CR/LF), and a "c" range that ends
+// before it starts, does not follow the previous copy, or runs past the
+// fields/lines there are. verify.js reports it as "PERMERROR:
+// Message-Instance m=<N> contains invalid JSON", the same as a JSON syntax
+// error or a duplicate key.
 export class InvalidRecipe extends Error {
   constructor(message) {
     super(message);
     this.name = 'InvalidRecipe';
-  }
-}
-
-// A Recipe the schema allows but that cannot be applied to the message: a
-// "c" range that ends before it starts, does not follow the previous copy,
-// or runs past the fields/lines there are. No -07 string covers this, so
-// verify.js keeps "PERMERROR: Message-Instance m=<N> has a malformed Recipe".
-export class MalformedRecipe extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'MalformedRecipe';
   }
 }
 
@@ -190,12 +182,11 @@ function decodeStep(step, where) {
 // of one name, or body lines) and yield what it emits, in Recipe order, a
 // range at a time: {range: [start, end]} for items start..end (1-based) or
 // {literal: binaryString}. Each step is checked against the schema
-// (decodeStep: InvalidRecipe), then each "c" range must have start <= end
-// <= count, and start after the end of every preceding "c" step
-// (MalformedRecipe).
+// (decodeStep), then each "c" range must have start <= end <= count, and
+// start after the end of every preceding "c" step. Throws InvalidRecipe.
 // The undo walk below expands ranges item by item (walkSteps); the planned
 // walk (plan.js) takes them whole. Both see the same checks in the same
-// order, so a Recipe is malformed to one exactly when it is to the other.
+// order, so a Recipe is invalid to one exactly when it is to the other.
 export function* walkRanges(steps, count, where, structuralOnly = false) {
   if (!Array.isArray(steps)) throw new InvalidRecipe(`${where}: steps are not an array`);
   let prevEnd = 0;
@@ -207,10 +198,10 @@ export function* walkRanges(steps, count, where, structuralOnly = false) {
     }
     const [start, end] = s.c;
     if (end < start || (!structuralOnly && end > count)) {
-      throw new MalformedRecipe(`${where}: "c" range [${start}, ${end}] is outside 1..${count}`);
+      throw new InvalidRecipe(`${where}: "c" range [${start}, ${end}] is outside 1..${count}`);
     }
     if (start <= prevEnd) {
-      throw new MalformedRecipe(`${where}: "c" range [${start}, ${end}] does not follow the previous copy (ended at ${prevEnd})`);
+      throw new InvalidRecipe(`${where}: "c" range [${start}, ${end}] does not follow the previous copy (ended at ${prevEnd})`);
     }
     if (!structuralOnly) yield { range: [start, end] };
     prevEnd = end;
@@ -228,7 +219,7 @@ export function* walkSteps(steps, count, where, structuralOnly = false) {
 
 // Structural check of a body Recipe ("b": null, or valid steps) without a
 // body to apply it to: used below a null body Recipe, where the body is gone
-// but a malformed Recipe is still a malformed Recipe. Bounds against the
+// but an invalid Recipe is still an invalid Recipe. Bounds against the
 // (absent) body are not checked; everything else is.
 export function validateBodyRecipe(b) {
   if (b === undefined || b === null) return;
@@ -298,8 +289,8 @@ export function applyHeaderRecipe(fields, hObj) {
 // Apply a whole decoded Recipe to a message state {fields, bodyLines} and
 // return the previous state. The caller decides what a null "b" (§5.2
 // redaction) means; here it leaves the body alone. Throws InvalidRecipe
-// when the Recipe is not a §5 object or a step is invalid, MalformedRecipe
-// when a "c" range does not fit.
+// when the Recipe is not a §5 object, a step is invalid, or a "c" range
+// does not fit.
 export function applyRecipe(recipe, state) {
   if (!isPlainObject(recipe)) throw new InvalidRecipe('Recipe is not a JSON object');
   if (!('h' in recipe) && !('b' in recipe)) throw new InvalidRecipe('Recipe has neither "h" nor "b"');
@@ -315,13 +306,11 @@ export function applyRecipe(recipe, state) {
 //  - a bad base64 r= value (atob throws, typically DOMException) is a
 //    "syntax error" in the Message-Instance -- the payload never even
 //    reached JSON parsing;
-//  - a JSON.parse failure or a duplicate key (SyntaxError), or JSON the §5
-//    schema does not allow (InvalidRecipe), "contains invalid JSON";
-//  - a schema-valid Recipe whose "c" ranges do not fit the message
-//    (MalformedRecipe) "has a malformed Recipe".
+//  - a JSON.parse failure or a duplicate key (SyntaxError), or a Recipe the
+//    §5 schema does not allow or whose "c" ranges do not fit the message
+//    (InvalidRecipe), "contains invalid JSON".
 // Anything else is a generic, non-specific failure to undo.
 export function classifyRecipeDecodeError(e) {
-  if (e instanceof MalformedRecipe) return 'malformed';
   if (e instanceof InvalidRecipe || e instanceof SyntaxError) return 'invalid-json';
   if (e instanceof DOMException) return 'syntax-error';
   return 'broken';

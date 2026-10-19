@@ -96,7 +96,8 @@ const cases = {
   'Recipe on m=1 below a null body Recipe, past the stale body': {
     maxM: 2, body: 'a\r\nb\r\nc\r\n', recipes: { 2: { b: null }, 1: { b: [{ c: [1, 4] }] } } },
   'Recipe on m=1 with a bad header range': { maxM: 1, headers: H, recipes: { 1: { h: { subject: [{ c: [1, 2] }] } } } },
-  'r= missing': { maxM: 2, recipes: {}, expect: 2 },
+  'r= missing (the same message)': { maxM: 2, recipes: {} },
+  'r= missing over a body Recipe': { maxM: 3, body: 'a\r\nb\r\n', recipes: { 2: { b: [{ c: [1, 1] }] } } },
   'r= invalid JSON': { maxM: 2, recipes: { 2: '{"b":' }, expect: 2 },
   'r= not base64': { maxM: 2, rawR: { 2: '!!!' }, expect: 2 },
   'Recipe not an object': { maxM: 2, recipes: { 2: [1] }, expect: 2 },

@@ -96,12 +96,11 @@ export function checkSignatureDuplicates(items, i) {
   return errors;
 }
 
-// The §14.2 error text for a classified Recipe failure ('broken': no r= to
-// undo, or any other failure, has no -07 string of its own).
+// The §14.2 error text for a classified Recipe failure ('broken': an
+// unexpected failure to undo, has no -07 string of its own).
 function recipeErrorSuffix(reason) {
   if (reason === 'invalid-json') return 'contains invalid JSON';
   if (reason === 'syntax-error') return 'syntax error';
-  if (reason === 'malformed') return 'has a malformed Recipe';
   return 'previous instance cannot be recreated';
 }
 
@@ -352,9 +351,9 @@ async function verifyOnce(raw, opts = {}) {
     };
     if (!chain.has(m)) {
       // No reconstructed state: the Recipe at m=undoBroken could not be
-      // undone. §14.2: report the specific PERMERROR (base64 syntax error vs.
-      // invalid JSON vs. malformed Recipe are distinct errors), on every
-      // level whose state is unreachable because of it.
+      // undone. §14.2: report the specific PERMERROR (a base64 syntax error
+      // and invalid JSON are distinct errors), on every level whose state is
+      // unreachable because of it.
       level.result = 'not-checked';
       level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
       level.detail = `PERMERROR: Message-Instance m=${undoBroken} ${recipeErrorSuffix(undoBrokenReason)}`;
@@ -369,7 +368,7 @@ async function verifyOnce(raw, opts = {}) {
       // above (there is no earlier state to undo to, so a malformed r=
       // there was previously never even looked at), so it needs its own
       // check here: decode it, and dry-run it against the m=1 state so a
-      // malformed Recipe (§5) is caught the same way as at m>=2.
+      // bad Recipe (§5) is caught the same way as at m>=2.
       try {
         chain.checkBottom(decodeRecipe(mi.map.r)); // a null "b" is left alone here
       } catch (e) {
@@ -635,7 +634,7 @@ async function checkCrypto(sig, i, instances, signatures, fetchKey, level, fail)
 // opts.undoWalk selects it. body is the current body's octets (Uint8Array).
 // Returns the chain interface verifyOnce() reads:
 //  - undoBroken / undoBrokenReason: the m whose Recipe could not be undone
-//    ('invalid-json' | 'syntax-error' | 'malformed' | 'broken'), or null;
+//    ('invalid-json' | 'syntax-error' | 'broken'), or null;
 //  - nullBodyAt: the highest m with a null body Recipe; nullBodyInstances:
 //    every such m;
 //  - has(m): the state at m was reached; noBody(m): its body is gone;
@@ -649,10 +648,12 @@ export function undoChain(headers, body, instances, maxM) {
   const nullBodyInstances = new Set(); // every m whose body Recipe is null
   let nullBodyAt = null; // highest m whose body Recipe is null (§5.2)
   let undoBroken = null; // m at which undo became impossible
-  let undoBrokenReason = null; // 'invalid-json' | 'syntax-error' | 'malformed' | 'broken'
+  let undoBrokenReason = null; // 'invalid-json' | 'syntax-error' | 'broken'
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
-    if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
+    // §9/§12.1: r= is optional; with no Recipes the previous instance is
+    // this same message (a difference shows as a hash mismatch below).
+    if (!('r' in mi.map)) { states[m - 1] = { ...states[m] }; continue; }
     let recipe;
     try {
       recipe = decodeRecipe(mi.map.r);

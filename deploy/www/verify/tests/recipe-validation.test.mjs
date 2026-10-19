@@ -81,7 +81,7 @@ async function verify(msg) {
 }
 
 // Unchanged content between hops, two body lines: the canvas for the
-// malformed-"c" cases (a correct Recipe would be {"b":[{"c":[1,2]}]}).
+// bad-"c" cases (a correct Recipe would be {"b":[{"c":[1,2]}]}).
 const twoLineFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' hi' }];
 const twoLineBody = 'hello\r\nworld\r\n';
 const unchanged = (recipe) => twoHop({
@@ -94,7 +94,6 @@ test('control: a well-formed copy Recipe over unchanged content passes end to en
   assert.equal(rep.overall, 'pass', rep.summary);
 });
 
-const MALFORMED = 'PERMERROR: Message-Instance m=2 has a malformed Recipe';
 const INVALID = 'PERMERROR: Message-Instance m=2 contains invalid JSON';
 
 function rejects(name, recipe, want) {
@@ -110,11 +109,11 @@ function rejects(name, recipe, want) {
   });
 }
 
-// A schema-valid Recipe whose "c" ranges do not fit the message.
-rejects('descending "c" ranges', { b: [{ c: [2, 2] }, { c: [1, 1] }] }, MALFORMED);
-rejects('overlapping "c" ranges', { b: [{ c: [1, 2] }, { c: [2, 2] }] }, MALFORMED);
-rejects('"c" end beyond the line count', { b: [{ c: [1, 3] }] }, MALFORMED);
-rejects('"c" end beyond the header instance count', { h: { subject: [{ c: [1, 2] }] } }, MALFORMED);
+// A schema-valid Recipe whose "c" ranges do not fit the message is invalid too.
+rejects('descending "c" ranges', { b: [{ c: [2, 2] }, { c: [1, 1] }] }, INVALID);
+rejects('overlapping "c" ranges', { b: [{ c: [1, 2] }, { c: [2, 2] }] }, INVALID);
+rejects('"c" end beyond the line count', { b: [{ c: [1, 3] }] }, INVALID);
+rejects('"c" end beyond the header instance count', { h: { subject: [{ c: [1, 2] }] } }, INVALID);
 // What the §5 schema does not allow.
 rejects('"c" start of 0', { b: [{ c: [0, 1] }] }, INVALID);
 rejects('"c" bounds as strings', { b: [{ c: ['1', '2'] }] }, INVALID);

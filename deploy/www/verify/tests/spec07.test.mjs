@@ -80,6 +80,36 @@ test('control: the one-hop and two-hop canvases pass', async () => {
 
 // --- U: the "u" Recipe step (C1) --------------------------------------------
 
+// §9/§12.1: r= is optional. A Message-Instance with no Recipes says the
+// previous instance is the same message; any difference shows as a hash
+// mismatch on the lower instance.
+test('a Message-Instance with no r= over an unchanged message passes', async () => {
+  const msg = await signChain([{ fields: FIELDS, body: BODY }, { fields: FIELDS, body: BODY }], [one(), two()]);
+  assertPass(await verify(msg));
+  assertPass(await verify(msg, { undoWalk: true }));
+});
+
+test('a Message-Instance with no r= over a changed message is a hash mismatch below it', async () => {
+  for (const [cur, want] of [
+    [{ fields: [['From', 'a@example.com'], ['Subject', '[list] hi']], body: BODY }, 'FAIL: Message-Instance m=1 header hash sha256 mismatch'],
+    [{ fields: FIELDS, body: 'hello\r\n-- footer\r\n' }, 'FAIL: Message-Instance m=1 body hash sha256 mismatch'],
+  ]) {
+    const msg = await signChain([{ fields: FIELDS, body: BODY }, cur], [one(), two()]);
+    for (const undoWalk of [false, true]) {
+      const rep = await verify(msg, { undoWalk });
+      assert.equal(rep.overall, 'fail', rep.summary);
+      assert.equal(rep.summary, want);
+    }
+  }
+});
+
+test('"c" ranges that do not fit the message are "contains invalid JSON" too', async () => {
+  for (const recipe of [{ b: [{ c: [1, 2] }] }, { b: [{ c: [1, 1] }, { c: [1, 1] }] }, { b: [{ c: [2, 1] }] },
+    { h: { subject: [{ c: [1, 2] }] } }]) {
+    assertPerm(await verify(await twoHop(recipe)), INVALID_JSON);
+  }
+});
+
 test('U2 (verify side): a "u" step restores a body line of octets 63 61 66 E9', async () => {
   const msg = await twoHop({ b: [{ u: ['Y2Fm6Q=='] }] }, {
     prev: { body: { bin: 'caf\xe9\r\n' } }, cur: { body: 'x\r\n' },

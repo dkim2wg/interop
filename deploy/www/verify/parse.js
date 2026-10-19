@@ -128,11 +128,18 @@ export function parseTagList(value) {
   const tags = [];
   const map = {};
   let syntaxError = false;
-  for (const seg of flat.split(';')) {
-    if (/^[ \t\r\n]*$/.test(seg)) continue;
+  // §8: tag-list = tag-spec *(";" tag-spec) [";"]: only the segment after
+  // a single trailing ";" may be empty; an empty one anywhere else (";;",
+  // or a leading ";") is a syntax error.
+  const segs = flat.split(';');
+  segs.forEach((seg, n) => {
+    if (/^[ \t\r\n]*$/.test(seg)) {
+      if (n < segs.length - 1) syntaxError = true;
+      return;
+    }
     if (!TAG_SPEC.test(seg)) syntaxError = true;
     const eq = seg.indexOf('=');
-    if (eq < 0) continue;
+    if (eq < 0) return;
     const name = seg.slice(0, eq).trim().toLowerCase();
     // DKIM2 tag values are base64 / tokens / digits / domains and never carry
     // significant internal whitespace; any WSP present came from header folding
@@ -143,7 +150,7 @@ export function parseTagList(value) {
     const val = seg.slice(eq + 1).replace(/[ \t\r\n]/g, '');
     tags.push({ tag: name, value: val, raw: seg });
     if (!(name in map)) map[name] = val;
-  }
+  });
   return { tags, map, syntaxError };
 }
 

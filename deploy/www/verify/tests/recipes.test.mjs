@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe, applyRecipe, decodeRecipe, InvalidRecipe, MalformedRecipe } from '../recipes.js';
+import { bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe, applyRecipe, decodeRecipe, InvalidRecipe } from '../recipes.js';
 
 test('bodyToLines / linesToBody round-trip', () => {
   assert.deepEqual(bodyToLines('a\r\nb\r\n'), ['a', 'b']);
@@ -116,24 +116,23 @@ test('"d" and "u" steps for the same text agree once both are binary strings', (
   assert.deepEqual(viaD, viaU);
 });
 
-// --- bad Recipes: InvalidRecipe (the §5 schema) or MalformedRecipe (a "c"
-// range that does not fit) -------------------------------------------------
+// --- bad Recipes: InvalidRecipe (the §5 schema, or a "c" range that does
+// not fit) -------------------------------------------------------------------
 const invalid = (fn) => assert.throws(fn, (e) => e instanceof InvalidRecipe && e.name === 'InvalidRecipe');
-const malformed = (fn) => assert.throws(fn, (e) => e instanceof MalformedRecipe && e.name === 'MalformedRecipe');
 
 test('"c" ranges: integers of at least 1 (schema), then bounds and ordering', () => {
   const cur = ['a', 'b', 'c'];
   assert.deepEqual(applyBodyRecipe(cur, [{ c: [1, 1] }, { c: [3, 3] }]), ['a', 'c']);
   invalid(() => applyBodyRecipe(cur, [{ c: [0, 1] }]));            // start 0
-  malformed(() => applyBodyRecipe(cur, [{ c: [1, 4] }]));          // end beyond count
-  malformed(() => applyBodyRecipe(cur, [{ c: [2, 1] }]));          // end < start
-  malformed(() => applyBodyRecipe(cur, [{ c: [2, 2] }, { c: [1, 1] }])); // descending
-  malformed(() => applyBodyRecipe(cur, [{ c: [1, 2] }, { c: [2, 3] }])); // overlapping
+  invalid(() => applyBodyRecipe(cur, [{ c: [1, 4] }]));          // end beyond count
+  invalid(() => applyBodyRecipe(cur, [{ c: [2, 1] }]));          // end < start
+  invalid(() => applyBodyRecipe(cur, [{ c: [2, 2] }, { c: [1, 1] }])); // descending
+  invalid(() => applyBodyRecipe(cur, [{ c: [1, 2] }, { c: [2, 3] }])); // overlapping
   invalid(() => applyBodyRecipe(cur, [{ c: ['1', '2'] }]));        // strings
   invalid(() => applyBodyRecipe(cur, [{ c: [1, 1.5] }]));          // fraction
   invalid(() => applyBodyRecipe(cur, [{ c: [1] }]));               // one bound
   invalid(() => applyBodyRecipe(cur, [{ c: [1, 2, 3] }]));         // three bounds
-  malformed(() => applyHeaderRecipe([{ name: 'Subject', value: ' x', raw: '' }], { subject: [{ c: [1, 2] }] }));
+  invalid(() => applyHeaderRecipe([{ name: 'Subject', value: ' x', raw: '' }], { subject: [{ c: [1, 2] }] }));
 });
 
 test('literal steps: bad base64, CR/LF, non-strings and unknown steps are invalid', () => {
