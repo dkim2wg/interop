@@ -26,6 +26,13 @@ REPO=/root/interop
 cd "$REPO"
 echo ">> interop HEAD: $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
 
+# 0a. `git pull` does not move submodules, and t/turscar.t (the deploy gate)
+#     reads the Turscar vectors from dkim2tests/. 2026-10-19: the -07 merge
+#     bumped the submodule and dropped a skip for a vector upstream had fixed;
+#     the box still had the old checkout and the gate failed on it.
+git submodule update --init dkim2tests
+echo ">> dkim2tests at $(git -C dkim2tests rev-parse --short HEAD)"
+
 # 0. Sendmail::PMilter 1.28+ (July 2026): the first release that answers a
 #     null-sender MAIL FROM:<>; 1.27 made Postfix wait out milter_command_timeout
 #     and internally-generated bounces shipped unsigned (we carried a local patch
