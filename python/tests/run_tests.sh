@@ -15,7 +15,9 @@ EMAILS_DIR="$SCRIPT_DIR/emails"
 EXPECTED_DIR="$SCRIPT_DIR/expected"
 SIGNER="$PYTHON_DIR/dkim2sign.py"
 
-# Activate venv if present
+# Activate venv if present (set it up with: python3 -m venv venv &&
+# venv/bin/pip install -r requirements.txt -- dnspython is needed for the
+# live-DNS tests; without it they skip)
 if [ -f "$PYTHON_DIR/venv/bin/activate" ]; then
     source "$PYTHON_DIR/venv/bin/activate"
 fi

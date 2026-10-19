@@ -1613,7 +1613,11 @@ def main():
     if args.dns_json:
         dns_data = load_dns_json(args.dns_json)
     else:
-        dns_data = LiveDNS(prefetch=not args.no_prefetch)
+        try:
+            dns_data = LiveDNS(prefetch=not args.no_prefetch)
+        except RuntimeError as e:   # no dnspython
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(2)
     # Full-chain validation is the default; --full-chain kept for compatibility.
     result = verify_message(raw, dns_data, full_chain=True,
                             walk="undo" if args.undo_walk else "plan",

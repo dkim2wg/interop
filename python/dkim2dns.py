@@ -20,22 +20,17 @@ within prefetch_wait seconds of sending, SERVFAIL, any error) is redone the
 ordinary synchronous way, so every verdict is what the synchronous lookup
 alone would give.  Each name is looked up once per message.
 
-StubResolver is a small UDP (TCP on truncation) stub resolver using the
-nameservers in /etc/resolv.conf; any object with the same query_txt() can
-stand in for it.
+DnspythonResolver asks the system's resolvers through dnspython, which is
+imported only when keys are looked up in DNS (dns.json needs nothing
+beyond the standard library and cryptography).  Any object with the same
+query_txt() can stand in for it -- the tests use a fake.
 """
 
 import os
-import random
-import socket
-import struct
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 PREFETCH_WAIT = 5.0     # seconds after sending before a prefetch is given up
-_TXT, _IN = 16, 1
-_RCODES = {0: "NOERROR", 1: "FORMERR", 2: "SERVFAIL", 3: "NXDOMAIN",
-           4: "NOTIMP", 5: "REFUSED"}
 _executor: ThreadPoolExecutor | None = None
 
 
@@ -43,113 +38,40 @@ class DNSTempError(Exception):
     """The lookup did not complete: timeout, SERVFAIL, transport error."""
 
 
-def _encode_name(name: str) -> bytes | None:
-    """Wire form of a domain name, or None if it cannot be one."""
-    out = b""
-    for label in name.rstrip(".").split("."):
+class DnspythonResolver:
+    """TXT queries through dnspython's dns.resolver (the system resolvers).
+
+    dnspython is needed only here: a verifier given dns.json never imports
+    it.  query_txt() returns ("NOERROR", records) -- records empty for
+    NoAnswer -- or ("NXDOMAIN", []); ValueError for a name that cannot be
+    looked up; any other failure (Timeout, NoNameservers i.e. SERVFAIL,
+    network errors) propagates and is a temporary error."""
+
+    def __init__(self, lifetime: float = PREFETCH_WAIT):
         try:
-            raw = label.encode("ascii")
-        except UnicodeEncodeError:
-            return None
-        if not 0 < len(raw) < 64:
-            return None
-        out += bytes([len(raw)]) + raw
-    return out + b"\0" if len(out) < 255 else None
-
-
-def _skip_name(msg: bytes, pos: int) -> int:
-    while True:
-        n = msg[pos]
-        if n == 0:
-            return pos + 1
-        if n & 0xC0 == 0xC0:
-            return pos + 2
-        pos += 1 + n
-
-
-def parse_txt_response(msg: bytes, qid: int) -> tuple[str, list[list[bytes]], bool]:
-    """(rcode name, TXT RRs as lists of character-strings, truncated)."""
-    rid, flags, qd, an, _, _ = struct.unpack("!HHHHHH", msg[:12])
-    if rid != qid or not flags & 0x8000:
-        raise DNSTempError("reply does not match the query")
-    rcode = _RCODES.get(flags & 0xF, f"RCODE{flags & 0xF}")
-    pos = 12
-    for _ in range(qd):
-        pos = _skip_name(msg, pos) + 4
-    records = []
-    for _ in range(an):
-        pos = _skip_name(msg, pos)
-        rtype, rclass, _, rdlen = struct.unpack("!HHIH", msg[pos:pos + 10])
-        pos += 10
-        rdata, pos = msg[pos:pos + rdlen], pos + rdlen
-        if rtype == _TXT and rclass == _IN:
-            strings, i = [], 0
-            while i < len(rdata):
-                strings.append(rdata[i + 1:i + 1 + rdata[i]])
-                i += 1 + rdata[i]
-            records.append(strings)
-    return rcode, records, bool(flags & 0x0200)
-
-
-class StubResolver:
-    """TXT queries to the system's recursive resolvers."""
-
-    def __init__(self, nameservers: list[str] | None = None,
-                 timeout: float = 5.0, port: int = 53):
-        self.nameservers = nameservers or self._system_nameservers()
-        self.timeout = timeout
-        self.port = port
-
-    @staticmethod
-    def _system_nameservers() -> list[str]:
-        servers = []
-        try:
-            with open("/etc/resolv.conf") as fh:
-                for line in fh:
-                    parts = line.split()
-                    if len(parts) >= 2 and parts[0] == "nameserver":
-                        servers.append(parts[1])
-        except OSError:
-            pass
-        return servers or ["127.0.0.1"]
+            import dns.resolver
+        except ImportError:
+            raise RuntimeError(
+                "looking keys up in DNS needs dnspython (pip install "
+                "dnspython); or pass --dns-json")
+        self._dns = dns
+        self.resolver = dns.resolver.Resolver()
+        self.resolver.lifetime = lifetime
 
     def query_txt(self, name: str) -> tuple[str, list[list[bytes]]]:
-        wire = _encode_name(name)
-        if wire is None:
-            raise ValueError(f"not a domain name: {name!r}")
-        qid = random.getrandbits(16)
-        query = struct.pack("!HHHHHH", qid, 0x0100, 1, 0, 0, 0) \
-            + wire + struct.pack("!HH", _TXT, _IN)
-        last: Exception = DNSTempError("no nameserver")
-        for ns in self.nameservers:
-            family = socket.AF_INET6 if ":" in ns else socket.AF_INET
-            try:
-                with socket.socket(family, socket.SOCK_DGRAM) as s:
-                    s.settimeout(self.timeout)
-                    s.sendto(query, (ns, self.port))
-                    rcode, recs, tc = parse_txt_response(s.recv(65535), qid)
-                if tc:
-                    with socket.create_connection((ns, self.port),
-                                                  self.timeout) as s:
-                        s.sendall(struct.pack("!H", len(query)) + query)
-                        rcode, recs, _ = parse_txt_response(
-                            self._recv_tcp(s), qid)
-                return rcode, recs
-            except (OSError, DNSTempError, struct.error, IndexError) as e:
-                last = e
-        raise last
-
-    @staticmethod
-    def _recv_tcp(s) -> bytes:
-        def exactly(n):
-            buf = b""
-            while len(buf) < n:
-                part = s.recv(n - len(buf))
-                if not part:
-                    raise DNSTempError("connection closed")
-                buf += part
-            return buf
-        return exactly(struct.unpack("!H", exactly(2))[0])
+        dns = self._dns
+        try:
+            qname = dns.name.from_text(name)
+        except dns.exception.DNSException as e:
+            raise ValueError(f"not a domain name: {name!r}: {e}")
+        try:
+            answer = self.resolver.resolve(qname, "TXT", search=False,
+                                           raise_on_no_answer=False)
+        except dns.resolver.NXDOMAIN:
+            return "NXDOMAIN", []
+        except dns.resolver.NoAnswer:
+            return "NOERROR", []
+        return "NOERROR", [list(rr.strings) for rr in answer]
 
 
 def _answer(rcode: str, records: list[list[bytes]]) -> list[str]:
@@ -166,21 +88,22 @@ def _answer(rcode: str, records: list[list[bytes]]) -> list[str]:
 
 
 class LiveDNS:
-    """Key source: TXT lookups through `resolver` (a StubResolver by
+    """Key source: TXT lookups through `resolver` (a DnspythonResolver by
     default), prefetched per message unless prefetch is False."""
 
     def __init__(self, resolver=None, prefetch: bool = True,
                  prefetch_wait: float = PREFETCH_WAIT):
-        self.resolver = resolver if resolver is not None else StubResolver()
+        self.resolver = (resolver if resolver is not None
+                         else DnspythonResolver(lifetime=prefetch_wait))
         self.prefetch = prefetch
         self.prefetch_wait = prefetch_wait
 
     def txt_records(self, name: str) -> list[str]:
         """The ordinary synchronous lookup."""
-        if _encode_name(name) is None:
-            raise KeyError(name)
         try:
             rcode, records = self.resolver.query_txt(name)
+        except ValueError:
+            raise KeyError(name)
         except Exception as e:
             raise DNSTempError(str(e) or type(e).__name__)
         return _answer(rcode, records)
@@ -208,7 +131,7 @@ class MessageKeys:
                 thread_name_prefix="dkim2-dns")
         for name in names:
             name = name.lower()
-            if name in self._pending or _encode_name(name) is None:
+            if name in self._pending:
                 continue
             self._pending[name] = (time.monotonic(), _executor.submit(
                 self.live.resolver.query_txt, name))

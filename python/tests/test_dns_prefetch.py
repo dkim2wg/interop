@@ -6,14 +6,14 @@ A fake resolver stands in for DNS, answering from the repo dns.json.
 """
 import json
 import os
-import struct
+import subprocess
 import sys
 import threading
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.dirname(HERE))
-from dkim2dns import LiveDNS, parse_txt_response  # noqa: E402
+from dkim2dns import DNSTempError, LiveDNS  # noqa: E402
 from dkim2verify import MessageVerifier, verify_message  # noqa: E402
 
 with open(os.path.join(ROOT, "dns.json")) as fh:
@@ -166,12 +166,60 @@ def test_definitive_answers_used_directly():
                                   for e in got[3]), got
 
 
-def test_parse_txt_response():
-    q = struct.pack("!HHHHHH", 7, 0x8180, 1, 1, 0, 0)
-    q += b"\x03sel\x0a_domainkey\x07example\x03com\x00" + struct.pack("!HH", 16, 1)
-    rdata = b"\x05v=DKI" + b"\x02M1"
-    q += b"\xc0\x0c" + struct.pack("!HHIH", 16, 1, 300, len(rdata)) + rdata
-    assert parse_txt_response(q, 7) == ("NOERROR", [[b"v=DKI", b"M1"]], False)
+def test_dnspython_answers_mapped():
+    try:
+        import dns.resolver
+    except ImportError:
+        print("skip: no dnspython")
+        return
+    from dkim2dns import DnspythonResolver
+
+    class RR:
+        strings = (b"v=DKIM1; k=ed25519; ", b"p=abc")
+
+    r = DnspythonResolver()
+    live = LiveDNS(r, prefetch=False)
+    outcomes = {}
+    for what in (dns.resolver.NXDOMAIN(), dns.resolver.NoAnswer(),
+                 dns.resolver.LifetimeTimeout(timeout=5.0, errors=[]),
+                 dns.resolver.NoNameservers(), OSError("unreachable"), [RR()]):
+        def resolve(*a, **kw):
+            if isinstance(what, Exception):
+                raise what
+            return what
+        r.resolver.resolve = resolve
+        try:
+            outcomes[type(what).__name__] = live.txt_records("s._domainkey.example.com")
+        except (KeyError, DNSTempError) as e:
+            outcomes[type(what).__name__] = type(e).__name__
+    assert outcomes == {
+        "NXDOMAIN": "KeyError", "NoAnswer": "KeyError",
+        "LifetimeTimeout": "DNSTempError", "NoNameservers": "DNSTempError",
+        "OSError": "DNSTempError",
+        "list": ["v=DKIM1; k=ed25519; p=abc"]}, outcomes
+    try:
+        live.txt_records("a..b._domainkey.example.com")   # not a name
+        assert False
+    except KeyError:
+        pass
+
+
+def test_dns_json_mode_needs_no_dnspython():
+    """The util/*.sh runners call the CLI with --dns-json and a bare
+    python3: dnspython must matter only for live DNS."""
+    fixture = os.path.join(ROOT, "perl", "tests", "expected",
+                           "chain-hop6-unchanged-re-sign.eml")
+    code = ("import sys, runpy; sys.modules['dns'] = None; "
+            "sys.argv = ['dkim2verify.py'] + sys.argv[1:]; "
+            "runpy.run_path(%r, run_name='__main__')"
+            % os.path.join(os.path.dirname(HERE), "dkim2verify.py"))
+    ok = subprocess.run([sys.executable, "-c", code, fixture, "--dns-json",
+                         os.path.join(ROOT, "dns.json"), "--ignore-timestamps"],
+                        capture_output=True, text=True)
+    assert ok.returncode == 0 and "PASS" in ok.stdout, ok.stdout + ok.stderr
+    live = subprocess.run([sys.executable, "-c", code, fixture,
+                           "--ignore-timestamps"], capture_output=True, text=True)
+    assert live.returncode == 2 and "needs dnspython" in live.stderr, live.stderr
 
 
 if __name__ == "__main__":
