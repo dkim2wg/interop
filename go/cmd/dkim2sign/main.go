@@ -24,6 +24,8 @@ func main() {
 		"sign even when a Message-Instance has a null body Recipe that no upstream signature covers (its m= is above every signature's m=; default: refuse; a signed null needs no option)")
 	dnsJSON := flag.String("dns-json", os.Getenv("DKIM2_DNS_JSON"),
 		"dns.json for verifying an upstream chain before signing (default $DKIM2_DNS_JSON, else real DNS)")
+	exploded := flag.Bool("exploded", false,
+		"this hop sends copies to more than one address: set the exploded flag (§12.5; implied by more than one -rcpt-to, never set at i=1)")
 	ignoreTS := flag.Bool("ignore-timestamps", false,
 		"skip the §10.3 timestamp check when verifying the upstream chain")
 	flag.Parse()
@@ -80,6 +82,7 @@ func main() {
 		Timestamp:  ts,
 		HashAlgs:   algs,
 
+		Exploded:            *exploded,
 		AllowNullBodyRecipe: *allowNull,
 		SkipTimestampCheck:  *ignoreTS,
 	}

@@ -263,13 +263,13 @@ func TestGateFakeCoverageRefused(t *testing.T) {
 			}
 			// Refused by the gate's verifier (result=permerror) or, for an
 			// i= present but not a chain number, by the signer's own parse.
-			if !strings.Contains(err.Error(), "PERMERROR DKIM2-Signature has a missing or malformed i= tag") {
+			if !strings.Contains(err.Error(), "PERMERROR: DKIM2-Signature has a missing or malformed i= tag") {
 				t.Errorf("%s allow=%v: error %q", name, allow, err)
 			}
 		}
 		_, err := Verify(bytes.NewReader(msg), &JSONKeyFetcher{Path: "../../dns.json"},
 			VerifyOptions{SkipTimestampCheck: true})
-		if err == nil || err.Error() != "PERMERROR DKIM2-Signature has a missing or malformed i= tag" {
+		if err == nil || err.Error() != "PERMERROR: DKIM2-Signature has a missing or malformed i= tag" {
 			t.Errorf("%s: Verify err = %v", name, err)
 		}
 	}

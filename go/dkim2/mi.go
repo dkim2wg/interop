@@ -109,10 +109,21 @@ func checkMIHashes(mi *MessageInstance, headerHash func(string) ([]byte, error),
 		gotB := bodyHashes[hs.Alg]
 		wantB, err := base64.StdEncoding.DecodeString(hs.BodyHash)
 		if err != nil || !bytes.Equal(gotB, wantB) {
-			return fmt.Errorf("m=%d: %s body hash mismatch", mi.Version, hs.Alg)
+			return &hashMismatchError{m: mi.Version, alg: hs.Alg, part: "body"}
 		}
 	}
 	return nil
+}
+
+// hashMismatchError is §14.7's "FAIL: Message-Instance m=<x> header hash
+// <alg> mismatch" (or body hash).
+type hashMismatchError struct {
+	m         int
+	alg, part string
+}
+
+func (e *hashMismatchError) Error() string {
+	return fmt.Sprintf("FAIL: Message-Instance m=%d %s hash %s mismatch", e.m, e.part, e.alg)
 }
 
 // verifyMIHeaderHashes is the header half of verifyMIHashesPrecomputed, and
@@ -140,11 +151,11 @@ func checkMIHeaderHashes(mi *MessageInstance, headerHash func(string) ([]byte, e
 		}
 		wantH, err := base64.StdEncoding.DecodeString(hs.HeaderHash)
 		if err != nil || !bytes.Equal(gotH, wantH) {
-			return fmt.Errorf("m=%d: %s header hash mismatch", mi.Version, hs.Alg)
+			return &hashMismatchError{m: mi.Version, alg: hs.Alg, part: "header"}
 		}
 	}
 	if usable == 0 {
-		return fmt.Errorf("Message-Instance m=%d no supported hash algorithm", mi.Version)
+		return fmt.Errorf("PERMERROR: Message-Instance m=%d has no supported hash algorithm", mi.Version)
 	}
 	return nil
 }
@@ -177,11 +188,11 @@ func parseMI(raw string) (*MessageInstance, error) {
 
 	mStr := tvl.get("m")
 	if mStr == "" {
-		return nil, fmt.Errorf("missing m= tag")
+		return nil, fmt.Errorf("PERMERROR: Message-Instance tag=m missing")
 	}
 	m, err := strconv.Atoi(mStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid m= tag: %w", err)
+		return nil, fmt.Errorf("PERMERROR: Message-Instance has a malformed m= tag")
 	}
 
 	// §7: tag names are case insignificant and each kind appears once;
@@ -196,7 +207,7 @@ func parseMI(raw string) (*MessageInstance, error) {
 		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d syntax error", m)
 	}
 	if !tvl.has("h") {
-		return nil, fmt.Errorf("invalid h= tag: %q", "")
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d tag=h missing", m)
 	}
 	hashes, err := parseHashSets(tvl.get("h"))
 	if err != nil {

@@ -24,16 +24,18 @@ func wantOutcome(t *testing.T, got, want string) {
 	}
 }
 
-// F.1: every non-empty tag-list fragment must be a well-formed tag=value.
+// F.1: every tag-list fragment must be a well-formed tag=value; only the end
+// of the list may be empty (-07 §8: one optional trailing ";").
 func TestWholeFieldF1_TagLists(t *testing.T) {
 	sigLine, miLine, rest := strictSigned(t, 1740000000)
 	tmpl := withS(t, sigLine, "sel1:rsa-sha256:{SIG}")
-	const sigErr = "PERMERROR DKIM2-Signature i=1 syntax error"
+	const sigErr = "PERMERROR: DKIM2-Signature i=1 syntax error"
 	const miErr = "PERMERROR: Message-Instance m=1 syntax error"
 	cases := []struct {
 		name, extra, want string
 	}{
-		{"empty fragments", " ;; ", ""},
+		{"empty fragments", " ;; ", sigErr}, // §8: only one trailing ";"
+		{"FWS after the trailing semicolon", " \r\n\t", ""},
 		{"unknown tag", " x_1=foo bar;", ""},
 		{"folded unknown value", " x=foo\r\n\tbar;", ""},
 		{"FWS around =", " x = foo ;", ""},
@@ -71,7 +73,7 @@ func TestWholeFieldF1_TagLists(t *testing.T) {
 // F.2: no FWS inside a selector or algorithm name; exactly three parts.
 func TestWholeFieldF2_SItems(t *testing.T) {
 	sigLine, miLine, rest := strictSigned(t, 1740000000)
-	const sigErr = "PERMERROR DKIM2-Signature i=1 syntax error"
+	const sigErr = "PERMERROR: DKIM2-Signature i=1 syntax error"
 	cases := []struct {
 		name, s, want string
 	}{
@@ -141,7 +143,7 @@ func TestWholeFieldF4_KeyRecordValues(t *testing.T) {
 	sigLine, miLine, rest := strictSigned(t, 1740000000)
 	msg := sigLine + "\r\n" + miLine + "\r\n" + rest
 	p := sel1P(t)
-	const keyErr = "PERMERROR DKIM2-Signature i=1 public key sel1 has a syntax error"
+	const keyErr = "PERMERROR: DKIM2-Signature i=1 public key sel1 has a syntax error"
 	cases := []struct {
 		name, rec, want string
 	}{

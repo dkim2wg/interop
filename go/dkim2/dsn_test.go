@@ -460,7 +460,7 @@ func TestAuthenticateRejectsTamperedHeaders(t *testing.T) {
 		if res.OK {
 			t.Fatalf("headersOnly=%v: tampered returned message authenticated", headersOnly)
 		}
-		if res.Reason == nil || !strings.Contains(res.Reason.Error(), "header hash mismatch") {
+		if res.Reason == nil || !strings.Contains(res.Reason.Error(), "header hash sha256 mismatch") {
 			t.Fatalf("headersOnly=%v: Reason = %v, want header hash mismatch", headersOnly, res.Reason)
 		}
 	}
@@ -479,10 +479,10 @@ func TestAuthenticateUnsignedOriginal(t *testing.T) {
 	if res.Top != nil {
 		t.Fatalf("Top = %+v, want nil for an unsigned original", res.Top)
 	}
-	// Reported as "no DKIM2-Signature", so a caller can tell an unsigned
-	// original (fall back to legacy DSN handling) from a broken one.
-	if res.Reason == nil || !strings.Contains(res.Reason.Error(), "no DKIM2-Signature") {
-		t.Fatalf("Reason = %v, want no DKIM2-Signature", res.Reason)
+	// Reported as ErrNone (no DKIM2 header fields), so a caller can tell an
+	// unsigned original (fall back to legacy DSN handling) from a broken one.
+	if !errors.Is(res.Reason, ErrNone) {
+		t.Fatalf("Reason = %v, want ErrNone", res.Reason)
 	}
 }
 

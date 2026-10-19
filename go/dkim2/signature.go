@@ -137,7 +137,15 @@ var ErrNone = errors.New("none")
 
 // errUnkeyableSignature is the PERMERROR for a DKIM2-Signature whose i= is
 // missing or not a positive integer (or that has no tag-list at all).
-var errUnkeyableSignature = errors.New("PERMERROR DKIM2-Signature has a missing or malformed i= tag")
+var errUnkeyableSignature = errors.New("PERMERROR: DKIM2-Signature has a missing or malformed i= tag")
+
+// MaxFutureSkew and MaxSignatureAge are the §14.3 timestamp limits: a
+// signature made more than one day after delivery, or more than 14 days
+// before it, is not Validly Signed.
+const (
+	MaxFutureSkew   = 86400
+	MaxSignatureAge = 1209600
+)
 
 // MaxChainLength is the most hops a chain may have: every i= and m= names
 // one, so none may be larger.
@@ -172,19 +180,19 @@ func chainNumberError(field, tag, v string, present bool) error {
 	v = strings.TrimSpace(v)
 	if !allASCIIDigits(v) || strings.TrimLeft(v, "0") == "" {
 		if tag == "i" {
-			return fmt.Errorf("PERMERROR %s has a missing or malformed i= tag", field)
+			return fmt.Errorf("PERMERROR: %s has a missing or malformed i= tag", field)
 		}
-		return fmt.Errorf("PERMERROR %s has a malformed %s= tag", field, tag)
+		return fmt.Errorf("PERMERROR: %s has a malformed %s= tag", field, tag)
 	}
 	if len(v) > 3 {
-		return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
+		return fmt.Errorf("PERMERROR: %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
 	}
 	n, _ := strconv.Atoi(v)
 	if n > MaxChainNumber {
-		return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
+		return fmt.Errorf("PERMERROR: %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
 	}
 	if n > MaxChainLength {
-		return fmt.Errorf("PERMERROR %s %s= exceeds the maximum chain length of %d", field, tag, MaxChainLength)
+		return fmt.Errorf("PERMERROR: %s %s= exceeds the maximum chain length of %d", field, tag, MaxChainLength)
 	}
 	return nil
 }
@@ -270,9 +278,15 @@ func validSelector(s string) bool {
 	return true
 }
 
-// sigSyntaxError is spec-06 §11.2's "PERMERROR DKIM2-Signature i=<x> syntax error".
+// sigSyntaxError is §14.2's "PERMERROR: DKIM2-Signature i=<x> syntax error".
 func sigSyntaxError(i int) error {
-	return fmt.Errorf("PERMERROR DKIM2-Signature i=%d syntax error", i)
+	return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d syntax error", i)
+}
+
+// sigTagError is §14.2's "PERMERROR: DKIM2-Signature i=<x> tag=<y> <what>"
+// (what is "missing" or "was unexpected").
+func sigTagError(i int, tag, what string) error {
+	return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d tag=%s %s", i, tag, what)
 }
 
 func parseSig(raw string) (*DKIM2Signature, error) {
@@ -280,7 +294,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	if colon < 0 {
 		// i= is not yet parsed at this point (the tag-value list hasn't even
 		// been split off the field name), so no i=<x> prefix is available.
-		return nil, fmt.Errorf("DKIM2-Signature: no colon found")
+		return nil, errors.New("PERMERROR: DKIM2-Signature syntax error (no colon found)")
 	}
 	tvl := parseTagValueList(raw[colon+1:])
 	sig := &DKIM2Signature{Duplicate: tvl.duplicate}
@@ -290,7 +304,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		if err != nil {
 			// The i= tag itself is malformed, so its value can't be trusted
 			// to prefix this error.
-			return nil, fmt.Errorf("DKIM2-Signature tag=i syntax error: %w", err)
+			return nil, errUnkeyableSignature
 		}
 		sig.Sequence = n
 	}
@@ -302,7 +316,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	if v := tvl.get("m"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return nil, fmt.Errorf("DKIM2-Signature i=%d tag=m syntax error: %w", sig.Sequence, err)
+			return nil, sigSyntaxError(sig.Sequence)
 		}
 		sig.MIVersion = n
 	}
@@ -325,7 +339,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	if v := tvl.get("mf"); v != "" {
 		b, err := base64.StdEncoding.DecodeString(stripB64WSP(v))
 		if err != nil {
-			return nil, fmt.Errorf("invalid mf=: %w", err)
+			return nil, sigSyntaxError(sig.Sequence)
 		}
 		sig.MailFrom = string(b)
 	}
@@ -333,7 +347,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		for _, part := range strings.Split(v, ",") {
 			b, err := base64.StdEncoding.DecodeString(stripB64WSP(part))
 			if err != nil {
-				return nil, fmt.Errorf("invalid rt= item: %w", err)
+				return nil, sigSyntaxError(sig.Sequence)
 			}
 			sig.RcptTo = append(sig.RcptTo, string(b))
 		}
@@ -368,7 +382,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	}
 	if v := tvl.get("n"); v != "" {
 		if len(v) > 64 {
-			return nil, fmt.Errorf("n= nonce exceeds 64 characters (%d)", len(v))
+			return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d n= nonce exceeds 64 characters (%d)", sig.Sequence, len(v))
 		}
 		sig.Nonce = v
 	}
@@ -382,23 +396,31 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	}
 	// draft-06 §8: i= m= t= d= s= MUST be present; plus either nd= or both
 	// mf= and rt=. nd= and mf=/rt= are mutually exclusive.
-	if !tvl.has("i") || !tvl.has("m") || !tvl.has("t") {
-		return nil, fmt.Errorf("DKIM2-Signature i=%d: missing required i=/m=/t= tag", sig.Sequence)
+	for _, tag := range []string{"i", "m", "t"} {
+		if !tvl.has(tag) {
+			return nil, sigTagError(sig.Sequence, tag, "missing")
+		}
 	}
 	if sig.Domain == "" {
-		return nil, fmt.Errorf("DKIM2-Signature i=%d tag=d missing", sig.Sequence)
+		return nil, sigTagError(sig.Sequence, "d", "missing")
 	}
 	if len(sig.Sigs) == 0 {
-		return nil, fmt.Errorf("DKIM2-Signature i=%d tag=s missing", sig.Sequence)
+		return nil, sigTagError(sig.Sequence, "s", "missing")
 	}
 	hasND := tvl.has("nd")
 	hasMF := tvl.has("mf")
 	hasRT := tvl.has("rt")
-	if hasND && (hasMF || hasRT) {
-		return nil, fmt.Errorf("DKIM2-Signature i=%d tag=nd was unexpected: nd= excludes mf=/rt=", sig.Sequence)
+	if hasND && hasMF {
+		return nil, sigTagError(sig.Sequence, "mf", "was unexpected")
 	}
-	if !hasND && !(hasMF && hasRT) {
-		return nil, fmt.Errorf("DKIM2-Signature i=%d: missing chain tags (need nd= or both mf=+rt=)", sig.Sequence)
+	if hasND && hasRT {
+		return nil, sigTagError(sig.Sequence, "rt", "was unexpected")
+	}
+	if !hasND && !hasMF {
+		return nil, sigTagError(sig.Sequence, "mf", "missing")
+	}
+	if !hasND && !hasRT {
+		return nil, sigTagError(sig.Sequence, "rt", "missing")
 	}
 	return sig, nil
 }

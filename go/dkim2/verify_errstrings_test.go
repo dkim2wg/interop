@@ -83,22 +83,22 @@ func TestSignatureParseErrorsCarryISequence(t *testing.T) {
 		{
 			name: "no colon at all",
 			raw:  "i=1; m=1; t=1;",
-			want: "DKIM2-Signature: no colon found",
+			want: "PERMERROR: DKIM2-Signature syntax error (no colon found)",
 		},
 		{
 			name: "invalid i= (sequence itself malformed, no i= prefix possible)",
 			raw:  "DKIM2-Signature: i=abc; m=1; t=1;",
-			want: "DKIM2-Signature tag=i syntax error",
+			want: "PERMERROR: DKIM2-Signature has a missing or malformed i= tag",
 		},
 		{
 			name: "invalid m= (i= already known)",
 			raw:  "DKIM2-Signature: i=1; m=abc; t=1;",
-			want: "DKIM2-Signature i=1 tag=m syntax error",
+			want: "PERMERROR: DKIM2-Signature i=1 syntax error",
 		},
 		{
 			name: "invalid t= (i= already known)",
 			raw:  "DKIM2-Signature: i=1; m=1; t=abc;",
-			want: "PERMERROR DKIM2-Signature i=1 syntax error",
+			want: "PERMERROR: DKIM2-Signature i=1 syntax error",
 		},
 		{
 			name: "missing d= (i= already known)",

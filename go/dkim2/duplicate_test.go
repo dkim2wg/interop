@@ -18,7 +18,7 @@ func TestDuplicateSelectorIsPermerror(t *testing.T) {
 		{Selector: "sel1", Algorithm: "rsa-sha256"},
 		{Selector: "sel1", Algorithm: "ed25519-sha256"},
 	}, 3)
-	want := "PERMERROR DKIM2-Signature i=3 has a duplicate selector"
+	want := "PERMERROR: DKIM2-Signature i=3 has a duplicate selector"
 	if len(errs) != 1 || errs[0] != want {
 		t.Errorf("got %v, want [%q]", errs, want)
 	}

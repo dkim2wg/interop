@@ -284,7 +284,7 @@ func planCases() []planCase {
 		{name: "null body recipe", levels: []planLevel{
 			{h, "whatever\r\n", ""},
 			{strings.Replace(h, "hello", "[l] hello", 1), "new\r\n", `{"h":{"subject":[{"d":["hello"]}]},"b":null}`}}},
-		{name: "null body recipe, header mismatch below", want: "body not checked below a null body Recipe", levels: []planLevel{
+		{name: "null body recipe, header mismatch below", want: "FAIL: Message-Instance m=1 header hash sha256 mismatch", levels: []planLevel{
 			{strings.Replace(h, "hello", "other", 1), "whatever\r\n", ""},
 			{strings.Replace(h, "hello", "[l] hello", 1), "new\r\n", `{"h":{"subject":[{"d":["hello"]}]},"b":null}`}}},
 		{name: "header recipes checked below a null body recipe", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
@@ -319,7 +319,7 @@ func planCases() []planCase {
 		{name: "bare LF", levels: []planLevel{
 			{h, "b\n", ""},
 			{h, "a\nb\n\n", `{"b":[{"c":[2,2]}]}`}}},
-		{name: "body hash mismatch", want: "m=1: sha256 body hash mismatch", levels: []planLevel{
+		{name: "body hash mismatch", want: "FAIL: Message-Instance m=1 body hash sha256 mismatch", levels: []planLevel{
 			{h, "a\r\nX\r\n", ""},
 			{h, "a\r\nb\r\n", `{"b":[{"c":[1,1]},{"d":["Y"]}]}`}}},
 		{name: "subject tag removed", levels: []planLevel{
@@ -376,7 +376,7 @@ func planCases() []planCase {
 			{h, "a\r\n", ""},
 			{h, "a\r\n", `{"h":{"subject":[{"c":[1,2]}]}}`},
 			{h, "a\r\n", `{"b":[{"c":[1,4]}]}`}}},
-		{name: "hash mismatch above a recipe error", want: "target v=2", levels: []planLevel{
+		{name: "hash mismatch above a recipe error", want: "FAIL: Message-Instance m=2 header hash sha256 mismatch", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{strings.Replace(h, "hello", "zz", 1), "a\r\n", `{"h":{"subject":[{"c":[1,2]}]}}`},
 			{h, "a\r\n", `{"b":[{"c":[1,1]}]}`}}},

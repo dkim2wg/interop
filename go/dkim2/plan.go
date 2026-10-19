@@ -675,7 +675,7 @@ func (p *chainPlan) walk(results []VerifyResult) ([]VerifyResult, error) {
 		if err := p.check(t); err != nil {
 			return append(results, VerifyResult{
 				Domain: fmt.Sprintf("MI-chain v=%d", t),
-				Error:  fmt.Errorf("MI chain validation failed: %w", err),
+				Error:  chainLevelError(err),
 			}), nil
 		}
 	}

@@ -74,9 +74,16 @@ func parseTagValueList(s string) *tagValueList {
 	// Tag names keep their ORIGINAL case and order so the header can be
 	// re-serialized byte-for-byte for signing-input reconstruction; get/has
 	// below do the case-insensitive lookup required by spec-06 §8.
-	for _, part := range strings.Split(s, ";") {
+	parts := strings.Split(s, ";")
+	for i, part := range parts {
 		part = trimFWS(part)
 		if part == "" {
+			// §8: tag-spec *( ";" tag-spec ) [ ";" ] -- only the tag-list's
+			// end may be empty (one optional trailing ";"); ";;" or a
+			// leading ";" is a syntax error.
+			if i != len(parts)-1 {
+				tvl.syntaxErr = true
+			}
 			continue
 		}
 		eq := strings.IndexByte(part, '=')
