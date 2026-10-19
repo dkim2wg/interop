@@ -293,11 +293,11 @@ class _Acc:
 
 
 def _trailing_crlfs(buf, lo: int, hi: int) -> int:
-    """How many CRLF pairs end buf[lo:hi] (galloping, not per line)."""
+    """How many CRLF pairs end buf[lo:hi] (galloping backwards from hi,
+    comparing in place, not per line)."""
     k, step = 0, 1
     while step:
-        start = hi - 2 * (k + step)
-        if start >= lo and buf[start:hi - 2 * k] == _CRLF * step:
+        if buf.endswith(_CRLF * step, lo, hi - 2 * k):
             k += step
             step *= 2
         else:
@@ -310,34 +310,38 @@ class BodyPass:
 
     Only a partial line is kept between chunks.  Within a chunk, line
     offsets are found only where some list's segment starts or ends, and
-    each span between them is hashed as one slice."""
+    each span between them is hashed in place, as one memoryview slice of
+    the chunk."""
 
     def __init__(self, plan: BodyPlan):
         self.plan = plan
         self.accs = [_Acc(segs, algs) for segs, algs in plan.wanted.values()]
-        self.partial = b""
+        self.partial = bytearray()
         self.line0 = 0
 
-    def feed(self, data: bytes) -> None:
-        start = 0
+    def feed(self, data: bytes, start: int = 0, nlf: int | None = None) -> None:
+        """Body bytes data[start:]; nlf, if known, the LFs in them."""
+        mv = memoryview(data)
         if self.partial:
-            nl = data.find(b"\n")
+            nl = data.find(b"\n", start)
             if nl < 0:
-                self.partial += data
+                self.partial += mv[start:]
                 return
-            joined = self.partial + data[:nl + 1]
-            self.partial = b""
-            self._chunk(joined, 0, len(joined))
+            self.partial += mv[start:nl + 1]
+            line, self.partial = self.partial, bytearray()
+            self._chunk(line, 0, len(line), 1)
             start = nl + 1
+            if nlf is not None:
+                nlf -= 1
         last = data.rfind(b"\n", start)
-        if last < 0:
-            self.partial = data[start:]
-            return
-        self._chunk(data, start, last + 1)
-        self.partial = data[last + 1:]
+        if last >= 0:
+            self._chunk(data, start, last + 1, nlf)
+        self.partial += mv[last + 1 if last >= 0 else start:]
 
-    def _chunk(self, buf: bytes, lo: int, hi: int) -> None:
-        n = buf.count(b"\n", lo, hi)
+    def _chunk(self, buf, lo: int, hi: int, n: int | None = None) -> None:
+        """Complete lines buf[lo:hi]; n, if known, how many."""
+        if n is None:
+            n = buf.count(b"\n", lo, hi)
         first, past = self.line0, self.line0 + n
         offsets = {first: lo, past: hi}
         mv = memoryview(buf)
@@ -347,15 +351,23 @@ class BodyPass:
             pos = offsets.get(line)
             if pos is not None:
                 return pos
-            near = max(l for l in offsets if l < line)
-            pos, need = offsets[near], line - near
-            if need <= 16:
+            below = max(l for l in offsets if l < line)
+            above = min(l for l in offsets if l > line)
+            floor = offsets[below]
+            back, need = above - line, line - below
+            if back <= 16 and back < need:
+                # Step back from the line above: rfind from its start.
+                pos = offsets[above]
+                for _ in range(back):
+                    pos = buf.rfind(b"\n", floor, pos - 1) + 1
+            elif need <= 16:
+                pos = floor
                 for _ in range(need):
                     pos = buf.find(b"\n", pos) + 1
             else:
-                # Smallest p with `need` newlines in buf[pos:p]; each probe
+                # Smallest p with `need` newlines in buf[floor:p]; each probe
                 # counts only the half still in question.
-                a, b, have = pos, hi, 0
+                a, b, have = floor, offsets[above], 0
                 while a < b:
                     mid = (a + b) // 2
                     c = buf.count(b"\n", a, mid)
@@ -398,9 +410,8 @@ class BodyPass:
         list (a body segment still open is past the end, and only a list
         below a failing range check holds one) and record the digests."""
         if self.partial:
-            line = self.partial + _CRLF
-            self.partial = b""
-            self._chunk(line, 0, len(line))
+            line, self.partial = self.partial + _CRLF, bytearray()
+            self._chunk(line, 0, len(line), 1)
         self.plan.nlines = self.line0
         for acc in self.accs:
             for kind, a, b in acc.segs[acc.k:]:

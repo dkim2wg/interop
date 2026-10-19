@@ -1383,13 +1383,15 @@ def _verify_chain(ctx: _Context, walk, o: _Options) -> VerifyResult:
     return result
 
 
-def _normalise_crlf(data: bytes) -> bytes:
+def _normalise_crlf(data: bytes) -> tuple[bytes, int]:
     """parse_message()'s line-ending rule (CRLF, lone CR and lone LF are all
-    one line break, written CRLF), for a piece that does not end in CR."""
+    one line break, written CRLF), for a piece that does not end in CR.
+    Returns the piece, copied only if it changes, and its line breaks."""
     n = data.count(b"\n")
     if data.count(b"\r") == n and data.count(b"\r\n") == n:
-        return data
-    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n").replace(b"\n", b"\r\n")
+        return data, n
+    data = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return data.replace(b"\n", b"\r\n"), data.count(b"\n")
 
 
 class MessageVerifier:
@@ -1419,14 +1421,13 @@ class MessageVerifier:
                           walk, walk_trace)
         self._held_cr = False       # a CR that may be the start of a CRLF
         self._head = bytearray()    # normalised header block, until it ends
-        self._scanned = 0
         self._result = None         # settled by the header fields alone
         self._ctx = None
         self._plan = None
         self._pass = None           # BodyPass, or None to keep the body
         self._body = bytearray()
 
-    def _normalise(self, data: bytes) -> bytes:
+    def _normalise(self, data: bytes) -> tuple[bytes, int]:
         if self._held_cr:
             data = b"\r" + data
             self._held_cr = False
@@ -1438,25 +1439,44 @@ class MessageVerifier:
     def feed(self, data: bytes) -> None:
         if not data:
             return
-        data = self._normalise(data)
+        data, nlf = self._normalise(data)
+        start = 0
         if self._head is not None:
-            self._head += data
-            idx = self._head.find(b"\r\n\r\n", max(0, self._scanned - 3))
-            if idx < 0:
-                self._scanned = len(self._head)
+            start = self._split_head(data)
+            if start is None:
                 return
-            rest = bytes(self._head[idx + 4:])
-            self._end_of_headers(bytes(self._head[:idx]))
-            data = rest
-        self._body_data(data)
+            nlf -= data.count(b"\n", 0, start)
+        self._body_data(data, start, nlf)
 
-    def _body_data(self, data: bytes) -> None:
-        if self._result is not None or not data:
+    def _split_head(self, data: bytes) -> int | None:
+        """Take the header fields from `data`: None if they go on past it,
+        else where the body starts (after the blank line) once the header
+        block is handled.  Only the header part is copied."""
+        head = self._head
+        # The blank line may start in the bytes already held.
+        edge = bytes(head[-3:])
+        cut = (edge + data[:3]).find(b"\r\n\r\n")
+        if cut >= 0:
+            cut -= len(edge)
+            del head[len(head) + cut:]
+        else:
+            cut = data.find(b"\r\n\r\n")
+            if cut < 0:
+                head += data
+                return None
+            head += memoryview(data)[:cut]
+        self._end_of_headers(bytes(head))
+        return cut + 4
+
+    def _body_data(self, data: bytes, start: int = 0,
+                   nlf: int | None = None) -> None:
+        """Body bytes data[start:]; nlf, if known, the LFs in them."""
+        if self._result is not None or start >= len(data):
             return
         if self._pass is not None:
-            self._pass.feed(data)
+            self._pass.feed(data, start, nlf)
         else:
-            self._body += data
+            self._body += memoryview(data)[start:]
 
     def _end_of_headers(self, header_block: bytes) -> None:
         self._head = None
@@ -1480,14 +1500,11 @@ class MessageVerifier:
         self._held_cr = False
         if self._head is not None:
             # No blank line yet: the CR held back may complete one.
-            self._head += tail
-            idx = self._head.find(b"\r\n\r\n")
-            if idx < 0:
+            start = self._split_head(tail)
+            if start is None:
                 self._end_of_headers(bytes(self._head))
             else:
-                rest = bytes(self._head[idx + 4:])
-                self._end_of_headers(bytes(self._head[:idx]))
-                self._body_data(rest)
+                self._body_data(tail, start)
         else:
             self._body_data(tail)
         if self._result is not None:
