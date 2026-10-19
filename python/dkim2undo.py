@@ -4,6 +4,10 @@ DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-06
 
 Takes a signed email with Message-Instance headers containing recipes
 and reconstructs the message as it was at a previous version.
+
+The verifier's reference walk (dkim2verify walk="undo") rebuilds each
+version with reconstruct_headers()/reconstruct_body(); its default planned
+walk (dkim2plan) must give the same hashes and Recipe errors.
 """
 
 import argparse

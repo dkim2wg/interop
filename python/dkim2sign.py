@@ -945,8 +945,8 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
         if not path:
             raise SigningRefused(
                 "not signing: cannot verify the upstream DKIM2 chain: no DNS "
-                "data: pass --dns-json or set DKIM2_DNS_JSON (this verifier "
-                "has no live DNS)")
+                "data: pass --dns-json or set DKIM2_DNS_JSON (the signer gate "
+                "does not look keys up in DNS)")
         try:
             dns_data = dkim2verify.load_dns_json(path)
         except (OSError, ValueError) as e:

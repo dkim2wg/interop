@@ -1,0 +1,9 @@
+# DKIM2 Python implementation (dkim2sign, dkim2verify, dkim2undo, dkim2dsn).
+#   python3 -m venv venv && venv/bin/pip install -r requirements.txt
+# tests/run_tests.sh uses venv/ when it exists.
+cryptography>=42
+# Live DNS key lookups only (dkim2verify without --dns-json); dns.json
+# mode and the signer do not import it.
+dnspython>=2.6
+# Tests
+pytest
