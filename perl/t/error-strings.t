@@ -82,7 +82,7 @@ sub verify_text {
           rcptto => ['rcpt@test5.dkim2.com'] },
     );
     my $v = verify_text($msg->as_string);
-    is($v->result, 'fail', 'd=/mf= domain mismatch fails');
+    is($v->result, 'permerror', 'd=/mf= domain mismatch fails');
     like($v->result_detail, qr/\QDKIM2-Signature i=1 MAIL FROM and d= do not match\E/,
         'canonical d=/mf= mismatch detail');
 }
@@ -98,9 +98,8 @@ sub verify_text {
           rcptto => ['rcpt@test5.dkim2.com'] },
     );
     my $v = verify_text($msg->as_string);
-    is($v->result, 'fail', 'nd= adjacency mismatch fails');
-    like($v->result_detail, qr/\QDKIM2-Signature i=1 MAIL nd= does not match\E/,
-        'canonical nd= adjacency detail (verbatim MAIL typo preserved)');
+    is($v->result, 'permerror', 'nd= adjacency mismatch fails');
+    is($v->details, 'PERMERROR: DKIM2-Signature i=1 nd= does not match', 'nd= adjacency detail');
 }
 
 # ------------------------------------------------------------------
@@ -115,10 +114,9 @@ sub verify_text {
           rcptto => ['rcpt@test5.dkim2.com'] },
     );
     my $v = verify_text($msg->as_string);
-    is($v->result, 'fail', 'chain of custody break fails');
-    like($v->result_detail,
-        qr/\QDKIM2-Signature i=2 MAIL FROM <sender\E\@\Qtest2.dkim2.com> did not match\E/,
-        'canonical chain-of-custody detail cites offending mf= value');
+    is($v->result, 'permerror', 'chain of custody break fails');
+    is($v->details, 'PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1',
+        'chain-of-custody detail');
 }
 
 # ------------------------------------------------------------------
@@ -159,8 +157,8 @@ sub verify_text {
     $v->{_dk2_headers} = { 1 => { sig => $sig1 }, 2 => { sig => $sig2 } };
     my $ok = $v->_verify_chain();
     ok(!$ok, 'chain check rejects empty mf= on non-nd hop');
-    like($v->result_detail, qr/\QDKIM2-Signature i=2 MAIL FROM <> did not match\E/,
-        'canonical missing-MAIL-FROM custody detail');
+    is($v->details, 'PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1',
+        'missing-MAIL-FROM custody detail');
 }
 
 # ------------------------------------------------------------------
@@ -189,8 +187,8 @@ sub verify_text {
     $v->{_dk2_headers} = { 1 => { sig => $sig1 }, 2 => { sig => $sig2 } };
     my $ok = $v->_verify_chain();
     ok(!$ok, 'chain check rejects empty rt= on non-nd hop');
-    like($v->result_detail, qr/\QDKIM2-Signature i=1 RCPT TO <> did not match\E/,
-        'canonical missing-RCPT-TO custody detail');
+    is($v->details, 'PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1',
+        'missing-RCPT-TO custody detail');
 }
 
 done_testing;

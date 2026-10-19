@@ -7,7 +7,7 @@ our $VERSION = '0.22';
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 
-use Mail::DKIM2::Common qw(encode_tag_json decode_tag_json fold_header to_rfc5321_path);
+use Mail::DKIM2::Common qw(encode_tag_json decode_tag_json fold_header to_rfc5321_path to_alabel);
 
 use base 'Mail::DKIM2::TagValueList';
 
@@ -42,10 +42,10 @@ sub new {
     # mf= and rt= are base64-encoded SMTP addresses; mutually exclusive with nd=
     if (!defined $args{NextDomain}) {
         if (defined $args{MailFrom}) {
-            $self->set_tag('mf', encode_base64(to_rfc5321_path($args{MailFrom}), ''));
+            $self->set_tag('mf', encode_base64(_path($args{MailFrom}), ''));
         }
         if (defined $args{RcptTo}) {
-            my @encoded = map { encode_base64(to_rfc5321_path($_), '') } @{$args{RcptTo}};
+            my @encoded = map { encode_base64(_path($_), '') } @{$args{RcptTo}};
             $self->set_tag('rt', join(',', @encoded));
         }
     }
@@ -60,6 +60,15 @@ sub new {
     }
 
     return $self;
+}
+
+# An address as mf= or rt= records it: an RFC 5321 path in angle brackets
+# (-07 sections 10.5, 10.6), its domain written as A-labels (section 18).
+sub _path {
+    my ($addr) = @_;
+    my $path = to_rfc5321_path($addr);
+    $path =~ s/\@([^@>]*)>\z/"\@" . to_alabel($1) . ">"/e;
+    return $path;
 }
 
 # --- Parse from header line ---
@@ -202,7 +211,7 @@ sub mail_from {
     my $self = shift;
     if (@_) {
         $self->_croak_if_nd('mf');
-        $self->set_tag('mf', encode_base64(to_rfc5321_path(shift), ''));
+        $self->set_tag('mf', encode_base64(_path(shift), ''));
     }
     my $mf = $self->get_tag('mf');
     return unless defined $mf;
@@ -223,7 +232,7 @@ sub rcpt_to {
         my @list = ref $rcpt eq 'ARRAY' ? @$rcpt : ($rcpt);
         croak "rcpt_to requires at least one recipient" unless @list;
         $self->set_tag('rt',
-            join(',', map { encode_base64(to_rfc5321_path($_), '') } @list));
+            join(',', map { encode_base64(_path($_), '') } @list));
     }
     my $rt = $self->get_tag('rt');
     return unless defined $rt;

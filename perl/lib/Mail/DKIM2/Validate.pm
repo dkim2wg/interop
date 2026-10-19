@@ -5,7 +5,7 @@ our $VERSION = '0.22';
 
 use Email::MIME;
 use List::Util qw(max);
-use Mail::DKIM2::Common qw(extract_mi_version extract_domain relaxed_domain_match parse_dkim_pubkey parse_mime);
+use Mail::DKIM2::Common qw(extract_mi_version domain_of to_alabel relaxed_domain_match parse_dkim_pubkey parse_mime);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Signature;
@@ -352,7 +352,7 @@ sub _sig_level {
             my $ts = $sig->timestamp;
             if (defined $ts && $ts > 0) {
                 my $now = time();
-                if    ($ts > $now + 300)        { $lvl{timestamp} = { ok => 0, status => 'future', detail => 'timestamp in the future' }; }
+                if    ($ts > $now + 86400)      { $lvl{timestamp} = { ok => 0, status => 'future', detail => 'timestamp in the future' }; }
                 elsif ($now > $ts + 14*24*3600) { $lvl{timestamp} = { ok => 0, status => 'old',    detail => 'older than 14 days' }; }
             }
         }
@@ -360,39 +360,31 @@ sub _sig_level {
             my $prev = eval { Mail::DKIM2::Signature->parse($sig_by_i->{$num-1}) };
             die $@ if ref $@;
             if ($prev) {
+                # -07 section 7.1 item 1, as Verifier.pm checks it, so the
+                # report and the verdict cannot disagree.
+                my $p = $num - 1;
+                my $cur_d = $sig->domain // '';
                 my $prev_nd = $prev->next_domain;
+                my $cur_nd = $sig->next_domain;
+                my $mf = $sig->mail_from;
+                my @rts = map { [domain_of($_)] } @{ $prev->rcpt_to || [] };
                 if (defined $prev_nd && length $prev_nd) {
-                    # draft-06 §11.4: an nd= "imaginary hop" must name the domain
-                    # that signs the next signature; nd= MUST exactly match its d=.
-                    my $cur_d = $sig->domain // '';
-                    $lvl{custody} = (lc($prev_nd) eq lc($cur_d))
+                    # An nd= hop names the domain that signs the next signature.
+                    $lvl{custody} = (lc to_alabel($prev_nd) eq lc to_alabel($cur_d))
                         ? { ok => 1, detail => "nd=$prev_nd matches d= of i=$num" }
-                        # Canonical spec-06 wording (Task 3.1), verbatim "MAIL nd="
-                        # typo preserved, keyed on the *previous* hop's i=.
-                        : { ok => 0, detail => "DKIM2-Signature i=" . ($num - 1) . " MAIL nd= does not match" };
-                } else {
-                    my @rts = do { my $rt = $prev->rcpt_to; ref $rt eq 'ARRAY' ? @$rt : ($rt // ()) };
-                    my $cur_nd = $sig->next_domain;
-                    my $mf = $sig->mail_from;
-                    if (defined $cur_nd && length $cur_nd) {
-                        # draft-06 §9.3: a bridge after a real hop has no mf=, so
-                        # what must match the previous rt= is its d= — the key it
-                        # has to be made with. Mirrors Verifier.pm's check so the
-                        # report and the verdict cannot disagree.
-                        my $cur_d = $sig->domain // '';
-                        my $ok = grep { relaxed_domain_match($cur_d, extract_domain($_) // '') } @rts;
-                        $lvl{custody} = $ok
-                            ? { ok => 1, detail => "nd= hop d=$cur_d matches rt= of i=" . ($num - 1) }
-                            : { ok => 0, detail => "DKIM2-Signature i=$num nd= hop d=$cur_d did not match RCPT TO" };
-                    }
-                    elsif ($mf && $mf ne '<>') {
-                        my $mfd = extract_domain($mf);
-                        my $ok = grep { relaxed_domain_match($mfd // '', extract_domain($_) // '') } @rts;
-                        $lvl{custody} = $ok ? { ok => 1, detail => '' }
-                                            # Canonical spec-06 wording (Task 3.1), same
-                                            # form as Verifier.pm's Chain of Custody permerror.
-                                            : { ok => 0, detail => "DKIM2-Signature i=$num MAIL FROM $mf did not match" };
-                    }
+                        : { ok => 0, detail => "PERMERROR: DKIM2-Signature i=$p nd= does not match" };
+                } elsif ((defined $cur_nd && length $cur_nd) || (defined $mf && $mf =~ /\A<\s*>\z/)) {
+                    # An nd= hop, or a null mf=: its d= against the rt= domains.
+                    my $ok = grep { $_->[0] && !$_->[1] && relaxed_domain_match($_->[0], $cur_d) } @rts;
+                    $lvl{custody} = $ok
+                        ? { ok => 1, detail => ((defined $cur_nd && length $cur_nd) ? "nd= hop" : "mf=<> hop") . " d=$cur_d matches rt= of i=$p" }
+                        : { ok => 0, detail => "PERMERROR: DKIM2-Signature i=$num d= does not match the rt= of i=$p" };
+                } elsif (defined $mf) {
+                    my ($mfd, $lit) = domain_of($mf);
+                    my $ok = $mfd && !$lit
+                        && grep { $_->[0] && !$_->[1] && relaxed_domain_match($mfd, $_->[0]) } @rts;
+                    $lvl{custody} = $ok ? { ok => 1, detail => '' }
+                        : { ok => 0, detail => "PERMERROR: DKIM2-Signature i=$num mf= does not match the rt= of i=$p" };
                 }
             }
         }

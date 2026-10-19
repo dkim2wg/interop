@@ -18,7 +18,8 @@ use Mail::DKIM2::Common qw(
     encode_tag_json
     build_signing_input
     extract_mi_version
-    extract_domain
+    domain_of
+    to_alabel
     relaxed_domain_match
     check_ignore_prefixes
     MAX_CHAIN_LENGTH
@@ -344,16 +345,12 @@ sub finish_body {
         my $ok = $self->{NextDomainOK};
         if (defined $ok && length $ok) {
             if (lc $signature->next_domain ne lc $ok) {
-                $self->{result}  = 'permerror';
-                $self->{details} = "not signing: top signature nd="
-                    . $signature->next_domain . " names another domain";
-                return;
+                return $self->_error(permerror => "not signing: top signature nd="
+                    . $signature->next_domain . " names another domain");
             }
             # nd= names us: carry on
         } else {
-            $self->{result}  = 'permerror';
-            $self->{details} = "DKIM2-Signature i=$max_i unexpected nd= tag";
-            return;
+            return $self->_error(permerror => "DKIM2-Signature i=$max_i unexpected nd= tag");
         }
     }
 
@@ -399,11 +396,9 @@ sub finish_body {
         return unless $result;
     }
 
-    # Check Chain of Custody between consecutive signatures
-    if ($max_i > 1) {
-        my $chain_result = $self->_verify_chain();
-        return unless $chain_result;
-    }
+    # Chain of Custody: each signature against the one below it, and its
+    # own mf= against its d=.
+    return unless $self->_verify_chain();
 
     # §10.7: the cryptographic chain proves the MI headers are authentic, but
     # NOT that the current body/headers still match them. Walk the MI chain:
@@ -660,20 +655,22 @@ sub _verify_signature {
         return 0;
     }
 
-    # draft-06 §8: a signature carries either nd= or both mf= and rt=, never
-    # both forms. nd= together with mf=/rt= is a PERMERROR.
+    # -07 section 10: a signature carries either nd= or both mf= and rt=,
+    # never both forms. nd= together with mf= or rt= makes the mf= (or rt=)
+    # the unexpected tag.
     my $nd_tag = $signature->get_tag('nd');
     my $mf_tag = $signature->get_tag('mf');
     my $rt_tag = $signature->get_tag('rt');
-    if (defined $nd_tag && (defined $mf_tag || defined $rt_tag)) {
-        $self->{result}  = 'permerror';
-        $self->{details} = "DKIM2-Signature i=$i tag=nd was unexpected";
-        return 0;
-    }
-    if (!defined $nd_tag && !(defined $mf_tag && defined $rt_tag)) {
-        $self->{result}  = 'permerror';
-        $self->{details} = "DKIM2-Signature i=$i tag=mf missing";
-        return 0;
+    if (defined $nd_tag) {
+        return $self->_error(permerror => "DKIM2-Signature i=$i tag=mf was unexpected")
+            if defined $mf_tag;
+        return $self->_error(permerror => "DKIM2-Signature i=$i tag=rt was unexpected")
+            if defined $rt_tag;
+    } else {
+        return $self->_error(permerror => "DKIM2-Signature i=$i tag=mf missing")
+            unless defined $mf_tag;
+        return $self->_error(permerror => "DKIM2-Signature i=$i tag=rt missing")
+            unless defined $rt_tag;
     }
 
     # §8.3 SHOULD: n= nonce must not exceed 64 characters
@@ -721,18 +718,6 @@ sub _verify_signature {
             next if defined $r && $r =~ /^<.*>$/s;
             $self->{result}  = 'fail';
             $self->{details} = "rt= entry is not a bracketed RFC5321 forward-path at i=$i (spec 7.6)";
-            return 0;
-        }
-    }
-
-    # Validate d= matches mf= domain (skip for null sender / DSN)
-    my $mf = $signature->mail_from;
-    my $sig_domain = $signature->domain;
-    if ($mf && $mf ne '<>') {
-        my $mf_domain = extract_domain($mf);
-        unless ($mf_domain && relaxed_domain_match($mf_domain, $sig_domain)) {
-            $self->{result} = 'fail';
-            $self->{details} = "DKIM2-Signature i=$i MAIL FROM and d= do not match";
             return 0;
         }
     }
@@ -878,80 +863,71 @@ sub _verify_signature {
     return 1;
 }
 
+# Chain of Custody (-07 section 7.1 item 1, section 14.4). Every failure is
+# a PERMERROR. For each signature S, from i=1 up:
+#
+# - S against the one below it, P (from i=2): if P carries nd=, S's d= must
+#   be that domain (without regard to case), and nothing else is compared.
+#   Otherwise some rt= address of P must relaxed-match (section 7.2) --
+#   when S has nd= or a null mf=, S's d= (the rt= domain shortened);
+#   otherwise S's mf= domain (shortened) against the rt= domain.
+# - S's own mf= domain must relaxed-match its d=, unless the mf= is null or
+#   S has nd= (and so no mf=).
+#
+# Which of the two tests runs first only matters for which error is
+# reported when both fail; the link to P comes first.
 sub _verify_chain {
     my ($self) = @_;
     my %dk2_map = %{$self->{_dk2_headers}};
     my @dk2_is = sort { $a <=> $b } keys %dk2_map;
 
-    for my $idx (1..$#dk2_is) {
-        my $cur_i = $dk2_is[$idx];
-        my $prev_i = $dk2_is[$idx - 1];
-        my $cur_sig = $dk2_map{$cur_i}{sig};
-        my $prev_sig = $dk2_map{$prev_i}{sig};
+    my $has_nd = sub { my $nd = $_[0]->next_domain; defined $nd && length $nd };
+    for my $idx (0 .. $#dk2_is) {
+        my $i   = $dk2_is[$idx];
+        my $sig = $dk2_map{$i}{sig};
+        my $d   = $sig->domain // '';
+        my $mf  = $sig->mail_from;
+        my $null_mf = defined $mf && $mf =~ /\A<\s*>\z/;
 
-        # draft-06 §11.4: an nd= hop declares the domain that signs the next
-        # signature; nd= MUST exactly match that signature's d=.
-        my $prev_nd = $prev_sig->next_domain;
-        if (defined $prev_nd && length $prev_nd) {
-            my $cur_d = $cur_sig->domain // '';
-            unless (lc($prev_nd) eq lc($cur_d)) {
-                $self->{result} = 'fail';
-                $self->{details} = "DKIM2-Signature i=$prev_i MAIL nd= does not match";
-                return 0;
-            }
-            next;
-        }
-
-        my $prev_rt = $prev_sig->rcpt_to;
-        unless ($prev_rt) {
-            $self->{result} = 'fail';
-            $self->{details} = "DKIM2-Signature i=$prev_i RCPT TO <> did not match";
-            return 0;
-        }
-        my @prev_rts = ref($prev_rt) eq 'ARRAY' ? @$prev_rt : ($prev_rt);
-
-        # draft-06 §9.3: an nd= hop after a real one is a Forwarder bridging
-        # the gap between the domain it received the message at and the
-        # domain it sends from, and it has to be made with a key for a
-        # domain in the RCPT TO the message arrived with. So what has to
-        # match the previous rt= here is the hop's d=, since it has no mf=.
-        my $cur_nd = $cur_sig->next_domain;
-        if (defined $cur_nd && length $cur_nd) {
-            my $cur_d = $cur_sig->domain // '';
-            unless (grep { relaxed_domain_match($cur_d, extract_domain($_)) } @prev_rts) {
-                $self->{result} = 'fail';
-                $self->{details} = "DKIM2-Signature i=$cur_i nd= hop d=$cur_d did not match RCPT TO";
-                return 0;
-            }
-            next;
-        }
-
-        my $cur_mf = $cur_sig->mail_from;
-
-        # Chain of Custody: mf of N must relaxed-domain-match an rt of N-1
-        unless ($cur_mf) {
-            $self->{result} = 'fail';
-            $self->{details} = "DKIM2-Signature i=$cur_i MAIL FROM <> did not match";
-            return 0;
-        }
-
-        my $cur_mf_domain = extract_domain($cur_mf);
-        my $match = 0;
-        for my $rt (@prev_rts) {
-            my $rt_domain = extract_domain($rt);
-            if (relaxed_domain_match($cur_mf_domain, $rt_domain)) {
-                $match = 1;
-                last;
+        if ($idx > 0) {
+            my $p_i  = $dk2_is[$idx - 1];
+            my $prev = $dk2_map{$p_i}{sig};
+            if ($has_nd->($prev)) {
+                return $self->_error(permerror => "DKIM2-Signature i=$p_i nd= does not match")
+                    unless lc to_alabel($prev->next_domain) eq lc to_alabel($d);
+            } else {
+                my @rt = map { [domain_of($_)] } @{ $prev->rcpt_to || [] };
+                if ($has_nd->($sig) || $null_mf) {
+                    return $self->_error(permerror =>
+                        "DKIM2-Signature i=$i d= does not match the rt= of i=$p_i")
+                        unless grep { $_->[0] && !$_->[1] && relaxed_domain_match($_->[0], $d) } @rt;
+                } else {
+                    my ($mfd, $lit) = domain_of($mf);
+                    return $self->_error(permerror =>
+                        "DKIM2-Signature i=$i mf= does not match the rt= of i=$p_i")
+                        unless $mfd && !$lit
+                            && grep { $_->[0] && !$_->[1] && relaxed_domain_match($mfd, $_->[0]) } @rt;
+                }
             }
         }
-        unless ($match) {
-            $self->{result} = 'fail';
-            $self->{details} = "DKIM2-Signature i=$cur_i MAIL FROM $cur_mf did not match";
-            return 0;
+
+        if (defined $mf && !$null_mf && !$has_nd->($sig)) {
+            my ($mfd, $lit) = domain_of($mf);
+            return $self->_error(permerror => "DKIM2-Signature i=$i MAIL FROM and d= do not match")
+                unless $mfd && !$lit && relaxed_domain_match($mfd, $d);
         }
     }
 
     return 1;
+}
+
+# Record an outcome: result $state, details "STATE: $text" (-07 section
+# 14.1's form). Returns 0, for "return $self->_error(...)".
+sub _error {
+    my ($self, $state, $text) = @_;
+    $self->{result}  = $state;
+    $self->{details} = uc($state) . ": $text";
+    return 0;
 }
 
 # --- Public key lookup ---

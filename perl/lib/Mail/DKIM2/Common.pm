@@ -35,6 +35,8 @@ our @EXPORT_OK = qw(
     mi_version_tag
     strip_mi_versions
     extract_domain
+    domain_of
+    to_alabel
     to_rfc5321_path
     relaxed_domain_match
     parse_dkim_pubkey
@@ -609,17 +611,63 @@ sub to_rfc5321_path {
     return "<$addr>";
 }
 
-# Check if mf_domain is a subdomain of (or equal to) check_domain
+# domain_of($addr): the domain of an address or path, as ($domain,
+# $is_literal), or the empty list when there is none (no "@", or "<>").
+# The text between the last "@" and the closing ">" (or the end),
+# lowercased, with one trailing dot taken off: Postfix hands on
+# "<A@Example.COM.>" as it was given. A domain literal ("[192.0.2.1]") is
+# returned with $is_literal true; it never matches anything (-07 section
+# 7.2).
+sub domain_of {
+    my ($addr) = @_;
+    return unless defined $addr;
+    my $at = rindex($addr, '@');
+    return if $at < 0;
+    my $dom = substr($addr, $at + 1);
+    $dom =~ s/>.*\z//s;
+    $dom =~ s/\A\s+|\s+\z//g;
+    $dom = lc $dom;
+    $dom =~ s/\.\z//;
+    return unless length $dom;
+    return ($dom, $dom =~ /\A\[/ ? 1 : 0);
+}
+
+# to_alabel($domain): $domain with each label that is not ASCII lowercased
+# and written as its A-label, "xn--" and the RFC 3492 Punycode of the label
+# (-07 section 18). ASCII labels are left as they are. The input is UTF-8
+# octets, as a header field or a decoded mf=/rt= carries it (a character
+# string is taken as it is); a label that is not valid UTF-8 is left alone.
+# This is the label mapping only, not UTS 46.
+sub to_alabel {
+    my ($domain) = @_;
+    return $domain unless defined $domain && $domain =~ /[^\x00-\x7F]/;
+    require URI::_punycode;
+    return join '.', map {
+        my $label = $_;
+        if ($label =~ /[^\x00-\x7F]/) {
+            my $chars = utf8::is_utf8($label) ? $label
+                : eval { Encode::decode('UTF-8', $label, Encode::FB_CROAK() | Encode::LEAVE_SRC()) };
+            die $@ if ref $@;
+            $label = 'xn--' . URI::_punycode::encode_punycode(lc $chars) if defined $chars;
+        }
+        $label;
+    } split /\./, $domain, -1;
+}
+
+# relaxed_domain_match($p1, $p2): the relaxed domain match of -07 section
+# 7.2. Both are compared as A-labels, without regard to case, and without
+# one trailing dot. A domain literal on either side never matches. Otherwise
+# labels come off the LEFT of $p1 only, until it equals $p2 (a match) or
+# has no dot left (no match): so $p1 may be $p2 or below it, never above.
 sub relaxed_domain_match {
-    my ($mf_domain, $check_domain) = @_;
-    return 0 unless $mf_domain && $check_domain;
-    $mf_domain = lc($mf_domain);
-    $check_domain = lc($check_domain);
-    while ($mf_domain) {
-        return 1 if $mf_domain eq $check_domain;
-        $mf_domain =~ s/^[^.]+\.// or return 0;
+    my ($p1, $p2) = @_;
+    return 0 unless defined $p1 && defined $p2 && length $p1 && length $p2;
+    ($p1, $p2) = map { my $d = lc to_alabel($_); $d =~ s/\.\z//; $d } $p1, $p2;
+    return 0 if $p1 =~ /\A\[/ || $p2 =~ /\A\[/;
+    while (1) {
+        return 1 if $p1 eq $p2;
+        $p1 =~ s/\A[^.]*\.// or return 0;
     }
-    return 0;
 }
 
 # Build the signing input for DKIM2 signature signing/verification.
@@ -978,9 +1026,28 @@ The domain of C<user@domain> or C<< <user@domain> >>, or undef.
 Wraps an address in angle brackets if it has none; undef or empty becomes
 C<< <> >>. The form C<mf=> and C<rt=> carry.
 
-=head2 relaxed_domain_match($domain, $parent)
+=head2 domain_of($address)
 
-True if C<$domain> is C<$parent> or a subdomain of it, case-insensitively.
+The domain of an address or RFC 5321 path, as C<($domain, $is_literal)>:
+the text between the last C<@> and the closing C<< > >>, lowercased, with
+one trailing dot removed (C<< <A@Example.COM.> >> gives C<example.com>).
+C<$is_literal> is true for a domain literal such as C<[192.0.2.1]>. The
+empty list when there is no domain, as for C<< <> >>. New in 0.23.
+
+=head2 to_alabel($domain)
+
+The domain with each non-ASCII label lowercased and written as its A-label
+(C<xn--> and the RFC 3492 Punycode), as -07 section 18 has mf=, rt= and
+From domains compared: C<b\x{fc}cher.example>, as UTF-8 octets, gives
+C<xn--bcher-kva.example>. ASCII labels are unchanged; a label that is not
+valid UTF-8 is left as it is. No UTS 46 mapping. New in 0.23.
+
+=head2 relaxed_domain_match($p1, $p2)
+
+The relaxed domain match of -07 section 7.2: true if C<$p1> is C<$p2> or a
+subdomain of it. Labels come off the left of C<$p1> only. Both are compared
+as A-labels (C<to_alabel>), without regard to case and without a trailing
+dot. A domain literal on either side never matches (new in 0.23).
 
 =head1 FOLDING
 

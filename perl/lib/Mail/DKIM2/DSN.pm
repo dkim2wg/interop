@@ -8,7 +8,7 @@ use Email::MIME;
 use Carp;
 use List::Util qw(max);
 
-use Mail::DKIM2::Common qw(extract_domain relaxed_domain_match parse_mime extract_mi_version);
+use Mail::DKIM2::Common qw(domain_of relaxed_domain_match parse_mime extract_mi_version);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
@@ -261,8 +261,8 @@ sub _check_alignment {
         unless @rts;
 
     for my $r (@rts) {
-        my $rd = extract_domain($r) // '';
-        next unless length $rd;
+        my ($rd, $literal) = domain_of($r);
+        next unless $rd && !$literal;
         return ('pass', "DSN d=$d is aligned with rt= $r")
             if relaxed_domain_match($rd, $d);
     }
