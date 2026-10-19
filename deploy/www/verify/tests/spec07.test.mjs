@@ -263,7 +263,9 @@ test('A1: From a@sub.example.com with d=example.com passes', async () => {
   assertPass(await verify(await oneHopFrom('a@sub.example.com')));
 });
 
-for (const from of ['a@example.com, b@example.com', 'a@[192.0.2.1]', 'group: a@example.com;', 'not an address']) {
+// The last but one: display text with no angle brackets is not one mailbox
+// (final review T3); all five implementations agree.
+for (const from of ['a@example.com, b@example.com', 'a@[192.0.2.1]', 'group: a@example.com;', 'A a@example.com', 'not an address']) {
   test(`A1: From "${from}" is not authentic`, async () => {
     assertPerm(await verify(await oneHopFrom(from)), NOT_AUTHENTIC_1);
   });
@@ -419,4 +421,48 @@ test('an mf= without angle brackets is a syntax error', async () => {
 test('a missing required tag: "tag=<y> missing"', async () => {
   const text = new TextDecoder().decode(await signChain([{ fields: FIELDS, body: BODY }], [one()]));
   assertPerm(await verify(text.replace(/; rt=[^;]+/, '')), 'PERMERROR: DKIM2-Signature i=1 tag=rt missing');
+});
+
+// --- C9: the primary error is the first in -07 §14 section order ------------
+
+// msg with every `from` replaced by `to` (binary strings), after signing.
+const edit = (msg, from, to) => {
+  const text = Buffer.from(msg).toString('latin1');
+  assert.ok(text.includes(from), `no ${from}`);
+  return new Uint8Array(Buffer.from(text.split(from).join(to), 'latin1'));
+};
+function assertPrimary(rep, overall, text) {
+  assert.equal(rep.errors[0], text, rep.summary);
+  assert.equal(rep.overall, overall, rep.summary);
+}
+
+test('C9: a From changed after signing is the header hash FAIL (§14.7 before §14.8)', async () => {
+  const msg = edit(await oneHopFrom('A <a@example.com>'), 'From: A <a@example.com>', 'From: a@evil.example');
+  assertPrimary(await verify(msg), 'fail', 'FAIL: Message-Instance m=1 header hash sha256 mismatch');
+});
+
+test('C9: expired before custody (§14.3 before §14.4)', async () => {
+  const msg = await oneHopFrom('a@example.com', { mf: '<a@example.net>', t: T - 15 * 86400 });
+  assertPrimary(await verify(msg), 'permerror', 'PERMERROR: DKIM2-Signature i=1 signature expired');
+});
+
+test('C9: expired before an unexpected top nd= (§14.3 before §14.4)', async () => {
+  const msg = await oneHopFrom('a@example.com', { nd: 'fwd.example.net', t: T - 15 * 86400 });
+  assertPrimary(await verify(msg), 'permerror', 'PERMERROR: DKIM2-Signature i=1 signature expired');
+});
+
+test('C9: custody before a bad signature (§14.4 before §14.6)', async () => {
+  const msg = await oneHopFrom('a@example.com', { mf: '<a@example.net>', sets: [{ sel: 'sel', bad: true }] });
+  assertPrimary(await verify(msg), 'permerror', 'PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match');
+});
+
+test('C9: a bad signature before a header hash (§14.6 before §14.7)', async () => {
+  const msg = edit(await oneHopFrom('a@example.com', { sets: [{ sel: 'sel', bad: true }] }), 'Subject: hi', 'Subject: ho');
+  assertPrimary(await verify(msg), 'fail', 'FAIL: DKIM2-Signature i=1 selector sel incorrect signature');
+});
+
+test('C9: within §14.4, S against the one below it before its own mf= and d=', async () => {
+  const msg = await signChain([{ fields: FIELDS, body: BODY }],
+    [one(), { d: 'example.org', m: 1, mf: '<y@[192.0.2.1]>', rt: ['<b@example.net>'] }]);
+  assertPrimary(await verify(msg), 'permerror', 'PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1');
 });

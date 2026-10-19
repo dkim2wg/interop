@@ -77,15 +77,8 @@ func TestVerifyFullIgnoreTimestamps(t *testing.T) {
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	_, err = VerifyFull(bytes.NewReader(raw), f, VerifyOptions{SkipTimestampCheck: true})
 	// Without skip: should fail on age.
-	res, _ := VerifyFull(bytes.NewReader(raw), f)
-	anyTSerr := false
-	for _, r := range res {
-		if r.Error != nil && strings.Contains(r.Error.Error(), "expired") {
-			anyTSerr = true
-		}
-	}
-	if !anyTSerr {
-		t.Error("expected an expiry error without ignore-timestamps")
+	if _, err := VerifyFull(bytes.NewReader(raw), f); err == nil || !strings.Contains(err.Error(), "signature expired") {
+		t.Errorf("expected an expiry error without ignore-timestamps, got %v", err)
 	}
 	// With skip: should pass.
 	res2, err := VerifyFull(bytes.NewReader(raw), f, VerifyOptions{SkipTimestampCheck: true})

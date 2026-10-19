@@ -670,7 +670,13 @@ func (p *chainPlan) check(t int) error {
 func (p *chainPlan) walk(results []VerifyResult) ([]VerifyResult, error) {
 	for t := p.top - 1; t >= 1; t-- {
 		if p.recipeFails(t + 1) {
-			return results, &malformedRecipeError{m: t + 1}
+			// Found by the walk, so it ranks with §14.7 (C9): after the
+			// hash checks of the instances above it.
+			return append(results, VerifyResult{
+				Domain:  fmt.Sprintf("MI-chain v=%d", t+1),
+				Error:   &malformedRecipeError{m: t + 1},
+				section: 7,
+			}), nil
 		}
 		if err := p.check(t); err != nil {
 			return append(results, VerifyResult{

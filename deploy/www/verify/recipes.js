@@ -227,6 +227,19 @@ export function validateBodyRecipe(b) {
   for (const _ of walkSteps(b, Infinity, 'body', true)) { /* validate only */ }
 }
 
+// The message-independent step rules (§5: "c" ranges ascending and not
+// overlapping, every step well formed) for every step list of a decoded
+// Recipe, header and body alike. Only a range past the end of the items a
+// message actually has is left for applying it to find.
+export function validateRecipeSteps(rec) {
+  if ('h' in rec) {
+    for (const name of Object.keys(rec.h)) {
+      for (const _ of walkSteps(rec.h[name], Infinity, `header "${name}"`, true)) { /* validate only */ }
+    }
+  }
+  validateBodyRecipe(rec.b);
+}
+
 // §5.2: body lines numbered top-down from 1.
 export function applyBodyRecipe(curLines, steps) {
   const out = [];

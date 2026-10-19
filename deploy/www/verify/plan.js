@@ -21,7 +21,7 @@
 // names share their list and its canonical text, and a value is
 // canonicalized only if its name is in the header hash.
 import { walkRanges, walkSteps, decodeRecipe, classifyRecipeDecodeError,
-         validateBodyRecipe, isPlainObject } from './recipes.js';
+         validateBodyRecipe, validateRecipeSteps, isPlainObject } from './recipes.js';
 import { hashLine, isUnsignedHeader } from './canon.js';
 import { hashB64 } from './crypto.js';
 import { binaryToBytes } from './b64.js';
@@ -157,6 +157,7 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
   let nullBodyAt = null;
   let undoBroken = null;
   let undoBrokenReason = null;
+  let undoBrokenStage = null; // 'decode': the Recipe on its own; 'apply': against the message
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
     const cur = states[m];
@@ -166,9 +167,11 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
     let recipe;
     try {
       recipe = decodeRecipe(mi.map.r);
+      validateRecipeSteps(recipe);
     } catch (e) {
       undoBroken = m;
       undoBrokenReason = classifyRecipeDecodeError(e);
+      undoBrokenStage = 'decode';
       break;
     }
     try {
@@ -179,7 +182,7 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
         return { ...st, fields, hdr: hashedChanged ? {} : cur.hdr };
       };
       // decodeRecipe() has checked the §5 schema: an object with "h" and/or
-      // "b", "b" steps or null.
+      // "b", body Recipe steps or null.
       if (cur.noBody) {
         // Below a null body Recipe: "c" order checked, header Recipe applied.
         validateBodyRecipe(recipe.b);
@@ -200,6 +203,7 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
     } catch (e) {
       undoBroken = m;
       undoBrokenReason = classifyRecipeDecodeError(e);
+      undoBrokenStage = 'apply';
       break;
     }
   }
@@ -303,7 +307,7 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
   }
 
   return {
-    undoBroken, undoBrokenReason, nullBodyAt, nullBodyInstances,
+    undoBroken, undoBrokenReason, undoBrokenStage, nullBodyAt, nullBodyInstances,
     has: (m) => !!states[m],
     noBody: (m) => states[m].noBody,
     headerHash(m, alg) {

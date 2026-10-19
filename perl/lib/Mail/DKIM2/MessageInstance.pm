@@ -1167,6 +1167,27 @@ sub _check_recipe {
     return;
 }
 
+# recipe_order_error(): the message-independent part of _check_recipe for
+# this instance's Recipes -- every copy range well formed, ascending, not
+# overlapping -- as the reason (a string), or undef when they are. A
+# verifier reports one as the instance's "contains invalid JSON" with its
+# other field errors (contract C9); the bound a message gives is for
+# applying the Recipe to find.
+sub recipe_order_error {
+    my ($self) = @_;
+    my $bits = $self->{bits};
+    my @lists = (['body', $bits->{rb}],
+                 map { ["header $_", $bits->{rh}{$_}] } sort keys %{ $bits->{rh} || {} });
+    for my $l (@lists) {
+        next unless $l->[1];
+        eval { _check_recipe(@$l); 1 } and next;
+        die $@ if ref $@;
+        (my $why = $@) =~ s/\s+\z//;
+        return $why;
+    }
+    return undef;
+}
+
 sub _apply_recipe {
     my ($what, $recipe, $old) = @_;
     _check_recipe($what, $recipe, scalar @$old);
@@ -1497,6 +1518,15 @@ C<PERMERROR: > string on a missing C<m=> or C<h=>, a hash set that is not
 C<alg:hash:hash>, an algorithm named twice, a tag repeated in any case, or
 a Recipe that is not valid JSON or breaks the section 5 schema
 ("PERMERROR: Message-Instance m=N contains invalid JSON").
+
+=head2 recipe_order_error()
+
+The message-independent part of the Recipe rules for a parsed instance:
+every copy range well formed, ascending, and not overlapping another. Returns
+the reason as a string, or undef when the Recipes keep the rules. A verifier
+reports a failure as the instance's "contains invalid JSON", with the field's
+other errors; whether a range lies within the message is for applying the
+Recipe (L</undo>) to find.
 
 =head2 hash_algs()
 

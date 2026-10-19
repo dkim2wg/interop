@@ -87,7 +87,8 @@ def from_is_authentic(from_fields: list[bytes], d: str) -> bool:
     `from_fields` are the raw From fields of one state of the message.
     There must be exactly one, holding exactly one mailbox (a display name
     and angle-addr, or a bare addr-spec; the stdlib address parser, used
-    leniently), not a group, whose domain is not a domain literal and
+    leniently, but display text with no angle brackets, "Name a@b", is not
+    a mailbox), not a group, whose domain is not a domain literal and
     relaxed-matches d (§7.2) once both are A-labels (§18).
     """
     if len(from_fields) != 1:
@@ -102,6 +103,11 @@ def from_is_authentic(from_fields: list[bytes], d: str) -> bool:
                 or len(groups[0].addresses) != 1):
             return False
         domain = groups[0].addresses[0].domain
+        # Unquoted words with no "." between them in the local part:
+        # "Name a@b" (display text without the angle brackets) is not one
+        # mailbox, though the parser reads it as local-part "Name a".
+        if any("missing '.' between words" in str(e) for e in header.defects):
+            return False
     except Exception:       # anything the parser cannot make sense of
         return False
     domain = (domain or "").strip().lower()

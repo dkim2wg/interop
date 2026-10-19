@@ -108,6 +108,26 @@ draft -07 (shared tests in .superpowers/sdd/2026-10-18-dkim2-spec-07/common.md):
                                    -- U4: bad step objects; REJECT
   positive-control-recipe-uppercase-keys.eml -- K1: "H"/"Subject"/"D" keys
   recipe-case-duplicate-key.eml    -- K2: "Subject" and "subject"; REJECT
+  from-display-no-brackets.eml     -- T3: "From: Bron brong@test1..." (display
+                                         text, no <>) is not one mailbox; REJECT
+
+contract C9 (final review I1/I2), two faults each; the runner pins the
+PRIMARY error (first in -07 §14 section order) and its state exactly:
+  multi-from-tampered.eml          -- From changed after signing: §14.7 hash
+                                         FAIL before the §14.8 From PERMERROR
+  multi-expired-custody.eml        -- expired (§14.3) + mf= not under d= (§14.4)
+  multi-custody-bad-signature.eml  -- mf= not under d= (§14.4) + bad signature (§14.6)
+  multi-bad-signature-header-hash.eml -- bad signature (§14.6) + Subject
+                                         changed after signing (§14.7)
+  multi-tamper-two-instances.eml   -- m=2 and m=1 both mismatch: §14.7 goes
+                                         top down, so m=2 is primary
+  multi-expired-recipe-json.eml    -- malformed Recipe JSON (§14.2) + expired
+  multi-expired-recipe-order.eml   -- descending "c" ranges (§14.2) + expired
+  multi-expired-recipe-past-end.eml -- a copy past the end (found by the
+                                         §14.7 walk) + expired: expired is primary
+  multi-tamper-recipe-past-end.eml -- body cut after signing: the top body
+                                         hash FAIL before the Recipe that no
+                                         longer fits
 """
 import base64
 import json
@@ -860,11 +880,12 @@ def _mi_raw(headers, body, m, recipe=None):
     return v + ";"
 
 
-def _chain(states, hops):
+def _chain(states, hops, ts=TS):
     """A chain over message states.  states[k-1] is (headers, body, recipe)
     for m=k.  hops[i-1] is a dict for DKIM2-Signature i: d, m, and either
     mf + rt (a list) or nd; "key" names the key's domain when it differs from
-    d.  Every hash and signature is valid; only custody/From is under test."""
+    d.  Every hash and signature is valid; only custody/From is under test.
+    `ts` is i=1's t= (the multi-fault vectors give a real expired one)."""
     mis = [_mi_raw(h, b, k, r) for k, (h, b, r) in enumerate(states, 1)]
     sigs = []
     for i, hop in enumerate(hops, 1):
@@ -873,7 +894,7 @@ def _chain(states, hops):
         sigs.append(ds.build_dkim2_signature(
             mis[:m - 1], sigs, mis[m - 1], hop["d"], "sel1", priv, alg,
             mailfrom=hop.get("mf", ""), rcptto=hop.get("rt"), seq=i,
-            mi_version=m, timestamp=TS + 100 * (i - 1),
+            mi_version=m, timestamp=ts + 100 * (i - 1),
             next_domain=hop.get("nd")))
     top_h, top_b = states[-1][0], states[-1][1]
     out = b"".join(x.encode() + b"\r\n" for x in reversed(sigs))
@@ -1058,6 +1079,128 @@ def build_recipe_case_duplicate_key():
     return _two_hop(h1, b1, h2, b1, {"h": {"Subject": steps, "subject": []}})
 
 
+# Multi-fault vectors (contract C9, final review I1/I2): two faults at
+# once, so the runner can pin which one is the PRIMARY error -- the first in
+# -07 §14 section order -- and its state, exactly.  A single-fault vector
+# cannot tell a verifier that checks From before the hashes from one that
+# checks it after.
+
+def _replace_header(msg, name, value):
+    """`msg` with the first header field `name` (no colon) replaced by
+    `name: value` (no other change), after signing."""
+    head, sep, body = msg.partition(b"\r\n\r\n")
+    lines = head.split(b"\r\n")
+    for k, line in enumerate(lines):
+        if line.lower().startswith(name.lower() + b":"):
+            j = k + 1
+            while j < len(lines) and lines[j][:1] in (b" ", b"\t"):
+                j += 1
+            lines[k:j] = [name + b": " + value]
+            break
+    else:
+        raise ValueError(f"no {name!r} header field")
+    return b"\r\n".join(lines) + sep + body
+
+
+def _corrupt_signature(msg, i=1):
+    """`msg` with DKIM2-Signature i=<i>'s first signature value changed in
+    one base64 character mid-value: still valid base64, still the right
+    length, but the signature no longer verifies (§14.6)."""
+    head, sep, body = msg.partition(b"\r\n\r\n")
+    want = f"DKIM2-Signature: i={i};".encode()
+    start = head.index(want)
+    end = head.find(b"\r\nDKIM2-Signature:", start + 1)
+    end = len(head) if end < 0 else end
+    field = head[start:end]
+    at = field.index(b":rsa-sha256:") + len(b":rsa-sha256:") + 20
+    c = b"B" if field[at:at + 1] == b"A" else b"A"
+    field = field[:at] + c + field[at + 1:]
+    return head[:start] + field + head[end:] + sep + body
+
+
+def build_multi_from_tampered():
+    """A validly signed message whose From was then changed to a domain no
+    signature holds.  Both the m=1 header hash (§14.7) and From Authentic
+    (§14.8) fail; the primary error is the hash FAIL."""
+    return _replace_header(build_positive_control(), b"From", b"brong@evil.example")
+
+
+def build_multi_expired_custody():
+    """i=1 made 30 days ago (expired, §14.3) whose mf= is not under its d=
+    (Chain of Custody, §14.4).  The primary error is "signature expired".
+    Verified WITH the timestamp check (the runner's real-clock vectors)."""
+    import time
+    return _chain(_one_state(), [
+        dict(d=DOM, m=1, mf="a@test2.dkim2.com", rt=RT),
+    ], ts=int(time.time()) - 30 * 86400)
+
+
+def build_multi_custody_bad_signature():
+    """mf= not under d= (§14.4) and a signature that does not verify
+    (§14.6).  The primary error is the custody PERMERROR."""
+    return _corrupt_signature(build_mf_d_mismatch())
+
+
+def build_multi_bad_signature_header_hash():
+    """A signature that does not verify (§14.6) on a message whose Subject
+    changed after signing (§14.7).  The primary error is the selector FAIL."""
+    msg = _chain(_one_state(), [dict(d=DOM, m=1, mf=MF, rt=RT)])
+    return _replace_header(_corrupt_signature(msg), b"Subject", b"tampered")
+
+
+def build_multi_tamper_two_instances():
+    """A two-instance chain (positive-control-from-changed) whose Subject
+    changed after the top signature: m=2 and m=1 both mismatch.  §14.7 is
+    walked top down (a lower instance is rebuilt from the one above it), so
+    the primary error is the top instance's, m=2."""
+    return _replace_header(build_positive_from_changed(), b"Subject", b"Tampered")
+
+
+# Recipe errors and C9.  A Recipe that is malformed on its own (its JSON,
+# the §5 schema, "c" ranges out of order) is a §14.2 error of the field and
+# comes before everything else; one that only fails against the message (a
+# copy past the end) is found by the §14.7 chain walk, and ranks there.
+
+def build_multi_expired_recipe_json():
+    """Malformed Recipe JSON at m=2 (§14.2) on expired signatures (§14.3,
+    the fixed t= is weeks old): the Recipe error is primary."""
+    return build_malformed_json()
+
+
+def build_multi_expired_recipe_order():
+    """Descending "c" ranges at m=2 (§14.2, no message needed) on expired
+    signatures: the Recipe error is primary."""
+    return build_recipe_descending()
+
+
+def build_multi_expired_recipe_past_end():
+    """m=2's body Recipe copies lines 1-10 of a 3-line body: it fits the
+    schema and only fails against the message, so the walk (§14.7) finds
+    it, after the expired signature (§14.3), which is primary."""
+    headers, _ = load_base()
+    return _two_hop(headers, b"a\r\nb\r\n", headers, CUR_BODY, {"b": [{"c": [1, 10]}]})
+
+
+def build_multi_tamper_recipe_past_end():
+    """A valid two-hop chain (m=2's Recipe copies lines 1-2 of the body)
+    whose body was cut to one line after signing: the top body hash fails
+    (§14.7) before the walk can apply m=2's Recipe, which no longer fits.
+    The primary error is the hash FAIL."""
+    headers, _ = load_base()
+    msg = _two_hop(headers, b"alpha\r\nbeta\r\n", headers, CUR_BODY, {"b": [{"c": [1, 2]}]})
+    head, sep, _ = msg.partition(b"\r\n\r\n")
+    return head + sep + b"alpha\r\n"
+
+
+def build_from_display_no_brackets():
+    """T3: "From: Bron brong@test1.dkim2.com" -- display text with no angle
+    brackets is not one mailbox (RFC 5322 name-addr needs the <>), so From
+    is not Authentic even though the address is test1's and i=1 is d=test1."""
+    h, b = load_base()
+    h = [b"From: Bron brong@test1.dkim2.com" if x.lower().startswith(b"from:") else x for x in h]
+    return _chain([(h, b, None)], [dict(d=DOM, m=1, mf=MF, rt=RT)])
+
+
 FIXTURES = {
     "signature-gap.eml": build_signature_gap,
     "instance-gap.eml": build_instance_gap,
@@ -1114,6 +1257,16 @@ FIXTURES = {
     "recipe-empty-step.eml": build_recipe_empty_step,
     "positive-control-recipe-uppercase-keys.eml": build_positive_recipe_uppercase_keys,
     "recipe-case-duplicate-key.eml": build_recipe_case_duplicate_key,
+    "from-display-no-brackets.eml": build_from_display_no_brackets,
+    "multi-from-tampered.eml": build_multi_from_tampered,
+    "multi-expired-custody.eml": build_multi_expired_custody,
+    "multi-custody-bad-signature.eml": build_multi_custody_bad_signature,
+    "multi-bad-signature-header-hash.eml": build_multi_bad_signature_header_hash,
+    "multi-tamper-two-instances.eml": build_multi_tamper_two_instances,
+    "multi-expired-recipe-json.eml": build_multi_expired_recipe_json,
+    "multi-expired-recipe-order.eml": build_multi_expired_recipe_order,
+    "multi-expired-recipe-past-end.eml": build_multi_expired_recipe_past_end,
+    "multi-tamper-recipe-past-end.eml": build_multi_tamper_recipe_past_end,
 }
 
 

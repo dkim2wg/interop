@@ -327,10 +327,7 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 		}
 		return fmt.Errorf("not signing: upstream DKIM2 chain result=%s: %w", status, err)
 	}
-	for _, r := range results {
-		if r.Error == nil {
-			continue
-		}
+	if r := PrimaryResult(results); r != nil {
 		if strings.HasPrefix(r.Domain, "MI-chain") {
 			return fmt.Errorf("not signing: Message-Instance chain does not undo cleanly: %w", r.Error)
 		}

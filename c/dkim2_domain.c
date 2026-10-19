@@ -171,10 +171,10 @@ int dkim2_addr_alabel(const char *addr, char *out, size_t outlen, int *is_litera
 
 /* Copy s[0..n) to out without comments and white space outside quoted
    strings (CFWS); quoted strings are kept, quotes included. 0, or -1 when
-   out is too small. */
+   out is too small or CFWS separates two parts of the address. */
 static int strip_cfws(const char *s, size_t n, char *out, size_t outlen) {
     size_t o = 0;
-    int depth = 0, quote = 0;
+    int depth = 0, quote = 0, gap = 0;
     for (size_t i = 0; i < n; i++) {
         char c = s[i];
         if (depth) {
@@ -183,8 +183,11 @@ static int strip_cfws(const char *s, size_t n, char *out, size_t outlen) {
             else if (c == ')') depth--;
             continue;
         }
-        if (!quote && c == '(') { depth = 1; continue; }
-        if (!quote && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) continue;
+        if (!quote && c == '(') { depth = 1; gap = o > 0; continue; }
+        if (!quote && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) { gap = o > 0; continue; }
+        /* CFWS between two parts of the address: "Name a@b" (display text
+           with no angle brackets) or "<a b@c>" is not one addr-spec. */
+        if (gap) return -1;
         if (o + 2 >= outlen) return -1;
         if (quote && c == '\\' && i + 1 < n) { out[o++] = c; out[o++] = s[++i]; continue; }
         if (c == '"') quote = !quote;

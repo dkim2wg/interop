@@ -118,7 +118,10 @@ while (1) {
   if ($verifier->result eq 'pass') {
     say "OK DKIM2-Signature: i=$num; m=$instance";
   } else {
-    die "DKIM2-Signature i=$num: " . $verifier->result_detail();
+    # The primary error (contract C9) on a line of its own, first, then
+    # the result word with it.
+    say STDERR $verifier->details if $verifier->details;
+    die "DKIM2-Signature i=$num: " . $verifier->result_detail() . "\n";
   }
   $msg1->header_raw_set('DKIM2-Signature', grep { _geti($_) < $num } $msg1->header('DKIM2-Signature'));
   $num--;

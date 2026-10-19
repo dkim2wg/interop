@@ -217,11 +217,8 @@ func Authenticate(raw []byte, fetcher KeyFetcher, opts ...VerifyOptions) (*AuthR
 		dsnResults, dverr := Verify(bytes.NewReader(raw), fetcher, dsnOpts)
 		res.DSNError = dverr
 		if dverr == nil {
-			for _, r := range dsnResults {
-				if r.Error != nil {
-					res.DSNError = r.Error
-					break
-				}
+			if r := PrimaryResult(dsnResults); r != nil {
+				res.DSNError = r.Error
 			}
 		}
 	}
@@ -246,11 +243,9 @@ func Authenticate(raw []byte, fetcher KeyFetcher, opts ...VerifyOptions) (*AuthR
 		res.Reason = fmt.Errorf("no DKIM2-Signature headers found")
 		return res, nil
 	}
-	for _, r := range results {
-		if r.Error != nil {
-			res.Reason = r.Error
-			return res, nil
-		}
+	if r := PrimaryResult(results); r != nil {
+		res.Reason = r.Error
+		return res, nil
 	}
 	if res.DSNError != nil {
 		res.Reason = fmt.Errorf("DSN's own signature did not verify: %w", res.DSNError)

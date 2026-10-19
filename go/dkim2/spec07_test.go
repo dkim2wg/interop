@@ -430,6 +430,9 @@ func TestSpec07A1FromAuthentic(t *testing.T) {
 		{"=?utf-8?q?Caf=C3=A9?=\r\n <a@example.com>", "example.com", ""},
 		{"=?utf-8?q?Caf=C3=A9?=\r\n <a@example.com>", "example.net", notAuth},
 		{"group: a@example.com;", "example.com", notAuth},
+		// Display text with no angle brackets is not one mailbox (final
+		// review T3): all five implementations agree.
+		{"A a@example.com", "example.com", notAuth},
 	} {
 		in := []byte("From: " + tc.from + "\r\nSubject: s\r\n\r\nbody\r\n")
 		hop1 := must07(t, in, tc.d, "a@"+tc.d, []string{"list@lists.example.org"}, "")
@@ -620,6 +623,61 @@ func TestSpec07ErrorStrings(t *testing.T) {
 		wantErr07(t, hop1, "PERMERROR: DKIM2-Signature i=1 MAIL FROM b@example.com did not match",
 			VerifyOptions{SkipTimestampCheck: true, MailFrom: "b@example.com"})
 	})
+}
+
+// ---- C9: the primary error is the first in -07 §14 section order ----
+
+// primary07 is the primary error VerifyFull reports: its returned error's
+// first line, else PrimaryResult's; "" for a pass.
+func primary07(t *testing.T, msg []byte, opt VerifyOptions) string {
+	t.Helper()
+	results, err := VerifyFull(bytes.NewReader(msg), spec07Fetcher(t), opt)
+	if err != nil {
+		return strings.SplitN(err.Error(), "\n", 2)[0]
+	}
+	if r := PrimaryResult(results); r != nil {
+		return r.Error.Error()
+	}
+	return ""
+}
+
+func TestSpec07C9PrimaryError(t *testing.T) {
+	skip := VerifyOptions{SkipTimestampCheck: true}
+	now := time.Now().Unix()
+	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
+	badSig := func(m []byte, n int) []byte {
+		return bytes.Replace(m, []byte("t=1740000000"), []byte("t=1740000001"), n)
+	}
+	for _, tc := range []struct {
+		name string
+		msg  []byte
+		opt  VerifyOptions
+		want string
+	}{
+		// §14.7 before §14.8: a From changed after signing.
+		{"tampered From", bytes.Replace(hop1, []byte("From: A <a@example.com>"), []byte("From: a@evil.example"), 1),
+			skip, "FAIL: Message-Instance m=1 header hash sha256 mismatch"},
+		// §14.3 before §14.4.
+		{"expired and custody", must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, "",
+			func(o *SignOptions) { o.Timestamp = now - 15*86400 }),
+			VerifyOptions{}, "PERMERROR: DKIM2-Signature i=1 signature expired"},
+		{"expired and top nd", must07(t, []byte(spec07Base), "example.com", "", nil, "fwd.example.net",
+			func(o *SignOptions) { o.Timestamp = now - 15*86400 }),
+			VerifyOptions{}, "PERMERROR: DKIM2-Signature i=1 signature expired"},
+		// §14.4 before §14.6.
+		{"custody and signature", badSig(must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, ""), 1),
+			skip, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match"},
+		// §14.6 before §14.7.
+		{"signature and header hash", bytes.Replace(badSig(hop1, 1), []byte("Subject: hello"), []byte("Subject: jello"), 1),
+			skip, "FAIL: DKIM2-Signature i=1 selector s07 incorrect signature"},
+		// Lowest i= first within §14.6.
+		{"two bad signatures", badSig(must07(t, hop1, "example.org", "list@lists.example.org", []string{"b@example.net"}, ""), -1),
+			skip, "FAIL: DKIM2-Signature i=1 selector s07 incorrect signature"},
+	} {
+		if got := primary07(t, tc.msg, tc.opt); got != tc.want {
+			t.Errorf("%s: primary %q, want %q", tc.name, got, tc.want)
+		}
+	}
 }
 
 // ---- D1: never a DSN for mf=<> ----

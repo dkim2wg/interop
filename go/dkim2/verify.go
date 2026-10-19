@@ -27,15 +27,35 @@ import (
 // looked up in the background as soon as the header fields are read (see
 // prefetchKeys), while the body is still being read and hashed.
 func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
+	headers, results, err := verifyNoFrom(r, fetcher, opts...)
+	return fromLast(headers, results, err, opts...)
+}
+
+// verifyNoFrom is Verify without the §14.8 From check, for VerifyFull's
+// undo walk, which must check the lower instances (§14.7) before it.
+func verifyNoFrom(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Header, []VerifyResult, error) {
 	br := bufio.NewReader(r)
 	headers, err := readHeaderFields(br)
 	if err != nil {
-		return nil, fmt.Errorf("parsing headers: %w", err)
+		return nil, nil, fmt.Errorf("parsing headers: %w", err)
 	}
 	fetcher = prefetchKeys(headers, fetcher, opts...)
-	return verifyFields(headers, func(algs []string) (map[string][]byte, error) {
+	results, err := verifyFields(headers, func(algs []string) (map[string][]byte, error) {
 		return hashBodyStream(br, algs)
 	}, fetcher, opts...)
+	return headers, results, err
+}
+
+// fromLast finishes a verification with the §14.8 From check, which comes
+// last in contract C9's order: only when nothing before it failed.
+func fromLast(headers []Header, results []VerifyResult, err error, opts ...VerifyOptions) ([]VerifyResult, error) {
+	if err != nil || PrimaryResult(results) != nil {
+		return results, err
+	}
+	if ferr := verifyFrom(headers, opts...); ferr != nil {
+		return nil, ferr
+	}
+	return results, nil
 }
 
 // verifyFields is Verify once the header fields are parsed.  bodyHashes
@@ -167,22 +187,6 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		}
 	}
 
-	// §14.4: the top (highest i=) signature carrying nd= is "unexpected nd=
-	// tag": the signature that fulfils it has not been added.  A signer's
-	// own gate (Outbound with Signer set) may extend a top nd= signature
-	// that names that signer -- its own d= is about to satisfy the nd=
-	// (§12.3 out-of-band arrangements); any other domain is refused.
-	if topSig != nil && topSig.NextDomain != "" {
-		if len(opts) > 0 && opts[0].Outbound && opts[0].Signer != "" {
-			if !strings.EqualFold(topSig.NextDomain, opts[0].Signer) {
-				return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d unexpected nd= tag (nd=%s names another domain than %s)",
-					topSig.Sequence, topSig.NextDomain, opts[0].Signer)
-			}
-		} else {
-			return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d unexpected nd= tag", topSig.Sequence)
-		}
-	}
-
 	outbound := len(opts) > 0 && opts[0].Outbound
 	// Outbound: an unsigned top instance is the one the next signer covers.
 	// The signatures' own top instance is then an ordinary lower level (the
@@ -209,32 +213,6 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 			err = fmt.Errorf("PERMERROR: Message-Instance m=%d missing", topSig.MIVersion)
 		}
 		return []VerifyResult{{Sequence: topSig.Sequence, Domain: topSig.Domain, Error: err}}, nil
-	}
-
-	// §14.4: envelope exact-match against top sig if caller provided values
-	if len(opts) > 0 && topSig != nil {
-		opt := opts[0]
-		if opt.MailFrom != "" {
-			if normAddr(opt.MailFrom) != normAddr(topSig.MailFrom) {
-				return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d MAIL FROM %s did not match",
-					topSig.Sequence, opt.MailFrom)
-			}
-		}
-		if opt.RcptTo != nil {
-			for _, delivered := range opt.RcptTo {
-				found := false
-				for _, rt := range topSig.RcptTo {
-					if normAddr(delivered) == normAddr(rt) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d RCPT TO %s did not match",
-						topSig.Sequence, delivered)
-				}
-			}
-		}
 	}
 
 	// Sort sigs ascending by sequence
@@ -306,129 +284,51 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		}
 	}
 
-	// §14.4: the Chain of Custody, every signature's mf= against its d=
-	// and each signature against the one below it.
-	{
-		parsedSigs := make([]*DKIM2Signature, len(sigHeaders))
-		for i, raw := range sigHeaders {
-			parsedSigs[i], _ = parseSig(raw)
-		}
-		if err := checkChainOfCustody(parsedSigs); err != nil {
-			return nil, err
-		}
+	parsedSigs := make([]*DKIM2Signature, len(sigHeaders))
+	for i, raw := range sigHeaders {
+		parsedSigs[i], _ = parseSig(raw)
+	}
 
-		// §14.8: every From that the Recipes show, against its signature.
-		// Outbound, the unsigned instances above the top signature are the
-		// signer's own to answer for (Sign checks them itself).
-		mis := make(map[int]*MessageInstance, len(miHeaders))
-		for _, raw := range miHeaders {
-			if mi, err := parseMI(raw); err == nil {
-				mis[mi.Version] = mi
-			}
-		}
-		limit := maxMIVersion
-		if unsignedTop {
-			limit = topSig.MIVersion
-		}
-		if err := checkFromAuthentic(contentHeaders, mis, maxMIVersion, limit, parsedSigs); err != nil {
+	// Contract C9: the checks run in -07 §14 section order, each over every
+	// signature from i=1 up, so the first error found is the primary one.
+	// §14.2: each signature field on its own.
+	for _, sig := range parsedSigs {
+		if err := sigFieldError(sig, miHeaders); err != nil {
 			return nil, err
 		}
 	}
 
-	skipTS := len(opts) > 0 && opts[0].SkipTimestampCheck
-	now := time.Now().Unix()
+	// §14.3: not Validly Signed if made more than 14 days before delivery,
+	// or more than one day after it.  t=0 is valid syntax and simply very
+	// old.  Compared without adding to t=, which may be as large as
+	// math.MaxInt64.
+	if !(len(opts) > 0 && opts[0].SkipTimestampCheck) {
+		now := time.Now().Unix()
+		for _, sig := range parsedSigs {
+			if sig.Timestamp > now+MaxFutureSkew {
+				return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d signature is from the future", sig.Sequence)
+			}
+			if now-MaxSignatureAge > sig.Timestamp {
+				return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d signature expired", sig.Sequence)
+			}
+		}
+	}
+
+	// §14.4: the top signature's nd=, the envelope, then the Chain of
+	// Custody (every signature's mf= against its d=, and each signature
+	// against the one below it).
+	if err := topCustodyError(topSig, opts...); err != nil {
+		return nil, err
+	}
+	if err := checkChainOfCustody(parsedSigs); err != nil {
+		return nil, err
+	}
 
 	var results []VerifyResult
 
 	for idx, rawSig := range sigHeaders {
-		sig, err := parseSig(rawSig)
-		if err != nil {
-			results = append(results, VerifyResult{Error: err})
-			continue
-		}
-
+		sig := parsedSigs[idx]
 		res := VerifyResult{Sequence: sig.Sequence, Domain: sig.Domain}
-
-		// §8: a tag name that occurs more than once makes the whole
-		// tag-list invalid.
-		if sig.Duplicate != "" {
-			res.Error = sigSyntaxError(sig.Sequence)
-			results = append(results, res)
-			continue
-		}
-
-		// §14.3: not Validly Signed if made more than 14 days before
-		// delivery, or more than one day after it.  t=0 is valid syntax and
-		// simply very old.  Compared without adding to t=, which may be as
-		// large as math.MaxInt64.
-		if !skipTS {
-			if sig.Timestamp > now+MaxFutureSkew {
-				res.Error = fmt.Errorf("PERMERROR: DKIM2-Signature i=%d signature is from the future", sig.Sequence)
-				results = append(results, res)
-				continue
-			}
-			if now-MaxSignatureAge > sig.Timestamp {
-				res.Error = fmt.Errorf("PERMERROR: DKIM2-Signature i=%d signature expired", sig.Sequence)
-				results = append(results, res)
-				continue
-			}
-		}
-
-		// §10.5/§10.6 MUST: mf=/rt= values carry RFC5321 angle brackets;
-		// one that does not is a syntax error.
-		if sig.MailFrom != "" && !(strings.HasPrefix(sig.MailFrom, "<") && strings.HasSuffix(sig.MailFrom, ">")) {
-			res.Error = sigSyntaxError(sig.Sequence)
-		}
-		for _, r := range sig.RcptTo {
-			if !(strings.HasPrefix(r, "<") && strings.HasSuffix(r, ">")) {
-				res.Error = sigSyntaxError(sig.Sequence)
-				break
-			}
-		}
-		if res.Error != nil {
-			results = append(results, res)
-			continue
-		}
-
-		// §10.9: duplicate-selector and excess-selector checks must
-		// run before any DNS lookup or crypto work.
-		if dupErrs := checkSignatureDuplicates(sig.Sigs, sig.Sequence); len(dupErrs) > 0 {
-			res.Error = fmt.Errorf("%s", strings.Join(dupErrs, "; "))
-			results = append(results, res)
-			continue
-		}
-
-		// Find the MI for this signature's MI version
-		var thisMI *MessageInstance
-		for _, raw := range miHeaders {
-			mi, err := parseMI(raw)
-			if err == nil && mi.Version == sig.MIVersion {
-				thisMI = mi
-				break
-			}
-		}
-		if thisMI == nil {
-			res.Error = fmt.Errorf("PERMERROR: Message-Instance m=%d missing", sig.MIVersion)
-			results = append(results, res)
-			continue
-		}
-
-		// Verify MI header and body hashes only for the outermost (latest) MI.
-		// Earlier MI versions recorded hashes from a prior message state;
-		// an intermediary may have modified headers/body since then.
-		if sig.MIVersion == maxMIVersion {
-			var mierr error
-			if headersOnly {
-				mierr = verifyMIHeaderHashes(thisMI, contentHeaders)
-			} else {
-				mierr = verifyMIHashesPrecomputed(thisMI, contentHeaders, topBodyHashes)
-			}
-			if mierr != nil {
-				res.Error = mierr
-				results = append(results, res)
-				continue
-			}
-		}
 
 		// Build signing input:
 		// MI headers with m= <= this sig's MIVersion (ascending)
@@ -453,11 +353,184 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 
 		digest := sha256.Sum256(sigInput)
 
+		// §14.5 and §14.6: this signature's keys, then its signatures.
 		res.Error = verifySigItems(sig, fetcher, digest[:])
+
+		// §14.7: the MI header and body hashes, checked here only for the
+		// outermost (latest) MI.  Earlier MI versions recorded hashes from
+		// a prior message state; the chain walk checks those.  After the
+		// crypto (C9): a signature that does not verify is the primary
+		// error, whatever the hashes say.
+		if res.Error == nil && sig.MIVersion == maxMIVersion {
+			if headersOnly {
+				res.Error = verifyMIHeaderHashes(topMI, contentHeaders)
+			} else {
+				res.Error = verifyMIHashesPrecomputed(topMI, contentHeaders, topBodyHashes)
+			}
+		}
 		results = append(results, res)
 	}
 
 	return results, nil
+}
+
+// sigFieldError is the -07 §14.2 check of one DKIM2-Signature field on its
+// own (contract C9 runs it for every signature before any §14.3 check): a
+// duplicated tag, an mf=/rt= without its angle brackets (§10.5/§10.6), the
+// §10.9 duplicate-selector and selector-count rules, and an m= naming a
+// Message-Instance that is not there.
+func sigFieldError(sig *DKIM2Signature, miHeaders []string) error {
+	// §8: a tag name that occurs more than once makes the whole tag-list
+	// invalid.
+	if sig.Duplicate != "" {
+		return sigSyntaxError(sig.Sequence)
+	}
+	if sig.MailFrom != "" && !(strings.HasPrefix(sig.MailFrom, "<") && strings.HasSuffix(sig.MailFrom, ">")) {
+		return sigSyntaxError(sig.Sequence)
+	}
+	for _, r := range sig.RcptTo {
+		if !(strings.HasPrefix(r, "<") && strings.HasSuffix(r, ">")) {
+			return sigSyntaxError(sig.Sequence)
+		}
+	}
+	if dupErrs := checkSignatureDuplicates(sig.Sigs, sig.Sequence); len(dupErrs) > 0 {
+		return errors.New(dupErrs[0])
+	}
+	for _, raw := range miHeaders {
+		if mi, err := parseMI(raw); err == nil && mi.Version == sig.MIVersion {
+			return nil
+		}
+	}
+	return fmt.Errorf("PERMERROR: Message-Instance m=%d missing", sig.MIVersion)
+}
+
+// topCustodyError is the start of §14.4: a top (highest i=) signature
+// carrying nd= is "unexpected nd= tag" -- the signature that fulfils it has
+// not been added -- and the envelope, when the caller gave one, must match
+// the top signature's mf=/rt= exactly.  A signer's own gate (Outbound with
+// Signer set) may extend a top nd= signature that names that signer -- its
+// own d= is about to satisfy the nd= (§12.3 out-of-band arrangements); any
+// other domain is refused.
+func topCustodyError(topSig *DKIM2Signature, opts ...VerifyOptions) error {
+	if topSig == nil {
+		return nil
+	}
+	if topSig.NextDomain != "" {
+		if len(opts) > 0 && opts[0].Outbound && opts[0].Signer != "" {
+			if !strings.EqualFold(topSig.NextDomain, opts[0].Signer) {
+				return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d unexpected nd= tag (nd=%s names another domain than %s)",
+					topSig.Sequence, topSig.NextDomain, opts[0].Signer)
+			}
+		} else {
+			return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d unexpected nd= tag", topSig.Sequence)
+		}
+	}
+	if len(opts) == 0 {
+		return nil
+	}
+	opt := opts[0]
+	if opt.MailFrom != "" && normAddr(opt.MailFrom) != normAddr(topSig.MailFrom) {
+		return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d MAIL FROM %s did not match",
+			topSig.Sequence, opt.MailFrom)
+	}
+	for _, delivered := range opt.RcptTo {
+		found := false
+		for _, rt := range topSig.RcptTo {
+			if normAddr(delivered) == normAddr(rt) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d RCPT TO %s did not match",
+				topSig.Sequence, delivered)
+		}
+	}
+	return nil
+}
+
+// verifyFrom is §14.8 (§11), the last check in contract C9's order: run
+// only once everything before it passed.  Outbound, the unsigned instances
+// above the top signature are the signer's own to answer for (Sign checks
+// them itself).
+func verifyFrom(headers []Header, opts ...VerifyOptions) error {
+	var content []Header
+	var sigs []*DKIM2Signature
+	mis := map[int]*MessageInstance{}
+	top, topSigM, topSigI := 0, 0, 0
+	for _, h := range headers {
+		switch strings.ToLower(h.Name) {
+		case "message-instance":
+			if mi, err := parseMI(h.Raw); err == nil {
+				mis[mi.Version] = mi
+				if mi.Version > top {
+					top = mi.Version
+				}
+			}
+		case "dkim2-signature":
+			if s, err := parseSig(h.Raw); err == nil {
+				sigs = append(sigs, s)
+				if s.Sequence > topSigI {
+					topSigI, topSigM = s.Sequence, s.MIVersion
+				}
+			}
+		default:
+			content = append(content, h)
+		}
+	}
+	if len(sigs) == 0 {
+		return nil
+	}
+	sort.Slice(sigs, func(a, b int) bool { return sigs[a].Sequence < sigs[b].Sequence })
+	limit := top
+	if len(opts) > 0 && opts[0].Outbound && topSigM < top {
+		limit = topSigM
+	}
+	return checkFromAuthentic(content, mis, top, limit, sigs)
+}
+
+// c9Section is the -07 §14 section an error string belongs to, for
+// contract C9's ranking.  Anything not named here (syntax, missing,
+// duplicate, "is not signed", Recipe errors, local limits) is §14.2.
+func c9Section(text string) int {
+	switch {
+	case strings.HasSuffix(text, " signature expired") || strings.HasSuffix(text, " signature is from the future"):
+		return 3
+	case strings.HasPrefix(text, "TEMPERROR: ") || strings.Contains(text, " public key ") ||
+		strings.Contains(text, " has no signature with a supported algorithm"):
+		return 5
+	case strings.HasPrefix(text, "FAIL: DKIM2-Signature "):
+		return 6
+	case strings.HasPrefix(text, "FAIL: Message-Instance "):
+		return 7
+	case strings.HasSuffix(text, " matching From is not authentic"):
+		return 8
+	}
+	return 2
+}
+
+// PrimaryResult is the result whose error is the primary one (contract
+// C9): the first in -07 §14 section order, the lowest i= first within a
+// section; nil when every result passed.  Verify and VerifyFull return
+// every signature's result in i= order (and the chain walk's after them);
+// a caller reporting one reason, or one state, reports this one's.
+func PrimaryResult(results []VerifyResult) *VerifyResult {
+	var best *VerifyResult
+	bestSec := 0
+	for k := range results {
+		r := &results[k]
+		if r.Error == nil {
+			continue
+		}
+		sec := r.section
+		if sec == 0 {
+			sec = c9Section(strings.SplitN(r.Error.Error(), "\n", 2)[0])
+		}
+		if best == nil || sec < bestSec || (sec == bestSec && sec != 7 && sec != 2 && r.Sequence < best.Sequence) {
+			best, bestSec = r, sec
+		}
+	}
+	return best
 }
 
 // maxTagNumber is the highest value of tag across raw header fields (name

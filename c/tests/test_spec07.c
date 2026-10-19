@@ -713,6 +713,14 @@ static void test_from_authentic(void) {
         CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
         msg_free(&m);
     }
+    {   /* display text with no angle brackets is not one mailbox (final
+           review T3): all five implementations agree */
+        msg_t m;
+        base_signed(&m, "A a@example.com");
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
+        msg_free(&m);
+    }
     {   /* folded, RFC 2047 display name, angle-addr: one mailbox */
         msg_t m;
         base_signed(&m, "=?utf-8?q?Caf=C3=A9?=\r\n <a@example.com>");
@@ -917,6 +925,80 @@ static void test_timestamps(void) {
     }
 }
 
+/* i=<i> over m=<mi_m> by d, mf/rt raw paths, made at t; bad corrupts the
+   signature value. */
+static void add_sig_bad(msg_t *m, int i, int mi_m, unsigned long long t, const char *d,
+                        const char *mf, const char *rt, unsigned bad) {
+    char *emf = b64(mf), *ert = b64(rt), tags[2048];
+    snprintf(tags, sizeof tags, "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s", i, mi_m, t, d, emf, ert);
+    free(emf);
+    free(ert);
+    add_sig_raw(m, tags, 1, bad);
+}
+
+/* Contract C9: the primary error is the first in -07 §14 section order,
+   the lowest i= first within a section. */
+static void test_check_order(void) {
+    unsigned long long old = now() - 15 * 86400;
+    {   /* §14.7 before §14.8: From changed after signing */
+        msg_t m;
+        base_signed(&m, "A <a@example.com>");
+        msg_set(&m, "From", "a@evil.example");
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "FAIL: Message-Instance m=1 header hash sha256 mismatch");
+        CHECK(res.status == DKIM2_FAIL);
+        msg_free(&m);
+    }
+    {   /* §14.3 before §14.4: expired, and mf= not under d= */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        add_mi(&m, NULL);
+        add_sig_t(&m, 1, 1, old, "example.com", "<a@example.net>", "<list@lists.example.org>", NULL, NULL);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 signature expired");
+        msg_free(&m);
+    }
+    {   /* §14.3 before §14.4: expired, and a top nd= */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        add_mi(&m, NULL);
+        add_sig_t(&m, 1, 1, old, "example.com", NULL, NULL, "fwd.example.net", NULL);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 signature expired");
+        msg_free(&m);
+    }
+    {   /* §14.4 before §14.6: mf= not under d=, and a bad signature */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        add_mi(&m, NULL);
+        add_sig_bad(&m, 1, 1, now(), "example.com", "<a@example.net>", "<list@lists.example.org>", 1);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match");
+        msg_free(&m);
+    }
+    {   /* §14.6 before §14.7: a bad signature, and Subject changed */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        add_mi(&m, NULL);
+        add_sig_bad(&m, 1, 1, now(), "example.com", "<a@example.com>", "<list@lists.example.org>", 1);
+        msg_set(&m, "Subject", "tampered");
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 selector sel incorrect signature");
+        CHECK(res.status == DKIM2_FAIL);
+        msg_free(&m);
+    }
+    {   /* lowest i= first within §14.6: both signatures bad */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        add_mi(&m, NULL);
+        add_sig_bad(&m, 1, 1, now(), "example.com", "<a@example.com>", "<list@lists.example.org>", 1);
+        add_sig_bad(&m, 2, 1, now(), "example.org", "<list@lists.example.org>", "<b@example.net>", 1);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 selector sel incorrect signature");
+        msg_free(&m);
+    }
+}
+
 static void test_error_strings(void) {
     /* no DKIM2 header fields at all: "none", no error string */
     {
@@ -1100,6 +1182,7 @@ int main(void) {
     test_signer_gate();
     test_timestamps();
     test_error_strings();
+    test_check_order();
     test_tag_lists();
 
     EVP_PKEY_free(g_priv);

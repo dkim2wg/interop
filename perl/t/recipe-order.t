@@ -119,7 +119,7 @@ my @bad = (
     [ '{"b":[{"c":[2,2]},{"c":[2,2]}]}',   qr/copies lines 2-2 twice/, 'the same line twice' ],
     [ '{"b":[{"c":[0,3]}]}',               qr/contains invalid JSON/, 'a range from line 0' ],
     [ '{"b":[{"c":[1,6]}]}',               qr/copies lines 1-6 of 5/, 'a range past the end' ],
-    [ '{"b":[{"c":[3,1]}]}',               qr/copies lines 3-1 of 5/, 'a range that runs backwards' ],
+    [ '{"b":[{"c":[3,1]}]}',               qr/(?:copies lines 3-1 of 5|invalid copy range 3-1)/, 'a range that runs backwards' ],
     [ '{"b":[{"c":[1.5,3]}]}',             qr/contains invalid JSON/, 'a fractional bound' ],
     [ '{"b":[{"c":["x",3]}]}',             qr/contains invalid JSON/, 'a non-numeric bound' ],
     [ '{"b":[{"c":[true,3]}]}',            qr/contains invalid JSON/, 'a boolean bound' ],

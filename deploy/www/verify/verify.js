@@ -3,7 +3,7 @@ import { parseMessage, collectLevels, parseTagList, parseHashSets } from './pars
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
 import { fetchKey as dohFetchKey, keyName, DEFINITIVE_KEY_ERRORS } from './doh.js';
-import { decodeRecipe, classifyRecipeDecodeError, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe } from './recipes.js';
+import { decodeRecipe, classifyRecipeDecodeError, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe, validateRecipeSteps } from './recipes.js';
 import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
 import { planChain } from './plan.js';
 import { domainOf, toALabel, relaxedMatch } from './domain.js';
@@ -104,7 +104,8 @@ function recipeErrorSuffix(reason) {
   return 'previous instance cannot be recreated';
 }
 
-// Precedence for a verdict: fail > permerror > temperror > pass.
+// Precedence for one level's own state in the report: fail > permerror >
+// temperror > pass. The overall result is the primary error's state (C9).
 const RANK = { pass: 0, temperror: 1, permerror: 2, fail: 3 };
 // §14.3: a signature more than 14 days old, or more than one day ahead.
 const MAX_AGE = 14 * 86400;
@@ -331,7 +332,8 @@ async function verifyOnce(raw, opts = {}) {
     }
   }
   if (structErr.length) {
-    return { overall: 'permerror', summary: [...new Set(structErr)].join('; '), levels: [] };
+    const errors = [...new Set(structErr)];
+    return { overall: 'permerror', summary: errors.join('; '), errors, levels: [] };
   }
 
   // Start every public-key lookup now, so they overlap each other and the
@@ -346,7 +348,22 @@ async function verifyOnce(raw, opts = {}) {
   // as the reference (opts.undoWalk). Both give the same answers.
   const chain = (!opts.undoWalk && planChain(headers, body, instances, maxM, lines))
     || undoChain(headers, body, instances, maxM);
-  const { undoBroken, undoBrokenReason, nullBodyAt, nullBodyInstances } = chain;
+  const { undoBroken, undoBrokenReason, undoBrokenStage, nullBodyAt, nullBodyInstances } = chain;
+  // §14.2 (contract C9): every Recipe on its own, highest m= first, whether
+  // or not the walk reaches it.
+  const recipeErrors = [];
+  for (let m = maxM; m >= 1; m--) {
+    if (!('r' in instances[m].map)) continue;
+    try {
+      validateRecipeSteps(decodeRecipe(instances[m].map.r));
+    } catch (e) {
+      recipeErrors.push(`PERMERROR: Message-Instance m=${m} ${recipeErrorSuffix(classifyRecipeDecodeError(e))}`);
+    }
+  }
+  // Errors the chain walk found that rank with §14.7 though their text is
+  // §14.2's (contract C9): a Recipe that does not fit the message, ranked
+  // after the hash check of its own instance.
+  const walkErrors = new Map();
 
   // --- §14.7 MI hash checks (top-down) ----------------------------------
   for (let m = maxM; m >= 1; m--) {
@@ -366,6 +383,7 @@ async function verifyOnce(raw, opts = {}) {
       level.result = 'not-checked';
       level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
       level.detail = `PERMERROR: Message-Instance m=${undoBroken} ${recipeErrorSuffix(undoBrokenReason)}`;
+      if (undoBrokenStage === 'apply') walkErrors.set(level.detail, [7, -undoBroken, 1]);
       bump('permerror');
       levels.push(level);
       continue;
@@ -378,11 +396,16 @@ async function verifyOnce(raw, opts = {}) {
       // there was previously never even looked at), so it needs its own
       // check here: decode it, and dry-run it against the m=1 state so a
       // bad Recipe (§5) is caught the same way as at m>=2.
+      let stage = 'decode';
       try {
-        chain.checkBottom(decodeRecipe(mi.map.r)); // a null "b" is left alone here
+        const rec = decodeRecipe(mi.map.r);
+        validateRecipeSteps(rec);
+        stage = 'apply';
+        chain.checkBottom(rec); // a null "b" is left alone here
       } catch (e) {
         level.result = 'permerror';
         level.detail = `PERMERROR: Message-Instance m=1 ${recipeErrorSuffix(classifyRecipeDecodeError(e))}`;
+        if (stage === 'apply') walkErrors.set(level.detail, [7, -1, 1]);
         bump('permerror');
         levels.push(level);
         continue;
@@ -492,11 +515,14 @@ async function verifyOnce(raw, opts = {}) {
       if (RANK[st] > RANK[state]) state = st;
     };
 
+    // §14.2: the field on its own (its s= items, the §10.9 duplicate and
+    // limit rules). A field that fails here is not checked any further.
+    const sigSets = sigFieldErrors(sig, i, fail);
+
     // §14.4 Chain of Custody (d=/mf=, and this signature against the one
     // below it), plus the top-hop envelope exact-match against the actual
-    // delivery MAIL FROM / RCPT TO. A failure here, or a From that is not
-    // Authentic (§14.8), stops this signature short of the key lookup and
-    // the crypto, so a key-not-found cannot mask it.
+    // delivery MAIL FROM / RCPT TO. A failure here stops this signature
+    // short of the key lookup and the crypto (it outranks them, C9).
     const custody = custodyErrors(signatures, i, maxI);
     if (!custody.length && i === maxI) custody.push(...envelopeErrors(sig, i, opts));
     let notChecked = false;
@@ -505,15 +531,19 @@ async function verifyOnce(raw, opts = {}) {
       for (const text of custody) fail('permerror', text);
     } else {
       level.custody = { ok: true, detail: i === 1 ? 'origin' : 'chain intact' };
-      if (badFrom.has(i)) {
-        level.from = { ok: false };
-        fail('permerror', `PERMERROR: DKIM2-Signature i=${i} matching From is not authentic`);
-      } else if (!chain.has(level.m)) {
+    }
+    // §14.8: recorded here, ranked last (C9): it never stops the crypto.
+    if (badFrom.has(i)) {
+      level.from = { ok: false };
+      fail('permerror', `PERMERROR: DKIM2-Signature i=${i} matching From is not authentic`);
+    }
+    if (!custody.length && sigSets) {
+      if (!chain.has(level.m)) {
         // The Recipes did not reach this signature's instance: that is
         // reported on the Message-Instance; nothing here can be checked.
         notChecked = true;
       } else {
-        await checkCrypto(sig, i, instances, signatures, fetchKey, level, fail);
+        await checkCrypto(sig, i, sigSets, instances, signatures, fetchKey, level, fail);
       }
     }
 
@@ -535,23 +565,96 @@ async function verifyOnce(raw, opts = {}) {
 
     level.result = notChecked && state === 'pass' ? 'not-checked' : state;
     level.detail = errors.join('; ');
+    level.errors = errors;
     bump(state);
     levels.push(level);
   }
 
   const nullNote = nullBodyAt !== null && nullBodyAt > 1
     ? `; body not checked below m=${nullBodyAt} (null body Recipe), header history verified` : '';
-  // A failure's summary: every distinct error, in report order.
-  const errorTexts = [...new Set(levels.map((l) => l.detail).filter((d) => STATE_TEXT.test(d)))];
+  // Every distinct error, in contract C9 order: the first is the PRIMARY
+  // error, and its state is the result (never the "worst" state).
+  const found = [...recipeErrors];
+  for (const l of levels) {
+    for (const d of l.errors || [l.detail]) if (STATE_TEXT.test(d)) found.push(d);
+  }
+  const errors = primaryFirst([...new Set(found)], walkErrors);
+  if (errors.length) overall = stateOf(errors[0]);
   const summary = overall === 'pass'
     ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact${nullNote}`
-    : errorTexts.join('; ') || `verification ${overall}`;
-  return { overall, summary, levels };
+    : errors.join('; ') || `verification ${overall}`;
+  return { overall, summary, errors, levels };
+}
+
+// The result state an error string carries (§14.1: "STATE: text").
+function stateOf(text) {
+  return text.startsWith('FAIL: ') ? 'fail' : text.startsWith('TEMPERROR: ') ? 'temperror' : 'permerror';
+}
+
+// Contract C9: an error's place in -07 §14 order, as a key compared
+// element by element. §14.3, §14.5, §14.6 and §14.8 (checks made per
+// signature) go lowest i= first. §14.4 goes as C4 walks it: an unexpected
+// top nd=, the envelope, then each signature S from i=1 up (S against the
+// one below it, then S's own mf= against its d=). §14.7 goes top down (a
+// lower instance is rebuilt from the one above it). Anything else
+// (syntax, missing, duplicate, Recipe errors, local limits) is §14.2, in
+// the order found.
+export function c9Key(text) {
+  const num = (re) => { const m = re.exec(text); return m ? parseInt(m[1], 10) : 0; };
+  const i = num(/\bi=(\d+)/);
+  if (/ signature (?:expired|is from the future)$/.test(text)) return [3, i];
+  if (/ unexpected nd= tag$/.test(text)) return [4, 0];
+  if (/ (?:MAIL FROM|RCPT TO) .* did not match$/.test(text)) return [4, 1];
+  if (/ nd= does not match$/.test(text)) return [4, 2, i + 1, 0];
+  if (/ does not match the rt= of i=/.test(text)) return [4, 2, i, 0];
+  if (/ MAIL FROM and d= do not match$/.test(text)) return [4, 2, i, 1];
+  if (/^TEMPERROR: | public key | has no signature with a supported algorithm/.test(text)) return [5, i];
+  if (/^FAIL: DKIM2-Signature /.test(text)) return [6, i];
+  if (/^FAIL: Message-Instance /.test(text)) return [7, -num(/\bm=(\d+)/), 0];
+  if (/ matching From is not authentic$/.test(text)) return [8, i];
+  return [2];
+}
+
+// errors sorted into C9 order (stable: ties keep the order found);
+// walkErrors maps a text to its key where the text alone does not say.
+function primaryFirst(errors, walkErrors = new Map()) {
+  const cmp = (a, b) => {
+    for (let k = 0; k < Math.max(a.length, b.length); k++) {
+      const d = (a[k] ?? 0) - (b[k] ?? 0);
+      if (d) return d;
+    }
+    return 0;
+  };
+  return errors.map((text, n) => ({ text, n, key: walkErrors.get(text) || c9Key(text) }))
+    .sort((a, b) => cmp(a.key, b.key) || a.n - b.n)
+    .map((e) => e.text);
+}
+
+// §14.2 for one DKIM2-Signature field on its own: its s= items parse
+// (§10.9 syntax), no Selector twice and no algorithm three times (§10.9),
+// and every implemented item's value is a base64string. Returns the parsed
+// items, or null after reporting the error through fail(state, text).
+function sigFieldErrors(sig, i, fail) {
+  const sigSets = parseSigSets(rawTagValue(sig.tags.find((t) => t.tag === 's')));
+  if (!sigSets) { fail('permerror', `PERMERROR: DKIM2-Signature i=${i} syntax error`); return null; }
+  const dupErrors = checkSignatureDuplicates(sigSets, i);
+  if (dupErrors.length) {
+    for (const text of dupErrors) fail('permerror', text);
+    return null;
+  }
+  // §3.5: an item naming an algorithm we do not implement is ignored
+  // entirely -- no key lookup, never verified. §10.9: every item we do
+  // implement must carry a non-empty base64 signature.
+  if (sigSets.some((ss) => SUPPORTED_ALGS.has(ss.alg) && !BASE64.test(ss.sig))) {
+    fail('permerror', `PERMERROR: DKIM2-Signature i=${i} syntax error`);
+    return null;
+  }
+  return sigSets;
 }
 
 // §14.5/§14.6: fetch the key for each sig-set of signature i and verify it,
 // recording each in level.items and any error through fail(state, text).
-async function checkCrypto(sig, i, instances, signatures, fetchKey, level, fail) {
+async function checkCrypto(sig, i, sigSets, instances, signatures, fetchKey, level, fail) {
   // Signing input = MI 1..m then DKIM2-Signature 1..i (target blanked).
   // Build `ordered` from the actual parsed Field objects so the target
   // signature matches by REFERENCE inside signingInput() (which blanks s=
@@ -562,25 +665,9 @@ async function checkCrypto(sig, i, instances, signatures, fetchKey, level, fail)
   const inputBytes = binaryToBytes(signingInput(ordered, sig.field));
   const inputHash = await sha256Bytes(inputBytes);
 
-  // §10.9 syntax: the s= value must contain sig-sets, each with a Selector
-  // and an algorithm name. An empty/malformed s= is a syntax error, distinct
-  // from a well-formed sig-set naming an unsupported algorithm.
-  const sigSets = parseSigSets(rawTagValue(sig.tags.find((t) => t.tag === 's')));
-  if (!sigSets) return fail('permerror', `PERMERROR: DKIM2-Signature i=${i} syntax error`);
-
-  // §10.9: duplicate-selector and excess-selector checks run before any DNS
-  // lookup or crypto work.
-  const dupErrors = checkSignatureDuplicates(sigSets, i);
-  if (dupErrors.length) {
-    for (const text of dupErrors) fail('permerror', text);
-    return;
-  }
-  // §3.5: an item naming an algorithm we do not implement is ignored
-  // entirely -- no key lookup, never verified. §10.9: every item we do
-  // implement must carry a non-empty base64 signature; checked for all of
-  // them before any key lookup.
+  // §3.5: only the items naming an algorithm we implement are checked
+  // (sigFieldErrors has checked their values).
   const known = sigSets.filter((ss) => SUPPORTED_ALGS.has(ss.alg));
-  if (known.some((ss) => !BASE64.test(ss.sig))) return fail('permerror', `PERMERROR: DKIM2-Signature i=${i} syntax error`);
   // No verifiable signature set: this signature cannot be trusted. §3.5 only
   // lets us IGNORE unknown algorithms alongside a known one, not accept a
   // signature we cannot check at all.
@@ -643,7 +730,9 @@ async function checkCrypto(sig, i, instances, signatures, fetchKey, level, fail)
 // opts.undoWalk selects it. body is the current body's octets (Uint8Array).
 // Returns the chain interface verifyOnce() reads:
 //  - undoBroken / undoBrokenReason: the m whose Recipe could not be undone
-//    ('invalid-json' | 'syntax-error' | 'broken'), or null;
+//    ('invalid-json' | 'syntax-error' | 'broken'), or null; undoBrokenStage:
+//    'decode' (the Recipe on its own is malformed) or 'apply' (it does not
+//    fit the message: a copy past the end);
 //  - nullBodyAt: the highest m with a null body Recipe; nullBodyInstances:
 //    every such m;
 //  - has(m): the state at m was reached; noBody(m): its body is gone;
@@ -658,6 +747,7 @@ export function undoChain(headers, body, instances, maxM) {
   let nullBodyAt = null; // highest m whose body Recipe is null (§5.2)
   let undoBroken = null; // m at which undo became impossible
   let undoBrokenReason = null; // 'invalid-json' | 'syntax-error' | 'broken'
+  let undoBrokenStage = null; // 'decode': the Recipe on its own; 'apply': against the message
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
     // §9/§12.1: r= is optional; with no Recipes the previous instance is
@@ -666,9 +756,11 @@ export function undoChain(headers, body, instances, maxM) {
     let recipe;
     try {
       recipe = decodeRecipe(mi.map.r);
+      validateRecipeSteps(recipe);
     } catch (e) {
       undoBroken = m;
       undoBrokenReason = classifyRecipeDecodeError(e);
+      undoBrokenStage = 'decode';
       break;
     }
     try {
@@ -692,12 +784,13 @@ export function undoChain(headers, body, instances, maxM) {
     } catch (e) {
       undoBroken = m;
       undoBrokenReason = classifyRecipeDecodeError(e);
+      undoBrokenStage = 'apply';
       break;
     }
   }
   const hdrBytes = {};
   return {
-    undoBroken, undoBrokenReason, nullBodyAt, nullBodyInstances,
+    undoBroken, undoBrokenReason, undoBrokenStage, nullBodyAt, nullBodyInstances,
     has: (m) => !!states[m],
     noBody: (m) => !!states[m].noBody,
     headerHash(m, alg) {
@@ -758,14 +851,14 @@ function keyErrorDetail(e, selector) {
 }
 
 // §14.4 / §7.1 item 1: the Chain of Custody errors for signature i (empty
-// when it holds). Every signature with a non-null mf= relaxed-matches its d=
-// (§7.1 item 2). Then, against the signature P below it:
+// when it holds). Against the signature P below it:
 //  - after an nd= signature, d= must be exactly P's nd= (§12.3), and nothing
 //    else is compared;
 //  - an nd= signature, or one with mf=<>, must have its d= relaxed-matched
 //    by a domain in P's rt= (rt= is Parameter1, d= Parameter2);
 //  - otherwise mf= must relaxed-match a domain in P's rt= (mf= Parameter1).
-// An nd= on the top signature is unexpected: inbound, there is no next
+// Then every signature with a non-null mf= relaxed-matches its d= (§7.1
+// item 2). An nd= on the top signature is unexpected: inbound, there is no next
 // signature to carry it (§12.3's out-of-band case is a signer's concern).
 function custodyErrors(signatures, i, maxI) {
   const S = signatures[i];
@@ -774,9 +867,6 @@ function custodyErrors(signatures, i, maxI) {
   const hasNd = 'nd' in S.map;
   if (hasNd && i === maxI) errs.push(`PERMERROR: DKIM2-Signature i=${i} unexpected nd= tag`);
   const nullMf = !hasNd && S.mf === '<>';
-  if (!hasNd && !nullMf && !relaxedMatch(addrDomain(S.mf), d)) {
-    errs.push(`PERMERROR: DKIM2-Signature i=${i} MAIL FROM and d= do not match`);
-  }
   if (i > 1) {
     const P = signatures[i - 1];
     if ('nd' in P.map) {
@@ -788,6 +878,10 @@ function custodyErrors(signatures, i, maxI) {
     } else if (!P.rts.some((r) => relaxedMatch(addrDomain(S.mf), addrDomain(r)))) {
       errs.push(`PERMERROR: DKIM2-Signature i=${i} mf= does not match the rt= of i=${i - 1}`);
     }
+  }
+  // S's own mf= against its d=, after S against P (the order C4 walks).
+  if (!hasNd && !nullMf && !relaxedMatch(addrDomain(S.mf), d)) {
+    errs.push(`PERMERROR: DKIM2-Signature i=${i} MAIL FROM and d= do not match`);
   }
   return errs;
 }

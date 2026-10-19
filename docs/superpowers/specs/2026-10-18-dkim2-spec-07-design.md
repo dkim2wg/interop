@@ -203,7 +203,29 @@ They run, or at least rank, the checks in -07 §14 section order:
 7. §14.8: From Authentic
 
 The PRIMARY error is the first one in this order. Within one section, the lowest
-i= (or m=) comes first. The result state (and the A-R result) is the primary
+i= (or m=) comes first.
+
+How "within one section" applies (fix wave, 2026-10-19; vectors in
+util/negative-vectors.sh pin each):
+- §14.3, §14.5, §14.6, §14.8 (checks made per signature): the lowest i= first.
+  Within one signature, its key errors (§14.5) come before its signature
+  verdict (§14.6). "has no signature with a supported algorithm" ranks with §14.5.
+- §14.4: in the order C4 walks: an unexpected top nd=, the envelope (MAIL FROM,
+  then RCPT TO), then each signature S from i=1 up, S against the signature
+  below it before S's own mf= against its d=.
+- §14.7: top down. A lower instance is rebuilt from the one above it, so the
+  highest instance that fails is primary (a Subject changed after signing a
+  two-instance chain is `m=2 ... mismatch`, though m=1 mismatches too).
+- §14.2 includes every Recipe on its own, checked for every instance (highest
+  m= first) whether or not the chain walk reaches it: its base64, its JSON, the
+  §5 schema, and the "c" ranges ascending without overlap. A Recipe that keeps
+  all of that but does not fit the message (a "c" range past the last line or
+  field) can only be found by applying it, so it is the chain walk's: it ranks
+  in §14.7, after the hash check of its own instance, with the same
+  "contains invalid JSON" text. Otherwise §14.2 errors keep the order each
+  implementation reads the fields in (no vector has two §14.2 faults).
+- Every signature is checked whether or not the chain walk reaches the
+  instance it covers. The result state (and the A-R result) is the primary
 error's state. A verifier may list later errors after the primary one, but they
 never change the state, and the primary error is the first `STATE: text` line
 the CLI prints. A From tampered on a signed message is therefore

@@ -95,6 +95,12 @@ type VerifyResult struct {
 	Sequence int
 	Domain   string
 	Error    error // nil = pass
+
+	// section is the -07 §14 section Error ranks in (contract C9), when its
+	// text alone does not say: a Recipe that does not fit the message is
+	// found by the §14.7 chain walk and ranks there, though its string is
+	// §14.2's.  0: rank by the text (c9Section).
+	section int
 }
 
 // VerifyOptions carries optional envelope values for the §14.4 exact-match check.

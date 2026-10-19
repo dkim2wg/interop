@@ -253,7 +253,10 @@ isnt($rc4, 0, 'missing --selector is an error');
         my $v2 = Mail::DKIM2::Verifier->new;
         $v2->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
         $v2->PRINT($changed); $v2->CLOSE;
-        is($v2->result, 'fail', 'gate: changing the nd= domain does break i=1');
+        # The custody check (section 14.4) now names it before the broken
+        # i=1 signature (section 14.6) would: contract C9's order.
+        is($v2->details, 'PERMERROR: DKIM2-Signature i=1 nd= does not match',
+            'gate: changing the nd= domain does break the chain');
     }
     ($out, $rc) = $run->($nd_top->('TEST2.dkim2.com'));
     is($rc, 0, 'gate: nd= match is case-insensitive');

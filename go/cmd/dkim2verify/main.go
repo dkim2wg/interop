@@ -46,6 +46,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Contract C9: the primary error is the first "STATE: text" line.
+	if p := dkim2.PrimaryResult(results); p != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", p.Error)
+	}
 	allPass := true
 	for _, r := range results {
 		if r.Error != nil {

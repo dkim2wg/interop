@@ -95,10 +95,9 @@ func TestBareMFFailsVerify(t *testing.T) {
 	bad := strings.Replace(signed,
 		base64.StdEncoding.EncodeToString([]byte("<sender@test1.dkim2.com>")),
 		base64.StdEncoding.EncodeToString([]byte("sender@test1.dkim2.com")), 1)
-	res, _ := Verify(strings.NewReader(bad), testFetcher(t), VerifyOptions{SkipTimestampCheck: true})
-	if len(res) == 0 || res[len(res)-1].Error == nil ||
-		res[len(res)-1].Error.Error() != "PERMERROR: DKIM2-Signature i=1 syntax error" {
-		t.Fatalf("expected the unbracketed mf= syntax error, got %+v", res)
+	_, err := Verify(strings.NewReader(bad), testFetcher(t), VerifyOptions{SkipTimestampCheck: true})
+	if err == nil || err.Error() != "PERMERROR: DKIM2-Signature i=1 syntax error" {
+		t.Fatalf("expected the unbracketed mf= syntax error, got %v", err)
 	}
 }
 
@@ -108,10 +107,9 @@ func TestBareRTFailsVerify(t *testing.T) {
 	bad := strings.Replace(signed,
 		base64.StdEncoding.EncodeToString([]byte("<rcpt@test2.dkim2.com>")),
 		base64.StdEncoding.EncodeToString([]byte("rcpt@test2.dkim2.com")), 1)
-	res, _ := Verify(strings.NewReader(bad), testFetcher(t), VerifyOptions{SkipTimestampCheck: true})
-	if len(res) == 0 || res[len(res)-1].Error == nil ||
-		res[len(res)-1].Error.Error() != "PERMERROR: DKIM2-Signature i=1 syntax error" {
-		t.Fatalf("expected the unbracketed rt= syntax error, got %+v", res)
+	_, err := Verify(strings.NewReader(bad), testFetcher(t), VerifyOptions{SkipTimestampCheck: true})
+	if err == nil || err.Error() != "PERMERROR: DKIM2-Signature i=1 syntax error" {
+		t.Fatalf("expected the unbracketed rt= syntax error, got %v", err)
 	}
 }
 

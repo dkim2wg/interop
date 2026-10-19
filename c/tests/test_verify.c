@@ -373,15 +373,28 @@ int main(void) {
         assert(s1 != NULL && s2 != NULL);
         s1->next = s2;
 
+        /* Instances m=1 and m=2 and no timestamp check: the §14.2 and
+           §14.3 checks, which come first (contract C9), pass. */
+        static const char H[] = "h=sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:"
+                                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        char mv[160];
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
         vctx.sig_list = s1;
+        vctx.skip_timestamp_check = 1;
+        snprintf(mv, sizeof mv, "m=1; %s", H);
+        vctx.mi_list = dkim2_mi_parse(mv);
+        snprintf(mv, sizeof mv, "m=2; %s", H);
+        assert(vctx.mi_list != NULL);
+        vctx.mi_list->next = dkim2_mi_parse(mv);
+        assert(vctx.mi_list->next != NULL);
 
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);
         assert(res.status == DKIM2_PERMERROR);
         assert(strstr(res.message, "unexpected nd= tag") != NULL);
 
+        dkim2_mi_free(vctx.mi_list);
         dkim2_sig_free(vctx.sig_list);
     }
 

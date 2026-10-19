@@ -271,6 +271,9 @@ def test_a1_from_authentic():
         _fails_with(_hop1(frm, skip_from_check=True), not_auth)
     two_froms = message(extra=b"From: a@example.com\r\n")
     _fails_with(_hop1(raw=two_froms, skip_from_check=True), not_auth)
+    # Display text with no angle brackets is not one mailbox (final review
+    # T3): all five implementations agree.
+    _fails_with(_hop1("A a@example.com", skip_from_check=True), not_auth)
 
 
 def _list_rewrites_from(new_from: bytes):
@@ -373,6 +376,57 @@ def test_hash_and_signature_failures():
 def test_unsigned_mi():
     msg = add_mi(_hop1(), lambda h, b: (h, b + b"footer\r\n"))
     _fails_with(msg, "PERMERROR: Message-Instance m=2 is not signed")
+
+
+# --- C9: the primary error is the first in -07 §14 section order --------------------
+
+def _corrupt_sig(msg: bytes, i: int = 1) -> bytes:
+    """DKIM2-Signature i=<i>'s first signature value with one base64
+    character changed mid-value: still well-formed, no longer valid."""
+    head, sep, body = msg.partition(b"\r\n\r\n")
+    start = head.index(b"DKIM2-Signature: i=%d;" % i)
+    at = head.index(b"-sha256:", start) + len(b"-sha256:") + 10
+    c = b"B" if head[at:at + 1] == b"A" else b"A"
+    return head[:at] + c + head[at + 1:] + sep + body
+
+
+def test_c9_tampered_from_is_the_hash_fail():
+    # §14.7 before §14.8: a From changed after signing is a hash FAIL.
+    msg = _hop1().replace(b"From: A <a@example.com>", b"From: a@evil.example")
+    _fails_with(msg, "FAIL: Message-Instance m=1 header hash sha256 mismatch",
+                status="fail")
+
+
+def test_c9_expired_before_custody():
+    msg = _hop1(mailfrom="a@example.net", timestamp=int(time.time()) - 15 * 86400)
+    _fails_with(msg, "PERMERROR: DKIM2-Signature i=1 signature expired",
+                skip_timestamp_check=False)
+
+
+def test_c9_expired_before_unexpected_nd():
+    msg = _hop1(next_domain="fwd.example.net",
+                timestamp=int(time.time()) - 15 * 86400)
+    _fails_with(msg, "PERMERROR: DKIM2-Signature i=1 signature expired",
+                skip_timestamp_check=False)
+
+
+def test_c9_custody_before_signature():
+    msg = _corrupt_sig(_hop1(mailfrom="a@example.net"))
+    _fails_with(msg, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match")
+
+
+def test_c9_signature_before_hash():
+    msg = _corrupt_sig(_hop1()).replace(b"Subject: hello", b"Subject: hullo")
+    _fails_with(msg, "FAIL: DKIM2-Signature i=1 selector sel incorrect signature",
+                status="fail")
+
+
+def test_c9_lowest_i_first_within_a_section():
+    # Both signatures fail §14.6: i=1's is the primary error, though the
+    # chain walk reaches i=2 first.
+    msg = _corrupt_sig(_corrupt_sig(_to_list(_hop1()), 2), 1)
+    _fails_with(msg, "FAIL: DKIM2-Signature i=1 selector sel incorrect signature",
+                status="fail")
 
 
 # --- D: DSNs -----------------------------------------------------------------------

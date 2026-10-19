@@ -231,8 +231,10 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
         'A1: a folded From with an RFC 2047 display name');
     is_pass(add_sig(add_mi(message(from => '"Smith, A" <a@example.com> (comment, here)')), %HOP1),
         'A1: commas inside a quoted name and a comment');
+    # The last: display text with no angle brackets is not one mailbox
+    # (final review T3); all five implementations agree.
     for my $from ('a@example.com, b@example.com', 'a@[192.0.2.1]', 'group: a@example.com;',
-                  '"A" <a@example.com>, <b@example.com>') {
+                  '"A" <a@example.com>, <b@example.com>', 'A a@example.com') {
         is_error(add_sig(add_mi(message(from => $from)), %HOP1), 'permerror',
             'PERMERROR: DKIM2-Signature i=1 matching From is not authentic', "A1: From: $from");
     }
@@ -386,6 +388,33 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     $s = Mail::DKIM2::Signer->new(Domain => 'other.net', %list, MailFrom => 'f@other.net');
     $s->load($HOP1_TEXT);
     is($s->result, 'signed', 'signer: forwarding without a From change needs no From match');
+}
+
+# --- C9: the primary error is the first in -07 section 14 order ------------------------
+{
+    # DKIM2-Signature i=$i's signature value with one base64 character
+    # changed mid-value: still well-formed, no longer valid.
+    my $corrupt = sub {
+        my ($text, $i) = @_;
+        $text =~ s{(DKIM2-Signature:\s*i=$i;.*?sel1:rsa-sha256:\s*.{10})(.)}
+                  {$1 . ($2 eq 'A' ? 'B' : 'A')}se or die "no i=$i";
+        return $text;
+    };
+    (my $from = $HOP1_TEXT) =~ s/^From: .*$/From: a\@evil.example/m or die;
+    is_error($from, 'fail', 'FAIL: Message-Instance m=1 header hash sha256 mismatch',
+        'C9: From changed after signing (14.7 before 14.8)');
+    is_error(add_sig(add_mi(message()), %HOP1, mf => '<a@example.net>', t => time - 15 * 86400),
+        'permerror', 'PERMERROR: DKIM2-Signature i=1 signature expired',
+        'C9: expired and custody (14.3 before 14.4)');
+    is_error(add_sig(add_mi(message()), d => 'example.com', nd => 'fwd.example.net', t => time - 15 * 86400),
+        'permerror', 'PERMERROR: DKIM2-Signature i=1 signature expired',
+        'C9: expired and a top nd= (14.3 before 14.4)');
+    is_error($corrupt->(add_sig(add_mi(message()), %HOP1, mf => '<a@example.net>'), 1),
+        'permerror', 'PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match',
+        'C9: custody and a bad signature (14.4 before 14.6)');
+    (my $subj = $corrupt->($HOP1_TEXT, 1)) =~ s/^Subject: .*$/Subject: tampered/m or die;
+    is_error($subj, 'fail', 'FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature',
+        'C9: a bad signature and a header hash (14.6 before 14.7)');
 }
 
 done_testing;

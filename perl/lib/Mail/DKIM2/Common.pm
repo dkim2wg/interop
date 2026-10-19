@@ -704,7 +704,8 @@ sub to_alabel {
 # field or more than one, a field that is not exactly one mailbox (a list
 # of them, a group), no "@", or a domain literal. Lenient otherwise: the
 # display name, quoted or RFC 2047 encoded, and comments are skipped; the
-# mailbox is "Name <addr>" or a bare addr-spec.
+# mailbox is "Name <addr>" or a bare addr-spec ("Name addr", display text
+# with no angle brackets, is not one).
 sub from_domain {
     my (@values) = @_;
     return undef unless @values == 1 && defined $values[0];
@@ -726,7 +727,7 @@ sub from_domain {
             elsif ($c eq ')')  { $depth-- }
             next;
         }
-        if ($c eq '(') { $depth = 1; next }
+        if ($c eq '(') { $depth = 1; $out .= ' '; next }
         if ($c eq '"') { $inq = 1; $out .= $c; next }
         push @lt, length $out if $c eq '<';
         push @gt, length $out if $c eq '>';
@@ -743,6 +744,9 @@ sub from_domain {
         $addr = substr($out, $lt[0] + 1, $gt[0] - $lt[0] - 1);
     }
     $addr =~ s/\A\s+|\s+\z//g;
+    # White space (or a comment) between two parts of the address: "Name
+    # a@b", display text with no angle brackets, is not one mailbox.
+    return undef if ($addr =~ s/"(?:[^"\\]|\\.)*"/""/gr) =~ /\s/;
     return undef unless index($addr, '@') > 0;
     my ($dom, $literal) = domain_of($addr);
     return undef if !$dom || $literal || $dom =~ /\s/;
