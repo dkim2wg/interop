@@ -146,6 +146,12 @@ sub add {
         $self->{carry} .= $_[0];
         return;
     }
+    # The whole lines, read where they are when nothing is carried over and
+    # the piece ends at a line end (a whole body does): copied otherwise.
+    if (!length $self->{carry} && $nl == length($_[0]) - 1) {
+        $self->_block(\$_[0]);
+        return;
+    }
     my $block = $self->{carry} . substr($_[0], 0, $nl + 1);
     $self->{carry} = substr($_[0], $nl + 1);
     $self->_block(\$block);
@@ -153,11 +159,13 @@ sub add {
 
 # A run of whole lines, each ending in a LF. Hashed as CRLF lines: a bare LF
 # ends a line like a CRLF does, as in the Recipes' line numbering.
+# The block may be the caller's own string: it is never changed in place.
 sub _block {
     my ($self, $bref) = @_;
     if ($$bref =~ /(?<!\r)\n/) {
-        $$bref =~ s/\r\n/\n/g;
-        $$bref =~ s/\n/\r\n/g;
+        (my $copy = $$bref) =~ s/\r\n/\n/g;
+        $copy =~ s/\n/\r\n/g;
+        $bref = \$copy;
     }
     my $first = $self->{line};
     my $last  = $first + ($$bref =~ tr/\n//) - 1;
@@ -212,29 +220,30 @@ sub _block {
             if ($type) {
                 _literal($g, $self->{literals}[$_]) for $s .. $e;
             } else {
-                _span($g, substr($$bref, $off{$s}, $off{$e + 1} - $off{$s}), $e - $s + 1);
+                _span($g, $bref, $off{$s}, $off{$e + 1}, $e - $s + 1);
             }
         }
     }
 }
 
-# $n whole CRLF lines into $g. Blank lines are held back until a non-blank
-# line follows them (trailing blank lines are not hashed, spec-06 §6.1).
+# The $n whole CRLF lines of $$bref from $from to $to into $g, in one piece.
+# Blank lines are held back until a non-blank line follows them (trailing
+# blank lines are not hashed, spec-06 §6.1): those at the end of the run are
+# found by looking back from its end, and counted, not hashed.
 sub _span {
-    my ($g, $span, $n) = @_;
-    my $len = length $span;
+    my ($g, $bref, $from, $to, $n) = @_;
     $g->{lines} += $n;
-    if ($len == 2 * $n) {
+    if ($to - $from == 2 * $n) {
         $g->{pending} += $n;
         return;
     }
-    my ($end, $blank) = ($len, 0);
-    while ($end >= 4 && substr($span, $end - 4, 4) eq "\r\n\r\n") {
+    my ($end, $blank) = ($to, 0);
+    while ($end - $from >= 4 && substr($$bref, $end - 4, 4) eq "\r\n\r\n") {
         $end -= 2;
         $blank++;
     }
-    _emit($g, $g->{pending} ? ("\r\n" x $g->{pending}) . substr($span, 0, $end)
-                            : substr($span, 0, $end));
+    _emit($g, "\r\n" x $g->{pending}) if $g->{pending};
+    _emit($g, substr($$bref, $from, $end - $from));
     $g->{pending} = $blank;
 }
 
