@@ -36,6 +36,11 @@ struct dkim2_prefetch {
     int n;
 };
 
+/* Lookup threads still running, for dkim2_prefetch_drain(). */
+static pthread_mutex_t live_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t live_cv = PTHREAD_COND_INITIALIZER;
+static int live;
+
 static void entry_release(pf_entry_t *e) {
     pthread_mutex_lock(&e->mu);
     int last = --e->refs == 0;
@@ -82,7 +87,16 @@ static void *lookup_thread(void *arg) {
     pthread_mutex_unlock(&e->mu);
     free(ans);
     entry_release(e);
+    pthread_mutex_lock(&live_mu);
+    if (--live == 0) pthread_cond_broadcast(&live_cv);
+    pthread_mutex_unlock(&live_mu);
     return NULL;
+}
+
+void dkim2_prefetch_drain(void) {
+    pthread_mutex_lock(&live_mu);
+    while (live > 0) pthread_cond_wait(&live_cv, &live_mu);
+    pthread_mutex_unlock(&live_mu);
 }
 
 static int known_alg(const char *alg) {
@@ -116,8 +130,16 @@ static int add_name(dkim2_prefetch_t *pf, const char *qname) {
     int rc = pthread_attr_init(&at);
     if (rc == 0) {
         pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+        pthread_mutex_lock(&live_mu);
+        live++;
+        pthread_mutex_unlock(&live_mu);
         rc = pthread_create(&tid, &at, lookup_thread, e);
         pthread_attr_destroy(&at);
+        if (rc != 0) {
+            pthread_mutex_lock(&live_mu);
+            live--;
+            pthread_mutex_unlock(&live_mu);
+        }
     }
     if (rc != 0) {                      /* no thread: the lookup is synchronous */
         e->given_up = 1;

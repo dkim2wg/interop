@@ -112,7 +112,14 @@ static int sync_fake(const char *qname, unsigned char *ans, int anslen) {
     return wire(qname, t, ans, anslen);
 }
 
+/* Each case starts once the lookups of the one before have all finished:
+   a case that stops at its first bad key leaves the others to run on, and
+   they would be counted here. */
+static void release(void);
+
 static void reset(int pf_mode, const char *only, int sync_mode) {
+    release();
+    dkim2_prefetch_drain();
     pthread_mutex_lock(&g_mu);
     g_pf_mode = pf_mode; g_pf_only = only; g_sync_mode = sync_mode;
     g_pf_calls = g_sync_calls = 0;

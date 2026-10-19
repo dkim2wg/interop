@@ -40,3 +40,8 @@ dkim2_pubkey_t *dkim2_prefetch_getkey(dkim2_prefetch_t *pf, const char *selector
 
 /* Lookups still running are left to finish on their own. */
 void dkim2_prefetch_free(dkim2_prefetch_t *pf);
+
+/* Wait until every lookup thread has finished, those left to finish after
+   their verification gave up on them included: for an orderly shutdown, and
+   for tests that count lookups. */
+void dkim2_prefetch_drain(void);
