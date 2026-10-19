@@ -1,6 +1,6 @@
 # DKIM2 Message-Instance support for GNU Mailman 3
 
-Three patches (plus two small upstream fixes 3.3.10 needs on Python 3.13,
+Four patches (plus two small upstream fixes 3.3.10 needs on Python 3.13,
 see below) that make Mailman record, in a `Message-Instance` header, what
 it changed about each message it redistributes, so a DKIM2 verifier
 downstream can undo the list's changes and check the signatures of earlier
@@ -29,7 +29,7 @@ revision the migration follows, and the upstream code around the few lines
 added to `decorate.py`, `mime_delete.py` and `dmarc.py`). The design is described in
 `DKIM2-MESSAGE-INSTANCE.md`, which the Message-Instance patch adds.
 
-`patches-3.3.10/` carries five patches. The first two are upstream commits
+`patches-3.3.10/` carries six patches. The first two are upstream commits
 that 3.3.10 needs to run on Python 3.13 at all (the default on Debian 13 and
 Ubuntu 25.04+) and that have not been in a release yet: the `nntplib`
 requirement becomes `standard-nntplib`, without which `pip install` cannot
@@ -37,7 +37,7 @@ resolve 3.3.10 on 3.13, and the template loader stops using a `pathlib`
 path as a context manager, without which every template lookup (and so
 every decoration) raises a TypeError on 3.13. On Python 3.12 and earlier
 they change nothing and can be skipped. The DKIM2 patches are the last
-three. `patches-3.3.8/` and `patches-master/` are these three patches alone: 3.3.8 is only
+four. `patches-3.3.8/` and `patches-master/` are these four patches alone: 3.3.8 is only
 shipped with Python 3.11 and 3.12, where it needs no such fixes.
 
 ## The patches
@@ -79,6 +79,16 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
 3. **Add a per-list `dkim2_message_instance` flag.** A boolean list
    attribute (default on) exposed through the REST list configuration
    resource, with its Alembic migration, so individual lists can opt out.
+4. **DKIM2: draft -07 ("u" step, exploded hint, From rewrite).** Recipe
+   literals that are not valid UTF-8 go in a `"u"` step (base64 of the
+   octets) and valid UTF-8 in `"d"`, replacing the earlier `"b"` step;
+   JSON keys that are equal ignoring case are rejected as duplicates.
+   Every distribution copy gets `X-DKIM2-Exploded: yes`, which the
+   signing milter turns into the `exploded` flag and deletes. On a list
+   with Message-Instance enabled, From becomes the list's posting address
+   (as the `munge_from` DMARC mitigation does it) whenever the post
+   arrived without a `DKIM2-Signature` or the list changes it, so From
+   stays Authentic for the list's signing domain (draft -07 §11).
 
 ## What they apply to
 
@@ -119,7 +129,7 @@ git -c user.name=ops -c user.email=ops@example.org am /path/to/interop/mailman/p
 /opt/mailman/venv/bin/pip install .
 ```
 
-Either way you stay on your release plus these three changes, so your
+Either way you stay on your release plus these four changes, so your
 Postorius and HyperKitty keep working. (If you run Mailman master, use
 branch `dkim2` or `patches-master/` the same way.)
 
