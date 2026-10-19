@@ -29,7 +29,7 @@ func TestWholeFieldF1_TagLists(t *testing.T) {
 	sigLine, miLine, rest := strictSigned(t, 1740000000)
 	tmpl := withS(t, sigLine, "sel1:rsa-sha256:{SIG}")
 	const sigErr = "PERMERROR DKIM2-Signature i=1 syntax error"
-	const miErr = "PERMERROR Message-Instance m=1 syntax error"
+	const miErr = "PERMERROR: Message-Instance m=1 syntax error"
 	cases := []struct {
 		name, extra, want string
 	}{
@@ -111,7 +111,7 @@ func TestWholeFieldF3_HashSets(t *testing.T) {
 	hval := miLine[strings.Index(miLine, "h=")+2 : len(miLine)-1] // sha256:H:B
 	parts := strings.Split(hval, ":")
 	hh, bh := parts[1], parts[2]
-	const miErr = "PERMERROR Message-Instance m=1 syntax error"
+	const miErr = "PERMERROR: Message-Instance m=1 syntax error"
 	cases := []struct {
 		name, h, want string
 	}{

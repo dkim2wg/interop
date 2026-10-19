@@ -7,11 +7,10 @@ import (
 	"testing"
 )
 
-// Tests for the agreed extension to spec-06 §5: "b" (base64 octet) literal
-// steps, and the verifier actually enforcing the "c" range rules (two
-// integers, 1 <= start <= end <= item count, ascending and non-overlapping
-// across the list) as "PERMERROR Message-Instance m=<N> has a malformed
-// Recipe".
+// Tests for the -07 §5 "u" (base64 octet) literal steps, and the verifier
+// actually enforcing the "c" range rules (two integers, 1 <= start <= end <=
+// item count, ascending and non-overlapping across the list) as
+// "PERMERROR: Message-Instance m=<N> contains invalid JSON".
 
 const (
 	bytesTestHop1Key = "sel1._domainkey.test1.dkim2.com.pem"
@@ -118,7 +117,7 @@ func verifyFullError(t *testing.T, msg []byte) string {
 func TestRecipeBytesRoundTripVerifies(t *testing.T) {
 	hop1, hop2 := twoHopWithRecipe(t, bytesTestOriginal, "changed subject", "changed line", nil)
 
-	// The m=2 recipe must carry the two 8-bit literals as "b" items.
+	// The m=2 recipe must carry the two 8-bit literals as "u" items.
 	mi2 := logicalHeaders(string(hop2), "Message-Instance")[0]
 	mi, err := parseMI(mi2)
 	if err != nil {
@@ -131,7 +130,7 @@ func TestRecipeBytesRoundTripVerifies(t *testing.T) {
 	wantLine := base64.StdEncoding.EncodeToString([]byte("\xb1\xa4 world"))
 	subj := mi.Recipe.Headers["subject"]
 	if len(subj) != 1 || subj[0].Data != nil || len(subj[0].Bytes) != 1 || subj[0].Bytes[0] != wantSubj {
-		t.Errorf("subject recipe: want one b step [%s], got %+v", wantSubj, subj)
+		t.Errorf("subject recipe: want one u step [%s], got %+v", wantSubj, subj)
 	}
 	var sawLine bool
 	for _, s := range mi.Recipe.Body {
@@ -143,12 +142,12 @@ func TestRecipeBytesRoundTripVerifies(t *testing.T) {
 		}
 	}
 	if !sawLine {
-		t.Errorf("body recipe: want a b step [%s], got %+v", wantLine, mi.Recipe.Body)
+		t.Errorf("body recipe: want a u step [%s], got %+v", wantLine, mi.Recipe.Body)
 	}
 
 	// Through the real entry point (Verify + Undo-based chain validation).
 	if got := verifyFullError(t, hop2); got != "" {
-		t.Fatalf("two-hop message with b-step recipe failed: %s", got)
+		t.Fatalf("two-hop message with u-step recipe failed: %s", got)
 	}
 
 	// And the undone m=1 is byte-for-byte the first hop: the decoded octets
@@ -186,23 +185,23 @@ func TestVerifyRejectsMalformedRecipe(t *testing.T) {
 		{"empty step", `{"b":[{}]}`},
 		{"empty d", `{"b":[{"d":[]}]}`},
 		{"d not strings", `{"b":[{"d":[1]}]}`},
-		{"invalid base64 in b", `{"b":[{"b":["!!!!"]}]}`},
-		{"unpadded base64 in b", `{"b":[{"b":["YQ"]}]}`},
-		{"whitespace inside base64", `{"b":[{"b":["YQ ==" ]}]}`},
+		{"invalid base64 in u", `{"b":[{"u":["!!!!"]}]}`},
+		{"unpadded base64 in u", `{"b":[{"u":["YQ"]}]}`},
+		{"whitespace inside base64", `{"b":[{"u":["YQ ==" ]}]}`},
 		{"CR inside d", `{"b":[{"d":["a\rb"]}]}`},
 		{"LF inside d", `{"b":[{"d":["a\nb"]}]}`},
 		{"CRLF inside d, second item", `{"b":[{"d":["ok","a\r\nb"]}]}`},
 		{"CR inside header d", `{"h":{"subject":[{"d":["a\rb"]}]}}`},
 		{"LF inside header d", `{"h":{"subject":[{"d":["a\nb"]}]}}`},
-		{"CR inside decoded b", `{"b":[{"b":["` + base64.StdEncoding.EncodeToString([]byte("a\rb")) + `"]}]}`},
-		{"LF inside decoded b", `{"b":[{"b":["` + base64.StdEncoding.EncodeToString([]byte("a\nb")) + `"]}]}`},
+		{"CR inside decoded u", `{"b":[{"u":["` + base64.StdEncoding.EncodeToString([]byte("a\rb")) + `"]}]}`},
+		{"LF inside decoded u", `{"b":[{"u":["` + base64.StdEncoding.EncodeToString([]byte("a\nb")) + `"]}]}`},
 		{"descending header c ranges", `{"h":{"subject":[{"c":[2,2]},{"c":[1,1]}]}}`},
 		{"header start 0", `{"h":{"subject":[{"c":[0,0]}]}}`},
-		{"header invalid base64", `{"h":{"subject":[{"b":["*"]}]}}`},
+		{"header invalid base64", `{"h":{"subject":[{"u":["*"]}]}}`},
 	}
 
 	msg := string(buildSignedMsg(t))
-	want := "PERMERROR Message-Instance m=1 has a malformed Recipe"
+	want := "PERMERROR: Message-Instance m=1 contains invalid JSON"
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := base64.StdEncoding.EncodeToString([]byte(tc.json))
@@ -236,10 +235,10 @@ func TestMalformedRecipeStaysDistinctFromInvalidJSON(t *testing.T) {
 		return strings.Replace(msg, "Message-Instance: m=1; ", "Message-Instance: m=1; r="+r+"; ", 1)
 	}
 	_, err := Verify(strings.NewReader(inject(`{"h":5}`)), f, VerifyOptions{SkipTimestampCheck: true})
-	if err == nil || err.Error() != "PERMERROR Message-Instance m=1 contains invalid JSON" {
+	if err == nil || err.Error() != "PERMERROR: Message-Instance m=1 contains invalid JSON" {
 		t.Errorf(`{"h":5}: got %v, want the invalid-JSON PERMERROR`, err)
 	}
-	if _, err := parseRecipe([]byte(`{"h":{"subject":[{"c":[1,2]},{"b":["YQ=="]},{"c":[3,3]}]},"b":[{"d":["x"]},{"c":[1,1]}]}`)); err != nil {
+	if _, err := parseRecipe([]byte(`{"h":{"subject":[{"c":[1,2]},{"u":["YQ=="]},{"c":[3,3]}]},"b":[{"d":["x"]},{"c":[1,1]}]}`)); err != nil {
 		t.Errorf("well-formed recipe rejected: %v", err)
 	}
 }
@@ -259,7 +258,7 @@ func TestVerifyFullRejectsCopyBeyondCount(t *testing.T) {
 		{"body end beyond line count", &Recipe{Body: []RecipeStep{{Copy: &c1_99}}}},
 		{"header end beyond instance count", &Recipe{Headers: map[string][]RecipeStep{"subject": {{Copy: &c1_2}}}}},
 	}
-	want := "PERMERROR Message-Instance m=2 has a malformed Recipe"
+	want := "PERMERROR: Message-Instance m=2 contains invalid JSON"
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, hop2 := twoHopWithRecipe(t, bytesTestOriginal, "changed subject", "changed line", tc.recipe)
@@ -270,7 +269,7 @@ func TestVerifyFullRejectsCopyBeyondCount(t *testing.T) {
 	}
 }
 
-// Generation: 8-bit literals come out as "b", ASCII as "d", runs coalesce
+// Generation: non-UTF-8 literals come out as "u", UTF-8 as "d", runs coalesce
 // per kind and a mixed run alternates.
 func TestComputeDiffEmits8BitLiteralsAsBytes(t *testing.T) {
 	before := []byte("ascii one\r\nascii two\r\ncaf\xe9\r\n\xb1\xa4\r\nascii three\r\nkept\r\n")
@@ -299,7 +298,7 @@ func TestComputeDiffEmits8BitLiteralsAsBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(enc, []byte("�")) || !bytes.Contains(enc, []byte(`"b":["`+b64("caf\xe9")+`"`)) {
+	if bytes.Contains(enc, []byte("�")) || !bytes.Contains(enc, []byte(`"u":["`+b64("caf\xe9")+`"`)) {
 		t.Errorf("encoded recipe lost the octets: %s", enc)
 	}
 	// And it round-trips through our own apply code to the exact bytes.
@@ -315,7 +314,7 @@ func TestComputeDiffEmits8BitLiteralsAsBytes(t *testing.T) {
 		t.Errorf("round trip: got %q, want %q", got, before)
 	}
 
-	// Header side: a Latin-1 value is a "b" step, an ASCII one a "d" step.
+	// Header side: a Latin-1 value is a "u" step, a UTF-8 one a "d" step.
 	hb := []Header{{Name: "Subject", Value: "caf\xe9", Raw: "Subject: caf\xe9\r\n"},
 		{Name: "X-Note", Value: "x", Raw: "X-Note: x\r\n"},
 		{Name: "Comments", Value: "plain", Raw: "Comments: plain\r\n"}}
@@ -326,7 +325,7 @@ func TestComputeDiffEmits8BitLiteralsAsBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s := r.Headers["subject"]; len(s) != 1 || s[0].Data != nil || len(s[0].Bytes) != 1 || s[0].Bytes[0] != b64("caf\xe9") {
-		t.Errorf("subject: want b step, got %+v", s)
+		t.Errorf("subject: want u step, got %+v", s)
 	}
 	if s := r.Headers["comments"]; len(s) != 1 || len(s[0].Data) != 1 || s[0].Data[0] != "plain" || s[0].Bytes != nil {
 		t.Errorf("comments: want d step, got %+v", s)

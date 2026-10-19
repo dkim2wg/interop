@@ -3,8 +3,6 @@ package dkim2
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -189,27 +187,27 @@ func parseMI(raw string) (*MessageInstance, error) {
 	// §7: tag names are case insignificant and each kind appears once;
 	// "h=..; H=.." or "m=1; M=1" is a syntax error, never first/last-wins.
 	if tvl.duplicate != "" {
-		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d syntax error", m)
 	}
 
 	// §7: a fragment that is not a well-formed tag=value, or an h= that is
 	// not a list of whole hash-sets (§7.3), is a syntax error.
 	if tvl.syntaxErr {
-		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d syntax error", m)
 	}
 	if !tvl.has("h") {
 		return nil, fmt.Errorf("invalid h= tag: %q", "")
 	}
 	hashes, err := parseHashSets(tvl.get("h"))
 	if err != nil {
-		return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d syntax error", m)
 	}
 
 	// spec-06 §7.3: an algorithm MUST NOT be present more than once.
 	seen := map[string]bool{}
 	for _, hs := range hashes {
 		if seen[hs.Alg] {
-			return nil, fmt.Errorf("PERMERROR Message-Instance m=%d has a duplicate hash algorithm", m)
+			return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d has a duplicate hash algorithm", m)
 		}
 		seen[hs.Alg] = true
 	}
@@ -222,30 +220,18 @@ func parseMI(raw string) (*MessageInstance, error) {
 			// §11.2: a bad base64 r= value is a syntax error -- distinct
 			// from, and reported before, a post-decode JSON parse failure
 			// (below): the payload never even reached JSON parsing.
-			return nil, fmt.Errorf("PERMERROR Message-Instance m=%d syntax error", m)
+			return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d syntax error", m)
 		}
 		recipe, err := parseRecipe(rJSON)
 		if err != nil {
-			// spec-06 §11.2: "errors in a JSON object specifying Recipes
-			// should be called out specifically" -- a malformed r= payload
-			// is reported distinctly from a generic syntax error. This
-			// covers actual JSON syntax/type errors; other parseRecipe
-			// failures (e.g. the §5.1 null-header-Recipe rejection) already
-			// carry their own specific message and are left as-is.
-			//
-			// Well-formed JSON whose steps break the §5 rules (see
-			// errMalformedRecipe) is the agreed "has a malformed Recipe"
-			// PERMERROR instead; validateRecipeSteps at parse time catches
-			// everything but the item-count checks, which Undo applies.
-			if errors.Is(err, errMalformedRecipe) {
-				return nil, &malformedRecipeError{m: m}
-			}
-			var syntaxErr *json.SyntaxError
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) || errors.Is(err, errDuplicateJSONKey) {
-				return nil, fmt.Errorf("PERMERROR Message-Instance m=%d contains invalid JSON", m)
-			}
-			return nil, fmt.Errorf("invalid recipe JSON: %w", err)
+			// §14.2: "errors in a JSON object specifying Recipes SHOULD be
+			// called out specifically" -- a bad r= payload is reported
+			// distinctly from a generic syntax error.  JSON syntax and type
+			// errors, duplicate keys, and breaches of the §5 schema and
+			// step rules are all "contains invalid JSON"; validateRecipeSteps
+			// at parse time catches everything but the item-count checks,
+			// which the chain walk applies (with the same error).
+			return nil, &malformedRecipeError{m: m}
 		}
 		mi.Recipe = recipe
 	}

@@ -6,24 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
-// RecipeStep is one step in a body or header Recipe. Exactly one of the
-// three fields is set:
+// RecipeStep is one step in a body or header Recipe (§5.1, §5.2). Exactly
+// one of the three fields is set:
 //
 //   - Copy  {"c": [start, end]}: copy current items start..end inclusive.
 //   - Data  {"d": [str, ...]}:   literal lines/values as UTF-8 JSON text.
-//   - Bytes {"b": [b64, ...]}:   literal lines/values whose raw octets are
-//     base64 (RFC 4648 §4) inside the JSON string, for values that JSON text
-//     cannot carry (Latin-1, EUC-KR, any non-UTF-8 octets). Applied exactly
-//     like "d" after decoding. Agreed extension to spec-06 §5 (proposed to
-//     the WG).
+//   - Bytes {"u": [b64, ...]}:   literal lines/values whose raw octets are
+//     canonical base64 inside the JSON string, for values that are not valid
+//     UTF-8 (Latin-1, EUC-KR, ...). Applied exactly like "d" after decoding.
 type RecipeStep struct {
 	Copy  *[2]int  `json:"c,omitempty"`
 	Data  []string `json:"d,omitempty"`
-	Bytes []string `json:"b,omitempty"`
+	Bytes []string `json:"u,omitempty"`
 }
 
 // Recipe describes changes made to a message at one hop.
@@ -58,12 +58,12 @@ func (r Recipe) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&w)
 }
 
-// errMalformedRecipe marks a Recipe that is well-formed JSON but breaks the
-// §5 step rules: a "c" step that is not two integers, bounds out of range or
-// not ascending/non-overlapping, a step with other than exactly one known
-// key, an empty literal list, a "d" item containing CR or LF, or a "b" item
-// that is not base64 or decodes to octets containing CR or LF. Test with errors.Is; the §11.2-style report is
-// malformedRecipeError.
+// errMalformedRecipe marks a Recipe that breaks the §5 schema or step
+// rules: a "c" step that is not two integers, bounds out of range or not
+// ascending/non-overlapping, a step with other than exactly one known key, an
+// empty literal list, a "d" item containing CR or LF or not valid UTF-8, or a
+// "u" item that is not canonical base64 or decodes to octets containing CR or
+// LF. Test with errors.Is; the §14.2 report is malformedRecipeError.
 var errMalformedRecipe = errors.New("malformed Recipe")
 
 func malformedRecipe(format string, args ...any) error {
@@ -71,22 +71,24 @@ func malformedRecipe(format string, args ...any) error {
 }
 
 // malformedRecipeError is the PERMERROR a verifier reports for a Recipe on
-// Message-Instance m=M that breaks the §5 rules (shape follows the §11.2
-// list; "has a malformed Recipe" is the agreed extension). The message is
+// Message-Instance m=M that is not valid JSON, or breaks the §5 schema or
+// step rules (whether that shows when it is parsed or only when it is
+// applied to the message): §14.2's "contains invalid JSON". The message is
 // not accepted. It is self-describing, so Verify/VerifyFull return it
 // verbatim rather than wrapping it.
 type malformedRecipeError struct{ m int }
 
 func (e *malformedRecipeError) Error() string {
-	return fmt.Sprintf("PERMERROR Message-Instance m=%d has a malformed Recipe", e.m)
+	return fmt.Sprintf("PERMERROR: Message-Instance m=%d contains invalid JSON", e.m)
 }
 
 // UnmarshalJSON rejects every step shape the §5 schema does not allow:
-// anything but an object with exactly one key from {c, d, b}; a "c" whose
-// value is not an array of exactly two JSON integers (strings, 1.5 and the
-// like are rejected here, not silently coerced); an empty or non-string "d"
-// or "b" list. Range and base64 checks live in validateRecipeSteps so they
-// also cover programmatically built steps.
+// anything but an object with exactly one key from {c, d, u} (matched
+// without regard to case); a "c" whose value is not an array of exactly two
+// JSON integers (strings, 1.5 and the like are rejected here, not silently
+// coerced); an empty or non-string "d" or "u" list. Range and base64 checks
+// live in validateRecipeSteps so they also cover programmatically built
+// steps.
 func (s *RecipeStep) UnmarshalJSON(data []byte) error {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(data, &obj); err != nil || obj == nil {
@@ -97,7 +99,7 @@ func (s *RecipeStep) UnmarshalJSON(data []byte) error {
 	}
 	*s = RecipeStep{}
 	for k, v := range obj {
-		switch k {
+		switch strings.ToLower(k) {
 		case "c":
 			var bounds []json.RawMessage
 			if err := json.Unmarshal(v, &bounds); err != nil || len(bounds) != 2 {
@@ -118,10 +120,10 @@ func (s *RecipeStep) UnmarshalJSON(data []byte) error {
 				return malformedRecipe(`"d" must be a non-empty array of strings`)
 			}
 			s.Data = d
-		case "b":
+		case "u":
 			var b []string
 			if err := json.Unmarshal(v, &b); err != nil || len(b) == 0 {
-				return malformedRecipe(`"b" must be a non-empty array of base64 strings`)
+				return malformedRecipe(`"u" must be a non-empty array of base64 strings`)
 			}
 			s.Bytes = b
 		default:
@@ -131,39 +133,46 @@ func (s *RecipeStep) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// decodeRecipeBytes decodes one "b" item: standard-alphabet base64 (RFC 4648
-// §4, padded; nothing outside the alphabet, not even whitespace) whose
-// decoded octets contain neither CR nor LF. The result is returned as a Go
-// string so it flows down the same path as a "d" value; Go strings hold
-// arbitrary octets and nothing on the hashing path validates UTF-8.
+// The three patterns the §5 schema's "base64-line" must match: alphabet and
+// padding, whole quanta, and zero pad bits ("QR==" is not canonical).
+var (
+	reB64Alphabet = regexp.MustCompile(`^[A-Za-z0-9+/]*={0,2}$`)
+	reB64Quanta   = regexp.MustCompile(`^(.{4})*$`)
+	reB64PadBits  = regexp.MustCompile(`^([^=]*|.*[AQgw]==|.*[AEIMQUYcgkosw048]=)$`)
+)
+
+// decodeRecipeBytes decodes one "u" item: canonical base64 as the §5 schema
+// patterns define it (standard alphabet, padded, zero pad bits, nothing else
+// -- not even whitespace) whose decoded octets contain neither CR nor LF.
+// The result is returned as a Go string so it flows down the same path as a
+// "d" value; Go strings hold arbitrary octets and nothing on the hashing
+// path validates UTF-8.
 func decodeRecipeBytes(b64 string) (string, error) {
-	for i := 0; i < len(b64); i++ {
-		c := b64[i]
-		switch {
-		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
-			c == '+', c == '/', c == '=':
-		default:
-			return "", malformedRecipe(`"b" item is not standard base64`)
-		}
+	if !reB64Alphabet.MatchString(b64) || !reB64Quanta.MatchString(b64) || !reB64PadBits.MatchString(b64) {
+		return "", malformedRecipe(`"u" item is not canonical base64`)
 	}
-	raw, err := base64.StdEncoding.DecodeString(b64)
+	raw, err := base64.StdEncoding.Strict().DecodeString(b64)
 	if err != nil {
-		return "", malformedRecipe(`"b" item is not standard base64`)
+		return "", malformedRecipe(`"u" item is not canonical base64`)
 	}
 	if bytes.ContainsAny(raw, "\r\n") {
-		return "", malformedRecipe(`"b" item decodes to octets containing CR or LF`)
+		return "", malformedRecipe(`"u" item decodes to octets containing CR or LF`)
 	}
 	return string(raw), nil
 }
 
-// literals returns the literal values a "d" or "b" step emits (decoded for
-// "b"); nil for a "c" step. A "d" value containing CR or LF is rejected
-// (§5.1/§5.2: "The text strings MUST NOT contain CR or LF characters").
+// literals returns the literal values a "d" or "u" step emits (decoded for
+// "u"); nil for a "c" step. A "d" value containing CR or LF is rejected
+// (§5.1/§5.2: "The text strings MUST NOT contain CR or LF characters"), and
+// so is one that is not valid UTF-8 (that needs a "u" step).
 func (s RecipeStep) literals() ([]string, error) {
 	if s.Data != nil {
 		for _, v := range s.Data {
 			if strings.ContainsAny(v, "\r\n") {
 				return nil, malformedRecipe(`"d" item contains CR or LF`)
+			}
+			if !utf8.ValidString(v) {
+				return nil, malformedRecipe(`"d" item is not valid UTF-8`)
 			}
 		}
 		return s.Data, nil
@@ -183,9 +192,10 @@ func (s RecipeStep) literals() ([]string, error) {
 }
 
 // validateRecipeSteps checks one step list against the §5.1/§5.2 rules:
-// every step is exactly one of c/d/b; each "c" has 1 <= start <= end, and
+// every step is exactly one of c/d/u; each "c" has 1 <= start <= end, and
 // its start is greater than the end of every preceding "c" (ascending,
-// non-overlapping); no "d" item contains CR or LF; every "b" item decodes.
+// non-overlapping); every "d" item is UTF-8 without CR or LF; every "u" item
+// decodes.
 // count is the number of current
 // items (header instances of the name, or body lines) the Recipe is being
 // applied to, so that end <= count can be checked too; pass -1 at parse
@@ -204,7 +214,7 @@ func validateRecipeSteps(steps []RecipeStep, count int) error {
 			set++
 		}
 		if set != 1 {
-			return malformedRecipe("step %d must be exactly one of c/d/b", i)
+			return malformedRecipe("step %d must be exactly one of c/d/u", i)
 		}
 		if s.Copy != nil {
 			start, end := s.Copy[0], s.Copy[1]
@@ -227,13 +237,15 @@ func validateRecipeSteps(steps []RecipeStep, count int) error {
 }
 
 // errDuplicateJSONKey is returned for Recipe JSON in which one object names
-// a key twice: parsers disagree on which value wins (encoding/json keeps the
-// last, C's parser kept the first), so {"b":[...],"b":null} would be a null
-// body Recipe to some verifiers and signers and a real one to others.
+// a key twice, without regard to case (§5: keys MUST be unique; verifiers
+// match them case-insensitively): parsers disagree on which value wins, so
+// {"b":[...],"B":null} would be a null body Recipe to some verifiers and
+// signers and a real one to others.
 var errDuplicateJSONKey = errors.New("duplicate JSON object key")
 
 // jsonDuplicateKey walks data's tokens and returns errDuplicateJSONKey for
-// the first object that names a key twice (compared after unescaping). It
+// the first object that names a key twice (compared after unescaping and
+// lowercasing). It
 // returns nil for valid JSON without duplicates; invalid JSON is left to
 // json.Unmarshal to report.
 func jsonDuplicateKey(data []byte) error {
@@ -254,6 +266,7 @@ func jsonDuplicateKey(data []byte) error {
 		}
 		if top != nil && top.keys != nil && top.wantKey {
 			if k, ok := tok.(string); ok {
+				k = strings.ToLower(k)
 				if top.keys[k] {
 					return fmt.Errorf("%w %q", errDuplicateJSONKey, k)
 				}
@@ -280,21 +293,112 @@ func jsonDuplicateKey(data []byte) error {
 	}
 }
 
+// jsonLoneSurrogate reports whether a JSON text escapes a UTF-16 surrogate
+// that is not half of a pair ("\ud800"): encoding/json would quietly turn it
+// into U+FFFD, but it is not a character, so the string is not valid UTF-8
+// text.
+func jsonLoneSurrogate(data []byte) bool {
+	hex4 := func(i int) (rune, bool) {
+		if i+6 > len(data) || data[i] != '\\' || data[i+1] != 'u' {
+			return 0, false
+		}
+		var r rune
+		for _, c := range data[i+2 : i+6] {
+			switch {
+			case c >= '0' && c <= '9':
+				r = r<<4 | rune(c-'0')
+			case c >= 'a' && c <= 'f':
+				r = r<<4 | rune(c-'a'+10)
+			case c >= 'A' && c <= 'F':
+				r = r<<4 | rune(c-'A'+10)
+			default:
+				return 0, false
+			}
+		}
+		return r, true
+	}
+	inString := false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if !inString {
+			inString = c == '"'
+			continue
+		}
+		switch c {
+		case '"':
+			inString = false
+		case '\\':
+			r, ok := hex4(i)
+			if !ok {
+				i++ // a two-character escape
+				continue
+			}
+			switch {
+			case r >= 0xd800 && r <= 0xdbff:
+				lo, ok := hex4(i + 6)
+				if !ok || lo < 0xdc00 || lo > 0xdfff {
+					return true
+				}
+				i += 11
+			case r >= 0xdc00 && r <= 0xdfff:
+				return true
+			default:
+				i += 5
+			}
+		}
+	}
+	return false
+}
+
+// parseRecipe parses and checks a Recipe JSON object (§5).  parseMI reports
+// every failure -- invalid JSON, a duplicate key, or a breach of the schema
+// or step rules -- as "contains invalid JSON".  Keys are matched without
+// regard to case at every level: they MUST be lowercase, but a verifier is
+// liberal in what it accepts.
 func parseRecipe(data []byte) (*Recipe, error) {
+	if !utf8.Valid(data) || jsonLoneSurrogate(data) {
+		return nil, malformedRecipe("not UTF-8 JSON text")
+	}
 	if err := jsonDuplicateKey(data); err != nil {
 		return nil, err
 	}
-	// draft-06 §5.1: an explicit JSON null for "h" is no longer permitted
-	// (distinct from an absent "h", which means the headers were unchanged).
-	var r Recipe
 	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(data, &probe); err == nil {
-		if v, ok := probe["h"]; ok && string(v) == "null" {
-			return nil, errors.New("null header recipe not permitted (draft-06 §5.1)")
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, err
+	}
+	if probe == nil {
+		return nil, malformedRecipe("the Recipe is not a JSON object")
+	}
+	var r Recipe
+	var hasH, hasB bool
+	for k, v := range probe {
+		switch strings.ToLower(k) {
+		case "h":
+			hasH = true
+			// §5 schema: "h" is an object with at least one property, each
+			// an array of steps.  An absent "h" means the header fields
+			// were unchanged; null, {} or a non-array value is invalid.
+			var h map[string]json.RawMessage
+			if err := json.Unmarshal(v, &h); err != nil || h == nil {
+				return nil, malformedRecipe(`"h" is not an object`)
+			}
+			if len(h) == 0 {
+				return nil, malformedRecipe(`"h" names no header field`)
+			}
+			for name, steps := range h {
+				if t := bytes.TrimLeft(steps, " \t\r\n"); len(t) == 0 || t[0] != '[' {
+					return nil, malformedRecipe("header %q Recipe is not an array", name)
+				}
+			}
+		case "b":
+			hasB = true
+			if string(bytes.TrimSpace(v)) == "null" {
+				r.BodyNull = true
+			}
 		}
-		if v, ok := probe["b"]; ok && string(v) == "null" {
-			r.BodyNull = true
-		}
+	}
+	if !hasH && !hasB {
+		return nil, malformedRecipe(`neither "h" nor "b" is present`)
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
 		return nil, err
@@ -472,13 +576,14 @@ func isASCII(s string) bool {
 }
 
 // appendLiteral appends one literal value to steps: as a "d" item when it is
-// pure ASCII, otherwise as a "b" item carrying the exact octets (encoding/json
-// would turn any non-UTF-8 byte in a "d" string into U+FFFD). Consecutive
-// literals of the same kind coalesce into one step; a mixed run alternates
-// d and b steps.
+// valid UTF-8 (ASCII included), otherwise as a "u" item carrying the exact
+// octets (§5.1/§5.2: "u" MUST be used when the value is not valid UTF-8 and
+// SHOULD NOT be when "d" would do; encoding/json would turn any non-UTF-8
+// byte in a "d" string into U+FFFD). Consecutive literals of the same kind
+// coalesce into one step; a mixed run alternates d and u steps.
 func appendLiteral(steps []RecipeStep, val string) []RecipeStep {
 	n := len(steps)
-	if isASCII(val) {
+	if utf8.ValidString(val) {
 		if n > 0 && steps[n-1].Data != nil {
 			steps[n-1].Data = append(steps[n-1].Data, val)
 			return steps
@@ -501,7 +606,7 @@ func appendLiteral(steps []RecipeStep, val string) []RecipeStep {
 // "c" ranges ascending and non-overlapping (§5.1/§5.2); when there is none
 // -- the item is gone, or only occurrences at or below the last copied index
 // remain, as with reordered instances -- its literal is emitted instead (via
-// appendLiteral, so 8-bit values become "b" items). Indices already passed
+// appendLiteral, so non-UTF-8 values become "u" items). Indices already passed
 // can never be copied again, so they are discarded rather than consumed.
 func recipeSteps(beforeKeys, beforeVals, afterKeys []string) []RecipeStep {
 	afterIdx := make(map[string][]int)
@@ -533,7 +638,7 @@ func recipeSteps(beforeKeys, beforeVals, afterKeys []string) []RecipeStep {
 // that rebuilds the before lines from the after lines, using the capped
 // Myers diff (bodyDiff) with at most maxLiterals literal lines. tooBig reports that no recipe
 // within the cap exists, so the caller must emit the null body Recipe.
-// Literal runs are grouped into "d"/"b" steps by appendLiteral. The steps are
+// Literal runs are grouped into "d"/"u" steps by appendLiteral. The steps are
 // never nil unless tooBig: an empty previous body is the empty list.
 func bodyRecipeSteps(before, after []string, maxLiterals int) (steps []RecipeStep, tooBig bool) {
 	flat, kind := bodyDiff(after, before, maxLiterals)

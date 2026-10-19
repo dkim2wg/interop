@@ -328,7 +328,7 @@ func TestPropagateRefusesWhenUndoSimplyFails(t *testing.T) {
 	chain := nullRecipeChain(t)
 	broken := bytes.Replace(chain,
 		[]byte(base64.StdEncoding.EncodeToString([]byte(`{"b":null}`))),
-		[]byte(base64.StdEncoding.EncodeToString([]byte(`{}`))), 1)
+		[]byte(base64.StdEncoding.EncodeToString([]byte(`{"h":{"x-unused":[]}}`))), 1)
 	if bytes.Equal(chain, broken) {
 		t.Fatal("fixture: the null Recipe was not replaced")
 	}

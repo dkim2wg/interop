@@ -314,11 +314,11 @@ func TestStrictC_MessageInstanceTagCase(t *testing.T) {
 		{"H=", "Message-Instance: m=1; H=" + hval + ";", ""},
 		{"M=", "Message-Instance: M=1; h=" + hval + ";", ""},
 		{"h= twice", "Message-Instance: m=1; h=sha256:AAAA:AAAA; h=" + hval + ";",
-			"PERMERROR Message-Instance m=1 syntax error"},
+			"PERMERROR: Message-Instance m=1 syntax error"},
 		{"h= then H=", "Message-Instance: m=1; h=" + hval + "; H=" + hval + ";",
-			"PERMERROR Message-Instance m=1 syntax error"},
+			"PERMERROR: Message-Instance m=1 syntax error"},
 		{"m= then M=", "Message-Instance: m=1; M=1; h=" + hval + ";",
-			"PERMERROR Message-Instance m=1 syntax error"},
+			"PERMERROR: Message-Instance m=1 syntax error"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

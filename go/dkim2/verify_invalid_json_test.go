@@ -50,7 +50,7 @@ func TestVerifyReportsInvalidRecipeJSON(t *testing.T) {
 	// hidden. The injected r= is on m=1, the ONLY (bottom) Message-Instance
 	// in buildSignedMsg's fixture, so this also confirms Go already flags a
 	// malformed r= on the bottom instance, not just non-bottom ones.
-	want := "PERMERROR Message-Instance m=1 contains invalid JSON"
+	want := "PERMERROR: Message-Instance m=1 contains invalid JSON"
 	if got != want {
 		t.Errorf("got %q, want exactly %q", got, want)
 	}
@@ -97,7 +97,7 @@ func TestVerifyReportsBadBase64RecipeAsSyntaxError(t *testing.T) {
 		t.Fatal("expected a failure for a bad-base64 recipe, got a pass")
 	}
 
-	want := "PERMERROR Message-Instance m=1 syntax error"
+	want := "PERMERROR: Message-Instance m=1 syntax error"
 	if err.Error() != want {
 		t.Errorf("got %q, want exactly %q", err.Error(), want)
 	}

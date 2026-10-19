@@ -140,7 +140,7 @@ func TestNullBodyAtM3OverNormalM2Passes(t *testing.T) {
 	m2 := nullHop(t, nullHopBase(t), subjectTag, "second body\r\n",
 		`{"h":{"subject":[{"d":["hello"]}]},"b":[{"d":["body line"]}]}`)
 	expectPass(t, nullHop(t, m2, func(h []Header) []Header { return h }, "third body\r\n",
-		`{"h":{},"b":null}`))
+		`{"b":null}`))
 }
 
 func TestNullBodyForgedHistoryBelowNullFails(t *testing.T) {
@@ -160,7 +160,7 @@ func TestNullBodyForgedHistoryBelowNullFails(t *testing.T) {
 
 func TestNullBodyHeaderRecipeNotApplyingFails(t *testing.T) {
 	expectFail(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n",
-		`{"h":{"subject":[{"c":[1,9]}]},"b":null}`), "has a malformed Recipe")
+		`{"h":{"subject":[{"c":[1,9]}]},"b":null}`), "contains invalid JSON")
 }
 
 func TestUndoStillRefusesNullBody(t *testing.T) {

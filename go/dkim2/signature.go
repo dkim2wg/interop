@@ -72,6 +72,14 @@ type SignOptions struct {
 	// SkipUpstreamCheck turns the gate off entirely (the caller built the
 	// chain itself).
 	SkipUpstreamCheck bool
+
+	// Flags are emitted in f= (§10.10) as given, except that "exploded" is
+	// never emitted at i=1 (§12.5).
+	Flags []string
+	// Exploded requests the "exploded" flag (§12.5): this hop sends copies
+	// to more than one address.  It is also set, without the request, when
+	// RcptTo holds more than one address; never at i=1.
+	Exploded bool
 }
 
 // VerifyResult is the outcome for one DKIM2-Signature in the message.
@@ -113,6 +121,11 @@ type VerifyOptions struct {
 	// VerifyFull start, with real DNS keys, once the header fields are read.
 	NoKeyPrefetch bool
 }
+
+// ErrNone is returned by Verify and VerifyFull for a message with no DKIM2
+// header fields at all: the result is "none" (Authentication-Results
+// dkim2=none), not a PERMERROR, and it carries no error string of its own.
+var ErrNone = errors.New("none")
 
 // errUnkeyableSignature is the PERMERROR for a DKIM2-Signature whose i= is
 // missing or not a positive integer (or that has no tag-list at all).
