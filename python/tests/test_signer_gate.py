@@ -143,7 +143,7 @@ def test_verifier_permerror_on_signature_without_i():
     r = dkim2verify.verify_message(msg, DNS, full_chain=True,
                                    skip_timestamp_check=True)
     assert r.status == "permerror"
-    assert r.message == "PERMERROR: DKIM2-Signature i=None tag=i missing"
+    assert r.message == "PERMERROR: DKIM2-Signature i= tag=i missing"
 
 
 def test_get_seq_from_sig_never_raises():

@@ -314,11 +314,10 @@ next depends on whether it already carries an upstream DKIM2-Signature:
   and null-body refusals.
 
 The C milter in this repo (`c/dkim2_milter.c`, not the one deployed on
-dkim2.com) is stricter: it rejects every signer refusal with
-`550 5.7.1 <reason>`, with or without an upstream signature, and verify-mode
-rejections likewise (TEMPERROR gives `451 4.7.5`).
-Installing either, and wiring Mailman 3 or Sympa to them, is the subject of
-the [Postfix mailing-list host guide](dkim2-postfix-list-host-guide.md).
+dkim2.com) behaves the same way: `550 5.7.1 <reason>` for a refused message
+with an upstream DKIM2-Signature, unsigned delivery (hint and unsigned
+Message-Instances removed) without one. Its verify mode rejects a FAIL or
+PERMERROR with `550 5.7.1` and a TEMPERROR with `451 4.7.5`.
 
 ---
 

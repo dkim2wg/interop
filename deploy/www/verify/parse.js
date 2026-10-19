@@ -190,18 +190,21 @@ export const MAX_CHAIN_NUMBER = 100;
 // error of the field (named by its own i=, or m= for a Message-Instance:
 // `id`, the raw value). Then at most three digits and 1..MAX_CHAIN_NUMBER
 // (so "01" and "001" are 1), and no more than MAX_CHAIN_LENGTH: local
-// limits, with no -07 string of their own. A missing value (undefined) is
+// limits, with no -07 string of their own, named in the C6 form (a
+// signature's m= after its i=: "i=2 m=101 exceeds ..."). A missing value (undefined) is
 // left to the callers.
 export function chainNumberError(field, tag, v, id = v) {
   if (v === undefined) return null;
-  const malformed = `PERMERROR: ${field} ${field === 'Message-Instance' ? 'm' : 'i'}=${id} syntax error`;
-  if (typeof v !== 'string' || !/^[0-9]+$/.test(v)) return malformed;
-  if (/^0+$/.test(v)) return malformed;
+  const idTag = field === 'Message-Instance' ? 'm' : 'i';
+  let who = `${field} ${idTag}=${id}`;
+  if (typeof v !== 'string' || !/^[0-9]+$/.test(v)) return `PERMERROR: ${who} syntax error`;
+  if (/^0+$/.test(v)) return `PERMERROR: ${who} syntax error`;
+  if (tag !== idTag) who += ` ${tag}=${v}`;
   if (v.length > 3 || parseInt(v, 10) > MAX_CHAIN_NUMBER) {
-    return `PERMERROR: ${field} ${tag}= exceeds the maximum chain number of ${MAX_CHAIN_NUMBER}`;
+    return `PERMERROR: ${who} exceeds the maximum chain number of ${MAX_CHAIN_NUMBER}`;
   }
   if (parseInt(v, 10) > MAX_CHAIN_LENGTH) {
-    return `PERMERROR: ${field} ${tag}= exceeds the maximum chain length of ${MAX_CHAIN_LENGTH}`;
+    return `PERMERROR: ${who} exceeds the maximum chain length of ${MAX_CHAIN_LENGTH}`;
   }
   return null;
 }
@@ -213,7 +216,7 @@ export function collectLevels(headers) {
   const sigFields = [];
   const dupInstances = [];
   const dupSignatures = [];
-  // The i= values ('' when missing) of DKIM2-Signature fields whose i= is
+  // The i= values (null when missing) of DKIM2-Signature fields whose i= is
   // missing or not a positive integer in ASCII digits: no verifier can place
   // or key one, so verifyOnce() reports a syntax error rather than verifying
   // around it.
@@ -236,7 +239,7 @@ export function collectLevels(headers) {
       const parsed = parseTagList(f.value);
       const iv = parsed.map.i;
       const i = /^[0-9]+$/.test(iv || '') ? parseInt(iv, 10) : NaN;
-      if (Number.isNaN(i) || i < 1) { unkeyableSignatures.push(iv || ''); continue; }
+      if (Number.isNaN(i) || i < 1) { unkeyableSignatures.push(iv === undefined ? null : iv); continue; }
       const err = chainNumberError('DKIM2-Signature', 'i', iv)
                || chainNumberError('DKIM2-Signature', 'm', parsed.map.m, iv);
       if (err) { rangeError = rangeError || err; continue; }

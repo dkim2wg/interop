@@ -122,11 +122,22 @@ int main(void) {
             "i=+1; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
             "i=1x; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
             NULL };
+        /* C6: a missing i= is "i= tag=i missing"; one that is not a
+           positive integer is "i=<as written> syntax error". */
+        static const char *bad_i_want[] = {
+            "PERMERROR: DKIM2-Signature i= tag=i missing",
+            "PERMERROR: DKIM2-Signature i= syntax error",
+            "PERMERROR: DKIM2-Signature i=0 syntax error",
+            "PERMERROR: DKIM2-Signature i=abc syntax error",
+            "PERMERROR: DKIM2-Signature i=-1 syntax error",
+            "PERMERROR: DKIM2-Signature i=+1 syntax error",
+            "PERMERROR: DKIM2-Signature i=1x syntax error",
+        };
         char eb[256];
         for (int k = 0; bad_i[k]; k++) {
             assert(dkim2_sig_parse(bad_i[k]) == NULL);
             assert(dkim2_sig_parse_err(bad_i[k], eb, sizeof eb) == NULL);
-            assert(strcmp(eb, "PERMERROR: DKIM2-Signature has a missing or malformed i= tag") == 0);
+            assert(strcmp(eb, bad_i_want[k]) == 0);
         }
         assert(dkim2_sig_parse_err("i=1; m=1; t=1; d=e.example", eb, sizeof eb) == NULL);
         assert(strcmp(eb, "PERMERROR: DKIM2-Signature i=1 tag=s missing") == 0);
@@ -151,53 +162,55 @@ int main(void) {
             "99999999999999999999", NULL };
         static const char *mal_n[] = { "", "0", "000", "abc", "1x", "4294967297x",
             "30000000x", "0_1", "+1", "-1", "\xef\xbc\x91", NULL };
-        char eb[256], v[256];
+        char eb[256], v[256], want[256];
         for (int k = 0; ok_n[k]; k++)
-            assert(dkim2_chain_number_error("Message-Instance", "m", ok_n[k], eb, sizeof eb) == 0);
-        assert(dkim2_chain_number_error("Message-Instance", "m", NULL, eb, sizeof eb) == 0);
+            assert(dkim2_chain_number_error("Message-Instance", "m", ok_n[k], NULL, eb, sizeof eb) == 0);
+        assert(dkim2_chain_number_error("Message-Instance", "m", NULL, NULL, eb, sizeof eb) == 0);
         for (int k = 0; len_n[k]; k++) {
-            assert(dkim2_chain_number_error("Message-Instance", "m", len_n[k], eb, sizeof eb) != 0);
-            assert(strcmp(eb, "PERMERROR: Message-Instance m= exceeds the maximum chain length of 32") == 0);
+            assert(dkim2_chain_number_error("Message-Instance", "m", len_n[k], NULL, eb, sizeof eb) != 0);
+            snprintf(want, sizeof want, "PERMERROR: Message-Instance m=%s exceeds the maximum chain length of 32", len_n[k]);
+            assert(strcmp(eb, want) == 0);
         }
         for (int k = 0; mal_n[k]; k++) {
-            assert(dkim2_chain_number_error("Message-Instance", "m", mal_n[k], eb, sizeof eb) != 0);
-            assert(strcmp(eb, "PERMERROR: Message-Instance has a malformed m= tag") == 0);
+            assert(dkim2_chain_number_error("Message-Instance", "m", mal_n[k], NULL, eb, sizeof eb) != 0);
+            snprintf(want, sizeof want, "PERMERROR: Message-Instance m=%s syntax error", mal_n[k]);
+            assert(strcmp(eb, want) == 0);
 
             snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", mal_n[k]);
             assert(dkim2_sig_parse(v) == NULL);
             assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
-            assert(strcmp(eb, "PERMERROR: DKIM2-Signature has a malformed m= tag") == 0);
+            assert(strcmp(eb, "PERMERROR: DKIM2-Signature i=2 syntax error") == 0);
 
             snprintf(v, sizeof v, "m=%s; h=sha256:AAAA:BBBB", mal_n[k]);
             assert(dkim2_mi_parse(v) == NULL);
             assert(dkim2_mi_parse_err(v, eb, sizeof eb) == NULL);
-            assert(strcmp(eb, "PERMERROR: Message-Instance has a malformed m= tag") == 0);
+            snprintf(want, sizeof want, "PERMERROR: Message-Instance m=%s syntax error", mal_n[k]);
+            assert(strcmp(eb, want) == 0);
         }
-        assert(dkim2_chain_number_error("DKIM2-Signature", "i", "abc", eb, sizeof eb) != 0);
-        assert(strcmp(eb, "PERMERROR: DKIM2-Signature has a missing or malformed i= tag") == 0);
+        assert(dkim2_chain_number_error("DKIM2-Signature", "i", "abc", NULL, eb, sizeof eb) != 0);
+        assert(strcmp(eb, "PERMERROR: DKIM2-Signature i=abc syntax error") == 0);
 
         static const char *const *bad_sets[] = { len_n, num_n };
         static const char *bad_why[] = { "length of 32", "number of 100" };
         for (int b = 0; b < 2; b++) {
             const char *const *bad_n = bad_sets[b];
-            char want[256];
             for (int k = 0; bad_n[k]; k++) {
                 snprintf(v, sizeof v, "i=%s; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
                 assert(dkim2_sig_parse(v) == NULL);
                 assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
-                snprintf(want, sizeof want, "PERMERROR: DKIM2-Signature i= exceeds the maximum chain %s", bad_why[b]);
+                snprintf(want, sizeof want, "PERMERROR: DKIM2-Signature i=%s exceeds the maximum chain %s", bad_n[k], bad_why[b]);
                 assert(strcmp(eb, want) == 0);
 
                 snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
                 assert(dkim2_sig_parse(v) == NULL);
                 assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
-                snprintf(want, sizeof want, "PERMERROR: DKIM2-Signature m= exceeds the maximum chain %s", bad_why[b]);
+                snprintf(want, sizeof want, "PERMERROR: DKIM2-Signature i=2 m=%s exceeds the maximum chain %s", bad_n[k], bad_why[b]);
                 assert(strcmp(eb, want) == 0);
 
                 snprintf(v, sizeof v, "m=%s; h=sha256:AAAA:BBBB", bad_n[k]);
                 assert(dkim2_mi_parse(v) == NULL);
                 assert(dkim2_mi_parse_err(v, eb, sizeof eb) == NULL);
-                snprintf(want, sizeof want, "PERMERROR: Message-Instance m= exceeds the maximum chain %s", bad_why[b]);
+                snprintf(want, sizeof want, "PERMERROR: Message-Instance m=%s exceeds the maximum chain %s", bad_n[k], bad_why[b]);
                 assert(strcmp(eb, want) == 0);
             }
         }

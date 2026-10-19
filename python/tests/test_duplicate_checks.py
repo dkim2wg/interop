@@ -63,7 +63,7 @@ def test_duplicate_mi_version_is_permerror_inbound_and_outbound():
         r = dkim2verify.verify_message(raw, dns, allow_unsigned_mi=allow,
                                        skip_timestamp_check=True)
         assert r.status == 'permerror', (allow, r)
-        assert 'duplicate Message-Instance m=1' in r.message, r.message
+        assert 'Message-Instance m=1 appears more than once' in r.message, r.message
 
 
 def test_malformed_mi_m_is_clean_permerror():

@@ -327,23 +327,23 @@ int main(int argc, char **argv) {
     for (int skip = 0; skip <= 1; skip++) {
         expect_range_refused("DKIM2-Signature: i=99999999999999999999; m=2; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR: DKIM2-Signature i= exceeds the maximum chain number of 100", skip);
+            "PERMERROR: DKIM2-Signature i=99999999999999999999 exceeds the maximum chain number of 100", skip);
         expect_range_refused("DKIM2-Signature: i=101; m=2; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR: DKIM2-Signature i= exceeds the maximum chain number of 100", skip);
+            "PERMERROR: DKIM2-Signature i=101 exceeds the maximum chain number of 100", skip);
         expect_range_refused("DKIM2-Signature: i=33; m=2; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR: DKIM2-Signature i= exceeds the maximum chain length of 32", skip);
+            "PERMERROR: DKIM2-Signature i=33 exceeds the maximum chain length of 32", skip);
         expect_range_refused("DKIM2-Signature: i=2; m=4294967297; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR: DKIM2-Signature m= exceeds the maximum chain number of 100", skip);
+            "PERMERROR: DKIM2-Signature i=2 m=4294967297 exceeds the maximum chain number of 100", skip);
         expect_range_refused("DKIM2-Signature: i=2; m=4294967297x; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR: DKIM2-Signature has a malformed m= tag", skip);
+            "PERMERROR: DKIM2-Signature i=2 syntax error", skip);
         expect_range_refused("Message-Instance: m=99999999999999999999; h=sha256:AAAA:BBBB\r\n",
-            "PERMERROR: Message-Instance m= exceeds the maximum chain number of 100", skip);
+            "PERMERROR: Message-Instance m=99999999999999999999 exceeds the maximum chain number of 100", skip);
         expect_range_refused("Message-Instance: m=4294967297x; h=sha256:AAAA:BBBB\r\n",
-            "PERMERROR: Message-Instance has a malformed m= tag", skip);
+            "PERMERROR: Message-Instance m=4294967297x syntax error", skip);
     }
 
     expect_reuse_top_mi("valid-chain.eml");

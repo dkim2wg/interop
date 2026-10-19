@@ -28,7 +28,7 @@ use Mail::DKIM2::Common qw(
     chain_length_error
     duplicate_number_error
     valid_sequence
-    UNKEYABLE_SIGNATURE_ERROR
+    unkeyable_signature_error
     chain_number_error
     mi_version_tag
 );
@@ -186,7 +186,7 @@ sub handle_header {
         my $i = $sig ? $sig->sequence : undef;
         my $range = valid_sequence($i)
             && (chain_number_error('DKIM2-Signature', 'i', $i)
-                // chain_number_error('DKIM2-Signature', 'm', $sig->version));
+                // chain_number_error('DKIM2-Signature', 'm', $sig->version, $i));
         if ($range) {
             # Bounded here, before finish_body walks 1..i= for gaps.
             $self->{_range_error} //= $range;
@@ -198,7 +198,7 @@ sub handle_header {
                 sig => $sig,
             };
         } else {
-            $self->{_dk2_unkeyable} //= UNKEYABLE_SIGNATURE_ERROR;
+            $self->{_dk2_unkeyable} //= unkeyable_signature_error($contents);
         }
     }
 }
@@ -425,11 +425,8 @@ sub finish_body {
     $self->{details} = "i=1..$max_i verified";
 }
 
-# From must be Authentic (-07 sections 11 and 14.8). The From of the
-# message as it was at m=1 is checked against i=1; and for each m=k >= 2
-# whose header Recipe names From (the hop that made m=k changed it), the
-# From as it was at m=k against the lowest i= whose m= is k or more. A
-# version of the header comes from the undo walk if that ran, else from the
+# From must be Authentic (-07 sections 11 and 14.8): the From in effect
+# when each signature was made (see the pairs below). A version of the header comes from the undo walk if that ran, else from the
 # header plan (made here if the body was hashed without one). An instance
 # no signature covers (AllowUnsignedMI, MidProcess) has no signature to
 # answer for its From: the signer gate leaves that to the Signer, which
@@ -461,12 +458,26 @@ sub _verify_from {
         return $hplan->values_at($m, 'From') // [];
     };
 
-    my @pairs = ([1, $sigs[0][0]]);
-    for my $mi (sort { $a->get_tag('m') <=> $b->get_tag('m') } @parsed) {
+    # -07 §11, contract C5 as corrected by Ruling 19: the From in effect when
+    # each signature was made. i=1 against the From at state m(i=1); each
+    # i >= 2 against the From at state m(i) when an instance k with
+    # m(i-1) < k <= m(i) replaced From. A From replaced before any signature
+    # covered it (an unsigned ingress m=1 a list rewrote in m=2 before
+    # signing i=1) is never checked.
+    my %changes_from;
+    for my $mi (@parsed) {
         my $k = 0 + $mi->get_tag('m');
-        next unless $k >= 2 && $mi->get_tag('rh') && exists $mi->get_tag('rh')->{from};
-        my ($answer) = grep { $_->[1] >= $k } @sigs;
-        push @pairs, [$k, $answer->[0]] if $answer;
+        $changes_from{$k} = 1
+            if $k >= 2 && $mi->get_tag('rh') && exists $mi->get_tag('rh')->{from};
+    }
+    my @pairs;
+    my $prev_m;
+    for my $sig (@sigs) {
+        my ($i, $m) = @$sig;
+        my $due = $i == 1
+            || (defined $prev_m && grep { $_ > $prev_m && $_ <= $m } keys %changes_from);
+        $prev_m = $m;
+        push @pairs, [$m, $i] if $due;
     }
     for my $pair (@pairs) {
         my ($k, $i) = @$pair;

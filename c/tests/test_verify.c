@@ -1165,7 +1165,7 @@ int main(void) {
         dkim2_verify_result_t dres;
         dkim2_do_verify(&dctx, &dres);
         assert(dres.status == DKIM2_PERMERROR);
-        assert(strstr(dres.message, "duplicate Message-Instance m=1") != NULL);
+        assert(strstr(dres.message, "PERMERROR: Message-Instance m=1 appears more than once") != NULL);
         dkim2_mi_free(dctx.mi_list->next); dctx.mi_list->next = NULL;
         dkim2_mi_free(dctx.mi_list);
         dkim2_sig_free(dctx.sig_list);

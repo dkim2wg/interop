@@ -300,10 +300,13 @@ static int from_refusal(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     return 0;
 }
 
-/* Whether a parser error is one of dkim2_chain_number_error()'s. */
+/* Whether a parser error is one of dkim2_chain_number_error()'s, or a
+   missing or malformed i=/m= (the field is then left out of the lists, so
+   the next i= and m= cannot be computed). A field syntax error of any
+   other kind is included: refusing it costs nothing. */
 static int chain_number_refusal(const char *e) {
-    return strstr(e, "exceeds the maximum chain") || strstr(e, "has a malformed m= tag")
-        || strstr(e, "has a missing or malformed i= tag");
+    return strstr(e, "exceeds the maximum chain") || strstr(e, " syntax error")
+        || strstr(e, "tag=i missing") || strstr(e, "tag=m missing");
 }
 
 int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,

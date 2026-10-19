@@ -71,9 +71,8 @@ func TestVerifyCanonicalErrorStrings(t *testing.T) {
 // parse-time error messages carry the "DKIM2-Signature i=<x>" prefix
 // wherever the sequence number is already known by that point in parsing,
 // using the canonical "tag=<y> missing" / "tag=<y> syntax error" shapes.
-// Two cases (no colon yet, and a malformed i= tag itself) genuinely cannot
-// carry i=<x> since the sequence isn't parseable yet — those assert a
-// sensible i=-less form instead.
+// A field with no colon has no i= to name; a malformed i= is named as
+// written ("i=abc syntax error").
 func TestSignatureParseErrorsCarryISequence(t *testing.T) {
 	cases := []struct {
 		name string
@@ -86,9 +85,9 @@ func TestSignatureParseErrorsCarryISequence(t *testing.T) {
 			want: "PERMERROR: DKIM2-Signature syntax error (no colon found)",
 		},
 		{
-			name: "invalid i= (sequence itself malformed, no i= prefix possible)",
+			name: "invalid i= (named as written)",
 			raw:  "DKIM2-Signature: i=abc; m=1; t=1;",
-			want: "PERMERROR: DKIM2-Signature has a missing or malformed i= tag",
+			want: "PERMERROR: DKIM2-Signature i=abc syntax error",
 		},
 		{
 			name: "invalid m= (i= already known)",

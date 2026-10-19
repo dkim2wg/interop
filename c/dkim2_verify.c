@@ -213,52 +213,62 @@ int dkim2_mi_changes_from(const dkim2_mi_t *mi) {
     return rc != 0;     /* a Recipe naming From, or one we cannot read */
 }
 
-/* The pairs of -07 §11: the From fields of state 1 (the message as it was
-   when m=1 was the highest instance) with i=1, and, for each instance k >= 2
-   whose header Recipe names From, the From fields of state k with the
-   lowest-numbered signature whose m= >= k. An instance no signature covers
-   is skipped (inbound that is already "is not signed"; the signer gate
-   leaves the unsigned top to the signer's own check). sig_arr is ascending
-   i= from 1; the instances are contiguous 1..N (both checked already).
+/* The pairs of -07 §11 (contract C5 as corrected by Ruling 19): the From in
+   effect when each signature was made. State k is the message as it was when
+   m=k was the highest instance. The From fields of state m(i=1) are checked
+   with i=1, and for each i >= 2 where some instance k with m(i-1) < k <= m(i)
+   has a header Recipe naming From, the From fields of state m(i) with i. A
+   From replaced before any signature covered it is never checked, nor are
+   instances above the top signature's m= (the signer gate leaves the
+   unsigned top to the signer's own check). sig_arr is ascending i= from 1;
+   the instances are contiguous 1..N (both checked already).
    0, or -1 with the PERMERROR in msg. */
 static int check_from_authentic(const dkim2_ctx_t *ctx, dkim2_sig_t **sig_arr, int n_sigs,
                                 char *msg, size_t msgsz) {
-    const int MAX_MI = 64;
+    enum { MAX_MI = 64 };
     dkim2_mi_t *mis[MAX_MI];
     int n_mi = dkim2_mi_sorted(ctx->mi_list, mis, MAX_MI);
-    fromlist_t cur;
-    if (fromlist_of(ctx->headers, ctx->n_headers, &cur) < 0) {
+    fromlist_t lists[MAX_MI + 1];   /* distinct From states, top first */
+    int state_of[MAX_MI], changed[MAX_MI];
+    int nl = 1, cur = 0, rc_out = 0;
+    if (fromlist_of(ctx->headers, ctx->n_headers, &lists[0]) < 0) {
         snprintf(msg, msgsz, "PERMERROR: OOM");
         return -1;
     }
-    for (int vi = n_mi - 1; vi >= 1; vi--) {
+    for (int vi = n_mi - 1; vi >= 0; vi--) {
+        state_of[vi] = cur;
+        changed[vi] = 0;
+        if (vi == 0) break;
         fromlist_t prev;
-        int rc = from_undo(mis[vi], &cur, &prev);
+        int rc = from_undo(mis[vi], &lists[cur], &prev);
         if (rc < 0) {
-            fromlist_free(&cur);
             snprintf(msg, msgsz, "PERMERROR: Message-Instance m=%d contains invalid JSON", mis[vi]->m);
-            return -1;
+            rc_out = -1;
+            goto done;
         }
         if (rc == 0) continue;
-        const dkim2_sig_t *rel = NULL;
-        for (int k = 0; k < n_sigs && !rel; k++)
-            if (sig_arr[k]->m >= mis[vi]->m) rel = sig_arr[k];
-        if (rel && !fromlist_authentic(&cur, rel->d)) {
-            fromlist_free(&cur);
-            fromlist_free(&prev);
-            snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d matching From is not authentic", rel->i);
-            return -1;
+        changed[vi] = 1;
+        lists[nl] = prev;
+        cur = nl++;
+    }
+    for (int k = 0, prev_m = 0; k < n_sigs; k++) {
+        const dkim2_sig_t *s = sig_arr[k];
+        int due = s->i == 1, at = -1;
+        for (int vi = 0; vi < n_mi; vi++) {
+            if (mis[vi]->m > prev_m && mis[vi]->m <= s->m && changed[vi]) due = 1;
+            if (mis[vi]->m == s->m) at = vi;
         }
-        fromlist_free(&cur);
-        cur = prev;
+        prev_m = s->m;
+        if (!due || at < 0) continue;
+        if (!fromlist_authentic(&lists[state_of[at]], s->d)) {
+            snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d matching From is not authentic", s->i);
+            rc_out = -1;
+            goto done;
+        }
     }
-    int ok = n_sigs == 0 || fromlist_authentic(&cur, sig_arr[0]->d);
-    fromlist_free(&cur);
-    if (!ok) {
-        snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d matching From is not authentic", sig_arr[0]->i);
-        return -1;
-    }
-    return 0;
+done:
+    for (int i = 0; i < nl; i++) fromlist_free(&lists[i]);
+    return rc_out;
 }
 
 static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t msgsz) {
@@ -892,7 +902,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next)
         for (const dkim2_mi_t *b = a->next; b; b = b->next)
             if (a->m == b->m)
-                SETSTATUS(DKIM2_PERMERROR, "PERMERROR: duplicate Message-Instance m=%d", a->m);
+                SETSTATUS(DKIM2_PERMERROR, "PERMERROR: Message-Instance m=%d appears more than once", a->m);
 
     /* -07 §9.1: m= values must be contiguous 1..N. Explicit, before any
        crypto: name the first missing m= (§14.2 "missing"). (An unsigned top MI above the top signature

@@ -143,12 +143,12 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
     const char *v;
     v = tag_get(tl, "m");
     if (!v) {
-        /* No m= tag at all -- still unattributable. */
+        /* No m= tag at all (C6: tag=m missing, with no m= to name). */
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance syntax error");
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance m= tag=m missing");
         goto err;
     }
-    if (dkim2_chain_number_error("Message-Instance", "m", v, errbuf, errbufsz))
+    if (dkim2_chain_number_error("Message-Instance", "m", v, v, errbuf, errbufsz))
         goto err;
     mi->m = atoi(v);   /* 1..DKIM2_MAX_CHAIN_LENGTH ASCII digits: exact */
     /* -07 §9 wants lowercase tag names; any case is accepted (contract
@@ -308,32 +308,36 @@ static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
 }
 
 int dkim2_chain_number_error(const char *field, const char *tag, const char *v,
-                             char *errbuf, size_t errbufsz) {
+                             const char *ident, char *errbuf, size_t errbufsz) {
     if (!v) return 0;
+    if (!ident) ident = v;
+    const char *ident_tag = strcmp(field, "Message-Instance") == 0 ? "m" : "i";
+    char who[160];
     int digits = *v != '\0', nonzero = 0;
     for (const char *p = v; *p; p++) {
         if (*p < '0' || *p > '9') { digits = 0; break; }
         if (*p != '0') nonzero = 1;
     }
+    snprintf(who, sizeof who, "%s %s=%.40s", field, ident_tag, ident);
     if (!digits || !nonzero) {
-        if (errbuf && errbufsz) {
-            if (strcmp(tag, "i") == 0)
-                snprintf(errbuf, errbufsz, "PERMERROR: %s has a missing or malformed i= tag", field);
-            else
-                snprintf(errbuf, errbufsz, "PERMERROR: %s has a malformed %s= tag", field, tag);
-        }
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR: %s syntax error", who);
         return 1;
+    }
+    if (strcmp(tag, ident_tag) != 0) {
+        size_t wl = strlen(who);
+        snprintf(who + wl, sizeof who - wl, " %s=%.40s", tag, v);
     }
     if (strlen(v) > 3 || atoi(v) > DKIM2_MAX_CHAIN_NUMBER) {
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR: %s %s= exceeds the maximum chain number of %d",
-                     field, tag, DKIM2_MAX_CHAIN_NUMBER);
+            snprintf(errbuf, errbufsz, "PERMERROR: %s exceeds the maximum chain number of %d",
+                     who, DKIM2_MAX_CHAIN_NUMBER);
         return 1;
     }
     if (atoi(v) > DKIM2_MAX_CHAIN_LENGTH) {
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR: %s %s= exceeds the maximum chain length of %d",
-                     field, tag, DKIM2_MAX_CHAIN_LENGTH);
+            snprintf(errbuf, errbufsz, "PERMERROR: %s exceeds the maximum chain length of %d",
+                     who, DKIM2_MAX_CHAIN_LENGTH);
         return 1;
     }
     return 0;
@@ -427,11 +431,13 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
     taglist_t *tl = tagparse(value, NULL);
     const char *iv = tl ? tag_get(tl, "i") : NULL;
     const char *mv = tl ? tag_get(tl, "m") : NULL;
-    if (!valid_i(iv))
-        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature has a missing or malformed i= tag");
-    else if (dkim2_chain_number_error("DKIM2-Signature", "i", iv, errbuf, errbufsz))
+    if (!iv)
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i= tag=i missing");
+    else if (!valid_i(iv))
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%.40s syntax error", iv);
+    else if (dkim2_chain_number_error("DKIM2-Signature", "i", iv, iv, errbuf, errbufsz))
         ;
-    else if (dkim2_chain_number_error("DKIM2-Signature", "m", mv, errbuf, errbufsz))
+    else if (dkim2_chain_number_error("DKIM2-Signature", "m", mv, iv, errbuf, errbufsz))
         ;
     else if (tl && (tl->syntax_error || tl->duplicate || s_syntax_error(tag_get(tl, "s")) ||
                     (tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0) ||
@@ -456,8 +462,8 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     const char *v;
 #define REQ(tag) do { v = tag_get(tl, tag); if (!v) goto err; } while(0)
     /* Chain numbers only: atoi() of "4294967297x" would be 4294967297. */
-    REQ("i"); if (!valid_i(v) || dkim2_chain_number_error("DKIM2-Signature", "i", v, NULL, 0)) goto err; sig->i = atoi(v);
-    REQ("m"); if (dkim2_chain_number_error("DKIM2-Signature", "m", v, NULL, 0)) goto err; sig->m = atoi(v);
+    REQ("i"); if (!valid_i(v) || dkim2_chain_number_error("DKIM2-Signature", "i", v, NULL, NULL, 0)) goto err; sig->i = atoi(v);
+    REQ("m"); if (dkim2_chain_number_error("DKIM2-Signature", "m", v, NULL, NULL, 0)) goto err; sig->m = atoi(v);
     REQ("t"); if (parse_t(v, &sig->t) < 0) goto err;
     REQ("d"); sig->d = strdup(v);
     /* -07 §10.7: either nd= or both mf=+rt=, never both forms. */

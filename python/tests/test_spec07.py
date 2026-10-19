@@ -297,6 +297,32 @@ def test_a2_gate_refuses_unauthentic_rewritten_from():
         raise AssertionError("signed a rewritten From that is not Authentic")
 
 
+def _ingress(raw: bytes) -> bytes:
+    """An unsigned m=1 over `raw` as it arrived (a list's ingress stamp)."""
+    headers, body = parse_message(raw)
+    mi = dkim2sign.build_message_instance(headers, body, version=1)
+    return mi.encode() + b"\r\n" + raw
+
+
+def test_a5_from_replaced_before_first_signature_is_not_checked():
+    # Ruling 19: i=1 is checked against the From at state m(i=1).  The
+    # author's From in an unsigned ingress m=1, rewritten by the list in m=2
+    # before it signed i=1 (m=2), was never covered by a signature.
+    msg = add_mi(_ingress(message("A <a@elsewhere.net>")),
+                 replace_header(b"From", b"list@lists.example.org"))
+    assert "from" in E.mi_recipe(msg, 2)["h"]
+    _pass(sign(msg, "example.org", "list@lists.example.org"))
+
+
+def test_a5_from_at_state_m_of_i1_is_checked():
+    # i=1 covers m=2; the From at state 2 is not Authentic for d=example.org.
+    msg = add_mi(_ingress(message("A <a@example.com>")),
+                 replace_header(b"Subject", b"[list] hello"))
+    _fails_with(sign(msg, "example.org", "list@lists.example.org",
+                     skip_from_check=True),
+                "PERMERROR: DKIM2-Signature i=1 matching From is not authentic")
+
+
 def test_a3_signer_refuses_unauthentic_from():
     try:
         sign(message("a@example.net"), "example.com", "a@example.com")

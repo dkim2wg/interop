@@ -143,24 +143,30 @@ function fromIsAuthentic(values, d) {
   return !literal && relaxedMatch(toALabel(domain) || '', d);
 }
 
-// §11 / §14.8: the signatures whose matching From is not Authentic. The From
-// of state 1 is matched with i=1; and for each instance m=k whose header
-// Recipe replaces From, the From of state k with the lowest i whose m= is at
-// least k (when there is none, "is not signed" has already been reported).
-// A state the Recipes could not reach is not checked here: that is already
-// an error of its own.
+// §11 / §14.8 (contract C5 as corrected by Ruling 19): the signatures whose
+// matching From is not Authentic. The From in effect when each signature was
+// made is checked: i=1 against the From of state m(i=1), and each i >= 2
+// against the From of state m(i) when some instance k with m(i-1) < k <= m(i)
+// has a header Recipe that replaces From. A From replaced before any
+// signature covered it is never checked. A state the Recipes could not reach
+// is not checked here: that is already an error of its own.
 function unauthenticFrom(chain, instances, signatures, sigNums, maxM) {
   const bad = new Set();
-  const check = (k, i) => {
-    if (chain.has(k) && !fromIsAuthentic(chain.headerValues(k, 'from'), sigDomain(signatures[i]))) bad.add(i);
-  };
-  check(1, 1);
+  const changesFrom = new Set();
   for (let k = 2; k <= maxM; k++) {
     let rec;
     try { rec = decodeRecipe(instances[k].map.r); } catch (e) { continue; }
-    if (!rec.h || !('from' in rec.h)) continue;
-    const i = sigNums.find((n) => parseInt(signatures[n].map.m, 10) >= k);
-    if (i !== undefined) check(k, i);
+    if (rec.h && Object.keys(rec.h).some((n) => n.toLowerCase() === 'from')) changesFrom.add(k);
+  }
+  let prevM = null;
+  for (const i of sigNums) {
+    const m = parseInt(signatures[i].map.m, 10);
+    let due = i === 1;
+    if (!due && prevM !== null) {
+      for (const k of changesFrom) if (k > prevM && k <= m) due = true;
+    }
+    prevM = m;
+    if (due && chain.has(m) && !fromIsAuthentic(chain.headerValues(m, 'from'), sigDomain(signatures[i]))) bad.add(i);
   }
   return bad;
 }
@@ -224,12 +230,15 @@ async function verifyOnce(raw, opts = {}) {
   const { instances, signatures, dupInstances, dupSignatures, unkeyableSignatures, rangeError } =
     collectLevels(headers);
 
-  // A DKIM2-Signature with no i=, or an i= that is not a positive integer, is
-  // a syntax error -- never silently skipped (and never "none" when it is
-  // the only one), as in the other implementations.
+  // A DKIM2-Signature with no i= ("i= tag=i missing"), or an i= that is not
+  // a positive integer ("i=<as written> syntax error"), is a PERMERROR --
+  // never silently skipped (and never "none" when it is the only one), as in
+  // the other implementations.
   if (unkeyableSignatures.length) {
+    const iv = unkeyableSignatures[0];
+    const why = iv === null ? 'i= tag=i missing' : `i=${iv} syntax error`;
     return { overall: 'permerror',
-             summary: displayText(`PERMERROR: DKIM2-Signature i=${unkeyableSignatures[0]} syntax error`), levels: [] };
+             summary: displayText(`PERMERROR: DKIM2-Signature ${why}`), levels: [] };
   }
 
   // An i= or m= that is not a chain number (not 1*DIGIT, out of range, or

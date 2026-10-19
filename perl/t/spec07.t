@@ -259,6 +259,21 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
         'PERMERROR: DKIM2-Signature i=1 matching From is not authentic', 'A2: ... with the undo walk',
         StreamBody => 0);
 
+    # Ruling 19: i=1 is checked against the From at state m(i=1). An
+    # author's From in an unsigned ingress m=1 that the list rewrote in m=2
+    # before signing i=1 over m=2 was never covered, so it is not checked.
+    my $ingress = add_mi(message(from => 'A <a@elsewhere.net>'));
+    (my $rewritten = $ingress) =~ s/^From: .*$/From: list\@lists.example.org\r/m;
+    is_pass(add_sig(add_mi($rewritten, $ingress), %HOP2),
+        'Ruling 19: From replaced before the first signature is not checked');
+    is_pass(add_sig(add_mi($rewritten, $ingress), %HOP2),
+        'Ruling 19: ... with the undo walk', StreamBody => 0);
+    my $ingress_ok = add_mi(message());
+    (my $tagged = $ingress_ok) =~ s/^Subject: .*$/Subject: [list] test\r/m;
+    is_error(add_sig(add_mi($tagged, $ingress_ok), %HOP2), 'permerror',
+        'PERMERROR: DKIM2-Signature i=1 matching From is not authentic',
+        'Ruling 19: the From at state m(i=1) is checked against i=1');
+
     # A3: the signer refuses.
     my $s = Mail::DKIM2::Signer->new(Domain => 'example.com', Selector => 'sel1',
         Key => Spec07Fixture::key(), MailFrom => 'a@example.com', RcptTo => ['b@example.net']);

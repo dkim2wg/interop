@@ -775,6 +775,30 @@ static void test_from_authentic(void) {
         CHECK_PASS(res);
         msg_free(&m);
     }
+    /* Ruling 19: an author's From in an unsigned ingress m=1, rewritten by
+       the list in m=2 before it signed i=1 over m=2, is never checked */
+    {
+        msg_t m;
+        msg_init(&m, "a@elsewhere.net", "test", "Hello\r\nworld\r\n");
+        add_mi(&m, NULL);
+        msg_set(&m, "From", "list@lists.example.org");
+        add_mi(&m, "{\"h\":{\"from\":[{\"d\":[\"a@elsewhere.net\"]}]}}");
+        add_sig(&m, 1, 2, "example.org", "<list-bounces@lists.example.org>", "<r@dest.example>", NULL);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_PASS(res);
+        msg_free(&m);
+    }
+    {   /* ... but the From at state m(i=1) is */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\nworld\r\n");
+        add_mi(&m, NULL);
+        msg_set(&m, "Subject", "[list] test");
+        add_mi(&m, "{\"h\":{\"subject\":[{\"d\":[\"test\"]}]}}");
+        add_sig(&m, 1, 2, "example.org", "<list-bounces@lists.example.org>", "<r@dest.example>", NULL);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
+        msg_free(&m);
+    }
     /* A3: the signer refuses */
     {
         char err[512];

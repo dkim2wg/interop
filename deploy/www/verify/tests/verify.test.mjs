@@ -565,7 +565,8 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
     assert.equal(ok.overall, 'pass');
     const rep = await verifyMessage(junk + SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
     assert.equal(rep.overall, 'permerror');
-    assert.equal(rep.summary, `PERMERROR: DKIM2-Signature i=${ival || ''} syntax error`);
+    assert.equal(rep.summary, ival === null ? 'PERMERROR: DKIM2-Signature i= tag=i missing'
+      : `PERMERROR: DKIM2-Signature i=${ival} syntax error`);
     const alone = await verifyMessage(junk + 'From: a@example.com\r\n\r\nhi\r\n');
     assert.equal(alone.overall, 'permerror');
   });
@@ -582,19 +583,19 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
   const LEN = 'exceeds the maximum chain length of 32';
   const NUM = 'exceeds the maximum chain number of 100';
   const cases = [
-    ['signature i=33', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=33;', `PERMERROR: DKIM2-Signature i= ${LEN}`],
-    ['signature i=101', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=101;', `PERMERROR: DKIM2-Signature i= ${NUM}`],
-    ['signature i=2^32+1', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=4294967297;', `PERMERROR: DKIM2-Signature i= ${NUM}`],
-    ['signature i=huge', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=99999999999999999999;', `PERMERROR: DKIM2-Signature i= ${NUM}`],
-    ['signature m=huge', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297;', `PERMERROR: DKIM2-Signature m= ${NUM}`],
-    ['signature m=33', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=33;', `PERMERROR: DKIM2-Signature m= ${LEN}`],
+    ['signature i=33', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=33;', `PERMERROR: DKIM2-Signature i=33 ${LEN}`],
+    ['signature i=101', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=101;', `PERMERROR: DKIM2-Signature i=101 ${NUM}`],
+    ['signature i=2^32+1', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=4294967297;', `PERMERROR: DKIM2-Signature i=4294967297 ${NUM}`],
+    ['signature i=huge', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=99999999999999999999;', `PERMERROR: DKIM2-Signature i=99999999999999999999 ${NUM}`],
+    ['signature m=huge', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297;', `PERMERROR: DKIM2-Signature i=1 m=4294967297 ${NUM}`],
+    ['signature m=33', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=33;', `PERMERROR: DKIM2-Signature i=1 m=33 ${LEN}`],
     ['signature m=4294967297x', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297x;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
     ['signature m=abc', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=abc;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
     ['signature m=0', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=0;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
     ['signature m=fullwidth 1', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=１;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
-    ['instance m=huge', 'Message-Instance: m=1;', 'Message-Instance: m=99999999999999999999;', `PERMERROR: Message-Instance m= ${NUM}`],
-    ['instance m=101', 'Message-Instance: m=1;', 'Message-Instance: m=101;', `PERMERROR: Message-Instance m= ${NUM}`],
-    ['instance m=33', 'Message-Instance: m=1;', 'Message-Instance: m=33;', `PERMERROR: Message-Instance m= ${LEN}`],
+    ['instance m=huge', 'Message-Instance: m=1;', 'Message-Instance: m=99999999999999999999;', `PERMERROR: Message-Instance m=99999999999999999999 ${NUM}`],
+    ['instance m=101', 'Message-Instance: m=1;', 'Message-Instance: m=101;', `PERMERROR: Message-Instance m=101 ${NUM}`],
+    ['instance m=33', 'Message-Instance: m=1;', 'Message-Instance: m=33;', `PERMERROR: Message-Instance m=33 ${LEN}`],
     ['instance m=4294967297x', 'Message-Instance: m=1;', 'Message-Instance: m=4294967297x;', 'PERMERROR: Message-Instance m=4294967297x syntax error'],
     ['instance m=30000000x', 'Message-Instance: m=1;', 'Message-Instance: m=30000000x;', 'PERMERROR: Message-Instance m=30000000x syntax error'],
     ['instance m=0_1', 'Message-Instance: m=1;', 'Message-Instance: m=0_1;', 'PERMERROR: Message-Instance m=0_1 syntax error'],
@@ -616,6 +617,6 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
     const rep = await verifyMessage('DKIM2-Signature: i=99999999999999999999; m=2; d=evil.example\r\n' + SIGNED_SAMPLE,
       { fetchKey: realFetchKey, now: FRESH_NOW });
     assert.equal(rep.overall, 'permerror');
-    assert.equal(rep.summary, `PERMERROR: DKIM2-Signature i= ${NUM}`);
+    assert.equal(rep.summary, `PERMERROR: DKIM2-Signature i=99999999999999999999 ${NUM}`);
   });
 }

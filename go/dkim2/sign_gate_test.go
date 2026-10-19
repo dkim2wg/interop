@@ -221,8 +221,8 @@ func TestVerifyDuplicateMIVersion(t *testing.T) {
 	}
 	dup := append(append(append([]byte{}, hop1[:j]...), hop1[i:j]...), hop1[j:]...)
 	_, err := Verify(bytes.NewReader(dup), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
-	if err == nil || !strings.Contains(err.Error(), "duplicate Message-Instance m=1") {
-		t.Fatalf("want duplicate Message-Instance m=1, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "PERMERROR: Message-Instance m=1 appears more than once") {
+		t.Fatalf("want Message-Instance m=1 appears more than once, got %v", err)
 	}
 }
 
@@ -253,6 +253,17 @@ func TestGateFakeCoverageRefused(t *testing.T) {
 		"FWS m = 2":   []byte("DKIM2-Signature: m = 2 ; d=evil.example\r\n"),
 		"m rewritten": rewritten,
 	}
+	// C6: a missing i= is "i= tag=i missing", one that is not a positive
+	// integer "i=<as written> syntax error".
+	want := map[string]string{
+		"no i=":       "PERMERROR: DKIM2-Signature i= tag=i missing",
+		"empty i=":    "PERMERROR: DKIM2-Signature i= syntax error",
+		"i=0":         "PERMERROR: DKIM2-Signature i=0 syntax error",
+		"i=abc":       "PERMERROR: DKIM2-Signature i=abc syntax error",
+		"i=+1":        "PERMERROR: DKIM2-Signature i=+1 syntax error",
+		"FWS m = 2":   "PERMERROR: DKIM2-Signature i= tag=i missing",
+		"m rewritten": "PERMERROR: DKIM2-Signature i= tag=i missing",
+	}
 	for name, fake := range fakes {
 		msg := append(append([]byte{}, fake...), m...)
 		for _, allow := range []bool{false, true} {
@@ -263,13 +274,13 @@ func TestGateFakeCoverageRefused(t *testing.T) {
 			}
 			// Refused by the gate's verifier (result=permerror) or, for an
 			// i= present but not a chain number, by the signer's own parse.
-			if !strings.Contains(err.Error(), "PERMERROR: DKIM2-Signature has a missing or malformed i= tag") {
+			if !strings.Contains(err.Error(), want[name]) {
 				t.Errorf("%s allow=%v: error %q", name, allow, err)
 			}
 		}
 		_, err := Verify(bytes.NewReader(msg), &JSONKeyFetcher{Path: "../../dns.json"},
 			VerifyOptions{SkipTimestampCheck: true})
-		if err == nil || err.Error() != "PERMERROR: DKIM2-Signature has a missing or malformed i= tag" {
+		if err == nil || err.Error() != want[name] {
 			t.Errorf("%s: Verify err = %v", name, err)
 		}
 	}

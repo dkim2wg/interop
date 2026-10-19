@@ -188,11 +188,11 @@ func parseMI(raw string) (*MessageInstance, error) {
 
 	mStr := tvl.get("m")
 	if mStr == "" {
-		return nil, fmt.Errorf("PERMERROR: Message-Instance tag=m missing")
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m= tag=m missing")
 	}
 	m, err := strconv.Atoi(mStr)
 	if err != nil {
-		return nil, fmt.Errorf("PERMERROR: Message-Instance has a malformed m= tag")
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%s syntax error", strings.TrimSpace(mStr))
 	}
 
 	// §8, §9: tag names are case insignificant and each kind appears once;

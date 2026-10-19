@@ -134,12 +134,16 @@ int main(void) {
     CHECK(c.n_ins == 1 && strcmp(c.ins[0], "Authentication-Results: mx.test; dkim2=none") == 0);
     CHECK(c.rcode[0] == '\0');
 
-    /* sign mode, i=1: From not Authentic for d= -> 550 5.7.1, not signed */
+    /* sign mode, i=1: From not Authentic for d=, and no upstream DKIM2
+       header fields -> delivered unsigned (as the Perl milters do), the
+       hint removed, no reply */
     set_mode('s', "example.net");
-    CHECK(run(&c, "<a@example.net>", one, plain, body) == SMFIS_REJECT);
-    CHECK(strcmp(c.rcode, "550") == 0 && strcmp(c.xcode, "5.7.1") == 0);
-    CHECK(strcmp(c.reply, "not signing: From header field is not Authentic for d=example.net") == 0);
+    hdr_t plain_hint[] = { { "From", "a@example.com" }, { "To", "list@lists.example.org" },
+                           { "Subject", "hi" }, { "X-DKIM2-Exploded", "yes" }, { NULL, NULL } };
+    CHECK(run(&c, "<a@example.net>", one, plain_hint, body) == SMFIS_ACCEPT);
+    CHECK(c.rcode[0] == '\0');
     CHECK(c.n_add == 0);
+    CHECK(c.n_chg == 1 && strcmp(c.chg[0], "X-DKIM2-Exploded[1]=(delete)") == 0);
 
     /* sign mode, i=1 by example.com (the hint is ignored at i=1) */
     set_mode('s', "example.com");
@@ -194,6 +198,29 @@ int main(void) {
     /* ...and one recipient, no hint: no flag */
     CHECK(run(&c, "<list-bounces@lists.example.org>", dest, chain1, body) == SMFIS_ACCEPT);
     CHECK(added_with(&c, "DKIM2-Signature", "i=2;") && !added_with(&c, "DKIM2-Signature", "exploded"));
+
+    /* a refusal with an upstream DKIM2-Signature is 550 5.7.1, not signed:
+       example.net cannot sign a From changed to list@lists.example.org */
+    set_mode('s', "example.net");
+    {
+        hdr_t moved[] = { { "DKIM2-Signature", sig1 }, { "Message-Instance", mi1 },
+                          { "From", "a@example.org" }, { "To", "list@lists.example.org" },
+                          { "Subject", "hi" }, { NULL, NULL } };
+        CHECK(run(&c, "<b@example.net>", dest, moved, body) == SMFIS_REJECT);
+        CHECK(strcmp(c.rcode, "550") == 0 && strcmp(c.xcode, "5.7.1") == 0);
+        CHECK(strncmp(c.reply, "not signing:", 12) == 0);
+        CHECK(c.n_add == 0);
+    }
+    /* a refusal on Message-Instances alone (no signature): delivered
+       unsigned, the unsigned instances removed */
+    {
+        hdr_t mi_only[] = { { "Message-Instance", mi1 },
+                            { "From", "a@example.com" }, { "To", "list@lists.example.org" },
+                            { "Subject", "hi" }, { NULL, NULL } };
+        CHECK(run(&c, "<a@example.net>", one, mi_only, body) == SMFIS_ACCEPT);
+        CHECK(c.rcode[0] == '\0' && c.n_add == 0);
+        CHECK(c.n_chg == 1 && strcmp(c.chg[0], "Message-Instance[1]=(delete)") == 0);
+    }
 
     /* verify: a PERMERROR is 550 5.7.1 with the -07 string */
     set_mode('v', NULL);

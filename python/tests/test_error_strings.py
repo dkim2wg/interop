@@ -76,7 +76,7 @@ def test_missing_required_tag_reports_first_missing_i():
     errs = verify_dkim2_signature(
         _sig("m=2; t=1; d=fwd.example; nd=x.example; s=sel:rsa-sha256:AAAA"),
         [], [], {})
-    assert errs == ["PERMERROR: DKIM2-Signature i=None tag=i missing"], errs
+    assert errs == ["PERMERROR: DKIM2-Signature i= tag=i missing"], errs
 
 
 def test_missing_required_tag_reports_first_missing_t():
@@ -91,7 +91,7 @@ def test_missing_required_tag_order_i_before_s():
     errs = verify_dkim2_signature(
         _sig("m=2; t=1; d=fwd.example; nd=x.example"),
         [], [], {})
-    assert errs == ["PERMERROR: DKIM2-Signature i=None tag=i missing"], errs
+    assert errs == ["PERMERROR: DKIM2-Signature i= tag=i missing"], errs
 
 
 def test_nd_with_mf_unexpected_canonical():

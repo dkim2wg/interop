@@ -323,37 +323,35 @@ def _from_fields(headers: list[bytes]) -> list[bytes]:
 def _from_authentic_errors(content_headers: list[bytes],
                            mi_by_version: dict[int, str],
                            sig_by_seq: list[str]) -> list[str]:
-    """draft -07 §11, §14.8: every From the chain shows must be Authentic.
+    """draft -07 §11, §14.8: the From in effect when each signature was made
+    must be Authentic for it (contract C5, Ruling 19).
 
     State k is the header fields as they were when Message-Instance m=k was
     the highest; state k-1 is state k with m=k's header Recipe undone.  The
-    pairs checked are (From at state 1, signature i=1) and, for each k >= 2
-    whose header Recipe has a "from" key, (From at state k, the lowest i
-    whose m= >= k).  A pair with no such signature is skipped: either the
-    instance is reported as not signed, or (the signer gate's outbound mode)
-    it is the one about to be signed, and the signer checks it itself.  If a
-    header Recipe cannot be undone the walk stops there: that is reported
-    as invalid JSON already.
+    pairs checked are (From at state m(i=1), signature i=1) and, for each
+    i >= 2 where some instance k with m(i-1) < k <= m(i) has a "from" key in
+    its header Recipe, (From at state m(i), signature i).  A From replaced
+    before any signature covered it (an unsigned ingress m=1 that a list
+    rewrote in m=2 before signing i=1) is never checked, nor are instances
+    above the top signature's m= (the signer checks those itself).  If a
+    header Recipe cannot be undone the walk stops there: that is reported as
+    invalid JSON already, and states below it are not checked.
     """
     sigs = []
     for h in sig_by_seq:
         val = _get_header_value(h)
         sigs.append((_get_seq_from_sig(h), _get_mi_from_sig(h) or 0,
                      _extract_tag(val, "d") or ""))
+    sigs.sort()
 
-    def check(headers, i_val, d):
-        if not from_is_authentic(_from_fields(headers), d):
-            msg = f"PERMERROR: DKIM2-Signature i={i_val} matching From is not authentic"
-            if msg not in errors:
-                errors.append(msg)
-
-    errors: list[str] = []
+    # Walk down from the top instance, keeping each state and whether that
+    # instance's header Recipe replaced From.
+    states: dict[int, list[bytes]] = {}
+    changes_from: set[int] = set()
     headers = list(content_headers)
     for version in sorted(mi_by_version, reverse=True):
+        states[version] = headers
         if version == 1:
-            for i_val, _, d in sigs:
-                if i_val == 1:
-                    check(headers, i_val, d)
             break
         try:
             recipes = decode_recipes(mi_by_version[version])
@@ -362,15 +360,27 @@ def _from_authentic_errors(content_headers: list[bytes],
         h = recipes.get("h") if isinstance(recipes, dict) else None
         if not isinstance(h, dict) or not h:
             continue
-        if "from" in h:
-            covering = [s for s in sigs if s[1] >= version]
-            if covering:
-                i_val, _, d = min(covering)
-                check(headers, i_val, d)
+        if any(isinstance(k, str) and k.lower() == "from" for k in h):
+            changes_from.add(version)
         try:
             headers = reconstruct_headers(headers, h)
         except ValueError:
             break
+
+    errors: list[str] = []
+    prev_m = None
+    for i_val, m_val, d in sigs:
+        if i_val == 1:
+            due = True
+        else:
+            due = prev_m is not None and any(prev_m < k <= m_val for k in changes_from)
+        prev_m = m_val
+        if not due or m_val not in states:
+            continue
+        if not from_is_authentic(_from_fields(states[m_val]), d):
+            msg = f"PERMERROR: DKIM2-Signature i={i_val} matching From is not authentic"
+            if msg not in errors:
+                errors.append(msg)
     return errors
 
 
@@ -744,7 +754,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             ("i", i_val), ("m", m_val), ("t", t_val0), ("d", d_val), ("s", s_tag),
         ):
             if not tag_val:
-                return [f"PERMERROR: DKIM2-Signature i={i_val} tag={tag_name} missing"]
+                return [f"PERMERROR: DKIM2-Signature i={i_val or ''} tag={tag_name} missing"]
     # -07 §10: nd= excludes mf= and rt=; without nd= both are required.
     if nd_val and (mf_val or rt_val):
         return [f"PERMERROR: DKIM2-Signature i={i_val} "
@@ -1007,7 +1017,7 @@ def _check_headers(headers: list[bytes], o: _Options):
 
     for h in mi_headers:
         if _extract_tag(_get_header_value(h), "m") is None:
-            msg = "PERMERROR: Message-Instance m=None tag=m missing"
+            msg = "PERMERROR: Message-Instance m= tag=m missing"
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
         msg = _mi_duplicate_tag_error(h)
@@ -1024,7 +1034,7 @@ def _check_headers(headers: list[bytes], o: _Options):
             i_val = _extract_tag(_get_header_value(h), "i")
             msg = (f"PERMERROR: DKIM2-Signature i={i_val} syntax error"
                    if i_val is not None else
-                   "PERMERROR: DKIM2-Signature i=None tag=i missing")
+                   "PERMERROR: DKIM2-Signature i= tag=i missing")
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
 
@@ -1047,7 +1057,7 @@ def _check_headers(headers: list[bytes], o: _Options):
     for h in sig_headers:
         if not _sig_syntax_ok(_get_header_value(h)):
             i_val = _extract_tag(_get_header_value(h), "i")
-            msg = f"PERMERROR: DKIM2-Signature i={i_val} syntax error"
+            msg = f"PERMERROR: DKIM2-Signature i={i_val or ''} syntax error"
             return VerifyResult(ok=False, status='permerror',
                                 failing_i=_get_seq_from_sig(h),
                                 domain=None, message=msg, errors=[msg])
@@ -1056,7 +1066,7 @@ def _check_headers(headers: list[bytes], o: _Options):
     for h in mi_headers:
         mv = _get_version_from_mi(h)
         if mv in seen_m:
-            msg = f"PERMERROR: duplicate Message-Instance m={mv}"
+            msg = f"PERMERROR: Message-Instance m={mv} appears more than once"
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
         seen_m.add(mv)

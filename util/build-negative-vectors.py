@@ -97,6 +97,11 @@ draft -07 (shared tests in .superpowers/sdd/2026-10-18-dkim2-spec-07/common.md):
   positive-control-from-folded-2047.eml -- A1: folded RFC 2047 From, one mailbox
   positive-control-from-changed.eml -- A2: list under test2 rewrites From, signs m=2
   from-changed-not-authentic.eml   -- A2: the rewrite goes to test5; REJECT
+  positive-control-ingress-from-rewritten.eml -- Ruling 19: unsigned ingress
+                                         m=1 with the author's From, rewritten
+                                         in m=2, i=1 (test2) over m=2; ACCEPT
+  from-not-authentic-at-signed-state.eml -- Ruling 19: i=1 over m=2, the From
+                                         at state 2 is test1's, d=test2; REJECT
   positive-control-u-literal.eml   -- U2: "u" steps (incl. "Y2Fm6Q==")
   recipe-u-nonzero-pad.eml         -- U3: {"u":["QR=="]}; REJECT
   recipe-b-step.eml, recipe-two-step-keys.eml, recipe-empty-step.eml
@@ -975,6 +980,34 @@ def build_from_changed_not_authentic():
     return _from_changed(b"x@test5.dkim2.com")
 
 
+def build_positive_ingress_from_rewritten():
+    """Ruling 19 (contract C5 corrected): an unsigned ingress m=1 carrying
+    the author's From (test5, a domain no signature here holds); the list
+    under test2 rewrites From in m=2 and signs i=1 over m=2.  The author's
+    From was replaced before any signature covered it, so it is never
+    checked; the From at state m(i=1) = 2 is the list's.  MUST be accepted."""
+    h1, b1 = load_base()
+    h1 = [b"From: A <a@test5.dkim2.com>" if x.lower().startswith(b"from:") else x for x in h1]
+    h2 = [b'From: "A via list" <list@lists.test2.dkim2.com>'
+          if x.lower().startswith(b"from:") else x for x in h1]
+    return _chain([(h1, b1, None), (h2, b1, ds.build_recipes(h1, b1, h2, b1))], [
+        dict(d="test2.dkim2.com", m=2, mf="list-bounces@lists.test2.dkim2.com",
+             rt=["user@test5.dkim2.com"]),
+    ])
+
+
+def build_from_not_authentic_at_signed_state():
+    """Ruling 19: i=1 covers m=2, and the From at state 2 (unchanged from
+    the author's, test1) is not Authentic for i=1's d=test2.  REJECT with
+    "i=1 matching From is not authentic"."""
+    h1, b1 = load_base()
+    h2 = _subject_prefixed(h1, b"list")
+    return _chain([(h1, b1, None), (h2, b1, ds.build_recipes(h1, b1, h2, b1))], [
+        dict(d="test2.dkim2.com", m=2, mf="list-bounces@lists.test2.dkim2.com",
+             rt=["user@test5.dkim2.com"]),
+    ])
+
+
 def build_recipe_u_nonzero_pad():
     """U3: "QR==" fails the zero-pad-bits pattern (it would decode to "A")."""
     headers, _ = load_base()
@@ -1073,6 +1106,8 @@ FIXTURES = {
     "positive-control-from-folded-2047.eml": build_positive_from_folded_2047,
     "positive-control-from-changed.eml": build_positive_from_changed,
     "from-changed-not-authentic.eml": build_from_changed_not_authentic,
+    "positive-control-ingress-from-rewritten.eml": build_positive_ingress_from_rewritten,
+    "from-not-authentic-at-signed-state.eml": build_from_not_authentic_at_signed_state,
     "recipe-u-nonzero-pad.eml": build_recipe_u_nonzero_pad,
     "recipe-b-step.eml": build_recipe_b_step,
     "recipe-two-step-keys.eml": build_recipe_two_step_keys,

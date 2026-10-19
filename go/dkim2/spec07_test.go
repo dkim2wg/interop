@@ -461,6 +461,43 @@ func TestSpec07A2ChangedFrom(t *testing.T) {
 	wantErr07(t, hop2, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic")
 }
 
+// ingress07 adds an unsigned Message-Instance m=1 (no Recipe) over in, as a
+// list host stamps a post that arrived without DKIM2.
+func ingress07(t *testing.T, in []byte) []byte {
+	t.Helper()
+	headers, bodyReader, err := parseHeaders(bytes.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	body.ReadFrom(bodyReader)
+	hh, err := hashHeaders(headers, "sha256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bh, err := hashBody(bytes.NewReader(body.Bytes()), "sha256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append([]byte(fmt.Sprintf("Message-Instance: m=1; h=sha256:%s:%s;\r\n",
+		base64.StdEncoding.EncodeToString(hh), base64.StdEncoding.EncodeToString(bh))), in...)
+}
+
+// Ruling 19: i=1 is checked against the From at state m(i=1).  An author's
+// From in an unsigned ingress m=1 that the list rewrote in m=2 before
+// signing i=1 over m=2 was never covered by a signature, so it is not
+// checked; the From at state m(i=1) still is.
+func TestSpec07A5FromBeforeFirstSignature(t *testing.T) {
+	in := ingress07(t, []byte(strings.Replace(spec07Base, "a@example.com", "a@elsewhere.net", 1)))
+	rev := revise07(t, in, setHeader("From", "List <list@lists.example.org>"), "", "")
+	wantPass07(t, must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, ""))
+
+	in = ingress07(t, []byte(spec07Base))
+	rev = revise07(t, in, setHeader("Subject", "[list] s"), "", "")
+	wantErr07(t, must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, ""),
+		"PERMERROR: DKIM2-Signature i=1 matching From is not authentic")
+}
+
 func TestSpec07A3SignerRefusesInauthenticFrom(t *testing.T) {
 	in := []byte("From: a@example.net\r\nSubject: s\r\n\r\nbody\r\n")
 	out, err := sign07(t, in, "example.com", "a@example.com", []string{"b@example.org"}, "", true)

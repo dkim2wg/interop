@@ -130,7 +130,7 @@ test('collectLevels lists the i= of DKIM2-Signatures with no valid i= as unkeyab
     'From: a@b\r\n\r\nbody\r\n';
   const { headers } = parseMessage(msg);
   const { signatures, unkeyableSignatures } = collectLevels(headers);
-  assert.deepEqual(unkeyableSignatures, ['', '0', 'abc']);
+  assert.deepEqual(unkeyableSignatures, [null, '0', 'abc']);
   assert.deepEqual(Object.keys(signatures), ['1']);
 });
 
@@ -139,9 +139,9 @@ test('chainNumberError: i=/m= is 1*DIGIT, at most 3 digits and 1..100, then at m
   assert.equal(MAX_CHAIN_NUMBER, 100);
   for (const v of ['1', '9', '32', '01', '001', '032']) assert.equal(chainNumberError('DKIM2-Signature', 'm', v), null, v);
   for (const v of ['33', '99', '100', '099'])
-    assert.equal(chainNumberError('DKIM2-Signature', 'm', v), 'PERMERROR: DKIM2-Signature m= exceeds the maximum chain length of 32', v);
+    assert.equal(chainNumberError('DKIM2-Signature', 'm', v, '2'), `PERMERROR: DKIM2-Signature i=2 m=${v} exceeds the maximum chain length of 32`, v);
   for (const v of ['101', '999', '0001', '4294967297', '99999999999999999999'])
-    assert.equal(chainNumberError('Message-Instance', 'm', v), 'PERMERROR: Message-Instance m= exceeds the maximum chain number of 100', v);
+    assert.equal(chainNumberError('Message-Instance', 'm', v), `PERMERROR: Message-Instance m=${v} exceeds the maximum chain number of 100`, v);
   for (const v of ['', '0', '00', '000', 'abc', '1x', '4294967297x', '30000000x', '0_1', '\uFF11', '+1', '-1', ' 1'])
     assert.equal(chainNumberError('Message-Instance', 'm', v), `PERMERROR: Message-Instance m=${v} syntax error`, JSON.stringify(v));
   assert.equal(chainNumberError('DKIM2-Signature', 'i', 'abc'), 'PERMERROR: DKIM2-Signature i=abc syntax error');

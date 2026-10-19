@@ -75,13 +75,16 @@ Revision history for Mail::DKIM2
           argument is shortened, as before.
 
         From must be Authentic (sections 11, 12.4, 14.8)
-        - The Verifier checks the From at m=1 against i=1, and a From a
-          header Recipe at m=k changed against the lowest i= whose m= is k
-          or more: exactly one From field, one mailbox, its domain (as
-          A-labels, never a literal) at or below d=. Otherwise
+        - The Verifier checks the From in effect when each signature was
+          made: the From at state m(i=1) against i=1, and, for each i >= 2
+          where an instance in (m(i-1), m(i)] changed From, the From at
+          state m(i) against i: exactly one From field, one mailbox, its
+          domain (as A-labels, never a literal) at or below d=. Otherwise
           "PERMERROR: DKIM2-Signature i=N matching From is not authentic".
-          Instances no signature covers (AllowUnsignedMI, the signer gate)
-          are not checked: the Signer checks those.
+          A From replaced before any signature covered it (an unsigned
+          ingress m=1 a list rewrote in m=2 before signing i=1) is never
+          checked. Instances no signature covers (AllowUnsignedMI, the
+          signer gate) are not checked: the Signer checks those.
         - The Signer refuses (result fail, details "From header field is
           not Authentic for d=D") when the message has no DKIM2-Signature
           yet, or a Message-Instance no signature covers names From, and
@@ -170,6 +173,18 @@ Revision history for Mail::DKIM2
 
         Validate.pm reports Chain of Custody by the -07 rules and the same
         strings, and grades a timestamp over a day ahead as "future".
+
+        Error strings for i= and m= numbers, as all five interop verifiers
+        now give them: a DKIM2-Signature with no i= is "PERMERROR:
+        DKIM2-Signature i= tag=i missing" (UNKEYABLE_SIGNATURE_ERROR, was
+        "has a missing or malformed i= tag"), one whose i= is not a
+        positive integer "i=<as written> syntax error" (new
+        Common::unkeyable_signature_error); a signature's malformed m= is
+        "DKIM2-Signature i=<i> syntax error"; an out-of-range number names
+        the field and the value ("DKIM2-Signature i=33 exceeds the maximum
+        chain length of 32", "DKIM2-Signature i=2 m=101 exceeds ...",
+        "Message-Instance m=101 exceeds ..."). Common::chain_number_error
+        takes the field's own number as a fourth argument.
 
         Fixed: the DKIM2Verify handler's close_callback did not delete
         has_mi (added in 0.22), so authentication_milter logged "did not

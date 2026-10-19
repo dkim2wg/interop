@@ -301,6 +301,25 @@ test('A2: the original From is still checked against i=1', async () => {
   assertPerm(await verify(msg), NOT_AUTHENTIC_1);
 });
 
+// Ruling 19: i=1 is checked against the From at state m(i=1). An author's
+// From in an unsigned ingress m=1, rewritten by the list in m=2 before it
+// signed i=1 over m=2, was never covered by a signature.
+test('Ruling 19: a From replaced before the first signature is not checked', async () => {
+  const msg = await signChain([
+    { fields: [['From', 'a@elsewhere.net'], ['Subject', 'hi']], body: BODY },
+    { fields: [['From', 'list@lists.example.org'], ['Subject', 'hi']], body: BODY, recipe: { h: { from: [{ d: ['a@elsewhere.net'] }] } } },
+  ], [two({ m: 2 })]);
+  assertPass(await verify(msg));
+});
+
+test('Ruling 19: the From at state m(i=1) is checked against i=1', async () => {
+  const msg = await signChain([
+    { fields: [['From', 'a@example.com'], ['Subject', 'hi']], body: BODY },
+    { fields: [['From', 'a@example.com'], ['Subject', '[list] hi']], body: BODY, recipe: { h: { subject: [{ d: ['hi'] }] } } },
+  ], [two({ m: 2 })]);
+  assertPerm(await verify(msg), NOT_AUTHENTIC_1);
+});
+
 test('A4: From u@bücher.example (UTF-8) with d=xn--bcher-kva.example passes', async () => {
   const msg = await oneHopFrom('u@bücher.example', { d: 'xn--bcher-kva.example', mf: '<u@xn--bcher-kva.example>' });
   assertPass(await verify(msg));

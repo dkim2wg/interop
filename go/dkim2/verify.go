@@ -66,7 +66,7 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 	// a junk "DKIM2-Signature: m=2" can never pass for coverage of m=2.
 	for _, raw := range sigHeaders {
 		if !validSequenceTag(raw) {
-			return nil, errUnkeyableSignature
+			return nil, unkeyableSignatureError(raw)
 		}
 	}
 
@@ -270,7 +270,7 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		for _, raw := range miHeaders {
 			if mi, _ := parseMI(raw); mi != nil {
 				if seenM[mi.Version] {
-					return nil, fmt.Errorf("PERMERROR: duplicate Message-Instance m=%d", mi.Version)
+					return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d appears more than once", mi.Version)
 				}
 				seenM[mi.Version] = true
 			}
@@ -681,51 +681,55 @@ func fromRecipe(mi *MessageInstance) ([]RecipeStep, bool) {
 	return nil, false
 }
 
-// checkFromAuthentic is §14.8 (§11).  State k is the message as it was when
-// Message-Instance m=k was the highest: state top is the content as received,
-// and state k-1 is state k with m=k's From Recipe undone.  The From at state
-// 1 must be Authentic for the i=1 signature, and for each k >= 2 whose header
-// Recipe has a "from" key, the From at state k must be Authentic for the
-// lowest i whose m= is k or more.  States above limit are not checked.  A
-// From Recipe that cannot be applied stops the walk: the chain walk reports
-// it.  sigs are in ascending i= order.
+// checkFromAuthentic is §14.8 (§11), contract C5 as corrected by Ruling 19:
+// the From in effect when each signature was made must be Authentic for it.
+// State k is the message as it was when Message-Instance m=k was the highest:
+// state top is the content as received, and state k-1 is state k with m=k's
+// From Recipe undone.  The From at state m(i=1) is checked against i=1, and
+// for each i >= 2 where some m=k with m(i-1) < k <= m(i) has a "from" key in
+// its header Recipe, the From at state m(i) against i.  A From replaced
+// before any signature covered it is never checked, nor are states above
+// limit (outbound, the unsigned top instances: the signer checks those).  A
+// From Recipe that cannot be applied stops the walk, and the states below it
+// are not checked: the chain walk reports it.  sigs are in ascending i= order.
 func checkFromAuthentic(content []Header, mis map[int]*MessageInstance, top, limit int, sigs []*DKIM2Signature) error {
-	sigFor := func(k int) *DKIM2Signature {
-		for _, s := range sigs {
-			if s != nil && s.MIVersion >= k {
-				return s
-			}
-		}
-		return nil
-	}
-	failed := map[int]bool{}
+	fromAt := map[int][]Header{}
+	changed := map[int]bool{}
 	from := fromFields(content)
 	for k := top; k >= 1; k-- {
-		steps, changed := fromRecipe(mis[k])
-		if k <= limit && (k == 1 || changed) {
-			var s *DKIM2Signature
-			if k == 1 {
-				if len(sigs) > 0 && sigs[0] != nil && sigs[0].Sequence == 1 {
-					s = sigs[0]
-				}
-			} else {
-				s = sigFor(k)
-			}
-			if s != nil && !fromAuthentic(from, s.Domain) {
-				failed[s.Sequence] = true
-			}
+		fromAt[k] = from
+		steps, ch := fromRecipe(mis[k])
+		if !ch || k == 1 {
+			continue
 		}
-		if changed && k > 1 {
-			prev, err := applyHeaderRecipe(from, "From", steps)
-			if err != nil {
-				break
-			}
-			from = prev
+		changed[k] = true
+		prev, err := applyHeaderRecipe(from, "From", steps)
+		if err != nil {
+			break
 		}
+		from = prev
 	}
 	var errs []error
-	for _, s := range sigs {
-		if s != nil && failed[s.Sequence] {
+	prevM := 0
+	for idx, s := range sigs {
+		if s == nil {
+			continue
+		}
+		due := s.Sequence == 1
+		if s.Sequence >= 2 && idx > 0 {
+			for k := prevM + 1; k <= s.MIVersion; k++ {
+				if changed[k] {
+					due = true
+					break
+				}
+			}
+		}
+		prevM = s.MIVersion
+		state, ok := fromAt[s.MIVersion]
+		if !due || !ok || s.MIVersion > limit {
+			continue
+		}
+		if !fromAuthentic(state, s.Domain) {
 			errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d matching From is not authentic", s.Sequence))
 		}
 	}

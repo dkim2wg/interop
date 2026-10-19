@@ -18,7 +18,7 @@ use Mail::DKIM2::Common qw(
     chain_length_error
     duplicate_number_error
     valid_sequence
-    UNKEYABLE_SIGNATURE_ERROR
+    unkeyable_signature_error
     chain_number_error
     mi_version_tag
     from_authentic
@@ -76,14 +76,14 @@ sub finish_header {
             # chain a PERMERROR, so do not sign over it.
             my $e = $sig && valid_sequence($sig->sequence)
                 && (chain_number_error('DKIM2-Signature', 'i', $sig->sequence)
-                    // chain_number_error('DKIM2-Signature', 'm', $sig->version));
+                    // chain_number_error('DKIM2-Signature', 'm', $sig->version, $sig->sequence));
             if ($e) {
                 $range //= $e;
             }
             elsif ($sig && valid_sequence($sig->sequence)) {
                 push @dk2_headers, { i => $sig->sequence, raw => $header, sig => $sig };
             } else {
-                $unkeyable = UNKEYABLE_SIGNATURE_ERROR;
+                $unkeyable = unkeyable_signature_error($val);
             }
         }
     }

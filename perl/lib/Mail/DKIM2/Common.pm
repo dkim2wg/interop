@@ -55,6 +55,7 @@ our @EXPORT_OK = qw(
     chain_length_error
     valid_sequence
     UNKEYABLE_SIGNATURE_ERROR
+    unkeyable_signature_error
     chain_number_error
     duplicate_number_error
 );
@@ -152,8 +153,33 @@ sub chain_length_error {
 # i=, i=0, i=abc, or a header that does not parse -- is a PERMERROR, never
 # silently skipped: a signer gate that counts which instances are signed by
 # m= must not be fooled by a junk signature naming an m=.
+# The -07 C6 forms: a missing i= is "i= tag=i missing" (there is no number
+# to name the field by); one that is not a positive integer is named as
+# written, "i=<value> syntax error" (unkeyable_signature_error).
 use constant UNKEYABLE_SIGNATURE_ERROR =>
-    'PERMERROR: DKIM2-Signature has a missing or malformed i= tag';
+    'PERMERROR: DKIM2-Signature i= tag=i missing';
+
+# The PERMERROR for a DKIM2-Signature header value that no verifier can
+# key: UNKEYABLE_SIGNATURE_ERROR without an i= tag, else "PERMERROR:
+# DKIM2-Signature i=<as written> syntax error".
+sub unkeyable_signature_error {
+    my ($contents) = @_;
+    my $i = _raw_tag($contents, 'i');
+    return defined $i ? "PERMERROR: DKIM2-Signature i=$i syntax error"
+                      : UNKEYABLE_SIGNATURE_ERROR;
+}
+
+# The raw value of a tag in a header value (whitespace removed), or undef.
+sub _raw_tag {
+    my ($header, $tag) = @_;
+    return unless defined $header;
+    for my $part (split /;/, $header) {
+        next unless $part =~ /\A\s*\Q$tag\E\s*=(.*)\z/si;    # tag names are case insignificant
+        (my $v = $1) =~ s/\s//g;
+        return $v;
+    }
+    return;
+}
 
 sub valid_sequence {
     my ($i) = @_;
@@ -167,15 +193,22 @@ sub valid_sequence {
 # 1; and since each number names one hop, no more than MAX_CHAIN_LENGTH.
 # Checking this before anything walks 1..max keeps a value like
 # 99999999999999999999 from being used as a loop bound.
+#
+# The field is named by its own number as written (a DKIM2-Signature by its
+# i=, a Message-Instance by its m=, -07 C6): $ident, defaulting to $n. So a
+# signature's bad m= is "DKIM2-Signature i=2 syntax error", and an
+# out-of-range one "DKIM2-Signature i=2 m=101 exceeds ...".
 sub chain_number_error {
-    my ($field, $tag, $n) = @_;
+    my ($field, $tag, $n, $ident) = @_;
     return unless defined $n;
-    my $malformed = $tag eq 'i' ? UNKEYABLE_SIGNATURE_ERROR
-                  : "PERMERROR: $field $tag=$n syntax error";
-    return $malformed unless $n =~ /\A[0-9]+\z/ && $n =~ /[1-9]/;
-    return "PERMERROR: $field $tag= exceeds the maximum chain number of "
+    my $id_tag = $field eq 'Message-Instance' ? 'm' : 'i';
+    my $who = "$field $id_tag=" . ($ident // $n);
+    return "PERMERROR: $who syntax error"
+        unless $n =~ /\A[0-9]+\z/ && $n =~ /[1-9]/;
+    $who .= " $tag=$n" if $tag ne $id_tag;
+    return "PERMERROR: $who exceeds the maximum chain number of "
         . MAX_CHAIN_NUMBER if length($n) > 3 || $n > MAX_CHAIN_NUMBER;
-    return "PERMERROR: $field $tag= exceeds the maximum chain length of "
+    return "PERMERROR: $who exceeds the maximum chain length of "
         . MAX_CHAIN_LENGTH if $n > MAX_CHAIN_LENGTH;
     return;
 }
@@ -1066,21 +1099,30 @@ L</UNKEYABLE_SIGNATURE_ERROR>.
 
 =head2 UNKEYABLE_SIGNATURE_ERROR
 
-The PERMERROR string for a DKIM2-Signature with a missing or malformed
-C<i=>, or one that does not parse.
+The PERMERROR string for a DKIM2-Signature with no C<i=> tag, or one that
+does not parse: C<"PERMERROR: DKIM2-Signature i= tag=i missing">.
 
-=head2 chain_number_error($field, $tag, $n)
+=head2 unkeyable_signature_error($value)
+
+The PERMERROR string for a DKIM2-Signature header value whose C<i=> is
+missing (L</UNKEYABLE_SIGNATURE_ERROR>) or not a positive integer
+(C<"PERMERROR: DKIM2-Signature i=E<lt>as writtenE<gt> syntax error">). New
+in 0.23.
+
+=head2 chain_number_error($field, $tag, $n, $ident)
 
 The PERMERROR string for an C<i=> or C<m=> value that is not a chain
 number, or undef (also for an undefined C<$n>, which is left to the
-caller). A value that is not 1*DIGIT in ASCII, or is zero, is malformed:
-L</UNKEYABLE_SIGNATURE_ERROR> for C<i=>, else
-C<"PERMERROR: $field $tag=$n syntax error"> (-07 section 14.2). More than
-three digits or above L</MAX_CHAIN_NUMBER> is C<"PERMERROR: $field $tag=
-exceeds the maximum chain number of 100">. Above L</MAX_CHAIN_LENGTH> is
-C<"PERMERROR: $field $tag= exceeds the maximum chain length of 32">: every
-C<i=> and C<m=> names one hop, so none can be larger than the chain.
-C<01> and C<001> are 1.
+caller). The field is named by its own number as written, C<$ident>
+(default C<$n>): a DKIM2-Signature by C<i=>, a Message-Instance by C<m=>.
+A value that is not 1*DIGIT in ASCII, or is zero, is
+C<"PERMERROR: $field i=$ident syntax error"> (C<m=> for a
+Message-Instance; -07 section 14.2). More than three digits or above
+L</MAX_CHAIN_NUMBER> is C<"PERMERROR: DKIM2-Signature i=$ident exceeds the
+maximum chain number of 100">, with C<" m=$n"> after C<$ident> for a
+signature's C<m=>. Above L</MAX_CHAIN_LENGTH>, likewise C<"... exceeds the
+maximum chain length of 32">: every C<i=> and C<m=> names one hop, so none
+can be larger than the chain. C<01> and C<001> are 1.
 
 =head2 duplicate_number_error($field, $tag, @numbers)
 

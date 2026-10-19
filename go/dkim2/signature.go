@@ -135,9 +135,18 @@ type VerifyOptions struct {
 // dkim2=none), not a PERMERROR, and it carries no error string of its own.
 var ErrNone = errors.New("none")
 
-// errUnkeyableSignature is the PERMERROR for a DKIM2-Signature whose i= is
-// missing or not a positive integer (or that has no tag-list at all).
-var errUnkeyableSignature = errors.New("PERMERROR: DKIM2-Signature has a missing or malformed i= tag")
+// unkeyableSignatureError is the PERMERROR for a DKIM2-Signature whose i= is
+// missing ("i= tag=i missing", also when it has no tag-list at all) or not a
+// positive integer ("i=<as written> syntax error"), in the C6 forms.
+func unkeyableSignatureError(raw string) error {
+	if colon := strings.IndexByte(raw, ':'); colon >= 0 {
+		tvl := parseTagValueList(raw[colon+1:])
+		if tvl.has("i") {
+			return fmt.Errorf("PERMERROR: DKIM2-Signature i=%s syntax error", strings.TrimSpace(tvl.get("i")))
+		}
+	}
+	return errors.New("PERMERROR: DKIM2-Signature i= tag=i missing")
+}
 
 // MaxFutureSkew and MaxSignatureAge are the §14.3 timestamp limits: a
 // signature made more than one day after delivery, or more than 14 days
@@ -170,29 +179,36 @@ func allASCIIDigits(v string) bool {
 
 // chainNumberError is the PERMERROR for an i= or m= value that is not a chain
 // number, or nil (also when the tag is absent, which is left to the callers).
-// 1*DIGIT in ASCII, else malformed (also zero): strconv.Atoi would take "+1".
-// At most three digits and 1..MaxChainNumber, so "01" and "001" are 1 (and
-// nothing is converted that could overflow), and no more than MaxChainLength.
-func chainNumberError(field, tag, v string, present bool) error {
+// 1*DIGIT in ASCII, else a syntax error (also zero): strconv.Atoi would take
+// "+1".  At most three digits and 1..MaxChainNumber, so "01" and "001" are 1
+// (and nothing is converted that could overflow), and no more than
+// MaxChainLength.  The field is named by its own number as written (a
+// DKIM2-Signature by i=, a Message-Instance by m=, -07 §14.2): ident.
+func chainNumberError(field, tag, v, ident string, present bool) error {
 	if !present {
 		return nil
 	}
 	v = strings.TrimSpace(v)
+	identTag := "i"
+	if field == "Message-Instance" {
+		identTag = "m"
+	}
+	who := field + " " + identTag + "=" + strings.TrimSpace(ident)
 	if !allASCIIDigits(v) || strings.TrimLeft(v, "0") == "" {
-		if tag == "i" {
-			return fmt.Errorf("PERMERROR: %s has a missing or malformed i= tag", field)
-		}
-		return fmt.Errorf("PERMERROR: %s has a malformed %s= tag", field, tag)
+		return fmt.Errorf("PERMERROR: %s syntax error", who)
 	}
-	if len(v) > 3 {
-		return fmt.Errorf("PERMERROR: %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
+	if tag != identTag {
+		who += " " + tag + "=" + v
 	}
-	n, _ := strconv.Atoi(v)
+	n := MaxChainNumber + 1
+	if len(v) <= 3 {
+		n, _ = strconv.Atoi(v)
+	}
 	if n > MaxChainNumber {
-		return fmt.Errorf("PERMERROR: %s %s= exceeds the maximum chain number of %d", field, tag, MaxChainNumber)
+		return fmt.Errorf("PERMERROR: %s exceeds the maximum chain number of %d", who, MaxChainNumber)
 	}
 	if n > MaxChainLength {
-		return fmt.Errorf("PERMERROR: %s %s= exceeds the maximum chain length of %d", field, tag, MaxChainLength)
+		return fmt.Errorf("PERMERROR: %s exceeds the maximum chain length of %d", who, MaxChainLength)
 	}
 	return nil
 }
@@ -216,7 +232,11 @@ func chainRangeError(miHeaders, sigHeaders []string) error {
 				continue
 			}
 			tvl := parseTagValueList(raw[colon+1:])
-			if err := chainNumberError(c.field, c.tag, tvl.get(c.tag), tvl.has(c.tag)); err != nil {
+			identTag := "i"
+			if c.field == "Message-Instance" {
+				identTag = "m"
+			}
+			if err := chainNumberError(c.field, c.tag, tvl.get(c.tag), tvl.get(identTag), tvl.has(c.tag)); err != nil {
 				return err
 			}
 		}
@@ -302,9 +322,8 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 	if v := tvl.get("i"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			// The i= tag itself is malformed, so its value can't be trusted
-			// to prefix this error.
-			return nil, errUnkeyableSignature
+			// The i= tag itself is malformed: name it as written.
+			return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%s syntax error", strings.TrimSpace(v))
 		}
 		sig.Sequence = n
 	}

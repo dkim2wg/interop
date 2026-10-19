@@ -34,10 +34,14 @@ static struct {
 typedef struct {
     dkim2_ctx_t ctx;
     int n_exploded_hint;    /* X-DKIM2-Exploded fields seen (sign modes) */
+    int n_mi_fields;        /* Message-Instance fields seen, parsed or not */
+    int n_sig_fields;       /* DKIM2-Signature fields seen, parsed or not */
 } conn_state_t;
 
 static void state_reset(conn_state_t *s) {
     s->n_exploded_hint = 0;
+    s->n_mi_fields = 0;
+    s->n_sig_fields = 0;
     dkim2_ctx_t *c = &s->ctx;
     for (int i = 0; i < c->n_headers; i++) free(c->headers[i]);
     free(c->headers);
@@ -109,6 +113,7 @@ static sfsistat cb_header(SMFICTX *ctx, char *name, char *value) {
 
     /* Parse DKIM2 headers as they arrive */
     if (strcasecmp(name, "Message-Instance") == 0) {
+        s->n_mi_fields++;
         char errbuf[256];
         dkim2_mi_t *mi = dkim2_mi_parse_err(value, errbuf, sizeof errbuf);
         if (mi) {
@@ -121,6 +126,7 @@ static sfsistat cb_header(SMFICTX *ctx, char *name, char *value) {
             snprintf(c->mi_error, sizeof c->mi_error, "%s", errbuf);
         }
     } else if (strcasecmp(name, "DKIM2-Signature") == 0) {
+        s->n_sig_fields++;
         char errbuf[256];
         dkim2_sig_t *sig = dkim2_sig_parse_err(value, errbuf, sizeof errbuf);
         if (sig) {
@@ -240,14 +246,25 @@ static sfsistat cb_eom(SMFICTX *ctx) {
             /* Signer refusal: an existing DKIM2 chain that does not verify
                (or a null body Recipe on an unsigned instance, without
                allow_null_body_recipe), or a From that is not Authentic for
-               our domain. -07 §12/§13: such a message is not to be signed or
-               forwarded, so it is rejected 550 5.7.1 with the reason (it
-               used to be delivered unsigned). Every Message-Instance's body
-               and header hashes are checked, by the plan fed in cb_body. */
+               our domain. Every Message-Instance's body and header hashes
+               are checked, by the plan fed in cb_body.
+               With an upstream DKIM2-Signature, -07 §12/§13: the message is
+               not to be signed or forwarded as it is, so it is rejected
+               550 5.7.1 with the reason. Without one (as the Perl milters
+               do) it is delivered unsigned: the hint and any unsigned
+               Message-Instance fields are removed, since no signature will
+               ever cover them. */
             if (strncmp(c->errmsg, "not signing:", 12) == 0) {
                 syslog(LOG_WARNING, "dkim2-milter: %s", c->errmsg);
-                set_reply(ctx, "550", "5.7.1", c->errmsg);
-                return SMFIS_REJECT;
+                if (s->n_sig_fields > 0) {
+                    set_reply(ctx, "550", "5.7.1", c->errmsg);
+                    return SMFIS_REJECT;
+                }
+                for (int k = s->n_exploded_hint; k >= 1; k--)
+                    smfi_chgheader(ctx, EXPLODED_HINT, k, NULL);
+                for (int k = s->n_mi_fields; k >= 1; k--)
+                    smfi_chgheader(ctx, "Message-Instance", k, NULL);
+                return SMFIS_ACCEPT;
             }
             syslog(LOG_ERR, "dkim2-milter: sign failed: %s", c->errmsg);
             return SMFIS_TEMPFAIL;
