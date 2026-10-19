@@ -335,6 +335,36 @@ sub list_modified {
     like($v->result_detail, qr/i=1\.\.2/, 'list: both signatures verified');
 }
 
+# --- 2a. The exploded flag (-07 section 12.5) ---
+#
+# The list manager marks each distribution copy X-DKIM2-Exploded: yes; the
+# milter signs it with f=exploded and removes the hint. A copy with two
+# recipients gets the flag without asking.
+{
+    my $list = list_modified(originator_signed());
+    my $f = sub { my ($sig) = inserted($_[0], 'DKIM2-Signature');
+                  $sig && $sig->{value} =~ /\bf=([^;]*)/ ? $1 =~ s/\s+//gr : '' };
+    my ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => "X-DKIM2-Exploded: yes$EOL$list");
+    is($f->($mods), 'exploded', 'exploded hint: f=exploded');
+    my @gone = grep { $_->{op} eq 'change' && $_->{name} eq 'X-DKIM2-Exploded' } @$mods;
+    is(scalar @gone, 1, 'exploded hint: the hint is deleted');
+    is($gone[0]{value} // 'x', '', 'exploded hint: ... with an empty value');
+    my $out = apply_mods("X-DKIM2-Exploded: yes$EOL$list", $mods);
+    unlike($out, qr/^X-DKIM2-Exploded/mi, 'exploded hint: it does not leave');
+    is(verify($out)->result, 'pass', 'exploded hint: the copy verifies');
+
+    ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['a@example.org', 'b@example.org'],
+        message => $list);
+    is($f->($mods), 'exploded', 'two recipients: f=exploded');
+    ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['a@example.org'],
+        message => $list);
+    is($f->($mods), '', 'one recipient, no hint: no f=');
+}
+
 # --- 3. The opt-out must not loosen the chain gate: broken upstream -> refuse ---
 {
     my $signed = originator_signed();

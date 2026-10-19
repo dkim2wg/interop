@@ -148,6 +148,13 @@ sub addheader_callback {
     $self->change_header( 'X-DKIM2-Snapshot', $_, q{} ) for reverse 1 .. @tokens;
     $self->{'_snapshot_token'} = ( @tokens == 1 && $tokens[0] =~ /\A[0-9a-f]{32}\z/ ) ? $tokens[0] : undef;
 
+    # X-DKIM2-Exploded: a list manager on this host (Mailman, Sympa) marks
+    # each distribution copy, asking for the -07 "exploded" flag (section
+    # 12.5). Its presence, whatever the value, is the request. It never
+    # leaves either.
+    my $exploded = grep { /\AX-DKIM2-Exploded[ \t]*:/i } @{ $self->{'headers'} || [] };
+    $self->change_header( 'X-DKIM2-Exploded', $_, q{} ) for reverse 1 .. $exploded;
+
     # Determine if we should sign this message
     my $should_sign = 0;
     if ( $config->{'sign_authenticated'} && $self->is_authenticated() ) {
@@ -209,8 +216,9 @@ sub addheader_callback {
             $message_data .= _fmtheader($h);
         }
 
-        # Original headers (less X-DKIM2-Snapshot, removed above)
-        foreach my $chunk (grep { !/\AX-DKIM2-Snapshot[ \t]*:/i } @{$self->{'headers'} || []}) {
+        # Original headers (less X-DKIM2-Snapshot and X-DKIM2-Exploded,
+        # removed above)
+        foreach my $chunk (grep { !/\AX-DKIM2-(?:Snapshot|Exploded)[ \t]*:/i } @{$self->{'headers'} || []}) {
             $message_data .= $chunk;
         }
 
@@ -256,6 +264,7 @@ sub addheader_callback {
             Domain   => $sign_domain,
             Selector => $selector,
             Key      => $key,
+            ( $exploded ? ( Exploded => 1 ) : () ),
         );
 
         # Pin t= when configured.  Only the test suite sets this, so that the
@@ -797,7 +806,10 @@ diff-based MI is computed capturing header and body changes made during local
 processing.  A message whose top Message-Instance does not match and that has
 no such snapshot gets no new MI (and the gate refuses it); one with no
 Message-Instance at all gets C<m=1>.  The handler removes C<X-DKIM2-Snapshot>
-from every message it sees, signed or not.  A snapshot diff whose body Recipe would need more
+from every message it sees, signed or not, and C<X-DKIM2-Exploded> too: a
+message that carried one (Mailman and Sympa mark each distribution copy
+C<X-DKIM2-Exploded: yes>) is signed with the C<exploded> flag (-07 section
+12.5), as is one with more than one recipient, never at C<i=1>.  A snapshot diff whose body Recipe would need more
 than C<max_recipe_literals> literal lines declares the body unrecoverable
 (a null body Recipe): this handler only adds header fields, so it cannot
 move the old body into the MIME epilogue.  Like any null this hop adds, it is

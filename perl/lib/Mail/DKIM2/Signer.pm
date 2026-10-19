@@ -27,7 +27,7 @@ use Mail::DKIM2::MessageInstance;
 
 sub known_options {
     return qw(Domain Selector KeyFile Key Algorithm MailFrom RcptTo
-              Nonce Flags Timestamp NextDomain);
+              Nonce Flags Exploded Timestamp NextDomain);
 }
 
 sub init {
@@ -122,34 +122,47 @@ sub finish_header {
     # Determine highest MI version
     my $mi_version = @mi_headers ? $mi_headers[-1]{v} : 0;
 
-    # Build initial signature items as [selector, algorithm, value] arrays
-    my @sig_items;
-    push @sig_items, [
-        $self->{Selector},
-        $self->{Algorithm},
-        '',
-    ];
-
-    # Create the signature object
-    # draft-06 §9.3: when NextDomain is set this is an imaginary forwarding
-    # hop — emit nd= and omit mf=/rt= (Signature->new enforces the exclusion).
-    my $signature = Mail::DKIM2::Signature->new(
-        Sequence   => $next_i,
-        Version    => $mi_version || undef,
-        Timestamp  => $self->{Timestamp} || time(),
-        Domain     => $self->{Domain},
-        ($self->{NextDomain}
-            ? (NextDomain => $self->{NextDomain})
-            : (MailFrom => $self->{MailFrom}, RcptTo => $self->{RcptTo})),
-        Signatures => \@sig_items,
-        ($self->{Nonce} ? (Nonce => $self->{Nonce}) : ()),
-        ($self->{Flags} ? (Flags => $self->{Flags}) : ()),
-    );
-
-    $self->{_signature} = $signature;
+    $self->{_mi_version} = $mi_version;
+    $self->{_timestamp}  = $self->{Timestamp} || time();
     $self->{_mi_headers} = \@mi_headers;
     $self->{_dk2_headers} = \@dk2_headers;
     $self->{_next_i} = $next_i;
+    $self->{_signature} = $self->_new_signature($self->{RcptTo});
+}
+
+# The signature object for this hop with rt= set to $rcpt (an arrayref, or
+# undef for none). draft-06 §9.3: when NextDomain is set this is an
+# imaginary forwarding hop -- emit nd= and omit mf=/rt= (Signature->new
+# enforces the exclusion).
+#
+# f= (-07 section 12.5): "exploded" MUST be set by a hop sending the message
+# to more than one address and MUST NOT be set at i=1. So it is set when
+# i > 1 and the caller asked for it (Exploded, or "exploded" among its
+# Flags) or rt= holds more than one address, and dropped at i=1 whatever
+# the caller said. Built afresh for each recipient set, since the flag
+# depends on rt=.
+sub _new_signature {
+    my ($self, $rcpt) = @_;
+    my $i = $self->{_next_i};
+    my @rcpt = !defined $rcpt ? () : ref $rcpt eq 'ARRAY' ? @$rcpt : ($rcpt);
+    my @flags = grep { $_ ne 'exploded' } @{ $self->{Flags} || [] };
+    my $asked = $self->{Exploded}
+             || grep { $_ eq 'exploded' } @{ $self->{Flags} || [] };
+    push @flags, 'exploded'
+        if $i > 1 && ($asked || (!$self->{NextDomain} && @rcpt > 1));
+    return Mail::DKIM2::Signature->new(
+        Sequence   => $i,
+        Version    => $self->{_mi_version} || undef,
+        Timestamp  => $self->{_timestamp},
+        Domain     => $self->{Domain},
+        ($self->{NextDomain}
+            ? (NextDomain => $self->{NextDomain})
+            : (MailFrom => $self->{MailFrom},
+               (defined $rcpt ? (RcptTo => \@rcpt) : ()))),
+        Signatures => [[ $self->{Selector}, $self->{Algorithm}, '' ]],
+        ($self->{Nonce} ? (Nonce => $self->{Nonce}) : ()),
+        (@flags ? (Flags => \@flags) : ()),
+    );
 }
 
 sub finish_body {
@@ -181,7 +194,11 @@ sub sign_for_recipient {
     my ($self, $rcpt) = @_;
     croak "sign_for_recipient: no signature: " . ($self->{details} // 'CLOSE has not run')
         unless $self->{_signature};
-    $self->{_signature}->rcpt_to($rcpt);
+    croak "cannot set rt= on a signature carrying nd= (spec-06 §8.7)"
+        if $self->{NextDomain};
+    my @list = ref $rcpt eq 'ARRAY' ? @$rcpt : ($rcpt);
+    croak "rcpt_to requires at least one recipient" unless @list;
+    $self->{_signature} = $self->_new_signature(\@list);
     $self->_compute_signature;
     $self->{result} = 'signed';
     return $self->as_string;
@@ -384,7 +401,16 @@ The C<n=> value, at most 64 characters.
 
 =item Flags
 
-An arrayref of C<f=> flags, such as C<donotmodify>.
+An arrayref of C<f=> flags, such as C<feedback>. An C<exploded> among
+them is a request for the flag, as C<Exploded> is.
+
+=item Exploded
+
+True when this hop sends the message to more than one address, as a list
+manager does (-07 section 12.5). The signature then carries the
+C<exploded> flag, which it also gets whenever C<rt=> holds more than one
+address. Never at C<i=1>: there the flag, requested this way or in
+C<Flags>, is dropped.
 
 =back
 

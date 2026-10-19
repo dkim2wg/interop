@@ -323,6 +323,11 @@ sub cb_eom {
     # leaves: every mode removes it on sight (inbound adds a fresh one).
     my @snapshot_tokens = _strip_snapshot_header($ctx, $priv, \$message);
 
+    # X-DKIM2-Exploded: a list manager on this host (Mailman, Sympa) marks each
+    # distribution copy, asking the signer for the -07 "exploded" flag. Only
+    # a signing milter acts on it, and it never leaves: removed before signing.
+    $priv->{exploded} = _strip_exploded_header($ctx, $priv, \$message) if $do_sign;
+
     # Extract message-id for logging
     my $msgid = '';
     for my $hdr (@{$priv->{headers}}) {
@@ -892,17 +897,33 @@ sub _snapshot_key { "X-DKIM2-Snapshot:$_[0]" }
 # the reconstructed message. Returns the tokens that were there.
 sub _strip_snapshot_header {
     my ($ctx, $priv, $message_ref) = @_;
-    my @tok = map { $_->[1] =~ s/^\s+|\s+$//gr }
-              grep { lc $_->[0] eq 'x-dkim2-snapshot' } @{$priv->{headers}};
-    return () unless @tok;
-    $ctx->chgheader('X-DKIM2-Snapshot', $_, '') for reverse 1 .. @tok;
+    return _strip_header($ctx, $priv, $message_ref, 'X-DKIM2-Snapshot');
+}
+
+# Remove every X-DKIM2-Exploded field, as above. True if there was one: the
+# -07 contract makes its presence, whatever its value, the request.
+sub _strip_exploded_header {
+    my ($ctx, $priv, $message_ref) = @_;
+    my @values = _strip_header($ctx, $priv, $message_ref, 'X-DKIM2-Exploded');
+    return @values ? 1 : 0;
+}
+
+# Remove every $name field from the wire (deleted last first, by index among
+# the fields as received, before anything is inserted) and from the
+# reconstructed message. Returns the values that were there, trimmed.
+sub _strip_header {
+    my ($ctx, $priv, $message_ref, $name) = @_;
+    my @val = map { $_->[1] =~ s/^\s+|\s+$//gr }
+              grep { lc $_->[0] eq lc $name } @{$priv->{headers}};
+    return () unless @val;
+    $ctx->chgheader($name, $_, '') for reverse 1 .. @val;
     my $sep = index($$message_ref, "\015\012\015\012");
     if ($sep >= 0) {
         my $head = substr($$message_ref, 0, $sep + 2);
-        $head =~ s/^X-DKIM2-Snapshot[ \t]*:[^\r\n]*\r\n(?:[ \t][^\r\n]*\r\n)*//mig;
+        $head =~ s/^\Q$name\E[ \t]*:[^\r\n]*\r\n(?:[ \t][^\r\n]*\r\n)*//mig;
         substr($$message_ref, 0, $sep + 2) = $head;
     }
-    return @tok;
+    return @val;
 }
 
 sub _format_mi {
@@ -934,6 +955,7 @@ sub _do_sign {
             Algorithm => $config->{algorithm},
             MailFrom  => ( length($priv->{env_from} // '') ? $priv->{env_from} : '<>' ),
             RcptTo    => $priv->{env_rcpt},
+            ($priv->{exploded} ? (Exploded => 1) : ()),
         );
         $signer->PRINT($message);
         $signer->CLOSE();
@@ -1026,6 +1048,13 @@ domain fallback) and uses the first key found.  The algorithm is
 auto-detected from the key type (RSA or Ed25519).
 
 =back
+
+When signing, a message carrying an C<X-DKIM2-Exploded> header field (any
+value; Mailman and Sympa add C<X-DKIM2-Exploded: yes> to every
+distribution copy) is signed with the C<exploded> flag (-07 section 12.5),
+which a signature also gets whenever the message has more than one
+recipient; never at C<i=1>. The field is removed from the message before
+it is signed and never leaves.
 
 This program implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>.
 

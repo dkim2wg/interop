@@ -459,8 +459,8 @@ A nonce of at most 64 characters.
 
 =item C<f=>
 
-Comma-separated flags: C<donotmodify>, C<donotexplode>, C<feedback>,
-C<feedhere>.
+Comma-separated flags (-07 section 10.10): C<exploded>, C<feedback>,
+C<feedhere>, or any other; an unknown flag has no effect.
 
 =item C<s=>
 

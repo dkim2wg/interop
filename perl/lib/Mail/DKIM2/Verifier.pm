@@ -405,54 +405,6 @@ sub finish_body {
         return unless $chain_result;
     }
 
-    # §10.8: Check donotmodify and donotexplode requests
-    for my $i (1..$max_i) {
-        my $sig   = $dk2_map{$i}{sig};
-        my $flags = $sig->flags // [];
-
-        if (grep { $_ eq 'donotmodify' } @$flags) {
-            my $m = 0 + ($sig->version || 0);
-            if ($m >= 1 && $mi_map{$m} && $mi_map{$m + 1}) {
-                # spec-06 §3.4/§7.3: an MI may carry several hash-sets. Only
-                # compare hash-sets whose algorithm we implement; if the two
-                # instances share none, we cannot tell whether the message
-                # changed and fail closed rather than silently accept.
-                my %by_alg_m  = map { $_->[0] => $_ } @{ _extract_mi_hash_sets($mi_map{$m}) };
-                my %by_alg_m1 = map { $_->[0] => $_ } @{ _extract_mi_hash_sets($mi_map{$m + 1}) };
-                my $impl = Mail::DKIM2::MessageInstance::hash_algs();
-                my @common = grep { $by_alg_m{$_} && $by_alg_m1{$_} && $impl->{$_} }
-                             keys %by_alg_m;
-
-                unless (@common) {
-                    $self->{result}  = 'permerror';
-                    $self->{details} = "Message-Instance m=$m no supported hash algorithm";
-                    return;
-                }
-
-                for my $alg (@common) {
-                    my (undef, $hh_m,  $bh_m)  = @{ $by_alg_m{$alg}  };
-                    my (undef, $hh_m1, $bh_m1) = @{ $by_alg_m1{$alg} };
-                    if ($hh_m ne $hh_m1 || $bh_m ne $bh_m1) {
-                        $self->{result}  = 'fail';
-                        $self->{details} = 'Message modified despite donotmodify request at i=' . $i;
-                        return;
-                    }
-                }
-            }
-        }
-
-        if (grep { $_ eq 'donotexplode' } @$flags) {
-            for my $j ($i + 1 .. $max_i) {
-                my $later_flags = $dk2_map{$j}{sig}->flags // [];
-                if (grep { $_ eq 'exploded' } @$later_flags) {
-                    $self->{result}  = 'fail';
-                    $self->{details} = 'Message exploded despite donotexplode request at i=' . $i;
-                    return;
-                }
-            }
-        }
-    }
-
     # §10.7: the cryptographic chain proves the MI headers are authentic, but
     # NOT that the current body/headers still match them. Walk the MI chain:
     # verify the top instance against the current content, then undo each
@@ -1420,11 +1372,6 @@ instead names the C<d=> of the hop that follows (spec-06 sections 9.3 and
 11.4).
 
 =item 5.
-
-B<Flags.> A hop that changed the message after a C<donotmodify>, or
-exploded it after a C<donotexplode>, is a C<fail>.
-
-=item 6.
 
 B<Content.> The top Message-Instance must match the message; its Recipe
 is applied and the next instance down checked against the result, back to

@@ -374,4 +374,26 @@ expect_sign('mi-only-null (allow_null_body_recipe)', list_post(null => 1, unsign
     expect_refuse('nd-to-other', $other, 'test3.dkim2.com', 'upstream-chain');
 }
 
+# --- X-DKIM2-Exploded: the list manager's request for the exploded flag (-07) ----------
+{
+    my $flags = sub {
+        my ($mock) = @_;
+        my ($sig) = fields($mock, 'DKIM2-Signature');
+        return $sig && $sig->{value} =~ /\bf=([^;]*)/ ? $1 =~ s/\s+//gr : '';
+    };
+    my $post = "X-DKIM2-Exploded: yes$EOL" . list_post();
+    my ($h, $mock) = expect_sign('exploded hint', $post, 'test2.dkim2.com', 2);
+    is($flags->($mock), 'exploded', 'exploded hint: f=exploded');
+    is_deeply([ grep { $_->{field} eq 'X-DKIM2-Exploded' } @{$h->{_changed_headers} // []} ],
+              [ { field => 'X-DKIM2-Exploded', index => 1, value => '' } ],
+              'exploded hint: the hint is removed');
+    ($h, $mock) = expect_sign('no hint', list_post(), 'test2.dkim2.com', 2);
+    is($flags->($mock), '', 'no hint, one recipient: no f=');
+    # Ignored at i=1 (an originating hop never explodes).
+    ($h, $mock) = run_sign("X-DKIM2-Exploded: yes$EOL$PLAIN",
+        domains => { 'test1.dkim2.com' => { selector => 'sel1',
+            key => DKIM2TestKeys::private_key_pem('test1.dkim2.com', 'sel1') } });
+    is($flags->($mock), '', 'exploded hint at i=1: no f=');
+}
+
 done_testing;
