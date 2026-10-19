@@ -386,10 +386,10 @@ sub check_duplicates {
 
     my @errors;
     if (grep { $_ > 1 } values %sel_count) {
-        push @errors, "PERMERROR DKIM2-Signature i=$i_val has a duplicate selector";
+        push @errors, "PERMERROR: DKIM2-Signature i=$i_val has a duplicate selector";
     }
     if (grep { $_ > 2 } values %alg_count) {
-        push @errors, "PERMERROR DKIM2-Signature i=$i_val has more selectors than allowed";
+        push @errors, "PERMERROR: DKIM2-Signature i=$i_val has more selectors than allowed";
     }
     return @errors;
 }

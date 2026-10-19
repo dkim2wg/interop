@@ -427,7 +427,7 @@ sub dsn_around {
             SkipTimestampCheck => 1,
         );
         ok(!$auth->{ok}, "a tampered returned message does not authenticate (headers_only=$headers_only)");
-        like($auth->{details} // '', qr/header hash mismatch/, '  ... because the header hash differs');
+        like($auth->{details} // '', qr/header hash sha256 mismatch/, '  ... because the header hash differs');
     }
 }
 

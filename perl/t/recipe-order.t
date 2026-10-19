@@ -50,7 +50,7 @@ sub verify_result {
     $v->set_pubkey_callback(DKIM2TestKeys::pubkey_callback());
     my $ok = eval { $v->load($text); 1 };
     return ('died', $@) unless $ok;
-    return ($v->result, $v->details);
+    return ($v->result, $v->details, $v->diagnostic);
 }
 
 our $ORIGINAL = join('',
@@ -146,14 +146,18 @@ for my $case (@bad) {
     my $err = eval { Mail::DKIM2::MessageInstance->undo($text); 1 } ? '' : $@;
     like($err, $error, "undo refuses $name");
 
-    my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($text);
+    # Every Recipe error is "contains invalid JSON"; which one is detail.
+    my $invalid = 'PERMERROR: Message-Instance m=2 contains invalid JSON';
+    my ($ok, $why, $detail) = Mail::DKIM2::MessageInstance->chain_verifies($text);
     ok(!$ok, "... chain_verifies does not pass");
-    like($why, $error, "... and says why");
+    is($why, $invalid, "... and says why");
+    like($detail // $why, $error, "... with the detail") unless $error =~ /invalid JSON/;
 
-    my ($result, $details) = verify_result($text);
+    my ($result, $details, $diag) = verify_result($text);
     isnt($result, 'died', "... the Verifier does not throw");
     isnt($result, 'pass', "... and does not accept the message") or diag($details);
-    like($details, $error, "... naming the problem");
+    is($details, $invalid, "... naming the problem");
+    like($diag // $details, $error, "... with the detail in diagnostic()") unless $error =~ /invalid JSON/;
 }
 
 # The honest footer Recipe still passes, so the failures above are the

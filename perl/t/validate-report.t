@@ -358,7 +358,7 @@ sub signed_input_nd {
     my $rep = Mail::DKIM2::Validate::report($signed, %ropt);
     my ($lvl) = grep { ($_->{result}//'') eq 'fail' } @{$rep->{levels}};
     ok($lvl, 'validator reports a failing level for bare mf=');
-    like($lvl->{detail}, qr/mf=.*7\.5|bracket/i, 'detail names the mf= bracket rule');
+    like($lvl->{detail}, qr/PERMERROR: DKIM2-Signature i=1 syntax error/, 'detail: an unbracketed mf= is a syntax error');
 }
 
 # 8) per-hop details: signature From/To + recovered MI Recipe values

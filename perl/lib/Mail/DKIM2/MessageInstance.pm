@@ -49,7 +49,7 @@ sub _chain_error_fields {
     return chain_length_error({ 'message-instance' => scalar @mi,
                                 'dkim2-signature'  => $signatures })
         // ((grep { !defined mi_version_tag($_) } @mi)
-               ? 'PERMERROR Message-Instance without m= tag' : undef)
+               ? 'PERMERROR: Message-Instance without m= tag' : undef)
         // $range
         // duplicate_number_error('Message-Instance', 'm', map { extract_mi_version($_) } @mi);
 }
@@ -1056,15 +1056,16 @@ sub _check_hashes {
     my $impl = hash_algs();
     my @usable = sort grep { $impl->{$_} } keys %$hashes;
 
-    return (0, "Message-Instance m=$num no supported hash algorithm") unless @usable;
+    return (0, "PERMERROR: Message-Instance m=$num no supported hash algorithm") unless @usable;
 
+    # -07 section 14.7's words, naming the algorithm.
     for my $alg (@usable) {
         my ($h1, $b1) = @{ $hashes->{$alg} };
-        my $hd = $header->($alg);
-        return (0, "$alg header hash mismatch ($h1 != $hd)") if $h1 ne $hd;
+        return (0, "FAIL: Message-Instance m=$num header hash $alg mismatch")
+            if $h1 ne $header->($alg);
         next unless $body;
-        my $bd = $body->($alg);
-        return (0, "$alg body hash mismatch ($b1 != $bd)") if $b1 ne $bd;
+        return (0, "FAIL: Message-Instance m=$num body hash $alg mismatch")
+            if $b1 ne $body->($alg);
     }
     return 1;
 }
@@ -1230,8 +1231,7 @@ sub chain_verifies {
         last unless $num;
 
         my ($ok, $err) = $class->verify($msg, %opts, HeadersOnly => $headers_only);
-        return (0, "Message-Instance m=$num does not match content"
-                 . ($err ? " ($err)" : '')) unless $ok;
+        return (0, $err // "FAIL: Message-Instance m=$num header hash mismatch") unless $ok;
 
         last if $num <= 1;
         # A null body Recipe loses the previous body, not the header
@@ -1241,8 +1241,13 @@ sub chain_verifies {
 
         my $prev = eval { $class->undo($msg, HeadersOnly => $headers_only) };
         die $@ if ref $@;
-        return (0, "Message-Instance m=$num did not undo cleanly"
-                 . ($@ ? ": $@" : '')) if $@ || !$prev;
+        # Every Recipe error is "contains invalid JSON" (the -07 contract);
+        # a third value says which range, for a log.
+        if ($@ || !$prev) {
+            (my $why = $@ // '') =~ s/\s+\z//;
+            return (0, $why) if $why =~ /\A(?:PERMERROR|FAIL|TEMPERROR): /;
+            return (0, "PERMERROR: Message-Instance m=$num contains invalid JSON", $why);
+        }
         $msg = $prev;
     }
     return (1, undef);
@@ -1396,7 +1401,10 @@ hashes cover the modified message.
 
 Checks the top instance against the message. Returns its C<m=> on success.
 On failure, including an instance that does not parse, returns C<0> in
-scalar context and C<(0, $reason)> in list context. Never dies.
+scalar context and C<(0, $reason)> in list context, the reason in the -07
+words with its state, e.g. C<"FAIL: Message-Instance m=2 body hash sha256
+mismatch"> or C<"PERMERROR: Message-Instance m=2 contains invalid JSON">.
+Never dies.
 
 With C<HeadersOnly =E<gt> 1> only the header hashes are checked and the body
 hash is skipped; this is how instances below a null body Recipe are checked,
@@ -1424,7 +1432,10 @@ with a null body Recipe (previous body unrecoverable) it carries on
 header-only (C<HeadersOnly>), so every lower instance's header hashes are
 still checked. Returns C<(1, undef)> only when the whole header history
 checks out, or C<(0, $reason)> at the first instance that does not match or
-does not undo. Never dies. A forwarder runs this before signing so it does
+does not undo, the reason as C<verify> gives it. Every Recipe that does not
+undo is C<"PERMERROR: Message-Instance m=N contains invalid JSON"> (the
+-07 contract); a third value then says why (C<"body Recipe copies lines
+2-2 twice">). Never dies. A forwarder runs this before signing so it does
 not put its name to a chain its recipients will reject.
 
 =head2 parse($header_value)

@@ -458,7 +458,11 @@ sub _verify {
     $v->allow_unsigned_mi(1);
     $v->set_pubkey_callback($cb) if $cb;
     $v->PRINT($text); $v->CLOSE;
-    return ($v->result // 'none', $v->details);
+    # The -07 string, and for the sender the resolver's reason behind a key
+    # that could not be fetched (Verifier::diagnostic).
+    my $detail = $v->details;
+    $detail .= " - " . $v->diagnostic if defined $detail && defined $v->diagnostic;
+    return ($v->result // 'none', $detail);
 }
 
 # Split a message into (headers-without-trailing-CRLF, body).

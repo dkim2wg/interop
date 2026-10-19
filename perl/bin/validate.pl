@@ -67,7 +67,7 @@ my $top_i = $num;
 # even though our own inbound path stamps an unsigned MI internally.
 if ($instance) {
   my $top_signed = %map ? max(map { _getv($_) } values %map) : 0;
-  die "PERMERROR Message-Instance m=$instance is not signed\n"
+  die "PERMERROR: Message-Instance m=$instance is not signed\n"
     if $instance > $top_signed;
 }
 

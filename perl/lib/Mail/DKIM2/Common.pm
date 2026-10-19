@@ -50,6 +50,8 @@ our @EXPORT_OK = qw(
     DKIM2_DATE
     MAX_CHAIN_LENGTH
     MAX_CHAIN_NUMBER
+    FUTURE_LIMIT
+    EXPIRY
     chain_length_error
     valid_sequence
     UNKEYABLE_SIGNATURE_ERROR
@@ -66,6 +68,12 @@ our @EXPORT_OK = qw(
 use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-06';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
 use constant DKIM2_DATE  => '2026-10-08';
+
+# -07 section 14.3: a DKIM2-Signature whose t= is more than a day after
+# delivery is "from the future", and one made more than 14 days before it
+# has "expired". Seconds.
+use constant FUTURE_LIMIT => 86400;
+use constant EXPIRY       => 14 * 86400;
 
 # Local policy, not spec-06: a message carrying more Message-Instance or
 # DKIM2-Signature fields than this is a PERMERROR, found before any key is
@@ -133,7 +141,7 @@ sub chain_length_error {
         my $count = ref($msg) eq 'HASH'
                   ? ($msg->{lc $field} // 0)
                   : scalar(my @values = $msg->header_raw($field));
-        return "PERMERROR more than " . MAX_CHAIN_LENGTH . " $field fields"
+        return "PERMERROR: more than " . MAX_CHAIN_LENGTH . " $field fields"
             if $count > MAX_CHAIN_LENGTH;
     }
     return;
@@ -145,7 +153,7 @@ sub chain_length_error {
 # silently skipped: a signer gate that counts which instances are signed by
 # m= must not be fooled by a junk signature naming an m=.
 use constant UNKEYABLE_SIGNATURE_ERROR =>
-    'PERMERROR DKIM2-Signature has a missing or malformed i= tag';
+    'PERMERROR: DKIM2-Signature has a missing or malformed i= tag';
 
 sub valid_sequence {
     my ($i) = @_;
@@ -163,11 +171,11 @@ sub chain_number_error {
     my ($field, $tag, $n) = @_;
     return unless defined $n;
     my $malformed = $tag eq 'i' ? UNKEYABLE_SIGNATURE_ERROR
-                  : "PERMERROR $field has a malformed $tag= tag";
+                  : "PERMERROR: $field $tag=$n syntax error";
     return $malformed unless $n =~ /\A[0-9]+\z/ && $n =~ /[1-9]/;
-    return "PERMERROR $field $tag= exceeds the maximum chain number of "
+    return "PERMERROR: $field $tag= exceeds the maximum chain number of "
         . MAX_CHAIN_NUMBER if length($n) > 3 || $n > MAX_CHAIN_NUMBER;
-    return "PERMERROR $field $tag= exceeds the maximum chain length of "
+    return "PERMERROR: $field $tag= exceeds the maximum chain length of "
         . MAX_CHAIN_LENGTH if $n > MAX_CHAIN_LENGTH;
     return;
 }
@@ -180,7 +188,7 @@ sub duplicate_number_error {
     my ($field, $tag, @numbers) = @_;
     my %seen;
     for my $n (grep { defined } @numbers) {
-        return "PERMERROR $field $tag=$n appears more than once"
+        return "PERMERROR: $field $tag=$n appears more than once"
             if $seen{$n + 0}++;
     }
     return;
@@ -1067,10 +1075,10 @@ The PERMERROR string for an C<i=> or C<m=> value that is not a chain
 number, or undef (also for an undefined C<$n>, which is left to the
 caller). A value that is not 1*DIGIT in ASCII, or is zero, is malformed:
 L</UNKEYABLE_SIGNATURE_ERROR> for C<i=>, else
-C<"PERMERROR $field has a malformed $tag= tag">. More than three digits
-or above L</MAX_CHAIN_NUMBER> is C<"PERMERROR $field $tag= exceeds the
-maximum chain number of 100">. Above L</MAX_CHAIN_LENGTH> is
-C<"PERMERROR $field $tag= exceeds the maximum chain length of 32">: every
+C<"PERMERROR: $field $tag=$n syntax error"> (-07 section 14.2). More than
+three digits or above L</MAX_CHAIN_NUMBER> is C<"PERMERROR: $field $tag=
+exceeds the maximum chain number of 100">. Above L</MAX_CHAIN_LENGTH> is
+C<"PERMERROR: $field $tag= exceeds the maximum chain length of 32">: every
 C<i=> and C<m=> names one hop, so none can be larger than the chain.
 C<01> and C<001> are 1.
 

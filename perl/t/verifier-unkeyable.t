@@ -63,7 +63,7 @@ for my $name (sort keys %junk) {
     my $v = verify($junk{$name} . $EOL . $signed);
     is($v->result, 'permerror', "$name: permerror");
     is($v->result_detail,
-       'permerror (PERMERROR DKIM2-Signature has a missing or malformed i= tag)',
+       'permerror (PERMERROR: DKIM2-Signature has a missing or malformed i= tag)',
        "$name: says why");
 
     my $s2 = Mail::DKIM2::Signer->new(

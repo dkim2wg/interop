@@ -22,15 +22,20 @@ our $TAG_NAME  = qr/[A-Za-z][A-Za-z0-9_]*/;
 our $TAG_VALUE = qr/(?:[\x21-\x3A\x3C-\x7E]+(?:[ \t\r\n]+[\x21-\x3A\x3C-\x7E]+)*)?/;
 
 # Split a tag-list into [name, value] pairs, the whitespace around names and
-# values trimmed. Empty specs (";;", a trailing ";") are skipped. Returns
-# (\@pairs, $ok): $ok is false if any non-empty spec is not name=value, or a
+# values trimmed. A trailing ";" is allowed. Returns
+# (\@pairs, $ok): $ok is false if an empty spec comes before the end
+# (";;"), any other spec is not name=value, or a
 # value has a character the grammar does not allow. The pairs still hold
 # every spec that did parse, for diagnostics.
 sub split_tag_list {
     my ($string) = @_;
     my (@pairs, $bad);
-    for my $spec (split /;/, $string, -1) {
-        next if $spec =~ /\A[ \t\r\n]*\z/;
+    my @specs = split /;/, $string, -1;
+    # -07 section 8: one ";" may end the list; an empty spec anywhere else
+    # (";;", a leading ";") is a syntax error.
+    pop @specs if @specs && $specs[-1] =~ /\A[ \t\r\n]*\z/;
+    for my $spec (@specs) {
+        if ($spec =~ /\A[ \t\r\n]*\z/) { $bad = 1; next }
         my ($name, $val) = $spec =~ /\A[ \t\r\n]*($TAG_NAME)[ \t\r\n]*=[ \t\r\n]*(.*?)[ \t\r\n]*\z/s
             or do { $bad = 1; next };
         $bad = 1 unless $val =~ /\A$TAG_VALUE\z/;
@@ -158,8 +163,9 @@ repeat as a permerror.
 
 =head2 syntax_error()
 
-True if the parsed input did not match the tag-list grammar of sections 7
-and 8: a non-empty fragment that is not C<name=value>, a name not starting
+True if the parsed input did not match the tag-list grammar (-07 section
+8): an empty fragment before the end (C<;;>; one trailing C<;> is fine), a
+fragment that is not C<name=value>, a name not starting
 with a letter, or a value with a character outside printable ASCII or a
 C<;>. The well-formed tags are still available, for diagnostics.
 
