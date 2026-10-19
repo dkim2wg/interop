@@ -90,6 +90,20 @@ Revision history for Mail::DKIM2
           @values); new HeaderPlan::values_at($m, $name).
         - DSN->generate and DSN->propagate sign From
           "Mail Delivery System <postmaster@" the signer's Domain ">".
+        - An unsigned post on the stock-Mailman route (and any message
+          whose Message-Instances no DKIM2-Signature covers) leaves
+          dkim2-milter and the DKIM2Sign handler with ONE m=1, as -07
+          section 12.1 allows: hashes of the copy sent and Recipes back to
+          the post as it arrived, a From munge included (so C5 checks the
+          munged From against i=1). The instances it carried are removed
+          and X-DKIM2-Info records action=restarted-unsigned-mi=m=1,...;
+          the message as it arrived comes from those instances when the top
+          one matches, else from the X-DKIM2-Snapshot snapshot. A post that
+          arrived signed is extended as before (m=N+1).
+        - MessageInstance->calculate($msg, $previous) with no instances on
+          either gives m=1 with Recipes (it died before). New
+          MessageInstance->calculate_first($msg, $previous): the m=1 above,
+          undoing every instance of $previous.
 
         Error strings and results (section 14)
         - details() is the -07 human-readable string, state included:

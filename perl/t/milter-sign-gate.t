@@ -113,13 +113,28 @@ sub gate_sign {
 
 sub fields { my ($mock, $f) = @_; grep { $_->{field} eq $f } @{$mock->{pre_headers}} }
 
-# The message as it leaves: pre_headers prepended in reverse, as milters do.
+# The message as it leaves: the handler's header changes applied in order as
+# the MTA does (an empty value deletes the index'th field of that name,
+# 1-based), then pre_headers prepended in reverse, as milters do.
 sub assemble {
-    my ($raw, $mock) = @_;
+    my ($raw, $mock, $h) = @_;
+    for my $c (@{ $h ? $h->{_changed_headers} // [] : [] }) {
+        my ($hdr, $body) = split /$EOL$EOL/, $raw, 2;
+        my @f;
+        for my $line (split /$EOL/, $hdr) {
+            if ($line =~ /^[ \t]/ && @f) { $f[-1] .= "$EOL$line" } else { push @f, $line }
+        }
+        my $n = 0;
+        @f = map {
+            my $hit = /^\Q$c->{field}\E[ \t]*:/i && ++$n == $c->{index};
+            $hit ? ($c->{value} eq '' ? () : ("$c->{field}: $c->{value}")) : ($_)
+        } @f;
+        $raw = join($EOL, @f) . "$EOL$EOL" . $body;
+    }
     my $out = '';
-    for my $h (reverse @{$mock->{pre_headers}}) {
-        (my $v = $h->{value}) =~ s/\015?\012/$EOL/g;
-        $out .= "$h->{field}: $v$EOL";
+    for my $p (reverse @{$mock->{pre_headers}}) {
+        (my $v = $p->{value}) =~ s/\015?\012/$EOL/g;
+        $out .= "$p->{field}: $v$EOL";
     }
     return $out . $raw;
 }
@@ -139,7 +154,7 @@ sub expect_sign {
     is(scalar @sig, 1, "$name: signed");
     like($sig[0]{value} // '', qr/^i=$want_i;/, "$name: i=$want_i")
         if @sig;
-    like(verify_out(assemble($raw, $mock), $cfg{ignore_header_prefixes}), qr/^pass/, "$name: the result verifies");
+    like(verify_out(assemble($raw, $mock, $h), $cfg{ignore_header_prefixes}), qr/^pass/, "$name: the result verifies");
     return ($h, $mock);
 }
 
@@ -274,7 +289,55 @@ expect_refuse('mi-only-broken', list_post(forge => 1, unsigned => 1), 'test2.dki
 expect_refuse('mi-only-broken (allow_null_body_recipe)',
     list_post(forge => 1, unsigned => 1), 'test2.dkim2.com', 'broken-mi-chain',
     allow_null_body_recipe => 1);
-expect_sign('mi-only', list_post(unsigned => 1), 'test2.dkim2.com', 1);
+{
+    # -07 section 12.1 (ruling 17): instances with no signature under them
+    # leave as ONE m=1 -- here the matching top undoes to the list's m=1, so
+    # no snapshot is needed.
+    my $raw = list_post(unsigned => 1);
+    my ($h, $mock) = expect_sign('mi-only', $raw, 'test2.dkim2.com', 1);
+    my $out = assemble($raw, $mock, $h);
+    is_deeply([ $out =~ /^Message-Instance:[ \t]*m=(\d+)/mg ], [1], 'mi-only: one Message-Instance, m=1');
+    my @info = map { $_->{value} } fields($mock, 'X-DKIM2-Info');
+    ok((grep { /\baction=restarted-unsigned-mi=m=1,m=2;/ } @info), 'mi-only: X-DKIM2-Info records the restart');
+    my $back = Mail::DKIM2::MessageInstance->undo($out);
+    is($back->header('Subject'), 'a post', 'mi-only: m=1 undoes to the list\'s first form');
+}
+
+# --- stock route: unsigned post, From munged, snapshot from arrival ---------------
+# The inbound side stamped an unsigned m=1 over the author's post and kept a
+# snapshot under an X-DKIM2-Snapshot token; stock Mailman then munged the From
+# (rule R15). The copy leaves with ONE m=1 whose Recipes go back to the post as
+# it arrived, signed as i=1 by the list domain (-07 sections 11, 12.1).
+{
+    my $mi1 = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($PLAIN));
+    my $arrived = "Message-Instance: " . $mi1->as_string . $EOL . $PLAIN;
+    my $dir = tempdir(CLEANUP => 1);
+    my $tok = 'fedcba9876543210fedcba9876543210';
+    Mail::DKIM2::MessageStore->new(directory => $dir)->store("X-DKIM2-Snapshot:$tok", $arrived);
+    (my $listed = $arrived) =~ s/^From: [^\r\n]*/From: Author via list <list\@test2.dkim2.com>${EOL}Reply-To: author\@test1.dkim2.com/m
+        or die 'fixture';
+    $listed =~ s/^Subject: /Subject: [list] /m;
+    $listed .= "-- $EOL" . "list footer$EOL";
+    my $raw = "X-DKIM2-Snapshot: $tok$EOL" . $listed;
+    my ($h, $mock) = expect_sign('munge', $raw, 'test2.dkim2.com', 1, snapshot_directory => $dir);
+    my ($sig) = fields($mock, 'DKIM2-Signature');
+    like($sig->{value} // '', qr/\bd=test2\.dkim2\.com;/, 'munge: d= the list domain');
+    my $out = assemble($raw, $mock, $h);
+    is_deeply([ $out =~ /^Message-Instance:[ \t]*m=(\d+)/mg ], [1], 'munge: one Message-Instance, m=1');
+    my $back = Mail::DKIM2::MessageInstance->undo($out);
+    is($back->header('From'), 'Author <author@test1.dkim2.com>', 'munge: undo restores the author From');
+    ok(!defined $back->header('Reply-To'), 'munge: undo removes the Reply-To');
+    is($back->body_raw, "hello list$EOL", 'munge: undo restores the body');
+
+    # Without the munge the Signer refuses: the author's From is not
+    # Authentic for the list domain (rule R15 is why operators munge).
+    (my $nomunge = $arrived) =~ s/^Subject: /Subject: [list] /m;
+    $nomunge = "X-DKIM2-Snapshot: $tok$EOL" . $nomunge;
+    my ($h2, $mock2) = gate_sign($nomunge, 'test2.dkim2.com', snapshot_directory => $dir);
+    is(scalar(fields($mock2, 'DKIM2-Signature')), 0, 'no munge: not signed');
+    ok((grep { /not Authentic for d=test2\.dkim2\.com/ } map { $_->[1] // '' } @{$h2->{_log}}),
+       'no munge: the Signer\'s refusal is logged');
+}
 expect_refuse('mi-only-null', list_post(null => 1, unsigned => 1), 'test2.dkim2.com',
     'null-body-recipe');
 expect_sign('mi-only-null (allow_null_body_recipe)', list_post(null => 1, unsigned => 1),

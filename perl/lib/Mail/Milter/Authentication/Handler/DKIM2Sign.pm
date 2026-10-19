@@ -242,6 +242,7 @@ sub addheader_callback {
         if ( $config->{'add_message_instance'} ) {
             delete $self->{'_stripped_mi_versions'};
             delete $self->{'_clean_message_data'};
+            delete $self->{'_restarted_mi'};
             my $mi = $self->_compute_message_instance($message_data, $config);
             if ( $self->{'_stripped_mi_versions'} ) {
                 # Broken intermediate MIs were stripped; use the cleaned message data
@@ -342,6 +343,13 @@ sub addheader_callback {
 
         if ( $sig_result eq 'signed' ) {
             $self->_delete_mi_versions(@mi_removals);
+            if ( @mi_removals && $self->{'_restarted_mi'} ) {
+                push @{$handler->{pre_headers}}, {
+                    'field' => 'X-DKIM2-Info',
+                    'value' => _dkim2_info('restarted-unsigned-mi='
+                        . join( ',', map { "m=$_" } @mi_removals )),
+                };
+            }
             if ( defined $mi_value ) {
                 push @{$handler->{pre_headers}}, {
                     'field' => 'Message-Instance',
@@ -468,30 +476,42 @@ sub close_callback {
 
 # Compute Message-Instance header for the message.
 #
-# 1. If the topmost MI already matches, return undef (no new MI needed).
-# 2. If the message carries the X-DKIM2-Snapshot token DKIM2Verify gave it,
+# 1. A message with no DKIM2-Signature whose instances (all this host's own,
+#    all unsigned) are more than one matching m=1: restart them as ONE m=1
+#    (-07 section 12.1), hashes of the message less its instances and
+#    Recipes back to the message as it arrived -- from the instances
+#    themselves when the top matches, else from the snapshot (step 3).
+# 2. If the topmost MI already matches, return undef (no new MI needed).
+# 3. If the message carries the X-DKIM2-Snapshot token DKIM2Verify gave it,
 #    compute a diff MI between that snapshot and the current message.
-# 3. Otherwise, fall back to a hash-only MI (no Recipes).
+# 4. Otherwise, fall back to a hash-only MI (no Recipes).
 sub _compute_message_instance {
     my ( $self, $message_data, $config ) = @_;
 
     my $mi = eval {
         my $msg = parse_mime($message_data);
 
-        # Skip if the topmost MI already matches current content
         my @ignore = ( IgnorePrefixes => $config->{'ignore_header_prefixes'} );
-        if ( Mail::DKIM2::MessageInstance->verify($msg, @ignore) ) {
+        my @mi_headers = $msg->header_raw('Message-Instance');
+        my $matched = @mi_headers && Mail::DKIM2::MessageInstance->verify($msg, @ignore);
+        my $restart = @mi_headers && !$msg->header_raw('DKIM2-Signature')
+                   && !( $matched && @mi_headers == 1 );
+
+        # Skip if the topmost MI already matches current content
+        if ( $matched && !$restart ) {
             $self->dbgout( 'DKIM2MI', 'Message unchanged, skipping MI', LOG_DEBUG );
             return undef;
         }
 
-        my @mi_headers = $msg->header_raw('Message-Instance');
         # An m= above MAX_CHAIN_LENGTH is never a loop bound below (the gate
         # refuses the message on it).
         return undef if grep { chain_number_error('Message-Instance', 'm', mi_version_tag($_)) }
                         @mi_headers;
         my %mi_by_v = map { (extract_mi_version($_) || 0) => $_ } @mi_headers;
         my $max_v = @mi_headers ? (sort { $b <=> $a } keys %mi_by_v)[0] : 0;
+
+        return $self->_restart_instances($message_data, $message_data, \%mi_by_v, $config)
+            if $restart && $matched;
 
         # The snapshot DKIM2Verify took of this very message, named by its
         # X-DKIM2-Snapshot token -- never one found by Message-Instance value
@@ -517,6 +537,9 @@ sub _compute_message_instance {
                         return undef;
                     }
                 }
+
+                return $self->_restart_instances($message_data, $snapshot_data, \%mi_by_v, $config)
+                    if $restart;
 
                 # If the current message has more MI headers than the snapshot,
                 # upstream added intermediate MIs.  Since verify() already told us
@@ -559,6 +582,29 @@ sub _compute_message_instance {
         return;
     }
 
+    return $mi;
+}
+
+# The ONE m=1 an unsigned message leaves with (step 1 above): Recipes back to
+# $previous (the message itself, or the snapshot) as it was before its first
+# instance. Every instance the message carries goes; a chain that does not
+# undo cleanly gives no instance, and the gate refuses on it as before.
+sub _restart_instances {
+    my ( $self, $message_data, $previous, $mi_by_v, $config ) = @_;
+    my @ignore = ( IgnorePrefixes => $config->{'ignore_header_prefixes'} );
+    my ( $ok, $why ) = Mail::DKIM2::MessageInstance->chain_verifies($previous, @ignore);
+    unless ( $ok ) {
+        $self->dbgout( 'DKIM2MI', "Not restarting the unsigned instances as m=1: $why", LOG_INFO );
+        return undef;
+    }
+    my $mi = Mail::DKIM2::MessageInstance->calculate_first($message_data, $previous, @ignore,
+        MaxRecipeLiterals => $config->{'max_recipe_literals'});
+    my @versions = sort { $a <=> $b } keys %$mi_by_v;
+    $self->{'_stripped_mi_versions'} = \@versions;
+    $self->{'_restarted_mi'} = 1;
+    $self->{'_clean_message_data'} = strip_mi_versions($message_data, @versions);
+    $self->dbgout( 'DKIM2MI',
+        'Restarting unsigned ' . join(',', map { "m=$_" } @versions) . ' as one m=1', LOG_INFO );
     return $mi;
 }
 
@@ -837,6 +883,18 @@ than C<max_recipe_literals> literal lines declares the body unrecoverable
 move the old body into the MIME epilogue.  Like any null this hop adds, it is
 signed only with C<allow_null_body_recipe>; without it the message goes out
 unsigned.
+
+A message with no DKIM2-Signature whose Message-Instances (all unsigned:
+an C<m=1> stamped on arrival, a list manager's instance over it) are more
+than one matching C<m=1> is signed with B<one> Message-Instance, C<m=1>
+(-07 section 12.1): the hashes of the copy sent and Recipes back to the
+message as it arrived, a From munge included. The instances it carried are
+removed, with C<X-DKIM2-Info: action=restarted-unsigned-mi=m=1,...;>. The
+message as it arrived comes from those instances when the top one matches
+the content, else from the snapshot; a chain that does not undo cleanly
+gets no instance and the gate refuses the message. The From sent must still
+be Authentic for the signing domain (-07 section 11). A message that
+arrived signed is extended with C<m=N+1> as before.
 
 =head1 HTTP KEY ENDPOINT
 

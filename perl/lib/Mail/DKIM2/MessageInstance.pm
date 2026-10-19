@@ -844,7 +844,8 @@ sub calculate {
         if (my $error = _chain_error($current)) {
             die "$error\n";
         }
-        die "Previous message has no existing instances" unless @mi_prev;
+        # No instances on either side is a first instance with Recipes
+        # (-07 section 12.1: changes made as the message enters DKIM2).
         # Verify same message by checking MI headers match
         # header_raw returns values only, so prepend the name for canonicalization
         my $canon_cur  = join(',', map { dkim2_canonicalize_header("Message-Instance: $_") } @mi_cur);
@@ -852,7 +853,7 @@ sub calculate {
         die "This isn't the same message" unless ($canon_cur eq $canon_prev);
 
         my %map = map { extract_mi_version($_) => $_ } @mi_cur;
-        $self->set_tag('m', max(keys %map) + 1);
+        $self->set_tag('m', (max(keys %map) // 0) + 1);
 
         if (exists $opts{BodyRecipe}) {
             # Caller supplies the body Recipe: no body diff runs.
@@ -987,6 +988,41 @@ sub calculate {
     }
 
     return $self;
+}
+
+# --- First instance over earlier unsigned ones ---
+
+sub calculate_first {
+    my ($class, $current, $previous, %opts) = @_;
+    Mail::DKIM2::Common::_check_options("$class->calculate_first", \%opts,
+        qw(Algs EpilogueThreshold IgnorePrefixes MaxRecipeLiterals UseEpilogue));
+    croak "need a message" unless $current;
+    croak "need a previous message" unless $previous;
+
+    $current = parse_mime($current) unless ref($current) && $current->isa('Email::MIME');
+    # undo() (and so chain_verifies) rewrites the message it is given: work
+    # on copies of $previous.
+    my $prev_raw = ref($previous) ? $previous->as_string : $previous;
+    $previous = parse_mime($prev_raw);
+
+    # Only a chain that undoes cleanly says what the message was before it.
+    my ($ok, $why) = $class->chain_verifies($prev_raw,
+        (exists $opts{IgnorePrefixes} ? (IgnorePrefixes => $opts{IgnorePrefixes}) : ()));
+    die(($why // 'Message-Instance chain does not verify') . "\n") unless $ok;
+
+    # Undo every instance, m=1 included (its own Recipes, if any). Past a
+    # null body Recipe the earlier body is gone: header Recipes only, and
+    # the new instance declares the body unrecoverable.
+    my $lost = 0;
+    while (my @mi = $previous->header_raw('Message-Instance')) {
+        my %by_v = map { (extract_mi_version($_) // 0) => $_ } @mi;
+        $lost = 1 if $class->parse($by_v{ max(keys %by_v) })->unrecoverable;
+        $previous = $class->undo($previous, HeadersOnly => $lost);
+    }
+    $current->header_set('Message-Instance');
+
+    return $class->calculate($current, $previous, %opts,
+        ($lost ? (BodyRecipe => 'null') : ()));
 }
 
 # --- Verify ---
@@ -1379,7 +1415,8 @@ C<calculate> with a previous message only; see below.
 Returns a new instance describing C<$msg>. With no C<$previous>, C<$msg>
 must carry no Message-Instance and the result is C<m=1>. With
 C<$previous>, both messages must carry the same existing instances; the
-result is the next C<m=>, with hashes of C<$msg> and Recipes that rebuild
+result is the next C<m=> (C<m=1> when neither carries any: a first instance
+with Recipes, -07 section 12.1), with hashes of C<$msg> and Recipes that rebuild
 C<$previous> from it. Dies if the message cannot be processed: it already
 has 32 instances, its instances do not form a chain, or C<$previous> is
 not an earlier form of the same message.
@@ -1396,6 +1433,21 @@ lines (or more work than the fixed bound), and an unchanged body gets no
 Recipe. C<EpilogueThreshold> and C<MaxRecipeLiterals> are mutually
 exclusive; both must be non-negative integers. Both epilogue forms modify C<$msg> in place, and the
 hashes cover the modified message.
+
+=head2 calculate_first($msg, $previous, %options)
+
+Returns an C<m=1> instance for a message none of whose instances is
+signed: the hashes of C<$msg> less its Message-Instance fields, and Recipes
+that rebuild C<$previous> as it was before its first instance (-07 section
+12.1 lets the first instance record the changes made as the message enters
+DKIM2). C<$previous> may carry instances, a stamped C<m=1> and local ones
+over it; their whole chain must verify (C<chain_verifies>), and every one
+is undone, C<m=1> included. Past a null body Recipe the earlier body is
+gone and the result gets the null body Recipe. C<$msg>'s Message-Instance
+fields are removed from it in place (pass a string to leave yours alone);
+the caller removes them from the message it sends. Takes C<calculate>'s
+options except C<BodyHash> and C<BodyRecipe>. Dies if the chain of
+C<$previous> does not verify, with the reason C<chain_verifies> gives.
 
 =head2 verify($msg, %options)
 

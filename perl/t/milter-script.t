@@ -844,8 +844,13 @@ sub stock_decorate {
     is_deeply([mi_numbers($wire)], [1, 2], 'unsigned wrap: m=1 and m=2');
     my ($v2, $omods) = run_milter(
         from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'], message => $wire);
-    my $rv = verify(assemble($wire, $omods));
+    my $out = apply_mods($wire, $omods);
+    is_deeply([mi_numbers($out)], [1], 'unsigned wrap: leaves with one Message-Instance, m=1 (-07 section 12.1)');
+    my $rv = verify($out);
     is($rv->result, 'pass', 'unsigned wrap: signed copy verifies') or diag($rv->result_detail);
+    my $back = Mail::DKIM2::MessageInstance->undo(Email::MIME->new($out));
+    my ($lbody) = $LOCAL =~ /\r\n\r\n(.*)\z/s;
+    is($back->body_raw, $lbody, 'unsigned wrap: m=1 undoes past the wrap to the body as posted');
 }
 
 # 3. Multipart is left alone: no body, no header change, only the arrival headers.
@@ -890,7 +895,9 @@ sub stock_decorate {
     ok(index($wire, $orig_body) > 0, 'big body: original body carried whole');
     my ($v2, $omods) = run_milter(
         from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'], message => $wire);
-    is(verify(assemble($wire, $omods))->result, 'pass', 'big body: signed copy verifies');
+    my $out = apply_mods($wire, $omods);
+    is_deeply([mi_numbers($out)], [1], 'big body: one Message-Instance, m=1');
+    is(verify($out)->result, 'pass', 'big body: signed copy verifies');
 }
 
 # 6. Startup checks.
@@ -1011,6 +1018,46 @@ sub info_has { my ($mods, $re) = @_; scalar grep { $_->{value} =~ $re } inserted
     is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'refused: not signed');
     is($v, 'y', 'refused: rejected, since the sender\'s i=1 is on it');
     like(reply_of($mods), qr/^550 5\.7\.1 not signing: /, 'refused: 550 5.7.1');
+}
+
+# --- Stock route, unsigned post with a From munge: one m=1 (-07 section 12.1) ---
+# An unsigned post gets an unsigned m=1 on arrival; stock Mailman munges the
+# From (munge_from, dmarc_mitigate_unconditionally), tags the subject and adds
+# a footer. Sent as m=1 + m=2 + i=1, C5 would check the author's From at m=1
+# against d=list and every receiver would refuse it. It leaves instead with
+# ONE m=1: hashes of the copy sent, Recipes back to the post as it arrived.
+{
+    my ($munge_pid, $munge_sock) = spawn_milter(mode => 'inbound');
+    (my $p = $PLAIN) =~ s/<post\@test1/<munge\@test1/;
+    my ($iv, $imods) = run_milter(sock => $munge_sock,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $p);
+    my $arrived = apply_mods($p, $imods);
+    is_deeply([mi_numbers($arrived)], [1], 'munge: arrival m=1 stamped');
+    like($arrived, qr/^X-DKIM2-Snapshot:/mi, 'munge: arrival snapshot token added');
+    (my $listed = $arrived) =~ s/^From: [^\r\n]*/From: Author via list <list\@test2.dkim2.com>${EOL}Reply-To: author\@test1.dkim2.com/m
+        or die 'fixture';
+    $listed =~ s/^Subject: /Subject: [list] /m;
+    $listed .= "-- $EOL" . "list footer$EOL";
+    my ($v, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'], message => $listed);
+    is($v, 'c', 'munge: milter continues');
+    my $out = apply_mods($listed, $mods);
+    is_deeply([mi_numbers($out)], [1], 'munge: leaves with one Message-Instance, m=1')
+        or diag(join "\n", (split /\n/, milter_log())[-8 .. -1]);
+    my @sig = inserted($mods, 'DKIM2-Signature');
+    is(scalar @sig, 1, 'munge: signed');
+    like($sig[0]{value} // '', qr/\bi=1;/, 'munge: as i=1');
+    like($sig[0]{value} // '', qr/\bd=test2\.dkim2\.com;/, 'munge: with d= the list domain');
+    ok(info_has($mods, qr/action=restarted-unsigned-mi=m=1;/), 'munge: X-DKIM2-Info records the restart');
+    my $rv = verify($out);
+    is($rv->result, 'pass', 'munge: verifies at a receiver') or diag($rv->result_detail);
+    my $back = Mail::DKIM2::MessageInstance->undo(Email::MIME->new($out));
+    is($back->header('From'), 'Author <author@test1.dkim2.com>', 'munge: undo restores the author From');
+    ok(!defined $back->header('Reply-To'), 'munge: undo removes the Reply-To');
+    is($back->header('Subject'), 'a post', 'munge: undo restores the Subject');
+    my ($pbody) = $p =~ /\r\n\r\n(.*)\z/s;
+    is($back->body_raw, $pbody, 'munge: undo restores the body');
+    ok(!$back->header_raw('Message-Instance'), 'munge: nothing below m=1');
 }
 
 done_testing;

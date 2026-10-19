@@ -541,7 +541,7 @@ sub cb_eom {
                 $mi_info{snapf} = $snapshot_store->rel_path_for_mi(_snapshot_key($snapshot_tokens[0]))
                     if defined $snap;
             }
-            my $ok = eval { $mi_header = _compute_mi($message, \%mi_info,
+            my $ok = eval { $mi_header = _compute_mi($message, \%mi_info, Outbound => 1,
                                 (defined $snap ? (Snapshot => $snap) : ())); 1 };
             unless ($ok) {
                 warn "dkim2-milter: not signing $msgid: internal error computing the "
@@ -631,30 +631,27 @@ sub cb_eom {
                 # indexes count the Message-Instance fields as received, and an
                 # MTA that counts fields inserted earlier in this end-of-message
                 # would otherwise delete one place off (our own new instance).
+                # Last index first, so each index still counts the fields
+                # as received.
                 if ($mi_info{strip_mi_versions}) {
-                    for my $v (@{$mi_info{strip_mi_versions}}) {
-                        my $count = 0;
-                        my $del_idx = 0;
-                        for my $hdr (@{$priv->{headers}}) {
-                            if (lc($hdr->[0]) eq 'message-instance') {
-                                $count++;
-                                my $val = $hdr->[1];
-                                $val =~ s/^\s+//;
-                                if ((extract_mi_version($val) // 0) == $v) {
-                                    $del_idx = $count;
-                                    last;
-                                }
-                            }
-                        }
-                        if ($del_idx) {
-                            $ctx->chgheader('Message-Instance', $del_idx, '');
-                            warn "dkim2-milter: deleted broken MI m=$v from wire message\n";
-                        }
+                    my %gone = map { $_ => 1 } @{$mi_info{strip_mi_versions}};
+                    my ($count, @del) = (0);
+                    for my $hdr (@{$priv->{headers}}) {
+                        next unless lc($hdr->[0]) eq 'message-instance';
+                        $count++;
+                        my $v = extract_mi_version($hdr->[1] =~ s/^\s+//r) // 0;
+                        push @del, [$count, $v] if $gone{$v};
+                    }
+                    for my $d (reverse @del) {
+                        $ctx->chgheader('Message-Instance', $d->[0], '');
+                        warn "dkim2-milter: deleted " . ($mi_info{restart} ? 'unsigned' : 'broken')
+                           . " MI m=$d->[1] from wire message\n";
                     }
                     my $stripped_str = join(',', map { "m=$_" } @{$mi_info{strip_mi_versions}});
                     my $recomp_from  = $mi_info{strip_mi_versions}[0] - 1;
-                    $ctx->insheader('X-DKIM2-Info',
-                        _dkim2_info("stripped-broken-mi=$stripped_str,recomputed-from=m$recomp_from"), 0);
+                    $ctx->insheader('X-DKIM2-Info', $mi_info{restart}
+                        ? _dkim2_info("restarted-unsigned-mi=$stripped_str")
+                        : _dkim2_info("stripped-broken-mi=$stripped_str,recomputed-from=m$recomp_from"), 0);
                 }
                 if ($mi_header) {
                     $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
@@ -809,6 +806,13 @@ sub _error_text {
 #                           snapshot the X-DKIM2-Snapshot token names); a top
 #                           instance that no longer matches is explained by a
 #                           diff against it and nothing else.
+#   Outbound => 1           the instance the signer is about to sign. On a
+#                           message with no DKIM2-Signature, every instance is
+#                           this host's own and unsigned, and the copy leaves
+#                           with ONE m=1 (-07 section 12.1): hashes of what is
+#                           sent, Recipes back to the message as it arrived.
+#                           $info->{restart} then lists the instances that
+#                           go (in $info->{strip_mi_versions} too).
 # Sets $info->{matched} when the top instance matches the content, and
 # $info->{hc}/{hn} (the hashed header names) for X-DKIM2-Info. Stores nothing:
 # the callers decide what becomes a snapshot.
@@ -825,12 +829,16 @@ sub _compute_mi {
     $info->{hn} = $hnames;
 
     my @mi_hdrs = $msg->header_raw('Message-Instance');
+    my $matched = @mi_hdrs && Mail::DKIM2::MessageInstance->verify($msg);
+    $info->{matched} = 1 if $matched;
+
+    # Outbound, unsigned: restart as one m=1 unless it already is one.
+    return _restart_mi($message, $msg, \@mi_hdrs, $matched, $info, %o)
+        if $o{Outbound} && @mi_hdrs && !$msg->header_raw('DKIM2-Signature')
+        && !($matched && @mi_hdrs == 1);
 
     # The top instance already describes the content: nothing to add.
-    if (@mi_hdrs && Mail::DKIM2::MessageInstance->verify($msg)) {
-        $info->{matched} = 1;
-        return undef;
-    }
+    return undef if $matched;
 
     # An m= above MAX_CHAIN_LENGTH is a PERMERROR (the verifier and the gate
     # say so) and is never a range bound below: snap_max_v+1 .. max_v with
@@ -887,6 +895,54 @@ sub _compute_mi {
         Mail::DKIM2::MessageInstance->calculate($work_msg, $snap_msg, %mi_opts);
     };
     return $mi ? _format_mi($mi) : undef;
+}
+
+# _restart_mi: the m=1 an unsigned outgoing copy leaves with (-07 section
+# 12.1; see _compute_mi). The message as it arrived comes from the chain of
+# instances itself when its top matches the content (a list manager that
+# recorded its own change), else from this host's snapshot of this very
+# message. Either chain must undo cleanly; if not, no instance, and the gate
+# refuses the message on its chain as before.
+sub _restart_mi {
+    my ($message, $msg, $mi_hdrs, $matched, $info, %o) = @_;
+    my @versions = sort { $a <=> $b } map { extract_mi_version($_) // 0 } @$mi_hdrs;
+    if (my ($e) = grep { defined } map { chain_number_error('Message-Instance', 'm', mi_version_tag($_)) }
+                                    @$mi_hdrs) {
+        warn "dkim2-milter: not computing a Message-Instance: $e\n";
+        return undef;
+    }
+    my $previous;
+    if ($matched) {
+        $previous = $message;
+    } elsif (!defined $o{Snapshot}) {
+        warn "dkim2-milter: top Message-Instance does not match the content and no snapshot of ours describes it\n";
+        return undef;
+    } else {
+        # The snapshot's instances must be the message's own, unchanged
+        # (any the message has above them are dropped with the rest).
+        my $snap_msg = parse_mime($o{Snapshot});
+        my %by_v = map { (extract_mi_version($_) || 0) => $_ } @$mi_hdrs;
+        for my $sv ($snap_msg->header_raw('Message-Instance')) {
+            my $v = extract_mi_version($sv) || 0;
+            my ($a, $b) = map { defined $_ ? s/\s+/ /gr =~ s/^ | $//gr : '' } $sv, $by_v{$v};
+            if ($a ne $b) {
+                warn "dkim2-milter: snapshot does not belong to this message (m=$v differs)\n";
+                return undef;
+            }
+        }
+        $previous = $o{Snapshot};
+    }
+    my ($ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($previous);
+    unless ($ok) {
+        warn "dkim2-milter: not restarting the unsigned instances as m=1: $why\n";
+        return undef;
+    }
+    my $mi = Mail::DKIM2::MessageInstance->calculate_first($message, $previous, %mi_opts);
+    $info->{strip_mi_versions} = \@versions;
+    $info->{restart} = \@versions;
+    warn "dkim2-milter: restarting unsigned " . join(',', map { "m=$_" } @versions)
+       . " as one m=1\n";
+    return _format_mi($mi);
 }
 
 # Not signing: remove every Message-Instance no DKIM2-Signature on the
@@ -1212,6 +1268,21 @@ matches is explained by a diff against the snapshot that token names, and
 nothing else.  Every mode removes any C<X-DKIM2-Snapshot> a message arrives
 with (inbound then adds its own), so a token can neither come from outside
 nor leave the host.  Both milters must share the directory.
+
+=item Unsigned posts leave with one m=1
+
+A message with no DKIM2-Signature (an unsigned post the inbound milter
+stamped C<m=1>, perhaps a C<--wrap-single-part> C<m=2> or a list manager's
+instance over it) is signed with B<one> Message-Instance, C<m=1> (-07
+section 12.1): the hashes of the copy sent and Recipes back to the post as
+it arrived, a From munge included. The instances it carried are removed,
+with C<X-DKIM2-Info: action=restarted-unsigned-mi=m=1,...;>. The post as it
+arrived comes from those instances when the top one matches the content,
+else from the snapshot; a chain that does not undo cleanly gets no
+instance and the message is not signed. The From sent must still be
+Authentic for the signing domain (-07 section 11): without a From munge an
+outside author's post goes out unsigned. A post that arrived signed is
+extended with C<m=N+1> as before.
 
 =item Not signing
 
