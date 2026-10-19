@@ -4,6 +4,40 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* CRLF-normalise in..in+n into out (room for 2n): a bare CR or bare LF
+   becomes CRLF. Runs already in that form are copied whole. */
+static size_t crlf_normalise(const unsigned char *in, size_t n, unsigned char *out) {
+    size_t o = 0, i = 0;
+    while (i < n) {
+        size_t k = dkim2_crlf_clean((const char *)in + i, n - i);
+        memcpy(out + o, in + i, k);
+        o += k;
+        i += k;
+        if (i == n) break;
+        out[o++] = '\r';    /* in[i]: a bare LF or a lone CR */
+        out[o++] = '\n';
+        i++;
+    }
+    return o;
+}
+
+/* Where the body starts in the raw bytes h..h+n: after the first empty line
+   that is not the first line (once normalised, the first "\r\n\r\n"), with
+   *found set. Lines end at CRLF, a lone CR or a bare LF. 0 when the bytes
+   so far cannot tell; at eof, n with *found clear when there is no such
+   line (the whole message is header). */
+static size_t raw_body_start(const unsigned char *h, size_t n, int eof, int *found) {
+    *found = 0;
+    for (size_t i = 0, line = 0; i < n; line++) {
+        size_t st = i;
+        while (i < n && h[i] != '\r' && h[i] != '\n') i++;
+        if (i == n || (h[i] == '\r' && i + 1 == n && !eof)) break;
+        i += (h[i] == '\r' && i + 1 < n && h[i + 1] == '\n') ? 2 : 1;
+        if (line > 0 && (h[st] == '\r' || h[st] == '\n')) { *found = 1; return i; }
+    }
+    return eof ? n : 0;
+}
+
 static int eml_parse_internal(const char *path,
     char ***headers_out, int *n_headers_out,
     dkim2_digests_t *body_digests_out,
@@ -15,46 +49,49 @@ static int eml_parse_internal(const char *path,
     long fsize = ftell(f);
     rewind(f);
 
-    unsigned char *raw = malloc((size_t)fsize + 4);
-    if (!raw) { fclose(f); return -1; }
-    size_t n = fread(raw, 1, (size_t)fsize, f);
+    /* The header block first, read until its end is known. The body is
+       then read into a buffer of its own, and copied again only if it
+       needs CRLF normalisation. */
+    size_t cap = 65536, hn = 0, bs;
+    unsigned char *head = NULL;
+    int eof = 0, found = 0;
+    for (;;) {
+        unsigned char *nh = realloc(head, cap);
+        if (!nh) { free(head); fclose(f); return -1; }
+        head = nh;
+        size_t got = fread(head + hn, 1, cap - hn, f);
+        eof = got < cap - hn;
+        hn += got;
+        if ((bs = raw_body_start(head, hn, eof, &found)) || eof) break;
+        cap *= 2;
+    }
+    size_t rest = !eof && fsize > 0 && (size_t)fsize > hn ? (size_t)fsize - hn : 0;
+    size_t blen = hn - bs;
+    unsigned char *body = malloc(blen + rest + 4);
+    unsigned char *buf = malloc(bs * 2 + 4);
+    if (!body || !buf) { free(body); free(buf); free(head); fclose(f); return -1; }
+    memcpy(body, head + bs, blen);
+    blen += fread(body + blen, 1, rest, f);
     fclose(f);
-    raw[n] = '\0';
-
-    /* Normalise to CRLF */
-    unsigned char *buf = malloc(n * 2 + 4);
-    if (!buf) { free(raw); return -1; }
-    size_t blen = 0;
-    for (size_t i = 0; i < n; ) {
-        if (raw[i] == '\r' && i + 1 < n && raw[i+1] == '\n') {
-            buf[blen++] = '\r'; buf[blen++] = '\n'; i += 2;
-        } else if (raw[i] == '\r') {
-            buf[blen++] = '\r'; buf[blen++] = '\n'; i++;
-        } else if (raw[i] == '\n') {
-            buf[blen++] = '\r'; buf[blen++] = '\n'; i++;
-        } else {
-            buf[blen++] = raw[i++];
-        }
+    size_t hlen = crlf_normalise(head, bs, buf);
+    buf[hlen] = '\0';
+    free(head);
+    if (dkim2_crlf_clean((const char *)body, blen) < blen) {
+        unsigned char *nb = malloc(blen * 2 + 4);
+        if (!nb) { free(body); free(buf); return -1; }
+        blen = crlf_normalise(body, blen, nb);
+        free(body);
+        body = nb;
     }
-    buf[blen] = '\0';
-    free(raw);
+    body[blen] = '\0';
 
-    /* Find header/body split (blank line \r\n\r\n) */
-    size_t body_start = blen;
-    size_t header_end = blen;
-    for (size_t i = 0; i + 3 < blen; i++) {
-        if (buf[i] == '\r' && buf[i+1] == '\n' &&
-            buf[i+2] == '\r' && buf[i+3] == '\n') {
-            header_end = i;
-            body_start = i + 4;
-            break;
-        }
-    }
+    /* With the blank line found, buf ends with it: "\r\n\r\n". */
+    size_t header_end = found ? hlen - 4 : hlen;
 
     /* Split header block into logical header fields (handling continuations) */
     int hcap = 32, nh = 0;
     char **hdrs = malloc((size_t)hcap * sizeof(char *));
-    if (!hdrs) { free(buf); return -1; }
+    if (!hdrs) { free(buf); free(body); return -1; }
 
     size_t i = 0;
     while (i < header_end) {
@@ -66,35 +103,32 @@ static int eml_parse_internal(const char *path,
             while (i <= header_end && !(buf[i] == '\r' && buf[i+1] == '\n')) i++;
             if (buf[i] == '\r' && buf[i+1] == '\n') i += 2;
         }
-        size_t hlen = i - start;
-        if (hlen < 3) continue;
+        size_t flen = i - start;
+        if (flen < 3) continue;
 
         if (nh >= hcap) {
             hcap *= 2;
             char **tmp = realloc(hdrs, (size_t)hcap * sizeof(char *));
-            if (!tmp) { eml_free(hdrs, nh); free(buf); return -1; }
+            if (!tmp) { eml_free(hdrs, nh); free(buf); free(body); return -1; }
             hdrs = tmp;
         }
-        hdrs[nh] = malloc(hlen + 1);
-        memcpy(hdrs[nh], buf + start, hlen);
-        hdrs[nh][hlen] = '\0';
+        hdrs[nh] = malloc(flen + 1);
+        memcpy(hdrs[nh], buf + start, flen);
+        hdrs[nh][flen] = '\0';
         nh++;
     }
+    free(buf);
 
-    size_t body_data_len = (body_start < blen) ? (blen - body_start) : 0;
-    for (int alg = 0; alg < DKIM2_N_HASH_ALGS; alg++)
-        dkim2_body_hash_raw_alg((const char *)(buf + body_start), body_data_len, alg,
-                                body_digests_out->d[alg]);
+    if (body_digests_out)
+        for (int alg = 0; alg < DKIM2_N_HASH_ALGS; alg++)
+            dkim2_body_hash_raw_alg((const char *)body, blen, alg, body_digests_out->d[alg]);
 
     if (body_out && body_len_out) {
-        *body_out = malloc(body_data_len + 1);
-        if (!*body_out) { eml_free(hdrs, nh); free(buf); return -1; }
-        memcpy(*body_out, buf + body_start, body_data_len);
-        (*body_out)[body_data_len] = '\0';
-        *body_len_out = body_data_len;
+        *body_out = (char *)body;
+        *body_len_out = blen;
+    } else {
+        free(body);
     }
-
-    free(buf);
     *headers_out   = hdrs;
     *n_headers_out = nh;
     return 0;

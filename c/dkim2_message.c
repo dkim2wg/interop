@@ -137,8 +137,10 @@ dkim2_verify_result_t dkim2_verify_message_opts(const char *eml_path,
     int n_headers = 0;
     dkim2_ctx_t ctx = {0};
 
+    /* No whole-body digests: with the body bytes at hand, every instance's
+       body hash is computed from them (by the plan, or the undo walk). */
     if (eml_parse_with_body(eml_path, &headers, &n_headers,
-                             &ctx.body_digests, &ctx.body, &ctx.body_len) < 0)
+                             NULL, &ctx.body, &ctx.body_len) < 0)
         return result;
 
     ctx.headers              = headers;

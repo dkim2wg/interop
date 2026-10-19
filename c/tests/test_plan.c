@@ -285,6 +285,12 @@ static void body_cases(void) {
          { H3, "new\r\n", "{" RSUB3 ",\"b\":null}" });
     CASE("unterminated last line", NULL, "PASS", { H1, "a\r\nb" },
          { H2, "a\r\nb", "{" RSUB ",\"b\":[{\"c\":[1,2]}]}" });
+#define B64 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    /* LFs are counted in 64-byte blocks: the last line is not one of them. */
+    CASE("unterminated last line of 64 bytes", NULL, "PASS", { H1, "a\r\n" B64 },
+         { H2, "a\r\n" B64, "{" RSUB ",\"b\":[{\"c\":[1,2]}]}" });
+    CASE("unterminated last line of 128 bytes", NULL, "PASS", { H1, "a\r\n" B64 B64 "x\r\n" },
+         { H2, "a\r\n" B64 B64, "{" RSUB ",\"b\":[{\"c\":[1,2]},{\"d\":[\"x\"]}]}" });
     CASE("unterminated last line + literal", NULL, "PASS", { H1, "a\r\nbx\r\n" },
          { H2, "a\r\nb", "{" RSUB ",\"b\":[{\"c\":[1,2]},{\"d\":[\"x\"]}]}" });
     CASE_FALLBACK("unterminated + literal, then a Recipe", NULL, "PASS", { H1, "bx\r\n" },

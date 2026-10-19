@@ -16,6 +16,16 @@ typedef struct {
     unsigned char d[DKIM2_N_HASH_ALGS][DKIM2_MAX_HASH_LEN];
 } dkim2_digests_t;
 
+/* The longest prefix of s that CRLF normalisation (a bare CR or bare LF
+   becomes CRLF) leaves unchanged: every CR in it is followed by an LF and
+   every LF follows a CR. It never ends with a CR, whose LF may be in the
+   next chunk, and is 0 when s starts with an LF. */
+size_t dkim2_crlf_clean(const char *s, size_t len);
+
+/* DKIM2_CRLF_RUN "\r\n" pairs, to hash held-back blank lines in bulk. */
+#define DKIM2_CRLF_RUN 128
+extern const char dkim2_crlf_run[DKIM2_CRLF_RUN * 2 + 1];
+
 /* ── Streaming body hasher ───────────────────────────────────────────────────
    Handles CRLF normalisation and trailing empty-line stripping on the fly.
    Memory profile matches OpenDKIM: body is never buffered, only hashed.
