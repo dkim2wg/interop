@@ -232,7 +232,7 @@ int main(void) {
         free(mi2); free(sig2);
     }
 
-    /* --- Error: no DKIM2-Signature → PERMERROR --- */
+    /* --- No DKIM2 header fields at all → "none", no error string --- */
     {
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
@@ -242,7 +242,7 @@ int main(void) {
         vctx.mi_list = NULL; vctx.sig_list = NULL;
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);
-        assert(res.status == DKIM2_PERMERROR);
+        assert(res.status == DKIM2_NONE && res.message[0] == '\0');
     }
 
     /* --- Error: MI missing for signature's m= → PERMERROR --- */
@@ -300,7 +300,8 @@ int main(void) {
             mail_from, rcpts, raw_headers, 3, body, mi_val, tampered_mf_sig);
         assert(bad_mf_st == DKIM2_PERMERROR);
 
-        /* Confirm the failure message cites 7.5 */
+        /* Through the real ingestion path it is a syntax error (-07 §10.5,
+           §14.2). */
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
         char mi_hdr[1024], sig_hdr[2048];
@@ -315,12 +316,11 @@ int main(void) {
         dkim2_body_hash_raw(body, strlen(body), vctx.body_digests.d[0]);
         vctx.mail_from = (char *)mail_from;
         vctx.rcpt_to = rcpts;
-        vctx.mi_list = dkim2_mi_parse(mi_val);
-        vctx.sig_list = dkim2_sig_parse(tampered_mf_sig);
+        dkim2_ctx_collect(&vctx);
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);
         assert(res.status == DKIM2_PERMERROR);
-        assert(strstr(res.message, "7.5") != NULL);
+        assert(strcmp(res.message, "PERMERROR: DKIM2-Signature i=1 syntax error") == 0);
         dkim2_mi_free(vctx.mi_list);
         dkim2_sig_free(vctx.sig_list);
     }
@@ -344,13 +344,13 @@ int main(void) {
             "DKIM2-Signature i=1 MAIL FROM and d= do not match") != NULL);
     }
 
-    /* --- Error: top-level nd= (spec-06 local policy) → PERMERROR ---
+    /* --- Error: top-level nd= (-07 §14.4 "unexpected nd= tag") → PERMERROR ---
        The only legitimate nd= producer emits an nd= hop together with a
        matching higher-i= signature, so nd= must never appear on the
        topmost (highest i=) DKIM2-Signature. */
     {
         dkim2_sig_t *s1 = dkim2_sig_parse(
-            "i=1; m=1; t=1; d=fwd.example.com; mf=PA==; rt=PA==; "
+            "i=1; m=1; t=1; d=fwd.example.com; mf=PD4=; rt=PD4=; "
             "s=test:ed25519-sha256:AAAA");
         dkim2_sig_t *s2 = dkim2_sig_parse(
             "i=2; m=2; t=1; d=fwd.example.com; nd=next.example.com; "
@@ -379,7 +379,7 @@ int main(void) {
             "i=1; m=1; t=1; d=fwd.example.com; nd=next.example.com; "
             "s=test:ed25519-sha256:AAAA");
         dkim2_sig_t *s2 = dkim2_sig_parse(
-            "i=2; m=2; t=1; d=next.example.com; mf=PA==; rt=PA==; "
+            "i=2; m=2; t=1; d=next.example.com; mf=PD4=; rt=PD4=; "
             "s=test:ed25519-sha256:AAAA");
         assert(s1 != NULL && s2 != NULL);
         s1->next = s2;
@@ -588,7 +588,7 @@ int main(void) {
         dkim2_verify_result_t res = dkim2_verify_message(path, NULL, NULL, 1);
         assert(res.status == DKIM2_PERMERROR);
         assert(strcmp(res.message,
-            "PERMERROR Message-Instance m=1 has a duplicate hash algorithm") == 0);
+            "PERMERROR: Message-Instance m=1 has a duplicate hash algorithm") == 0);
         remove(path);
     }
 
@@ -620,7 +620,7 @@ int main(void) {
         dkim2_verify_result_t res = dkim2_verify_message(path, NULL, NULL, 1);
         assert(res.status == DKIM2_PERMERROR);
         assert(strcmp(res.message,
-            "PERMERROR Message-Instance m=1 has a duplicate hash algorithm") == 0);
+            "PERMERROR: Message-Instance m=1 has a duplicate hash algorithm") == 0);
         remove(path);
     }
 
@@ -724,7 +724,7 @@ int main(void) {
         dkim2_do_verify(&vctx, &res);
         assert(res.status == DKIM2_PERMERROR);
         assert(strcmp(res.message,
-            "PERMERROR Message-Instance m=2 contains invalid JSON") == 0);
+            "PERMERROR: Message-Instance m=2 contains invalid JSON") == 0);
 
         dkim2_mi_free(vctx.mi_list);
         dkim2_sig_free(vctx.sig_list); /* frees sig1_parsed + chained sig2_parsed */
@@ -814,7 +814,7 @@ int main(void) {
         dkim2_do_verify(&vctx, &res);
         assert(res.status == DKIM2_PERMERROR);
         assert(strcmp(res.message,
-            "PERMERROR Message-Instance m=2 syntax error") == 0);
+            "PERMERROR: Message-Instance m=2 syntax error") == 0);
         assert(strstr(res.message, "invalid JSON") == NULL);
 
         dkim2_mi_free(vctx.mi_list);
@@ -894,7 +894,7 @@ int main(void) {
         dkim2_do_verify(&vctx, &res);
         assert(res.status == DKIM2_PERMERROR);
         assert(strcmp(res.message,
-            "PERMERROR Message-Instance m=1 contains invalid JSON") == 0);
+            "PERMERROR: Message-Instance m=1 contains invalid JSON") == 0);
 
         dkim2_mi_free(vctx.mi_list);
         dkim2_sig_free(vctx.sig_list);
@@ -1019,7 +1019,7 @@ int main(void) {
         remove(path);
         assert(res.status == DKIM2_PERMERROR);
         assert(strcmp(res.message,
-            "PERMERROR Message-Instance m=1 syntax error") == 0);
+            "PERMERROR: Message-Instance m=1 syntax error") == 0);
 
         free(mi1_out);
         free(sig1_out);
@@ -1133,7 +1133,7 @@ int main(void) {
         remove(path);
         assert(res.status == DKIM2_PERMERROR);
         assert(strcmp(res.message,
-            "PERMERROR Message-Instance m=1 syntax error") == 0);
+            "PERMERROR: Message-Instance m=1 syntax error") == 0);
 
         free(mi1_out);
         free(sig1_out);
@@ -1171,7 +1171,7 @@ int main(void) {
         dkim2_do_verify(&dctx, &dres);
         assert(dres.status == DKIM2_PERMERROR);
         assert(strstr(dres.message,
-            "Message-Instance sequence not contiguous (missing m=2)") != NULL);
+            "PERMERROR: Message-Instance m=2 missing") != NULL);
         dkim2_mi_free(dctx.mi_list->next); dctx.mi_list->next = NULL;
         dkim2_mi_free(dctx.mi_list);
         dkim2_sig_free(dctx.sig_list);

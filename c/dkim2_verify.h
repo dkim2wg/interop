@@ -2,6 +2,11 @@
 #include "dkim2_internal.h"
 #include "dkim2_plan.h"
 
+/* -07 §14.3: a DKIM2-Signature made more than 14 days before delivery, or
+   from more than one day ahead of it, is not Validly Signed. */
+#define DKIM2_MAX_AGE_SECS    1209600ULL
+#define DKIM2_MAX_FUTURE_SECS 86400ULL
+
 typedef struct {
     dkim2_status_t status;
     char message[512];  /* human-readable result per §10.1 */

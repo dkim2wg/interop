@@ -801,7 +801,7 @@ int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz) {
                 }
                 if (lv->acc >= 0 && memcmp(p->acc[lv->acc].out.d[alg], stored, alen) != 0) {
                     snprintf(errbuf, errbufsz,
-                        "FAIL: Message-Instance m=%d body hash mismatch", mi->m);
+                        "FAIL: Message-Instance m=%d body hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
                     return -1;
                 }
             }
@@ -809,32 +809,32 @@ int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz) {
             int hl = (int)b64_decode(mi->hsets[hi].hdr_hash, stored, sizeof stored);
             if (hl != (int)alen || memcmp(lv->hdr.d[alg], stored, alen) != 0) {
                 snprintf(errbuf, errbufsz,
-                    "FAIL: Message-Instance m=%d header hash mismatch", mi->m);
+                    "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
                 return -1;
             }
         }
         if (n_checked == 0) {
             snprintf(errbuf, errbufsz,
-                "FAIL: Message-Instance m=%d no supported hash algorithm", mi->m);
+                "PERMERROR: Message-Instance m=%d no supported hash algorithm", mi->m);
             return -1;
         }
         if (lv->r_err == 1) {
-            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance m=%d syntax error", mi->m);
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance m=%d syntax error", mi->m);
             return -1;
         }
         if (lv->r_err == 2) {
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d contains invalid JSON", mi->m);
+                "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
             return -1;
         }
         if (lv->body_err) {
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d has a malformed body Recipe", mi->m);
+                "PERMERROR: Message-Instance m=%d has a malformed body Recipe", mi->m);
             return -1;
         }
         if (lv->hdr_err) {
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d has a malformed header Recipe", mi->m);
+                "PERMERROR: Message-Instance m=%d has a malformed header Recipe", mi->m);
             return -1;
         }
     }

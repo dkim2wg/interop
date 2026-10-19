@@ -313,11 +313,11 @@ static void body_cases(void) {
          { H2, B, "{" RSUB ",\"b\":[]}" });
     CASE("u literal (UTF-8 is allowed in u)", NULL, "PASS", { H1, "caf\xc3\xa9\r\none\r\n" },
          { H2, B, "{" RSUB ",\"b\":[{\"u\":[\"Y2Fmw6k=\"]},{\"c\":[1,1]}]}" });
-    CASE("body hash mismatch at m=1", NULL, "m=1 body hash mismatch",
+    CASE("body hash mismatch at m=1", NULL, "m=1 body hash sha256 mismatch",
          { H1, B, NULL, "other\r\n" }, { H2, B, "{" RSUB "}" });
-    CASE("top body hash mismatch", NULL, "m=2 body hash mismatch",
+    CASE("top body hash mismatch", NULL, "m=2 body hash sha256 mismatch",
          { H1, B }, { H2, B, "{" RSUB "}", "other\r\n" });
-    CASE("hash mismatch above a bad Recipe", NULL, "m=2 header hash mismatch",
+    CASE("hash mismatch above a bad Recipe", NULL, "m=2 header hash sha256 mismatch",
          { H1, B }, { H2, B, "{" RSUB ",\"b\":[{\"c\":[1,9]}]}", NULL, H1 });
     CASE("m=01", NULL, "PASS", { H1, B, NULL, NULL, NULL, "01" },
          { H2, B, "{" RSUB "}" });
@@ -381,7 +381,7 @@ static void header_cases(void) {
     CASE("header Recipes below a null", NULL, "m=2 has a malformed header Recipe",
          { H1, B }, { H2, "two\r\n", "{\"h\":{\"cc\":[{\"c\":[1,1]}]}}" },
          { H3, "new\r\n", "{" RSUB3 ",\"b\":null}" });
-    CASE("header hash mismatch below a null", NULL, "m=1 header hash mismatch",
+    CASE("header hash mismatch below a null", NULL, "m=1 header hash sha256 mismatch",
          { H1, B, NULL, NULL, "From: other\r\n" }, { H2, "new\r\n", "{" RSUB ",\"b\":null}" });
     CASE("h is null", NULL, "contains invalid JSON", { H1, B },
          { H2, B, "{\"h\":null}" });

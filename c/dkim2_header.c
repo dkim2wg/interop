@@ -129,14 +129,14 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
            specific to name (compare dkim2_verify.c's own unattributable
            "PERMERROR: No DKIM2-Signature header"). */
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance syntax error");
         return NULL;
     }
     dkim2_mi_t *mi = calloc(1, sizeof *mi);
     if (!mi) {
         /* OOM allocating the MI struct itself -- same unattributable case. */
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance syntax error");
         taglist_free(tl);
         return NULL;
     }
@@ -145,7 +145,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
     if (!v) {
         /* No m= tag at all -- still unattributable. */
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR Message-Instance syntax error");
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance syntax error");
         goto err;
     }
     if (dkim2_chain_number_error("Message-Instance", "m", v, errbuf, errbufsz))
@@ -158,7 +158,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
     if (tl->duplicate || tl->syntax_error) {
         if (errbuf && errbufsz)
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d syntax error", mi->m);
+                "PERMERROR: Message-Instance m=%d syntax error", mi->m);
         goto err;
     }
     v = tag_get(tl, "h");
@@ -167,7 +167,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
            name it. */
         if (errbuf && errbufsz)
             snprintf(errbuf, errbufsz,
-                "PERMERROR Message-Instance m=%d syntax error", mi->m);
+                "PERMERROR: Message-Instance m=%d tag=h missing", mi->m);
         goto err;
     }
     {
@@ -178,7 +178,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
                already populated at this point, so the message can name it. */
             if (errbuf && errbufsz)
                 snprintf(errbuf, errbufsz,
-                    "PERMERROR Message-Instance m=%d has a duplicate hash algorithm",
+                    "PERMERROR: Message-Instance m=%d has a duplicate hash algorithm",
                     mi->m);
             goto err;
         }
@@ -192,7 +192,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
                is what "vanished with no error at all" must become. */
             if (errbuf && errbufsz)
                 snprintf(errbuf, errbufsz,
-                    "PERMERROR Message-Instance m=%d syntax error", mi->m);
+                    "PERMERROR: Message-Instance m=%d syntax error", mi->m);
             goto err;
         }
     }
@@ -318,21 +318,21 @@ int dkim2_chain_number_error(const char *field, const char *tag, const char *v,
     if (!digits || !nonzero) {
         if (errbuf && errbufsz) {
             if (strcmp(tag, "i") == 0)
-                snprintf(errbuf, errbufsz, "PERMERROR %s has a missing or malformed i= tag", field);
+                snprintf(errbuf, errbufsz, "PERMERROR: %s has a missing or malformed i= tag", field);
             else
-                snprintf(errbuf, errbufsz, "PERMERROR %s has a malformed %s= tag", field, tag);
+                snprintf(errbuf, errbufsz, "PERMERROR: %s has a malformed %s= tag", field, tag);
         }
         return 1;
     }
     if (strlen(v) > 3 || atoi(v) > DKIM2_MAX_CHAIN_NUMBER) {
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR %s %s= exceeds the maximum chain number of %d",
+            snprintf(errbuf, errbufsz, "PERMERROR: %s %s= exceeds the maximum chain number of %d",
                      field, tag, DKIM2_MAX_CHAIN_NUMBER);
         return 1;
     }
     if (atoi(v) > DKIM2_MAX_CHAIN_LENGTH) {
         if (errbuf && errbufsz)
-            snprintf(errbuf, errbufsz, "PERMERROR %s %s= exceeds the maximum chain length of %d",
+            snprintf(errbuf, errbufsz, "PERMERROR: %s %s= exceeds the maximum chain length of %d",
                      field, tag, DKIM2_MAX_CHAIN_LENGTH);
         return 1;
     }
@@ -377,6 +377,49 @@ static int s_syntax_error(const char *v) {
     return bad;
 }
 
+/* An mf= or rt= value: comma-separated base64 items, each decoding to a
+   bracketed RFC 5321 path (-07 §10.5/§10.6: "The angle brackets MUST be
+   included"). */
+static int paths_ok(const char *v) {
+    char *copy = strdup(v), *save = NULL;
+    int ok = copy != NULL, any = 0;
+    for (char *tok = copy ? strtok_r(copy, ",", &save) : NULL; tok && ok;
+         tok = strtok_r(NULL, ",", &save)) {
+        unsigned char dec[512];
+        int n = b64_decode(tok, dec, sizeof dec - 1);
+        ok = n >= 2 && dec[0] == '<' && dec[n - 1] == '>';
+        any = 1;
+    }
+    free(copy);
+    return ok && any;
+}
+
+/* -07 §14.2: a required tag that is absent ("tag=<y> missing"), or mf=/rt=
+   together with nd= ("tag=<y> was unexpected", §10.7). 1 with errbuf set,
+   or 0. */
+static int missing_tag(const taglist_t *tl, char *errbuf, size_t errbufsz, int i) {
+    static const char *req[] = { "m", "t", "d", "s", NULL };
+    for (int k = 0; req[k]; k++)
+        if (!tag_get(tl, req[k])) {
+            snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d tag=%s missing", i, req[k]);
+            return 1;
+        }
+    int nd = tag_get(tl, "nd") != NULL;
+    static const char *path[] = { "mf", "rt", NULL };
+    for (int k = 0; path[k]; k++) {
+        int has = tag_get(tl, path[k]) != NULL;
+        if (nd && has) {
+            snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d tag=%s was unexpected", i, path[k]);
+            return 1;
+        }
+        if (!nd && !has) {
+            snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d tag=%s missing", i, path[k]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz) {
     if (errbuf && errbufsz) errbuf[0] = '\0';
     dkim2_sig_t *sig = dkim2_sig_parse(value);
@@ -385,16 +428,20 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
     const char *iv = tl ? tag_get(tl, "i") : NULL;
     const char *mv = tl ? tag_get(tl, "m") : NULL;
     if (!valid_i(iv))
-        snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature has a missing or malformed i= tag");
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature has a missing or malformed i= tag");
     else if (dkim2_chain_number_error("DKIM2-Signature", "i", iv, errbuf, errbufsz))
         ;
     else if (dkim2_chain_number_error("DKIM2-Signature", "m", mv, errbuf, errbufsz))
         ;
-    else if (tl && (tl->syntax_error || s_syntax_error(tag_get(tl, "s")) ||
-                    (tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0)))
-        snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature i=%d syntax error", atoi(iv));
+    else if (tl && (tl->syntax_error || tl->duplicate || s_syntax_error(tag_get(tl, "s")) ||
+                    (tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0) ||
+                    (tag_get(tl, "mf") && !paths_ok(tag_get(tl, "mf"))) ||
+                    (tag_get(tl, "rt") && !paths_ok(tag_get(tl, "rt")))))
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d syntax error", atoi(iv));
+    else if (tl && missing_tag(tl, errbuf, errbufsz, atoi(iv)))
+        ;
     else
-        snprintf(errbuf, errbufsz, "PERMERROR DKIM2-Signature is malformed");
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature is malformed");
     if (tl) taglist_free(tl);
     return NULL;
 }
@@ -420,6 +467,8 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
         if (nd && (mf || rt)) goto err;      /* nd= excludes mf=/rt= */
         if (!nd && !(mf && rt)) goto err;    /* need nd= or both mf=+rt= */
         if (nd) sig->nd = strdup(nd);
+        /* Bracketed paths only (a syntax error otherwise). */
+        if ((mf && !paths_ok(mf)) || (rt && !paths_ok(rt))) goto err;
         if (mf) {
             unsigned char dec[512]; int n = b64_decode(mf, dec, sizeof dec);
             if (n < 0) goto err;

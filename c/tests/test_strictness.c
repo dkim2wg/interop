@@ -225,17 +225,17 @@ static void test_algorithms(const char *mi) {
     /* A message correctly RSA-signed but declaring future-alg. */
     s = sig1(mi, "sel1", "future-alg", g_rsa, "rsa-sha256");
     expect("RSA signature declared future-alg is ignored, no lookup",
-        verify(mi, s, 0), DKIM2_FAIL,
-        "FAIL DKIM2-Signature i=1 has no signature with a supported algorithm", 0);
+        verify(mi, s, 0), DKIM2_PERMERROR,
+        "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm", 0);
     free(s);
     s = sig1(mi, "sel1", "RSA-SHA256", g_rsa, "rsa-sha256");
     expect("RSA-SHA256 (case differs) is unknown",
-        verify(mi, s, 0), DKIM2_FAIL,
-        "FAIL DKIM2-Signature i=1 has no signature with a supported algorithm", 0);
+        verify(mi, s, 0), DKIM2_PERMERROR,
+        "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm", 0);
     free(s);
     s = sig1(mi, "sel1", "rsa-sha256x", g_rsa, "rsa-sha256");
-    expect("rsa-sha256x is unknown", verify(mi, s, 0), DKIM2_FAIL,
-        "FAIL DKIM2-Signature i=1 has no signature with a supported algorithm", 0);
+    expect("rsa-sha256x is unknown", verify(mi, s, 0), DKIM2_PERMERROR,
+        "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm", 0);
     free(s);
 
     {
@@ -274,7 +274,7 @@ static void test_algorithms(const char *mi) {
         snprintf(what, sizeof what, "%s value '%s' is a syntax error, no lookup", bad[i].alg, bad[i].lit);
         s = make_sig(mi, g_now, &bad[i], 1);
         expect(what, verify(mi, s, 0), DKIM2_PERMERROR,
-            "PERMERROR DKIM2-Signature i=1 syntax error", 0);
+            "PERMERROR: DKIM2-Signature i=1 syntax error", 0);
         free(s);
     }
 
@@ -282,18 +282,18 @@ static void test_algorithms(const char *mi) {
     s = sig1(mi, "ed", "rsa-sha256", g_rsa, "rsa-sha256");
     expect("rsa-sha256 item with an Ed25519 key: algorithm mismatch",
         verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR DKIM2-Signature i=1 public key ed algorithm mismatch", 1);
+        "PERMERROR: DKIM2-Signature i=1 public key ed algorithm mismatch", 1);
     free(s);
     s = sig1(mi, "sel1", "ed25519-sha256", g_ed, "ed25519-sha256");
     expect("ed25519-sha256 item with an RSA key: algorithm mismatch",
         verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR DKIM2-Signature i=1 public key sel1 algorithm mismatch", 1);
+        "PERMERROR: DKIM2-Signature i=1 public key sel1 algorithm mismatch", 1);
     free(s);
     set_key("ednok", "v=DKIM1; p=%s", g_ed_b64);   /* k= defaults to rsa */
     s = sig1(mi, "ednok", "ed25519-sha256", g_ed, "ed25519-sha256");
     expect("Ed25519 p= without k=ed25519 is not an RSA key",
         verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR DKIM2-Signature i=1 public key ednok has a syntax error", 1);
+        "PERMERROR: DKIM2-Signature i=1 public key ednok has a syntax error", 1);
     free(s);
 }
 
@@ -310,7 +310,7 @@ static void test_key_errors(const char *mi) {
         set_key("kx", cases[i].fmt, g_rsa_b64);
         char *s = sig1(mi, "kx", "rsa-sha256", g_rsa, "rsa-sha256");
         char want[160], what[96];
-        snprintf(want, sizeof want, "PERMERROR DKIM2-Signature i=1 public key kx %s", cases[i].msg);
+        snprintf(want, sizeof want, "PERMERROR: DKIM2-Signature i=1 public key kx %s", cases[i].msg);
         snprintf(what, sizeof what, "record '%.30s'", g_keys[g_nkeys - 1].txt);
         expect(what, verify(mi, s, 0), DKIM2_PERMERROR, want, 1);
         free(s);
@@ -329,21 +329,21 @@ static void test_outcome(const char *mi) {
     s = make_sig(mi, g_now, rev_last, 2);
     expect("good item + revoked item: PERMERROR for the signature",
         verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR DKIM2-Signature i=1 public key kx has been revoked", -1);
+        "PERMERROR: DKIM2-Signature i=1 public key kx has been revoked", -1);
     free(s);
     item_t rev_first[2] = { { "kx", "ed25519-sha256", g_ed, "ed25519-sha256", NULL },
                             { "sel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL } };
     s = make_sig(mi, g_now, rev_first, 2);
     expect("revoked item + good item: PERMERROR for the signature",
         verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR DKIM2-Signature i=1 public key kx has been revoked", -1);
+        "PERMERROR: DKIM2-Signature i=1 public key kx has been revoked", -1);
     free(s);
     item_t mism[2] = { { "sel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL },
                        { "sel2", "ed25519-sha256", g_ed, "ed25519-sha256", NULL } };
     s = make_sig(mi, g_now, mism, 2);
     expect("good item + algorithm-mismatch item: PERMERROR",
         verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR DKIM2-Signature i=1 public key sel2 algorithm mismatch", -1);
+        "PERMERROR: DKIM2-Signature i=1 public key sel2 algorithm mismatch", -1);
     free(s);
 
     item_t absent1[2] = { { "nosel", "ed25519-sha256", g_ed, "ed25519-sha256", NULL },
@@ -354,19 +354,19 @@ static void test_outcome(const char *mi) {
     free(s);
     s = sig1(mi, "nosel", "rsa-sha256", g_rsa, "rsa-sha256");
     expect("only item absent: PERMERROR does not exist", verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR DKIM2-Signature i=1 public key nosel does not exist", 1);
+        "PERMERROR: DKIM2-Signature i=1 public key nosel does not exist", 1);
     free(s);
     item_t absent2[3] = { { "nosel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL },
                           { "zz", "future-alg", NULL, NULL, "AAAA" },
                           { "nosel2", "ed25519-sha256", g_ed, "ed25519-sha256", NULL } };
     s = make_sig(mi, g_now, absent2, 3);
     expect("every implemented item absent: names the first", verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR DKIM2-Signature i=1 public key nosel1 does not exist", 2);
+        "PERMERROR: DKIM2-Signature i=1 public key nosel1 does not exist", 2);
     free(s);
 
     s = sig1(mi, "tempfail", "rsa-sha256", g_rsa, "rsa-sha256");
     expect("DNS failure: TEMPERROR could not be fetched", verify(mi, s, 0), DKIM2_TEMPERROR,
-        "TEMPERROR DKIM2-Signature i=1 public key tempfail could not be fetched", 1);
+        "TEMPERROR: DKIM2-Signature i=1 public key tempfail could not be fetched", 1);
     free(s);
 
     item_t onebad[2] = { { "sel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL },
@@ -374,7 +374,7 @@ static void test_outcome(const char *mi) {
                            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" } };
     s = make_sig(mi, g_now, onebad, 2);
     expect("good item + bad signature: FAIL naming the selector", verify(mi, s, 0), DKIM2_FAIL,
-        "FAIL DKIM2-Signature i=1 ed incorrect signature", 2);
+        "FAIL: DKIM2-Signature i=1 signature sel1 signature ed failed", 2);
     free(s);
     {   /* §3.2: an RSA key under 1024 bits is present but unusable. */
         EVP_PKEY *weak = NULL;
@@ -391,14 +391,14 @@ static void test_outcome(const char *mi) {
         set_key("weak", "v=DKIM1; k=rsa; p=%s", wb64);
         s = sig1(mi, "weak", "rsa-sha256", weak, "rsa-sha256");
         expect("only item has a 768-bit RSA key: PERMERROR", verify(mi, s, 0), DKIM2_PERMERROR,
-            "PERMERROR DKIM2-Signature i=1 public key weak is shorter than 1024 bits", 1);
+            "PERMERROR: DKIM2-Signature i=1 public key weak is shorter than 1024 bits", 1);
         free(s);
         item_t wk[2] = { { "ed", "ed25519-sha256", g_ed, "ed25519-sha256", NULL },
                          { "weak", "rsa-sha256", weak, "rsa-sha256", NULL } };
         s = make_sig(mi, g_now, wk, 2);
         expect("good item + 768-bit RSA item: PERMERROR for the signature",
             verify(mi, s, 0), DKIM2_PERMERROR,
-            "PERMERROR DKIM2-Signature i=1 public key weak is shorter than 1024 bits", 2);
+            "PERMERROR: DKIM2-Signature i=1 public key weak is shorter than 1024 bits", 2);
         free(s);
         EVP_PKEY_free(weak);
     }
@@ -437,7 +437,7 @@ static void test_mi_tags(const char *mi) {
         char what[128];
         snprintf(what, sizeof what, "repeated tag (signed) '%.40s...' is a syntax error", variants[i]);
         expect(what, verify(variants[i], s, 0), DKIM2_PERMERROR,
-            "PERMERROR Message-Instance m=1 syntax error", -1);
+            "PERMERROR: Message-Instance m=1 syntax error", -1);
         free(s); free(variants[i]);
     }
 }
@@ -452,7 +452,7 @@ static void test_timestamps(const char *mi) {
         for (int skip = 0; skip < 2; skip++) {
             snprintf(what, sizeof what, "t=%s is a syntax error (skip age check: %d)", bad[i], skip);
             expect(what, verify(mi, s, skip), DKIM2_PERMERROR,
-                "PERMERROR DKIM2-Signature i=1 syntax error", 0);
+                "PERMERROR: DKIM2-Signature i=1 syntax error", 0);
         }
         free(s);
     }
@@ -486,8 +486,8 @@ static char *insert_at(const char *s, size_t at, const char *ins) {
 
 static void test_field_syntax(const char *mi) {
     printf("F.1 tag-list syntax\n");
-    const char *SIG_SYNTAX = "PERMERROR DKIM2-Signature i=1 syntax error";
-    const char *MI_SYNTAX = "PERMERROR Message-Instance m=1 syntax error";
+    const char *SIG_SYNTAX = "PERMERROR: DKIM2-Signature i=1 syntax error";
+    const char *MI_SYNTAX = "PERMERROR: Message-Instance m=1 syntax error";
     const char *bad[] = { "junk; ", "9bad=foo; ", "=v; ", "x=a\x7f" "b; ", "x=caf\xc3\xa9; ",
                           "n=\x80; ", "x=a\x01; ", "x y=1; ", ";; ", NULL };
     const char *good[] = { "x=unknown value; ", "x=; ", " X_9 = a=b ; ", NULL };
