@@ -12,8 +12,8 @@
    The top instance is all of the current body; each instance below is the
    one above composed with that MI's body Recipe (an MI with no body Recipe
    shares the list above it). The current body is then read ONCE, in chunks
-   cut anywhere, each line going to the digests of every distinct list that
-   holds it. Copy ranges are checked against the list they apply to once the
+   cut anywhere, each run of lines going (straight from the caller's bytes)
+   to the digests of every distinct list that holds it. Copy ranges are checked against the list they apply to once the
    body's line count is known.
 
    Headers: the fields are split once and grouped by lowercase name; per

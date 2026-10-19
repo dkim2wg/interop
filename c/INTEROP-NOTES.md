@@ -679,6 +679,27 @@ is in not building copies, and in the milter not needing the body.
 `chain-hop6-unchanged-re-sign.eml` (6 signatures, 5 distinct keys, live DNS):
 0.37–0.71 s with synchronous lookups, 0.08 s with prefetch.
 
+**Body in runs, not lines (2026-10-18).** The pass no longer handles the body
+line by line. Between segment boundaries a run of lines is hashed straight
+from the caller's buffer; LFs are only counted (64-byte blocks, vectorised)
+to find where a segment starts or ends, and only the blank lines ending a run
+are found, backwards. Bytes already CRLF-normal (`dkim2_crlf_clean`) are not
+copied; the milter keeps only a partial last line between chunks. When two
+or more digests take the same run they take it 128 bytes each in turn:
+interleaved that finely, two SHA-256s overlap in the CPU (10 MB body, two
+lists: 5.2 ms, against 6.1 ms one after the other and 5.7 ms for plain
+`2 x SHA-256`). Most of the old cost was not the pass, though: `eml_parse`
+normalised the file byte by byte, then hashed the whole body with SHA-256
+*and* SHA-512 for a digest the verifier never reads when it has the body
+(it now passes NULL), then copied it. It now reads the header block, then
+the body into its own buffer (copied again only if it needs normalising):
+14 ms to 1.3 ms on 10 MB. Verify of the xbench `big-10` message: 20 ms to
+6 ms; `big-50`: 93 ms to 33 ms.
+
+The streaming body hasher (milter) was rewritten on the same lines and a bug
+fell out: a lone CR emitted its CRLF at once instead of holding it back, so a
+body ending `"\r\r"` or `"\r\r\n"` hashed one CRLF too many.
+
 ---
 
 ## Spec Quality Issues

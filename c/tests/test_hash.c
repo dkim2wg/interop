@@ -161,6 +161,62 @@ int main(void) {
     assert(memcmp(all.d[0], d256, 32) == 0);
     assert(memcmp(all.d[1], d512, 64) == 0);
 
+    /* dkim2_crlf_clean: the prefix normalisation leaves alone */
+    assert(dkim2_crlf_clean("", 0) == 0);
+    assert(dkim2_crlf_clean("\nab", 3) == 0);
+    assert(dkim2_crlf_clean("ab\r\ncd", 6) == 6);
+    assert(dkim2_crlf_clean("ab\r\ncd\r", 7) == 6);     /* its LF may follow */
+    assert(dkim2_crlf_clean("ab\ncd", 5) == 2);         /* bare LF */
+    assert(dkim2_crlf_clean("ab\rcd", 5) == 2);         /* lone CR */
+    assert(dkim2_crlf_clean("\r\r\n", 3) == 0);
+    {
+        char big[300];
+        for (int i = 0; i < 300; i += 3) memcpy(big + i, "x\r\n", 3);
+        assert(dkim2_crlf_clean(big, 300) == 300);
+        big[199] = 'y';                                 /* "xy\n": bare LF at 200 */
+        assert(dkim2_crlf_clean(big, 300) == 200);
+    }
+
+    /* The streaming hasher, fed in three pieces cut anywhere, hashes what
+       CRLF normalisation then the batch hash do -- a lone CR's line among
+       the trailing blank ones included. */
+    {
+        static const char *raw[] = {
+            "abc\r\r", "abc\r\r\n", "abc\r\rx", "abc\r", "a\nb\n\n\r\n", "\r\n\r\n",
+            "x\r\n\r\n\ry\n\n", "\n", "\r", "", "a\r\n\r\n\r\nb\r\n\r\n",
+        };
+        for (size_t c = 0; c < sizeof raw / sizeof *raw; c++) {
+            const char *r = raw[c];
+            size_t n = strlen(r), nl = 0;
+            char norm[64];
+            for (size_t j = 0; j < n; j++) {
+                if (r[j] == '\r' || r[j] == '\n') {
+                    norm[nl++] = '\r';
+                    norm[nl++] = '\n';
+                    if (r[j] == '\r' && j + 1 < n && r[j + 1] == '\n') j++;
+                } else {
+                    norm[nl++] = r[j];
+                }
+            }
+            dkim2_digests_t want;
+            for (int a = 0; a < DKIM2_N_HASH_ALGS; a++)
+                assert(dkim2_body_hash_raw_alg(norm, nl, a, want.d[a]) == 0);
+            for (size_t i = 0; i <= n; i++)
+                for (size_t j = i; j <= n; j++) {
+                    dkim2_body_hasher_t *s = dkim2_body_hasher_new();
+                    assert(s != NULL);
+                    dkim2_body_hasher_update(s, r, i);
+                    dkim2_body_hasher_update(s, r + i, j - i);
+                    dkim2_body_hasher_update(s, r + j, n - j);
+                    dkim2_digests_t got;
+                    assert(dkim2_body_hasher_final_all(s, &got) == 0);
+                    dkim2_body_hasher_free(s);
+                    for (int a = 0; a < DKIM2_N_HASH_ALGS; a++)
+                        assert(memcmp(got.d[a], want.d[a], dkim2_hash_alg_len(a)) == 0);
+                }
+        }
+    }
+
     puts("hash: all tests passed");
     return 0;
 }

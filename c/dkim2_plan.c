@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <strings.h>
+#include <limits.h>
 
 /* The open end of the top instance's single body segment. */
 #define SEG_INF (1LL << 60)
@@ -51,6 +52,7 @@ typedef struct {
     int seg;                /* next segment of list to consume */
     long long pending;      /* blank lines held back (§6.1) */
     int emitted, last_crlf;
+    int active;             /* takes the current run of body lines */
     dkim2_digests_t out;
 } acc_t;
 
@@ -523,12 +525,21 @@ static void acc_update(acc_t *a, const void *d, size_t len) {
         if (a->md[i]) EVP_DigestUpdate(a->md[i], d, len);
 }
 
+/* The blank lines held back, now that a non-blank line follows. */
+static void acc_blanks(acc_t *a) {
+    while (a->pending > 0) {
+        long long k = a->pending < DKIM2_CRLF_RUN ? a->pending : DKIM2_CRLF_RUN;
+        acc_update(a, dkim2_crlf_run, (size_t)(2 * k));
+        a->pending -= k;
+    }
+}
+
 /* One line (terminator included) into a body digest. §6.1: a run of blank
    lines is held back until a non-blank line follows; at the end it is
    dropped. The run carries across body lines and literals alike. */
 static void acc_emit(acc_t *a, const unsigned char *s, size_t len) {
     if (len == 2 && s[0] == '\r' && s[1] == '\n') { a->pending++; return; }
-    for (; a->pending > 0; a->pending--) acc_update(a, "\r\n", 2);
+    acc_blanks(a);
     acc_update(a, s, len);
     a->emitted = 1;
     a->last_crlf = len >= 2 && s[len - 2] == '\r' && s[len - 1] == '\n';
@@ -539,22 +550,92 @@ static void acc_lits(dkim2_plan_t *p, acc_t *a, const seg_t *g) {
         acc_emit(a, p->blit[k].s, p->blit[k].len);
 }
 
-static void plan_line(dkim2_plan_t *p, const char *s, size_t len) {
-    long long n = ++p->n_lines;
+/* Past k lines of s..e (each up to and including an LF; a last one
+   without is a line too), *got the lines passed -- fewer than k only at e.
+   LFs are counted a block at a time (vectorisable), and only the block
+   holding the k-th is searched -- or the last few bytes, never skipped
+   in blocks, which end any line without an LF. */
+static const char *skip_lines(const char *s, const char *e, long long k, long long *got) {
+    long long n = 0;
+    while (e - s > 64) {
+        int c = 0;
+        for (int i = 0; i < 64; i++) c += s[i] == '\n';
+        if (n + c >= k) break;
+        n += c;
+        s += 64;
+    }
+    while (s < e && n < k) {
+        const char *nl = memchr(s, '\n', (size_t)(e - s));
+        s = nl ? nl + 1 : e;
+        n++;
+    }
+    *got = n;
+    return s;
+}
+
+/* Bytes each digest takes in turn when several share a run. */
+#define STRIDE 128
+
+/* A run of whole body lines s..e (split at each LF; only the body's last
+   line may lack one) into every active digest: as acc_emit line by line,
+   but only the blank lines ending the run need finding, backwards. With
+   more than one digest, they take the run a few blocks at a time in turn:
+   independent hashes interleaved that finely keep the CPU busy on two at
+   once (measured: two SHA-256 over 10 MB, 5.2 ms against 6.1 ms whole). */
+static void acc_run(dkim2_plan_t *p, const char *s, const char *e) {
+    long long t = 0;
+    while (e - s >= 2 && e[-1] == '\n' && e[-2] == '\r' && (e - 2 == s || e[-3] == '\n')) {
+        e -= 2;
+        t++;
+    }
+    int n_active = 0;
     for (int k = 0; k < p->n_acc; k++) {
         acc_t *a = &p->acc[k];
-        const seglist_t *l = a->list;
-        while (a->seg < l->n) {
-            const seg_t *g = &l->s[a->seg];
-            if (g->lit) { acc_lits(p, a, g); a->seg++; continue; }
-            if (n < g->from) break;
-            if (n <= g->to) {
-                acc_emit(a, (const unsigned char *)s, len);
-                if (n == g->to) a->seg++;
+        if (!a->active) continue;
+        n_active++;
+        if (e == s) { a->pending += t; continue; }
+        acc_blanks(a);
+        a->emitted = 1;
+        a->last_crlf = e - s >= 2 && e[-2] == '\r' && e[-1] == '\n';
+        a->pending = t;
+    }
+    size_t stride = n_active > 1 ? STRIDE : (size_t)(e - s);
+    for (; s < e; s += stride) {
+        size_t len = (size_t)(e - s) < stride ? (size_t)(e - s) : stride;
+        for (int k = 0; k < p->n_acc; k++)
+            if (p->acc[k].active) acc_update(&p->acc[k], s, len);
+    }
+}
+
+/* Body lines s..e, the next after p->n_lines (whole lines; only at the
+   end of the body may the last lack its LF). Cut wherever some digest's
+   segment starts or ends; each piece goes to the digests whose segment
+   holds it. */
+static void plan_lines(dkim2_plan_t *p, const char *s, const char *e) {
+    while (s < e) {
+        long long n = p->n_lines + 1, cut = LLONG_MAX;
+        for (int k = 0; k < p->n_acc; k++) {
+            acc_t *a = &p->acc[k];
+            const seglist_t *l = a->list;
+            for (; a->seg < l->n; a->seg++) {
+                const seg_t *g = &l->s[a->seg];
+                if (g->lit) { acc_lits(p, a, g); continue; }
+                if (g->to < n) continue;
+                long long c = n < g->from ? g->from : g->to + 1;
+                if (c < cut) cut = c;
                 break;
             }
-            a->seg++;
         }
+        long long got;
+        const char *q = skip_lines(s, e, cut - n, &got);
+        for (int k = 0; k < p->n_acc; k++) {
+            acc_t *a = &p->acc[k];
+            const seg_t *g = a->seg < a->list->n ? &a->list->s[a->seg] : NULL;
+            a->active = g && !g->lit && g->from <= n;
+        }
+        acc_run(p, s, q);
+        p->n_lines += got;
+        s = q;
     }
 }
 
@@ -573,47 +654,48 @@ static int part_append(dkim2_plan_t *p, const char *d, size_t len) {
 }
 
 /* Lines as dkim2_apply_body_recipe splits them: up to and including each
-   LF; only a partial line is kept between chunks. */
+   LF. Whole lines are hashed from d itself; only a partial line is kept
+   between chunks. */
 static int split_feed(dkim2_plan_t *p, const char *d, size_t len) {
-    while (len) {
+    const char *e = d + len;
+    if (p->part_len) {
         const char *nl = memchr(d, '\n', len);
         if (!nl) return part_append(p, d, len);
-        size_t ll = (size_t)(nl - d) + 1;
-        if (p->part_len) {
-            if (part_append(p, d, ll) < 0) return -1;
-            plan_line(p, p->part, p->part_len);
-            p->part_len = 0;
-        } else {
-            plan_line(p, d, ll);
-        }
-        d += ll;
-        len -= ll;
+        if (part_append(p, d, (size_t)(nl + 1 - d)) < 0) return -1;
+        plan_lines(p, p->part, p->part + p->part_len);
+        p->part_len = 0;
+        d = nl + 1;
     }
-    return 0;
+    const char *end = e;
+    while (end > d && end[-1] != '\n') end--;
+    plan_lines(p, d, end);
+    return end < e ? part_append(p, end, (size_t)(e - end)) : 0;
 }
 
 int dkim2_plan_body_update(dkim2_plan_t *p, const char *data, size_t len) {
     if (p->finished) return -1;
     if (!p->normalise) return split_feed(p, data, len);
-    /* As eml_parse: CRLF stays, a bare CR or bare LF becomes CRLF. */
-    char buf[8192];
-    size_t o = 0;
-    for (size_t i = 0; i < len; i++) {
-        char c = data[i];
-        if (o + 4 > sizeof buf) {
-            if (split_feed(p, buf, o) < 0) return -1;
-            o = 0;
-        }
+    /* As eml_parse: CRLF stays, a bare CR or bare LF becomes CRLF. Runs
+       already in that form go through as they are. */
+    while (len) {
         if (p->prev_cr) {
             p->prev_cr = 0;
-            buf[o++] = '\r'; buf[o++] = '\n';
-            if (c == '\n') continue;
+            if (split_feed(p, "\r\n", 2) < 0) return -1;
+            if (data[0] == '\n') { data++; len--; }
+            continue;
         }
-        if (c == '\r') p->prev_cr = 1;
-        else if (c == '\n') { buf[o++] = '\r'; buf[o++] = '\n'; }
-        else buf[o++] = c;
+        size_t k = dkim2_crlf_clean(data, len);
+        if (k) {
+            if (split_feed(p, data, k) < 0) return -1;
+        } else {
+            if (data[0] == '\r') p->prev_cr = 1;
+            else if (split_feed(p, "\r\n", 2) < 0) return -1;
+            k = 1;
+        }
+        data += k;
+        len -= k;
     }
-    return split_feed(p, buf, o);
+    return 0;
 }
 
 /* Lines the list holds once the body has n lines. */
@@ -638,7 +720,7 @@ int dkim2_plan_body_final(dkim2_plan_t *p) {
     }
     if (p->part_len) {
         p->unterminated = 1;
-        plan_line(p, p->part, p->part_len);
+        plan_lines(p, p->part, p->part + p->part_len);
         p->part_len = 0;
     }
     p->finished = 1;

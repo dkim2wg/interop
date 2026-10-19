@@ -16,7 +16,8 @@ int eml_parse(const char *path,
               dkim2_digests_t *body_digests_out);
 
 /* Like eml_parse but also returns the CRLF-normalised body bytes.
-   *body_out is malloc'd; caller frees. body_len_out is the byte count. */
+   *body_out is malloc'd; caller frees. body_len_out is the byte count.
+   body_digests_out may be NULL: the body is then not hashed here. */
 int eml_parse_with_body(const char *path,
                         char ***headers_out, int *n_headers_out,
                         dkim2_digests_t *body_digests_out,

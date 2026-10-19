@@ -31,12 +31,31 @@ size_t dkim2_hash_alg_len(int idx) {
     return (idx >= 0 && idx < DKIM2_N_HASH_ALGS) ? HASH_ALGS[idx].len : 0;
 }
 
+size_t dkim2_crlf_clean(const char *s, size_t len) {
+    const unsigned char *u = (const unsigned char *)s;
+    if (len == 0 || u[0] == '\n') return 0;
+    /* Byte i and byte i+1 pair up: a CR exactly where an LF follows. A
+       block at a time without branches, so the compiler can vectorise it. */
+    size_t i = 0;
+    while (i + 64 < len) {
+        unsigned bad = 0;
+        for (size_t j = i; j < i + 64; j++) bad |= (u[j] == '\r') ^ (u[j + 1] == '\n');
+        if (bad) break;
+        i += 64;
+    }
+    for (; i + 1 < len; i++)
+        if ((u[i] == '\r') != (u[i + 1] == '\n')) break;
+    /* i is the first unpaired byte, or the last byte: a lone CR is left
+       out, anything else (a byte before a bare LF) is kept. */
+    return u[i] == '\r' ? i : i + 1;
+}
+
 /* ── Streaming body hasher ──────────────────────────────────────────────── */
 
 struct dkim2_body_hasher {
     EVP_MD_CTX *md_ctx[DKIM2_N_HASH_ALGS];
-    int pending_crlfs;  /* trailing \r\n pairs held back (not yet hashed) */
-    int prev_was_cr;    /* last byte fed was a bare \r (cross-chunk state) */
+    size_t pending_crlfs;  /* trailing \r\n pairs held back (not yet hashed) */
+    int prev_was_cr;       /* last byte fed was a \r (cross-chunk state) */
 };
 
 dkim2_body_hasher_t *dkim2_body_hasher_new(void) {
@@ -53,50 +72,54 @@ dkim2_body_hasher_t *dkim2_body_hasher_new(void) {
     return bh;
 }
 
-static void flush_pending(dkim2_body_hasher_t *bh) {
+#define CRLF4   "\r\n\r\n\r\n\r\n"
+#define CRLF32  CRLF4 CRLF4 CRLF4 CRLF4 CRLF4 CRLF4 CRLF4 CRLF4
+const char dkim2_crlf_run[DKIM2_CRLF_RUN * 2 + 1] = CRLF32 CRLF32 CRLF32 CRLF32;
+
+static void hasher_put(dkim2_body_hasher_t *bh, const void *d, size_t len) {
+    for (int i = 0; i < DKIM2_N_HASH_ALGS; i++)
+        EVP_DigestUpdate(bh->md_ctx[i], d, len);
+}
+
+/* Bytes already CRLF-normal (no lone CR or bare LF, not ending in CR):
+   whatever precedes their trailing \r\n pairs goes now, after the pairs
+   held back so far; the trailing pairs are held back in turn. */
+static void hasher_clean(dkim2_body_hasher_t *bh, const char *s, size_t len) {
+    const char *e = s + len;
+    size_t t = 0;
+    while (e - s >= 2 && e[-2] == '\r' && e[-1] == '\n') { e -= 2; t++; }
+    if (e == s) { bh->pending_crlfs += t; return; }
     while (bh->pending_crlfs > 0) {
-        for (int i = 0; i < DKIM2_N_HASH_ALGS; i++)
-            EVP_DigestUpdate(bh->md_ctx[i], "\r\n", 2);
-        bh->pending_crlfs--;
+        size_t k = bh->pending_crlfs < DKIM2_CRLF_RUN ? bh->pending_crlfs : DKIM2_CRLF_RUN;
+        hasher_put(bh, dkim2_crlf_run, 2 * k);
+        bh->pending_crlfs -= k;
     }
+    hasher_put(bh, s, (size_t)(e - s));
+    bh->pending_crlfs = t;
 }
 
 int dkim2_body_hasher_update(dkim2_body_hasher_t *bh,
                              const char *data, size_t len) {
-    size_t i = 0;
-    while (i < len) {
-        /* Resolve pending bare \r from previous chunk */
+    while (len) {
+        /* A CR from the previous chunk (or a lone one): it ends a line. */
         if (bh->prev_was_cr) {
             bh->prev_was_cr = 0;
-            if (data[i] == '\n') {
-                bh->pending_crlfs++;
-                i++;
-                continue;
-            }
-            /* Bare \r: normalise to \r\n, emit as a line terminator */
-            flush_pending(bh);
-            for (int k = 0; k < DKIM2_N_HASH_ALGS; k++)
-                EVP_DigestUpdate(bh->md_ctx[k], "\r\n", 2);
-            /* data[i] is unprocessed non-\n; fall through */
+            hasher_clean(bh, "\r\n", 2);
+            if (data[0] == '\n') { data++; len--; }
+            continue;
         }
-
-        /* Scan for next \r or bare \n */
-        size_t j = i;
-        while (j < len && data[j] != '\r' && data[j] != '\n') j++;
-
-        if (j > i) {
-            /* Real content: flush held-back CRLFs then emit content */
-            flush_pending(bh);
-            for (int k = 0; k < DKIM2_N_HASH_ALGS; k++)
-                EVP_DigestUpdate(bh->md_ctx[k], data + i, j - i);
-            i = j;
-        } else if (data[i] == '\r') {
+        size_t k = dkim2_crlf_clean(data, len);
+        if (k) {
+            hasher_clean(bh, data, k);
+        } else if (data[0] == '\r') {
             bh->prev_was_cr = 1;
-            i++;
-        } else { /* bare \n: normalise to \r\n */
-            bh->pending_crlfs++;
-            i++;
+            k = 1;
+        } else {            /* bare \n: normalise to \r\n */
+            hasher_clean(bh, "\r\n", 2);
+            k = 1;
         }
+        data += k;
+        len -= k;
     }
     return 0;
 }
