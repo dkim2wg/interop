@@ -74,6 +74,11 @@ export function txtData(data) {
   return out;
 }
 
+// The fetchKey() failures that are a definitive answer about the name (no
+// such key, or a record that is unusable): looking again cannot change them.
+// Anything else (key-temperror, a malformed DoH response) may.
+export const DEFINITIVE_KEY_ERRORS = new Set(['key-notfound', 'key-multiple', 'key-syntax', 'key-revoked']);
+
 export async function fetchKey(selector, domain, opts = {}) {
   const url = new URL(opts.dohUrl || DEFAULT_DOH);
   url.searchParams.set('name', keyName(selector, domain));
@@ -83,7 +88,9 @@ export async function fetchKey(selector, domain, opts = {}) {
     // Bound a hung DoH request so it surfaces as a temperror rather than
     // hanging the verification. Any fetch rejection (incl. AbortError on
     // timeout) maps to key-temperror, preserving the cause for diagnosis.
-    resp = await fetch(url, { headers: { accept: 'application/dns-json' }, signal: AbortSignal.timeout(5000) });
+    // opts.fetch: a fetch() stand-in (tests).
+    const init = { headers: { accept: 'application/dns-json' }, signal: AbortSignal.timeout(5000) };
+    resp = await (opts.fetch ? opts.fetch(url, init) : fetch(url, init));
   } catch (e) {
     throw new Error('key-temperror', { cause: e });
   }

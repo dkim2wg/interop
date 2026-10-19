@@ -2,9 +2,10 @@
 import { parseMessage, collectLevels, parseTagList, parseHashSets } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
-import { fetchKey as dohFetchKey } from './doh.js';
-import { decodeRecipe, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe, MalformedRecipe } from './recipes.js';
+import { fetchKey as dohFetchKey, keyName, DEFINITIVE_KEY_ERRORS } from './doh.js';
+import { decodeRecipe, classifyRecipeDecodeError, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe, MalformedRecipe } from './recipes.js';
 import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
+import { planChain } from './plan.js';
 
 const SIG_MI_NAMES = new Set(['message-instance', 'dkim2-signature']);
 
@@ -89,25 +90,6 @@ export function checkSignatureDuplicates(items, i) {
   return errors;
 }
 
-// spec-06 §11.2: classify a decodeRecipe() failure so the two error kinds
-// stay distinct, per the ruling that base64 and JSON failures are different
-// errors:
-//  - a bad base64 r= value (atob throws, typically DOMException) is a
-//    syntax error (§11.2 lists this explicitly for malformed field
-//    content) -- the payload never even reached JSON parsing.
-//  - a JSON.parse failure (SyntaxError) on the successfully-decoded bytes
-//    is the more specific "contains invalid JSON" case.
-//  - valid JSON that is not a valid Recipe (§5: a "c" range out of bounds
-//    or not ascending, a non-base64 "b" item, CR/LF in a literal...) is
-//    "has a malformed Recipe" -- recipes.js throws MalformedRecipe.
-// Anything else is a generic, non-specific Recipe-decode failure.
-function classifyRecipeDecodeError(e) {
-  if (e instanceof MalformedRecipe) return 'malformed';
-  if (e instanceof SyntaxError) return 'invalid-json';
-  if (e instanceof DOMException) return 'syntax-error';
-  return 'broken';
-}
-
 // The §11.2 error text for a classified Recipe failure, or null when the
 // failure is not a specific PERMERROR (a generic "undo broke").
 function recipeErrorSuffix(reason) {
@@ -178,7 +160,6 @@ export async function verifyMessage(raw, opts = {}) {
 }
 
 async function verifyOnce(raw, opts = {}) {
-  const fetchKey = opts.fetchKey || dohFetchKey;
   const now = opts.now || Math.floor(Date.now() / 1000);
   const { headers, body } = parseMessage(raw);
   const { instances, signatures, dupInstances, dupSignatures, unkeyableSignatures, rangeError } =
@@ -275,55 +256,23 @@ async function verifyOnce(raw, opts = {}) {
     return { overall: 'permerror', summary: structErr.join('; '), levels: [] };
   }
 
-  // --- reconstruct message state per instance (top-down) ----------------
-  // state[m] = { fields, bodyLines } representing the message at instance m.
-  const states = {};
-  states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(body) };
-  const nullBodyInstances = new Set(); // every m whose body Recipe is null
-  let nullBodyAt = null; // highest m whose body Recipe is null (§5.2)
-  let undoBroken = null; // m at which undo became impossible
-  let undoBrokenReason = null; // 'invalid-json' | 'syntax-error' | 'malformed' | 'broken'
-  for (let m = maxM; m >= 2; m--) {
-    const mi = instances[m];
-    if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
-    let recipe;
-    try {
-      recipe = decodeRecipe(mi.map.r);
-    } catch (e) {
-      undoBroken = m;
-      undoBrokenReason = classifyRecipeDecodeError(e);
-      break;
-    }
-    try {
-      if (states[m].noBody) {
-        // Below a null body Recipe the body is gone: apply the header Recipe
-        // only (still validated as a Recipe object) and carry on.
-        if (recipe === null || typeof recipe !== 'object' || Array.isArray(recipe)) throw new MalformedRecipe('Recipe is not a JSON object');
-        if (!('h' in recipe) && !('b' in recipe)) throw new MalformedRecipe('Recipe has neither "h" nor "b"');
-        validateBodyRecipe(recipe.b); // structure still checked; body not applied
-        states[m - 1] = { fields: 'h' in recipe ? applyHeaderRecipe(states[m].fields, recipe.h) : states[m].fields, bodyLines: states[m].bodyLines, noBody: true };
-        if (recipe.b === null) nullBodyInstances.add(m);
-      } else if (recipe !== null && typeof recipe === 'object' && recipe.b === null) {
-        // §5.2 null "b": the previous body cannot be recreated, but the
-        // header Recipe is mandatory and the header history is still
-        // checkable. Sticky: every lower instance is header-hash-only.
-        states[m - 1] = { fields: 'h' in recipe ? applyHeaderRecipe(states[m].fields, recipe.h) : states[m].fields, bodyLines: states[m].bodyLines, noBody: true };
-        nullBodyInstances.add(m);
-        if (nullBodyAt === null) nullBodyAt = m;
-      } else {
-        states[m - 1] = applyRecipe(recipe, states[m]);
-      }
-    } catch (e) {
-      undoBroken = m;
-      undoBrokenReason = e instanceof MalformedRecipe ? 'malformed' : 'broken';
-      break;
-    }
-  }
+  // Start every public-key lookup now, so they overlap each other and the
+  // hashing below; each signature check awaits its own.
+  const fetchKey = opts.fetchKey
+    || prefetchKeys(signatures, sigNums, { fetch: opts.dohFetch, dohUrl: opts.dohUrl });
+
+  // --- the chain of message states, one per instance (top-down) ----------
+  // The planned walk (plan.js) works out every instance's hash input from
+  // the current message without rebuilding any of them; the undo walk
+  // (undoChain below) literally rebuilds each previous message and is kept
+  // as the reference (opts.undoWalk). Both give the same answers.
+  const chain = (!opts.undoWalk && planChain(headers, body, instances, maxM))
+    || undoChain(headers, body, instances, maxM);
+  const { undoBroken, undoBrokenReason, nullBodyAt, nullBodyInstances } = chain;
 
   // --- §11.7 MI hash checks (top-down) ----------------------------------
   for (let m = maxM; m >= 1; m--) {
     const mi = instances[m];
-    const state = states[m];
     const level = {
       kind: 'instance', m,
       tags: mi.tags.map((t) => ({ tag: t.tag, value: t.value })),
@@ -331,7 +280,7 @@ async function verifyOnce(raw, opts = {}) {
       header_recipes: [], undo: m === 1 ? 'n/a' : 'clean',
       result: 'pass', detail: '',
     };
-    if (!state) {
+    if (!chain.has(m)) {
       // No reconstructed state: a broken chain (permerror or fail).
       level.result = 'not-checked';
       if (recipeErrorSuffix(undoBrokenReason)) {
@@ -363,7 +312,7 @@ async function verifyOnce(raw, opts = {}) {
       // check here: decode it, and dry-run it against the m=1 state so a
       // malformed Recipe (§5) is caught the same way as at m>=2.
       try {
-        applyRecipe(decodeRecipe(mi.map.r), state); // a null "b" is left alone here
+        chain.checkBottom(decodeRecipe(mi.map.r)); // a null "b" is left alone here
       } catch (e) {
         const reason = classifyRecipeDecodeError(e);
         const suffix = recipeErrorSuffix(reason);
@@ -391,8 +340,7 @@ async function verifyOnce(raw, opts = {}) {
         levels.push(level);
         continue;
       }
-      const hdrBytes = binaryToBytes(canonHeaderHash(signedFields(state.fields)));
-      const bodyBytes = binaryToBytes(canonBody(linesToBody(state.bodyLines)));
+      const noBody = chain.noBody(m);
       // §3.4: ignore hash-sets naming algorithms we do not implement; all the
       // ones we do implement must match (mirrors §11.6 for signatures).
       const usable = sets.filter((s) => s.alg in HASH_ALGS);
@@ -402,17 +350,17 @@ async function verifyOnce(raw, opts = {}) {
         bump('fail');
       } else {
         level.header_hash = 'match';
-        level.body_hash = state.noBody ? 'not-checked' : 'match';
-        if (state.noBody) level.detail = `body not checked (null body Recipe at m=${nullBodyAt})`;
+        level.body_hash = noBody ? 'not-checked' : 'match';
+        if (noBody) level.detail = `body not checked (null body Recipe at m=${nullBodyAt})`;
         for (const s of usable) {
-          if (await hashB64(hdrBytes, s.alg) !== s.headerHash) {
+          if (await chain.headerHash(m, s.alg) !== s.headerHash) {
             level.header_hash = 'mismatch';
             level.result = 'fail';
             level.detail = `Message Instance m=${m} ${s.alg} header hash mismatch`;
             bump('fail');
             break;
           }
-          if (!state.noBody && await hashB64(bodyBytes, s.alg) !== s.bodyHash) {
+          if (!noBody && await chain.bodyHash(m, s.alg) !== s.bodyHash) {
             level.body_hash = 'mismatch';
             level.result = 'fail';
             level.detail = `Message Instance m=${m} ${s.alg} body hash mismatch`;
@@ -446,11 +394,10 @@ async function verifyOnce(raw, opts = {}) {
         const rtag = level.tags.find((t) => t.tag === 'r');
         if (rtag) rtag.value = recipeSummary(rec);
         // Per-header current<-previous, only when the previous state exists.
-        const prev = states[m - 1];
-        if (hasH && prev) {
+        if (hasH && chain.has(m - 1)) {
           for (const name of Object.keys(rec.h).sort()) {
-            const cur = displayText(headerValues(state.fields, name).join(' / '));
-            const pre = displayText(headerValues(prev.fields, name).join(' / '));
+            const cur = displayText(chain.headerValues(m, name).join(' / '));
+            const pre = displayText(chain.headerValues(m - 1, name).join(' / '));
             level.header_recipes.push({
               name,
               current: cur.length ? cur : '(absent)',
@@ -513,8 +460,7 @@ async function verifyOnce(raw, opts = {}) {
 
     // §11.5/§11.6 fetch key + verify each s= sig-set.
     const mAtSig = parseInt(sig.map.m, 10);
-    const state = states[mAtSig];
-    if (!state) {
+    if (!chain.has(mAtSig)) {
       // Reconstruction did not reach this signature's instance: broken chain
       // downgrades overall.
       level.result = 'not-checked';
@@ -659,6 +605,111 @@ async function verifyOnce(raw, opts = {}) {
     ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact${nullNote} — with warnings: ${levels.filter((l) => l.result === 'warn' && l.detail).map((l) => l.detail).join('; ')}`
     : levels.filter((l) => l.detail).map((l) => l.detail).join('; ') || `verification ${overall}`;
   return { overall, summary, levels };
+}
+
+// The undo walk: rebuild the message state at each instance, top-down, by
+// applying each Message-Instance's Recipe to the state above it (§5). The
+// reference for planChain() (plan.js), which must give the same answers;
+// opts.undoWalk selects it. Returns the chain interface verifyOnce() reads:
+//  - undoBroken / undoBrokenReason: the m whose Recipe could not be undone
+//    ('invalid-json' | 'syntax-error' | 'malformed' | 'broken'), or null;
+//  - nullBodyAt: the highest m with a null body Recipe; nullBodyInstances:
+//    every such m;
+//  - has(m): the state at m was reached; noBody(m): its body is gone;
+//  - headerHash(m, alg) / bodyHash(m, alg): base64 §6 hashes of that state;
+//  - headerValues(m, name): the trimmed values of a field, document order;
+//  - checkBottom(recipe): dry-run the m=1 Recipe; throws as applyRecipe.
+export function undoChain(headers, body, instances, maxM) {
+  // state[m] = { fields, bodyLines } representing the message at instance m.
+  const states = {};
+  states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(body) };
+  const nullBodyInstances = new Set(); // every m whose body Recipe is null
+  let nullBodyAt = null; // highest m whose body Recipe is null (§5.2)
+  let undoBroken = null; // m at which undo became impossible
+  let undoBrokenReason = null; // 'invalid-json' | 'syntax-error' | 'malformed' | 'broken'
+  for (let m = maxM; m >= 2; m--) {
+    const mi = instances[m];
+    if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
+    let recipe;
+    try {
+      recipe = decodeRecipe(mi.map.r);
+    } catch (e) {
+      undoBroken = m;
+      undoBrokenReason = classifyRecipeDecodeError(e);
+      break;
+    }
+    try {
+      if (states[m].noBody) {
+        // Below a null body Recipe the body is gone: apply the header Recipe
+        // only (still validated as a Recipe object) and carry on.
+        if (recipe === null || typeof recipe !== 'object' || Array.isArray(recipe)) throw new MalformedRecipe('Recipe is not a JSON object');
+        if (!('h' in recipe) && !('b' in recipe)) throw new MalformedRecipe('Recipe has neither "h" nor "b"');
+        validateBodyRecipe(recipe.b); // structure still checked; body not applied
+        states[m - 1] = { fields: 'h' in recipe ? applyHeaderRecipe(states[m].fields, recipe.h) : states[m].fields, bodyLines: states[m].bodyLines, noBody: true };
+        if (recipe.b === null) nullBodyInstances.add(m);
+      } else if (recipe !== null && typeof recipe === 'object' && recipe.b === null) {
+        // §5.2 null "b": the previous body cannot be recreated, but the
+        // header Recipe is mandatory and the header history is still
+        // checkable. Sticky: every lower instance is header-hash-only.
+        states[m - 1] = { fields: 'h' in recipe ? applyHeaderRecipe(states[m].fields, recipe.h) : states[m].fields, bodyLines: states[m].bodyLines, noBody: true };
+        nullBodyInstances.add(m);
+        if (nullBodyAt === null) nullBodyAt = m;
+      } else {
+        states[m - 1] = applyRecipe(recipe, states[m]);
+      }
+    } catch (e) {
+      undoBroken = m;
+      undoBrokenReason = e instanceof MalformedRecipe ? 'malformed' : 'broken';
+      break;
+    }
+  }
+  const hdrBytes = {};
+  return {
+    undoBroken, undoBrokenReason, nullBodyAt, nullBodyInstances,
+    has: (m) => !!states[m],
+    noBody: (m) => !!states[m].noBody,
+    headerHash(m, alg) {
+      if (!hdrBytes[m]) hdrBytes[m] = binaryToBytes(canonHeaderHash(signedFields(states[m].fields)));
+      return hashB64(hdrBytes[m], alg);
+    },
+    bodyHash: (m, alg) => hashB64(binaryToBytes(canonBody(linesToBody(states[m].bodyLines))), alg),
+    headerValues: (m, name) => headerValues(states[m].fields, name),
+    checkBottom: (recipe) => { applyRecipe(recipe, states[1]); },
+  };
+}
+
+// Start the DoH lookup of every distinct selector._domainkey.domain the
+// DKIM2-Signatures name for an algorithm we implement, all at once, and
+// return a fetchKey(selector, domain) that answers from them. A prefetched
+// answer that is definitive (a key, NXDOMAIN, no TXT record, an unusable
+// record) is used as it is; anything else (a timeout, SERVFAIL, a network
+// error) is looked up again the ordinary way, so every verdict is what it
+// would have been without the prefetch.
+function prefetchKeys(signatures, sigNums, dohOpts) {
+  const pending = new Map();
+  for (const i of sigNums) {
+    const sig = signatures[i];
+    const sTag = sig.tags.find((t) => t.tag === 's');
+    const sets = sTag && parseSigSets(rawTagValue(sTag));
+    if (!sets || sig.map.d === undefined) continue;
+    for (const ss of sets) {
+      if (!SUPPORTED_ALGS.has(ss.alg)) continue;
+      const name = keyName(ss.selector, sig.map.d);
+      if (pending.has(name)) continue;
+      // Settled into an outcome, so an unawaited failure is never unhandled.
+      pending.set(name, dohFetchKey(ss.selector, sig.map.d, dohOpts)
+        .then((key) => ({ key }), (err) => ({ err })));
+    }
+  }
+  return async (selector, domain) => {
+    const p = pending.get(keyName(selector, domain));
+    if (p) {
+      const { key, err } = await p;
+      if (!err) return key;
+      if (err instanceof Error && DEFINITIVE_KEY_ERRORS.has(err.message)) throw err;
+    }
+    return dohFetchKey(selector, domain, dohOpts);
+  };
 }
 
 // spec-06 §11.5 wording, naming the Selector.
