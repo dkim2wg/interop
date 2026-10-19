@@ -188,3 +188,24 @@ PERMERROR.
 - Fixtures: change From addresses so that From is Authentic against i=1 (and
   against later From-changing signers), then regenerate the expected files.
   Never weaken the check to keep an old fixture passing.
+
+## C9. Check order and the primary result (added 2026-10-19, final review I1)
+
+All five verifiers report the same primary error and state for the same input.
+They run, or at least rank, the checks in -07 §14 section order:
+
+1. §14.2: header field validity (syntax, tags, Recipes, duplicate hash/selector, "is not signed", missing)
+2. §14.3: timestamps (expired, from the future)
+3. §14.4: Chain of Custody, envelope match, then the C4 steps
+4. §14.5: public keys (TEMPERROR/PERMERROR key strings)
+5. §14.6: signature verification (FAIL selector strings)
+6. §14.7: body and header hashes (FAIL hash mismatch)
+7. §14.8: From Authentic
+
+The PRIMARY error is the first one in this order. Within one section, the lowest
+i= (or m=) comes first. The result state (and the A-R result) is the primary
+error's state. A verifier may list later errors after the primary one, but they
+never change the state, and the primary error is the first `STATE: text` line
+the CLI prints. A From tampered on a signed message is therefore
+`FAIL: Message-Instance m=<x> header hash <alg> mismatch` (§14.7 comes before §14.8)
+in every verifier.
