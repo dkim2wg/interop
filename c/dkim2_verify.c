@@ -112,6 +112,155 @@ static int matches_rt(const char *p1, const dkim2_sig_t *p) {
    the previous hop (mf= is Parameter1). Then every signature with a
    non-null mf= (and so no nd=) needs its mf= domain to relaxed-match its d=.
    mf=/rt= domains are compared as A-labels (§18). */
+static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t msgsz);
+
+/* ---- From Authentic (-07 §11, §14.8; contract C5) ---- */
+
+/* The values of a message's From fields, bottom-up (v[0] is the last From
+   field, as header Recipes number them). */
+typedef struct { char **v; int n; } fromlist_t;
+
+static void fromlist_free(fromlist_t *f) {
+    for (int i = 0; i < f->n; i++) free(f->v[i]);
+    free(f->v);
+    f->v = NULL;
+    f->n = 0;
+}
+
+static int fromlist_push(fromlist_t *f, const char *s, size_t len) {
+    char **nv = realloc(f->v, (size_t)(f->n + 1) * sizeof *nv);
+    if (!nv) return -1;
+    f->v = nv;
+    if (!(f->v[f->n] = malloc(len + 1))) return -1;
+    memcpy(f->v[f->n], s, len);
+    f->v[f->n][len] = '\0';
+    f->n++;
+    return 0;
+}
+
+static int fromlist_of(char **hdrs, int n, fromlist_t *out) {
+    out->v = NULL;
+    out->n = 0;
+    for (int i = n - 1; i >= 0; i--) {
+        if (!hdrs[i] || strncasecmp(hdrs[i], "from", 4) != 0) continue;
+        const char *v = hdrs[i] + 4;
+        while (*v == ' ' || *v == '\t') v++;
+        if (*v != ':') continue;
+        v++;
+        size_t len = strlen(v);
+        while (len && (v[len - 1] == '\r' || v[len - 1] == '\n')) len--;
+        if (fromlist_push(out, v, len) < 0) { fromlist_free(out); return -1; }
+    }
+    return 0;
+}
+
+/* Exactly one From field, holding exactly one mailbox whose (A-label)
+   domain is not a literal and relaxed-matches d (From is Parameter1). */
+static int fromlist_authentic(const fromlist_t *f, const char *d) {
+    char dom[512];
+    return f->n == 1 && d && dkim2_from_domain(f->v[0], dom, sizeof dom) == 0 &&
+           dkim2_relaxed_match(dom, d);
+}
+
+int dkim2_from_authentic(char **hdrs, int n_hdrs, const char *d) {
+    fromlist_t f;
+    if (fromlist_of(hdrs, n_hdrs, &f) < 0) return 0;
+    int ok = fromlist_authentic(&f, d);
+    fromlist_free(&f);
+    return ok;
+}
+
+/* Undo MI's header Recipe for From (a "from" key, any case) on cur: 1 with
+   *prev the From fields as they were before this instance, 0 when the
+   Recipe does not name From, -1 when it cannot be read or does not fit. */
+static int from_undo(const dkim2_mi_t *mi, const fromlist_t *cur, fromlist_t *prev) {
+    prev->v = NULL;
+    prev->n = 0;
+    if (!mi->r_raw) return 0;
+    size_t rl = strlen(mi->r_raw), dmax = rl * 3 / 4 + 4;
+    unsigned char *rj = malloc(dmax + 1);
+    if (!rj) return -1;
+    int jl = b64_decode(mi->r_raw, rj, dmax);
+    if (jl <= 0) { free(rj); return -1; }
+    rj[jl] = '\0';
+    cJSON *root = dkim2_recipe_parse((const char *)rj);
+    free(rj);
+    if (!root) return -1;
+    const cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");   /* keys lowercased */
+    const cJSON *list = h ? cJSON_GetObjectItemCaseSensitive(h, "from") : NULL;
+    if (!list) { cJSON_Delete(root); return 0; }
+    dkim2_recipe_op_t *ops;
+    int n_ops, rc = 1;
+    if (dkim2_recipe_ops(list, 1, &ops, &n_ops) < 0) { cJSON_Delete(root); return -1; }
+    for (int i = 0; i < n_ops && rc == 1; i++) {
+        if (ops[i].lit) {
+            if (fromlist_push(prev, (const char *)ops[i].s, ops[i].len) < 0) rc = -1;
+            continue;
+        }
+        for (int k = ops[i].from; k <= ops[i].to && rc == 1; k++)
+            if (k > cur->n || fromlist_push(prev, cur->v[k - 1], strlen(cur->v[k - 1])) < 0) rc = -1;
+    }
+    dkim2_recipe_ops_free(ops, n_ops);
+    cJSON_Delete(root);
+    if (rc < 0) fromlist_free(prev);
+    return rc;
+}
+
+int dkim2_mi_changes_from(const dkim2_mi_t *mi) {
+    fromlist_t none = { NULL, 0 }, prev;
+    int rc = from_undo(mi, &none, &prev);
+    fromlist_free(&prev);
+    return rc != 0;     /* a Recipe naming From, or one we cannot read */
+}
+
+/* The pairs of -07 §11: the From fields of state 1 (the message as it was
+   when m=1 was the highest instance) with i=1, and, for each instance k >= 2
+   whose header Recipe names From, the From fields of state k with the
+   lowest-numbered signature whose m= >= k. An instance no signature covers
+   is skipped (inbound that is already "is not signed"; the signer gate
+   leaves the unsigned top to the signer's own check). sig_arr is ascending
+   i= from 1; the instances are contiguous 1..N (both checked already).
+   0, or -1 with the PERMERROR in msg. */
+static int check_from_authentic(const dkim2_ctx_t *ctx, dkim2_sig_t **sig_arr, int n_sigs,
+                                char *msg, size_t msgsz) {
+    const int MAX_MI = 64;
+    dkim2_mi_t *mis[MAX_MI];
+    int n_mi = dkim2_mi_sorted(ctx->mi_list, mis, MAX_MI);
+    fromlist_t cur;
+    if (fromlist_of(ctx->headers, ctx->n_headers, &cur) < 0) {
+        snprintf(msg, msgsz, "PERMERROR: OOM");
+        return -1;
+    }
+    for (int vi = n_mi - 1; vi >= 1; vi--) {
+        fromlist_t prev;
+        int rc = from_undo(mis[vi], &cur, &prev);
+        if (rc < 0) {
+            fromlist_free(&cur);
+            snprintf(msg, msgsz, "PERMERROR: Message-Instance m=%d contains invalid JSON", mis[vi]->m);
+            return -1;
+        }
+        if (rc == 0) continue;
+        const dkim2_sig_t *rel = NULL;
+        for (int k = 0; k < n_sigs && !rel; k++)
+            if (sig_arr[k]->m >= mis[vi]->m) rel = sig_arr[k];
+        if (rel && !fromlist_authentic(&cur, rel->d)) {
+            fromlist_free(&cur);
+            fromlist_free(&prev);
+            snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d matching From is not authentic", rel->i);
+            return -1;
+        }
+        fromlist_free(&cur);
+        cur = prev;
+    }
+    int ok = n_sigs == 0 || fromlist_authentic(&cur, sig_arr[0]->d);
+    fromlist_free(&cur);
+    if (!ok) {
+        snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d matching From is not authentic", sig_arr[0]->i);
+        return -1;
+    }
+    return 0;
+}
+
 static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t msgsz) {
     for (int k = 1; k < n_sigs; k++) {
         const dkim2_sig_t *s = sig_arr[k], *p = sig_arr[k - 1];
@@ -1004,6 +1153,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         if (verify_ctx_mi_chain(ctx, mi_errbuf, sizeof mi_errbuf) < 0)
             SETSTATUS((mi_errbuf[0] == 'F') ? DKIM2_FAIL : DKIM2_PERMERROR,
                 "%s", mi_errbuf);
+    }
+
+    /* -07 §14.8: every From the Recipes show, and the current one, is
+       Authentic for its relevant signature. */
+    {
+        char fmsg[256];
+        if (check_from_authentic(ctx, sig_arr, n_sigs, fmsg, sizeof fmsg) < 0)
+            SETSTATUS(DKIM2_PERMERROR, "%s", fmsg);
     }
 
     result->status = DKIM2_OK;

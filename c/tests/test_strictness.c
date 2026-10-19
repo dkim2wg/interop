@@ -602,13 +602,19 @@ static void test_field_syntax(const char *mi) {
 }
 
 /* F.5: the C signer never folds, so a long Domain stays whole; it must sign
-   and verify with mf= in that domain. */
+   and verify with mf= (and From, -07 §11) in that domain. */
+static const char *LONG_HEADERS[] = {
+    "From: sender@" LONG_DOMAIN "\r\n",
+    "To: rcpt@example.org\r\n",
+    "Subject: strictness\r\n",
+};
+
 static void test_long_domain(void) {
     printf("F.5 long d=\n");
     const char *mf = "<sender@" LONG_DOMAIN ">";
     dkim2_ctx_t ctx;
     memset(&ctx, 0, sizeof ctx);
-    ctx.headers = (char **)HEADERS;
+    ctx.headers = (char **)LONG_HEADERS;
     ctx.n_headers = 3;
     dkim2_body_hash_raw(BODY, strlen(BODY), ctx.body_digests.d[0]);
     ctx.mail_from = (char *)mf;
@@ -623,7 +629,7 @@ static void test_long_domain(void) {
     FILE *f = fopen(EML, "wb");
     assert(f);
     fprintf(f, "DKIM2-Signature: %s\r\nMessage-Instance: %s\r\n", sig, mi);
-    for (int i = 0; i < 3; i++) fputs(HEADERS[i], f);
+    for (int i = 0; i < 3; i++) fputs(LONG_HEADERS[i], f);
     fprintf(f, "\r\n%s", BODY);
     fclose(f);
     g_lookups = 0;

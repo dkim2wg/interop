@@ -281,6 +281,25 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     return 0;
 }
 
+/* -07 §12.4: when this signature is the first (no DKIM2-Signature yet), or
+   an instance no signature covers yet changed From, the From header field
+   must be Authentic for our d=. Returns 0 to sign, -1 to refuse with
+   ctx->errmsg set. */
+static int from_refusal(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
+    int signed_m = 0, need = !ctx->sig_list;
+    for (const dkim2_sig_t *s = ctx->sig_list; s; s = s->next)
+        if (s->m > signed_m) signed_m = s->m;
+    for (const dkim2_mi_t *m = ctx->mi_list; m && !need; m = m->next)
+        if (m->m > signed_m && dkim2_mi_changes_from(m)) need = 1;
+    if (need && !dkim2_from_authentic(ctx->headers, ctx->n_headers, cfg->domain)) {
+        snprintf(ctx->errmsg, sizeof ctx->errmsg,
+            "not signing: From header field is not Authentic for d=%.200s",
+            cfg->domain ? cfg->domain : "");
+        return -1;
+    }
+    return 0;
+}
+
 /* Whether a parser error is one of dkim2_chain_number_error()'s. */
 static int chain_number_refusal(const char *e) {
     return strstr(e, "exceeds the maximum chain") || strstr(e, "has a malformed m= tag")
@@ -304,6 +323,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
         }
     }
     if (sign_gate(ctx, cfg) < 0) return -1;
+    if (!cfg->skip_chain_check && from_refusal(ctx, cfg) < 0) return -1;
 
     /* spec-06 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
        NULL) is sha256 only, so default output stays byte-identical to before
