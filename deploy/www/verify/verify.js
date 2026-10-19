@@ -149,19 +149,20 @@ function duplicateTag(tags) {
 // Mail::DKIM2::Validate::report().
 // raw: the message as a Uint8Array (exact octets -- what a file or an SMTP
 // stream gives) or a string (pasted text, taken as UTF-8). Either way the
-// verifier works on a binary string, one code unit per byte; see b64.js.
+// verifier works on octets: the header fields as binary strings, one code
+// unit per byte (see b64.js), and the body as the octets themselves.
 export async function verifyMessage(raw, opts = {}) {
-  let bin;
-  if (raw instanceof Uint8Array) bin = bytesToBinary(raw);
-  else if (ArrayBuffer.isView(raw)) bin = bytesToBinary(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength));
-  else if (raw instanceof ArrayBuffer) bin = bytesToBinary(new Uint8Array(raw));
-  else bin = textToBinary(String(raw));
-  return verifyOnce(bin, opts);
+  let octets;
+  if (raw instanceof Uint8Array) octets = raw;
+  else if (ArrayBuffer.isView(raw)) octets = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+  else if (raw instanceof ArrayBuffer) octets = new Uint8Array(raw);
+  else octets = binaryToBytes(textToBinary(String(raw)));
+  return verifyOnce(octets, opts);
 }
 
 async function verifyOnce(raw, opts = {}) {
   const now = opts.now || Math.floor(Date.now() / 1000);
-  const { headers, body } = parseMessage(raw);
+  const { headers, body, lines } = parseMessage(raw);
   const { instances, signatures, dupInstances, dupSignatures, unkeyableSignatures, rangeError } =
     collectLevels(headers);
 
@@ -266,7 +267,7 @@ async function verifyOnce(raw, opts = {}) {
   // the current message without rebuilding any of them; the undo walk
   // (undoChain below) literally rebuilds each previous message and is kept
   // as the reference (opts.undoWalk). Both give the same answers.
-  const chain = (!opts.undoWalk && planChain(headers, body, instances, maxM))
+  const chain = (!opts.undoWalk && planChain(headers, body, instances, maxM, lines))
     || undoChain(headers, body, instances, maxM);
   const { undoBroken, undoBrokenReason, nullBodyAt, nullBodyInstances } = chain;
 
@@ -610,7 +611,8 @@ async function verifyOnce(raw, opts = {}) {
 // The undo walk: rebuild the message state at each instance, top-down, by
 // applying each Message-Instance's Recipe to the state above it (§5). The
 // reference for planChain() (plan.js), which must give the same answers;
-// opts.undoWalk selects it. Returns the chain interface verifyOnce() reads:
+// opts.undoWalk selects it. body is the current body's octets (Uint8Array).
+// Returns the chain interface verifyOnce() reads:
 //  - undoBroken / undoBrokenReason: the m whose Recipe could not be undone
 //    ('invalid-json' | 'syntax-error' | 'malformed' | 'broken'), or null;
 //  - nullBodyAt: the highest m with a null body Recipe; nullBodyInstances:
@@ -622,7 +624,7 @@ async function verifyOnce(raw, opts = {}) {
 export function undoChain(headers, body, instances, maxM) {
   // state[m] = { fields, bodyLines } representing the message at instance m.
   const states = {};
-  states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(body) };
+  states[maxM] = { fields: headers.slice(), bodyLines: bodyToLines(bytesToBinary(body)) };
   const nullBodyInstances = new Set(); // every m whose body Recipe is null
   let nullBodyAt = null; // highest m whose body Recipe is null (§5.2)
   let undoBroken = null; // m at which undo became impossible

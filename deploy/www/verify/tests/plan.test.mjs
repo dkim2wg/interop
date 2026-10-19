@@ -137,8 +137,8 @@ test('instances with the same body share one body hash computation', async () =>
     recipes: { 3: { h: { subject: [{ d: ['x'] }] } }, 2: { b: [{ c: [1, 1] }] } } });
   const { parseMessage, collectLevels } = await import('../parse.js');
   const { planChain } = await import('../plan.js');
-  const { textToBinary } = await import('../b64.js');
-  const { headers, body } = parseMessage(textToBinary(raw));
+  const { textToBinary, binaryToBytes } = await import('../b64.js');
+  const { headers, body } = parseMessage(binaryToBytes(textToBinary(raw)));
   const { instances } = collectLevels(headers);
   const chain = planChain(headers, body, instances, 3);
   assert.equal(chain.bodyHash(3, 'sha256'), chain.bodyHash(2, 'sha256'));

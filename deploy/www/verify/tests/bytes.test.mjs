@@ -33,6 +33,11 @@ test('textToBinary UTF-8 encodes text and maps surrogateescape to raw bytes', ()
   assert.equal(textToBinary('café'), 'caf\xc3\xa9');
   // Python: 'caf\xe9'.decode('utf-8', 'surrogateescape') -> 'caf\udce9'
   assert.equal(textToBinary('caf\udce9'), 'caf\xe9');
+  // A lone surrogate outside U+DC80..U+DCFF is U+FFFD, as TextEncoder makes
+  // it; U+DC80 inside a pair is half of an ordinary character (U+10080).
+  assert.equal(textToBinary('a\ud800b\udc00'), 'a\xef\xbf\xbdb\xef\xbf\xbd');
+  assert.equal(textToBinary('𐂀\udc80'), '\xf0\x90\x82\x80\x80');
+  assert.equal(textToBinary('plain ascii\r\n'), 'plain ascii\r\n');
 });
 
 test('verifyMessage given bytes hashes non-UTF-8 octets intact', async () => {

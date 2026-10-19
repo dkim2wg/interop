@@ -10,10 +10,11 @@
 // current body. Walking down, a body Recipe's copy ranges are resolved
 // against the list above (they ascend, so one forward pointer) and its
 // literals become LIT segments. An instance with no body Recipe shares the
-// list above it, and so its digests. The hash input of a list is then built
-// once from views into the body's octets plus the literals: WebCrypto's
-// digest is one-shot, so this is where the work goes, and no body is ever
-// split into lines.
+// list above it, and so its digests. The body stays octets from input to
+// digest (never a string, never split into lines). A list that comes down to
+// one run of the body is digested as a view into it, with no copy; only a
+// list of several pieces is assembled, once (WebCrypto's digest is
+// one-shot), from views into the body octets and the literals.
 //
 // Headers: field values are grouped by lowercased name once; each instance
 // holds, per name, the values bottom-up (as Recipes number them). Unchanged
@@ -24,6 +25,7 @@ import { walkRanges, walkSteps, decodeRecipe, classifyRecipeDecodeError,
 import { hashLine, isUnsignedHeader } from './canon.js';
 import { hashB64 } from './crypto.js';
 import { binaryToBytes } from './b64.js';
+import { crlfCount } from './parse.js';
 
 const BODY = 0;
 const LIT = 1;
@@ -36,14 +38,22 @@ function hashedName(name) {
   return !isUnsignedHeader(name) && name !== 'message-instance' && name !== 'dkim2-signature';
 }
 
-// Number of lines bodyToLines() would give for `body` (CRLF line ends only:
-// parseMessage() has already made every line end a CRLF; an unterminated
-// last line still counts).
+// Number of lines bodyToLines() would give for the body octets (CRLF line
+// ends only: parseMessage() has already made every line end a CRLF; an
+// unterminated last line still counts). parseMessage() gives this as
+// `lines`, counted in the pass that checks the line ends.
 function countLines(body) {
-  if (body === '') return 0;
-  let n = 0;
-  for (let i = body.indexOf('\n'); i >= 0; i = body.indexOf('\n', i + 1)) n++;
-  return body.endsWith('\r\n') ? n : n + 1;
+  const len = body.length;
+  if (len === 0) return 0;
+  const n = crlfCount(body);
+  return body[len - 1] === 10 ? n : n + 1;
+}
+
+// Length of `u8` without its trailing CRLF pairs.
+function trimCRLF(u8) {
+  let e = u8.length;
+  while (e >= 2 && u8[e - 2] === 13 && u8[e - 1] === 10) e -= 2;
+  return e;
 }
 
 // A Recipe whose header part names Message-Instance: undoing it changes the
@@ -61,10 +71,13 @@ function namesMessageInstance(instances, maxM) {
   return false;
 }
 
-// planChain(headers, body, instances, maxM): the chain interface documented
-// at undoChain() in verify.js, or null when this message is left to the undo
-// walk (a header Recipe naming Message-Instance).
-export function planChain(headers, body, instances, maxM) {
+// planChain(headers, body, instances, maxM, nLines): body is the current
+// body's octets and nLines its line count (parseMessage()'s `body` and
+// `lines` for octets; counted here if not given). Returns the chain
+// interface documented at undoChain() in verify.js, or null when this
+// message is left to the undo walk (a header Recipe naming
+// Message-Instance).
+export function planChain(headers, body, instances, maxM, nLines = countLines(body)) {
   if (namesMessageInstance(instances, maxM)) return null;
 
   const literals = []; // shared literal-line table (binary strings)
@@ -140,7 +153,6 @@ export function planChain(headers, body, instances, maxM) {
   }
 
   // --- walk the instances top-down
-  const nLines = countLines(body);
   const top = { fields: topFields, hdr: {}, body: { segs: nLines ? [[BODY, 1, nLines]] : [], count: nLines }, noBody: false };
   const states = { [maxM]: top };
   const nullBodyInstances = new Set();
@@ -219,26 +231,36 @@ export function planChain(headers, body, instances, maxM) {
     return st.hdr;
   }
 
-  // --- body hash input. On the first request, one forward pass over the
-  // body finds the octet offset of every line a segment starts or ends at,
-  // for every list still to be hashed; each list's input is then assembled
-  // from views into the body octets and the literal lines.
-  let bodyBytes = null;
+  // --- body hash input. On the first request, one pass over the body finds
+  // the octet offset of every line a segment starts or ends at, for every
+  // list still to be hashed: lines in the first half forwards from the top,
+  // the rest backwards from the end (a wrapped original ends a few lines
+  // short of it). A list's input is its pieces: views into the body octets,
+  // literal lines and CRLFs.
   let lineAt = null; // line number -> octet offset of its start
-  const terminated = body === '' || body.endsWith('\r\n');
+  const terminated = body.length === 0 || body[body.length - 1] === 10;
   function locateLines() {
-    bodyBytes = binaryToBytes(body);
     const want = new Set();
     for (const st of Object.values(states)) {
       if (st.noBody) continue;
       for (const [kind, from, to] of st.body.segs) if (kind === BODY) { want.add(from); want.add(to + 1); }
     }
+    const ks = [...want].sort((a, b) => a - b);
     lineAt = new Map();
-    let line = 1, pos = 0;
-    for (const k of [...want].sort((a, b) => a - b)) {
-      if (k > nLines) { lineAt.set(k, body.length); continue; }
-      while (line < k) { pos = body.indexOf('\n', pos) + 1; line++; }
-      lineAt.set(k, pos);
+    let line = 1, pos = 0; // forwards: pos is the start of `line`
+    let j = 0;
+    for (; j < ks.length && ks[j] <= nLines / 2; j++) {
+      while (line < ks[j]) { while (body[pos++] !== 10); line++; }
+      lineAt.set(ks[j], pos);
+    }
+    // backwards: likewise, from just after the last line (the CRLF an
+    // unterminated one is hashed with counted in)
+    line = nLines + 1; pos = terminated ? body.length : body.length + 2;
+    for (let i = ks.length - 1; i >= j; i--) {
+      const k = Math.min(ks[i], nLines + 1);
+      // back over the CRLF ending line - 1, then to just after the LF before
+      while (line > k) { pos -= 2; while (pos > 0 && body[pos - 1] !== 10) pos--; line--; }
+      lineAt.set(ks[i], Math.min(pos, body.length));
     }
   }
   const literalBytes = new Map();
@@ -246,31 +268,39 @@ export function planChain(headers, body, instances, maxM) {
     if (list.input) return list.input;
     if (!lineAt) locateLines();
     const parts = [];
-    let total = 0;
     for (const [kind, from, to] of list.segs) {
       if (kind === BODY) {
-        parts.push(bodyBytes.subarray(lineAt.get(from), lineAt.get(to + 1)));
-        total += parts[parts.length - 1].length;
-        if (to === nLines && !terminated) { parts.push(CRLF); total += 2; }
+        parts.push(body.subarray(lineAt.get(from), lineAt.get(to + 1)));
+        if (to === nLines && !terminated) parts.push(CRLF);
       } else {
         for (let k = from; k <= to; k++) {
           if (!literalBytes.has(k)) literalBytes.set(k, binaryToBytes(literals[k]));
           parts.push(literalBytes.get(k), CRLF);
-          total += literalBytes.get(k).length + 2;
         }
       }
     }
-    let buf;
-    if (parts.length === 1) buf = parts[0];
+    // §6.1: trailing empty lines go; the body ends with exactly one CRLF.
+    // Only a literal line or an unterminated last line can end without a
+    // CRLF, and a CRLF piece always follows either, so no CRLF pair spans
+    // two pieces: trim piece by piece from the end, then cut the last piece
+    // left just after its first trimmed CRLF (still a view), or add a CRLF.
+    while (parts.length) {
+      const last = parts[parts.length - 1];
+      const e = trimCRLF(last);
+      if (e === 0) { parts.pop(); continue; }
+      if (e < last.length) parts[parts.length - 1] = last.subarray(0, e + 2);
+      else parts.push(CRLF);
+      break;
+    }
+    if (parts.length <= 1) list.input = parts.length ? parts[0] : CRLF;
     else {
-      buf = new Uint8Array(total);
+      let total = 0;
+      for (const p of parts) total += p.length;
+      const buf = new Uint8Array(total);
       let off = 0;
       for (const p of parts) { buf.set(p, off); off += p.length; }
+      list.input = buf;
     }
-    // §6.1: trailing empty lines go; the body ends with exactly one CRLF.
-    let e = buf.length;
-    while (e >= 2 && buf[e - 2] === 13 && buf[e - 1] === 10) e -= 2;
-    list.input = buf.length === 0 ? CRLF : buf.subarray(0, e + 2);
     list.digests = {};
     return list.input;
   }
