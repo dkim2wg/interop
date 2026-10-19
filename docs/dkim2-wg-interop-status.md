@@ -94,7 +94,7 @@ the -07 tree (2026-10-18):
 
 | Runner | Cells | What it checks |
 |--------|-------|----------------|
-| `util/negative-vectors.sh` | 265 | 39 negative vectors rejected with the exact -07 string, 14 positive controls accepted, by all five verifiers |
+| `util/negative-vectors.sh` | 275 | 40 negative vectors rejected with the exact -07 string, 15 positive controls accepted, by all five verifiers |
 | `util/signer-gate.sh` | 200 | 25 chain shapes through the four signers, plain and with `--allow-null-body-recipe` |
 | `util/hash-matrix.sh` | 60 | 4 signers × sha256/sha512/both × 5 verifiers |
 | `util/interop-fold-mi.sh` | 57 | FWS in tag values, recipe-less instances |

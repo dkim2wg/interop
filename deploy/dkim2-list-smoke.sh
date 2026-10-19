@@ -8,9 +8,11 @@
 #
 # Two rounds, because the outbound signer takes a different path for each:
 #
-#   1. UNSIGNED upstream: a plain message. The inbound milter stamps m=1, the
-#      list records its changes as m=2, the outbound milter has no upstream
-#      chain to check and originates i=1 over m=2.
+#   1. UNSIGNED upstream: a plain message. Under -07 it leaves with a single
+#      m=1 over the copy as sent (list From), whose Recipe leads back to the
+#      post as received (Mailman and Sympa drop the inbound stamp; on the
+#      stock route the outbound milter folds the instances into one); the
+#      outbound milter has no upstream chain to check and originates i=1.
 #   2. SIGNED upstream: the same message first signed as dkim2.com/sel1 (m=1 +
 #      i=1), as a post from a DKIM2-signing sender arrives. The list records
 #      m=2 UNSIGNED and hands it over; the outbound milter must verify i=1,

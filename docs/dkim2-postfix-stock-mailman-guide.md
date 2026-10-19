@@ -388,7 +388,11 @@ Then post to a list that is not in the maps: its copies carry no
   copy's `m=1` must be Authentic for the list domain. The copy carries a
   single `m=1` with the munged From (section 6), and the author's From is
   only in its Recipe, which C5 never checks. Without `munge_from` the
-  signing milter refuses and the copy goes out unsigned.
+  signing milter refuses and the copy goes out unsigned. (The earlier
+  shape, an `m=1` with the author's From under the list's `m=2` and `i=1`
+  over `m=2`, is also valid under the corrected C5, which checks the From
+  as it was when each signature was made; the single `m=1` is simply
+  shorter.)
 - **A post whose DKIM2 chain is already broken** when it arrives (damaged in
   transit, or someone's edit of a signed post) gets no snapshot and is not
   wrapped (`not wrapping ...: arrival result fail` in the wrap milter's

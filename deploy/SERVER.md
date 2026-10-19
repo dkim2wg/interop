@@ -1029,10 +1029,10 @@ the snapshot diff) and `i=2` (`d=dkim2.com`). Smoke test:
 Under -07 both lists need Mailman to rewrite From (stock Mailman cannot do
 it in code): set `dmarc_mitigate_action=munge_from` and
 `dmarc_mitigate_unconditionally=True` on each over REST at the -07 deploy
-(`docs/dkim2-postfix-stock-mailman-guide.md`, section 6). Plain posts from
-authors outside `dkim2.com` may still fail From Authentic (on this route and
-on the patched Mailman lists); see that guide's section 9 and
-`c/INTEROP-NOTES.md` (-07).
+(`docs/dkim2-postfix-stock-mailman-guide.md`, section 6). A plain post then
+leaves the signing milter with a single `m=1` (munged From, Recipe back to
+the post as it arrived, `X-DKIM2-Info: ... action=restarted-unsigned-mi=...`)
+and verifies.
 
 Backups of the pre-change files: `/etc/postfix/{main,master}.cf.bak-2026-10-14`,
 `/etc/mailman3/mailman.cfg.bak-2026-10-14` (and `master.cf.bak-2026-10-14b`
@@ -1271,11 +1271,10 @@ milter-signed copies locally, and asserts the current draft (read from
 
 1. **Unsigned upstream** — a plain message from the capture address. The
    inbound milter stamps `m=1`, the list records `m=2`, the outbound milter
-   originates `i=1`. Expected chain `i=1..1`. (-07: the verifiers compare
-   the From in `m=1` with `i=1`. It passes here because the capture address
-   is in `dkim2.com`, the domain the lists sign as; a plain post from an
-   outside author would not — see the open question in `c/INTEROP-NOTES.md`
-   (-07).)
+   originates `i=1`. Expected chain `i=1..1`. (-07: Mailman and Sympa send
+   such a post with a single `m=1` over the copy as sent, list From, with a
+   Recipe back to the post as received, so the round expects one
+   Message-Instance; the From checked against `i=1` is the list's.)
 2. **DKIM2-signed upstream** — the same message first signed as
    `dkim2.com`/`sel1` (`/etc/dkim2/reflector/sel1.key`) and delivered over raw
    SMTP, as a post from a signing sender arrives. The list records `m=2`

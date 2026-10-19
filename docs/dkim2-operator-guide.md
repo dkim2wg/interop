@@ -146,8 +146,8 @@ before: a bounce travels back along the chain.
 ### The `d=` / From relationship (-07 §11)
 
 From must also be Authentic: its domain must be `d=` or a subdomain of it.
-A verifier checks this against signature i=1, and again against the first
-signature over any hop that changed From. Your signer checks it whenever it
+A verifier checks the From each signature signed: the one i=1 signed, and
+again the one any later signature signed after a hop changed From. Your signer checks it whenever it
 originates a message (no DKIM2-Signature on it yet) or signs over an
 unsigned change of From, and otherwise refuses with:
 

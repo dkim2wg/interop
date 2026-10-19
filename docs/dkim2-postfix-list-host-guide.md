@@ -185,15 +185,16 @@ that header as a request to set `f=exploded` (from `i=2` up; never at
 the signing domain is refused with
 `From header field is not Authentic for d=<domain>`.
 
-One open problem on Mailman: for a post from a sender that does not sign
-DKIM2, the inbound milter's `m=1` holds the author's From and the list's
-signature is `i=1`. The -07 verifiers here compare the From in `m=1` with
-`i=1`, so such a copy fails `matching From is not authentic` unless the
-author is in the list's signing domain, even though Mailman rewrote From.
-(Sympa avoids it: an unsigned post leaves with a single `m=1` over the
-rewritten copy, with a Recipe back to the post as received.) Whether -07 §11
-requires that comparison is recorded as an open question in
-`c/INTEROP-NOTES.md` (-07).
+**Posts from senders that do not sign DKIM2.** The list's signature is the
+first, `i=1`, so the From it signs must be the list's. Mailman and Sympa
+(-07 patches) send such a post with a single `Message-Instance`, `m=1`,
+over the copy as sent (list From), whose Recipe leads back to the post as
+received, author's From included; any unsigned instance the post arrived
+with, the inbound milter's stamp included, is dropped. A verifier checks
+the From in effect when each signature was made (-07 §11, contract C5), so
+the copy verifies and the author's From in the Recipe is never compared
+with the list's domain. (An `m=1` with the author's From under the list's
+`m=2`, signed `i=1` over `m=2`, would also verify under that rule.)
 
 **Refusals.** When the outbound milter refuses to sign a message that
 already carries an upstream DKIM2-Signature (broken upstream chain, an

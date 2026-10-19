@@ -91,8 +91,8 @@ Custody failures (a bounce `mf=<>` signed by a domain that was not in the
 previous `rt=`; an `nd=` hop by the parent of the `rt=` domain, since only the
 first parameter of the relaxed match is shortened; a hop after `nd=` that is
 not the `nd=` domain; domain-literal `rt=`/`mf=`; an `mf=` outside its `d=`),
-From not Authentic (at `i=1`, and after a list rewrote From into a domain it
-does not sign for), a `"u"` step with non-zero pad bits, the -06 `"b"` step
+From not Authentic (at `i=1`, including when `i=1` signs a later state than
+`m=1`, and after a list rewrote From into a domain it does not sign for), a `"u"` step with non-zero pad bits, the -06 `"b"` step
 key, a step object with two keys or none, and two `"h"` keys that differ
 only in case. Positive controls: the same algorithm signed twice under
 distinct Selectors, which §10.9 explicitly permits; a Recipe on the bottom
@@ -100,10 +100,12 @@ instance; a correct bridge; an unsigned lower Message-Instance under a signed
 higher one; `"u"` steps restoring non-UTF-8 octets; a bounce back along the
 chain (with the `rt=` recorded as `<list@Lists.Test2.DKIM2.com.>`); an `nd=`
 hop under a subdomain `rt=`; a folded RFC 2047 From; a list that rewrote From
-into its own domain; and a Recipe with upper-case keys. The runner feeds them
+into its own domain, with or without a signature under the rewrite (an
+author's From replaced before the first signature is never checked, -07 §11);
+and a Recipe with upper-case keys. The runner feeds them
 all through every verifier's real CLI entry point and asserts each negative
 vector is REJECTED with the exact -07 error string (contract C6, matched as a
-substring) and each positive control is ACCEPTED (53 vectors, 265 cells):
+substring) and each positive control is ACCEPTED (55 vectors, 275 cells):
 
     ./util/negative-vectors.sh
 

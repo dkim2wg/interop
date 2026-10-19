@@ -173,11 +173,17 @@ tag` inbound (a signer whose own `d=` is the `nd=` may still extend it), and
 
 Let state k be the message as it was when Message-Instance m=k was the
 highest (state N is the message as received; state k−1 is state k with MI
-k's header Recipe applied). Check:
+k's header Recipe applied). Check the From in effect when each signature
+was made:
 
-- From at state 1 against signature i=1;
-- for each k ≥ 2 whose header Recipe has a `from` key (any case), From at
-  state k against the lowest i whose signature `m=` ≥ k.
+- From at state m(i=1) against signature i=1;
+- for each i ≥ 2, if some instance k with m(i−1) < k ≤ m(i) has a `from`
+  key (any case) in its header Recipe, From at state m(i) against i.
+
+A From replaced before any signature covered it (a list's unsigned ingress
+`m=1` with the author's From, rewritten in `m=2` before the list signed
+`i=1` over `m=2`) is never checked; instances above the top signature's
+`m=` are left to the signer.
 
 A pair passes when that state has exactly one From field holding exactly one
 mailbox (`Name <a@b>` or `a@b`; a group or a list fails), the domain is not
