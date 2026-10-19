@@ -49,8 +49,10 @@ const cases = {
   'body of only blank lines, copied': { maxM: 2, body: '\r\n\r\n', recipes: { 2: { b: [{ c: [1, 2] }] } } },
   'lone CR and bare LF in the body': { maxM: 2, body: 'a\rb\r\nc\nd\r\n', recipes: { 2: { b: [{ c: [2, 3] }] } } },
   'empty body Recipe []': { maxM: 2, body: 'a\r\n', recipes: { 2: { b: [] } } },
-  '"b" step and surrogate-escaped "d"': {
-    maxM: 2, body: 'a\r\n', recipes: { 2: { b: [{ b: [b64('caf\xe9')] }, { d: ['x\udce9y'] }, { c: [1, 1] }] } } },
+  '"u" step and a UTF-8 "d"': {
+    maxM: 2, body: 'a\r\n', recipes: { 2: { b: [{ u: [b64('caf\xe9')] }, { d: ['x\u00e9y'] }, { c: [1, 1] }] } } },
+  'a lone surrogate in "d"': { maxM: 2, body: 'a\r\n', recipes: { 2: '{"b":[{"d":["x\\udce9y"]}]}' }, expect: 2 },
+  'upper-case step and top-level keys': { maxM: 2, body: 'a\r\nb\r\n', recipes: { 2: { B: [{ C: [1, 1] }, { U: [b64('caf\xe9')] }] } } },
   // headers
   'subject tag removed': { maxM: 2, headers: H, recipes: { 2: { h: { subject: [{ d: ['hi'] }] } } } },
   'fields removed': { maxM: 2, headers: [...H, ['List-Id', '<l.example.com>']], recipes: { 2: { h: { 'list-id': [] } } } },
@@ -68,7 +70,7 @@ const cases = {
     maxM: 2, headers: [['From', 'a@example.com'], ['SUBJECT', 'one'], ['subject', 'two'], ['Subject', 'three']],
     recipes: { 2: { h: { subject: [{ c: [2, 3] }] } } } },
   'mixed-case Recipe keys': { maxM: 2, headers: H, recipes: { 2: { h: { Subject: [{ d: ['hi'] }], TO: [{ c: [1, 1] }] } } } },
-  'Recipe keys differing only in case': { maxM: 2, headers: H, recipes: { 2: { h: { Subject: [{ d: ['x'] }], SUBJECT: [{ d: ['y'] }] } } } },
+  'Recipe keys differing only in case': { maxM: 2, headers: H, recipes: { 2: { h: { Subject: [{ d: ['x'] }], SUBJECT: [{ d: ['y'] }] } } }, expect: 2 },
   'skipped fields with Recipes': {
     maxM: 2, headers: [...H, ['Received', 'from a'], ['Received', 'from b'], ['X-Mailer', 'm']],
     recipes: { 2: { h: { received: [{ c: [1, 1] }], 'x-mailer': [], 'dkim2-signature': [] } } } },
@@ -94,7 +96,8 @@ const cases = {
   'Recipe on m=1 below a null body Recipe, past the stale body': {
     maxM: 2, body: 'a\r\nb\r\nc\r\n', recipes: { 2: { b: null }, 1: { b: [{ c: [1, 4] }] } } },
   'Recipe on m=1 with a bad header range': { maxM: 1, headers: H, recipes: { 1: { h: { subject: [{ c: [1, 2] }] } } } },
-  'r= missing': { maxM: 2, recipes: {}, expect: 2 },
+  'r= missing (the same message)': { maxM: 2, recipes: {} },
+  'r= missing over a body Recipe': { maxM: 3, body: 'a\r\nb\r\n', recipes: { 2: { b: [{ c: [1, 1] }] } } },
   'r= invalid JSON': { maxM: 2, recipes: { 2: '{"b":' }, expect: 2 },
   'r= not base64': { maxM: 2, rawR: { 2: '!!!' }, expect: 2 },
   'Recipe not an object': { maxM: 2, recipes: { 2: [1] }, expect: 2 },

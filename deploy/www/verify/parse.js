@@ -1,4 +1,4 @@
-// RFC5322 message parsing and DKIM2 tag-value parsing. Built from spec-06.
+// RFC5322 message parsing and DKIM2 tag-value parsing. Built from draft-ietf-dkim-dkim2-spec-07.
 import { bytesToBinary } from './b64.js';
 
 function toCRLF(raw) {
@@ -111,28 +111,35 @@ function parseHeaderBlock(headerBlock) {
   return headers;
 }
 
-// spec-06 §7, §8 x-tag: `[FWS] name [FWS] "=" [FWS] [value] [FWS]`, name
+// §8 tag-spec: `[FWS] name [FWS] "=" [FWS] [value] [FWS]`, name
 // ALPHA *(ALPHA / DIGIT / "_"), value x-tag-char *([FWS] x-tag-char) with
 // x-tag-char %x21-3A / %x3C-7E. The value is unfolded, so FWS is WSP here.
 const TAG_SPEC = /^[ \t\r\n]*[A-Za-z][A-Za-z0-9_]*[ \t\r\n]*=[ \t\r\n]*(?:[\x21-\x3a\x3c-\x7e](?:[ \t\r\n]*[\x21-\x3a\x3c-\x7e])*)?[ \t\r\n]*$/;
 
 // syntaxError is set when any non-empty fragment is not a well-formed tag
 // (`junk`, `9bad=foo`, `=v`, a NUL/DEL/8-bit byte in any value): the whole
-// field is then a syntax error (§11.2), never verified around the fragment.
+// field is then a syntax error (§14.2), never verified around the fragment.
 export function parseTagList(value) {
   // value is a header value as produced by parseMessage: fold CRLFs are
   // already stripped, so this only needs to guard against a literal \r\n
   // reaching us directly (e.g. from `raw`). Semicolons only ever separate
-  // tags (spec §7/§8).
+  // tags (§8).
   const flat = value.replace(/\r\n/g, ''); // drop folding
   const tags = [];
   const map = {};
   let syntaxError = false;
-  for (const seg of flat.split(';')) {
-    if (/^[ \t\r\n]*$/.test(seg)) continue;
+  // §8: tag-list = tag-spec *(";" tag-spec) [";"]: only the segment after
+  // a single trailing ";" may be empty; an empty one anywhere else (";;",
+  // or a leading ";") is a syntax error.
+  const segs = flat.split(';');
+  segs.forEach((seg, n) => {
+    if (/^[ \t\r\n]*$/.test(seg)) {
+      if (n < segs.length - 1) syntaxError = true;
+      return;
+    }
     if (!TAG_SPEC.test(seg)) syntaxError = true;
     const eq = seg.indexOf('=');
-    if (eq < 0) continue;
+    if (eq < 0) return;
     const name = seg.slice(0, eq).trim().toLowerCase();
     // DKIM2 tag values are base64 / tokens / digits / domains and never carry
     // significant internal whitespace; any WSP present came from header folding
@@ -143,11 +150,11 @@ export function parseTagList(value) {
     const val = seg.slice(eq + 1).replace(/[ \t\r\n]/g, '');
     tags.push({ tag: name, value: val, raw: seg });
     if (!(name in map)) map[name] = val;
-  }
+  });
   return { tags, map, syntaxError };
 }
 
-// spec-06 §7.3: h= is hash-set *("," hash-set). Hash names are lowercased —
+// §9.3: h= is hash-set *("," hash-set). Hash names are lowercased —
 // RFC 5234 makes ABNF quoted strings case-insensitive. h is the RAW value
 // (FWS intact): FWS is allowed around the hash name and colons and inside
 // the digests (removed), never inside the hash name. A set that is not
@@ -179,21 +186,22 @@ export const MAX_CHAIN_NUMBER = 100;
 
 // The PERMERROR summary for an i= or m= value that is not a chain number, or
 // null. A value must be 1*DIGIT (ASCII): parseInt would take the digit prefix
-// of "4294967297x" and run the 1..max loops to it. Then at most three digits
-// and 1..MAX_CHAIN_NUMBER (so "01" and "001" are 1), and no more than
-// MAX_CHAIN_LENGTH. A missing value (undefined) is left to the callers.
-export function chainNumberError(field, tag, v) {
+// of "4294967297x" and run the 1..max loops to it; anything else is a syntax
+// error of the field (named by its own i=, or m= for a Message-Instance:
+// `id`, the raw value). Then at most three digits and 1..MAX_CHAIN_NUMBER
+// (so "01" and "001" are 1), and no more than MAX_CHAIN_LENGTH: local
+// limits, with no -07 string of their own. A missing value (undefined) is
+// left to the callers.
+export function chainNumberError(field, tag, v, id = v) {
   if (v === undefined) return null;
-  const malformed = tag === 'i'
-    ? `${field} has a missing or malformed i= tag`
-    : `${field} has a malformed ${tag}= tag`;
+  const malformed = `PERMERROR: ${field} ${field === 'Message-Instance' ? 'm' : 'i'}=${id} syntax error`;
   if (typeof v !== 'string' || !/^[0-9]+$/.test(v)) return malformed;
   if (/^0+$/.test(v)) return malformed;
   if (v.length > 3 || parseInt(v, 10) > MAX_CHAIN_NUMBER) {
-    return `${field} ${tag}= exceeds the maximum chain number of ${MAX_CHAIN_NUMBER}`;
+    return `PERMERROR: ${field} ${tag}= exceeds the maximum chain number of ${MAX_CHAIN_NUMBER}`;
   }
   if (parseInt(v, 10) > MAX_CHAIN_LENGTH) {
-    return `${field} ${tag}= exceeds the maximum chain length of ${MAX_CHAIN_LENGTH}`;
+    return `PERMERROR: ${field} ${tag}= exceeds the maximum chain length of ${MAX_CHAIN_LENGTH}`;
   }
   return null;
 }
@@ -205,10 +213,11 @@ export function collectLevels(headers) {
   const sigFields = [];
   const dupInstances = [];
   const dupSignatures = [];
-  // DKIM2-Signature fields whose i= is missing or not a positive integer in
-  // ASCII digits: no verifier can place or key one, so verifyOnce() reports
-  // a PERMERROR rather than verifying around it.
-  let unkeyableSignatures = 0;
+  // The i= values ('' when missing) of DKIM2-Signature fields whose i= is
+  // missing or not a positive integer in ASCII digits: no verifier can place
+  // or key one, so verifyOnce() reports a syntax error rather than verifying
+  // around it.
+  const unkeyableSignatures = [];
   // The first i= or m= that is not a chain number (chainNumberError), as a
   // PERMERROR summary; such a field is not placed in instances/signatures,
   // so nothing loops up to it.
@@ -227,9 +236,9 @@ export function collectLevels(headers) {
       const parsed = parseTagList(f.value);
       const iv = parsed.map.i;
       const i = /^[0-9]+$/.test(iv || '') ? parseInt(iv, 10) : NaN;
-      if (Number.isNaN(i) || i < 1) { unkeyableSignatures++; continue; }
+      if (Number.isNaN(i) || i < 1) { unkeyableSignatures.push(iv || ''); continue; }
       const err = chainNumberError('DKIM2-Signature', 'i', iv)
-               || chainNumberError('DKIM2-Signature', 'm', parsed.map.m);
+               || chainNumberError('DKIM2-Signature', 'm', parsed.map.m, iv);
       if (err) { rangeError = rangeError || err; continue; }
       if (signatures[i]) dupSignatures.push(i);
       signatures[i] = { field: f, tags: parsed.tags, map: parsed.map, syntaxError: parsed.syntaxError };

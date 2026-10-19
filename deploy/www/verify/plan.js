@@ -21,7 +21,7 @@
 // names share their list and its canonical text, and a value is
 // canonicalized only if its name is in the header hash.
 import { walkRanges, walkSteps, decodeRecipe, classifyRecipeDecodeError,
-         validateBodyRecipe, isPlainObject, MalformedRecipe } from './recipes.js';
+         validateBodyRecipe, isPlainObject } from './recipes.js';
 import { hashLine, isUnsignedHeader } from './canon.js';
 import { hashB64 } from './crypto.js';
 import { binaryToBytes } from './b64.js';
@@ -92,20 +92,18 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
     topFields.get(n).push({ name: n, value: f.value });
   }
 
-  // §5.1 header Recipe, exactly as applyHeaderRecipe(): keys lowercased into
-  // a plain object (a later key differing only in case wins), applied in
-  // that object's key order. Returns the new name map and whether any name
-  // in the header hash changed.
+  // §5.1 header Recipe, exactly as applyHeaderRecipe(): keys matched as
+  // lowercase names (decodeRecipe has refused two differing only in case),
+  // applied in key order. Returns the new name map and whether any name in
+  // the header hash changed.
   function applyHeaders(fields, hObj) {
-    if (!isPlainObject(hObj)) throw new MalformedRecipe('"h" is not an object');
-    const recipe = {};
-    for (const k of Object.keys(hObj)) recipe[k.toLowerCase()] = hObj[k];
     const out = new Map(fields);
     let hashedChanged = false;
-    for (const name of Object.keys(recipe)) {
+    for (const key of Object.keys(hObj)) {
+      const name = key.toLowerCase();
       const cur = fields.get(name) || NO_FIELDS;
       const emitted = [];
-      for (const item of walkSteps(recipe[name], cur.length, `header "${name}"`)) {
+      for (const item of walkSteps(hObj[key], cur.length, `header "${name}"`)) {
         emitted.push('copy' in item ? cur[item.copy - 1] : { name, value: item.literal });
       }
       out.set(name, emitted);
@@ -162,7 +160,9 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
     const cur = states[m];
-    if (!('r' in mi.map)) { undoBroken = m; undoBrokenReason = 'broken'; break; }
+    // §9/§12.1: r= is optional; with no Recipes the previous instance is
+    // this same message, sharing its header and body digests.
+    if (!('r' in mi.map)) { states[m - 1] = cur; continue; }
     let recipe;
     try {
       recipe = decodeRecipe(mi.map.r);
@@ -178,31 +178,28 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
         const { fields, hashedChanged } = applyHeaders(cur.fields, recipe.h);
         return { ...st, fields, hdr: hashedChanged ? {} : cur.hdr };
       };
+      // decodeRecipe() has checked the §5 schema: an object with "h" and/or
+      // "b", "b" steps or null.
       if (cur.noBody) {
-        // Below a null body Recipe: structure checked, header Recipe applied.
-        if (!isPlainObject(recipe)) throw new MalformedRecipe('Recipe is not a JSON object');
-        if (!('h' in recipe) && !('b' in recipe)) throw new MalformedRecipe('Recipe has neither "h" nor "b"');
+        // Below a null body Recipe: "c" order checked, header Recipe applied.
         validateBodyRecipe(recipe.b);
         next = withHeaders({ body: cur.body, noBody: true });
         if (recipe.b === null) nullBodyInstances.add(m);
-      } else if (recipe !== null && typeof recipe === 'object' && recipe.b === null) {
+      } else if (recipe.b === null) {
         // §5.2 null "b": the body above is the last one there is (kept for
         // the bounds of an m=1 Recipe, as the undo walk keeps its lines).
         next = withHeaders({ body: cur.body, noBody: true });
         nullBodyInstances.add(m);
         if (nullBodyAt === null) nullBodyAt = m;
       } else {
-        // As applyRecipe(): object, "h" or "b", header Recipe, body Recipe.
-        if (!isPlainObject(recipe)) throw new MalformedRecipe('Recipe is not a JSON object');
-        if (!('h' in recipe) && !('b' in recipe)) throw new MalformedRecipe('Recipe has neither "h" nor "b"');
+        // As applyRecipe(): header Recipe, then body Recipe.
         next = withHeaders({ body: cur.body, noBody: false });
         if (Array.isArray(recipe.b)) next.body = composeBody(cur.body, recipe.b);
-        else if (recipe.b !== undefined && recipe.b !== null) throw new MalformedRecipe('"b" is neither steps nor null');
       }
       states[m - 1] = next;
     } catch (e) {
       undoBroken = m;
-      undoBrokenReason = e instanceof MalformedRecipe ? 'malformed' : 'broken';
+      undoBrokenReason = classifyRecipeDecodeError(e);
       break;
     }
   }
@@ -322,14 +319,12 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
     },
     headerValues: (m, name) => (states[m].fields.get(name.toLowerCase()) || NO_FIELDS)
       .map((entry) => entry.value.trim()).reverse(),
-    // The m=1 Recipe, dry-run as applyRecipe() does against the m=1 state.
+    // The (decoded) m=1 Recipe, dry-run as applyRecipe() does against the
+    // m=1 state.
     checkBottom(recipe) {
       const st = states[1];
-      if (!isPlainObject(recipe)) throw new MalformedRecipe('Recipe is not a JSON object');
-      if (!('h' in recipe) && !('b' in recipe)) throw new MalformedRecipe('Recipe has neither "h" nor "b"');
       if ('h' in recipe) applyHeaders(st.fields, recipe.h);
       if (Array.isArray(recipe.b)) { for (const _ of walkRanges(recipe.b, st.body.count, 'body')) { /* validate only */ } }
-      else if (recipe.b !== undefined && recipe.b !== null) throw new MalformedRecipe('"b" is neither steps nor null');
     },
   };
 }

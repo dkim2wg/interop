@@ -7,7 +7,7 @@ import { verifyMessage } from '../verify.js';
 import { parseKeyRecord } from '../doh.js';
 import { bytesToBinary, binaryToBytes, textToBinary } from '../b64.js';
 
-// A message is octets (spec-06 §6); the verifier must hash the bytes it was
+// A message is octets (§6); the verifier must hash the bytes it was
 // given, not a UTF-8 re-encoding of them. The fixture (signed by the Python
 // signer with the repo's test1.dkim2.com key) has Big5 and Latin-1 bytes in
 // the Subject and body that are NOT valid UTF-8 -- what 2003 spam and some
@@ -29,14 +29,12 @@ test('binary string helpers round-trip every byte value', () => {
   assert.deepEqual(binaryToBytes(bytesToBinary(all)), all);
 });
 
-test('textToBinary UTF-8 encodes text and maps surrogateescape to raw bytes', () => {
+test('textToBinary UTF-8 encodes text', () => {
   assert.equal(textToBinary('café'), 'caf\xc3\xa9');
-  // Python: 'caf\xe9'.decode('utf-8', 'surrogateescape') -> 'caf\udce9'
-  assert.equal(textToBinary('caf\udce9'), 'caf\xe9');
-  // A lone surrogate outside U+DC80..U+DCFF is U+FFFD, as TextEncoder makes
-  // it; U+DC80 inside a pair is half of an ordinary character (U+10080).
-  assert.equal(textToBinary('a\ud800b\udc00'), 'a\xef\xbf\xbdb\xef\xbf\xbd');
-  assert.equal(textToBinary('𐂀\udc80'), '\xf0\x90\x82\x80\x80');
+  assert.equal(textToBinary('𐂀'), '\xf0\x90\x82\x80');
+  // A lone surrogate is U+FFFD, as TextEncoder makes it (a Recipe "d"
+  // string holding one is refused before it gets here, spec-07 §5).
+  assert.equal(textToBinary('a\ud800b\udce9'), 'a\xef\xbf\xbdb\xef\xbf\xbd');
   assert.equal(textToBinary('plain ascii\r\n'), 'plain ascii\r\n');
 });
 

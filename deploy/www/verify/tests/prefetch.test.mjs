@@ -4,22 +4,21 @@
 // ordinary way, so every verdict is what it was without the prefetch.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { verifyMessage } from '../verify.js';
 import { fetchKey as dohFetchKey } from '../doh.js';
 import { bytesToBinary } from '../b64.js';
+import { signChain, newKeyPair, publicKeyB64, T } from './sign-chain.mjs';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..', '..', '..', '..');
-// Five hops, five distinct keys (test1..test5.dkim2.com), all in dns.json.
-const MSG = new Uint8Array(readFileSync(join(repoRoot, 'perl', 'tests', 'expected', 'chain-hop5-final-delivery.eml')));
-const NOW = Math.max(...[...bytesToBinary(MSG).matchAll(/[;\s]t=(\d+)/g)].map((m) => +m[1])) + 3600;
+// Five hops, five distinct keys (test1..test5.dkim2.com), each published
+// in the fake DNS below.
+const HOPS = [['sel1', 1], ['sel2', 2], ['sel3', 3], ['sel1', 4], ['sel2', 5]].map(([sel, n]) => ({
+  sel, kp: newKeyPair(), d: `test${n}.dkim2.com`, m: 1,
+  mf: `<hop${n}@test${n}.dkim2.com>`, rt: [`<user@test${n + 1}.dkim2.com>`],
+}));
+const MSG = await signChain([{ fields: [['From', 'a@test1.dkim2.com'], ['Subject', 'five hops']], body: 'hi\r\n' }], HOPS);
+const NOW = T + 3600;
 const dns = {};
-for (const [domain, names] of Object.entries(JSON.parse(readFileSync(join(repoRoot, 'dns.json'), 'utf8')))) {
-  for (const [name, recs] of Object.entries(names)) dns[`${name}.${domain}`] = recs[0][1];
-}
+for (const h of HOPS) dns[`${h.sel}._domainkey.${h.d}`] = `v=DKIM1; k=ed25519; p=${await publicKeyB64(h.kp)}`;
 const NAMES = ['sel1._domainkey.test1.dkim2.com', 'sel2._domainkey.test2.dkim2.com', 'sel3._domainkey.test3.dkim2.com',
   'sel1._domainkey.test4.dkim2.com', 'sel2._domainkey.test5.dkim2.com'];
 
@@ -74,7 +73,7 @@ test('every key is requested before any is answered, once each', async () => {
 test('a name shared by two signatures is looked up once', async () => {
   // Point two hops at the same key name: the second signature fails its
   // crypto, but there is still one lookup per name.
-  const bin = bytesToBinary(MSG).replace('d=test5.dkim2.com', 'd=test4.dkim2.com').replace('s=sel2:rsa-sha256:OUwr', 's=sel1:rsa-sha256:OUwr');
+  const bin = bytesToBinary(MSG).replace('d=test5.dkim2.com', 'd=test4.dkim2.com').replace('s=sel2:ed25519-sha256:', 's=sel1:ed25519-sha256:');
   const msg = Uint8Array.from(bin, (c) => c.charCodeAt(0));
   const doh = fakeDoh();
   await verifyMessage(msg, { now: NOW, dohFetch: doh.fetch });
@@ -136,8 +135,8 @@ test('no prefetch with an override key source', async () => {
   assert.equal(asked.length, NAMES.length);
 });
 
-test('no prefetch for algorithms not implemented, or a message that fails §11.2', async () => {
-  const bin = bytesToBinary(MSG).replace('s=sel2:rsa-sha256:OUwr', 's=sel2:rsa-sha1:OUwr');
+test('no prefetch for algorithms not implemented, or a message that fails §14.2', async () => {
+  const bin = bytesToBinary(MSG).replace('s=sel2:ed25519-sha256:', 's=sel2:rsa-sha1:');
   const doh = fakeDoh();
   await verifyMessage(Uint8Array.from(bin, (c) => c.charCodeAt(0)), { now: NOW, dohFetch: doh.fetch });
   assert.equal(doh.count('sel2._domainkey.test5.dkim2.com'), 0);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe, applyRecipe, decodeRecipe, MalformedRecipe } from '../recipes.js';
+import { bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe, applyRecipe, decodeRecipe, InvalidRecipe } from '../recipes.js';
 
 test('bodyToLines / linesToBody round-trip', () => {
   assert.deepEqual(bodyToLines('a\r\nb\r\n'), ['a', 'b']);
@@ -85,74 +85,85 @@ test('decodeRecipe base64-decodes JSON', () => {
   assert.deepEqual(decodeRecipe(b64), { b: [{ c: [1, 1] }] });
 });
 
-// --- "b" steps: base64 literals for octets that are not JSON text ----------
-// The message is a binary string (b64.js); a "b" item must land in it as
+// --- "u" steps: base64 literals for octets that are not UTF-8 -------------
+// The message is a binary string (b64.js); a "u" item must land in it as
 // exactly the decoded octets, like a "d" item does after UTF-8 encoding.
 const b64 = (bin) => Buffer.from(bin, 'latin1').toString('base64');
 
-test('applyBodyRecipe "b" step emits the decoded octets as a binary-string line', () => {
+test('applyBodyRecipe "u" step emits the decoded octets as a binary-string line', () => {
   const cur = ['[list] edited', '-- footer'];
-  const out = applyBodyRecipe(cur, [{ b: [b64('\xb1\xa4 line'), b64('caf\xe9')] }, { c: [2, 2] }]);
+  const out = applyBodyRecipe(cur, [{ u: [b64('\xb1\xa4 line'), b64('caf\xe9')] }, { c: [2, 2] }]);
   assert.deepEqual(out, ['\xb1\xa4 line', 'caf\xe9', '-- footer']);
   assert.equal(out[0].charCodeAt(0), 0xb1);
   assert.equal(out[0].charCodeAt(1), 0xa4);
   assert.equal(out[1].charCodeAt(3), 0xe9);
 });
 
-test('applyHeaderRecipe "b" step restores a header value with non-UTF-8 octets', () => {
+test('applyHeaderRecipe "u" step restores a header value with non-UTF-8 octets', () => {
   const fields = [
     { name: 'From', value: ' a@b', raw: 'From: a@b\r\n' },
     { name: 'Subject', value: ' [list] hello', raw: 'Subject: [list] hello\r\n' },
   ];
-  const out = applyHeaderRecipe(fields, { subject: [{ b: [b64('caf\xe9 \xb1\xa4')] }] });
+  const out = applyHeaderRecipe(fields, { subject: [{ u: [b64('caf\xe9 \xb1\xa4')] }] });
   const subj = out.find((f) => f.name.toLowerCase() === 'subject');
   assert.equal(subj.value, 'caf\xe9 \xb1\xa4');
   assert.equal(subj.value.length, 7);
 });
 
-test('"d" and "b" steps for the same text agree once both are binary strings', () => {
+test('"d" and "u" steps for the same text agree once both are binary strings', () => {
   const viaD = applyBodyRecipe([], [{ d: ['café'] }]);
-  const viaB = applyBodyRecipe([], [{ b: [Buffer.from('café', 'utf8').toString('base64')] }]);
-  assert.deepEqual(viaD, viaB);
+  const viaU = applyBodyRecipe([], [{ u: [Buffer.from('café', 'utf8').toString('base64')] }]);
+  assert.deepEqual(viaD, viaU);
 });
 
-// --- malformed Recipes throw MalformedRecipe (§5 rules) ---------------------
-const malformed = (fn) => assert.throws(fn, (e) => e instanceof MalformedRecipe && e.name === 'MalformedRecipe');
+// --- bad Recipes: InvalidRecipe (the §5 schema, or a "c" range that does
+// not fit) -------------------------------------------------------------------
+const invalid = (fn) => assert.throws(fn, (e) => e instanceof InvalidRecipe && e.name === 'InvalidRecipe');
 
-test('"c" ranges: bounds, ordering and integer-ness are enforced', () => {
+test('"c" ranges: integers of at least 1 (schema), then bounds and ordering', () => {
   const cur = ['a', 'b', 'c'];
   assert.deepEqual(applyBodyRecipe(cur, [{ c: [1, 1] }, { c: [3, 3] }]), ['a', 'c']);
-  malformed(() => applyBodyRecipe(cur, [{ c: [0, 1] }]));            // start 0
-  malformed(() => applyBodyRecipe(cur, [{ c: [1, 4] }]));            // end beyond count
-  malformed(() => applyBodyRecipe(cur, [{ c: [2, 1] }]));            // end < start
-  malformed(() => applyBodyRecipe(cur, [{ c: [2, 2] }, { c: [1, 1] }])); // descending
-  malformed(() => applyBodyRecipe(cur, [{ c: [1, 2] }, { c: [2, 3] }])); // overlapping
-  malformed(() => applyBodyRecipe(cur, [{ c: ['1', '2'] }]));        // strings
-  malformed(() => applyBodyRecipe(cur, [{ c: [1, 1.5] }]));          // fraction
-  malformed(() => applyBodyRecipe(cur, [{ c: [1] }]));               // one bound
-  malformed(() => applyBodyRecipe(cur, [{ c: [1, 2, 3] }]));         // three bounds
-  malformed(() => applyHeaderRecipe([{ name: 'Subject', value: ' x', raw: '' }], { subject: [{ c: [1, 2] }] }));
+  invalid(() => applyBodyRecipe(cur, [{ c: [0, 1] }]));            // start 0
+  invalid(() => applyBodyRecipe(cur, [{ c: [1, 4] }]));          // end beyond count
+  invalid(() => applyBodyRecipe(cur, [{ c: [2, 1] }]));          // end < start
+  invalid(() => applyBodyRecipe(cur, [{ c: [2, 2] }, { c: [1, 1] }])); // descending
+  invalid(() => applyBodyRecipe(cur, [{ c: [1, 2] }, { c: [2, 3] }])); // overlapping
+  invalid(() => applyBodyRecipe(cur, [{ c: ['1', '2'] }]));        // strings
+  invalid(() => applyBodyRecipe(cur, [{ c: [1, 1.5] }]));          // fraction
+  invalid(() => applyBodyRecipe(cur, [{ c: [1] }]));               // one bound
+  invalid(() => applyBodyRecipe(cur, [{ c: [1, 2, 3] }]));         // three bounds
+  invalid(() => applyHeaderRecipe([{ name: 'Subject', value: ' x', raw: '' }], { subject: [{ c: [1, 2] }] }));
 });
 
-test('literal steps: bad base64, CR/LF, non-strings and unknown steps are malformed', () => {
-  malformed(() => applyBodyRecipe([], [{ b: ['!!!!'] }]));
-  malformed(() => applyBodyRecipe([], [{ b: ['QUJD QUJD'] }]));           // whitespace is outside the alphabet
-  malformed(() => applyBodyRecipe([], [{ b: ['QUI'] }]));                 // unpadded: not canonical RFC 4648 §4
-  malformed(() => applyBodyRecipe([], [{ b: ['QUJDQQ'] }]));              // length not a multiple of 4
-  assert.deepEqual(applyBodyRecipe([], [{ b: ['QUI='] }]), ['AB']);       // padded form of the same octets
-  malformed(() => applyBodyRecipe([], [{ d: [] }]));                      // schema minItems 1
-  malformed(() => applyBodyRecipe([], [{ b: [] }]));
-  malformed(() => applyHeaderRecipe([], { subject: [{ d: [] }] }));
-  malformed(() => applyBodyRecipe([], [{ b: [b64('a\r\nb')] }]));
-  malformed(() => applyBodyRecipe([], [{ b: [b64('a\nb')] }]));
-  malformed(() => applyBodyRecipe([], [{ b: [42] }]));
-  malformed(() => applyBodyRecipe([], [{ d: ['a\r\nb'] }]));
-  malformed(() => applyBodyRecipe([], [{ d: [42] }]));
-  malformed(() => applyBodyRecipe([], [{ x: [] }]));
-  malformed(() => applyBodyRecipe([], [{ c: [1, 1], d: [] }]));
-  malformed(() => applyBodyRecipe([], ['c']));
-  malformed(() => applyBodyRecipe([], 'not an array'));
-  malformed(() => applyHeaderRecipe([], ['subject']));
+test('literal steps: bad base64, CR/LF, non-strings and unknown steps are invalid', () => {
+  invalid(() => applyBodyRecipe([], [{ u: ['!!!!'] }]));
+  invalid(() => applyBodyRecipe([], [{ u: ['QUJD QUJD'] }]));           // whitespace is outside the alphabet
+  invalid(() => applyBodyRecipe([], [{ u: ['QUI'] }]));                 // unpadded
+  invalid(() => applyBodyRecipe([], [{ u: ['QUJDQQ'] }]));              // length not a multiple of 4
+  invalid(() => applyBodyRecipe([], [{ u: ['QUJ='] }]));                // non-zero pad bits
+  invalid(() => applyBodyRecipe([], [{ u: ['QR=='] }]));
+  assert.deepEqual(applyBodyRecipe([], [{ u: ['QUI='] }]), ['AB']);     // canonical form of the same octets
+  assert.deepEqual(applyBodyRecipe([], [{ u: ['QQ=='] }]), ['A']);
+  assert.deepEqual(applyBodyRecipe([], [{ u: [''] }]), ['']);
+  invalid(() => applyBodyRecipe([], [{ d: [] }]));                      // schema minItems 1
+  invalid(() => applyBodyRecipe([], [{ u: [] }]));
+  invalid(() => applyHeaderRecipe([], { subject: [{ d: [] }] }));
+  invalid(() => applyBodyRecipe([], [{ u: [b64('a\r\nb')] }]));
+  invalid(() => applyBodyRecipe([], [{ u: [b64('a\nb')] }]));
+  invalid(() => applyBodyRecipe([], [{ u: [b64('a\rb')] }]));
+  invalid(() => applyBodyRecipe([], [{ u: [42] }]));
+  invalid(() => applyBodyRecipe([], [{ d: ['a\r\nb'] }]));
+  invalid(() => applyBodyRecipe([], [{ d: [42] }]));
+  invalid(() => applyBodyRecipe([], [{ d: ['caf\udce9'] }]));           // lone low surrogate
+  invalid(() => applyBodyRecipe([], [{ d: ['\ud800x'] }]));             // lone high surrogate
+  assert.deepEqual(applyBodyRecipe([], [{ d: ['\u{10080}'] }]), ['\xf0\x90\x82\x80']); // a pair is a character
+  invalid(() => applyBodyRecipe([], [{ b: ['eA=='] }]));                // the old "b" step is unknown
+  invalid(() => applyBodyRecipe([], [{ x: [] }]));
+  invalid(() => applyBodyRecipe([], [{}]));
+  invalid(() => applyBodyRecipe([], [{ c: [1, 1], d: [] }]));
+  invalid(() => applyBodyRecipe([], ['c']));
+  invalid(() => applyBodyRecipe([], 'not an array'));
+  invalid(() => applyHeaderRecipe([], ['subject']));
 });
 
 test('applyRecipe validates the top level and leaves a null "b" body alone', () => {
@@ -160,24 +171,43 @@ test('applyRecipe validates the top level and leaves a null "b" body alone', () 
   const prev = applyRecipe({ h: { subject: [{ d: ['y'] }] }, b: null }, state);
   assert.equal(prev.fields[0].value, 'y');
   assert.deepEqual(prev.bodyLines, ['l1']);
-  malformed(() => applyRecipe(5, state));
-  malformed(() => applyRecipe([], state));
-  malformed(() => applyRecipe({}, state));
-  malformed(() => applyRecipe({ b: 'lines' }, state));
-  malformed(() => applyRecipe({ h: [] }, state));
+  invalid(() => applyRecipe(5, state));
+  invalid(() => applyRecipe([], state));
+  invalid(() => applyRecipe({}, state));
+  invalid(() => applyRecipe({ b: 'lines' }, state));
+  invalid(() => applyRecipe({ h: [] }, state));
 });
+
+const r64 = (raw) => Buffer.from(raw).toString('base64');
 
 // A duplicate key anywhere in the Recipe JSON is invalid JSON: parsers
 // disagree on which value wins (C's took the first, JSON.parse the last), so
 // {"b":[...],"b":null} was a null body Recipe to some verifiers and a real
-// one to others.
-test('decodeRecipe: a duplicate key is a SyntaxError (invalid JSON)', () => {
+// one to others. Keys are matched without regard to case, so two that differ
+// only in case are a duplicate too.
+test('decodeRecipe: a duplicate key, in any case, is a SyntaxError (invalid JSON)', () => {
   for (const raw of ['{"b":[{"c":[1,1]}],"b":null}', '{"b":null,"b":[{"c":[1,1]}]}',
     '{"h":{"subject":[],"subject":[]}}', '{"h":{"subject":[]},"h":{}}',
-    '{"h":{"subject":[],"subj\\u0065ct":[]}}']) {
-    const b64 = Buffer.from(raw).toString('base64');
-    assert.throws(() => decodeRecipe(b64), SyntaxError, raw);
+    '{"h":{"subject":[],"subj\\u0065ct":[]}}', '{"h":{"Subject":[],"subject":[]}}',
+    '{"b":null,"B":null}', '{"b":[{"c":[1,1],"C":[1,1]}]}', '{"b":null,"x":{"k":1,"K":2}}']) {
+    assert.throws(() => decodeRecipe(r64(raw)), SyntaxError, raw);
   }
-  const ok = Buffer.from('{"h":{"subject":[{"d":["b"]}],"to":[]},"b":[{"d":["b"]}]}').toString('base64');
-  assert.deepEqual(decodeRecipe(ok).b, [{ d: ['b'] }]);
+  assert.deepEqual(decodeRecipe(r64('{"h":{"subject":[{"d":["b"]}],"to":[]},"b":[{"d":["b"]}]}')).b, [{ d: ['b'] }]);
+});
+
+test('decodeRecipe: keys in any case come out lowercased', () => {
+  assert.deepEqual(decodeRecipe(r64('{"H":{"Subject":[{"C":[1,1]}],"TO":[{"D":["x"]}]},"B":[{"U":["QQ=="]}]}')),
+    { h: { subject: [{ c: [1, 1] }], to: [{ d: ['x'] }] }, b: [{ u: ['QQ=='] }] });
+  // a "__proto__" header name stays an ordinary key
+  assert.deepEqual(Object.keys(decodeRecipe(r64('{"h":{"__PROTO__":[]}}')).h), ['__proto__']);
+});
+
+test('decodeRecipe: what the §5 schema refuses is an InvalidRecipe', () => {
+  for (const raw of ['[]', 'null', '7', '{}', '{"x":1}', '{"h":{}}', '{"h":[]}', '{"b":5}',
+    '{"b":[{}]}', '{"b":[{"b":["eA=="]}]}', '{"b":[{"u":["QR=="]}]}', '{"b":[{"u":["YQ1i"]}]}',
+    '{"h":{"subject":null}}', '{"h":{"subject":[{"d":["x"]}]},"b":[{"c":[0,1]}]}']) {
+    invalid(() => decodeRecipe(r64(raw)));
+  }
+  // an unknown top-level key next to "h" or "b" is ignored
+  assert.deepEqual(decodeRecipe(r64('{"b":null,"x":1}')), { b: null, x: 1 });
 });

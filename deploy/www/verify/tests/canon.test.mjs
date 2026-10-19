@@ -47,7 +47,7 @@ test('signingInput removes all WSP, keeps colon and CRLF, blanks target s=', () 
 
 test('canonHeaderHash collapses an interior WSP run to a single SP, not deletes it', () => {
   // §6.2 collapses runs of WSP to one SP; it must NOT delete them entirely
-  // (that is the §9.6 signing-input rule). This would fail if hashLine were
+  // (that is the §12.8 signing-input rule). This would fail if hashLine were
   // ever changed to delete-all-WSP instead of collapse-to-one-SP.
   const fields = [{ name: 'Subject', value: 'a  b' }];
   assert.equal(canonHeaderHash(fields), 'subject:a b\r\n');
@@ -62,7 +62,7 @@ test('canonHeaderHash unfolds a header value with an embedded CRLF+WSP fold', ()
 
 test('signingInput unfolds a header value with an embedded CRLF+WSP fold', () => {
   // unfold() strips the CRLF of the fold; the WSP that follows (and any
-  // other WSP in the value) is then deleted entirely per §9.6.
+  // other WSP in the value) is then deleted entirely per §12.8.
   const mi = { name: 'Message-Instance', value: ' m=1;\r\n h=sha256:AA=:BB=' };
   const sig = { name: 'DKIM2-Signature', value: ' i=1; s=sel:ed25519-sha256:ZZ' };
   const out = signingInput([mi, sig], sig);
@@ -82,7 +82,7 @@ test('canonHeaderHash orders duplicates bottom-up by document index, not array a
     'from:c\r\nfrom:b\r\nfrom:a\r\nto:x\r\n');
 });
 
-test('spec-06 §4: HDRMAINT-survey names are unsigned', () => {
+test('§4: HDRMAINT-survey names are unsigned', () => {
   for (const n of ['Apparently-To', 'Auto-Submitted', 'DL-Expansion-History',
                    'Original-Recipient', 'SIO-Label-History', 'VBR-Info',
                    'X400-Received', 'X400-Trace']) {
@@ -90,7 +90,7 @@ test('spec-06 §4: HDRMAINT-survey names are unsigned', () => {
   }
 });
 
-test('spec-06 §4: any Received-* is unsigned', () => {
+test('§4: any Received-* is unsigned', () => {
   assert.ok(isUnsignedHeader('Received-SPF'));
   assert.ok(isUnsignedHeader('Received-Anything'));
 });

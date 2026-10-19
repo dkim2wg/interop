@@ -13,17 +13,17 @@ function tagGrid(tags) {
   return g;
 }
 
-// Decoded view of the Recipe's "b" steps (base64 literals for octets that
-// are not JSON text, §5 extension): one line per item, as text with U+FFFD
-// where the octets are not UTF-8. The JSON view above keeps the base64.
-function bStepLines(rec) {
+// Decoded view of the Recipe's "u" steps (base64 literals for octets that
+// are not UTF-8, §5): one line per item, as text with U+FFFD where the
+// octets are not UTF-8. The JSON view above keeps the base64.
+function uStepLines(rec) {
   const lines = [];
   const dec = new TextDecoder();
   const add = (where, steps) => {
     if (!Array.isArray(steps)) return;
     steps.forEach((st) => {
-      if (!st || typeof st !== 'object' || !Array.isArray(st.b)) return;
-      st.b.forEach((item) => {
+      if (!st || typeof st !== 'object' || !Array.isArray(st.u)) return;
+      st.u.forEach((item) => {
         let text;
         try { text = dec.decode(Uint8Array.from(atob(String(item)), (c) => c.charCodeAt(0))); } catch (e) { text = '(not base64)'; }
         lines.push(where + ': "' + text + '"');
@@ -37,14 +37,16 @@ function bStepLines(rec) {
   return lines;
 }
 
+// The colour class for a state: TEMPERROR (try again later) in amber,
+// FAIL and PERMERROR in red.
+const stateClass = (s) => ({ pass: 'pass', none: 'none', temperror: 'warn', 'not-checked': 'notchecked' })[s] || 'fail';
+
 export function renderReport(rep, out) {
   out.replaceChildren();
-  out.appendChild(el('p', 'verdict ' + (rep.overall || 'none'), 'Overall: ' + (rep.overall || 'none')));
+  out.appendChild(el('p', 'verdict ' + stateClass(rep.overall || 'none'), 'Overall: ' + (rep.overall || 'none')));
   if (rep.summary) out.appendChild(el('p', 'muted', rep.summary));
   (rep.levels || []).forEach((lvl) => {
-    const cls = lvl.result === 'pass' ? 'pass'
-      : lvl.result === 'warn' ? 'warn'
-      : lvl.result === 'not-checked' ? 'notchecked' : 'fail';
+    const cls = stateClass(lvl.result);
     const card = el('div', 'card ' + cls);
     if (lvl.kind === 'signature') {
       card.appendChild(el('h3', null, 'DKIM2-Signature i=' + lvl.i + ' (m=' + lvl.m + ') — ' + lvl.result));
@@ -52,6 +54,7 @@ export function renderReport(rep, out) {
       (lvl.items || []).forEach((it) => card.appendChild(kv('crypto', it.selector + ' / ' + it.algorithm + ' → ' + (it.result || ''))));
       if (lvl.timestamp) card.appendChild(kv('timestamp', lvl.timestamp.ok ? 'ok' : ((lvl.timestamp.status || 'fail') + ' — ' + lvl.timestamp.detail)));
       if (lvl.custody) card.appendChild(kv('chain-of-custody', lvl.custody.ok ? ('ok' + (lvl.custody.detail ? ' — ' + lvl.custody.detail : '')) : ('FAIL — ' + lvl.custody.detail)));
+      if (lvl.from && !lvl.from.ok) card.appendChild(kv('From', 'not authentic for d='));
     } else {
       card.appendChild(el('h3', null, 'Message-Instance m=' + lvl.m + ' — ' + lvl.result));
       if (lvl.tags && lvl.tags.length) card.appendChild(tagGrid(lvl.tags));
@@ -61,7 +64,7 @@ export function renderReport(rep, out) {
       if (lvl.recipe_json !== undefined) {
         card.appendChild(kv('recipe (decoded)', ''));
         card.appendChild(el('pre', 'recipejson', JSON.stringify(lvl.recipe_json, null, 2)));
-        bStepLines(lvl.recipe_json).forEach((line) => card.appendChild(kv('recipe "b" (decoded)', line)));
+        uStepLines(lvl.recipe_json).forEach((line) => card.appendChild(kv('recipe "u" (decoded)', line)));
       }
       card.appendChild(kv('undo', lvl.undo));
     }
