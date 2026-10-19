@@ -27,7 +27,7 @@ const SAMPLE_T = 1782394336;      // t= in the sample
 const FRESH_NOW = SAMPLE_T + 3600; // well within the §11.3 14-day window
 
 test('no DKIM2-Signature yields overall=none', async () => {
-  const rep = await verifyMessage('From: a@b\r\nSubject: x\r\n\r\nhi\r\n');
+  const rep = await verifyMessage('From: a@example.com\r\nSubject: x\r\n\r\nhi\r\n');
   assert.equal(rep.overall, 'none');
 });
 
@@ -35,7 +35,7 @@ test('verifyMessage returns a levels array (shape contract)', async () => {
   // Real crypto verification of signed messages is covered end-to-end in
   // Task 9's vectors.test.mjs conformance harness. Here we only assert the
   // report shape contract: `levels` is always an array.
-  const rep = await verifyMessage('From: a@b\r\nSubject: x\r\n\r\nhi\r\n');
+  const rep = await verifyMessage('From: a@example.com\r\nSubject: x\r\n\r\nhi\r\n');
   assert.ok(Array.isArray(rep.levels));
 });
 
@@ -50,7 +50,7 @@ test('DKIM2-Signature with NO Message-Instance yields permerror (fix #3)', async
   // Message-Instance header, so this test would regress to a non-permerror
   // (or wrong-reason) result if that guard were removed.
   const raw =
-    'From: a@b\r\n' +
+    'From: a@example.com\r\n' +
     'DKIM2-Signature: i=1; m=1; t=1000000; d=test.dkim2.eu; ' +
     's=sel:rsa-sha256:AAAA; mf=PHNlbmRlckB0ZXN0LmRraW0yLmV1Pg==; rt=PHJlY2lwaWVudEBleGFtcGxlLmNvbT4=\r\n' +
     '\r\nhi\r\n';
@@ -68,7 +68,7 @@ test('signature with only an unsupported algorithm fails, overall=fail (fix #2a)
   // check is skipped and stays pass), custody that holds, a fresh timestamp,
   // and an s= whose only sig-set uses `banana`.
   const raw =
-    'From: a@b\r\n' +
+    'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
     `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${ENV}\r\n` +
     '\r\nhi\r\n';
@@ -83,7 +83,7 @@ test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, ne
   for (const env of ['mf=@@@; rt=PHJjcHRAZXhhbXBsZS5jb20+', 'mf=PHNlbmRlckBleGFtcGxlLmNvbT4=; rt=AAAA',
     'mf=c2VuZGVyQGV4YW1wbGUuY29t; rt=PHJjcHRAZXhhbXBsZS5jb20+']) {
     const raw =
-      'From: a@b\r\n' +
+      'From: a@example.com\r\n' +
       'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
       `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${env}\r\n` +
       '\r\nhi\r\n';
@@ -130,7 +130,7 @@ test('a signature within 14 days is a clean pass (no age warning)', async () => 
 test('MI with no supported hash algorithm fails closed (§11.7)', async () => {
   // h= names only `blake` (no sha256). The instance MUST NOT stay at pass.
   const raw =
-    'From: a@b\r\n' +
+    'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
     'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:rsa-sha256:AAA; nd=example.net\r\n' +
     '\r\nhi\r\n';
@@ -149,7 +149,7 @@ test('MI with no supported hash algorithm fails closed (§11.7)', async () => {
 // runs regardless of whether the signature bytes verify, and the assertions
 // are on the per-level custody fields rather than the overall verdict.
 const bridgedRaw = (bridgeDomain) =>
-  'From: a@b\r\n' +
+  'From: a@example.com\r\n' +
   'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
   'DKIM2-Signature: i=1; m=1; t=1000000; d=test1.dkim2.com; s=sel:rsa-sha256:AAA; ' +
     'mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+; rt=PHVzZXJAdGVzdDIuZGtpbTIuY29tPg==\r\n' +
@@ -247,7 +247,7 @@ test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary 
   // is needed. custody is the only reason this signature is unusable, so its
   // detail must be the one that reaches the summary.
   const raw =
-    'From: a@b\r\n' +
+    'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
     'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; ' +
     's=sel:banana:AAA; mf=PHNlbmRlckB3cm9uZy5leGFtcGxlPg==; rt=PHJjcHRAZXhhbXBsZS5jb20+\r\n' +
@@ -355,7 +355,7 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
   // Content is identical between hops (a legal, recipe-less/unchanged MI is
   // accepted everywhere), so m=1 and m=2 share the same genuinely correct
   // header/body hashes; only m=2 additionally carries the malformed r=.
-  const contentFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' hi' }];
+  const contentFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' hi' }];
   const body = 'hello\r\n';
   const hh = await hashB64(stringToBytes(canonHeaderHash(contentFields)), 'sha256');
   const bh = await hashB64(stringToBytes(canonBody(body)), 'sha256');
@@ -375,7 +375,7 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
   const draft1 =
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:;\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers: headers1 } = parseMessage(draft1);
   const { instances: mi1map, signatures: sig1map } = collectLevels(headers1);
   const input1 = stringToBytes(signingInput(
@@ -391,7 +391,7 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
     `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers: headers2 } = parseMessage(draft2);
   const { instances, signatures } = collectLevels(headers2);
   const input2 = stringToBytes(signingInput(
@@ -405,7 +405,7 @@ test('spec-06 §11.2: malformed r= JSON is reported as the specific PERMERROR th
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
     `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
 
   const rep = await verifyMessage(raw, { now: t + 10, fetchKey: stubEd25519Key });
 
@@ -430,7 +430,7 @@ test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", disti
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
   const stubEd25519Key = async () => ({ k: 'ed25519', p: pubB64 });
 
-  const contentFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' hi' }];
+  const contentFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' hi' }];
   const body = 'hello\r\n';
   const hh = await hashB64(stringToBytes(canonHeaderHash(contentFields)), 'sha256');
   const bh = await hashB64(stringToBytes(canonBody(body)), 'sha256');
@@ -445,7 +445,7 @@ test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", disti
   const draft1 =
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:;\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers: headers1 } = parseMessage(draft1);
   const { instances: mi1map, signatures: sig1map } = collectLevels(headers1);
   const input1 = stringToBytes(signingInput(
@@ -458,7 +458,7 @@ test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", disti
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
     `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers: headers2 } = parseMessage(draft2);
   const { instances, signatures } = collectLevels(headers2);
   const input2 = stringToBytes(signingInput(
@@ -472,7 +472,7 @@ test('spec-06 §11.2: a bad-base64 r= value is reported as "syntax error", disti
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig1};\r\n` +
     `Message-Instance: m=2; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
 
   const rep = await verifyMessage(raw, { now: t + 10, fetchKey: stubEd25519Key });
 
@@ -496,7 +496,7 @@ test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejec
   const pubB64 = bytesToB64(new Uint8Array(await subtle.exportKey('raw', kp.publicKey)));
   const stubEd25519Key = async () => ({ k: 'ed25519', p: pubB64 });
 
-  const contentFields = [{ name: 'From', value: ' a@b' }, { name: 'Subject', value: ' hi' }];
+  const contentFields = [{ name: 'From', value: ' a@example.com' }, { name: 'Subject', value: ' hi' }];
   const body = 'hello\r\n';
   const hh = await hashB64(stringToBytes(canonHeaderHash(contentFields)), 'sha256');
   const bh = await hashB64(stringToBytes(canonBody(body)), 'sha256');
@@ -509,7 +509,7 @@ test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejec
   const draft =
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:;\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
   const { headers } = parseMessage(draft);
   const { instances, signatures } = collectLevels(headers);
   const input = stringToBytes(signingInput(
@@ -520,7 +520,7 @@ test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejec
   const raw =
     `DKIM2-Signature: i=1; m=1; t=${t}; d=example.com; mf=${mf1}; rt=${rt1}; s=sel:ed25519-sha256:${sig};\r\n` +
     `Message-Instance: m=1; h=sha256:${hh}:${bh}; r=${badR};\r\n` +
-    `From: a@b\r\nSubject: hi\r\n\r\n${body}`;
+    `From: a@example.com\r\nSubject: hi\r\n\r\n${body}`;
 
   const rep = await verifyMessage(raw, { now: t + 10, fetchKey: stubEd25519Key });
 
@@ -567,7 +567,7 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
     const rep = await verifyMessage(junk + SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
     assert.equal(rep.overall, 'permerror');
     assert.equal(rep.summary, 'DKIM2-Signature has a missing or malformed i= tag');
-    const alone = await verifyMessage(junk + 'From: a@b\r\n\r\nhi\r\n');
+    const alone = await verifyMessage(junk + 'From: a@example.com\r\n\r\nhi\r\n');
     assert.equal(alone.overall, 'permerror');
   });
 }

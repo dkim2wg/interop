@@ -9,69 +9,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyMessage } from '../verify.js';
-import { canonHeaderHash, canonBody, signingInput } from '../canon.js';
-import { hashB64, sha256Bytes } from '../crypto.js';
-import { bytesToB64, binaryToBytes, textToBinary, stringToBytes } from '../b64.js';
 import { domainOf, toALabel, relaxedMatch } from '../domain.js';
+import { signChain as sign, newKeyPair, publicKeyB64, b64text, T } from './sign-chain.mjs';
 
-const { subtle } = globalThis.crypto;
-const keyPair = subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+const keyPair = newKeyPair();
 const DOMAINS = new Set(['example.com', 'example.org', 'example.net', 'other.net',
   'fwd.example.net', 'mail.example.org', 'other.example', 'elsewhere.net',
   'lists.example.org', 'sub.example.com', 'xn--bcher-kva.example']);
 async function fetchKey(selector, domain) {
   if (selector !== 'sel' || !DOMAINS.has(domain.toLowerCase())) throw new Error('key-notfound');
-  const p = bytesToB64(new Uint8Array(await subtle.exportKey('raw', (await keyPair).publicKey)));
-  return { k: 'ed25519', p };
+  return { k: 'ed25519', p: await publicKeyB64(keyPair) };
 }
 
-const T = 1740000000;
-const b64text = (text) => bytesToB64(stringToBytes(text));
-
-// A message state: fields [[name, value]] and body, as text (UTF-8); a
-// value or body given as { bin } is a binary string (one code unit per
-// octet), for octets that are not UTF-8. recipe: the r= of the Message-
-// Instance that leads from this state down to the previous one (an object,
-// JSON.stringify'd, or a string of JSON text used as it is).
-const bin = (v) => (typeof v === 'string' ? textToBinary(v) : v.bin);
-
-// hops: [{ d, m, mf, rt: [...], nd, f, t, extra }]; i is the position + 1.
-// Returns the signed message as octets.
-async function signChain(states, hops) {
-  const kp = await keyPair;
-  const miField = async (k) => {
-    const st = states[k - 1];
-    const fields = st.fields.map(([n, v]) => ({ name: n, value: ' ' + bin(v) }));
-    const hh = await hashB64(binaryToBytes(canonHeaderHash(fields.filter((f) => !/^x-/i.test(f.name)))), 'sha256');
-    const bh = await hashB64(binaryToBytes(canonBody(bin(st.body))), 'sha256');
-    let v = ` m=${k}; h=sha256:${hh}:${bh}`;
-    if (st.recipe !== undefined) {
-      const json = typeof st.recipe === 'string' ? st.recipe : JSON.stringify(st.recipe);
-      v += `; r=${b64text(json)}`;
-    }
-    return { name: 'Message-Instance', value: v };
-  };
-  const mis = [];
-  for (let k = 1; k <= states.length; k++) mis.push(await miField(k));
-  const sigs = [];
-  for (let n = 0; n < hops.length; n++) {
-    const h = hops[n];
-    let v = ` i=${n + 1}; m=${h.m || 1}; t=${h.t || T}; d=${h.d}`;
-    if (h.nd) v += `; nd=${h.nd}`;
-    else v += `; mf=${b64text(h.mf)}; rt=${h.rt.map(b64text).join(',')}`;
-    if (h.f) v += `; f=${h.f}`;
-    if (h.extra) v += h.extra;
-    const draft = { name: 'DKIM2-Signature', value: v + '; s=sel:ed25519-sha256:' };
-    const input = binaryToBytes(signingInput([...mis.slice(0, h.m || 1), ...sigs, draft], draft));
-    const sig = bytesToB64(new Uint8Array(await subtle.sign({ name: 'Ed25519' }, kp.privateKey, await sha256Bytes(input))));
-    sigs.push({ name: 'DKIM2-Signature', value: v + '; s=sel:ed25519-sha256:' + sig });
-  }
-  const top = states[states.length - 1];
-  const line = (f) => `${f.name}:${f.value}\r\n`;
-  const raw = sigs.slice().reverse().map(line).join('') + mis.slice().reverse().map(line).join('')
-    + top.fields.map(([n, v]) => `${n}: ${bin(v)}\r\n`).join('') + '\r\n' + bin(top.body);
-  return binaryToBytes(raw);
-}
+// See sign-chain.mjs: states[k - 1] is the message at m=k, hops[n - 1] is i=n.
+const signChain = (states, hops) => sign(states, hops, keyPair);
 
 const verify = (msg, opts = {}) => verifyMessage(msg, { now: T + 10, fetchKey, ...opts });
 

@@ -112,6 +112,52 @@ function displayText(bin) {
   return displayDecoder.decode(binaryToBytes(bin));
 }
 
+// The one addr-spec of a From field value (text), or null when the field is
+// not exactly one mailbox: a group, a list, or no address at all. Lenient
+// otherwise: "Name <a@b>" or "a@b", with comments and quoted strings (which
+// may hold any of , < : ; @) set aside first.
+function singleMailbox(text) {
+  let s = text.replace(/"(?:[^"\\]|\\[^])*"/g, '""');
+  for (let prev = ''; prev !== s;) { prev = s; s = s.replace(/\((?:[^()\\]|\\[^])*\)/g, ' '); }
+  if (/[:;,]/.test(s)) return null;
+  const angle = /^[^<>]*<([^<>]*)>\s*$/.exec(s);
+  const spec = (angle ? angle[1] : s).trim();
+  return /^[^\s@<>]+@[^\s@<>]+$/.test(spec) ? spec : null;
+}
+
+// §11: the From of one message state is Authentic for d= when the state has
+// exactly one From field, holding exactly one mailbox, whose domain is not a
+// literal and relaxed-matches d= (From domain Parameter1), as A-labels (§18).
+function fromIsAuthentic(values, d) {
+  if (values.length !== 1) return false;
+  const spec = singleMailbox(displayText(values[0]));
+  if (!spec) return false;
+  const { domain, literal } = domainOf(spec);
+  return !literal && relaxedMatch(toALabel(domain) || '', d);
+}
+
+// §11 / §14.8: the signatures whose matching From is not Authentic. The From
+// of state 1 is matched with i=1; and for each instance m=k whose header
+// Recipe replaces From, the From of state k with the lowest i whose m= is at
+// least k (when there is none, "is not signed" has already been reported).
+// A state the Recipes could not reach is not checked here: that is already
+// an error of its own.
+function unauthenticFrom(chain, instances, signatures, sigNums, maxM) {
+  const bad = new Set();
+  const check = (k, i) => {
+    if (chain.has(k) && !fromIsAuthentic(chain.headerValues(k, 'from'), sigDomain(signatures[i]))) bad.add(i);
+  };
+  check(1, 1);
+  for (let k = 2; k <= maxM; k++) {
+    let rec;
+    try { rec = decodeRecipe(instances[k].map.r); } catch (e) { continue; }
+    if (!rec.h || !('from' in rec.h)) continue;
+    const i = sigNums.find((n) => parseInt(signatures[n].map.m, 10) >= k);
+    if (i !== undefined) check(k, i);
+  }
+  return bad;
+}
+
 // All (unfolded, WSP-trimmed) values of a header field name, in document order.
 function headerValues(fields, name) {
   const n = name.toLowerCase();
@@ -427,6 +473,7 @@ async function verifyOnce(raw, opts = {}) {
   }
 
   // --- §11.3–§11.6 signature checks (top-down) --------------------------
+  const badFrom = unauthenticFrom(chain, instances, signatures, sigNums, maxM);
   for (let i = maxI; i >= 1; i--) {
     const sig = signatures[i];
     const level = {
@@ -470,6 +517,16 @@ async function verifyOnce(raw, opts = {}) {
       continue;
     }
     level.custody = { ok: true, detail: i === 1 ? 'origin' : 'chain intact' };
+
+    // §14.8: the From this signature vouches for, if any, is Authentic.
+    if (badFrom.has(i)) {
+      level.from = { ok: false };
+      level.result = 'permerror';
+      level.detail = `PERMERROR: DKIM2-Signature i=${i} matching From is not authentic`;
+      bump('permerror');
+      levels.push(level);
+      continue;
+    }
 
     // §11.5/§11.6 fetch key + verify each s= sig-set.
     const mAtSig = parseInt(sig.map.m, 10);
