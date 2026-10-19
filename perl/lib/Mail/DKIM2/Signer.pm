@@ -2,7 +2,7 @@ package Mail::DKIM2::Signer;
 use strict;
 use warnings;
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
@@ -140,7 +140,7 @@ sub finish_header {
 }
 
 # The signature object for this hop with rt= set to $rcpt (an arrayref, or
-# undef for none). draft-06 §9.3: when NextDomain is set this is an
+# undef for none). -07 §12.3: when NextDomain is set this is an
 # imaginary forwarding hop -- emit nd= and omit mf=/rt= (Signature->new
 # enforces the exclusion).
 #
@@ -208,7 +208,7 @@ sub finish_body {
 # Re-sign the same message for a different envelope recipient, returning the
 # folded DKIM2-Signature header to prepend for that recipient.
 #
-# This is the cheap half of signing. §9.6 signs solely the Message-Instance and
+# This is the cheap half of signing. §12.8 signs solely the Message-Instance and
 # DKIM2-Signature header fields, so everything expensive -- the body hash and
 # the hash of every other header field -- lives in the Message-Instance and is
 # identical for every recipient. Only rt= changes, so an additional recipient
@@ -223,12 +223,12 @@ sub finish_body {
 #     }
 #
 # Takes one address or an arrayref of them. Not usable on a signature carrying
-# nd=, which excludes rt= by §8.7; Signature::rcpt_to croaks in that case.
+# nd=, which excludes rt= by §10.7; Signature::rcpt_to croaks in that case.
 sub sign_for_recipient {
     my ($self, $rcpt) = @_;
     croak "sign_for_recipient: no signature: " . ($self->{details} // 'CLOSE has not run')
         unless $self->{_signature};
-    croak "cannot set rt= on a signature carrying nd= (spec-06 §8.7)"
+    croak "cannot set rt= on a signature carrying nd= (-07 §10.7)"
         if $self->{NextDomain};
     my @list = ref $rcpt eq 'ARRAY' ? @$rcpt : ($rcpt);
     croak "rcpt_to requires at least one recipient" unless @list;
@@ -248,7 +248,7 @@ sub _compute_signature {
     # Reset s= to the empty placeholder before building the signing input.
     # Without this a second call would sign an input containing the FIRST
     # call's signature bytes, which no verifier can reproduce -- the signing
-    # input must always carry an empty s= value (§9.6).
+    # input must always carry an empty s= value (§12.8).
     $signature->set_tag('s', join(':', $self->{Selector}, $self->{Algorithm}, ''));
 
     # Include the new signature as the signing_i entry
@@ -367,13 +367,13 @@ the Message-Instance header this hop wants to sign over (see
 L<Mail::DKIM2::MessageInstance>; a message with none is a C<fail>); the
 Signer reads the existing
 Message-Instance and DKIM2-Signature headers, chooses the next C<i=>, builds
-the signing input of spec-06 section 8.5, and signs it. It does not alter
+the signing input of -07 section 10.5, and signs it. It does not alter
 the message: the caller prepends the header C<as_string> returns.
 
 Extends L<Mail::DKIM2::HeaderParser>, which provides C<PRINT>, C<CLOSE>,
 C<load> and the tie interface.
 
-This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.
@@ -422,7 +422,7 @@ An arrayref of this hop's envelope recipients, recorded in C<rt=>.
 =item NextDomain
 
 The C<d=> of the hop that will sign next, recorded in C<nd=> for an
-imaginary forwarding hop (spec-06 section 9.3). Excludes C<MailFrom> and
+imaginary forwarding hop (-07 section 12.3). Excludes C<MailFrom> and
 C<RcptTo>.
 
 =item Timestamp

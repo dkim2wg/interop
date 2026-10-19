@@ -2,7 +2,7 @@ package Mail::DKIM2::Gate;
 use strict;
 use warnings;
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use Email::MIME;
 use Mail::DKIM2::Common qw(extract_mi_version parse_mime valid_sequence chain_number_error);
@@ -177,7 +177,7 @@ sub check {
     } keys %by_v;
     my $top_null = ($top && $null{$top}) ? 1 : 0;
     # How far up the upstream signatures reach: a DKIM2-Signature with m=k
-    # covers instances 1..k (spec-06 §8.2), so the highest m= of any of them
+    # covers instances 1..k (-07 §10.2), so the highest m= of any of them
     # is the top covered instance, and every instance above it is unsigned --
     # this hop will be the first to vouch for it. Only a signature with a
     # valid i= counts: one the Verifier cannot key is a PERMERROR there (so

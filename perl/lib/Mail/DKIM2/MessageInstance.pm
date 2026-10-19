@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 
 use Mail::DKIM2::Digest;
@@ -54,7 +54,7 @@ sub _chain_error_fields {
         // duplicate_number_error('Message-Instance', 'm', map { extract_mi_version($_) } @mi);
 }
 
-# spec-06 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# -07 §3.1: two hashing algorithms are defined. Verifiers MUST implement
 # both; Signers MAY implement either or both (we default to sha256). Each
 # is a function of the data to its raw digest, by Mail::DKIM2::Digest.
 my %HASH_ALGS = map {
@@ -64,11 +64,11 @@ my %HASH_ALGS = map {
 
 sub hash_algs { return { %HASH_ALGS } }
 
-# spec-06 §7.3: h= is hash-set *("," hash-set), hash-set = alg ":" hh ":" bh.
+# -07 §9.3: h= is hash-set *("," hash-set), hash-set = alg ":" hh ":" bh.
 # Hash names are lowercased -- RFC 5234 makes ABNF quoted strings
 # case-insensitive. All FWS is stripped (§2.12): it may appear anywhere
 # inside a base64 value (e.g. a folded header), not just at either end.
-# h= (spec-06 §7.3): hash-set *("," hash-set), each
+# h= (-07 §9.3): hash-set *("," hash-set), each
 # [FWS] hash-name [FWS] ":" header-hash ":" body-hash. FWS is trimmed from
 # around the name and removed from inside the base64 hashes; anywhere else
 # (inside the name, or a set missing a part) the value is malformed and this
@@ -142,7 +142,7 @@ sub get_tag {
 sub header_hash { return $_[0]->{bits}{h1} }
 sub body_hash { return $_[0]->{bits}{b1} }
 
-# The body hash (spec-06 section 6.3) of a raw body string with LF or CRLF
+# The body hash (-07 section 6.1) of a raw body string with LF or CRLF
 # line ends: no Email::MIME parse, for callers that hold the body alone.
 # Streams the body through the digest a megabyte at a time (each piece
 # ending at a LF, so a CRLF is never split): a large body is never copied
@@ -182,7 +182,7 @@ sub body_digest_raw {
     return encode_base64($d->digest, '');
 }
 
-# Mark the body Recipe as null per spec-06 §4.2: the body changed but the
+# Mark the body Recipe as null per -07 §5.2: the body changed but the
 # previous state cannot be recreated. as_string() then emits "b": null.
 sub set_null_body_recipe {
     my ($self) = @_;
@@ -191,7 +191,7 @@ sub set_null_body_recipe {
 
 # True if this instance declares the previous state non-recreatable (a null
 # "b" Recipe). Such an instance cannot be undone to a prior version. Under
-# draft-06 §5.1 a header Recipe can no longer be null, so only the body
+# -07 §5.1 a header Recipe can no longer be null, so only the body
 # Recipe can render an instance unrecoverable.
 sub unrecoverable {
     my ($self) = @_;
@@ -213,7 +213,7 @@ sub as_string {
         $hashes = (defined $h1 || defined $b1) ? { sha256 => [ $h1 // '', $b1 // '' ] } : {};
     }
 
-    # spec-06 §7.3: h= is hash-set *("," hash-set) -- one hash-set per
+    # -07 §9.3: h= is hash-set *("," hash-set) -- one hash-set per
     # configured algorithm, emitted in the signer's chosen order (default:
     # sha256 only; the signer default MUST NOT change).
     my @algs = @{ $self->{algs} || ['sha256'] };
@@ -237,7 +237,7 @@ sub as_string {
     if (exists $data{rh}) {
         my $rh = delete $data{rh};
         my %encoded;
-        # spec-06 §5.1: header field names in the JSON Recipes MUST be lower
+        # -07 §5.1: header field names in the JSON Recipes MUST be lower
         # case (matching against the message stays case-insensitive).
         for my $h (sort keys %$rh) {
             $encoded{lc $h} = _encode_recipe_list($rh->{$h});
@@ -304,7 +304,7 @@ sub parse {
     $header =~ s/^\s+//;
 
     # Parse tag-value format: m=N; h=...; r=... Tag identifiers are case
-    # insignificant and there MUST be only one of each kind (spec-06 §7), so
+    # insignificant and there MUST be only one of each kind (-07 §9), so
     # names are lowercased, and a repeat in any case is a syntax error --
     # never a silent overwrite, which let a wrong h= ahead of the right one
     # pass (review R5).
@@ -333,7 +333,7 @@ sub parse {
         my $sets = parse_hash_sets($raw_h)
             or die "PERMERROR: Message-Instance m=$tags{m} syntax error\n";
 
-        # §7.3: an algorithm MUST NOT be present more than once. Check the
+        # §9.3: an algorithm MUST NOT be present more than once. Check the
         # LIST returned by parse_hash_sets, not a hash keyed by algorithm --
         # a hash would let the second occurrence silently overwrite the
         # first, hiding the duplicate. Hash names are already lowercased by
@@ -357,9 +357,9 @@ sub parse {
     }
 
     if (exists $tags{r}) {
-        # spec-06 §11.2: a bad base64 r= value and a post-decode JSON parse
+        # -07 §14.2: a bad base64 r= value and a post-decode JSON parse
         # failure are different errors and must stay distinct: base64
-        # failure -> "syntax error" (§11.2 lists this explicitly for
+        # failure -> "syntax error" (§14.2 lists this explicitly for
         # malformed field content); JSON failure -> "contains invalid JSON".
         # decode_base64() is lenient (silently drops non-alphabet
         # characters rather than failing), so a strict format check is
@@ -495,7 +495,7 @@ sub b_digest {
     return _hash_data_b64($alg, $body);
 }
 
-# spec-06 §3.1/§3.4: hash $data with the named (implemented) algorithm and
+# -07 §3.1/§3.5: hash $data with the named (implemented) algorithm and
 # base64-encode the result. Equivalent to the historic digest64($digest)
 # path for sha256 (verified byte-identical), generalised to any algorithm
 # in %HASH_ALGS.
@@ -773,7 +773,7 @@ sub calculate {
     my $self = bless {}, $class;
     my $prefixes = check_ignore_prefixes($opts{IgnorePrefixes});
 
-    # spec-06 §3.1: the signer chooses one or more hash algorithms; default
+    # -07 §3.1: the signer chooses one or more hash algorithms; default
     # is sha256 only (the signer default MUST NOT change).
     $self->{algs} = ($opts{Algs} && @{$opts{Algs}}) ? [ @{$opts{Algs}} ] : ['sha256'];
 
@@ -921,7 +921,7 @@ sub calculate {
 
     # Hashes are always of the current (newest) version of the message,
     # computed after any epilogue modification, for every configured
-    # algorithm (spec-06 §7.3).
+    # algorithm (-07 §9.3).
     for my $alg (@{$self->{algs}}) {
         $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg, $prefixes),
             $body_hash ? $body_hash->{$alg} : b_digest($current, $alg) ];
@@ -951,7 +951,7 @@ sub calculate {
         my %known;
         push @{ $known{dkim2_canonicalize_header($cur[$_])} }, $_ + 1 for 0..$#cur;
         # Recipe: reconstruct @prev from @cur. Copy ranges must ascend (each
-        # starts after the last one ends, spec-06 §5.1), so each field of
+        # starts after the last one ends, -07 §5.1), so each field of
         # @cur is copied at most once and never out of turn: a repeat, or a
         # field the hop moved above one it left alone, goes in literally.
         # $last_end only grows, so each value's ascending index list is
@@ -1047,7 +1047,7 @@ sub _parse_error {
 sub _check_hashes {
     my ($self, $num, $header, $body) = @_;
 
-    # spec-06 §3.4: verify every hash-set whose algorithm we implement; ALL
+    # -07 §3.5: verify every hash-set whose algorithm we implement; ALL
     # of them must match. If none names an implemented algorithm, fail
     # closed rather than treating it as "no hash" -- an MI signed with only
     # sha512 (say) is perfectly valid and must verify via its sha512 set,
@@ -1075,13 +1075,13 @@ sub _check_hashes {
 # Rebuild the previous lines from @$old by a Recipe of [from, to] copy ranges
 # (1-based, inclusive) and literal lines. Each range must lie within @$old,
 # and the ranges must ascend: each must start after the one before it ends
-# (spec-06 §5.1, and the same rule for the body). The previous version is
+# (-07 §5.1, and the same rule for the body). The previous version is
 # rebuilt from this one, and a hop's change never needs a line of it twice
 # or in a different order -- a reordering is recorded literally. Without the
 # check a few bytes of header could name a copy of billions of lines.
 # Everything is checked before anything is copied.
 #
-# A bound must be a JSON integer (spec-06 §5 schema): {"c":["1","2"]} is
+# A bound must be a JSON integer (-07 §5 schema): {"c":["1","2"]} is
 # malformed, and every verifier in the interop set rejects it. The JSON
 # decoder gives a number an IV and a string a PV, so the distinction is
 # read off the scalar's flags -- before anything stringifies it, which
@@ -1288,7 +1288,7 @@ Mail::DKIM2::MessageInstance - Compute, verify and undo Message-Instance headers
 
 =head1 DESCRIPTION
 
-A Message-Instance header (spec-06 sections 4 to 7) records the message at
+A Message-Instance header (-07 sections 4 to 9) records the message at
 one point in its journey: a hash of its header fields and a hash of its
 body, and, from the second instance on, a Recipe for turning this instance
 back into the previous one. The wire format is
@@ -1314,7 +1314,7 @@ Messages are accepted as L<Email::MIME> objects or as strings, which are
 parsed. C<verify>, C<undo> and C<chain_verifies> look at the highest
 numbered Message-Instance the message carries.
 
-This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.

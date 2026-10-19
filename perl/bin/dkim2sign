@@ -21,7 +21,7 @@
 # nd= is extended only when nd= equals DOMAIN. On refusal it prints the reason
 # on stderr and exits 1 with nothing on stdout.
 #
-# Per §9.1/§9.2.5 an unmodified hop adds no Message-Instance: if the top
+# Per §12.1/§12.2.5 an unmodified hop adds no Message-Instance: if the top
 # instance already matches the content, its m= is reused and only a
 # DKIM2-Signature is added.
 
@@ -63,7 +63,7 @@ GetOptions(
 
 die _usage() unless defined $selector && defined $domain && defined $keyfile;
 
-# spec-06 §3.1: signer chooses one or both hash algorithms for the
+# -07 §3.1: signer chooses one or both hash algorithms for the
 # Message-Instance h= tag. Default MUST remain sha256 (byte-identical to
 # pre-spec-06 output).
 my %HASH_ALG_SETS = (
@@ -116,7 +116,7 @@ unless ($gate->{ok}) {
 
 my $msg = parse_mime($raw);
 
-# §9.1/§9.2.5: only add an instance if this hop actually changed something.
+# §12.1/§12.2.5: only add an instance if this hop actually changed something.
 # MessageInstance->verify returns the version it matched, so a true result means
 # the top instance still describes the message and must be reused.
 my $mi_header;

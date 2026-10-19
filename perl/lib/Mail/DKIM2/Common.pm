@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use Carp ();
 use B ();
@@ -65,9 +65,9 @@ our @EXPORT_OK = qw(
 # the date this implementation's DKIM2 behaviour last changed (a software
 # version stamp, not the draft's date) -- bump it on any change to what we
 # emit, not only on a spec bump. See ../spec/draft-gondwana-dkim2-debug-header.
-use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-06';
+use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-07';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE  => '2026-10-08';
+use constant DKIM2_DATE  => '2026-10-18';
 
 # -07 section 14.3: a DKIM2-Signature whose t= is more than a day after
 # delivery is "from the future", and one made more than 14 days before it
@@ -75,7 +75,7 @@ use constant DKIM2_DATE  => '2026-10-08';
 use constant FUTURE_LIMIT => 86400;
 use constant EXPIRY       => 14 * 86400;
 
-# Local policy, not spec-06: a message carrying more Message-Instance or
+# Local policy, not -07: a message carrying more Message-Instance or
 # DKIM2-Signature fields than this is a PERMERROR, found before any key is
 # fetched, signature checked or recipe applied. Every hop costs a verifier a
 # DNS lookup, a signature check and an undo of the whole message, and the
@@ -88,7 +88,7 @@ use constant MAX_CHAIN_LENGTH => 32;
 # converted to a number big enough to be a loop bound.
 use constant MAX_CHAIN_NUMBER => 100;
 
-# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-06 Section 4.
+# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-07 Section 4.
 # spec-05 narrowed the old /^arc-/ prefix to the three RFC 8617 field names and
 # added a /^received-/ prefix rule so future trace fields of that form need no
 # change here.
@@ -194,7 +194,7 @@ sub duplicate_number_error {
     return;
 }
 
-# DKIM2 header canonicalization for HEADER HASH per spec-06 Section 5.2:
+# DKIM2 header canonicalization for HEADER HASH per -07 Section 5.2:
 # 1. Lowercase header name
 # 2. Unfold continuation lines (remove CRLF before WSP)
 # 3. Collapse runs of WSP to single SP
@@ -217,7 +217,7 @@ sub dkim2_canonicalize_header {
     return "$name:$value\r\n";
 }
 
-# DKIM2 header canonicalization for SIGNATURE INPUT per spec-06 Section 9.6:
+# DKIM2 header canonicalization for SIGNATURE INPUT per -07 Section 12.8:
 # Same as header hash canonicalization except step 3 deletes ALL WSP
 # characters rather than collapsing to single SP.
 sub dkim2_canonicalize_sig_header {
@@ -490,7 +490,7 @@ sub _dkim2_fold_feed {
 }
 
 # May the field fold between $prev and $next, in state $st (_dkim2_fold_feed,
-# fed up to and including $prev)? The grammars (spec-06 §7, §8) allow FWS
+# fed up to and including $prev)? The grammars (-07 §9, §10) allow FWS
 # inside a base64string (§2.13) and in a few list positions, and nowhere in
 # a Domain, selector, algorithm or hash name, so only these are offered:
 #   - between two base64 characters of mf=, rt=, r=, of an h= digest (after
@@ -506,8 +506,8 @@ sub _dkim2_fold_ok {
     my $name = $st->{name};
     return 0 unless defined $name && length $name;
     return $name ne 's' if $prev eq ',';
-    # sig-set and hash-set allow FWS on either side of their ":"s (§8.9,
-    # §7.3; a base64string may begin or end with FWS).
+    # sig-set and hash-set allow FWS on either side of their ":"s (§10.9,
+    # §9.3; a base64string may begin or end with FWS).
     return 1 if ($name eq 's' || $name eq 'h') && ($prev eq ':' || $next eq ':');
     return 0 unless $prev =~ m{[A-Za-z0-9+/=]} && $next =~ m{[A-Za-z0-9+/=]};
     return 1 if $name eq 'mf' || $name eq 'rt' || $name eq 'r';
@@ -540,7 +540,7 @@ sub mi_version_tag {
     $header = $$header if ref($header);
     return unless defined $header;
     for my $part (split /;/, $header) {
-        next unless $part =~ /\A\s*m\s*=(.*)\z/si;    # tag names are case insignificant (§7)
+        next unless $part =~ /\A\s*m\s*=(.*)\z/si;    # tag names are case insignificant (§9)
         (my $v = $1) =~ s/\s//g;
         return $v;
     }
@@ -612,7 +612,7 @@ sub extract_domain {
 }
 
 # Wrap an address as an RFC5321 reverse-/forward-path for mf=/rt= (spec
-# §7.5/§7.6): angle brackets MUST be present. Empty/undef -> "<>"; an
+# §9.5/§9.6): angle brackets MUST be present. Empty/undef -> "<>"; an
 # already-bracketed value (incl. "<>") is returned unchanged.
 sub to_rfc5321_path {
     my ($addr) = @_;
@@ -749,7 +749,7 @@ sub relaxed_domain_match {
 #   signature   => the Signature object for the entry being signed/verified
 #   signing_header => optional folded header string (signer path)
 #
-# Per draft-ietf-dkim-dkim2-spec-06 Section 8.5:
+# Per draft-ietf-dkim-dkim2-spec-07 Section 10.5:
 #   1. All Message-Instance headers in ascending v= order
 #   2. All prior DKIM2-Signature headers in ascending i= order
 #   3. The incomplete DKIM2-Signature (with empty s=) being signed/verified
@@ -788,7 +788,7 @@ sub build_signing_input {
 # its deadline. That includes Reflector, Split and Validate, so the promise
 # in Mail::DKIM2's CONVENTIONS holds without exceptions (review R16).
 
-# A base64string (spec-06 §2.13), FWS already removed: base64 characters,
+# A base64string (-07 §2.13), FWS already removed: base64 characters,
 # padded with "=" to a multiple of four ("MUST be padded"). Internal.
 sub _is_base64string {
     my ($s) = @_;
@@ -811,7 +811,7 @@ sub _check_options {
 }
 
 # Parse and validate a key record (draft-ietf-dkim-dkim2-dns §3.2, §3.4.1;
-# spec-06 §11.5 says a Verifier MUST NOT use a malformed one). Returns the
+# -07 §14.5 says a Verifier MUST NOT use a malformed one). Returns the
 # key object, or (undef, $why) where $why completes "public key <selector>
 # ...": "has a syntax error", "has been revoked" or "has an unsupported key
 # type". The whole record is checked, not searched: a repeated tag (an empty
@@ -964,7 +964,7 @@ Those under L</CANONICALIZATION> and L</SIGNING INPUT> define bytes the
 spec defines and are of interest to anyone checking this implementation
 against another; the rest are conveniences.
 
-This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.
@@ -973,7 +973,7 @@ module here follows.
 
 =head2 DKIM2_DRAFT, DKIM2_REPO, DKIM2_DATE
 
-The spec revision implemented (C<ietf-dkim-dkim2-spec-06>), where the
+The spec revision implemented (C<ietf-dkim-dkim2-spec-07>), where the
 code lives, and the date this implementation's DKIM2 behaviour last
 changed. Emitted in X-DKIM2-Info debug headers
 (draft-gondwana-dkim2-debug-header).
@@ -993,7 +993,7 @@ three digits). See L</chain_number_error($field, $tag, $n)>.
 
 =head2 should_skip($header_name, [\@prefixes])
 
-True if the field is excluded from the header hash: the spec-06 section 4
+True if the field is excluded from the header hash: the -07 section 4
 list (C<Received>, C<Return-Path>, C<Message-Instance>,
 C<DKIM2-Signature>, C<DKIM-Signature>, C<Authentication-Results>, the ARC
 fields and others), any C<X-*> or C<Received-*> field, or a field whose

@@ -499,8 +499,8 @@ sub cb_eom {
         # allow_unsigned_mi: the message may carry a Message-Instance above the
         # top signature that is OURS to sign. A list manager on this host
         # (Mailman, Sympa) records its changes as a new m= and hands the
-        # message to us unsigned; the milter is the step that signs it. spec-06
-        # §11's "Message-Instance m=<x> is not signed" PERMERROR is a receiver's
+        # message to us unsigned; the milter is the step that signs it. -07
+        # §14's "Message-Instance m=<x> is not signed" PERMERROR is a receiver's
         # rule about mail on the wire, and applying it here refused to sign
         # every list post whose upstream chain was signed. The opt-out does not
         # loosen the chain gate: i=1..n still have to verify, and
@@ -1093,7 +1093,7 @@ The same goes for a message the Signer refuses, such as one whose From is
 not Authentic for the signing domain (-07 section 11). New in 0.23;
 before, every refused message went on.
 
-This program implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>.
+This program implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>.
 
 =head1 KEY DIRECTORY LAYOUT
 

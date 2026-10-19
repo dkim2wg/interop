@@ -2,7 +2,7 @@ package Mail::DKIM2::DSN;
 use strict;
 use warnings;
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use Email::MIME;
 use Carp;
@@ -15,7 +15,7 @@ use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 
 # Mail::DKIM2::DSN - propagate a DKIM2-signed DSN upstream (RFC 6522 DSN
-# structure; DKIM2 draft-06 §12.1.1 propagation procedure).
+# structure; DKIM2 -07 §16.2 propagation procedure).
 #
 # When a Forwarder receives a Delivery Status Notification for a message it
 # forwarded, it may propagate that DSN back towards the original sender. The
@@ -35,7 +35,7 @@ sub _top_sig {
 }
 
 # Remove the Forwarder's hop from an Email::MIME: the highest-sequence
-# DKIM2-Signature, and then any nd= signature left on top, since a §9.3
+# DKIM2-Signature, and then any nd= signature left on top, since a §12.3
 # bridge belongs to the hop it was made for and an nd= signature is never
 # valid as the top of a chain. (header_filter mishandles long folded values,
 # so filter on header_raw and re-set the survivors.)
@@ -106,7 +106,7 @@ sub _set_report_type {
 
 # Generate a fresh DKIM2-signed DSN for an inbound message, sent back to the
 # original sender (RFC 6522 three-part multipart/report structure; DKIM2
-# draft-06 §12.1). Used by the reflector-dsn address, which
+# -07 §16.1). Used by the reflector-dsn address, which
 # bounces every message regardless of whether it arrived DKIM2-signed.
 #
 # Args: Message (inbound message), Signer (MailFrom => '<>'), To (envelope
@@ -254,7 +254,7 @@ sub _parse_report {
 }
 
 # Return the LOWEST-sequence DKIM2-Signature (parsed) of an Email::MIME msg.
-# For a DSN that is the signature of the system that generated it: §12.1.1
+# For a DSN that is the signature of the system that generated it: §16.2
 # makes a DSN a new message with exactly one signature, and if that DSN is
 # itself forwarded onwards, i=1 is still its originator.
 sub _origin_sig {
@@ -265,7 +265,7 @@ sub _origin_sig {
     return $bottom;
 }
 
-# spec-06 §12.1.2 point 1: "The DSN's DKIM2-Signature will have a signing
+# -07 §16.3 point 1: "The DSN's DKIM2-Signature will have a signing
 # domain that is aligned with the recipient of the message that is being
 # returned. The recipient's address is located in the rt= tag of the last
 # (highest i= tag) DKIM2-Signature in the returned message."
@@ -275,7 +275,7 @@ sub _origin_sig {
 # verified -- anyone can write d=. authenticate() therefore verifies the DSN
 # as well, and only compares the d= it has proved.
 #
-# The direction is §9.4's: labels come off the left of the ADDRESS domain, so
+# The direction is §7.2's: labels come off the left of the ADDRESS domain, so
 # d= may be equal to or a parent of the rt= domain, never a child of it. A
 # system with a dedicated bounce domain signs as its organizational domain
 # (d=example.com) and puts the bounce address on the subdomain
@@ -305,7 +305,7 @@ sub _check_alignment {
                   . join(', ', @rts) . ')');
 }
 
-# Authenticate an inbound DSN before propagating it (spec-06 §12.1.2):
+# Authenticate an inbound DSN before propagating it (-07 §16.3):
 #
 #   * the returned original's DKIM2 chain must verify, from its headers alone
 #     when the DSN carries only headers (point 3);
@@ -315,7 +315,7 @@ sub _check_alignment {
 #   * deciding whether that top signature is one the CALLER made (d= and mf=)
 #     is left to the caller (point 2), since only it knows its own domains.
 #
-# A DSN that carries no DKIM2-Signature at all is not what §12.1.2 is about
+# A DSN that carries no DKIM2-Signature at all is not what §16.3 is about
 # ("When a system receives a DKIM2 signed DSN"), so it is reported as
 # dsn_result 'none' with alignment 'none' rather than failed: a caller that
 # wants to insist on a signed DSN can require them, and one still handling
@@ -390,9 +390,9 @@ sub authenticate {
     };
 }
 
-# Propagate a received DSN upstream (spec-06 §12.1.1).
+# Propagate a received DSN upstream (-07 §16.2).
 #
-# §12.1.2 is not optional here: "If the verification fails then the DSN MUST
+# §16.3 is not optional here: "If the verification fails then the DSN MUST
 # NOT be propagated any further", so propagate authenticates first and croaks
 # rather than re-signing a DSN it could not authenticate as ours. That needs a
 # PubkeyCallback; a caller that has authenticated already (or is exercising
@@ -415,7 +415,7 @@ sub propagate {
                 qw(PubkeyCallback Resolver),
         );
         unless ($auth->{ok}) {
-            croak "propagate: DSN did not authenticate (§12.1.2), not propagating: "
+            croak "propagate: DSN did not authenticate (§16.3), not propagating: "
                 . ($auth->{alignment} eq 'fail' ? $auth->{alignment_detail}
                                                 : ($auth->{details} // $auth->{result}));
         }
@@ -487,7 +487,7 @@ sub propagate {
     # 6. The propagated DSN is a NEW message: one Message-Instance (v=1) and one
     #    DKIM2-Signature, signed by the Forwarder with MAIL FROM <>. So the
     #    inbound DSN's OWN instance and signature go: they belong to the DSN we
-    #    received, which we have already authenticated (§12.1.2) and are not
+    #    received, which we have already authenticated (§16.3) and are not
     #    continuing. Leaving them makes the new instance m=2 on a chain whose
     #    i=1 is somebody else's, which is not a chain at all.
     $dsn->header_raw_set('Message-Instance');
@@ -553,7 +553,7 @@ and removing the signature and instance it added), then re-signs the whole
 DSN as a new message with MAIL FROM C<< <> >>, so it carries exactly one
 Message-Instance and one DKIM2-Signature.
 
-This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.

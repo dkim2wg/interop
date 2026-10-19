@@ -2,7 +2,7 @@ package Mail::DKIM2::Verifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
@@ -38,8 +38,8 @@ use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::BodyPlan;
 use Mail::DKIM2::HeaderPlan;
 
-# The signing algorithms this verifier implements (spec-06 §3.2, §3.3), and
-# the key class each needs. Every other s= item is ignored (§3.4).
+# The signing algorithms this verifier implements (-07 §3.2, §3.3), and
+# the key class each needs. Every other s= item is ignored (§3.5).
 my %IMPLEMENTED_ALG = (
     'rsa-sha256'     => 'Crypt::PK::RSA',
     'ed25519-sha256' => 'Crypt::PK::Ed25519',
@@ -55,7 +55,7 @@ sub _extract_mi_hash_sets {
     my ($raw) = @_;
     $raw =~ s/^[^:]+://;        # strip "Message-Instance:" field name
     $raw =~ s/\r?\n[ \t]/ /g;   # unfold continuation lines
-    return [] unless $raw =~ /(?:\A|;)\s*h\s*=([^;]*)/i;    # §7: any case
+    return [] unless $raw =~ /(?:\A|;)\s*h\s*=([^;]*)/i;    # §9: any case
     return Mail::DKIM2::MessageInstance::parse_hash_sets($1) // [];    # malformed: MI parse reports it
 }
 
@@ -86,7 +86,7 @@ sub skip_timestamp_check {
 }
 
 # allow_unsigned_mi: permit a Message-Instance whose m= is higher than any
-# DKIM2-Signature's m=, which spec-06 §11 otherwise makes a PERMERROR (see
+# DKIM2-Signature's m=, which -07 §14 otherwise makes a PERMERROR (see
 # finish_body).
 #
 # Set this on an OUTBOUND path. A Signer legitimately holds the new
@@ -129,7 +129,7 @@ sub mid_process {
 }
 
 # headers_only: the message being verified has no body, as with the returned
-# original in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures
+# original in a DSN's text/rfc822-headers part (-07 §16.3). Signatures
 # and the chain are checked as usual; of the Message-Instance content check,
 # only the header hash of the top instance can be, so only that is.
 sub headers_only {
@@ -274,7 +274,7 @@ sub finish_body {
     my %mi_map  = %{$self->{_mi_headers}};
     my %dk2_map = %{$self->{_dk2_headers}};
 
-    # spec-06 §11: "As a special case, there MUST NOT be a Message-Instance
+    # -07 §14: "As a special case, there MUST NOT be a Message-Instance
     # field with a higher m= value than occurs in any DKIM2-Signature field",
     # reported as "PERMERROR: Message-Instance m=<x> is not signed".
     #
@@ -306,7 +306,7 @@ sub finish_body {
         return;
     }
 
-    # spec-06 §7.3: reject a Message-Instance whose h= names the same
+    # -07 §9.3: reject a Message-Instance whose h= names the same
     # algorithm twice, before any DNS lookup or crypto work. Checked against
     # the LIST of hash-sets (via _extract_mi_hash_sets/parse_hash_sets), not
     # a hash keyed by algorithm, since a hash would let a later occurrence
@@ -336,7 +336,7 @@ sub finish_body {
     my $dk2_entry = $dk2_map{$max_i};
     my $signature = $dk2_entry->{sig};
 
-    # Local policy (stricter than spec-06 §"Check the Chain of Custody"): the
+    # Local policy (-07 sections 13.1, 14.4: a top nd= needs an out-of-band arrangement): the
     # highest-numbered DKIM2-Signature MUST NOT carry nd=. The only legitimate
     # nd= producer is reflector-brand-nd, which always emits the matching
     # higher-i= signature too, so nd= never appears on top.
@@ -395,7 +395,7 @@ sub finish_body {
     # own mf= against its d=.
     return unless $self->_verify_chain();
 
-    # §10.7: the cryptographic chain proves the MI headers are authentic, but
+    # §13.7: the cryptographic chain proves the MI headers are authentic, but
     # NOT that the current body/headers still match them. Walk the MI chain:
     # verify the top instance against the current content, then undo each
     # instance and verify the reconstructed content against the next one down,
@@ -403,7 +403,7 @@ sub finish_body {
     # unrecoverable) the walk continues over the header history only.
     #
     # MessageInstance::parse() dies (rather than returning an error) on a
-    # malformed r= payload -- e.g. the §11.2 invalid-JSON PERMERROR -- so
+    # malformed r= payload -- e.g. the §14.2 invalid-JSON PERMERROR -- so
     # this must run under eval or that die would propagate uncaught out of
     # finish_body() and crash the caller instead of yielding a clean
     # permerror result.
@@ -664,7 +664,7 @@ sub _verify_signature {
         signing_header => $sig_hdr_for_input,
     );
 
-    # draft-06: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
+    # -07 section 10: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked
     # via get_tag() (not the sequence/version/timestamp/domain accessors)
     # because those accessors just proxy get_tag() and would themselves
     # return undef for an absent tag anyway -- get_tag() is used directly
@@ -943,11 +943,11 @@ sub _outcome {
 # was given). Returns a Crypt::PK object, or undef when the answer positively
 # says there is no such record. Anything else -- a timeout, SERVFAIL, REFUSED,
 # a network error, or an errorstring this code has never seen -- dies with a
-# TEMPERROR: spec-06 §10 makes a DNS failure retryable, never a permanent "no
+# TEMPERROR: -07 §13 makes a DNS failure retryable, never a permanent "no
 # verifiable signature items", and emphatically never a 'fail', which reads as
 # a forged signature. _verify_signature's eval maps the die to temperror.
 # A record that is there but unusable dies with "PERMERROR: <why>" instead
-# (spec-06 §11.5): more than one TXT record, a record that does not validate
+# (-07 §14.5): more than one TXT record, a record that does not validate
 # (parse_dkim_key_record), revoked, or a key type that is not the signature
 # algorithm's -- mapped to permerror, with the selector.
 #
@@ -969,7 +969,7 @@ sub fetch_public_key {
         croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
     }
     # One TXT RR may hold several strings, joined with nothing between;
-    # several RRs for one selector are an error (spec-06 §11.5).
+    # several RRs for one selector are an error (-07 §14.5).
     my @txt = map { join '', $_->txtdata } grep { $_->type eq 'TXT' } $reply->answer;
     return unless @txt;
     croak "PERMERROR: has multiple records\n" if @txt > 1;
@@ -977,7 +977,7 @@ sub fetch_public_key {
     $why = 'algorithm mismatch'
         if $why && $why eq 'has an unsupported key type';
     croak "PERMERROR: $why\n" if $why;
-    # §8.9: the key's type must be the signature's algorithm's.
+    # §10.9: the key's type must be the signature's algorithm's.
     my $alg = $signature->algorithm($idx) // '';
     croak "PERMERROR: algorithm mismatch\n"
         if $IMPLEMENTED_ALG{$alg} && !$key->isa($IMPLEMENTED_ALG{$alg});
@@ -1192,7 +1192,7 @@ Mail::DKIM2::Verifier - Verify the DKIM2-Signature chain on a message
 Verifies every DKIM2-Signature on a message, not only the outermost: the
 chain must be complete (C<i=1> to C<i=N> with no gaps), each signature must
 verify over the headers that existed when it was made, consecutive hops must
-satisfy the chain-of-custody rules of spec-06 section 11.4, and the
+satisfy the chain-of-custody rules of -07 section 14.4, and the
 Message-Instance chain must undo cleanly back to the first instance, each
 one matching the content it describes. Past a null body Recipe (the previous
 body is gone) only the header history is checked. The outcome is a result and
@@ -1202,7 +1202,7 @@ Extends L<Mail::DKIM2::HeaderParser>, which provides C<PRINT>, C<CLOSE>,
 C<load> and the tie interface. A message with no DKIM2-Signature is decided
 from its headers alone and its body is not kept.
 
-This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.
@@ -1286,7 +1286,7 @@ the same.
 =item HeadersOnly
 
 The message has no body, as with the returned original in a DSN's
-C<text/rfc822-headers> part (spec-06 section 12.1.2). Signatures and the
+C<text/rfc822-headers> part (-07 section 16.3). Signatures and the
 chain are checked as usual; of the Message-Instance content check, only
 the top instance's header hash can be, so only that is.
 
@@ -1391,13 +1391,13 @@ C<Resolver>). Each name is looked up once per message. Returns a key
 object, undef when the answer positively says there is no such record
 (NXDOMAIN, NOERROR or NODATA), and dies with a C<TEMPERROR:> message for
 anything else, including a resolver error string it has never seen. The
-verifier maps that die to C<temperror>: spec-06 section 10 makes a DNS
+verifier maps that die to C<temperror>: -07 section 13 makes a DNS
 failure retryable, never a C<fail>, which would read as a forged
 signature.
 
 A record that is present but unusable dies with C<PERMERROR: E<lt>whyE<gt>>,
-which the verifier reports as C<permerror> naming the selector (spec-06
-section 11.5): C<has multiple records> (more than one TXT RR; several
+which the verifier reports as C<permerror> naming the selector (-07
+section 14.5): C<has multiple records> (more than one TXT RR; several
 strings in one RR are joined), C<has a syntax error> and C<has been
 revoked> (see L<Mail::DKIM2::Common/parse_dkim_key_record>), or
 C<algorithm mismatch> (a C<k=> that is not the signature algorithm's).

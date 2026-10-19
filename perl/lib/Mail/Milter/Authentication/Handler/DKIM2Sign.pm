@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Mail::Milter::Authentication::Pragmas;
 # ABSTRACT: Handler class for DKIM2 signing
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 use base 'Mail::Milter::Authentication::Handler';
 
 use Mail::DKIM2::Common qw(extract_mi_version strip_mi_versions load_private_key fold_header parse_mime
@@ -744,7 +744,7 @@ this hop originates the message or a Message-Instance it signs changed
 From (-07 section 11): the message then goes on unsigned, or, when it
 carries an upstream DKIM2-Signature, is rejected C<550 5.7.1> as above.
 
-This module implements draft-ietf-dkim-dkim2-spec-06; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.
@@ -763,7 +763,7 @@ origination and each copy carries a disclosed recipient set.  But at
 B<origination / submission>, a message with undisclosed (Bcc) recipients —
 envelope recipients that do not appear in the C<To:>/C<Cc:> headers — will have
 those Bcc addresses recorded in C<rt=>, visible to every recipient.  That
-B<leaks the Bcc>, contrary to draft-ietf-dkim-dkim2-spec-06, whose C<rt=>
+B<leaks the Bcc>, contrary to draft-ietf-dkim-dkim2-spec-07, whose C<rt=>
 description requires that Bcc recipients not be revealed to other recipients.
 
 The milter cannot fix this itself: the Postfix milter protocol modifies a

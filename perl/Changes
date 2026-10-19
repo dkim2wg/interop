@@ -1,5 +1,162 @@
 Revision history for Mail::DKIM2
 
+0.23    2026-10-18
+        Draft -07 (draft-ietf-dkim-dkim2-spec-07). The wire format and
+        many verdicts change: a message 0.22 passed may not pass, and the
+        other way round. DKIM2_DRAFT is ietf-dkim-dkim2-spec-07 and
+        DKIM2_DATE 2026-10-18. New prerequisite: URI (URI::_punycode).
+
+        Recipes (section 5)
+        - A Recipe literal that is valid UTF-8 (ASCII included) is a "d"
+          step; one that is not is a "u" step, canonical base64 of the
+          octets. The "b" step of 0.13 to 0.22 is gone: on the wire it is
+          now an unknown step key, and invalid. MessageInstance->calculate
+          emits "u" (the Sympa and Mailman handlers get it from there).
+        - Every step has exactly one key, "c", "d" or "u"; bare arrays and
+          strings as steps, an empty step, two keys, an unknown key, a "u"
+          string that is not canonical base64 (padding, zero pad bits, no
+          FWS), a decoded "u" or a "d" holding CR or LF, a "c" that is not
+          two integers of at least 1, "h": {}, "h": null, and a Recipe
+          object with neither "h" nor "b" are all "PERMERROR:
+          Message-Instance m=N contains invalid JSON". So, now, is every
+          Recipe that does not undo: a copy range past the end, out of
+          order or overlapping.
+        - JSON keys are matched without regard to case at every level
+          ("H", "Subject", "C" are read as "h", "subject", "c"); two keys
+          in one object that differ only in case are a duplicate, invalid
+          JSON. Keys are emitted in lower case.
+        - Common::decode_tag_json dies on JSON text that is not UTF-8 and
+          on a duplicate key in any case, and returns every string, keys
+          included, as UTF-8 octets (\u escapes too).
+        - A Message-Instance with no r= at m=2 or above is "no change", as
+          before; now tested.
+
+        Tag lists (section 8)
+        - An empty tag-spec before the end (";;", a leading ";") is a
+          syntax error in a Message-Instance and a DKIM2-Signature; one
+          trailing ";" is still allowed.
+        - A DKIM2-Signature tag repeated in any case is "syntax error" (was
+          "duplicate tag X not permitted"). A Message-Instance with no h=
+          is "tag=h missing".
+
+        Flags (sections 10.10, 12.5)
+        - donotmodify and donotexplode are no longer enforced: f= is a
+          list of flags with no verifier meaning.
+        - New Signer option Exploded. A signature carries f=exploded when
+          i > 1 and Exploded (or "exploded" in Flags) is set, or rt= holds
+          more than one address; never at i=1, where a caller-supplied
+          "exploded" is dropped. sign_for_recipient works the flag out
+          afresh for each recipient set (it builds a new Signature object).
+        - dkim2-milter and the DKIM2Sign handler treat an X-DKIM2-Exploded
+          header field (any value; Mailman and Sympa add one to each
+          distribution copy) as the request, and remove it before signing.
+          dkim2sign has --exploded.
+
+        Chain of Custody (sections 7, 14.4)
+        - Every signature is checked against the one below it: after an
+          nd= hop, d= must be that nd= ("i=P nd= does not match"); an nd=
+          hop or one with a null mf= must have its d= at or above a
+          previous rt= domain ("i=S d= does not match the rt= of i=P");
+          any other its mf= domain at or below one ("i=S mf= does not
+          match the rt= of i=P"). A null mf= used to fail outright, and an
+          nd= hop's d= was compared the other way round. Every non-null
+          mf= must be at or below its own d=, on every signature, not only
+          where it was checked before. All are PERMERROR (were "fail").
+        - nd= with mf= or rt= is "tag=mf (or rt) was unexpected" (was
+          "tag=nd was unexpected"); a missing rt= is "tag=rt missing".
+        - New Common::domain_of($addr): the domain of an address or path,
+          lowercased, one trailing dot off ("<A@Example.COM.>" is
+          example.com), and whether it is a domain literal.
+        - New Common::to_alabel($domain): non-ASCII labels as A-labels
+          (xn-- Punycode). Signers now record mf= and rt= domains as
+          A-labels.
+        - Common::relaxed_domain_match compares A-labels, ignores a
+          trailing dot, and never matches a domain literal; only its first
+          argument is shortened, as before.
+
+        From must be Authentic (sections 11, 12.4, 14.8)
+        - The Verifier checks the From at m=1 against i=1, and a From a
+          header Recipe at m=k changed against the lowest i= whose m= is k
+          or more: exactly one From field, one mailbox, its domain (as
+          A-labels, never a literal) at or below d=. Otherwise
+          "PERMERROR: DKIM2-Signature i=N matching From is not authentic".
+          Instances no signature covers (AllowUnsignedMI, the signer gate)
+          are not checked: the Signer checks those.
+        - The Signer refuses (result fail, details "From header field is
+          not Authentic for d=D") when the message has no DKIM2-Signature
+          yet, or a Message-Instance no signature covers names From, and
+          the From is not Authentic for its Domain.
+        - New Common::from_domain(@values) and Common::from_authentic($d,
+          @values); new HeaderPlan::values_at($m, $name).
+        - DSN->generate and DSN->propagate sign From
+          "Mail Delivery System <postmaster@" the signer's Domain ">".
+
+        Error strings and results (section 14)
+        - details() is the -07 human-readable string, state included:
+          "STATE: text", e.g. "PERMERROR: Message-Instance m=2 missing",
+          "FAIL: Message-Instance m=1 body hash sha256 mismatch". Checks
+          with no -07 string keep their words with a "PERMERROR: " prefix,
+          including Common's chain_length_error, chain_number_error (a
+          malformed number is now "Field tag=X syntax error"),
+          duplicate_number_error and UNKEYABLE_SIGNATURE_ERROR, and
+          Signature::check_duplicates. For pass and none, details() is
+          unchanged.
+        - Now permerror, were fail: a missing DKIM2-Signature or
+          Message-Instance (also one a signature covers that is not
+          there), every Chain of Custody failure, a timestamp out of range,
+          an unbracketed mf= or rt= ("syntax error"), no algorithm this
+          verifier implements, a Recipe that does not undo.
+        - Every signature item that can be checked is checked: all failing
+          is "FAIL: DKIM2-Signature i=N selector S incorrect signature",
+          some passing and some failing "FAIL: DKIM2-Signature i=N
+          signature S1 signature S2 failed" (one failing used to end the
+          check).
+        - "TEMPERROR: DKIM2-Signature i=N public key S could not be
+          fetched" loses its "(why)" suffix: the resolver's reason, and the
+          range behind a Recipe that does not undo, are in the new
+          Verifier::diagnostic().
+        - Every Message-Instance is parsed (syntax, h=, Recipe JSON) before
+          any signature is worked out, so a malformed one is reported as
+          such rather than as the signature it breaks.
+        - MessageInstance->verify and ->chain_verifies give the same
+          strings; chain_verifies gives the reason a Recipe did not undo as
+          a third value.
+
+        Timestamps (section 14.3)
+        - A t= more than a day ahead is "PERMERROR: DKIM2-Signature i=N
+          signature is from the future" (was five minutes, and fail); more
+          than 14 days old "signature expired" (was fail). New Common
+          constants FUTURE_LIMIT (86400) and EXPIRY (1209600).
+
+        DSNs and SMTP (sections 13, 16)
+        - New Verifier::provisionally_verified (section 13.1): the top
+          signature is correct and the top Message-Instance matches,
+          whatever else failed.
+        - New DSN->may_generate: never a DSN when the top mf= is <> or the
+          message is not Provisionally Verified. DSN->generate croaks
+          unless it may (new options PubkeyCallback, Resolver,
+          SkipTimestampCheck), and no longer falls back to the From header
+          field for the destination. DSN->propagate croaks rather than
+          send towards a null mf=.
+        - Reflector::generate_dsn and dkim2-reflector.pl send a DSN only
+          for a Provisionally Verified message, and log why not.
+        - dkim2-milter and the DKIM2Sign handler reject with 550 5.7.1 and
+          the reason (smfi_setreply, reject_mail) a message carrying an
+          upstream DKIM2-Signature that the gate or the Signer refuses to
+          sign; such a message used to be sent on unsigned. One with no
+          signature still goes on unsigned, this host's instances removed.
+
+        Reflector (section 11)
+        - When it originates the message (no DKIM2 chain to continue) or
+          changes it (any mode but raw), From becomes "<sender's name or
+          address> via DKIM2 reflector" <reflector-<mode>@<domain>>, the
+          sender's From kept as Reply-To if there is none. Originating
+          without a DKIM2-Signature to continue drops the inbound
+          Message-Instance and starts again at m=1.
+
+        Validate.pm reports Chain of Custody by the -07 rules and the same
+        strings, and grades a timestamp over a day ahead as "future".
+
 0.22    2026-10-18
         - Message hashes (every Message-Instance's header and body hashes)
           go through the new Mail::DKIM2::Digest: OpenSSL's SHA-2, through
