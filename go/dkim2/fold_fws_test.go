@@ -101,12 +101,12 @@ func TestParseFoldedFlagList(t *testing.T) {
 		" mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+;" +
 		" rt=PHJjcHRAdGVzdDIuZGtpbTIuY29tPg==;" +
 		" s=ed25519:ed25519-sha256:AAAA;" +
-		" f=feedback,\r\n\tdonotmodify;\r\n"
+		" f=feedback,\r\n\texploded;\r\n"
 	sig, err := parseSig(raw)
 	if err != nil {
 		t.Fatalf("parseSig: %v", err)
 	}
-	want := []string{"feedback", "donotmodify"}
+	want := []string{"feedback", "exploded"}
 	if len(sig.Flags) != len(want) {
 		t.Fatalf("Flags = %q, want %q", sig.Flags, want)
 	}

@@ -479,7 +479,7 @@ func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
 // buildIncomplete builds a fresh incomplete DKIM2-Signature header (s= values
 // are empty per §8.5), for use as the signing input when creating a new sig.
 func buildIncomplete(seq, miVer int, ts int64, domain, mailFrom string,
-	rcptTo []string, nextDomain, selector, algorithm string) string {
+	rcptTo []string, nextDomain string, flags []string, selector, algorithm string) string {
 	// draft-06 §9.3: an imaginary-hop signature carries nd= instead of mf=/rt=.
 	var chain string
 	if nextDomain != "" {
@@ -492,8 +492,35 @@ func buildIncomplete(seq, miVer int, ts int64, domain, mailFrom string,
 		}
 		chain = fmt.Sprintf("mf=%s; rt=%s", mf, strings.Join(rtParts, ","))
 	}
+	// f= (§10.10) goes before s=, so the s= placeholder stays last.
+	if len(flags) > 0 {
+		chain += "; f=" + strings.Join(flags, ",")
+	}
 	return fmt.Sprintf(
 		"DKIM2-Signature: i=%d; m=%d; t=%d; d=%s; %s; s=%s:%s:;",
 		seq, miVer, ts, domain, chain, selector, algorithm,
 	)
+}
+
+// signFlags is the f= list a new signature at sequence seq carries (§10.10,
+// §12.5): the caller's flags, each once, plus "exploded" when this hop
+// sends copies to more than one address (requested, or rt= holds more than
+// one); "exploded" is never set at i=1.
+func signFlags(seq int, opts SignOptions) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(f string) {
+		if f == "" || seen[f] || (f == "exploded" && seq == 1) {
+			return
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	for _, f := range opts.Flags {
+		add(strings.TrimSpace(f))
+	}
+	if opts.Exploded || len(opts.RcptTo) > 1 {
+		add("exploded")
+	}
+	return out
 }

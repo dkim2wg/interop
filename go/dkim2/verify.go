@@ -333,48 +333,6 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		}
 	}
 
-	// §10.8 SHOULD: reject if a donotmodify or donotexplode request was violated
-	{
-		miByVersion := make(map[int]*MessageInstance)
-		for _, raw := range miHeaders {
-			mi, err := parseMI(raw)
-			if err == nil {
-				miByVersion[mi.Version] = mi
-			}
-		}
-		for _, raw := range sigHeaders {
-			sig, err := parseSig(raw)
-			if err != nil {
-				continue
-			}
-			for _, flag := range sig.Flags {
-				switch flag {
-				case "donotmodify":
-					m := sig.MIVersion
-					cur, hasCur := miByVersion[m]
-					next, hasNext := miByVersion[m+1]
-					if hasCur && hasNext {
-						if !hashSetsEqual(cur.Hashes, next.Hashes) {
-							return nil, fmt.Errorf("i=%d: message modified despite donotmodify request", sig.Sequence)
-						}
-					}
-				case "donotexplode":
-					for _, raw2 := range sigHeaders {
-						sig2, err2 := parseSig(raw2)
-						if err2 != nil || sig2.Sequence <= sig.Sequence {
-							continue
-						}
-						for _, f2 := range sig2.Flags {
-							if f2 == "exploded" {
-								return nil, fmt.Errorf("i=%d: message exploded despite donotexplode request at i=%d", sig2.Sequence, sig.Sequence)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
 	skipTS := len(opts) > 0 && opts[0].SkipTimestampCheck
 	now := time.Now().Unix()
 
