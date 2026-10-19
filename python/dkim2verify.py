@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 verifier - draft-ietf-dkim-dkim2-spec-06
+DKIM2 verifier - draft-ietf-dkim-dkim2-spec-07
 
 Takes a signed email and verifies its DKIM2 signatures using public keys
 from a dns.json file or DNS TXT records (dkim2dns; looked up in the
@@ -47,6 +47,7 @@ from dkim2sign import (
     _tag_names,
     _get_version_from_mi,
     _get_seq_from_sig,
+    _get_mi_from_sig,
     _sig_has_valid_i,
     _is_ascii_digits,
     chain_range_error,
@@ -64,6 +65,9 @@ from dkim2undo import (
 )
 from dkim2plan import BodyPass, plan_chain, recipe_actions
 from dkim2dns import DNSTempError, LiveDNS
+from dkim2domain import (
+    addr_domain, from_is_authentic, relaxed_match, signing_domain,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +80,7 @@ def load_dns_json(path: str) -> dict:
 
 
 class KeyRecordError(Exception):
-    """A key record that exists but MUST NOT be used (spec-06 §11.5).
+    """A key record that exists but MUST NOT be used (-07 §14.5).
 
     `what` completes "public key <selector> ...": "has multiple records",
     "has a syntax error", "has been revoked" or "algorithm mismatch".
@@ -91,7 +95,7 @@ _KEY_TAG_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 _WSP = " \t\r\n"
 # RFC 6376 §3.2 tag-value: VALCHARs, with WSP/FWS only between them. Every
 # value is checked, including tags that are otherwise ignored, so a NUL, DEL
-# or 8-bit byte anywhere makes the record a syntax error (spec-06 §11.5).
+# or 8-bit byte anywhere makes the record a syntax error (-07 §14.5).
 _KEY_TAG_VALUE = re.compile(r"(?:[\x21-\x3a\x3c-\x7e]+(?:[ \t\r\n]+[\x21-\x3a\x3c-\x7e]+)*)?")
 
 
@@ -166,7 +170,7 @@ def _parse_key_txt(txt: str):
     tags = parse_key_record(txt)
     if tags is None or "p" not in tags:
         raise KeyRecordError("has a syntax error")
-    # h= (retired), n=, s=, t= and unknown tags are ignored (spec-06 §11.5).
+    # h= (retired), n=, s=, t= and unknown tags are ignored (-07 §14.5).
     p = _strip_fws(tags["p"])
     if p == "":
         raise KeyRecordError("has been revoked")
@@ -196,19 +200,6 @@ def _parse_key_txt(txt: str):
 # Verification
 # ---------------------------------------------------------------------------
 
-def _domain_from_addr(addr: str) -> str:
-    """Extract lowercase domain from '<local@domain>' or 'local@domain'."""
-    addr = addr.strip().strip("<>")
-    at = addr.rfind("@")
-    return addr[at + 1:].lower() if at >= 0 else addr.lower()
-
-
-def _relaxed_domain_match(d1: str, d2: str) -> bool:
-    """Return True if d1 equals d2 or d1 is a subdomain of d2."""
-    d1, d2 = d1.lower(), d2.lower()
-    return d1 == d2 or d1.endswith("." + d2)
-
-
 def _envelope_addr_equal(a: str, b: str) -> bool:
     """Exact envelope-address match per spec "Check the Chain of Custody":
     domains are compared case-insensitively, local-parts case-sensitively.
@@ -223,14 +214,14 @@ def _envelope_addr_equal(a: str, b: str) -> bool:
 
 
 def _bracket_errors(sig_headers: list[str]) -> list[str]:
-    """Spec §7.5/§7.6: every present mf= and rt= entry MUST be a bracketed
+    """-07 §10.5/§10.6: every present mf= and rt= entry MUST be a bracketed
     RFC5321 path (matches <...>, incl. <>). nd= hops carry no mf/rt and are
     skipped (checked implicitly since their mf=/rt= tags are absent)."""
     errs = []
     for sig_hdr in sig_headers:
         value = _get_header_value(sig_hdr)
         i_val = _extract_tag(value, "i")
-        for tag, section in (("mf", "5"), ("rt", "6")):
+        for tag in ("mf", "rt"):
             raw = _extract_tag(value, tag)
             if not raw:
                 continue
@@ -240,81 +231,153 @@ def _bracket_errors(sig_headers: list[str]) -> list[str]:
                     continue
                 dec = base64.b64decode(part).decode("utf-8", errors="surrogateescape")
                 if not (dec.startswith("<") and dec.endswith(">")):
-                    errs.append(
-                        f"DKIM2-Signature i={i_val}: {tag}= is not a bracketed "
-                        f"RFC5321 path (spec 7.{section})"
-                    )
+                    # -07 §10.5/§10.6: not a bracketed RFC5321 path.
+                    errs.append(f"PERMERROR: DKIM2-Signature i={i_val} syntax error")
     return errs
 
 
+def _decode_path(b64val: str) -> str:
+    """A decoded mf= or rt= entry ('' if it is not base64 at all)."""
+    try:
+        return base64.b64decode(_strip_fws(b64val)).decode(
+            "utf-8", errors="surrogateescape")
+    except (binascii.Error, ValueError):
+        return ""
+
+
+def _rt_domains(sig_value: str) -> list[str]:
+    """The A-label domains of a signature's rt= addresses (literals left
+    out: a domain literal never relaxed-matches anything)."""
+    raw = _extract_tag(sig_value, "rt") or ""
+    out = []
+    for part in raw.split(","):
+        if part.strip():
+            dom = addr_domain(_decode_path(part))
+            if dom is not None:
+                out.append(dom)
+    return out
+
+
 def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
-    """Validate §8.2/§11.4 Chain of Custody across consecutive signatures.
+    """draft -07 §7.1 item 1, §14.4: the Chain of Custody, as the contract's
+    C4 steps.  Every failure is a PERMERROR.
 
-    For each adjacent pair (ascending i=), either the lower signature carries
-    nd= (which MUST exactly match the higher signature's d=), or the higher
-    signature's mf= domain MUST relaxed-match an rt= domain of the lower one.
+    For every signature S with a non-null mf= and no nd=, the mf= domain
+    must relaxed-match S's d=.  Then for each S above i=1, with P the
+    signature below it:
 
-    A §9.3 bridge -- an nd= signature after a real hop, made by a Forwarder to
-    span the gap between the domain it received the message at and the domain
-    it sends from -- has no mf=, so for it the value that MUST relaxed-match
-    the lower hop's rt= is its d=: the key §9.3 requires it to be made with.
+    1. P has nd=: S's d= must equal it (ignoring case); nothing else is
+       checked for S.
+    2. S has nd= (a §12.3 bridge, which has no mf=) or S's mf= is <>: some
+       rt= domain of P must relaxed-match S's d=.
+    3. Otherwise S's mf= domain must relaxed-match some rt= domain of P.
+
+    Relaxed matching strips labels from the left of its first argument only
+    (§7.2), and a domain literal never matches.
     """
     errors = []
-    for k in range(1, len(sig_by_seq)):
-        cur_val = _get_header_value(sig_by_seq[k])
-        prev_val = _get_header_value(sig_by_seq[k - 1])
-        cur_i = _extract_tag(cur_val, "i")
-        prev_i = _extract_tag(prev_val, "i")
-        prev_nd = _extract_tag(prev_val, "nd")
-        if prev_nd:
-            # draft-06 §11.4: nd= MUST exactly match the next sig's d=.
-            cur_d = _extract_tag(cur_val, "d") or ""
-            if prev_nd.lower() != cur_d.lower():
-                errors.append(
-                    f"DKIM2-Signature i={prev_i} MAIL nd= does not match"
-                )
-            continue
-        cur_mf_b64 = _extract_tag(cur_val, "mf")
-        prev_rt_raw = _extract_tag(prev_val, "rt")
-        if not prev_rt_raw:
-            errors.append(
-                f"DKIM2-Signature i={prev_i} RCPT TO <> did not match"
-            )
-            continue
-        prev_rts = [
-            base64.b64decode(rt.strip()).decode("utf-8", errors="surrogateescape")
-            for rt in prev_rt_raw.split(",") if rt.strip()
-        ]
+    for k, sig in enumerate(sig_by_seq):
+        val = _get_header_value(sig)
+        i_val = _extract_tag(val, "i")
+        raw_d = _extract_tag(val, "d") or ""
+        d = signing_domain(raw_d)
+        nd = _extract_tag(val, "nd")
+        mf_raw = _extract_tag(val, "mf")
+        mf = _decode_path(mf_raw) if mf_raw else None
+        null_mf = mf is not None and mf.strip() == "<>"
 
-        cur_nd = _extract_tag(cur_val, "nd")
-        if cur_nd:
-            cur_d = _extract_tag(cur_val, "d") or ""
-            if not any(_relaxed_domain_match(cur_d, _domain_from_addr(rt))
-                       for rt in prev_rts):
-                errors.append(
-                    f"DKIM2-Signature i={cur_i} nd= hop d={cur_d} did not match RCPT TO"
-                )
-            continue
+        if k > 0:
+            prev = _get_header_value(sig_by_seq[k - 1])
+            prev_i = _extract_tag(prev, "i")
+            prev_nd = _extract_tag(prev, "nd")
+            if prev_nd:
+                if prev_nd.strip().lower() != raw_d.strip().lower():
+                    errors.append(
+                        f"PERMERROR: DKIM2-Signature i={prev_i} nd= does not match")
+            elif nd or null_mf:
+                if not any(relaxed_match(rt, d) for rt in _rt_domains(prev)):
+                    errors.append(
+                        f"PERMERROR: DKIM2-Signature i={i_val} d= does not "
+                        f"match the rt= of i={prev_i}")
+            elif mf is not None:
+                mf_d = addr_domain(mf)
+                if mf_d is None or not any(relaxed_match(mf_d, rt)
+                                           for rt in _rt_domains(prev)):
+                    errors.append(
+                        f"PERMERROR: DKIM2-Signature i={i_val} mf= does not "
+                        f"match the rt= of i={prev_i}")
 
-        if not cur_mf_b64:
-            errors.append(
-                f"DKIM2-Signature i={cur_i} MAIL FROM <> did not match"
-            )
+        if mf is not None and not null_mf and not nd:
+            mf_d = addr_domain(mf)
+            if mf_d is None or not relaxed_match(mf_d, d):
+                errors.append(
+                    f"PERMERROR: DKIM2-Signature i={i_val} MAIL FROM and d= "
+                    f"do not match")
+    return errors
+
+
+def _from_fields(headers: list[bytes]) -> list[bytes]:
+    return [h for h in headers if _header_name(h) == b"from"]
+
+
+def _from_authentic_errors(content_headers: list[bytes],
+                           mi_by_version: dict[int, str],
+                           sig_by_seq: list[str]) -> list[str]:
+    """draft -07 §11, §14.8: every From the chain shows must be Authentic.
+
+    State k is the header fields as they were when Message-Instance m=k was
+    the highest; state k-1 is state k with m=k's header Recipe undone.  The
+    pairs checked are (From at state 1, signature i=1) and, for each k >= 2
+    whose header Recipe has a "from" key, (From at state k, the lowest i
+    whose m= >= k).  A pair with no such signature is skipped: either the
+    instance is reported as not signed, or (the signer gate's outbound mode)
+    it is the one about to be signed, and the signer checks it itself.  If a
+    header Recipe cannot be undone the walk stops there: that is reported
+    as invalid JSON already.
+    """
+    sigs = []
+    for h in sig_by_seq:
+        val = _get_header_value(h)
+        sigs.append((_get_seq_from_sig(h), _get_mi_from_sig(h) or 0,
+                     _extract_tag(val, "d") or ""))
+
+    def check(headers, i_val, d):
+        if not from_is_authentic(_from_fields(headers), d):
+            msg = f"PERMERROR: DKIM2-Signature i={i_val} matching From is not authentic"
+            if msg not in errors:
+                errors.append(msg)
+
+    errors: list[str] = []
+    headers = list(content_headers)
+    for version in sorted(mi_by_version, reverse=True):
+        if version == 1:
+            for i_val, _, d in sigs:
+                if i_val == 1:
+                    check(headers, i_val, d)
+            break
+        try:
+            recipes = decode_recipes(mi_by_version[version])
+        except (ValueError, TypeError):
+            break
+        h = recipes.get("h") if isinstance(recipes, dict) else None
+        if not isinstance(h, dict) or not h:
             continue
-        cur_mf = base64.b64decode(cur_mf_b64).decode("utf-8", errors="surrogateescape")
-        cur_mf_domain = _domain_from_addr(cur_mf)
-        if not any(_relaxed_domain_match(cur_mf_domain, _domain_from_addr(rt))
-                   for rt in prev_rts):
-            errors.append(
-                f"DKIM2-Signature i={cur_i} MAIL FROM {cur_mf} did not match"
-            )
+        if "from" in h:
+            covering = [s for s in sigs if s[1] >= version]
+            if covering:
+                i_val, _, d = min(covering)
+                check(headers, i_val, d)
+        try:
+            headers = reconstruct_headers(headers, h)
+        except ValueError:
+            break
     return errors
 
 
 def _strip_fws(s: str) -> str:
     """Remove folding whitespace from a tag value.
 
-    Per spec-06 §2.12 folding whitespace may appear inside a base64 string or
+    Per -07 §2.12 folding whitespace may appear inside a base64 string or
     around the colons of an s= item, and MUST be ignored when the value is
     used.  Selectors, algorithm names and base64 never contain significant
     whitespace, so removing all of it is safe.
@@ -325,7 +388,7 @@ def _strip_fws(s: str) -> str:
 _FWS_TABLE = {ord(c): None for c in " \t\r\n"}
 
 
-# spec-06 §7 / §8 tag-list syntax, checked over the whole field (follow-up
+# -07 §8 tag-list syntax, checked over the whole field (follow-up
 # review F.1). FWS is any WSP, with each CRLF followed by WSP; written so it
 # cannot be split ambiguously (no backtracking blow-up on a bad field).
 _FWS_RE = r"[ \t]*(?:\r\n[ \t]+)*"
@@ -334,24 +397,29 @@ _TAG_SPEC = re.compile(
     rf"{_FWS_RE}[A-Za-z][A-Za-z0-9_]*{_FWS_RE}={_FWS_RE}"
     rf"(?:{_X_TAG_CHAR}(?:{_FWS_RE}{_X_TAG_CHAR})*)?{_FWS_RE}")
 _EMPTY_SPEC = re.compile(_FWS_RE)
-# §3.5 selector (labels joined by '.'); §8.9 sig-name and §7.3 hash-name.
+# §3.6 selector (labels joined by '.'); §10.9 sig-name and §9.3 hash-name.
 # No FWS inside either: "rsa- sha256" is not normalised to a known name.
 _SELECTOR_RE = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*")
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def _tag_list_ok(value: str) -> bool:
-    """Every ';'-separated fragment is empty or a well-formed tag-spec.
-
-    A junk fragment, a bad tag name or a NUL/DEL/8-bit byte in any value
-    (known or unknown tag) makes the whole field a syntax error; it is never
-    skipped so the rest can be verified."""
-    return all(_EMPTY_SPEC.fullmatch(f) or _TAG_SPEC.fullmatch(f)
-               for f in value.split(";"))
+    """draft -07 §8 tag-list: tag-specs separated by ';', with an optional
+    ';' after the last one.  So every fragment but a final one must be a
+    well-formed tag-spec: an empty fragment (";;", or a leading ';') is a
+    syntax error, as is a junk fragment, a bad tag name or a NUL/DEL/8-bit
+    byte in any value (known or unknown tag).  The field is never skipped so
+    the rest can be verified."""
+    if _EMPTY_SPEC.fullmatch(value):
+        return True     # no tags at all: reported as missing tags
+    frags = value.split(";")
+    if len(frags) > 1 and _EMPTY_SPEC.fullmatch(frags[-1]):
+        frags.pop()
+    return all(_TAG_SPEC.fullmatch(f) for f in frags)
 
 
 def _sig_syntax_ok(value: str) -> bool:
-    """§8 tag-list plus §8.9 s= items: each exactly selector:algorithm:value.
+    """§8 tag-list plus §10.9 s= items: each exactly selector:algorithm:value.
 
     FWS is allowed (trimmed) around the ',' and ':'s and inside the base64
     value, but not inside the selector or algorithm name."""
@@ -369,7 +437,7 @@ def _sig_syntax_ok(value: str) -> bool:
 
 
 def _mi_syntax_ok(value: str) -> bool:
-    """§7 tag-list plus §7.3 h= hash-sets: each exactly name:hash:hash, with
+    """§8 tag-list plus §9.3 h= hash-sets: each exactly name:hash:hash, with
     no FWS inside the hash name and both digests present."""
     if not _tag_list_ok(value):
         return False
@@ -385,55 +453,12 @@ def _mi_syntax_ok(value: str) -> bool:
 
 
 def _sig_flags(sig_hdr: str) -> list[str]:
-    """Return the f= flag list of a DKIM2-Signature header (draft-06 §8.10)."""
+    """Return the f= flag list of a DKIM2-Signature header (-07 §10.10).
+
+    No flag is enforced by the verifier: -07 removed donotmodify and
+    donotexplode, and "exploded" is information for the receiver."""
     f = _extract_tag(_get_header_value(sig_hdr), "f")
     return [x.strip() for x in f.split(",") if x.strip()] if f else []
-
-
-def _flag_enforcement_errors(sig_by_seq: list[str], mi_headers: list[str]) -> list[str]:
-    """Enforce the donotmodify/donotexplode flags (draft-06 §11.8).
-
-    feedback/feedhere are recognised but carry no verifier enforcement.
-    """
-    errors = []
-    # Map MI version -> (header_hash, body_hash)
-    mi_hash = {}
-    for mi in mi_headers:
-        val = _get_header_value(mi)
-        m = _extract_tag(val, "m")
-        h = _extract_tag(val, "h")
-        if m is None or h is None:
-            continue
-        parts = h.split(":")
-        if len(parts) >= 3:
-            mi_hash[int(m)] = (parts[1], parts[2])
-
-    sigs = []
-    for s in sig_by_seq:
-        val = _get_header_value(s)
-        sigs.append({
-            "i": _extract_tag(val, "i"),
-            "m": _extract_tag(val, "m"),
-            "flags": _sig_flags(s),
-        })
-
-    for p in sigs:
-        if "donotmodify" in p["flags"] and p["m"] is not None:
-            m = int(p["m"])
-            if m in mi_hash and (m + 1) in mi_hash and mi_hash[m] != mi_hash[m + 1]:
-                errors.append(
-                    f"DKIM2-Signature i={p['i']}: message modified despite "
-                    f"donotmodify request"
-                )
-        if "donotexplode" in p["flags"] and p["i"] is not None:
-            for q in sigs:
-                if (q["i"] is not None and int(q["i"]) > int(p["i"])
-                        and "exploded" in q["flags"]):
-                    errors.append(
-                        f"DKIM2-Signature i={q['i']}: message exploded despite "
-                        f"donotexplode request at i={p['i']}"
-                    )
-    return errors
 
 
 def extract_mi_headers(headers: list[bytes]) -> list[str]:
@@ -474,17 +499,18 @@ def _b64decode_strict(val: str) -> bytes | None:
 
 
 def _malformed_recipe_error(m_val) -> str:
-    """§11.2-style text for a Recipe that parses as JSON but cannot be applied."""
-    return f"PERMERROR Message-Instance m={m_val} has a malformed Recipe"
+    """§14.2 text for a Recipe that parses as JSON but cannot be applied:
+    it breaks the §5 schema."""
+    return f"PERMERROR: Message-Instance m={m_val} contains invalid JSON"
 
 
 def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
-    """Parse a spec-06 §7.3 h= value into (alg, header_hash, body_hash) triples.
+    """Parse a -07 §9.3 h= value into (alg, header_hash, body_hash) triples.
 
     Hash names are lowercased: RFC 5234 makes ABNF quoted strings
     case-insensitive, so "SHA256" is a syntactically valid hash-name.
 
-    Per spec-06 §2.12, folding whitespace may appear inside a base64 string
+    Per -07 §2.12, folding whitespace may appear inside a base64 string
     (or around the colons) and MUST be ignored when the value is used, so
     every field is run through _strip_fws rather than a bare .strip().
     """
@@ -498,12 +524,12 @@ def parse_hash_sets(h_tag: str) -> list[tuple[str, str, str]]:
 
 
 def _mi_duplicate_tag_error(mi_hdr: str) -> str | None:
-    """spec-06 §7: tag identifiers are case insignificant and there MUST be
+    """-07 §8: tag identifiers are case insignificant and there MUST be
     only one of each kind, so `h=..; H=..` or `m=1; M=1` is a syntax error."""
     names = _tag_names(_get_header_value(mi_hdr))  # lowercased
     if len(set(names)) != len(names):
         m_val = _extract_tag(_get_header_value(mi_hdr), "m")
-        return f"PERMERROR Message-Instance m={m_val} syntax error"
+        return f"PERMERROR: Message-Instance m={m_val} syntax error"
     return None
 
 
@@ -514,7 +540,7 @@ def verify_message_instance(mi_hdr: str, headers: list[bytes], body: bytes,
     Returns a list of errors (empty = success).
 
     With headers_only set, the message being checked has no body -- as with the
-    returned original in a DSN's text/rfc822-headers part (spec-06 §12.1.2) --
+    returned original in a DSN's text/rfc822-headers part (-07 §16.3) --
     so only the header hash is compared and body is ignored.
     """
     return check_message_instance(
@@ -535,10 +561,10 @@ def check_message_instance(mi_hdr: str, header_hash, body_hash,
     if dup:
         return [dup]
 
-    # §11.2: a malformed r= payload is reported specifically, regardless of
+    # §14.2: a malformed r= payload is reported specifically, regardless of
     # what else is wrong with this Message-Instance header. Two distinct
     # failure kinds, kept distinct rather than both being called "invalid
-    # JSON": a bad base64 r= value never even reaches JSON parsing -- §11.2
+    # JSON": a bad base64 r= value never even reaches JSON parsing -- §14.2
     # lists this as a plain syntax error -- while a JSON parse failure is
     # the more specific "contains invalid JSON" case.
     r_tag = _extract_tag(value, "r")
@@ -550,7 +576,7 @@ def check_message_instance(mi_hdr: str, header_hash, body_hash,
         r_bytes = _b64decode_strict(re.sub(r"\s+", "", r_tag))
         if r_bytes is None:
             errors.append(
-                f"PERMERROR Message-Instance m={m_val} syntax error"
+                f"PERMERROR: Message-Instance m={m_val} syntax error"
             )
         else:
             try:
@@ -561,17 +587,16 @@ def check_message_instance(mi_hdr: str, header_hash, body_hash,
                 # literals as raw octets; a Latin-1 or EUC-KR line makes the
                 # whole JSON undecodable). Both are ValueErrors; catching only
                 # the former let the latter escape as a traceback.
-                errors.append(
-                    f"PERMERROR Message-Instance m={m_val} contains invalid JSON"
-                )
+                errors.append(_malformed_recipe_error(m_val))
             else:
-                # Valid JSON that is not a well-formed Recipe (§5: a "c"
-                # that is not two integers, not 1 <= start <= end, or that
-                # does not ascend past the previous "c"; a "b" that is not
-                # base64; a literal carrying CR or LF) is a third, distinct
-                # failure. This is the message-independent part; the
-                # per-list upper bound is checked where the Recipe is
-                # applied (full-chain undo) and reported under the same text.
+                # Valid JSON that breaks the §5 schema (a step without
+                # exactly one of "c"/"d"/"u"; a "c" that is not two
+                # integers, not 1 <= start <= end, or that does not ascend
+                # past the previous "c"; a "u" that is not canonical base64;
+                # a literal carrying CR or LF; "h": {}) is invalid JSON too.
+                # This is the message-independent part; the per-list upper
+                # bound is checked where the Recipe is applied (full-chain
+                # undo) and reported under the same text.
                 try:
                     validate_recipes(recipes)
                 except MalformedRecipe:
@@ -579,87 +604,81 @@ def check_message_instance(mi_hdr: str, header_hash, body_hash,
 
     h_tag = _extract_tag(value, "h")
     if not h_tag:
-        return errors + ["Message-Instance: missing h= tag"]
+        return errors + [f"PERMERROR: Message-Instance m={m_val} tag=h missing"]
 
     sets = parse_hash_sets(h_tag)
     if not sets:
-        return errors + [f"Message-Instance: invalid h= format (got {h_tag!r})"]
+        return errors + [f"PERMERROR: Message-Instance m={m_val} syntax error"]
 
-    # spec-06 §7.3: an algorithm MUST NOT be present more than once.
+    # -07 §9.3: an algorithm MUST NOT be present more than once.
     seen = set()
     for alg, _, _ in sets:
         if alg in seen:
-            return errors + [f"PERMERROR Message-Instance m={m_val} has a duplicate hash algorithm"]
+            return errors + [f"PERMERROR: Message-Instance m={m_val} has a duplicate hash algorithm"]
         seen.add(alg)
 
-    # §3.4: ignore hash-sets naming algorithms we do not implement, but an MI
+    # §3.5: ignore hash-sets naming algorithms we do not implement, but an MI
     # with no implemented hash-set cannot be verified and must fail closed.
     usable = [s for s in sets if s[0] in HASH_ALGS]
     if not usable:
-        return errors + [f"Message-Instance m={m_val} no supported hash algorithm"]
+        return errors + [f"PERMERROR: Message-Instance m={m_val} has no supported "
+                         f"hash algorithm"]
 
-    # All implemented hash-sets must pass (mirrors §11.6 for signatures). A
-    # malformed base64 value in one hash-set is itself a PERMERROR (§11.2:
+    # All implemented hash-sets must pass (mirrors §14.6 for signatures). A
+    # malformed base64 value in one hash-set is itself a PERMERROR (§14.2:
     # verifiers MUST meticulously validate format and values); it does not
     # abort the whole MI check, mirroring the non-short-circuit "all usable
     # hash-sets are checked" behaviour of a hash mismatch below.
     for alg, h_val, b_val in usable:
         h_actual = _b64decode_strict(h_val)
         if h_actual is None:
-            errors.append(
-                f"PERMERROR Message-Instance m={m_val} {alg} header hash is "
-                f"not valid base64 (got {h_val!r})"
-            )
+            errors.append(f"PERMERROR: Message-Instance m={m_val} syntax error")
         else:
             expected = header_hash(alg)
             if expected != h_actual:
                 errors.append(
-                    f"Message-Instance: {alg} header hash mismatch\n"
-                    f"  expected: {b64(expected)}\n"
-                    f"  got:      {h_val}"
-                )
+                    f"FAIL: Message-Instance m={m_val} header hash {alg} mismatch")
 
         if headers_only:
             continue
 
         b_actual = _b64decode_strict(b_val)
         if b_actual is None:
-            errors.append(
-                f"PERMERROR Message-Instance m={m_val} {alg} body hash is "
-                f"not valid base64 (got {b_val!r})"
-            )
+            errors.append(f"PERMERROR: Message-Instance m={m_val} syntax error")
         else:
             expected = body_hash(alg)
             if expected != b_actual:
                 errors.append(
-                    f"Message-Instance: {alg} body hash mismatch\n"
-                    f"  expected: {b64(expected)}\n"
-                    f"  got:      {b_val}"
-                )
+                    f"FAIL: Message-Instance m={m_val} body hash {alg} mismatch")
 
     return errors
 
 
 def _check_signature_duplicates(sig_items, i_val) -> list[str]:
-    """spec-06 §8.9 duplicate/limit rules for one DKIM2-Signature s= tag.
+    """-07 §10.9 duplicate/limit rules for one DKIM2-Signature s= tag.
 
     A Selector MUST NOT appear more than once. The same signing algorithm may
     appear at most twice, and only with distinct Selectors. Selector matching is
-    case-insensitive (a Selector is a Domain, §3.5).
+    case-insensitive (a Selector is a Domain, §3.6).
     """
     errors = []
     selectors = [sel.lower() for sel, _, _ in sig_items]
     if len(set(selectors)) != len(selectors):
-        errors.append(f"PERMERROR DKIM2-Signature i={i_val} has a duplicate selector")
+        errors.append(f"PERMERROR: DKIM2-Signature i={i_val} has a duplicate selector")
     counts = {}
     for _, alg, _ in sig_items:
         counts[alg.lower()] = counts.get(alg.lower(), 0) + 1
     if any(n > 2 for n in counts.values()):
-        errors.append(f"PERMERROR DKIM2-Signature i={i_val} has more selectors than allowed")
+        errors.append(f"PERMERROR: DKIM2-Signature i={i_val} has more selectors than allowed")
     return errors
 
 
-# Implemented signature algorithms (spec-06 §3) -> the k= key type they need.
+# -07 §14.3 timestamp limits, in seconds.
+MAX_AGE = 14 * 24 * 3600
+MAX_FUTURE = 24 * 3600
+
+# Implemented signature algorithms (-07 §3; MLDSA44-Ed25519-SHA512, §3.4, is
+# not implemented yet and is disregarded like any unknown algorithm, §3.5) -> the k= key type they need.
 SIG_ALGS = {"rsa-sha256": "rsa", "ed25519-sha256": "ed25519"}
 
 
@@ -695,18 +714,18 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         mi_headers: All Message-Instance headers in the message
         other_sig_headers: All DKIM2-Signature headers with lower i= values
         dns_data: DNS records dict from dns.json, or a live key source
-        skip_timestamp_check: if True, skip §10.3 14-day expiry check
+        skip_timestamp_check: if True, skip the §14.3 timestamp checks
 
     Returns a list of errors (empty = success).
     """
     errors = []
     value = _get_header_value(sig_hdr)
 
-    # §8: "there MUST be only one of each kind" of tag.
+    # §8: a tag-list with a duplicate tag-name is invalid.
     seen = _tag_names(value)
     dups = sorted({n for n in seen if seen.count(n) > 1})
     if dups:
-        return [f"DKIM2-Signature: duplicate tag {dups[0]!r} not permitted (§8)"]
+        return [f"PERMERROR: DKIM2-Signature i={_extract_tag(value, 'i')} syntax error"]
 
     # Extract required tags
     i_val = _extract_tag(value, "i")
@@ -718,50 +737,42 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     mf_val = _extract_tag(value, "mf")
     rt_val = _extract_tag(value, "rt")
 
-    # draft-06 §8: i= m= t= d= s= MUST be present; plus either nd= or both
+    # -07 §10: i= m= t= d= s= MUST be present; plus either nd= or both
     # mf= and rt= (and nd= excludes mf=/rt=).
     if not all([i_val, m_val, t_val0, d_val, s_tag]):
         for tag_name, tag_val in (
             ("i", i_val), ("m", m_val), ("t", t_val0), ("d", d_val), ("s", s_tag),
         ):
             if not tag_val:
-                return [f"DKIM2-Signature i={i_val} tag={tag_name} missing"]
+                return [f"PERMERROR: DKIM2-Signature i={i_val} tag={tag_name} missing"]
+    # -07 §10: nd= excludes mf= and rt=; without nd= both are required.
     if nd_val and (mf_val or rt_val):
-        return [f"DKIM2-Signature i={i_val} tag=nd was unexpected"]
+        return [f"PERMERROR: DKIM2-Signature i={i_val} "
+                f"tag={'mf' if mf_val else 'rt'} was unexpected"]
     if not nd_val and not (mf_val and rt_val):
-        return [f"DKIM2-Signature i={i_val} tag=mf missing"]
+        return [f"PERMERROR: DKIM2-Signature i={i_val} "
+                f"tag={'rt' if mf_val else 'mf'} missing"]
 
-    # §8.4: sig-t-tag = 1*DIGIT. Checked even when the age check is skipped.
+    # §10.4: sig-t-tag = 1*DIGIT. Checked even when the age check is skipped.
     if not _is_ascii_digits(t_val0):
-        return [f"PERMERROR DKIM2-Signature i={i_val} syntax error"]
+        return [f"PERMERROR: DKIM2-Signature i={i_val} syntax error"]
 
-    # §7.3 SHOULD: n= nonce must not exceed 64 characters
+    # §10.3 SHOULD: n= nonce must not exceed 64 characters
     n_val = _extract_tag(value, "n")
     if n_val and len(n_val) > 64:
-        return [f"DKIM2-Signature i={i_val}: n= nonce exceeds 64 characters ({len(n_val)})"]
+        return [f"PERMERROR: DKIM2-Signature i={i_val} n= nonce exceeds 64 "
+                f"characters ({len(n_val)})"]
 
-    # §10.3 SHOULD: reject signatures more than 14 days old or in the future
+    # -07 §14.3: not Validly Signed if t= is more than 14 days before now,
+    # or more than one day after it.
     t_val = _extract_tag(value, "t")
     if t_val and not skip_timestamp_check:
         ts = int(t_val)  # 1*DIGIT (checked above); Python ints don't overflow
         now = int(time.time())
-        if ts > now + 300:
-            return [f"DKIM2-Signature i={i_val}: timestamp is in the future"]
-        if now > ts + 14 * 24 * 3600:
-            return [f"DKIM2-Signature i={i_val}: signature has expired (age > 14 days)"]
-
-    # Relaxed d<->mf per-sig check (mirrors Perl Verifier.pm:326-333): the
-    # envelope MAIL FROM domain must equal or be a subdomain of d=, unless
-    # the sender is the null sender (<>).
-    if mf_val:
-        decoded_mf = base64.b64decode(mf_val).decode("utf-8", errors="surrogateescape")
-        if decoded_mf != "<>":
-            mf_domain = _domain_from_addr(decoded_mf)
-            if not _relaxed_domain_match(mf_domain, d_val):
-                errors.append(
-                    f"DKIM2-Signature i={i_val} MAIL FROM and d= do not match"
-                )
-                return errors
+        if ts > now + MAX_FUTURE:
+            return [f"PERMERROR: DKIM2-Signature i={i_val} signature is from the future"]
+        if now > ts + MAX_AGE:
+            return [f"PERMERROR: DKIM2-Signature i={i_val} signature expired"]
 
     # Two parallel views of each s= item.  The *raw* fields keep whatever
     # folding whitespace the producer inserted, and are what we blank out of
@@ -775,23 +786,23 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     for part in s_tag.split(","):
         fields = part.split(":", 2)
         if len(fields) != 3:
-            return [f"DKIM2-Signature i={i_val}: invalid s= item format: {part!r}"]
+            return [f"PERMERROR: DKIM2-Signature i={i_val} syntax error"]
         sig_items_raw.append(fields)
         sig_items.append([_strip_fws(f) for f in fields])
 
-    # spec-06 §8.9: duplicate-selector and excess-selector checks must run
+    # -07 §10.9: duplicate-selector and excess-selector checks must run
     # before any DNS lookup or crypto work.
     dup_errors = _check_signature_duplicates(sig_items, i_val)
     if dup_errors:
         return dup_errors
 
-    # §3.4/§8.9: only rsa-sha256 and ed25519-sha256 (byte-for-byte; tag
+    # §3.5/§10.9: only rsa-sha256 and ed25519-sha256 (byte-for-byte; tag
     # values are case significant, §8) are implemented. Items naming any
     # other algorithm are ignored entirely -- no key lookup, no crypto. A
     # known item's value must be non-empty base64 (FWS removed), checked
     # here before any key lookup.
     if not any(alg in SIG_ALGS for _, alg, _ in sig_items):
-        return [f"FAIL DKIM2-Signature i={i_val} has no signature with a "
+        return [f"PERMERROR: DKIM2-Signature i={i_val} has no signature with a "
                 f"supported algorithm"]
     usable_items = []
     for selector, algorithm, sig_value_b64 in sig_items:
@@ -799,7 +810,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             continue
         sig_bytes = _b64decode_strict(sig_value_b64)
         if not sig_bytes:
-            return [f"PERMERROR DKIM2-Signature i={i_val} syntax error"]
+            return [f"PERMERROR: DKIM2-Signature i={i_val} syntax error"]
         usable_items.append((selector, algorithm, sig_bytes))
 
     # Build the incomplete signature (the signed form) by blanking each s=
@@ -823,7 +834,7 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     data = b"".join(canon)
     digest = hashlib.sha256(data).digest()
 
-    # Spec "E" outcome rules (§11.5, §11.6). Fetch every implemented item's
+    # Spec "E" outcome rules (§14.5, §14.6). Fetch every implemented item's
     # key first: a record that is present but unusable makes the whole
     # signature a PERMERROR even if another item would verify (all items
     # MUST be checked; a revoked key is not one we may skip). An absent
@@ -834,9 +845,9 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         try:
             public_key, key_type = lookup_public_key(d_val, selector, dns_data)
         except KeyRecordError as e:
-            return [f"PERMERROR DKIM2-Signature i={i_val} public key {selector} {e.what}"]
+            return [f"PERMERROR: DKIM2-Signature i={i_val} public key {selector} {e.what}"]
         except DNSTempError:
-            return [f"TEMPERROR DKIM2-Signature i={i_val} public key {selector} "
+            return [f"TEMPERROR: DKIM2-Signature i={i_val} public key {selector} "
                     f"could not be fetched"]
         except KeyError:
             if first_absent is None:
@@ -844,23 +855,25 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
             continue
 
         if SIG_ALGS[algorithm] != key_type:
-            return [f"PERMERROR DKIM2-Signature i={i_val} public key "
+            return [f"PERMERROR: DKIM2-Signature i={i_val} public key "
                     f"{selector} algorithm mismatch"]
 
         # §3.2: RSA keys MUST be at least 1024 bits. A shorter key is a
         # present-but-unusable key: PERMERROR for the whole signature.
         if key_type == "rsa" and getattr(public_key, "key_size", 0) < 1024:
-            return [f"PERMERROR DKIM2-Signature i={i_val} public key "
+            return [f"PERMERROR: DKIM2-Signature i={i_val} public key "
                     f"{selector} is shorter than 1024 bits"]
         keyed.append((selector, key_type, public_key, sig_bytes))
 
     if not keyed:
-        return [f"PERMERROR DKIM2-Signature i={i_val} public key "
+        return [f"PERMERROR: DKIM2-Signature i={i_val} public key "
                 f"{first_absent} does not exist"]
 
     # Verify every item that has a key; any failure is FAIL naming the
-    # Selector (§11.6).
-    failed = []
+    # Selector (-07 §14.6): "selector <s1> incorrect signature" when every
+    # checkable item failed, else "signature <s1> signature <s2> failed"
+    # naming one that passed and one that failed.
+    failed, passed = [], []
     for selector, key_type, public_key, sig_bytes in keyed:
         try:
             if key_type == "ed25519":
@@ -874,8 +887,14 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
                 )
         except Exception:
             failed.append(selector)
-    if failed:
-        errors.append(f"FAIL DKIM2-Signature i={i_val} {failed[0]} incorrect signature")
+        else:
+            passed.append(selector)
+    if failed and passed:
+        errors.append(f"FAIL: DKIM2-Signature i={i_val} signature {passed[0]} "
+                      f"signature {failed[0]} failed")
+    elif failed:
+        errors.append(f"FAIL: DKIM2-Signature i={i_val} selector {failed[0]} "
+                      f"incorrect signature")
 
     return errors
 
@@ -891,24 +910,15 @@ class VerifyResult:
 
 
 def _classify_status(errors: list[str]) -> str:
-    """Map collected errors to a result status string."""
+    """The result status for collected errors: the state the first error
+    declares (-07 §14.1, every error is "<STATE>: <text>")."""
     if not errors:
         return 'pass'
-    e = errors[0].lower()
-    if 'no dkim2-signature' in e:
-        return 'none'
-    if 'temperror' in e:
+    e = errors[0]
+    if e.startswith('TEMPERROR:'):
         return 'temperror'
-    # A self-declared §11 PERMERROR is a permerror whatever its wording
-    # ("... public key sel algorithm mismatch" is not a crypto failure).
-    if e.startswith('permerror'):
-        return 'permerror'
-    if e.startswith('fail'):
+    if e.startswith('FAIL:'):
         return 'fail'
-    # Crypto/hash/custody failures
-    if any(k in e for k in ('failed', 'mismatch', 'break', 'expired', 'not match')):
-        return 'fail'
-    # Structural/format problems
     return 'permerror'
 
 
@@ -997,7 +1007,7 @@ def _check_headers(headers: list[bytes], o: _Options):
 
     for h in mi_headers:
         if _extract_tag(_get_header_value(h), "m") is None:
-            msg = "PERMERROR Message-Instance has a malformed m= tag"
+            msg = "PERMERROR: Message-Instance m=None tag=m missing"
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
         msg = _mi_duplicate_tag_error(h)
@@ -1011,7 +1021,10 @@ def _check_headers(headers: list[bytes], o: _Options):
     # a junk signature that names an m= but signs nothing.
     for h in sig_headers:
         if not _sig_has_valid_i(h):
-            msg = "PERMERROR DKIM2-Signature has a missing or malformed i= tag"
+            i_val = _extract_tag(_get_header_value(h), "i")
+            msg = (f"PERMERROR: DKIM2-Signature i={i_val} syntax error"
+                   if i_val is not None else
+                   "PERMERROR: DKIM2-Signature i=None tag=i missing")
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
 
@@ -1023,18 +1036,18 @@ def _check_headers(headers: list[bytes], o: _Options):
         return VerifyResult(ok=False, status='permerror', failing_i=None,
                             domain=None, message=range_error, errors=[range_error])
 
-    # spec-06 §7, §8: the whole field must be a well-formed tag-list, with
+    # -07 §8: the whole field must be a well-formed tag-list, with
     # well-formed s= items and h= hash-sets (follow-up review F.1-F.3).
     for h in mi_headers:
         if not _mi_syntax_ok(_get_header_value(h)):
-            msg = (f"PERMERROR Message-Instance "
+            msg = (f"PERMERROR: Message-Instance "
                    f"m={_extract_tag(_get_header_value(h), 'm')} syntax error")
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
     for h in sig_headers:
         if not _sig_syntax_ok(_get_header_value(h)):
             i_val = _extract_tag(_get_header_value(h), "i")
-            msg = f"PERMERROR DKIM2-Signature i={i_val} syntax error"
+            msg = f"PERMERROR: DKIM2-Signature i={i_val} syntax error"
             return VerifyResult(ok=False, status='permerror',
                                 failing_i=_get_seq_from_sig(h),
                                 domain=None, message=msg, errors=[msg])
@@ -1043,12 +1056,12 @@ def _check_headers(headers: list[bytes], o: _Options):
     for h in mi_headers:
         mv = _get_version_from_mi(h)
         if mv in seen_m:
-            msg = f"duplicate Message-Instance m={mv}"
+            msg = f"PERMERROR: duplicate Message-Instance m={mv}"
             return VerifyResult(ok=False, status='permerror', failing_i=None,
                                 domain=None, message=msg, errors=[msg])
         seen_m.add(mv)
 
-    # spec-06 §7.1: Message-Instance m= and DKIM2-Signature i= values must be
+    # -07 §9.1: Message-Instance m= and DKIM2-Signature i= values must be
     # contiguous from 1.  Structural, so checked before any crypto.  (A
     # missing top instance in outbound mode is not a gap: the caller adds it.)
     for label, name, vals in (
@@ -1057,25 +1070,30 @@ def _check_headers(headers: list[bytes], o: _Options):
              {_get_seq_from_sig(h) for h in sig_headers})):
         for n in range(1, (max(vals) if vals else 0) + 1):
             if n not in vals:
-                msg = f"PERMERROR missing {label} {name}={n}"
+                msg = f"PERMERROR: {label} {name}={n} missing"
                 return VerifyResult(ok=False, status='permerror',
                                     failing_i=None, domain=None,
                                     message=msg, errors=[msg])
 
     mi_only = o.allow_unsigned_mi and not sig_headers and bool(mi_headers)
-    if not sig_headers and not mi_only:
+    if not sig_headers and not mi_headers:
+        # No DKIM2 header fields at all: result "none", with no error.
         return VerifyResult(ok=False, status='none', failing_i=None, domain=None,
-                            message='no DKIM2-Signature headers',
-                            errors=['no DKIM2-Signature headers'])
+                            message='no DKIM2 header fields', errors=[])
+    if not sig_headers and not mi_only:
+        msg = "PERMERROR: Message-Instance m=1 is not signed"
+        return VerifyResult(ok=False, status='permerror', failing_i=None,
+                            domain=None, message=msg, errors=[msg])
     if not mi_headers:
-        return VerifyResult(ok=False, status='permerror', failing_i=None, domain=None,
-                            message='no Message-Instance headers',
-                            errors=['no Message-Instance headers'])
+        top_m = max(_get_mi_from_sig(h) or 0 for h in sig_headers)
+        msg = f"PERMERROR: Message-Instance m={top_m} missing"
+        return VerifyResult(ok=False, status='permerror', failing_i=None,
+                            domain=None, message=msg, errors=[msg])
 
     max_mi_version = max(_get_version_from_mi(h) for h in mi_headers)
     top_sig = None
     if not mi_only:
-        # Spec-01 §9/§10: top DKIM2-Signature must cover the topmost MI
+        # -07 §14.2: the top DKIM2-Signature must cover the topmost MI
         max_mi_version = max(_get_version_from_mi(h) for h in mi_headers)
         top_sig = max(sig_headers, key=_get_seq_from_sig)
         top_sig_value = _get_header_value(top_sig)
@@ -1086,8 +1104,11 @@ def _check_headers(headers: list[bytes], o: _Options):
                 o.allow_unsigned_mi and top_sig_m_int < max_mi_version):
             top_sig_i = _get_seq_from_sig(top_sig)
             top_domain = _extract_tag(_get_header_value(top_sig), 'd') or ''
-            msg = (f"top signature i={top_sig_seq} m={top_sig_m_int} does not cover "
-                   f"topmost MI m={max_mi_version}")
+            if top_sig_m_int > max_mi_version:
+                msg = f"PERMERROR: Message-Instance m={top_sig_m_int} missing"
+            else:
+                msg = (f"PERMERROR: Message-Instance m={top_sig_m_int + 1} "
+                       f"is not signed")
             return VerifyResult(ok=False, status='permerror', failing_i=top_sig_i,
                                 domain=top_domain, message=msg, errors=[msg])
 
@@ -1097,12 +1118,12 @@ def _check_headers(headers: list[bytes], o: _Options):
         # is incomplete/tampered, so reject before any further checks run.
         if _extract_tag(top_sig_value, "nd") and not o.allow_unsigned_mi:
             top_i = _get_seq_from_sig(top_sig)
-            msg = f"DKIM2-Signature i={top_sig_seq} unexpected nd= tag"
+            msg = f"PERMERROR: DKIM2-Signature i={top_sig_seq} unexpected nd= tag"
             return VerifyResult(ok=False, status='permerror', failing_i=top_i,
                                 domain=_extract_tag(top_sig_value, 'd') or '',
                                 message=msg, errors=[msg])
 
-    # Envelope MAIL FROM / RCPT TO checks (spec §"Check the Chain of Custody"):
+    # Envelope MAIL FROM / RCPT TO checks (-07 §14.4):
     # exact match against the top signature's declared mf=/rt=, domains
     # lowercased, local-part case-sensitive. Applies regardless of
     # full_chain/simple mode. rt= MAY carry extra recipients beyond what was
@@ -1121,12 +1142,12 @@ def _check_headers(headers: list[bytes], o: _Options):
         if o.mail_from is not None:
             if top_mf is None or not _envelope_addr_equal(o.mail_from, top_mf):
                 all_errors.append(
-                    f"DKIM2-Signature i={top_i} MAIL FROM {o.mail_from} did not match"
+                    f"PERMERROR: DKIM2-Signature i={top_i} MAIL FROM {o.mail_from} did not match"
                 )
         for rcpt in (o.rcpt_to or []):
             if not any(_envelope_addr_equal(rcpt, rt) for rt in top_rts):
                 all_errors.append(
-                    f"DKIM2-Signature i={top_i} RCPT TO {rcpt} did not match"
+                    f"PERMERROR: DKIM2-Signature i={top_i} RCPT TO {rcpt} did not match"
                 )
 
     # Collect the non-MI, non-sig headers for hash verification
@@ -1162,12 +1183,14 @@ def _verify_simple(ctx: _Context, body: bytes, o: _Options) -> VerifyResult:
 
     sig_by_seq = sorted(sig_headers, key=_get_seq_from_sig)
 
-    # §8.2/§11.4: inter-sig chain custody (nd= or mf=/rt=)
-    all_errors.extend(_chain_custody_errors(sig_by_seq))
-    # §11.8: donotmodify/donotexplode enforcement
-    all_errors.extend(_flag_enforcement_errors(sig_by_seq, mi_headers))
-    # §7.5/§7.6: mf=/rt= MUST be bracketed RFC5321 paths
+    # -07 §10.5/§10.6: mf=/rt= MUST be bracketed RFC5321 paths
     all_errors.extend(_bracket_errors(sig_by_seq))
+    # -07 §7.1, §14.4: Chain of Custody
+    all_errors.extend(_chain_custody_errors(sig_by_seq))
+    # -07 §11, §14.8: every From the chain shows is Authentic
+    mi_by_version, _ = _walk_order(ctx)
+    all_errors.extend(_from_authentic_errors(ctx.content_headers,
+                                             mi_by_version, sig_by_seq))
 
     for idx, sig_hdr in enumerate(sig_by_seq):
         prior_sigs = sig_by_seq[:idx]
@@ -1246,14 +1269,15 @@ def _verify_chain(ctx: _Context, walk, o: _Options) -> VerifyResult:
 
     sig_by_seq = sorted(ctx.sig_headers, key=_get_seq_from_sig)
 
-    # §8.2/§11.4: inter-sig chain custody check (full-chain mode)
-    all_errors.extend(_chain_custody_errors(sig_by_seq))
-    # §11.8: donotmodify/donotexplode enforcement
-    all_errors.extend(_flag_enforcement_errors(sig_by_seq, ctx.mi_headers))
-    # §7.5/§7.6: mf=/rt= MUST be bracketed RFC5321 paths
+    # -07 §10.5/§10.6: mf=/rt= MUST be bracketed RFC5321 paths
     all_errors.extend(_bracket_errors(sig_by_seq))
+    # -07 §7.1, §14.4: Chain of Custody
+    all_errors.extend(_chain_custody_errors(sig_by_seq))
+    # -07 §11, §14.8: every From the chain shows is Authentic
+    all_errors.extend(_from_authentic_errors(ctx.content_headers,
+                                             mi_by_version, sig_by_seq))
 
-    # spec-06 §5: once an instance's body Recipe is null the previous body
+    # -07 §5.2: once an instance's body Recipe is null the previous body
     # cannot be recreated, so every lower instance is checked on its header
     # hash only (header Recipes are mandatory, so header history still is).
     body_unchecked_below = None
@@ -1270,18 +1294,8 @@ def _verify_chain(ctx: _Context, walk, o: _Options) -> VerifyResult:
             o.walk_trace.append(
                 (version,) + walk.digests(version, body_unchecked_below is None))
         if errs:
-            for e in errs:
-                # A self-describing PERMERROR already names its own m=
-                # (e.g. "PERMERROR Message-Instance m=2 contains invalid
-                # JSON"); prefixing "v=2: " on top of that would double up
-                # the same information and stop the text from being the
-                # verbatim §11.2 string. Only non-PERMERROR errors (which
-                # don't otherwise say which version they're about) get the
-                # v= prefix.
-                if e.startswith("PERMERROR"):
-                    all_errors.append(e)
-                else:
-                    all_errors.append(f"v={version}: {e}")
+            # Every error names its own m= (-07 §14.2, §14.7).
+            all_errors.extend(e for e in errs if e not in all_errors)
         elif verbose:
             print(f"  MI v={version} hashes: OK", file=sys.stderr)
 
@@ -1306,7 +1320,7 @@ def _verify_chain(ctx: _Context, walk, o: _Options) -> VerifyResult:
 
         # If there's a lower version, undo Recipes to reconstruct previous state
         if version > versions[-1]:
-            # A malformed r= is already reported (as the specific §11.2
+            # A malformed r= is already reported (as the specific §14.2
             # invalid-JSON PERMERROR) by the mi_errors() call above; don't
             # let the same failure crash decode_recipes() here with an
             # uncaught exception.
@@ -1316,20 +1330,14 @@ def _verify_chain(ctx: _Context, walk, o: _Options) -> VerifyResult:
                 recipes = None
             if recipes is not None:
                 null_h, h_recipes, null_b, b_recipes = recipe_actions(recipes)
-                # draft-06 §5.1: a present "h" that is JSON null is a syntax
-                # error (distinct from an absent "h", which means headers
-                # were unchanged); mirrors dkim2undo.py's rejection.
-                if null_h:
-                    all_errors.append(
-                        f"v={version}: header recipe is null: not permitted"
-                    )
+
                 # A Recipe that cannot be applied (§5: a "c" range past the
                 # items present, or any structural fault the hash check
-                # above already named) is the §11.2 malformed-Recipe
-                # PERMERROR; mi_errors() may have reported the structural
-                # part already, so don't list it twice. The reconstruction
-                # stops here: the lower instances cannot be checked against
-                # a state we could not rebuild.
+                # above already named) is reported as invalid JSON (-07
+                # §14.2: it breaks the schema); mi_errors() may have reported
+                # the structural part already, so don't list it twice. The
+                # reconstruction stops here: the lower instances cannot be
+                # checked against a state we could not rebuild.
                 def _malformed(e):
                     msg = _malformed_recipe_error(version)
                     if msg not in all_errors:
@@ -1338,19 +1346,21 @@ def _verify_chain(ctx: _Context, walk, o: _Options) -> VerifyResult:
                         print(f"  Malformed Recipe in m={version}: {e}",
                               file=sys.stderr)
 
+                # draft -07 §5.1: a present "h" that is JSON null (the null
+                # header Recipe) is not allowed; validate_recipes() has
+                # already reported it.
+                if null_h:
+                    _malformed("null header Recipe")
+                    break
                 if h_recipes is not None:
                     try:
                         walk.undo_headers(version, h_recipes)
                         if verbose:
                             print(f"  Undid header recipes for v={version}",
                                   file=sys.stderr)
-                    except MalformedRecipe as e:
+                    except ValueError as e:
                         _malformed(e)
                         break
-                    except ValueError as e:
-                        all_errors.append(
-                            f"v={version}: failed to undo header recipes: {e}"
-                        )
 
                 if null_b:
                     # Null body Recipe: header history is still walked.
@@ -1365,13 +1375,9 @@ def _verify_chain(ctx: _Context, walk, o: _Options) -> VerifyResult:
                         if verbose:
                             print(f"  Undid body recipes for v={version}",
                                   file=sys.stderr)
-                    except MalformedRecipe as e:
+                    except ValueError as e:
                         _malformed(e)
                         break
-                    except ValueError as e:
-                        all_errors.append(
-                            f"v={version}: failed to undo body recipes: {e}"
-                        )
 
     top_sig = ctx.top_sig
     top_sig_i = _get_seq_from_sig(top_sig) if top_sig else 0
@@ -1554,7 +1560,7 @@ def verify_message(source: "Source", dns_data, full_chain: bool = False,
     every instance the walk checks.
 
     If headers_only is True the message has no body, as with the returned
-    original in a DSN's text/rfc822-headers part (spec-06 §12.1.2). Signatures
+    original in a DSN's text/rfc822-headers part (-07 §16.3). Signatures
     and the chain are checked as usual, but of the Message-Instance content
     check only the top instance's header hash can be, so only that is --
     nothing further down the chain can be undone without a body to undo into,
@@ -1594,7 +1600,7 @@ def verify_message(source: "Source", dns_data, full_chain: bool = False,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-06)")
+        description="Verify DKIM2 signatures (draft-ietf-dkim-dkim2-spec-07)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--dns-json",
                         help="Path to dns.json with public keys (default: "
@@ -1613,7 +1619,7 @@ def main():
                              "is the default")
     parser.add_argument("--ignore-timestamps", "--skip-timestamp-check",
                         dest="skip_timestamp_check", action="store_true",
-                        help="Disable the §10.3 timestamp (14-day/future) check")
+                        help="Disable the §14.3 timestamp (14-day/future) check")
     parser.add_argument("--mail-from",
                         help="Envelope MAIL FROM to check against the top "
                              "signature's mf= tag")

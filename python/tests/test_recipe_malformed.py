@@ -1,17 +1,16 @@
 """A Recipe that is valid JSON but cannot be applied is a PERMERROR.
 
-spec-06 §5.1/§5.2 already require each "c" start to exceed every preceding
-"c" end, and the schema requires two integers >= 1; the verifier used to
-apply whatever it was given (an out-of-range "c" silently copied nothing).
-The extension proposed to the WG makes every such fault, plus a "b" item
-that is not base64 or decodes to CR/LF, a malformed Recipe:
+draft -07 §5: each step is an object with exactly one key, "c", "d" or "u";
+a "c" is two integers 1 <= start <= end, each start past every preceding
+end; "d" is text and "u" canonical base64, neither giving CR or LF.  Any
+such fault breaks the §5 schema, and is reported as
 
-    PERMERROR Message-Instance m=<x> has a malformed Recipe
+    PERMERROR: Message-Instance m=<x> contains invalid JSON
 
-distinct from "syntax error" (bad base64 r=) and "contains invalid JSON".
-Each case here goes through dkim2verify.verify_message on a complete,
-validly-signed two-hop message, so the only thing wrong with it is the
-Recipe -- and the result must be a not-ok result, never an exception.
+distinct from "syntax error" (bad base64 r=).  Each case here goes through
+dkim2verify.verify_message on a complete, validly-signed two-hop message,
+so the only thing wrong with it is the Recipe -- and the result must be a
+not-ok result, never an exception.
 """
 
 import base64
@@ -38,7 +37,7 @@ ORIGINAL = (
     b"line 3\r\n"
 )
 
-WANT = "PERMERROR Message-Instance m=2 has a malformed Recipe"
+WANT = "PERMERROR: Message-Instance m=2 contains invalid JSON"
 
 
 def _footer(headers, body):
@@ -94,24 +93,32 @@ CASES = [
      {"b": [{"c": [1, 2, 3]}]}, True),
     ("c with one bound", _footer,
      {"b": [{"c": [1]}]}, True),
-    ("invalid base64 in b", _footer,
-     {"b": [{"b": ["!!!!"]}, {"c": [2, 3]}]}, True),
-    ("unpadded base64 in b", _footer,
-     {"b": [{"b": ["bGluZSAx"[:-1]]}, {"c": [2, 3]}]}, True),
-    ("CRLF inside a decoded b item", _footer,
-     {"b": [{"b": [_b(b"line 1\r\nline 2")]}, {"c": [3, 3]}]}, True),
-    ("LF inside a decoded b item", _footer,
-     {"b": [{"b": [_b(b"line 1\nline 2")]}, {"c": [3, 3]}]}, True),
-    ("CR inside a decoded b item", _footer,
-     {"b": [{"b": [_b(b"line 1\r")]}, {"c": [2, 3]}]}, True),
+    ("invalid base64 in u", _footer,
+     {"b": [{"u": ["!!!!"]}, {"c": [2, 3]}]}, True),
+    ("unpadded base64 in u", _footer,
+     {"b": [{"u": ["bGluZSAx"[:-1]]}, {"c": [2, 3]}]}, True),
+    ("non-zero pad bits in u", _footer,
+     {"b": [{"u": ["bGluZSAxQR=="]}, {"c": [2, 3]}]}, True),
+    ("FWS inside a u item", _footer,
+     {"b": [{"u": ["bGlu ZSAx"]}, {"c": [2, 3]}]}, True),
+    ("CRLF inside a decoded u item", _footer,
+     {"b": [{"u": [_b(b"line 1\r\nline 2")]}, {"c": [3, 3]}]}, True),
+    ("LF inside a decoded u item", _footer,
+     {"b": [{"u": [_b(b"line 1\nline 2")]}, {"c": [3, 3]}]}, True),
+    ("CR inside a decoded u item", _footer,
+     {"b": [{"u": [_b(b"line 1\r")]}, {"c": [2, 3]}]}, True),
     ("CRLF inside a d item", _footer,
      {"b": [{"d": ["line 1\r\nline 2"]}, {"c": [3, 3]}]}, True),
-    ("b item that is not a string", _footer,
-     {"b": [{"b": [1]}, {"c": [2, 3]}]}, True),
+    ("lone surrogate in a d item", _footer,
+     {"b": [{"d": ["line \udc31"]}, {"c": [2, 3]}]}, True),
+    ("u item that is not a string", _footer,
+     {"b": [{"u": [1]}, {"c": [2, 3]}]}, True),
     ("empty d array", _footer,
      {"b": [{"d": []}, {"c": [1, 3]}]}, True),
-    ("empty b array", _footer,
-     {"b": [{"b": []}, {"c": [1, 3]}]}, True),
+    ("empty u array", _footer,
+     {"b": [{"u": []}, {"c": [1, 3]}]}, True),
+    ("the old b step key", _footer,
+     {"b": [{"b": [_b(b"line 1")]}, {"c": [2, 3]}]}, True),
     ("empty d array in a header recipe", _dup_subjects,
      {"h": {"subject": [{"c": [1, 1]}, {"d": []}]}}, True),
     ("step with two keys", _footer,
@@ -132,6 +139,10 @@ CASES = [
      {"h": [{"c": [1, 1]}]}, True),
     ("neither h nor b", _footer,
      {"x": []}, True),
+    ("h with no header fields", _footer,
+     {"h": {}, "b": [{"c": [1, 3]}]}, True),
+    ("null h", _footer,
+     {"h": None, "b": [{"c": [1, 3]}]}, True),
 ]
 
 
@@ -144,7 +155,7 @@ def test_malformed_recipe_rejected_full_chain(name, modify, recipe, structural):
     assert WANT in result.errors, (name, result.errors)
     # Named once, however many code paths noticed it.
     assert result.errors.count(WANT) == 1, (name, result.errors)
-    # It is a format fault in a DKIM2 header field (§11.2), not a signature
+    # It is a format fault in a DKIM2 header field (§14.2), not a signature
     # or hash failure.
     assert result.status == "permerror", (name, result.status, result.errors)
 
@@ -161,12 +172,12 @@ def test_malformed_recipe_rejected_without_full_chain(name, modify, recipe, stru
     assert WANT in result.errors, (name, result.errors)
 
 
-def test_malformed_recipe_is_not_reported_as_invalid_json():
+def test_malformed_recipe_is_reported_once_and_not_as_syntax_error():
     msg = two_hop(ORIGINAL, _footer,
                   recipe_json=json.dumps({"b": [{"c": [2, 2]}, {"c": [1, 1]}]}).encode())
     result = verify(msg)
-    assert not any("invalid JSON" in e or "syntax error" in e for e in result.errors), \
-        result.errors
+    assert result.errors.count(WANT) == 1, result.errors
+    assert not any("syntax error" in e for e in result.errors), result.errors
 
 
 def test_undo_cli_path_refuses_a_malformed_recipe():

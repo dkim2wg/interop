@@ -81,7 +81,10 @@ def compare(raw, dns, sizes=(997,)):
     return ref
 
 
-def _run(paths, dns, sizes):
+_PRE07 = ("matching From is not authentic", "contains invalid JSON")
+
+
+def _run(paths, dns, sizes, pre07=False):
     n, statuses = 0, {}
     for path in paths:
         with open(path, "rb") as fh:
@@ -91,6 +94,8 @@ def _run(paths, dns, sizes):
                 r = compare(variant, dns, sizes)
             except AssertionError:
                 raise AssertionError(f"{path} variant {k}")
+            if pre07 and k == 0:
+                assert all(e.endswith(_PRE07) for e in r.errors), (path, r.errors)
             statuses[(k, r.status)] = statuses.get((k, r.status), 0) + 1
             n += 1
     return n, statuses
@@ -109,10 +114,14 @@ def test_captured_corpus():
         print("skip: no corpus/results/capture")
         return
     paths = sorted(glob.glob(os.path.join(corpus, "*.eml")))
-    n, statuses = _run(paths, _keys(corpus), (997,))
+    n, statuses = _run(paths, _keys(corpus), (997,), pre07=True)
     print(f"compared {len(paths)} messages, {n} variants: {statuses}")
-    # The originals verify; the changed copies do not.
-    assert statuses.get((0, "pass")) == len(paths), statuses
+    # The capture is -06 list mail: under -07 its From is not Authentic (the
+    # lists did not rewrite it) and a Latin-1/EUC-KR literal is a -06 "b"
+    # step, now an unknown step key.  So an original may be a PERMERROR for
+    # those reasons only -- never a hash or signature FAIL.
+    assert statuses.get((0, "fail"), 0) == 0, statuses
+    assert statuses.get((0, "temperror"), 0) == 0, statuses
 
 
 if __name__ == "__main__":

@@ -1,10 +1,9 @@
-"""Header-history walk past a null body Recipe (spec-06 §5).
+"""Header-history walk past a null body Recipe (-07 §5.2).
 
 A null body Recipe means the previous *body* cannot be recreated; header
 Recipes are mandatory, so the header history below the null is still undone
 and checked (header hash only -- the body hash is not checked below it).
 """
-import importlib.util
 import json
 import os
 import sys
@@ -14,10 +13,8 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.dirname(HERE))
 from dkim2verify import verify_message  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location(
-    "build_negative_vectors", os.path.join(ROOT, "util", "build-negative-vectors.py"))
-bnv = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(bnv)
+sys.path.insert(0, HERE)
+from util_fixtures import bnv  # noqa: E402  (From Authentic for test1)
 
 
 def _verify(msg):
@@ -39,7 +36,7 @@ def test_null_at_m3_over_normal_m2_passes():
 def test_forged_history_below_null_fails_on_m1_header_hash():
     r = _verify(bnv.build_null_body_forged_history())
     assert not r.ok
-    assert any("v=1" in e and "header hash mismatch" in e for e in r.errors), r.errors
+    assert ("FAIL: Message-Instance m=1 header hash sha256 mismatch" in r.errors), r.errors
     assert not any("body hash" in e for e in r.errors), r.errors
 
 
@@ -79,7 +76,7 @@ def test_null_below_ordinary_instance_passes():
 def test_forged_history_below_null_below_ordinary_fails():
     r = _verify(_chain3_null_in_middle(True))
     assert not r.ok
-    assert any("v=1" in e and "header hash mismatch" in e for e in r.errors), r.errors
+    assert ("FAIL: Message-Instance m=1 header hash sha256 mismatch" in r.errors), r.errors
 
 
 def test_header_recipe_not_applying_below_null_error_text():
@@ -118,7 +115,7 @@ def test_empty_body_header_only_recipe_passes():
 def test_empty_body_hidden_to_change_fails():
     r = _verify(_empty_body(True))
     assert not r.ok
-    assert any("v=1" in e and "header hash mismatch" in e for e in r.errors), r.errors
+    assert ("FAIL: Message-Instance m=1 header hash sha256 mismatch" in r.errors), r.errors
 
 
 def test_pass_message_notes_unchecked_body():

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 public keys from DNS - draft-ietf-dkim-dkim2-spec-06 §11.5
+DKIM2 public keys from DNS - draft-ietf-dkim-dkim2-spec-07 §14.5
 
 A key source for dkim2verify.verify_message() in place of a dns.json dict:
 

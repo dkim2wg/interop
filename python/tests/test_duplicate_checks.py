@@ -11,10 +11,10 @@ def test_clean_signature_list_has_no_errors():
 
 
 def test_duplicate_selector_is_permerror():
-    # spec-06 §8.9: a Selector MUST NOT be present more than once
+    # -07 §10.9: a Selector MUST NOT be present more than once
     items = [("sel1", "rsa-sha256", "AAA"), ("sel1", "ed25519-sha256", "BBB")]
     errs = _check_signature_duplicates(items, "3")
-    assert errs == ["PERMERROR DKIM2-Signature i=3 has a duplicate selector"]
+    assert errs == ["PERMERROR: DKIM2-Signature i=3 has a duplicate selector"]
 
 
 def test_duplicate_selector_is_case_insensitive():
@@ -24,7 +24,7 @@ def test_duplicate_selector_is_case_insensitive():
 
 
 def test_same_algorithm_twice_with_distinct_selectors_is_allowed():
-    # spec-06 §8.9: one additional signature using the same algorithm MAY be
+    # -07 §10.9: one additional signature using the same algorithm MAY be
     # present provided a different Selector is used
     items = [("sel1", "rsa-sha256", "AAA"), ("sel2", "rsa-sha256", "BBB")]
     assert _check_signature_duplicates(items, "1") == []
@@ -34,7 +34,7 @@ def test_same_algorithm_three_times_has_excess_selectors():
     items = [("sel1", "rsa-sha256", "AAA"), ("sel2", "rsa-sha256", "BBB"),
              ("sel3", "rsa-sha256", "CCC")]
     errs = _check_signature_duplicates(items, "2")
-    assert errs == ["PERMERROR DKIM2-Signature i=2 has more selectors than allowed"]
+    assert errs == ["PERMERROR: DKIM2-Signature i=2 has more selectors than allowed"]
 
 
 def test_duplicate_selector_and_excess_selector_are_independent():
@@ -77,7 +77,7 @@ def test_malformed_mi_m_is_clean_permerror():
         for allow in (False, True):
             r = dkim2verify.verify_message(raw, dns, allow_unsigned_mi=allow)
             assert r.status == 'permerror', (bad, allow, r)
-            assert 'malformed m= tag' in r.message, r.message
+            assert r.message == f'PERMERROR: Message-Instance m={bad} syntax error', r.message
 
 
 def _gap_verify(sigs, mis, allow):
@@ -97,25 +97,25 @@ def test_signature_i_gap_is_permerror_naming_first_missing():
     for allow in (False, True):
         r = _gap_verify([(1, 1), (3, 2)], [1, 2], allow)
         assert r.status == 'permerror', (allow, r)
-        assert 'missing DKIM2-Signature i=2' in r.message, r.message
+        assert r.message == 'PERMERROR: DKIM2-Signature i=2 missing', r.message
 
 
 def test_signature_chain_not_starting_at_one_is_gap():
     r = _gap_verify([(2, 1)], [1], False)
-    assert 'missing DKIM2-Signature i=1' in r.message, r.message
+    assert r.message == 'PERMERROR: DKIM2-Signature i=1 missing', r.message
 
 
 def test_instance_m_gap_is_permerror_naming_first_missing():
     for allow in (False, True):
         r = _gap_verify([(1, 1), (2, 3)], [1, 3], allow)
         assert r.status == 'permerror', (allow, r)
-        assert 'missing Message-Instance m=2' in r.message, r.message
+        assert r.message == 'PERMERROR: Message-Instance m=2 missing', r.message
 
 
 def test_instance_gap_below_unsigned_top_is_error_outbound():
     r = _gap_verify([(1, 1)], [1, 3], True)
     assert r.status == 'permerror'
-    assert 'missing Message-Instance m=2' in r.message, r.message
+    assert r.message == 'PERMERROR: Message-Instance m=2 missing', r.message
 
 
 def test_contiguous_chain_passes_gap_checks():

@@ -98,7 +98,7 @@ def errors(raw):
 
 
 def malformed(m):
-    return f"PERMERROR Message-Instance m={m} has a malformed Recipe"
+    return f"PERMERROR: Message-Instance m={m} contains invalid JSON"
 
 
 # --- body -----------------------------------------------------------------

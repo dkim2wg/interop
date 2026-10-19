@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Recipe header keys are always emitted lowercase (canonical form).
 
-spec-06 §5.1: header field names in the JSON Recipes MUST be lower case
-(matching against the message stays case-insensitive). We lowercase the
+-07 §5: every JSON key in a Recipe, header field names included, MUST be
+lower case (matching against the message stays case-insensitive). We lowercase the
 recipe (h) keys on output regardless of the case the caller supplied.
 """
 import base64
