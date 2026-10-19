@@ -79,13 +79,33 @@ static char *canon_for_sig(const char *hdr) {
 static unsigned char *build_sign_input(
     dkim2_mi_t *mi_list, dkim2_sig_t *sig_list,
     const char *new_sig_value, size_t *out_len) {
+    /* The lists are in header order -- newest first in a received message --
+       so sort them: the signing input is ascending m=, then ascending i=
+       (taking the lists as given signed any chain with two or more existing
+       instances or signatures in the wrong order). */
+    enum { MAXF = 64 };
+    dkim2_mi_t *mis[MAXF];
+    dkim2_sig_t *sigs[MAXF];
+    int n_mi = 0, n_sig = 0;
+    for (dkim2_mi_t *mi = mi_list; mi && n_mi < MAXF; mi = mi->next) mis[n_mi++] = mi;
+    for (dkim2_sig_t *s = sig_list; s && n_sig < MAXF; s = s->next) sigs[n_sig++] = s;
+    for (int i = 1; i < n_mi; i++)
+        for (int j = i; j > 0 && mis[j - 1]->m > mis[j]->m; j--) {
+            dkim2_mi_t *t = mis[j]; mis[j] = mis[j - 1]; mis[j - 1] = t;
+        }
+    for (int i = 1; i < n_sig; i++)
+        for (int j = i; j > 0 && sigs[j - 1]->i > sigs[j]->i; j--) {
+            dkim2_sig_t *t = sigs[j]; sigs[j] = sigs[j - 1]; sigs[j - 1] = t;
+        }
+
     char *buf = malloc(65536);
     if (!buf) return NULL;
     size_t pos = 0;
 
     /* MI headers ascending m= — use raw_value when available (existing MIs),
        else format from struct (newly created MI with no raw_value yet) */
-    for (dkim2_mi_t *mi = mi_list; mi; mi = mi->next) {
+    for (int k = 0; k < n_mi; k++) {
+        dkim2_mi_t *mi = mis[k];
         char *mi_val = mi->raw_value ? NULL : dkim2_mi_format(mi);
         const char *use_val = mi->raw_value ? mi->raw_value : mi_val;
         if (!use_val) { free(buf); return NULL; }
@@ -103,7 +123,8 @@ static unsigned char *build_sign_input(
     }
 
     /* Existing DKIM2-Signature headers ascending i= */
-    for (dkim2_sig_t *sig = sig_list; sig; sig = sig->next) {
+    for (int k = 0; k < n_sig; k++) {
+        dkim2_sig_t *sig = sigs[k];
         /* Use raw_value which is the complete original header value */
         size_t rv_len = strlen(sig->raw_value);
         char *full = malloc(rv_len + 24);
@@ -386,12 +407,20 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     /* Use configured timestamp or current time */
     uint64_t now = cfg->timestamp ? cfg->timestamp : (uint64_t)time(NULL);
 
-    /* Format incomplete DKIM2-Signature value (empty sig per §8.5) */
+    /* -07 §12.5: an intermediary (i > 1) sending copies to more than one
+       address sets "exploded" -- when the caller says so (a list that sends
+       each recipient its own copy), or when this one copy goes to several
+       rt= addresses. Never on i=1. */
+    int n_rt = 0;
+    for (int i = 0; ctx->rcpt_to && ctx->rcpt_to[i]; i++) n_rt++;
+    const char *flags = (new_i > 1 && (cfg->exploded || n_rt > 1)) ? " f=exploded;" : "";
+
+    /* Format incomplete DKIM2-Signature value (empty sig per -07 §12.8) */
     char incomplete_sig[4096];
     snprintf(incomplete_sig, sizeof incomplete_sig,
-        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s; s=%s:%s:;",
+        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s;%s s=%s:%s:;",
         new_i, new_m, (unsigned long long)now,
-        cfg->domain, mf_b64, rt_b64,
+        cfg->domain, mf_b64, rt_b64, flags,
         cfg->selector, alg);
 
     /* Build MI list to sign: existing + new (if new_m > any existing) */
@@ -451,9 +480,9 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     /* Format complete DKIM2-Signature value */
     char complete_sig[4096];
     snprintf(complete_sig, sizeof complete_sig,
-        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s; s=%s:%s:%s;",
+        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s;%s s=%s:%s:%s;",
         new_i, new_m, (unsigned long long)now,
-        cfg->domain, mf_b64, rt_b64,
+        cfg->domain, mf_b64, rt_b64, flags,
         cfg->selector, alg, sig_b64);
     free(sig_b64);
 
