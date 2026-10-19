@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { verifyMessage, relaxedDomainMatch, domainOf } from '../verify.js';
+import { verifyMessage } from '../verify.js';
 import { parseKeyRecord } from '../doh.js';
 import { parseMessage, collectLevels } from '../parse.js';
 import { canonHeaderHash, canonBody, signingInput } from '../canon.js';
@@ -25,17 +25,6 @@ const realFetchKey = async (selector, domain) => {
 };
 const SAMPLE_T = 1782394336;      // t= in the sample
 const FRESH_NOW = SAMPLE_T + 3600; // well within the §11.3 14-day window
-
-test('relaxedDomainMatch strips labels from the left of the from-domain', () => {
-  assert.equal(relaxedDomainMatch('bounce.a.example.com', 'example.com'), true);
-  assert.equal(relaxedDomainMatch('example.com', 'example.com'), true);
-  assert.equal(relaxedDomainMatch('example.com', 'other.com'), false);
-});
-
-test('domainOf extracts the domain from a reverse/forward path', () => {
-  assert.equal(domainOf('<bob@Sub.Example.COM>'), 'sub.example.com');
-  assert.equal(domainOf('<>'), '');
-});
 
 test('no DKIM2-Signature yields overall=none', async () => {
   const rep = await verifyMessage('From: a@b\r\nSubject: x\r\n\r\nhi\r\n');
@@ -70,14 +59,18 @@ test('DKIM2-Signature with NO Message-Instance yields permerror (fix #3)', async
   assert.match(rep.summary, /Message-Instance/);
 });
 
+// mf=<sender@example.com>, rt=<rcpt@example.com>: custody that holds for
+// a one-hop d=example.com signature.
+const ENV = 'mf=PHNlbmRlckBleGFtcGxlLmNvbT4=; rt=PHJjcHRAZXhhbXBsZS5jb20+';
+
 test('signature with only an unsupported algorithm fails, overall=fail (fix #2a)', async () => {
   // Isolate the algorithm path: use a non-sha256 MI hash-set (so the MI hash
-  // check is skipped and stays pass), nd= for trivially-ok top-hop custody,
-  // a fresh timestamp, and an s= whose only sig-set uses `banana`.
+  // check is skipped and stays pass), custody that holds, a fresh timestamp,
+  // and an s= whose only sig-set uses `banana`.
   const raw =
     'From: a@b\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
-    'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; nd=example.net\r\n' +
+    `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${ENV}\r\n` +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
@@ -86,24 +79,21 @@ test('signature with only an unsupported algorithm fails, overall=fail (fix #2a)
   assert.equal(rep.overall, 'fail');
 });
 
-test('present but invalid-base64 mf= does not throw; custody fails (fix #5a)', async () => {
-  // `@@@` is not valid base64; b64ToString throws a DOMException. The
-  // orchestrator must catch it and fail the custody check, not propagate.
-  const raw =
-    'From: a@b\r\n' +
-    'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
-    'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; mf=@@@; rt=AAAA\r\n' +
-    '\r\nhi\r\n';
-  let rep;
-  await assert.doesNotReject(async () => { rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey }); });
-  const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
-  assert.ok(sig, 'signature level present');
-  assert.equal(sig.custody.ok, false);
-  // fix #4: a custody failure must surface into level.detail (and hence the
-  // top-level summary), not just level.custody.detail.
-  assert.match(sig.detail, /mf\/rt malformed/);
-  assert.match(rep.summary, /mf\/rt malformed/);
+test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, never an exception', async () => {
+  for (const env of ['mf=@@@; rt=PHJjcHRAZXhhbXBsZS5jb20+', 'mf=PHNlbmRlckBleGFtcGxlLmNvbT4=; rt=AAAA',
+    'mf=c2VuZGVyQGV4YW1wbGUuY29t; rt=PHJjcHRAZXhhbXBsZS5jb20+']) {
+    const raw =
+      'From: a@b\r\n' +
+      'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+      `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${env}\r\n` +
+      '\r\nhi\r\n';
+    let rep;
+    await assert.doesNotReject(async () => { rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey }); });
+    assert.equal(rep.overall, 'permerror', env);
+    assert.equal(rep.summary, 'PERMERROR: DKIM2-Signature i=1 syntax error', env);
+  }
 });
+
 
 // --- §11.3 expired signature is PERMERROR, not fail --------------------
 test('an old-but-otherwise-valid signature (>14 days) is a soft WARN, not a failure (§11.3/§8.4)', async () => {
@@ -185,7 +175,7 @@ test('a §9.3 bridge from a domain the mail never reached fails custody', async 
     { now: 1000000, fetchKey: stubKey });
   const sig2 = rep.levels.find((l) => l.kind === 'signature' && l.i === 2);
   assert.equal(sig2.custody.ok, false);
-  assert.match(sig2.custody.detail, /i=2 nd= hop d=test4\.dkim2\.com did not match i=1 rt=/);
+  assert.equal(sig2.custody.detail, 'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1');
 });
 
 // --- §11.4 top-hop envelope exact-match ---------------------------------
@@ -250,8 +240,8 @@ test('omitting the envelope skips the §11.4 check (browser paste case)', async 
 });
 
 test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary (fix #4)', async () => {
-  // mf= decodes to a domain that does not relaxed-match d=, so custodyCheck's
-  // normal (non-exception) `if (!level.custody.ok)` branch fires. Timestamp
+  // mf= decodes to a domain that does not relaxed-match d=, so
+  // custodyErrors() reports it. Timestamp
   // is fresh and the MI hash-set uses a non-sha256 alg so the MI check is
   // skipped (stays pass); the sig-set alg is unsupported so no real crypto
   // is needed. custody is the only reason this signature is unusable, so its
@@ -260,7 +250,7 @@ test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary 
     'From: a@b\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
     'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; ' +
-    's=sel:banana:AAA; mf=PHNlbmRlckB3cm9uZy5leGFtcGxlPg==; rt=AAAA\r\n' +
+    's=sel:banana:AAA; mf=PHNlbmRlckB3cm9uZy5leGFtcGxlPg==; rt=PHJjcHRAZXhhbXBsZS5jb20+\r\n' +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);

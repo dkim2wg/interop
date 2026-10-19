@@ -6,24 +6,30 @@ import { fetchKey as dohFetchKey, keyName, DEFINITIVE_KEY_ERRORS } from './doh.j
 import { decodeRecipe, classifyRecipeDecodeError, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe } from './recipes.js';
 import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
 import { planChain } from './plan.js';
+import { domainOf, toALabel, relaxedMatch } from './domain.js';
 
 const SIG_MI_NAMES = new Set(['message-instance', 'dkim2-signature']);
 
-export function domainOf(path) {
-  const m = /<?[^@<>]*@([^>]*)>?/.exec(path || '');
-  return m ? m[1].toLowerCase() : '';
+// The domain of an address (a decoded mf=/rt= path) as A-labels (§18), or
+// a domain literal as it is; '' when there is none or it cannot be mapped.
+// Either way relaxedMatch() treats the literal and '' as matching nothing.
+function addrDomain(addr) {
+  const { domain, literal } = domainOf(addr);
+  return literal ? domain : (toALabel(domain) || '');
 }
 
-export function relaxedDomainMatch(fromDomain, targetDomain) {
-  let a = (fromDomain || '').toLowerCase();
-  const b = (targetDomain || '').toLowerCase();
-  while (a) {
-    if (a === b) return true;
-    const dot = a.indexOf('.');
-    if (dot < 0) return false;
-    a = a.slice(dot + 1);
-  }
-  return false;
+// A d= value, compared as A-labels.
+function sigDomain(sig) {
+  return toALabel((sig.map.d || '').toLowerCase()) || '';
+}
+
+// A decoded mf=/rt= value (§10.5/§10.6): a base64string (§2.14) whose
+// decoded path carries its angle brackets; null when it is not.
+function decodePath(v) {
+  if (!BASE64.test(v)) return null;
+  let path;
+  try { path = b64ToString(v); } catch (e) { return null; }
+  return /^<[^]*>$/.test(path) ? path : null;
 }
 
 // Signed header fields (for the §6.2 header hash) at a given message state.
@@ -217,9 +223,12 @@ async function verifyOnce(raw, opts = {}) {
   for (const i of sigNums) {
     const s = signatures[i];
     for (const t of ['i', 'm', 't', 'd', 's']) if (!(t in s.map)) structErr.push(`DKIM2-Signature i=${i} tag=${t} missing`);
-    const hasNd = 'nd' in s.map, hasMf = 'mf' in s.map, hasRt = 'rt' in s.map;
-    if (hasNd && (hasMf || hasRt)) structErr.push(`DKIM2-Signature i=${i} tag=nd was unexpected`);
-    if (!hasNd && !(hasMf && hasRt)) structErr.push(`DKIM2-Signature i=${i} tag=mf missing`);
+    // §10.7: an nd= signature has no mf= or rt=; any other has both.
+    const hasNd = 'nd' in s.map;
+    for (const t of ['mf', 'rt']) {
+      if (hasNd && t in s.map) structErr.push(`PERMERROR: DKIM2-Signature i=${i} tag=${t} was unexpected`);
+      if (!hasNd && !(t in s.map)) structErr.push(`PERMERROR: DKIM2-Signature i=${i} tag=${t} missing`);
+    }
   }
   // spec-06: exactly one Message-Instance per m= and one DKIM2-Signature per i=.
   for (const m of new Set(dupInstances)) structErr.push(`Message-Instance m=${m} appears more than once`);
@@ -251,6 +260,13 @@ async function verifyOnce(raw, opts = {}) {
     if (tTag && !/^[0-9]+$/.test(rawTagValue(tTag))) structErr.push(`PERMERROR DKIM2-Signature i=${i} syntax error`);
     // §8.3: the n= nonce value MUST NOT exceed 64 characters.
     if ('n' in s.map && s.map.n.length > 64) structErr.push(`DKIM2-Signature i=${i} n= nonce exceeds 64 characters`);
+    // §10.5/§10.6: mf= and each rt= are base64 of a path in angle brackets.
+    // Decoded once here, for the Chain of Custody and envelope checks.
+    if (!('nd' in s.map) && 'mf' in s.map && 'rt' in s.map) {
+      s.mf = decodePath(s.map.mf);
+      s.rts = s.map.rt.split(',').map(decodePath);
+      if (s.mf === null || s.rts.includes(null)) structErr.push(`PERMERROR: DKIM2-Signature i=${i} syntax error`);
+    }
   }
   if (structErr.length) {
     return { overall: 'permerror', summary: structErr.join('; '), levels: [] };
@@ -437,26 +453,23 @@ async function verifyOnce(raw, opts = {}) {
       }
     }
 
-    // §11.4 Chain of Custody (inter-signature + d=/mf=), plus the top-hop
-    // envelope exact-match against the actual delivery MAIL FROM / RCPT TO.
-    try {
-      custodyCheck(level, signatures, i, maxI, opts);
-      if (i === maxI && level.custody.ok) envelopeCheck(level, sig, i, opts);
-    } catch (e) {
-      // e.g. invalid base64 in a present mf=/rt= (b64ToString throws).
-      level.custody = { ok: false, detail: `i=${i} mf/rt malformed` };
-      level.custodyState = 'permerror';
-    }
-    if (!level.custody.ok) {
-      // A Chain of Custody / envelope failure (§11.4) is a permanent error for
-      // this signature; short-circuit before the crypto check so a subsequent
-      // key-not-found does not mask the permerror as a plain 'fail'.
-      level.result = level.custodyState || 'permerror';
+    // §14.4 Chain of Custody (d=/mf=, and this signature against the one
+    // below it), plus the top-hop envelope exact-match against the actual
+    // delivery MAIL FROM / RCPT TO.
+    const custody = custodyErrors(signatures, i, maxI);
+    if (!custody.length && i === maxI) custody.push(...envelopeErrors(sig, i, opts));
+    if (custody.length) {
+      // A Chain of Custody / envelope failure is a PERMERROR for this
+      // signature; short-circuit before the crypto check so a subsequent
+      // key-not-found does not mask it.
+      level.custody = { ok: false, detail: custody.join('; ') };
+      level.result = 'permerror';
       level.detail = level.custody.detail;
-      bump(level.custodyState || 'permerror');
+      bump('permerror');
       levels.push(level);
       continue;
     }
+    level.custody = { ok: true, detail: i === 1 ? 'origin' : 'chain intact' };
 
     // §11.5/§11.6 fetch key + verify each s= sig-set.
     const mAtSig = parseInt(sig.map.m, 10);
@@ -725,78 +738,42 @@ function keyErrorDetail(e, selector) {
   return e.message in map ? `public key ${selector} ${map[e.message]}` : String(e.message || e);
 }
 
-// §11.4: inter-signature mf/rt match + d=/mf= relaxed match + nd= handling.
-function custodyCheck(level, signatures, i, maxI, opts) {
-  const sig = signatures[i];
-  const hasNd = 'nd' in sig.map;
-
-  if (hasNd) {
-    const next = signatures[i + 1];
-    if (!next) {
-      // nd= on the highest signature: needs out-of-band trust (§9.3). SHOULD.
-      level.custody = { ok: true, detail: `nd=${sig.map.nd} (top hop; out-of-band trust assumed)` };
-      return;
-    }
-    if ((next.map.d || '').toLowerCase() !== sig.map.nd.toLowerCase()) {
-      level.custody = { ok: false, detail: `nd= does not match i=${i + 1} d=` };
-      level.custodyState = 'permerror';
-      return;
-    }
-    // §9.3: an nd= hop after a real one is a Forwarder bridging the gap
-    // between the domain it received the message at and the domain it sends
-    // from, and it has to be made with a key for a domain in the RCPT TO the
-    // message arrived with. It has no mf=, so what must match the previous
-    // hop's rt= is its own d=.
-    if (i > 1) {
-      const lower = signatures[i - 1];
-      const ndD = (sig.map.d || '').toLowerCase();
-      const rtDomains = (lower.map.rt || '').split(',').map((r) => domainOf(b64ToString(r)));
-      if (!rtDomains.some((rt) => relaxedDomainMatch(ndD, rt))) {
-        level.custody = { ok: false, detail: `i=${i} nd= hop d=${ndD} did not match i=${i - 1} rt=` };
-        level.custodyState = 'permerror';
-        return;
+// §14.4 / §7.1 item 1: the Chain of Custody errors for signature i (empty
+// when it holds). Every signature with a non-null mf= relaxed-matches its d=
+// (§7.1 item 2). Then, against the signature P below it:
+//  - after an nd= signature, d= must be exactly P's nd= (§12.3), and nothing
+//    else is compared;
+//  - an nd= signature, or one with mf=<>, must have its d= relaxed-matched
+//    by a domain in P's rt= (rt= is Parameter1, d= Parameter2);
+//  - otherwise mf= must relaxed-match a domain in P's rt= (mf= Parameter1).
+// An nd= on the top signature is unexpected: inbound, there is no next
+// signature to carry it (§12.3's out-of-band case is a signer's concern).
+function custodyErrors(signatures, i, maxI) {
+  const S = signatures[i];
+  const d = sigDomain(S);
+  const errs = [];
+  const hasNd = 'nd' in S.map;
+  if (hasNd && i === maxI) errs.push(`PERMERROR: DKIM2-Signature i=${i} unexpected nd= tag`);
+  const nullMf = !hasNd && S.mf === '<>';
+  if (!hasNd && !nullMf && !relaxedMatch(addrDomain(S.mf), d)) {
+    errs.push(`PERMERROR: DKIM2-Signature i=${i} MAIL FROM and d= do not match`);
+  }
+  if (i > 1) {
+    const P = signatures[i - 1];
+    if ('nd' in P.map) {
+      if (d !== P.map.nd.toLowerCase()) errs.push(`PERMERROR: DKIM2-Signature i=${i - 1} nd= does not match`);
+    } else if (hasNd || nullMf) {
+      if (!P.rts.some((r) => relaxedMatch(addrDomain(r), d))) {
+        errs.push(`PERMERROR: DKIM2-Signature i=${i} d= does not match the rt= of i=${i - 1}`);
       }
-    }
-    level.custody = { ok: true, detail: `nd=${sig.map.nd} matches i=${i + 1} d=` };
-    return;
-  }
-
-  // §8.5: the decoded mf= reverse-path MUST include the angle brackets
-  // (unless empty). A non-empty value that is not <...> is a permerror.
-  const mfDecoded = b64ToString(sig.map.mf || '');
-  if (mfDecoded !== '' && !(mfDecoded.startsWith('<') && mfDecoded.endsWith('>'))) {
-    level.custody = { ok: false, detail: `i=${i} MAIL FROM ${mfDecoded} did not match (missing angle brackets)` };
-    level.custodyState = 'permerror';
-    return;
-  }
-
-  // d= vs mf= relaxed match (skip when mf empty, e.g. DSN).
-  const mfDomain = domainOf(mfDecoded);
-  if (mfDomain && !relaxedDomainMatch(mfDomain, (sig.map.d || '').toLowerCase())) {
-    level.custody = { ok: false, detail: `i=${i} MAIL FROM and d= do not match` };
-    level.custodyState = 'permerror';
-    return;
-  }
-
-  // Inter-signature: mf= of this hop matches an rt= of the next-lower hop.
-  // Unless the lower hop is an nd= one: it carries no rt= at all, and that
-  // pair is governed by the nd=/d= adjacency checked on the lower level
-  // instead (§9.3/§11.4). Comparing against its absent rt= here would fail
-  // every legitimately bridged forward.
-  if (i > 1 && !('nd' in signatures[i - 1].map)) {
-    const lower = signatures[i - 1];
-    const rtDomains = (lower.map.rt || '').split(',').map((r) => domainOf(b64ToString(r)));
-    const matched = rtDomains.some((rt) => relaxedDomainMatch(mfDomain, rt));
-    if (!matched) {
-      level.custody = { ok: false, detail: `i=${i} MAIL FROM ${mfDomain} did not match i=${i - 1} rt=` };
-      level.custodyState = 'permerror';
-      return;
+    } else if (!P.rts.some((r) => relaxedMatch(addrDomain(S.mf), addrDomain(r)))) {
+      errs.push(`PERMERROR: DKIM2-Signature i=${i} mf= does not match the rt= of i=${i - 1}`);
     }
   }
-  level.custody = { ok: true, detail: i === 1 ? 'origin' : 'chain intact' };
+  return errs;
 }
 
-// Normalize an envelope address for the §11.4 EXACT comparison: strip one
+// Normalize an envelope address for the §14.4 EXACT comparison: strip one
 // leading '<' and trailing '>', split on the LAST '@' into localpart+domain,
 // lower-case ONLY the domain (the local part case is significant), and keep
 // the local part verbatim. An address with no '@' is returned as-is.
@@ -809,35 +786,26 @@ function normalizeAddr(a) {
   return s.slice(0, at) + '@' + s.slice(at + 1).toLowerCase();
 }
 
-// §11.4: the actual delivery MAIL FROM / RCPT TO MUST EXACTLY match (NOT the
-// relaxed algorithm) the mf=/rt= of the highest-numbered DKIM2-Signature; only
-// the domain is lower-cased. Applies only when the caller supplies the real
-// envelope (opts.mailFrom + opts.rcptTo); the browser paste case has no
-// envelope and skips this check. nd= (out-of-band, §11.4) and an empty '<>'
-// reverse-path (DSN, §8.5/§12) skip the MAIL FROM comparison.
-function envelopeCheck(level, sig, i, opts) {
+// §14.4: the actual delivery MAIL FROM / RCPT TO MUST EXACTLY match (NOT the
+// relaxed algorithm) the mf=/rt= of the highest-numbered DKIM2-Signature;
+// only the domain is lower-cased. Applies only when the caller supplies the
+// real envelope (opts.mailFrom + opts.rcptTo); the browser paste case has no
+// envelope and skips this check. An nd= signature (no mf=/rt=, and already
+// an error on top) and an empty '<>' reverse-path skip the MAIL FROM
+// comparison.
+function envelopeErrors(sig, i, opts) {
   const mailFrom = opts.mailFrom;
   const rcptTo = opts.rcptTo;
-  if (typeof mailFrom !== 'string' || !Array.isArray(rcptTo) || rcptTo.length === 0) return;
-  if ('nd' in sig.map) return; // §11.4 out-of-band case: no mf=/rt= to match
-
-  const mfDecoded = b64ToString(sig.map.mf || '');
-  if (mfDecoded !== '<>') {
-    if (normalizeAddr(mfDecoded) !== normalizeAddr(mailFrom)) {
-      level.custody = { ok: false, detail: `DKIM2-Signature i=${i} MAIL FROM ${mailFrom} did not match` };
-      level.custodyState = 'permerror';
-      return;
-    }
+  if (typeof mailFrom !== 'string' || !Array.isArray(rcptTo) || rcptTo.length === 0) return [];
+  if ('nd' in sig.map) return [];
+  if (sig.mf !== '<>' && normalizeAddr(sig.mf) !== normalizeAddr(mailFrom)) {
+    return [`PERMERROR: DKIM2-Signature i=${i} MAIL FROM ${mailFrom} did not match`];
   }
-
-  const rtNorm = (sig.map.rt || '').split(',')
-    .filter((r) => r.trim() !== '')
-    .map((r) => normalizeAddr(b64ToString(r.trim())));
+  const rtNorm = sig.rts.map(normalizeAddr);
   for (const rcpt of rcptTo) {
     if (!rtNorm.includes(normalizeAddr(rcpt))) {
-      level.custody = { ok: false, detail: `DKIM2-Signature i=${i} RCPT TO ${rcpt} did not match` };
-      level.custodyState = 'permerror';
-      return;
+      return [`PERMERROR: DKIM2-Signature i=${i} RCPT TO ${rcpt} did not match`];
     }
   }
+  return [];
 }
