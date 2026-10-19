@@ -21,9 +21,11 @@ use Mail::DKIM2::Common qw(
     UNKEYABLE_SIGNATURE_ERROR
     chain_number_error
     mi_version_tag
+    from_authentic
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
+use Mail::DKIM2::HeaderPlan;
 
 sub known_options {
     return qw(Domain Selector KeyFile Key Algorithm MailFrom RcptTo
@@ -110,6 +112,13 @@ sub finish_header {
     # rejects one that names none (tag=m missing), so a message with no
     # instance cannot be signed: compute one first (dkim2sign does).
     $error //= 'no Message-Instance field to sign over' unless @mi_headers;
+    # -07 sections 11 and 12.4: a hop that originates the message, or whose
+    # instances changed From, signs with a d= the From is Authentic for.
+    $error //= "From header field is not Authentic for d=$self->{Domain}"
+        if $self->_from_must_match(\@mi_headers, \@dk2_headers)
+        && !from_authentic($self->{Domain},
+               map { $_->[1] } grep { lc $_->[0] eq 'from' }
+               @{ Mail::DKIM2::HeaderPlan::fields($self->{headers}) });
     if ($error) {
         # A protocol outcome, not a programming error: reported through
         # result/details like the Verifier's, so a streaming host is not
@@ -163,6 +172,31 @@ sub _new_signature {
         ($self->{Nonce} ? (Nonce => $self->{Nonce}) : ()),
         (@flags ? (Flags => \@flags) : ()),
     );
+}
+
+# True when this signature answers for the From the message carries: there
+# is no signature yet (this hop is i=1), or a Message-Instance no existing
+# signature covers (m= above every signature's m=) has a header Recipe that
+# names From -- this hop, or a list manager on its host, changed it. One
+# that does not parse is left to the verifiers (and Mail::DKIM2::Gate),
+# which refuse it: the Signer checks only what it needs to sign.
+sub _from_must_match {
+    my ($self, $mi_headers, $dk2_headers) = @_;
+    return 1 unless @$dk2_headers;
+    my $covered = 0;
+    for my $d (@$dk2_headers) {
+        my $m = $d->{sig}->version // 0;
+        $covered = 0 + $m if $m =~ /\A[0-9]+\z/ && $m > $covered;
+    }
+    for my $mi (grep { $_->{v} > $covered } @$mi_headers) {
+        (my $value = $mi->{raw}) =~ s/\A[^:]*:\s*//;
+        my $obj = eval { Mail::DKIM2::MessageInstance->parse($value) };
+        die $@ if ref $@;
+        next unless $obj;
+        my $rh = $obj->get_tag('rh');
+        return 1 if $rh && exists $rh->{from};
+    }
+    return 0;
 }
 
 sub finish_body {
@@ -429,7 +463,12 @@ cannot be signed: no Message-Instance to sign over, a chain already at the
 length limit, a DKIM2-Signature with a missing or malformed C<i=> (or one
 that does not parse), an C<i=> or C<m=> that is not a chain number (see
 L<Mail::DKIM2::Common/"chain_number_error($field, $tag, $n)">), or a
-repeated C<i=> or C<m=>. L</"details()"> says which. A failure is a result, not
+repeated C<i=> or C<m=>; or, when the message has no DKIM2-Signature yet or
+a Message-Instance no signature covers changed From, a From that is not
+Authentic for C<Domain> (-07 sections 11 and 12.4: exactly one From field
+holding one mailbox whose domain is C<Domain> or below it), with details
+C<From header field is not Authentic for d=E<lt>DomainE<gt>>.
+L</"details()"> says which. A failure is a result, not
 an exception: C<PRINT> and C<CLOSE> return normally.
 
 =head2 details()

@@ -370,7 +370,7 @@ sub _sig_level {
                 my @rts = map { [domain_of($_)] } @{ $prev->rcpt_to || [] };
                 if (defined $prev_nd && length $prev_nd) {
                     # An nd= hop names the domain that signs the next signature.
-                    $lvl{custody} = (lc to_alabel($prev_nd) eq lc to_alabel($cur_d))
+                    $lvl{custody} = ((to_alabel($prev_nd) =~ tr/A-Z/a-z/r) eq (to_alabel($cur_d) =~ tr/A-Z/a-z/r))
                         ? { ok => 1, detail => "nd=$prev_nd matches d= of i=$num" }
                         : { ok => 0, detail => "PERMERROR: DKIM2-Signature i=$p nd= does not match" };
                 } elsif ((defined $cur_nd && length $cur_nd) || (defined $mf && $mf =~ /\A<\s*>\z/)) {

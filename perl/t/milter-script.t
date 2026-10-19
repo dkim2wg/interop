@@ -249,6 +249,11 @@ my $PLAIN = join($EOL,
     "Here's a test user!",
     '');
 
+# The same post from an author at the list's own domain: a message the
+# outbound milter signs as i=1 must have a From in its domain (-07 section
+# 11), and an unsigned post keeps its From in the m=1 stamped on arrival.
+my $LOCAL = $PLAIN =~ s/<author\@test1\.dkim2\.com>/<author\@test2.dkim2.com>/r;
+
 sub originator_signed {
     my $plain = shift // $PLAIN;
     my $mi  = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($plain));
@@ -281,7 +286,7 @@ sub list_modified {
 {
     my ($verdict, $mods) = run_milter(
         from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
-        message => $PLAIN);
+        message => $LOCAL);
     is($verdict, 'c', 'plain: milter continues');
     my @sig = inserted($mods, 'DKIM2-Signature');
     is(scalar @sig, 1, 'plain: one DKIM2-Signature inserted');
@@ -297,8 +302,21 @@ sub list_modified {
     like($_, qr/;\z/, 'plain: the last tag is followed by ";"') for @info;
     like("@info", qr/action=mi-m=1; hc=\d+; hn=\S+;/, 'plain: action=mi-m=1 with hc= and hn=');
     like("@info", qr/action=sign d=test2\.dkim2\.com a=rsa-sha256;/, 'plain: action=sign names d= and a=');
-    my $v = verify(assemble($PLAIN, $mods));
+    my $v = verify(assemble($LOCAL, $mods));
     is($v->result, 'pass', 'plain: signed output verifies') or diag($v->result_detail);
+}
+
+# --- 1a. No upstream chain, From in another domain: not ours to originate ---
+# (-07 section 11): the message goes on unsigned, with no instance of ours.
+{
+    my ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => $PLAIN);
+    is($verdict, 'c', 'foreign From: milter continues');
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'foreign From: not signed');
+    is(scalar(inserted($mods, 'Message-Instance')), 0, 'foreign From: no Message-Instance');
+    like(milter_log(), qr/From header field is not Authentic for d=test2\.dkim2\.com/,
+        'foreign From: the refusal is logged');
 }
 
 # --- 2. THE BUG: signed upstream + list's unsigned m=2 -> must sign i=2 ---
@@ -393,7 +411,7 @@ SKIP: {
     chmod 0000, "$dir/keys/unreadable.test2.dkim2.com";
     my ($verdict, $mods) = run_milter(
         from => 'list-bounces@unreadable.test2.dkim2.com', rcpt => ['subscriber@example.org'],
-        message => $PLAIN);
+        message => $LOCAL);
     is($verdict, 'c', 'unreadable: milter answers');
     my @sig = inserted($mods, 'DKIM2-Signature');
     is(scalar @sig, 1, 'unreadable: signed with the parent domain key');
@@ -522,7 +540,7 @@ sub info_values {
 # --- 6. Malformed Content-Type: parsed quietly, same decision ---
 {
     for my $ct ('text/plain; charset=Windows-1252;', 'text/plain; Windows-1252') {
-        (my $m = $PLAIN) =~ s/^Content-Type: text\/plain(?=\r)/Content-Type: $ct/m;
+        (my $m = $LOCAL) =~ s/^Content-Type: text\/plain(?=\r)/Content-Type: $ct/m;
         my $before = length milter_log();
         my ($verdict, $mods) = run_milter(
             from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
@@ -791,8 +809,8 @@ sub stock_decorate {
 #    signs the unchanged message as i=1 over both.
 {
     my ($verdict, $mods) = run_milter(sock => $in_sock,
-        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $PLAIN);
-    my $wire = apply_mods($PLAIN, $mods);
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $LOCAL);
+    my $wire = apply_mods($LOCAL, $mods);
     is_deeply([mi_numbers($wire)], [1, 2], 'unsigned wrap: m=1 and m=2');
     my ($v2, $omods) = run_milter(
         from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'], message => $wire);
@@ -832,7 +850,7 @@ sub stock_decorate {
 # 5. A body over one milter packet (65535 bytes) is replaced in several
 #    chunks and reassembles exactly.
 {
-    my $big = $PLAIN;
+    my $big = $LOCAL;
     $big =~ s/Here's a test user!/join($EOL, map { "line $_ " . ('x' x 70) } 1 .. 2000)/e;
     my ($verdict, $mods) = run_milter(sock => $in_sock,
         from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $big);

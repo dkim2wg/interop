@@ -14,7 +14,7 @@ my $EOL = "\r\n";
 
 sub with_mi { my ($mi, $msg) = @_; "Message-Instance: " . $mi->as_string . $EOL . $msg }
 
-my $orig = join($EOL, 'From: a@example.com', 'To: list@example.org',
+my $orig = join($EOL, 'From: a@test1.dkim2.com', 'To: list@example.org',
     'Subject: hello', 'Message-ID: <x@example.com>', '', 'body one', 'body two', '');
 my $m1 = with_mi($MI->calculate($orig), $orig);
 

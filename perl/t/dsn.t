@@ -37,7 +37,7 @@ my %NO_AUTH = (SkipAuthentication => 1);
 
 # Build a v=1 signed inbound message from a sender.
 sub signed_inbound {
-    my $raw = "From: Sender <sender\@origin.example>\r\n"
+    my $raw = "From: Sender <sender\@test1.dkim2.com>\r\n"
             . "To: user\@test1.dkim2.com\r\n"
             . "Subject: hello\r\n"
             . "\r\n"
@@ -376,7 +376,8 @@ sub dsn_around {
                               body => $embedded);
     return Email::MIME->create(
         attributes => { content_type => 'multipart/report', encoding => '7bit' },
-        header_str => [ From => 'postmaster@test3.dkim2.com',
+        # From the domain that signs it (-07 section 11).
+        header_str => [ From => 'postmaster@' . ($o{domain} // 'test3.dkim2.com'),
                         To => 'user@test2.dkim2.com',
                         Subject => 'failure' ],
         parts => [

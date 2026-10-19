@@ -53,6 +53,9 @@ The upstream DKIM2-Signatures are verified with a Verifier that allows an
 unsigned Message-Instance above the top signature (the one the caller is about
 to sign), and the Message-Instance chain must match the content and undo
 cleanly down to m=1, including the header history below a null body Recipe.
+Every From the signed instances have had must be Authentic (-07 section
+11); a From changed in an instance no upstream signature covers is not
+checked here but by L<Mail::DKIM2::Signer>, against the C<d=> it signs with.
 
 The result has C<ok> (true to sign), C<verify_result> (C<none> without a
 DKIM2-Signature), C<has_chain>, C<top_null> (the top Message-Instance has a

@@ -67,9 +67,12 @@ sub signed_m1 {
 }
 
 # m=1 alone, unsigned (a list manager that adds instances but never signs).
+# The signer that comes after it is i=1, so (-07 section 11) the From has
+# to be in its domain from m=1 on: the list rewrote it already.
 sub unsigned_m1 {
-    my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($PLAIN));
-    return "Message-Instance: " . $mi->as_string . $EOL . $PLAIN;
+    (my $plain = $PLAIN) =~ s/^From: [^\r\n]*/From: List <list\@test2.dkim2.com>/m;
+    my $mi = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($plain));
+    return "Message-Instance: " . $mi->as_string . $EOL . $plain;
 }
 
 # The list at test2 tags the subject and adds a footer, recording unsigned m=2.

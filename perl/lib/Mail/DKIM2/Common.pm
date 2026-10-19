@@ -37,6 +37,8 @@ our @EXPORT_OK = qw(
     extract_domain
     domain_of
     to_alabel
+    from_domain
+    from_authentic
     to_rfc5321_path
     relaxed_domain_match
     parse_dkim_pubkey
@@ -626,7 +628,7 @@ sub domain_of {
     my $dom = substr($addr, $at + 1);
     $dom =~ s/>.*\z//s;
     $dom =~ s/\A\s+|\s+\z//g;
-    $dom = lc $dom;
+    $dom =~ tr/A-Z/a-z/;    # ASCII only: the octets may be UTF-8
     $dom =~ s/\.\z//;
     return unless length $dom;
     return ($dom, $dom =~ /\A\[/ ? 1 : 0);
@@ -654,6 +656,67 @@ sub to_alabel {
     } split /\./, $domain, -1;
 }
 
+# from_domain(@values): the domain a From header field is Authentic for
+# (-07 section 11), from the values of every From field in one version of
+# the header (each as header_raw gives it, folded or not): the lowercased
+# A-label domain of its one mailbox, or undef when there is none -- no From
+# field or more than one, a field that is not exactly one mailbox (a list
+# of them, a group), no "@", or a domain literal. Lenient otherwise: the
+# display name, quoted or RFC 2047 encoded, and comments are skipped; the
+# mailbox is "Name <addr>" or a bare addr-spec.
+sub from_domain {
+    my (@values) = @_;
+    return undef unless @values == 1 && defined $values[0];
+    (my $v = $values[0]) =~ s/\r?\n(?=[ \t])//g;
+    # One pass: comments dropped, quoted strings kept whole, and the
+    # structure outside them ($skel) and the angle brackets found.
+    my ($out, $skel, $depth, $inq, @lt, @gt) = ('', '', 0, 0);
+    for (my $i = 0; $i < length $v; $i++) {
+        my $c = substr($v, $i, 1);
+        if ($inq) {
+            if ($c eq '\\') { $out .= substr($v, $i++, 2); next }
+            $inq = 0 if $c eq '"';
+            $out .= $c;
+            next;
+        }
+        if ($depth) {
+            if    ($c eq '\\') { $i++ }
+            elsif ($c eq '(')  { $depth++ }
+            elsif ($c eq ')')  { $depth-- }
+            next;
+        }
+        if ($c eq '(') { $depth = 1; next }
+        if ($c eq '"') { $inq = 1; $out .= $c; next }
+        push @lt, length $out if $c eq '<';
+        push @gt, length $out if $c eq '>';
+        $skel .= $c;
+        $out  .= $c;
+    }
+    return undef if $inq || $depth;
+    # A "," is a second mailbox; a ":" or ";" a group (or an obsolete route).
+    return undef if $skel =~ /[,:;]/;
+    my $addr = $out;
+    if (@lt || @gt) {
+        return undef unless @lt == 1 && @gt == 1 && $lt[0] < $gt[0]
+                         && substr($out, $gt[0] + 1) !~ /\S/;
+        $addr = substr($out, $lt[0] + 1, $gt[0] - $lt[0] - 1);
+    }
+    $addr =~ s/\A\s+|\s+\z//g;
+    return undef unless index($addr, '@') > 0;
+    my ($dom, $literal) = domain_of($addr);
+    return undef if !$dom || $literal || $dom =~ /\s/;
+    return to_alabel($dom) =~ tr/A-Z/a-z/r;
+}
+
+# from_authentic($d, @values): true if the From field(s) of one version of
+# the header, as from_domain takes them, are Authentic for signing domain
+# $d: from_domain gives a domain and it relaxed-matches $d (-07 section 11).
+sub from_authentic {
+    my ($d, @values) = @_;
+    my $dom = from_domain(@values);
+    return defined $dom && relaxed_domain_match($dom, $d) ? 1 : 0;
+}
+
 # relaxed_domain_match($p1, $p2): the relaxed domain match of -07 section
 # 7.2. Both are compared as A-labels, without regard to case, and without
 # one trailing dot. A domain literal on either side never matches. Otherwise
@@ -662,7 +725,7 @@ sub to_alabel {
 sub relaxed_domain_match {
     my ($p1, $p2) = @_;
     return 0 unless defined $p1 && defined $p2 && length $p1 && length $p2;
-    ($p1, $p2) = map { my $d = lc to_alabel($_); $d =~ s/\.\z//; $d } $p1, $p2;
+    ($p1, $p2) = map { my $d = to_alabel($_) =~ tr/A-Z/a-z/r; $d =~ s/\.\z//; $d } $p1, $p2;
     return 0 if $p1 =~ /\A\[/ || $p2 =~ /\A\[/;
     while (1) {
         return 1 if $p1 eq $p2;
@@ -1041,6 +1104,21 @@ The domain with each non-ASCII label lowercased and written as its A-label
 From domains compared: C<b\x{fc}cher.example>, as UTF-8 octets, gives
 C<xn--bcher-kva.example>. ASCII labels are unchanged; a label that is not
 valid UTF-8 is left as it is. No UTS 46 mapping. New in 0.23.
+
+=head2 from_domain(@values)
+
+The domain a From header field is Authentic for (-07 section 11), given the
+values of every From field in one version of the header: the lowercased
+A-label domain of its one mailbox, or undef when there is no From field,
+more than one, a field holding other than exactly one mailbox (a list, a
+group), or a domain literal. Display names (quoted or RFC 2047) and
+comments are skipped; C<< Name <addr> >> and a bare C<addr> both work. New in
+0.23.
+
+=head2 from_authentic($d, @values)
+
+True if C<from_domain(@values)> gives a domain and it relaxed-matches the
+signing domain C<$d>. New in 0.23.
 
 =head2 relaxed_domain_match($p1, $p2)
 

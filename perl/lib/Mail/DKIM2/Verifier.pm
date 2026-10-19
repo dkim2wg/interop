@@ -424,8 +424,64 @@ sub finish_body {
     }
     return unless $mi_chain_ok;
 
+    # -07 section 11, 14.8: every From the message has had must be
+    # Authentic for the signature that answers for it.
+    return unless $self->_verify_from;
+
     $self->{result} = 'pass';
     $self->{details} = "i=1..$max_i verified";
+}
+
+# From must be Authentic (-07 sections 11 and 14.8). The From of the
+# message as it was at m=1 is checked against i=1; and for each m=k >= 2
+# whose header Recipe names From (the hop that made m=k changed it), the
+# From as it was at m=k against the lowest i= whose m= is k or more. A
+# version of the header comes from the undo walk if that ran, else from the
+# header plan (made here if the body was hashed without one). An instance
+# no signature covers (AllowUnsignedMI, MidProcess) has no signature to
+# answer for its From: the signer gate leaves that to the Signer, which
+# checks the From it is about to sign.
+sub _verify_from {
+    my ($self) = @_;
+    my %dk2_map = %{$self->{_dk2_headers}};
+    my @sigs = map { [$_, 0 + ($dk2_map{$_}{sig}->version // 0)] } sort { $a <=> $b } keys %dk2_map;
+    return 1 unless @sigs;
+
+    my ($hplan, @parsed);
+    if ($self->{_planned} && $self->{_header_plan}) {
+        $hplan  = $self->{_header_plan};
+        @parsed = values %{ $self->{_planned}{parsed} };
+    } else {
+        $hplan = Mail::DKIM2::HeaderPlan->new($self->{headers},
+            IgnorePrefixes => $self->{IgnorePrefixes});
+        for my $value ($hplan->values('Message-Instance')) {
+            my $mi = eval { Mail::DKIM2::MessageInstance->parse($value) };
+            die $@ if ref $@;
+            push @parsed, $mi if $mi;
+        }
+        @parsed = sort { $b->get_tag('m') <=> $a->get_tag('m') } @parsed;
+        $hplan->plan(@parsed);
+    }
+    my $from_at = sub {
+        my ($m) = @_;
+        return $self->{_from_at}{$m} if $self->{_from_at} && $self->{_from_at}{$m};
+        return $hplan->values_at($m, 'From') // [];
+    };
+
+    my @pairs = ([1, $sigs[0][0]]);
+    for my $mi (sort { $a->get_tag('m') <=> $b->get_tag('m') } @parsed) {
+        my $k = 0 + $mi->get_tag('m');
+        next unless $k >= 2 && $mi->get_tag('rh') && exists $mi->get_tag('rh')->{from};
+        my ($answer) = grep { $_->[1] >= $k } @sigs;
+        push @pairs, [$k, $answer->[0]] if $answer;
+    }
+    for my $pair (@pairs) {
+        my ($k, $i) = @$pair;
+        my $d = $dk2_map{$i}{sig}->domain // '';
+        next if Mail::DKIM2::Common::from_authentic($d, @{ $from_at->($k) });
+        return $self->_error(permerror => "DKIM2-Signature i=$i matching From is not authentic");
+    }
+    return 1;
 }
 
 # The headers-only half of _verify_mi_chain: the top instance's header hash
@@ -481,6 +537,8 @@ sub _verify_mi_chain {
         my %by_v = map { (extract_mi_version($_) // 0) => $_ } @mi;
         my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
         last unless $num;
+        # This version's From fields, for the -07 section 11 check.
+        $self->{_from_at}{$num} = [ $msg->header_raw('From') ];
 
         my %body = (HeadersOnly => $headers_only);
         if ($plan && !$headers_only) {
@@ -894,7 +952,7 @@ sub _verify_chain {
             my $prev = $dk2_map{$p_i}{sig};
             if ($has_nd->($prev)) {
                 return $self->_error(permerror => "DKIM2-Signature i=$p_i nd= does not match")
-                    unless lc to_alabel($prev->next_domain) eq lc to_alabel($d);
+                    unless (to_alabel($prev->next_domain) =~ tr/A-Z/a-z/r) eq (to_alabel($d) =~ tr/A-Z/a-z/r);
             } else {
                 my @rt = map { [domain_of($_)] } @{ $prev->rcpt_to || [] };
                 if ($has_nd->($sig) || $null_mf) {

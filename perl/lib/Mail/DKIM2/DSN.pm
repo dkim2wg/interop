@@ -76,6 +76,8 @@ sub _sign_as_new {
     my $with_mi = "Message-Instance: " . $mi->as_string . "\r\n" . $dsn_text;
     $signer->PRINT($with_mi);
     $signer->CLOSE;
+    croak "DSN not signed: " . ($signer->result_detail // 'no result')
+        unless ($signer->result // '') eq 'signed';
     my $sig_hdr = $signer->as_string;
     $sig_hdr =~ s/\r?\n$//;
     return $sig_hdr . "\r\n" . $with_mi;
@@ -169,7 +171,9 @@ sub generate {
     my $dsn = Email::MIME->create(
         attributes => { content_type => 'multipart/report', encoding => '7bit' },
         header => [
-            From    => "Mail Delivery System <postmaster\@$mta>",
+            # The signer's own address: -07 section 11 requires a From
+            # Authentic for this, the DSN's i=1 signature.
+            From    => "Mail Delivery System <postmaster\@$signer->{Domain}>",
             To      => $to,
             Subject => 'Delivery Status Notification (Failure)',
         ],
@@ -454,6 +458,11 @@ sub propagate {
     #    i=1 is somebody else's, which is not a chain at all.
     $dsn->header_raw_set('Message-Instance');
     $dsn->header_raw_set('DKIM2-Signature');
+    # 7. A new message from the Forwarder, so its From is the Forwarder's:
+    #    -07 section 11 requires a From Authentic for the i=1 signature,
+    #    and the reporting MTA's From would name the destination the
+    #    message went to, which section 16.2 says to remove.
+    $dsn->header_raw_set('From', "Mail Delivery System <postmaster\@$signer->{Domain}>");
 
     $signer->{MailFrom} = '<>';
     $signer->{RcptTo}   = [$upstream];
