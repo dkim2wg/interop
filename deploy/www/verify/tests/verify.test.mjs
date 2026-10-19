@@ -63,10 +63,10 @@ test('DKIM2-Signature with NO Message-Instance yields permerror (fix #3)', async
 // a one-hop d=example.com signature.
 const ENV = 'mf=PHNlbmRlckBleGFtcGxlLmNvbT4=; rt=PHJjcHRAZXhhbXBsZS5jb20+';
 
-test('signature with only an unsupported algorithm fails, overall=fail (fix #2a)', async () => {
-  // Isolate the algorithm path: use a non-sha256 MI hash-set (so the MI hash
-  // check is skipped and stays pass), custody that holds, a fresh timestamp,
-  // and an s= whose only sig-set uses `banana`.
+test('signature with only an unsupported algorithm is PERMERROR, never a pass (fix #2a)', async () => {
+  // Isolate the algorithm path: custody that holds, a fresh timestamp, and
+  // an s= whose only sig-set uses `banana`. (The MI's unsupported hash is a
+  // PERMERROR of its own; the signature's level is what is under test.)
   const raw =
     'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
@@ -75,8 +75,9 @@ test('signature with only an unsupported algorithm fails, overall=fail (fix #2a)
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
   assert.ok(sig, 'signature level present');
-  assert.equal(sig.result, 'fail');
-  assert.equal(rep.overall, 'fail');
+  assert.equal(sig.result, 'permerror');
+  assert.equal(sig.detail, 'PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm');
+  assert.equal(rep.overall, 'permerror');
 });
 
 test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, never an exception', async () => {
@@ -95,25 +96,24 @@ test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, ne
 });
 
 
-// --- §11.3 expired signature is PERMERROR, not fail --------------------
-test('an old-but-otherwise-valid signature (>14 days) is a soft WARN, not a failure (§11.3/§8.4)', async () => {
+// --- §14.3 an expired signature is PERMERROR --------------------------
+test('an old-but-otherwise-valid signature (>14 days) is PERMERROR, and the crypto still shows (§14.3)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<sender@test.dkim2.eu>',
     rcptTo: ['<recipient@example.com>'],
     now: SAMPLE_T + 20 * 86400, // 20 days after the signature timestamp
   });
-  // Crypto/hashes are fine; only the age is stale — overall must be 'warn'
-  // (the reference /validate/ grades age as a soft warning), NOT a hard error.
-  assert.equal(rep.overall, 'warn');
-  assert.match(rep.summary, /more than 14 days old/);
+  assert.equal(rep.overall, 'permerror');
+  assert.equal(rep.summary, 'PERMERROR: DKIM2-Signature i=1 signature expired');
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
-  assert.equal(sig.result, 'warn');
+  assert.equal(sig.result, 'permerror');
   assert.equal(sig.timestamp.ok, false);
   assert.equal(sig.timestamp.status, 'expired');
+  assert.equal(sig.items[0].result, 'pass');
 });
 
-test('a signature within 14 days is a clean pass (no age warning)', async () => {
+test('a signature within 14 days is a clean pass (no age error)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<sender@test.dkim2.eu>',
@@ -126,22 +126,22 @@ test('a signature within 14 days is a clean pass (no age warning)', async () => 
   assert.equal(sig.timestamp.ok, true);
 });
 
-// --- §11.7 MI hash fails closed when no supported hash algorithm ---------
-test('MI with no supported hash algorithm fails closed (§11.7)', async () => {
+// --- §14.7 MI hash fails closed when no supported hash algorithm ---------
+test('MI with no supported hash algorithm fails closed (§14.7)', async () => {
   // h= names only `blake` (no sha256). The instance MUST NOT stay at pass.
   const raw =
     'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
-    'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:rsa-sha256:AAA; nd=example.net\r\n' +
+    `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:rsa-sha256:AAA; ${ENV}\r\n` +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const mi = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi, 'instance level present');
-  assert.equal(mi.result, 'fail');
-  assert.match(mi.detail, /no supported hash algorithm/);
+  assert.equal(mi.result, 'permerror');
+  assert.equal(mi.detail, 'PERMERROR: Message-Instance m=1 no supported hash algorithm');
 });
 
-// --- §9.3 a Forwarder's nd= bridge after a real hop ---------------------
+// --- §12.3 a Forwarder's nd= bridge after a real hop --------------------
 //
 // The message arrives at test2 (i=1 rt=); test2 sends it on from test3, and
 // bridges the gap with an nd= hop before signing the real hop as test3. Only
@@ -530,11 +530,10 @@ test('spec-06 §9.1/§11.2: a malformed r= on the BOTTOM (m=1) instance is rejec
   assert.equal(mi1.detail, 'PERMERROR: Message-Instance m=1 contains invalid JSON');
 });
 
-// --- §11.6 signature-failure strings name the Selector -------------------
-// draft-06 replaced the algorithm-based failure text with Selector-based
-// wording: "<selector> incorrect signature", and a two-Selector variant for
-// when some signatures pass and others fail.
-test('spec-06 §11.6: a broken signature names the failing Selector', async () => {
+// --- §14.6 signature-failure strings name the Selector -------------------
+// "selector <s1> incorrect signature", and a two-Selector variant for when
+// some signatures pass and others fail.
+test('§14.6: a broken signature names the failing Selector', async () => {
   // Corrupt one base64 character inside the s= signature value. The value stays
   // valid base64, so RSA verification returns false rather than throwing — that
   // is the plain-FAIL branch, not the key-permerror branch.
@@ -551,11 +550,11 @@ test('spec-06 §11.6: a broken signature names the failing Selector', async () =
   });
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
   assert.equal(sig.result, 'fail');
-  assert.equal(sig.detail, 'DKIM2-Signature i=1 rsa2048 incorrect signature');
+  assert.equal(sig.detail, 'FAIL: DKIM2-Signature i=1 selector rsa2048 incorrect signature');
 });
 
 // A DKIM2-Signature the verifier cannot key (no i=, or an i= that is not a
-// positive integer) is a PERMERROR, never silently skipped: a junk
+// positive integer) is a syntax error, never silently skipped: a junk
 // "DKIM2-Signature: m=1" on top of a chain that verifies must not pass, and
 // on its own must not read as 'none'.
 for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
@@ -566,44 +565,44 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
     assert.equal(ok.overall, 'pass');
     const rep = await verifyMessage(junk + SIGNED_SAMPLE, { fetchKey: realFetchKey, now: FRESH_NOW });
     assert.equal(rep.overall, 'permerror');
-    assert.equal(rep.summary, 'DKIM2-Signature has a missing or malformed i= tag');
+    assert.equal(rep.summary, `PERMERROR: DKIM2-Signature i=${ival || ''} syntax error`);
     const alone = await verifyMessage(junk + 'From: a@example.com\r\n\r\nhi\r\n');
     assert.equal(alone.overall, 'permerror');
   });
 }
 
 // Every DKIM2-Signature i= and m=, and every Message-Instance m=, is 1*DIGIT:
-// anything else is a malformed tag. At most 3 digits and 1..100
+// anything else is a syntax error. At most 3 digits and 1..100
 // (MAX_CHAIN_NUMBER), else out of range; and a chain has at most 32
 // (MAX_CHAIN_LENGTH) hops, so a number above that is a PERMERROR too. All of
-// it before the §11.2 contiguity loops walk 1..max: i=/m= of 4294967297 (or
+// it before the §14.2 contiguity loops walk 1..max: i=/m= of 4294967297 (or
 // 4294967297x, which parseInt took as 4294967297) used to run this page out
 // of memory.
 {
   const LEN = 'exceeds the maximum chain length of 32';
   const NUM = 'exceeds the maximum chain number of 100';
   const cases = [
-    ['signature i=33', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=33;', `DKIM2-Signature i= ${LEN}`],
-    ['signature i=101', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=101;', `DKIM2-Signature i= ${NUM}`],
-    ['signature i=2^32+1', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=4294967297;', `DKIM2-Signature i= ${NUM}`],
-    ['signature i=huge', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=99999999999999999999;', `DKIM2-Signature i= ${NUM}`],
-    ['signature m=huge', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297;', `DKIM2-Signature m= ${NUM}`],
-    ['signature m=33', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=33;', `DKIM2-Signature m= ${LEN}`],
-    ['signature m=4294967297x', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297x;', 'DKIM2-Signature has a malformed m= tag'],
-    ['signature m=abc', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=abc;', 'DKIM2-Signature has a malformed m= tag'],
-    ['signature m=0', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=0;', 'DKIM2-Signature has a malformed m= tag'],
-    ['signature m=fullwidth 1', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=\uFF11;', 'DKIM2-Signature has a malformed m= tag'],
-    ['instance m=huge', 'Message-Instance: m=1;', 'Message-Instance: m=99999999999999999999;', `Message-Instance m= ${NUM}`],
-    ['instance m=101', 'Message-Instance: m=1;', 'Message-Instance: m=101;', `Message-Instance m= ${NUM}`],
-    ['instance m=33', 'Message-Instance: m=1;', 'Message-Instance: m=33;', `Message-Instance m= ${LEN}`],
-    ['instance m=4294967297x', 'Message-Instance: m=1;', 'Message-Instance: m=4294967297x;', 'Message-Instance has a malformed m= tag'],
-    ['instance m=30000000x', 'Message-Instance: m=1;', 'Message-Instance: m=30000000x;', 'Message-Instance has a malformed m= tag'],
-    ['instance m=0_1', 'Message-Instance: m=1;', 'Message-Instance: m=0_1;', 'Message-Instance has a malformed m= tag'],
+    ['signature i=33', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=33;', `PERMERROR: DKIM2-Signature i= ${LEN}`],
+    ['signature i=101', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=101;', `PERMERROR: DKIM2-Signature i= ${NUM}`],
+    ['signature i=2^32+1', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=4294967297;', `PERMERROR: DKIM2-Signature i= ${NUM}`],
+    ['signature i=huge', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=99999999999999999999;', `PERMERROR: DKIM2-Signature i= ${NUM}`],
+    ['signature m=huge', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297;', `PERMERROR: DKIM2-Signature m= ${NUM}`],
+    ['signature m=33', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=33;', `PERMERROR: DKIM2-Signature m= ${LEN}`],
+    ['signature m=4294967297x', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=4294967297x;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
+    ['signature m=abc', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=abc;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
+    ['signature m=0', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=0;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
+    ['signature m=fullwidth 1', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=１;', 'PERMERROR: DKIM2-Signature i=1 syntax error'],
+    ['instance m=huge', 'Message-Instance: m=1;', 'Message-Instance: m=99999999999999999999;', `PERMERROR: Message-Instance m= ${NUM}`],
+    ['instance m=101', 'Message-Instance: m=1;', 'Message-Instance: m=101;', `PERMERROR: Message-Instance m= ${NUM}`],
+    ['instance m=33', 'Message-Instance: m=1;', 'Message-Instance: m=33;', `PERMERROR: Message-Instance m= ${LEN}`],
+    ['instance m=4294967297x', 'Message-Instance: m=1;', 'Message-Instance: m=4294967297x;', 'PERMERROR: Message-Instance m=4294967297x syntax error'],
+    ['instance m=30000000x', 'Message-Instance: m=1;', 'Message-Instance: m=30000000x;', 'PERMERROR: Message-Instance m=30000000x syntax error'],
+    ['instance m=0_1', 'Message-Instance: m=1;', 'Message-Instance: m=0_1;', 'PERMERROR: Message-Instance m=0_1 syntax error'],
     // The top signature's m= must name a Message-Instance that exists.
     ['signature m=32 (no such instance)', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=32;',
-     'top signature i=1 covers m=32 but no Message-Instance m=32 exists'],
+     'PERMERROR: Message-Instance m=32 missing'],
     ['signature m=2 over m=1 only', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=2;',
-     'top signature i=1 covers m=2 but no Message-Instance m=2 exists'],
+     'PERMERROR: Message-Instance m=2 missing'],
   ];
   for (const [label, from, to, want] of cases) {
     test(`out-of-range or malformed ${label} is permerror`, async () => {
@@ -617,6 +616,6 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
     const rep = await verifyMessage('DKIM2-Signature: i=99999999999999999999; m=2; d=evil.example\r\n' + SIGNED_SAMPLE,
       { fetchKey: realFetchKey, now: FRESH_NOW });
     assert.equal(rep.overall, 'permerror');
-    assert.equal(rep.summary, `DKIM2-Signature i= ${NUM}`);
+    assert.equal(rep.summary, `PERMERROR: DKIM2-Signature i= ${NUM}`);
   });
 }

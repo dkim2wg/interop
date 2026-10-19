@@ -37,14 +37,16 @@ function uStepLines(rec) {
   return lines;
 }
 
+// The colour class for a state: TEMPERROR (try again later) in amber,
+// FAIL and PERMERROR in red.
+const stateClass = (s) => ({ pass: 'pass', none: 'none', temperror: 'warn', 'not-checked': 'notchecked' })[s] || 'fail';
+
 export function renderReport(rep, out) {
   out.replaceChildren();
-  out.appendChild(el('p', 'verdict ' + (rep.overall || 'none'), 'Overall: ' + (rep.overall || 'none')));
+  out.appendChild(el('p', 'verdict ' + stateClass(rep.overall || 'none'), 'Overall: ' + (rep.overall || 'none')));
   if (rep.summary) out.appendChild(el('p', 'muted', rep.summary));
   (rep.levels || []).forEach((lvl) => {
-    const cls = lvl.result === 'pass' ? 'pass'
-      : lvl.result === 'warn' ? 'warn'
-      : lvl.result === 'not-checked' ? 'notchecked' : 'fail';
+    const cls = stateClass(lvl.result);
     const card = el('div', 'card ' + cls);
     if (lvl.kind === 'signature') {
       card.appendChild(el('h3', null, 'DKIM2-Signature i=' + lvl.i + ' (m=' + lvl.m + ') — ' + lvl.result));

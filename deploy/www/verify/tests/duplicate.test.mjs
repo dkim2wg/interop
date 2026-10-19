@@ -12,7 +12,7 @@ test('duplicate selector is permerror', () => {
   // spec-06 §8.9: a Selector MUST NOT be present more than once
   const items = [{ selector: 'sel1', alg: 'rsa-sha256' }, { selector: 'sel1', alg: 'ed25519-sha256' }];
   assert.deepEqual(checkSignatureDuplicates(items, 3),
-    ['PERMERROR DKIM2-Signature i=3 has a duplicate selector']);
+    ['PERMERROR: DKIM2-Signature i=3 has a duplicate selector']);
 });
 
 test('duplicate selector is case-insensitive', () => {
@@ -37,7 +37,7 @@ test('same algorithm three times has excess selectors', () => {
     { selector: 'sel3', alg: 'rsa-sha256' },
   ];
   assert.deepEqual(checkSignatureDuplicates(items, 2),
-    ['PERMERROR DKIM2-Signature i=2 has more selectors than allowed']);
+    ['PERMERROR: DKIM2-Signature i=2 has more selectors than allowed']);
 });
 
 test('duplicate selector and excess-selector are independent', () => {

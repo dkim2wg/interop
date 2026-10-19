@@ -132,7 +132,7 @@ for (const [name, sig] of [['empty', ''], ['not base64', '!!!!'], ['base64 with 
     const calls = [];
     const rep = await verify(await signed({ items: [{ sel: 'rsa', alg: 'rsa-sha256', sig }] }), { calls });
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.equal(sigLevel(rep).detail, 'PERMERROR DKIM2-Signature i=1 syntax error');
+    assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 syntax error');
     assert.deepEqual(calls, []);
   });
 }
@@ -147,14 +147,14 @@ test('A: rsa-sha256 against an Ed25519 key is an algorithm mismatch naming the s
   const records = { rsa: `v=DKIM1; k=ed25519; p=${await ED_P}` };
   const rep = await verify(await signed(), { records });
   assert.equal(rep.overall, 'permerror', rep.summary);
-  assert.equal(sigLevel(rep).detail, 'PERMERROR DKIM2-Signature i=1 public key rsa algorithm mismatch');
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 public key rsa algorithm mismatch');
 });
 
 test('A: ed25519-sha256 against an RSA key is an algorithm mismatch', async () => {
   const records = { ed: `v=DKIM1; k=rsa; p=${await RSA_P}` };
   const rep = await verify(await signed({ items: [{ sel: 'ed', alg: 'ed25519-sha256', key: 'ed' }] }), { records });
   assert.equal(rep.overall, 'permerror', rep.summary);
-  assert.equal(sigLevel(rep).detail, 'PERMERROR DKIM2-Signature i=1 public key ed algorithm mismatch');
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 public key ed algorithm mismatch');
 });
 
 // --- B. key records --------------------------------------------------------
@@ -164,7 +164,7 @@ const keyCase = (name, record, expected) => test(`B: ${name}`, async () => {
   const rep = await verify(await signed(), { records: { rsa: rec } });
   if (expected === 'pass') { assert.equal(rep.overall, 'pass', rep.summary); return; }
   assert.equal(rep.overall, 'permerror', rep.summary);
-  assert.equal(sigLevel(rep).detail, `PERMERROR DKIM2-Signature i=1 public key rsa ${expected}`);
+  assert.equal(sigLevel(rep).detail, `PERMERROR: DKIM2-Signature i=1 public key rsa ${expected}`);
 });
 
 keyCase('a repeated p= is a syntax error, not the good key', 'v=DKIM1; p=; p=<rsa>', 'has a syntax error');
@@ -204,7 +204,7 @@ test('B: DoH: two TXT RRs (even identical) are multiple records', async () => {
   await withDoh([txt(rec), txt(rec)], async () => {
     const rep = await verifyMessage(await signed(), { now: T + 10, fetchKey: dohFetchKey });
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.equal(sigLevel(rep).detail, 'PERMERROR DKIM2-Signature i=1 public key rsa has multiple records');
+    assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 public key rsa has multiple records');
   });
 });
 
@@ -258,7 +258,7 @@ for (const [name, mi] of [
   test(`C: a repeated Message-Instance tag (${name}) is a syntax error`, async () => {
     const rep = await verify(await signed({ mi }));
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.match(rep.summary, /PERMERROR Message-Instance m=1 syntax error/);
+    assert.match(rep.summary, /PERMERROR: Message-Instance m=1 syntax error/);
   });
 }
 
@@ -271,7 +271,7 @@ for (const bad of ['garbage', '-5', '1e9', '0x10', '12 34', '', '+5', '1.5']) {
     test(`D: t=${JSON.stringify(bad)} is a syntax error${skipTimestamp ? ' even when skipping the age check' : ''}`, async () => {
       const rep = await verify(await withT(bad), { skipTimestamp });
       assert.equal(rep.overall, 'permerror', rep.summary);
-      assert.match(rep.summary, /PERMERROR DKIM2-Signature i=1 syntax error/);
+      assert.match(rep.summary, /PERMERROR: DKIM2-Signature i=1 syntax error/);
     });
   }
 }
@@ -283,23 +283,25 @@ test('D: t= with surrounding WSP is fine', async () => {
 
 test('D: t=0 is valid syntax and expired by the age check', async () => {
   const rep = await verify(await withT('0'));
-  assert.equal(rep.overall, 'warn', rep.summary);
+  assert.equal(rep.overall, 'permerror', rep.summary);
   assert.equal(sigLevel(rep).timestamp.status, 'expired');
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 signature expired');
 });
 
 test('D: t=10^12 does not overflow (a future timestamp, not expired)', async () => {
   const rep = await verify(await withT('1000000000000'));
-  assert.equal(rep.overall, 'pass', rep.summary);
-  assert.equal(sigLevel(rep).timestamp.ok, true);
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.equal(sigLevel(rep).timestamp.status, 'future');
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 signature is from the future');
 });
 
 // --- E. outcome of a signature's items --------------------------------------
 
-test('E1: no item with an implemented algorithm is FAIL with the §E wording', async () => {
+test('E1: no item with an implemented algorithm is PERMERROR with the §E wording', async () => {
   const calls = [];
   const rep = await verify(await signed({ items: [{ sel: 'rsa', alg: 'future-alg', key: 'rsa' }] }), { calls });
-  assert.equal(rep.overall, 'fail', rep.summary);
-  assert.equal(sigLevel(rep).detail, 'DKIM2-Signature i=1 has no signature with a supported algorithm');
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm');
   assert.deepEqual(calls, []);
 });
 
@@ -307,7 +309,7 @@ test('E2: an unpadded signature value (AAA) for a known algorithm is a syntax er
   const calls = [];
   const rep = await verify(await signed({ items: [{ sel: 'rsa', alg: 'rsa-sha256', sig: 'AAA' }] }), { calls });
   assert.equal(rep.overall, 'permerror', rep.summary);
-  assert.equal(sigLevel(rep).detail, 'PERMERROR DKIM2-Signature i=1 syntax error');
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 syntax error');
   assert.deepEqual(calls, []);
 });
 
@@ -321,7 +323,7 @@ test('E2: a real Ed25519 key with its "=" padding removed is a key syntax error'
   const rep = await verify(await signed({ items: [{ sel: 'ed', alg: 'ed25519-sha256', key: 'ed' }] }),
     { records: { ed: `v=DKIM1; k=ed25519; p=${p}` } });
   assert.equal(rep.overall, 'permerror', rep.summary);
-  assert.equal(sigLevel(rep).detail, 'PERMERROR DKIM2-Signature i=1 public key ed has a syntax error');
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 public key ed has a syntax error');
 });
 
 const twoItems = () => signed({ items: [{ sel: 'rsa', alg: 'rsa-sha256', key: 'rsa' }, { sel: 'ed', alg: 'ed25519-sha256', key: 'ed' }] });
@@ -335,7 +337,7 @@ for (const [why, rec, wording] of [
     const records = { rsa: `v=DKIM1; k=rsa; p=${await RSA_P}`, ed: rec };
     const rep = await verify(await twoItems(), { records });
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.equal(sigLevel(rep).detail, `PERMERROR DKIM2-Signature i=1 public key ed ${wording}`);
+    assert.equal(sigLevel(rep).detail, `PERMERROR: DKIM2-Signature i=1 public key ed ${wording}`);
   });
 }
 
@@ -355,13 +357,13 @@ test('E3: an absent key plus a failing item is FAIL', async () => {
 test('E4: every implemented item absent is PERMERROR naming the first absent selector', async () => {
   const rep = await verify(await twoItems(), { records: {} });
   assert.equal(rep.overall, 'permerror', rep.summary);
-  assert.equal(sigLevel(rep).detail, 'PERMERROR DKIM2-Signature i=1 public key rsa does not exist');
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 public key rsa does not exist');
 });
 
 test('E3: a DNS failure is TEMPERROR naming the selector', async () => {
   const rep = await verifyMessage(await signed(), { now: T + 10, fetchKey: async () => { throw new Error('key-temperror'); } });
   assert.equal(rep.overall, 'temperror', rep.summary);
-  assert.equal(sigLevel(rep).detail, 'TEMPERROR DKIM2-Signature i=1 public key rsa could not be fetched');
+  assert.equal(sigLevel(rep).detail, 'TEMPERROR: DKIM2-Signature i=1 public key rsa could not be fetched');
 });
 
 // --- F. whole-field syntax (follow-up review) --------------------------------
@@ -383,12 +385,12 @@ for (const [name, extra] of [
   test(`F1: DKIM2-Signature with ${name} is a syntax error`, async () => {
     const rep = await verify(await signed({ sigTags: `${SIG_TAGS};${extra}` }));
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.match(rep.summary, /PERMERROR DKIM2-Signature i=1 syntax error/);
+    assert.match(rep.summary, /PERMERROR: DKIM2-Signature i=1 syntax error/);
   });
   test(`F1: Message-Instance with ${name} is a syntax error`, async () => {
     const rep = await verify(await signed({ mi: (hh, bh) => `${MI_OK(hh, bh)};${extra}` }));
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.match(rep.summary, /PERMERROR Message-Instance m=1 syntax error/);
+    assert.match(rep.summary, /PERMERROR: Message-Instance m=1 syntax error/);
   });
 }
 
@@ -416,7 +418,7 @@ for (const [name, items, mutate] of [
     if (mutate) raw = mutate(raw);
     const rep = await verify(raw, { calls });
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.equal(sigLevel(rep).detail, 'PERMERROR DKIM2-Signature i=1 syntax error');
+    assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 syntax error');
     assert.deepEqual(calls, []);
   });
 }
@@ -441,7 +443,7 @@ for (const [name, mi] of [
   test(`F3: h= with ${name} is a syntax error`, async () => {
     const rep = await verify(await signed({ mi }));
     assert.equal(rep.overall, 'permerror', rep.summary);
-    assert.match(rep.summary, /PERMERROR Message-Instance m=1 syntax error/);
+    assert.match(rep.summary, /PERMERROR: Message-Instance m=1 syntax error/);
   });
 }
 

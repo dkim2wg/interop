@@ -121,7 +121,7 @@ test('collectLevels does not create NaN-keyed entries for malformed headers', ()
   assert.equal(sigFields.length, 1);
 });
 
-test('collectLevels counts DKIM2-Signatures with no valid i= as unkeyable', () => {
+test('collectLevels lists the i= of DKIM2-Signatures with no valid i= as unkeyable', () => {
   const msg =
     'DKIM2-Signature: m=2; d=evil.example\r\n' +
     'DKIM2-Signature: i=0; m=2; d=evil.example\r\n' +
@@ -130,7 +130,7 @@ test('collectLevels counts DKIM2-Signatures with no valid i= as unkeyable', () =
     'From: a@b\r\n\r\nbody\r\n';
   const { headers } = parseMessage(msg);
   const { signatures, unkeyableSignatures } = collectLevels(headers);
-  assert.equal(unkeyableSignatures, 3);
+  assert.deepEqual(unkeyableSignatures, ['', '0', 'abc']);
   assert.deepEqual(Object.keys(signatures), ['1']);
 });
 
@@ -139,12 +139,13 @@ test('chainNumberError: i=/m= is 1*DIGIT, at most 3 digits and 1..100, then at m
   assert.equal(MAX_CHAIN_NUMBER, 100);
   for (const v of ['1', '9', '32', '01', '001', '032']) assert.equal(chainNumberError('DKIM2-Signature', 'm', v), null, v);
   for (const v of ['33', '99', '100', '099'])
-    assert.equal(chainNumberError('DKIM2-Signature', 'm', v), 'DKIM2-Signature m= exceeds the maximum chain length of 32', v);
+    assert.equal(chainNumberError('DKIM2-Signature', 'm', v), 'PERMERROR: DKIM2-Signature m= exceeds the maximum chain length of 32', v);
   for (const v of ['101', '999', '0001', '4294967297', '99999999999999999999'])
-    assert.equal(chainNumberError('Message-Instance', 'm', v), 'Message-Instance m= exceeds the maximum chain number of 100', v);
+    assert.equal(chainNumberError('Message-Instance', 'm', v), 'PERMERROR: Message-Instance m= exceeds the maximum chain number of 100', v);
   for (const v of ['', '0', '00', '000', 'abc', '1x', '4294967297x', '30000000x', '0_1', '\uFF11', '+1', '-1', ' 1'])
-    assert.equal(chainNumberError('Message-Instance', 'm', v), 'Message-Instance has a malformed m= tag', JSON.stringify(v));
-  assert.equal(chainNumberError('DKIM2-Signature', 'i', 'abc'), 'DKIM2-Signature has a missing or malformed i= tag');
+    assert.equal(chainNumberError('Message-Instance', 'm', v), `PERMERROR: Message-Instance m=${v} syntax error`, JSON.stringify(v));
+  assert.equal(chainNumberError('DKIM2-Signature', 'i', 'abc'), 'PERMERROR: DKIM2-Signature i=abc syntax error');
+  assert.equal(chainNumberError('DKIM2-Signature', 'm', 'x', '7'), 'PERMERROR: DKIM2-Signature i=7 syntax error');
   assert.equal(chainNumberError('DKIM2-Signature', 'm', undefined), null, 'missing is left to the callers');
 });
 

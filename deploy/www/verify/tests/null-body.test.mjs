@@ -53,7 +53,7 @@ test('null body Recipe at m=3 over a normal m=2 passes', async () => {
 test('forged history below a null body Recipe fails on the m=1 header hash', async () => {
   const rep = await run('null-body-forged-history.eml');
   assert.notEqual(rep.overall, 'pass');
-  assert.match(rep.summary, /m=1 .*header hash mismatch/);
+  assert.match(rep.summary, /FAIL: Message-Instance m=1 header hash sha256 mismatch/);
 });
 
 const lv = (rep, m) => rep.levels.find((l) => l.kind === 'instance' && l.m === m);
@@ -69,7 +69,7 @@ test('null at m=2 below an ordinary m=3 passes; every null instance is unrecover
 test('forged To: hidden in the null instance below an ordinary m=3 fails at m=1 header hash', async () => {
   const rep = await run('null-below-ordinary-forged.eml');
   assert.notEqual(rep.overall, 'pass');
-  assert.match(rep.summary, /m=1 .*header hash mismatch/);
+  assert.match(rep.summary, /FAIL: Message-Instance m=1 header hash sha256 mismatch/);
 });
 
 test('empty body, null body Recipe, header-only history passes', async () => {
@@ -81,7 +81,7 @@ test('empty body, null body Recipe, header-only history passes', async () => {
 test('empty body, null body Recipe, hidden To: change fails at m=1 header hash', async () => {
   const rep = await run('empty-body-null-forged.eml');
   assert.notEqual(rep.overall, 'pass');
-  assert.match(rep.summary, /m=1 .*header hash mismatch/);
+  assert.match(rep.summary, /FAIL: Message-Instance m=1 header hash sha256 mismatch/);
 });
 
 test('empty body, ordinary header-only Recipe passes; hidden To: fails', async () => {
@@ -89,7 +89,7 @@ test('empty body, ordinary header-only Recipe passes; hidden To: fails', async (
   assert.equal(ok.overall, 'pass', ok.summary);
   const bad = await run('empty-body-plain-forged.eml');
   assert.notEqual(bad.overall, 'pass');
-  assert.match(bad.summary, /m=1 .*header hash mismatch/);
+  assert.match(bad.summary, /FAIL: Message-Instance m=1 header hash sha256 mismatch/);
 });
 
 for (const [f, want] of [

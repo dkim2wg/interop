@@ -179,21 +179,22 @@ export const MAX_CHAIN_NUMBER = 100;
 
 // The PERMERROR summary for an i= or m= value that is not a chain number, or
 // null. A value must be 1*DIGIT (ASCII): parseInt would take the digit prefix
-// of "4294967297x" and run the 1..max loops to it. Then at most three digits
-// and 1..MAX_CHAIN_NUMBER (so "01" and "001" are 1), and no more than
-// MAX_CHAIN_LENGTH. A missing value (undefined) is left to the callers.
-export function chainNumberError(field, tag, v) {
+// of "4294967297x" and run the 1..max loops to it; anything else is a syntax
+// error of the field (named by its own i=, or m= for a Message-Instance:
+// `id`, the raw value). Then at most three digits and 1..MAX_CHAIN_NUMBER
+// (so "01" and "001" are 1), and no more than MAX_CHAIN_LENGTH: local
+// limits, with no -07 string of their own. A missing value (undefined) is
+// left to the callers.
+export function chainNumberError(field, tag, v, id = v) {
   if (v === undefined) return null;
-  const malformed = tag === 'i'
-    ? `${field} has a missing or malformed i= tag`
-    : `${field} has a malformed ${tag}= tag`;
+  const malformed = `PERMERROR: ${field} ${field === 'Message-Instance' ? 'm' : 'i'}=${id} syntax error`;
   if (typeof v !== 'string' || !/^[0-9]+$/.test(v)) return malformed;
   if (/^0+$/.test(v)) return malformed;
   if (v.length > 3 || parseInt(v, 10) > MAX_CHAIN_NUMBER) {
-    return `${field} ${tag}= exceeds the maximum chain number of ${MAX_CHAIN_NUMBER}`;
+    return `PERMERROR: ${field} ${tag}= exceeds the maximum chain number of ${MAX_CHAIN_NUMBER}`;
   }
   if (parseInt(v, 10) > MAX_CHAIN_LENGTH) {
-    return `${field} ${tag}= exceeds the maximum chain length of ${MAX_CHAIN_LENGTH}`;
+    return `PERMERROR: ${field} ${tag}= exceeds the maximum chain length of ${MAX_CHAIN_LENGTH}`;
   }
   return null;
 }
@@ -205,10 +206,11 @@ export function collectLevels(headers) {
   const sigFields = [];
   const dupInstances = [];
   const dupSignatures = [];
-  // DKIM2-Signature fields whose i= is missing or not a positive integer in
-  // ASCII digits: no verifier can place or key one, so verifyOnce() reports
-  // a PERMERROR rather than verifying around it.
-  let unkeyableSignatures = 0;
+  // The i= values ('' when missing) of DKIM2-Signature fields whose i= is
+  // missing or not a positive integer in ASCII digits: no verifier can place
+  // or key one, so verifyOnce() reports a syntax error rather than verifying
+  // around it.
+  const unkeyableSignatures = [];
   // The first i= or m= that is not a chain number (chainNumberError), as a
   // PERMERROR summary; such a field is not placed in instances/signatures,
   // so nothing loops up to it.
@@ -227,9 +229,9 @@ export function collectLevels(headers) {
       const parsed = parseTagList(f.value);
       const iv = parsed.map.i;
       const i = /^[0-9]+$/.test(iv || '') ? parseInt(iv, 10) : NaN;
-      if (Number.isNaN(i) || i < 1) { unkeyableSignatures++; continue; }
+      if (Number.isNaN(i) || i < 1) { unkeyableSignatures.push(iv || ''); continue; }
       const err = chainNumberError('DKIM2-Signature', 'i', iv)
-               || chainNumberError('DKIM2-Signature', 'm', parsed.map.m);
+               || chainNumberError('DKIM2-Signature', 'm', parsed.map.m, iv);
       if (err) { rangeError = rangeError || err; continue; }
       if (signatures[i]) dupSignatures.push(i);
       signatures[i] = { field: f, tags: parsed.tags, map: parsed.map, syntaxError: parsed.syntaxError };

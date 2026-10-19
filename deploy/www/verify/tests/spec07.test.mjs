@@ -314,8 +314,7 @@ test('Message-Instance fields but no signature: "is not signed"', async () => {
 });
 
 test('a duplicate hash algorithm is PERMERROR', async () => {
-  const msg = new TextDecoder().decode(await signChain([{ fields: FIELDS, body: BODY }], [one()]))
-    .replace(/h=sha256:([^;]+)/, 'h=sha256:$1,sha256:$1');
+  const msg = await signChain([{ fields: FIELDS, body: BODY, h: (hh, bh) => `sha256:${hh}:${bh},sha256:${hh}:${bh}` }], [one()]);
   assertPerm(await verify(msg), 'PERMERROR: Message-Instance m=1 has a duplicate hash algorithm');
 });
 
@@ -338,13 +337,9 @@ test('a broken signature: "selector <s1> incorrect signature"', async () => {
 });
 
 test('one of two signatures fails: "signature <s1> signature <s2> failed"', async () => {
-  const text = new TextDecoder().decode(await signChain([{ fields: FIELDS, body: BODY }], [one()]));
-  const sig = /s=sel:ed25519-sha256:([^;\r\n]+)/.exec(text)[1];
-  const bad = (sig[0] === 'A' ? 'B' : 'A') + sig.slice(1);
-  // a second Selector for the same key, carrying a corrupted value, added to
-  // the s= list: the signing input blanks both values, so "sel" still verifies
-  const both = text.replace(`s=sel:ed25519-sha256:${sig}`, `s=sel:ed25519-sha256:${sig},sel2:ed25519-sha256:${bad}`);
-  const rep = await verify(both, { fetchKey: async (s, d) => fetchKey('sel', d) });
+  // a second Selector for the same key, carrying a corrupted value
+  const msg = await signChain([{ fields: FIELDS, body: BODY }], [one({ sets: [{ sel: 'sel' }, { sel: 'sel2', bad: true }] })]);
+  const rep = await verify(msg, { fetchKey: async (s, d) => fetchKey('sel', d) });
   assert.equal(rep.overall, 'fail');
   assert.match(rep.summary, /FAIL: DKIM2-Signature i=1 signature sel signature sel2 failed/);
 });

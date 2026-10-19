@@ -46,10 +46,17 @@ const files = readdirSync(testsDir).filter((f) => f.endsWith('.toml'));
 // repo's other reference runners skip it for the same reason.)
 const BROKEN_VECTORS = new Set(['tags_whitespace']);
 
+// Vectors whose expected state this repo's -07 contract settles differently.
+// Both are a reject; only the state differs. algorithm_only_future: a
+// signature with no sig-set in an implemented algorithm has no -07 string,
+// so (contract C6) it keeps its wording and becomes a PERMERROR, where the
+// vector (written for -06) expects FAIL.
+const CONTRACT_STATE = { algorithm_only_future: 'permerror' };
+
 for (const file of files) {
   const toml = parseToml(readFileSync(join(testsDir, file), 'utf8'));
   const name = toml.Name || file;
-  const expected = (toml.ExpectedState || '').toLowerCase();
+  const expected = CONTRACT_STATE[name] || (toml.ExpectedState || '').toLowerCase();
   if (!expected) continue;
 
   const run = BROKEN_VECTORS.has(name) ? test.skip : test;

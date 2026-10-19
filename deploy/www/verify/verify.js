@@ -83,7 +83,7 @@ export function checkSignatureDuplicates(items, i) {
   const errors = [];
   const selectors = items.map((it) => (it.selector || '').toLowerCase());
   if (new Set(selectors).size !== selectors.length) {
-    errors.push(`PERMERROR DKIM2-Signature i=${i} has a duplicate selector`);
+    errors.push(`PERMERROR: DKIM2-Signature i=${i} has a duplicate selector`);
   }
   const counts = new Map();
   for (const it of items) {
@@ -91,19 +91,27 @@ export function checkSignatureDuplicates(items, i) {
     counts.set(alg, (counts.get(alg) || 0) + 1);
   }
   if ([...counts.values()].some((n) => n > 2)) {
-    errors.push(`PERMERROR DKIM2-Signature i=${i} has more selectors than allowed`);
+    errors.push(`PERMERROR: DKIM2-Signature i=${i} has more selectors than allowed`);
   }
   return errors;
 }
 
-// The §11.2 error text for a classified Recipe failure, or null when the
-// failure is not a specific PERMERROR (a generic "undo broke").
+// The §14.2 error text for a classified Recipe failure ('broken': no r= to
+// undo, or any other failure, has no -07 string of its own).
 function recipeErrorSuffix(reason) {
   if (reason === 'invalid-json') return 'contains invalid JSON';
   if (reason === 'syntax-error') return 'syntax error';
   if (reason === 'malformed') return 'has a malformed Recipe';
-  return null;
+  return 'previous instance cannot be recreated';
 }
+
+// Precedence for a verdict: fail > permerror > temperror > pass.
+const RANK = { pass: 0, temperror: 1, permerror: 2, fail: 3 };
+// §14.3: a signature more than 14 days old, or more than one day ahead.
+const MAX_AGE = 14 * 86400;
+const MAX_AHEAD = 86400;
+// An error string as §14.1 has them: "STATE: text".
+const STATE_TEXT = /^(?:PERMERROR|FAIL|TEMPERROR): /;
 
 // Message content is a binary string (one code unit per byte); for the
 // report, show it as text: UTF-8 where it is, U+FFFD where it is not.
@@ -218,57 +226,58 @@ async function verifyOnce(raw, opts = {}) {
     collectLevels(headers);
 
   // A DKIM2-Signature with no i=, or an i= that is not a positive integer, is
-  // a PERMERROR -- never silently skipped (and never "none" when it is the
-  // only one), as in the other implementations.
-  if (unkeyableSignatures) {
+  // a syntax error -- never silently skipped (and never "none" when it is
+  // the only one), as in the other implementations.
+  if (unkeyableSignatures.length) {
     return { overall: 'permerror',
-             summary: 'DKIM2-Signature has a missing or malformed i= tag', levels: [] };
+             summary: displayText(`PERMERROR: DKIM2-Signature i=${unkeyableSignatures[0]} syntax error`), levels: [] };
   }
 
   // An i= or m= that is not a chain number (not 1*DIGIT, out of range, or
-  // above MAX_CHAIN_LENGTH): a PERMERROR before the §11.2 loops below walk
+  // above MAX_CHAIN_LENGTH): a PERMERROR before the §14.2 loops below walk
   // 1..max (4294967297, or 4294967297x, used to run this page out of memory).
   if (rangeError) {
-    return { overall: 'permerror', summary: rangeError, levels: [] };
+    return { overall: 'permerror', summary: displayText(rangeError), levels: [] };
   }
 
   const miNums = Object.keys(instances).map(Number).sort((a, b) => a - b);
   const sigNums = Object.keys(signatures).map(Number).sort((a, b) => a - b);
 
+  // No DKIM2 header fields at all: nothing to verify, and no error.
+  // Message-Instance fields with no signature: the top one is not signed.
   if (sigNums.length === 0) {
-    return { overall: 'none', summary: 'No DKIM2-Signature header field present.', levels: [] };
+    if (miNums.length === 0) return { overall: 'none', summary: 'No DKIM2 header fields present.', levels: [] };
+    return { overall: 'permerror', summary: `PERMERROR: Message-Instance m=${miNums[miNums.length - 1]} is not signed`, levels: [] };
   }
 
   const levels = [];
   let overall = 'pass';
   const bump = (state) => {
-    // Precedence for the overall verdict: fail > permerror > temperror > pass.
-    const rank = { pass: 0, warn: 1, temperror: 2, permerror: 3, fail: 4 };
-    if (rank[state] > rank[overall]) overall = state;
+    if (RANK[state] > RANK[overall]) overall = state;
   };
 
-  // --- §11.2 structural validation -------------------------------------
+  // --- §14.2 structural validation -------------------------------------
   const maxM = miNums[miNums.length - 1];
   const maxI = sigNums[sigNums.length - 1];
   const structErr = [];
-  // A signed message MUST carry at least Message-Instance m=1 (§11.2).
-  if (miNums.length === 0) structErr.push('Message-Instance m=1 missing');
-  for (let i = 1; i <= maxI; i++) if (!signatures[i]) structErr.push(`DKIM2-Signature i=${i} missing`);
-  for (let m = 1; m <= maxM; m++) if (!instances[m]) structErr.push(`Message-Instance m=${m} missing`);
-  // §11.2: the highest MI m= must be covered by some signature's m= VALUE
-  // (i= hop count and m= do not necessarily track together).
+  // A signed message MUST carry at least Message-Instance m=1.
+  if (miNums.length === 0) structErr.push('PERMERROR: Message-Instance m=1 missing');
+  for (let i = 1; i <= maxI; i++) if (!signatures[i]) structErr.push(`PERMERROR: DKIM2-Signature i=${i} missing`);
+  for (let m = 1; m <= maxM; m++) if (!instances[m]) structErr.push(`PERMERROR: Message-Instance m=${m} missing`);
+  // The highest MI m= must be covered by some signature's m= VALUE (i= hop
+  // count and m= do not necessarily track together).
   const maxSigM = Math.max(...sigNums.map((i) => parseInt(signatures[i].map.m, 10)));
-  if (maxM > maxSigM) structErr.push(`Message-Instance m=${maxM} is not signed`);
+  if (maxM > maxSigM) structErr.push(`PERMERROR: Message-Instance m=${maxM} is not signed`);
   // The top signature's m= must name a Message-Instance that exists (as in
   // the other implementations): a signature over an instance that is not
   // there signs nothing a receiver can check.
   const topSigM = signatures[maxI].map.m;
-  if (topSigM !== undefined && !instances[parseInt(topSigM, 10)]) {
-    structErr.push(`top signature i=${maxI} covers m=${parseInt(topSigM, 10)} but no Message-Instance m=${parseInt(topSigM, 10)} exists`);
+  if (topSigM !== undefined && !(parseInt(topSigM, 10) <= maxM)) {
+    structErr.push(`PERMERROR: Message-Instance m=${parseInt(topSigM, 10)} missing`);
   }
   for (const i of sigNums) {
     const s = signatures[i];
-    for (const t of ['i', 'm', 't', 'd', 's']) if (!(t in s.map)) structErr.push(`DKIM2-Signature i=${i} tag=${t} missing`);
+    for (const t of ['i', 'm', 't', 'd', 's']) if (!(t in s.map)) structErr.push(`PERMERROR: DKIM2-Signature i=${i} tag=${t} missing`);
     // §10.7: an nd= signature has no mf= or rt=; any other has both.
     const hasNd = 'nd' in s.map;
     for (const t of ['mf', 'rt']) {
@@ -276,36 +285,35 @@ async function verifyOnce(raw, opts = {}) {
       if (!hasNd && !(t in s.map)) structErr.push(`PERMERROR: DKIM2-Signature i=${i} tag=${t} missing`);
     }
   }
-  // spec-06: exactly one Message-Instance per m= and one DKIM2-Signature per i=.
-  for (const m of new Set(dupInstances)) structErr.push(`Message-Instance m=${m} appears more than once`);
-  for (const i of new Set(dupSignatures)) structErr.push(`DKIM2-Signature i=${i} appears more than once`);
+  // Exactly one Message-Instance per m= and one DKIM2-Signature per i=.
+  for (const m of new Set(dupInstances)) structErr.push(`PERMERROR: Message-Instance m=${m} appears more than once`);
+  for (const i of new Set(dupSignatures)) structErr.push(`PERMERROR: DKIM2-Signature i=${i} appears more than once`);
   for (const m of miNums) {
     const mi = instances[m];
-    for (const t of ['m', 'h']) if (!(t in mi.map)) structErr.push(`Message-Instance m=${m} tag=${t} missing`);
-    // §7: tag identifiers are case insignificant and there MUST be only one
-    // of each kind: h= twice, or h= and H=, is a syntax error (never first-
-    // or last-one-wins).
-    // §7/§7.3: a fragment that is not a well-formed tag, or an h= hash-set
+    for (const t of ['m', 'h']) if (!(t in mi.map)) structErr.push(`PERMERROR: Message-Instance m=${m} tag=${t} missing`);
+    // §8: tag names are matched without regard to case and there MUST be
+    // only one of each: h= twice, or h= and H=, is a syntax error (never
+    // first- or last-one-wins).
+    // §8/§9.3: a fragment that is not a well-formed tag, or an h= hash-set
     // that is not name:digest:digest, makes the whole field a syntax error.
     let hSyntax = false;
     const hTag = mi.tags.find((t) => t.tag === 'h');
     if (hTag) { try { parseHashSets(rawTagValue(hTag)); } catch (e) { hSyntax = true; } }
-    if (duplicateTag(mi.tags) || mi.syntaxError || hSyntax) structErr.push(`PERMERROR Message-Instance m=${m} syntax error`);
+    if (duplicateTag(mi.tags) || mi.syntaxError || hSyntax) structErr.push(`PERMERROR: Message-Instance m=${m} syntax error`);
   }
   for (const i of sigNums) {
     const s = signatures[i];
-    // §8: tags may appear in any order but MUST be only one of each kind.
-    // §8: a fragment that is not a well-formed tag is a syntax error.
-    if (s.syntaxError) structErr.push(`PERMERROR DKIM2-Signature i=${i} syntax error`);
-    const dupS = duplicateTag(s.tags);
-    if (dupS) structErr.push(`DKIM2-Signature i=${i} tag=${dupS} appears more than once`);
-    // §8.4: t= is 1*DIGIT. Checked here, whether or not the age check runs
+    // §8: tags may appear in any order but MUST be only one of each kind
+    // (names matched without regard to case), and a fragment that is not a
+    // well-formed tag is a syntax error.
+    if (s.syntaxError || duplicateTag(s.tags)) structErr.push(`PERMERROR: DKIM2-Signature i=${i} syntax error`);
+    // §10.4: t= is 1*DIGIT. Checked here, whether or not the age check runs
     // (opts.skipTimestamp). Read the raw value: parseTagList strips internal
     // WSP, which would turn "12 34" into "1234".
     const tTag = s.tags.find((t) => t.tag === 't');
-    if (tTag && !/^[0-9]+$/.test(rawTagValue(tTag))) structErr.push(`PERMERROR DKIM2-Signature i=${i} syntax error`);
-    // §8.3: the n= nonce value MUST NOT exceed 64 characters.
-    if ('n' in s.map && s.map.n.length > 64) structErr.push(`DKIM2-Signature i=${i} n= nonce exceeds 64 characters`);
+    if (tTag && !/^[0-9]+$/.test(rawTagValue(tTag))) structErr.push(`PERMERROR: DKIM2-Signature i=${i} syntax error`);
+    // §10.3: the n= nonce value MUST NOT exceed 64 characters.
+    if ('n' in s.map && s.map.n.length > 64) structErr.push(`PERMERROR: DKIM2-Signature i=${i} n= nonce exceeds 64 characters`);
     // §10.5/§10.6: mf= and each rt= are base64 of a path in angle brackets.
     // Decoded once here, for the Chain of Custody and envelope checks.
     if (!('nd' in s.map) && 'mf' in s.map && 'rt' in s.map) {
@@ -315,7 +323,7 @@ async function verifyOnce(raw, opts = {}) {
     }
   }
   if (structErr.length) {
-    return { overall: 'permerror', summary: structErr.join('; '), levels: [] };
+    return { overall: 'permerror', summary: [...new Set(structErr)].join('; '), levels: [] };
   }
 
   // Start every public-key lookup now, so they overlap each other and the
@@ -343,25 +351,14 @@ async function verifyOnce(raw, opts = {}) {
       result: 'pass', detail: '',
     };
     if (!chain.has(m)) {
-      // No reconstructed state: a broken chain (permerror or fail).
+      // No reconstructed state: the Recipe at m=undoBroken could not be
+      // undone. §14.2: report the specific PERMERROR (base64 syntax error vs.
+      // invalid JSON vs. malformed Recipe are distinct errors), on every
+      // level whose state is unreachable because of it.
       level.result = 'not-checked';
-      if (recipeErrorSuffix(undoBrokenReason)) {
-        // spec-06 §11.2: report the specific PERMERROR (JSON parse failure
-        // vs. base64 syntax error vs. malformed Recipe are distinct, per the
-        // ruling that they are different errors), not the generic "undo
-        // broke" fail below -- and every level whose state is unreachable
-        // because of it must bump 'permerror' too (not 'fail', which
-        // outranks 'permerror' in the overall verdict), so the final verdict
-        // is permerror rather than being clobbered by a downstream fail.
-        const suffix = recipeErrorSuffix(undoBrokenReason);
-        level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
-        level.detail = `PERMERROR: Message-Instance m=${undoBroken} ${suffix}`;
-        bump('permerror');
-      } else {
-        level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
-        level.detail = `state unavailable (undo broke at m=${undoBroken})`;
-        bump('fail');
-      }
+      level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
+      level.detail = `PERMERROR: Message-Instance m=${undoBroken} ${recipeErrorSuffix(undoBrokenReason)}`;
+      bump('permerror');
       levels.push(level);
       continue;
     }
@@ -376,15 +373,11 @@ async function verifyOnce(raw, opts = {}) {
       try {
         chain.checkBottom(decodeRecipe(mi.map.r)); // a null "b" is left alone here
       } catch (e) {
-        const reason = classifyRecipeDecodeError(e);
-        const suffix = recipeErrorSuffix(reason);
-        if (suffix) {
-          level.result = 'fail';
-          level.detail = `PERMERROR: Message-Instance m=1 ${suffix}`;
-          bump('permerror');
-          levels.push(level);
-          continue;
-        }
+        level.result = 'permerror';
+        level.detail = `PERMERROR: Message-Instance m=1 ${recipeErrorSuffix(classifyRecipeDecodeError(e))}`;
+        bump('permerror');
+        levels.push(level);
+        continue;
       }
     }
     try {
@@ -396,20 +389,20 @@ async function verifyOnce(raw, opts = {}) {
       const algSeen = new Set();
       const dupAlg = sets.some((s) => (algSeen.has(s.alg) ? true : (algSeen.add(s.alg), false)));
       if (dupAlg) {
-        level.result = 'fail';
-        level.detail = `PERMERROR Message-Instance m=${m} has a duplicate hash algorithm`;
-        bump('fail');
+        level.result = 'permerror';
+        level.detail = `PERMERROR: Message-Instance m=${m} has a duplicate hash algorithm`;
+        bump('permerror');
         levels.push(level);
         continue;
       }
       const noBody = chain.noBody(m);
-      // §3.4: ignore hash-sets naming algorithms we do not implement; all the
-      // ones we do implement must match (mirrors §11.6 for signatures).
+      // §3.5: ignore hash-sets naming algorithms we do not implement; all the
+      // ones we do implement must match (§14.7).
       const usable = sets.filter((s) => s.alg in HASH_ALGS);
       if (usable.length === 0) {
-        level.result = 'fail';
-        level.detail = `Message Instance m=${m} no supported hash algorithm`;
-        bump('fail');
+        level.result = 'permerror';
+        level.detail = `PERMERROR: Message-Instance m=${m} no supported hash algorithm`;
+        bump('permerror');
       } else {
         level.header_hash = 'match';
         level.body_hash = noBody ? 'not-checked' : 'match';
@@ -418,23 +411,23 @@ async function verifyOnce(raw, opts = {}) {
           if (await chain.headerHash(m, s.alg) !== s.headerHash) {
             level.header_hash = 'mismatch';
             level.result = 'fail';
-            level.detail = `Message Instance m=${m} ${s.alg} header hash mismatch`;
+            level.detail = `FAIL: Message-Instance m=${m} header hash ${s.alg} mismatch`;
             bump('fail');
             break;
           }
           if (!noBody && await chain.bodyHash(m, s.alg) !== s.bodyHash) {
             level.body_hash = 'mismatch';
             level.result = 'fail';
-            level.detail = `Message Instance m=${m} ${s.alg} body hash mismatch`;
+            level.detail = `FAIL: Message-Instance m=${m} body hash ${s.alg} mismatch`;
             bump('fail');
             break;
           }
         }
       }
     } catch (e) {
-      level.result = 'fail';
-      level.detail = `Message Instance m=${m} hash computation error`;
-      bump('fail');
+      level.result = 'permerror';
+      level.detail = `PERMERROR: Message-Instance m=${m} hash computation error`;
+      bump('permerror');
     }
     if (m >= 2 && undoBroken === m) level.undo = 'failed';
     else if (m >= 2 && nullBodyInstances.has(m)) level.undo = 'unrecoverable';
@@ -472,7 +465,7 @@ async function verifyOnce(raw, opts = {}) {
     levels.push(level);
   }
 
-  // --- §11.3–§11.6 signature checks (top-down) --------------------------
+  // --- §14.3–§14.6, §14.8 signature checks (top-down) ---------------------
   const badFrom = unauthenticFrom(chain, instances, signatures, sigNums, maxM);
   for (let i = maxI; i >= 1; i--) {
     const sig = signatures[i];
@@ -482,200 +475,159 @@ async function verifyOnce(raw, opts = {}) {
       items: [], timestamp: { ok: true, detail: '' },
       custody: { ok: true, detail: '' }, result: 'pass', detail: '',
     };
-
-    // §11.3 timestamp: a signature more than 14 days old is graded as a soft
-    // WARNING, not a hard failure. The spec says a verifier SHOULD fail on age
-    // (§11.3) but MAY ignore it (§8.4); for a paste-a-saved-message tool, old
-    // messages are the norm, so we surface age as a warning and still verify
-    // the crypto (matching the reference /validate/ behaviour). The upgrade to
-    // 'warn' happens only if the signature otherwise passes (see below).
-    let expired = false;
-    // t= is 1*DIGIT (checked in §11.2 above); 10^12 and beyond fit a double.
-    if (!opts.skipTimestamp) {
-      const t = parseInt(sig.map.t, 10);
-      const ageDays = (now - t) / 86400;
-      if (ageDays > 14) {
-        expired = true;
-        level.timestamp = { ok: false, status: 'expired', detail: `signature more than 14 days old (${Math.floor(ageDays)}d)` };
-      }
-    }
+    // Every error found for this signature, each a "STATE: text" string,
+    // and the worst state among them.
+    const errors = [];
+    let state = 'pass';
+    const fail = (st, text) => {
+      errors.push(text);
+      if (RANK[st] > RANK[state]) state = st;
+    };
 
     // §14.4 Chain of Custody (d=/mf=, and this signature against the one
     // below it), plus the top-hop envelope exact-match against the actual
-    // delivery MAIL FROM / RCPT TO.
+    // delivery MAIL FROM / RCPT TO. A failure here, or a From that is not
+    // Authentic (§14.8), stops this signature short of the key lookup and
+    // the crypto, so a key-not-found cannot mask it.
     const custody = custodyErrors(signatures, i, maxI);
     if (!custody.length && i === maxI) custody.push(...envelopeErrors(sig, i, opts));
+    let notChecked = false;
     if (custody.length) {
-      // A Chain of Custody / envelope failure is a PERMERROR for this
-      // signature; short-circuit before the crypto check so a subsequent
-      // key-not-found does not mask it.
       level.custody = { ok: false, detail: custody.join('; ') };
-      level.result = 'permerror';
-      level.detail = level.custody.detail;
-      bump('permerror');
-      levels.push(level);
-      continue;
-    }
-    level.custody = { ok: true, detail: i === 1 ? 'origin' : 'chain intact' };
-
-    // §14.8: the From this signature vouches for, if any, is Authentic.
-    if (badFrom.has(i)) {
-      level.from = { ok: false };
-      level.result = 'permerror';
-      level.detail = `PERMERROR: DKIM2-Signature i=${i} matching From is not authentic`;
-      bump('permerror');
-      levels.push(level);
-      continue;
-    }
-
-    // §11.5/§11.6 fetch key + verify each s= sig-set.
-    const mAtSig = parseInt(sig.map.m, 10);
-    if (!chain.has(mAtSig)) {
-      // Reconstruction did not reach this signature's instance: broken chain
-      // downgrades overall.
-      level.result = 'not-checked';
-      level.detail = 'message state for this signature could not be reconstructed';
-      if (undoBrokenReason === 'broken') bump('fail');
-      levels.push(level);
-      continue;
-    }
-    // Signing input = MI 1..mAtSig then DKIM2-Signature 1..i (target blanked).
-    // Build `ordered` from the actual parsed Field objects so the target
-    // signature matches by REFERENCE inside signingInput() (which blanks s=
-    // only for the element that is `=== sig.field`).
-    let inputBytes, inputHash;
-    try {
-      const ordered = [];
-      for (let m = 1; m <= mAtSig; m++) ordered.push(instances[m].field);
-      for (let k = 1; k <= i; k++) ordered.push(signatures[k].field);
-      inputBytes = binaryToBytes(signingInput(ordered, sig.field));
-      inputHash = await sha256Bytes(inputBytes);
-    } catch (e) {
-      level.result = 'fail';
-      level.detail = `DKIM2-Signature i=${i} signing input error`;
-      bump('fail');
-      levels.push(level);
-      continue;
-    }
-
-    const sigSets = parseSigSets(rawTagValue(sig.tags.find((t) => t.tag === 's')));
-    // §8.9 syntax: the s= value must contain sig-sets, each with a Selector and
-    // an algorithm name. An empty/malformed s= is a syntax error (permerror),
-    // distinct from a well-formed sig-set naming an unsupported algorithm
-    // (algorithm_only_future), which is a plain 'fail' below.
-    if (!sigSets) {
-      level.result = 'permerror';
-      level.detail = `PERMERROR DKIM2-Signature i=${i} syntax error`;
-      bump('permerror');
-      levels.push(level);
-      continue;
-    }
-
-    // spec-06 §8.9: duplicate-selector and excess-selector checks must
-    // run before any DNS lookup or crypto work.
-    const dupErrors = checkSignatureDuplicates(sigSets, i);
-    if (dupErrors.length) {
-      level.result = 'permerror';
-      level.detail = dupErrors.join('; ');
-      bump('permerror');
-      levels.push(level);
-      continue;
-    }
-    // §3.4: an item naming an algorithm we do not implement is ignored
-    // entirely -- no key lookup, never verified. §8.9: every item we do
-    // implement must carry a non-empty base64 signature; checked for all of
-    // them before any key lookup.
-    const known = sigSets.filter((ss) => SUPPORTED_ALGS.has(ss.alg));
-    if (known.some((ss) => !BASE64.test(ss.sig))) {
-      level.result = 'permerror';
-      level.detail = `PERMERROR DKIM2-Signature i=${i} syntax error`;
-      bump('permerror');
-      levels.push(level);
-      continue;
-    }
-    // §E: an absent key (NXDOMAIN / no TXT) skips that item; a present but
-    // unusable record (multiple, syntax, revoked, mismatch) is a PERMERROR
-    // for the whole signature even if another item verifies. If every
-    // implemented item is absent, PERMERROR naming the first absent one.
-    let anyChecked = known.length > 0, allPass = true;
-    const absent = [];
-    for (const ss of known) {
-      let ok = false, detail = '', status;
-      try {
-        const key = await fetchKey(ss.selector, sig.map.d);
-        const sigBytes = b64ToBytes(ss.sig);
-        // §8.9/§11.5: the key must be of the algorithm's type (k= is case
-        // significant; an unknown k= is never read as RSA).
-        const want = ss.alg === 'ed25519-sha256' ? 'ed25519' : 'rsa';
-        if (key.k !== want) throw new Error('key-mismatch');
-        ok = ss.alg === 'ed25519-sha256'
-          ? await verifyEd25519(key.p, sigBytes, inputHash)
-          : await verifyRsa(key.p, sigBytes, inputBytes);
-      } catch (e) {
-        detail = keyErrorDetail(e, ss.selector);
-        if (e.message === 'key-notfound') {
-          absent.push(ss.selector);
-          level.items.push({ selector: ss.selector, algorithm: ss.alg, result: detail, absent: true });
-          continue;
-        }
-        // §11.5/§11.6: a present but unusable key (multiple records, syntax,
-        // revoked, algorithm mismatch, too small) is a permerror; a fetch
-        // failure is a temperror.
-        if (e.message === 'key-temperror') { level.itemTemp = true; status = 'temp'; }
-        else if (e.message === 'key-tooshort') { detail = `public key ${ss.selector} RSA key size too small, ${e.bits} bits`; level.itemPerm = true; status = 'perm'; }
-        else if (e.message === 'ed25519-unsupported') { detail = 'ed25519 unsupported in this browser'; }
-        else if (['key-multiple', 'key-syntax', 'key-revoked', 'key-mismatch'].includes(e.message)) { level.itemPerm = true; status = 'perm'; }
-      }
-      if (!ok) allPass = false;
-      level.items.push({ selector: ss.selector, algorithm: ss.alg, result: ok ? 'pass' : (detail || 'fail'), status });
-    }
-    if (anyChecked && absent.length === known.length) {
-      level.result = 'permerror';
-      level.detail = `PERMERROR DKIM2-Signature i=${i} public key ${absent[0]} does not exist`;
-      bump('permerror');
-    } else if (!anyChecked) {
-      // No verifiable signature set (no supported algorithm, or none parsed):
-      // this signature cannot be trusted — fail it (matches algorithm_only
-      // _future=fail). §3.4 only lets us IGNORE unknown algs alongside a known
-      // one, not accept a signature we cannot check at all.
-      level.result = 'fail';
-      if (!level.detail) level.detail = `DKIM2-Signature i=${i} has no signature with a supported algorithm`;
-      bump('fail');
-    } else if (!allPass) {
-      if (level.itemPerm) { level.result = 'permerror'; level.detail = `PERMERROR DKIM2-Signature i=${i} ${level.items.find((it) => it.status === 'perm').result}`; bump('permerror'); }
-      else if (level.itemTemp) { level.result = 'temperror'; level.detail = `TEMPERROR DKIM2-Signature i=${i} ${level.items.find((it) => it.status === 'temp').result}`; bump('temperror'); }
-      else {
-        // §11.6: report the Selector(s) involved rather than the algorithm. When
-        // some signatures pass and others fail, name both sides — a Verifier that
-        // can see the split is well placed to spot an attack on the weaker one.
-        const passed = level.items.filter((it) => it.result === 'pass').map((it) => it.selector);
-        const failed = level.items.filter((it) => it.result !== 'pass' && !it.absent).map((it) => it.selector);
-        level.result = 'fail';
-        level.detail = passed.length
-          ? `DKIM2-Signature i=${i} ${passed.join(', ')} signature passed, ${failed.join(', ')} signature failed`
-          : `DKIM2-Signature i=${i} ${failed.join(', ')} incorrect signature`;
-        bump('fail');
+      for (const text of custody) fail('permerror', text);
+    } else {
+      level.custody = { ok: true, detail: i === 1 ? 'origin' : 'chain intact' };
+      if (badFrom.has(i)) {
+        level.from = { ok: false };
+        fail('permerror', `PERMERROR: DKIM2-Signature i=${i} matching From is not authentic`);
+      } else if (!chain.has(level.m)) {
+        // The Recipes did not reach this signature's instance: that is
+        // reported on the Message-Instance; nothing here can be checked.
+        notChecked = true;
+      } else {
+        await checkCrypto(sig, i, instances, signatures, fetchKey, level, fail);
       }
     }
-    // A valid but old signature is a soft warning, not a failure (§11.3/§8.4).
-    // Only downgrade a level that otherwise passed — a real failure outranks it.
-    if (expired && level.result === 'pass') {
-      level.result = 'warn';
-      level.detail = `DKIM2-Signature i=${i} more than 14 days old`;
-      bump('warn');
+
+    // §14.3 timestamps, against the current time (a pasted message has no
+    // delivery time): more than 14 days old, or more than a day ahead, and
+    // the message is not Validly Signed. Checked after the crypto so the
+    // report still shows whether the signature itself verified.
+    // t= is 1*DIGIT (checked above); 10^12 and beyond fit a double.
+    if (!opts.skipTimestamp) {
+      const t = parseInt(sig.map.t, 10);
+      if (now - t > MAX_AGE) {
+        level.timestamp = { ok: false, status: 'expired', detail: `t= is ${Math.floor((now - t) / 86400)} days before now` };
+        fail('permerror', `PERMERROR: DKIM2-Signature i=${i} signature expired`);
+      } else if (t - now > MAX_AHEAD) {
+        level.timestamp = { ok: false, status: 'future', detail: `t= is ${Math.floor((t - now) / 3600)} hours after now` };
+        fail('permerror', `PERMERROR: DKIM2-Signature i=${i} signature is from the future`);
+      }
     }
+
+    level.result = notChecked && state === 'pass' ? 'not-checked' : state;
+    level.detail = errors.join('; ');
+    bump(state);
     levels.push(level);
   }
 
   const nullNote = nullBodyAt !== null && nullBodyAt > 1
     ? `; body not checked below m=${nullBodyAt} (null body Recipe), header history verified` : '';
+  // A failure's summary: every distinct error, in report order.
+  const errorTexts = [...new Set(levels.map((l) => l.detail).filter((d) => STATE_TEXT.test(d)))];
   const summary = overall === 'pass'
     ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact${nullNote}`
-    : overall === 'warn'
-    ? `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact${nullNote} — with warnings: ${levels.filter((l) => l.result === 'warn' && l.detail).map((l) => l.detail).join('; ')}`
-    : levels.filter((l) => l.detail).map((l) => l.detail).join('; ') || `verification ${overall}`;
+    : errorTexts.join('; ') || `verification ${overall}`;
   return { overall, summary, levels };
 }
+
+// §14.5/§14.6: fetch the key for each sig-set of signature i and verify it,
+// recording each in level.items and any error through fail(state, text).
+async function checkCrypto(sig, i, instances, signatures, fetchKey, level, fail) {
+  // Signing input = MI 1..m then DKIM2-Signature 1..i (target blanked).
+  // Build `ordered` from the actual parsed Field objects so the target
+  // signature matches by REFERENCE inside signingInput() (which blanks s=
+  // only for the element that is `=== sig.field`).
+  const ordered = [];
+  for (let m = 1; m <= level.m; m++) ordered.push(instances[m].field);
+  for (let k = 1; k <= i; k++) ordered.push(signatures[k].field);
+  const inputBytes = binaryToBytes(signingInput(ordered, sig.field));
+  const inputHash = await sha256Bytes(inputBytes);
+
+  // §10.9 syntax: the s= value must contain sig-sets, each with a Selector
+  // and an algorithm name. An empty/malformed s= is a syntax error, distinct
+  // from a well-formed sig-set naming an unsupported algorithm.
+  const sigSets = parseSigSets(rawTagValue(sig.tags.find((t) => t.tag === 's')));
+  if (!sigSets) return fail('permerror', `PERMERROR: DKIM2-Signature i=${i} syntax error`);
+
+  // §10.9: duplicate-selector and excess-selector checks run before any DNS
+  // lookup or crypto work.
+  const dupErrors = checkSignatureDuplicates(sigSets, i);
+  if (dupErrors.length) {
+    for (const text of dupErrors) fail('permerror', text);
+    return;
+  }
+  // §3.5: an item naming an algorithm we do not implement is ignored
+  // entirely -- no key lookup, never verified. §10.9: every item we do
+  // implement must carry a non-empty base64 signature; checked for all of
+  // them before any key lookup.
+  const known = sigSets.filter((ss) => SUPPORTED_ALGS.has(ss.alg));
+  if (known.some((ss) => !BASE64.test(ss.sig))) return fail('permerror', `PERMERROR: DKIM2-Signature i=${i} syntax error`);
+  // No verifiable signature set: this signature cannot be trusted. §3.5 only
+  // lets us IGNORE unknown algorithms alongside a known one, not accept a
+  // signature we cannot check at all.
+  if (known.length === 0) {
+    return fail('permerror', `PERMERROR: DKIM2-Signature i=${i} has no signature with a supported algorithm`);
+  }
+
+  // An absent key (NXDOMAIN / no TXT) skips that item; a present but
+  // unusable record (multiple, syntax, revoked, mismatch, too small) is a
+  // PERMERROR for the whole signature even if another item verifies, and a
+  // fetch failure a TEMPERROR. If every implemented item is absent, PERMERROR
+  // naming the first absent one.
+  const absent = [];
+  let perm = null, temp = null, allPass = true;
+  for (const ss of known) {
+    let ok = false, detail = '';
+    try {
+      const key = await fetchKey(ss.selector, sig.map.d);
+      const sigBytes = b64ToBytes(ss.sig);
+      // §10.9/§14.5: the key must be of the algorithm's type (k= is case
+      // significant; an unknown k= is never read as RSA).
+      const want = ss.alg === 'ed25519-sha256' ? 'ed25519' : 'rsa';
+      if (key.k !== want) throw new Error('key-mismatch');
+      ok = ss.alg === 'ed25519-sha256'
+        ? await verifyEd25519(key.p, sigBytes, inputHash)
+        : await verifyRsa(key.p, sigBytes, inputBytes);
+    } catch (e) {
+      detail = keyErrorDetail(e, ss.selector);
+      if (e.message === 'key-notfound') {
+        absent.push(ss.selector);
+        level.items.push({ selector: ss.selector, algorithm: ss.alg, result: detail, absent: true });
+        continue;
+      }
+      if (e.message === 'key-temperror') temp = temp || detail;
+      else if (e.message === 'key-tooshort') { detail = `public key ${ss.selector} RSA key size too small, ${e.bits} bits`; perm = perm || detail; }
+      else if (e.message === 'ed25519-unsupported') detail = 'ed25519 unsupported in this browser';
+      else if (['key-multiple', 'key-syntax', 'key-revoked', 'key-mismatch'].includes(e.message)) perm = perm || detail;
+    }
+    if (!ok) allPass = false;
+    level.items.push({ selector: ss.selector, algorithm: ss.alg, result: ok ? 'pass' : (detail || 'fail') });
+  }
+  if (absent.length === known.length) return fail('permerror', `PERMERROR: DKIM2-Signature i=${i} public key ${absent[0]} does not exist`);
+  if (allPass) return;
+  if (perm) return fail('permerror', `PERMERROR: DKIM2-Signature i=${i} ${perm}`);
+  if (temp) return fail('temperror', `TEMPERROR: DKIM2-Signature i=${i} ${temp}`);
+  // §14.6: report the Selector(s) involved rather than the algorithm. When
+  // some signatures pass and others fail, name both sides -- a Verifier that
+  // can see the split is well placed to spot an attack on the weaker one.
+  const passed = level.items.filter((it) => it.result === 'pass').map((it) => it.selector);
+  const failed = level.items.filter((it) => it.result !== 'pass' && !it.absent).map((it) => it.selector);
+  fail('fail', passed.length
+    ? `FAIL: DKIM2-Signature i=${i} signature ${passed.join(', ')} signature ${failed.join(', ')} failed`
+    : `FAIL: DKIM2-Signature i=${i} selector ${failed.join(', ')} incorrect signature`);
+}
+
 
 // The undo walk: rebuild the message state at each instance, top-down, by
 // applying each Message-Instance's Recipe to the state above it (§5). The
