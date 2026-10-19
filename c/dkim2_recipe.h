@@ -1,22 +1,31 @@
 #pragma once
 #include <stddef.h>
 
-/* Recipe steps (spec-06 §5 plus the WG extension of 2026-10):
+/* Recipe steps (-07 §5, §5.1, §5.2); each step is an object with exactly
+   one key:
      {"c": [start, end]}  copy items start..end (1-based, inclusive); across
                           a list each start MUST exceed the previous end
-     {"d": [str, ...]}    literal lines/values, ASCII/UTF-8 JSON strings
-     {"b": [b64, ...]}    literal lines/values whose raw octets are base64
-                          (RFC 4648 §4) -- used for any literal with a byte
-                          >= 0x80; decoded octets MUST NOT contain CR or LF
-   Any violation is a malformed Recipe: the apply_* functions return NULL and
-   the verifier reports PERMERROR. The gen_* functions never emit a literal
-   with 8-bit bytes as "d", nor a "c" range that breaks the ascending rule. */
+     {"d": [str, ...]}    literal lines/values: UTF-8 JSON strings, no CR/LF
+     {"u": [b64, ...]}    literal lines/values whose raw octets are canonical
+                          base64 (zero pad bits, no whitespace) -- used for a
+                          literal that is not valid UTF-8; decoded octets
+                          MUST NOT contain CR or LF
+   Keys are matched without regard to case (lowercase is emitted). A Recipe
+   that breaks the schema is rejected by dkim2_recipe_parse() (the verifier's
+   "contains invalid JSON"); one that only fails against the message (a copy
+   past the last item) makes the apply_* functions return NULL. The gen_*
+   functions emit "d" for every UTF-8 literal and "u" for the rest, and never
+   a "c" range that breaks the ascending rule. */
 
-/* cJSON_Parse() of a Recipe, refusing (NULL) one in which any object names
-   a key twice: cJSON keeps the first of two equal keys and the other
-   implementations' parsers the last, so {"b":[...],"b":null} would be a null
-   body Recipe to some verifiers and signers and a real one to others. Every
-   Recipe parse here goes through it. Free with dkim2_recipe_free(). */
+/* cJSON_Parse() of a Recipe, refusing (NULL) one that is not valid -07 §5
+   JSON: a key named twice in one object, compared without regard to case
+   (cJSON keeps the first of two equal keys and the other implementations'
+   parsers the last, so {"b":[...],"b":null} would be a null body Recipe to
+   some verifiers and signers and a real one to others), or anything the
+   schema forbids -- not an object, neither "h" nor "b", an empty "h", a step
+   without exactly one of "c"/"d"/"u", a malformed literal or copy range.
+   Every key of the result is lowercased. Every Recipe parse here goes
+   through it. Free with dkim2_recipe_free(). */
 struct cJSON *dkim2_recipe_parse(const char *r_json);
 void dkim2_recipe_free(struct cJSON *root);
 
@@ -35,11 +44,11 @@ typedef struct {
     size_t len;
 } dkim2_recipe_op_t;
 
-/* Flatten one Recipe list -- a body "b" array or one header field's array --
+/* Flatten one Recipe list -- the body ("b") array or one header field's array --
    exactly as the apply_* functions read it (same step classification, same
    literal and copy-range rules), but with no bounds check: the caller
    compares the last copy's end against the list the Recipe applies to.
-   reject_nul: refuse a "b" literal with an embedded NUL (header values).
+   reject_nul: refuse a "u" literal with an embedded NUL (header values).
    Returns 0 with *ops (malloc'd, free with dkim2_recipe_ops_free) and
    *n_ops set, or -1 for a malformed list (*ops NULL). */
 int dkim2_recipe_ops(const struct cJSON *list, int reject_nul,

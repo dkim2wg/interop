@@ -56,9 +56,13 @@ int main(void) {
     assert(memcmp(result, body, out_len) == 0);
     free(result);
 
-    /* Body Recipe: empty Recipe {} means body unchanged */
+    /* Body Recipe: -07 §5 requires "h" or "b", so {} is not a Recipe */
     const char *r4 = "{}";
     result = dkim2_apply_body_recipe(r4, body, strlen(body), &out_len);
+    assert(result == NULL);
+
+    /* ...but a Recipe with only "h" leaves the body unchanged */
+    result = dkim2_apply_body_recipe("{\"h\":{\"subject\":[]}}", body, strlen(body), &out_len);
     assert(result != NULL);
     assert(out_len == strlen(body));
     free(result);
@@ -192,13 +196,13 @@ int main(void) {
         free(ok);
     }
 
-    /* ---- "b" steps: base64 literals carrying raw octets ---- */
+    /* ---- "u" steps: base64 literals carrying raw octets ---- */
     {
         const char *b3 = "L1\r\nL2\r\nL3\r\n";
         size_t n;
         /* "\xb1\xa4" = saQ=   "caf\xe9" = Y2Fm6Q== */
         char *r = dkim2_apply_body_recipe(
-            "{\"b\":[{\"c\":[1,1]},{\"b\":[\"saQ=\",\"Y2Fm6Q==\"]},{\"c\":[3,3]}]}",
+            "{\"b\":[{\"c\":[1,1]},{\"u\":[\"saQ=\",\"Y2Fm6Q==\"]},{\"c\":[3,3]}]}",
             b3, strlen(b3), &n);
         const char want[] = "L1\r\n\xb1\xa4\r\ncaf\xe9\r\nL3\r\n";
         assert(r != NULL);
@@ -206,27 +210,27 @@ int main(void) {
         assert(memcmp(r, want, n) == 0);
         free(r);
 
-        /* an empty "b" item is an empty line, like an empty "d" string */
-        r = dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"\"]}]}", b3, strlen(b3), &n);
+        /* an empty "u" item is an empty line, like an empty "d" string */
+        r = dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"\"]}]}", b3, strlen(b3), &n);
         assert(r && n == 2 && memcmp(r, "\r\n", 2) == 0);
         free(r);
 
         /* rejections: not base64; whitespace inside; URL-safe alphabet;
            trailing junk after padding; decoded CR; decoded LF; non-string */
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"c@f=\"]}]}", b3, strlen(b3), &n) == NULL);
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"sa Q=\"]}]}", b3, strlen(b3), &n) == NULL);
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"sa-_\"]}]}", b3, strlen(b3), &n) == NULL);
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"saQ=x\"]}]}", b3, strlen(b3), &n) == NULL);
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"YQ1i\"]}]}", b3, strlen(b3), &n) == NULL);  /* a\rb */
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"YQpi\"]}]}", b3, strlen(b3), &n) == NULL);  /* a\nb */
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"YQ0K\"]}]}", b3, strlen(b3), &n) == NULL);  /* a\r\n */
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[1]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"c@f=\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"sa Q=\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"sa-_\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"saQ=x\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"YQ1i\"]}]}", b3, strlen(b3), &n) == NULL);  /* a\rb */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"YQpi\"]}]}", b3, strlen(b3), &n) == NULL);  /* a\nb */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"YQ0K\"]}]}", b3, strlen(b3), &n) == NULL);  /* a\r\n */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[1]}]}", b3, strlen(b3), &n) == NULL);
 
         /* header side: same bytes come back inside the field value */
         char *hdrs1[] = { "Subject: plain\r\n" };
         int n_out;
         char **hh = dkim2_apply_header_recipe(
-            "{\"h\":{\"subject\":[{\"b\":[\"Y2Fm6Q==\"]},{\"d\":[\"ascii\"]},{\"b\":[\"saQ=\"]}]}}",
+            "{\"h\":{\"subject\":[{\"u\":[\"Y2Fm6Q==\"]},{\"d\":[\"ascii\"]},{\"u\":[\"saQ=\"]}]}}",
             hdrs1, 1, &n_out);
         assert(hh != NULL && n_out == 3);
         /* new values are bottom-up, so they land top-down reversed */
@@ -235,13 +239,43 @@ int main(void) {
         assert(strcmp(hh[2], "subject: caf\xe9\r\n") == 0);
         for (int i = 0; i < n_out; i++) free(hh[i]);
         free(hh);
-        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[\"YQ1i\"]}]}}", hdrs1, 1, &n_out) == NULL);
-        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[\"YQpi\"]}]}}", hdrs1, 1, &n_out) == NULL);
-        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[\"!!\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"u\":[\"YQ1i\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"u\":[\"YQpi\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"u\":[\"!!\"]}]}}", hdrs1, 1, &n_out) == NULL);
+
+        /* -07 §5: zero pad bits ("QR==", "QUJ=" are not canonical) */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QR==\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QUJ=\"]}]}", b3, strlen(b3), &n) == NULL);
+        r = dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QQ==\",\"QUI=\"]}]}", b3, strlen(b3), &n);
+        assert(r && n == 7 && memcmp(r, "A\r\nAB\r\n", n) == 0);
+        free(r);
+        /* the -06 "b" step key is gone; a step has exactly one key */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"eA==\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[1,1],\"d\":[\"x\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[\"x\"]}", b3, strlen(b3), &n) == NULL);
+        /* "d" must be valid UTF-8 and made of strings */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"d\":[\"caf\xe9\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"d\":[1]}]}", b3, strlen(b3), &n) == NULL);
+        r = dkim2_apply_body_recipe("{\"b\":[{\"d\":[\"caf\xc3\xa9\"]}]}", b3, strlen(b3), &n);
+        assert(r && n == 7 && memcmp(r, "caf\xc3\xa9\r\n", n) == 0);
+        free(r);
+        /* keys in any case */
+        r = dkim2_apply_body_recipe("{\"B\":[{\"C\":[1,1]},{\"U\":[\"QQ==\"]},{\"D\":[\"z\"]}]}", b3, strlen(b3), &n);
+        assert(r && n == 10 && memcmp(r, "L1\r\nA\r\nz\r\n", n) == 0);
+        free(r);
+        hh = dkim2_apply_header_recipe("{\"H\":{\"SUBJECT\":[{\"D\":[\"new\"]}]}}", hdrs1, 1, &n_out);
+        assert(hh && n_out == 1 && strcmp(hh[0], "subject: new\r\n") == 0);
+        free(hh[0]); free(hh);
+        /* "h" must name at least one field, and each must be a list */
+        assert(dkim2_apply_header_recipe("{\"h\":{}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":null}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_recipe_parse("{\"x\":1}") == NULL);
+        assert(dkim2_recipe_parse("[]") == NULL);
     }
 
-    /* ---- generation: 8-bit literals become "b" items, JSON stays 7-bit,
-       and the result round-trips through apply ---- */
+    /* ---- generation: non-UTF-8 literals become "u" items, UTF-8 ones stay
+       "d", and the result round-trips through apply ---- */
     {
         const char *old_b = "Line1\r\nLine2\r\nLine3\r\n";
         const char *new_b = "Line1\r\nLine2\r\ncaf\xe9\r\nascii\r\n\xb1\xa4\r\n";
@@ -249,27 +283,27 @@ int main(void) {
         char *rc = dkim2_gen_body_recipe(old_b, strlen(old_b), new_b, strlen(new_b), &imp);
         assert(rc && imp == 0);
         for (const char *p = rc; *p; p++) assert((unsigned char)*p < 0x80);
-        assert(strstr(rc, "\"b\":[\"Y2Fm6Q==\"]") != NULL);
+        assert(strstr(rc, "\"u\":[\"Y2Fm6Q==\"]") != NULL);
         assert(strstr(rc, "\"d\":[\"ascii\"]") != NULL);
-        assert(strstr(rc, "\"b\":[\"saQ=\"]") != NULL);
+        assert(strstr(rc, "\"u\":[\"saQ=\"]") != NULL);
         size_t n;
         char *r = dkim2_apply_body_recipe(rc, old_b, strlen(old_b), &n);
         assert(r && n == strlen(new_b) && memcmp(r, new_b, n) == 0);
         free(r);
         free(rc);
 
-        /* consecutive 8-bit lines coalesce into one "b" step */
+        /* consecutive non-UTF-8 lines coalesce into one "u" step */
         const char *new_b2 = "caf\xe9\r\nth\xe9\r\n";
         rc = dkim2_gen_body_recipe(old_b, strlen(old_b), new_b2, strlen(new_b2), &imp);
-        assert(rc && strstr(rc, "{\"b\":[{\"b\":[\"Y2Fm6Q==\",\"dGjp\"]}]}") != NULL);
+        assert(rc && strstr(rc, "{\"b\":[{\"u\":[\"Y2Fm6Q==\",\"dGjp\"]}]}") != NULL);
         free(rc);
 
-        /* header: an 8-bit value is a "b" item and applies back to the bytes */
+        /* header: a non-UTF-8 value is a "u" item and applies back to the bytes */
         char *new_hdr[] = { "Subject: caf\xe9\r\n" };
         char *hr = dkim2_gen_header_recipe("Subject", NULL, 0, new_hdr, 1);
         assert(hr != NULL);
         for (const char *p = hr; *p; p++) assert((unsigned char)*p < 0x80);
-        assert(strcmp(hr, "{\"h\":{\"subject\":[{\"b\":[\"Y2Fm6Q==\"]}]}}") == 0);
+        assert(strcmp(hr, "{\"h\":{\"subject\":[{\"u\":[\"Y2Fm6Q==\"]}]}}") == 0);
         int n_out;
         char **hh = dkim2_apply_header_recipe(hr, NULL, 0, &n_out);
         assert(hh && n_out == 1 && strcmp(hh[0], "subject: caf\xe9\r\n") == 0);
@@ -327,7 +361,7 @@ int main(void) {
     }
 
     /* ---- cross-implementation alignment: CR/LF in "d", canonical base64
-       padding in "b", and empty literal arrays are all malformed ---- */
+       padding in "u", and empty literal arrays are all malformed ---- */
     {
         const char *b3 = "L1\r\nL2\r\nL3\r\n";
         char *hdrs1[] = { "Subject: plain\r\n" };
@@ -339,20 +373,20 @@ int main(void) {
         assert(dkim2_apply_body_recipe("{\"b\":[{\"d\":[\"ok\",\"a\\r\\n\"]}]}", b3, strlen(b3), &n) == NULL);
         assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"d\":[\"a\\rb\"]}]}}", hdrs1, 1, &n_out) == NULL);
         assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"d\":[\"a\\nb\"]}]}}", hdrs1, 1, &n_out) == NULL);
-        /* (2) "b" must be canonical padded base64: "QUI" rejected, "QUI=" ok */
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"QUI\"]}]}", b3, strlen(b3), &n) == NULL);
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"QQ\"]}]}", b3, strlen(b3), &n) == NULL);
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"QUJD=\"]}]}", b3, strlen(b3), &n) == NULL);
-        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[\"QUI\"]}]}}", hdrs1, 1, &n_out) == NULL);
-        char *r = dkim2_apply_body_recipe("{\"b\":[{\"b\":[\"QUI=\",\"QQ==\",\"QUJD\"]}]}", b3, strlen(b3), &n);
+        /* (2) "u" must be canonical padded base64: "QUI" rejected, "QUI=" ok */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QUI\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QQ\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QUJD=\"]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"u\":[\"QUI\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        char *r = dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QUI=\",\"QQ==\",\"QUJD\"]}]}", b3, strlen(b3), &n);
         assert(r && n == 12 && memcmp(r, "AB\r\nA\r\nABC\r\n", n) == 0);
         free(r);
-        /* (3) empty "d" or "b" array (schema minItems 1) */
+        /* (3) empty "d" or "u" array (schema minItems 1) */
         assert(dkim2_apply_body_recipe("{\"b\":[{\"d\":[]}]}", b3, strlen(b3), &n) == NULL);
-        assert(dkim2_apply_body_recipe("{\"b\":[{\"b\":[]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[]}]}", b3, strlen(b3), &n) == NULL);
         assert(dkim2_apply_body_recipe("{\"b\":[{\"c\":[1,1]},{\"d\":[]}]}", b3, strlen(b3), &n) == NULL);
         assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"d\":[]}]}}", hdrs1, 1, &n_out) == NULL);
-        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"b\":[]}]}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"u\":[]}]}}", hdrs1, 1, &n_out) == NULL);
         /* an empty step LIST is still the legal "remove all instances" */
         char **ok = dkim2_apply_header_recipe("{\"h\":{\"subject\":[]}}", hdrs1, 1, &n_out);
         assert(ok && n_out == 0);

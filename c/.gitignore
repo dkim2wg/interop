@@ -21,3 +21,5 @@ tests/.gate-fixtures
 tests/test_plan
 tests/test_plan_corpus
 tests/test_prefetch
+tests/test_domain
+tests/test_spec07

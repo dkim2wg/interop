@@ -145,7 +145,7 @@ int main(void) {
         assert(strstr(err, "m=1 header hash mismatch"));
         for (int i = 0; i < 3; i++) dkim2_mi_free(f[i]);
     }
-    /* malformed body Recipe on an instance BELOW a null -> PERMERROR */
+    /* malformed body Recipe on an instance BELOW a null -> PERMERROR (invalid JSON) */
     {
         const char *bads[] = {
             "{\"h\":{\"subject\":[{\"d\":[\"[L] hi\"]}]},\"b\":5}",
@@ -158,7 +158,7 @@ int main(void) {
             /* m=3 is null, m=2 (below it) carries the malformed Recipe; its
                header Recipe is valid, so only structure validation can reject */
             assert(run(m, 3, h3, 3, B3, err, sizeof err) != 0);
-            assert(strstr(err, "m=2 has a malformed body Recipe"));
+            assert(strstr(err, "m=2 contains invalid JSON"));
             for (int i = 0; i < 3; i++) dkim2_mi_free(m[i]);
         }
     }

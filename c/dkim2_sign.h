@@ -18,6 +18,10 @@ typedef struct {
        Default off. A refusal returns -1 with ctx->errmsg starting
        "not signing: ". */
     int allow_null_body_recipe;
+    /* -07 §12.5: this hop sends copies to more than one address. Adds
+       "exploded" to f= when i > 1 (also added, requested or not, when rt=
+       holds more than one address); ignored at i = 1. */
+    int exploded;
     int skip_timestamp_check;   /* the chain gate ignores t= expiry (harness use) */
     int skip_chain_check;       /* DO NOT USE outside tests: sign without running the
                                    gate, to build deliberately broken chains */

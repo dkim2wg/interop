@@ -497,7 +497,8 @@ static int undo_walk(
                    payload never surfaced as an error at all. Probe the decoded
                    JSON directly here, before either apply_*_recipe() call, so
                    that failure is reported specifically instead of vanishing. */
-                /* dkim2_recipe_parse(): a duplicate key is invalid JSON too. */
+                /* dkim2_recipe_parse(): a duplicate key (ignoring case) and
+                   anything the -07 §5 schema forbids are invalid JSON too. */
                 cJSON *probe = dkim2_recipe_parse(rj);
                 if (!probe) {
                     free(r_json_bytes);
@@ -517,12 +518,10 @@ static int undo_walk(
                    state -- only meaningful when there IS a previous hop. */
                 if (vi > 0) {
                     /* Apply body Recipe */
-                    /* The JSON parsed above, so a NULL from either apply_*
-                       call now means the Recipe violates the §5 schema (a
-                       copy range given as strings, a zero bound, an end past
-                       the last item, ranges out of ascending order, a "b"
-                       item that is not clean base64 or decodes to CR/LF). Report
-                       it as such rather than fall through to a hash
+                    /* The JSON parsed and met the schema above, so a NULL
+                       from either apply_* call now means the Recipe does not
+                       fit the message (a copy past the last line or field).
+                       Report it as such rather than fall through to a hash
                        mismatch on the un-undone content. */
                     if (null_body) {
                         /* Previous body is unrecoverable: stop checking

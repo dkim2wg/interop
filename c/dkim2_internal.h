@@ -9,6 +9,7 @@ typedef enum {
     DKIM2_FAIL,
     DKIM2_PERMERROR,
     DKIM2_TEMPERROR,
+    DKIM2_NONE,         /* no DKIM2 header fields at all (A-R dkim2=none) */
 } dkim2_status_t;
 
 /* One hash-set from h= tag: "sha256:headerhash:bodyhash" */

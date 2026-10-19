@@ -489,8 +489,8 @@ static void test_field_syntax(const char *mi) {
     const char *SIG_SYNTAX = "PERMERROR DKIM2-Signature i=1 syntax error";
     const char *MI_SYNTAX = "PERMERROR Message-Instance m=1 syntax error";
     const char *bad[] = { "junk; ", "9bad=foo; ", "=v; ", "x=a\x7f" "b; ", "x=caf\xc3\xa9; ",
-                          "n=\x80; ", "x=a\x01; ", "x y=1; ", NULL };
-    const char *good[] = { "x=unknown value; ", ";; ", "x=; ", " X_9 = a=b ; ", NULL };
+                          "n=\x80; ", "x=a\x01; ", "x y=1; ", ";; ", NULL };
+    const char *good[] = { "x=unknown value; ", "x=; ", " X_9 = a=b ; ", NULL };
     char *s, *m2, what[128];
     for (int i = 0; bad[i]; i++) {
         g_sig_extra = bad[i];
