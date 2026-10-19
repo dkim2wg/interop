@@ -96,11 +96,16 @@ it was when MI m=k was the highest. State N is the message as received; state k�
 is state k with MI k's header Recipe applied. Reuse the planned/undo walk that
 already reconstructs header states.
 
-Pairs to check:
-- (From at state 1, signature i=1).
-- For each k ≥ 2 whose header Recipe has a `from` key (any case): (From at state
-  k, the lowest i whose signature m= ≥ k). If there is no such signature, the
-  existing "is not signed" error already applies.
+Pairs to check: the From in effect when each relevant signature was made
+(§11; corrected 2026-10-18 with Bron. A From that was replaced before any
+signature covered it, such as the author's From in an unsigned ingress m=1 that a
+list rewrote in m=2 before signing i=1, is never checked. §13.3 makes that
+original-form check an optional receiver assessment.)
+- (From at state m(i=1), signature i=1), where m(i=1) is i=1's m= value.
+- For each signature i ≥ 2: if any MI k with m(i−1) < k ≤ m(i) has a `from`
+  key in its header Recipe (any case), check (From at state m(i), signature i).
+- Instances above the top signature's m= (unsigned top instances, outbound/gate
+  mode) are not checked here; the signer's own check covers them.
 
 A pair passes when that state has exactly one From field, the field holds exactly
 one mailbox, the addr-spec domain is not a literal, and
