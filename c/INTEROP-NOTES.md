@@ -788,6 +788,23 @@ What the cross-implementation runs found:
 
 ---
 
+## 24. Implementations behind Perl: C9 multi-fault order (2026-10-20)
+
+Mail::DKIM2 0.25 (Perl) implements the contract's C9 additions, settled with
+Bron on 2026-10-20 (docs/superpowers/specs/2026-10-18-dkim2-spec-07-design.md):
+- **§14.2:** structure before content, in a fixed sequence a..h. Then each
+  Message-Instance's content by ascending m=, then each signature's.
+- **Lowest duplicate:** a number given twice is reported by its lowest value.
+- **Missing m=:** "PERMERROR: Message-Instance m= tag=m missing".
+- **§14.7:** every header hash (in h= order) before any body hash.
+
+**Python, Go, C and the browser JS have NOT been ported yet.** They are
+ported one at a time, following Perl. perl/t/check-order.t has the cases.
+Once all five are level, those cases become multi-fault vectors in
+util/negative-vectors.sh. Until then, the five can name different primary
+errors (same state) on messages with more than one §14.2 fault, or with
+several wrong hashes in one instance.
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused

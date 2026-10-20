@@ -183,7 +183,7 @@ package PlainResolver { use parent -norequire, 'Net::DNS::Resolver' }
 {
     no warnings 'once';
     my $many = join(',', map { "s$_:rsa-sha256:AAAA" } 1 .. 200);
-    (my $hostile = $raw) =~ s/\A/DKIM2-Signature: i=7; m=6; t=1; d=test1.dkim2.com; mf=PD4=; rt=PD4=; s=$many;\r\n/;
+    (my $hostile = $raw) =~ s/\A/DKIM2-Signature: i=7; m=5; t=1; d=test1.dkim2.com; mf=PD4=; rt=PD4=; s=$many;\r\n/;
     my $res = BgResolver->new(dns => $dns);
     my $v = Mail::DKIM2::Verifier->new(SkipTimestampCheck => 1, Resolver => $res);
     $v->PRINT($hostile);

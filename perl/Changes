@@ -1,5 +1,35 @@
 Revision history for Mail::DKIM2
 
+0.25    2026-10-20
+        Which error is reported when a message has more than one fault
+        (the interop contract's C9, so every implementation names the
+        same one), and one verdict.
+
+        - Section 14.2: the chain's structure before any field's content,
+          in a fixed order: too many fields; a Message-Instance with no
+          usable m=; an m= given twice; a DKIM2-Signature with no usable
+          i= (or one out of range); an i= given twice; a missing
+          Message-Instance; an instance no signature covers; a missing
+          DKIM2-Signature. Then each Message-Instance's content by
+          ascending m= (it was highest first), then each signature's.
+        - A number given twice is reported by its lowest value, not the
+          first met.
+        - Section 14.7: within one instance every header hash, in the
+          order h= lists the algorithms, before any body hash (it was each
+          algorithm in turn, alphabetically).
+        - A Message-Instance with no m= is "PERMERROR: Message-Instance
+          m= tag=m missing" (was "... without m= tag"); new constant
+          Mail::DKIM2::Common::MI_MISSING_M_ERROR.
+        - The structure is judged at the end of the header fields, so a
+          message whose chain is broken there stops before any key is
+          fetched.
+        - Verdict change: a message with no DKIM2-Signature and a gap in
+          its Message-Instances (only m=2, say) is "PERMERROR: Message-
+          Instance m=1 missing" with AllowUnsignedMI or MidProcess too; it
+          used to be "none" there. "none" is only for a message with no
+          DKIM2 field at all. (The reflector, which uses AllowUnsignedMI,
+          no longer bridge-signs such a message.)
+
 0.24    2026-10-19
         Fixes to the public-key prefetch added in 0.22, which made every
         DKIM2-signed message cost about five seconds behind a resolver that

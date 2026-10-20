@@ -2,7 +2,7 @@ package Mail::DKIM2::Gate;
 use strict;
 use warnings;
 
-our $VERSION = '0.24';
+our $VERSION = '0.25';
 
 use Email::MIME;
 use Mail::DKIM2::Common qw(extract_mi_version parse_mime valid_sequence chain_number_error);
@@ -153,7 +153,8 @@ sub check {
     # header-only walk below a null-body Recipe, and the same up-front
     # _chain_error check (verify() makes it on the first iteration).
     # allow_unsigned_mi only suppresses the "MI m= not signed" PERMERROR
-    # earlier in finish_body; it does not change the walk.  So a 'pass'
+    # among the structure checks at the end of the header fields; it does
+    # not change the walk.  So a 'pass'
     # means chain_verifies would succeed, and walking again is wasted work.
     # Without signatures, with a caller-supplied VerifyResult, or on any
     # non-pass result the walk was not (fully) done, so run it here.

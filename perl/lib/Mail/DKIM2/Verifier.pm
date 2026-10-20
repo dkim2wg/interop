@@ -2,7 +2,7 @@ package Mail::DKIM2::Verifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.24';
+our $VERSION = '0.25';
 
 use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
@@ -13,6 +13,7 @@ use Time::HiRes ();
 use Scalar::Util ();
 
 use Mail::DKIM2::Common qw(
+    MI_MISSING_M_ERROR
     parse_mime
     dkim2_canonicalize_header
     decode_tag_json
@@ -62,13 +63,6 @@ our $PREFETCH_POLL = 0.005;
 # prefetched is asked for with query() if it is ever needed.
 our $PREFETCH_MAX = 8;
 
-sub _extract_mi_hash_sets {
-    my ($raw) = @_;
-    $raw =~ s/^[^:]+://;        # strip "Message-Instance:" field name
-    $raw =~ s/\r?\n[ \t]/ /g;   # unfold continuation lines
-    return [] unless $raw =~ /(?:\A|;)\s*h\s*=([^;]*)/i;    # §9: any case
-    return Mail::DKIM2::MessageInstance::parse_hash_sets($1) // [];    # malformed: MI parse reports it
-}
 
 sub known_options {
     return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
@@ -173,8 +167,12 @@ sub handle_header {
             # Bounded here, before finish_body walks 1..m= for gaps. Keyed
             # by number, so m=01 is m=1.
             my $v = extract_mi_version($contents);
-            if (my $e = chain_number_error('Message-Instance', 'm', $raw)) {
-                $self->{_range_error} //= $e;
+            if (!defined $raw) {
+                # No m= at all: nothing to place it in the chain by.
+                $self->{_mi_unusable} //= MI_MISSING_M_ERROR;
+            }
+            elsif (my $e = chain_number_error('Message-Instance', 'm', $raw)) {
+                $self->{_mi_unusable} //= $e;
             }
             elsif ($v) {
                 push @{$self->{_numbers}{'message-instance'}}, $v;
@@ -183,7 +181,9 @@ sub handle_header {
             1;
         } or do {
             die $@ if ref $@;
-            $self->{_mi_parse_error} = $@;
+            # Defensive: neither helper dies on a string today, but a field
+            # that could not be read has no m= to place it in the chain by.
+            $self->{_mi_unusable} //= MI_MISSING_M_ERROR;
         };
     }
     elsif ($lc_name eq 'dkim2-signature') {
@@ -200,7 +200,7 @@ sub handle_header {
                 // chain_number_error('DKIM2-Signature', 'm', $sig->version, $i));
         if ($range) {
             # Bounded here, before finish_body walks 1..i= for gaps.
-            $self->{_range_error} //= $range;
+            $self->{_sig_unusable} //= $range;
         }
         elsif (valid_sequence($i)) {
             push @{$self->{_numbers}{'dkim2-signature'}}, $i;
@@ -209,7 +209,7 @@ sub handle_header {
                 sig => $sig,
             };
         } else {
-            $self->{_dk2_unkeyable} //= unkeyable_signature_error($contents);
+            $self->{_sig_unusable} //= unkeyable_signature_error($contents);
         }
     }
 }
@@ -218,24 +218,17 @@ sub handle_header {
 # decide the result.
 sub finish_header {
     my $self = shift;
-    my $numbers = $self->{_numbers};
-    my $error = chain_length_error($self->{_chain_counts})
-        // $self->{_dk2_unkeyable}
-        // $self->{_range_error}
-        // duplicate_number_error('Message-Instance', 'm',
-               @{$numbers->{'message-instance'} || []})
-        // duplicate_number_error('DKIM2-Signature', 'i',
-               @{$numbers->{'dkim2-signature'} || []});
-    if ($error) {
+    if (my $error = $self->_structure_error) {
         $self->{result}  = 'permerror';
         $self->{details} = $error;
         $self->stop;
         return;
     }
 
-    # With no signature the verdict is already known -- 'none', or the
-    # unsigned-instance PERMERROR -- and finish_body reaches it before it
-    # looks at the body, so do not keep one. Most mail carries no DKIM2 at
+    # With no signature the verdict is already known -- 'none' (a structure
+    # fault, such as the unsigned-instance PERMERROR, has stopped above) --
+    # and finish_body reaches it before it looks at the body, so do not keep
+    # one. Most mail carries no DKIM2 at
     # all, and a verifier run on every message would otherwise hold a copy
     # of each.
     unless (%{$self->{_dk2_headers}}) {
@@ -247,6 +240,52 @@ sub finish_header {
     $self->_prefetch_keys;
 
     $self->_start_plans if $self->{StreamBody} && !$self->{HeadersOnly};
+}
+
+# -07 section 14.2, structure: what the fields' names and m=/i= numbers
+# alone decide, in the interop contract's fixed order (C9: a..h), so every
+# verifier names the same fault first. The faults that decide which fields
+# are in the chain at all (a..e) come before the gaps and coverage worked
+# out from them (f..h). undef if the chain's shape is sound.
+sub _structure_error {
+    my ($self) = @_;
+    my $numbers = $self->{_numbers};
+    my %mi  = %{$self->{_mi_headers}};
+    my %dk2 = %{$self->{_dk2_headers}};
+    my $error = chain_length_error($self->{_chain_counts})              # a
+        // $self->{_mi_unusable}                                        # b
+        // duplicate_number_error('Message-Instance', 'm',              # c
+               @{$numbers->{'message-instance'} || []})
+        // $self->{_sig_unusable}                                       # d
+        // duplicate_number_error('DKIM2-Signature', 'i',               # e
+               @{$numbers->{'dkim2-signature'} || []});
+    return $error if $error;
+
+    # f: every instance from m=1 up to the highest there is, or the highest
+    # the top signature covers -- a signature naming an absent instance is
+    # the same gap.
+    my ($max_v) = sort { $b <=> $a } keys %mi;
+    my ($max_i) = sort { $b <=> $a } keys %dk2;
+    my $top_m = defined $max_i ? ($dk2{$max_i}{sig}->version || 0) : 0;
+    my $upto = ($max_v // 0) > $top_m ? $max_v : $top_m;
+    for my $v (1 .. $upto) {
+        return "PERMERROR: Message-Instance m=$v missing" unless $mi{$v};
+    }
+
+    # g: an instance above every signature's m= is one nothing vouches for.
+    # Not for an outbound signer (AllowUnsignedMI: it holds the instance it
+    # is about to sign) or a partial chain view (MidProcess).
+    if (defined $max_v && !$self->{AllowUnsignedMI} && !$self->{MidProcess}) {
+        my ($top_signed) = sort { $b <=> $a } grep { defined }
+                           map { $_->{sig}->version } values %dk2;
+        return "PERMERROR: Message-Instance m=$max_v is not signed"
+            if !defined $top_signed || $max_v > $top_signed;
+    }
+
+    for my $i (1 .. ($max_i // 0)) {                                     # h
+        return "PERMERROR: DKIM2-Signature i=$i missing" unless $dk2{$i};
+    }
+    return;
 }
 
 # StreamBody: from the header fields, parsed once as the undo walk's parser
@@ -285,30 +324,10 @@ sub finish_body {
     my %mi_map  = %{$self->{_mi_headers}};
     my %dk2_map = %{$self->{_dk2_headers}};
 
-    # -07 §14: "As a special case, there MUST NOT be a Message-Instance
-    # field with a higher m= value than occurs in any DKIM2-Signature field",
-    # reported as "PERMERROR: Message-Instance m=<x> is not signed".
-    #
-    # An unsigned Message-Instance records hashes that nothing vouches for, so
-    # accepting one lets a hop assert an instance with no accountability --
-    # which is the whole thing DKIM2 exists to prevent. This must run BEFORE
-    # the no-signatures 'none' return below, or a message carrying only an MI
-    # reads as "no DKIM2 here" instead of as malformed.
-    #
-    # Suppressed by allow_unsigned_mi (an outbound signer holds the new MI
-    # before its signature exists) and by mid_process (a partial chain view
-    # keeps every MI while higher signatures are stripped).
-    unless ($self->{AllowUnsignedMI} || $self->{MidProcess}) {
-        if (keys %mi_map) {
-            my ($top_mi) = sort { $b <=> $a } keys %mi_map;
-            my ($top_signed) = sort { $b <=> $a }
-                               grep { defined }
-                               map  { $_->{sig} ? $_->{sig}->version : undef }
-                               values %dk2_map;
-            if (!defined $top_signed || $top_mi > $top_signed) {
-                return $self->_error(permerror => "Message-Instance m=$top_mi is not signed");
-            }
-        }
+    # -07 section 14.2, structure (also checked at the end of the headers,
+    # which stops there on a fault).
+    if (my $error = $self->_structure_error) {
+        return $self->_outcome($error);
     }
 
     unless (keys %dk2_map) {
@@ -317,28 +336,12 @@ sub finish_body {
         return;
     }
 
-    # -07 §9.3: reject a Message-Instance whose h= names the same
-    # algorithm twice, before any DNS lookup or crypto work. Checked against
-    # the LIST of hash-sets (via _extract_mi_hash_sets/parse_hash_sets), not
-    # a hash keyed by algorithm, since a hash would let a later occurrence
-    # silently overwrite an earlier one and hide the duplicate. Matching is
-    # case-insensitive (parse_hash_sets already lowercases algorithm names).
-    for my $v (sort keys %mi_map) {
-        my $sets = _extract_mi_hash_sets($mi_map{$v});
-        my %seen;
-        for my $s (@$sets) {
-            if ($seen{$s->[0]}++) {
-                return $self->_error(permerror => "Message-Instance m=$v has a duplicate hash algorithm");
-            }
-        }
-    }
-
-    # -07 section 14.2 before 14.6: every Message-Instance must be valid --
-    # its tag list, h=, and a Recipe that is valid JSON -- before any
-    # signature is worked out. Highest m= first, as the chain walk goes.
-    # The copy ranges' order is the field's too (contract C9): only the
-    # bound a message gives is left for the chain walk to find.
-    for my $v (sort { $b <=> $a } keys %mi_map) {
+    # Section 14.2, content: every Message-Instance on its own, by ascending
+    # m= (contract C9) -- its tag list, then a duplicate hash algorithm, then
+    # its Recipe (MessageInstance->parse checks in that order), then the
+    # Recipe's copy ranges -- before any signature is worked out. Only the
+    # bound a message gives a range is left for the chain walk.
+    for my $v (sort { $a <=> $b } keys %mi_map) {
         (my $value = $mi_map{$v}) =~ s/\A[^:]*:[ \t]*//;
         my $obj = eval { Mail::DKIM2::MessageInstance->parse($value) };
         die $@ if ref $@;
@@ -350,30 +353,7 @@ sub finish_body {
     }
 
     my $max_i = (sort { $b <=> $a } keys %dk2_map)[0];
-    my $dk2_entry = $dk2_map{$max_i};
-    my $signature = $dk2_entry->{sig};
-
-    # Validate chain completeness - check for gaps
-    for my $i (1..$max_i) {
-        return $self->_error(permerror => "DKIM2-Signature i=$i missing")
-            unless $dk2_map{$i};
-    }
-
-    # Message-Instance completeness: m=1 up to the highest instance there is,
-    # or the highest the top signature covers, whichever is higher -- a
-    # signature naming an instance that is not there is the same gap. (An
-    # instance above the top signature is -07 section 14.2's "is not
-    # signed", checked at the top of finish_body, because it must also fire
-    # when there are no signatures at all.)
-    {
-        my ($max_v) = sort { $b <=> $a } keys %mi_map;
-        my $top_m = $dk2_map{$max_i}{sig}->version || 0;
-        my $upto = ($max_v // 0) > $top_m ? $max_v : $top_m;
-        for my $v (1 .. $upto) {
-            return $self->_error(permerror => "Message-Instance m=$v missing")
-                unless $mi_map{$v};
-        }
-    }
+    my $signature = $dk2_map{$max_i}{sig};
 
     # Contract C9: the signatures are checked in -07 section 14 order,
     # each section over every signature from i=1 up, so the first error

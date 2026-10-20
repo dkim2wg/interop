@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.24';
+our $VERSION = '0.25';
 
 
 use Mail::DKIM2::Digest;
@@ -14,6 +14,7 @@ use Carp;
 
 use Mail::DKIM2::TagValueList ();
 use Mail::DKIM2::Common qw(
+    MI_MISSING_M_ERROR
     parse_mime
     should_skip
     dkim2_canonicalize_header
@@ -44,13 +45,15 @@ sub _chain_error {
 sub _chain_error_fields {
     my ($fields, $signatures) = @_;
     my @mi = @$fields;
-    my ($range) = grep { defined }
-                  map { chain_number_error('Message-Instance', 'm', mi_version_tag($_)) } @mi;
+    # The first field with no usable m= (none, or not a chain number), in
+    # field order -- interop contract C9's step b.
+    my ($unusable) = grep { defined }
+                     map { my $raw = mi_version_tag($_);
+                           defined $raw ? chain_number_error('Message-Instance', 'm', $raw)
+                                        : MI_MISSING_M_ERROR } @mi;
     return chain_length_error({ 'message-instance' => scalar @mi,
                                 'dkim2-signature'  => $signatures })
-        // ((grep { !defined mi_version_tag($_) } @mi)
-               ? 'PERMERROR: Message-Instance without m= tag' : undef)
-        // $range
+        // $unusable
         // duplicate_number_error('Message-Instance', 'm', map { extract_mi_version($_) } @mi);
 }
 
@@ -350,6 +353,8 @@ sub parse {
         for my $s (@$sets) {
             $self->{bits}{hashes}{$s->[0]} = [$s->[1], $s->[2]];
         }
+        # The order h= lists them in: the order they are checked in.
+        $self->{hash_order} = [ map { $_->[0] } @$sets ];
         # Back-compatible aliases for the sha256 hash-set
         if (my $sha256 = $self->{bits}{hashes}{sha256}) {
             @{$self->{bits}}{qw(h1 b1)} = @$sha256;
@@ -1114,18 +1119,23 @@ sub _check_hashes {
     # not be rejected just because h1/b1 (the sha256 alias) are undef.
     my $hashes = $self->get_tag('hashes') || {};
     my $impl = hash_algs();
-    my @usable = sort grep { $impl->{$_} } keys %$hashes;
+    # h= order: as parsed, or as calculate() writes them (its algs).
+    my @usable = grep { $impl->{$_} && $hashes->{$_} }
+                 @{ $self->{hash_order} || $self->{algs} || [ sort keys %$hashes ] };
 
     return (0, "PERMERROR: Message-Instance m=$num no supported hash algorithm") unless @usable;
 
-    # -07 section 14.7's words, naming the algorithm.
+    # -07 section 14.7's words, naming the algorithm. Every header hash, in
+    # h= order, before any body hash (interop contract C9), so every
+    # verifier names the same one when several are wrong.
     for my $alg (@usable) {
-        my ($h1, $b1) = @{ $hashes->{$alg} };
         return (0, "FAIL: Message-Instance m=$num header hash $alg mismatch")
-            if $h1 ne $header->($alg);
-        next unless $body;
+            if $hashes->{$alg}[0] ne $header->($alg);
+    }
+    return 1 unless $body;
+    for my $alg (@usable) {
         return (0, "FAIL: Message-Instance m=$num body hash $alg mismatch")
-            if $b1 ne $body->($alg);
+            if $hashes->{$alg}[1] ne $body->($alg);
     }
     return 1;
 }

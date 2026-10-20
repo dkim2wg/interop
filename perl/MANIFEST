@@ -41,6 +41,7 @@ t/body-plan-corpus.t
 t/body-plan.t
 t/chain-length.t
 t/chain-number-bound.t
+t/check-order.t
 t/common.t
 t/data-in-sync.t
 t/data/dns.json

@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.24';
+our $VERSION = '0.25';
 
 use Carp ();
 use B ();
@@ -56,6 +56,7 @@ our @EXPORT_OK = qw(
     chain_length_error
     valid_sequence
     UNKEYABLE_SIGNATURE_ERROR
+    MI_MISSING_M_ERROR
     unkeyable_signature_error
     chain_number_error
     duplicate_number_error
@@ -160,6 +161,10 @@ sub chain_length_error {
 use constant UNKEYABLE_SIGNATURE_ERROR =>
     'PERMERROR: DKIM2-Signature i= tag=i missing';
 
+# The same for a Message-Instance with no m= tag: nothing to name it by.
+use constant MI_MISSING_M_ERROR =>
+    'PERMERROR: Message-Instance m= tag=m missing';
+
 # The PERMERROR for a DKIM2-Signature header value that no verifier can
 # key: UNKEYABLE_SIGNATURE_ERROR without an i= tag, else "PERMERROR:
 # DKIM2-Signature i=<as written> syntax error".
@@ -214,18 +219,17 @@ sub chain_number_error {
     return;
 }
 
-# The PERMERROR for the first number that appears twice among a field's
+# The PERMERROR for the lowest number that appears twice among a field's
 # m= or i= values, or undef. Each number names one hop, so a second field
 # with the same number is never a valid chain, and taking either one would
 # let the other go unchecked.
 sub duplicate_number_error {
     my ($field, $tag, @numbers) = @_;
-    my %seen;
-    for my $n (grep { defined } @numbers) {
-        return "PERMERROR: $field $tag=$n appears more than once"
-            if $seen{$n + 0}++;
-    }
-    return;
+    my %count;
+    $count{$_ + 0}++ for grep { defined } @numbers;
+    # The lowest number given twice (interop contract C9), not the first met.
+    my ($n) = sort { $a <=> $b } grep { $count{$_} > 1 } keys %count;
+    return defined $n ? "PERMERROR: $field $tag=$n appears more than once" : undef;
 }
 
 # DKIM2 header canonicalization for HEADER HASH per -07 Section 5.2:
@@ -1127,6 +1131,11 @@ L</UNKEYABLE_SIGNATURE_ERROR>.
 
 The PERMERROR string for a DKIM2-Signature with no C<i=> tag, or one that
 does not parse: C<"PERMERROR: DKIM2-Signature i= tag=i missing">.
+
+=head2 MI_MISSING_M_ERROR
+
+The PERMERROR string for a Message-Instance with no C<m=> tag:
+C<"PERMERROR: Message-Instance m= tag=m missing">. New in 0.25.
 
 =head2 unkeyable_signature_error($value)
 
