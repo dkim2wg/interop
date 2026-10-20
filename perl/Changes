@@ -1,5 +1,38 @@
 Revision history for Mail::DKIM2
 
+0.24    2026-10-19
+        Fixes to the public-key prefetch added in 0.22, which made every
+        DKIM2-signed message cost about five seconds behind a resolver that
+        customises send or query, and one API change.
+
+        - No prefetch through a resolver that subclasses Net::DNS::Resolver
+          and overrides send or query (as FastMTA's and authentication_
+          milter's do) without its own bgsend: Net::DNS's bgsend bypassed
+          that override and asked only the first nameserver, and on a host
+          where those background answers never arrived every key waited out
+          the deadline before query() asked again. Such a resolver now gets
+          every lookup through query(). A plain Net::DNS::Resolver, or one
+          with its own bgsend, is prefetched as before.
+        - At most $Mail::DKIM2::Verifier::PREFETCH_MAX (8) keys are asked
+          for in the background per message, the top signature's first. The
+          prefetch runs before any field is judged, and a message naming
+          thousands of selectors opened a socket and sent a query for each;
+          a key not prefetched is asked for with query() if it is needed.
+        - $Mail::DKIM2::Verifier::PREFETCH_WAIT is 1 second (was 5): an
+          answer that has not arrived by then is asked again with query().
+        - Waiting for a background answer sleeps between polls (5ms,
+          $Mail::DKIM2::Verifier::PREFETCH_POLL). Net::DNS's own bgbusy
+          already waited briefly, but a resolver whose bgbusy does not block
+          made the old loop spin.
+        - A truncated background answer (Net::DNS's TCP retry failed) is
+          asked again with query() instead of being used.
+        - API change: Signer->as_string croaks "no signature: REASON" when
+          there is no signature (before CLOSE, or when result is "fail");
+          it used to return the empty string, which a caller that
+          prepended it without checking result turned into a blank line
+          ending the message's header block. Check result first, as every
+          caller in this distribution does.
+
 0.23    2026-10-18
         Draft -07 (draft-ietf-dkim-dkim2-spec-07). The wire format and
         many verdicts change: a message 0.22 passed may not pass, and the

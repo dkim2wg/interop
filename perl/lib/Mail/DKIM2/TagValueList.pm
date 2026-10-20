@@ -2,7 +2,7 @@ package Mail::DKIM2::TagValueList;
 use strict;
 use warnings;
 
-our $VERSION = '0.23';
+our $VERSION = '0.24';
 
 # Simple tag=value list as defined in draft-ietf-dkim-dkim2-spec-07 Section 8.
 # Preserves insertion order for serialization.

@@ -2,7 +2,7 @@ package Mail::DKIM2::Signer;
 use strict;
 use warnings;
 
-our $VERSION = '0.23';
+our $VERSION = '0.24';
 
 use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
@@ -291,9 +291,13 @@ sub signature {
     return $self->{_signature};
 }
 
+# No signature (before CLOSE, or a refused message) croaks: an empty string
+# prepended to the message by a caller that did not check result() is a
+# blank line that ends its header block.
 sub as_string {
     my $self = shift;
-    return '' unless $self->{_signature};
+    croak 'no signature: ' . ($self->{details} // 'the message has not been signed') . "\n"
+        unless $self->{_signature};
     return $self->{_signature}->as_folded_string();
 }
 
@@ -481,9 +485,14 @@ C<result> and C<details> together, e.g. C<"fail (PERMERROR ...)">.
 
 =head2 as_string()
 
-The complete C<DKIM2-Signature: ...> header, folded for insertion, or the
-empty string if there is no signature. The folding is part of what was
-signed and must not be changed.
+The complete C<DKIM2-Signature: ...> header, folded for insertion. The
+folding is part of what was signed and must not be changed.
+
+Croaks C<no signature: REASON> when there is no signature: before
+C<CLOSE>, or when C<result> is C<fail> (REASON is C<details>). Check
+C<result> first. (Before 0.24 it returned the empty string, which a caller
+that prepended it unchecked turned into a blank line ending the message's
+header block.)
 
 =head2 signature()
 

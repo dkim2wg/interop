@@ -2,7 +2,7 @@ package Mail::DKIM2::Verifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.23';
+our $VERSION = '0.24';
 
 use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
@@ -10,6 +10,7 @@ use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 use POSIX qw();
 use Time::HiRes ();
+use Scalar::Util ();
 
 use Mail::DKIM2::Common qw(
     parse_mime
@@ -47,9 +48,19 @@ my %IMPLEMENTED_ALG = (
 
 # How long a key lookup sent in the background at the end of the headers is
 # waited for, from when it was sent, before it is asked again the ordinary
-# way (with the resolver's retries and other servers): Net::DNS's own first
-# retransmit interval.
-our $PREFETCH_WAIT = 5;
+# way (query(), with the resolver's retries and other nameservers). The
+# answer normally arrives while the body is hashed; one that has not come in
+# a second is treated as lost, not waited out.
+our $PREFETCH_WAIT = 1;
+
+# How often a background lookup still in flight is polled while waiting.
+our $PREFETCH_POLL = 0.005;
+
+# The most keys asked for in the background per message, the top signature's
+# first. The prefetch runs before any field is judged, so a message naming
+# thousands of selectors must not open thousands of sockets; a key not
+# prefetched is asked for with query() if it is ever needed.
+our $PREFETCH_MAX = 8;
 
 sub _extract_mi_hash_sets {
     my ($raw) = @_;
@@ -1061,26 +1072,49 @@ sub _resolver {
     };
 }
 
+# Whether $resolver's background calls can be used for the prefetch. A
+# subclass of Net::DNS::Resolver that overrides send or query (its own
+# transport, caching, metrics -- FastMTA's and authentication_milter's do)
+# but not bgsend would have Net::DNS's bgsend bypass it, and that asks only
+# the first nameserver; such a resolver gets every lookup through query().
+# One that provides its own bgsend is trusted with it.
+sub _can_prefetch {
+    my ($resolver) = @_;
+    return 0 unless Scalar::Util::blessed($resolver);
+    my $bgsend = $resolver->can('bgsend') or return 0;
+    require Net::DNS::Resolver;
+    return 1 if $bgsend != (Net::DNS::Resolver->can('bgsend') // 0);
+    for my $method (qw(send query)) {
+        my $own = $resolver->can($method) // 0;
+        return 0 unless $own == (Net::DNS::Resolver->can($method) // -1);
+    }
+    return 1;
+}
+
 # Every key the signatures name, asked for at once, in the background, as
 # soon as the header fields are in: the answers come back while the body
-# arrives and is hashed. Only with a resolver that can (Net::DNS's bgsend),
-# and not when a PubkeyCallback fetches the keys. Never fatal: a key not
-# asked for here is asked for when it is wanted.
+# arrives and is hashed. Only with a resolver whose background calls are
+# safe to use (_can_prefetch), and not when a PubkeyCallback fetches the
+# keys. Never fatal: a key not asked for here is asked for when it is wanted.
 sub _prefetch_keys {
     my ($self) = @_;
     return if $self->{PubkeyCallback};
     my $resolver = $self->_resolver;
-    return unless $resolver->can('bgsend');
+    return unless _can_prefetch($resolver);
+    my $sent = 0;
     for my $entry (sort { $b->{sig}->sequence <=> $a->{sig}->sequence }
                    values %{$self->{_dk2_headers}}) {
+        last if $sent >= $PREFETCH_MAX;
         my $sig = $entry->{sig};
         eval {
             my $dom = $sig->domain or return;
             for my $idx (0 .. ($sig->sig_count || 0) - 1) {
+                return if $sent >= $PREFETCH_MAX;
                 next unless $IMPLEMENTED_ALG{$sig->algorithm($idx) // ''};
                 my $sel = $sig->selector($idx) or next;
                 my $fqdn = "$sel._domainkey.$dom";
                 next if $self->{_key_queries}{lc $fqdn};
+                $sent++;
                 my $handle = $resolver->bgsend($fqdn, 'TXT') or next;
                 $self->{_key_queries}{lc $fqdn} =
                     [$handle, Time::HiRes::time() + $PREFETCH_WAIT];
@@ -1099,11 +1133,15 @@ sub _key_reply {
     if (my $q = delete $self->{_key_queries}{lc $fqdn}) {
         my $ready = 1;
         while ($resolver->bgbusy($q->[0])) {    # may swap in a TCP handle
-            next if Time::HiRes::time() < $q->[1];
-            $ready = 0;
-            last;
+            my $left = $q->[1] - Time::HiRes::time();
+            if ($left <= 0) { $ready = 0; last }
+            # Sleep between polls: a resolver's bgbusy need not block.
+            my $poll = $PREFETCH_POLL > 0.001 ? $PREFETCH_POLL : 0.001;
+            Time::HiRes::sleep($left < $poll ? $left : $poll);
         }
-        if (my $packet = $ready && $resolver->bgread($q->[0])) {
+        # A truncated answer (Net::DNS's TCP retry failed) settles nothing.
+        my $packet = $ready && $resolver->bgread($q->[0]);
+        if ($packet && !$packet->header->tc) {
             my $rcode = $packet->header->rcode;
             return [$packet] if $packet->header->ancount;
             return [undef, $rcode] if $rcode eq 'NXDOMAIN' || $rcode eq 'NOERROR';
@@ -1300,9 +1338,19 @@ the signatures name is asked for at once, in the background, as soon as
 the header fields are in, and the answers are read when the signatures
 are checked: the lookups overlap each other, the body's arrival and the
 hashing. An answer that settles nothing -- none within
-C<$Mail::DKIM2::Verifier::PREFETCH_WAIT> seconds (5) of being sent, or
-SERVFAIL -- is asked again with C<query>, so the verdicts are those of
-one C<query> at a time. Not with a C<PubkeyCallback>.
+C<$Mail::DKIM2::Verifier::PREFETCH_WAIT> seconds (1) of being sent, or
+SERVFAIL, or truncated -- is asked again with C<query>, so the verdicts
+are those of one C<query> at a time. At most
+C<$Mail::DKIM2::Verifier::PREFETCH_MAX> keys (8) are prefetched per
+message, the top signature's first; any other key is asked for with
+C<query> when it is needed. Not with a C<PubkeyCallback>.
+
+A subclass of L<Net::DNS::Resolver> that overrides C<send> (its own
+transport, caching or metrics) but not C<bgsend> gets no prefetch:
+Net::DNS's C<bgsend> would bypass that C<send>, and asks only the first
+nameserver. Every key is then asked for with C<query>, and so through the
+subclass's C<send>. A resolver that provides its own C<bgsend> is used for
+the prefetch.
 
 =item PubkeyCallback
 

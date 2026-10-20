@@ -55,7 +55,11 @@ like($@, qr/Domain required/, '  ... naming the option');
     is($s->result, 'fail', '  ... the result is fail');
     like($s->details, qr/^PERMERROR: more than @{[MAX_CHAIN_LENGTH]} DKIM2-Signature fields/,
         '  ... with the reason in details');
-    is($s->as_string, '', '  ... and there is no header to add');
+    # Asking for the header anyway is a caller bug: an empty string would be
+    # glued onto the message as a blank line, ending its header block.
+    ok(!eval { $s->as_string; 1 }, '  ... and as_string croaks: there is no header to add');
+    like($@, qr/^no signature: PERMERROR: more than @{[MAX_CHAIN_LENGTH]} DKIM2-Signature fields/,
+        '  ... with the reason');
     like($s->result_detail, qr/^fail \(PERMERROR/, '  ... result_detail wraps both');
 }
 
