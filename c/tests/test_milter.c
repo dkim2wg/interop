@@ -41,7 +41,11 @@ int smfi_setreply(SMFICTX *c, char *r, char *x, char *m) {
     snprintf(c->reply, sizeof c->reply, "%s", m);
     return MI_SUCCESS;
 }
+/* A header field name whose add or delete the fake libmilter refuses. */
+static const char *g_fail_header;
+
 int smfi_addheader(SMFICTX *c, char *n, char *v) {
+    if (g_fail_header && strcmp(n, g_fail_header) == 0) return MI_FAILURE;
     if (c->n_add < 8) snprintf(c->add[c->n_add++], sizeof c->add[0], "%s: %s", n, v);
     return MI_SUCCESS;
 }
@@ -51,6 +55,7 @@ int smfi_insheader(SMFICTX *c, int i, char *n, char *v) {
     return MI_SUCCESS;
 }
 int smfi_chgheader(SMFICTX *c, char *n, int i, char *v) {
+    if (g_fail_header && strcmp(n, g_fail_header) == 0) return MI_FAILURE;
     if (c->n_chg < 8) snprintf(c->chg[c->n_chg++], sizeof c->chg[0], "%s[%d]=%s", n, i, v ? v : "(delete)");
     return MI_SUCCESS;
 }
@@ -251,6 +256,42 @@ int main(void) {
         CHECK(run(&c, "<a@example.net>", one, mi_only, body) == SMFIS_ACCEPT);
         CHECK(c.rcode[0] == '\0' && c.n_add == 0);
         CHECK(c.n_chg == 1 && strcmp(c.chg[0], "Message-Instance[1]=(delete)") == 0);
+
+        /* libmilter refusing a change: an unsigned Message-Instance that
+           cannot be removed must not go out (-07 §13), so tempfail */
+        g_n_log = 0;
+        g_fail_header = "Message-Instance";
+        CHECK(run(&c, "<a@example.net>", one, mi_only, body) == SMFIS_TEMPFAIL);
+        CHECK(logged("could not delete Message-Instance"));
+        g_fail_header = NULL;
+    }
+    {   /* ...a hint that cannot be removed is only logged (an X- field) */
+        g_n_log = 0;
+        g_fail_header = "X-DKIM2-Exploded";
+        CHECK(run(&c, "<a@example.net>", one, plain_hint, body) == SMFIS_ACCEPT);
+        CHECK(logged("could not delete X-DKIM2-Exploded"));
+        g_fail_header = NULL;
+    }
+    {   /* ...a Message-Instance that cannot be added: tempfail, and no
+           signature is added without it */
+        set_mode('s', "example.com");
+        g_n_log = 0;
+        g_fail_header = "Message-Instance";
+        CHECK(run(&c, "<a@example.com>", one, plain, body) == SMFIS_TEMPFAIL);
+        CHECK(logged("could not add Message-Instance"));
+        CHECK(c.n_add == 0);
+        g_fail_header = NULL;
+        set_mode('s', "example.net");
+    }
+    {   /* ...a signature that cannot be added: tempfail, not an unsigned
+           Message-Instance on the wire */
+        set_mode('s', "example.com");
+        g_n_log = 0;
+        g_fail_header = "DKIM2-Signature";
+        CHECK(run(&c, "<a@example.com>", one, plain, body) == SMFIS_TEMPFAIL);
+        CHECK(logged("could not add DKIM2-Signature"));
+        g_fail_header = NULL;
+        set_mode('s', "example.net");
     }
 
     /* verify: a PERMERROR is 550 5.7.1 with the -07 string */

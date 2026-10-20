@@ -15,6 +15,20 @@
 #include <ctype.h>
 #include <openssl/evp.h>
 
+/* A DKIM2-Signature value, malloc'd to fit (rt= may hold any number of
+   recipients); NULL on out of memory. sigv "" gives the incomplete value
+   that is signed (-07 §12.8). */
+static char *sig_value(int i, int m, unsigned long long t, const char *d,
+                       const char *mf, const char *rt, const char *flags,
+                       const char *sel, const char *alg, const char *sigv) {
+    const char *fmt = "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s;%s s=%s:%s:%s;";
+    int n = snprintf(NULL, 0, fmt, i, m, t, d, mf, rt, flags, sel, alg, sigv);
+    if (n < 0) return NULL;
+    char *out = malloc((size_t)n + 1);
+    if (out) snprintf(out, (size_t)n + 1, fmt, i, m, t, d, mf, rt, flags, sel, alg, sigv);
+    return out;
+}
+
 /* RFC5321 path for mf=/rt= (-07 §10.5/§10.6): brackets MUST be present, and
  * a domain with non-ASCII (U-label) labels is recorded as A-labels (§18).
  * Returns a malloc'd string the caller frees. NULL/empty -> "<>". */
@@ -96,6 +110,33 @@ static char *canon_for_sig(const char *hdr) {
     return out;
 }
 
+/* Append the -07 §12.8 canonical form of "name: value" to *buf, growing it
+   as needed. Returns 0, or -1 on allocation failure: a field is never left
+   out, since a signature over less than the whole input cannot verify. */
+static int append_sign_field(char **buf, size_t *pos, size_t *cap,
+                             const char *name, const char *value) {
+    size_t fl = strlen(name) + strlen(value) + 5;
+    char *full = malloc(fl);
+    if (!full) return -1;
+    snprintf(full, fl, "%s: %s\r\n", name, value);
+    char *canon = canon_for_sig(full);
+    free(full);
+    if (!canon) return -1;
+    size_t cl = strlen(canon);
+    if (*pos + cl + 1 > *cap) {
+        size_t want = *cap;
+        while (*pos + cl + 1 > want) want *= 2;
+        char *grown = realloc(*buf, want);
+        if (!grown) { free(canon); return -1; }
+        *buf = grown;
+        *cap = want;
+    }
+    memcpy(*buf + *pos, canon, cl);
+    *pos += cl;
+    free(canon);
+    return 0;
+}
+
 /* Build the -07 §12.8 signing input:
    Canonicalized MI headers (ascending m=), then DKIM2-Signature headers
    (ascending i=), then the incomplete new signature header (empty sig values).
@@ -122,9 +163,9 @@ static unsigned char *build_sign_input(
             dkim2_sig_t *t = sigs[j]; sigs[j] = sigs[j - 1]; sigs[j - 1] = t;
         }
 
-    char *buf = malloc(65536);
+    size_t pos = 0, cap = 4096;
+    char *buf = malloc(cap);
     if (!buf) return NULL;
-    size_t pos = 0;
 
     /* MI headers ascending m= — use raw_value when available (existing MIs),
        else format from struct (newly created MI with no raw_value yet) */
@@ -132,46 +173,23 @@ static unsigned char *build_sign_input(
         dkim2_mi_t *mi = mis[k];
         char *mi_val = mi->raw_value ? NULL : dkim2_mi_format(mi);
         const char *use_val = mi->raw_value ? mi->raw_value : mi_val;
-        if (!use_val) { free(buf); return NULL; }
-        size_t vl = strlen(use_val);
-        char *full = malloc(vl + 24);
-        snprintf(full, vl + 24, "message-instance: %s\r\n", use_val);
+        int rc = use_val ? append_sign_field(&buf, &pos, &cap, "message-instance", use_val) : -1;
         free(mi_val);
-        char *canon = canon_for_sig(full);
-        free(full);
-        if (canon) {
-            size_t cl = strlen(canon);
-            if (pos + cl < 65536) { memcpy(buf + pos, canon, cl); pos += cl; }
-            free(canon);
-        }
+        if (rc < 0) { free(buf); return NULL; }
     }
 
-    /* Existing DKIM2-Signature headers ascending i= */
-    for (int k = 0; k < n_sig; k++) {
-        dkim2_sig_t *sig = sigs[k];
-        /* Use raw_value which is the complete original header value */
-        size_t rv_len = strlen(sig->raw_value);
-        char *full = malloc(rv_len + 24);
-        snprintf(full, rv_len + 24, "dkim2-signature: %s\r\n", sig->raw_value);
-        char *canon = canon_for_sig(full);
-        free(full);
-        if (canon) {
-            size_t cl = strlen(canon);
-            if (pos + cl < 65536) { memcpy(buf + pos, canon, cl); pos += cl; }
-            free(canon);
+    /* Existing DKIM2-Signature headers ascending i= (raw_value is the
+       complete original header value) */
+    for (int k = 0; k < n_sig; k++)
+        if (append_sign_field(&buf, &pos, &cap, "dkim2-signature", sigs[k]->raw_value) < 0) {
+            free(buf);
+            return NULL;
         }
-    }
 
     /* Incomplete new DKIM2-Signature (empty sig values) */
-    size_t ns_len = strlen(new_sig_value);
-    char *full = malloc(ns_len + 24);
-    snprintf(full, ns_len + 24, "dkim2-signature: %s\r\n", new_sig_value);
-    char *canon = canon_for_sig(full);
-    free(full);
-    if (canon) {
-        size_t cl = strlen(canon);
-        if (pos + cl < 65536) { memcpy(buf + pos, canon, cl); pos += cl; }
-        free(canon);
+    if (append_sign_field(&buf, &pos, &cap, "dkim2-signature", new_sig_value) < 0) {
+        free(buf);
+        return NULL;
     }
 
     *out_len = pos;
@@ -403,30 +421,45 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
 
     /* Base64-encode mf= — normalized to a bracketed RFC5321 path (-07 §10.5) */
     char *mfp = to_rfc5321_path(ctx->mail_from);
-    size_t mf_b64_len = ((strlen(mfp) + 2) / 3) * 4 + 2;
-    char *mf_b64 = malloc(mf_b64_len);
+    size_t mf_b64_len = mfp ? ((strlen(mfp) + 2) / 3) * 4 + 2 : 0;
+    char *mf_b64 = mfp ? malloc(mf_b64_len) : NULL;
+    if (!mf_b64) {
+        free(mfp);
+        snprintf(ctx->errmsg, sizeof ctx->errmsg, "out of memory");
+        return -1;
+    }
     b64_encode((const unsigned char *)mfp, strlen(mfp), mf_b64, mf_b64_len);
     free(mfp);
 
     /* Base64-encode each rt= value, comma-separated — each normalized to a
-       bracketed RFC5321 path (-07 §10.6) */
-    /* Estimate size: each rcpt ~64 chars encoded */
-    size_t rt_buf_size = 4096;
-    char *rt_b64 = calloc(1, rt_buf_size);
-    size_t rt_pos = 0;
-    if (ctx->rcpt_to) {
-        for (int i = 0; ctx->rcpt_to[i]; i++) {
-            char *rcpt = to_rfc5321_path(ctx->rcpt_to[i]);
-            size_t rcpt_enc_len = ((strlen(rcpt) + 2) / 3) * 4 + 2;
-            char *enc = malloc(rcpt_enc_len);
-            b64_encode((const unsigned char *)rcpt, strlen(rcpt), enc, rcpt_enc_len);
-            free(rcpt);
-            if (i) { rt_b64[rt_pos++] = ','; }
-            size_t el = strlen(enc);
-            memcpy(rt_b64 + rt_pos, enc, el);
-            rt_pos += el;
-            free(enc);
+       bracketed RFC5321 path (-07 §10.6). The buffer grows to fit: any
+       number of recipients, of any length. */
+    size_t rt_cap = 256, rt_pos = 0;
+    char *rt_b64 = malloc(rt_cap);
+    if (!rt_b64) {
+        free(mf_b64);
+        snprintf(ctx->errmsg, sizeof ctx->errmsg, "out of memory");
+        return -1;
+    }
+    for (int i = 0; ctx->rcpt_to && ctx->rcpt_to[i]; i++) {
+        char *rcpt = to_rfc5321_path(ctx->rcpt_to[i]);
+        size_t enc_len = rcpt ? ((strlen(rcpt) + 2) / 3) * 4 + 2 : 0;
+        if (rcpt && rt_pos + 1 + enc_len > rt_cap) {
+            size_t want = rt_cap;
+            while (rt_pos + 1 + enc_len > want) want *= 2;
+            char *grown = realloc(rt_b64, want);
+            if (grown) { rt_b64 = grown; rt_cap = want; }
+            else { free(rcpt); rcpt = NULL; }
         }
+        if (!rcpt) {
+            free(rt_b64); free(mf_b64);
+            snprintf(ctx->errmsg, sizeof ctx->errmsg, "out of memory");
+            return -1;
+        }
+        if (i) rt_b64[rt_pos++] = ',';
+        b64_encode((const unsigned char *)rcpt, strlen(rcpt), rt_b64 + rt_pos, rt_cap - rt_pos);
+        rt_pos += strlen(rt_b64 + rt_pos);
+        free(rcpt);
     }
     rt_b64[rt_pos] = '\0';
 
@@ -463,12 +496,14 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     const char *flags = (new_i > 1 && (cfg->exploded || n_rt > 1)) ? " f=exploded;" : "";
 
     /* Format incomplete DKIM2-Signature value (empty sig per -07 §12.8) */
-    char incomplete_sig[4096];
-    snprintf(incomplete_sig, sizeof incomplete_sig,
-        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s;%s s=%s:%s:;",
-        new_i, new_m, (unsigned long long)now,
-        cfg->domain, mf_b64, rt_b64, flags,
-        cfg->selector, alg);
+    char *incomplete_sig = sig_value(new_i, new_m, (unsigned long long)now,
+        cfg->domain, mf_b64, rt_b64, flags, cfg->selector, alg, "");
+    if (!incomplete_sig) {
+        EVP_PKEY_free(privkey);
+        free(mf_b64); free(rt_b64);
+        snprintf(ctx->errmsg, sizeof ctx->errmsg, "out of memory");
+        return -1;
+    }
 
     /* Build MI list to sign: existing + new (if new_m > any existing) */
     dkim2_mi_t *mi_for_sign = ctx->mi_list;
@@ -494,6 +529,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     size_t sign_input_len;
     unsigned char *sign_input = build_sign_input(
         mi_for_sign, ctx->sig_list, incomplete_sig, &sign_input_len);
+    free(incomplete_sig);
 
     /* Detach new_mi from list to avoid dangling pointer */
     if (!already_in_list) {
@@ -525,24 +561,31 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     }
 
     /* Format complete DKIM2-Signature value */
-    char complete_sig[4096];
-    snprintf(complete_sig, sizeof complete_sig,
-        "i=%d; m=%d; t=%llu; d=%s; mf=%s; rt=%s;%s s=%s:%s:%s;",
-        new_i, new_m, (unsigned long long)now,
-        cfg->domain, mf_b64, rt_b64, flags,
-        cfg->selector, alg, sig_b64);
+    char *complete_sig = sig_value(new_i, new_m, (unsigned long long)now,
+        cfg->domain, mf_b64, rt_b64, flags, cfg->selector, alg, sig_b64);
     free(sig_b64);
+    free(mf_b64); free(rt_b64);
+    if (!complete_sig) {
+        snprintf(ctx->errmsg, sizeof ctx->errmsg, "out of memory");
+        return -1;
+    }
 
     /* Format MI value (only if new MI was created). dkim2_mi_format joins
        every hash-set with commas, e.g. "sha256:hh:bh,sha512:hh:bh" for
        --hash both — deterministic sha256-then-sha512 order. */
     if (!already_in_list) {
         *mi_out = dkim2_mi_format(&new_mi);
+        /* NULL means "reused" to the caller: a signature over an instance
+           that is never added would make the chain invalid. */
+        if (!*mi_out) {
+            free(complete_sig);
+            snprintf(ctx->errmsg, sizeof ctx->errmsg, "out of memory");
+            return -1;
+        }
     } else {
         *mi_out = NULL; /* no new MI header needed */
     }
 
-    *sig_out = strdup(complete_sig);
-    free(mf_b64); free(rt_b64);
+    *sig_out = complete_sig;
     return 0;
 }

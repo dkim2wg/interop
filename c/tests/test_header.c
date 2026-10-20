@@ -4,6 +4,7 @@
 #include <assert.h>
 #include "../dkim2_header.h"
 #include "../dkim2_verify.h"
+#include "../base64.h"
 
 int main(void) {
     /* --- Message-Instance parsing --- */
@@ -337,6 +338,51 @@ int main(void) {
     assert(strstr(errbuf, "duplicate selector") != NULL);
     assert(strstr(errbuf, "more selectors than allowed") == NULL);
     dkim2_sig_free(sig);
+
+    /* dkim2_sig_format / dkim2_mi_format of fields of any size: they used
+       fixed 8192/4096-byte buffers (and 512 bytes per base64 address), and
+       ran past them with many rt= values, a long address or a long r=. */
+    {
+        enum { N = 200 };
+        static char raw[65536], line[160], enc[2048];
+        char mf[600] = "<";
+        /* 400 octets: within the parser's 512, but over 512 once in base64 */
+        memset(mf + 1, 'x', 386);
+        snprintf(mf + 387, sizeof mf - 387, "@example.com>");
+        b64_encode((const unsigned char *)mf, strlen(mf), enc, sizeof enc);
+        int pos = snprintf(raw, sizeof raw, "i=1; m=1; t=1; d=example.com; mf=%s; rt=", enc);
+        for (int i = 0; i < N; i++) {
+            snprintf(line, sizeof line, "<recipient-%03d-with-a-rather-long-local-part@dest.example>", i);
+            b64_encode((const unsigned char *)line, strlen(line), enc, sizeof enc);
+            pos += snprintf(raw + pos, sizeof raw - pos, "%s%s", i ? "," : "", enc);
+        }
+        snprintf(raw + pos, sizeof raw - pos, "; s=sel:ed25519-sha256:AAAA;");
+        dkim2_sig_t *big = dkim2_sig_parse(raw);
+        assert(big != NULL);
+        char *out = dkim2_sig_format(big, 0);
+        assert(out != NULL);
+        dkim2_sig_t *back = dkim2_sig_parse(out);
+        assert(back != NULL);
+        int n = 0;
+        while (back->rt && back->rt[n]) n++;
+        assert(n == N);
+        assert(strcmp(back->mf, mf) == 0);
+        assert(strcmp(back->rt[N - 1], line) == 0);
+        free(out);
+        dkim2_sig_free(back);
+        dkim2_sig_free(big);
+
+        static char mraw[16384];
+        int mp = snprintf(mraw, sizeof mraw, "m=2; h=sha256:AAAA:BBBB; r=");
+        memset(mraw + mp, 'A', 10000);
+        snprintf(mraw + mp + 10000, sizeof mraw - mp - 10000, ";");
+        dkim2_mi_t *bigmi = dkim2_mi_parse(mraw);
+        assert(bigmi != NULL);
+        char *mout = dkim2_mi_format(bigmi);
+        assert(mout != NULL && strlen(mout) == strlen(mraw));
+        free(mout);
+        dkim2_mi_free(bigmi);
+    }
 
     puts("header: all tests passed");
     return 0;

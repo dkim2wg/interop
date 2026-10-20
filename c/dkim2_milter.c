@@ -72,6 +72,8 @@ static sfsistat cb_envfrom(SMFICTX *ctx, char **argv) {
     /* Reset per-message state on each new envelope */
     state_reset(s);
     s->ctx.mail_from = strdup(argv[0]);
+    /* A MAIL FROM lost to an allocation failure would be signed as mf=<>. */
+    if (!s->ctx.mail_from) return SMFIS_TEMPFAIL;
     return SMFIS_CONTINUE;
 }
 
@@ -79,8 +81,14 @@ static sfsistat cb_envrcpt(SMFICTX *ctx, char **argv) {
     conn_state_t *s = smfi_getpriv(ctx);
     dkim2_ctx_t *c = &s->ctx;
     int n = c->n_rcpt;
-    c->rcpt_to = realloc(c->rcpt_to, (size_t)(n + 2) * sizeof(char *));
-    c->rcpt_to[n]     = strdup(argv[0]);
+    /* A recipient lost to an allocation failure would leave rt= short and
+       the signature wrong for it: tempfail this RCPT instead. */
+    char *rcpt = strdup(argv[0]);
+    if (!rcpt) return SMFIS_TEMPFAIL;
+    char **grown = realloc(c->rcpt_to, (size_t)(n + 2) * sizeof(char *));
+    if (!grown) { free(rcpt); return SMFIS_TEMPFAIL; }
+    c->rcpt_to = grown;
+    c->rcpt_to[n]     = rcpt;
     c->rcpt_to[n + 1] = NULL;
     c->n_rcpt++;
     return SMFIS_CONTINUE;
@@ -214,6 +222,28 @@ static void set_reply(SMFICTX *ctx, const char *rcode, const char *xcode, const 
         syslog(LOG_WARNING, "dkim2-milter: smfi_setreply %s %s failed", rcode, xcode);
 }
 
+
+/* Delete header field "name" instance k; on failure log, and return -1. */
+static int del_field(SMFICTX *ctx, const char *name, int k) {
+    if (smfi_chgheader(ctx, (char *)name, k, NULL) == MI_SUCCESS) return 0;
+    syslog(LOG_WARNING, "dkim2-milter: could not delete %s #%d", name, k);
+    return -1;
+}
+
+/* Add header field "name"; on failure log, and return -1. */
+static int add_field(SMFICTX *ctx, const char *name, char *value) {
+    if (smfi_addheader(ctx, (char *)name, value) == MI_SUCCESS) return 0;
+    syslog(LOG_ERR, "dkim2-milter: could not add %s (value %zu bytes)", name, strlen(value));
+    return -1;
+}
+
+/* The X-DKIM2-Exploded hints, last first (the indexes of the ones still to
+   go do not move). An X- field is outside every hash (-07 §4), so one that
+   cannot be removed is only logged. */
+static void del_hints(SMFICTX *ctx, int n) {
+    for (int k = n; k >= 1; k--) del_field(ctx, EXPLODED_HINT, k);
+}
+
 static sfsistat cb_eom(SMFICTX *ctx) {
     conn_state_t *s = smfi_getpriv(ctx);
     dkim2_ctx_t *c = &s->ctx;
@@ -301,10 +331,12 @@ static sfsistat cb_eom(SMFICTX *ctx) {
                     set_reply(ctx, "550", "5.7.1", c->errmsg);
                     return SMFIS_REJECT;
                 }
-                for (int k = s->n_exploded_hint; k >= 1; k--)
-                    smfi_chgheader(ctx, EXPLODED_HINT, k, NULL);
+                del_hints(ctx, s->n_exploded_hint);
+                /* An unsigned Message-Instance left on the message would go
+                   out as an invalid DKIM2 field (-07 §13): tempfail, which
+                   discards this transaction's changes, rather than send it. */
                 for (int k = s->n_mi_fields; k >= 1; k--)
-                    smfi_chgheader(ctx, "Message-Instance", k, NULL);
+                    if (del_field(ctx, "Message-Instance", k) < 0) return SMFIS_TEMPFAIL;
                 return SMFIS_ACCEPT;
             }
             syslog(LOG_ERR, "dkim2-milter: sign failed: %s", c->errmsg);
@@ -312,12 +344,14 @@ static sfsistat cb_eom(SMFICTX *ctx) {
         }
         /* The hint is not passed on (deleted last instance first, so the
            indexes of the ones still to go do not move). */
-        for (int k = s->n_exploded_hint; k >= 1; k--)
-            smfi_chgheader(ctx, EXPLODED_HINT, k, NULL);
-        if (mi_val) smfi_addheader(ctx, "Message-Instance", mi_val);   /* NULL: reused */
-        smfi_addheader(ctx, "DKIM2-Signature",   sig_val);
+        del_hints(ctx, s->n_exploded_hint);
+        /* A Message-Instance without its signature (or neither, half the
+           pair) must not go out: tempfail discards both. */
+        int added = (!mi_val || add_field(ctx, "Message-Instance", mi_val) == 0)   /* NULL: reused */
+                 && add_field(ctx, "DKIM2-Signature", sig_val) == 0;
         free(mi_val);
         free(sig_val);
+        if (!added) return SMFIS_TEMPFAIL;
     }
 
     return SMFIS_ACCEPT;

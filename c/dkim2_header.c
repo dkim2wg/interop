@@ -6,6 +6,7 @@
 #include <strings.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdarg.h>
 
 /* Strip all FWS (whitespace including CRLF) from a base64 string in-place. */
 static void strip_fws(char *s) {
@@ -478,7 +479,9 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
         if (mf) {
             unsigned char dec[512]; int n = b64_decode(mf, dec, sizeof dec);
             if (n < 0) goto err;
-            sig->mf = malloc((size_t)n + 1); memcpy(sig->mf, dec, (size_t)n); sig->mf[n] = '\0';
+            sig->mf = malloc((size_t)n + 1);
+            if (!sig->mf) goto err;
+            memcpy(sig->mf, dec, (size_t)n); sig->mf[n] = '\0';
         }
         if (rt) { int nrt = 0; sig->rt = parse_rt(rt, &nrt); if (!sig->rt) goto err; }
     }
@@ -521,59 +524,88 @@ void dkim2_sig_free(dkim2_sig_t *sig) {
     free(sig);
 }
 
-char *dkim2_mi_format(const dkim2_mi_t *mi) {
-    char *buf = malloc(4096);
-    if (!buf) return NULL;
-    int pos = snprintf(buf, 4096, "m=%d; h=", mi->m);
-    for (int i = 0; i < mi->n_hsets; i++) {
-        if (i) buf[pos++] = ',';
-        pos += snprintf(buf + pos, 4096 - pos, "%s:%s:%s",
-            mi->hsets[i].alg, mi->hsets[i].hdr_hash, mi->hsets[i].body_hash);
+/* A string built to fit: every append grows it; any allocation failure
+   makes sb_done() return NULL. */
+typedef struct { char *s; size_t len, cap; int oom; } sbuf_t;
+
+static void sb_printf(sbuf_t *b, const char *fmt, ...) {
+    if (b->oom) return;
+    va_list ap, ap2;
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) { b->oom = 1; va_end(ap2); return; }
+    if (b->len + (size_t)n + 1 > b->cap) {
+        size_t want = b->cap ? b->cap : 256;
+        while (b->len + (size_t)n + 1 > want) want *= 2;
+        char *g = realloc(b->s, want);
+        if (!g) { b->oom = 1; va_end(ap2); return; }
+        b->s = g;
+        b->cap = want;
     }
+    vsnprintf(b->s + b->len, b->cap - b->len, fmt, ap2);
+    va_end(ap2);
+    b->len += (size_t)n;
+}
+
+/* Append the base64 of raw. */
+static void sb_b64(sbuf_t *b, const char *raw) {
+    size_t n = strlen(raw), el = ((n + 2) / 3) * 4 + 2;
+    char *e = malloc(el);
+    if (!e) { b->oom = 1; return; }
+    b64_encode((const unsigned char *)raw, n, e, el);
+    sb_printf(b, "%s", e);
+    free(e);
+}
+
+static char *sb_done(sbuf_t *b) {
+    if (b->oom) { free(b->s); return NULL; }
+    return b->s ? b->s : strdup("");
+}
+
+char *dkim2_mi_format(const dkim2_mi_t *mi) {
+    sbuf_t b = {0};
+    sb_printf(&b, "m=%d; h=", mi->m);
+    for (int i = 0; i < mi->n_hsets; i++)
+        sb_printf(&b, "%s%s:%s:%s", i ? "," : "",
+            mi->hsets[i].alg, mi->hsets[i].hdr_hash, mi->hsets[i].body_hash);
     if (mi->r_raw)
-        pos += snprintf(buf + pos, 4096 - pos, "; r=%s", mi->r_raw);
+        sb_printf(&b, "; r=%s", mi->r_raw);
     /* Trailing semicolon per spec ABNF tag-list grammar (matches Python/Perl) */
-    pos += snprintf(buf + pos, 4096 - pos, ";");
-    return buf;
+    sb_printf(&b, ";");
+    return sb_done(&b);
 }
 
 char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
-    char *buf = malloc(8192);
-    if (!buf) return NULL;
-    int pos = snprintf(buf, 8192, "i=%d; m=%d; t=%llu; d=%s",
+    sbuf_t b = {0};
+    sb_printf(&b, "i=%d; m=%d; t=%llu; d=%s",
         sig->i, sig->m, (unsigned long long)sig->t, sig->d);
     if (sig->nd) {
         /* -07 §12.3: imaginary hop carries nd= instead of mf=/rt= */
-        pos += snprintf(buf + pos, 8192 - pos, "; nd=%s", sig->nd);
+        sb_printf(&b, "; nd=%s", sig->nd);
     } else {
-        char mf_b64[512];
-        b64_encode((const unsigned char *)sig->mf, strlen(sig->mf), mf_b64, sizeof mf_b64);
-        pos += snprintf(buf + pos, 8192 - pos, "; mf=%s", mf_b64);
-        pos += snprintf(buf + pos, 8192 - pos, "; rt=");
+        sb_printf(&b, "; mf=");
+        sb_b64(&b, sig->mf ? sig->mf : "");
+        sb_printf(&b, "; rt=");
         for (int i = 0; sig->rt && sig->rt[i]; i++) {
-            if (i) buf[pos++] = ',';
-            char rt_b64[512];
-            b64_encode((const unsigned char *)sig->rt[i], strlen(sig->rt[i]), rt_b64, sizeof rt_b64);
-            pos += snprintf(buf + pos, 8192 - pos, "%s", rt_b64);
+            if (i) sb_printf(&b, ",");
+            sb_b64(&b, sig->rt[i]);
         }
     }
     /* s= */
-    pos += snprintf(buf + pos, 8192 - pos, "; s=");
-    for (int i = 0; i < sig->n_ssets; i++) {
-        if (i) buf[pos++] = ',';
-        pos += snprintf(buf + pos, 8192 - pos, "%s:%s:%s",
+    sb_printf(&b, "; s=");
+    for (int i = 0; i < sig->n_ssets; i++)
+        sb_printf(&b, "%s%s:%s:%s", i ? "," : "",
             sig->ssets[i].selector, sig->ssets[i].alg,
             empty_sig ? "" : (sig->ssets[i].sig_b64 ? sig->ssets[i].sig_b64 : ""));
-    }
     if (sig->n)
-        pos += snprintf(buf + pos, 8192 - pos, "; n=%s", sig->n);
+        sb_printf(&b, "; n=%s", sig->n);
     /* f= flags (-07 §10.10), e.g. feedback, feedhere — preserved verbatim */
     if (sig->flags && sig->flags[0]) {
-        pos += snprintf(buf + pos, 8192 - pos, "; f=");
-        for (int i = 0; sig->flags[i]; i++) {
-            if (i) buf[pos++] = ',';
-            pos += snprintf(buf + pos, 8192 - pos, "%s", sig->flags[i]);
-        }
+        sb_printf(&b, "; f=");
+        for (int i = 0; sig->flags[i]; i++)
+            sb_printf(&b, "%s%s", i ? "," : "", sig->flags[i]);
     }
-    return buf;
+    return sb_done(&b);
 }

@@ -61,17 +61,22 @@ typedef struct {
     char body[4096];
 } msg_t;
 
+/* "Name: value\r\n", malloc'd to fit (a signature with many rt= values
+   is long). */
+static char *field_line(const char *name, const char *value) {
+    size_t n = strlen(name) + strlen(value) + 5;
+    char *buf = malloc(n);
+    if (buf) snprintf(buf, n, "%s: %s\r\n", name, value);
+    return buf;
+}
+
 static void msg_add_bottom(msg_t *m, const char *name, const char *value) {
-    char buf[2048];
-    snprintf(buf, sizeof buf, "%s: %s\r\n", name, value);
-    m->h[m->n++] = strdup(buf);
+    m->h[m->n++] = field_line(name, value);
 }
 
 static void msg_add_top(msg_t *m, const char *name, const char *value) {
-    char buf[8192];
-    snprintf(buf, sizeof buf, "%s: %s\r\n", name, value);
     memmove(m->h + 1, m->h, (size_t)m->n * sizeof m->h[0]);
-    m->h[0] = strdup(buf);
+    m->h[0] = field_line(name, value);
     m->n++;
 }
 
@@ -510,6 +515,64 @@ static void test_no_recipe(void) {
         dkim2_verify_result_t res = verify(&m);
         CHECK_MSG(res, "FAIL: Message-Instance m=1 body hash sha256 mismatch");
         msg_free(&m);
+    }
+}
+
+/* The signer, chained and with many recipients. */
+static void test_sign_chain(void) {
+    char err[512], sig[4096];
+    /* A third hop signed over two instances and two signatures verifies:
+       the signing input takes the existing fields in ascending m= and i=
+       order (-07 §12.8), which the signer once got backwards. */
+    {
+        char *r1[] = { "<list@lists.example.org>", NULL };
+        char *r2[] = { "<b@example.net>", NULL };
+        char *r3[] = { "<c@dest.example>", NULL };
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        CHECK(lib_sign(&m, "example.com", "<a@example.com>", r1, 0, err, sizeof err, NULL, 0) == 0);
+        msg_set(&m, "Subject", "[list] test");
+        add_mi(&m, "{\"h\":{\"subject\":[{\"d\":[\"test\"]}]}}");
+        CHECK(lib_sign(&m, "example.org", "<l@lists.example.org>", r2, 0, err, sizeof err, NULL, 0) == 0);
+        msg_set(&m, "Subject", "Fwd: [list] test");
+        add_mi(&m, "{\"h\":{\"subject\":[{\"d\":[\"[list] test\"]}]}}");
+        CHECK(lib_sign(&m, "example.net", "<f@example.net>", r3, 0, err, sizeof err, NULL, 0) == 0);
+        if (err[0]) fprintf(stderr, "  sign: %s\n", err);
+        CHECK(count_fields(&m, "Message-Instance") == 3);
+        CHECK(count_fields(&m, "DKIM2-Signature") == 3);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_PASS(res);
+        msg_free(&m);
+    }
+    /* 300 recipients with long addresses: rt= holds every one (it used to
+       be built in a fixed 4096-byte buffer with no bounds check). 900 takes
+       the signing input past 64KB, where build_sign_input used to drop the
+       new signature's own field and sign without it. */
+    for (int round = 0; round < 2; round++) {
+        const int N = round ? 900 : 300;
+        static char addrs[900][96];
+        static char *rcpts[901];
+        for (int i = 0; i < N; i++) {
+            snprintf(addrs[i], sizeof addrs[i],
+                     "<recipient-%03d-with-a-rather-long-local-part@dest.example>", i);
+            rcpts[i] = addrs[i];
+        }
+        rcpts[N] = NULL;
+        static char bigsig[262144];
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        CHECK(lib_sign(&m, "example.com", "<a@example.com>", rcpts, 0, err, sizeof err,
+                       bigsig, sizeof bigsig) == 0);
+        dkim2_sig_t *s = dkim2_sig_parse(bigsig);
+        int n = 0;
+        for (; s && s->rt && s->rt[n]; n++) ;
+        CHECK(n == N);
+        CHECK(s && s->rt && strcmp(s->rt[N - 1], addrs[N - 1]) == 0);
+        dkim2_sig_free(s);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_PASS(res);
+        msg_free(&m);
+        (void)sig;
     }
 }
 
@@ -1186,6 +1249,7 @@ int main(void) {
     test_u_steps();
     test_json_keys();
     test_no_recipe();
+    test_sign_chain();
     test_flags();
     test_custody();
     test_from_authentic();

@@ -284,7 +284,13 @@ static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t ms
             }
             continue;
         }
-        if (s->nd || !s->mf || is_null_path(s->mf)) {
+        /* The field parser reports a missing mf= first; it is never read
+           here as the null path <>. */
+        if (!s->nd && !s->mf) {
+            snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d tag=mf missing", s->i);
+            return -1;
+        }
+        if (s->nd || is_null_path(s->mf)) {
             if (!s->d || !rt_matches(p, s->d)) {
                 snprintf(msg, msgsz,
                     "PERMERROR: DKIM2-Signature i=%d d= does not match the rt= of i=%d", s->i, p->i);
@@ -380,10 +386,6 @@ static const char *sig_alg_key_type(const char *alg) {
     return strcmp(alg, "rsa-sha256") == 0 ? "rsa" : "ed25519";
 }
 
-/* Build signing input for the verifier — same structure as -07 §12.8 signing,
-   but for the signature being verified, substitute empty string for its sig value.
-   The sig_value_to_empty is the sig_b64 we want to blank out.
-   We reconstruct an "incomplete" signature value by using dkim2_sig_format. */
 /* Blank sig bytes in a raw DKIM2-Signature value, preserving trailing semicolon.
    Finds the s= tag and replaces each sel:alg:sigvalue with sel:alg: (empty).
    Returns malloc'd string. */
@@ -466,10 +468,10 @@ static char *blank_sig_values(const char *raw_val) {
    Returns 0, or -1 on allocation failure. */
 static int append_canon(char **buf, size_t *pos, size_t *bufsz,
                         const char *hdr_name, const char *val) {
-    size_t vl = strlen(val);
-    char *full = malloc(vl + strlen(hdr_name) + 5);
+    size_t fl = strlen(val) + strlen(hdr_name) + 5;
+    char *full = malloc(fl);
     if (!full) return -1;
-    sprintf(full, "%s: %s\r\n", hdr_name, val);
+    snprintf(full, fl, "%s: %s\r\n", hdr_name, val);
     char *canon = canon_for_sig(full);
     free(full);
     if (!canon) return -1;
