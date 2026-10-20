@@ -217,13 +217,21 @@ util/negative-vectors.sh pin each):
   highest instance that fails is primary (a Subject changed after signing a
   two-instance chain is `m=2 ... mismatch`, though m=1 mismatches too).
 - §14.2, structure first (Bron, 2026-10-19):
-  1. STRUCTURE -- what the field names and their m=/i= numbers alone decide:
-     too many fields (the chain-length limits); a field with no usable m=/i=
-     (missing, or not a valid chain number); a number given twice; a gap in
-     the numbering ("m=<x> missing", "i=<x> missing"); the top instance not
-     signed ("is not signed"). Among these: Message-Instance faults before
-     DKIM2-Signature faults, each by ascending number, and in the order listed
-     here for one field.
+  1. STRUCTURE -- what the field names and their m=/i= numbers alone decide,
+     checked in exactly this order (the first that applies is primary):
+     a. too many fields: Message-Instance count first, then DKIM2-Signature
+        (the chain-length limit);
+     b. a Message-Instance with no usable m= (missing, or not a valid chain
+        number) -- the first such field, top down;
+     c. a Message-Instance m= given twice -- the lowest such number;
+     d. "Message-Instance m=<x> missing" -- the lowest x from 1 up to the
+        higher of the highest m= present and the top usable signature's m=;
+     e. "Message-Instance m=<top> is not signed";
+     f. a DKIM2-Signature with no usable i= (or an i=/m= out of range) -- the
+        first such field, top down;
+     g. a DKIM2-Signature i= given twice -- the lowest such number;
+     h. "DKIM2-Signature i=<x> missing" -- the lowest x.
+     A message with no DKIM2 fields at all is "none", not an error.
   2. CONTENT -- each field's own content: Message-Instances by ascending m=,
      then DKIM2-Signatures by ascending i=. Within one field: its tag-list
      syntax, then missing or unexpected tags, then duplicate hash algorithm /
