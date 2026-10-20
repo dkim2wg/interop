@@ -224,13 +224,15 @@ util/negative-vectors.sh pin each):
      b. a Message-Instance with no usable m= (missing, or not a valid chain
         number) -- the first such field, top down;
      c. a Message-Instance m= given twice -- the lowest such number;
-     d. "Message-Instance m=<x> missing" -- the lowest x from 1 up to the
-        higher of the highest m= present and the top usable signature's m=;
-     e. "Message-Instance m=<top> is not signed";
-     f. a DKIM2-Signature with no usable i= (or an i=/m= out of range) -- the
+     d. a DKIM2-Signature with no usable i= (or an i=/m= out of range) -- the
         first such field, top down;
-     g. a DKIM2-Signature i= given twice -- the lowest such number;
+     e. a DKIM2-Signature i= given twice -- the lowest such number;
+     f. "Message-Instance m=<x> missing" -- the lowest x from 1 up to the
+        higher of the highest m= present and the top signature's m=;
+     g. "Message-Instance m=<top> is not signed";
      h. "DKIM2-Signature i=<x> missing" -- the lowest x.
+     b..e decide which fields are in the chain at all, so they come before
+     the gaps and the coverage that are worked out from those fields.
      A message with no DKIM2 fields at all is "none", not an error.
   2. CONTENT -- each field's own content: Message-Instances by ascending m=,
      then DKIM2-Signatures by ascending i=. Within one field: its tag-list
