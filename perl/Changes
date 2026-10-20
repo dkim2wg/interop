@@ -1,5 +1,28 @@
 Revision history for Mail::DKIM2
 
+0.26    2026-10-20
+        A message in a file can be signed and gated without reading it
+        into memory. No change to anything on the wire.
+
+        - New Mail::DKIM2::BodyHasher: the body hash body_digest_raw
+          gives, from a message fed through PRINT/CLOSE or load() in
+          pieces, holding at most a megabyte of the body. Its
+          body_hashes are what calculate's BodyHash and verify's
+          BodyHashes take, so a Message-Instance can be computed or
+          checked from the header block alone.
+        - Gate->check takes a filehandle (or any object with getline) as
+          well as a string, and streams its body into the Verifier. It
+          reads the whole message only to walk the chain itself: no
+          DKIM2-Signature but some Message-Instance, or VerifyResult.
+        - Gate->check no longer walks the Message-Instance chain after
+          its own Verifier has refused the chain: the verdict was
+          upstream-chain either way.
+        - The Signer discards the body as it arrives (section 12.8 signs
+          none of it), and may be fed the header block alone.
+        - load() reads a filehandle a piece at a time, and stops reading
+          once the parser has stopped (a Verifier with no signature to
+          check, after the header fields), instead of reading it whole.
+
 0.25    2026-10-20
         Which error is reported when a message has more than one fault
         (the interop contract's C9, so every implementation names the
