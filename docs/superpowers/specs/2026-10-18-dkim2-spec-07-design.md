@@ -216,14 +216,29 @@ util/negative-vectors.sh pin each):
 - §14.7: top down. A lower instance is rebuilt from the one above it, so the
   highest instance that fails is primary (a Subject changed after signing a
   two-instance chain is `m=2 ... mismatch`, though m=1 mismatches too).
-- §14.2 includes every Recipe on its own, checked for every instance (highest
-  m= first) whether or not the chain walk reaches it: its base64, its JSON, the
-  §5 schema, and the "c" ranges ascending without overlap. A Recipe that keeps
-  all of that but does not fit the message (a "c" range past the last line or
-  field) can only be found by applying it, so it is the chain walk's: it ranks
-  in §14.7, after the hash check of its own instance, with the same
-  "contains invalid JSON" text. Otherwise §14.2 errors keep the order each
-  implementation reads the fields in (no vector has two §14.2 faults).
+- §14.2, structure first (Bron, 2026-10-19):
+  1. STRUCTURE -- what the field names and their m=/i= numbers alone decide:
+     too many fields (the chain-length limits); a field with no usable m=/i=
+     (missing, or not a valid chain number); a number given twice; a gap in
+     the numbering ("m=<x> missing", "i=<x> missing"); the top instance not
+     signed ("is not signed"). Among these: Message-Instance faults before
+     DKIM2-Signature faults, each by ascending number, and in the order listed
+     here for one field.
+  2. CONTENT -- each field's own content: Message-Instances by ascending m=,
+     then DKIM2-Signatures by ascending i=. Within one field: its tag-list
+     syntax, then missing or unexpected tags, then duplicate hash algorithm /
+     duplicate selector / too many selectors, then (Message-Instance) its
+     Recipe: base64, JSON, the §5 schema, and the "c" ranges ascending without
+     overlap -- checked for every instance whether or not the chain walk
+     reaches it.
+  A Recipe that keeps all of that but does not fit the message (a "c" range
+  past the last line or field) can only be found by applying it, so it is the
+  chain walk's: it ranks in §14.7, after the hash check of its own instance,
+  with the same "contains invalid JSON" text.
+- §14.7, within one instance (Bron, 2026-10-19): every header hash, in the
+  order the h= tag lists the algorithms, before any body hash, in the same
+  order. So an instance whose sha512 header hash and sha256 body hash are both
+  wrong reports the header hash.
 - Every signature is checked whether or not the chain walk reaches the
   instance it covers. The result state (and the A-R result) is the primary
 error's state. A verifier may list later errors after the primary one, but they
