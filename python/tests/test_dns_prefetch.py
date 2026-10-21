@@ -1,6 +1,7 @@
 """Public-key prefetch (dkim2dns): every key the signatures name is asked
-for as soon as the header fields are known, and the verdicts are exactly the
-ones the ordinary synchronous lookup gives.
+for as soon as the header fields are known (and used only once the chain
+walk has passed, contract C9), and the verdicts are exactly the ones the ordinary
+synchronous lookup gives.
 
 A fake resolver stands in for DNS, answering from the repo dns.json.
 """
@@ -122,6 +123,17 @@ def test_all_keys_requested_by_end_of_headers_once_each():
     r = v.close()
     assert r.ok, r.errors
     assert sorted(fake.calls) == sorted(NAMES)   # no second lookup
+
+
+def test_failed_walk_is_the_result_whatever_the_keys_say():
+    # Contract C9: the keys are prefetched, but none is used (no ordinary
+    # lookup, no key error) when the chain walk fails.
+    fake = FakeResolver(first={"*": "NXDOMAIN"})
+    r = verify_message(RAW + b"tampered\r\n", LiveDNS(fake), **KW)
+    assert r.status == "fail", r.errors
+    # Five signatures, one instance: no hop changed the content.
+    assert r.errors == ["FAIL: Message-Instance m=1 body hash sha256 mismatch"]
+    assert fake.sync_calls == []
 
 
 def test_good_answers_match_dns_json_and_sync():

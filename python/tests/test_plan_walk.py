@@ -15,8 +15,12 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.dirname(HERE))
-from dkim2sign import b64, compute_body_hash, compute_header_hash  # noqa: E402
-from dkim2verify import MessageVerifier, verify_message  # noqa: E402
+from dkim2sign import (  # noqa: E402
+    b64, compute_body_hash, compute_header_hash, parse_message,
+)
+from dkim2verify import (  # noqa: E402
+    MessageVerifier, _mi_content_error, extract_mi_headers, verify_message,
+)
 
 JUNK = b64(bytes(32))
 BODY5 = b"".join(b"line%d\r\n" % i for i in range(1, 6))
@@ -79,7 +83,11 @@ def _run(raw, walk, chunks=None):
 
 def same(raw, splits=True, planned=True):
     """Assert the planned walk matches the undo walk; return the result.
-    planned=False: a message the plan hands back to the undo walk."""
+    planned=False: a message the plan hands back to the undo walk.  An
+    instance whose Recipe is malformed on its own is reported from the
+    header fields (contract C9), before either walk is planned."""
+    if any(map(_mi_content_error, extract_mi_headers(parse_message(raw)[0]))):
+        planned = False
     ref, ref_trace = _run(raw, "undo")
     got, got_trace = _run(raw, "plan")
     assert got_trace == ref_trace, (got_trace, ref_trace)

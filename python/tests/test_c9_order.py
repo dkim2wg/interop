@@ -1,0 +1,137 @@
+"""Contract C9: on a message with more than one fault the PRIMARY error (the
+first in result.errors, whose state is the result) is the first in C9's
+order: §14.2 structure (steps a..h), each Message-Instance's content by
+ascending m=, the §14.7 chain walk, each DKIM2-Signature's content by
+ascending i=, then §14.3, §14.4, §14.5, §14.6, §14.8.
+
+Fixtures are the multi-* vectors from util/build-negative-vectors.py, each
+carrying two faults; util/negative-vectors.sh pins the same texts for every
+verifier.
+"""
+import json
+import os
+import sys
+
+import pytest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, os.path.dirname(HERE))
+import dkim2verify  # noqa: E402
+
+sys.path.insert(0, HERE)
+from util_fixtures import bnv  # noqa: E402
+
+with open(os.path.join(ROOT, "dns.json")) as _fh:
+    DNS = json.load(_fh)
+
+HDR1 = "FAIL: Message-Instance m=1 header hash sha256 mismatch"
+JSON2 = "PERMERROR: Message-Instance m=2 contains invalid JSON"
+EXPECT = {
+    "multi-from-tampered": HDR1,
+    "multi-header-and-body-tampered": HDR1,
+    "multi-expired-custody": "PERMERROR: DKIM2-Signature i=1 signature expired",
+    "multi-custody-bad-signature":
+        "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match",
+    "multi-bad-signature-header-hash": HDR1,
+    "multi-tamper-two-instances":
+        "FAIL: Message-Instance m=2 header hash sha256 mismatch",
+    "multi-expired-recipe-json": JSON2,
+    "multi-expired-recipe-order": JSON2,
+    "multi-expired-recipe-past-end": JSON2,
+    "multi-tamper-recipe-past-end":
+        "FAIL: Message-Instance m=2 body hash sha256 mismatch",
+    "multi-signature-gap-recipe-json": "PERMERROR: DKIM2-Signature i=1 missing",
+    "multi-instance-gap-signature-gap": "PERMERROR: Message-Instance m=1 missing",
+    "multi-instance-gap-unsigned": "PERMERROR: Message-Instance m=1 missing",
+    "multi-instance-no-m-signature-twice":
+        "PERMERROR: Message-Instance m= tag=m missing",
+    "multi-instance-twice-signature-no-i":
+        "PERMERROR: Message-Instance m=1 appears more than once",
+    "multi-instance-twice-junk-signature":
+        "PERMERROR: Message-Instance m=1 appears more than once",
+    "multi-instance-twice-lowest":
+        "PERMERROR: Message-Instance m=1 appears more than once",
+    "multi-signature-twice-lowest":
+        "PERMERROR: DKIM2-Signature i=1 appears more than once",
+    "multi-instance-syntax-dup-alg": "PERMERROR: Message-Instance m=1 syntax error",
+    "multi-instance-syntax-dup-selector":
+        "PERMERROR: Message-Instance m=1 syntax error",
+    "multi-instance-dup-alg-recipe":
+        "PERMERROR: Message-Instance m=2 has a duplicate hash algorithm",
+    "multi-header-sha512-body-sha256":
+        "FAIL: Message-Instance m=1 header hash sha512 mismatch",
+    "multi-expired-nd": "PERMERROR: DKIM2-Signature i=1 signature expired",
+    "multi-expired-header-hash": HDR1,
+    "multi-custody-header-hash": HDR1,
+    "multi-body-hash-no-key": "FAIL: Message-Instance m=1 body hash sha256 mismatch",
+}
+
+
+def test_every_multi_vector_is_covered():
+    assert {n[:-4] for n in bnv.FIXTURES if n.startswith("multi-")} == set(EXPECT)
+
+
+class _CountingKeys:
+    """A dns.json key source that records every name prefetched and every
+    name actually looked up (used)."""
+
+    def __init__(self):
+        self.prefetched = []
+        self.names = []
+
+    def prefetch(self, names):
+        self.prefetched.extend(names)
+
+    def txt_records(self, name):
+        self.names.append(name)
+        sel, _, domain = name.partition("._domainkey.")
+        recs = DNS.get(domain, {}).get(f"{sel}._domainkey")
+        if not recs:
+            raise KeyError(name)
+        return [v if isinstance(v, str) else "".join(v)
+                for t, v in recs if t.lower() == "txt"]
+
+
+@pytest.mark.parametrize("walk", ["plan", "undo"])
+@pytest.mark.parametrize("name", sorted(EXPECT))
+def test_primary_error(name, walk):
+    msg = bnv.FIXTURES[name + ".eml"]()
+    keys = _CountingKeys()
+    r = dkim2verify.verify_message(
+        msg, keys, full_chain=True, walk=walk,
+        skip_timestamp_check=not name.startswith("multi-expired-"))
+    want = EXPECT[name]
+    assert r.message == want, r.errors
+    assert r.errors[0] == want
+    assert r.status == ("fail" if want.startswith("FAIL:") else "permerror")
+    # Instances that fail (structure, content or walk) are the verdict: no
+    # public key is used, and no key error reported.
+    if "Message-Instance" in want or "DKIM2-Signature i=1 missing" in want \
+            or "appears more than once" in want:
+        assert keys.names == [], keys.names
+        assert not any("public key" in e for e in r.errors), r.errors
+
+
+def test_unsigned_instances_are_still_walked():
+    # Outbound (allow_unsigned_mi) with no signature: the instances are
+    # walked, and one that does not match the message is the result.
+    msg = bnv.build_multi_header_sha512_body_sha256()
+    headers, body = dkim2verify.parse_message(msg)
+    unsigned = b"".join(h + b"\r\n" for h in headers
+                        if not h.lower().startswith(b"dkim2-signature:"))
+    r = dkim2verify.verify_message(unsigned + b"\r\n" + body, DNS,
+                                   full_chain=True, allow_unsigned_mi=True)
+    assert r.message == "FAIL: Message-Instance m=1 header hash sha512 mismatch"
+
+
+def test_more_fields_than_the_chain_length():
+    msg = bnv.build_positive_control()
+    head, sep, body = msg.partition(b"\r\n\r\n")
+    mi = b"Message-Instance: m=1; h=sha256:AAAA:BBBB"
+    sig = b"DKIM2-Signature: i=1; m=1"
+    for extra, want in ((mi, "Message-Instance"), (sig, "DKIM2-Signature")):
+        r = dkim2verify.verify_message(
+            b"\r\n".join([extra] * 33) + b"\r\n" + head + sep + body, DNS,
+            full_chain=True, skip_timestamp_check=True)
+        assert r.message == f"PERMERROR: more than 32 {want} fields"

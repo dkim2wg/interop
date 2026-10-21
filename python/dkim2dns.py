@@ -13,7 +13,8 @@ error is DNSTempError, reported as "TEMPERROR ... could not be fetched".
 
 Per message, the verifier calls for_message() and, as soon as the header
 fields are known, prefetch() with every key name the DKIM2-Signatures need;
-those queries run in the background while the body arrives.  When a
+those queries run in the background while the body arrives.  No answer is
+used until the chain walk has passed (contract C9).  When a
 signature is checked, a definitive prefetched answer (records, NXDOMAIN,
 NOERROR with no TXT) is used as it is; one that does not settle it (no reply
 within prefetch_wait seconds of sending, SERVFAIL, any error) is redone the

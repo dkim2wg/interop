@@ -415,9 +415,11 @@ def test_c9_custody_before_signature():
     _fails_with(msg, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match")
 
 
-def test_c9_signature_before_hash():
+def test_c9_hash_before_signature():
+    # The chain walk (§14.7) before any signature (§14.6): a failing walk is
+    # the primary error, whatever is wrong with the signatures.
     msg = _corrupt_sig(_hop1()).replace(b"Subject: hello", b"Subject: hullo")
-    _fails_with(msg, "FAIL: DKIM2-Signature i=1 selector sel incorrect signature",
+    _fails_with(msg, "FAIL: Message-Instance m=1 header hash sha256 mismatch",
                 status="fail")
 
 
