@@ -233,6 +233,57 @@ int main(void) {
         printf("  ok: %d keys requested at end of headers, once each\n", nwant);
     }
 
+    /* Bounded: at most DKIM2_PREFETCH_MAX keys, top signature first,
+       implemented algorithms only, de-duplicated -- 50 selectors in one
+       s= (or 500 copies of one) cannot drive 50 queries. */
+    {
+        reset(ANSWER, NULL, ANSWER);
+        dkim2_ctx_t ctx;
+        memset(&ctx, 0, sizeof ctx);
+        size_t cap = 50 * 40 + 256, len;
+        char *v = malloc(cap);
+        assert(v);
+        len = (size_t)snprintf(v, cap, "i=1; m=1; t=1; d=one.example; mf=PGE+; rt=PGE+; s=");
+        for (int k = 0; k < 50; k++)
+            len += (size_t)snprintf(v + len, cap - len, "%ss%d:ed25519-sha256:AAAA", k ? "," : "", k);
+        assert(dkim2_ctx_add_field(&ctx, 1, v) == 0);
+        assert(dkim2_ctx_add_field(&ctx, 1,
+            "i=2; m=1; t=1; d=two.example; mf=PGE+; rt=PGE+; "
+            "s=x:future-alg:AAAA,a:ed25519-sha256:AAAA,a:rsa-sha256:AAAA,b:rsa-sha256:AAAA") == 0);
+        dkim2_prefetch_t *pf = dkim2_prefetch_start(&ctx);
+        int n = dkim2_prefetch_count(pf);
+        CHECK(n == DKIM2_PREFETCH_MAX, "50 selectors: %d names prefetched", n);
+        CHECK(n > 1 && strcmp(dkim2_prefetch_name(pf, 0), "a._domainkey.two.example") == 0 &&
+              strcmp(dkim2_prefetch_name(pf, 1), "b._domainkey.two.example") == 0 &&
+              strcmp(dkim2_prefetch_name(pf, 2), "s0._domainkey.one.example") == 0,
+              "not top signature first, de-duplicated: %s", n ? dkim2_prefetch_name(pf, 0) : "");
+        dkim2_prefetch_free(pf);
+        dkim2_prefetch_drain();
+        CHECK(g_pf_calls == DKIM2_PREFETCH_MAX, "50 selectors: %d queries", g_pf_calls);
+        dkim2_sig_free(ctx.sig_list);
+        dkim2_badfield_free(ctx.bad_list);
+
+        reset(ANSWER, NULL, ANSWER);
+        memset(&ctx, 0, sizeof ctx);
+        free(v);
+        cap = 500 * 20 + 256;
+        v = malloc(cap);
+        assert(v);
+        len = (size_t)snprintf(v, cap, "i=1; m=1; t=1; d=one.example; mf=PGE+; rt=PGE+; s=");
+        for (int k = 0; k < 500; k++)
+            len += (size_t)snprintf(v + len, cap - len, "%ss:rsa-sha256:AAAA", k ? "," : "");
+        assert(dkim2_ctx_add_field(&ctx, 1, v) == 0);
+        pf = dkim2_prefetch_start(&ctx);
+        CHECK(dkim2_prefetch_count(pf) == 1, "500 copies: %d names", dkim2_prefetch_count(pf));
+        dkim2_prefetch_free(pf);
+        dkim2_prefetch_drain();
+        CHECK(g_pf_calls == 1, "500 copies: %d queries", g_pf_calls);
+        dkim2_sig_free(ctx.sig_list);
+        dkim2_badfield_free(ctx.bad_list);
+        free(v);
+        printf("  ok: prefetch bounded to %d keys, top signature first\n", DKIM2_PREFETCH_MAX);
+    }
+
     /* Good answers: no synchronous lookup at all. */
     reset(ANSWER, NULL, ANSWER);
     dkim2_verify_result_t r = run(1);

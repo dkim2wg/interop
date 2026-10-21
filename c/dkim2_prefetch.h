@@ -1,9 +1,10 @@
 #pragma once
 #include "dkim2_internal.h"
 
-/* Public-key prefetch: as soon as the header fields are known, look up
-   every distinct selector._domainkey.domain the DKIM2-Signatures name (for
-   the signing algorithms implemented here), each in a thread of its own,
+/* Public-key prefetch: as soon as the header fields are known (and their
+   §14.2 structure checked), look up the distinct
+   selector._domainkey.domain names the DKIM2-Signatures give (for the
+   signing algorithms implemented here; up to DKIM2_PREFETCH_MAX), each in a thread of its own,
    so the lookups overlap each other and the body. A signature check then
    takes its key from that answer when it is definitive -- records, NXDOMAIN,
    NOERROR with no TXT -- and arrived within dkim2_prefetch_timeout_ms of
@@ -13,6 +14,11 @@
    the synchronous lookups give. */
 
 typedef struct dkim2_prefetch dkim2_prefetch_t;
+
+/* At most this many keys are prefetched for one message: the signatures'
+   by descending i=, de-duplicated. Any other key is looked up when it is
+   needed, so many signatures or selectors cannot drive many queries. */
+#define DKIM2_PREFETCH_MAX 8
 
 /* The resolver the prefetch threads use: the answer length, or -1 with
    *herr an h_errno value (HOST_NOT_FOUND, NO_DATA, TRY_AGAIN, ...). NULL
@@ -24,7 +30,7 @@ extern int (*dkim2_prefetch_query_hook)(const char *qname, unsigned char *answer
 /* How long a prefetched answer is waited for, from when it was sent. */
 extern int dkim2_prefetch_timeout_ms;   /* default 5000 */
 
-/* Start the lookups for ctx->sig_list. NULL when there is nothing to look
+/* Start the lookups for ctx->sig_list (at most DKIM2_PREFETCH_MAX). NULL when there is nothing to look
    up, on failure, or when keys do not come from DNS: dkim2_dns_override
    (dns.json) is set, or dkim2_dns_query_hook is without a prefetch hook. */
 dkim2_prefetch_t *dkim2_prefetch_start(const dkim2_ctx_t *ctx);

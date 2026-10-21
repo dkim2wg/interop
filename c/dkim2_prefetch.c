@@ -1,5 +1,6 @@
 #include "dkim2_prefetch.h"
 #include "dkim2_dns.h"
+#include "dkim2_header.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -152,11 +153,22 @@ dkim2_prefetch_t *dkim2_prefetch_start(const dkim2_ctx_t *ctx) {
     /* Keys from dns.json or a test seam are not DNS: nothing to overlap. */
     if (dkim2_dns_override || (dkim2_dns_query_hook && !dkim2_prefetch_query_hook))
         return NULL;
+    /* The signatures by descending i= (top first): the top one's keys are
+       the ones most surely needed. dkim2_ctx_add_field keeps at most
+       DKIM2_MAX_CHAIN_LENGTH of them. */
+    const dkim2_sig_t *sigs[DKIM2_MAX_CHAIN_LENGTH];
+    int n_sigs = 0;
+    for (const dkim2_sig_t *s = ctx->sig_list; s && n_sigs < DKIM2_MAX_CHAIN_LENGTH; s = s->next) {
+        int k = n_sigs++;
+        for (; k > 0 && sigs[k - 1]->i < s->i; k--) sigs[k] = sigs[k - 1];
+        sigs[k] = s;
+    }
     dkim2_prefetch_t *pf = calloc(1, sizeof *pf);
     if (!pf) return NULL;
-    for (const dkim2_sig_t *s = ctx->sig_list; s; s = s->next) {
+    for (int si = 0; si < n_sigs && pf->n < DKIM2_PREFETCH_MAX; si++) {
+        const dkim2_sig_t *s = sigs[si];
         if (!s->d) continue;
-        for (int j = 0; j < s->n_ssets; j++) {
+        for (int j = 0; j < s->n_ssets && pf->n < DKIM2_PREFETCH_MAX; j++) {
             if (!known_alg(s->ssets[j].alg)) continue;
             char q[512];
             snprintf(q, sizeof q, "%s._domainkey.%s", s->ssets[j].selector, s->d);

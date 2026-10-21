@@ -804,7 +804,7 @@ done:
 /* -07 §14.2 structure, contract C9 steps a..h: what the field names and
    their m=/i= numbers alone decide, the first that applies being primary.
    0, or -1 with the PERMERROR in msg. */
-static int structure_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) {
+static int structure_error(const dkim2_ctx_t *ctx, int outbound, char *msg, size_t msgsz) {
     enum { N = DKIM2_MAX_CHAIN_LENGTH + 1 };
     int n_mi[N] = {0}, n_sig[N] = {0}, sig_m[N] = {0};
     int max_m = 0, max_i = 0;
@@ -873,7 +873,7 @@ static int structure_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) {
     int signed_m = 0;
     for (int x = 1; x <= max_i; x++)
         if (sig_m[x] > signed_m) signed_m = sig_m[x];
-    if (!ctx->outbound && max_m && (!max_i || (signed_m && signed_m < max_m))) {
+    if (!outbound && max_m && (!max_i || (signed_m && signed_m < max_m))) {
         snprintf(msg, msgsz, "PERMERROR: Message-Instance m=%d is not signed", max_m);
         return -1;
     }
@@ -884,6 +884,11 @@ static int structure_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) {
             return -1;
         }
     return 0;
+}
+
+int dkim2_structure_check(const dkim2_ctx_t *ctx, int outbound) {
+    char msg[256];
+    return structure_error(ctx, outbound, msg, sizeof msg);
 }
 
 /* The field on ctx->bad_list of this kind and number, or NULL. */
@@ -1039,7 +1044,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
        prefetch only looks them up). */
     {
         char sbuf[256];
-        if (structure_error(ctx, sbuf, sizeof sbuf) < 0)
+        if (structure_error(ctx, ctx->outbound, sbuf, sizeof sbuf) < 0)
             SETSTATUS(DKIM2_PERMERROR, "%s", sbuf);
     }
 

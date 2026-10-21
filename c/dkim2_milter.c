@@ -142,7 +142,10 @@ static sfsistat cb_eoh(SMFICTX *ctx) {
        (both verifying and the signer gate use them). The body itself is
        never kept. */
     if (c->mi_list || c->sig_list) {
-        c->prefetch = dkim2_prefetch_start(c);
+        /* No key is used when the structure fails (contract C9). Signing
+           modes check the chain as the signer gate does: outbound. */
+        if (dkim2_structure_check(c, g_cfg.mode != 'v') == 0)
+            c->prefetch = dkim2_prefetch_start(c);
         c->plan = dkim2_plan_new_ctx(c, 1);
         if (!c->plan) return SMFIS_TEMPFAIL;
     }

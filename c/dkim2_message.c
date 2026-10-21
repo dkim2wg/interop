@@ -133,10 +133,12 @@ dkim2_verify_result_t dkim2_verify_message_opts(const char *eml_path,
 
     dkim2_ctx_collect(&ctx);
 
-    /* End of headers: the key lookups start, and the chain is planned and
+    /* End of headers: the key lookups start (once the structure is
+       sound: otherwise no key is ever used), and the chain is planned and
        hashed while they are under way. ctx.body stays for the one case the
        plan hands back to the undo walk. */
-    if (!opts->no_prefetch) ctx.prefetch = dkim2_prefetch_start(&ctx);
+    if (!opts->no_prefetch && dkim2_structure_check(&ctx, 0) == 0)
+        ctx.prefetch = dkim2_prefetch_start(&ctx);
     if (!opts->undo_walk) {
         ctx.plan = dkim2_plan_new_ctx(&ctx, 0);
         if (ctx.plan) {

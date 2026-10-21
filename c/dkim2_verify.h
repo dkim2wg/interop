@@ -22,6 +22,12 @@ typedef struct {
    Populates result with PASS/FAIL/PERMERROR/TEMPERROR and a message. */
 void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result);
 
+/* -07 §14.2 structure (contract C9 steps a..h) of the fields collected in
+   ctx, as dkim2_do_verify checks it first; outbound as ctx->outbound (an
+   unsigned top Message-Instance allowed). 0, or -1 when it fails -- then
+   nothing more is worth doing, key lookups included. */
+int dkim2_structure_check(const dkim2_ctx_t *ctx, int outbound);
+
 /* -07 §10.9: check the s= tag of one DKIM2-Signature for duplicate/limit
    violations -- a Selector MUST NOT be present more than once, and the same
    signing algorithm MUST NOT be present more than twice (and only with
