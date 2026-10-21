@@ -226,7 +226,9 @@ util/negative-vectors.sh pin each):
   1. STRUCTURE -- what the field names and their m=/i= numbers alone decide,
      checked in exactly this order (the first that applies is primary):
      a. too many fields: Message-Instance count first, then DKIM2-Signature
-        (the chain-length limit);
+        (the chain-length limit): "PERMERROR: more than 32 Message-Instance
+        fields" / "PERMERROR: more than 32 DKIM2-Signature fields" (Bron,
+        2026-10-20: Perl's text);
      b. a Message-Instance with no usable m= (missing, or not a valid chain
         number) -- the first such field, top down;
      c. a Message-Instance m= given twice -- the lowest such number;

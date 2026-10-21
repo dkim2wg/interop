@@ -22,6 +22,9 @@ Writes:
   dup-hash-algorithm.eml           -- h= repeats an algorithm (sha256 twice)
   dup-selector.eml                 -- s= repeats a Selector (sel1 twice)
   too-many-signatures.eml          -- s= has one algorithm 3+ times
+  too-many-instance-fields.eml     -- 33 Message-Instance (and 33 DKIM2-Signature)
+                                      fields: C9 step a, instances first
+  too-many-signature-fields.eml    -- 33 DKIM2-Signature fields: C9 step a
   malformed-json-r.eml             -- r= decodes to malformed JSON
   nd-bridge-wrong-domain.eml       -- a §12.3 nd= bridge made with a key for a
                                          domain the message never arrived at
@@ -131,10 +134,42 @@ PRIMARY error (first in -07 §14 section order) and its state exactly:
   multi-tamper-recipe-past-end.eml -- body cut after signing: the top body
                                          hash FAIL before the Recipe that no
                                          longer fits
+
+contract C9 check order (perl/t/check-order.t, perl/t/spec07.t's C9 block):
+  multi-signature-gap-recipe-json.eml -- i=1 missing (step h) + m=2 r= not
+                                         base64 (content): the gap
+  multi-instance-gap-signature-gap.eml -- m=1 and i=1 missing: m=1 (f < h)
+  multi-instance-no-m-signature-twice.eml -- an instance with no m= + i=1
+                                         given twice: no m= (b < e)
+  multi-instance-twice-signature-no-i.eml -- m=1 twice + a signature with no
+                                         i=: m=1 twice (c < d)
+  multi-instance-twice-lowest.eml  -- m=2 and m=1 twice, m=2 met first: m=1
+  multi-signature-twice-lowest.eml -- i=2 and i=1 twice, i=2 met first: i=1
+  multi-instance-twice-junk-signature.eml -- junk "i=1;" signature + m=1
+                                         twice: m=1 twice (c < e)
+  multi-instance-gap-unsigned.eml  -- only m=2, no signature: m=1 missing
+                                         (f < g), not "none"
+  multi-instance-syntax-dup-alg.eml -- m=1 syntax error + m=2 duplicate hash
+                                         algorithm: m=1 (ascending m=)
+  multi-instance-dup-alg-recipe.eml -- m=2 duplicate hash algorithm + r= not
+                                         base64: the algorithm (tags < Recipe)
+  multi-instance-syntax-dup-selector.eml -- m=1 syntax error + i=1 duplicate
+                                         selector: m=1 (instances < signatures)
+  multi-header-sha512-body-sha256.eml -- h=sha256,sha512 with the sha256 body
+                                         hash and the sha512 header hash wrong:
+                                         the sha512 header hash (headers first)
+  multi-expired-nd.eml             -- expired (§14.3) + top nd= (§14.4): expired
+  multi-expired-header-hash.eml    -- expired + Subject changed: the hash FAIL
+                                         (§14.7 < §14.3)
+  multi-custody-header-hash.eml    -- mf= not under d= + Subject changed: the
+                                         hash FAIL (§14.7 < §14.4)
+  multi-body-hash-no-key.eml       -- selector with no key record + body
+                                         changed: the body hash FAIL (§14.7 < §14.5)
 """
 import base64
 import json
 import os
+import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1204,6 +1239,243 @@ def build_multi_tamper_recipe_past_end():
     return head + sep + b"alpha\r\n"
 
 
+# C9 check order (perl/t/check-order.t and the C9 block of perl/t/spec07.t):
+# more two-fault vectors.  §14.2 STRUCTURE (what the fields' names and m=/i=
+# numbers decide, steps a..h) comes before §14.2 CONTENT; instances by
+# ascending m= before signatures; within §14.7 the header hashes in h= order
+# before any body hash; and the Message-Instances (§14.7 included) before
+# §14.3, §14.4 and §14.5.  Every field a signature covers is signed as it
+# stands (malformed or not), so nothing but the two named faults is wrong.
+
+def _order_states():
+    """Two states: the base message (m=1) and a Subject-tag + footer hop
+    (m=2, with its real Recipe)."""
+    h1, b1 = load_base()
+    h2, b2 = _subject_prefixed(h1, b"list"), b1 + b"footer\r\n"
+    return (h1, b1), (h2, b2, ds.build_recipes(h1, b1, h2, b2))
+
+
+def _order_sign(mis, below, i, m, d=DOM, mf=MF, rt=RT, sel="sel1", ts=TS):
+    """DKIM2-Signature i=<i> m=<m> signed with d's sel1 key (named `sel` in
+    the field) over exactly the instance fields `mis` and the signature
+    fields `below`, as they stand."""
+    priv, alg = ds.load_private_key(key("sel1", d))
+    return ds.build_dkim2_signature(
+        mis, below, None, d, sel, priv, alg,
+        mailfrom=mf, rcptto=rt, seq=i, mi_version=m, timestamp=ts)
+
+
+def _order_message(fields, headers, body):
+    """`fields` (DKIM2 fields, top first, as str or bytes) over the message."""
+    out = b"".join((f if isinstance(f, bytes) else f.encode()) + b"\r\n" for f in fields)
+    out += b"".join(h + b"\r\n" for h in headers)
+    return out + b"\r\n" + body
+
+
+def _order_two_hop():
+    """The fields of a valid two-hop chain, ([sig2, sig1], [mi2, mi1]),
+    and the top state's headers and body."""
+    (h1, b1), (h2, b2, r) = _order_states()
+    mi1, mi2 = _mi_raw(h1, b1, 1), _mi_raw(h2, b2, 2, r)
+    sig1 = _order_sign([mi1], [], 1, 1)
+    sig2 = _order_sign([mi1, mi2], [sig1], 2, 2, d="test2.dkim2.com",
+                       mf="relay@test2.dkim2.com", rt=["final@example.com"])
+    return [sig2, sig1], [mi2, mi1], h2, b2
+
+
+def _with_r(mi, r):
+    """Message-Instance field `mi` (no r= yet) with r=<r> added as written."""
+    return mi[:-1] + f"; r={r};"
+
+
+def _dup_alg(mi):
+    """Message-Instance field `mi` with its sha256 hash set given twice."""
+    return re.sub(r"h=(sha256:[^;]*)", r"h=\1,\1", mi, count=1)
+
+
+def build_multi_signature_gap_recipe_json():
+    """i=1 missing (§14.2 structure, step h) + m=2's r= not base64 (§14.2
+    content): the gap is primary.  i=2 is signed over the chain as sent."""
+    (h1, b1), (h2, b2, _r) = _order_states()
+    mi1, mi2 = _mi_raw(h1, b1, 1), _with_r(_mi_raw(h2, b2, 2), "!!!!")
+    sig2 = _order_sign([mi1, mi2], [], 2, 2, d="test2.dkim2.com",
+                       mf="relay@test2.dkim2.com", rt=["final@example.com"])
+    return _order_message([sig2, mi2, mi1], h2, b2)
+
+
+def build_multi_instance_gap_signature_gap():
+    """m=1 and i=1 both missing (steps f and h): "m=1 missing" is primary."""
+    _s1, (h2, b2, r) = _order_states()
+    mi2 = _mi_raw(h2, b2, 2, r)
+    sig2 = _order_sign([mi2], [], 2, 2, d="test2.dkim2.com",
+                       mf="relay@test2.dkim2.com", rt=["final@example.com"])
+    return _order_message([sig2, mi2], h2, b2)
+
+
+def build_multi_instance_no_m_signature_twice():
+    """A Message-Instance with no m= (step b) + DKIM2-Signature i=1 given
+    twice (step e): the instance with no m= is primary."""
+    headers, body = load_base()
+    mi1 = _mi_raw(headers, body, 1)
+    sig1 = _order_sign([mi1], [], 1, 1)
+    return _order_message(["Message-Instance: h=sha256:AAAA:BBBB;", sig1, sig1, mi1],
+                          headers, body)
+
+
+def build_multi_instance_twice_signature_no_i():
+    """Message-Instance m=1 given twice (step c) + a DKIM2-Signature with no
+    i= (step d): the m= given twice is primary."""
+    headers, body = load_base()
+    mi1 = _mi_raw(headers, body, 1)
+    sig1 = _order_sign([mi1], [], 1, 1)
+    return _order_message(["DKIM2-Signature: m=1; d=test1.dkim2.com;", sig1, mi1, mi1],
+                          headers, body)
+
+
+def build_multi_instance_twice_lowest():
+    """m=2 and m=1 both given twice, m=2's copy met first (step c): the
+    LOWEST m= given twice, m=1, is primary."""
+    sigs, (mi2, mi1), h, b = _order_two_hop()
+    return _order_message([mi2] + sigs + [mi2, mi1, mi1], h, b)
+
+
+def build_multi_signature_twice_lowest():
+    """i=2 and i=1 both given twice, i=2's copy met first (step e): the
+    LOWEST i= given twice, i=1, is primary."""
+    (sig2, sig1), mis, h, b = _order_two_hop()
+    return _order_message([sig2, sig2, sig1, sig1] + mis, h, b)
+
+
+def build_multi_instance_twice_junk_signature():
+    """A junk "DKIM2-Signature: i=1;" (i=1 given twice, step e) + m=1 given
+    twice (step c): the m= given twice is primary."""
+    headers, body = load_base()
+    mi1 = _mi_raw(headers, body, 1)
+    sig1 = _order_sign([mi1], [], 1, 1)
+    return _order_message(["DKIM2-Signature: i=1;", sig1, mi1, mi1], headers, body)
+
+
+def build_multi_instance_gap_unsigned():
+    """Only a Message-Instance m=2 and no signature: m=1 missing (step f)
+    and m=2 not signed (step g).  The gap is primary -- and a message with
+    a DKIM2 field is never "none"."""
+    _s1, (h2, b2, r) = _order_states()
+    return _order_message([_mi_raw(h2, b2, 2, r)], h2, b2)
+
+
+def build_multi_instance_syntax_dup_alg():
+    """m=1 a tag-list syntax error (";;") + m=2 a duplicate hash algorithm,
+    both signed as they stand: content by ascending m=, so m=1's syntax
+    error is primary."""
+    (h1, b1), (h2, b2, r) = _order_states()
+    mi1 = _mi_raw(h1, b1, 1) + ";"
+    mi2 = _dup_alg(_mi_raw(h2, b2, 2, r))
+    sig1 = _order_sign([mi1], [], 1, 1)
+    sig2 = _order_sign([mi1, mi2], [sig1], 2, 2, d="test2.dkim2.com",
+                       mf="relay@test2.dkim2.com", rt=["final@example.com"])
+    return _order_message([sig2, sig1, mi2, mi1], h2, b2)
+
+
+def build_multi_instance_dup_alg_recipe():
+    """m=2 with a duplicate hash algorithm AND an r= that is not base64:
+    within one instance the duplicate algorithm comes before its Recipe."""
+    (h1, b1), (h2, b2, _r) = _order_states()
+    mi1 = _mi_raw(h1, b1, 1)
+    mi2 = _with_r(_dup_alg(_mi_raw(h2, b2, 2)), "!!!!")
+    sig1 = _order_sign([mi1], [], 1, 1)
+    sig2 = _order_sign([mi1, mi2], [sig1], 2, 2, d="test2.dkim2.com",
+                       mf="relay@test2.dkim2.com", rt=["final@example.com"])
+    return _order_message([sig2, sig1, mi2, mi1], h2, b2)
+
+
+def build_multi_instance_syntax_dup_selector():
+    """m=1 a tag-list syntax error + i=1 a duplicate selector (both entries
+    genuinely signed): instances before signatures, so m=1 is primary."""
+    headers, body = load_base()
+    mi1 = _mi_raw(headers, body, 1) + ";"
+    sig1 = build_multi_sig([mi1], [], seq=1, mi_version=1, timestamp=TS, domain=DOM,
+                           mailfrom=MF, rcptto=RT,
+                           entries=[("sel1", key("sel1")), ("sel1", key("sel1"))])
+    return _order_message([sig1, mi1], headers, body)
+
+
+def build_multi_header_sha512_body_sha256():
+    """One instance with h=sha256:..,sha512:.. whose sha256 BODY hash and
+    sha512 HEADER hash are both wrong (the instance is signed as it stands).
+    Every header hash comes before any body hash, so the sha512 header hash
+    is primary, though sha256 is listed first."""
+    headers, body = load_base()
+    mi1 = ds.build_message_instance(headers, body, version=1, algs=["sha256", "sha512"])
+
+    def flip(b64v):
+        return ("B" if b64v[0] == "A" else "A") + b64v[1:]
+    mi1 = re.sub(r"sha256:([^:]+):([^,;]+)", lambda x: f"sha256:{x[1]}:{flip(x[2])}", mi1)
+    mi1 = re.sub(r"sha512:([^:]+):([^,;]+)", lambda x: f"sha512:{flip(x[1])}:{x[2]}", mi1)
+    sig1 = _order_sign([mi1], [], 1, 1)
+    return _order_message([sig1, mi1], headers, body)
+
+
+def _expired_ts():
+    import time
+    return int(time.time()) - 30 * 86400
+
+
+def build_multi_expired_nd():
+    """i=1 made 30 days ago (§14.3) carrying an nd= on the top signature
+    (§14.4: the next hop never signed): "signature expired" is primary."""
+    return _chain(_one_state(), [
+        dict(d=DOM, m=1, nd="test3.dkim2.com"),
+    ], ts=_expired_ts())
+
+
+def build_multi_expired_header_hash():
+    """An expired i=1 (§14.3) on a message whose Subject changed after
+    signing (§14.7): the hash FAIL is primary."""
+    msg = _chain(_one_state(), [dict(d=DOM, m=1, mf=MF, rt=RT)], ts=_expired_ts())
+    return _replace_header(msg, b"Subject", b"tampered")
+
+
+def build_multi_custody_header_hash():
+    """i=1's mf= not under its d= (§14.4) on a message whose Subject changed
+    after signing (§14.7): the hash FAIL is primary."""
+    return _replace_header(build_mf_d_mismatch(), b"Subject", b"tampered")
+
+
+def _too_many_fields(n_mi, n_sig):
+    """A valid one-hop message with its Message-Instance written n_mi times
+    and its DKIM2-Signature n_sig times: more than 32 of either is §14.2
+    step a, before the duplicate numbers (c, e) the copies also are."""
+    headers, body = load_base()
+    mi_hdr = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
+    sig_hdr = build_multi_sig(
+        [mi_hdr], [], seq=1, mi_version=1, timestamp=TS, domain=DOM,
+        mailfrom=MF, rcptto=RT, entries=[("sel1", key("sel1"))],
+    )
+    out = (sig_hdr.encode() + b"\r\n") * n_sig + (mi_hdr.encode() + b"\r\n") * n_mi
+    for h in headers:
+        out += h + b"\r\n"
+    return out + b"\r\n" + body
+
+
+def build_too_many_instance_fields():
+    return _too_many_fields(33, 33)
+
+
+def build_too_many_signature_fields():
+    return _too_many_fields(1, 33)
+
+
+def build_multi_body_hash_no_key():
+    """i=1 names selector "nokey", which has no key record (§14.5; the
+    signature itself is made with sel1's key), on a message whose body
+    changed after signing (§14.7): the body hash FAIL is primary, and no
+    key need be fetched."""
+    headers, body = load_base()
+    mi1 = _mi_raw(headers, body, 1)
+    sig1 = _order_sign([mi1], [], 1, 1, sel="nokey")
+    return _order_message([sig1, mi1], headers, b"changed\r\n")
+
+
 def build_from_display_no_brackets():
     """T3: "From: Bron brong@test1.dkim2.com" -- display text with no angle
     brackets is not one mailbox (RFC 5322 name-addr needs the <>), so From
@@ -1280,6 +1552,24 @@ FIXTURES = {
     "multi-expired-recipe-order.eml": build_multi_expired_recipe_order,
     "multi-expired-recipe-past-end.eml": build_multi_expired_recipe_past_end,
     "multi-tamper-recipe-past-end.eml": build_multi_tamper_recipe_past_end,
+    "multi-signature-gap-recipe-json.eml": build_multi_signature_gap_recipe_json,
+    "multi-instance-gap-signature-gap.eml": build_multi_instance_gap_signature_gap,
+    "multi-instance-no-m-signature-twice.eml": build_multi_instance_no_m_signature_twice,
+    "multi-instance-twice-signature-no-i.eml": build_multi_instance_twice_signature_no_i,
+    "multi-instance-twice-lowest.eml": build_multi_instance_twice_lowest,
+    "multi-signature-twice-lowest.eml": build_multi_signature_twice_lowest,
+    "multi-instance-twice-junk-signature.eml": build_multi_instance_twice_junk_signature,
+    "multi-instance-gap-unsigned.eml": build_multi_instance_gap_unsigned,
+    "multi-instance-syntax-dup-alg.eml": build_multi_instance_syntax_dup_alg,
+    "multi-instance-dup-alg-recipe.eml": build_multi_instance_dup_alg_recipe,
+    "multi-instance-syntax-dup-selector.eml": build_multi_instance_syntax_dup_selector,
+    "multi-header-sha512-body-sha256.eml": build_multi_header_sha512_body_sha256,
+    "multi-expired-nd.eml": build_multi_expired_nd,
+    "multi-expired-header-hash.eml": build_multi_expired_header_hash,
+    "multi-custody-header-hash.eml": build_multi_custody_header_hash,
+    "multi-body-hash-no-key.eml": build_multi_body_hash_no_key,
+    "too-many-instance-fields.eml": build_too_many_instance_fields,
+    "too-many-signature-fields.eml": build_too_many_signature_fields,
 }
 
 

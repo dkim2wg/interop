@@ -59,7 +59,7 @@ sign() { # sign <impl> <alg> <out>
 # repo root's) names it, for runners that must add keys the repo file lacks
 # (util/charset-corpus.sh verifies mail signed with the live dkim2.com key).
 # The file path must be absolute: the Perl and JS tools chdir before opening it.
-VERIFIERS="python go c perl js"
+VERIFIERS="${VERIFIERS:-python go c perl js}"
 
 #
 # The §14.3 timestamp check is off by default (the fixtures carry fixed

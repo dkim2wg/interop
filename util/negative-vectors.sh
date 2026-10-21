@@ -43,7 +43,10 @@
 # error's own token, and, for the CLIs that also report an overall result
 # (JS's "<overall>: ", Perl's "<result> ("), that result too.  The multi-*
 # vectors carry two faults each and pin which one is primary (the first in
-# C9's order: the Message-Instances, walk included, before the signatures).  multi-expired-* is verified with the real clock
+# C9's order: the Message-Instances, walk included, before the signatures;
+# within §14.2, structure -- C9 steps a..h -- before content, instances by
+# ascending m= before signatures; within §14.7, every header hash before any
+# body hash).  multi-expired-* is verified with the real clock
 # (no --ignore-timestamps): its expiry is the point.
 set -u
 
@@ -55,9 +58,9 @@ cd "$root"
 # or verifier is deliberately added, and so it CATCHES one being silently
 # dropped -- a runner that quietly covers less than it claims is worse than
 # no runner, because it still reads as proof.
-NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml duplicate-mi-version.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml null-body-forged-history.eml empty-body-forged-history.eml malformed-body-recipe-below-null.eml signature-gap.eml instance-gap.eml unkeyable-signature-no-i.eml unkeyable-signature-i-abc.eml lone-junk-signature.eml signature-i-33.eml signature-i-101.eml signature-i-huge.eml signature-m-huge.eml instance-m-huge.eml signature-m-malformed.eml instance-m-malformed.eml recipe-duplicate-b-null-last.eml recipe-duplicate-b-null-first.eml recipe-duplicate-h-key.eml custody-bounce-d-mismatch.eml nd-subdomain-swapped.eml nd-next-hop-mismatch.eml custody-mf-domain-literal.eml mf-d-mismatch.eml from-not-authentic.eml from-changed-not-authentic.eml from-not-authentic-at-signed-state.eml recipe-u-nonzero-pad.eml recipe-b-step.eml recipe-two-step-keys.eml recipe-empty-step.eml recipe-case-duplicate-key.eml from-display-no-brackets.eml multi-from-tampered.eml multi-header-and-body-tampered.eml multi-expired-custody.eml multi-custody-bad-signature.eml multi-bad-signature-header-hash.eml multi-tamper-two-instances.eml multi-expired-recipe-json.eml multi-expired-recipe-order.eml multi-expired-recipe-past-end.eml multi-tamper-recipe-past-end.eml"
+NEG_VECTORS="dup-hash-algorithm.eml dup-selector.eml too-many-signatures.eml malformed-json-r.eml unsigned-mi.eml nd-bridge-wrong-domain.eml duplicate-mi-version.eml recipe-descending-ranges.eml recipe-overlapping-ranges.eml null-body-forged-history.eml empty-body-forged-history.eml malformed-body-recipe-below-null.eml signature-gap.eml instance-gap.eml unkeyable-signature-no-i.eml unkeyable-signature-i-abc.eml lone-junk-signature.eml signature-i-33.eml signature-i-101.eml signature-i-huge.eml signature-m-huge.eml instance-m-huge.eml signature-m-malformed.eml instance-m-malformed.eml recipe-duplicate-b-null-last.eml recipe-duplicate-b-null-first.eml recipe-duplicate-h-key.eml custody-bounce-d-mismatch.eml nd-subdomain-swapped.eml nd-next-hop-mismatch.eml custody-mf-domain-literal.eml mf-d-mismatch.eml from-not-authentic.eml from-changed-not-authentic.eml from-not-authentic-at-signed-state.eml recipe-u-nonzero-pad.eml recipe-b-step.eml recipe-two-step-keys.eml recipe-empty-step.eml recipe-case-duplicate-key.eml from-display-no-brackets.eml multi-from-tampered.eml multi-header-and-body-tampered.eml multi-expired-custody.eml multi-custody-bad-signature.eml multi-bad-signature-header-hash.eml multi-tamper-two-instances.eml multi-expired-recipe-json.eml multi-expired-recipe-order.eml multi-expired-recipe-past-end.eml multi-tamper-recipe-past-end.eml multi-signature-gap-recipe-json.eml multi-instance-gap-signature-gap.eml multi-instance-no-m-signature-twice.eml multi-instance-twice-signature-no-i.eml multi-instance-twice-lowest.eml multi-signature-twice-lowest.eml multi-instance-twice-junk-signature.eml multi-instance-gap-unsigned.eml multi-instance-syntax-dup-alg.eml multi-instance-dup-alg-recipe.eml multi-instance-syntax-dup-selector.eml multi-header-sha512-body-sha256.eml multi-expired-nd.eml multi-expired-header-hash.eml multi-custody-header-hash.eml multi-body-hash-no-key.eml too-many-instance-fields.eml too-many-signature-fields.eml"
 POS_VECTORS="positive-control-two-selectors.eml positive-control-bottom-recipe.eml positive-control-nd-bridge.eml positive-control-unreferenced-lower-mi.eml positive-control-u-literal.eml positive-control-null-body.eml positive-control-null-body-over-recipe.eml positive-control-null-below.eml positive-control-empty-body-chain.eml positive-control-custody-bounce.eml positive-control-nd-subdomain-rt.eml positive-control-from-folded-2047.eml positive-control-from-changed.eml positive-control-ingress-from-rewritten.eml positive-control-recipe-uppercase-keys.eml"
-VERIFIERS="python go c perl js"
+VERIFIERS="${VERIFIERS:-python go c perl js}"  # VERIFIERS=python for one while iterating
 n_vectors=0;   for _f in $NEG_VECTORS $POS_VECTORS; do n_vectors=$((n_vectors + 1));     done
 n_verifiers=0; for _v in $VERIFIERS;                 do n_verifiers=$((n_verifiers + 1)); done
 expected=$((n_vectors * n_verifiers))
@@ -120,6 +123,26 @@ want_text() {
                              echo "PERMERROR: Message-Instance m=2 contains invalid JSON" ;;  # §14.2 < §14.3
     multi-expired-recipe-past-end.eml) echo "PERMERROR: Message-Instance m=2 contains invalid JSON" ;;  # walk < §14.3
     multi-tamper-recipe-past-end.eml) echo "FAIL: Message-Instance m=2 body hash sha256 mismatch" ;;  # top hash, then undo
+    # §14.2 structure, in C9's fixed sequence (a..h), before §14.2 content.
+    multi-signature-gap-recipe-json.eml) echo "PERMERROR: DKIM2-Signature i=1 missing" ;;  # h < content
+    multi-instance-gap-signature-gap.eml|multi-instance-gap-unsigned.eml)
+                             echo "PERMERROR: Message-Instance m=1 missing" ;;  # f < g, f < h
+    multi-instance-no-m-signature-twice.eml) echo "PERMERROR: Message-Instance m= tag=m missing" ;;  # b < e
+    multi-instance-twice-signature-no-i.eml|multi-instance-twice-junk-signature.eml)
+                             echo "PERMERROR: Message-Instance m=1 appears more than once" ;;  # c < d, c < e
+    multi-instance-twice-lowest.eml) echo "PERMERROR: Message-Instance m=1 appears more than once" ;;  # c: lowest m=
+    multi-signature-twice-lowest.eml) echo "PERMERROR: DKIM2-Signature i=1 appears more than once" ;;  # e: lowest i=
+    # §14.2 content: instances by ascending m=, then signatures.
+    multi-instance-syntax-dup-alg.eml|multi-instance-syntax-dup-selector.eml)
+                             echo "PERMERROR: Message-Instance m=1 syntax error" ;;  # m=1 < m=2 < signatures
+    multi-instance-dup-alg-recipe.eml) echo "PERMERROR: Message-Instance m=2 has a duplicate hash algorithm" ;;  # tags < Recipe
+    multi-header-sha512-body-sha256.eml) echo "FAIL: Message-Instance m=1 header hash sha512 mismatch" ;;  # header hashes < body hashes
+    multi-expired-nd.eml)    echo "PERMERROR: DKIM2-Signature i=1 signature expired" ;;  # §14.3 < §14.4
+    multi-expired-header-hash.eml|multi-custody-header-hash.eml)
+                             echo "FAIL: Message-Instance m=1 header hash sha256 mismatch" ;;  # §14.7 < §14.3, §14.4
+    multi-body-hash-no-key.eml) echo "FAIL: Message-Instance m=1 body hash sha256 mismatch" ;;  # §14.7 < §14.5
+    too-many-instance-fields.eml) echo "PERMERROR: more than 32 Message-Instance fields" ;;  # a: instances first, before c/e
+    too-many-signature-fields.eml) echo "PERMERROR: more than 32 DKIM2-Signature fields" ;;  # a before e
     *) echo "want_text: no expected text for $1" >&2; return 1 ;;
     esac
 }

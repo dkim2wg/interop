@@ -798,12 +798,7 @@ Bron on 2026-10-20 (docs/superpowers/specs/2026-10-18-dkim2-spec-07-design.md):
 - **Missing m=:** "PERMERROR: Message-Instance m= tag=m missing".
 - **§14.7:** every header hash (in h= order) before any body hash.
 
-**Python, Go, C and the browser JS have NOT been ported yet.** They are
-ported one at a time, following Perl. perl/t/check-order.t has the cases.
-Once all five are level, those cases become multi-fault vectors in
-util/negative-vectors.sh. Until then, the five can name different primary
-errors (same state) on messages with more than one §14.2 fault, or with
-several wrong hashes in one instance.
+**Ported to Python, Go, C and the browser JS on 2026-10-20:** see 25.
 
 ## 25. Implementations behind Perl: hashes before signatures (2026-10-20)
 
@@ -815,12 +810,17 @@ each DKIM2-Signature's content, §14.3 to §14.6, and §14.8. A hash mismatch
 is the primary error over any timestamp, custody, key or signature error, and
 no key is fetched for a message whose instances fail.
 
-**Python, Go, C and the browser JS have NOT been ported yet.** Until they
-are, they name a different primary error (and possibly state) on a message
-with both a failing walk and a signature fault. util/negative-vectors.sh
-already expects the new order, so they show WRONG PRIMARY on
-multi-bad-signature-header-hash and multi-expired-recipe-past-end;
-perl/t/spec07.t has more cases ("14.7 before 14.x").
+**Ported 2026-10-20 (branch c9-port-0.26):** Python, Go, C and the browser
+JS now follow this order, and 24's §14.2 structure sequence with it. Keys
+are still prefetched at the end of the headers (Bron: keep the DNS overlap
+with the body); only using them waits for the walk. Step a now has a
+contract string, Perl's: "PERMERROR: more than 32 Message-Instance fields"
+(then DKIM2-Signature); Go, C and JS had no count check. Step g's "signed"
+means any signature's m=, not the top one's (Go and C had it wrong).
+util/negative-vectors.sh pins all of it with 18 new vectors (16 multi-*,
+2 too-many-*-fields): 420/420 agree. perl/bin/validate.pl now runs the
+whole message through the Verifier first, so its primary error is the
+library's, not its own walk's.
 
 ## Spec Quality Issues
 
