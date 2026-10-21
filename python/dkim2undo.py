@@ -79,7 +79,12 @@ def loads_recipe(data):
     for any invalid JSON: parsers disagree on which value wins, so
     {"b":[...],"B":null} would be a null body Recipe to some verifiers and
     signers and a real one to others."""
-    return json.loads(data, object_pairs_hook=_lowercase_keys)
+    try:
+        return json.loads(data, object_pairs_hook=_lowercase_keys)
+    except RecursionError:
+        # JSON nested deeper than the interpreter's stack: invalid JSON,
+        # like any other we cannot parse, never a crash.
+        raise ValueError("Recipe JSON nested too deeply") from None
 
 
 class MalformedRecipe(ValueError):

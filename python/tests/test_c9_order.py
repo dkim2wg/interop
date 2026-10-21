@@ -8,7 +8,9 @@ Fixtures are the multi-* vectors from util/build-negative-vectors.py, each
 carrying two faults; util/negative-vectors.sh pins the same texts for every
 verifier.
 """
+import base64
 import json
+import re
 import os
 import sys
 
@@ -135,3 +137,63 @@ def test_more_fields_than_the_chain_length():
             b"\r\n".join([extra] * 33) + b"\r\n" + head + sep + body, DNS,
             full_chain=True, skip_timestamp_check=True)
         assert r.message == f"PERMERROR: more than 32 {want} fields"
+
+
+# --- malformed input never escapes as an exception --------------------------
+
+def _replace_tag(msg: bytes, field: bytes, old: bytes, new: bytes) -> bytes:
+    head, sep, body = msg.partition(b"\r\n\r\n")
+    start = head.index(field)
+    at = head.index(old, start)
+    return head[:at] + new + head[at + len(old):] + sep + body
+
+
+@pytest.mark.parametrize("field,old", [
+    (b"DKIM2-Signature:", b"i=1;"), (b"DKIM2-Signature:", b"m=1;"),
+    (b"Message-Instance:", b"m=1;"),
+])
+def test_chain_number_of_5000_digits(field, old):
+    huge = b"9" * 5000
+    msg = _replace_tag(bnv.build_positive_control(), field, old,
+                       old[:2] + huge + b";")
+    r = dkim2verify.verify_message(msg, DNS, full_chain=True,
+                                   skip_timestamp_check=True)
+    assert r.status == "permerror"
+    assert r.message.endswith(
+        f"={huge.decode()} exceeds the maximum chain number of 100"), r.message[-60:]
+
+
+def test_timestamp_of_5000_digits_is_from_the_future():
+    msg = bnv.build_positive_control()
+    t = re.search(rb"t=(\d+);", msg).group(1)
+    msg = msg.replace(b"t=" + t + b";", b"t=" + b"9" * 5000 + b";", 1)
+    r = dkim2verify.verify_message(msg, DNS, full_chain=True)
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 signature is from the future"
+    msg = msg.replace(b"t=" + b"9" * 5000, b"t=" + b"0" * 5000 + b"1", 1)
+    r = dkim2verify.verify_message(msg, DNS, full_chain=True)
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 signature expired"
+
+
+def test_deeply_nested_recipe_is_invalid_json():
+    deep = base64.b64encode(b"[" * 200000 + b"]" * 200000).decode()
+    msg = bnv.build_positive_control()
+    head, sep, body = msg.partition(b"\r\n\r\n")
+    head = head.replace(b"Message-Instance: m=1;",
+                        f"Message-Instance: m=1; r={deep};".encode(), 1)
+    for walk in ("plan", "undo"):
+        r = dkim2verify.verify_message(head + sep + body, DNS, full_chain=True,
+                                       walk=walk, skip_timestamp_check=True)
+        assert r.message == "PERMERROR: Message-Instance m=1 contains invalid JSON"
+
+
+# --- prefetch fan-out --------------------------------------------------------
+
+def test_prefetch_is_capped_top_signature_first():
+    sigs = [f"DKIM2-Signature: i={i}; m=1; d=d{i}.example; "
+            f"s=a:rsa-sha256:AA,b:ed25519-sha256:AA,c:x-unknown:AA,a:rsa-sha256:AA"
+            for i in range(1, 6)]
+    names = dkim2verify._key_names(sigs)
+    assert len(names) == dkim2verify.PREFETCH_MAX == 8
+    assert names[:4] == ["a._domainkey.d5.example", "b._domainkey.d5.example",
+                         "a._domainkey.d4.example", "b._domainkey.d4.example"]
+    assert names[-1] == "b._domainkey.d2.example"

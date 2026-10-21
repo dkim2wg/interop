@@ -809,7 +809,10 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
     # and before any key lookup (contract C9: §14 section order).
     t_val = _extract_tag(value, "t")
     if not skip_timestamp_check:
-        ts = int(t_val)  # 1*DIGIT (checked above); Python ints don't overflow
+        # 1*DIGIT (checked above).  int() refuses more than 4300 digits, and
+        # any t= of 20 or more significant digits is far in the future.
+        digits = t_val.lstrip("0") or "0"
+        ts = int(digits) if len(digits) < 20 else 10 ** 20
         now = int(time.time())
         if ts > now + MAX_FUTURE:
             return [f"PERMERROR: DKIM2-Signature i={i_val} signature is from the future"]
@@ -933,7 +936,7 @@ def _classify_status(errors: list[str]) -> str:
 def _extract_failing_i(errors: list[str]) -> int | None:
     """Extract the first i= value mentioned in any error string."""
     for err in errors:
-        m = re.search(r'\bi=(\d+)\b', err)
+        m = re.search(r'\bi=(\d{1,9})\b', err)
         if m:
             return int(m.group(1))
     return None
@@ -961,7 +964,7 @@ def _c9_key(err: str):
     for section, rx in _C9_SECTIONS:
         if rx.search(err):
             if section in _C9_BY_NUMBER:
-                m = re.search(r"\bi=(\d+)", err)
+                m = re.search(r"\bi=(\d{1,9})\b", err)
                 return (section, int(m.group(1)) if m else 0)
             return (section, 0)
     return (2, 0)
@@ -1027,11 +1030,18 @@ def _message_keys(dns_data):
     return dns_data.for_message() if hasattr(dns_data, "for_message") else dns_data
 
 
+# At most this many keys are prefetched per message, so a message naming
+# many cannot fan out into many lookups; any other key is looked up the
+# ordinary way if it is ever needed.
+PREFETCH_MAX = 8
+
+
 def _key_names(sig_headers: list[str]) -> list[str]:
-    """Every distinct selector._domainkey.domain the signatures name, for the
-    implemented algorithms only."""
+    """The distinct selector._domainkey.domain names to prefetch: the
+    signatures' from the top (highest i=) down, implemented algorithms
+    only, at most PREFETCH_MAX."""
     names = []
-    for h in sig_headers:
+    for h in sorted(sig_headers, key=_get_seq_from_sig, reverse=True):
         value = _get_header_value(h)
         d_val = _extract_tag(value, "d")
         s_tag = _extract_tag(value, "s")
@@ -1042,6 +1052,8 @@ def _key_names(sig_headers: list[str]) -> list[str]:
                 name = f"{parts[0]}._domainkey.{d_val}".lower()
                 if name not in names:
                     names.append(name)
+                    if len(names) == PREFETCH_MAX:
+                        return names
     return names
 
 

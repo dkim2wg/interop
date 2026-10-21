@@ -759,7 +759,8 @@ def chain_number_error(field: str, tag: str, v: str | None,
     v = v.strip()
     ident_tag = "m" if field == "Message-Instance" else "i"
     who = f"{field} {ident_tag}={v if ident is None else ident.strip()}"
-    if not _is_ascii_digits(v) or int(v) == 0:
+    # Length before int(): int() refuses more than 4300 digits.
+    if not _is_ascii_digits(v) or not v.strip("0"):
         return f"PERMERROR: {who} syntax error"
     if tag != ident_tag:
         who += f" {tag}={v}"
@@ -797,7 +798,7 @@ def _sig_has_valid_i(hdr: str) -> bool:
     ASCII digits (of any size: one above MAX_CHAIN_NUMBER is keyable but out
     of range, which chain_range_error reports)."""
     v = _tag_of(hdr, "i")
-    return v is not None and _is_ascii_digits(v) and int(v) > 0
+    return v is not None and _is_ascii_digits(v) and bool(v.strip("0"))
 
 
 def _get_mi_from_sig(hdr: str) -> int | None:
