@@ -216,37 +216,36 @@ export function collectLevels(headers) {
   const sigFields = [];
   const dupInstances = [];
   const dupSignatures = [];
-  // The i= values (null when missing) of DKIM2-Signature fields whose i= is
-  // missing or not a positive integer in ASCII digits: no verifier can place
-  // or key one, so verifyOnce() reports a syntax error rather than verifying
-  // around it.
-  const unkeyableSignatures = [];
-  // The first i= or m= that is not a chain number (chainNumberError), as a
-  // PERMERROR summary; such a field is not placed in instances/signatures,
-  // so nothing loops up to it.
-  let rangeError = null;
+  // Contract C9 steps b and d: the PERMERROR for each Message-Instance with
+  // no usable m=, and each DKIM2-Signature with no usable i= (or an i=/m=
+  // that is not a chain number, chainNumberError), top down. Such a field is
+  // not placed in instances/signatures, so nothing loops up to it
+  // (4294967297, or 4294967297x, used to run this page out of memory).
+  const instanceErrors = [];
+  const signatureErrors = [];
   for (const f of headers) {
     if (isName(f, 'message-instance')) {
       miFields.push(f);
       const parsed = parseTagList(f.value);
-      const err = chainNumberError('Message-Instance', 'm', parsed.map.m);
-      if (err) { rangeError = rangeError || err; continue; }
+      const err = parsed.map.m === undefined ? 'PERMERROR: Message-Instance m= tag=m missing'
+        : chainNumberError('Message-Instance', 'm', parsed.map.m);
+      if (err) { instanceErrors.push(err); continue; }
       const m = parseInt(parsed.map.m, 10);
-      if (!Number.isNaN(m) && instances[m]) dupInstances.push(m);
-      if (!Number.isNaN(m)) instances[m] = { field: f, tags: parsed.tags, map: parsed.map, syntaxError: parsed.syntaxError };
+      if (instances[m]) dupInstances.push(m);
+      instances[m] = { field: f, tags: parsed.tags, map: parsed.map, syntaxError: parsed.syntaxError };
     } else if (isName(f, 'dkim2-signature')) {
       sigFields.push(f);
       const parsed = parseTagList(f.value);
       const iv = parsed.map.i;
-      const i = /^[0-9]+$/.test(iv || '') ? parseInt(iv, 10) : NaN;
-      if (Number.isNaN(i) || i < 1) { unkeyableSignatures.push(iv === undefined ? null : iv); continue; }
-      const err = chainNumberError('DKIM2-Signature', 'i', iv)
-               || chainNumberError('DKIM2-Signature', 'm', parsed.map.m, iv);
-      if (err) { rangeError = rangeError || err; continue; }
+      const err = iv === undefined ? 'PERMERROR: DKIM2-Signature i= tag=i missing'
+        : chainNumberError('DKIM2-Signature', 'i', iv)
+          || chainNumberError('DKIM2-Signature', 'm', parsed.map.m, iv);
+      if (err) { signatureErrors.push(err); continue; }
+      const i = parseInt(iv, 10);
       if (signatures[i]) dupSignatures.push(i);
       signatures[i] = { field: f, tags: parsed.tags, map: parsed.map, syntaxError: parsed.syntaxError };
     }
   }
   return { instances, signatures, miFields, sigFields, dupInstances, dupSignatures,
-           unkeyableSignatures, rangeError };
+           instanceErrors, signatureErrors };
 }

@@ -26,7 +26,11 @@
        <code>"u"</code> steps; and errors use the -07 wording
        (<code>PERMERROR: …</code>). A pasted message has no delivery time, so
        timestamps are checked against now: a signature more than 14 days old
-       shows as <code>signature expired</code>.</p>
+       shows as <code>signature expired</code>. When a message has more
+       than one fault, the first error listed is the primary one and sets the
+       result: the Message-Instances (structure, Recipes, then the hashes, top
+       down) are checked before the signatures, and no public key is used
+       until they all pass.</p>
     <p class="privacy">Public keys are fetched over DNS-over-HTTPS from Cloudflare
        (<code>cloudflare-dns.com</code>), so the signing domains and selectors in
        your message are sent to Cloudflare. The message body never leaves your browser.</p>

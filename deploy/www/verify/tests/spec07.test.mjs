@@ -456,9 +456,47 @@ test('C9: custody before a bad signature (§14.4 before §14.6)', async () => {
   assertPrimary(await verify(msg), 'permerror', 'PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match');
 });
 
-test('C9: a bad signature before a header hash (§14.6 before §14.7)', async () => {
+test('C9: a header hash before a bad signature (§14.7 before §14.6), and no signature verified', async () => {
   const msg = edit(await oneHopFrom('a@example.com', { sets: [{ sel: 'sel', bad: true }] }), 'Subject: hi', 'Subject: ho');
-  assertPrimary(await verify(msg), 'fail', 'FAIL: DKIM2-Signature i=1 selector sel incorrect signature');
+  const rep = await verify(msg);
+  assertPrimary(rep, 'fail', 'FAIL: Message-Instance m=1 header hash sha256 mismatch');
+  assert.ok(!rep.errors.some((e) => /incorrect signature/.test(e)), rep.summary);
+});
+
+test('C9: no key is used while the walk fails (§14.7 before §14.5)', async () => {
+  let lookups = 0;
+  const msg = edit(await oneHopFrom('a@example.com'), 'Subject: hi', 'Subject: ho');
+  const rep = await verify(msg, { fetchKey: async () => { lookups++; throw new Error('key-notfound'); } });
+  assertPrimary(rep, 'fail', 'FAIL: Message-Instance m=1 header hash sha256 mismatch');
+  assert.equal(lookups, 0);
+});
+
+test('C9: a Message-Instance with no m= is structure, before a signature given twice', async () => {
+  const msg = await oneHopFrom('a@example.com');
+  const text = Buffer.from(msg).toString('latin1');
+  const sig = /^DKIM2-Signature:.*\r\n(?:[ \t].*\r\n)*/im.exec(text)[0];
+  const rep = await verify(new Uint8Array(Buffer.from(
+    'Message-Instance: h=sha256:AAAA:AAAA\r\n' + sig + text, 'latin1')));
+  assertPrimary(rep, 'permerror', 'PERMERROR: Message-Instance m= tag=m missing');
+});
+
+test('C9 step a: more than 32 fields, Message-Instance counted first, unusable ones too', async () => {
+  const text = Buffer.from(await oneHopFrom('a@example.com')).toString('latin1');
+  const junk = (name, n) => `${name}: x\r\n`.repeat(n);
+  const rep = await verify(new Uint8Array(Buffer.from(junk('Message-Instance', 33) + junk('DKIM2-Signature', 33) + text, 'latin1')));
+  assertPrimary(rep, 'permerror', 'PERMERROR: more than 32 Message-Instance fields');
+  const rep2 = await verify(new Uint8Array(Buffer.from(junk('DKIM2-Signature', 32) + text, 'latin1')));
+  assertPrimary(rep2, 'permerror', 'PERMERROR: more than 32 DKIM2-Signature fields');
+});
+
+test('C9 step g: an instance covered by a lower signature\'s m= is signed', async () => {
+  // i=1 m=1, i=2 m=2, i=3 m=1: m=2 is signed by i=2, though the top signs m=1.
+  const msg = await signChain([{ fields: FIELDS, body: BODY }, { fields: FIELDS, body: BODY }],
+    [one(), { d: 'example.com', m: 2, mf: '<a@example.com>', rt: ['<b@example.com>'] },
+      { d: 'example.com', m: 1, mf: '<a@example.com>', rt: ['<b@example.com>'] }]);
+  const rep = await verify(msg);
+  assert.ok(!rep.errors.some((e) => /is not signed/.test(e)), rep.summary);
+  assert.equal(rep.levels.filter((l) => l.kind === 'signature').length, 3);
 });
 
 test('C9: within §14.4, S against the one below it before its own mf= and d=', async () => {

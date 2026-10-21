@@ -121,7 +121,7 @@ test('collectLevels does not create NaN-keyed entries for malformed headers', ()
   assert.equal(sigFields.length, 1);
 });
 
-test('collectLevels lists the i= of DKIM2-Signatures with no valid i= as unkeyable', () => {
+test('collectLevels reports DKIM2-Signatures with no usable i=, top down', () => {
   const msg =
     'DKIM2-Signature: m=2; d=evil.example\r\n' +
     'DKIM2-Signature: i=0; m=2; d=evil.example\r\n' +
@@ -129,8 +129,9 @@ test('collectLevels lists the i= of DKIM2-Signatures with no valid i= as unkeyab
     'DKIM2-Signature: i=1; m=1; d=good.example\r\n' +
     'From: a@b\r\n\r\nbody\r\n';
   const { headers } = parseMessage(msg);
-  const { signatures, unkeyableSignatures } = collectLevels(headers);
-  assert.deepEqual(unkeyableSignatures, [null, '0', 'abc']);
+  const { signatures, signatureErrors } = collectLevels(headers);
+  assert.deepEqual(signatureErrors, ['PERMERROR: DKIM2-Signature i= tag=i missing',
+    'PERMERROR: DKIM2-Signature i=0 syntax error', 'PERMERROR: DKIM2-Signature i=abc syntax error']);
   assert.deepEqual(Object.keys(signatures), ['1']);
 });
 
@@ -151,8 +152,8 @@ test('chainNumberError: i=/m= is 1*DIGIT, at most 3 digits and 1..100, then at m
 
 test('collectLevels keys i=/m= numerically (01 and 001 are 1)', () => {
   const msg = 'Message-Instance: m=001; h=x\r\nDKIM2-Signature: i=01; m=001; d=a.example\r\nFrom: a@b\r\n\r\nbody\r\n';
-  const { instances, signatures, rangeError } = collectLevels(parseMessage(msg).headers);
-  assert.equal(rangeError, null);
+  const { instances, signatures, instanceErrors, signatureErrors } = collectLevels(parseMessage(msg).headers);
+  assert.deepEqual([...instanceErrors, ...signatureErrors], []);
   assert.deepEqual(Object.keys(instances), ['1']);
   assert.deepEqual(Object.keys(signatures), ['1']);
 });

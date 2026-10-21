@@ -91,7 +91,9 @@ test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, ne
     let rep;
     await assert.doesNotReject(async () => { rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey }); });
     assert.equal(rep.overall, 'permerror', env);
-    assert.equal(rep.summary, 'PERMERROR: DKIM2-Signature i=1 syntax error', env);
+    // Listed after the primary error: the instance's (C9: instances first).
+    assert.deepEqual(rep.errors, ['PERMERROR: Message-Instance m=1 no supported hash algorithm',
+      'PERMERROR: DKIM2-Signature i=1 syntax error'], env);
   }
 });
 
@@ -151,11 +153,11 @@ test('MI with no supported hash algorithm fails closed (§14.7)', async () => {
 const bridgedRaw = (bridgeDomain) =>
   'From: a@example.com\r\n' +
   'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
-  'DKIM2-Signature: i=1; m=1; t=1000000; d=test1.dkim2.com; s=sel:rsa-sha256:AAA; ' +
+  'DKIM2-Signature: i=1; m=1; t=1000000; d=test1.dkim2.com; s=sel:rsa-sha256:AAAA; ' +
     'mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+; rt=PHVzZXJAdGVzdDIuZGtpbTIuY29tPg==\r\n' +
-  `DKIM2-Signature: i=2; m=1; t=1000000; d=${bridgeDomain}; s=sel:rsa-sha256:AAA; ` +
+  `DKIM2-Signature: i=2; m=1; t=1000000; d=${bridgeDomain}; s=sel:rsa-sha256:AAAA; ` +
     'nd=test3.dkim2.com\r\n' +
-  'DKIM2-Signature: i=3; m=1; t=1000000; d=test3.dkim2.com; s=sel:rsa-sha256:AAA; ' +
+  'DKIM2-Signature: i=3; m=1; t=1000000; d=test3.dkim2.com; s=sel:rsa-sha256:AAAA; ' +
     'mf=PHNyczA9eEBib3VuY2UudGVzdDMuZGtpbTIuY29tPg==; rt=PGRlc3RAdGVzdDUuZGtpbTIuY29tPg==\r\n' +
   '\r\nhi\r\n';
 
@@ -599,9 +601,10 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
     ['instance m=4294967297x', 'Message-Instance: m=1;', 'Message-Instance: m=4294967297x;', 'PERMERROR: Message-Instance m=4294967297x syntax error'],
     ['instance m=30000000x', 'Message-Instance: m=1;', 'Message-Instance: m=30000000x;', 'PERMERROR: Message-Instance m=30000000x syntax error'],
     ['instance m=0_1', 'Message-Instance: m=1;', 'Message-Instance: m=0_1;', 'PERMERROR: Message-Instance m=0_1 syntax error'],
-    // The top signature's m= must name a Message-Instance that exists.
+    // The top signature's m= must name a Message-Instance that exists: the
+    // lowest one missing up to it is reported (C9 step f).
     ['signature m=32 (no such instance)', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=32;',
-     'PERMERROR: Message-Instance m=32 missing'],
+     'PERMERROR: Message-Instance m=2 missing'],
     ['signature m=2 over m=1 only', 'Dkim2-Signature: i=1;m=1;', 'Dkim2-Signature: i=1;m=2;',
      'PERMERROR: Message-Instance m=2 missing'],
   ];
