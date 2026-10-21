@@ -315,10 +315,16 @@ as 8bit is never downgraded to 7bit on the way to a server without
 8BITMIME, because that rewrites `Content-Transfer-Encoding` after signing
 and the body hash no longer matches.
 
-Append `deploy/examples/postfix-master.cf.fragment` to `master.cf`. Its
-first listener is the one every list copy will be submitted to:
+Append `deploy/examples/postfix-master.cf.fragment` to `master.cf`. It
+defines two services, and the second needs the first. The first is a
+`cleanup` service named `cleanup-dkim2`, explained under "Keep Bcc,
+Resent-Bcc and Content-Length" below; the second is the listener every
+list copy will be submitted to:
 
 ```
+cleanup-dkim2 unix n     -       y       -       0       cleanup
+  -o message_drop_headers=return-path
+
 127.0.0.1:10587 inet n  -       y       -       -       smtpd
   -o syslog_name=postfix/dkim2-list
   -o cleanup_service_name=cleanup-dkim2
@@ -358,13 +364,8 @@ Removing `Bcc` is right where a message is first submitted, and there it
 happens before signing. On mail that arrives already signed, or that a
 list or forwarder sends on, it is the sending side's job, not yours: do
 not strip these headers on ingress, and do not strip them on the egress
-of forwarded mail. The fragment's first entry is a second `cleanup`
-service that drops only `Return-Path`:
-
-```
-cleanup-dkim2 unix n     -       y       -       0       cleanup
-  -o message_drop_headers=return-path
-```
+of forwarded mail. That is what `cleanup-dkim2`, the fragment's first
+entry, is for: a second `cleanup` service that drops only `Return-Path`.
 
 Point every listener that receives mail or carries forwarded mail at it
 with `-o cleanup_service_name=cleanup-dkim2`: the port 25 `smtp inet ...

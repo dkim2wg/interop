@@ -174,7 +174,9 @@ at the header-keeping cleanup, by adding
   -o cleanup_service_name=cleanup-dkim2
 ```
 
-under the `smtp inet ... smtpd` line in `master.cf`. Postfix's default
+under the `smtp inet ... smtpd` line in `master.cf`, once the fragment
+under "master.cf" below has defined `cleanup-dkim2`: Postfix cannot hand
+mail to a cleanup service that does not exist. Postfix's default
 cleanup removes `Bcc`, `Resent-Bcc` and `Content-Length`, which DKIM2
 hashes, so a signed post carrying one of them would fail at the wrap
 milter and go out unwrapped and unsigned. (On mail you send yourself, Bcc
