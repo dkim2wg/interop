@@ -141,19 +141,6 @@ type VerifyOptions struct {
 // dkim2=none), not a PERMERROR, and it carries no error string of its own.
 var ErrNone = errors.New("none")
 
-// unkeyableSignatureError is the PERMERROR for a DKIM2-Signature whose i= is
-// missing ("i= tag=i missing", also when it has no tag-list at all) or not a
-// positive integer ("i=<as written> syntax error"), in the C6 forms.
-func unkeyableSignatureError(raw string) error {
-	if colon := strings.IndexByte(raw, ':'); colon >= 0 {
-		tvl := parseTagValueList(raw[colon+1:])
-		if tvl.has("i") {
-			return fmt.Errorf("PERMERROR: DKIM2-Signature i=%s syntax error", strings.TrimSpace(tvl.get("i")))
-		}
-	}
-	return errors.New("PERMERROR: DKIM2-Signature i= tag=i missing")
-}
-
 // MaxFutureSkew and MaxSignatureAge are the §14.3 timestamp limits: a
 // signature made more than one day after delivery, or more than 14 days
 // before it, is not Validly Signed.

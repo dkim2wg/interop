@@ -666,24 +666,25 @@ func (p *chainPlan) check(t int) error {
 
 // walk checks the instances below the top in the undo walk's order --
 // undo instance t+1's Recipe, then check instance t -- stopping at the
-// first failure, and reports it as VerifyFull's undo walk does.
-func (p *chainPlan) walk(results []VerifyResult) ([]VerifyResult, error) {
+// first failure, which it returns as VerifyFull's undo walk does (nil when
+// every instance checks out).
+func (p *chainPlan) walk() *VerifyResult {
 	for t := p.top - 1; t >= 1; t-- {
 		if p.recipeFails(t + 1) {
 			// Found by the walk, so it ranks with §14.7 (C9): after the
 			// hash checks of the instances above it.
-			return append(results, VerifyResult{
+			return &VerifyResult{
 				Domain:  fmt.Sprintf("MI-chain v=%d", t+1),
 				Error:   &malformedRecipeError{m: t + 1},
-				section: 7,
-			}), nil
+				section: 3,
+			}
 		}
 		if err := p.check(t); err != nil {
-			return append(results, VerifyResult{
+			return &VerifyResult{
 				Domain: fmt.Sprintf("MI-chain v=%d", t),
 				Error:  chainLevelError(err),
-			}), nil
+			}
 		}
 	}
-	return results, nil
+	return nil
 }

@@ -16,7 +16,8 @@ import (
 )
 
 // Verify reads r and verifies all DKIM2-Signature headers.
-// Returns one VerifyResult per signature. Body is never buffered: it is
+// Returns one VerifyResult per signature, or the top Message-Instance's
+// failure alone (contract C9: the walk comes before the signatures). Body is never buffered: it is
 // canonicalised in a single streaming pass, fanned out to one hash.Hash per
 // implemented algorithm the topmost Message-Instance's h= tag names (see
 // hashBodyStream), even when that names more than one algorithm.  It is
@@ -27,23 +28,16 @@ import (
 // looked up in the background as soon as the header fields are read (see
 // prefetchKeys), while the body is still being read and hashed.
 func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
-	headers, results, err := verifyNoFrom(r, fetcher, opts...)
-	return fromLast(headers, results, err, opts...)
-}
-
-// verifyNoFrom is Verify without the §14.8 From check, for VerifyFull's
-// undo walk, which must check the lower instances (§14.7) before it.
-func verifyNoFrom(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Header, []VerifyResult, error) {
 	br := bufio.NewReader(r)
 	headers, err := readHeaderFields(br)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parsing headers: %w", err)
+		return nil, fmt.Errorf("parsing headers: %w", err)
 	}
 	fetcher = prefetchKeys(headers, fetcher, opts...)
 	results, err := verifyFields(headers, func(algs []string) (map[string][]byte, error) {
 		return hashBodyStream(br, algs)
-	}, fetcher, opts...)
-	return headers, results, err
+	}, nil, fetcher, opts...)
+	return fromLast(headers, results, err, opts...)
 }
 
 // fromLast finishes a verification with the §14.8 From check, which comes
@@ -62,9 +56,22 @@ func fromLast(headers []Header, results []VerifyResult, err error, opts ...Verif
 // returns the body hash for each algorithm named (those of the topmost
 // Message-Instance this build implements); it is called at most once, and
 // not at all with HeadersOnly or when an earlier check already failed.
+// lower, when not nil, is the §14.7 walk of the instances below the top
+// (VerifyFull's): run once the top instance's hashes match, it returns the
+// walk's failure or nil.
+//
+// The checks run in contract C9's order, so the first error found is the
+// primary one: §14.2 structure (chainStructure), each Message-Instance's
+// content by ascending m=, the §14.7 chain walk, each DKIM2-Signature's
+// content by ascending i=, then §14.3, §14.4, and per signature §14.5 and
+// §14.6.  A walk that fails is the result whatever the signatures say: no
+// key is used and no signature verified before it passes.
 func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][]byte, error),
-	fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
-	var err error
+	lower func() *VerifyResult, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
+	var opt VerifyOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 	// Separate MI, sig, and content headers; preserve original Raw for signing input
 	var miHeaders []string  // raw strings from h.Raw (include CRLF)
 	var sigHeaders []string // raw strings from h.Raw (include CRLF)
@@ -81,228 +88,103 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		}
 	}
 
-	// A DKIM2-Signature whose i= is missing or not a positive integer cannot
-	// be placed in the chain or keyed: PERMERROR, never silently skipped, so
-	// a junk "DKIM2-Signature: m=2" can never pass for coverage of m=2.
-	for _, raw := range sigHeaders {
-		if !validSequenceTag(raw) {
-			return nil, unkeyableSignatureError(raw)
-		}
-	}
-
-	// Every i= and m= is a chain number (chainNumberError), before any 1..max walk.
-	if err := chainRangeError(miHeaders, sigHeaders); err != nil {
-		return nil, err
-	}
-
 	// No DKIM2 header fields at all is "none", not an error (-07 §14.2's
 	// "No DKIM2 header fields found" is reported as dkim2=none).
 	if len(sigHeaders) == 0 && len(miHeaders) == 0 {
 		return nil, ErrNone
 	}
-	noSigsOutbound := len(sigHeaders) == 0 && len(opts) > 0 && opts[0].Outbound
-	if len(sigHeaders) == 0 && !noSigsOutbound {
-		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d is not signed", maxTagNumber(miHeaders, "m"))
-	}
-	if len(miHeaders) == 0 {
-		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d missing", maxTagNumber(sigHeaders, "m"))
-	}
 
-	// Spec review note #3: top sig's m= must equal the count of MI headers.
-	// Also track the topmost MI object itself: its hash-sets name the
-	// algorithm(s) the body must be hashed with below.
-	maxMIVersion := 0
+	cs, err := chainStructure(miHeaders, sigHeaders, opt.Outbound)
+	if err != nil {
+		return nil, err
+	}
+	miHeaders, sigHeaders = cs.mis, cs.sigs
+
+	// §14.2 content: each Message-Instance on its own, by ascending m=,
+	// whether or not the walk reaches it.  Every parseMI error is a
+	// self-describing §14.2 string.
 	var topMI *MessageInstance
 	for _, raw := range miHeaders {
-		mi, err := parseMI(raw)
-		if err != nil {
-			// Report the parse failure rather than skipping the header. Skipping
-			// silently lowers the apparent topmost version, which turns the real
-			// defect into a bogus "does not cover topmost MI" complaint below.
-			//
-			// Every parseMI error is a self-describing §14.2 string.
+		if topMI, err = parseMI(raw); err != nil {
 			return nil, err
-		}
-		if mi.Version > maxMIVersion {
-			maxMIVersion = mi.Version
-			topMI = mi
 		}
 	}
 
 	// §16.3: with HeadersOnly there is no body to hash — the caller handed us
 	// the header fields alone, as echoed back in a DSN's text/rfc822-headers
 	// part — so the body pass is skipped and only header hashes are checked.
-	headersOnly := len(opts) > 0 && opts[0].HeadersOnly
+	headersOnly := opt.HeadersOnly
 
-	// Body is never buffered: hash it in a single streaming pass, fanned out
-	// to every algorithm the topmost MI's h= tag names (that this build
-	// implements — see hashBodyMulti/HashAlg, §3.5). Only the topmost MI's
-	// hashes are ever checked against the body (see the per-signature loop
-	// below), so that is the only hash-set that needs consulting here.
-	var topBodyHashes map[string][]byte
-	if !headersOnly {
-		var neededAlgs []string
-		if topMI != nil {
-			neededAlgs = implementedAlgs(topMI.Hashes)
-		}
-		topBodyHashes, err = bodyHashes(neededAlgs)
-		if err != nil {
-			return nil, fmt.Errorf("PERMERROR: body hash: %w", err)
-		}
-	}
-
-	// Outbound with no signature at all (a list host added unsigned
-	// Message-Instances to an unsigned post): there is nothing to verify
-	// cryptographically, but the top instance must still match the content;
-	// VerifyFull then checks that the chain undoes.
-	if noSigsOutbound {
+	// §14.7, the chain walk, top down.  The top instance is checked against
+	// the content as received; the body is hashed in a single streaming pass
+	// (never buffered), fanned out to every algorithm the topmost MI's h= tag
+	// names that this build implements (see hashBodyStream, §3.5).  The
+	// instances below it are lower's.  With no Message-Instance at all (the
+	// signatures' m= tags are missing) there is nothing to walk.
+	if topMI != nil {
 		var mierr error
 		if headersOnly {
 			mierr = verifyMIHeaderHashes(topMI, contentHeaders)
 		} else {
+			topBodyHashes, err := bodyHashes(implementedAlgs(topMI.Hashes))
+			if err != nil {
+				return nil, fmt.Errorf("PERMERROR: body hash: %w", err)
+			}
 			mierr = verifyMIHashesPrecomputed(topMI, contentHeaders, topBodyHashes)
 		}
 		if mierr != nil {
-			return []VerifyResult{{Domain: "MI-chain", Error: fmt.Errorf("unsigned top %w", mierr)}}, nil
+			// Outbound, a top instance no signature covers yet is the
+			// signer's own: "unsigned top", reported against the top
+			// signature when there is one.
+			switch {
+			case len(sigHeaders) == 0:
+				mierr = fmt.Errorf("unsigned top %w", mierr)
+			case opt.Outbound && cs.maxSigM < topMI.Version:
+				mierr = fmt.Errorf("i=%d: unsigned top %w", cs.topSigI, mierr)
+			}
+			res := VerifyResult{Sequence: cs.topSigI, Domain: cs.topSigD, Error: mierr}
+			if len(sigHeaders) == 0 {
+				res.Domain = "MI-chain"
+			}
+			return []VerifyResult{res}, nil
 		}
+		if lower != nil {
+			if r := lower(); r != nil {
+				return []VerifyResult{*r}, nil
+			}
+		}
+	}
+
+	// Outbound with no signature at all (a list host added unsigned
+	// Message-Instances to an unsigned post): the walk was all there is.
+	if len(sigHeaders) == 0 {
 		return []VerifyResult{}, nil
 	}
 
-	// A signature that does not parse (bad t=, a missing tag, a known
-	// algorithm's item without a base64 value) is the result, rather than a
-	// knock-on "missing" once that signature drops out of the walk.
-	for _, raw := range sigHeaders {
-		if _, err := parseSig(raw); err != nil {
-			return nil, err
-		}
-	}
-
-	var topSig *DKIM2Signature
-	for _, raw := range sigHeaders {
-		s, err := parseSig(raw)
-		if err == nil {
-			if topSig == nil || s.Sequence > topSig.Sequence {
-				topSig = s
-			}
-		}
-	}
-
-	outbound := len(opts) > 0 && opts[0].Outbound
-	// Outbound: an unsigned top instance is the one the next signer covers.
-	// The signatures' own top instance is then an ordinary lower level (the
-	// chain walk checks it); the unsigned one is checked against the content.
-	unsignedTop := outbound && topSig != nil && topSig.MIVersion < maxMIVersion
-	if unsignedTop && !headersOnly {
-		if mierr := verifyMIHashesPrecomputed(topMI, contentHeaders, topBodyHashes); mierr != nil {
-			return []VerifyResult{{
-				Sequence: topSig.Sequence, Domain: topSig.Domain,
-				Error: fmt.Errorf("i=%d: unsigned top %w", topSig.Sequence, mierr),
-			}}, nil
-		}
-	} else if unsignedTop {
-		if mierr := verifyMIHeaderHashes(topMI, contentHeaders); mierr != nil {
-			return []VerifyResult{{
-				Sequence: topSig.Sequence, Domain: topSig.Domain,
-				Error: fmt.Errorf("i=%d: unsigned top %w", topSig.Sequence, mierr),
-			}}, nil
-		}
-	}
-	if topSig != nil && topSig.MIVersion != maxMIVersion && !unsignedTop {
-		err := fmt.Errorf("PERMERROR: Message-Instance m=%d is not signed", maxMIVersion)
-		if topSig.MIVersion > maxMIVersion {
-			err = fmt.Errorf("PERMERROR: Message-Instance m=%d missing", topSig.MIVersion)
-		}
-		return []VerifyResult{{Sequence: topSig.Sequence, Domain: topSig.Domain, Error: err}}, nil
-	}
-
-	// Sort sigs ascending by sequence
-	sort.Slice(sigHeaders, func(i, j int) bool {
-		a, _ := parseSig(sigHeaders[i])
-		b, _ := parseSig(sigHeaders[j])
-		if a == nil || b == nil {
-			return false
-		}
-		return a.Sequence < b.Sequence
-	})
-
-	// Sort MIs ascending by version
-	sort.Slice(miHeaders, func(i, j int) bool {
-		a, _ := parseMI(miHeaders[i])
-		b, _ := parseMI(miHeaders[j])
-		if a == nil || b == nil {
-			return false
-		}
-		return a.Version < b.Version
-	})
-
-	// §14.2: i= values must be contiguous 1..N; the first gap is missing.
-	for idx, raw := range sigHeaders {
-		sig, _ := parseSig(raw)
-		if sig == nil || sig.Sequence != idx+1 {
-			return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d missing", idx+1)
-		}
-	}
-	// A repeated m= is its own error, before the contiguity check.
-	{
-		seenM := make(map[int]bool)
-		for _, raw := range miHeaders {
-			if mi, _ := parseMI(raw); mi != nil {
-				if seenM[mi.Version] {
-					return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d appears more than once", mi.Version)
-				}
-				seenM[mi.Version] = true
-			}
-		}
-	}
-	// §14.2: m= values must be contiguous 1..N; the first gap is missing.
-	for idx, raw := range miHeaders {
-		mi, _ := parseMI(raw)
-		if mi == nil || mi.Version != idx+1 {
-			return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d missing", idx+1)
-		}
-	}
-
-	// §14.2: a Message-Instance whose m= is higher than every
-	// signature's is an error. A lower one no signature names is valid (a
-	// list's unsigned m=1 under a signature on m=2).  Outbound, every
-	// instance above the top signature is one the caller is about to cover
-	// (its signature will name the top m=), so none of them is an error:
-	// the chain walk still checks each against the content and undoes it.
-	{
-		maxSigM := 0
-		for _, raw := range sigHeaders {
-			sig, _ := parseSig(raw)
-			if sig != nil && sig.MIVersion > maxSigM {
-				maxSigM = sig.MIVersion
-			}
-		}
-		for _, raw := range miHeaders {
-			mi, _ := parseMI(raw)
-			if mi != nil && mi.Version > maxSigM && !unsignedTop {
-				return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d is not signed", mi.Version)
-			}
-		}
-	}
-
+	// §14.2 content: each DKIM2-Signature on its own, by ascending i=.  A
+	// signature that does not parse (bad t=, a missing tag, a known
+	// algorithm's item without a base64 value) is the result.
 	parsedSigs := make([]*DKIM2Signature, len(sigHeaders))
 	for i, raw := range sigHeaders {
-		parsedSigs[i], _ = parseSig(raw)
-	}
-
-	// Contract C9: the checks run in -07 §14 section order, each over every
-	// signature from i=1 up, so the first error found is the primary one.
-	// §14.2: each signature field on its own.
-	for _, sig := range parsedSigs {
-		if err := sigFieldError(sig, miHeaders); err != nil {
+		if parsedSigs[i], err = parseSig(raw); err != nil {
+			// §8: a duplicated tag is tag-list syntax, which ranks before
+			// the missing or unexpected tags parseSig checks for.
+			if colon := strings.IndexByte(raw, ':'); colon >= 0 && parseTagValueList(raw[colon+1:]).duplicate != "" {
+				return nil, sigSyntaxError(i + 1)
+			}
+			return nil, err
+		}
+		if err := sigFieldError(parsedSigs[i], miHeaders); err != nil {
 			return nil, err
 		}
 	}
+	topSig := parsedSigs[len(parsedSigs)-1]
 
 	// §14.3: not Validly Signed if made more than 14 days before delivery,
 	// or more than one day after it.  t=0 is valid syntax and simply very
 	// old.  Compared without adding to t=, which may be as large as
 	// math.MaxInt64.
-	if !(len(opts) > 0 && opts[0].SkipTimestampCheck) {
+	if !opt.SkipTimestampCheck {
 		now := time.Now().Unix()
 		for _, sig := range parsedSigs {
 			if sig.Timestamp > now+MaxFutureSkew {
@@ -324,27 +206,22 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		return nil, err
 	}
 
-	var results []VerifyResult
-
+	// §14.5 and §14.6: each signature's keys, then its signatures.
+	results := make([]VerifyResult, 0, len(sigHeaders))
 	for idx, rawSig := range sigHeaders {
 		sig := parsedSigs[idx]
-		res := VerifyResult{Sequence: sig.Sequence, Domain: sig.Domain}
 
 		// Build signing input:
 		// MI headers with m= <= this sig's MIVersion (ascending)
 		// Sig headers with i= < this sig's Sequence (ascending, i.e. indices 0..idx-1)
 		// Incomplete form of this sig
 		var sigInput []byte
-		for _, raw := range miHeaders {
-			mi, err := parseMI(raw)
-			if err == nil && mi.Version <= sig.MIVersion {
+		for k, raw := range miHeaders {
+			if k+1 <= sig.MIVersion { // miHeaders are m=1..N in order
 				sigInput = append(sigInput, canonicalizeSigHeader(raw)...)
 			}
 		}
-		for i, raw := range sigHeaders {
-			if i >= idx {
-				break
-			}
+		for _, raw := range sigHeaders[:idx] {
 			sigInput = append(sigInput, canonicalizeSigHeader(raw)...)
 		}
 		// The incomplete form: strip signature values from this sig's raw header
@@ -352,30 +229,154 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		sigInput = append(sigInput, canonicalizeSigHeader(incomplete+"\r\n")...)
 
 		digest := sha256.Sum256(sigInput)
-
-		// §14.5 and §14.6: this signature's keys, then its signatures.
-		res.Error = verifySigItems(sig, fetcher, digest[:])
-
-		// §14.7: the MI header and body hashes, checked here only for the
-		// outermost (latest) MI.  Earlier MI versions recorded hashes from
-		// a prior message state; the chain walk checks those.  After the
-		// crypto (C9): a signature that does not verify is the primary
-		// error, whatever the hashes say.
-		if res.Error == nil && sig.MIVersion == maxMIVersion {
-			if headersOnly {
-				res.Error = verifyMIHeaderHashes(topMI, contentHeaders)
-			} else {
-				res.Error = verifyMIHashesPrecomputed(topMI, contentHeaders, topBodyHashes)
-			}
-		}
-		results = append(results, res)
+		results = append(results, VerifyResult{Sequence: sig.Sequence, Domain: sig.Domain,
+			Error: verifySigItems(sig, fetcher, digest[:])})
 	}
 
 	return results, nil
 }
 
+// chainShape is what chainStructure leaves for the checks after it: the
+// fields in chain order, and the top (highest i=) signature's numbers.
+type chainShape struct {
+	mis, sigs []string // raw fields, by ascending m= and i= (1..N each)
+	topSigI   int
+	topSigM   int    // 0 when the top signature has no m=
+	topSigD   string // its d= as written
+	maxSigM   int    // the highest m= of any signature
+}
+
+// chainStructure is -07 §14.2's structure check, contract C9 steps a..h:
+// what the field names and their m=/i= numbers alone decide, before any
+// field's content.  Each step is over every field, and the first that
+// applies is the result:
+//
+//	a. more than MaxChainLength fields: Message-Instance, then
+//	   DKIM2-Signature;
+//	b. a Message-Instance with no usable m= (first top down);
+//	c. an m= given twice (the lowest);
+//	d. a DKIM2-Signature with no usable i=, or an i=/m= that is not a
+//	   chain number (first top down);
+//	e. an i= given twice (the lowest);
+//	f. "m=<x> missing", the lowest x up to the higher of the highest m=
+//	   and the top signature's m=;
+//	g. the top Message-Instance not signed: above every signature's m=
+//	   (allowed outbound: the next signer covers it);
+//	h. "i=<x> missing", the lowest x.
+func chainStructure(miHeaders, sigHeaders []string, outbound bool) (*chainShape, error) {
+	tags := func(raw string) *tagValueList {
+		if colon := strings.IndexByte(raw, ':'); colon >= 0 {
+			raw = raw[colon+1:]
+		}
+		return parseTagValueList(raw)
+	}
+	// num is a value chainNumberError passed: 1..MaxChainLength in digits.
+	num := func(v string) int {
+		n, _ := strconv.Atoi(strings.TrimSpace(v))
+		return n
+	}
+
+	// a.
+	if len(miHeaders) > MaxChainLength {
+		return nil, fmt.Errorf("PERMERROR: more than %d Message-Instance fields", MaxChainLength)
+	}
+	if len(sigHeaders) > MaxChainLength {
+		return nil, fmt.Errorf("PERMERROR: more than %d DKIM2-Signature fields", MaxChainLength)
+	}
+
+	// b, c.
+	miAt := make([]string, MaxChainLength+1)
+	maxM := 0
+	for _, raw := range miHeaders {
+		tvl := tags(raw)
+		if !tvl.has("m") {
+			return nil, errors.New("PERMERROR: Message-Instance m= tag=m missing")
+		}
+		if err := chainNumberError("Message-Instance", "m", tvl.get("m"), tvl.get("m"), true); err != nil {
+			return nil, err
+		}
+	}
+	for _, raw := range miHeaders {
+		m := num(tags(raw).get("m"))
+		if miAt[m] != "" {
+			return nil, lowestTwice("Message-Instance m", miHeaders, tags, "m")
+		}
+		miAt[m] = raw
+		if m > maxM {
+			maxM = m
+		}
+	}
+
+	// d, e.
+	cs := &chainShape{}
+	sigAt := make([]string, MaxChainLength+1)
+	maxI := 0
+	for _, raw := range sigHeaders {
+		tvl := tags(raw)
+		if !tvl.has("i") {
+			return nil, errors.New("PERMERROR: DKIM2-Signature i= tag=i missing")
+		}
+		ident := tvl.get("i")
+		if err := chainNumberError("DKIM2-Signature", "i", ident, ident, true); err != nil {
+			return nil, err
+		}
+		if err := chainNumberError("DKIM2-Signature", "m", tvl.get("m"), ident, tvl.has("m")); err != nil {
+			return nil, err
+		}
+	}
+	for _, raw := range sigHeaders {
+		tvl := tags(raw)
+		i := num(tvl.get("i"))
+		if sigAt[i] != "" {
+			return nil, lowestTwice("DKIM2-Signature i", sigHeaders, tags, "i")
+		}
+		sigAt[i] = raw
+		cs.maxSigM = max(cs.maxSigM, num(tvl.get("m")))
+		if i > maxI {
+			maxI = i
+			cs.topSigI, cs.topSigM, cs.topSigD = i, num(tvl.get("m")), tvl.get("d")
+		}
+	}
+
+	// f, g, h.
+	for x := 1; x <= max(maxM, cs.topSigM); x++ {
+		if miAt[x] == "" {
+			return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d missing", x)
+		}
+	}
+	if maxM > cs.maxSigM && !outbound {
+		return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d is not signed", maxM)
+	}
+	for x := 1; x <= maxI; x++ {
+		if sigAt[x] == "" {
+			return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d missing", x)
+		}
+	}
+
+	cs.mis, cs.sigs = miAt[1:maxM+1], sigAt[1:maxI+1]
+	return cs, nil
+}
+
+// lowestTwice is "<who>=<n> appears more than once" for the lowest number
+// tag gives more than one of raws (all chain numbers): steps c and e of
+// chainStructure.
+func lowestTwice(who string, raws []string, tags func(string) *tagValueList, tag string) error {
+	var count [MaxChainLength + 1]int
+	for _, raw := range raws {
+		n, _ := strconv.Atoi(strings.TrimSpace(tags(raw).get(tag)))
+		count[n]++
+	}
+	for n, c := range count {
+		if c > 1 {
+			return fmt.Errorf("PERMERROR: %s=%d appears more than once", who, n)
+		}
+	}
+	return nil // not reached: the caller found one
+}
+
 // sigFieldError is the -07 §14.2 check of one DKIM2-Signature field on its
-// own (contract C9 runs it for every signature before any §14.3 check): a
+// own (contract C9 runs it for every signature, by ascending i=, after the
+// chain walk and before any §14.3 check): a
 // duplicated tag, an mf=/rt= without its angle brackets (§10.5/§10.6), the
 // §10.9 duplicate-selector and selector-count rules, and an m= naming a
 // Message-Instance that is not there.
@@ -489,31 +490,33 @@ func verifyFrom(headers []Header, opts ...VerifyOptions) error {
 	return checkFromAuthentic(content, mis, top, limit, sigs)
 }
 
-// c9Section is the -07 §14 section an error string belongs to, for
-// contract C9's ranking.  Anything not named here (syntax, missing,
-// duplicate, "is not signed", Recipe errors, local limits) is §14.2.
+// c9Section is where an error string ranks in contract C9's order: the
+// §14.7 chain walk (3), §14.3 (5), §14.5 (7), §14.6 (8), §14.8 (9).
+// Anything else (§14.2, §14.4) is 2: those stop verification before
+// anything that could be ranked against them is checked.
 func c9Section(text string) int {
 	switch {
-	case strings.HasSuffix(text, " signature expired") || strings.HasSuffix(text, " signature is from the future"):
+	case strings.HasPrefix(text, "FAIL: Message-Instance "):
 		return 3
+	case strings.HasSuffix(text, " signature expired") || strings.HasSuffix(text, " signature is from the future"):
+		return 5
 	case strings.HasPrefix(text, "TEMPERROR: ") || strings.Contains(text, " public key ") ||
 		strings.Contains(text, " has no signature with a supported algorithm"):
-		return 5
-	case strings.HasPrefix(text, "FAIL: DKIM2-Signature "):
-		return 6
-	case strings.HasPrefix(text, "FAIL: Message-Instance "):
 		return 7
-	case strings.HasSuffix(text, " matching From is not authentic"):
+	case strings.HasPrefix(text, "FAIL: DKIM2-Signature "):
 		return 8
+	case strings.HasSuffix(text, " matching From is not authentic"):
+		return 9
 	}
 	return 2
 }
 
 // PrimaryResult is the result whose error is the primary one (contract
-// C9): the first in -07 §14 section order, the lowest i= first within a
-// section; nil when every result passed.  Verify and VerifyFull return
-// every signature's result in i= order (and the chain walk's after them);
-// a caller reporting one reason, or one state, reports this one's.
+// C9): the first in its order, the lowest i= first within a section; nil
+// when every result passed.  A chain walk that fails is the only result
+// Verify and VerifyFull return; otherwise they return every signature's
+// result in i= order.  A caller reporting one reason, or one state,
+// reports this one's.
 func PrimaryResult(results []VerifyResult) *VerifyResult {
 	var best *VerifyResult
 	bestSec := 0
@@ -526,28 +529,11 @@ func PrimaryResult(results []VerifyResult) *VerifyResult {
 		if sec == 0 {
 			sec = c9Section(strings.SplitN(r.Error.Error(), "\n", 2)[0])
 		}
-		if best == nil || sec < bestSec || (sec == bestSec && sec != 7 && sec != 2 && r.Sequence < best.Sequence) {
+		if best == nil || sec < bestSec || (sec == bestSec && sec > 4 && r.Sequence < best.Sequence) {
 			best, bestSec = r, sec
 		}
 	}
 	return best
-}
-
-// maxTagNumber is the highest value of tag across raw header fields (name
-// included), for an error that has to name one; chainRangeError has
-// already checked that every one present is a chain number.
-func maxTagNumber(raws []string, tag string) int {
-	max := 0
-	for _, raw := range raws {
-		colon := strings.IndexByte(raw, ':')
-		if colon < 0 {
-			continue
-		}
-		if n, err := strconv.Atoi(parseTagValueList(raw[colon+1:]).get(tag)); err == nil && n > max {
-			max = n
-		}
-	}
-	return max
 }
 
 // verifySigItems decides one DKIM2-Signature's outcome from its s= items, in

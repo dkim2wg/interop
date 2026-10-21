@@ -642,6 +642,7 @@ func primary07(t *testing.T, msg []byte, opt VerifyOptions) string {
 }
 
 func TestSpec07C9PrimaryError(t *testing.T) {
+	pre := func(fields string, msg []byte) []byte { return append([]byte(fields), msg...) }
 	skip := VerifyOptions{SkipTimestampCheck: true}
 	now := time.Now().Unix()
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
@@ -667,9 +668,55 @@ func TestSpec07C9PrimaryError(t *testing.T) {
 		// §14.4 before §14.6.
 		{"custody and signature", badSig(must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, ""), 1),
 			skip, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match"},
-		// §14.6 before §14.7.
+		// The chain walk before every signature check: §14.6, §14.3, §14.5,
+		// and the signature's own §14.2 content.
 		{"signature and header hash", bytes.Replace(badSig(hop1, 1), []byte("Subject: hello"), []byte("Subject: jello"), 1),
-			skip, "FAIL: DKIM2-Signature i=1 selector s07 incorrect signature"},
+			skip, "FAIL: Message-Instance m=1 header hash sha256 mismatch"},
+		{"expired and header hash", bytes.Replace(must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
+			func(o *SignOptions) { o.Timestamp = now - 15*86400 }), []byte("Subject: hello"), []byte("Subject: jello"), 1),
+			VerifyOptions{}, "FAIL: Message-Instance m=1 header hash sha256 mismatch"},
+		{"no key and body hash", append(must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
+			func(o *SignOptions) { o.Selector = "nokey" }), "more\r\n"...),
+			skip, "FAIL: Message-Instance m=1 body hash sha256 mismatch"},
+		{"signature syntax and header hash", bytes.Replace(bytes.Replace(hop1, []byte("t=1740000000;"), []byte("t=1740000000; T=1;"), 1),
+			[]byte("Subject: hello"), []byte("Subject: jello"), 1),
+			skip, "FAIL: Message-Instance m=1 header hash sha256 mismatch"},
+		// Every header hash before any body hash.
+		{"header and body hash", append(bytes.Replace(hop1, []byte("Subject: hello"), []byte("Subject: jello"), 1), "more\r\n"...),
+			skip, "FAIL: Message-Instance m=1 header hash sha256 mismatch"},
+		// §14.2 structure, steps b..h in order, before any content.
+		{"a: instances before signatures", pre(strings.Repeat("Message-Instance: m=1\r\nDKIM2-Signature: i=1\r\n", 32), hop1),
+			skip, "PERMERROR: more than 32 Message-Instance fields"},
+		{"a: signatures", pre(strings.Repeat("DKIM2-Signature: x\r\n", 32), hop1),
+			skip, "PERMERROR: more than 32 DKIM2-Signature fields"},
+		{"b: no m= before e", pre("DKIM2-Signature: i=1; m=1\r\nMessage-Instance: h=x\r\n", hop1),
+			skip, "PERMERROR: Message-Instance m= tag=m missing"},
+		{"c: lowest m=", pre("Message-Instance: m=2\r\nMessage-Instance: m=2\r\nMessage-Instance: m=1\r\n", hop1),
+			skip, "PERMERROR: Message-Instance m=1 appears more than once"},
+		{"c before d", pre("Message-Instance: m=1\r\nDKIM2-Signature: d=x\r\n", hop1),
+			skip, "PERMERROR: Message-Instance m=1 appears more than once"},
+		{"e: lowest i=", pre("DKIM2-Signature: i=3\r\nDKIM2-Signature: i=3\r\nDKIM2-Signature: i=1\r\n", hop1),
+			skip, "PERMERROR: DKIM2-Signature i=1 appears more than once"},
+		{"f before g", pre("Message-Instance: m=3\r\n", hop1),
+			skip, "PERMERROR: Message-Instance m=2 missing"},
+		{"g before h", pre("Message-Instance: m=2\r\nDKIM2-Signature: i=3; m=1\r\n", hop1),
+			skip, "PERMERROR: Message-Instance m=2 is not signed"},
+		// Signed means covered by any signature's m=, not only the top one's.
+		{"g: any signature's m=", pre("DKIM2-Signature: i=3; m=1\r\nDKIM2-Signature: i=2; m=2\r\nMessage-Instance: m=2\r\n", hop1),
+			skip, "PERMERROR: Message-Instance m=2 tag=h missing"},
+		{"h before content", pre("DKIM2-Signature: i=3; m=1\r\n", hop1),
+			skip, "PERMERROR: DKIM2-Signature i=2 missing"},
+		// §14.2 content: Message-Instances by ascending m=.
+		{"m=1 before m=2", pre("DKIM2-Signature: i=2; m=2\r\nMessage-Instance: m=2; h=sha256:a:b,sha256:a:b\r\n",
+			bytes.Replace(hop1, []byte("Message-Instance: m=1;"), []byte("Message-Instance: m=1;;"), 1)),
+			skip, "PERMERROR: Message-Instance m=1 syntax error"},
+		// §14.2 content within one signature: tag-list syntax (a duplicated
+		// tag) before a missing tag.
+		{"duplicate tag before missing tag", bytes.Replace(hop1, []byte("t=1740000000;"), []byte("d=x.example;"), 1),
+			skip, "PERMERROR: DKIM2-Signature i=1 syntax error"},
+		// Outbound with no signature, the unsigned instances are still walked.
+		{"outbound unsigned", pre("Message-Instance: m=1; h=sha256:AAAA:AAAA\r\n", []byte(spec07Base)),
+			VerifyOptions{SkipTimestampCheck: true, Outbound: true}, "unsigned top FAIL: Message-Instance m=1 header hash sha256 mismatch"},
 		// Lowest i= first within §14.6.
 		{"two bad signatures", badSig(must07(t, hop1, "example.org", "list@lists.example.org", []string{"b@example.net"}, ""), -1),
 			skip, "FAIL: DKIM2-Signature i=1 selector s07 incorrect signature"},

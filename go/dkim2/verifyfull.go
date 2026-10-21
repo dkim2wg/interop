@@ -9,13 +9,13 @@ import (
 	"strings"
 )
 
-// VerifyFull verifies the signature chain and the top Message-Instance (as
-// Verify does), then validates every lower Message-Instance against the
-// version of the message its Recipes rebuild.  A Recipe or hash failure is
-// reported as an extra failing VerifyResult ("MI-chain v=N"); a Recipe that
-// breaks the §5 rules against the message is the verbatim PERMERROR, ranked
-// with §14.7 (contract C9).  The §14.8 From check comes last, when nothing
-// else failed.
+// VerifyFull is Verify with the whole §14.7 chain walk: after the top
+// Message-Instance, every lower one is checked against the version of the
+// message its Recipes rebuild, before any signature (contract C9).  A Recipe
+// or hash failure is then the only VerifyResult ("MI-chain v=N"); a Recipe
+// that breaks the §5 rules against the message is the verbatim PERMERROR,
+// ranked with §14.7.  The §14.8 From check comes last, when nothing else
+// failed.
 //
 // The lower instances are checked by the planned walk (plan.go): the message
 // is read once, its body streamed in the chunks r delivers into one pass that
@@ -56,11 +56,7 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	}
 	plan.close()
 
-	results, err := verifyFields(headers, plan.topHashes, fetcher, opts...)
-	if err != nil {
-		return results, err
-	}
-	results, err = plan.walk(results)
+	results, err := verifyFields(headers, plan.topHashes, plan.walk, fetcher, opts...)
 	return fromLast(headers, results, err, opts...)
 }
 
@@ -92,25 +88,36 @@ func (rr *recordingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// verifyFullUndo is VerifyFull by the undo walk: Verify, then each lower
-// instance rebuilt with Undo, which checks that level's recorded hashes.
+// verifyFullUndo is VerifyFull by the undo walk: each lower instance is
+// rebuilt with Undo, which checks that level's recorded hashes.
 func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 	buf, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
-
-	headers, results, err := verifyNoFrom(bytes.NewReader(buf), fetcher, opts...)
+	br := bufio.NewReader(bytes.NewReader(buf))
+	headers, err := readHeaderFields(br)
 	if err != nil {
-		return results, err
+		return nil, fmt.Errorf("parsing headers: %w", err)
 	}
+	fetcher = prefetchKeys(headers, fetcher, opts...)
 
 	// §16.3: with no body there is nothing to undo a lower instance into, so
-	// Verify's top-instance header-hash check is as far as the chain walk goes.
-	if len(opts) > 0 && opts[0].HeadersOnly {
-		return fromLast(headers, results, nil, opts...)
+	// the top instance's header-hash check is as far as the chain walk goes.
+	var lower func() *VerifyResult
+	if !(len(opts) > 0 && opts[0].HeadersOnly) {
+		lower = func() *VerifyResult { return undoWalk(buf, headers) }
 	}
+	results, err := verifyFields(headers, func(algs []string) (map[string][]byte, error) {
+		return hashBodyStream(br, algs)
+	}, lower, fetcher, opts...)
+	return fromLast(headers, results, err, opts...)
+}
 
+// undoWalk checks each instance below the top of the message in buf: Undo
+// to it, top down, which rebuilds it and checks its recorded hashes.  The
+// first failure is returned, nil when there is none.
+func undoWalk(buf []byte, headers []Header) *VerifyResult {
 	highest := 0
 	for _, h := range headers {
 		if strings.ToLower(h.Name) == "message-instance" {
@@ -119,9 +126,6 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 			}
 		}
 	}
-
-	// Validate each lower instance. Undo(target) reconstructs highest..target
-	// and verifies the target level's recorded hashes.
 	for target := highest - 1; target >= 1; target-- {
 		if err := undo(bytes.NewReader(buf), io.Discard, target, true); err != nil {
 			// A Recipe that only fails against the real item counts is
@@ -131,20 +135,17 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 			// instances above it.
 			var mre *malformedRecipeError
 			if errors.As(err, &mre) {
-				results = append(results, VerifyResult{
+				return &VerifyResult{
 					Domain:  fmt.Sprintf("MI-chain v=%d", mre.m),
 					Error:   mre,
-					section: 7,
-				})
-				break
+					section: 3,
+				}
 			}
-			results = append(results, VerifyResult{
+			return &VerifyResult{
 				Domain: fmt.Sprintf("MI-chain v=%d", target),
 				Error:  chainLevelError(err),
-			})
-			break
+			}
 		}
 	}
-
-	return fromLast(headers, results, nil, opts...)
+	return nil
 }
