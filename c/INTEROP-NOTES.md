@@ -822,6 +822,15 @@ util/negative-vectors.sh pins all of it with 18 new vectors (16 multi-*,
 whole message through the Verifier first, so its primary error is the
 library's, not its own walk's.
 
+Review of the ports (security, correctness, performance, API) found no C9
+error but a shared hole: Python, Go, C and JS prefetched a key for every
+selector of every signature, so a message naming thousands of selectors
+started thousands of DNS queries. All four now match Perl's $PREFETCH_MAX:
+at most 8 lookups, top signature first, anything else looked up only if
+needed; Go and C also start the prefetch only after the structure check.
+Python also raised on a 4301-digit i=/m= or t= and on deeply nested
+Recipe JSON (the other four already returned a clean result).
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
