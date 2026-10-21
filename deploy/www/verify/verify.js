@@ -249,10 +249,17 @@ async function verifyOnce(raw, opts = {}) {
   const maxM = miNums[miNums.length - 1];
   const maxI = sigNums[sigNums.length - 1];
 
+  // Each DKIM2-Signature's own content (§14.2), worked out now but
+  // reported where C9 ranks it, after the walk: only a signature that
+  // passes has its keys looked up (an s= of thousands of Selectors is
+  // rejected before any lookup).
+  const sigContent = {};
+  for (const i of sigNums) sigContent[i] = signatureContentError(signatures[i], i);
+
   // Start every public-key lookup now, so they overlap each other and the
   // hashing below. No key is used until the Message-Instances have passed.
-  const fetchKey = opts.fetchKey
-    || prefetchKeys(signatures, sigNums, { fetch: opts.dohFetch, dohUrl: opts.dohUrl });
+  const fetchKey = opts.fetchKey || prefetchKeys(signatures, sigNums.filter((i) => !sigContent[i]),
+    { fetch: opts.dohFetch, dohUrl: opts.dohUrl });
 
   // --- §14.2 Message-Instance content, by ascending m= -------------------
   const miLevels = {};
@@ -288,7 +295,7 @@ async function verifyOnce(raw, opts = {}) {
     ...miNums.slice().reverse().map((m) => miLevels[m]),
     ...sigNums.slice().reverse().map((i) => sigLevels[i]),
   ];
-  if (miErrors.length) return failed(miErrors, levelList());
+  if (miErrors.length) return failed(miErrors, explain(levelList(), 'not checked: a Message-Instance is malformed'));
 
   // --- the chain of message states, one per instance (top-down) ----------
   // The planned walk (plan.js) works out every instance's hash input from
@@ -378,13 +385,15 @@ async function verifyOnce(raw, opts = {}) {
   // --- §14.2 DKIM2-Signature content, by ascending i= --------------------
   const sigErrors = [];
   for (const i of sigNums) {
-    const text = signatureContentError(signatures[i], i);
+    const text = sigContent[i];
     if (text) {
       Object.assign(sigLevels[i], { result: 'permerror', detail: text, errors: [text] });
       sigErrors.push(text);
     }
   }
-  if (sigErrors.length) return failed([...walkErrors, ...sigErrors], levelList());
+  if (sigErrors.length) {
+    return failed([...walkErrors, ...sigErrors], explain(levelList(), 'not checked: a DKIM2-Signature is malformed'));
+  }
 
   // --- §14.3–§14.6, §14.8 signature checks -------------------------------
   const badFrom = unauthenticFrom(chain, instances, signatures, sigNums, maxM);
@@ -439,6 +448,7 @@ async function verifyOnce(raw, opts = {}) {
     // t= is 1*DIGIT (checked above); 10^12 and beyond fit a double.
     if (!opts.skipTimestamp) {
       const t = parseInt(sig.map.t, 10);
+      level.timestamp = { ok: true, detail: '' };
       if (now - t > MAX_AGE) {
         level.timestamp = { ok: false, status: 'expired', detail: `t= is ${Math.floor((now - t) / 86400)} days before now` };
         fail('permerror', `PERMERROR: DKIM2-Signature i=${i} signature expired`);
@@ -449,7 +459,8 @@ async function verifyOnce(raw, opts = {}) {
     }
 
     level.result = notChecked && state === 'pass' ? 'not-checked' : state;
-    level.detail = errors.join('; ');
+    level.detail = errors.join('; ')
+      || (notChecked ? 'not checked: the Message-Instances do not match the message' : '');
     level.errors = errors;
   }
 
@@ -472,6 +483,12 @@ async function verifyOnce(raw, opts = {}) {
 // first is the primary error, and its state is the result).
 function failed(errors, levels) {
   return { overall: stateOf(errors[0]), summary: errors.join('; '), errors, levels };
+}
+
+// levels, each one never checked given why in its detail.
+function explain(levels, why) {
+  for (const l of levels) if (l.result === 'not-checked' && !l.detail) l.detail = why;
+  return levels;
 }
 
 // The result state an error string carries (§14.1: "STATE: text").
@@ -581,10 +598,9 @@ function signatureContentError(s, i) {
 // The report entry for one DKIM2-Signature, before any check of it.
 function signatureLevel(sig, i) {
   return {
-    kind: 'signature', i, m: parseInt(sig.map.m, 10),
+    kind: 'signature', i, m: sig.map.m === undefined ? null : parseInt(sig.map.m, 10),
     tags: sig.tags.map((t) => ({ tag: t.tag, value: t.value })),
-    items: [], timestamp: { ok: true, detail: '' },
-    custody: { ok: true, detail: '' }, result: 'not-checked', detail: '', errors: [],
+    items: [], result: 'not-checked', detail: '', errors: [], // timestamp, custody: once checked
   };
 }
 
@@ -804,9 +820,12 @@ export function undoChain(headers, body, instances, maxM) {
 // record) is used as it is; anything else (a timeout, SERVFAIL, a network
 // error) is looked up again the ordinary way, so every verdict is what it
 // would have been without the prefetch.
+// At most PREFETCH_MAX lookups are started, top signature first; a key
+// not prefetched is looked up the ordinary way if it is ever needed.
+const PREFETCH_MAX = 8;
 function prefetchKeys(signatures, sigNums, dohOpts) {
   const pending = new Map();
-  for (const i of sigNums) {
+  for (const i of sigNums.slice().reverse()) {
     const sig = signatures[i];
     const sTag = sig.tags.find((t) => t.tag === 's');
     const sets = sTag && parseSigSets(rawTagValue(sTag));
@@ -815,6 +834,7 @@ function prefetchKeys(signatures, sigNums, dohOpts) {
       if (!SUPPORTED_ALGS.has(ss.alg)) continue;
       const name = keyName(ss.selector, sig.map.d);
       if (pending.has(name)) continue;
+      if (pending.size >= PREFETCH_MAX) break;
       // Settled into an outcome, so an unawaited failure is never unhandled.
       pending.set(name, dohFetchKey(ss.selector, sig.map.d, dohOpts)
         .then((key) => ({ key }), (err) => ({ err })));

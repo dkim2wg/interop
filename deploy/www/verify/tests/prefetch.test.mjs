@@ -145,3 +145,45 @@ test('no prefetch for algorithms not implemented, or a message that fails §14.2
   assert.equal(rep.overall, 'permerror');
   assert.equal(broken.calls.length, 0);
 });
+
+test('no prefetch for a signature whose s= fails §14.2, however many Selectors it names', async () => {
+  // 3000 distinct Selectors for one algorithm: "more selectors than allowed".
+  const many = Array.from({ length: 3000 }, (_, n) => `x${n}:ed25519-sha256:AAAA`).join(',');
+  const bin = bytesToBinary(MSG).replace(/s=sel2:ed25519-sha256:/, `s=${many},sel2:ed25519-sha256:`);
+  const doh = fakeDoh();
+  const rep = await verifyMessage(Uint8Array.from(bin, (c) => c.charCodeAt(0)), { now: NOW, dohFetch: doh.fetch });
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.match(rep.errors[0], /has more selectors than allowed$/);
+  assert.ok(doh.calls.length <= NAMES.length, `${doh.calls.length} DoH requests`);
+  assert.ok(!doh.calls.some((n) => n.startsWith('x')), 'no lookup for the oversized s=');
+});
+
+test('signatures never checked show no timestamp or custody verdict, and say why', async () => {
+  // A malformed Message-Instance: the verification stops before any signature.
+  const bin = bytesToBinary(MSG).replace(/Message-Instance: m=1;/i, 'Message-Instance: m=1; h=;');
+  const rep = await verifyMessage(Uint8Array.from(bin, (c) => c.charCodeAt(0)), { now: NOW, fetchKey: async () => { throw new Error('key-notfound'); } });
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  const sigs = rep.levels.filter((l) => l.kind === 'signature');
+  assert.equal(sigs.length, HOPS.length);
+  for (const l of sigs) {
+    assert.equal(l.result, 'not-checked');
+    assert.equal(l.timestamp, undefined);
+    assert.equal(l.custody, undefined);
+    assert.match(l.detail, /^not checked: /);
+  }
+});
+
+test('at most 8 keys are prefetched, top signature first', async () => {
+  // Ten distinct names (each hop also names extraN, same algorithm, distinct
+  // Selector), and a malformed Message-Instance so that no key is ever
+  // used: every request made is a prefetch.
+  let bin = bytesToBinary(MSG).replace(/Message-Instance: m=1;/i, 'Message-Instance: m=1; h=;');
+  for (const [n, h] of HOPS.entries()) {
+    bin = bin.replace(new RegExp(`(d=${h.d.replace(/\./g, '\\.')};[^]*?s=)`), `$1extra${n}:ed25519-sha256:AAAA,`);
+  }
+  const doh = fakeDoh();
+  await verifyMessage(Uint8Array.from(bin, (c) => c.charCodeAt(0)), { now: NOW, dohFetch: doh.fetch });
+  assert.equal(new Set(doh.calls).size, 8, doh.calls.join(' '));
+  assert.ok(!doh.calls.some((n) => n.endsWith('test1.dkim2.com')), 'the lowest signature is the one left out');
+  assert.ok(doh.calls.includes('sel2._domainkey.test5.dkim2.com'));
+});

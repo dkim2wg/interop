@@ -49,7 +49,7 @@ export function renderReport(rep, out) {
     const cls = stateClass(lvl.result);
     const card = el('div', 'card ' + cls);
     if (lvl.kind === 'signature') {
-      card.appendChild(el('h3', null, 'DKIM2-Signature i=' + lvl.i + ' (m=' + lvl.m + ') — ' + lvl.result));
+      card.appendChild(el('h3', null, 'DKIM2-Signature i=' + lvl.i + (lvl.m == null ? ' (m= missing)' : ' (m=' + lvl.m + ')') + ' — ' + lvl.result));
       if (lvl.tags && lvl.tags.length) card.appendChild(tagGrid(lvl.tags));
       (lvl.items || []).forEach((it) => card.appendChild(kv('crypto', it.selector + ' / ' + it.algorithm + ' → ' + (it.result || ''))));
       if (lvl.timestamp) card.appendChild(kv('timestamp', lvl.timestamp.ok ? 'ok' : ((lvl.timestamp.status || 'fail') + ' — ' + lvl.timestamp.detail)));
