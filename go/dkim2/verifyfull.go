@@ -24,8 +24,9 @@ import (
 // verdicts; it is used with UndoWalk set, with HeadersOnly, and for the rare
 // message the plan declines (see newChainPlan).
 //
-// With real DNS keys every key the signatures name is looked up in the
-// background as soon as the header fields are read (see prefetchKeys).
+// With real DNS keys the signatures' keys are looked up in the background
+// as soon as the header fields are read and the chain's structure checks
+// out (see prefetchKeys).
 func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 	if len(opts) > 0 && (opts[0].UndoWalk || opts[0].HeadersOnly) {
 		return verifyFullUndo(r, fetcher, opts...)
@@ -38,10 +39,25 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	if err != nil {
 		return nil, err
 	}
-	fetcher = prefetchKeys(headers, fetcher, opts...)
+	// The structure first: a malformed chain is rejected before any of the
+	// body is read (and before a plan with a body list per instance is made).
+	cs, err := chainOf(headers, opts...)
+	if err != nil {
+		return nil, err
+	}
+	fetcher = prefetchKeys(cs.sigs, fetcher, opts...)
 	plan := newChainPlan(headers)
 	if plan == nil {
-		return verifyFullUndo(io.MultiReader(bytes.NewReader(rec.buf), r), fetcher, opts...)
+		buf, err := io.ReadAll(io.MultiReader(bytes.NewReader(rec.buf), r))
+		if err != nil {
+			return nil, err
+		}
+		// The body starts after the header fields, read again to find it.
+		br := bufio.NewReader(bytes.NewReader(buf))
+		if _, err := readHeaderFields(br); err != nil {
+			return nil, err
+		}
+		return verifyUndoFrom(buf, br, headers, cs, fetcher, opts...)
 	}
 	rec.buf, rec.off = nil, true
 
@@ -56,7 +72,7 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	}
 	plan.close()
 
-	results, err := verifyFields(headers, plan.topHashes, plan.walk, fetcher, opts...)
+	results, err := verifyFields(cs, plan.topHashes, plan.walk, fetcher, opts...)
 	return fromLast(headers, results, err, opts...)
 }
 
@@ -100,7 +116,17 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 	if err != nil {
 		return nil, fmt.Errorf("parsing headers: %w", err)
 	}
-	fetcher = prefetchKeys(headers, fetcher, opts...)
+	cs, err := chainOf(headers, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return verifyUndoFrom(buf, br, headers, cs, prefetchKeys(cs.sigs, fetcher, opts...), opts...)
+}
+
+// verifyUndoFrom is verifyFullUndo once the message (buf) is read, its
+// header fields parsed (br is at the body) and its structure (cs) checked.
+func verifyUndoFrom(buf []byte, br *bufio.Reader, headers []Header, cs *chainShape,
+	fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 
 	// §16.3: with no body there is nothing to undo a lower instance into, so
 	// the top instance's header-hash check is as far as the chain walk goes.
@@ -108,7 +134,7 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 	if !(len(opts) > 0 && opts[0].HeadersOnly) {
 		lower = func() *VerifyResult { return undoWalk(buf, headers) }
 	}
-	results, err := verifyFields(headers, func(algs []string) (map[string][]byte, error) {
+	results, err := verifyFields(cs, func(algs []string) (map[string][]byte, error) {
 		return hashBodyStream(br, algs)
 	}, lower, fetcher, opts...)
 	return fromLast(headers, results, err, opts...)

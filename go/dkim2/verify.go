@@ -16,8 +16,9 @@ import (
 )
 
 // Verify reads r and verifies all DKIM2-Signature headers.
-// Returns one VerifyResult per signature, or the top Message-Instance's
-// failure alone (contract C9: the walk comes before the signatures). Body is never buffered: it is
+// Returns one VerifyResult per signature or, when the chain walk fails
+// (contract C9: it comes before the signatures), the walk's failure alone,
+// with the top signature's i=.  Body is never buffered: it is
 // canonicalised in a single streaming pass, fanned out to one hash.Hash per
 // implemented algorithm the topmost Message-Instance's h= tag names (see
 // hashBodyStream), even when that names more than one algorithm.  It is
@@ -25,19 +26,53 @@ import (
 // An optional VerifyOptions may be passed to enable §14.4 envelope matching.
 //
 // With real DNS keys (NetKeyFetcher) every key the signatures name is
-// looked up in the background as soon as the header fields are read (see
-// prefetchKeys), while the body is still being read and hashed.
+// looked up in the background as soon as the header fields are read and
+// the chain's structure checks out (see prefetchKeys), while the body is
+// still being read and hashed.
 func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 	br := bufio.NewReader(r)
 	headers, err := readHeaderFields(br)
 	if err != nil {
 		return nil, fmt.Errorf("parsing headers: %w", err)
 	}
-	fetcher = prefetchKeys(headers, fetcher, opts...)
-	results, err := verifyFields(headers, func(algs []string) (map[string][]byte, error) {
+	cs, err := chainOf(headers, opts...)
+	if err != nil {
+		return nil, err
+	}
+	fetcher = prefetchKeys(cs.sigs, fetcher, opts...)
+	results, err := verifyFields(cs, func(algs []string) (map[string][]byte, error) {
 		return hashBodyStream(br, algs)
 	}, nil, fetcher, opts...)
 	return fromLast(headers, results, err, opts...)
+}
+
+// chainOf sorts headers into Message-Instances, DKIM2-Signatures and
+// content, and runs the §14.2 structure check (chainStructure) over them:
+// the first thing verified, before the body is read or any key looked up.
+// No DKIM2 header fields at all is ErrNone (-07 §14.2's "No DKIM2 header
+// fields found" is reported as dkim2=none).
+func chainOf(headers []Header, opts ...VerifyOptions) (*chainShape, error) {
+	var mis, sigs []string // raw fields, CRLF included
+	var content []Header
+	for _, h := range headers {
+		switch strings.ToLower(h.Name) {
+		case "message-instance":
+			mis = append(mis, h.Raw)
+		case "dkim2-signature":
+			sigs = append(sigs, h.Raw)
+		default:
+			content = append(content, h)
+		}
+	}
+	if len(sigs) == 0 && len(mis) == 0 {
+		return nil, ErrNone
+	}
+	cs, err := chainStructure(mis, sigs, len(opts) > 0 && opts[0].Outbound)
+	if err != nil {
+		return nil, err
+	}
+	cs.content = content
+	return cs, nil
 }
 
 // fromLast finishes a verification with the §14.8 From check, which comes
@@ -52,7 +87,7 @@ func fromLast(headers []Header, results []VerifyResult, err error, opts ...Verif
 	return results, nil
 }
 
-// verifyFields is Verify once the header fields are parsed.  bodyHashes
+// verifyFields is Verify once the chain's structure (cs) checks out.  bodyHashes
 // returns the body hash for each algorithm named (those of the topmost
 // Message-Instance this build implements); it is called at most once, and
 // not at all with HeadersOnly or when an earlier check already failed.
@@ -61,44 +96,19 @@ func fromLast(headers []Header, results []VerifyResult, err error, opts ...Verif
 // walk's failure or nil.
 //
 // The checks run in contract C9's order, so the first error found is the
-// primary one: §14.2 structure (chainStructure), each Message-Instance's
-// content by ascending m=, the §14.7 chain walk, each DKIM2-Signature's
+// primary one: (§14.2 structure, already checked by chainOf,) each
+// Message-Instance's content by ascending m=, the §14.7 chain walk, each DKIM2-Signature's
 // content by ascending i=, then §14.3, §14.4, and per signature §14.5 and
 // §14.6.  A walk that fails is the result whatever the signatures say: no
 // key is used and no signature verified before it passes.
-func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][]byte, error),
+func verifyFields(cs *chainShape, bodyHashes func(algs []string) (map[string][]byte, error),
 	lower func() *VerifyResult, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 	var opt VerifyOptions
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
-	// Separate MI, sig, and content headers; preserve original Raw for signing input
-	var miHeaders []string  // raw strings from h.Raw (include CRLF)
-	var sigHeaders []string // raw strings from h.Raw (include CRLF)
-	var contentHeaders []Header
-
-	for _, h := range headers {
-		switch strings.ToLower(h.Name) {
-		case "message-instance":
-			miHeaders = append(miHeaders, h.Raw)
-		case "dkim2-signature":
-			sigHeaders = append(sigHeaders, h.Raw)
-		default:
-			contentHeaders = append(contentHeaders, h)
-		}
-	}
-
-	// No DKIM2 header fields at all is "none", not an error (-07 §14.2's
-	// "No DKIM2 header fields found" is reported as dkim2=none).
-	if len(sigHeaders) == 0 && len(miHeaders) == 0 {
-		return nil, ErrNone
-	}
-
-	cs, err := chainStructure(miHeaders, sigHeaders, opt.Outbound)
-	if err != nil {
-		return nil, err
-	}
-	miHeaders, sigHeaders = cs.mis, cs.sigs
+	miHeaders, sigHeaders, contentHeaders := cs.mis, cs.sigs, cs.content
+	var err error
 
 	// §14.2 content: each Message-Instance on its own, by ascending m=,
 	// whether or not the walk reaches it.  Every parseMI error is a
@@ -150,6 +160,7 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 		}
 		if lower != nil {
 			if r := lower(); r != nil {
+				r.Sequence = cs.topSigI // as the top instance's failure is
 				return []VerifyResult{*r}, nil
 			}
 		}
@@ -174,7 +185,7 @@ func verifyFields(headers []Header, bodyHashes func(algs []string) (map[string][
 			}
 			return nil, err
 		}
-		if err := sigFieldError(parsedSigs[i], miHeaders); err != nil {
+		if err := sigFieldError(parsedSigs[i], len(miHeaders)); err != nil {
 			return nil, err
 		}
 	}
@@ -244,6 +255,7 @@ type chainShape struct {
 	topSigM   int    // 0 when the top signature has no m=
 	topSigD   string // its d= as written
 	maxSigM   int    // the highest m= of any signature
+	content   []Header
 }
 
 // chainStructure is -07 §14.2's structure check, contract C9 steps a..h:
@@ -380,7 +392,7 @@ func lowestTwice(who string, raws []string, tags func(string) *tagValueList, tag
 // duplicated tag, an mf=/rt= without its angle brackets (§10.5/§10.6), the
 // §10.9 duplicate-selector and selector-count rules, and an m= naming a
 // Message-Instance that is not there.
-func sigFieldError(sig *DKIM2Signature, miHeaders []string) error {
+func sigFieldError(sig *DKIM2Signature, top int) error {
 	// §8: a tag name that occurs more than once makes the whole tag-list
 	// invalid.
 	if sig.Duplicate != "" {
@@ -397,10 +409,9 @@ func sigFieldError(sig *DKIM2Signature, miHeaders []string) error {
 	if dupErrs := checkSignatureDuplicates(sig.Sigs, sig.Sequence); len(dupErrs) > 0 {
 		return errors.New(dupErrs[0])
 	}
-	for _, raw := range miHeaders {
-		if mi, err := parseMI(raw); err == nil && mi.Version == sig.MIVersion {
-			return nil
-		}
+	// chainStructure found m=1..top, and no others.
+	if sig.MIVersion >= 1 && sig.MIVersion <= top {
+		return nil
 	}
 	return fmt.Errorf("PERMERROR: Message-Instance m=%d missing", sig.MIVersion)
 }

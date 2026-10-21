@@ -5,7 +5,6 @@ import (
 	"crypto"
 	"errors"
 	"net"
-	"strings"
 	"sync"
 	"time"
 )
@@ -14,8 +13,9 @@ import (
 // is waited for; past that the key is looked up the ordinary way.
 var keyPrefetchTimeout = 5 * time.Second
 
-// keyPrefetcher is a NetKeyFetcher whose lookups were all started in the
-// background as soon as the header fields were read.  FetchPublicKey takes
+// keyPrefetcher is a NetKeyFetcher whose lookups (up to PrefetchMax) were
+// started in the background as soon as the header fields were read and
+// checked.  FetchPublicKey takes
 // a prefetched answer only when it settles the key -- TXT records, or a
 // definitive "no such name / no TXT" -- and redoes the lookup the ordinary,
 // synchronous way otherwise (no answer within keyPrefetchTimeout of
@@ -39,27 +39,33 @@ type keyLookup struct {
 	ferr error
 }
 
-// prefetchKeys starts a background TXT lookup for every distinct key name
-// the DKIM2-Signatures in headers name with an algorithm this build
-// implements, and returns the KeyFetcher that uses the answers.  Only real
-// DNS (*NetKeyFetcher) is prefetched: any other KeyFetcher -- dns.json, a
-// caller's override -- and opts' NoKeyPrefetch return fetcher unchanged.
-func prefetchKeys(headers []Header, fetcher KeyFetcher, opts ...VerifyOptions) KeyFetcher {
+// PrefetchMax is the most key lookups prefetchKeys starts for one message.
+// Any key it leaves out is looked up the ordinary way if it is ever needed.
+const PrefetchMax = 8
+
+// prefetchKeys starts a background TXT lookup for each distinct key name
+// the DKIM2-Signatures sigs (in ascending i= order, the structure checked)
+// name with an algorithm this build implements -- the top signature's
+// first, and at most PrefetchMax in all -- and returns the KeyFetcher that
+// uses the answers.  Only real DNS (*NetKeyFetcher) is prefetched: any
+// other KeyFetcher -- dns.json, a caller's override -- and opts'
+// NoKeyPrefetch return fetcher unchanged.
+func prefetchKeys(sigs []string, fetcher KeyFetcher, opts ...VerifyOptions) KeyFetcher {
 	nf, ok := fetcher.(*NetKeyFetcher)
 	if !ok || nf == nil || (len(opts) > 0 && opts[0].NoKeyPrefetch) {
 		return fetcher
 	}
 	pf := &keyPrefetcher{base: nf, lookups: map[string]*keyLookup{}}
 	res := nf.resolver()
-	for _, h := range headers {
-		if !strings.EqualFold(h.Name, "dkim2-signature") {
-			continue
-		}
-		sig, err := parseSig(h.Raw)
+	for k := len(sigs) - 1; k >= 0 && len(pf.lookups) < PrefetchMax; k-- {
+		sig, err := parseSig(sigs[k])
 		if err != nil {
 			continue
 		}
 		for _, item := range sig.Sigs {
+			if len(pf.lookups) == PrefetchMax {
+				break
+			}
 			if !KnownSigAlg(item.Algorithm) {
 				continue
 			}

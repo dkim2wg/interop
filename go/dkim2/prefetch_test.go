@@ -3,7 +3,9 @@ package dkim2
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -208,25 +210,83 @@ func TestPrefetchNXDOMAIN(t *testing.T) {
 func TestNoPrefetchWithOverrideKeys(t *testing.T) {
 	msg, _ := prefetchMsg(t)
 	headers, _ := splitMessage(t, msg)
+	cs, err := chainOf(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sigs := cs.sigs
 	jf := &JSONKeyFetcher{Path: "../../dns.json"}
-	if f := prefetchKeys(headers, jf, VerifyOptions{}); f != KeyFetcher(jf) {
+	if f := prefetchKeys(sigs, jf, VerifyOptions{}); f != KeyFetcher(jf) {
 		t.Errorf("dns.json keys were wrapped for prefetch: %T", f)
 	}
 	fk := loadFileKeys(t, "../../dns.json")
-	if f := prefetchKeys(headers, fk, VerifyOptions{}); f == nil {
+	if f := prefetchKeys(sigs, fk, VerifyOptions{}); f == nil {
 		t.Error("nil fetcher")
 	} else if _, ok := f.(*keyPrefetcher); ok {
 		t.Error("an override fetcher was prefetched")
 	}
 	res := newFakeResolver(t, nil)
 	nf := &NetKeyFetcher{Resolver: res}
-	if f := prefetchKeys(headers, nf, VerifyOptions{NoKeyPrefetch: true}); f != KeyFetcher(nf) {
+	if f := prefetchKeys(sigs, nf, VerifyOptions{NoKeyPrefetch: true}); f != KeyFetcher(nf) {
 		t.Errorf("NoKeyPrefetch still prefetched: %T", f)
 	}
 	if len(res.count()) != 0 {
 		t.Errorf("lookups made: %v", res.count())
 	}
-	if f := prefetchKeys(headers, nf, VerifyOptions{}); f == KeyFetcher(nf) {
+	if f := prefetchKeys(sigs, nf, VerifyOptions{}); f == KeyFetcher(nf) {
 		t.Error("real DNS keys were not prefetched")
+	}
+}
+
+// TestPrefetchCap: at most PrefetchMax lookups, the top signature's keys
+// first, each name once, and none for an algorithm this build lacks.
+func TestPrefetchCap(t *testing.T) {
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	sig := func(i int, d string, items []string) string {
+		return fmt.Sprintf("DKIM2-Signature: i=%d; m=1; t=1; d=%s; mf=%s; rt=%s; s=%s\r\n",
+			i, d, b64("<a@"+d+">"), b64("<b@x.example>"), strings.Join(items, ","))
+	}
+	items := []string{"u:new-alg:AAAA", "s0:ed25519-sha256:AAAA"}
+	for k := 0; k < 50; k++ {
+		items = append(items, fmt.Sprintf("s%d:rsa-sha256:AAAA", k))
+	}
+	sigs := []string{sig(1, "low.example", []string{"l:rsa-sha256:AAAA"}), sig(2, "top.example", items)}
+	res := newFakeResolver(t, nil)
+	pf, ok := prefetchKeys(sigs, &NetKeyFetcher{Resolver: res}).(*keyPrefetcher)
+	if !ok {
+		t.Fatal("not prefetched")
+	}
+	var got []string
+	for name := range pf.lookups {
+		got = append(got, name)
+	}
+	sort.Strings(got)
+	want := []string{"s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"}
+	for k := range want {
+		want[k] += "._domainkey.top.example"
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("prefetched %v, want %v", got, want)
+	}
+}
+
+// TestNoPrefetchOnStructureError: a chain whose structure fails (C9 steps
+// a..h) is rejected before any key is looked up.
+func TestNoPrefetchOnStructureError(t *testing.T) {
+	msg, _ := prefetchMsg(t)
+	msg = append([]byte("DKIM2-Signature: i=5; m=1\r\n"), msg...)
+	res := newFakeResolver(t, nil)
+	for _, undo := range []bool{false, true} {
+		_, err := VerifyFull(bytes.NewReader(msg), &NetKeyFetcher{Resolver: res},
+			VerifyOptions{SkipTimestampCheck: true, UndoWalk: undo})
+		if err == nil || err.Error() != "PERMERROR: DKIM2-Signature i=3 missing" {
+			t.Errorf("undo=%v: err = %v", undo, err)
+		}
+	}
+	if _, err := Verify(bytes.NewReader(msg), &NetKeyFetcher{Resolver: res}); err == nil {
+		t.Error("Verify passed")
+	}
+	if n := res.count(); len(n) != 0 {
+		t.Errorf("lookups made: %v", n)
 	}
 }
