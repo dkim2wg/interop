@@ -93,6 +93,7 @@ t/headerparser.t
 t/ignore-prefixes.t
 t/interop.t
 t/invalid-json.t
+t/json-backend.t
 t/key-record.t
 t/lib/ChainPlanReference.pm
 t/lib/DKIM2SignedFixture.pm

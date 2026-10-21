@@ -1,5 +1,16 @@
 Revision history for Mail::DKIM2
 
+0.27    2026-10-21
+        Fix a test failure on hosts without JSON::XS.
+
+        - A Recipe number with an exponent ({"c":[1e0,3]}) is refused
+          whichever JSON backend JSON.pm picks. JSON::PP decodes 1e0 as
+          an integer where JSON::XS gives a float, so with JSON::PP 0.25
+          and 0.26 accepted it and failed t/recipe-order.t on install.
+          decode_tag_json now refuses any number with a fraction or an
+          exponent from the JSON text itself.
+        - New t/json-backend.t runs the check under JSON::PP.
+
 0.26    2026-10-20
         The Message-Instances are verified before the signatures, and a
         message in a file can be signed and gated without reading it into

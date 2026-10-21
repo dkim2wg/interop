@@ -3,7 +3,7 @@ use Test::More;
 use Mail::DKIM2;
 use Mail::DKIM2::Common qw(DKIM2_DRAFT DKIM2_DATE);
 is(DKIM2_DRAFT, 'ietf-dkim-dkim2-spec-07', 'draft constant is -07');
-is($Mail::DKIM2::VERSION, '0.26', 'the distribution is 0.26');
+is($Mail::DKIM2::VERSION, '0.27', 'the distribution is 0.27');
 is(DKIM2_DATE, '2026-10-18', 'software date is the last DKIM2 behaviour change (draft -07)');
 
 # One distribution version, carried by every module.
