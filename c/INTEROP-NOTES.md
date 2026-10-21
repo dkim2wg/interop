@@ -805,6 +805,23 @@ util/negative-vectors.sh. Until then, the five can name different primary
 errors (same state) on messages with more than one §14.2 fault, or with
 several wrong hashes in one instance.
 
+## 25. Implementations behind Perl: hashes before signatures (2026-10-20)
+
+Mail::DKIM2 0.26 (Perl) checks the Message-Instances before the signatures,
+C9 as revised with Bron on 2026-10-20
+(docs/superpowers/specs/2026-10-18-dkim2-spec-07-design.md): §14.2
+structure, each Message-Instance's content, the §14.7 walk, and only then
+each DKIM2-Signature's content, §14.3 to §14.6, and §14.8. A hash mismatch
+is the primary error over any timestamp, custody, key or signature error, and
+no key is fetched for a message whose instances fail.
+
+**Python, Go, C and the browser JS have NOT been ported yet.** Until they
+are, they name a different primary error (and possibly state) on a message
+with both a failing walk and a signature fault. util/negative-vectors.sh
+already expects the new order, so they show WRONG PRIMARY on
+multi-bad-signature-header-hash and multi-expired-recipe-past-end;
+perl/t/spec07.t has more cases ("14.7 before 14.x").
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused

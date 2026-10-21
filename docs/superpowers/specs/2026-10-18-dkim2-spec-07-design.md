@@ -192,15 +192,21 @@ PERMERROR.
 ## C9. Check order and the primary result (added 2026-10-19, final review I1)
 
 All five verifiers report the same primary error and state for the same input.
-They run, or at least rank, the checks in -07 §14 section order:
+They check the Message-Instances first and the signatures over them second
+(Bron, 2026-10-20: the order the §14 introduction gives, hashes and then the
+signature, rather than the numbering of its subsections). A signature is only
+worth checking, and its key only worth fetching, over instances that describe
+the message. They run, or at least rank, the checks in this order:
 
-1. §14.2: header field validity (syntax, tags, Recipes, duplicate hash/selector, "is not signed", missing)
-2. §14.3: timestamps (expired, from the future)
-3. §14.4: Chain of Custody, envelope match, then the C4 steps
-4. §14.5: public keys (TEMPERROR/PERMERROR key strings)
-5. §14.6: signature verification (FAIL selector strings)
-6. §14.7: body and header hashes (FAIL hash mismatch)
-7. §14.8: From Authentic
+1. §14.2 structure: what the field names and their m=/i= numbers decide (a..h below)
+2. §14.2 Message-Instance content, by ascending m=
+3. §14.7: body and header hashes, the chain walk (FAIL hash mismatch)
+4. §14.2 DKIM2-Signature content, by ascending i=
+5. §14.3: timestamps (expired, from the future)
+6. §14.4: Chain of Custody, envelope match, then the C4 steps
+7. §14.5: public keys (TEMPERROR/PERMERROR key strings)
+8. §14.6: signature verification (FAIL selector strings)
+9. §14.8: From Authentic
 
 The PRIMARY error is the first one in this order. Within one section, the lowest
 i= (or m=) comes first.
@@ -234,8 +240,9 @@ util/negative-vectors.sh pin each):
      b..e decide which fields are in the chain at all, so they come before
      the gaps and the coverage that are worked out from those fields.
      A message with no DKIM2 fields at all is "none", not an error.
-  2. CONTENT -- each field's own content: Message-Instances by ascending m=,
-     then DKIM2-Signatures by ascending i=. Within one field: its tag-list
+  2. CONTENT -- each field's own content: Message-Instances by ascending m=
+     before the chain walk, DKIM2-Signatures by ascending i= after it. Within
+     one field: its tag-list
      syntax, then missing or unexpected tags, then duplicate hash algorithm /
      duplicate selector / too many selectors, then (Message-Instance) its
      Recipe: base64, JSON, the §5 schema, and the "c" ranges ascending without
@@ -249,8 +256,8 @@ util/negative-vectors.sh pin each):
   order the h= tag lists the algorithms, before any body hash, in the same
   order. So an instance whose sha512 header hash and sha256 body hash are both
   wrong reports the header hash.
-- Every signature is checked whether or not the chain walk reaches the
-  instance it covers. The result state (and the A-R result) is the primary
+- A chain walk that fails is the primary error, whatever is wrong with the
+  signatures, and none of them need be checked. The result state (and the A-R result) is the primary
 error's state. A verifier may list later errors after the primary one, but they
 never change the state, and the primary error is the first `STATE: text` line
 the CLI prints. A From tampered on a signed message is therefore

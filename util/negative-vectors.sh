@@ -43,7 +43,7 @@
 # error's own token, and, for the CLIs that also report an overall result
 # (JS's "<overall>: ", Perl's "<result> ("), that result too.  The multi-*
 # vectors carry two faults each and pin which one is primary (the first in
-# -07 §14 section order).  multi-expired-* is verified with the real clock
+# C9's order: the Message-Instances, walk included, before the signatures).  multi-expired-* is verified with the real clock
 # (no --ignore-timestamps): its expiry is the point.
 set -u
 
@@ -112,13 +112,13 @@ want_text() {
     multi-header-and-body-tampered.eml) echo "FAIL: Message-Instance m=1 header hash sha256 mismatch" ;;  # header before body
     multi-expired-custody.eml) echo "PERMERROR: DKIM2-Signature i=1 signature expired" ;;       # §14.3 < §14.4
     multi-custody-bad-signature.eml) echo "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match" ;;  # §14.4 < §14.6
-    multi-bad-signature-header-hash.eml) echo "FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature" ;;  # §14.6 < §14.7
+    multi-bad-signature-header-hash.eml) echo "FAIL: Message-Instance m=1 header hash sha256 mismatch" ;;  # §14.7 < §14.6
     multi-tamper-two-instances.eml) echo "FAIL: Message-Instance m=2 header hash sha256 mismatch" ;;  # §14.7 top down
     # A Recipe malformed on its own is §14.2; one that only fails against
     # the message is found by the §14.7 walk, in walk order.
     multi-expired-recipe-json.eml|multi-expired-recipe-order.eml)
                              echo "PERMERROR: Message-Instance m=2 contains invalid JSON" ;;  # §14.2 < §14.3
-    multi-expired-recipe-past-end.eml) echo "PERMERROR: DKIM2-Signature i=1 signature expired" ;;  # §14.3 < walk
+    multi-expired-recipe-past-end.eml) echo "PERMERROR: Message-Instance m=2 contains invalid JSON" ;;  # walk < §14.3
     multi-tamper-recipe-past-end.eml) echo "FAIL: Message-Instance m=2 body hash sha256 mismatch" ;;  # top hash, then undo
     *) echo "want_text: no expected text for $1" >&2; return 1 ;;
     esac
