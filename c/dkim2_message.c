@@ -10,7 +10,7 @@
 #include <ctype.h>
 
 /* Scan header array, parse any Message-Instance and DKIM2-Signature headers
-   into ctx->mi_list and ctx->sig_list. */
+   into ctx->mi_list and ctx->sig_list (ctx->bad_list when they do not). */
 void dkim2_ctx_collect(dkim2_ctx_t *ctx) {
     for (int i = 0; i < ctx->n_headers; i++) {
         const char *hdr = ctx->headers[i];
@@ -31,30 +31,10 @@ void dkim2_ctx_collect(dkim2_ctx_t *ctx) {
         memcpy(valdup, val, vlen);
         valdup[vlen] = '\0';
 
-        if (strcmp(name, "message-instance") == 0) {
-            char errbuf[256];
-            dkim2_mi_t *mi = dkim2_mi_parse_err(valdup, errbuf, sizeof errbuf);
-            if (mi) {
-                dkim2_mi_t **tail = &ctx->mi_list;
-                while (*tail) tail = &(*tail)->next;
-                *tail = mi;
-            } else if (errbuf[0] && !ctx->mi_error[0]) {
-                /* Keep the first specific parse error; a later MI header
-                   failing for an unrelated reason shouldn't overwrite it. */
-                snprintf(ctx->mi_error, sizeof ctx->mi_error, "%s", errbuf);
-            }
-        } else if (strcmp(name, "dkim2-signature") == 0) {
-            char errbuf[256];
-            dkim2_sig_t *sig = dkim2_sig_parse_err(valdup, errbuf, sizeof errbuf);
-            if (sig) {
-                dkim2_sig_t **tail = &ctx->sig_list;
-                while (*tail) tail = &(*tail)->next;
-                *tail = sig;
-            } else if (!ctx->sig_error[0]) {
-                /* Never skipped silently: dkim2_do_verify() PERMERRORs. */
-                snprintf(ctx->sig_error, sizeof ctx->sig_error, "%s", errbuf);
-            }
-        }
+        if (strcmp(name, "message-instance") == 0)
+            dkim2_ctx_add_field(ctx, 0, valdup);
+        else if (strcmp(name, "dkim2-signature") == 0)
+            dkim2_ctx_add_field(ctx, 1, valdup);
         free(valdup);
     }
 }
@@ -88,6 +68,7 @@ int dkim2_sign_message(const char *eml_path, FILE *out,
 
     dkim2_mi_free(ctx.mi_list);
     dkim2_sig_free(ctx.sig_list);
+    dkim2_badfield_free(ctx.bad_list);
 
     free(ctx.body);
     if (r < 0) {
@@ -175,6 +156,7 @@ dkim2_verify_result_t dkim2_verify_message_opts(const char *eml_path,
     dkim2_prefetch_free(ctx.prefetch);
     dkim2_mi_free(ctx.mi_list);
     dkim2_sig_free(ctx.sig_list);
+    dkim2_badfield_free(ctx.bad_list);
     free(ctx.body);
     eml_free(headers, n_headers);
     return result;

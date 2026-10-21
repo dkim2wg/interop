@@ -53,6 +53,20 @@ typedef struct dkim2_sig {
     struct dkim2_sig *next;
 } dkim2_sig_t;
 
+/* A Message-Instance or DKIM2-Signature field that did not parse. It is
+   kept (in header order, top down) rather than dropped: its number still
+   counts for the §14.2 structure checks, and its error ranks with the
+   other fields' by contract C9 (dkim2_do_verify). */
+typedef struct dkim2_badfield {
+    int is_sig;             /* 0 = Message-Instance, 1 = DKIM2-Signature */
+    int num;                /* its usable m= (Message-Instance) or i=, else 0 */
+    int sig_m;              /* a DKIM2-Signature's usable m=, else 0 */
+    int structural;         /* the error is about the field's number (no
+                               usable m=, or no usable i=/m=): §14.2 b or d */
+    char *err;              /* the PERMERROR to report */
+    struct dkim2_badfield *next;
+} dkim2_badfield_t;
+
 /* Per-message context */
 typedef struct dkim2_ctx {
     /* Collected headers in order received */
@@ -64,22 +78,19 @@ typedef struct dkim2_ctx {
     dkim2_mi_t  *mi_list;   /* ascending m= order */
     dkim2_sig_t *sig_list;  /* ascending i= order */
 
-    /* Set by the header-collection path (dkim2_message.c/dkim2_milter.c) when
-       a Message-Instance header fails to parse with a specific, reportable
-       cause (currently: -07 §9.3 duplicate hash algorithm in h=) rather
-       than simply being malformed/absent. Such a header never makes it into
-       mi_list, so nothing downstream would otherwise ever see the problem --
-       dkim2_do_verify() checks this first, before any DNS/crypto work, and
-       reports it verbatim. Empty string means no such error occurred. */
+    /* The first parse error of a Message-Instance / DKIM2-Signature field
+       (dkim2_ctx_add_field), for the signer, which refuses on any. The
+       verifier ranks every such field from bad_list instead (contract C9).
+       Empty string means none. */
     char mi_error[256];
-
-    /* Likewise for a DKIM2-Signature that fails to parse (dkim2_sig_parse_err):
-       it never makes it into sig_list, and dkim2_do_verify() reports this as a
-       PERMERROR before anything else rather than verifying the rest as if it
-       were not there. Otherwise a junk "DKIM2-Signature: m=2" would be
-       invisible here while another implementation, or a reader counting
-       coverage by m=, saw it. Empty string means none. */
     char sig_error[256];
+
+    /* Every field that did not parse, top down (dkim2_ctx_add_field). */
+    dkim2_badfield_t *bad_list;
+
+    /* How many Message-Instance / DKIM2-Signature fields there are, parsed
+       or not (dkim2_ctx_add_field; contract C9 step a). */
+    int n_mi_fields, n_sig_fields;
 
     /* Body hash — computed incrementally, never buffered.
        Holds every implemented algorithm's digest (-07 §3.1). */

@@ -787,12 +787,13 @@ int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz) {
         const level_t *lv = &p->lv[vi];
         const dkim2_mi_t *mi = lv->mi;
         int n_checked = 0;
+        /* Every header hash, in h= order, before any body hash (contract
+           C9, as the undo walk). */
         for (int hi = 0; hi < mi->n_hsets; hi++) {
             int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
             if (alg < 0) continue;
             size_t alen = dkim2_hash_alg_len(alg);
             n_checked++;
-            /* Header hash before body hash (contract C9, as the undo walk). */
             unsigned char stored_h[DKIM2_MAX_HASH_LEN];
             int hl = (int)b64_decode(mi->hsets[hi].hdr_hash, stored_h, sizeof stored_h);
             if (hl != (int)alen || memcmp(lv->hdr.d[alg], stored_h, alen) != 0) {
@@ -800,18 +801,21 @@ int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz) {
                     "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
                 return -1;
             }
-            if (!lv->gone) {
-                unsigned char stored[DKIM2_MAX_HASH_LEN];
-                int bl = (int)b64_decode(mi->hsets[hi].body_hash, stored, sizeof stored);
-                if (bl != (int)alen) {
-                    snprintf(errbuf, errbufsz, "PERMERROR: bad body hash in MI m=%d", mi->m);
-                    return -1;
-                }
-                if (lv->acc >= 0 && memcmp(p->acc[lv->acc].out.d[alg], stored, alen) != 0) {
-                    snprintf(errbuf, errbufsz,
-                        "FAIL: Message-Instance m=%d body hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
-                    return -1;
-                }
+        }
+        for (int hi = 0; hi < mi->n_hsets && !lv->gone; hi++) {
+            int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
+            if (alg < 0) continue;
+            size_t alen = dkim2_hash_alg_len(alg);
+            unsigned char stored[DKIM2_MAX_HASH_LEN];
+            int bl = (int)b64_decode(mi->hsets[hi].body_hash, stored, sizeof stored);
+            if (bl != (int)alen) {
+                snprintf(errbuf, errbufsz, "PERMERROR: bad body hash in MI m=%d", mi->m);
+                return -1;
+            }
+            if (lv->acc >= 0 && memcmp(p->acc[lv->acc].out.d[alg], stored, alen) != 0) {
+                snprintf(errbuf, errbufsz,
+                    "FAIL: Message-Instance m=%d body hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
+                return -1;
             }
         }
         if (n_checked == 0) {

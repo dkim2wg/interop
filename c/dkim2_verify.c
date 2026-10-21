@@ -614,14 +614,14 @@ static int undo_walk(
             }
         }
         int n_checked = 0;
+        /* Every header hash, in h= order, before any body hash (contract
+           C9: the same primary error as the other verifiers when both are
+           wrong). */
         for (int hi = 0; !trace && hi < mi->n_hsets; hi++) {
             int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
             if (alg < 0) continue;          /* -07 §3.5: ignore what we don't implement */
             size_t alen = dkim2_hash_alg_len(alg);
             n_checked++;
-
-            /* Header hash before body hash (contract C9: the same primary
-               error as the other verifiers when both are wrong). */
             unsigned char computed_hh[DKIM2_MAX_HASH_LEN];
             if (dkim2_header_hash_raw_alg((const char **)content, n_content, alg, computed_hh) < 0) {
                 snprintf(errbuf, errbufsz, "PERMERROR: header hash computation failed");
@@ -634,8 +634,11 @@ static int undo_walk(
                     "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
                 ret = -1; goto done;
             }
-
-            if (!body_gone) {
+        }
+        for (int hi = 0; !trace && !body_gone && hi < mi->n_hsets; hi++) {
+            int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
+            if (alg < 0) continue;
+            size_t alen = dkim2_hash_alg_len(alg);
             unsigned char stored_bh[DKIM2_MAX_HASH_LEN];
             int bh_len = (int)b64_decode(mi->hsets[hi].body_hash, stored_bh, sizeof stored_bh);
             if (bh_len != (int)alen) {
@@ -658,7 +661,6 @@ static int undo_walk(
                 snprintf(errbuf, errbufsz,
                     "FAIL: Message-Instance m=%d body hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
                 ret = -1; goto done;
-            }
             }
         }
         /* Fail closed: an MI naming no implemented algorithm is unverifiable. */
@@ -799,18 +801,116 @@ done:
     return ret;
 }
 
-/* -07 §14.2 for every Message-Instance's r= on its own, highest m= first:
-   base64 that does not decode is a syntax error, JSON that does not parse
-   or breaks the §5 schema (dkim2_recipe_parse: duplicate keys, step shapes,
-   "c" ranges ascending) is invalid JSON. 0, or -1 with the PERMERROR in
-   msg. */
-static int recipe_fields_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) {
-    enum { MAX_MI = 64 };
-    dkim2_mi_t *mis[MAX_MI];
-    int n_mi = dkim2_mi_sorted(ctx->mi_list, mis, MAX_MI);
-    for (int vi = n_mi - 1; vi >= 0; vi--) {
-        const dkim2_mi_t *mi = mis[vi];
-        if (!mi->r_raw) continue;
+/* -07 §14.2 structure, contract C9 steps a..h: what the field names and
+   their m=/i= numbers alone decide, the first that applies being primary.
+   0, or -1 with the PERMERROR in msg. */
+static int structure_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) {
+    enum { N = DKIM2_MAX_CHAIN_LENGTH + 1 };
+    int n_mi[N] = {0}, n_sig[N] = {0}, sig_m[N] = {0};
+    int max_m = 0, max_i = 0;
+    const dkim2_badfield_t *b;
+
+    /* a. Too many fields (the chain-length limit), parsed or not:
+       Message-Instance first. */
+    if (ctx->n_mi_fields > DKIM2_MAX_CHAIN_LENGTH) {
+        snprintf(msg, msgsz, "PERMERROR: more than %d Message-Instance fields", DKIM2_MAX_CHAIN_LENGTH);
+        return -1;
+    }
+    if (ctx->n_sig_fields > DKIM2_MAX_CHAIN_LENGTH) {
+        snprintf(msg, msgsz, "PERMERROR: more than %d DKIM2-Signature fields", DKIM2_MAX_CHAIN_LENGTH);
+        return -1;
+    }
+    /* b. A Message-Instance with no usable m=, the first top down. */
+    for (b = ctx->bad_list; b; b = b->next)
+        if (!b->is_sig && b->structural) {
+            snprintf(msg, msgsz, "%s", b->err);
+            return -1;
+        }
+    /* c. A Message-Instance m= given twice: the lowest. */
+    for (const dkim2_mi_t *mi = ctx->mi_list; mi; mi = mi->next)
+        if (mi->m >= 1 && mi->m < N) n_mi[mi->m]++;
+    for (b = ctx->bad_list; b; b = b->next)
+        if (!b->is_sig && b->num >= 1 && b->num < N) n_mi[b->num]++;
+    for (int x = 1; x < N; x++) {
+        if (n_mi[x] > 1) {
+            snprintf(msg, msgsz, "PERMERROR: Message-Instance m=%d appears more than once", x);
+            return -1;
+        }
+        if (n_mi[x]) max_m = x;
+    }
+    /* d. A DKIM2-Signature with no usable i= (or m=), the first top down. */
+    for (b = ctx->bad_list; b; b = b->next)
+        if (b->is_sig && b->structural) {
+            snprintf(msg, msgsz, "%s", b->err);
+            return -1;
+        }
+    /* e. A DKIM2-Signature i= given twice: the lowest. */
+    for (const dkim2_sig_t *s = ctx->sig_list; s; s = s->next)
+        if (s->i >= 1 && s->i < N) { n_sig[s->i]++; sig_m[s->i] = s->m; }
+    for (b = ctx->bad_list; b; b = b->next)
+        if (b->is_sig && b->num >= 1 && b->num < N) { n_sig[b->num]++; sig_m[b->num] = b->sig_m; }
+    for (int x = 1; x < N; x++) {
+        if (n_sig[x] > 1) {
+            snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d appears more than once", x);
+            return -1;
+        }
+        if (n_sig[x]) max_i = x;
+    }
+    /* f. The lowest m= missing up to the higher of the highest m= and the
+       top signature's m= (0 when that field has none: its content error
+       is reported later). */
+    int top_m = max_i ? sig_m[max_i] : 0;
+    for (int x = 1; x <= (max_m > top_m ? max_m : top_m); x++)
+        if (!n_mi[x]) {
+            snprintf(msg, msgsz, "PERMERROR: Message-Instance m=%d missing", x);
+            return -1;
+        }
+    /* g. The highest Message-Instance is not signed: no signature's m=
+       reaches it (any signature, not only the top one; 0 when none has a
+       usable m=: their content errors are reported later). Outbound mode
+       (signer gate): the unsigned top instance is the one the signer is
+       about to cover. */
+    int signed_m = 0;
+    for (int x = 1; x <= max_i; x++)
+        if (sig_m[x] > signed_m) signed_m = sig_m[x];
+    if (!ctx->outbound && max_m && (!max_i || (signed_m && signed_m < max_m))) {
+        snprintf(msg, msgsz, "PERMERROR: Message-Instance m=%d is not signed", max_m);
+        return -1;
+    }
+    /* h. The lowest i= missing. */
+    for (int x = 1; x <= max_i; x++)
+        if (!n_sig[x]) {
+            snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d missing", x);
+            return -1;
+        }
+    return 0;
+}
+
+/* The field on ctx->bad_list of this kind and number, or NULL. */
+static const dkim2_badfield_t *bad_field(const dkim2_ctx_t *ctx, int is_sig, int num) {
+    for (const dkim2_badfield_t *b = ctx->bad_list; b; b = b->next)
+        if (b->is_sig == is_sig && b->num == num) return b;
+    return NULL;
+}
+
+/* -07 §14.2 Message-Instance content, by ascending m= (after the structure
+   checks: m= is 1..N, each once): a field that did not parse reports its
+   own error; otherwise its r= on its own, whether or not the chain walk
+   reaches it -- base64 that does not decode is a syntax error, JSON that
+   does not parse or breaks the §5 schema (dkim2_recipe_parse: duplicate
+   keys, step shapes, "c" ranges ascending) is invalid JSON. A Recipe that
+   does not fit the message (a copy past the end) is the walk's to find
+   (§14.7). 0, or -1 with the error in msg. */
+static int mi_content_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) {
+    for (int x = 1; x <= DKIM2_MAX_CHAIN_LENGTH; x++) {
+        const dkim2_badfield_t *b = bad_field(ctx, 0, x);
+        if (b) {
+            snprintf(msg, msgsz, "%s", b->err);
+            return -1;
+        }
+        const dkim2_mi_t *mi = ctx->mi_list;
+        while (mi && mi->m != x) mi = mi->next;
+        if (!mi || !mi->r_raw) continue;
         size_t max = strlen(mi->r_raw) * 3 / 4 + 4;
         unsigned char *json = malloc(max + 1);
         if (!json) {
@@ -831,6 +931,31 @@ static int recipe_fields_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) 
             return -1;
         }
         cJSON_Delete(r);
+    }
+    return 0;
+}
+
+/* -07 §14.2 DKIM2-Signature content, by ascending i= (sig_arr: every
+   signature, i= 1..n_sigs): a field that did not parse reports its own
+   error; otherwise every implemented item's value must be a padded
+   base64string (FWS already removed by the parser), then the §10.9
+   duplicate and limit rules. 0, or -1 with the PERMERROR in msg. */
+static int sig_content_error(const dkim2_ctx_t *ctx, dkim2_sig_t **sig_arr, int n_sigs,
+                             char *msg, size_t msgsz) {
+    for (int x = 1, si = 0; x <= DKIM2_MAX_CHAIN_LENGTH; x++) {
+        const dkim2_badfield_t *b = bad_field(ctx, 1, x);
+        if (b) {
+            snprintf(msg, msgsz, "%s", b->err);
+            return -1;
+        }
+        if (si >= n_sigs || sig_arr[si]->i != x) continue;
+        const dkim2_sig_t *sig = sig_arr[si++];
+        for (int j = 0; j < sig->n_ssets; j++)
+            if (known_sig_alg(sig->ssets[j].alg) && !b64_is_strict(sig->ssets[j].sig_b64)) {
+                snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d syntax error", sig->i);
+                return -1;
+            }
+        if (dkim2_sig_check_duplicates(sig, msg, msgsz) < 0) return -1;
     }
     return 0;
 }
@@ -897,161 +1022,74 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = 0;
     result->domain[0] = '\0';
 
-    /* -07 §9.3: a Message-Instance header that failed to parse --
-       whether with a specific reportable cause (duplicate hash algorithm in
-       h=, the -2 case) or a plain syntax/malloc failure (-1: a missing
-       required tag, a malformed h= entry, or an allocation failure) -- never
-       made it into ctx->mi_list. The header-collection path
-       (dkim2_message.c/dkim2_milter.c) dropped it and recorded the reason
-       here instead via dkim2_mi_parse_err()'s errbuf. Report it immediately,
-       before any other check (including DNS/crypto), and regardless of
-       whether the affected m= would have been the topmost, signature-covered
-       instance or the bottom (m=1) one: it must never simply vanish, and
-       must never be misreported as "no Message-Instance for m=N" (the wrong
-       error, describing the wrong problem).
-
-       The bottom-MI case matters in its own right: nothing else in this
-       function or in verify_mi_hashes() (-07 §14.7, below) independently checks
-       for a dropped m=1 -- the only thing that happens to catch it today is
-       that m=1's raw bytes are always part of every covering signature's
-       -07 §14.6 crypto input (mi->m is always <= any sig's target m), so a drop
-       usually surfaces as an incidental "signature verification failed"
-       instead. A hand-built message whose signatures were computed to match
-       the verifier's already-missing-m=1 reconstruction (see
-       c/tests/test_verify.c) passes with no error at all if this mi_error
-       check doesn't run first -- i.e. without this check, the bottom-MI case
-       fails OPEN in that construction. This check must fire unconditionally,
-       before that crypto path is ever reached. */
     /* No DKIM2 header fields at all: "none" (A-R dkim2=none), with no
        error string -- not a PERMERROR (contract C6, 2026-10-18). */
-    if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0] && !ctx->sig_error[0]) {
+    if (!ctx->mi_list && !ctx->sig_list && !ctx->bad_list) {
         result->status = DKIM2_NONE;
         return;
     }
 
-    if (ctx->mi_error[0])
-        SETSTATUS(DKIM2_PERMERROR, "%s", ctx->mi_error);
-
-    /* Likewise a DKIM2-Signature that did not parse (no i=, an i= that is
-       not a positive integer, a missing required tag): a PERMERROR, never
-       verified around as if it were absent. */
-    if (ctx->sig_error[0])
-        SETSTATUS(DKIM2_PERMERROR, "%s", ctx->sig_error);
-
-    /* -07 §9.1/§14.7: each Message-Instance m= value appears once. Check it
-       explicitly (inbound and outbound), before any crypto, rather than
-       leaving it to an incidental signature or hash failure. */
-    for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next)
-        for (const dkim2_mi_t *b = a->next; b; b = b->next)
-            if (a->m == b->m)
-                SETSTATUS(DKIM2_PERMERROR, "PERMERROR: Message-Instance m=%d appears more than once", a->m);
-
-    /* -07 §9.1: m= values must be contiguous 1..N. Explicit, before any
-       crypto: name the first missing m= (§14.2 "missing"). (An unsigned top MI above the top signature
-       is still a member of 1..N, so outbound mode needs no exemption; only a
-       gap is an error.) */
+    /* Contract C9: the checks run in this order, so the first error found
+       is the primary one: §14.2 structure, Message-Instance content, the
+       §14.7 chain walk, DKIM2-Signature content, then §14.3, §14.4, §14.5,
+       §14.6 and §14.8 over the signatures. A field that did not parse
+       (ctx->bad_list) is never verified around as if it were absent: its
+       number counts for the structure, and its error ranks with its
+       kind's content. No key is used before the walk passes (the
+       prefetch only looks them up). */
     {
-        int max_m = 0, n_mi = 0;
-        for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next) {
-            n_mi++;
-            if (a->m > max_m) max_m = a->m;
-        }
-        for (int want = 1; n_mi && want <= max_m; want++) {
-            int found = 0;
-            for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next)
-                if (a->m == want) { found = 1; break; }
-            if (!found)
-                SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: Message-Instance m=%d missing", want);
-        }
+        char sbuf[256];
+        if (structure_error(ctx, sbuf, sizeof sbuf) < 0)
+            SETSTATUS(DKIM2_PERMERROR, "%s", sbuf);
     }
 
-    /* Outbound mode (signer gate): a chain with no signature yet -- just an
-       unsigned Message-Instance the signer is about to cover -- has no
-       signature to verify; its MI chain is still checked. */
-    if (ctx->outbound && !ctx->sig_list && ctx->mi_list) {
-        char mi_errbuf[512];
-        if (verify_ctx_mi_chain(ctx, mi_errbuf, sizeof mi_errbuf) < 0)
-            SETSTATUS((mi_errbuf[0] == 'F') ? DKIM2_FAIL : DKIM2_PERMERROR,
-                "%s", mi_errbuf);
-        result->status = DKIM2_OK;
-        snprintf(result->message, sizeof result->message,
-            "PASS: no DKIM2-Signature yet; Message-Instance chain verified");
-        return;
-    }
-
-    /* -07 §14.2: Message-Instance fields but no DKIM2-Signature: the top
-       instance is not signed. */
-    if (!ctx->sig_list) {
-        int top = 0;
-        for (const dkim2_mi_t *a = ctx->mi_list; a; a = a->next)
-            if (a->m > top) top = a->m;
-        SETSTATUS(DKIM2_PERMERROR, "PERMERROR: Message-Instance m=%d is not signed", top);
-    }
-
-    /* Build sorted array of all sigs (ascending i=) */
-    const int MAX = 64;
-    dkim2_sig_t *sig_arr[MAX]; int n_sigs = 0;
-    for (dkim2_sig_t *s = ctx->sig_list; s && n_sigs < MAX; s = s->next)
+    /* The signatures, ascending i= (1..n_sigs once the content of any
+       that did not parse has been reported below). */
+    dkim2_sig_t *sig_arr[DKIM2_MAX_CHAIN_LENGTH]; int n_sigs = 0;
+    for (dkim2_sig_t *s = ctx->sig_list; s && n_sigs < DKIM2_MAX_CHAIN_LENGTH; s = s->next)
         sig_arr[n_sigs++] = s;
     for (int i = 1; i < n_sigs; i++) {
         dkim2_sig_t *key = sig_arr[i]; int j = i - 1;
         while (j >= 0 && sig_arr[j]->i > key->i) { sig_arr[j+1] = sig_arr[j]; j--; }
         sig_arr[j+1] = key;
     }
-
-    dkim2_sig_t *latest = sig_arr[n_sigs - 1];
-    result->sig_i = latest->i;
-    snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
-
-    /* -07 §10.1: i= sequence must be contiguous 1..N; name the first gap. */
-    for (int i = 0; i < n_sigs; i++) {
-        if (sig_arr[i]->i != i + 1)
-            SETSTATUS(DKIM2_PERMERROR, "PERMERROR: DKIM2-Signature i=%d missing", i + 1);
+    dkim2_sig_t *latest = n_sigs ? sig_arr[n_sigs - 1] : NULL;
+    if (latest) {
+        result->sig_i = latest->i;
+        snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
     }
 
-    /* Find the MI the latest signature covers */
-    dkim2_mi_t *covered_mi = NULL;
-    for (dkim2_mi_t *m = ctx->mi_list; m; m = m->next)
-        if (m->m == latest->m) { covered_mi = m; break; }
-    if (!covered_mi)
-        SETSTATUS(DKIM2_PERMERROR,
-            "PERMERROR: Message-Instance m=%d missing", latest->m);
-
-    /* -07 §14.2: No MI with m= higher than latest->m should exist unsigned */
-    for (dkim2_mi_t *m = ctx->mi_list; m; m = m->next) {
-        /* Outbound mode: the unsigned top instance is the one the signer is
-           about to cover (e.g. a list manager's own m=), so it is allowed. */
-        if (!ctx->outbound && m->m > latest->m)
-            SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: Message-Instance m=%d is not signed", m->m);
-    }
-
-    /* Contract C9: the rest runs in -07 §14 section order, each section
-       over every signature from i=1 up, so the first error found is the
-       primary one. */
-
-    /* -07 §14.2: every Message-Instance's r= on its own, highest m= first,
-       whether or not the chain walk reaches it. A Recipe that does not fit
-       the message (a copy past the end) is the walk's to find (§14.7). */
     {
         char rbuf[256];
-        if (recipe_fields_error(ctx, rbuf, sizeof rbuf) < 0)
+        if (mi_content_error(ctx, rbuf, sizeof rbuf) < 0)
             SETSTATUS(rbuf[0] == 'T' ? DKIM2_TEMPERROR : DKIM2_PERMERROR, "%s", rbuf);
     }
 
-    /* -07 §14.2, each signature field on its own: the §10.9 duplicate and
-       limit rules, and every implemented item's value a padded
-       base64string (FWS already removed by the parser). */
-    for (int si = 0; si < n_sigs; si++) {
-        dkim2_sig_t *sig = sig_arr[si];
-        char dup_errbuf[256];
-        if (dkim2_sig_check_duplicates(sig, dup_errbuf, sizeof dup_errbuf) < 0)
-            SETSTATUS(DKIM2_PERMERROR, "%s", dup_errbuf);
-        for (int j = 0; j < sig->n_ssets; j++)
-            if (known_sig_alg(sig->ssets[j].alg) && !b64_is_strict(sig->ssets[j].sig_b64))
-                SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: DKIM2-Signature i=%d syntax error", sig->i);
+    /* -07 §14.7: every Message-Instance's hashes, undoing Recipes for the
+       inner ones. A walk that fails is the primary error, whatever is
+       wrong with the signatures. */
+    if (ctx->mi_list) {
+        char mi_errbuf[512];
+        if (verify_ctx_mi_chain(ctx, mi_errbuf, sizeof mi_errbuf) < 0)
+            SETSTATUS((mi_errbuf[0] == 'F') ? DKIM2_FAIL : DKIM2_PERMERROR,
+                "%s", mi_errbuf);
+    }
+
+    {
+        char cbuf[256];
+        if (sig_content_error(ctx, sig_arr, n_sigs, cbuf, sizeof cbuf) < 0)
+            SETSTATUS(DKIM2_PERMERROR, "%s", cbuf);
+    }
+
+    /* Outbound mode (signer gate): a chain with no signature yet -- just an
+       unsigned Message-Instance the signer is about to cover -- has no
+       signature to verify; its chain was walked above. (Inbound, the
+       structure checks have reported it as not signed.) */
+    if (!latest) {
+        result->status = DKIM2_OK;
+        snprintf(result->message, sizeof result->message,
+            "PASS: no DKIM2-Signature yet; Message-Instance chain verified");
+        return;
     }
 
     /* -07 §14.3: not Validly Signed when made more than 14 days before
@@ -1119,7 +1157,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
           signature, even if another item verifies; absent is skipped.
        4. all absent: PERMERROR naming the first.
        5. verify every item that has a key; any failure is FAIL. */
-    dkim2_pubkey_t **keys[MAX];
+    dkim2_pubkey_t **keys[DKIM2_MAX_CHAIN_LENGTH];
     memset(keys, 0, sizeof keys);
     dkim2_status_t key_status = DKIM2_OK;
     for (int si = 0; si < n_sigs && key_status == DKIM2_OK; si++) {
@@ -1247,14 +1285,6 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     }
     result->sig_i = latest->i;
     snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
-
-    /* -07 §14.7: Verify all MI body+header hashes, undoing Recipes for inner hops. */
-    {
-        char mi_errbuf[512];
-        if (verify_ctx_mi_chain(ctx, mi_errbuf, sizeof mi_errbuf) < 0)
-            SETSTATUS((mi_errbuf[0] == 'F') ? DKIM2_FAIL : DKIM2_PERMERROR,
-                "%s", mi_errbuf);
-    }
 
     /* -07 §14.8: every From the Recipes show, and the current one, is
        Authentic for its relevant signature. */

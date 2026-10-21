@@ -54,7 +54,7 @@ static char *dns_override(const char *qname, int *n_records) {
 
 /* ---- in-memory messages ---- */
 
-#define MAXH 64
+#define MAXH 128
 typedef struct {
     char *h[MAXH];      /* "Name: value\r\n", top-down */
     int n;
@@ -276,6 +276,7 @@ static dkim2_verify_result_t verify_mode(const msg_t *m, int outbound) {
         dkim2_do_verify(&ctx, &res[walk]);
         dkim2_mi_free(ctx.mi_list);
         dkim2_sig_free(ctx.sig_list);
+        dkim2_badfield_free(ctx.bad_list);
     }
     if (res[0].status != res[1].status || strcmp(res[0].message, res[1].message) != 0) {
         printf("FAIL: walks disagree: planned \"%s\" undo \"%s\"\n", res[0].message, res[1].message);
@@ -311,6 +312,7 @@ static int lib_sign(msg_t *m, const char *d, const char *mail_from, char **rcpts
     if (err) snprintf(err, errsz, "%s", rc ? ctx.errmsg : "");
     dkim2_mi_free(ctx.mi_list);
     dkim2_sig_free(ctx.sig_list);
+    dkim2_badfield_free(ctx.bad_list);
     if (rc == 0) {
         if (mi) msg_add_top(m, "Message-Instance", mi);
         msg_add_top(m, "DKIM2-Signature", sig);
@@ -1049,14 +1051,15 @@ static void test_check_order(void) {
         CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match");
         msg_free(&m);
     }
-    {   /* §14.6 before §14.7: a bad signature, and Subject changed */
+    {   /* §14.7 before §14.6: Subject changed, and a bad signature (a
+           failing walk is primary whatever is wrong with the signatures) */
         msg_t m;
         msg_init(&m, "a@example.com", "test", "Hello\r\n");
         add_mi(&m, NULL);
         add_sig_bad(&m, 1, 1, now(), "example.com", "<a@example.com>", "<list@lists.example.org>", 1);
         msg_set(&m, "Subject", "tampered");
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 selector sel incorrect signature");
+        CHECK_MSG(res, "FAIL: Message-Instance m=1 header hash sha256 mismatch");
         CHECK(res.status == DKIM2_FAIL);
         msg_free(&m);
     }
@@ -1068,6 +1071,116 @@ static void test_check_order(void) {
         add_sig_bad(&m, 2, 1, now(), "example.org", "<list@lists.example.org>", "<b@example.net>", 1);
         dkim2_verify_result_t res = verify(&m);
         CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 selector sel incorrect signature");
+        msg_free(&m);
+    }
+
+    /* §14.2 structure, a..h, before any content (contract C9). */
+    static const char MI1[] = "m=1; h=sha256:AAAA:AAAA", MI2[] = "m=2; h=sha256:AAAA:AAAA";
+    static const char SIG1[] = "i=1; m=1; t=1; d=example.com; mf=PGE+; rt=PGE+; s=sel:ed25519-sha256:AAAA";
+    static const char SIG2[] = "i=2; m=1; t=1; d=example.com; mf=PGE+; rt=PGE+; s=sel:ed25519-sha256:AAAA";
+    {   /* c: a number given twice is reported by its lowest value */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        msg_add_top(&m, "Message-Instance", MI2);
+        msg_add_top(&m, "Message-Instance", MI2);
+        msg_add_top(&m, "Message-Instance", MI1);
+        msg_add_top(&m, "Message-Instance", MI1);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: Message-Instance m=1 appears more than once");
+        /* b before c: an instance with no m= at all */
+        msg_add_top(&m, "Message-Instance", "h=sha256:AAAA:AAAA");
+        res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: Message-Instance m= tag=m missing");
+        msg_free(&m);
+    }
+    {   /* c before d, d before e, e before f..h */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        msg_add_top(&m, "DKIM2-Signature", SIG2);
+        msg_add_top(&m, "DKIM2-Signature", SIG2);
+        msg_add_top(&m, "DKIM2-Signature", SIG1);
+        msg_add_top(&m, "DKIM2-Signature", SIG1);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 appears more than once");
+        msg_add_top(&m, "DKIM2-Signature", "m=1; t=1; d=example.com");
+        res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i= tag=i missing");
+        msg_add_top(&m, "Message-Instance", MI1);
+        msg_add_top(&m, "Message-Instance", MI1);
+        res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: Message-Instance m=1 appears more than once");
+        msg_free(&m);
+    }
+    {   /* f before g before h: m=1 missing under a signed m=2 with i= gaps;
+           then the top instance unsigned; then the lowest i= gap */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        msg_add_top(&m, "Message-Instance", MI2);
+        msg_add_top(&m, "DKIM2-Signature", SIG2);
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: Message-Instance m=1 missing");
+        msg_add_top(&m, "Message-Instance", MI1);
+        res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: Message-Instance m=2 is not signed");
+        msg_free(&m);
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        msg_add_top(&m, "Message-Instance", MI1);
+        msg_add_top(&m, "DKIM2-Signature", SIG2);
+        res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 missing");
+        msg_free(&m);
+    }
+    {   /* a: more than 32 fields of a kind, parsed or not, before all
+           else; Message-Instance first */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        for (int k = 0; k < 33; k++) {
+            msg_add_top(&m, "DKIM2-Signature", k ? SIG1 : "junk");
+            msg_add_top(&m, "Message-Instance", k ? MI1 : "junk");
+        }
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: more than 32 Message-Instance fields");
+        msg_free(&m);
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        msg_add_top(&m, "Message-Instance", MI1);
+        for (int k = 0; k < 33; k++) msg_add_top(&m, "DKIM2-Signature", SIG1);
+        res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: more than 32 DKIM2-Signature fields");
+        msg_free(&m);
+    }
+    {   /* g: signed means covered by any signature's m=, not only the top
+           one's: i=1 m=1, i=2 m=2, i=3 m=1 leaves m=2 signed */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        msg_add_top(&m, "Message-Instance", MI1);
+        msg_add_top(&m, "Message-Instance", MI2);
+        msg_add_top(&m, "DKIM2-Signature", SIG1);
+        msg_add_top(&m, "DKIM2-Signature",
+            "i=2; m=2; t=1; d=example.com; mf=PGE+; rt=PGE+; s=sel:ed25519-sha256:AAAA");
+        msg_add_top(&m, "DKIM2-Signature",
+            "i=3; m=1; t=1; d=example.com; mf=PGE+; rt=PGE+; s=sel:ed25519-sha256:AAAA");
+        dkim2_verify_result_t res = verify(&m);
+        CHECK(strstr(res.message, "is not signed") == NULL);
+        CHECK_MSG(res, "FAIL: Message-Instance m=2 header hash sha256 mismatch");
+        msg_free(&m);
+    }
+    {   /* content: Message-Instances by ascending m=, whatever the order
+           of the fields; then the walk, then the signatures' content */
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        msg_add_top(&m, "Message-Instance", "m=1; h=sha256:AAAA:AAAA; h=sha256:AAAA:AAAA");
+        msg_add_top(&m, "Message-Instance", "m=2; h=sha256:AAAA:AAAA,sha256:BBBB:BBBB");
+        msg_add_top(&m, "DKIM2-Signature",
+            "i=1; m=2; t=1; d=example.com; mf=PGE+; rt=PGE+; s=sel:ed25519-sha256:AAAA,sel:ed25519-sha256:AAAA");
+        dkim2_verify_result_t res = verify(&m);
+        CHECK_MSG(res, "PERMERROR: Message-Instance m=1 syntax error");
+        msg_free(&m);
+        msg_init(&m, "a@example.com", "test", "Hello\r\n");
+        msg_add_top(&m, "Message-Instance", MI1);
+        msg_add_top(&m, "DKIM2-Signature",
+            "i=1; m=1; t=1; d=example.com; mf=PGE+; rt=PGE+; s=sel:ed25519-sha256:AAAA,sel:ed25519-sha256:AAAA");
+        res = verify(&m);
+        CHECK_MSG(res, "FAIL: Message-Instance m=1 header hash sha256 mismatch");
         msg_free(&m);
     }
 }
@@ -1194,6 +1307,11 @@ static void test_error_strings(void) {
         msg_init(&m, "a@example.com", "test", "Hello\r\n");
         msg_add_top(&m, "Message-Instance", "m=1; r=e30=;");
         dkim2_verify_result_t res = verify(&m);
+        /* Structure before content (contract C9): unsigned first... */
+        CHECK_MSG(res, "PERMERROR: Message-Instance m=1 is not signed");
+        /* ...and once signed, the instance's own content. */
+        add_sig(&m, 1, 1, "example.com", "<a@example.com>", "<list@lists.example.org>", NULL);
+        res = verify(&m);
         CHECK_MSG(res, "PERMERROR: Message-Instance m=1 tag=h missing");
         msg_free(&m);
     }

@@ -177,6 +177,7 @@ static void check_file(const char *path, const char *label) {
     if (bad) n_fail++;
     dkim2_mi_free(ctx.mi_list);
     dkim2_sig_free(ctx.sig_list);
+    dkim2_badfield_free(ctx.bad_list);
     free(ctx.body);
     eml_free(h, nh);
 }

@@ -37,5 +37,6 @@ dkim2_verify_result_t dkim2_verify_message_opts(const char *eml_path,
                                                  const dkim2_verify_opts_t *opts);
 
 /* Parse ctx->headers' Message-Instance and DKIM2-Signature fields into
-   ctx->mi_list / ctx->sig_list (and ctx->mi_error / ctx->sig_error). */
+   ctx->mi_list / ctx->sig_list (and ctx->bad_list, ctx->mi_error /
+   ctx->sig_error), as dkim2_ctx_add_field(). */
 void dkim2_ctx_collect(dkim2_ctx_t *ctx);

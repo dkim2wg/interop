@@ -21,6 +21,18 @@
    whitespace from the value, terminate with CRLF. Used here only to
    hand-build a valid signing input for a synthetic nd= hop, since the
    C signer itself has no way to emit nd= (see test below). */
+/* "h=sha256:<header hash>:<body hash>" that a digest-only ctx with no
+   header fields and zeroed body digests walks cleanly (contract C9: the
+   chain walk comes before the signature checks). */
+static void empty_chain_hset(char *out, size_t outsz) {
+    unsigned char hh[DKIM2_MAX_HASH_LEN], zero[32] = {0};
+    char hb[64], bb[64];
+    assert(dkim2_header_hash_raw_alg(NULL, 0, 0, hh) == 0);
+    b64_encode(hh, 32, hb, sizeof hb);
+    b64_encode(zero, 32, bb, sizeof bb);
+    snprintf(out, outsz, "h=sha256:%s:%s", hb, bb);
+}
+
 static void test_canon_append(char *buf, size_t *pos,
                               const char *hdr_name, const char *value) {
     for (const char *h = hdr_name; *h; h++)
@@ -338,6 +350,7 @@ int main(void) {
         assert(strcmp(res.message, "PERMERROR: DKIM2-Signature i=1 syntax error") == 0);
         dkim2_mi_free(vctx.mi_list);
         dkim2_sig_free(vctx.sig_list);
+        dkim2_badfield_free(vctx.bad_list);
     }
 
     /* --- Error: d= does not relaxed-match mf= domain → PERMERROR,
@@ -373,11 +386,11 @@ int main(void) {
         assert(s1 != NULL && s2 != NULL);
         s1->next = s2;
 
-        /* Instances m=1 and m=2 and no timestamp check: the §14.2 and
-           §14.3 checks, which come first (contract C9), pass. */
-        static const char H[] = "h=sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:"
-                                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-        char mv[160];
+        /* Instances m=1 and m=2 and no timestamp check: the §14.2, §14.7
+           and §14.3 checks, which come first (contract C9), pass. */
+        char H[160];
+        empty_chain_hset(H, sizeof H);
+        char mv[200];
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
         vctx.sig_list = s1;
@@ -501,6 +514,11 @@ int main(void) {
         memset(&vctx, 0, sizeof vctx);
         vctx.mi_list = dkim2_mi_parse(mi2_out);
         vctx.sig_list = sig1_parsed;
+        /* The message itself, so the chain walk (before custody, contract
+           C9) passes. */
+        vctx.headers = (char **)raw_headers;
+        vctx.n_headers = 3;
+        dkim2_body_hash_raw(body, strlen(body), vctx.body_digests.d[0]);
 
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);
@@ -564,6 +582,11 @@ int main(void) {
         memset(&vctx, 0, sizeof vctx);
         vctx.mi_list = dkim2_mi_parse(mi2_out);
         vctx.sig_list = sig1_parsed;
+        /* The message itself, so the chain walk (before custody, contract
+           C9) passes. */
+        vctx.headers = (char **)raw_headers;
+        vctx.n_headers = 3;
+        dkim2_body_hash_raw(body, strlen(body), vctx.body_digests.d[0]);
 
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);

@@ -208,18 +208,10 @@ static void expect_digest_only(const char *name, int allow_null, int want_sign) 
             const char *c = strchr(h[i], ':');
             char *v = strdup(c + 2);
             v[strcspn(v, "\r\n")] = 0;
-            if (!strncasecmp(h[i], "Message-Instance", 16)) {
-                dkim2_mi_t *mi = dkim2_mi_parse(v);
-                dkim2_mi_t **t = &ctx.mi_list; while (*t) t = &(*t)->next; *t = mi;
-            } else if (!strncasecmp(h[i], "DKIM2-Signature", 15)) {
-                char eb[256];
-                dkim2_sig_t *s = dkim2_sig_parse_err(v, eb, sizeof eb);
-                if (s) {
-                    dkim2_sig_t **t = &ctx.sig_list; while (*t) t = &(*t)->next; *t = s;
-                } else if (!ctx.sig_error[0]) {
-                    snprintf(ctx.sig_error, sizeof ctx.sig_error, "%s", eb);
-                }
-            }
+            if (!strncasecmp(h[i], "Message-Instance", 16))
+                assert(dkim2_ctx_add_field(&ctx, 0, v) == 0);
+            else if (!strncasecmp(h[i], "DKIM2-Signature", 15))
+                assert(dkim2_ctx_add_field(&ctx, 1, v) == 0);
             free(v);
         }
         dkim2_sign_config_t cfg = { .domain = "test3.dkim2.com", .selector = "sel1",
@@ -233,7 +225,7 @@ static void expect_digest_only(const char *name, int allow_null, int want_sign) 
                r ? " : " : "", r ? ctx.errmsg : "");
         if (!ok) g_fail = 1;
         free(mi); free(sig);
-        dkim2_mi_free(ctx.mi_list); dkim2_sig_free(ctx.sig_list);
+        dkim2_mi_free(ctx.mi_list); dkim2_sig_free(ctx.sig_list); dkim2_badfield_free(ctx.bad_list);
         eml_free(h, nh);
     }
 }

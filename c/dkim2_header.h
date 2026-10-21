@@ -58,3 +58,13 @@ void dkim2_sig_free(dkim2_sig_t *sig);
    If empty_sig is non-zero, s= signature values are set to "" (for the -07 §12.8 signing input).
    Caller frees. */
 char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig);
+
+/* Parse one Message-Instance (is_sig 0) or DKIM2-Signature (is_sig 1)
+   field value into ctx->mi_list / ctx->sig_list; one that does not parse
+   goes on ctx->bad_list with its error, the first of each kind also into
+   ctx->mi_error / ctx->sig_error. Every field is counted (ctx->n_mi_fields,
+   ctx->n_sig_fields); past DKIM2_MAX_CHAIN_LENGTH of a kind none is kept.
+   Returns 0, or -1 when out of memory. */
+int dkim2_ctx_add_field(dkim2_ctx_t *ctx, int is_sig, const char *value);
+
+void dkim2_badfield_free(dkim2_badfield_t *b);

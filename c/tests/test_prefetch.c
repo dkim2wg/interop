@@ -168,6 +168,7 @@ static int distinct_keys(char names[][256]) {
         }
     dkim2_mi_free(ctx.mi_list);
     dkim2_sig_free(ctx.sig_list);
+    dkim2_badfield_free(ctx.bad_list);
     eml_free(h, nh);
     return n;
 }
@@ -227,6 +228,7 @@ int main(void) {
         dkim2_prefetch_free(pf);
         dkim2_mi_free(ctx.mi_list);
         dkim2_sig_free(ctx.sig_list);
+        dkim2_badfield_free(ctx.bad_list);
         eml_free(h, nh);
         printf("  ok: %d keys requested at end of headers, once each\n", nwant);
     }

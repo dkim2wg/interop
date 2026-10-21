@@ -83,11 +83,13 @@ static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
         }
         /* -07 §9.3: an algorithm MUST NOT be present more than once. Check
            against every entry already stored -- this must run before any
-           hash is computed or compared. */
+           hash is computed or compared. The rest of h= is still read: a
+           malformed set is a syntax error, which ranks first (contract C9). */
+        int again = 0;
         for (int i = 0; i < *n; i++) {
-            if (strcasecmp((*out)[i].alg, tok) == 0) { dup = 1; break; }
+            if (strcasecmp((*out)[i].alg, tok) == 0) { again = 1; break; }
         }
-        if (dup) break;
+        if (again) { dup = 1; continue; }
 
         /* Each strdup() must be checked: under OOM a NULL here would
            otherwise flow straight into the next hash-set's
@@ -608,4 +610,70 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
             sb_printf(&b, "%s%s", i ? "," : "", sig->flags[i]);
     }
     return sb_done(&b);
+}
+
+/* The chain number a field gives for tag, or 0 when it has none usable. */
+static int usable_number(const taglist_t *tl, const char *field, const char *tag) {
+    const char *v = tl ? tag_get(tl, tag) : NULL;
+    if (!v || dkim2_chain_number_error(field, tag, v, NULL, NULL, 0)) return 0;
+    return atoi(v);     /* 1..DKIM2_MAX_CHAIN_LENGTH ASCII digits: exact */
+}
+
+int dkim2_ctx_add_field(dkim2_ctx_t *ctx, int is_sig, const char *value) {
+    char errbuf[256];
+    /* Past the chain-length limit the message is rejected on the count
+       alone (contract C9 step a): count, but keep no more fields. */
+    int *count = is_sig ? &ctx->n_sig_fields : &ctx->n_mi_fields;
+    if (++*count > DKIM2_MAX_CHAIN_LENGTH) return 0;
+    if (!is_sig) {
+        dkim2_mi_t *mi = dkim2_mi_parse_err(value, errbuf, sizeof errbuf);
+        if (mi) {
+            dkim2_mi_t **tail = &ctx->mi_list;
+            while (*tail) tail = &(*tail)->next;
+            *tail = mi;
+            return 0;
+        }
+    } else {
+        dkim2_sig_t *sig = dkim2_sig_parse_err(value, errbuf, sizeof errbuf);
+        if (sig) {
+            dkim2_sig_t **tail = &ctx->sig_list;
+            while (*tail) tail = &(*tail)->next;
+            *tail = sig;
+            return 0;
+        }
+    }
+    /* Keep the first error of each kind for the signer, which refuses on
+       any (dkim2_sign.c). */
+    char *first = is_sig ? ctx->sig_error : ctx->mi_error;
+    if (!first[0])
+        snprintf(first, is_sig ? sizeof ctx->sig_error : sizeof ctx->mi_error, "%s", errbuf);
+
+    dkim2_badfield_t *b = calloc(1, sizeof *b);
+    if (!b) return -1;
+    b->is_sig = is_sig;
+    if (!(b->err = strdup(errbuf))) { free(b); return -1; }
+    taglist_t *tl = tagparse(value, NULL);
+    if (!is_sig) {
+        b->num = usable_number(tl, "Message-Instance", "m");
+        b->structural = !b->num;
+    } else {
+        const char *iv = tl ? tag_get(tl, "i") : NULL;
+        b->num = valid_i(iv) ? usable_number(tl, "DKIM2-Signature", "i") : 0;
+        b->sig_m = usable_number(tl, "DKIM2-Signature", "m");
+        b->structural = !b->num || (tl && tag_get(tl, "m") && !b->sig_m);
+    }
+    if (tl) taglist_free(tl);
+    dkim2_badfield_t **tail = &ctx->bad_list;
+    while (*tail) tail = &(*tail)->next;
+    *tail = b;
+    return 0;
+}
+
+void dkim2_badfield_free(dkim2_badfield_t *b) {
+    while (b) {
+        dkim2_badfield_t *next = b->next;
+        free(b->err);
+        free(b);
+        b = next;
+    }
 }
