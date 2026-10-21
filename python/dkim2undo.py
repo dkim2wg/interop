@@ -564,7 +564,8 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
             colon = hdr_str.find(":")
             val = hdr_str[colon + 1:] if colon != -1 else hdr_str
             m_val = _extract_tag(val, "m")
-            if m_val and int(m_val) <= target_version:
+            if (m_val and re.fullmatch(r"[0-9]{1,3}", m_val)
+                    and int(m_val) <= target_version):
                 output_parts.append(hdr)
         elif name == b"message-instance":
             hdr_str = hdr.decode("utf-8", errors="surrogateescape")
