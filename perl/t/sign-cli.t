@@ -255,7 +255,7 @@ isnt($rc4, 0, 'missing --selector is an error');
         $v2->PRINT($changed); $v2->CLOSE;
         # The custody check (section 14.4) now names it before the broken
         # i=1 signature (section 14.6) would: contract C9's order.
-        is($v2->details, 'PERMERROR: DKIM2-Signature i=1 nd= does not match',
+        is($v2->details, 'FAIL: DKIM2-Signature i=1 nd= does not match',
             'gate: changing the nd= domain does break the chain');
     }
     ($out, $rc) = $run->($nd_top->('TEST2.dkim2.com'));

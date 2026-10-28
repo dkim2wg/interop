@@ -18,9 +18,9 @@ for my $c (
     [ '1e9',         1, qr/^permerror .*DKIM2-Signature i=1 syntax error/ ],
     [ '0x10',        1, qr/^permerror .*DKIM2-Signature i=1 syntax error/ ],
     [ '12 34',       1, qr/^permerror .*DKIM2-Signature i=1 syntax error/ ],
-    [ '0',           0, qr/^permerror \(PERMERROR: DKIM2-Signature i=1 signature expired\)$/ ],
+    [ '0',           0, qr/^fail \(FAIL: DKIM2-Signature i=1 signature expired\)$/ ],
     [ '0',           1, qr/^pass/ ],
-    [ '1000000000000', 0, qr/^permerror \(PERMERROR: DKIM2-Signature i=1 signature is from the future\)$/ ],   # §8.4: up to 10^12 handled
+    [ '1000000000000', 0, qr/^fail \(FAIL: DKIM2-Signature i=1 signature is from the future\)$/ ],   # §8.4: up to 10^12 handled
 ) {
     my ($t, $skip, $want) = @$c;
     my $v = DKIM2SignedFixture::verify(DKIM2SignedFixture::signed(timestamp => $t),

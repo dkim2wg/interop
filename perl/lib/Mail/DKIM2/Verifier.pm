@@ -443,7 +443,7 @@ sub finish_body {
             }
             # nd= names us: carry on
         } else {
-            return $self->_error(permerror => "DKIM2-Signature i=$max_i unexpected nd= tag");
+            return $self->_error(fail => "DKIM2-Signature i=$max_i unexpected nd= tag");
         }
     }
     return unless $self->_verify_chain();
@@ -520,7 +520,7 @@ sub _verify_from {
         my ($k, $i) = @$pair;
         my $d = $dk2_map{$i}{sig}->domain // '';
         next if Mail::DKIM2::Common::from_authentic($d, @{ $from_at->($k) });
-        return $self->_error(permerror => "DKIM2-Signature i=$i matching From is not authentic");
+        return $self->_error(fail => "DKIM2-Signature i=$i matching From is not authentic");
     }
     return 1;
 }
@@ -787,15 +787,15 @@ sub _check_sig_field {
 }
 
 # Section 14.3: a signature made more than 14 days before delivery, or more
-# than a day after it, is not Validly Signed.
+# than a day after it, is not Fully Verified: a FAIL under -08 (D5).
 sub _check_sig_time {
     my ($self, $i) = @_;
     return 1 if $self->{SkipTimestampCheck};
     my $ts  = $self->{_dk2_headers}{$i}{sig}->timestamp;
     my $now = time();
-    return $self->_error(permerror => "DKIM2-Signature i=$i signature is from the future")
+    return $self->_error(fail => "DKIM2-Signature i=$i signature is from the future")
         if $ts > $now + FUTURE_LIMIT;
-    return $self->_error(permerror => "DKIM2-Signature i=$i signature expired")
+    return $self->_error(fail => "DKIM2-Signature i=$i signature expired")
         if $now > $ts + EXPIRY;
     return 1;
 }
@@ -899,8 +899,8 @@ sub _check_sig_item {
          : ('fail', "FAIL: DKIM2-Signature i=$i selector $sel incorrect signature");
 }
 
-# Chain of Custody (-07 section 7.1 item 1, section 14.4). Every failure is
-# a PERMERROR. For each signature S, from i=1 up:
+# Chain of Custody (-08 section 7.1 item 1, section 14.4). Every failure is
+# a FAIL (-08 moved them from PERMERROR: contract D5). For each signature S, from i=1 up:
 #
 # - S against the one below it, P (from i=2): if P carries nd=, S's d= must
 #   be that domain (without regard to case), and nothing else is compared.
@@ -929,17 +929,17 @@ sub _verify_chain {
             my $p_i  = $dk2_is[$idx - 1];
             my $prev = $dk2_map{$p_i}{sig};
             if ($has_nd->($prev)) {
-                return $self->_error(permerror => "DKIM2-Signature i=$p_i nd= does not match")
+                return $self->_error(fail => "DKIM2-Signature i=$p_i nd= does not match")
                     unless (to_alabel($prev->next_domain) =~ tr/A-Z/a-z/r) eq (to_alabel($d) =~ tr/A-Z/a-z/r);
             } else {
                 my @rt = map { [domain_of($_)] } @{ $prev->rcpt_to || [] };
                 if ($has_nd->($sig) || $null_mf) {
-                    return $self->_error(permerror =>
+                    return $self->_error(fail =>
                         "DKIM2-Signature i=$i d= does not match the rt= of i=$p_i")
                         unless grep { $_->[0] && !$_->[1] && relaxed_domain_match($_->[0], $d) } @rt;
                 } else {
                     my ($mfd, $lit) = domain_of($mf);
-                    return $self->_error(permerror =>
+                    return $self->_error(fail =>
                         "DKIM2-Signature i=$i mf= does not match the rt= of i=$p_i")
                         unless $mfd && !$lit
                             && grep { $_->[0] && !$_->[1] && relaxed_domain_match($mfd, $_->[0]) } @rt;
@@ -949,7 +949,7 @@ sub _verify_chain {
 
         if (defined $mf && !$null_mf && !$has_nd->($sig)) {
             my ($mfd, $lit) = domain_of($mf);
-            return $self->_error(permerror => "DKIM2-Signature i=$i MAIL FROM and d= do not match")
+            return $self->_error(fail => "DKIM2-Signature i=$i MAIL FROM and d= do not match")
                 unless $mfd && !$lit && relaxed_domain_match($mfd, $d);
         }
     }
