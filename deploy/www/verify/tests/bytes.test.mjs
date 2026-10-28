@@ -33,7 +33,7 @@ test('textToBinary UTF-8 encodes text', () => {
   assert.equal(textToBinary('café'), 'caf\xc3\xa9');
   assert.equal(textToBinary('𐂀'), '\xf0\x90\x82\x80');
   // A lone surrogate is U+FFFD, as TextEncoder makes it (a Recipe "d"
-  // string holding one is refused before it gets here, spec-07 §5).
+  // string holding one is refused before it gets here, spec-08 §5).
   assert.equal(textToBinary('a\ud800b\udce9'), 'a\xef\xbf\xbdb\xef\xbf\xbd');
   assert.equal(textToBinary('plain ascii\r\n'), 'plain ascii\r\n');
 });

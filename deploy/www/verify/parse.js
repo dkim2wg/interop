@@ -1,4 +1,4 @@
-// RFC5322 message parsing and DKIM2 tag-value parsing. Built from draft-ietf-dkim-dkim2-spec-07.
+// RFC5322 message parsing and DKIM2 tag-value parsing. Built from draft-ietf-dkim-dkim2-spec-08.
 import { bytesToBinary } from './b64.js';
 
 function toCRLF(raw) {
@@ -140,7 +140,10 @@ export function parseTagList(value) {
     if (!TAG_SPEC.test(seg)) syntaxError = true;
     const eq = seg.indexOf('=');
     if (eq < 0) return;
-    const name = seg.slice(0, eq).trim().toLowerCase();
+    // -08 §8 (contract D10): tag names are lowercase, and compared as
+    // written: "M" is an unknown tag, never m=, and "M=2" beside m=1 is
+    // no duplicate.
+    const name = seg.slice(0, eq).trim();
     // DKIM2 tag values are base64 / tokens / digits / domains and never carry
     // significant internal whitespace; any WSP present came from header folding
     // (FWS). Strip ALL whitespace so a value split across continuation lines —
@@ -154,23 +157,32 @@ export function parseTagList(value) {
   return { tags, map, syntaxError };
 }
 
-// §9.3: h= is hash-set *("," hash-set). Hash names are lowercased —
-// RFC 5234 makes ABNF quoted strings case-insensitive. h is the RAW value
-// (FWS intact): FWS is allowed around the hash name and colons and inside
-// the digests (removed), never inside the hash name. A set that is not
-// exactly name:digest:digest, with both digests present, throws
-// Error('h-syntax') -- never skipped.
+// A base64string: non-empty, padded with "=" to a multiple of four (§2.14).
+export const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/;
+
+// §9.3 (-08): h= is hash-any = hash-all *("|" hash-all), hash-all =
+// hash-set *("," hash-set). Returns the hash-sets in h= order, each with
+// the index of its "|" group. Hash names are kept as written: the ABNF
+// gives them as %s"sha256" / %s"sha512", case sensitive (RFC 7405), so
+// "SHA256" is an unknown algorithm. h is the RAW value (FWS intact):
+// FWS is allowed around "|" and "," and the hash name and colons, and
+// inside the digests (removed), never inside the hash name. A set that is
+// not exactly name:digest:digest, with both digests base64strings (contract
+// D3), or an empty member (a leading, trailing or doubled "|" or ","),
+// throws Error('h-syntax') -- never skipped.
 export function parseHashSets(h) {
   const out = [];
-  for (const item of (h || '').split(',')) {
-    const parts = item.split(':');
-    if (parts.length !== 3) throw new Error('h-syntax');
-    const alg = parts[0].replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
-    const headerHash = parts[1].replace(/[ \t\r\n]+/g, '');
-    const bodyHash = parts[2].replace(/[ \t\r\n]+/g, '');
-    if (!/^[A-Za-z0-9_-]+$/.test(alg) || !headerHash || !bodyHash) throw new Error('h-syntax');
-    out.push({ alg: alg.toLowerCase(), headerHash, bodyHash });
-  }
+  (h || '').split('|').forEach((group, g) => {
+    for (const item of group.split(',')) {
+      const parts = item.split(':');
+      if (parts.length !== 3) throw new Error('h-syntax');
+      const alg = parts[0].replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+      const headerHash = parts[1].replace(/[ \t\r\n]+/g, '');
+      const bodyHash = parts[2].replace(/[ \t\r\n]+/g, '');
+      if (!/^[A-Za-z0-9_-]+$/.test(alg) || !BASE64.test(headerHash) || !BASE64.test(bodyHash)) throw new Error('h-syntax');
+      out.push({ alg, headerHash, bodyHash, group: g });
+    }
+  });
   return out;
 }
 
@@ -190,7 +202,7 @@ export const MAX_CHAIN_NUMBER = 100;
 // error of the field (named by its own i=, or m= for a Message-Instance:
 // `id`, the raw value). Then at most three digits and 1..MAX_CHAIN_NUMBER
 // (so "01" and "001" are 1), and no more than MAX_CHAIN_LENGTH: local
-// limits, with no -07 string of their own, named in the C6 form (a
+// limits, with no -08 string of their own, named in the C6 form (a
 // signature's m= after its i=: "i=2 m=101 exceeds ..."). A missing value (undefined) is
 // left to the callers.
 export function chainNumberError(field, tag, v, id = v) {

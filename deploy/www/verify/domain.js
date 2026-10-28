@@ -1,5 +1,5 @@
 // Address domains and the relaxed domain match, per
-// draft-ietf-dkim-dkim2-spec-07 §7 and §18. Built from spec.
+// draft-ietf-dkim-dkim2-spec-08 §7 and §18. Built from spec.
 
 // The domain of an address (a decoded mf=/rt= path, or an addr-spec): the
 // text after the last "@", up to a closing ">", lowercased, with one

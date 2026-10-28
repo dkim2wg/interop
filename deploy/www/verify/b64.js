@@ -45,7 +45,7 @@ export function binaryToBytes(bin) {
 // Text -> binary string, by UTF-8 encoding. Used for a pasted message and
 // for Recipe "d" literals, which are JSON strings. ASCII text is already its
 // own binary string. (Octets that are not UTF-8 travel in a Recipe as a "u"
-// step, spec-07 §5; a "d" string holding a lone surrogate is refused before
+// step, spec-08 §5; a "d" string holding a lone surrogate is refused before
 // it gets here.)
 export function textToBinary(text) {
   if (/^[\x00-\x7f]*$/.test(text)) return text;
