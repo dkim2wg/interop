@@ -117,7 +117,7 @@ func TestBridgeFromUnrelatedDomainRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("a bridge from a domain the mail never reached was accepted")
 	}
-	if !strings.Contains(err.Error(), "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1") {
+	if !strings.Contains(err.Error(), "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1") {
 		t.Fatalf("err = %v, want the nd= hop d= mismatch", err)
 	}
 }
@@ -138,7 +138,7 @@ func TestUnbridgedForwardBreaksCustody(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unbridged forward from another domain kept custody")
 	}
-	if !strings.Contains(err.Error(), "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1") {
+	if !strings.Contains(err.Error(), "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1") {
 		t.Fatalf("err = %v, want a chain-of-custody failure", err)
 	}
 }

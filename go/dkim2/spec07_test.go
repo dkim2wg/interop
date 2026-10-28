@@ -372,7 +372,7 @@ func TestSpec07C1PostfixStyleDomains(t *testing.T) {
 func TestSpec07C2NullMailFromWrongDomain(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
 	hop2 := must07(t, hop1, "other.net", "<>", []string{"a@example.com"}, "")
-	wantErr07(t, hop2, "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1")
+	wantErr07(t, hop2, "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1")
 }
 
 func ndChain07(t *testing.T, rt1, d2, d3 string) []byte {
@@ -386,12 +386,12 @@ func TestSpec07C3NdHop(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"x@example.org"}, "")
 	hop2 := must07(t, hop1, "mail.example.org", "", nil, "fwd.example.net")
 	hop3 := must07(t, hop2, "fwd.example.net", "b@fwd.example.net", []string{"c@example.net"}, "")
-	wantErr07(t, hop3, "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1")
+	wantErr07(t, hop3, "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1")
 }
 
 func TestSpec07C4NdMismatch(t *testing.T) {
 	wantErr07(t, ndChain07(t, "x@mail.example.org", "example.org", "other.example"),
-		"PERMERROR: DKIM2-Signature i=2 nd= does not match")
+		"FAIL: DKIM2-Signature i=2 nd= does not match")
 }
 
 func TestSpec07C5DomainLiteral(t *testing.T) {
@@ -399,8 +399,8 @@ func TestSpec07C5DomainLiteral(t *testing.T) {
 	hop2 := must07(t, hop1, "example.org", "y@[192.0.2.1]", []string{"c@example.net"}, "")
 	got := verify07(t, hop2)
 	for _, want := range []string{
-		"PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1",
-		"PERMERROR: DKIM2-Signature i=2 MAIL FROM and d= do not match",
+		"FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1",
+		"FAIL: DKIM2-Signature i=2 MAIL FROM and d= do not match",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("want %q in %q", want, got)
@@ -411,7 +411,7 @@ func TestSpec07C5DomainLiteral(t *testing.T) {
 func TestSpec07C6MailFromAndD(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"list@lists.example.org"}, "")
 	_, err := VerifyFull(bytes.NewReader(hop1), spec07Fetcher(t), VerifyOptions{SkipTimestampCheck: true})
-	want := "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match"
+	want := "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"
 	if err == nil || !strings.HasPrefix(err.Error(), want) {
 		t.Fatalf("want top-level %q, got %v", want, err)
 	}
@@ -420,7 +420,7 @@ func TestSpec07C6MailFromAndD(t *testing.T) {
 // ---- A: From must be Authentic (§11, §14.8) ----
 
 func TestSpec07A1FromAuthentic(t *testing.T) {
-	const notAuth = "PERMERROR: DKIM2-Signature i=1 matching From is not authentic"
+	const notAuth = "FAIL: DKIM2-Signature i=1 matching From is not authentic"
 	for _, tc := range []struct {
 		from, d, want string
 	}{
@@ -457,13 +457,13 @@ func fromChangeChain07(t *testing.T, newFrom string) []byte {
 func TestSpec07A2ChangedFrom(t *testing.T) {
 	wantPass07(t, fromChangeChain07(t, "List <list@lists.example.org>"))
 	wantErr07(t, fromChangeChain07(t, "x@elsewhere.net"),
-		"PERMERROR: DKIM2-Signature i=2 matching From is not authentic")
+		"FAIL: DKIM2-Signature i=2 matching From is not authentic")
 	// The From at state 1 is still checked against i=1.
 	hop1 := must07(t, []byte(strings.Replace(spec07Base, "a@example.com", "a@elsewhere.net", 1)),
 		"example.com", "a@example.com", []string{"list@lists.example.org"}, "")
 	rev := revise07(t, hop1, setHeader("From", "list@lists.example.org"), "", "")
 	hop2 := must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, "")
-	wantErr07(t, hop2, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic")
+	wantErr07(t, hop2, "FAIL: DKIM2-Signature i=1 matching From is not authentic")
 }
 
 // ingress07 adds an unsigned Message-Instance m=1 (no Recipe) over in, as a
@@ -500,7 +500,7 @@ func TestSpec07A5FromBeforeFirstSignature(t *testing.T) {
 	in = ingress07(t, []byte(spec07Base))
 	rev = revise07(t, in, setHeader("Subject", "[list] s"), "", "")
 	wantErr07(t, must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, ""),
-		"PERMERROR: DKIM2-Signature i=1 matching From is not authentic")
+		"FAIL: DKIM2-Signature i=1 matching From is not authentic")
 }
 
 func TestSpec07A3SignerRefusesInauthenticFrom(t *testing.T) {
@@ -541,7 +541,7 @@ func TestSpec07A3GateUnsignedTopChangedFrom(t *testing.T) {
 func TestSpec07GateTopNd(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"x@mail.example.org"}, "")
 	hop2 := must07(t, hop1, "example.org", "", nil, "fwd.example.net")
-	wantErr07(t, hop2, "PERMERROR: DKIM2-Signature i=2 unexpected nd= tag")
+	wantErr07(t, hop2, "FAIL: DKIM2-Signature i=2 unexpected nd= tag")
 	out, err := sign07(t, hop2, "fwd.example.net", "b@fwd.example.net", []string{"c@example.net"}, "", true)
 	if err != nil {
 		t.Fatalf("gate refused d= == nd=: %v", err)
@@ -572,10 +572,10 @@ func TestSpec07T1FutureLimit(t *testing.T) {
 	wantPass07(t, ok, VerifyOptions{})
 	bad := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
 		func(o *SignOptions) { o.Timestamp = now + 172800 })
-	wantErr07(t, bad, "PERMERROR: DKIM2-Signature i=1 signature is from the future", VerifyOptions{})
+	wantErr07(t, bad, "FAIL: DKIM2-Signature i=1 signature is from the future", VerifyOptions{})
 	old := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
 		func(o *SignOptions) { o.Timestamp = now - 1209600 - 3600 })
-	wantErr07(t, old, "PERMERROR: DKIM2-Signature i=1 signature expired", VerifyOptions{})
+	wantErr07(t, old, "FAIL: DKIM2-Signature i=1 signature expired", VerifyOptions{})
 }
 
 // ---- -07 error strings ----
@@ -619,10 +619,10 @@ func TestSpec07ErrorStrings(t *testing.T) {
 	})
 	t.Run("custody", func(t *testing.T) {
 		hop2 := must07(t, hop1, "example.net", "x@example.net", []string{"y@example.org"}, "")
-		wantErr07(t, hop2, "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1")
+		wantErr07(t, hop2, "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1")
 	})
 	t.Run("envelope", func(t *testing.T) {
-		wantErr07(t, hop1, "PERMERROR: DKIM2-Signature i=1 MAIL FROM b@example.com did not match",
+		wantErr07(t, hop1, "FAIL: DKIM2-Signature i=1 MAIL FROM b@example.com did not match",
 			VerifyOptions{SkipTimestampCheck: true, MailFrom: "b@example.com"})
 	})
 }
@@ -663,13 +663,13 @@ func TestSpec07C9PrimaryError(t *testing.T) {
 		// §14.3 before §14.4.
 		{"expired and custody", must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, "",
 			func(o *SignOptions) { o.Timestamp = now - 15*86400 }),
-			VerifyOptions{}, "PERMERROR: DKIM2-Signature i=1 signature expired"},
+			VerifyOptions{}, "FAIL: DKIM2-Signature i=1 signature expired"},
 		{"expired and top nd", must07(t, []byte(spec07Base), "example.com", "", nil, "fwd.example.net",
 			func(o *SignOptions) { o.Timestamp = now - 15*86400 }),
-			VerifyOptions{}, "PERMERROR: DKIM2-Signature i=1 signature expired"},
+			VerifyOptions{}, "FAIL: DKIM2-Signature i=1 signature expired"},
 		// §14.4 before §14.6.
 		{"custody and signature", badSig(must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, ""), 1),
-			skip, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match"},
+			skip, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"},
 		// The chain walk before every signature check: §14.6, §14.3, §14.5,
 		// and the signature's own §14.2 content.
 		{"signature and header hash", bytes.Replace(badSig(hop1, 1), []byte("Subject: hello"), []byte("Subject: jello"), 1),

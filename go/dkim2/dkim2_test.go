@@ -855,7 +855,7 @@ func TestVerifyGap3DomainSuffix(t *testing.T) {
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	// Timestamps skipped: an expired t= would be the primary error (C9).
 	_, err = Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})
-	if err == nil || !strings.Contains(err.Error(), "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match") {
+	if err == nil || !strings.Contains(err.Error(), "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match") {
 		t.Errorf("expected domain suffix mismatch error, got %v", err)
 	}
 }
@@ -1135,7 +1135,7 @@ func TestVerifyChainCustodyBreak(t *testing.T) {
 	if got == "" {
 		t.Fatal("expected failure for chain-of-custody break, but all results passed")
 	}
-	const wantSubstr = "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1"
+	const wantSubstr = "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1"
 	if !strings.Contains(got, wantSubstr) {
 		t.Errorf("error message = %q, want substring %q", got, wantSubstr)
 	}
@@ -1193,7 +1193,7 @@ func TestVerifyTimestampExpired(t *testing.T) {
 	// Without SkipTimestampCheck the old test email should be rejected,
 	// before any key or signature work (contract C9: §14.3).
 	_, err = Verify(bytes.NewReader(raw), f)
-	if err == nil || err.Error() != "PERMERROR: DKIM2-Signature i=1 signature expired" {
+	if err == nil || err.Error() != "FAIL: DKIM2-Signature i=1 signature expired" {
 		t.Errorf("expected expiry error for old test email, got %v", err)
 	}
 }

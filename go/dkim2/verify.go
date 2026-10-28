@@ -199,10 +199,10 @@ func verifyFields(cs *chainShape, bodyHashes func(algs []string) (map[string][]b
 		now := time.Now().Unix()
 		for _, sig := range parsedSigs {
 			if sig.Timestamp > now+MaxFutureSkew {
-				return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d signature is from the future", sig.Sequence)
+				return nil, fmt.Errorf("FAIL: DKIM2-Signature i=%d signature is from the future", sig.Sequence)
 			}
 			if now-MaxSignatureAge > sig.Timestamp {
-				return nil, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d signature expired", sig.Sequence)
+				return nil, fmt.Errorf("FAIL: DKIM2-Signature i=%d signature expired", sig.Sequence)
 			}
 		}
 	}
@@ -430,11 +430,11 @@ func topCustodyError(topSig *DKIM2Signature, opts ...VerifyOptions) error {
 	if topSig.NextDomain != "" {
 		if len(opts) > 0 && opts[0].Outbound && opts[0].Signer != "" {
 			if !strings.EqualFold(topSig.NextDomain, opts[0].Signer) {
-				return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d unexpected nd= tag (nd=%s names another domain than %s)",
+				return fmt.Errorf("FAIL: DKIM2-Signature i=%d unexpected nd= tag (nd=%s names another domain than %s)",
 					topSig.Sequence, topSig.NextDomain, opts[0].Signer)
 			}
 		} else {
-			return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d unexpected nd= tag", topSig.Sequence)
+			return fmt.Errorf("FAIL: DKIM2-Signature i=%d unexpected nd= tag", topSig.Sequence)
 		}
 	}
 	if len(opts) == 0 {
@@ -442,7 +442,7 @@ func topCustodyError(topSig *DKIM2Signature, opts ...VerifyOptions) error {
 	}
 	opt := opts[0]
 	if opt.MailFrom != "" && normAddr(opt.MailFrom) != normAddr(topSig.MailFrom) {
-		return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d MAIL FROM %s did not match",
+		return fmt.Errorf("FAIL: DKIM2-Signature i=%d MAIL FROM %s did not match",
 			topSig.Sequence, opt.MailFrom)
 	}
 	for _, delivered := range opt.RcptTo {
@@ -454,7 +454,7 @@ func topCustodyError(topSig *DKIM2Signature, opts ...VerifyOptions) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d RCPT TO %s did not match",
+			return fmt.Errorf("FAIL: DKIM2-Signature i=%d RCPT TO %s did not match",
 				topSig.Sequence, delivered)
 		}
 	}
@@ -511,15 +511,33 @@ func c9Section(text string) int {
 		return 3
 	case strings.HasSuffix(text, " signature expired") || strings.HasSuffix(text, " signature is from the future"):
 		return 5
+	case strings.HasSuffix(text, " matching From is not authentic"):
+		return 9
+	case custodyText(text):
+		return 6
 	case strings.HasPrefix(text, "TEMPERROR: ") || strings.Contains(text, " public key ") ||
 		strings.Contains(text, " has no signature with a supported algorithm"):
 		return 7
 	case strings.HasPrefix(text, "FAIL: DKIM2-Signature "):
 		return 8
-	case strings.HasSuffix(text, " matching From is not authentic"):
-		return 9
 	}
 	return 2
+}
+
+// custodyText reports whether an error text is one of §14.4's: the top
+// signature's nd=, the envelope, or a Chain of Custody step (all FAIL in
+// -08, contract D5, like the §14.6 signature strings they rank before).
+func custodyText(text string) bool {
+	if !strings.HasPrefix(text, "FAIL: DKIM2-Signature ") {
+		return false
+	}
+	for _, s := range []string{" unexpected nd= tag", " did not match", " nd= does not match",
+		" d= does not match the rt= of i=", " mf= does not match the rt= of i=", " MAIL FROM and d= do not match"} {
+		if strings.Contains(text, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // PrimaryResult is the result whose error is the primary one (contract
@@ -685,8 +703,8 @@ func isNullPath(mf string) bool {
 }
 
 // checkChainOfCustody is §14.4 over the signatures in ascending i= order
-// (§7.1 items 1 and 2).  Every failure is PERMERROR; all of them are
-// reported, joined, in the order found.
+// (§7.1 items 1 and 2).  Every failure is FAIL (-08, contract D5); all of
+// them are reported, joined, in the order found.
 //
 //   - Every signature S with a non-null mf= and no nd=: the mf= domain
 //     relaxed-matches S's d=.
@@ -706,11 +724,11 @@ func checkChainOfCustody(sigs []*DKIM2Signature) error {
 			switch {
 			case p.NextDomain != "":
 				if !strings.EqualFold(p.NextDomain, s.Domain) {
-					errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d nd= does not match", p.Sequence))
+					errs = append(errs, fmt.Errorf("FAIL: DKIM2-Signature i=%d nd= does not match", p.Sequence))
 				}
 			case s.NextDomain != "" || isNullPath(s.MailFrom):
 				if !addrMatches(p.RcptTo, s.Domain) {
-					errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d d= does not match the rt= of i=%d",
+					errs = append(errs, fmt.Errorf("FAIL: DKIM2-Signature i=%d d= does not match the rt= of i=%d",
 						s.Sequence, p.Sequence))
 				}
 			default:
@@ -723,14 +741,14 @@ func checkChainOfCustody(sigs []*DKIM2Signature) error {
 					}
 				}
 				if !matched {
-					errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d mf= does not match the rt= of i=%d",
+					errs = append(errs, fmt.Errorf("FAIL: DKIM2-Signature i=%d mf= does not match the rt= of i=%d",
 						s.Sequence, p.Sequence))
 				}
 			}
 		}
 		if s.NextDomain == "" && !isNullPath(s.MailFrom) {
 			if mf, lit := domainOf(s.MailFrom); lit || !relaxedMatch(mf, s.Domain) {
-				errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d MAIL FROM and d= do not match", s.Sequence))
+				errs = append(errs, fmt.Errorf("FAIL: DKIM2-Signature i=%d MAIL FROM and d= do not match", s.Sequence))
 			}
 		}
 	}
@@ -800,7 +818,7 @@ func checkFromAuthentic(content []Header, mis map[int]*MessageInstance, top, lim
 			continue
 		}
 		if !fromAuthentic(state, s.Domain) {
-			errs = append(errs, fmt.Errorf("PERMERROR: DKIM2-Signature i=%d matching From is not authentic", s.Sequence))
+			errs = append(errs, fmt.Errorf("FAIL: DKIM2-Signature i=%d matching From is not authentic", s.Sequence))
 		}
 	}
 	return errors.Join(errs...)

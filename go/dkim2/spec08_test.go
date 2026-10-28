@@ -7,6 +7,7 @@ package dkim2
 import (
 	"bytes"
 	"testing"
+	"time"
 )
 
 // ---- D10: tag names and JSON keys are strictly lowercase ----
@@ -58,5 +59,46 @@ func TestSpec08D10JSONKeysStrictLowercase(t *testing.T) {
 	// Non-ASCII letters are not judged.
 	if _, err := parseMI(miWithRecipe(2, `{"h":{"x-É":[{"d":["v"]}]}}`)); err != nil {
 		t.Errorf("a non-ASCII capital in a key: %v", err)
+	}
+}
+
+// ---- D5: timestamps, Chain of Custody and From Authentic are FAIL ----
+
+func TestSpec08D5FailNotPermerror(t *testing.T) {
+	skip := VerifyOptions{SkipTimestampCheck: true}
+	now := time.Now().Unix()
+	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
+	for _, tc := range []struct {
+		name string
+		msg  []byte
+		opt  VerifyOptions
+		want string
+	}{
+		{"expired", must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
+			func(o *SignOptions) { o.Timestamp = now - 15*86400 }),
+			VerifyOptions{}, "FAIL: DKIM2-Signature i=1 signature expired"},
+		{"future", must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
+			func(o *SignOptions) { o.Timestamp = now + 2*86400 }),
+			VerifyOptions{}, "FAIL: DKIM2-Signature i=1 signature is from the future"},
+		{"top nd", must07(t, []byte(spec07Base), "example.com", "", nil, "fwd.example.net"),
+			skip, "FAIL: DKIM2-Signature i=1 unexpected nd= tag"},
+		{"envelope MAIL FROM", hop1, VerifyOptions{SkipTimestampCheck: true, MailFrom: "b@example.com"},
+			"FAIL: DKIM2-Signature i=1 MAIL FROM b@example.com did not match"},
+		{"envelope RCPT TO", hop1, VerifyOptions{SkipTimestampCheck: true, RcptTo: []string{"x@example.org"}},
+			"FAIL: DKIM2-Signature i=1 RCPT TO x@example.org did not match"},
+		{"mf and d", must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, ""),
+			skip, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"},
+		{"nd mismatch", ndChain07(t, "x@mail.example.org", "example.org", "other.example"),
+			skip, "FAIL: DKIM2-Signature i=2 nd= does not match"},
+		{"d and rt", must07(t, hop1, "other.net", "<>", []string{"a@example.com"}, ""),
+			skip, "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1"},
+		{"mf and rt", must07(t, hop1, "example.net", "x@example.net", []string{"y@example.org"}, ""),
+			skip, "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1"},
+		{"From", fromChangeChain07(t, "x@elsewhere.net"),
+			skip, "FAIL: DKIM2-Signature i=2 matching From is not authentic"},
+	} {
+		if got := primary07(t, tc.msg, tc.opt); got != tc.want {
+			t.Errorf("%s: primary %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
