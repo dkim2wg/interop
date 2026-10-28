@@ -121,7 +121,9 @@ def test_u5_empty_h_and_neither_h_nor_b():
 
 
 def test_d_with_lone_surrogate():
-    _invalid_step(b'{"b":[{"d":["\\udc80"]}]}')
+    # -08: a lone surrogate makes the whole document invalid JSON (it is
+    # not a Unicode string, so the text does not parse), not one bad step.
+    _invalid_json(b'{"b":[{"d":["\\udc80"]}]}')
 
 
 def test_d_with_cr():

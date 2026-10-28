@@ -197,6 +197,7 @@ draft -08 (docs/superpowers/specs/2026-10-28-dkim2-spec-08-design.md):
   recipe-b-before-h.eml            -- bad b and h steps: b[1] is named first
   recipe-whole-before-step.eml     -- bad step + "h" not an object: invalid JSON
   recipe-number-exponent.eml       -- an unused "n":1e0: invalid JSON
+  recipe-lone-surrogate.eml        -- a "d" string "\\udc80": invalid JSON
   auto-submitted-modified.eml      -- Auto-Submitted changed after signing (D1):
                                          header hash mismatch
   positive-control-auto-submitted.eml -- Auto-Submitted and VBR-Info, signed
@@ -1760,6 +1761,15 @@ def build_recipe_number_exponent():
     return _two_hop(headers, CUR_BODY, headers, CUR_BODY, '{"b":[{"c":[1,3]}],"n":1e0}')
 
 
+def build_recipe_lone_surrogate():
+    """D6: a "d" string written as the escape of a lone surrogate (\\udc80) is
+    not a Unicode string, so the document is not JSON text: "contains
+    invalid JSON", not one bad step."""
+    headers, _ = load_base()
+    return _two_hop(headers, b"x\r\n" + CUR_BODY, headers, CUR_BODY,
+                    '{"b":[{"d":["\\udc80"]},{"c":[1,3]}]}')
+
+
 def build_auto_submitted_modified():
     """D1: Auto-Submitted is hashed since -08.  A message signed with
     "Auto-Submitted: auto-generated", which a later hop changed to
@@ -1917,6 +1927,7 @@ FIXTURES = {
     "recipe-b-before-h.eml": build_recipe_b_before_h,
     "recipe-whole-before-step.eml": build_recipe_whole_before_step,
     "recipe-number-exponent.eml": build_recipe_number_exponent,
+    "recipe-lone-surrogate.eml": build_recipe_lone_surrogate,
     "auto-submitted-modified.eml": build_auto_submitted_modified,
     "positive-control-auto-submitted.eml": build_positive_auto_submitted,
     "uppercase-tag.eml": build_uppercase_tag,

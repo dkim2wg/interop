@@ -118,7 +118,7 @@ CASES = [
     ("CRLF inside a d item", _footer,
      {"b": [{"d": ["line 1\r\nline 2"]}, {"c": [3, 3]}]}, True, 'b[0]'),
     ("lone surrogate in a d item", _footer,
-     {"b": [{"d": ["line \udc31"]}, {"c": [2, 3]}]}, True, 'b[0]'),
+     {"b": [{"d": ["line \udc31"]}, {"c": [2, 3]}]}, True, None),
     ("u item that is not a string", _footer,
      {"b": [{"u": [1]}, {"c": [2, 3]}]}, True, 'b[0]'),
     ("empty d array", _footer,

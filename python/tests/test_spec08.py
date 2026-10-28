@@ -116,6 +116,11 @@ def _step_invalid(path):
     b'{"b":"x"}',
     b'{"b":[{"x":1}],"h":[]}',             # whole-document before any step
     b'{"b":[{"c":[1,1]}],"b":null}',       # duplicate key
+    # A lone surrogate escape is not a Unicode string: the document does not
+    # parse as text (as Perl's decoder sees it), wherever the string is.
+    b'{"b":[{"d":["\\ud800"]}]}',
+    b'{"b":[{"c":[1,1]}],"x":["\\udc80"]}',
+    b'{"b":[{"c":[1,1]}],"\\udc80":1}',
 ])
 def test_d6_whole_document_is_invalid_json(rj):
     _fails_with(_bad_recipe(rj), INVALID_JSON_2)
@@ -141,7 +146,6 @@ def test_d6_whole_document_is_invalid_json(rj):
     (b'{"b":[{"u":["DQ=="]}]}', "b[0]"),                      # decodes to CR
     (b'{"b":[{"u":["QR=="]}]}', "b[0]"),                      # non-canonical
     (b'{"b":[{"u":["QQ"]}]}', "b[0]"),
-    (b'{"b":[{"d":["\\ud800"]}]}', "b[0]"),                   # lone surrogate
     (b'{"b":[{"c":[2,2]},{"c":[1,1]}]}', "b[1]"),             # out of order
     (b'{"b":[{"c":[1,2]},{"c":[2,3]}]}', "b[1]"),             # overlap
     (b'{"h":{"subject":"x"}}', "h.subject"),                  # not an array

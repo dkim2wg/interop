@@ -101,8 +101,16 @@ def loads_recipe(data):
         # guess UTF-16 or UTF-32 from the first bytes.
         data = bytes(data).decode("utf-8")
     try:
-        return json.loads(data, object_pairs_hook=_strict_keys,
-                          parse_float=_no_float, parse_constant=_no_constant)
+        obj = json.loads(data, object_pairs_hook=_strict_keys,
+                         parse_float=_no_float, parse_constant=_no_constant)
+        # A JSON "\u" escape of a surrogate with no partner is not a Unicode string (RFC
+        # 8259 §8.2), so a document carrying one, anywhere, is not valid
+        # JSON text: the whole Recipe is invalid JSON, as UTF-8 that does
+        # not decode is.  Re-encoding finds it, keys and values alike.
+        json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        return obj
+    except UnicodeEncodeError:
+        raise ValueError("Recipe JSON has a lone surrogate") from None
     except RecursionError:
         # JSON nested deeper than the interpreter's stack: invalid JSON,
         # like any other we cannot parse, never a crash.
