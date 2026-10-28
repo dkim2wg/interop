@@ -67,27 +67,38 @@ my %HASH_ALGS = map {
 
 sub hash_algs { return { %HASH_ALGS } }
 
-# -07 §9.3: h= is hash-set *("," hash-set), hash-set = alg ":" hh ":" bh.
-# Hash names are lowercased -- RFC 5234 makes ABNF quoted strings
-# case-insensitive. All FWS is stripped (§2.12): it may appear anywhere
-# inside a base64 value (e.g. a folded header), not just at either end.
-# h= (-07 §9.3): hash-set *("," hash-set), each
-# [FWS] hash-name [FWS] ":" header-hash ":" body-hash. FWS is trimmed from
-# around the name and removed from inside the base64 hashes; anywhere else
-# (inside the name, or a set missing a part) the value is malformed and this
-# returns undef rather than skipping the set or joining the name up.
-sub parse_hash_sets {
+# h= (-08 §9.3): hash-all groups joined by "|", each hash-set *(","
+# hash-set), and each hash-set [FWS] hash-name [FWS] ":" header-hash ":"
+# body-hash. FWS is trimmed from around the name and removed from inside the
+# base64 hashes (§2.12: a folded value may break anywhere in them); anywhere
+# else (inside the name, or a set missing a part) the value is malformed and
+# this returns undef rather than skipping the set or joining the name up, as
+# it does for an empty member (D2). Hash names are case-sensitive (§2.14):
+# "SHA256" is a name of its own, which no verifier implements.
+# parse_hash_groups gives [[[name, hh, bh], ...], ...]; parse_hash_sets the
+# sets alone, in h= order.
+sub parse_hash_groups {
     my ($h_tag) = @_;
-    my @sets;
-    for my $item (split /,/, $h_tag, -1) {
-        my ($name, $rest) = $item =~ /\A[ \t\r\n]*([A-Za-z0-9_-]+)[ \t\r\n]*:(.*)\z/s
-            or return;
-        $rest =~ s/[ \t\r\n]//g;
-        my @hashes = split /:/, $rest, -1;
-        return unless @hashes == 2 && length $hashes[0] && length $hashes[1];
-        push @sets, [lc $name, @hashes];
+    my $groups = Mail::DKIM2::Common::split_any_all($h_tag) or return;
+    my @out;
+    for my $group (@$groups) {
+        my @sets;
+        for my $item (@$group) {
+            my ($name, $rest) = $item =~ /\A[ \t\r\n]*([A-Za-z0-9_-]+)[ \t\r\n]*:(.*)\z/s
+                or return;
+            $rest =~ s/[ \t\r\n]//g;
+            my @hashes = split /:/, $rest, -1;
+            return unless @hashes == 2 && length $hashes[0] && length $hashes[1];
+            push @sets, [$name, @hashes];
+        }
+        push @out, \@sets;
     }
-    return \@sets;
+    return \@out;
+}
+
+sub parse_hash_sets {
+    my $groups = parse_hash_groups(@_) or return;
+    return [ map { @$_ } @$groups ];
 }
 
 # FILTHY PATCHING (needed for undo to work with Email::Simple)
@@ -353,15 +364,14 @@ sub parse {
 
     # -07 section 9.3: h= is a list of hash-sets
     if (exists $tags{h}) {
-        my $sets = parse_hash_sets($raw_h)
+        my $groups = parse_hash_groups($raw_h)
             or die "PERMERROR: Message-Instance m=$tags{m} syntax error\n";
+        my $sets = [ map { @$_ } @$groups ];
 
-        # §9.3: an algorithm MUST NOT be present more than once. Check the
-        # LIST returned by parse_hash_sets, not a hash keyed by algorithm --
-        # a hash would let the second occurrence silently overwrite the
-        # first, hiding the duplicate. Hash names are already lowercased by
-        # parse_hash_sets (RFC 5234 makes ABNF quoted strings
-        # case-insensitive), so this comparison is case-insensitive too.
+        # §9.3: an algorithm MUST NOT be present more than once, in any
+        # group (D2). Check the LIST of sets, not a hash keyed by algorithm
+        # -- a hash would let the second occurrence silently overwrite the
+        # first, hiding the duplicate. Names are case-sensitive (§2.14).
         # This must run before any hash is computed or compared.
         my %seen;
         for my $s (@$sets) {
@@ -373,8 +383,10 @@ sub parse {
         for my $s (@$sets) {
             $self->{bits}{hashes}{$s->[0]} = [$s->[1], $s->[2]];
         }
-        # The order h= lists them in: the order they are checked in.
+        # The order h= lists them in: the order they are checked in; and
+        # its "|" groups of "," lists (-08 §9.3).
         $self->{hash_order} = [ map { $_->[0] } @$sets ];
+        $self->{hash_groups} = [ map { [ map { $_->[0] } @$_ ] } @$groups ];
         # Back-compatible aliases for the sha256 hash-set
         if (my $sha256 = $self->{bits}{hashes}{sha256}) {
             @{$self->{bits}}{qw(h1 b1)} = @$sha256;
@@ -1125,37 +1137,41 @@ sub _parse_error {
 }
 
 # Instance $num's hash-sets against the header and body hashes the two
-# callbacks give for an algorithm ($body undef: headers only). Returns 1,
-# or (0, $reason) at the first mismatch.
+# callbacks give for an algorithm ($body undef: headers only, when the body
+# is gone -- below a null body Recipe, or a DSN without it, -08 §16.4 -- and
+# a set passes on its header hash). Returns 1, or (0, $reason).
+#
+# -08 §14.7: each set passes if its hashes match, fails if one does not, and
+# is a PERMERROR if this verifier does not implement its algorithm; the
+# "," lists and "|" groups combine as Common::combine_sets says (D4). A set
+# reports its header hash before its body hash; sets go in h= order.
 sub _check_hashes {
     my ($self, $num, $header, $body) = @_;
 
-    # -07 §3.5: verify every hash-set whose algorithm we implement; ALL
-    # of them must match. If none names an implemented algorithm, fail
-    # closed rather than treating it as "no hash" -- an MI signed with only
-    # sha512 (say) is perfectly valid and must verify via its sha512 set,
-    # not be rejected just because h1/b1 (the sha256 alias) are undef.
     my $hashes = $self->get_tag('hashes') || {};
     my $impl = hash_algs();
-    # h= order: as parsed, or as calculate() writes them (its algs).
-    my @usable = grep { $impl->{$_} && $hashes->{$_} }
-                 @{ $self->{hash_order} || $self->{algs} || [ sort keys %$hashes ] };
-
-    return (0, "PERMERROR: Message-Instance m=$num no supported hash algorithm") unless @usable;
-
-    # -07 section 14.7's words, naming the algorithm. Every header hash, in
-    # h= order, before any body hash (interop contract C9), so every
-    # verifier names the same one when several are wrong.
-    for my $alg (@usable) {
-        return (0, "FAIL: Message-Instance m=$num header hash $alg mismatch")
-            if $hashes->{$alg}[0] ne $header->($alg);
+    # h= groups: as parsed, or the one list calculate() writes (its algs).
+    my $groups = $self->{hash_groups}
+        || [ $self->{hash_order} || $self->{algs} || [ sort keys %$hashes ] ];
+    my @results;
+    for my $group (@$groups) {
+        my @members;
+        for my $alg (@$group) {
+            my $pair = $hashes->{$alg};
+            push @members,
+                  !$impl->{$alg} || !$pair
+                    ? ['permerror', "PERMERROR: Message-Instance m=$num algorithm $alg unknown"]
+                : $pair->[0] ne $header->($alg)
+                    ? ['fail', "FAIL: Message-Instance m=$num header hash $alg mismatch"]
+                : $body && $pair->[1] ne $body->($alg)
+                    ? ['fail', "FAIL: Message-Instance m=$num body hash $alg mismatch"]
+                : ['pass'];
+        }
+        push @results, \@members;
     }
-    return 1 unless $body;
-    for my $alg (@usable) {
-        return (0, "FAIL: Message-Instance m=$num body hash $alg mismatch")
-            if $hashes->{$alg}[1] ne $body->($alg);
-    }
-    return 1;
+    my ($state, $why) = Mail::DKIM2::Common::combine_sets(\@results,
+        "FAIL: Message-Instance m=$num no group of hashes passed");
+    return $state eq 'pass' ? 1 : (0, $why);
 }
 
 # --- Undo ---
@@ -1590,11 +1606,18 @@ Recipe (L</undo>) to find.
 A hashref of the hash algorithms this module implements, name to
 function.
 
+=head2 parse_hash_groups($h_value)
+
+Splits an C<h=> value into its C<|> groups of C<,> lists (-08 section 9.3):
+an arrayref of arrayrefs of C<[alg, header_hash, body_hash]>, with folding
+whitespace stripped from around the names and inside the hashes. Names keep
+their case (they are case-sensitive). Returns undef if any hash-set is
+malformed or any member is empty.
+
 =head2 parse_hash_sets($h_value)
 
-Splits an C<h=> value into an arrayref of C<[alg, header_hash, body_hash]>,
-lowercasing the names and stripping folding whitespace from around the names
-and inside the hashes. Returns undef if any hash-set is malformed.
+The hash-sets of an C<h=> value in the order it gives them, whatever their
+groups: C<parse_hash_groups> flattened. Returns undef where it does.
 
 =head1 INSTANCE METHODS
 

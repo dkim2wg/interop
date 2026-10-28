@@ -38,25 +38,29 @@ is_deeply([Mail::DKIM2::Signature::check_duplicates($twice)], [],
 my $thrice = Mail::DKIM2::Signature->parse(
     'i=2; m=1; t=1740000000; d=a.example; nd=b.example; '
   . 's=sel1:rsa-sha256:AAA,sel2:rsa-sha256:BBB,sel3:rsa-sha256:CCC');
-is_deeply([Mail::DKIM2::Signature::check_duplicates($thrice)],
-          ['PERMERROR: DKIM2-Signature i=2 has more selectors than allowed'],
-          '-07 §10.9: three same-algorithm signatures exceed the selector limit');
+is_deeply([Mail::DKIM2::Signature::check_duplicates($thrice)], [],
+          '-08 §10.9: any number of same-algorithm signatures with distinct Selectors');
 
 my $dup_sel_and_alg = Mail::DKIM2::Signature->parse(
     'i=1; m=1; t=1740000000; d=a.example; nd=b.example; '
   . 's=sel1:rsa-sha256:AAA,sel1:rsa-sha256:BBB');
 my @combo_errs = Mail::DKIM2::Signature::check_duplicates($dup_sel_and_alg);
-ok((grep { /duplicate selector/ } @combo_errs), 'duplicate selector detected');
-ok(!(grep { /more selectors than allowed/ } @combo_errs),
-   '-07 §10.9: duplicate-selector and excess-selector checks are independent '
- . '(count is 2, not 3+)');
+is_deeply(\@combo_errs, ['PERMERROR: DKIM2-Signature i=1 has a duplicate selector'],
+          'duplicate selector detected');
+
+my $across = Mail::DKIM2::Signature->parse(
+    'i=1; m=1; t=1740000000; d=a.example; nd=b.example; '
+  . 's=sel1:rsa-sha256:AAA|SEL1:ed25519-sha256:BBB');
+is_deeply([Mail::DKIM2::Signature::check_duplicates($across)],
+          ['PERMERROR: DKIM2-Signature i=1 has a duplicate selector'],
+          '-08 §10.9: a Selector twice across "|" groups, in any case');
 
 # --- -07 §9.3: Message-Instance h= duplicate hash algorithm ---
 
-my $mi_sets = Mail::DKIM2::MessageInstance::parse_hash_sets('sha256:AAA:BBB,SHA256:CCC:DDD');
+my $mi_sets = Mail::DKIM2::MessageInstance::parse_hash_sets('sha256:AAA:BBB|sha256:CCC:DDD');
 my %seen;
 my $dup = grep { $seen{$_->[0]}++ } @$mi_sets;
-ok($dup, 'duplicate hash algorithm detected case-insensitively in parse_hash_sets list');
+ok($dup, 'duplicate hash algorithm across "|" groups is in the parse_hash_sets list');
 
 eval {
     Mail::DKIM2::MessageInstance->parse('m=7; h=sha256:AAA:BBB,sha256:CCC:DDD;');
@@ -65,10 +69,13 @@ like($@, qr/^PERMERROR: Message-Instance m=7 has a duplicate hash algorithm/,
      '-07 §9.3: MessageInstance::parse dies with the exact PERMERROR string on a duplicate');
 
 eval {
-    Mail::DKIM2::MessageInstance->parse('m=7; h=sha256:AAA:BBB,SHA256:CCC:DDD;');
+    Mail::DKIM2::MessageInstance->parse('m=7; h=sha256:AAA:BBB|sha256:CCC:DDD;');
 };
 like($@, qr/^PERMERROR: Message-Instance m=7 has a duplicate hash algorithm/,
-     '-07 §9.3: duplicate hash algorithm detected case-insensitively via parse()');
+     '-08 §9.3: duplicate hash algorithm across "|" groups via parse()');
+
+my $two_names = Mail::DKIM2::MessageInstance->parse('m=7; h=sha256:AAA:BBB,SHA256:CCC:DDD;');
+ok($two_names, '-08 §2.14: SHA256 is not sha256 (names are case-sensitive)');
 
 my $ok_mi = Mail::DKIM2::MessageInstance->parse('m=7; h=sha256:AAA:BBB,sha512:CCC:DDD;');
 ok($ok_mi, 'two distinct hash algorithms parse cleanly');

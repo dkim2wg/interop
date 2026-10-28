@@ -39,6 +39,8 @@ my $CASE = '-08 D10: an uppercase tag-name is an unknown tag, not a duplicate';
 my %KNOWN_DIVERGENCE = (
     (map { ("d2_duplicate_${_}_tag" => $CASE) } qw(d f i m mf n rt t)),
     tags_mixed_case => '-08 D10: tag-names are case-sensitive, so mixed case is missing tags',
+    algorithm_with_future => '-08 §14.6: an unknown algorithm joined by "," is a PERMERROR; '
+                           . 'a new algorithm offered beside a known one needs "|"',
 );
 
 my $parser = TOML::Parser->new;

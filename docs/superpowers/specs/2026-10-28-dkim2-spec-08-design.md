@@ -66,6 +66,14 @@ Each sig-set in `s=` order gives one intermediate result:
     sig-set, in `s=` order, with that result.
 - Verify every sig-set. Don't short-circuit inside a tag: the result has to be
   deterministic whatever the evaluation order.
+- **Amends C9:** an item's key error only counts if no `|` group passes, so
+  §14.5 and §14.6 can't be separate passes over every signature any more.
+  They are one step, signature by signature from i=1 up: each item's key,
+  then its signature, then the groups combined. A key error at i=2 and a bad
+  signature at i=1 now report the i=1 FAIL.
+- Folding (Perl `fold_header`): FWS is allowed on either side of `,` and `|`
+  in `s=` and `h=` (§9.3, §10.9 ABNF), so a fold may go there. A fold must
+  never land inside a selector or algorithm name.
 
 ## D4. Combining hash results (§14.7)
 

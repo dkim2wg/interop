@@ -31,9 +31,9 @@ is(scalar @$sets, 2, 'two hash-sets parsed');
 is_deeply($sets->[0], ['sha256', 'AAA', 'BBB'], 'first hash-set');
 is_deeply($sets->[1], ['sha512', 'CCC', 'DDD'], 'second hash-set');
 
-# RFC 5234: ABNF quoted strings are case-insensitive
+# -08 §2.14: hash names are case-sensitive
 my $upper = Mail::DKIM2::MessageInstance::parse_hash_sets('SHA512:AAA:BBB');
-is($upper->[0][0], 'sha512', 'hash-name matched case-insensitively');
+is($upper->[0][0], 'SHA512', 'hash-name keeps its case');
 
 # FWS inside a folded h= must not corrupt the hash-set (§2.12: FWS may
 # appear anywhere inside a base64 value, not just at the ends of an item).
@@ -89,7 +89,7 @@ is($folded_mid->[0][2], 'BBB', 'FWS stripped from the middle of a body hash');
         "Message-Instance: m=1; h=unknownalg:AAAA:BBBB;\r\n$headers\r\n$body");
     my ($ok2, $err2) = Mail::DKIM2::MessageInstance->verify($unimplemented_only_msg);
     ok(!$ok2, 'MI naming only an unimplemented algorithm fails');
-    like($err2, qr/no supported hash algorithm/,
+    like($err2, qr/\APERMERROR: Message-Instance m=1 algorithm unknownalg unknown\z/,
         'MI naming only an unimplemented algorithm fails CLOSED, distinct from the sha512-only case');
 }
 

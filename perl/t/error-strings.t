@@ -272,9 +272,11 @@ sub verify_text {
     (my $dupsel = $one) =~ s/(s=sel1:rsa-sha256:[^;]*)/$1,sel1:ed25519-sha256:AAAA/;
     is(Spec07Fixture::verify($dupsel)->details, 'PERMERROR: DKIM2-Signature i=1 has a duplicate selector',
         '-07 string: duplicate selector');
+    # -08 §14.2 dropped "has more selectors than allowed": three items of
+    # one algorithm are checked like any others.
     (my $three = $one) =~ s/(s=sel1:rsa-sha256:[^;]*)/$1,s2:rsa-sha256:AAAA,s3:rsa-sha256:AAAA/;
-    is(Spec07Fixture::verify($three)->details, 'PERMERROR: DKIM2-Signature i=1 has more selectors than allowed',
-        '-07 string: more selectors than allowed');
+    is(Spec07Fixture::verify($three)->details, 'FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature',
+        '-08: no selector limit (sel1 no longer matches the s= it signed)');
 }
 
 done_testing;

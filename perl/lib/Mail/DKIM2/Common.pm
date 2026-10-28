@@ -21,6 +21,8 @@ use Email::MIME::ContentType ();
 use Exporter 'import';
 our @EXPORT_OK = qw(
     should_skip
+    split_any_all
+    combine_sets
     parse_mime
     check_ignore_prefixes
     dkim2_canonicalize_header
@@ -230,6 +232,52 @@ sub duplicate_number_error {
     # The lowest number given twice (interop contract C9), not the first met.
     my ($n) = sort { $a <=> $b } grep { $count{$_} > 1 } keys %count;
     return defined $n ? "PERMERROR: $field $tag=$n appears more than once" : undef;
+}
+
+# The groups of an h= or s= value (-08 sections 9.3, 10.9): any-of groups
+# split by "|", each an all-of list split by ",", as [[item, ...], ...] with
+# each item's text untrimmed (its own parser trims the FWS around it). Undef
+# when a member is empty -- a leading, trailing or doubled "|" or "," -- which
+# is a syntax error (the -08 contract, D2).
+sub split_any_all {
+    my ($value) = @_;
+    my @groups;
+    for my $group (split /\|/, $value, -1) {
+        my @items = split /,/, $group, -1;
+        return if !@items || grep { /\A[ \t\r\n]*\z/ } @items;
+        push @groups, \@items;
+    }
+    return \@groups;
+}
+
+# combine_sets(\@groups, $none_passed) -> ($state, $text): the result of an
+# h= or s= value from its members' own (-08 sections 14.6, 14.7). @groups is
+# [[[$state, $text], ...], ...] -- the "|" groups of "," lists, in the
+# order the value gives them -- with each $state one of pass, fail,
+# temperror, permerror and $text the member's own error. An all-of list
+# passes if every member does; is a temperror if every member that does not
+# is one; else fails if any member fails; else is a permerror. The any-of
+# groups pass if one does; else are a temperror if one is; else fail if one
+# does; else are a permerror. The text (contract D3/D4): with one group, the
+# first member whose state is the result's; with several, $none_passed for a
+# fail, else the first member anywhere whose state is the result's.
+sub combine_sets {
+    my ($groups, $none_passed) = @_;
+    my @all;
+    for my $g (@$groups) {
+        my @bad = grep { $_->[0] ne 'pass' } @$g;
+        push @all, !@bad                                    ? 'pass'
+                 : !grep({ $_->[0] ne 'temperror' } @bad)   ? 'temperror'
+                 : grep({ $_->[0] eq 'fail' } @bad)         ? 'fail'
+                 :                                            'permerror';
+    }
+    my %have = map { $_ => 1 } @all;
+    my ($state) = grep { $have{$_} } qw(pass temperror fail permerror);
+    return ('pass') if $state eq 'pass';
+    return ($state, $none_passed) if @$groups > 1 && $state eq 'fail';
+    my @members = @$groups == 1 ? @{ $groups->[0] } : map { @$_ } @$groups;
+    my ($first) = grep { $_->[0] eq $state } @members;
+    return ($state, $first->[1]);
 }
 
 # DKIM2 header canonicalization for HEADER HASH per -07 Section 5.2:
@@ -529,30 +577,31 @@ sub _dkim2_fold_feed {
         $st->{colons} = 0;
         return;
     }
-    if    ($c eq ',') { $st->{colons} = 0 }
+    if    ($c eq ',' || $c eq '|') { $st->{colons} = 0 }
     elsif ($c eq ':') { $st->{colons}++ }
 }
 
 # May the field fold between $prev and $next, in state $st (_dkim2_fold_feed,
-# fed up to and including $prev)? The grammars (-07 §9, §10) allow FWS
+# fed up to and including $prev)? The grammars (-08 §9, §10) allow FWS
 # inside a base64string (§2.13) and in a few list positions, and nowhere in
 # a Domain, selector, algorithm or hash name, so only these are offered:
 #   - between two base64 characters of mf=, rt=, r=, of an h= digest (after
 #     the hash name's ":"), or of an s= signature value (after both ":"s);
-#   - on either side of a ":" in s= and h=;
-#   - after a "," in any list but s=: f= allows FWS around commas, a
-#     hash-set and a base64string (h=, rt=) may start with FWS, and an
-#     unknown tag's x-tag-value allows FWS between characters (X-DKIM2-Info's
-#     hn= list folds here too). Not in s=: a sig-set starts with its
-#     Selector.
+#   - on either side of a ":" in s= and h=, and of a "," or "|" joining
+#     their members (-08 §9.3, §10.9);
+#   - after a "," in any other list: f= allows FWS around commas, a
+#     base64string (rt=) may start with FWS, and an unknown tag's
+#     x-tag-value allows FWS between characters (X-DKIM2-Info's hn= list
+#     folds here too).
 sub _dkim2_fold_ok {
     my ($st, $prev, $next) = @_;
     my $name = $st->{name};
     return 0 unless defined $name && length $name;
-    return $name ne 's' if $prev eq ',';
-    # sig-set and hash-set allow FWS on either side of their ":"s (§10.9,
-    # §9.3; a base64string may begin or end with FWS).
-    return 1 if ($name eq 's' || $name eq 'h') && ($prev eq ':' || $next eq ':');
+    # sig-set and hash-set allow FWS on either side of their ":"s, and the
+    # lists of them on either side of each "," and "|" (§10.9, §9.3).
+    return 1 if ($name eq 's' || $name eq 'h')
+             && grep { $_ eq ':' || $_ eq ',' || $_ eq '|' } $prev, $next;
+    return 1 if $prev eq ',';
     return 0 unless $prev =~ m{[A-Za-z0-9+/=]} && $next =~ m{[A-Za-z0-9+/=]};
     return 1 if $name eq 'mf' || $name eq 'rt' || $name eq 'r';
     return $st->{colons} >= 1 if $name eq 'h';
@@ -1170,6 +1219,26 @@ can be larger than the chain. C<01> and C<001> are 1.
 The PERMERROR string for the first number that appears twice, or undef.
 
 =head1 ADDRESSES
+
+=head2 split_any_all($value)
+
+The groups of an C<h=> or C<s=> value (-08 sections 9.3 and 10.9): an
+arrayref of C<|>-separated groups, each an arrayref of its C<,>-separated
+members, untrimmed. Undef if any member is empty (a leading, trailing or
+doubled C<|> or C<,>), which is a syntax error.
+
+=head2 combine_sets(\@groups, $none_passed)
+
+The overall C<($state, $text)> of an C<h=> or C<s=> value from its
+members' results (-08 sections 14.6 and 14.7). C<@groups> holds one
+arrayref per C<|> group, of C<[$state, $text]> per member, C<$state> being
+C<pass>, C<fail>, C<temperror> or C<permerror>. A group passes if every
+member does; is a temperror if every member that does not pass is one; else
+fails if any member fails; else is a permerror. The value passes if any
+group does; else is a temperror, fail or permerror if any group is, in that
+order. C<$text> is the first member's (in value order) with the overall
+state, or C<$none_passed> when several groups give a fail. A pass has no
+text.
 
 =head2 extract_domain($address)
 

@@ -166,16 +166,27 @@ sub _parse_sig_item {
     return ([$sel, $alg, _strip_fws($val)], $ok);
 }
 
-# The s= items and whether they all parsed: (\@items, $ok).
+# The s= items and whether they all parsed: (\@items, $ok, \@groups). s= is
+# sig-all lists joined by "|" (-08 §10.9), each sig-set *("," sig-set); the
+# items are in s= order and @groups lists each group's item indices. An
+# empty member (a leading, trailing or doubled "|" or ",") is a syntax
+# error (the -08 contract, D2), and the items are then the ","-split ones.
 sub _parse_sig_items {
     my ($s) = @_;
-    my (@items, $bad);
-    for my $part (split /,/, $s, -1) {
-        my ($item, $ok) = _parse_sig_item($part);
-        $bad = 1 unless $ok;
-        push @items, $item;
+    my $split = Mail::DKIM2::Common::split_any_all($s);
+    my (@items, @groups, $bad);
+    for my $group ($split ? @$split : [ split /,/, $s, -1 ]) {
+        my @idx;
+        for my $part (@$group) {
+            my ($item, $ok) = _parse_sig_item($part);
+            $bad = 1 unless $ok;
+            push @idx, scalar @items;
+            push @items, $item;
+        }
+        push @groups, \@idx;
     }
-    return (\@items, !$bad);
+    $bad = 1 unless $split;
+    return (\@items, !$bad, \@groups);
 }
 
 sub signatures_data {
@@ -184,6 +195,16 @@ sub signatures_data {
     return unless defined $s && length $s;
     my ($items) = _parse_sig_items($s);
     return $items;
+}
+
+# The s= groups (-08 §10.9): an arrayref of the "|" groups, each an arrayref
+# of the indices of its ","-joined items, as selector() and friends take.
+sub sig_groups {
+    my $self = shift;
+    my $s = $self->get_tag('s');
+    return [] unless defined $s && length $s;
+    my (undef, undef, $groups) = _parse_sig_items($s);
+    return $groups;
 }
 
 # Malformed anywhere: the tag list itself (TagValueList), or an s= item.
@@ -302,8 +323,9 @@ sub as_string_without_data {
     for my $t (@{$self->{order}}) {
         my $v = defined $self->{tags}{$t} ? $self->{tags}{$t} : '';
         if ($t eq 's') {
-            # Replace each sel:alg:sig with sel:alg: (empty value per §10.5)
-            $v =~ s/([^,:]+:[^,:]+):[^,]*/$1:/g;
+            # Replace each sel:alg:sig with sel:alg: (empty value, -08
+            # §12.8); selectors, names and the ":" "," "|" all stay.
+            $v =~ s/([^,|:]+:[^,|:]+):[^,|]*/$1:/g;
         }
         push @parts, "$t=$v";
     }
@@ -320,7 +342,7 @@ sub as_folded_string_without_data {
     # Replace each sel:alg:sig with sel:alg: (null/empty string per spec §10.5)
     my $saved = $self->get_tag('s');
     my $stripped = $saved;
-    $stripped =~ s/([^,:]+:[^,:]+):[^,]*/$1:/g;
+    $stripped =~ s/([^,|:]+:[^,|:]+):[^,|]*/$1:/g;
 
     my @parts;
     for my $t (@{$self->{order}}) {
@@ -357,18 +379,10 @@ sub sig_count {
     return scalar @$sigs;
 }
 
-# -07 §10.9 duplicate/limit rules for one DKIM2-Signature s= tag.
-#
-# A Selector MUST NOT appear more than once. The same signing algorithm MAY
-# appear a second time, but only with a distinct Selector -- three or more
-# occurrences of the same algorithm means "more selectors than allowed". The
-# two checks are independent: two items sharing both algorithm and Selector
-# are a duplicate-selector error, not a selector-count error (the count is 2,
-# not 3+).
-#
-# Matching is case-insensitive for both: hash/algorithm names are RFC 5234
-# ABNF quoted strings (case-insensitive), and a Selector is a Domain (§3.6),
-# and DNS names are case-insensitive.
+# -08 §10.9 duplicate rule for one DKIM2-Signature s= tag: a Selector MUST
+# NOT appear more than once, in any group. The same algorithm may appear any
+# number of times with distinct Selectors (-08 dropped -07's limit of two).
+# Selectors match without regard to case: a Selector is a Domain (§3.6).
 #
 # Returns a list of PERMERROR strings (empty if clean).
 sub check_duplicates {
@@ -376,21 +390,10 @@ sub check_duplicates {
     my $sigs = $self->_sig_items;
     return () unless $sigs && @$sigs;
 
-    my $i_val = $self->sequence;
-    my (%sel_count, %alg_count);
-    for my $item (@$sigs) {
-        $sel_count{lc($item->[SIG_SELECTOR]  // '')}++;
-        $alg_count{lc($item->[SIG_ALGORITHM] // '')}++;
-    }
-
-    my @errors;
-    if (grep { $_ > 1 } values %sel_count) {
-        push @errors, "PERMERROR: DKIM2-Signature i=$i_val has a duplicate selector";
-    }
-    if (grep { $_ > 2 } values %alg_count) {
-        push @errors, "PERMERROR: DKIM2-Signature i=$i_val has more selectors than allowed";
-    }
-    return @errors;
+    my %sel_count;
+    $sel_count{lc($_->[SIG_SELECTOR] // '')}++ for @$sigs;
+    return () unless grep { $_ > 1 } values %sel_count;
+    return "PERMERROR: DKIM2-Signature i=" . $self->sequence . " has a duplicate selector";
 }
 
 1;
@@ -533,14 +536,22 @@ An arrayref of flags, or undef.
 =head2 signatures_data()
 
 An arrayref of C<[selector, algorithm, value]> arrayrefs, one per C<s=>
-item: folding whitespace trimmed from around the selector and algorithm and
-removed from inside the base64 value, which is all section 8.9 allows.
+item in the order C<s=> gives them, whatever their groups: folding
+whitespace trimmed from around the selector and algorithm and removed from
+inside the base64 value, which is all -08 section 10.9 allows.
+
+=head2 sig_groups()
+
+The C<s=> groups (-08 section 10.9): an arrayref with one arrayref per
+C<|>-separated group, holding the indices of its C<,>-joined items. A
+group passes when all its items do, and the signature when any group does.
 
 =head2 syntax_error()
 
 True if the field is not a valid tag list (see
 L<Mail::DKIM2::TagValueList/syntax_error>) or an C<s=> item is malformed:
-missing a part, or whitespace inside its selector or algorithm name.
+missing a part, or whitespace inside its selector or algorithm name; or a
+member of C<s=> is empty (a leading, trailing or doubled C<|> or C<,>).
 
 =head2 selector([$index]), algorithm([$index]), signature_value([$index])
 
@@ -552,8 +563,8 @@ The number of items.
 
 =head2 check_duplicates()
 
-A list of PERMERROR strings for the section 8.9 rules: a selector used
-twice, or an algorithm used more than twice. Empty if clean.
+A list of PERMERROR strings for the -08 section 10.9 rule: a selector used
+twice, in any group. Empty if clean.
 
 =head1 SERIALIZATION
 
