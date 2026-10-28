@@ -293,7 +293,7 @@ static void test_algorithms(const char *mi) {
     s = sig1(mi, "ednok", "ed25519-sha256", g_ed, "ed25519-sha256");
     expect("Ed25519 p= without k=ed25519 is not an RSA key",
         verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR: DKIM2-Signature i=1 public key ednok has a syntax error", 1);
+        "PERMERROR: DKIM2-Signature i=1 public key ednok is malformed", 1);
     free(s);
 }
 
@@ -391,14 +391,14 @@ static void test_outcome(const char *mi) {
         set_key("weak", "v=DKIM1; k=rsa; p=%s", wb64);
         s = sig1(mi, "weak", "rsa-sha256", weak, "rsa-sha256");
         expect("only item has a 768-bit RSA key: PERMERROR", verify(mi, s, 0), DKIM2_PERMERROR,
-            "PERMERROR: DKIM2-Signature i=1 public key weak is shorter than 1024 bits", 1);
+            "PERMERROR: DKIM2-Signature i=1 public key weak is malformed", 1);
         free(s);
         item_t wk[2] = { { "ed", "ed25519-sha256", g_ed, "ed25519-sha256", NULL },
                          { "weak", "rsa-sha256", weak, "rsa-sha256", NULL } };
         s = make_sig(mi, g_now, wk, 2);
         expect("good item + 768-bit RSA item: PERMERROR for the signature",
             verify(mi, s, 0), DKIM2_PERMERROR,
-            "PERMERROR: DKIM2-Signature i=1 public key weak is shorter than 1024 bits", 2);
+            "PERMERROR: DKIM2-Signature i=1 public key weak is malformed", 2);
         free(s);
         EVP_PKEY_free(weak);
     }

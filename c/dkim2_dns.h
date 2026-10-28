@@ -16,12 +16,17 @@ extern char *(*dkim2_dns_override)(const char *qname, int *n_records);
 extern int (*dkim2_dns_query_hook)(const char *qname, unsigned char *answer, int anslen);
 
 /* *errp values (-07 §14.5 wording, to follow "public key <selector> ").
-   The first four mean a record is present but unusable; ABSENT and FETCH
+   The first five mean a record is present but unusable; ABSENT and FETCH
    are lookup outcomes. ("OOM" is the only other value, as TEMPERROR.) */
 extern const char DKIM2_KEYERR_MULTIPLE[];  /* "has multiple records" */
 extern const char DKIM2_KEYERR_SYNTAX[];    /* "has a syntax error" */
 extern const char DKIM2_KEYERR_REVOKED[];   /* "has been revoked" */
 extern const char DKIM2_KEYERR_ALG[];       /* "algorithm mismatch" (unknown k=) */
+extern const char DKIM2_KEYERR_MALFORMED[]; /* "is malformed": p= is base64 but no
+                                               key of its type -- an Ed25519 key
+                                               not 32 octets, an RSA key that
+                                               does not load or is under 1024
+                                               bits (-08 §3.2, §14.5; D7) */
 
 extern const char DKIM2_KEYERR_ABSENT[];   /* "does not exist" (PERMERROR) */
 extern const char DKIM2_KEYERR_FETCH[];    /* "could not be fetched" (TEMPERROR) */

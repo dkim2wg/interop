@@ -143,7 +143,7 @@ static void test_key_records(void) {
     expect_record(REC("v=DKIM1; k=unknown; p=%s", g_rsa_b64), DKIM2_PERMERROR,
         "algorithm mismatch", "unknown k= is never read as RSA");
     expect_record(REC("v=DKIM1; k=ed25519; p=%s", g_rsa_b64), DKIM2_PERMERROR,
-        "has a syntax error", "p= not a key of type k= is a syntax error");
+        "is malformed", "p= not a key of type k= is malformed");
     /* Behaviour spec F.4: every value, known or ignored, is VALCHARs with
        WSP/FWS only between them. */
     expect_record(REC("v=DKIM1; x=a\x7f" "b; p=%s", g_rsa_b64), DKIM2_PERMERROR,

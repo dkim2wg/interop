@@ -1224,9 +1224,6 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 why = dns_err ? dns_err : DKIM2_KEYERR_SYNTAX;
             } else if (strcmp(pubkey->alg, sig_alg_key_type(sset->alg)) != 0) {
                 why = DKIM2_KEYERR_ALG;                     /* -07 §10.9 */
-            } else if (strcmp(sset->alg, "rsa-sha256") == 0 &&
-                       EVP_PKEY_bits(pubkey->pkey) < 1024) {
-                why = "is shorter than 1024 bits";          /* §3.2 */
             }
             if (why) {
                 dkim2_pubkey_free(pubkey);

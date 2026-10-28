@@ -21,6 +21,7 @@ const char DKIM2_KEYERR_MULTIPLE[] = "has multiple records";
 const char DKIM2_KEYERR_SYNTAX[]   = "has a syntax error";
 const char DKIM2_KEYERR_REVOKED[]  = "has been revoked";
 const char DKIM2_KEYERR_ALG[]      = "algorithm mismatch";
+const char DKIM2_KEYERR_MALFORMED[] = "is malformed";
 const char DKIM2_KEYERR_ABSENT[]   = "does not exist";
 const char DKIM2_KEYERR_FETCH[]    = "could not be fetched";
 
@@ -137,11 +138,15 @@ static dkim2_pubkey_t *parse_key_record(const char *txt,
             const unsigned char *kp2 = keybuf;
             key->pkey = d2i_PublicKey(EVP_PKEY_RSA, NULL, &kp2, keylen);
         }
-    } else {
+        /* -08 §3.2: an RSA key under 1024 bits MUST NOT be used. */
+        if (key->pkey && EVP_PKEY_bits(key->pkey) < 1024) {
+            EVP_PKEY_free(key->pkey); key->pkey = NULL;
+        }
+    } else if (keylen == 32) {          /* -08 §14.5: exactly 32 octets */
         key->pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL, keybuf, (size_t)keylen);
     }
     if (!key->pkey) {                   /* p= is not a key of type k= */
-        *statusp = DKIM2_PERMERROR; *errp = DKIM2_KEYERR_SYNTAX; goto fail;
+        *statusp = DKIM2_PERMERROR; *errp = DKIM2_KEYERR_MALFORMED; goto fail;
     }
     *statusp = DKIM2_OK; *errp = NULL;
     goto out;

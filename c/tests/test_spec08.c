@@ -11,6 +11,8 @@
 #include <time.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/rsa.h>
 #include <cjson/cJSON.h>
 #include "../dkim2_internal.h"
 #include "../dkim2_sign.h"
@@ -274,6 +276,69 @@ static void test_fail_states(void) {
     msg_free(&m);
 }
 
+/* D7: "public key <s> is malformed" (-08 §3.2, §14.5). */
+static char g_key_txt[4096];
+static char *key_override(const char *qname, int *n_records) {
+    (void)qname; (void)n_records;
+    return strdup(g_key_txt);
+}
+
+static const char *key_error(const char *fmt, const unsigned char *der, size_t len) {
+    char b[3072];
+    b64_encode(der, len, b, sizeof b);
+    snprintf(g_key_txt, sizeof g_key_txt, fmt, b);
+    char *(*saved)(const char *, int *) = dkim2_dns_override;
+    dkim2_dns_override = key_override;
+    dkim2_status_t st;
+    const char *err = NULL;
+    dkim2_pubkey_t *k = dkim2_dns_getkey("x", "example.com", &st, &err);
+    dkim2_dns_override = saved;
+    if (k && !k->revoked) { dkim2_pubkey_free(k); return "OK"; }
+    dkim2_pubkey_free(k);
+    return err ? err : "?";
+}
+
+static void test_malformed_keys(void) {
+    unsigned char raw[64];
+    for (size_t i = 0; i < sizeof raw; i++) raw[i] = (unsigned char)(i * 7 + 1);
+    CHECK(strcmp(key_error("v=DKIM1; k=ed25519; p=%s", raw, 32), "OK") == 0);
+    CHECK(strcmp(key_error("v=DKIM1; k=ed25519; p=%s", raw, 31), "is malformed") == 0);
+    CHECK(strcmp(key_error("v=DKIM1; k=ed25519; p=%s", raw, 33), "is malformed") == 0);
+    /* an Ed25519 key published as a DER SubjectPublicKeyInfo */
+    {
+        unsigned char *der = NULL;
+        int n = i2d_PUBKEY(g_priv, &der);
+        CHECK(n == 44);
+        CHECK(strcmp(key_error("v=DKIM1; k=ed25519; p=%s", der, (size_t)n), "is malformed") == 0);
+        OPENSSL_free(der);
+    }
+    /* RSA: base64 that is no key; a key under 1024 bits; 1024 is fine */
+    CHECK(strcmp(key_error("v=DKIM1; k=rsa; p=%s", raw, 48), "is malformed") == 0);
+    static const int bits[] = { 512, 1023, 1024, 2048 };
+    for (int k = 0; k < 4; k++) {
+        EVP_PKEY *rsa = EVP_RSA_gen((unsigned)bits[k]);
+        CHECK(rsa != NULL);
+        unsigned char *der = NULL;
+        int n = i2d_PUBKEY(rsa, &der);
+        const char *e = key_error("v=DKIM1; k=rsa; p=%s", der, (size_t)n);
+        if (bits[k] < 1024) CHECK(strcmp(e, "is malformed") == 0);
+        else CHECK(strcmp(e, "OK") == 0);
+        OPENSSL_free(der);
+        EVP_PKEY_free(rsa);
+    }
+    /* p= that is not base64 at all is still a syntax error */
+    snprintf(g_key_txt, sizeof g_key_txt, "v=DKIM1; k=ed25519; p=!!!!");
+    {
+        char *(*saved)(const char *, int *) = dkim2_dns_override;
+        dkim2_dns_override = key_override;
+        dkim2_status_t st;
+        const char *err = NULL;
+        dkim2_pubkey_t *k = dkim2_dns_getkey("x", "example.com", &st, &err);
+        dkim2_dns_override = saved;
+        CHECK(!k && err && strcmp(err, "has a syntax error") == 0);
+    }
+}
+
 int main(void) {
     harness_init();
 
@@ -281,6 +346,7 @@ int main(void) {
     test_strict_lowercase();
     test_recipe_paths();
     test_fail_states();
+    test_malformed_keys();
 
     harness_done();
     if (g_fail) { printf("test_spec08: %d failure(s)\n", g_fail); return 1; }
