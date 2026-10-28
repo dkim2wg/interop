@@ -406,9 +406,13 @@ sub parse {
         if ($tags{r} !~ m{\A(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?\z}) {
             die "PERMERROR: Message-Instance m=$tags{m} syntax error\n";
         }
-        # Anything wrong with the JSON -- its syntax, or the -07 section 5
-        # schema -- is the one error, "contains invalid JSON".
+        # Anything wrong with the JSON document as a whole -- its syntax,
+        # its keys, the shape of "h" and "b" -- is "contains invalid JSON";
+        # one bad step is "Recipe <path> is invalid" (-08 §14.2, contract
+        # D6), with the path b[<n>] or h.<name>[<n>]: the first bad one, b
+        # before h, header names in byte order, steps in order.
         my $invalid = "PERMERROR: Message-Instance m=$tags{m} contains invalid JSON\n";
+        my $bad = sub { "PERMERROR: Message-Instance m=$tags{m} Recipe $_[0] is invalid\n" };
         my $recipe_data = eval { decode_tag_json($tags{r}) };
         if ($@) {
             die $@ if ref $@;
@@ -424,7 +428,7 @@ sub parse {
         # recreated -- distinct from an absent one (no change).
         if (exists $top{b}) {
             if (ref $top{b} eq 'ARRAY') {
-                $self->{bits}{rb} = _decode_recipe_list($top{b}, $invalid);
+                $self->{bits}{rb} = _decode_recipe_list($top{b}, $bad, 'b');
             } elsif (!defined $top{b}) {
                 $self->{bits}{rb_null} = 1;
             } else {
@@ -435,8 +439,8 @@ sub parse {
             # A non-empty object (minProperties 1); never null (section 5.1).
             die $invalid unless ref $top{h} eq 'HASH' && %{$top{h}};
             my %rh;
-            for my $h (keys %{$top{h}}) {
-                $rh{$h} = _decode_recipe_list($top{h}{$h}, $invalid);
+            for my $h (sort keys %{$top{h}}) {
+                $rh{$h} = _decode_recipe_list($top{h}{$h}, $bad, 'h.' . _path_name($h));
             }
             $self->{bits}{rh} = \%rh;
         }
@@ -446,36 +450,43 @@ sub parse {
 }
 
 # Convert wire format Recipe list to internal format
-# Wire (-07 section 5): an array of steps, each an object with exactly one
-# key, "c", "d" or "u" (lowercase): {"c": [from,to]} copies, {"d": [...]}
-# emits UTF-8 literals, {"u": [...]} emits base64 ones.
+# Wire (-08 section 5): an array of steps, each an object with exactly one
+# key, "c", "d" or "u": {"c": [from,to]} copies, {"d": [...]} emits UTF-8
+# literals, {"u": [...]} emits base64 ones.
 # Internal: [from,to] arrays for copy ranges, strings for literal content
 #
 # A "u" item is decoded here, so the rest of the module sees one kind of
 # literal: a plain byte string. The schema's checks are all made here, and
-# any failure dies with $invalid ("contains invalid JSON"): a copy range is
-# exactly two JSON integers of at least 1; a "d" or "u" array has at least
-# one string; a "u" string is canonical base64 -- the alphabet, padding to
-# a multiple of four, and zero pad bits, the schema's three patterns -- with
-# no FWS; and no literal, "d" text or decoded "u" octets, may contain CR or
-# LF, since a literal is exactly one header value or one body line. "d"
-# text is UTF-8 already: decode_tag_json refuses JSON that is not.
-# The order and bounds of copy ranges are not the schema's: _check_recipe
-# checks those, against the lines a Recipe applies to.
+# so are §5.1/§5.2's rules on copy ranges that need no message: a range is
+# exactly two JSON integers of at least 1, start <= end, each starting
+# after the one before ends (no overlap, nothing out of order); a "d" or "u"
+# array has at least one string; a "u" string is canonical base64 -- the
+# alphabet, padding to a multiple of four, and zero pad bits, the schema's
+# three patterns -- with no FWS; and no literal, "d" text or decoded "u"
+# octets, may contain CR or LF, since a literal is exactly one header value
+# or one body line. "d" text is UTF-8 already: decode_tag_json refuses JSON
+# that is not. A list that is not an array is bad as a whole ($path); a bad
+# step dies with $bad->("$path[<n>]"), n its 0-based index (contract D6).
+# Whether a range lies within the lines it copies is for _check_recipe,
+# when the Recipe is applied.
 my $U_PATTERN = qr{\A(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?\z};
 sub _decode_recipe_list {
-    my ($list, $invalid) = @_;
-    die $invalid unless ref $list eq 'ARRAY';
-    my @decoded;
-    for my $item (@$list) {
+    my ($list, $bad, $path) = @_;
+    die $bad->($path) unless ref $list eq 'ARRAY';
+    my (@decoded, $prev_end);
+    for my $n (0 .. $#$list) {
+        my $item = $list->[$n];
+        my $invalid = $bad->("$path\[$n]");
         die $invalid unless ref $item eq 'HASH' && keys %$item == 1;
-        my ($key) = keys %$item;
-        my $kind = $key;
-        my $val  = $item->{$key};
+        my ($kind) = keys %$item;
+        my $val  = $item->{$kind};
         die $invalid unless ref $val eq 'ARRAY';
         if ($kind eq 'c') {
             die $invalid unless @$val == 2
                 && !grep { !_is_json_integer($_) || $_ < 1 } @$val;
+            die $invalid if $val->[0] > $val->[1]
+                || (defined $prev_end && $val->[0] <= $prev_end);
+            $prev_end = $val->[1];
             push @decoded, $val;
         } elsif ($kind eq 'd') {
             die $invalid unless @$val;
@@ -496,6 +507,14 @@ sub _decode_recipe_list {
         }
     }
     return \@decoded;
+}
+
+# A header name as a Recipe path writes it: printable ASCII as it is,
+# any other octet as \xHH (contract D6).
+sub _path_name {
+    my ($name) = @_;
+    $name =~ s/([^\x21-\x7e])/sprintf '\\x%02X', ord $1/ge;
+    return $name;
 }
 
 # --- Digests ---
@@ -1235,27 +1254,6 @@ sub _check_recipe {
     return;
 }
 
-# recipe_order_error(): the message-independent part of _check_recipe for
-# this instance's Recipes -- every copy range well formed, ascending, not
-# overlapping -- as the reason (a string), or undef when they are. A
-# verifier reports one as the instance's "contains invalid JSON" with its
-# other field errors (contract C9); the bound a message gives is for
-# applying the Recipe to find.
-sub recipe_order_error {
-    my ($self) = @_;
-    my $bits = $self->{bits};
-    my @lists = (['body', $bits->{rb}],
-                 map { ["header $_", $bits->{rh}{$_}] } sort keys %{ $bits->{rh} || {} });
-    for my $l (@lists) {
-        next unless $l->[1];
-        eval { _check_recipe(@$l); 1 } and next;
-        die $@ if ref $@;
-        (my $why = $@) =~ s/\s+\z//;
-        return $why;
-    }
-    return undef;
-}
-
 sub _apply_recipe {
     my ($what, $recipe, $old) = @_;
     _check_recipe($what, $recipe, scalar @$old);
@@ -1366,8 +1364,9 @@ sub chain_verifies {
 
         my $prev = eval { $class->undo($msg, HeadersOnly => $headers_only) };
         die $@ if ref $@;
-        # Every Recipe error is "contains invalid JSON" (the -07 contract);
-        # a third value says which range, for a log.
+        # A bad step is already a verdict (parse: "Recipe <path> is
+        # invalid", D6). A range past the lines it copies is found here, as
+        # "contains invalid JSON"; a third value says which range, for a log.
         if ($@ || !$prev) {
             (my $why = $@ // '') =~ s/\s+\z//;
             return (0, $why) if $why =~ /\A(?:PERMERROR|FAIL|TEMPERROR): /;
@@ -1591,15 +1590,6 @@ C<PERMERROR: > string on a missing C<m=> or C<h=>, a hash set that is not
 C<alg:hash:hash>, an algorithm named twice, a tag repeated in any case, or
 a Recipe that is not valid JSON or breaks the section 5 schema
 ("PERMERROR: Message-Instance m=N contains invalid JSON").
-
-=head2 recipe_order_error()
-
-The message-independent part of the Recipe rules for a parsed instance:
-every copy range well formed, ascending, and not overlapping another. Returns
-the reason as a string, or undef when the Recipes keep the rules. A verifier
-reports a failure as the instance's "contains invalid JSON", with the field's
-other errors; whether a range lies within the message is for applying the
-Recipe (L</undo>) to find.
 
 =head2 hash_algs()
 

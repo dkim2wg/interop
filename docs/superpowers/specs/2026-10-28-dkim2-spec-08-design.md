@@ -113,13 +113,17 @@ The A-R result is `dkim2=fail` for each of them. The check order is still C9.
 
 New string: `PERMERROR: Message-Instance m=<x> Recipe <path> is invalid`.
 - `contains invalid JSON` stays for whole-document problems: not parseable;
-  not an object; duplicate keys; a key that isn't lowercase (D10); `h` not a
-  non-empty object; `b` not an array or null; neither `h` nor `b`.
+  not an object; duplicate keys; a key that isn't lowercase (D10); any JSON
+  number with a fraction or exponent, wherever it is (`1.5`, `1e0`: JSON
+  libraries disagree on whether `1e0` is an integer, so it's judged from the
+  text); `h` not a non-empty object; `b` not an array or null; neither `h`
+  nor `b`.
 - `Recipe <path> is invalid` covers one step that the schema or §5.1/§5.2
   rejects:
   - the step isn't an object;
   - the step doesn't have exactly one of `c`/`d`/`u`;
   - a `c` that isn't exactly two JSON integers >= 1, or has start > end;
+  - a header entry in `h` that isn't an array: path `h.<name>`, no index;
   - an empty `d`/`u` array, or a non-string in one;
   - CR or LF in a line;
   - non-canonical base64;

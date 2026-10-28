@@ -351,19 +351,15 @@ sub finish_body {
     # instances that describe the message.
     #
     # Section 14.2, content: every Message-Instance on its own, by ascending
-    # m= -- its tag list, then a duplicate hash algorithm, then its Recipe
-    # (MessageInstance->parse checks in that order), then the Recipe's copy
-    # ranges. Only the bound a message gives a range is left for the chain
+    # m= -- its tag list, then a duplicate hash algorithm, then its Recipe,
+    # copy-range order included (MessageInstance->parse checks in that
+    # order). Only the bound a message gives a range is left for the chain
     # walk.
     for my $v (sort { $a <=> $b } keys %mi_map) {
         (my $value = $mi_map{$v}) =~ s/\A[^:]*:[ \t]*//;
         my $obj = eval { Mail::DKIM2::MessageInstance->parse($value) };
         die $@ if ref $@;
         return $self->_outcome(Mail::DKIM2::MessageInstance::_parse_error($@)) unless $obj;
-        if (defined(my $why = $obj->recipe_order_error)) {
-            $self->{diagnostic} = $why;
-            return $self->_error(permerror => "Message-Instance m=$v contains invalid JSON");
-        }
     }
 
     # Section 14.7: walk the chain. Verify the top instance against the

@@ -79,27 +79,33 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     is_pass(add_sig($n2, %HOP2), 'U2: the UTF-8 body line undoes byte-exactly');
 }
 
-# --- U3, U4, U5, K2: malformed Recipes are invalid JSON -------------------------
+# --- U3, U4, U5, K2: malformed Recipes (-08 §14.2, contract D6) ----------------
+# A bad step is "Recipe <path> is invalid"; a fault of the document as a
+# whole is "contains invalid JSON".
 {
+    my $JSON = 'contains invalid JSON';
     my %bad = (
-        'U3 u not canonical (pad bits)' => '{"b":[{"u":["QR=="]}]}',
-        'U4 the old b step'             => '{"b":[{"b":["eA=="]}]}',
-        'U4 two keys in a step'         => '{"b":[{"c":[1,1],"d":["x"]}]}',
-        'U4 an empty step'              => '{"b":[{}]}',
-        'U5 u decodes to a CR'          => '{"b":[{"u":["YQ1i"]}]}',
-        'U5 h with no properties'       => '{"h":{}}',
-        'U5 neither h nor b'            => '{"x":1}',
-        'K2 header name twice (case)'   => '{"h":{"Subject":[],"subject":[]}}',
-        'K2 step key twice (case)'      => '{"b":[{"c":[1,1],"C":[1,1]}]}',
-        'c is not two integers'         => '{"b":[{"c":["1",1]}]}',
-        'c starts at 0'                 => '{"b":[{"c":[0,1]}]}',
-        'u not padded'                  => '{"b":[{"u":["eA"]}]}',
-        'd is not UTF-8'                => qq({"b":[{"d":["caf\xE9"]}]}),
-        'a header Recipe is not array'  => '{"h":{"subject":{"c":[1,1]}}}',
+        'U3 u not canonical (pad bits)' => ['{"b":[{"u":["QR=="]}]}', 'Recipe b[0] is invalid'],
+        'U4 the old b step'             => ['{"b":[{"b":["eA=="]}]}', 'Recipe b[0] is invalid'],
+        'U4 two keys in a step'         => ['{"b":[{"c":[1,1],"d":["x"]}]}', 'Recipe b[0] is invalid'],
+        'U4 an empty step'              => ['{"b":[{}]}', 'Recipe b[0] is invalid'],
+        'U5 u decodes to a CR'          => ['{"b":[{"u":["YQ1i"]}]}', 'Recipe b[0] is invalid'],
+        'U5 h with no properties'       => ['{"h":{}}', $JSON],
+        'U5 neither h nor b'            => ['{"x":1}', $JSON],
+        'K2 header name twice (case)'   => ['{"h":{"Subject":[],"subject":[]}}', $JSON],
+        'K2 step key twice (case)'      => ['{"b":[{"c":[1,1],"C":[1,1]}]}', $JSON],
+        'c is not two integers'         => ['{"b":[{"c":["1",1]}]}', 'Recipe b[0] is invalid'],
+        'c starts at 0'                 => ['{"b":[{"c":[0,1]}]}', 'Recipe b[0] is invalid'],
+        'u not padded'                  => ['{"b":[{"u":["eA"]}]}', 'Recipe b[0] is invalid'],
+        'd is not UTF-8'                => [qq({"b":[{"d":["caf\xE9"]}]}), $JSON],
+        'a header Recipe is not array'  => ['{"h":{"subject":{"c":[1,1]}}}', 'Recipe h.subject is invalid'],
+        'a step in the second header'   => ['{"h":{"subject":[{"c":[1,1]}],"to":[{"c":[1]}]}}',
+                                            'Recipe h.to[0] is invalid'],
     );
     for my $name (sort keys %bad) {
-        my $t = add_sig(mi_with_recipe($HOP1_TEXT, $bad{$name}), %HOP2);
-        is_error($t, 'permerror', 'PERMERROR: Message-Instance m=2 contains invalid JSON', $name);
+        my ($json, $want) = @{ $bad{$name} };
+        my $t = add_sig(mi_with_recipe($HOP1_TEXT, $json), %HOP2);
+        is_error($t, 'permerror', "PERMERROR: Message-Instance m=2 $want", $name);
     }
 }
 

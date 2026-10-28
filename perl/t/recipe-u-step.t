@@ -144,7 +144,7 @@ sub with_recipe {
         { c => [3, 4] },
         { d => ['tail'] },
     ], 'consecutive literals of one kind share a step; kinds alternate');
-    my $dec = Mail::DKIM2::MessageInstance::_decode_recipe_list($enc, "invalid\n");
+    my $dec = Mail::DKIM2::MessageInstance::_decode_recipe_list($enc, sub { "invalid $_[0]\n" }, "b");
     is_deeply($dec, $list, 'and the decoder gives the list back');
 }
 
@@ -160,7 +160,8 @@ sub with_recipe {
 }
 
 # --- reject: bad steps make the instance fail, never throw out of the Verifier ---
-my $INVALID = qr/\APERMERROR: Message-Instance m=2 contains invalid JSON\z/;
+# -08 §14.2, contract D6: one bad step is "Recipe <path> is invalid".
+sub invalid { my ($path) = @_; qr/\APERMERROR: Message-Instance m=2 Recipe \Q$path\E is invalid\z/ }
 my @bad = (
     [ { b => [ { u => ['not base64!'] } ] },              'characters outside the alphabet' ],
     [ { b => [ { u => ['QUJD='] } ] },                    'wrong padding' ],
@@ -193,6 +194,7 @@ my @bad = (
 
 for my $case (@bad) {
     my ($recipe, $name) = @$case;
+    my $INVALID = invalid(exists $recipe->{b} ? 'b[0]' : 'h.comments[0]');
     my ($current) = two_hops(sub { with_recipe($_[0], $recipe) });
     my $text = $current->as_string;
 
