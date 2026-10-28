@@ -1,7 +1,7 @@
 # DKIM2 Interop Status Report
 
-**Spec:** draft-ietf-dkim-dkim2-spec-07  
-**Date:** 2026-10-18 (-07 upgrade; earlier sections of this report date from 2026-05-01)  
+**Spec:** draft-ietf-dkim-dkim2-spec-08  
+**Date:** 2026-10-18 (-08 upgrade; earlier sections of this report date from 2026-05-01)  
 **Audience:** DKIM2 Working Group participants, hackathon attendees
 
 ---
@@ -42,7 +42,7 @@ browser JS verifier) implement every verifier row.
 | §11, §12.4, §14.8 | From must be Authentic (verifier check and signer refusal) | ✅ | ✅ | ✅ | ✅ |
 | §12.3 | `nd=` imaginary hops | ✅ | ✅ | ✅ | ✅ |
 | §12.8 | Signing input construction | ✅ | ✅ | ✅ | ✅ |
-| §14.1–§14.8 | Exact -07 error strings (`STATE: text`) | ✅ | ✅ | ✅ | ✅ |
+| §14.1–§14.8 | Exact -08 error strings (`STATE: text`) | ✅ | ✅ | ✅ | ✅ |
 | §14.3 | Timestamps: > 14 days old or > 1 day in the future is PERMERROR | ✅ | ✅ | ✅ | ✅ |
 | §14.4 | Chain of Custody (mf=/d=, mf=/rt=, bounce d=/rt=, nd= checks) and envelope exact match | ✅ | ✅ | ✅ | ✅ |
 | §14.6 | Verify all s= items (algorithm agility) | ✅ | ✅ | ✅ | ✅ |
@@ -90,11 +90,11 @@ The Perl `t/interop.t` test verifies all Python expected emails.  The Python
 The Go test suite includes verification of the shared test vectors.
 
 The cross-implementation runners in `util/` (see the README), all green on
-the -07 tree (2026-10-18):
+the -08 tree (2026-10-18):
 
 | Runner | Cells | What it checks |
 |--------|-------|----------------|
-| `util/negative-vectors.sh` | 330 | 51 negative vectors rejected with the exact -07 string, 15 positive controls accepted, by all five verifiers |
+| `util/negative-vectors.sh` | 330 | 51 negative vectors rejected with the exact -08 string, 15 positive controls accepted, by all five verifiers |
 | `util/signer-gate.sh` | 200 | 25 chain shapes through the four signers, plain and with `--allow-null-body-recipe` |
 | `util/hash-matrix.sh` | 60 | 4 signers × sha256/sha512/both × 5 verifiers |
 | `util/interop-fold-mi.sh` | 57 | FWS in tag values, recipe-less instances |
@@ -237,7 +237,7 @@ These have not been resolved and should be addressed in a future draft revision:
 
 ```
 dns.json       DNS TXT records for all test domains (test1..test5.dkim2.com,
-               and mail.test2.dkim2.com for the -07 Chain of Custody vectors)
+               and mail.test2.dkim2.com for the -08 Chain of Custody vectors)
 keys/          Private key files for all selectors, all test domains
                Format: <selector>._domainkey.<domain>.pem  (PKCS#8 PEM)
 spec/          draft-ietf-dkim-dkim2-spec-07.txt (and the earlier drafts)
