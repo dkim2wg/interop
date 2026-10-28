@@ -4,7 +4,7 @@ use 5.020;
 use Path::Tiny;
 use Email::MIME;
 use lib 'lib';
-use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey parse_mime
+use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_key_record parse_mime
                            valid_sequence chain_number_error mi_version_tag unkeyable_signature_error);
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -160,6 +160,12 @@ sub find_key {
   $idx //= 0;
   my $sel = $signature->selector($idx);
   my $dom = $signature->domain;
-  my $key_txt = $dns->{$dom}{"$sel._domainkey"}[0][1];
-  return parse_dkim_pubkey($key_txt);
+  my $records = $dns->{$dom}{"$sel._domainkey"} or return;
+  # As the Verifier's own DNS fetch does (-08 section 14.5): no record is
+  # "does not exist"; one that is there but unusable is a PERMERROR with
+  # its reason ("is malformed", "has been revoked", ...).
+  die "PERMERROR: has multiple records\n" if @$records > 1;
+  my ($key, $why) = parse_dkim_key_record($records->[0][1]);
+  die "PERMERROR: $why\n" unless $key;
+  return $key;
 }
