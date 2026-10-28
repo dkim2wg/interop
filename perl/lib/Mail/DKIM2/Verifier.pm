@@ -641,9 +641,9 @@ sub _mi_mismatch {
     return $self->_outcome($err // "FAIL: Message-Instance m=$num header hash mismatch");
 }
 
-# Instance $num's Recipe does not undo: a copy range past the end, out of
-# order or overlapping -- every Recipe error is "contains invalid JSON"
-# (the -07 contract). Which range is kept for diagnostic().
+# Instance $num's Recipe does not undo: a copy range past the end of what
+# it copies (parse has refused a bad step already, D6) is "contains invalid
+# JSON". Which range is kept for diagnostic().
 sub _mi_undo_failed {
     my ($self, $num, $err) = @_;
     if (defined $err) {
