@@ -8,25 +8,28 @@ import (
 )
 
 func TestHashAlgRegistry(t *testing.T) {
-	for _, n := range []string{"sha256", "sha512", "SHA256", "SHA512"} {
+	for _, n := range []string{"sha256", "sha512"} {
 		if _, ok := HashAlg(n); !ok {
 			t.Errorf("HashAlg(%q) must be supported (§3.1)", n)
 		}
 	}
-	if _, ok := HashAlg("x-whirlpool"); ok {
-		t.Error("unknown algorithms must not resolve")
+	// -08 §9.3 writes the names %s"sha256": case sensitive.
+	for _, n := range []string{"x-whirlpool", "SHA256", "Sha512"} {
+		if _, ok := HashAlg(n); ok {
+			t.Errorf("HashAlg(%q): unknown algorithms must not resolve", n)
+		}
 	}
 }
 
 func TestParseHashSets(t *testing.T) {
-	got, err := parseHashSets("sha256:AAA:BBB,sha512:CCC:DDD")
+	got, err := parseHashSets("sha256:AAAA:BBBB,sha512:CCCC:DDDD")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("got %d hash-sets, want 2", len(got))
 	}
-	if got[0].Alg != "sha256" || got[0].HeaderHash != "AAA" || got[0].BodyHash != "BBB" {
+	if got[0].Alg != "sha256" || got[0].HeaderHash != "AAAA" || got[0].BodyHash != "BBBB" {
 		t.Errorf("first hash-set wrong: %+v", got[0])
 	}
 	if got[1].Alg != "sha512" {
@@ -34,18 +37,18 @@ func TestParseHashSets(t *testing.T) {
 	}
 }
 
-func TestParseHashSetsLowercasesAlg(t *testing.T) {
-	got, err := parseHashSets("SHA512:AAA:BBB")
+func TestParseHashSetsKeepsAlgCase(t *testing.T) {
+	got, err := parseHashSets("SHA512:AAAA:BBBB")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got[0].Alg != "sha512" {
-		t.Errorf("alg = %q, want sha512 (RFC 5234 quoted strings are case-insensitive)", got[0].Alg)
+	if got[0].Alg != "SHA512" {
+		t.Errorf("alg = %q, want SHA512 as written (-08 §9.3 %%s\"sha512\" is case sensitive)", got[0].Alg)
 	}
 }
 
 func TestParseMIWithBothAlgorithms(t *testing.T) {
-	raw := "Message-Instance: m=1; h=sha256:AAA:BBB,sha512:CCC:DDD;"
+	raw := "Message-Instance: m=1; h=sha256:AAAA:BBBB,sha512:CCCC:DDDD;"
 	mi, err := parseMI(raw)
 	if err != nil {
 		t.Fatalf("parseMI: %v", err)
@@ -72,7 +75,7 @@ func TestVerifyMIHashesFailsClosedOnUnimplementedAlgorithm(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a fail-closed error, got nil (pass)")
 	}
-	want := "PERMERROR: Message-Instance m=1 has no supported hash algorithm"
+	want := "PERMERROR: Message-Instance m=1 algorithm x-whirlpool unknown" // -08 §14.7 (contract D4)
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
 	}

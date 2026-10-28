@@ -73,7 +73,7 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	plan.close()
 
 	results, err := verifyFields(cs, plan.topHashes, plan.walk, fetcher, opts...)
-	return fromLast(headers, results, err, opts...)
+	return fromLast(headers, results, err, true, opts...)
 }
 
 // chainLevelError is the VerifyResult error for a lower Message-Instance
@@ -82,9 +82,9 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 // walk's own wording, as a PERMERROR.  The planned and undo walks both use
 // it, so they report the same.
 func chainLevelError(err error) error {
-	var hm *hashMismatchError
-	if errors.As(err, &hm) {
-		return hm
+	var hr *hashResultError
+	if errors.As(err, &hr) {
+		return hr
 	}
 	return fmt.Errorf("PERMERROR: MI chain validation failed: %w", err)
 }
@@ -128,7 +128,7 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 func verifyUndoFrom(buf []byte, br *bufio.Reader, headers []Header, cs *chainShape,
 	fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 
-	// §16.3: with no body there is nothing to undo a lower instance into, so
+	// §16.4: with no body there is nothing to undo a lower instance into, so
 	// the top instance's header-hash check is as far as the chain walk goes.
 	var lower func() *VerifyResult
 	if !(len(opts) > 0 && opts[0].HeadersOnly) {
@@ -137,7 +137,7 @@ func verifyUndoFrom(buf []byte, br *bufio.Reader, headers []Header, cs *chainSha
 	results, err := verifyFields(cs, func(algs []string) (map[string][]byte, error) {
 		return hashBodyStream(br, algs)
 	}, lower, fetcher, opts...)
-	return fromLast(headers, results, err, opts...)
+	return fromLast(headers, results, err, lower != nil, opts...)
 }
 
 // undoWalk checks each instance below the top of the message in buf: Undo

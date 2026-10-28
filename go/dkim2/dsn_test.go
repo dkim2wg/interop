@@ -73,8 +73,8 @@ func TestPropagate(t *testing.T) {
 
 	out, upstream, err := Propagate(dsn.Bytes(), PropagateOptions{
 		ForwarderDomain: "test2.dkim2.com",
-		Key:             loadKey(t, keys+"ed25519._domainkey.test3.dkim2.com.pem"),
-		Selector:        "ed25519", Domain: "test3.dkim2.com", Timestamp: 1740000000,
+		Key:             loadKey(t, keys+"ed25519._domainkey.test2.dkim2.com.pem"),
+		Selector:        "ed25519", Domain: "test2.dkim2.com", Timestamp: 1740000000,
 		SkipAuthentication: true,
 	})
 	if err != nil {
@@ -271,8 +271,8 @@ func TestPropagateNullRecipeReturnsHeadersOnly(t *testing.T) {
 	out, upstream, err := Propagate(dsnAround(t, nullRecipeChain(t), false),
 		PropagateOptions{
 			ForwarderDomain: "test2.dkim2.com",
-			Key:             loadKey(t, keys+"sel1._domainkey.test3.dkim2.com.pem"),
-			Selector:        "sel1", Domain: "test3.dkim2.com", Timestamp: 1740000000,
+			Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
+			Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
 			SkipAuthentication: true,
 		})
 	if err != nil {
@@ -346,7 +346,7 @@ func TestPropagateRefusesWhenUndoSimplyFails(t *testing.T) {
 	}
 }
 
-// --- Authenticate: §16.3, the returned original's chain must verify -------
+// --- Authenticate: §16.4, the returned original's chain must verify -------
 
 // The fixtures above never verify (hop 1 signs d=test1.dkim2.com over a
 // sender@origin.example envelope, which the d=/mf= rule rejects), which the
@@ -418,7 +418,7 @@ func TestAuthenticateIntactTwoHop(t *testing.T) {
 	if res.HeadersOnly {
 		t.Fatal("HeadersOnly set for a message/rfc822 DSN")
 	}
-	// The forwarder recognises i=2 as its own by d= (§16.3 point 2).
+	// The forwarder recognises i=2 as its own by d= (§16.4 point 2).
 	if res.Top == nil || res.Top.Sequence != 2 || res.Top.Domain != "test2.dkim2.com" {
 		t.Fatalf("Top = %+v, want i=2 d=test2.dkim2.com", res.Top)
 	}
@@ -566,13 +566,13 @@ func TestPropagateStripsTheBridgeWithItsHop(t *testing.T) {
 	}
 }
 
-// --- §16.3 point 1: the DSN's own signing domain must be aligned with the
+// --- §16.4 point 1: the DSN's own signing domain must be aligned with the
 // rt= of the returned message's top signature — i.e. the bounce came from the
 // system we handed the message to. Checked only on a d= we have verified: an
 // unverified d= is whatever the forger typed. -------------------------------
 
 // signedDSNAround wraps embedded in a DSN and signs the DSN as a new message
-// (as §16.2 makes it: MAIL FROM <>, one Message-Instance, one signature).
+// (as §16.3 makes it: MAIL FROM <>, one Message-Instance, one signature).
 func signedDSNAround(t *testing.T, embedded []byte, domain string) []byte {
 	t.Helper()
 	// The reporter's own postmaster, so the DSN's From is Authentic (§11).
@@ -688,7 +688,7 @@ func TestAuthenticateBrokenDSNSignature(t *testing.T) {
 
 func TestAuthenticateUnsignedDSNIsReportedNotFailed(t *testing.T) {
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
-	// An unsigned DSN is not what §16.3 is about ("when a system receives a
+	// An unsigned DSN is not what §16.4 is about ("when a system receives a
 	// DKIM2 signed DSN"), so it is reported, not failed.
 	res, err := Authenticate(dsnAround(t, verifiableTwoHop(t), false), f,
 		VerifyOptions{SkipTimestampCheck: true})
@@ -706,7 +706,7 @@ func TestAuthenticateUnsignedDSNIsReportedNotFailed(t *testing.T) {
 	}
 }
 
-// --- §16.3: "If the verification fails then the DSN MUST NOT be propagated
+// --- §16.4: "If the verification fails then the DSN MUST NOT be propagated
 // any further" — Propagate enforces that itself. ---------------------------
 
 func TestPropagateNeedsTheMeansToAuthenticate(t *testing.T) {
@@ -754,7 +754,7 @@ func TestPropagateAFullyAuthenticatedDSN(t *testing.T) {
 		t.Fatalf("upstream = %q, want <sender@test1.dkim2.com>", upstream)
 	}
 
-	// The inbound DSN was itself signed — the only kind §16.3 is about — so
+	// The inbound DSN was itself signed — the only kind §16.4 is about — so
 	// its own instance and signature must not survive into ours.
 	headers, _, err := parseHeaders(bytes.NewReader(out))
 	if err != nil {

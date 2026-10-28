@@ -18,10 +18,11 @@ var hashAlgs = map[string]func() hash.Hash{
 	"sha512": sha512.New,
 }
 
-// HashAlg resolves a §9.3 hash-name to its constructor. Matching is
-// case-insensitive: RFC 5234 makes ABNF quoted strings case-insensitive.
+// HashAlg resolves a §9.3 hash-name to its constructor. Matching is case
+// sensitive: -08 writes the names as %s"sha256" and %s"sha512" (RFC 7405),
+// so "SHA256" is an unknown algorithm.
 func HashAlg(name string) (func() hash.Hash, bool) {
-	f, ok := hashAlgs[strings.ToLower(name)]
+	f, ok := hashAlgs[name]
 	return f, ok
 }
 
@@ -81,16 +82,17 @@ func hashBody(r io.Reader, alg string) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// Unsigned header fields per §4, §4.1.
+// Unsigned header fields per §4, §4.1.  draft -08 took Auto-Submitted and
+// VBR-Info off this list: they are hashed.
 var excludedHeaderNames = map[string]bool{
 	"apparently-to": true, "arc-authentication-results": true,
 	"arc-message-signature": true, "arc-seal": true,
-	"authentication-results": true, "auto-submitted": true,
+	"authentication-results": true,
 	"delivered-to": true, "dkim-signature": true,
 	"dkim2-signature": true, "dl-expansion-history": true,
 	"message-instance": true, "original-recipient": true,
 	"received": true, "return-path": true, "sio-label-history": true,
-	"vbr-info": true, "x400-received": true, "x400-trace": true,
+	"x400-received": true, "x400-trace": true,
 }
 
 // spec-05 §4 narrowed the ARC- prefix to three exact names (above) and added

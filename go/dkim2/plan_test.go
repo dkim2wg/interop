@@ -275,10 +275,10 @@ func planCases() []planCase {
 			{h, "a\r\nb\r\n", ""},
 			{h, "a\r\n", `{"b":[{"c":[1,2]}]}`},
 			{h, "a\r\nb\r\n", `{"b":[{"c":[1,1]}]}`}}},
-		{name: "out of order copies", noPlan: true, want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
+		{name: "out of order copies", noPlan: true, want: "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid", levels: []planLevel{
 			{h, "b\r\na\r\n", ""},
 			{h, "a\r\nb\r\n", `{"b":[{"c":[2,2]},{"c":[1,1]}]}`}}},
-		{name: "overlapping copies", noPlan: true, want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
+		{name: "overlapping copies", noPlan: true, want: "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid", levels: []planLevel{
 			{h, "a\r\nb\r\nb\r\nc\r\n", ""},
 			{h, "a\r\nb\r\nc\r\n", `{"b":[{"c":[1,2]},{"c":[2,3]}]}`}}},
 		{name: "null body recipe", levels: []planLevel{
@@ -347,7 +347,8 @@ func planCases() []planCase {
 		{name: "mixed-case names", levels: []planLevel{
 			{"FROM: a@example.com\r\nsubject: hello\r\nSUBJECT: two\r\n", "a\r\n", ""},
 			{"FROM: a@example.com\r\nSubject: [l] hello\r\nSUBJECT: two\r\n", "a\r\n", `{"h":{"subject":[{"c":[1,1]},{"d":["hello"]}]}}`}}},
-		{name: "mixed-case recipe keys", levels: []planLevel{
+		// -08 (contract D10): uppercase keys are invalid JSON.
+		{name: "mixed-case recipe keys", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", noPlan: true, levels: []planLevel{
 			{h + "Keywords: k\r\n", "a\r\n", ""},
 			{strings.Replace(h, "hello", "[l] hello", 1), "a\r\n", `{"h":{"Subject":[{"d":["hello"]}],"KEYWORDS":[{"d":["k"]}]}}`}}},
 		{name: "skipped fields with recipes", levels: []planLevel{
@@ -363,7 +364,7 @@ func planCases() []planCase {
 		{name: "header copy of a missing field", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h, "a\r\n", `{"h":{"keywords":[{"c":[1,1]}]}}`}}},
-		{name: "header copies out of order", noPlan: true, want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
+		{name: "header copies out of order", noPlan: true, want: "PERMERROR: Message-Instance m=2 Recipe h.comments[1] is invalid", levels: []planLevel{
 			{h, "a\r\n", ""},
 			{h + "Comments: 1\r\nComments: 2\r\n", "a\r\n", `{"h":{"comments":[{"c":[2,2]},{"c":[1,1]}]}}`}}},
 		{name: "first bad name in key order", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", levels: []planLevel{
