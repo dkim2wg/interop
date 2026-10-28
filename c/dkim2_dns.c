@@ -21,6 +21,7 @@ const char DKIM2_KEYERR_MULTIPLE[] = "has multiple records";
 const char DKIM2_KEYERR_SYNTAX[]   = "has a syntax error";
 const char DKIM2_KEYERR_REVOKED[]  = "has been revoked";
 const char DKIM2_KEYERR_ALG[]      = "algorithm mismatch";
+const char DKIM2_KEYERR_MALFORMED[] = "is malformed";
 const char DKIM2_KEYERR_ABSENT[]   = "does not exist";
 const char DKIM2_KEYERR_FETCH[]    = "could not be fetched";
 
@@ -31,7 +32,7 @@ static int is_alpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <=
 static int is_digit(char c) { return c >= '0' && c <= '9'; }
 
 /* A key record is a dns-00 §3.2 tag-list, validated as a whole (§3.4.1;
-   -07 §14.5 "MUST validate the key record"): every tag-spec is
+   -08 §14.5 "MUST validate the key record"): every tag-spec is
    [FWS] name [FWS] "=" value, name = ALPHA *(ALPHA / DIGIT / "_"), tag
    names are case sensitive and may not repeat, v= (if present) is first
    and exactly "DKIM1", p= is required. k= defaults to "rsa"; "rsa" and
@@ -137,11 +138,15 @@ static dkim2_pubkey_t *parse_key_record(const char *txt,
             const unsigned char *kp2 = keybuf;
             key->pkey = d2i_PublicKey(EVP_PKEY_RSA, NULL, &kp2, keylen);
         }
-    } else {
+        /* -08 §3.2: an RSA key under 1024 bits MUST NOT be used. */
+        if (key->pkey && EVP_PKEY_bits(key->pkey) < 1024) {
+            EVP_PKEY_free(key->pkey); key->pkey = NULL;
+        }
+    } else if (keylen == 32) {          /* -08 §14.5: exactly 32 octets */
         key->pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL, keybuf, (size_t)keylen);
     }
     if (!key->pkey) {                   /* p= is not a key of type k= */
-        *statusp = DKIM2_PERMERROR; *errp = DKIM2_KEYERR_SYNTAX; goto fail;
+        *statusp = DKIM2_PERMERROR; *errp = DKIM2_KEYERR_MALFORMED; goto fail;
     }
     *statusp = DKIM2_OK; *errp = NULL;
     goto out;
@@ -198,7 +203,7 @@ int dkim2_dns_answer_settles(const unsigned char *answer, int anslen, int herr) 
 dkim2_pubkey_t *dkim2_dns_key_from_answer(const unsigned char *answer, int anslen,
     int herr, dkim2_status_t *statusp, const char **errp) {
     if (anslen < 0) {
-        /* -07 §14.5: NXDOMAIN / no data is "absent" (PERMERROR); anything else
+        /* -08 §14.5: NXDOMAIN / no data is "absent" (PERMERROR); anything else
            (SERVFAIL, timeout, refused) could not be fetched (TEMPERROR). */
         if (herr == HOST_NOT_FOUND || herr == NO_DATA) {
             *statusp = DKIM2_PERMERROR; *errp = DKIM2_KEYERR_ABSENT;
@@ -214,7 +219,7 @@ dkim2_pubkey_t *dkim2_dns_key_from_answer(const unsigned char *answer, int ansle
     }
 
     /* dns-00 §3.4.2.2: the strings of ONE TXT RR are concatenated with
-       nothing between them; more than one TXT RR is an error (-07
+       nothing between them; more than one TXT RR is an error (-08
        §14.5). Non-TXT answers (a CNAME on the way) are skipped. */
     int rrcount = ns_msg_count(msg, ns_s_an);
     char *txt = NULL;

@@ -112,7 +112,7 @@ dkim2_verify_result_t dkim2_verify_message_opts(const char *eml_path,
 {
     static const dkim2_verify_opts_t defaults = { 0 };
     if (!opts) opts = &defaults;
-    dkim2_verify_result_t result = {DKIM2_PERMERROR, "failed to parse message", 0, ""};
+    dkim2_verify_result_t result = {DKIM2_PERMERROR, "failed to parse message", 0, "", 0};
 
     char **headers = NULL;
     int n_headers = 0;

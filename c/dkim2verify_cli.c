@@ -65,6 +65,9 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "none\n");
     else if (verbose || result.status != DKIM2_OK)
         fprintf(stderr, "%s\n", result.message);
+    /* -08 §13: a PASS whose lower body hashes could not be checked. */
+    if (result.status == DKIM2_OK && !result.fully_verified)
+        fprintf(stderr, "not fully verified: a body hash below the top could not be checked\n");
 
     dkim2_dns_json_free();
     return (result.status == DKIM2_OK) ? 0 : 1;

@@ -1,4 +1,4 @@
-/* Null body Recipe ("b": null, -07 §5.2): the previous BODY cannot be
+/* Null body Recipe ("b": null, -08 §5.2): the previous BODY cannot be
    recreated, but header Recipes are mandatory (§5.1) so the header history
    below the null must still be walked and checked.
 

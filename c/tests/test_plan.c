@@ -264,11 +264,11 @@ static void body_cases(void) {
          { H1, "x\r\ny\r\nq\r\n" },
          { H2, "p\r\nq\r\n", "{" RSUB ",\"b\":[{\"c\":[1,3]}]}" },
          { H3, "z\r\n", "{" RSUB3 ",\"b\":[{\"d\":[\"p\",\"q\"]}]}" });
-    CASE("out-of-order copies", NULL, "contains invalid JSON", { H1, B },
+    CASE("out-of-order copies", NULL, "is invalid", { H1, B },
          { H2, B, "{" RSUB ",\"b\":[{\"c\":[2,2]},{\"c\":[1,1]}]}" });
-    CASE("overlapping copies", NULL, "contains invalid JSON", { H1, B },
+    CASE("overlapping copies", NULL, "is invalid", { H1, B },
          { H2, "a\r\nb\r\nc\r\n", "{" RSUB ",\"b\":[{\"c\":[1,2]},{\"c\":[2,3]}]}" });
-    CASE("string copy bounds", NULL, "contains invalid JSON", { H1, B },
+    CASE("string copy bounds", NULL, "is invalid", { H1, B },
          { H2, B, "{" RSUB ",\"b\":[{\"c\":[\"1\",\"2\"]}]}" });
     CASE("b is not an array", NULL, "contains invalid JSON", { H1, B },
          { H2, B, "{" RSUB ",\"b\":5}" });
@@ -277,7 +277,7 @@ static void body_cases(void) {
     CASE("null body Recipe, 3 levels", NULL, "PASS", { H1, B, NULL, "junk\r\n" },
          { H2, "two\r\n", "{" RSUB ",\"b\":[{\"d\":[\"zzz\"]}]}", "junk2\r\n" },
          { H3, "new\r\n", "{" RSUB3 ",\"b\":null}" });
-    CASE("bad structure below a null", NULL, "m=2 contains invalid JSON",
+    CASE("bad structure below a null", NULL, "m=2 Recipe b[1] is invalid",
          { H1, B }, { H2, "two\r\n", "{" RSUB ",\"b\":[{\"c\":[3,4]},{\"c\":[1,2]}]}" },
          { H3, "new\r\n", "{" RSUB3 ",\"b\":null}" });
     CASE("out of range below a null (not checked)", NULL, "PASS",
@@ -370,7 +370,7 @@ static void header_cases(void) {
          { H2, B, "{\"h\":{\"subject\":[{\"c\":[1,2]}]}}" });
     CASE("missing field", NULL, "contains invalid JSON", { H1, B },
          { H2, B, "{\"h\":{\"cc\":[{\"c\":[1,1]}]}}" });
-    CASE("header copies out of order", NULL, "contains invalid JSON",
+    CASE("header copies out of order", NULL, "is invalid",
          { H1 "Comments: a\r\nComments: b\r\n", B },
          { H1 "Comments: a\r\nComments: b\r\n", B,
            "{\"h\":{\"comments\":[{\"c\":[2,2]},{\"c\":[1,1]}]}}" });
@@ -387,7 +387,7 @@ static void header_cases(void) {
          { H2, B, "{\"h\":null}" });
     CASE("h is an array", NULL, "contains invalid JSON", { H1, B },
          { H2, B, "{\"h\":[]}" });
-    CASE("non-array field / unknown step", NULL, "contains invalid JSON", { H1, B },
+    CASE("non-array field / unknown step", NULL, "Recipe h.subject[0] is invalid", { H1, B },
          { H2, B, "{\"h\":{\"to\":5,\"subject\":[{\"x\":1},{\"d\":[\"hi\",7]}]}}" });
     CASE("message-instance key, literal", NULL, "PASS", { H1, B },
          { H2, B, "{\"h\":{\"message-instance\":[{\"d\":[\"m=9\"]}]," "\"subject\":[{\"d\":[\"hi\"]}]}}" });
@@ -396,9 +396,9 @@ static void header_cases(void) {
     CASE("u literal header", NULL, "PASS",
          { "From: a@example.com\r\nSubject: caf\xc3\xa9\r\n", B },
          { "From: a@example.com\r\nSubject: x\r\n", B, "{\"h\":{\"subject\":[{\"u\":[\"Y2Fmw6k=\"]}]}}" });
-    CASE("NUL in a u header literal", NULL, "contains invalid JSON", { H1, B },
+    CASE("NUL in a u header literal", NULL, "Recipe h.subject[0] is invalid", { H1, B },
          { H2, B, "{\"h\":{\"subject\":[{\"u\":[\"aABp\"]}]}}" });
-    CASE("CR in a d literal", NULL, "contains invalid JSON", { H1, B },
+    CASE("CR in a d literal", NULL, "Recipe h.subject[0] is invalid", { H1, B },
          { H2, B, "{\"h\":{\"subject\":[{\"d\":[\"a\\rb\"]}]}}" });
     CASE("long field name", NULL, NULL,
          { H1 "Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-a: 1\r\n", B },

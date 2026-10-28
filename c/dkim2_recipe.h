@@ -1,7 +1,7 @@
 #pragma once
 #include <stddef.h>
 
-/* Recipe steps (-07 §5, §5.1, §5.2); each step is an object with exactly
+/* Recipe steps (-08 §5, §5.1, §5.2); each step is an object with exactly
    one key:
      {"c": [start, end]}  copy items start..end (1-based, inclusive); across
                           a list each start MUST exceed the previous end
@@ -10,24 +10,33 @@
                           base64 (zero pad bits, no whitespace) -- used for a
                           literal that is not valid UTF-8; decoded octets
                           MUST NOT contain CR or LF
-   Keys are matched without regard to case (lowercase is emitted). A Recipe
+   Keys are strictly lowercase (-08, contract D10). A Recipe
    that breaks the schema is rejected by dkim2_recipe_parse() (the verifier's
-   "contains invalid JSON"); one that only fails against the message (a copy
+   "contains invalid JSON" for the document as a whole, "Recipe <path> is
+   invalid" for one step: dkim2_recipe_parse_ex); one that only fails against the message (a copy
    past the last item) makes the apply_* functions return NULL -- reported
    as "contains invalid JSON" as well. The gen_*
    functions emit "d" for every UTF-8 literal and "u" for the rest, and never
    a "c" range that breaks the ascending rule. */
 
-/* cJSON_Parse() of a Recipe, refusing (NULL) one that is not valid -07 §5
-   JSON: a key named twice in one object, compared without regard to case
-   (cJSON keeps the first of two equal keys and the other implementations'
+/* cJSON_Parse() of a Recipe, refusing (NULL) one that is not valid -08 §5
+   JSON: a key holding an ASCII capital (contract D10), or a key named
+   twice in one object, compared exactly after unescaping (cJSON keeps the first of two equal keys and the other implementations'
    parsers the last, so {"b":[...],"b":null} would be a null body Recipe to
    some verifiers and signers and a real one to others), or anything the
    schema forbids -- not an object, neither "h" nor "b", an empty "h", a step
    without exactly one of "c"/"d"/"u", a malformed literal or copy range.
-   Every key of the result is lowercased. Every Recipe parse here goes
-   through it. Free with dkim2_recipe_free(). */
+   Every Recipe parse here goes through it. Free with dkim2_recipe_free(). */
 struct cJSON *dkim2_recipe_parse(const char *r_json);
+/* As dkim2_recipe_parse, for len octets of JSON text (which may hold a
+   NUL, which makes it invalid; r_json[len] must be the terminating NUL).
+   On failure path (pathsz > 0) gets "" when
+   the document as a whole is at fault -- "contains invalid JSON" -- or the
+   first bad step's path, "b[<n>]", "h.<name>[<n>]" or "h.<name>" (a header
+   entry that is not an array), name octets outside 0x21-0x7E written as
+   \xHH: "Recipe <path> is invalid" (-08 §14.2, contract D6). Every
+   whole-document check is made before any step check. */
+struct cJSON *dkim2_recipe_parse_ex(const char *r_json, size_t len, char *path, size_t pathsz);
 void dkim2_recipe_free(struct cJSON *root);
 
 /* Structure-only validation of a body Recipe (same rules as apply, but no

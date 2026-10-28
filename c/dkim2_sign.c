@@ -17,7 +17,7 @@
 
 /* A DKIM2-Signature value, malloc'd to fit (rt= may hold any number of
    recipients); NULL on out of memory. sigv "" gives the incomplete value
-   that is signed (-07 §12.8). */
+   that is signed (-08 §12.8). */
 static char *sig_value(int i, int m, unsigned long long t, const char *d,
                        const char *mf, const char *rt, const char *flags,
                        const char *sel, const char *alg, const char *sigv) {
@@ -29,7 +29,7 @@ static char *sig_value(int i, int m, unsigned long long t, const char *d,
     return out;
 }
 
-/* RFC5321 path for mf=/rt= (-07 §10.5/§10.6): brackets MUST be present, and
+/* RFC5321 path for mf=/rt= (-08 §10.5/§10.6): brackets MUST be present, and
  * a domain with non-ASCII (U-label) labels is recorded as A-labels (§18).
  * Returns a malloc'd string the caller frees. NULL/empty -> "<>". */
 static char *to_rfc5321_path(const char *addr) {
@@ -63,7 +63,7 @@ static char *to_rfc5321_path(const char *addr) {
     return out;
 }
 
-/* -07 §12.8 canonicalization for signature input:
+/* -08 §12.8 canonicalization for signature input:
    lowercase name, unfold (remove CRLF+following WSP), delete ALL remaining WSP,
    re-add trailing CRLF.
    Input: "Name: folded value\r\n"
@@ -110,7 +110,7 @@ static char *canon_for_sig(const char *hdr) {
     return out;
 }
 
-/* Append the -07 §12.8 canonical form of "name: value" to *buf, growing it
+/* Append the -08 §12.8 canonical form of "name: value" to *buf, growing it
    as needed. Returns 0, or -1 on allocation failure: a field is never left
    out, since a signature over less than the whole input cannot verify. */
 static int append_sign_field(char **buf, size_t *pos, size_t *cap,
@@ -137,7 +137,7 @@ static int append_sign_field(char **buf, size_t *pos, size_t *cap,
     return 0;
 }
 
-/* Build the -07 §12.8 signing input:
+/* Build the -08 §12.8 signing input:
    Canonicalized MI headers (ascending m=), then DKIM2-Signature headers
    (ascending i=), then the incomplete new signature header (empty sig values).
    Returns malloc'd buffer and sets *out_len. */
@@ -197,7 +197,7 @@ static unsigned char *build_sign_input(
 }
 
 /* Non-zero if a Message-Instance's r= carries a null body Recipe ("b": null,
-   -07 §5.2: the previous body cannot be recreated). */
+   -08 §5.2: the previous body cannot be recreated). */
 static int mi_null_body(const dkim2_mi_t *mi) {
     if (!mi->r_raw) return 0;
     size_t n = strlen(mi->r_raw);
@@ -219,7 +219,7 @@ static int mi_null_body(const dkim2_mi_t *mi) {
 }
 
 /* The m= of the highest UNSIGNED Message-Instance with a null body Recipe,
-   else 0. A DKIM2-Signature with m=k covers instances 1..k (-07 §10.2),
+   else 0. A DKIM2-Signature with m=k covers instances 1..k (-08 §10.2),
    so an instance is unsigned when its m= is above the highest m= of every
    parsed (valid i=) signature -- whether it is the top, or another unsigned
    instance was added over it. A null an upstream domain already signed is
@@ -249,7 +249,7 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     if (!ctx->mi_list && !ctx->sig_list && !ctx->mi_error[0] && !ctx->sig_error[0])
         return 0;                       /* no existing chain: sign as always */
 
-    /* -07 §12.3/§14.4: an nd= on the top signature names the domain that
+    /* -08 §12.3/§14.4: an nd= on the top signature names the domain that
        signs next. We may extend the chain only if that is us; the verifier's
        blanket "top signature carries nd=" rejection is lifted in outbound
        mode because this is the check that replaces it. */
@@ -299,7 +299,7 @@ static int sign_gate(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg) {
     return 0;
 }
 
-/* -07 §12.4: when this signature is the first (no DKIM2-Signature yet), or
+/* -08 §12.4: when this signature is the first (no DKIM2-Signature yet), or
    an instance no signature covers yet changed From, the From header field
    must be Authentic for our d=. Returns 0 to sign, -1 to refuse with
    ctx->errmsg set. */
@@ -346,7 +346,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     if (sign_gate(ctx, cfg) < 0) return -1;
     if (!cfg->skip_chain_check && from_refusal(ctx, cfg) < 0) return -1;
 
-    /* -07 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
+    /* -08 §3.1: which hash algorithm(s) to emit in h=. Default (cfg->hash
        NULL) is sha256 only, so default output stays byte-identical to before
        hash agility existed. "--hash both" emits sha256 first, then sha512. */
     int sel_algs[DKIM2_N_HASH_ALGS];
@@ -361,7 +361,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
         sel_algs[n_sel++] = a;
     }
 
-    /* -07 §9.3: body hash already computed incrementally (both algorithms);
+    /* -08 §9.3: body hash already computed incrementally (both algorithms);
        header hash computed here per selected algorithm. */
     dkim2_hashset_t hs[DKIM2_N_HASH_ALGS];
     char hh_b64[DKIM2_N_HASH_ALGS][DKIM2_MAX_HASH_LEN * 2];
@@ -419,7 +419,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     for (dkim2_sig_t *sig = ctx->sig_list; sig; sig = sig->next)
         if (sig->i >= new_i) new_i = sig->i + 1;
 
-    /* Base64-encode mf= — normalized to a bracketed RFC5321 path (-07 §10.5) */
+    /* Base64-encode mf= — normalized to a bracketed RFC5321 path (-08 §10.5) */
     char *mfp = to_rfc5321_path(ctx->mail_from);
     size_t mf_b64_len = mfp ? ((strlen(mfp) + 2) / 3) * 4 + 2 : 0;
     char *mf_b64 = mfp ? malloc(mf_b64_len) : NULL;
@@ -432,7 +432,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     free(mfp);
 
     /* Base64-encode each rt= value, comma-separated — each normalized to a
-       bracketed RFC5321 path (-07 §10.6). The buffer grows to fit: any
+       bracketed RFC5321 path (-08 §10.6). The buffer grows to fit: any
        number of recipients, of any length. */
     size_t rt_cap = 256, rt_pos = 0;
     char *rt_b64 = malloc(rt_cap);
@@ -487,7 +487,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     /* Use configured timestamp or current time */
     uint64_t now = cfg->timestamp ? cfg->timestamp : (uint64_t)time(NULL);
 
-    /* -07 §12.5: an intermediary (i > 1) sending copies to more than one
+    /* -08 §12.5: an intermediary (i > 1) sending copies to more than one
        address sets "exploded" -- when the caller says so (a list that sends
        each recipient its own copy), or when this one copy goes to several
        rt= addresses. Never on i=1. */
@@ -495,7 +495,7 @@ int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     for (int i = 0; ctx->rcpt_to && ctx->rcpt_to[i]; i++) n_rt++;
     const char *flags = (new_i > 1 && (cfg->exploded || n_rt > 1)) ? " f=exploded;" : "";
 
-    /* Format incomplete DKIM2-Signature value (empty sig per -07 §12.8) */
+    /* Format incomplete DKIM2-Signature value (empty sig per -08 §12.8) */
     char *incomplete_sig = sig_value(new_i, new_m, (unsigned long long)now,
         cfg->domain, mf_b64, rt_b64, flags, cfg->selector, alg, "");
     if (!incomplete_sig) {

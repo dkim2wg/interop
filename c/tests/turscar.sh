@@ -4,9 +4,9 @@
 # ./dkim2verify CLI (which reads our nested dns.json) and compares the
 # accept/reject decision to each vector's ExpectedState ("pass" == accept).
 #
-# The vectors target spec-02, but the tag rules (case-insensitive identifiers,
-# any order, single occurrence, FWS) and the >=1024-bit key requirement (§3.2)
-# are unchanged in -07, so they apply directly.
+# The vectors target spec-02. The tag rules (any order, single occurrence,
+# FWS) and the >=1024-bit key requirement (§3.2) still apply; the ones -08
+# reverses are known divergences (below).
 #
 # Exact status-code differences (permerror vs fail) are not distinguished: the
 # CLI exits 0 (pass) or non-zero (reject), which is the gated invariant.
@@ -14,7 +14,7 @@ set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
 cdir=$(dirname "$here")                  # c/
-tests="$cdir/../dkim2tests/tests"
+tests="${TURSCAR_TESTS:-$cdir/../dkim2tests/tests}"   # TURSCAR_TESTS: another checkout
 cli="$cdir/dkim2verify"
 
 [ -d "$tests" ] || { echo "SKIP: submodule not checked out ($tests)"; exit 0; }
@@ -50,7 +50,20 @@ json.dump(dns, open(dnspath, "w"))
 print("\n".join(lines))
 PY
 
-known_skip=""   # none at present: dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf)
+# Known divergences: vectors whose expectation draft -08 (contract
+# docs/superpowers/specs/2026-10-28-dkim2-spec-08-design.md) reverses.
+# - d2_duplicate_*_tag (8 of them): each repeats a tag with its name in
+#   uppercase; -08 tag names are strictly lowercase (D10), so the uppercase
+#   twin is an unknown tag and the signature verifies. (d2_duplicate_s_tag
+#   still rejects: its second s= breaks the signed input.)
+# - tags_mixed_case: uppercase tag names are unknown tags (D10), so the
+#   required tags are missing.
+# - algorithm_with_future: an unknown algorithm beside a good signature in a
+#   "," list is a PERMERROR item, which the list requires (-08 §14.6, D3).
+known_skip="d2_duplicate_d_tag d2_duplicate_f_tag d2_duplicate_i_tag d2_duplicate_m_tag
+            d2_duplicate_mf_tag d2_duplicate_n_tag d2_duplicate_rt_tag d2_duplicate_t_tag
+            tags_mixed_case algorithm_with_future"
+known_skip=$(echo $known_skip)
 
 fail=0; gated=0; skipped=0
 while IFS='|' read -r name expected signed mf rt; do
