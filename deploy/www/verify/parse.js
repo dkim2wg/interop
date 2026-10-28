@@ -1,4 +1,4 @@
-// RFC5322 message parsing and DKIM2 tag-value parsing. Built from draft-ietf-dkim-dkim2-spec-07.
+// RFC5322 message parsing and DKIM2 tag-value parsing. Built from draft-ietf-dkim-dkim2-spec-08.
 import { bytesToBinary } from './b64.js';
 
 function toCRLF(raw) {
@@ -140,7 +140,10 @@ export function parseTagList(value) {
     if (!TAG_SPEC.test(seg)) syntaxError = true;
     const eq = seg.indexOf('=');
     if (eq < 0) return;
-    const name = seg.slice(0, eq).trim().toLowerCase();
+    // -08 §8 (contract D10): tag names are lowercase, and compared as
+    // written: "M" is an unknown tag, never m=, and "M=2" beside m=1 is
+    // no duplicate.
+    const name = seg.slice(0, eq).trim();
     // DKIM2 tag values are base64 / tokens / digits / domains and never carry
     // significant internal whitespace; any WSP present came from header folding
     // (FWS). Strip ALL whitespace so a value split across continuation lines —

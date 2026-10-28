@@ -239,26 +239,38 @@ test('B: DoH: an unquoted TXT data value (some resolvers) is taken as-is', async
 
 // --- C. Message-Instance tags --------------------------------------------
 
-test('C: a correctly signed instance written with H= passes', async () => {
+// -08 §8 (contract D10): tag names are lowercase. An uppercase one is an
+// unknown tag: ignored, and never a duplicate of its lowercase twin.
+test('C: an instance written with H= has no h=', async () => {
   const rep = await verify(await signed({ mi: (hh, bh) => ` m=1; H=sha256:${hh}:${bh}` }));
-  assert.equal(rep.overall, 'pass', rep.summary);
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.match(rep.summary, /PERMERROR: Message-Instance m=1 tag=h missing/);
 });
 
-test('C: a correctly signed instance written with M= passes', async () => {
+test('C: an instance written with M= has no m=', async () => {
   const rep = await verify(await signed({ mi: (hh, bh) => ` M=1; h=sha256:${hh}:${bh}` }));
-  assert.equal(rep.overall, 'pass', rep.summary);
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.match(rep.summary, /PERMERROR: Message-Instance m= tag=m missing/);
 });
 
 for (const [name, mi] of [
   ['h= twice, bogus first', (hh, bh) => ` m=1; h=sha256:AAAA:AAAA; h=sha256:${hh}:${bh}`],
   ['h= twice, bogus last', (hh, bh) => ` m=1; h=sha256:${hh}:${bh}; h=sha256:AAAA:AAAA`],
-  ['h= and H=', (hh, bh) => ` m=1; h=sha256:${hh}:${bh}; H=sha256:${hh}:${bh}`],
-  ['m= and M=', (hh, bh) => ` m=1; M=1; h=sha256:${hh}:${bh}`],
 ]) {
   test(`C: a repeated Message-Instance tag (${name}) is a syntax error`, async () => {
     const rep = await verify(await signed({ mi }));
     assert.equal(rep.overall, 'permerror', rep.summary);
     assert.match(rep.summary, /PERMERROR: Message-Instance m=1 syntax error/);
+  });
+}
+
+for (const [name, mi] of [
+  ['h= and H=', (hh, bh) => ` m=1; h=sha256:${hh}:${bh}; H=sha256:AAAA:AAAA`],
+  ['m= and M=', (hh, bh) => ` m=1; M=2; h=sha256:${hh}:${bh}`],
+]) {
+  test(`C: an uppercase twin of a Message-Instance tag (${name}) is ignored`, async () => {
+    const rep = await verify(await signed({ mi }));
+    assert.equal(rep.overall, 'pass', rep.summary);
   });
 }
 

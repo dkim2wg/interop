@@ -51,12 +51,23 @@ const BROKEN_VECTORS = new Set([]);
 // makes FAIL.
 const CONTRACT_STATE = { algorithm_only_future: 'permerror', domain_below_mailfrom: 'fail' };
 
+// Turscar's draft-02 vectors that the -08 contract reverses (as Python's
+// test_turscar.py KNOWN_DIVERGENCE): D10 makes an uppercase tag name an
+// unknown tag, so it is no duplicate of its lowercase twin and never
+// stands in for it.
+const D10 = '-08 contract D10: an uppercase tag name is an unknown tag';
+const KNOWN_DIVERGENCE = {
+  ...Object.fromEntries(['d', 'f', 'i', 'm', 'mf', 'n', 'rt', 's', 't'].map((t) => [`d2_duplicate_${t}_tag`, D10])),
+  tags_mixed_case: D10,
+};
+
 for (const file of files) {
   const toml = parseToml(readFileSync(join(testsDir, file), 'utf8'));
   const name = toml.Name || file;
   const expected = CONTRACT_STATE[name] || (toml.ExpectedState || '').toLowerCase();
   if (!expected) continue;
 
+  if (KNOWN_DIVERGENCE[name]) { test.skip(`vector ${name}: ${KNOWN_DIVERGENCE[name]}`); continue; }
   const run = BROKEN_VECTORS.has(name) ? test.skip : test;
   run(`vector ${name} -> ${expected}`, async () => {
     let msg = toml.SignedMessage;

@@ -186,9 +186,8 @@ function recipeSummary(rec) {
   return parts.length ? parts.join('; ') : 'none';
 }
 
-// Return the (lowercased) name of the first tag that appears more than once in
-// a parsed tag list, or null. Tag names are case-insensitive (§8), and
-// parseTagList already lowercases them.
+// Return the name of the first tag that appears more than once in a parsed
+// tag list, or null. Tag names are compared as written (-08 §8, D10).
 function duplicateTag(tags) {
   const seen = new Set();
   for (const t of tags) {

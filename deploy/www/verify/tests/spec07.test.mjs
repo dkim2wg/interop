@@ -414,8 +414,8 @@ test('a DNS failure: "TEMPERROR: ... public key <s1> could not be fetched"', asy
   assert.match(rep.summary, /TEMPERROR: DKIM2-Signature i=1 public key sel could not be fetched/);
 });
 
-test('a duplicate tag, in any case, is a syntax error', async () => {
-  const msg = await signChain([{ fields: FIELDS, body: BODY }], [one({ extra: '; N=x; n=y' })]);
+test('a duplicate tag is a syntax error', async () => {
+  const msg = await signChain([{ fields: FIELDS, body: BODY }], [one({ extra: '; n=x; n=y' })]);
   assertPerm(await verify(msg), 'PERMERROR: DKIM2-Signature i=1 syntax error');
 });
 
