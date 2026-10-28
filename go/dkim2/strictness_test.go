@@ -143,7 +143,7 @@ func TestStrictA_UnknownAlgorithmNeverVerified(t *testing.T) {
 			if got == "" {
 				t.Fatalf("RSA-signed item declaring %q passed", alg)
 			}
-			if want := "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm"; !strings.Contains(got, want) {
+			if want := "PERMERROR: DKIM2-Signature i=1 selector sel1 algorithm unknown"; !strings.Contains(got, want) {
 				t.Errorf("error %q, want %q", got, want)
 			}
 			if f.n != 0 {
@@ -155,23 +155,27 @@ func TestStrictA_UnknownAlgorithmNeverVerified(t *testing.T) {
 
 func TestStrictA_UnknownItemSkippedBeforeLookup(t *testing.T) {
 	sigLine, miLine, rest := strictSigned(t, 1740000000)
-	for name, s := range map[string]string{
-		"base64 value":     "sel2:future-alg:AAAA,sel1:rsa-sha256:{SIG}",
-		"non-base64 value": "sel2:future-alg:!!not base64!!,sel1:rsa-sha256:{SIG}",
+	// -08 (contract D3): an unknown item is PERMERROR, so only a "|"
+	// alternative lets a known one pass; its value must still be base64.
+	for name, tc := range map[string]struct{ s, want string }{
+		"base64 value":      {"sel2:future-alg:AAAA|sel1:rsa-sha256:{SIG}", ""},
+		"in a \",\" group":  {"sel2:future-alg:AAAA,sel1:rsa-sha256:{SIG}", "PERMERROR: DKIM2-Signature i=1 selector sel2 algorithm unknown"},
+		"non-base64 value": {"sel2:future-alg:!!not base64!!|sel1:rsa-sha256:{SIG}", "PERMERROR: DKIM2-Signature i=1 syntax error"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			msg := resign(t, withS(t, sigLine, s), miLine, rest)
+			msg := resign(t, withS(t, sigLine, tc.s), miLine, rest)
 			f := &countingFetcher{inner: jsonFetcher()}
-			if got := verifyOutcome(msg, f, skipTS); got != "" {
-				t.Fatalf("want pass, got %q", got)
+			if got := verifyOutcome(msg, f, skipTS); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
-			if f.n != 1 {
-				t.Errorf("%d key lookups, want exactly 1", f.n)
+			if want := map[bool]int{true: 1, false: 0}[tc.want != "PERMERROR: DKIM2-Signature i=1 syntax error"]; f.n != want {
+				t.Errorf("%d key lookups, want %d", f.n, want)
 			}
 		})
 	}
 }
 
+// Many items stop at the 8-item limit (contract D3), before any lookup.
 func TestStrictA_ManyUnknownItemsLinear(t *testing.T) {
 	sigLine, miLine, rest := strictSigned(t, 1740000000)
 	var items []string
@@ -179,14 +183,14 @@ func TestStrictA_ManyUnknownItemsLinear(t *testing.T) {
 		items = append(items, fmt.Sprintf("u%d:future-alg-%d:AAAA", i, i))
 	}
 	items = append(items, "sel1:rsa-sha256:{SIG}")
-	msg := resign(t, withS(t, sigLine, strings.Join(items, ",")), miLine, rest)
+	msg := resign(t, withS(t, sigLine, strings.Join(items, "|")), miLine, rest)
 	f := &countingFetcher{inner: jsonFetcher()}
 	got := verifyOutcome(msg, f, skipTS)
-	if got != "" {
-		t.Fatalf("want pass, got %q", got)
+	if want := "PERMERROR: DKIM2-Signature i=1 has more than 8 signatures"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
-	if f.n != 1 {
-		t.Errorf("%d key lookups, want exactly 1", f.n)
+	if f.n != 0 {
+		t.Errorf("%d key lookups, want none", f.n)
 	}
 }
 
@@ -438,7 +442,11 @@ func TestStrictE_ItemOutcomes(t *testing.T) {
 		{"multiple records beside a good item", "sel2:rsa-sha256:AAAA,sel1:rsa-sha256:{SIG}",
 			txtFetcher{"sel1": good, "sel2": {good[0], good[0]}},
 			"PERMERROR: DKIM2-Signature i=1 public key sel2 has multiple records"},
+		// -08 (contract D3): an absent key is the item's PERMERROR, which
+		// only a "|" alternative overrides.
 		{"absent key beside a good item", "sel9:rsa-sha256:AAAA,sel1:rsa-sha256:{SIG}",
+			txtFetcher{"sel1": good}, "PERMERROR: DKIM2-Signature i=1 public key sel9 does not exist"},
+		{"absent key or a good item", "sel9:rsa-sha256:AAAA|sel1:rsa-sha256:{SIG}",
 			txtFetcher{"sel1": good}, ""},
 		{"all keys absent", "sel9:rsa-sha256:AAAA,sel8:ed25519-sha256:{SIG},sel7:future-alg:AAAA",
 			txtFetcher{"sel1": good},
@@ -450,7 +458,7 @@ func TestStrictE_ItemOutcomes(t *testing.T) {
 		{"bad signature", "sel1:rsa-sha256:AAAA", txtFetcher{"sel1": good},
 			"FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature"},
 		{"bad signature beside a good one", "sel1:rsa-sha256:{SIG},ed25519:ed25519-sha256:AAAA",
-			jsonFetcher(), "FAIL: DKIM2-Signature i=1 signature sel1 signature ed25519 failed"},
+			jsonFetcher(), "FAIL: DKIM2-Signature i=1 selector ed25519 incorrect signature"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

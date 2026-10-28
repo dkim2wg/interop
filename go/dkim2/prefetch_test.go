@@ -246,11 +246,14 @@ func TestPrefetchCap(t *testing.T) {
 		return fmt.Sprintf("DKIM2-Signature: i=%d; m=1; t=1; d=%s; mf=%s; rt=%s; s=%s\r\n",
 			i, d, b64("<a@"+d+">"), b64("<b@x.example>"), strings.Join(items, ","))
 	}
+	// The top signature's 7 known items (s0..s6; u's algorithm is unknown,
+	// so its key is never looked up), then the next one down until 8.
 	items := []string{"u:new-alg:AAAA", "s0:ed25519-sha256:AAAA"}
-	for k := 0; k < 50; k++ {
+	for k := 1; k < 7; k++ {
 		items = append(items, fmt.Sprintf("s%d:rsa-sha256:AAAA", k))
 	}
-	sigs := []string{sig(1, "low.example", []string{"l:rsa-sha256:AAAA"}), sig(2, "top.example", items)}
+	low := []string{"l0:rsa-sha256:AAAA", "l1:rsa-sha256:AAAA", "l2:rsa-sha256:AAAA"}
+	sigs := []string{sig(1, "low.example", low), sig(2, "top.example", items)}
 	res := newFakeResolver(t, nil)
 	pf, ok := prefetchKeys(sigs, &NetKeyFetcher{Resolver: res}).(*keyPrefetcher)
 	if !ok {
@@ -261,12 +264,29 @@ func TestPrefetchCap(t *testing.T) {
 		got = append(got, name)
 	}
 	sort.Strings(got)
-	want := []string{"s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"}
-	for k := range want {
-		want[k] += "._domainkey.top.example"
+	want := []string{"l0._domainkey.low.example"}
+	for k := 0; k < 7; k++ {
+		want = append(want, fmt.Sprintf("s%d._domainkey.top.example", k))
 	}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("prefetched %v, want %v", got, want)
+	}
+
+	// An s= with more than 8 items is a §14.2 error, found before any key
+	// is fetched (contract D3): none of its keys are prefetched.
+	items = append(items, "s7:rsa-sha256:AAAA")
+	sigs = []string{sig(1, "low.example", low), sig(2, "top.example", items)}
+	pf, ok = prefetchKeys(sigs, &NetKeyFetcher{Resolver: res}).(*keyPrefetcher)
+	if !ok {
+		t.Fatal("not prefetched")
+	}
+	got = got[:0]
+	for name := range pf.lookups {
+		got = append(got, name)
+	}
+	sort.Strings(got)
+	if want := "l0._domainkey.low.example l1._domainkey.low.example l2._domainkey.low.example"; strings.Join(got, " ") != want {
+		t.Errorf("prefetched %v, want %s", got, want)
 	}
 }
 

@@ -45,12 +45,20 @@ func toRFC5321Path(a string) string {
 	return a
 }
 
-// SigItem is one sel:alg:value entry in the s= tag.
+// SigItem is one sel:alg:value entry (sig-set) in the s= tag.
 type SigItem struct {
 	Selector  string
 	Algorithm string
 	Value     []byte // nil means empty (signing input placeholder per §10.9)
+	// Group is the sig-all ("," list) the item belongs to, counting the
+	// "|"-separated groups of s= from 0 (-08 §10.9).  Signers write one.
+	Group int
 }
+
+// MaxSignatureItems is the most sig-sets one s= may hold (contract D3, a
+// local limit: -08 dropped "more selectors than allowed", and every item
+// can cost a key lookup and a verification).
+const MaxSignatureItems = 8
 
 // SignOptions carries per-message signing parameters.
 type SignOptions struct {
@@ -261,7 +269,9 @@ func validSequenceTag(raw string) bool {
 
 // KnownSigAlg reports whether alg is a signature algorithm this verifier
 // implements (§3, §10.9).  Algorithm names are tag values, so they are
-// case significant: "RSA-SHA256" is not "rsa-sha256".
+// case significant: "RSA-SHA256" is not "rsa-sha256".  -08's mldsa44 (§3.4)
+// is deferred (contract D8: Go keeps ML-DSA internal), so it, like the old
+// mldsa44-ed25519-sha512 composite, is an unknown algorithm.
 func KnownSigAlg(alg string) bool {
 	return alg == "rsa-sha256" || alg == "ed25519-sha256"
 }
@@ -365,31 +375,37 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		}
 	}
 	if v := tvl.get("s"); v != "" {
-		for _, part := range strings.Split(v, ",") {
-			// §10.9 sig-set: exactly three parts.  FWS is allowed around the
-			// comma and each colon (trimmed) and inside the base64 value
-			// (removed), never inside the selector or algorithm name: "rsa-
-			// sha256" is a syntax error, not a fold to undo.
-			fields := strings.Split(part, ":")
-			if len(fields) != 3 {
-				return nil, sigSyntaxError(sig.Sequence)
-			}
-			item := SigItem{Selector: trimFWS(fields[0]), Algorithm: trimFWS(fields[1])}
-			if !validSelector(item.Selector) || !validToken(item.Algorithm) {
-				return nil, sigSyntaxError(sig.Sequence)
-			}
-			value := stripB64WSP(fields[2])
-			// §3.5: an item whose algorithm is not implemented is ignored
-			// entirely, value included.  An implemented one MUST carry a
-			// non-empty base64 signature.
-			if KnownSigAlg(item.Algorithm) {
+		// -08 §10.9: "|" groups of "," lists of sig-sets; an empty member
+		// is a syntax error (contract D2).
+		groups, ok := splitGroups(v)
+		if !ok {
+			return nil, sigSyntaxError(sig.Sequence)
+		}
+		for g, parts := range groups {
+			for _, part := range parts {
+				// §10.9 sig-set: exactly three parts.  FWS is allowed around
+				// the separators and each colon (trimmed) and inside the
+				// base64 value (removed), never inside the selector or
+				// algorithm name: "rsa- sha256" is a syntax error, not a
+				// fold to undo.
+				fields := strings.Split(part, ":")
+				if len(fields) != 3 {
+					return nil, sigSyntaxError(sig.Sequence)
+				}
+				item := SigItem{Selector: trimFWS(fields[0]), Algorithm: trimFWS(fields[1]), Group: g}
+				if !validSelector(item.Selector) || !validToken(item.Algorithm) {
+					return nil, sigSyntaxError(sig.Sequence)
+				}
+				// Every item, whatever its algorithm, carries a non-empty
+				// base64 signature (contract D3).
+				value := stripB64WSP(fields[2])
 				b, err := base64.StdEncoding.DecodeString(value)
 				if value == "" || err != nil {
 					return nil, sigSyntaxError(sig.Sequence)
 				}
 				item.Value = b
+				sig.Sigs = append(sig.Sigs, item)
 			}
-			sig.Sigs = append(sig.Sigs, item)
 		}
 	}
 	if v := tvl.get("n"); v != "" {
@@ -447,12 +463,18 @@ func (sig *DKIM2Signature) String() string {
 	}
 	rt := strings.Join(rtParts, ",")
 
-	var sParts []string
-	for _, item := range sig.Sigs {
-		val := base64.StdEncoding.EncodeToString(item.Value)
-		sParts = append(sParts, item.Selector+":"+item.Algorithm+":"+val)
+	var sb strings.Builder
+	for i, item := range sig.Sigs {
+		switch {
+		case i == 0:
+		case item.Group != sig.Sigs[i-1].Group:
+			sb.WriteByte('|')
+		default:
+			sb.WriteByte(',')
+		}
+		sb.WriteString(item.Selector + ":" + item.Algorithm + ":" + base64.StdEncoding.EncodeToString(item.Value))
 	}
-	s := strings.Join(sParts, ",")
+	s := sb.String()
 
 	// §10.7: an nd= signature carries nd= instead of mf=/rt=.
 	var chain string
@@ -504,18 +526,26 @@ func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
 		sval, suffix = rest[:semi], rest[semi:]
 	}
 
-	// Blank the 3rd (signature) field of each comma-separated item, dropping
-	// any folding within it.
-	var stripped []string
-	for _, item := range strings.Split(sval, ",") {
-		f := strings.SplitN(item, ":", 3)
-		if len(f) == 3 {
-			stripped = append(stripped, f[0]+":"+f[1]+":")
-		} else {
-			stripped = append(stripped, item)
+	// Blank the 3rd (signature) field of each item, dropping any folding
+	// within it; every selector, algorithm name and ":" "," "|" stays
+	// (-08 §12.8, contract D2).
+	var out strings.Builder
+	for gi, group := range strings.Split(sval, "|") {
+		if gi > 0 {
+			out.WriteByte('|')
+		}
+		for ii, item := range strings.Split(group, ",") {
+			if ii > 0 {
+				out.WriteByte(',')
+			}
+			if f := strings.SplitN(item, ":", 3); len(f) == 3 {
+				out.WriteString(f[0] + ":" + f[1] + ":")
+			} else {
+				out.WriteString(item)
+			}
 		}
 	}
-	return head + prefix + strings.Join(stripped, ",") + suffix
+	return head + prefix + out.String() + suffix
 }
 
 // buildIncomplete builds a fresh incomplete DKIM2-Signature header (s= values

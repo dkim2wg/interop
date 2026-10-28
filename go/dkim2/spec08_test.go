@@ -6,12 +6,16 @@ package dkim2
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -221,6 +225,159 @@ func TestSpec08D4HashCombine(t *testing.T) {
 	mi := &MessageInstance{Version: 1, Hashes: []HashSet{set("sha256", true, false, 0)}}
 	if err := verifyMIHeaderHashes(mi, headers); err != nil {
 		t.Errorf("headers only: %v", err)
+	}
+}
+
+// ---- D2, D3, D8: "|" and "," groups of signatures in s= ----
+
+// resignSels is resign (strictness_test.go) for a template whose s= items
+// carry {sel1}, {sel2} ...: each replaced by a real RSA signature with that
+// test1.dkim2.com key over the signing input (every value blanked).
+func resignSels(t *testing.T, sigTmpl, miLine, rest string, sels ...string) string {
+	t.Helper()
+	blank := sigTmpl
+	for _, s := range sels {
+		blank = strings.Replace(blank, "{"+s+"}", "", 1)
+	}
+	incomplete := (&DKIM2Signature{}).incompleteForm(blank)
+	var input []byte
+	input = append(input, canonicalizeSigHeader(miLine+"\r\n")...)
+	input = append(input, canonicalizeSigHeader(incomplete+"\r\n")...)
+	digest := sha256.Sum256(input)
+	full := sigTmpl
+	for _, s := range sels {
+		sig, err := signDigest(strictKey(t, s), digest[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		full = strings.Replace(full, "{"+s+"}", base64.StdEncoding.EncodeToString(sig), 1)
+	}
+	return full + "\r\n" + miLine + "\r\n" + rest
+}
+
+// tempFetcher fails the lookup of Selector "tmp" as a DNS failure would.
+type tempFetcher struct{ KeyFetcher }
+
+func (f tempFetcher) FetchPublicKey(sel, dom string) (crypto.PublicKey, string, error) {
+	if sel == "tmp" {
+		return nil, "", errors.New("SERVFAIL")
+	}
+	return f.KeyFetcher.FetchPublicKey(sel, dom)
+}
+
+func TestSpec08D2SigGroupsParse(t *testing.T) {
+	sig, err := parseSig("DKIM2-Signature: i=1; m=1; t=1; d=a.example; mf=PD4=; rt=PD4=; " +
+		"s=a:rsa-sha256:AAAA \r\n | b:rsa-sha256:BBBB ,\tc:ed25519-sha256:CCCC;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sig.Sigs) != 3 || sig.Sigs[0].Group != 0 || sig.Sigs[1].Group != 1 || sig.Sigs[2].Group != 1 {
+		t.Fatalf("got %+v", sig.Sigs)
+	}
+	for _, s := range []string{
+		"a:rsa-sha256:AAAA|", "|a:rsa-sha256:AAAA", "a:rsa-sha256:AAAA||b:rsa-sha256:AAAA",
+		"a:rsa-sha256:AAAA,,b:rsa-sha256:AAAA", "a:rsa-sha256:AAAA,\t|b:rsa-sha256:AAAA",
+		// Every value is a non-empty base64string, whatever the algorithm.
+		"a:rsa-sha256:AAAA|x:future:@@@@", "a:rsa-sha256:AAAA,x:mldsa44:", "x:future:AAA",
+	} {
+		if _, err := parseSig("DKIM2-Signature: i=1; m=1; t=1; d=a.example; mf=PD4=; rt=PD4=; s=" + s + ";"); err == nil ||
+			err.Error() != "PERMERROR: DKIM2-Signature i=1 syntax error" {
+			t.Errorf("s=%s: %v, want a syntax error", s, err)
+		}
+	}
+	// String keeps the groups.
+	sig.Sigs = []SigItem{{Selector: "a", Algorithm: "rsa-sha256", Value: []byte{0}},
+		{Selector: "b", Algorithm: "rsa-sha256", Value: []byte{0}, Group: 1}}
+	if s := sig.String(); !strings.Contains(s, "s=a:rsa-sha256:AA==|b:rsa-sha256:AA==;") {
+		t.Errorf("String() = %q", s)
+	}
+}
+
+func TestSpec08D3SigCombine(t *testing.T) {
+	sigLine, miLine, rest := strictSigned(t, 1740000000)
+	const pfx = "DKIM2-Signature i=1 "
+	for _, tc := range []struct {
+		name, s string
+		sels    []string
+		want    string
+		lookups int
+	}{
+		{"both pass", "sel1:rsa-sha256:{sel1},sel2:rsa-sha256:{sel2}", []string{"sel1", "sel2"}, "", 2},
+		{"three of one algorithm", "sel1:rsa-sha256:{sel1},sel2:rsa-sha256:{sel2},sel3:rsa-sha256:{sel3}",
+			[]string{"sel1", "sel2", "sel3"}, "", 3},
+		{"good | bad", "sel1:rsa-sha256:{sel1}|sel2:rsa-sha256:AAAA", []string{"sel1"}, "", 2},
+		{"bad | good", "sel2:rsa-sha256:AAAA|sel1:rsa-sha256:{sel1}", []string{"sel1"}, "", 2},
+		{"good, bad", "sel1:rsa-sha256:{sel1},sel2:rsa-sha256:AAAA", []string{"sel1"},
+			"FAIL: " + pfx + "selector sel2 incorrect signature", 2},
+		{"bad | bad", "sel1:rsa-sha256:AAAA|sel2:rsa-sha256:AAAA", nil,
+			"FAIL: " + pfx + "no group of signatures passed", 2},
+		{"good, unknown", "sel1:rsa-sha256:{sel1},x:mldsa44:AAAA", []string{"sel1"},
+			"PERMERROR: " + pfx + "selector x algorithm unknown", 1},
+		{"good | unknown", "sel1:rsa-sha256:{sel1}|x:mldsa44:AAAA", []string{"sel1"}, "", 1},
+		{"old composite only", "x:mldsa44-ed25519-sha512:AAAA", nil,
+			"PERMERROR: " + pfx + "selector x algorithm unknown", 0},
+		{"no key | good", "nokey:rsa-sha256:AAAA|sel1:rsa-sha256:{sel1}", []string{"sel1"}, "", 2},
+		{"no key, bad: FAIL", "nokey:rsa-sha256:AAAA,sel2:rsa-sha256:AAAA", nil,
+			"FAIL: " + pfx + "selector sel2 incorrect signature", 2},
+		{"no key, good", "nokey:rsa-sha256:AAAA,sel1:rsa-sha256:{sel1}", []string{"sel1"},
+			"PERMERROR: " + pfx + "public key nokey does not exist", 2},
+		{"DNS failure, good", "tmp:rsa-sha256:AAAA,sel1:rsa-sha256:{sel1}", []string{"sel1"},
+			"TEMPERROR: " + pfx + "public key tmp could not be fetched", 2},
+		{"DNS failure, bad", "tmp:rsa-sha256:AAAA,sel2:rsa-sha256:AAAA", nil,
+			"FAIL: " + pfx + "selector sel2 incorrect signature", 2},
+		{"bad | DNS failure", "sel2:rsa-sha256:AAAA|tmp:rsa-sha256:AAAA", nil,
+			"TEMPERROR: " + pfx + "public key tmp could not be fetched", 2},
+		{"unknown | no key", "x:future:AAAA|nokey:rsa-sha256:AAAA", nil,
+			"PERMERROR: " + pfx + "selector x algorithm unknown", 1},
+	} {
+		msg := resignSels(t, withS(t, sigLine, tc.s), miLine, rest, tc.sels...)
+		f := &countingFetcher{inner: tempFetcher{jsonFetcher()}}
+		if got := verifyOutcome(msg, f, skipTS); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+		if f.n != tc.lookups {
+			t.Errorf("%s: %d key lookups, want %d", tc.name, f.n, tc.lookups)
+		}
+	}
+}
+
+func TestSpec08D3SelectorLimitAndDuplicates(t *testing.T) {
+	sigLine, miLine, rest := strictSigned(t, 1740000000)
+	items := func(n int) string {
+		var s []string
+		for i := 0; i < n; i++ {
+			s = append(s, fmt.Sprintf("x%d:future:AAAA", i))
+		}
+		return strings.Join(s, ",")
+	}
+	for _, tc := range []struct{ name, s, want string }{
+		{"nine", "sel1:rsa-sha256:{sel1}|" + items(8), "PERMERROR: DKIM2-Signature i=1 has more than 8 signatures"},
+		{"eight", "sel1:rsa-sha256:{sel1}|" + items(7), ""},
+		{"duplicate across groups", "sel1:rsa-sha256:{sel1}|sel1:rsa-sha256:AAAA",
+			"PERMERROR: DKIM2-Signature i=1 has a duplicate selector"},
+		{"duplicate before the limit", "sel1:rsa-sha256:{sel1}|" + items(8) + ",sel1:rsa-sha256:AAAA",
+			"PERMERROR: DKIM2-Signature i=1 has a duplicate selector"},
+	} {
+		msg := resignSels(t, withS(t, sigLine, tc.s), miLine, rest, "sel1")
+		f := &countingFetcher{inner: jsonFetcher()}
+		if got := verifyOutcome(msg, f, skipTS); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+		if tc.want != "" && f.n != 0 {
+			t.Errorf("%s: %d key lookups before the §14.2 check, want 0", tc.name, f.n)
+		}
+	}
+}
+
+// D3 amends C9: §14.5 and §14.6 are one step per signature, from i=1 up.
+func TestSpec08D3KeyErrorAboveBadSignature(t *testing.T) {
+	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
+	hop2 := must07(t, hop1, "example.org", "list@lists.example.org", []string{"sub@example.net"}, "",
+		func(o *SignOptions) { o.Selector = "nokey" })
+	bad := bytes.Replace(hop2, []byte("i=1; m=1; t=1740000000"), []byte("i=1; m=1; t=1740000001"), 1)
+	want := "FAIL: DKIM2-Signature i=1 selector s07 incorrect signature"
+	if got := primary07(t, bad, VerifyOptions{SkipTimestampCheck: true}); got != want {
+		t.Errorf("primary %q, want %q", got, want)
 	}
 }
 

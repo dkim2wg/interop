@@ -44,36 +44,35 @@ func TestSameAlgorithmTwiceAllowed(t *testing.T) {
 	}
 }
 
-func TestThreeSameAlgorithmHasExcessSelectors(t *testing.T) {
+// -08 §10.9 allows any number of one algorithm with distinct Selectors.
+func TestThreeSameAlgorithmAllowed(t *testing.T) {
 	errs := checkSignatureDuplicates([]SigItem{
 		{Selector: "sel1", Algorithm: "rsa-sha256"},
 		{Selector: "sel2", Algorithm: "rsa-sha256"},
 		{Selector: "sel3", Algorithm: "rsa-sha256"},
 	}, 2)
-	if len(errs) != 1 || !strings.Contains(errs[0], "has more selectors than allowed") {
-		t.Errorf("got %v, want an excess-selector PERMERROR", errs)
+	if len(errs) != 0 {
+		t.Errorf("got %v, want none", errs)
 	}
 }
 
-func TestDuplicateSelectorAndExcessSelectorAreIndependent(t *testing.T) {
-	// two sigs sharing an algorithm AND a Selector is a duplicate-selector
-	// error but NOT an excess-selector error (the count is 2, not 3+)
-	errs := checkSignatureDuplicates([]SigItem{
-		{Selector: "sel1", Algorithm: "rsa-sha256"},
-		{Selector: "sel1", Algorithm: "rsa-sha256"},
-	}, 1)
-	foundDup := false
-	foundExcess := false
-	for _, e := range errs {
-		if strings.Contains(e, "duplicate selector") {
-			foundDup = true
-		}
-		if strings.Contains(e, "more selectors than allowed") {
-			foundExcess = true
-		}
+// The local limit (contract D3): at most 8 items, checked after duplicates.
+func TestMoreThanEightSignatures(t *testing.T) {
+	var items []SigItem
+	for i := 0; i < 9; i++ {
+		items = append(items, SigItem{Selector: string(rune('a' + i)), Algorithm: "rsa-sha256"})
 	}
-	if !foundDup || foundExcess {
-		t.Errorf("got %v, want only duplicate-selector error", errs)
+	if errs := checkSignatureDuplicates(items[:8], 1); len(errs) != 0 {
+		t.Errorf("eight: got %v", errs)
+	}
+	want := "PERMERROR: DKIM2-Signature i=1 has more than 8 signatures"
+	if errs := checkSignatureDuplicates(items, 1); len(errs) != 1 || errs[0] != want {
+		t.Errorf("nine: got %v, want [%q]", errs, want)
+	}
+	items[8].Selector = "a"
+	want = "PERMERROR: DKIM2-Signature i=1 has a duplicate selector"
+	if errs := checkSignatureDuplicates(items, 1); len(errs) != 1 || errs[0] != want {
+		t.Errorf("nine with a duplicate: got %v, want [%q]", errs, want)
 	}
 }
 
