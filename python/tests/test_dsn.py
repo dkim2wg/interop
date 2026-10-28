@@ -132,8 +132,10 @@ def test_propagate_accepts_wellformed_three_part_dsn():
 
     out = dkim2dsn.propagate(
         dsn, forwarder_domain="test2.dkim2.com",
-        keyfile=_key("ed25519", "test3.dkim2.com"),
-        selector="ed25519", domain="test3.dkim2.com", timestamp=1740000000,
+        # -08 §16.2 (contract D11): d= relaxed-matches the returned
+        # message's top rt= (user@test2.dkim2.com); test3 no longer may.
+        keyfile=_key("ed25519", "test2.dkim2.com"),
+        selector="ed25519", domain="test2.dkim2.com", timestamp=1740000000,
         skip_authentication=True)
     assert out["upstream_mailfrom"] == "<sender@origin.example>", out["upstream_mailfrom"]
 
@@ -142,8 +144,10 @@ def test_propagate_basic():
     dsn = _wrap_dsn(_two_hop_embedded())
     out = dkim2dsn.propagate(
         dsn, forwarder_domain="test2.dkim2.com",
-        keyfile=_key("ed25519", "test3.dkim2.com"),
-        selector="ed25519", domain="test3.dkim2.com", timestamp=1740000000,
+        # -08 §16.2 (contract D11): d= relaxed-matches the returned
+        # message's top rt= (user@test2.dkim2.com); test3 no longer may.
+        keyfile=_key("ed25519", "test2.dkim2.com"),
+        selector="ed25519", domain="test2.dkim2.com", timestamp=1740000000,
         skip_authentication=True)
 
     # After undoing the forwarder hop (i=2/m=2), the now-top signature is i=1
@@ -200,8 +204,10 @@ def _null_recipe_embedded():
 def test_propagate_null_recipe_returns_headers_only():
     out = dkim2dsn.propagate(
         _wrap_dsn(_null_recipe_embedded()), forwarder_domain="test2.dkim2.com",
-        keyfile=_key("ed25519", "test3.dkim2.com"),
-        selector="ed25519", domain="test3.dkim2.com", timestamp=1740000000,
+        # -08 §16.2 (contract D11): d= relaxed-matches the returned
+        # message's top rt= (user@test2.dkim2.com); test3 no longer may.
+        keyfile=_key("ed25519", "test2.dkim2.com"),
+        selector="ed25519", domain="test2.dkim2.com", timestamp=1740000000,
         skip_authentication=True)
     assert out["upstream_mailfrom"] == "<sender@origin.example>", out["upstream_mailfrom"]
 

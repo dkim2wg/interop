@@ -592,3 +592,31 @@ def test_d9_unsigned_top_instance_is_not_fully_verified():
     msg = add_mi(_hop1(), replace_header(b"Subject", b"x"))
     r = verify(msg, allow_unsigned_mi=True)
     assert r.ok and r.fully_verified is False
+
+
+# --- D11: a DSN's d= relaxed-matches the reported message's top rt= -------------
+
+def _wrap_dsn(embedded):
+    import test_spec07
+    return test_spec07._wrap_dsn(embedded)
+
+
+def test_d11_propagated_dsn_d_must_match_top_rt():
+    import dkim2dsn
+    # i=1 (example.com) sent to list@lists.example.org; the list (example.org)
+    # forwarded it.  After the list's hop is taken off, the top rt= is
+    # lists.example.org, which example.org relaxed-matches.
+    dsn = _wrap_dsn(_to_list(_hop1()))
+    out = dkim2dsn.propagate(dsn, forwarder_domain="example.org",
+                             keyfile=E.keyfile("example.org"), selector="sel",
+                             domain="example.org", skip_authentication=True)
+    assert out["raw"]
+    # example.net matches no rt= domain: no DSN.
+    with pytest.raises(ValueError, match="rt="):
+        dkim2dsn.propagate(dsn, forwarder_domain="example.org",
+                           keyfile=E.keyfile("example.net"), selector="sel",
+                           domain="example.net", skip_authentication=True)
+    # lists.example.org itself is fine too.
+    dkim2dsn.propagate(dsn, forwarder_domain="example.org",
+                       keyfile=E.keyfile("lists.example.org"), selector="sel",
+                       domain="lists.example.org", skip_authentication=True)

@@ -360,6 +360,18 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
         raise ValueError("propagate: the upstream MAIL FROM is <>; no DSN is "
                          "sent for it (§16)")
 
+    # -08 §7.1 item 4, §16.2 (contract D11): the DSN's d= MUST relaxed-match
+    # a recipient in the rt= of the reported message's highest signature --
+    # the hop that delivered the message to us -- with the rt= domain as
+    # Parameter1.  If our signing domain cannot, send no DKIM2 DSN.
+    top = _top_sig_tags(embedded) or {}
+    rt_domains = [d for d in (addr_domain(r) for r in top.get("rt", []) if r)
+                  if d is not None]
+    if not any(relaxed_match(rd, signing_domain(domain)) for rd in rt_domains):
+        raise ValueError(
+            f"propagate: d={domain} does not relaxed-match any rt= of the "
+            f"returned message's top signature; no DSN is sent (§16.2)")
+
     # 4. Rebuild the embedded part (headers-only fallback strips the body).
     new_inner = email.message_from_bytes(embedded, policy=policy.compat32)
     if headers_only:
