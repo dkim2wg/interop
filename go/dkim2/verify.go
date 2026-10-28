@@ -43,7 +43,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 	results, err := verifyFields(cs, func(algs []string) (map[string][]byte, error) {
 		return hashBodyStream(br, algs)
 	}, nil, fetcher, opts...)
-	return fromLast(headers, results, err, opts...)
+	return fromLast(headers, results, err, false, opts...)
 }
 
 // chainOf sorts headers into Message-Instances, DKIM2-Signatures and
@@ -77,14 +77,56 @@ func chainOf(headers []Header, opts ...VerifyOptions) (*chainShape, error) {
 
 // fromLast finishes a verification with the §14.8 From check, which comes
 // last in contract C9's order: only when nothing before it failed.
-func fromLast(headers []Header, results []VerifyResult, err error, opts ...VerifyOptions) ([]VerifyResult, error) {
+// walked says whether the instances below the top were checked (the §14.7
+// chain walk ran); it and the chain decide FullyVerified on a pass.
+func fromLast(headers []Header, results []VerifyResult, err error, walked bool, opts ...VerifyOptions) ([]VerifyResult, error) {
 	if err != nil || PrimaryResult(results) != nil {
 		return results, err
 	}
 	if ferr := verifyFrom(headers, opts...); ferr != nil {
 		return nil, ferr
 	}
+	if fully := fullyVerified(headers, walked, opts...); fully {
+		for k := range results {
+			results[k].FullyVerified = true
+		}
+	}
 	return results, nil
+}
+
+// fullyVerified decides, for a verification that passed, whether it is
+// Fully Verified (-08 §13, contract D9): every instance's hashes checked
+// against the message its Recipes rebuild, which a null body Recipe on any
+// m=k (k >= 2) prevents for the bodies below it; with a body (not
+// HeadersOnly); walked, or with only one instance; and every instance
+// signed (Outbound may leave an unsigned top).
+func fullyVerified(headers []Header, walked bool, opts ...VerifyOptions) bool {
+	var opt VerifyOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	if opt.HeadersOnly {
+		return false
+	}
+	top, maxSigM := 0, 0
+	for _, h := range headers {
+		switch strings.ToLower(h.Name) {
+		case "message-instance":
+			mi, err := parseMI(h.Raw)
+			if err != nil {
+				return false
+			}
+			if mi.Version >= 2 && mi.Recipe != nil && mi.Recipe.BodyNull {
+				return false
+			}
+			top = max(top, mi.Version)
+		case "dkim2-signature":
+			if s, err := parseSig(h.Raw); err == nil {
+				maxSigM = max(maxSigM, s.MIVersion)
+			}
+		}
+	}
+	return top >= 1 && maxSigM >= top && (walked || top == 1)
 }
 
 // verifyFields is Verify once the chain's structure (cs) checks out.  bodyHashes

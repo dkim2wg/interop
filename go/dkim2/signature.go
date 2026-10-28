@@ -104,6 +104,15 @@ type VerifyResult struct {
 	Domain   string
 	Error    error // nil = pass
 
+	// FullyVerified (-08 §13, contract D9) is set, on every result, when the
+	// whole verification passed and checked everything §13 asks for.  A
+	// pass is not Fully Verified when a null body Recipe ("b": null) on some
+	// Message-Instance m=k (k >= 2) leaves the body hashes below it
+	// uncheckable, when HeadersOnly skipped the body, when Verify (unlike
+	// VerifyFull) left lower instances unchecked, or when Outbound left an
+	// unsigned top instance.  It is not reported in A-R.
+	FullyVerified bool
+
 	// section is the -07 §14 section Error ranks in (contract C9), when its
 	// text alone does not say: a Recipe that does not fit the message is
 	// found by the §14.7 chain walk and ranks there, though its string is

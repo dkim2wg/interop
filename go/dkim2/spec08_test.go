@@ -425,6 +425,64 @@ func TestSpec08D7MalformedKeys(t *testing.T) {
 	}
 }
 
+// ---- D9: FullyVerified ----
+
+func TestSpec08D9FullyVerified(t *testing.T) {
+	skip := VerifyOptions{SkipTimestampCheck: true}
+	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
+	twoHop := must07(t, revise07(t, hop1, setHeader("Subject", "[list] hello"), "", ""),
+		"example.org", "list@lists.example.org", []string{"sub@example.net"}, "")
+	nullBody := must07(t, revise07(t, hop1, nil, "changed\r\n", `{"b":null}`),
+		"example.org", "list@lists.example.org", []string{"sub@example.net"}, "",
+		func(o *SignOptions) { o.AllowNullBodyRecipe = true })
+	full := func(results []VerifyResult, err error) string {
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		if p := PrimaryResult(results); p != nil {
+			return "error: " + p.Error.Error()
+		}
+		fv := results[0].FullyVerified
+		for _, r := range results {
+			if r.FullyVerified != fv {
+				t.Fatalf("results disagree: %+v", results)
+			}
+		}
+		return fmt.Sprint(fv)
+	}
+	for _, tc := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"one hop", full(VerifyFull(bytes.NewReader(hop1), spec07Fetcher(t), skip)), "true"},
+		{"one hop, Verify", full(Verify(bytes.NewReader(hop1), spec07Fetcher(t), skip)), "true"},
+		{"two hops", full(VerifyFull(bytes.NewReader(twoHop), spec07Fetcher(t), skip)), "true"},
+		{"two hops, undo walk", full(VerifyFull(bytes.NewReader(twoHop), spec07Fetcher(t),
+			VerifyOptions{SkipTimestampCheck: true, UndoWalk: true})), "true"},
+		// Verify checks only the top instance: the lower ones are not checked.
+		{"two hops, Verify", full(Verify(bytes.NewReader(twoHop), spec07Fetcher(t), skip)), "false"},
+		// A null body Recipe at m=2: PASS, but m=1's body hash is never checked.
+		{"null body", full(VerifyFull(bytes.NewReader(nullBody), spec07Fetcher(t), skip)), "false"},
+		{"null body, undo walk", full(VerifyFull(bytes.NewReader(nullBody), spec07Fetcher(t),
+			VerifyOptions{SkipTimestampCheck: true, UndoWalk: true})), "false"},
+		{"headers only", full(VerifyFull(bytes.NewReader(hop1), spec07Fetcher(t),
+			VerifyOptions{SkipTimestampCheck: true, HeadersOnly: true})), "false"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s: FullyVerified %s, want %s", tc.name, tc.got, tc.want)
+		}
+	}
+	// A failure is never Fully Verified.
+	results, _ := VerifyFull(bytes.NewReader(bytes.Replace(hop1, []byte("body line"), []byte("body lime"), 1)),
+		spec07Fetcher(t), skip)
+	for _, r := range results {
+		if r.FullyVerified {
+			t.Errorf("a failed result is Fully Verified: %+v", r)
+		}
+	}
+}
+
 // ---- D5: timestamps, Chain of Custody and From Authentic are FAIL ----
 
 func TestSpec08D5FailNotPermerror(t *testing.T) {

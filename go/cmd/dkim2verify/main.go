@@ -61,6 +61,11 @@ func main() {
 	}
 
 	if allPass {
+		// -08 §13 (contract D9): a pass whose lower body hashes could not
+		// be checked (a null body Recipe) is not Fully Verified.
+		if len(results) > 0 && !results[0].FullyVerified {
+			fmt.Fprintln(os.Stderr, "NOTE: not Fully Verified (-08 §13): a null body Recipe left lower body hashes unchecked")
+		}
 		fmt.Fprintln(os.Stdout, "PASS: all signatures verified")
 	} else {
 		os.Exit(1)

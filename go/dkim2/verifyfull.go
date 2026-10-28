@@ -73,7 +73,7 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	plan.close()
 
 	results, err := verifyFields(cs, plan.topHashes, plan.walk, fetcher, opts...)
-	return fromLast(headers, results, err, opts...)
+	return fromLast(headers, results, err, true, opts...)
 }
 
 // chainLevelError is the VerifyResult error for a lower Message-Instance
@@ -137,7 +137,7 @@ func verifyUndoFrom(buf []byte, br *bufio.Reader, headers []Header, cs *chainSha
 	results, err := verifyFields(cs, func(algs []string) (map[string][]byte, error) {
 		return hashBodyStream(br, algs)
 	}, lower, fetcher, opts...)
-	return fromLast(headers, results, err, opts...)
+	return fromLast(headers, results, err, lower != nil, opts...)
 }
 
 // undoWalk checks each instance below the top of the message in buf: Undo
