@@ -728,6 +728,48 @@ static void test_combine_hashes(void) {
     }
 }
 
+/* D9: a null body Recipe above m=1 leaves the result PASS, but not Fully
+   Verified (-08 §13). */
+static void test_fully_verified(void) {
+    msg_t m;
+    base_signed(&m, "a@example.com");
+    dkim2_verify_result_t r = verify(&m);
+    CHECK_PASS(r);
+    CHECK(r.fully_verified == 1);
+    msg_free(&m);
+
+    /* m=2 with "b": null: the body below cannot be checked */
+    base_signed(&m, "a@example.com");
+    snprintf(m.body, sizeof m.body, "Something else\r\n");
+    add_mi(&m, "{\"b\":null}");
+    add_sig(&m, 2, 2, "example.org", "<list-bounces@lists.example.org>", "<r@dest.example>", NULL);
+    r = verify(&m);
+    CHECK_PASS(r);
+    CHECK(r.fully_verified == 0);
+    /* ...and a third instance above it changes nothing */
+    add_mi(&m, NULL);
+    add_sig(&m, 3, 3, "dest.example", "<x@dest.example>", "<y@final.example>", NULL);
+    r = verify(&m);
+    CHECK_PASS(r);
+    CHECK(r.fully_verified == 0);
+    msg_free(&m);
+
+    /* a null body Recipe on m=1 hides nothing */
+    msg_init(&m, "a@example.com", "test", "Hello\r\n");
+    add_mi(&m, "{\"b\":null}");
+    add_sig(&m, 1, 1, "example.com", "<a@example.com>", "<list@lists.example.org>", NULL);
+    r = verify(&m);
+    CHECK_PASS(r);
+    CHECK(r.fully_verified == 1);
+    msg_free(&m);
+
+    /* any other result is not Fully Verified */
+    base_signed(&m, "a@elsewhere.net");
+    r = verify(&m);
+    CHECK(r.status == DKIM2_FAIL && r.fully_verified == 0);
+    msg_free(&m);
+}
+
 int main(void) {
     harness_init();
 
@@ -740,6 +782,7 @@ int main(void) {
     test_groups_signing_input();
     test_combine_signatures();
     test_combine_hashes();
+    test_fully_verified();
 
     harness_done();
     if (g_fail) { printf("test_spec08: %d failure(s)\n", g_fail); return 1; }

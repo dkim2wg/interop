@@ -965,11 +965,39 @@ static void verify_signature(const dkim2_ctx_t *ctx, dkim2_sig_t *sig,
                  sig->i, sig->ssets[pick].selector);
 }
 
+/* -08 §13 (contract D9): a PASS is Fully Verified unless some instance
+   above m=1 has a null body Recipe (the bodies below it cannot be
+   checked), or the body was given only as its digest and there are inner
+   instances (their body hashes were not checked). */
+static int fully_verified(const dkim2_ctx_t *ctx) {
+    int n_mi = 0;
+    for (const dkim2_mi_t *mi = ctx->mi_list; mi; mi = mi->next) {
+        n_mi++;
+        if (mi->m < 2 || !mi->r_raw) continue;
+        size_t max = strlen(mi->r_raw) * 3 / 4 + 4;
+        unsigned char *json = malloc(max + 1);
+        if (!json) return 0;
+        int len = b64_decode(mi->r_raw, json, max);
+        cJSON *r = NULL;
+        if (len > 0) {
+            json[len] = '\0';
+            r = dkim2_recipe_parse_ex((const char *)json, (size_t)len, NULL, 0);
+        }
+        free(json);
+        const cJSON *b = r ? cJSON_GetObjectItemCaseSensitive(r, "b") : NULL;
+        int null_body = !r || (b && cJSON_IsNull(b));
+        cJSON_Delete(r);
+        if (null_body) return 0;
+    }
+    return !(n_mi > 1 && !ctx->plan && !ctx->body);
+}
+
 void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->status = DKIM2_PERMERROR;
     result->message[0] = '\0';
     result->sig_i = 0;
     result->domain[0] = '\0';
+    result->fully_verified = 0;
 
     /* No DKIM2 header fields at all: "none" (A-R dkim2=none), with no
        error string -- not a PERMERROR (contract C6, 2026-10-18). */
@@ -1036,6 +1064,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
        structure checks have reported it as not signed.) */
     if (!latest) {
         result->status = DKIM2_OK;
+        result->fully_verified = fully_verified(ctx);
         snprintf(result->message, sizeof result->message,
             "PASS: no DKIM2-Signature yet; Message-Instance chain verified");
         return;
@@ -1123,6 +1152,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     }
 
     result->status = DKIM2_OK;
+    result->fully_verified = fully_verified(ctx);
     snprintf(result->message, sizeof result->message,
         "PASS: DKIM2-Signature i=%d verified", latest->i);
 }

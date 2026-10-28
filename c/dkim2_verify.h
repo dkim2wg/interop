@@ -12,6 +12,11 @@ typedef struct {
     char message[512];  /* human-readable result per -07 §14.1 */
     int sig_i;          /* i= of the DKIM2-Signature that was checked */
     char domain[256];   /* d= value of the signature where failure/success occurred */
+    int fully_verified; /* -08 §13 (contract D9): 1 only for a PASS that checked
+                           every instance's body hash -- 0 when some m=k
+                           (k >= 2) has a null body Recipe, when only the top
+                           body hash could be checked (digest-only), and for
+                           any other result. Not in A-R. */
 } dkim2_verify_result_t;
 
 /* Verify the message in ctx.
