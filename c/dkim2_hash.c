@@ -190,8 +190,8 @@ int dkim2_body_hash(const char *body, size_t bodylen, char *out, size_t outlen) 
     return b64_encode(digest, DKIM2_HASH_LEN, out, outlen) >= 0 ? 0 : -1;
 }
 
-/* Returns 1 if this lowercase header name is unsigned per -07 §4.
-   spec-05 narrowed the old "arc-" prefix to the three RFC 8617 names and
+/* Returns 1 if this lowercase header name is unsigned per -08 §4.
+   spec-08 removed Auto-Submitted and VBR-Info (now hashed); spec-05 narrowed the old "arc-" prefix to the three RFC 8617 names and
    added a "received-" prefix rule. Note x400-received / x400-trace match
    neither the "x-" nor the "received-" prefix and need their own entries. */
 int dkim2_hdr_ignored(const char *lname, size_t nlen) {
@@ -201,7 +201,6 @@ int dkim2_hdr_ignored(const char *lname, size_t nlen) {
         {"arc-message-signature",      21},
         {"arc-seal",                    8},
         {"authentication-results",     22},
-        {"auto-submitted",             14},
         {"delivered-to",               12},
         {"dkim-signature",             14},
         {"dkim2-signature",            15},
@@ -211,7 +210,6 @@ int dkim2_hdr_ignored(const char *lname, size_t nlen) {
         {"received",                    8},
         {"return-path",                11},
         {"sio-label-history",          17},
-        {"vbr-info",                    8},
         {"x400-received",              13},
         {"x400-trace",                 10},
     };

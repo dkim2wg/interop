@@ -100,18 +100,16 @@ int main(void) {
         "From: sender@example.com\r\n",
         "Subject: Test\r\n",
         "Apparently-To: a@example.com\r\n",
-        "Auto-Submitted: auto-replied\r\n",
         "DL-Expansion-History: x\r\n",
         "Original-Recipient: rfc822;a@example.com\r\n",
         "SIO-Label-History: x\r\n",
-        "VBR-Info: md=example.com\r\n",
         "X400-Received: x\r\n",
         "X400-Trace: x\r\n",
         "Received-SPF: pass\r\n",
         "Received-Anything: x\r\n",
     };
     char h05[64];
-    assert(dkim2_header_hash(hdrs_05, 12, h05, sizeof h05) == 0);
+    assert(dkim2_header_hash(hdrs_05, 10, h05, sizeof h05) == 0);
     assert(strcmp(h05, hb) == 0);
 
     /* spec-05 §4: the ARC- prefix narrowed to three exact names */
