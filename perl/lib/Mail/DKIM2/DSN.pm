@@ -112,7 +112,7 @@ sub _set_report_type {
 sub may_generate {
     my ($class, %args) = @_;
     Mail::DKIM2::Common::_check_options("$class->may_generate", \%args,
-        qw(Message PubkeyCallback Resolver SkipTimestampCheck));
+        qw(Domain Message PubkeyCallback Resolver SkipTimestampCheck));
     my $raw = $args{Message} // croak "may_generate: need Message";
     (my $text = $raw) =~ s/\r?\n/\r\n/g;
     my $top = eval { _top_sig(parse_mime($text)) };
@@ -129,6 +129,14 @@ sub may_generate {
     return (0, 'the message is not Provisionally Verified ('
              . ($v->details // $v->result) . ')')
         unless $v->provisionally_verified;
+    # -08 sections 7.1 item 4, 16.2: the DSN's d= MUST relaxed-match a
+    # recipient in the reported message's top rt= -- the same test a
+    # receiver makes of it (_check_alignment) -- or it is a forgery to them.
+    if (defined $args{Domain}) {
+        my ($aligned, $detail) = _check_alignment(
+            Mail::DKIM2::Signature->new(Domain => $args{Domain}), $top);
+        return (0, $detail) unless $aligned eq 'pass';
+    }
     return (1, undef);
 }
 
@@ -153,7 +161,7 @@ sub generate {
 
     # -07 section 16: never for a message with a null top mf=, nor for one
     # that is not Provisionally Verified.
-    my ($may, $why) = $class->may_generate(Message => $raw,
+    my ($may, $why) = $class->may_generate(Message => $raw, Domain => $signer->{Domain},
         map { exists $args{$_} ? ($_ => $args{$_}) : () }
             qw(PubkeyCallback Resolver SkipTimestampCheck));
     croak "generate: not sending a DSN: $why" unless $may;
@@ -584,8 +592,11 @@ are new in 0.23.
 Whether a DSN may be sent for C<Message> at all: its top DKIM2-Signature's
 C<mf=> is not C<< <> >>, and it is Provisionally Verified (see
 L<Mail::DKIM2::Verifier/provisionally_verified()>), with keys from
-C<PubkeyCallback> or C<Resolver> and C<SkipTimestampCheck> as above.
-Returns C<(1, undef)>, or C<(0, $why)>. New in 0.23.
+C<PubkeyCallback> or C<Resolver> and C<SkipTimestampCheck> as above. Given
+C<Domain>, the DSN's signing domain, also that it relaxed-matches a
+recipient in the top C<rt=> (-08 sections 7.1 item 4 and 16.2):
+C<generate> passes its Signer's. Returns C<(1, undef)>, or C<(0, $why)>.
+New in 0.23; C<Domain> in 0.28.
 
 =head2 authenticate(%args)
 

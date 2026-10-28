@@ -156,9 +156,10 @@ sub generate {
 # message, addressed back to the sender. Used by the reflector-dsn address.
 # The DSN is a fresh DKIM2 message signed as new: MAIL FROM <>, one
 # Message-Instance and one DKIM2-Signature on the top message, embedding the
-# original as a message/rfc822 part. -07 section 16: only for a message that
-# is Provisionally Verified and whose top mf= is not <>; otherwise returns
-# undef, and in list context (undef, $why). Keys from pubkey_cb, else DNS.
+# original as a message/rfc822 part. -08 section 16.2: only for a message
+# that is Provisionally Verified, whose top mf= is not <>, and whose top rt=
+# names a recipient in our domain; otherwise returns undef, and in list
+# context (undef, $why). Keys from pubkey_cb, else DNS.
 sub generate_dsn {
     my (%a) = @_;
     croak "need a sender" unless $a{sender};
@@ -169,7 +170,8 @@ sub generate_dsn {
 
     my %keys = (($a{pubkey_cb} ? (PubkeyCallback => $a{pubkey_cb}) : ()),
                 ($a{skip_timestamp_check} ? (SkipTimestampCheck => 1) : ()));
-    my ($may, $why) = Mail::DKIM2::DSN->may_generate(Message => $a{message}, %keys);
+    my ($may, $why) = Mail::DKIM2::DSN->may_generate(Message => $a{message},
+        Domain => $a{domain}, %keys);
     return wantarray ? (undef, $why) : undef unless $may;
 
     my %sa = (Domain => $a{domain}, Selector => $a{selector}, MailFrom => '<>',

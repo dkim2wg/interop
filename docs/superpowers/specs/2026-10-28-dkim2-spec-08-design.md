@@ -195,12 +195,20 @@ it. Revisit once DKIMKEYS defines its key type.
 
 The Perl DSN generator MUST choose a d= that relaxed-matches a domain in the
 reported message's top `rt=`. If no configured key can do that, send no DKIM2
-DSN.
+DSN. The check is the receiver's own `_check_alignment`, in
+`DSN->may_generate(Domain => ...)`; `generate` and `Reflector::generate_dsn`
+pass their signing domain, and the latter returns "no DSN" rather than dying.
 
 ## D12. Not done
 
-- Provisionally Verified (§13.2) stays an internal notion. Our milters fully
-  verify at SMTP time, so there's no separate API or A-R state.
+- Provisionally Verified (§13.2): no new A-R state. Perl already has
+  `provisionally_verified()` (since 0.23, used to gate DSNs). It now runs
+  -08's steps 1, 2, 3 and 5:
+  - step 5 is new: top d= relaxed-matches top mf= unless mf= is null;
+  - it no longer checks timestamps, because §13.2 doesn't list them, so a
+    DSN may report on a message too old to be Fully Verified;
+  - step 4 (the envelope) belongs to the SMTP caller.
+  Other implementations that have the notion follow the same rules.
 - Replay (§15) stays decided against.
 
 ## D13. Names and versions

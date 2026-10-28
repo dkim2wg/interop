@@ -310,9 +310,10 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
 
 # --- D1: no DSN for a null top mf= ----------------------------------------------------
 {
-    my %dsn = (Signer => Mail::DKIM2::Signer->new(Domain => 'example.net', Selector => 'sel1',
+    # The DSN's d= is a recipient domain of the reported hop (-08 section 16.2).
+    my %dsn = (Signer => Mail::DKIM2::Signer->new(Domain => 'example.org', Selector => 'sel1',
                    Key => Spec07Fixture::key(), MailFrom => '<>'),
-               ReportingMTA => 'example.net', PubkeyCallback => Spec07Fixture::pubkey_cb());
+               ReportingMTA => 'lists.example.org', PubkeyCallback => Spec07Fixture::pubkey_cb());
     my $null_top = add_sig($HOP1_TEXT, d => 'example.org', mf => '<>', rt => ['<b@example.net>']);
     my ($ok, $why) = Mail::DKIM2::DSN->may_generate(Message => $null_top,
         PubkeyCallback => Spec07Fixture::pubkey_cb());

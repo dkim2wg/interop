@@ -1156,14 +1156,6 @@ sub details {
     return $self->{details};
 }
 
-# provisionally_verified(): -07 section 13.1. After CLOSE, true when the
-# highest i= DKIM2-Signature is correct and the highest m= Message-Instance's
-# hashes match the message -- the initial assessment that lets a receiver
-# accept a message, and the only kind of message a DSN may be sent for
-# (section 16.1). A pass is; otherwise the top signature and the top
-# instance are checked on their own, whatever went wrong lower down. A top
-# signature with nd=, or one that does not cover the top instance, is not.
-# The verdict (result, details, diagnostic) is left as it was.
 # -08 section 13 (contract D9): a pass for which every instance's hashes
 # were checked -- not one below a null body Recipe, whose instances' body
 # hashes cannot be, nor a HeadersOnly or InstancesOnly verification.
@@ -1173,6 +1165,17 @@ sub fully_verified {
         && !$self->{HeadersOnly} && !$self->{InstancesOnly} ? 1 : 0;
 }
 
+# provisionally_verified(): -08 section 13.2. After CLOSE, true when the
+# highest i= DKIM2-Signature and the highest m= Message-Instance pass that
+# section's checks -- the initial assessment that lets a receiver accept a
+# message, and the only kind of message a DSN may be sent for (section
+# 16.2). A pass is; otherwise the top signature and the top instance are
+# checked on their own, whatever went wrong lower down: the signature
+# covers the top instance (step 1), its s= passes (2), the instance's h=
+# passes (3), and its d= relaxed-matches its mf= unless that is null (5).
+# Step 4, the envelope, is the SMTP layer's: the Verifier is not given it.
+# A top signature with nd= is not (section 13.2's last paragraph). The
+# verdict (result, details, diagnostic) is left as it was.
 sub provisionally_verified {
     my ($self) = @_;
     return $self->{_provisional} //= $self->_provisionally_verified ? 1 : 0;
@@ -1193,12 +1196,19 @@ sub _provisionally_verified {
     return 0 unless ($sig->version // '') =~ /\A[0-9]+\z/ && $sig->version == $top_m;
 
     local @{$self}{qw(result details diagnostic)};
+    # -08 section 13.2 steps 2 and 5: the top signature's s= passes, and its
+    # d= relaxed-matches its mf= unless that is null. Timestamps are not a
+    # step: a message too old to be Fully Verified may still be reported on.
     my $sig_ok = eval {
-        $self->_check_sig_field($max_i) && $self->_check_sig_time($max_i)
-            && $self->_check_sig_items($max_i);
+        $self->_check_sig_field($max_i) && $self->_check_sig_items($max_i);
     };
     die $@ if ref $@;
     return 0 unless $sig_ok;
+    my $mf = $sig->mail_from;
+    if (defined $mf && $mf !~ /\A<\s*>\z/) {
+        my ($mfd, $lit) = domain_of($mf);
+        return 0 unless $mfd && !$lit && relaxed_domain_match($mfd, $sig->domain // '');
+    }
 
     (my $value = $mi{$top_m}) =~ s/\A[^:]*:[ \t]*//;
     my $obj = eval { Mail::DKIM2::MessageInstance->parse($value) };
@@ -1466,14 +1476,17 @@ verification. New in 0.28.
 
 =head2 provisionally_verified()
 
-After C<CLOSE>: true when the message is Provisionally Verified (-07
-section 13.1) -- the highest C<i=> DKIM2-Signature is correct and the
-highest C<m=> Message-Instance matches the message -- whatever else went
-wrong. A receiver may accept such a message and decide later; a DSN may
-only be sent for one (section 16.1, L<Mail::DKIM2::DSN>). A C<pass> is
-always Provisionally Verified; a top signature with C<nd=>, or one that does
-not cover the top instance, never is. Leaves C<result>, C<details> and
-C<diagnostic> as they were. New in 0.23.
+After C<CLOSE>: true when the message is Provisionally Verified (-08
+section 13.2) -- the highest C<i=> DKIM2-Signature covers the highest C<m=>
+Message-Instance, its signatures pass, the instance's hashes match the
+message, and its C<d=> relaxed-matches its C<mf=> (unless that is null) --
+whatever else went wrong, timestamps included. Matching C<mf=> and C<rt=>
+against the SMTP envelope is left to the caller, who has it. A receiver may
+accept such a message and decide later; a DSN may only be sent for one
+(section 16.2, L<Mail::DKIM2::DSN>). A C<pass> is always Provisionally
+Verified; a top signature with C<nd=> never is. Leaves C<result>,
+C<details> and C<diagnostic> as they were. New in 0.23; the -08 checks in
+0.28.
 
 =head2 result_detail()
 
