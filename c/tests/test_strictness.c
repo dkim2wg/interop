@@ -259,7 +259,9 @@ static void test_algorithms(const char *mi) {
         it[N] = (item_t){ "sel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL };
         s = make_sig(mi, g_now, it, N + 1);
         dkim2_verify_result_t r = verify(mi, s, 0);
-        expect("4000 unknown items + one good item pass, one lookup", r, DKIM2_OK, NULL, 1);
+        /* -08 (contract D3): at most 8 items, before any key is fetched */
+        expect("4000 unknown items + one good item: too many, no lookup", r, DKIM2_PERMERROR,
+            "PERMERROR: DKIM2-Signature i=1 has more than 8 signatures", 0);
         free(s); free(it); free(sels); free(algs);
     }
 

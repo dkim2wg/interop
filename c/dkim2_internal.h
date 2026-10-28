@@ -17,14 +17,17 @@ typedef struct dkim2_hashset {
     char *alg;          /* "sha256" */
     char *hdr_hash;     /* base64 header hash */
     char *body_hash;    /* base64 body hash */
+    int group;          /* which "|" group (hash-all) it is in, from 0 (-08 §9.3) */
 } dkim2_hashset_t;
 
 /* Parsed Message-Instance header (-07 §9) */
 typedef struct dkim2_mi {
     int m;                      /* m= revision number */
     char *r_raw;                /* r= base64 recipe (NULL if absent) */
-    dkim2_hashset_t *hsets;     /* h= hash sets */
+    dkim2_hashset_t *hsets;     /* h= hash sets, in h= order */
     int n_hsets;
+    int n_groups;               /* "|" groups (hash-any of hash-alls; 0 or 1: one) */
+    char *list_buf;             /* the parsed h=, which hsets point into */
     char *raw_value;            /* full header value, for signature canon */
     struct dkim2_mi *next;
 } dkim2_mi_t;
@@ -34,6 +37,7 @@ typedef struct dkim2_sigset {
     char *selector;
     char *alg;          /* "rsa-sha256" or "ed25519-sha256" */
     char *sig_b64;      /* base64 signature value */
+    int group;          /* which "|" group (sig-all) it is in, from 0 (-08 §10.9) */
 } dkim2_sigset_t;
 
 /* Parsed DKIM2-Signature header (-07 §10) */
@@ -46,8 +50,10 @@ typedef struct dkim2_sig {
     char **rt;              /* rt= decoded RCPT TO values (NULL-terminated) */
     char *d;                /* d= signing domain */
     char *nd;               /* nd= next-domain (-07 §10.7); NULL if absent */
-    dkim2_sigset_t *ssets;  /* s= signature sets */
-    int n_ssets;
+    dkim2_sigset_t *ssets;  /* s= signature sets, in s= order */
+    int n_ssets;            /* at most DKIM2_MAX_SIGNATURES */
+    int n_groups;           /* "|" groups (sig-any of sig-alls; 0 or 1: one) */
+    char *list_buf;         /* the parsed s=, which ssets point into */
     char **flags;           /* f= flags (NULL-terminated) */
     char *raw_value;        /* full header value */
     struct dkim2_sig *next;

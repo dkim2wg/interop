@@ -339,6 +339,207 @@ static void test_malformed_keys(void) {
     }
 }
 
+/* The error dkim2_sig_parse_err gives for "<prefix> s=<s>", or "" when it
+   parses (sig: the parse, freed by the caller). */
+static const char *SIG_PREFIX = "i=1; m=1; t=1; d=ex.example; "
+    "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; s=";
+static void sig_err(const char *s, char *err, size_t errsz, dkim2_sig_t **sig) {
+    char v[16384];
+    snprintf(v, sizeof v, "%s%s", SIG_PREFIX, s);
+    dkim2_sig_t *p = dkim2_sig_parse_err(v, err, errsz);
+    if (p) err[0] = '\0';
+    if (sig) *sig = p; else dkim2_sig_free(p);
+}
+
+static void mi_err(const char *h, char *err, size_t errsz, dkim2_mi_t **mi) {
+    char v[16384];
+    snprintf(v, sizeof v, "m=1; h=%s;", h);
+    dkim2_mi_t *p = dkim2_mi_parse_err(v, err, errsz);
+    if (p) err[0] = '\0';
+    if (mi) *mi = p; else dkim2_mi_free(p);
+}
+
+/* D2: "|" groups of "," lists in s= and h= (-08 §9.3, §10.9). */
+static void test_groups_parse(void) {
+    char err[256];
+    dkim2_sig_t *sig;
+    sig_err("a:ed25519-sha256:AAAA|b:ed25519-sha256:BBBB,c:rsa-sha256:CCCC", err, sizeof err, &sig);
+    CHECK(err[0] == '\0' && sig && sig->n_ssets == 3 && sig->n_groups == 2);
+    if (sig && sig->n_ssets == 3) {
+        CHECK(sig->ssets[0].group == 0 && sig->ssets[1].group == 1 && sig->ssets[2].group == 1);
+        CHECK(strcmp(sig->ssets[2].selector, "c") == 0 && strcmp(sig->ssets[2].sig_b64, "CCCC") == 0);
+    }
+    dkim2_sig_free(sig);
+    /* FWS on either side of "|" and "," and inside the value */
+    sig_err("a:ed25519-sha256:AA\r\n AA \r\n | b : ed25519-sha256 : BBBB ,\tc:x:CC CC", err, sizeof err, &sig);
+    CHECK(err[0] == '\0' && sig && sig->n_ssets == 3 && sig->n_groups == 2);
+    if (sig && sig->n_ssets == 3) CHECK(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0 &&
+                                        strcmp(sig->ssets[1].selector, "b") == 0);
+    dkim2_sig_free(sig);
+    /* an empty member, anywhere; a value that is not base64, any algorithm;
+       FWS inside a name */
+    static const char *bad_s[] = {
+        "a:x:AAAA||b:x:AAAA", "|a:x:AAAA", "a:x:AAAA|", "a:x:AAAA,,b:x:AAAA",
+        "a:x:AAAA,|b:x:AAAA", ",a:x:AAAA", "a:x:AAAA,", "a:x:", "a:x:!!!!",
+        "a:x:AAA", "a:ed25519-sha256:", "a:x:AAAA| ", "a b:x:AAAA", "a:x y:AAAA",
+        "a:x:AAAA:BBBB",
+    };
+    for (size_t k = 0; k < sizeof bad_s / sizeof bad_s[0]; k++) {
+        sig_err(bad_s[k], err, sizeof err, NULL);
+        if (strcmp(err, "PERMERROR: DKIM2-Signature i=1 syntax error") != 0)
+            printf("  (s=%s)\n", bad_s[k]);
+        CHECK(strcmp(err, "PERMERROR: DKIM2-Signature i=1 syntax error") == 0);
+    }
+    /* duplicates across the whole tag, any case */
+    sig_err("a:x:AAAA|b:y:AAAA,A:z:AAAA", err, sizeof err, NULL);
+    CHECK(strcmp(err, "PERMERROR: DKIM2-Signature i=1 has a duplicate selector") == 0);
+    /* any number of one algorithm, up to the local limit of 8 items */
+    sig_err("a:x:AAAA,b:x:AAAA,c:x:AAAA,d:x:AAAA|e:x:AAAA,f:x:AAAA,g:x:AAAA,h:x:AAAA", err, sizeof err, NULL);
+    CHECK(err[0] == '\0');
+    sig_err("a:x:AAAA,b:x:AAAA,c:x:AAAA,d:x:AAAA|e:x:AAAA,f:x:AAAA,g:x:AAAA,h:x:AAAA|i:x:AAAA", err, sizeof err, NULL);
+    CHECK(strcmp(err, "PERMERROR: DKIM2-Signature i=1 has more than 8 signatures") == 0);
+    /* syntax before duplicate before the limit */
+    sig_err("a:x:AAAA,a:x:AAAA,c:x:AAAA,d:x:AAAA,e:x:AAAA,f:x:AAAA,g:x:AAAA,h:x:AAAA,i:x:AAAA", err, sizeof err, NULL);
+    CHECK(strcmp(err, "PERMERROR: DKIM2-Signature i=1 has a duplicate selector") == 0);
+    sig_err("a:x:AAAA,a:x:AAAA,c:x:AAAA,d:x:AAAA,e:x:AAAA,f:x:AAAA,g:x:AAAA,h:x:AAAA,i:x:", err, sizeof err, NULL);
+    CHECK(strcmp(err, "PERMERROR: DKIM2-Signature i=1 syntax error") == 0);
+    /* thousands of groups: still one answer, and a bounded one */
+    {
+        size_t cap = 200000, n = 0;
+        char *big = malloc(cap);
+        for (int k = 0; k < 5000; k++)
+            n += (size_t)snprintf(big + n, cap - n, "%ss%d:x:AAAA", k ? "|" : "", k);
+        char *v = malloc(cap + 256);
+        snprintf(v, cap + 256, "%s%s", SIG_PREFIX, big);
+        dkim2_sig_t *p = dkim2_sig_parse_err(v, err, sizeof err);
+        CHECK(!p && strcmp(err, "PERMERROR: DKIM2-Signature i=1 has more than 8 signatures") == 0);
+        dkim2_sig_free(p);
+        free(v);
+        free(big);
+    }
+
+    dkim2_mi_t *mi;
+    mi_err("sha256:AAAA:BBBB|sha512:CCCC:DDDD,x-hash:EEEE:FFFF", err, sizeof err, &mi);
+    CHECK(err[0] == '\0' && mi && mi->n_hsets == 3 && mi->n_groups == 2);
+    if (mi && mi->n_hsets == 3)
+        CHECK(mi->hsets[0].group == 0 && mi->hsets[1].group == 1 && mi->hsets[2].group == 1 &&
+              strcmp(mi->hsets[2].alg, "x-hash") == 0 && strcmp(mi->hsets[2].body_hash, "FFFF") == 0);
+    dkim2_mi_free(mi);
+    mi_err("sha256:AA\r\n AA:BBBB \r\n |\r\n sha512 :CCCC:DD DD", err, sizeof err, &mi);
+    CHECK(err[0] == '\0' && mi && mi->n_hsets == 2 &&
+          strcmp(mi->hsets[0].hdr_hash, "AAAA") == 0 && strcmp(mi->hsets[1].body_hash, "DDDD") == 0);
+    dkim2_mi_free(mi);
+    static const char *bad_h[] = {
+        "sha256:AAAA:BBBB||sha512:AAAA:BBBB", "|sha256:AAAA:BBBB", "sha256:AAAA:BBBB,",
+        "sha256:AAAA:BBBB,|sha512:AAAA:BBBB", "x-hash:AAAA:", "x-hash::AAAA",
+        "x-hash:!!!!:AAAA", "sha256:AAAA:BBB", "sha 256:AAAA:BBBB",
+    };
+    for (size_t k = 0; k < sizeof bad_h / sizeof bad_h[0]; k++) {
+        mi_err(bad_h[k], err, sizeof err, NULL);
+        if (strcmp(err, "PERMERROR: Message-Instance m=1 syntax error") != 0)
+            printf("  (h=%s)\n", bad_h[k]);
+        CHECK(strcmp(err, "PERMERROR: Message-Instance m=1 syntax error") == 0);
+    }
+    mi_err("sha256:AAAA:BBBB|sha512:AAAA:BBBB,SHA256:AAAA:BBBB", err, sizeof err, NULL);
+    CHECK(strcmp(err, "PERMERROR: Message-Instance m=1 has a duplicate hash algorithm") == 0);
+
+    /* formatting keeps the groups */
+    sig_err("a:x:AAAA|b:y:BBBB,c:z:CCCC", err, sizeof err, &sig);
+    if (sig) {
+        char *f = dkim2_sig_format(sig, 1);
+        CHECK(f && strstr(f, "s=a:x:|b:y:,c:z:") != NULL);
+        free(f);
+        f = dkim2_sig_format(sig, 0);
+        CHECK(f && strstr(f, "s=a:x:AAAA|b:y:BBBB,c:z:CCCC") != NULL);
+        free(f);
+    }
+    dkim2_sig_free(sig);
+    mi_err("sha256:AAAA:BBBB|sha512:CCCC:DDDD,x-hash:EEEE:FFFF", err, sizeof err, &mi);
+    if (mi) {
+        char *f = dkim2_mi_format(mi);
+        CHECK(f && strstr(f, "h=sha256:AAAA:BBBB|sha512:CCCC:DDDD,x-hash:EEEE:FFFF;") != NULL);
+        free(f);
+    }
+    dkim2_mi_free(mi);
+}
+
+/* Add a DKIM2-Signature whose s= is spec, written as it goes on the wire
+   except that a value "G" is a good Ed25519 signature and "B" a bad one;
+   any other value is kept. The signing input blanks every value and keeps
+   the rest of s= byte for byte (-08 §12.8). tags: everything before s=. */
+static void add_sig_spec(msg_t *m, const char *tags, const char *spec) {
+    char tmpl[4096], val[8192];
+    size_t tl = (size_t)snprintf(tmpl, sizeof tmpl, "%s; s=", tags);
+    int colons = 0;
+    for (const char *p = spec; *p && tl < sizeof tmpl - 2; p++) {
+        if (*p == ',' || *p == '|') colons = 0;
+        else if (*p == ':') colons++;
+        else if (colons >= 2) continue;
+        tmpl[tl++] = *p;
+    }
+    tmpl[tl++] = ';';
+    tmpl[tl] = '\0';
+    char *in = malloc(65536);
+    size_t pos = 0;
+    canon_chain(m, in, &pos);
+    canon_append(in, &pos, "dkim2-signature", tmpl);
+    char *good = dkim2_sign(g_priv, "ed25519-sha256", (unsigned char *)in, pos);
+    free(in);
+    char bad[256];
+    snprintf(bad, sizeof bad, "%s", good);
+    bad[0] = bad[0] == 'A' ? 'B' : 'A';
+    size_t vl = (size_t)snprintf(val, sizeof val, "%s; s=", tags);
+    colons = 0;
+    for (const char *p = spec; *p; ) {
+        if (colons >= 2 && strchr(" \t\r\n", *p)) { val[vl++] = *p++; continue; }
+        if (colons >= 2 && *p != ',' && *p != '|') {
+            size_t n = strcspn(p, ",|"), core = n;
+            while (core && strchr(" \t\r\n", p[core - 1])) core--;
+            if (core == 1 && *p == 'G') vl += (size_t)snprintf(val + vl, sizeof val - vl, "%s", good);
+            else if (core == 1 && *p == 'B') vl += (size_t)snprintf(val + vl, sizeof val - vl, "%s", bad);
+            else vl += (size_t)snprintf(val + vl, sizeof val - vl, "%.*s", (int)core, p);
+            vl += (size_t)snprintf(val + vl, sizeof val - vl, "%.*s", (int)(n - core), p + core);
+            p += n;
+            colons = 0;
+            continue;
+        }
+        if (*p == ',' || *p == '|') colons = 0;
+        else if (*p == ':') colons++;
+        val[vl++] = *p++;
+    }
+    snprintf(val + vl, sizeof val - vl, ";");
+    free(good);
+    msg_add_top(m, "DKIM2-Signature", val);
+}
+
+/* i=1 by example.com over m=1 with this s= (add_sig_spec). */
+static void signed_with(msg_t *m, const char *spec) {
+    msg_init(m, "a@example.com", "test", "Hello\r\nworld\r\n");
+    add_mi(m, NULL);
+    char tags[512], *mf = b64("<a@example.com>"), *rt = b64("<list@lists.example.org>");
+    snprintf(tags, sizeof tags, "i=1; m=1; t=%llu; d=example.com; mf=%s; rt=%s", now(), mf, rt);
+    free(mf); free(rt);
+    add_sig_spec(m, tags, spec);
+}
+
+/* D2: the signing input keeps every "|" and "," (-08 §12.8). */
+static void test_groups_signing_input(void) {
+    static const char *ok[] = {
+        "sel:ed25519-sha256:G",
+        "sel:ed25519-sha256:G|sel2:ed25519-sha256:G",
+        "sel:ed25519-sha256:G,sel2:ed25519-sha256:G",
+        "sel:ed25519-sha256:G \r\n | \r\n sel2 : ed25519-sha256 : G",
+    };
+    for (size_t k = 0; k < sizeof ok / sizeof ok[0]; k++) {
+        msg_t m;
+        signed_with(&m, ok[k]);
+        dkim2_verify_result_t r = verify(&m);
+        if (r.status != DKIM2_OK) printf("  (%s)\n", m.h[0]);
+        CHECK_PASS(r);
+        msg_free(&m);
+    }
+}
+
 int main(void) {
     harness_init();
 
@@ -347,6 +548,8 @@ int main(void) {
     test_recipe_paths();
     test_fail_states();
     test_malformed_keys();
+    test_groups_parse();
+    test_groups_signing_input();
 
     harness_done();
     if (g_fail) { printf("test_spec08: %d failure(s)\n", g_fail); return 1; }

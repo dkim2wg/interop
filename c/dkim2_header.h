@@ -4,6 +4,11 @@
 /* Every i= and m= names one hop, and a chain has at most this many. */
 #define DKIM2_MAX_CHAIN_LENGTH 32
 
+/* Local limit (contract D3): an s= with more items than this, in any
+   groups, is "has more than 8 signatures" -- every item can cost a key
+   lookup and a verification. */
+#define DKIM2_MAX_SIGNATURES 8
+
 /* The largest number an i= or m= may be written as (at most three digits). */
 #define DKIM2_MAX_CHAIN_NUMBER 100
 

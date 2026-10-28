@@ -319,63 +319,6 @@ static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t ms
     return 0;
 }
 
-/* -07 §10.9: a Selector MUST NOT appear more than once within a single
-   s= tag; the same signing algorithm MAY appear a second time, but only
-   with a distinct Selector -- three or more occurrences of the same
-   algorithm means "more selectors than allowed". The two checks are
-   independent: two items sharing both algorithm and Selector are a
-   duplicate-selector error, not a selector-count error (the count is 2,
-   not 3+). Matching is
-   case-insensitive for both: algorithm names are RFC 5234 ABNF quoted
-   strings, and a Selector is a Domain (-07 §3.6) -- DNS names are
-   case-insensitive. Returns 0 if clean, -1 with errbuf filled otherwise. */
-static const dkim2_sigset_t *g_cmp_ssets; /* qsort context (single-threaded use) */
-
-static int cmp_sel(const void *a, const void *b) {
-    return strcasecmp(g_cmp_ssets[*(const int *)a].selector,
-                      g_cmp_ssets[*(const int *)b].selector);
-}
-static int cmp_alg(const void *a, const void *b) {
-    return strcasecmp(g_cmp_ssets[*(const int *)a].alg,
-                      g_cmp_ssets[*(const int *)b].alg);
-}
-
-/* Sorted, not pairwise: an s= with thousands of items stays O(n log n). */
-int dkim2_sig_check_duplicates(const dkim2_sig_t *sig, char *errbuf, size_t errbufsz) {
-    int n = sig->n_ssets;
-    if (n < 2) return 0;
-    int *idx = malloc((size_t)n * sizeof *idx);
-    if (!idx) {
-        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d syntax error", sig->i);
-        return -1;
-    }
-    int rc = 0;
-    for (int i = 0; i < n; i++) idx[i] = i;
-    g_cmp_ssets = sig->ssets;
-    qsort(idx, (size_t)n, sizeof *idx, cmp_sel);
-    for (int i = 1; i < n; i++)
-        if (strcasecmp(sig->ssets[idx[i - 1]].selector, sig->ssets[idx[i]].selector) == 0) {
-            snprintf(errbuf, errbufsz,
-                "PERMERROR: DKIM2-Signature i=%d has a duplicate selector", sig->i);
-            rc = -1; goto out;
-        }
-
-    qsort(idx, (size_t)n, sizeof *idx, cmp_alg);
-    for (int i = 0, run = 1; i < n; i++, run++) {
-        if (i == 0 || strcasecmp(sig->ssets[idx[i - 1]].alg, sig->ssets[idx[i]].alg) != 0)
-            run = 1;
-        if (run > 2) {
-            snprintf(errbuf, errbufsz,
-                "PERMERROR: DKIM2-Signature i=%d has more selectors than allowed", sig->i);
-            rc = -1; goto out;
-        }
-    }
-out:
-    g_cmp_ssets = NULL;
-    free(idx);
-    return rc;
-}
-
 /* -07 §3.5/§10.9: the signing algorithms we implement, by exact
    (case-significant) name. Anything else is ignored. */
 static int known_sig_alg(const char *alg) {
@@ -387,81 +330,42 @@ static const char *sig_alg_key_type(const char *alg) {
     return strcmp(alg, "rsa-sha256") == 0 ? "rsa" : "ed25519";
 }
 
-/* Blank sig bytes in a raw DKIM2-Signature value, preserving trailing semicolon.
-   Finds the s= tag and replaces each sel:alg:sigvalue with sel:alg: (empty).
-   Returns malloc'd string. */
+static int is_fws_c(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+
+/* The DKIM2-Signature value as it was signed (-08 §12.8, §14.6 step 2):
+   in the s= tag (its name exactly "s", FWS allowed before the "="), every
+   signature value -- the text after an item's second ':' up to the next
+   ',' or '|' -- is removed. Selectors, algorithm names and every ':' ','
+   '|' stay byte for byte, as does everything outside s=. Returns a
+   malloc'd string, no longer than raw_val. */
 static char *blank_sig_values(const char *raw_val) {
-    size_t rlen = strlen(raw_val);
-
-    /* Find the s= tag at a tag boundary (start, or after ';'/FWS), matching
-       the tag name case-insensitively per -07 §10.  FWS may sit between the
-       tag name and '=' ("s = sel:alg:sig", Turscar tags_whitespace). */
-    const char *s_tag = NULL, *s_eq = NULL;
-    for (const char *p = raw_val; *p; p++) {
-        if (p[0] == 's'
-            && (p == raw_val || p[-1] == ';' || p[-1] == ' ' || p[-1] == '\t'
-                || p[-1] == '\n')) {
-            const char *q = p + 1;
-            while (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n') q++;
-            if (*q == '=') {
-                s_tag = p;
-                s_eq = q;
-                break;
-            }
-        }
-    }
-    if (!s_tag) return strdup(raw_val); /* no s= tag, return as-is */
-
-    /* Output buffer: prefix + blanked ssets + optional trailing ";" */
-    char *out = malloc(rlen + 32);
+    char *out = malloc(strlen(raw_val) + 1);
     if (!out) return NULL;
-    size_t pos = 0;
-
-    /* Copy prefix up to and including the "=" of s= */
-    size_t prefix_len = (size_t)(s_eq - raw_val) + 1;
-    memcpy(out, raw_val, prefix_len);
-    pos = prefix_len;
-
-    /* Parse comma-separated selector:alg:sigval entries */
-    const char *p = s_eq + 1;
-    int first = 1;
-    while (*p && *p != ';') {
-        while (*p == ' ' || *p == '\t') p++;
-        if (!*p || *p == ';') break;
-
-        /* selector */
-        const char *c1 = p;
-        while (*c1 && *c1 != ':' && *c1 != ';' && *c1 != ',') c1++;
-        if (*c1 != ':') break;
-        size_t sel_len = (size_t)(c1 - p);
-
-        /* alg */
-        const char *c2 = c1 + 1;
-        while (*c2 && *c2 != ':' && *c2 != ';' && *c2 != ',') c2++;
-        if (*c2 != ':') break;
-        size_t alg_len = (size_t)(c2 - c1 - 1);
-
-        /* skip sig value to next comma or semicolon */
-        const char *sig_end = c2 + 1;
-        while (*sig_end && *sig_end != ',' && *sig_end != ';') sig_end++;
-
-        if (!first) out[pos++] = ',';
-        first = 0;
-        memcpy(out + pos, p, sel_len); pos += sel_len;
-        out[pos++] = ':';
-        memcpy(out + pos, c1 + 1, alg_len); pos += alg_len;
-        out[pos++] = ':';
-
-        p = sig_end;
-        if (*p == ',') p++;
+    char *w = out;
+    const char *p = raw_val;
+    while (*p) {
+        const char *frag = p, *q = p;
+        while (*p && *p != ';') p++;            /* the tag-spec is frag..p */
+        while (q < p && is_fws_c(*q)) q++;
+        int is_s = q < p && *q == 's';
+        if (is_s) {
+            const char *e = q + 1;
+            while (e < p && is_fws_c(*e)) e++;
+            is_s = e < p && *e == '=';
+            if (is_s) q = e + 1;
+        }
+        if (!is_s) q = p;
+        memcpy(w, frag, (size_t)(q - frag));
+        w += q - frag;
+        for (int colons = 0; q < p; q++) {
+            if (*q == ',' || *q == '|') colons = 0;
+            else if (*q == ':') colons++;
+            else if (colons >= 2) continue;     /* a signature value */
+            *w++ = *q;
+        }
+        if (*p) *w++ = *p++;                    /* the ';' */
     }
-
-    /* Copy everything from the end of the s= value onward verbatim: a trailing
-       ';' and/or any tags that follow s= when it is not the last tag (so the
-       reconstruction is independent of tag order). */
-    size_t rest_len = strlen(p);
-    memcpy(out + pos, p, rest_len); pos += rest_len;
-    out[pos] = '\0';
+    *w = '\0';
     return out;
 }
 
@@ -948,11 +852,12 @@ static int mi_content_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) {
     return 0;
 }
 
-/* -07 §14.2 DKIM2-Signature content, by ascending i= (sig_arr: every
+/* -08 §14.2 DKIM2-Signature content, by ascending i= (sig_arr: every
    signature, i= 1..n_sigs): a field that did not parse reports its own
-   error; otherwise every implemented item's value must be a padded
-   base64string (FWS already removed by the parser), then the §10.9
-   duplicate and limit rules. 0, or -1 with the PERMERROR in msg. */
+   error -- the parser has checked its tags, that every s= item's value is
+   a padded base64string, the §10.9 duplicate Selector rule and the local
+   limit of DKIM2_MAX_SIGNATURES items, in that order. 0, or -1 with the
+   PERMERROR in msg. */
 static int sig_content_error(const dkim2_ctx_t *ctx, dkim2_sig_t **sig_arr, int n_sigs,
                              char *msg, size_t msgsz) {
     for (int x = 1, si = 0; x <= DKIM2_MAX_CHAIN_LENGTH; x++) {
@@ -962,13 +867,7 @@ static int sig_content_error(const dkim2_ctx_t *ctx, dkim2_sig_t **sig_arr, int 
             return -1;
         }
         if (si >= n_sigs || sig_arr[si]->i != x) continue;
-        const dkim2_sig_t *sig = sig_arr[si++];
-        for (int j = 0; j < sig->n_ssets; j++)
-            if (known_sig_alg(sig->ssets[j].alg) && !b64_is_strict(sig->ssets[j].sig_b64)) {
-                snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d syntax error", sig->i);
-                return -1;
-            }
-        if (dkim2_sig_check_duplicates(sig, msg, msgsz) < 0) return -1;
+        si++;
     }
     return 0;
 }

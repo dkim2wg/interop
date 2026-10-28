@@ -39,11 +39,12 @@ static int name_ok(const char *s, int labels) {
     return len > 0;
 }
 
-/* Split one s= or h= item into exactly three parts on ':' (-07 §9.3,
-   §8.9). FWS is trimmed from around the first two (it may sit beside a
-   colon or a list comma) and removed from inside the third (a base64
-   value); a name with FWS inside it is left for name_ok() to reject. */
-static int split3(char *item, char **p1, char **p2, char **p3) {
+/* Split one s= or h= item into exactly three parts on ':' (-08 §9.3,
+   §10.9). FWS is trimmed from around the first two (it may sit beside a
+   colon or a list separator) and removed from inside the third (a base64
+   value), and from inside the second too when strip2 (a hash value); a
+   name with FWS inside it is left for name_ok() to reject. */
+static int split3(char *item, char **p1, char **p2, char **p3, int strip2) {
     char *c1 = strchr(item, ':');
     if (!c1) return -1;
     *c1++ = '\0';
@@ -53,69 +54,92 @@ static int split3(char *item, char **p1, char **p2, char **p3) {
     if (strchr(c2, ':')) return -1;
     *p1 = trim_fws(item);
     *p2 = trim_fws(c1);
+    if (strip2) strip_fws(*p2);
     strip_fws(c2);
     *p3 = c2;
     return 0;
 }
 
-/* Parse h= value: "sha256:hhash:bhash,sha256:hhash:bhash,..."
-   Returns 0 on success, -1 on malloc/syntax failure, -2 if an algorithm
-   name is present more than once (-07 §9.3; case-insensitive per
-   RFC 5234, since ABNF quoted strings are case-insensitive). */
-static int parse_hsets(const char *h, dkim2_hashset_t **out, int *n) {
-    int cnt = 1;
-    for (const char *p = h; *p; p++) if (*p == ',') cnt++;
-    *out = calloc((size_t)cnt, sizeof(dkim2_hashset_t));
-    if (!*out) return -1;
-    *n = 0;
-    char *copy = strdup(h);
-    if (!copy) { free(*out); *out = NULL; return -1; }
-    /* An empty set (",,") or one without both digests is a syntax error,
-       never skipped; the hash name may not contain FWS ("sha 256"). */
-    char *tok = copy, *next;
-    int dup = 0;
-    for (; tok; tok = next) {
-        next = strchr(tok, ',');
-        if (next) *next++ = '\0';
-        char *c1, *c2;
-        if (split3(tok, &tok, &c1, &c2) < 0 || !name_ok(tok, 0) || !*c1 || !*c2) {
-            free(copy); return -1;
-        }
-        /* -07 §9.3: an algorithm MUST NOT be present more than once. Check
-           against every entry already stored -- this must run before any
-           hash is computed or compared. The rest of h= is still read: a
-           malformed set is a syntax error, which ranks first (contract C9). */
-        int again = 0;
-        for (int i = 0; i < *n; i++) {
-            if (strcasecmp((*out)[i].alg, tok) == 0) { again = 1; break; }
-        }
-        if (again) { dup = 1; continue; }
+/* One item of an h= or s= list, pointing into the list's buffer. */
+typedef struct { char *p1, *p2, *p3; int group; } item3_t;
 
-        /* Each strdup() must be checked: under OOM a NULL here would
-           otherwise flow straight into the next hash-set's
-           strcasecmp((*out)[i].alg, tok) comparison above and crash. The
-           entries already stored at indices 0..*n-1 are freed by the
-           caller (dkim2_mi_free() walks mi->hsets up to mi->n_hsets, which
-           is this *n) once *out is attached to the mi struct on the error
-           path; only this partially-built entry -- not yet counted in *n --
-           needs cleaning up here. */
-        (*out)[*n].alg = strdup(tok);
-        if (!(*out)[*n].alg) { free(copy); return -1; }
-        (*out)[*n].hdr_hash = strdup(c1);
-        if (!(*out)[*n].hdr_hash) {
-            free((*out)[*n].alg); (*out)[*n].alg = NULL;
-            free(copy); return -1;
-        }
-        (*out)[*n].body_hash = strdup(c2);
-        if (!(*out)[*n].body_hash) {
-            free((*out)[*n].alg); (*out)[*n].alg = NULL;
-            free((*out)[*n].hdr_hash); (*out)[*n].hdr_hash = NULL;
-            free(copy); return -1;
-        }
-        (*n)++;
+static const item3_t *g_cmp_items;   /* qsort context (single-threaded use) */
+static int cmp_item_p1(const void *a, const void *b) {
+    return strcasecmp(g_cmp_items[*(const int *)a].p1, g_cmp_items[*(const int *)b].p1);
+}
+
+/* Parse an h= (is_sig 0) or s= (is_sig 1) value (-08 §9.3, §10.9):
+     any = all *([FWS] "|" [FWS] all), all = item *([FWS] "," [FWS] item)
+   An h= item is hash-name ":" base64 ":" base64, an s= item selector ":"
+   sig-name ":" base64, every base64 value non-empty and padded, whatever
+   the algorithm (contract D3). The items point into one copy of v (*buf),
+   so a list of any length costs three allocations; finding a repeated
+   hash name or Selector (compared without regard to case, across the whole
+   tag) sorts, so it costs n log n. Returns 0; -1 for a syntax error (an
+   empty member: a leading, trailing or doubled "|" or ",") or OOM; -2 for
+   a repeated name; -3 for more than DKIM2_MAX_SIGNATURES s= items -- each
+   only when nothing before it in that order applies. */
+static int parse_list(const char *v, int is_sig, char **buf, item3_t **items,
+                      int *n, int *n_groups) {
+    *buf = NULL; *items = NULL; *n = 0; *n_groups = 0;
+    size_t cnt = 1;
+    for (const char *p = v; *p; p++) if (*p == ',' || *p == '|') cnt++;
+    char *copy = strdup(v);
+    item3_t *it = calloc(cnt, sizeof *it);
+    int *idx = calloc(cnt, sizeof *idx);
+    int rc = 0, k = 0, group = 0;
+    if (!copy || !it || !idx) { rc = -1; goto out; }
+    for (char *tok = copy, *next; tok; tok = next) {
+        size_t span = strcspn(tok, ",|");
+        char sep = tok[span];
+        tok[span] = '\0';
+        next = sep ? tok + span + 1 : NULL;
+        if (split3(tok, &it[k].p1, &it[k].p2, &it[k].p3, !is_sig) < 0 ||
+            !name_ok(it[k].p1, is_sig) ||
+            !(is_sig ? name_ok(it[k].p2, 0) : b64_is_strict(it[k].p2)) ||
+            !b64_is_strict(it[k].p3)) { rc = -1; goto out; }
+        it[k].group = group;
+        idx[k] = k;
+        k++;
+        if (sep == '|') group++;
     }
+    g_cmp_items = it;
+    qsort(idx, (size_t)k, sizeof *idx, cmp_item_p1);
+    g_cmp_items = NULL;
+    for (int i = 1; i < k; i++)
+        if (strcasecmp(it[idx[i - 1]].p1, it[idx[i]].p1) == 0) { rc = -2; goto out; }
+    if (is_sig && k > DKIM2_MAX_SIGNATURES) { rc = -3; goto out; }
+    *buf = copy; copy = NULL;
+    *items = it; it = NULL;
+    *n = k;
+    *n_groups = group + 1;
+out:
     free(copy);
-    return dup ? -2 : 0;
+    free(it);
+    free(idx);
+    return rc;
+}
+
+/* Parse h= into hsets (-08 §9.3): 0, -1 syntax error or OOM, -2 a hash
+   name present more than once anywhere in the tag (case-insensitive per
+   RFC 5234, since ABNF quoted strings are case-insensitive). */
+static int parse_hsets(const char *h, dkim2_mi_t *mi) {
+    item3_t *it;
+    int n, ng;
+    int rc = parse_list(h, 0, &mi->list_buf, &it, &n, &ng);
+    if (rc < 0) return rc;
+    mi->hsets = calloc((size_t)(n ? n : 1), sizeof *mi->hsets);
+    if (!mi->hsets) { free(it); free(mi->list_buf); mi->list_buf = NULL; return -1; }
+    for (int i = 0; i < n; i++) {
+        mi->hsets[i].alg = it[i].p1;
+        mi->hsets[i].hdr_hash = it[i].p2;
+        mi->hsets[i].body_hash = it[i].p3;
+        mi->hsets[i].group = it[i].group;
+    }
+    mi->n_hsets = n;
+    mi->n_groups = ng;
+    free(it);
+    return 0;
 }
 
 dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz) {
@@ -174,9 +198,9 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
         goto err;
     }
     {
-        int hr = parse_hsets(v, &mi->hsets, &mi->n_hsets);
+        int hr = parse_hsets(v, mi);
         if (hr == -2) {
-            /* -07 §9.3: duplicate hash algorithm -- a specific,
+            /* -08 §9.3: duplicate hash algorithm -- a specific,
                reportable parse failure, not a plain "MI absent". mi->m is
                already populated at this point, so the message can name it. */
             if (errbuf && errbufsz)
@@ -218,12 +242,8 @@ void dkim2_mi_free(dkim2_mi_t *mi) {
     if (!mi) return;
     dkim2_mi_free(mi->next);   /* recurse before freeing self */
     mi->next = NULL;
-    for (int i = 0; i < mi->n_hsets; i++) {
-        free(mi->hsets[i].alg);
-        free(mi->hsets[i].hdr_hash);
-        free(mi->hsets[i].body_hash);
-    }
-    free(mi->hsets);
+    free(mi->hsets);           /* its strings are in list_buf */
+    free(mi->list_buf);
     free(mi->r_raw);
     free(mi->raw_value);
     free(mi);
@@ -281,32 +301,26 @@ static char **parse_flags(const char *f_val, int *n_out) {
     return out;
 }
 
-/* Parse s= value: comma-separated "selector:alg:sig" triples (-07
-   §10.9). FWS may sit around the comma and the colons and inside the base64
-   value, never inside the Selector or algorithm name (no "rsa- sha256"
-   normalised to rsa-sha256); an item that is not exactly three parts, or
-   an empty item, is a syntax error. */
-static int parse_ssets(const char *s, dkim2_sigset_t **out, int *n) {
-    int cnt = 1;
-    for (const char *p = s; *p; p++) if (*p == ',') cnt++;
-    *out = calloc((size_t)cnt, sizeof(dkim2_sigset_t));
-    if (!*out) return -1;
-    *n = 0;
-    char *copy = strdup(s), *tok, *next;
-    if (!copy) { free(*out); *out = NULL; return -1; }
-    for (tok = copy; tok; tok = next) {
-        next = strchr(tok, ',');
-        if (next) *next++ = '\0';
-        char *alg, *val;
-        if (split3(tok, &tok, &alg, &val) < 0 || !name_ok(tok, 1) || !name_ok(alg, 0)) {
-            free(copy); return -1;
-        }
-        (*out)[*n].selector = strdup(tok);
-        (*out)[*n].alg      = strdup(alg);
-        (*out)[*n].sig_b64  = strdup(val);
-        (*n)++;
+/* Parse s= into ssets (-08 §10.9; parse_list): 0, -1 syntax error or OOM,
+   -2 a Selector present more than once anywhere in the tag (a Selector is
+   a Domain, so without regard to case), -3 more than DKIM2_MAX_SIGNATURES
+   items. */
+static int parse_ssets(const char *s, dkim2_sig_t *sig) {
+    item3_t *it;
+    int n, ng;
+    int rc = parse_list(s, 1, &sig->list_buf, &it, &n, &ng);
+    if (rc < 0) return rc;
+    sig->ssets = calloc((size_t)(n ? n : 1), sizeof *sig->ssets);
+    if (!sig->ssets) { free(it); free(sig->list_buf); sig->list_buf = NULL; return -1; }
+    for (int i = 0; i < n; i++) {
+        sig->ssets[i].selector = it[i].p1;
+        sig->ssets[i].alg = it[i].p2;
+        sig->ssets[i].sig_b64 = it[i].p3;
+        sig->ssets[i].group = it[i].group;
     }
-    free(copy);
+    sig->n_ssets = n;
+    sig->n_groups = ng;
+    free(it);
     return 0;
 }
 
@@ -375,13 +389,14 @@ static int parse_t(const char *v, uint64_t *out) {
     return 0;
 }
 
-/* Non-zero if an s= value is present and does not parse. */
-static int s_syntax_error(const char *v) {
-    dkim2_sigset_t *ss = NULL;
-    int n = 0, bad = v && parse_ssets(v, &ss, &n) < 0;
-    for (int i = 0; i < n; i++) { free(ss[i].selector); free(ss[i].alg); free(ss[i].sig_b64); }
-    free(ss);
-    return bad;
+/* parse_list's verdict on an s= value (0 when absent). */
+static int s_list_error(const char *v) {
+    if (!v) return 0;
+    char *buf;
+    item3_t *it;
+    int n, ng, rc = parse_list(v, 1, &buf, &it, &n, &ng);
+    if (rc == 0) { free(buf); free(it); }
+    return rc;
 }
 
 /* An mf= or rt= value: comma-separated base64 items, each decoding to a
@@ -442,13 +457,19 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
         ;
     else if (dkim2_chain_number_error("DKIM2-Signature", "m", mv, iv, errbuf, errbufsz))
         ;
-    else if (tl && (tl->syntax_error || tl->duplicate || s_syntax_error(tag_get(tl, "s")) ||
+    else if (tl && (tl->syntax_error || tl->duplicate || s_list_error(tag_get(tl, "s")) == -1 ||
                     (tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0) ||
                     (tag_get(tl, "mf") && !paths_ok(tag_get(tl, "mf"))) ||
                     (tag_get(tl, "rt") && !paths_ok(tag_get(tl, "rt")))))
         snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d syntax error", atoi(iv));
     else if (tl && missing_tag(tl, errbuf, errbufsz, atoi(iv)))
         ;
+    /* -08 §10.9: then a repeated Selector, then the local limit (D3). */
+    else if (tl && s_list_error(tag_get(tl, "s")) == -2)
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d has a duplicate selector", atoi(iv));
+    else if (tl && s_list_error(tag_get(tl, "s")) == -3)
+        snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d has more than %d signatures",
+                 atoi(iv), DKIM2_MAX_SIGNATURES);
     else
         snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature is malformed");
     if (tl) taglist_free(tl);
@@ -488,7 +509,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
         if (rt) { int nrt = 0; sig->rt = parse_rt(rt, &nrt); if (!sig->rt) goto err; }
     }
     REQ("s");
-    if (parse_ssets(v, &sig->ssets, &sig->n_ssets) < 0) goto err;
+    if (parse_ssets(v, sig) < 0) goto err;
 #undef REQ
     v = tag_get(tl, "n");
     if (v) {
@@ -516,12 +537,8 @@ void dkim2_sig_free(dkim2_sig_t *sig) {
     sig->next = NULL;
     free(sig->n); free(sig->mf); free(sig->d); free(sig->nd); free(sig->raw_value);
     if (sig->rt) { for (int i = 0; sig->rt[i]; i++) free(sig->rt[i]); free(sig->rt); }
-    for (int i = 0; i < sig->n_ssets; i++) {
-        free(sig->ssets[i].selector);
-        free(sig->ssets[i].alg);
-        free(sig->ssets[i].sig_b64);
-    }
-    free(sig->ssets);
+    free(sig->ssets);          /* its strings are in list_buf */
+    free(sig->list_buf);
     if (sig->flags) { for (int i = 0; sig->flags[i]; i++) free(sig->flags[i]); free(sig->flags); }
     free(sig);
 }
@@ -566,11 +583,19 @@ static char *sb_done(sbuf_t *b) {
     return b->s ? b->s : strdup("");
 }
 
+/* What goes before item i of an h= or s= list: nothing, "," or "|". A
+   struct built by hand (n_groups 0) is one group. */
+static const char *list_sep(int i, int n_groups, int prev_group, int group) {
+    if (!i) return "";
+    return n_groups > 1 && group != prev_group ? "|" : ",";
+}
+
 char *dkim2_mi_format(const dkim2_mi_t *mi) {
     sbuf_t b = {0};
     sb_printf(&b, "m=%d; h=", mi->m);
     for (int i = 0; i < mi->n_hsets; i++)
-        sb_printf(&b, "%s%s:%s:%s", i ? "," : "",
+        sb_printf(&b, "%s%s:%s:%s", list_sep(i, mi->n_groups, i ? mi->hsets[i - 1].group : 0,
+                                             mi->hsets[i].group),
             mi->hsets[i].alg, mi->hsets[i].hdr_hash, mi->hsets[i].body_hash);
     if (mi->r_raw)
         sb_printf(&b, "; r=%s", mi->r_raw);
@@ -598,7 +623,8 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     /* s= */
     sb_printf(&b, "; s=");
     for (int i = 0; i < sig->n_ssets; i++)
-        sb_printf(&b, "%s%s:%s:%s", i ? "," : "",
+        sb_printf(&b, "%s%s:%s:%s", list_sep(i, sig->n_groups, i ? sig->ssets[i - 1].group : 0,
+                                             sig->ssets[i].group),
             sig->ssets[i].selector, sig->ssets[i].alg,
             empty_sig ? "" : (sig->ssets[i].sig_b64 ? sig->ssets[i].sig_b64 : ""));
     if (sig->n)
