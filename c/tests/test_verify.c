@@ -191,24 +191,24 @@ int main(void) {
         "TAMPERED body!\r\n", mi_val, sig_val);
     assert(st == DKIM2_FAIL);
 
-    /* --- Error: wrong MAIL FROM → PERMERROR, canonical -07 message --- */
+    /* --- Error: wrong MAIL FROM → FAIL (-08 §14.4) --- */
     {
         dkim2_verify_result_t res;
         verify_test_message_full("<wrong@example.com>", rcpts,
             raw_headers, 3, body, mi_val, sig_val, &res);
-        assert(res.status == DKIM2_PERMERROR);
+        assert(res.status == DKIM2_FAIL);
         assert(strstr(res.message,
             "DKIM2-Signature i=1 MAIL FROM <wrong@example.com> did not match") != NULL);
         st = res.status;
     }
 
-    /* --- Error: wrong RCPT TO → PERMERROR, canonical -07 message --- */
+    /* --- Error: wrong RCPT TO → FAIL (-08 §14.4) --- */
     char *wrong_rcpts[] = { "<wrong@example.org>", NULL };
     {
         dkim2_verify_result_t res;
         verify_test_message_full(mail_from, wrong_rcpts,
             raw_headers, 3, body, mi_val, sig_val, &res);
-        assert(res.status == DKIM2_PERMERROR);
+        assert(res.status == DKIM2_FAIL);
         assert(strstr(res.message,
             "DKIM2-Signature i=1 RCPT TO <wrong@example.org> did not match") != NULL);
         st = res.status;
@@ -353,7 +353,7 @@ int main(void) {
         dkim2_badfield_free(vctx.bad_list);
     }
 
-    /* --- Error: d= does not relaxed-match mf= domain → PERMERROR,
+    /* --- Error: d= does not relaxed-match mf= domain → FAIL,
        canonical -07 message (the -07 §14.4 check fires before crypto, so
        tampering d= post-signature doesn't need to preserve validity). --- */
     {
@@ -367,12 +367,12 @@ int main(void) {
         dkim2_verify_result_t res;
         verify_test_message_full(mail_from, rcpts, raw_headers, 3, body,
             mi_val, tampered_d_sig, &res);
-        assert(res.status == DKIM2_PERMERROR);
+        assert(res.status == DKIM2_FAIL);
         assert(strstr(res.message,
             "DKIM2-Signature i=1 MAIL FROM and d= do not match") != NULL);
     }
 
-    /* --- Error: top-level nd= (-07 §14.4 "unexpected nd= tag") → PERMERROR ---
+    /* --- Error: top-level nd= (-07 §14.4 "unexpected nd= tag") → FAIL ---
        The only legitimate nd= producer emits an nd= hop together with a
        matching higher-i= signature, so nd= must never appear on the
        topmost (highest i=) DKIM2-Signature. */
@@ -404,7 +404,7 @@ int main(void) {
 
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);
-        assert(res.status == DKIM2_PERMERROR);
+        assert(res.status == DKIM2_FAIL);
         assert(strstr(res.message, "unexpected nd= tag") != NULL);
 
         dkim2_mi_free(vctx.mi_list);
@@ -439,7 +439,7 @@ int main(void) {
         dkim2_sig_free(vctx.sig_list);
     }
 
-    /* --- Error: Chain of Custody nd= adjacency mismatch (-07 §14.4) → PERMERROR,
+    /* --- Error: Chain of Custody nd= adjacency mismatch (-07 §14.4) → FAIL,
        canonical -07 message (§14.4).
        The C signer cannot emit nd= itself, so hop i=1 is hand-signed here:
        its own DKIM2-Signature header (with a genuine nd= tag) is covered by
@@ -522,9 +522,9 @@ int main(void) {
 
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);
-        assert(res.status == DKIM2_PERMERROR);
+        assert(res.status == DKIM2_FAIL);
         assert(strstr(res.message,
-            "PERMERROR: DKIM2-Signature i=1 nd= does not match") != NULL);
+            "FAIL: DKIM2-Signature i=1 nd= does not match") != NULL);
 
         dkim2_mi_free(vctx.mi_list);
         dkim2_sig_free(vctx.sig_list); /* frees sig1_parsed + chained sig2_parsed */
@@ -532,7 +532,7 @@ int main(void) {
         free(sig2_out);
     }
 
-    /* --- Error: inter-signature Chain of Custody break (-07 §14.4) → PERMERROR,
+    /* --- Error: inter-signature Chain of Custody break (-07 §14.4) → FAIL,
        canonical -07 message "DKIM2-Signature i=2 mf= does not match the
        rt= of i=1". Both hops are produced by the normal signer (no nd=
        involved this time), chained via ctx2.sig_list so hop i=2 gets a
@@ -590,9 +590,9 @@ int main(void) {
 
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);
-        assert(res.status == DKIM2_PERMERROR);
+        assert(res.status == DKIM2_FAIL);
         assert(strstr(res.message,
-            "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1") != NULL);
+            "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1") != NULL);
 
         dkim2_mi_free(vctx.mi_list);
         dkim2_sig_free(vctx.sig_list); /* frees sig1_parsed + chained sig2_parsed */

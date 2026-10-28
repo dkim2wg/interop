@@ -194,12 +194,93 @@ static void test_recipe_paths(void) {
     CHECK_PASS(recipe_at_m2("{\"b\":[{\"c\":[1,2]}],\"x\":[-5,0,10]}"));
 }
 
+/* Verify with an envelope (undo and planned walks agree on these). */
+static dkim2_verify_result_t verify_env(const msg_t *m, const char *mail_from, const char *rcpt) {
+    dkim2_ctx_t ctx;
+    memset(&ctx, 0, sizeof ctx);
+    char *rcpts[2] = { (char *)rcpt, NULL };
+    ctx.headers = (char **)m->h;
+    ctx.n_headers = m->n;
+    ctx.body = (char *)m->body;
+    ctx.body_len = strlen(m->body);
+    ctx.mail_from = (char *)mail_from;
+    ctx.rcpt_to = rcpt ? rcpts : NULL;
+    dkim2_ctx_collect(&ctx);
+    dkim2_verify_result_t res;
+    dkim2_do_verify(&ctx, &res);
+    dkim2_mi_free(ctx.mi_list);
+    dkim2_sig_free(ctx.sig_list);
+    dkim2_badfield_free(ctx.bad_list);
+    return res;
+}
+
+#define CHECK_STATE(res, st, want) do { CHECK((res).status == (st)); CHECK_MSG(res, want); } while (0)
+
+/* D5: timestamps, Chain of Custody and From Authentic are FAIL. */
+static void test_fail_states(void) {
+    msg_t m;
+    msg_init(&m, "a@example.com", "test", "Hello\r\n");
+    add_mi(&m, NULL);
+    add_sig_t(&m, 1, 1, now() - 15 * 86400, "example.com", "<a@example.com>", "<l@lists.example.org>", NULL, NULL);
+    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=1 signature expired");
+    msg_free(&m);
+
+    msg_init(&m, "a@example.com", "test", "Hello\r\n");
+    add_mi(&m, NULL);
+    add_sig_t(&m, 1, 1, now() + 2 * 86400, "example.com", "<a@example.com>", "<l@lists.example.org>", NULL, NULL);
+    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=1 signature is from the future");
+    msg_free(&m);
+
+    /* custody: the envelope, then the tags */
+    base_signed(&m, "a@example.com");
+    CHECK_STATE(verify_env(&m, "<b@example.com>", NULL), DKIM2_FAIL,
+                "FAIL: DKIM2-Signature i=1 MAIL FROM <b@example.com> did not match");
+    CHECK_STATE(verify_env(&m, "<a@example.com>", "<x@example.net>"), DKIM2_FAIL,
+                "FAIL: DKIM2-Signature i=1 RCPT TO <x@example.net> did not match");
+    CHECK_PASS(verify_env(&m, "<a@example.com>", "<list@lists.example.org>"));
+    msg_free(&m);
+
+    msg_init(&m, "a@example.com", "test", "Hello\r\n");
+    add_mi(&m, NULL);
+    add_sig(&m, 1, 1, "example.com", "<a@example.net>", "<l@lists.example.org>", NULL);
+    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match");
+    msg_free(&m);
+
+    msg_init(&m, "a@example.com", "test", "Hello\r\n");
+    add_mi(&m, NULL);
+    add_sig(&m, 1, 1, "example.com", NULL, NULL, "example.org");
+    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=1 unexpected nd= tag");
+    msg_free(&m);
+
+    base_signed(&m, "a@example.com");
+    add_sig(&m, 2, 1, "example.org", "<x@example.org>", "<r@dest.example>", NULL);
+    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1");
+    msg_free(&m);
+
+    base_signed(&m, "a@example.com");
+    add_sig(&m, 2, 1, "other.net", "<>", "<r@dest.example>", NULL);
+    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1");
+    msg_free(&m);
+
+    msg_init(&m, "a@example.com", "test", "Hello\r\n");
+    add_mi(&m, NULL);
+    add_sig(&m, 1, 1, "example.com", NULL, NULL, "example.org");
+    add_sig(&m, 2, 1, "example.net", "<a@example.net>", "<r@dest.example>", NULL);
+    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=1 nd= does not match");
+    msg_free(&m);
+
+    base_signed(&m, "a@elsewhere.net");
+    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
+    msg_free(&m);
+}
+
 int main(void) {
     harness_init();
 
     test_hashed_fields();
     test_strict_lowercase();
     test_recipe_paths();
+    test_fail_states();
 
     harness_done();
     if (g_fail) { printf("test_spec08: %d failure(s)\n", g_fail); return 1; }

@@ -467,19 +467,19 @@ static void test_timestamps(const char *mi) {
     item_t it = { "sel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL };
     char *s = make_sig(mi, "0", &it, 1);
     dkim2_verify_result_t r = verify(mi, s, 0);
-    expect("t=0 is valid syntax but expired", r, DKIM2_PERMERROR, NULL, -1);
+    expect("t=0 is valid syntax but expired", r, DKIM2_FAIL, NULL, -1);
     if (!strstr(r.message, "expired")) { printf("  FAIL: t=0 not reported expired\n"); g_failures++; }
     expect("t=0 passes with the age check skipped", verify(mi, s, 1), DKIM2_OK, NULL, 1);
     free(s);
     s = make_sig(mi, " 1000000000000 ", &it, 1);
     expect("t=10^12 does not overflow (future, skipped)", verify(mi, s, 1), DKIM2_OK, NULL, 1);
     r = verify(mi, s, 0);
-    expect("t=10^12 is in the future", r, DKIM2_PERMERROR, NULL, -1);
+    expect("t=10^12 is in the future", r, DKIM2_FAIL, NULL, -1);
     if (!strstr(r.message, "future")) { printf("  FAIL: t=10^12 not reported future\n"); g_failures++; }
     free(s);
     s = make_sig(mi, "99999999999999999999999999", &it, 1);
     r = verify(mi, s, 0);
-    expect("t= past 2^64 is digits, saturates to the future", r, DKIM2_PERMERROR, NULL, -1);
+    expect("t= past 2^64 is digits, saturates to the future", r, DKIM2_FAIL, NULL, -1);
     if (!strstr(r.message, "future")) { printf("  FAIL: huge t= not reported future\n"); g_failures++; }
     free(s);
 }

@@ -104,7 +104,8 @@ static int matches_rt(const char *p1, const dkim2_sig_t *p) {
 }
 
 /* -07 Chain of Custody (§7.1 items 1 and 2, §14.4; contract C4) over the
-   signatures in ascending i= order. 0, or -1 with the PERMERROR in msg.
+   signatures in ascending i= order. 0, or -1 with the error in msg: FAIL
+   (-08 §14.4, contract D5), but PERMERROR for a missing mf=.
    Every signature after the first is checked against the one before it:
    after an nd= hop its d= must be that nd=; an nd= hop, or a null mf=, needs
    an rt= domain of the previous hop that relaxed-matches its d= (rt= is
@@ -222,7 +223,7 @@ int dkim2_mi_changes_from(const dkim2_mi_t *mi) {
    instances above the top signature's m= (the signer gate leaves the
    unsigned top to the signer's own check). sig_arr is ascending i= from 1;
    the instances are contiguous 1..N (both checked already).
-   0, or -1 with the PERMERROR in msg. */
+   0, or -1 with the error in msg: FAIL (-08 §14.8, contract D5). */
 static int check_from_authentic(const dkim2_ctx_t *ctx, dkim2_sig_t **sig_arr, int n_sigs,
                                 char *msg, size_t msgsz) {
     enum { MAX_MI = 64 };
@@ -264,7 +265,7 @@ static int check_from_authentic(const dkim2_ctx_t *ctx, dkim2_sig_t **sig_arr, i
         prev_m = s->m;
         if (!due || at < 0 || state_of[at] < 0) continue;
         if (!fromlist_authentic(&lists[state_of[at]], s->d)) {
-            snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d matching From is not authentic", s->i);
+            snprintf(msg, msgsz, "FAIL: DKIM2-Signature i=%d matching From is not authentic", s->i);
             rc_out = -1;
             goto done;
         }
@@ -279,7 +280,7 @@ static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t ms
         const dkim2_sig_t *s = sig_arr[k], *p = sig_arr[k - 1];
         if (p->nd) {
             if (!s->d || strcasecmp(p->nd, s->d) != 0) {
-                snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d nd= does not match", p->i);
+                snprintf(msg, msgsz, "FAIL: DKIM2-Signature i=%d nd= does not match", p->i);
                 return -1;
             }
             continue;
@@ -293,7 +294,7 @@ static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t ms
         if (s->nd || is_null_path(s->mf)) {
             if (!s->d || !rt_matches(p, s->d)) {
                 snprintf(msg, msgsz,
-                    "PERMERROR: DKIM2-Signature i=%d d= does not match the rt= of i=%d", s->i, p->i);
+                    "FAIL: DKIM2-Signature i=%d d= does not match the rt= of i=%d", s->i, p->i);
                 return -1;
             }
             continue;
@@ -301,7 +302,7 @@ static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t ms
         char md[512];
         if (dkim2_addr_alabel(s->mf, md, sizeof md, NULL) != 0 || !matches_rt(md, p)) {
             snprintf(msg, msgsz,
-                "PERMERROR: DKIM2-Signature i=%d mf= does not match the rt= of i=%d", s->i, p->i);
+                "FAIL: DKIM2-Signature i=%d mf= does not match the rt= of i=%d", s->i, p->i);
             return -1;
         }
     }
@@ -311,7 +312,7 @@ static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t ms
         char md[512];
         if (dkim2_addr_alabel(s->mf, md, sizeof md, NULL) != 0 || !s->d ||
             !dkim2_relaxed_match(md, s->d)) {
-            snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d MAIL FROM and d= do not match", s->i);
+            snprintf(msg, msgsz, "FAIL: DKIM2-Signature i=%d MAIL FROM and d= do not match", s->i);
             return -1;
         }
     }
@@ -1111,11 +1112,11 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         for (int si = 0; si < n_sigs; si++) {
             dkim2_sig_t *sig = sig_arr[si];
             if (sig->t > now + DKIM2_MAX_FUTURE_SECS)
-                SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: DKIM2-Signature i=%d signature is from the future", sig->i);
+                SETSTATUS(DKIM2_FAIL,
+                    "FAIL: DKIM2-Signature i=%d signature is from the future", sig->i);
             if (now > sig->t + DKIM2_MAX_AGE_SECS)
-                SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: DKIM2-Signature i=%d signature expired", sig->i);
+                SETSTATUS(DKIM2_FAIL,
+                    "FAIL: DKIM2-Signature i=%d signature expired", sig->i);
         }
     }
 
@@ -1126,14 +1127,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
        domain -- it is about to add that signature -- so the check is
        skipped. */
     if (!ctx->outbound && latest->nd && latest->nd[0])
-        SETSTATUS(DKIM2_PERMERROR, "PERMERROR: DKIM2-Signature i=%d unexpected nd= tag", latest->i);
+        SETSTATUS(DKIM2_FAIL, "FAIL: DKIM2-Signature i=%d unexpected nd= tag", latest->i);
 
     /* -07 §14.4: Envelope MAIL FROM must match top sig's mf= (domain
        case-insensitive, local-part case-sensitive, null sender aware). */
     if (!ctx->outbound && ctx->mail_from && latest->mf) {
         if (!env_addr_eq(ctx->mail_from, latest->mf))
-            SETSTATUS(DKIM2_PERMERROR,
-                "PERMERROR: DKIM2-Signature i=%d MAIL FROM %s did not match",
+            SETSTATUS(DKIM2_FAIL,
+                "FAIL: DKIM2-Signature i=%d MAIL FROM %s did not match",
                 latest->i, ctx->mail_from);
     }
 
@@ -1145,8 +1146,8 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
             for (int j = 0; latest->rt[j]; j++)
                 if (env_addr_eq(ctx->rcpt_to[i], latest->rt[j])) { found = 1; break; }
             if (!found)
-                SETSTATUS(DKIM2_PERMERROR,
-                    "PERMERROR: DKIM2-Signature i=%d RCPT TO %s did not match",
+                SETSTATUS(DKIM2_FAIL,
+                    "FAIL: DKIM2-Signature i=%d RCPT TO %s did not match",
                     latest->i, ctx->rcpt_to[i]);
         }
     }
@@ -1156,7 +1157,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     {
         char cmsg[256];
         if (check_custody(sig_arr, n_sigs, cmsg, sizeof cmsg) < 0)
-            SETSTATUS(DKIM2_PERMERROR, "%s", cmsg);
+            SETSTATUS(cmsg[0] == 'F' ? DKIM2_FAIL : DKIM2_PERMERROR, "%s", cmsg);
     }
 
     /* -07 §14.5 for every signature, then §14.6 for every signature. The
@@ -1303,7 +1304,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     {
         char fmsg[256];
         if (check_from_authentic(ctx, sig_arr, n_sigs, fmsg, sizeof fmsg) < 0)
-            SETSTATUS(DKIM2_PERMERROR, "%s", fmsg);
+            SETSTATUS(fmsg[0] == 'F' ? DKIM2_FAIL : DKIM2_PERMERROR, "%s", fmsg);
     }
 
     result->status = DKIM2_OK;

@@ -296,8 +296,8 @@ static void test_custody(void) {
         base_signed(&m, "a@example.com");
         add_sig(&m, 2, 1, "other.net", "<>", "<a@example.com>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1");
-        CHECK(res.status == DKIM2_PERMERROR);
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1");
+        CHECK(res.status == DKIM2_FAIL);
         msg_free(&m);
     }
     /* C3: an nd= bridge */
@@ -321,7 +321,7 @@ static void test_custody(void) {
         add_sig(&m, 2, 1, "mail.example.org", NULL, NULL, "fwd.example.net");
         add_sig(&m, 3, 1, "fwd.example.net", "<b@fwd.example.net>", "<r@dest.example>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1");
         msg_free(&m);
     }
     /* C4 */
@@ -333,7 +333,7 @@ static void test_custody(void) {
         add_sig(&m, 2, 1, "example.org", NULL, NULL, "fwd.example.net");
         add_sig(&m, 3, 1, "other.example", "<b@other.example>", "<r@dest.example>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=2 nd= does not match");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=2 nd= does not match");
         msg_free(&m);
     }
     /* C5: a domain literal never matches */
@@ -344,7 +344,7 @@ static void test_custody(void) {
         add_sig(&m, 1, 1, "example.com", "<a@example.com>", "<x@[192.0.2.1]>", NULL);
         add_sig(&m, 2, 1, "example.org", "<y@[192.0.2.1]>", "<r@dest.example>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1");
         msg_free(&m);
     }
     /* C6: MAIL FROM and d= on every signature (here i=1) */
@@ -354,8 +354,8 @@ static void test_custody(void) {
         add_mi(&m, NULL);
         add_sig(&m, 1, 1, "example.com", "<a@example.net>", "<list@lists.example.org>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match");
-        CHECK(res.status == DKIM2_PERMERROR);
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match");
+        CHECK(res.status == DKIM2_FAIL);
         msg_free(&m);
     }
     /* mf= domain a subdomain of d= (and of the previous rt= domain) */
@@ -386,7 +386,7 @@ static void test_custody(void) {
         base_signed(&m, "a@example.com");
         add_sig(&m, 2, 1, "example.org", NULL, NULL, "fwd.example.net");
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=2 unexpected nd= tag");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=2 unexpected nd= tag");
         msg_free(&m);
     }
 }
@@ -406,7 +406,7 @@ static void test_from_authentic(void) {
         add_mi(&m, NULL);
         add_sig(&m, 1, 1, "example.net", "<a@example.net>", "<list@lists.example.org>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
         msg_free(&m);
     }
     {
@@ -420,14 +420,14 @@ static void test_from_authentic(void) {
         msg_t m;
         base_signed(&m, "a@example.com, b@example.com");
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
         msg_free(&m);
     }
     {
         msg_t m;
         base_signed(&m, "a@[192.0.2.1]");
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
         msg_free(&m);
     }
     {   /* display text with no angle brackets is not one mailbox (final
@@ -435,7 +435,7 @@ static void test_from_authentic(void) {
         msg_t m;
         base_signed(&m, "A a@example.com");
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
         msg_free(&m);
     }
     {   /* folded, RFC 2047 display name, angle-addr: one mailbox */
@@ -452,7 +452,7 @@ static void test_from_authentic(void) {
         add_mi(&m, NULL);
         add_sig(&m, 1, 1, "example.com", "<a@example.com>", "<list@lists.example.org>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
         msg_free(&m);
     }
     /* A2: a list rewrites From into its own domain */
@@ -473,7 +473,7 @@ static void test_from_authentic(void) {
         add_mi(&m, "{\"h\":{\"from\":[{\"d\":[\"a@example.com\"]}]}}");
         add_sig(&m, 2, 2, "example.org", "<list-bounces@lists.example.org>", "<r@dest.example>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=2 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=2 matching From is not authentic");
         msg_free(&m);
     }
     {   /* the earlier From is checked too: i=1 is not Authentic for it */
@@ -485,7 +485,7 @@ static void test_from_authentic(void) {
         add_mi(&m, "{\"h\":{\"from\":[{\"d\":[\"a@elsewhere.net\"]}]}}");
         add_sig(&m, 2, 2, "example.org", "<list-bounces@lists.example.org>", "<r@dest.example>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
         msg_free(&m);
     }
     {   /* From changed at m=2, which i=2 covers via m=3: i=2 is relevant */
@@ -521,7 +521,7 @@ static void test_from_authentic(void) {
         add_mi(&m, "{\"h\":{\"subject\":[{\"d\":[\"test\"]}]}}");
         add_sig(&m, 1, 2, "example.org", "<list-bounces@lists.example.org>", "<r@dest.example>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
         msg_free(&m);
     }
     /* A3: the signer refuses */
@@ -576,7 +576,7 @@ static void test_signer_gate(void) {
         add_sig(&m, 1, 1, "example.com", "<a@example.com>", "<x@example.org>", NULL);
         add_sig(&m, 2, 1, "example.org", NULL, NULL, "fwd.example.net");
         dkim2_verify_result_t in = verify(&m);
-        CHECK_MSG(in, "PERMERROR: DKIM2-Signature i=2 unexpected nd= tag");
+        CHECK_MSG(in, "FAIL: DKIM2-Signature i=2 unexpected nd= tag");
         char *rc[] = { "<r@dest.example>", NULL };
         CHECK(lib_sign(&m, "fwd.example.net", "<b@fwd.example.net>", rc, 0, err, sizeof err, NULL, 0) == 0);
         if (err[0]) printf("  gate said: %s\n", err);
@@ -628,7 +628,7 @@ static void test_timestamps(void) {
         add_mi(&m, NULL);
         add_sig_t(&m, 1, 1, now() + 172800, "example.com", "<a@example.com>", "<list@lists.example.org>", NULL, NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 signature is from the future");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 signature is from the future");
         msg_free(&m);
     }
     {
@@ -637,7 +637,7 @@ static void test_timestamps(void) {
         add_mi(&m, NULL);
         add_sig_t(&m, 1, 1, now() - 1209600 - 3600, "example.com", "<a@example.com>", "<list@lists.example.org>", NULL, NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 signature expired");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 signature expired");
         msg_free(&m);
     }
 }
@@ -682,7 +682,7 @@ static void test_check_order(void) {
         add_mi(&m, NULL);
         add_sig_t(&m, 1, 1, old, "example.com", "<a@example.net>", "<list@lists.example.org>", NULL, NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 signature expired");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 signature expired");
         msg_free(&m);
     }
     {   /* §14.3 before §14.4: expired, and a top nd= */
@@ -691,7 +691,7 @@ static void test_check_order(void) {
         add_mi(&m, NULL);
         add_sig_t(&m, 1, 1, old, "example.com", NULL, NULL, "fwd.example.net", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 signature expired");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 signature expired");
         msg_free(&m);
     }
     {   /* §14.4 before §14.6: mf= not under d=, and a bad signature */
@@ -700,7 +700,7 @@ static void test_check_order(void) {
         add_mi(&m, NULL);
         add_sig_bad(&m, 1, 1, now(), "example.com", "<a@example.net>", "<list@lists.example.org>", 1);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match");
         msg_free(&m);
     }
     {   /* §14.7 before §14.6: Subject changed, and a bad signature (a
