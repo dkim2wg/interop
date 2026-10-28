@@ -7,7 +7,8 @@ vector's ExpectedState.
 
 The vectors are written against draft-02; the tag rules (case-insensitive
 identifiers, any order, single occurrence, FWS) and the >=1024-bit key
-requirement are unchanged in draft-07, so they apply to us directly.
+requirement were unchanged up to draft-07; -08's strict-lowercase tags and
+AND/OR groups are the KNOWN_DIVERGENCE entries below.
 
 Run:  python3 tests/test_turscar.py     (exit 0 = all match)
 Skips cleanly if the submodule is not checked out.
@@ -24,8 +25,19 @@ TESTS_DIR = os.path.join(REPO_ROOT, "dkim2tests", "tests")
 
 # Upstream vectors we knowingly diverge from, with the reason.  These are not
 # counted as failures.
-# (None at present: dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf).)
-KNOWN_DIVERGENCE: dict[str, str] = {}
+# dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf).
+# The draft-02 vectors take tag names in any case and skip an unknown
+# algorithm beside a good one; -08 (contract D10, D3) does neither.
+_D10 = ("-08 contract D10: an uppercase tag name is an unknown tag, so it is "
+        "not a twin of the lowercase one")
+KNOWN_DIVERGENCE: dict[str, str] = {
+    **{f"d2_duplicate_{t}_tag": _D10
+       for t in ("d", "f", "i", "m", "mf", "n", "rt", "t")},
+    "tags_mixed_case": "-08 contract D10: I=, M=, D=... are unknown tags, so "
+                       "i= is missing",
+    "algorithm_with_future": "-08 §14.6 step 4, contract D3: an unimplemented "
+                             "algorithm in a \",\" group makes it PERMERROR",
+}
 
 
 def dns_from_toml(d):
