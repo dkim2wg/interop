@@ -58,6 +58,31 @@ test('D10: a Message-Instance with only M= is "tag=m missing"', async () => {
   assertPrimary(await verify(msg), 'permerror', 'PERMERROR: Message-Instance m= tag=m missing');
 });
 
+// --- D7: a key that is not one of its type is "is malformed" ----------------
+
+const { subtle } = globalThis.crypto;
+const spki = async (kp) => Buffer.from(await subtle.exportKey('spki', (await kp).publicKey)).toString('base64');
+const withKey = (key) => async () => key;
+
+test('D7: an Ed25519 p= that is not exactly 32 octets is malformed', async () => {
+  const msg = await oneHop();
+  const raw = Buffer.from(await publicKeyB64(keyPair), 'base64');
+  for (const p of [raw.subarray(0, 31).toString('base64'), Buffer.concat([raw, Buffer.from([0])]).toString('base64'), await spki(keyPair)]) {
+    assertPrimary(await verify(msg, { fetchKey: withKey({ k: 'ed25519', p }) }), 'permerror',
+      'PERMERROR: DKIM2-Signature i=1 public key sel is malformed');
+  }
+});
+
+test('D7: an RSA key shorter than 1024 bits, or base64 that is no RSA key, is malformed', async () => {
+  const rsa512 = subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 512,
+    publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+  const msg = edit(await oneHop(), ':ed25519-sha256:', ':rsa-sha256:');
+  for (const p of [await spki(rsa512), 'AAAAAAAA']) {
+    assertPrimary(await verify(msg, { fetchKey: withKey({ k: 'rsa', p }) }), 'permerror',
+      'PERMERROR: DKIM2-Signature i=1 public key sel is malformed');
+  }
+});
+
 // --- D6, D10: Recipe errors ---------------------------------------------------
 
 const two = (over = {}) => ({ d: 'example.com', m: 2, mf: '<a@example.com>', rt: ['<c@example.net>'], ...over });

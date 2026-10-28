@@ -703,9 +703,8 @@ async function checkCrypto(sig, i, sigSets, instances, signatures, fetchKey, lev
         continue;
       }
       if (e.message === 'key-temperror') temp = temp || detail;
-      else if (e.message === 'key-tooshort') { detail = `public key ${ss.selector} RSA key size too small, ${e.bits} bits`; perm = perm || detail; }
       else if (e.message === 'ed25519-unsupported') detail = 'ed25519 unsupported in this browser';
-      else if (['key-multiple', 'key-syntax', 'key-revoked', 'key-mismatch'].includes(e.message)) perm = perm || detail;
+      else if (['key-multiple', 'key-syntax', 'key-revoked', 'key-mismatch', 'key-malformed'].includes(e.message)) perm = perm || detail;
     }
     if (!ok) allPass = false;
     level.items.push({ selector: ss.selector, algorithm: ss.alg, result: ok ? 'pass' : (detail || 'fail') });
@@ -850,6 +849,7 @@ function keyErrorDetail(e, selector) {
     'key-syntax': 'has a syntax error',
     'key-revoked': 'has been revoked',
     'key-mismatch': 'algorithm mismatch',
+    'key-malformed': 'is malformed',
     'key-temperror': 'could not be fetched',
   };
   return e.message in map ? `public key ${selector} ${map[e.message]}` : String(e.message || e);

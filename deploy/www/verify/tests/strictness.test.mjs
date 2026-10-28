@@ -175,7 +175,9 @@ keyCase('a spec that is not a tag is a syntax error', 'v=DKIM1; junk; p=<rsa>', 
 keyCase('a bad tag name is a syntax error', 'v=DKIM1; 9k=rsa; p=<rsa>', 'has a syntax error');
 keyCase('no p= is a syntax error', 'v=DKIM1; k=rsa', 'has a syntax error');
 keyCase('p= not base64 is a syntax error', 'v=DKIM1; k=rsa; p=!!notbase64!!', 'has a syntax error');
-keyCase('p= base64 but not a key is a syntax error', 'v=DKIM1; k=rsa; p=AAAAAAAA', 'has a syntax error');
+// -08 §14.5 (contract D7): base64 that does not load as a key of its type
+// is malformed.
+keyCase('p= base64 but not a key is malformed', 'v=DKIM1; k=rsa; p=AAAAAAAA', 'is malformed');
 keyCase('unknown k= is an algorithm mismatch, never read as RSA', 'v=DKIM1; k=unknown; p=<rsa>', 'algorithm mismatch');
 keyCase('k=RSA (case significant) is an algorithm mismatch', 'v=DKIM1; k=RSA; p=<rsa>', 'algorithm mismatch');
 keyCase('empty p= is revoked', 'v=DKIM1; k=rsa; p=', 'has been revoked');
