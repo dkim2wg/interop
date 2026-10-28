@@ -201,3 +201,345 @@ def test_d5_from_not_authentic_is_fail():
     msg = sign(message("A <a@other.net>"), "example.com", "a@example.com",
                ["r@example.net"], skip_upstream_check=True, skip_from_check=True)
     _fails_with(msg, "FAIL: DKIM2-Signature i=1 matching From is not authentic", "fail")
+
+
+# --- hand-built s= and h= layouts (test1.dkim2.com keys from dns.json) ----------
+
+import copy  # noqa: E402
+import json  # noqa: E402
+import re  # noqa: E402
+import time  # noqa: E402
+
+import dkim2verify  # noqa: E402
+from dkim2sign import (  # noqa: E402
+    b64, compute_body_hash, compute_header_hash, compute_signature,
+    load_private_key, parse_message,
+)
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+T1 = "test1.dkim2.com"
+T1DNS = json.load(open(os.path.join(REPO, "dns.json")))
+BASE = (b"From: a@test1.dkim2.com\r\nTo: b@example.com\r\nSubject: s08\r\n"
+        b"\r\nHello\r\n")
+
+
+def _h(layout: str) -> str:
+    """An h= value from a layout like "sha256:H:B|sha512:H:BAD": H and B are
+    the right header and body hashes, BAD a wrong (but base64) one."""
+    headers, body = parse_message(BASE)
+
+    def one(m):
+        alg, hh, bh = m.group(1), m.group(2), m.group(3)
+        good = alg in ("sha256", "sha512")
+        hv = b64(compute_header_hash(headers, alg)) if good and hh == "H" else (
+            "AAAA" if hh in ("H", "BAD") else hh)
+        bv = b64(compute_body_hash(body, alg)) if good and bh == "B" else (
+            "AAAA" if bh in ("B", "BAD") else bh)
+        return f"{alg}:{hv}:{bv}"
+    return re.sub(r"([^\s:,|]+):([^\s:,|]*):([^\s:,|]*)", one, layout)
+
+
+def make(s_layout: str, h_layout: str = "sha256:H:B", t=None, dns_sel=None):
+    """A one-hop message whose s= is `s_layout`: items "sel:alg:VALUE" joined
+    by "," and "|" (with any FWS written in the layout).  VALUE "SIGN:<key>"
+    is a real signature with that test1 key over the signed form."""
+    t = str(int(time.time())) if t is None else t
+    mi = f"Message-Instance: m=1; h={_h(h_layout)};"
+    mf, rt = b64(b"<a@test1.dkim2.com>"), b64(b"<b@example.com>")
+    pre = f"DKIM2-Signature: i=1; m=1; t={t}; d={T1}; mf={mf}; rt={rt}; s="
+    item = re.compile(r"([^\s:,|]+)(\s*:\s*)([^\s:,|]+)(\s*:)(SIGN:[\w-]+|[^,|;]*)")
+    incomplete = pre + item.sub(lambda m: m.group(1) + m.group(2) + m.group(3)
+                                + m.group(4), s_layout) + ";"
+
+    def signed(m):
+        v = m.group(5)
+        if v.startswith("SIGN:"):
+            key, kalg = load_private_key(
+                os.path.join(REPO, "keys", f"{v[5:]}._domainkey.{T1}.pem"))
+            v = b64(compute_signature([mi], [], incomplete, key, kalg))
+        return m.group(1) + m.group(2) + m.group(3) + m.group(4) + v
+    sig = pre + item.sub(signed, s_layout) + ";"
+    return (mi + "\r\n" + sig + "\r\n").encode() + BASE
+
+
+def v8(raw, dns=None, **kw):
+    kw.setdefault("skip_timestamp_check", True)
+    out = []
+    for walk in WALKS:
+        r = dkim2verify.verify_message(raw, T1DNS if dns is None else dns,
+                                       full_chain=True, walk=walk, **kw)
+        out.append((r.ok, r.status, r.errors[:1]))
+    assert out[0] == out[1], out
+    return dkim2verify.verify_message(raw, T1DNS if dns is None else dns, **kw)
+
+
+def ok(raw, **kw):
+    r = v8(raw, **kw)
+    assert r.ok and r.status == "pass", r.errors
+
+
+def err(raw, text, **kw):
+    r = v8(raw, **kw)
+    assert not r.ok and r.errors[0] == text, r.errors
+    assert r.status == text.split(":", 1)[0].lower(), (r.status, r.errors)
+
+
+def _dns_with(records, sel):
+    d = copy.deepcopy(T1DNS)
+    d[T1][f"{sel}._domainkey"] = records
+    return d
+
+
+@pytest.fixture
+def lookups(monkeypatch):
+    calls = []
+    real = dkim2verify.lookup_public_key
+
+    def counting(domain, selector, dns_data):
+        calls.append(selector)
+        return real(domain, selector, dns_data)
+    monkeypatch.setattr(dkim2verify, "lookup_public_key", counting)
+    return calls
+
+
+S1 = "sel1:rsa-sha256:SIGN:sel1"
+S2 = "sel2:rsa-sha256:SIGN:sel2"
+ED = "ed25519:ed25519-sha256:SIGN:ed25519"
+SIG1 = "DKIM2-Signature i=1"
+MI1 = "Message-Instance m=1"
+
+
+def test_harness_baseline():
+    ok(make(S1))
+    ok(make(f"{S1},{ED}"))
+
+
+# --- D2: "|" groups of "," lists in s= and h= -----------------------------------
+
+@pytest.mark.parametrize("layout", [
+    f"{S1}|{S2}", f"{S1} | {S2}", f"{S1}\r\n\t|\r\n\t{S2}", f"{S1},{S2}|{ED}",
+    f"{S1} ,\r\n {S2}",
+])
+def test_d2_groups_and_fws_parse(layout):
+    ok(make(layout))
+
+
+@pytest.mark.parametrize("layout", [
+    f"|{S1}", f"{S1}|", f"{S1}||{S2}", f",{S1}", f"{S1},", f"{S1},,{S2}",
+    f"{S1}|,{S2}", f"{S1} | ",
+])
+def test_d2_empty_member_is_syntax_error(layout):
+    err(make(layout), f"PERMERROR: {SIG1} syntax error")
+
+
+@pytest.mark.parametrize("layout", [
+    "|sha256:H:B", "sha256:H:B|", "sha256:H:B||sha512:H:B", "sha256:H:B,",
+    "sha256:H:B,,sha512:H:B",
+])
+def test_d2_empty_hash_member_is_syntax_error(layout):
+    err(make(S1, layout), f"PERMERROR: {MI1} syntax error")
+
+
+def test_d2_duplicates_across_the_whole_tag():
+    err(make(f"{S1}|{S1}"), f"PERMERROR: {SIG1} has a duplicate selector")
+    err(make(S1, "sha256:H:B|sha256:H:B"),
+        f"PERMERROR: {MI1} has a duplicate hash algorithm")
+
+
+def test_d2_same_algorithm_many_selectors_allowed():
+    # -08 dropped "has more selectors than allowed".
+    ok(make(f"{S1},{S2},sel3:rsa-sha256:SIGN:sel3"))
+
+
+def test_d2_fold_never_inside_a_name():
+    err(make("sel1:rsa-\r\n\tsha256:SIGN:sel1"), f"PERMERROR: {SIG1} syntax error")
+    err(make(S1, "sha\r\n\t256:H:B"), f"PERMERROR: {MI1} syntax error")
+
+
+# --- D3: combining signature results -------------------------------------------
+
+BADSIG = "sel2:rsa-sha256:SIGN:sel1"         # sel1's signature under sel2: FAIL
+UNK = "x:mldsa44:AAAA"                        # D8: mldsa44 is not implemented
+
+
+def test_d3_unknown_algorithm_alone_is_permerror_no_key(lookups):
+    err(make(UNK), f"PERMERROR: {SIG1} selector x algorithm unknown")
+    assert lookups == []
+
+
+@pytest.mark.parametrize("alg", ["mldsa44", "mldsa44-ed25519-sha512", "RSA-SHA256",
+                                 "future-alg"])
+def test_d8_unimplemented_algorithms(alg, lookups):
+    err(make(f"{S1},x:{alg}:AAAA"), f"PERMERROR: {SIG1} selector x algorithm unknown")
+    ok(make(f"{S1}|x:{alg}:AAAA"))
+    assert "x" not in lookups
+
+
+def test_d3_unknown_joined_by_comma_vs_bar():
+    err(make(f"{S1},{UNK}"), f"PERMERROR: {SIG1} selector x algorithm unknown")
+    ok(make(f"{S1}|{UNK}"))
+    ok(make(f"{UNK}|{S1}"))
+
+
+def test_d3_one_group_fail_string_is_first_fail():
+    err(make(f"{S1},{BADSIG}"), f"FAIL: {SIG1} selector sel2 incorrect signature")
+    err(make(f"{BADSIG},{S1}"), f"FAIL: {SIG1} selector sel2 incorrect signature")
+    # FAIL beats PERMERROR in a group, so the FAIL is reported though the
+    # unknown item comes first.
+    err(make(f"{UNK},{BADSIG}"), f"FAIL: {SIG1} selector sel2 incorrect signature")
+
+
+def test_d3_many_groups_fail_is_no_group_passed():
+    err(make(f"{BADSIG}|{UNK}"), f"FAIL: {SIG1} no group of signatures passed")
+    err(make(f"{S1},{BADSIG}|sel3:rsa-sha256:SIGN:sel1"),
+        f"FAIL: {SIG1} no group of signatures passed")
+    ok(make(f"{BADSIG}|{S1}"))
+
+
+def test_d3_many_groups_permerror_is_first_permerror():
+    err(make(f"{UNK}|y:future:AAAA"), f"PERMERROR: {SIG1} selector x algorithm unknown")
+    err(make(f"nokey:rsa-sha256:SIGN:sel1|{UNK}"),
+        f"PERMERROR: {SIG1} public key nokey does not exist")
+
+
+def test_d3_key_errors_are_items():
+    # An absent key is that item's PERMERROR (-07 skipped it).
+    err(make(f"{S1},nokey:rsa-sha256:SIGN:sel1"),
+        f"PERMERROR: {SIG1} public key nokey does not exist")
+    ok(make(f"{S1}|nokey:rsa-sha256:SIGN:sel1"))
+    # A revoked key in another group does not stop a pass.
+    dns = _dns_with([["txt", "v=DKIM1; k=rsa; p="]], "sel2")
+    ok(make(f"{S1}|{S2}"), dns=dns)
+    err(make(f"{S1},{S2}"), f"PERMERROR: {SIG1} public key sel2 has been revoked", dns=dns)
+
+
+@pytest.fixture
+def tempfail(monkeypatch):
+    real = dkim2verify.lookup_public_key
+
+    def lookup(domain, selector, dns_data):
+        if selector == "sel2":
+            raise dkim2verify.DNSTempError("sel2")
+        return real(domain, selector, dns_data)
+    monkeypatch.setattr(dkim2verify, "lookup_public_key", lookup)
+
+
+def test_d3_temperror_rules(tempfail):
+    t = f"TEMPERROR: {SIG1} public key sel2 could not be fetched"
+    err(make(f"{S1},{S2}"), t)                   # every non-PASS is TEMPERROR
+    err(make(f"{S2},{BADSIG.replace('sel2', 'sel3')}"),
+        f"FAIL: {SIG1} selector sel3 incorrect signature")  # a FAIL is not
+    err(make(f"{S2}|{UNK}"), t)                  # any group TEMPERROR
+    ok(make(f"{S2}|{S1}"))
+
+
+def test_d3_every_item_is_verified(lookups):
+    ok(make(f"{S1}|{S2}|{ED}"))
+    assert sorted(set(lookups)) == ["ed25519", "sel1", "sel2"]
+
+
+def test_d3_limit_of_8_items(lookups):
+    items = [S1, S2, "sel3:rsa-sha256:SIGN:sel3", ED,
+             "dkim2test:rsa-sha256:SIGN:dkim2test", "rsa1024:rsa-sha256:SIGN:rsa1024"]
+    ok(make(",".join(items) + "|a:x:AAAA,b:x:AAAA"))
+    lookups.clear()
+    err(make(",".join(items) + "|a:x:AAAA,b:x:AAAA,c:x:AAAA"),
+        f"PERMERROR: {SIG1} has more than 8 signatures")
+    assert lookups == []
+    # after the duplicate-selector check
+    err(make(",".join(items + [S1]) + "|a:x:AAAA,b:x:AAAA"),
+        f"PERMERROR: {SIG1} has a duplicate selector")
+
+
+@pytest.mark.parametrize("val", ["", "@@@@", "AA AA!"])
+def test_d3_unknown_algorithm_value_must_be_base64(val):
+    err(make(f"{S1}|x:future:{val}"), f"PERMERROR: {SIG1} syntax error")
+
+
+@pytest.mark.parametrize("val", ["", "@@@@"])
+def test_d3_unknown_hash_values_must_be_base64(val):
+    err(make(S1, f"sha256:H:B|x-hash:{val}:AAAA"), f"PERMERROR: {MI1} syntax error")
+    err(make(S1, f"sha256:H:B|x-hash:AAAA:{val}"), f"PERMERROR: {MI1} syntax error")
+
+
+def test_d3_amended_c9_key_error_above_bad_signature_below():
+    # i=1 has a bad signature, i=2's key is missing: §14.5 and §14.6 are one
+    # step per signature now, so the i=1 FAIL is primary.
+    hop1 = _hop1()
+    bad1 = hop1.replace(b"s=sel:ed25519-sha256:", b"s=sel:ed25519-sha256:A", 1)
+    bad1 = re.sub(rb"(s=sel:ed25519-sha256:)A(.)", lambda m: m.group(1) + (
+        b"B" if m.group(2) != b"B" else b"C"), bad1, count=1)
+    two = sign(bad1, "example.org", "list@lists.example.org", ["b@example.net"],
+               skip_upstream_check=True)
+    dns = dict(E.DNS)
+    del dns["example.org"]
+    r = dkim2verify.verify_message(two, dns, full_chain=True, skip_timestamp_check=True)
+    assert r.errors[0] == "FAIL: DKIM2-Signature i=1 selector sel incorrect signature", r.errors
+    assert any("i=2 public key sel does not exist" in e for e in r.errors), r.errors
+
+
+# --- D4: combining hash results ------------------------------------------------
+
+def test_d4_unknown_hash_alone_is_permerror():
+    err(make(S1, "x-hash:AAAA:AAAA"), f"PERMERROR: {MI1} algorithm x-hash unknown")
+    err(make(S1, "SHA256:H:B"), f"PERMERROR: {MI1} algorithm SHA256 unknown")
+
+
+def test_d4_unknown_hash_joined_by_comma_vs_bar():
+    err(make(S1, "sha256:H:B,x-hash:AAAA:AAAA"), f"PERMERROR: {MI1} algorithm x-hash unknown")
+    ok(make(S1, "sha256:H:B|x-hash:AAAA:AAAA"))
+    ok(make(S1, "x-hash:AAAA:AAAA|sha256:H:B"))
+
+
+def test_d4_one_group_strings():
+    err(make(S1, "sha256:H:BAD"), f"FAIL: {MI1} body hash sha256 mismatch")
+    err(make(S1, "sha256:BAD:BAD"), f"FAIL: {MI1} header hash sha256 mismatch")
+    # in h= order, each set header before body (replaces C9's "every
+    # header hash before any body hash")
+    err(make(S1, "sha256:H:BAD,sha512:BAD:B"), f"FAIL: {MI1} body hash sha256 mismatch")
+    err(make(S1, "sha512:BAD:B,sha256:H:BAD"), f"FAIL: {MI1} header hash sha512 mismatch")
+    err(make(S1, "x-hash:AAAA:AAAA,sha256:H:BAD"), f"FAIL: {MI1} body hash sha256 mismatch")
+
+
+def test_d4_many_groups():
+    err(make(S1, "sha256:H:BAD|sha512:BAD:B"), f"FAIL: {MI1} no group of hashes passed")
+    err(make(S1, "sha256:H:BAD|x-hash:AAAA:AAAA"), f"FAIL: {MI1} no group of hashes passed")
+    err(make(S1, "x-hash:AAAA:AAAA|y-hash:AAAA:AAAA"),
+        f"PERMERROR: {MI1} algorithm x-hash unknown")
+    ok(make(S1, "sha256:H:BAD|sha512:H:B"))
+
+
+# --- D7: malformed keys --------------------------------------------------------
+
+def _short_rsa_p():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    key = rsa.RSAPublicNumbers(65537, (1 << 1022) | 0x1234567).public_key()
+    return b64(key.public_bytes(serialization.Encoding.DER,
+                                serialization.PublicFormat.SubjectPublicKeyInfo))
+
+
+ED_P = [v for t, v in T1DNS[T1]["ed25519._domainkey"] if t == "txt"][0].split("p=")[1]
+ED_SPKI = b64(bytes.fromhex("302a300506032b6570032100") + __import__("base64").b64decode(ED_P))
+
+
+@pytest.mark.parametrize("sel,item,rec", [
+    ("sel1", S1, f"v=DKIM1; k=rsa; p={_short_rsa_p()}"),        # 1023 bits
+    ("sel1", S1, "v=DKIM1; k=rsa; p=AAAA"),                      # not a key
+    ("sel1", S1, f"v=DKIM1; k=rsa; p={ED_SPKI}"),                # not RSA
+    ("ed25519", ED, f"v=DKIM1; k=ed25519; p={b64(bytes(31))}"),  # 31 octets
+    ("ed25519", ED, f"v=DKIM1; k=ed25519; p={b64(bytes(33))}"),  # 33 octets
+    ("ed25519", ED, f"v=DKIM1; k=ed25519; p={ED_SPKI}"),         # DER SPKI
+])
+def test_d7_malformed_key(sel, item, rec):
+    err(make(item), f"PERMERROR: {SIG1} public key {sel} is malformed",
+        dns=_dns_with([["txt", rec]], sel))
+
+
+def test_d7_non_base64_p_is_still_syntax_error():
+    err(make(S1), f"PERMERROR: {SIG1} public key sel1 has a syntax error",
+        dns=_dns_with([["txt", "v=DKIM1; k=rsa; p=!!!!"]], "sel1"))
+
+
+def test_d7_rsa_1024_verifies():
+    ok(make("rsa1024:rsa-sha256:SIGN:rsa1024"))

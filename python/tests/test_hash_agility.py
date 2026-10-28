@@ -20,9 +20,11 @@ def test_parse_multiple_hash_sets():
     assert sets == [("sha256", "AAA", "BBB"), ("sha512", "CCC", "DDD")]
 
 
-def test_parse_hash_name_is_case_insensitive():
-    # RFC 5234 quoted strings are case-insensitive
-    assert parse_hash_sets("SHA256:AAA:BBB")[0][0] == "sha256"
+def test_parse_hash_name_is_case_sensitive():
+    # -08 §2.14 and §9.3 (%s"sha256"): hash names are case-sensitive, so
+    # "SHA256" is an algorithm we have not implemented (was lowercased
+    # under -07).
+    assert parse_hash_sets("SHA256:AAA:BBB")[0][0] == "SHA256"
 
 
 def test_body_hash_sha512_differs_and_is_64_bytes():
@@ -42,10 +44,10 @@ def _mi(h_tag):
 
 
 def test_unknown_algorithm_alone_fails_closed(monkeypatch):
-    # §3.4 says ignore unimplemented algorithms, but an MI with no implemented
-    # hash-set cannot be verified and MUST NOT be left at pass.
-    errs = verify_message_instance(_mi("x-whirlpool:AAA:BBB"), [b"From: a@b\r\n"], b"x\r\n")
-    assert any("no supported hash algorithm" in e for e in errs)
+    # -08 §14.7 step 2 (contract D4): an algorithm we have not implemented
+    # is a PERMERROR hash-set ("no supported hash algorithm" under -07).
+    errs = verify_message_instance(_mi("x-whirlpool:AAAA:BBBB"), [b"From: a@b\r\n"], b"x\r\n")
+    assert errs == ["PERMERROR: Message-Instance m=1 algorithm x-whirlpool unknown"], errs
 
 
 def test_duplicate_algorithm_is_permerror():
@@ -54,10 +56,12 @@ def test_duplicate_algorithm_is_permerror():
     assert any("has a duplicate hash algorithm" in e for e in errs)
 
 
-def test_duplicate_algorithm_detected_case_insensitively():
-    errs = verify_message_instance(_mi("sha256:AAA:BBB,SHA256:CCC:DDD"),
+def test_algorithm_names_differing_in_case_are_not_duplicates():
+    # -08: names are case-sensitive, so SHA256 is another (unknown)
+    # algorithm, not a duplicate of sha256 (-07 compared them ignoring case).
+    errs = verify_message_instance(_mi("sha256:AAAA:BBBB,SHA256:CCCC:DDDD"),
                                    [b"From: a@b\r\n"], b"x\r\n")
-    assert any("has a duplicate hash algorithm" in e for e in errs)
+    assert not any("has a duplicate hash algorithm" in e for e in errs), errs
 
 
 # --- Review round 1 findings -------------------------------------------------

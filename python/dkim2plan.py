@@ -30,6 +30,7 @@ caller uses the undo walk.
 """
 
 import hashlib
+import re
 import sys
 
 from dkim2sign import (
@@ -53,10 +54,11 @@ def mi_hash_algs(mi_hdr: str) -> set[str]:
     colon = mi_hdr.find(":")
     h = _extract_tag(mi_hdr[colon + 1:], "h")
     algs = set()
-    for item in (h or "").split(","):
+    # -08 §9.3: "|" groups of "," lists; names are case-sensitive.
+    for item in re.split(r"[,|]", h or ""):
         parts = "".join(item.split()).split(":")
-        if len(parts) == 3 and parts[0].lower() in _HASHERS:
-            algs.add(parts[0].lower())
+        if len(parts) == 3 and parts[0] in _HASHERS:
+            algs.add(parts[0])
     return algs
 
 

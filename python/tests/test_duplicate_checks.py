@@ -30,16 +30,25 @@ def test_same_algorithm_twice_with_distinct_selectors_is_allowed():
     assert _check_signature_duplicates(items, "1") == []
 
 
-def test_same_algorithm_three_times_has_excess_selectors():
+def test_same_algorithm_three_times_is_allowed():
+    # -07 allowed an algorithm at most twice ("has more selectors than
+    # allowed"); -08 §10.9 allows any number with distinct selectors
+    # (contract D2), up to the local limit of 8 items (D3).
     items = [("sel1", "rsa-sha256", "AAA"), ("sel2", "rsa-sha256", "BBB"),
              ("sel3", "rsa-sha256", "CCC")]
-    errs = _check_signature_duplicates(items, "2")
-    assert errs == ["PERMERROR: DKIM2-Signature i=2 has more selectors than allowed"]
+    assert _check_signature_duplicates(items, "2") == []
+
+
+def test_more_than_8_items_is_the_local_limit():
+    items = [(f"s{n}", "rsa-sha256", "AAAA") for n in range(9)]
+    assert _check_signature_duplicates(items, "2") == [
+        "PERMERROR: DKIM2-Signature i=2 has more than 8 signatures"]
+    assert _check_signature_duplicates(items[:8], "2") == []
 
 
 def test_duplicate_selector_and_excess_selector_are_independent():
     # two sigs sharing an algorithm AND a selector is a duplicate-selector
-    # error but NOT an excess-selector error (the count is 2, not 3+)
+    # error and nothing else
     items = [("sel1", "rsa-sha256", "AAA"), ("sel1", "rsa-sha256", "BBB")]
     errs = _check_signature_duplicates(items, "1")
     assert any("duplicate selector" in e for e in errs)

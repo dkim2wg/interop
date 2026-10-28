@@ -62,8 +62,11 @@ EXPECT = {
         "PERMERROR: Message-Instance m=1 syntax error",
     "multi-instance-dup-alg-recipe":
         "PERMERROR: Message-Instance m=2 has a duplicate hash algorithm",
+    # -08 (contract D4): one "," group reports its first failing hash-set
+    # in h= order (sha256, whose body hash is wrong); -07's C9 put every
+    # header hash before any body hash.
     "multi-header-sha512-body-sha256":
-        "FAIL: Message-Instance m=1 header hash sha512 mismatch",
+        "FAIL: Message-Instance m=1 body hash sha256 mismatch",
     "multi-expired-nd": "FAIL: DKIM2-Signature i=1 signature expired",
     "multi-expired-header-hash": HDR1,
     "multi-custody-header-hash": HDR1,
@@ -125,7 +128,7 @@ def test_unsigned_instances_are_still_walked():
                         if not h.lower().startswith(b"dkim2-signature:"))
     r = dkim2verify.verify_message(unsigned + b"\r\n" + body, DNS,
                                    full_chain=True, allow_unsigned_mi=True)
-    assert r.message == "FAIL: Message-Instance m=1 header hash sha512 mismatch"
+    assert r.message == "FAIL: Message-Instance m=1 body hash sha256 mismatch"
 
 
 def test_more_fields_than_the_chain_length():
