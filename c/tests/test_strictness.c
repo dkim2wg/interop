@@ -224,26 +224,29 @@ static void test_algorithms(const char *mi) {
 
     /* A message correctly RSA-signed but declaring future-alg. */
     s = sig1(mi, "sel1", "future-alg", g_rsa, "rsa-sha256");
-    expect("RSA signature declared future-alg is ignored, no lookup",
+    /* -08 §14.6 step 4 (contract D3): an algorithm not implemented is a
+       PERMERROR item, "algorithm unknown", with no key fetched. */
+    expect("RSA signature declared future-alg is unknown, no lookup",
         verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm", 0);
+        "PERMERROR: DKIM2-Signature i=1 selector sel1 algorithm unknown", 0);
     free(s);
     s = sig1(mi, "sel1", "RSA-SHA256", g_rsa, "rsa-sha256");
     expect("RSA-SHA256 (case differs) is unknown",
         verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm", 0);
+        "PERMERROR: DKIM2-Signature i=1 selector sel1 algorithm unknown", 0);
     free(s);
     s = sig1(mi, "sel1", "rsa-sha256x", g_rsa, "rsa-sha256");
     expect("rsa-sha256x is unknown", verify(mi, s, 0), DKIM2_PERMERROR,
-        "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm", 0);
+        "PERMERROR: DKIM2-Signature i=1 selector sel1 algorithm unknown", 0);
     free(s);
 
     {
         item_t it[2] = { { "sel2", "future-alg", NULL, NULL, "AAAA" },
                          { "sel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL } };
         s = make_sig(mi, g_now, it, 2);
-        expect("sel2:future-alg:AAAA,sel1:rsa-sha256:<good> passes, one lookup",
-            verify(mi, s, 0), DKIM2_OK, NULL, 1);
+        expect("sel2:future-alg:AAAA,sel1:rsa-sha256:<good>: both required, one lookup",
+            verify(mi, s, 0), DKIM2_PERMERROR,
+            "PERMERROR: DKIM2-Signature i=1 selector sel2 algorithm unknown", 1);
         free(s);
     }
 
@@ -351,8 +354,11 @@ static void test_outcome(const char *mi) {
     item_t absent1[2] = { { "nosel", "ed25519-sha256", g_ed, "ed25519-sha256", NULL },
                           { "sel1", "rsa-sha256", g_rsa, "rsa-sha256", NULL } };
     s = make_sig(mi, g_now, absent1, 2);
-    expect("absent item + good item: absent skipped, pass",
-        verify(mi, s, 0), DKIM2_OK, NULL, 2);
+    /* -08 (contract D3): an absent key is the item's PERMERROR, which a
+       "," list does not skip */
+    expect("absent item + good item: PERMERROR does not exist",
+        verify(mi, s, 0), DKIM2_PERMERROR,
+        "PERMERROR: DKIM2-Signature i=1 public key nosel does not exist", 2);
     free(s);
     s = sig1(mi, "nosel", "rsa-sha256", g_rsa, "rsa-sha256");
     expect("only item absent: PERMERROR does not exist", verify(mi, s, 0), DKIM2_PERMERROR,
@@ -376,7 +382,7 @@ static void test_outcome(const char *mi) {
                            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" } };
     s = make_sig(mi, g_now, onebad, 2);
     expect("good item + bad signature: FAIL naming the selector", verify(mi, s, 0), DKIM2_FAIL,
-        "FAIL: DKIM2-Signature i=1 signature sel1 signature ed failed", 2);
+        "FAIL: DKIM2-Signature i=1 selector ed incorrect signature", 2);
     free(s);
     {   /* §3.2: an RSA key under 1024 bits is present but unusable. */
         EVP_PKEY *weak = NULL;
@@ -568,7 +574,10 @@ static void test_field_syntax(const char *mi) {
         const char *v = strstr(s2, "rsa-sha256 : ") + 13;
         char *s3 = insert_at(s2, (size_t)(v - s2) + 20, "\r\n\t");
         char *s4 = insert_at(s3, strlen(s3) - 30, " ");   /* and a space */
-        expect("FWS around , and : and inside base64 is fine", verify(mi, s4, 0), DKIM2_OK, NULL, 1);
+        /* both are required (-08 §14.6): the parse is fine, and the
+           result is zz's "algorithm unknown" after sel1's one lookup */
+        expect("FWS around , and : and inside base64 is fine", verify(mi, s4, 0), DKIM2_PERMERROR,
+            "PERMERROR: DKIM2-Signature i=1 selector zz algorithm unknown", 1);
         free(s2); free(s3); free(s4);
         s2 = subst(s, "zz:future-alg:AAAA", "zz:future-alg");
         expect("an item with two parts is a syntax error", verify(mi, s2, 0), DKIM2_PERMERROR, SIG_SYNTAX, 0);
@@ -592,7 +601,7 @@ static void test_field_syntax(const char *mi) {
         { "h=sha256:", "h=,sha256:", 0 },
         { "h=sha256:", "h=sh+a:AAAA:AAAA,sha256:", 0 },
         { "h=sha256:", "h= \r\n sha256 :\r\n ", 1 },
-        { "h=sha256:", "h=future-hash:AAAA:AAAA , sha256: ", 1 },
+        { "h=sha256:", "h=future-hash:AAAA:AAAA | sha256: ", 1 },   /* -08: "|" */
     };
     for (size_t i = 0; i < sizeof hs / sizeof hs[0]; i++) {
         m2 = subst(mi, hs[i].from, hs[i].to);

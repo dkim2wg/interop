@@ -540,6 +540,194 @@ static void test_groups_signing_input(void) {
     }
 }
 
+/* Keys for D3: sel/sel2 the test key, "temp" a DNS failure, "badrec" a
+   record with a syntax error, "rsa" an RSA key; anything else absent.
+   Counts the lookups. */
+static int g_lookups;
+static char g_rsa_txt[1024];
+static char *combine_dns(const char *qname, int *n_records) {
+    g_lookups++;
+    if (strncmp(qname, "sel._domainkey.", 15) == 0 || strncmp(qname, "sel2._domainkey.", 16) == 0)
+        return strdup(g_dns_txt);
+    if (strncmp(qname, "temp._domainkey.", 16) == 0) { *n_records = -1; return NULL; }
+    if (strncmp(qname, "badrec._domainkey.", 18) == 0) return strdup("v=DKIM1; p=!!!!");
+    if (strncmp(qname, "rsa._domainkey.", 15) == 0) return strdup(g_rsa_txt);
+    *n_records = 0;
+    return NULL;
+}
+
+/* D3: each sig-set gives a result, the "," lists and "|" groups combine
+   them (-08 §14.6), and the reported string is fixed by the contract. */
+static void test_combine_signatures(void) {
+    char *(*saved)(const char *, int *) = dkim2_dns_override;
+    dkim2_dns_override = combine_dns;
+    {
+        EVP_PKEY *rsa = EVP_RSA_gen(2048);
+        unsigned char *der = NULL;
+        int n = i2d_PUBKEY(rsa, &der);
+        char b[1024];
+        b64_encode(der, (size_t)n, b, sizeof b);
+        snprintf(g_rsa_txt, sizeof g_rsa_txt, "v=DKIM1; k=rsa; p=%s", b);
+        OPENSSL_free(der);
+        EVP_PKEY_free(rsa);
+    }
+    static const struct { const char *spec; dkim2_status_t st; const char *want; int lookups; } cases[] = {
+        { "sel:ed25519-sha256:G|sel2:ed25519-sha256:B", DKIM2_OK, NULL, 2 },
+        { "sel:ed25519-sha256:B|sel2:ed25519-sha256:G", DKIM2_OK, NULL, 2 },
+        { "sel:ed25519-sha256:B|sel2:ed25519-sha256:B", DKIM2_FAIL,
+          "FAIL: DKIM2-Signature i=1 no group of signatures passed", 2 },
+        { "sel:ed25519-sha256:G,sel2:ed25519-sha256:B", DKIM2_FAIL,
+          "FAIL: DKIM2-Signature i=1 selector sel2 incorrect signature", 2 },
+        { "sel:ed25519-sha256:B,sel2:ed25519-sha256:B", DKIM2_FAIL,
+          "FAIL: DKIM2-Signature i=1 selector sel incorrect signature", 2 },
+        /* an unimplemented algorithm is a PERMERROR item, with no lookup */
+        { "sel:ed25519-sha256:G,x:mldsa44:AAAA", DKIM2_PERMERROR,
+          "PERMERROR: DKIM2-Signature i=1 selector x algorithm unknown", 1 },
+        { "x:mldsa44:AAAA|sel:ed25519-sha256:G", DKIM2_OK, NULL, 1 },
+        { "x:mldsa44-ed25519-sha512:AAAA", DKIM2_PERMERROR,
+          "PERMERROR: DKIM2-Signature i=1 selector x algorithm unknown", 0 },
+        { "x:RSA-SHA256:AAAA", DKIM2_PERMERROR,
+          "PERMERROR: DKIM2-Signature i=1 selector x algorithm unknown", 0 },
+        /* key errors are items' results too */
+        { "nokey:ed25519-sha256:AAAA|sel:ed25519-sha256:G", DKIM2_OK, NULL, 2 },
+        { "sel:ed25519-sha256:G,nokey:ed25519-sha256:AAAA", DKIM2_PERMERROR,
+          "PERMERROR: DKIM2-Signature i=1 public key nokey does not exist", 2 },
+        { "sel:ed25519-sha256:G,badrec:ed25519-sha256:AAAA", DKIM2_PERMERROR,
+          "PERMERROR: DKIM2-Signature i=1 public key badrec has a syntax error", 2 },
+        { "rsa:ed25519-sha256:AAAA|sel:ed25519-sha256:B", DKIM2_FAIL,
+          "FAIL: DKIM2-Signature i=1 no group of signatures passed", 2 },
+        { "rsa:ed25519-sha256:AAAA", DKIM2_PERMERROR,
+          "PERMERROR: DKIM2-Signature i=1 public key rsa algorithm mismatch", 1 },
+        /* TEMPERROR: a "," list is TEMPERROR only if every non-PASS is */
+        { "temp:ed25519-sha256:AAAA,sel:ed25519-sha256:G", DKIM2_TEMPERROR,
+          "TEMPERROR: DKIM2-Signature i=1 public key temp could not be fetched", 2 },
+        { "temp:ed25519-sha256:AAAA,sel:ed25519-sha256:B", DKIM2_FAIL,
+          "FAIL: DKIM2-Signature i=1 selector sel incorrect signature", 2 },
+        { "sel:ed25519-sha256:B,temp:ed25519-sha256:AAAA", DKIM2_FAIL,
+          "FAIL: DKIM2-Signature i=1 selector sel incorrect signature", 2 },
+        { "temp:ed25519-sha256:AAAA,x:mldsa44:AAAA", DKIM2_PERMERROR,
+          "PERMERROR: DKIM2-Signature i=1 selector x algorithm unknown", 1 },
+        /* ...and any TEMPERROR group outranks a FAIL group */
+        { "sel:ed25519-sha256:B|temp:ed25519-sha256:AAAA", DKIM2_TEMPERROR,
+          "TEMPERROR: DKIM2-Signature i=1 public key temp could not be fetched", 2 },
+        { "x:mldsa44:AAAA|sel:ed25519-sha256:B", DKIM2_FAIL,
+          "FAIL: DKIM2-Signature i=1 no group of signatures passed", 1 },
+        { "x:mldsa44:AAAA|nokey:ed25519-sha256:AAAA", DKIM2_PERMERROR,
+          "PERMERROR: DKIM2-Signature i=1 selector x algorithm unknown", 1 },
+        { "nokey:ed25519-sha256:AAAA|x:mldsa44:AAAA", DKIM2_PERMERROR,
+          "PERMERROR: DKIM2-Signature i=1 public key nokey does not exist", 1 },
+        /* every item is checked: no short cut inside the tag */
+        { "sel:ed25519-sha256:G|sel2:ed25519-sha256:G,nokey:ed25519-sha256:AAAA", DKIM2_OK, NULL, 3 },
+    };
+    for (size_t k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+        msg_t m;
+        signed_with(&m, cases[k].spec);
+        g_lookups = 0;
+        dkim2_ctx_t ctx;
+        memset(&ctx, 0, sizeof ctx);
+        ctx.headers = m.h;
+        ctx.n_headers = m.n;
+        ctx.body = m.body;
+        ctx.body_len = strlen(m.body);
+        dkim2_ctx_collect(&ctx);
+        dkim2_verify_result_t r;
+        dkim2_do_verify(&ctx, &r);
+        dkim2_mi_free(ctx.mi_list);
+        dkim2_sig_free(ctx.sig_list);
+        dkim2_badfield_free(ctx.bad_list);
+        int ok = r.status == cases[k].st &&
+                 (cases[k].want ? strcmp(r.message, cases[k].want) == 0 : 1) &&
+                 g_lookups == cases[k].lookups;
+        if (!ok) {
+            printf("FAIL s=%s: got %d \"%s\" (%d lookups), want %d \"%s\" (%d)\n", cases[k].spec,
+                   (int)r.status, r.message, g_lookups, (int)cases[k].st,
+                   cases[k].want ? cases[k].want : "PASS", cases[k].lookups);
+            g_fail++;
+        }
+        msg_free(&m);
+    }
+
+    /* §14.5 and §14.6 are one step per signature (D3 amends C9): a bad
+       signature at i=1 is primary over a key error at i=2. */
+    {
+        msg_t m;
+        signed_with(&m, "sel:ed25519-sha256:B");
+        char tags[512], *mf = b64("<l@lists.example.org>"), *rt = b64("<r@dest.example>");
+        snprintf(tags, sizeof tags, "i=2; m=1; t=%llu; d=lists.example.org; mf=%s; rt=%s", now(), mf, rt);
+        free(mf); free(rt);
+        add_sig_spec(&m, tags, "nokey:ed25519-sha256:AAAA");
+        CHECK_MSG(verify(&m), "FAIL: DKIM2-Signature i=1 selector sel incorrect signature");
+        msg_free(&m);
+    }
+    dkim2_dns_override = saved;
+}
+
+/* Add Message-Instance m=<next> with h= written from spec: S/P a good
+   sha256/sha512 hash-set, s/p one whose header hash is wrong, t/q one whose
+   body hash is wrong, X/Y the unknown "x-hash"/"y-hash"; "," and "|" kept. */
+static void add_mi_h(msg_t *m, const char *spec) {
+    int next = count_fields(m, "Message-Instance") + 1;
+    char val[4096];
+    size_t vl = (size_t)snprintf(val, sizeof val, "m=%d; h=", next);
+    for (const char *p = spec; *p; p++) {
+        if (*p == ',' || *p == '|') { val[vl++] = *p; continue; }
+        if (*p == 'X' || *p == 'Y') {
+            vl += (size_t)snprintf(val + vl, sizeof val - vl, "%c-hash:AAAA:AAAA", *p == 'X' ? 'x' : 'y');
+            continue;
+        }
+        int a = (*p == 'S' || *p == 's' || *p == 't') ? 0 : 1;
+        unsigned char hh[DKIM2_MAX_HASH_LEN], bh[DKIM2_MAX_HASH_LEN];
+        dkim2_header_hash_raw_alg((const char **)m->h, m->n, a, hh);
+        dkim2_body_hash_raw_alg(m->body, strlen(m->body), a, bh);
+        if (*p == 's' || *p == 'p') hh[0] ^= 1;
+        if (*p == 't' || *p == 'q') bh[0] ^= 1;
+        char h64[128], b64v[128];
+        b64_encode(hh, dkim2_hash_alg_len(a), h64, sizeof h64);
+        b64_encode(bh, dkim2_hash_alg_len(a), b64v, sizeof b64v);
+        vl += (size_t)snprintf(val + vl, sizeof val - vl, "%s:%s:%s", dkim2_hash_alg_name(a), h64, b64v);
+    }
+    snprintf(val + vl, sizeof val - vl, ";");
+    msg_add_top(m, "Message-Instance", val);
+}
+
+/* D4: hash-sets combine the same way (-08 §14.7). */
+static void test_combine_hashes(void) {
+    static const struct { const char *spec, *want; } cases[] = {
+        { "S", NULL }, { "P", NULL }, { "S,P", NULL }, { "s|P", NULL }, { "X|S", NULL },
+        { "S|X", NULL }, { "t|P", NULL }, { "Y,X|S,P", NULL },
+        { "s",   "FAIL: Message-Instance m=1 header hash sha256 mismatch" },
+        { "t",   "FAIL: Message-Instance m=1 body hash sha256 mismatch" },
+        { "s,P", "FAIL: Message-Instance m=1 header hash sha256 mismatch" },
+        { "S,q", "FAIL: Message-Instance m=1 body hash sha512 mismatch" },
+        { "S,p", "FAIL: Message-Instance m=1 header hash sha512 mismatch" },
+        /* h= order; a set's header before its body */
+        { "t,p", "FAIL: Message-Instance m=1 body hash sha256 mismatch" },
+        { "p,s", "FAIL: Message-Instance m=1 header hash sha512 mismatch" },
+        { "s|p", "FAIL: Message-Instance m=1 no group of hashes passed" },
+        { "s,P|X", "FAIL: Message-Instance m=1 no group of hashes passed" },
+        { "S,X|Y", "PERMERROR: Message-Instance m=1 algorithm x-hash unknown" },
+        { "Y,S|X", "PERMERROR: Message-Instance m=1 algorithm y-hash unknown" },
+        { "X",   "PERMERROR: Message-Instance m=1 algorithm x-hash unknown" },
+        { "S,X", "PERMERROR: Message-Instance m=1 algorithm x-hash unknown" },
+        { "X,s", "FAIL: Message-Instance m=1 header hash sha256 mismatch" },
+        { "X|s", "FAIL: Message-Instance m=1 no group of hashes passed" },
+        { "X|Y", "PERMERROR: Message-Instance m=1 algorithm x-hash unknown" },
+    };
+    for (size_t k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+        msg_t m;
+        msg_init(&m, "a@example.com", "test", "Hello\r\nworld\r\n");
+        add_mi_h(&m, cases[k].spec);
+        add_sig(&m, 1, 1, "example.com", "<a@example.com>", "<list@lists.example.org>", NULL);
+        dkim2_verify_result_t r = verify(&m);
+        if (cases[k].want ? strcmp(r.message, cases[k].want) != 0 : r.status != DKIM2_OK) {
+            printf("FAIL h=%s: got \"%s\", want \"%s\"\n", cases[k].spec, r.message,
+                   cases[k].want ? cases[k].want : "PASS");
+            g_fail++;
+        }
+        msg_free(&m);
+    }
+}
+
 int main(void) {
     harness_init();
 
@@ -550,6 +738,8 @@ int main(void) {
     test_malformed_keys();
     test_groups_parse();
     test_groups_signing_input();
+    test_combine_signatures();
+    test_combine_hashes();
 
     harness_done();
     if (g_fail) { printf("test_spec08: %d failure(s)\n", g_fail); return 1; }

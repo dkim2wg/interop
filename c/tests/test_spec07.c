@@ -926,7 +926,7 @@ static void test_error_strings(void) {
         CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 selector sel incorrect signature");
         add_sig_raw(&m2, tags, 2, 2);
         res = verify(&m2);
-        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 signature sel signature sel2 failed");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 selector sel2 incorrect signature");   /* -08 */
         CHECK(res.status == DKIM2_FAIL);
         free(mf); free(rt);
         msg_free(&m); msg_free(&m2);

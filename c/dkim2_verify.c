@@ -319,8 +319,10 @@ static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t ms
     return 0;
 }
 
-/* -07 §3.5/§10.9: the signing algorithms we implement, by exact
-   (case-significant) name. Anything else is ignored. */
+/* -08 §3.5/§10.9: the signing algorithms we implement, by exact
+   (case-significant) name. Anything else -- mldsa44 (deferred, contract
+   D8) and the old mldsa44-ed25519-sha512 included -- is "algorithm
+   unknown", a PERMERROR item (§14.6 step 4). */
 static int known_sig_alg(const char *alg) {
     return strcmp(alg, "rsa-sha256") == 0 || strcmp(alg, "ed25519-sha256") == 0;
 }
@@ -518,61 +520,28 @@ static int undo_walk(
                 dkim2_header_hash_raw_alg((const char **)content, n_content, a, t->hdr.d[a]);
             }
         }
-        int n_checked = 0;
-        /* Every header hash, in h= order, before any body hash (contract
-           C9: the same primary error as the other verifiers when both are
-           wrong). */
-        for (int hi = 0; !trace && hi < mi->n_hsets; hi++) {
-            int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
-            if (alg < 0) continue;          /* -07 §3.5: ignore what we don't implement */
-            size_t alen = dkim2_hash_alg_len(alg);
-            n_checked++;
-            unsigned char computed_hh[DKIM2_MAX_HASH_LEN];
-            if (dkim2_header_hash_raw_alg((const char **)content, n_content, alg, computed_hh) < 0) {
-                snprintf(errbuf, errbufsz, "PERMERROR: header hash computation failed");
+        /* -08 §14.7 (contract D4): every hash-set in h= order, each its
+           header hash before its body hash, combined over the "|" groups.
+           The body hash is only compared where there are body bytes (or,
+           at the top, the caller's digest) and no null body Recipe above. */
+        if (!trace) {
+            dkim2_digests_t hdr, body;
+            int have_body = !body_gone && (cur_body || vi == n_mi - 1);
+            for (int hi = 0; hi < mi->n_hsets; hi++) {
+                int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
+                if (alg < 0) continue;
+                if (dkim2_header_hash_raw_alg((const char **)content, n_content, alg, hdr.d[alg]) < 0) {
+                    snprintf(errbuf, errbufsz, "PERMERROR: header hash computation failed");
+                    ret = -1; goto done;
+                }
+                if (have_body && cur_body)
+                    dkim2_body_hash_raw_alg(cur_body, cur_body_len, alg, body.d[alg]);
+                else if (have_body)
+                    memcpy(body.d[alg], ctx->body_digests.d[alg], dkim2_hash_alg_len(alg));
+            }
+            if (dkim2_mi_hash_verdict(mi, &hdr, have_body ? &body : NULL, errbuf, errbufsz) < 0) {
                 ret = -1; goto done;
             }
-            unsigned char stored_hh[DKIM2_MAX_HASH_LEN];
-            int hh_len = (int)b64_decode(mi->hsets[hi].hdr_hash, stored_hh, sizeof stored_hh);
-            if (hh_len != (int)alen || memcmp(computed_hh, stored_hh, alen) != 0) {
-                snprintf(errbuf, errbufsz,
-                    "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
-                ret = -1; goto done;
-            }
-        }
-        for (int hi = 0; !trace && !body_gone && hi < mi->n_hsets; hi++) {
-            int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
-            if (alg < 0) continue;
-            size_t alen = dkim2_hash_alg_len(alg);
-            unsigned char stored_bh[DKIM2_MAX_HASH_LEN];
-            int bh_len = (int)b64_decode(mi->hsets[hi].body_hash, stored_bh, sizeof stored_bh);
-            if (bh_len != (int)alen) {
-                snprintf(errbuf, errbufsz, "PERMERROR: bad body hash in MI m=%d", mi->m);
-                ret = -1; goto done;
-            }
-            unsigned char computed_bh[DKIM2_MAX_HASH_LEN];
-            int have_body_hash = 1;
-            if (cur_body) {
-                dkim2_body_hash_raw_alg(cur_body, cur_body_len, alg, computed_bh);
-            } else if (vi == n_mi - 1) {
-                memcpy(computed_bh, ctx->body_digests.d[alg], alen);
-            } else {
-                have_body_hash = 0;          /* no body bytes for inner MIs */
-            }
-            /* Only the BODY comparison is skipped without body bytes; the
-               header hash above is always checked (a digest-only caller
-               still sees a bad inner header history). */
-            if (have_body_hash && memcmp(computed_bh, stored_bh, alen) != 0) {
-                snprintf(errbuf, errbufsz,
-                    "FAIL: Message-Instance m=%d body hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
-                ret = -1; goto done;
-            }
-        }
-        /* Fail closed: an MI naming no implemented algorithm is unverifiable. */
-        if (n_checked == 0 && !trace) {
-            snprintf(errbuf, errbufsz,
-                "PERMERROR: Message-Instance m=%d no supported hash algorithm", mi->m);
-            ret = -1; goto done;
         }
 
         /* -07 §12.1: even the bottom (m=1) instance MAY carry Recipes
@@ -928,6 +897,74 @@ static int verify_ctx_mi_chain(const dkim2_ctx_t *ctx, char *errbuf, size_t errb
                             ctx->body, ctx->body_len, ctx, errbuf, errbufsz);
 }
 
+/* -08 §14.5/§14.6 for one DKIM2-Signature (contract D3). Each s= item
+   (at most DKIM2_MAX_SIGNATURES: the parser's limit) gets a result: an
+   algorithm not implemented here is PERMERROR "selector <s> algorithm
+   unknown", with no key fetched; a key that cannot be had is the §14.5
+   TEMPERROR or PERMERROR; otherwise the signature is PASS or FAIL
+   "selector <s> incorrect signature". Every item is checked, and the
+   results combine as dkim2_combine says. *st stays DKIM2_OK on PASS; else
+   it is the state and msg the string. */
+static void verify_signature(const dkim2_ctx_t *ctx, dkim2_sig_t *sig,
+                             dkim2_status_t *st, char *msg, size_t msgsz) {
+    enum { N = DKIM2_MAX_SIGNATURES };
+    int n = sig->n_ssets < N ? sig->n_ssets : N;
+    int r[N], g[N];
+    const char *why[N];             /* a key error's text, or NULL */
+    unsigned char *input = NULL;
+    size_t input_len = 0;
+    int input_failed = 0;
+    for (int j = 0; j < n; j++) {
+        const dkim2_sigset_t *ss = &sig->ssets[j];
+        g[j] = ss->group;
+        why[j] = NULL;
+        if (!known_sig_alg(ss->alg)) { r[j] = DKIM2_R_PERMERROR; continue; }
+        dkim2_status_t dns_status = DKIM2_OK;
+        const char *dns_err = NULL;
+        dkim2_pubkey_t *key = dkim2_prefetch_getkey(ctx->prefetch, ss->selector, sig->d,
+                                                    &dns_status, &dns_err);
+        if (!key || key->revoked) {
+            r[j] = dns_status == DKIM2_TEMPERROR ? DKIM2_R_TEMPERROR : DKIM2_R_PERMERROR;
+            why[j] = dns_err ? dns_err :
+                     dns_status == DKIM2_TEMPERROR ? DKIM2_KEYERR_FETCH : DKIM2_KEYERR_SYNTAX;
+        } else if (strcmp(key->alg, sig_alg_key_type(ss->alg)) != 0) {
+            r[j] = DKIM2_R_PERMERROR;
+            why[j] = DKIM2_KEYERR_ALG;                      /* -08 §10.9 */
+        } else {
+            /* The signed input is the same for every item (§12.8). */
+            if (!input && !input_failed) {
+                input = build_verify_input(ctx->mi_list, ctx->sig_list, sig, j, &input_len);
+                input_failed = !input;
+            }
+            r[j] = input && dkim2_verify(key->pkey, ss->alg, input, input_len, ss->sig_b64) == 0
+                   ? DKIM2_R_PASS : DKIM2_R_FAIL;
+        }
+        dkim2_pubkey_free(key);
+    }
+    free(input);
+    if (input_failed) {
+        *st = DKIM2_TEMPERROR;
+        snprintf(msg, msgsz, "TEMPERROR: out of memory");
+        return;
+    }
+    int pick, res = dkim2_combine(r, g, n, sig->n_groups, &pick);
+    if (res == DKIM2_R_PASS) return;
+    *st = res == DKIM2_R_FAIL ? DKIM2_FAIL : res == DKIM2_R_TEMPERROR ? DKIM2_TEMPERROR
+                                                                        : DKIM2_PERMERROR;
+    if (pick < 0)
+        snprintf(msg, msgsz, "FAIL: DKIM2-Signature i=%d no group of signatures passed", sig->i);
+    else if (res == DKIM2_R_FAIL)
+        snprintf(msg, msgsz, "FAIL: DKIM2-Signature i=%d selector %s incorrect signature",
+                 sig->i, sig->ssets[pick].selector);
+    else if (why[pick])
+        snprintf(msg, msgsz, "%s: DKIM2-Signature i=%d public key %s %s",
+                 res == DKIM2_R_TEMPERROR ? "TEMPERROR" : "PERMERROR", sig->i,
+                 sig->ssets[pick].selector, why[pick]);
+    else
+        snprintf(msg, msgsz, "PERMERROR: DKIM2-Signature i=%d selector %s algorithm unknown",
+                 sig->i, sig->ssets[pick].selector);
+}
+
 void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->status = DKIM2_PERMERROR;
     result->message[0] = '\0';
@@ -1059,138 +1096,20 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
             SETSTATUS(cmsg[0] == 'F' ? DKIM2_FAIL : DKIM2_PERMERROR, "%s", cmsg);
     }
 
-    /* -07 §14.5 for every signature, then §14.6 for every signature. The
-       outcome of a signature's s= items (behaviour spec E):
-       1. unimplemented algorithms are ignored; none implemented: PERMERROR
-          (a local check with no -07 string, contract C6).
-       2. (an implemented item's value is a padded base64string: §14.2 above)
-       3. fetch every implemented item's key: DNS failure is TEMPERROR;
-          a present but unusable record is PERMERROR for the whole
-          signature, even if another item verifies; absent is skipped.
-       4. all absent: PERMERROR naming the first.
-       5. verify every item that has a key; any failure is FAIL. */
-    dkim2_pubkey_t **keys[DKIM2_MAX_CHAIN_LENGTH];
-    memset(keys, 0, sizeof keys);
-    dkim2_status_t key_status = DKIM2_OK;
-    for (int si = 0; si < n_sigs && key_status == DKIM2_OK; si++) {
-        dkim2_sig_t *sig = sig_arr[si];
-        result->sig_i = sig->i;
-        snprintf(result->domain, sizeof result->domain, "%s", sig->d ? sig->d : "");
-
-        int n_known = 0;
-        for (int j = 0; j < sig->n_ssets; j++)
-            if (known_sig_alg(sig->ssets[j].alg)) n_known++;
-        if (n_known == 0) {
-            key_status = DKIM2_PERMERROR;
-            snprintf(result->message, sizeof result->message,
-                "PERMERROR: DKIM2-Signature i=%d has no signature with a supported algorithm", sig->i);
-            break;
-        }
-
-        keys[si] = calloc((size_t)sig->n_ssets, sizeof *keys[si]);
-        if (!keys[si]) {
-            key_status = DKIM2_TEMPERROR;
-            snprintf(result->message, sizeof result->message, "TEMPERROR: out of memory");
-            break;
-        }
-        const char *first_absent = NULL;
-        int n_keys = 0;
-        for (int j = 0; j < sig->n_ssets && key_status == DKIM2_OK; j++) {
-            dkim2_sigset_t *sset = &sig->ssets[j];
-            if (!known_sig_alg(sset->alg)) continue;
-
-            dkim2_status_t dns_status;
-            const char *dns_err = NULL;
-            /* From the prefetched answer when it settles the lookup. */
-            dkim2_pubkey_t *pubkey = dkim2_prefetch_getkey(ctx->prefetch,
-                sset->selector, sig->d, &dns_status, &dns_err);
-            const char *why = NULL;
-
-            if (!pubkey || pubkey->revoked) {
-                dkim2_pubkey_free(pubkey);
-                pubkey = NULL;
-                if (dns_err == DKIM2_KEYERR_ABSENT) {
-                    if (!first_absent) first_absent = sset->selector;
-                    continue;
-                }
-                if (dns_status == DKIM2_TEMPERROR) {
-                    key_status = DKIM2_TEMPERROR;
-                    snprintf(result->message, sizeof result->message,
-                        "TEMPERROR: DKIM2-Signature i=%d public key %s %s",
-                        sig->i, sset->selector, dns_err ? dns_err : DKIM2_KEYERR_FETCH);
-                    break;
-                }
-                why = dns_err ? dns_err : DKIM2_KEYERR_SYNTAX;
-            } else if (strcmp(pubkey->alg, sig_alg_key_type(sset->alg)) != 0) {
-                why = DKIM2_KEYERR_ALG;                     /* -07 §10.9 */
-            }
-            if (why) {
-                dkim2_pubkey_free(pubkey);
-                key_status = DKIM2_PERMERROR;
-                snprintf(result->message, sizeof result->message,
-                    "PERMERROR: DKIM2-Signature i=%d public key %s %s",
-                    sig->i, sset->selector, why);
-                break;
-            }
-            keys[si][j] = pubkey;
-            n_keys++;
-        }
-        if (key_status == DKIM2_OK && n_keys == 0) {
-            key_status = DKIM2_PERMERROR;
-            snprintf(result->message, sizeof result->message,
-                "PERMERROR: DKIM2-Signature i=%d public key %s %s",
-                sig->i, first_absent, DKIM2_KEYERR_ABSENT);
-        }
-    }
-
-    /* -07 §14.6: check every signature that has a key; all failing is
-       "selector <s1> incorrect signature", some passing and some failing
-       names one of each. */
-    for (int si = 0; si < n_sigs && key_status == DKIM2_OK; si++) {
-        dkim2_sig_t *sig = sig_arr[si];
-        result->sig_i = sig->i;
-        snprintf(result->domain, sizeof result->domain, "%s", sig->d ? sig->d : "");
-        const char *failed_sel = NULL, *passed_sel = NULL;
-        for (int j = 0; j < sig->n_ssets; j++) {
-            if (!keys[si][j]) continue;
-            size_t sign_input_len;
-            unsigned char *sign_input = build_verify_input(
-                ctx->mi_list, ctx->sig_list, sig, j, &sign_input_len);
-            if (!sign_input) {
-                key_status = DKIM2_PERMERROR;
-                snprintf(result->message, sizeof result->message,
-                    "PERMERROR: Failed to build signing input for DKIM2-Signature i=%d", sig->i);
-                break;
-            }
-            if (dkim2_verify(keys[si][j]->pkey, sig->ssets[j].alg,
-                    sign_input, sign_input_len, sig->ssets[j].sig_b64) != 0) {
-                if (!failed_sel) failed_sel = sig->ssets[j].selector;
-            } else if (!passed_sel) {
-                passed_sel = sig->ssets[j].selector;
-            }
-            free(sign_input);
-        }
-        if (key_status != DKIM2_OK) break;
-        if (failed_sel) {
-            key_status = DKIM2_FAIL;
-            if (passed_sel)
-                snprintf(result->message, sizeof result->message,
-                    "FAIL: DKIM2-Signature i=%d signature %s signature %s failed",
-                    sig->i, passed_sel, failed_sel);
-            else
-                snprintf(result->message, sizeof result->message,
-                    "FAIL: DKIM2-Signature i=%d selector %s incorrect signature", sig->i, failed_sel);
-        }
-    }
-
+    /* -08 §14.5 and §14.6, one step per signature from i=1 up (contract
+       D3, amending C9): each s= item's key, then its signature, then the
+       items combined over the "," lists and "|" groups. The lowest i=
+       whose combination is not PASS is the primary error. */
     for (int si = 0; si < n_sigs; si++) {
-        if (!keys[si]) continue;
-        for (int j = 0; j < sig_arr[si]->n_ssets; j++) dkim2_pubkey_free(keys[si][j]);
-        free(keys[si]);
-    }
-    if (key_status != DKIM2_OK) {
-        result->status = key_status;
-        return;
+        dkim2_sig_t *sig = sig_arr[si];
+        result->sig_i = sig->i;
+        snprintf(result->domain, sizeof result->domain, "%s", sig->d ? sig->d : "");
+        dkim2_status_t st = DKIM2_OK;
+        verify_signature(ctx, sig, &st, result->message, sizeof result->message);
+        if (st != DKIM2_OK) {
+            result->status = st;
+            return;
+        }
     }
     result->sig_i = latest->i;
     snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
