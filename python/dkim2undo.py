@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-07
+DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-08
 
 Takes a signed email with Message-Instance headers containing recipes
 and reconstructs the message as it was at a previous version.
@@ -36,7 +36,7 @@ from dkim2sign import (
 class Unrecoverable(ValueError):
     """The previous body cannot be reconstructed *by design*.
 
-    -07 §5.2/§16.2: a present "b" that is JSON null is the upstream
+    -08 §5.2/§16.3: a present "b" that is JSON null is the upstream
     saying the previous body cannot be put back (a "null Recipe") -- distinct
     from an absent "b", which means the body was not modified. That is not a
     defect in the message, so it gets its own type: DSN propagation answers it
@@ -518,7 +518,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
             print(f"  v={version}: applying recipes", file=sys.stderr)
 
         # Apply header Recipes
-        # -07 §5.1 disallows the null header Recipe: a present "h" that is
+        # -08 §5.1 disallows the null header Recipe: a present "h" that is
         # null is a syntax error (distinct from an absent "h", which means
         # the header fields were unchanged).
         if "h" in recipes and recipes["h"] is None:
@@ -642,7 +642,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-07)")
+        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-08)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--target-version", type=int, default=None,
                         help="MI version to reconstruct back to (default: highest - 1)")

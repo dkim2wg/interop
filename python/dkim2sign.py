@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 signer - draft-ietf-dkim-dkim2-spec-07
+DKIM2 signer - draft-ietf-dkim-dkim2-spec-08
 
 Takes a raw email, selector, domain, and keyfile and produces a signed
 message with Message-Instance and DKIM2-Signature headers on stdout.
@@ -53,7 +53,7 @@ def b64json(obj) -> str:
 
 
 def to_rfc5321_path(addr: str) -> str:
-    """Wrap an address as an RFC5321 path for mf=/rt= (-07 §10.5/§10.6):
+    """Wrap an address as an RFC5321 path for mf=/rt= (-08 §10.5/§10.6):
     angle brackets MUST be present. Empty -> '<>'.  A non-ASCII domain is
     recorded as its A-label (§18); the local part and an ASCII or literal
     domain are left exactly as given."""
@@ -179,7 +179,7 @@ def canonicalize_header_field(raw_hdr: bytes) -> bytes:
     return (name + ":" + value).encode("utf-8", errors="surrogateescape")
 
 
-# -07 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# -08 §3.1: two hashing algorithms are defined. Verifiers MUST implement
 # both; Signers MAY implement either or both (we default to sha256).
 HASH_ALGS = {
     "sha256": lambda data: hashlib.sha256(data).digest(),
@@ -260,7 +260,7 @@ def build_message_instance(headers: list[bytes], body: bytes,
     """
     if algs is None:
         algs = ["sha256"]
-    # -07 §9.3: one hash-set per algorithm, comma separated. An algorithm
+    # -08 §9.3: one hash-set per algorithm, comma separated. An algorithm
     # MUST NOT appear more than once, so `algs` must be de-duplicated by the
     # caller (the CLI does this).
     sets = ",".join(
@@ -277,7 +277,7 @@ def build_message_instance(headers: list[bytes], body: bytes,
 def _lowercase_recipe_keys(recipe):
     """Every JSON object key in a Recipe, lowercased, for output.
 
-    draft -07 §5: keys MUST be lower case -- the top-level "h"/"b", the
+    draft -08 §5: keys MUST be lower case -- the top-level "h"/"b", the
     header field names inside "h" (matching against the message stays
     case-insensitive), and the step keys.  Values are left alone.
     """
@@ -294,7 +294,7 @@ def _lowercase_recipe_keys(recipe):
 # ---------------------------------------------------------------------------
 #
 # An intermediary that changes a message records how to get the previous
-# version back (draft -07 §5.1/§5.2).  A literal that is valid UTF-8 (ASCII
+# version back (draft -08 §5.1/§5.2).  A literal that is valid UTF-8 (ASCII
 # included) goes out as a "d" string; any other literal -- a Latin-1 or
 # EUC-KR line, say, which JSON text cannot carry -- as a "u" item, the
 # canonical base64 of its raw octets.
@@ -705,7 +705,7 @@ def _get_version_from_mi(hdr: str) -> int:
 def _mi_hashes(hdr: str) -> str | None:
     """Extract the h= hash set of a Message-Instance header, FWS removed.
 
-    Folding whitespace may appear inside the base64 hashes (-07 §2.12), so
+    Folding whitespace may appear inside the base64 hashes (-08 §2.12), so
     strip it before comparing two instances' hashes.
     """
     colon = hdr.find(":")
@@ -755,7 +755,7 @@ def chain_number_error(field: str, tag: str, v: str | None,
     1*DIGIT in ASCII, else a syntax error (also zero); at most three digits
     and 1..MAX_CHAIN_NUMBER, so "01" and "001" are 1; and no more than
     MAX_CHAIN_LENGTH, since each number names one hop.  The field is named by
-    its own number (a DKIM2-Signature by i=, a Message-Instance by m=, -07
+    its own number (a DKIM2-Signature by i=, a Message-Instance by m=, -08
     §14.2): `ident` is that value as written, defaulting to `v`."""
     if v is None:
         return None
@@ -826,7 +826,7 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Per draft-ietf-dkim-dkim2-spec-07 Section 12.8:
+    # Per draft-ietf-dkim-dkim2-spec-08 Section 12.8:
     # 1. All MI headers in ascending v= order
     # 2. All prior DKIM2-Signature headers in ascending i= order
     # 3. The incomplete DKIM2-Signature being created
@@ -874,10 +874,10 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     """Build a complete DKIM2-Signature header.
 
     If next_domain is given, the signature carries an nd= tag for an imaginary
-    forwarding hop (-07 §12.3) and omits mf=/rt=. Otherwise it carries
-    mf=/rt= as usual. Any flags are emitted as an f= tag (-07 §10.10).
+    forwarding hop (-08 §12.3) and omits mf=/rt=. Otherwise it carries
+    mf=/rt= as usual. Any flags are emitted as an f= tag (-08 §10.10).
 
-    -07 §12.5: above i=1, "exploded" is added when it was requested
+    -08 §12.5: above i=1, "exploded" is added when it was requested
     (`exploded`) or rt= holds more than one address; at i=1 it MUST NOT be
     set, so a request -- or a caller-supplied "exploded" flag -- is dropped.
 
@@ -886,7 +886,7 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     if timestamp is None:
         timestamp = int(time.time())
 
-    # -07 §12.3: an nd= hop carries nd= instead of mf=/rt=.
+    # -08 §12.3: an nd= hop carries nd= instead of mf=/rt=.
     if next_domain:
         chain = f"nd={next_domain}"
     else:
@@ -1045,7 +1045,7 @@ def _extract_mi_recipe(mi_hdr: str):
 
 
 def _from_needs_check(existing_mi: list[str], existing_sig: list[str]) -> bool:
-    """-07 §12.4: the signer chooses d= so From is Authentic when it signs
+    """-08 §12.4: the signer chooses d= so From is Authentic when it signs
     the original message (no DKIM2-Signature yet), or when From was changed
     -- by a Message-Instance above the highest m= any signature covers,
     whose header Recipe has a "from" key."""
@@ -1084,12 +1084,12 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     m=) and allow_null_body_recipe is not set, SigningRefused is raised.  Keys come
     from dns_data, else the dns.json named by $DKIM2_DNS_JSON.
 
-    -07 §12.4: when the message is being signed for the first time, or a
+    -08 §12.4: when the message is being signed for the first time, or a
     Message-Instance no signature covers yet changed From, the From header
     field must be Authentic for `domain`, or SigningRefused is raised with
     "From header field is not Authentic for d=<domain>".
 
-    exploded=True asks for the "exploded" flag (-07 §12.5): it is set above
+    exploded=True asks for the "exploded" flag (-08 §12.5): it is set above
     i=1 when requested or when rt= holds more than one address.
 
     skip_upstream_check=True bypasses the gate entirely, and
@@ -1146,7 +1146,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     # Build Message-Instance header
     mi_hdr = build_message_instance(headers, body, version=mi_version, algs=algs)
 
-    # -07 §12.1: a hop that leaves both hashes unchanged adds no new
+    # -08 §12.1: a hop that leaves both hashes unchanged adds no new
     # Message-Instance at all — it signs against the existing top instance and
     # reuses its m=.  Emitting an instance with identical hashes and no Recipe
     # is not forbidden, but §12.1 still calls it "most likely to be pointless
@@ -1180,7 +1180,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-07)")
+        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-08)")
     parser.add_argument("message", help="Path to raw email file (- for stdin)")
     parser.add_argument("-s", "--selector", required=True,
                         help="DKIM2 selector name")
@@ -1201,13 +1201,13 @@ def main():
                         help="Signature flag (f=); repeatable")
     parser.add_argument("--exploded", action="store_true",
                         help="this hop sends copies to more than one address: "
-                             "set the exploded flag (-07 §12.5; never at i=1, "
+                             "set the exploded flag (-08 §12.5; never at i=1, "
                              "and set anyway when rt= has more than one "
                              "address)")
     parser.add_argument("--hash", dest="hash_algs", default="sha256",
                         choices=["sha256", "sha512", "both"],
                         help="hash algorithm(s) for the Message-Instance h= tag "
-                             "(-07 §3.1; default sha256)")
+                             "(-08 §3.1; default sha256)")
     parser.add_argument("--allow-null-body-recipe", action="store_true",
                         help="sign even when a Message-Instance has a null "
                              "body Recipe that no upstream signature covers "

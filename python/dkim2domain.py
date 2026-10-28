@@ -1,4 +1,4 @@
-"""Address domains and the relaxed domain match (draft-ietf-dkim-dkim2-spec-07
+"""Address domains and the relaxed domain match (draft-ietf-dkim-dkim2-spec-08
 §7.2, §18).
 
 Shared by the signer (mf=/rt= are recorded with A-label domains, and the From
@@ -82,7 +82,7 @@ def signing_domain(d: str) -> str:
 
 
 def from_is_authentic(from_fields: list[bytes], d: str) -> bool:
-    """-07 §11: is the From header field Authentic for signing domain d?
+    """-08 §11: is the From header field Authentic for signing domain d?
 
     `from_fields` are the raw From fields of one state of the message.
     There must be exactly one, holding exactly one mailbox (a display name
