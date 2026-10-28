@@ -425,6 +425,31 @@ func TestSpec08D7MalformedKeys(t *testing.T) {
 	}
 }
 
+// ---- D11: a DSN's d= relaxed-matches the reported message's top rt= ----
+
+func TestSpec08D11PropagateDomainMatchesTopRt(t *testing.T) {
+	const keys = "../../keys/"
+	raw := []byte("From: sender@test1.dkim2.com\r\nTo: user@test2.dkim2.com\r\nSubject: s\r\n\r\nbody line\r\n")
+	hop1 := signOnce(t, raw, keys+"rsa1024._domainkey.test1.dkim2.com.pem",
+		"rsa1024", "test1.dkim2.com", "sender@test1.dkim2.com", []string{"user@mx.test2.dkim2.com"})
+	hop2 := signOnce(t, hop1, keys+"rsa1024._domainkey.test2.dkim2.com.pem",
+		"rsa1024", "test2.dkim2.com", "user@test2.dkim2.com", []string{"dest@test3.dkim2.com"})
+	propagate := func(domain, sel string) error {
+		_, _, err := Propagate(wrapDSN(hop2), PropagateOptions{
+			Key:      loadKey(t, keys+sel+"._domainkey."+domain+".pem"),
+			Selector: sel, Domain: domain, Timestamp: 1740000000, SkipAuthentication: true,
+		})
+		return err
+	}
+	// i=1's rt= is user@mx.test2.dkim2.com: test2.dkim2.com matches it.
+	if err := propagate("test2.dkim2.com", "ed25519"); err != nil {
+		t.Fatalf("d=test2.dkim2.com: %v", err)
+	}
+	if err := propagate("test4.dkim2.com", "ed25519"); err == nil || !strings.Contains(err.Error(), "rt=") {
+		t.Fatalf("d=test4.dkim2.com: got %v, want a refusal naming rt=", err)
+	}
+}
+
 // ---- D9: FullyVerified ----
 
 func TestSpec08D9FullyVerified(t *testing.T) {

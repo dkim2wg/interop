@@ -73,8 +73,8 @@ func TestPropagate(t *testing.T) {
 
 	out, upstream, err := Propagate(dsn.Bytes(), PropagateOptions{
 		ForwarderDomain: "test2.dkim2.com",
-		Key:             loadKey(t, keys+"ed25519._domainkey.test3.dkim2.com.pem"),
-		Selector:        "ed25519", Domain: "test3.dkim2.com", Timestamp: 1740000000,
+		Key:             loadKey(t, keys+"ed25519._domainkey.test2.dkim2.com.pem"),
+		Selector:        "ed25519", Domain: "test2.dkim2.com", Timestamp: 1740000000,
 		SkipAuthentication: true,
 	})
 	if err != nil {
@@ -271,8 +271,8 @@ func TestPropagateNullRecipeReturnsHeadersOnly(t *testing.T) {
 	out, upstream, err := Propagate(dsnAround(t, nullRecipeChain(t), false),
 		PropagateOptions{
 			ForwarderDomain: "test2.dkim2.com",
-			Key:             loadKey(t, keys+"sel1._domainkey.test3.dkim2.com.pem"),
-			Selector:        "sel1", Domain: "test3.dkim2.com", Timestamp: 1740000000,
+			Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
+			Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
 			SkipAuthentication: true,
 		})
 	if err != nil {

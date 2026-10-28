@@ -364,6 +364,13 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("propagate: the returned message's top signature has mf=<>, " +
 			"so no DSN may be sent (§16)")
 	}
+	// -08 §7.1 item 4, §16.2 (contract D11): the DSN's d= must relaxed-match
+	// a recipient in the rt= of the reported message's top signature, or no
+	// DSN is sent.
+	if top, terr := topSig(embeddedFinal); terr != nil || !addrMatches(top.RcptTo, opts.Domain) {
+		return nil, "", fmt.Errorf("propagate: d=%s does not relaxed-match the reported message's top rt=, "+
+			"so no DSN may be sent (§16.2)", opts.Domain)
+	}
 
 	// 3. Splice the rebuilt original back into the part and reassemble the body.
 	//    splitPartHeaders trims the CRLF that ends the boundary DELIMITER line
