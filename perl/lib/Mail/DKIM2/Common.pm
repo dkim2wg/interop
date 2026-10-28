@@ -966,7 +966,8 @@ sub parse_dkim_key_record {
     my $k = $tag{k} // 'rsa';
     my $key = _key_from_p($k, $p);
     return $key if $key;
-    return (undef, $k eq 'rsa' || $k eq 'ed25519' ? $syntax : 'has an unsupported key type');
+    # -08 §14.5 (contract D7): base64 that is not a usable key of its type.
+    return (undef, $k eq 'rsa' || $k eq 'ed25519' ? 'is malformed' : 'has an unsupported key type');
 }
 
 # A key object from a valid record: the key, or nothing (a key type this
@@ -980,19 +981,16 @@ sub parse_dkim_pubkey {
 sub _key_from_p {
     my ($k, $p) = @_;
     if ($k eq 'ed25519') {
-        # RFC 8463 publishes the raw 32-byte key in p=, but some signers
-        # publish a DER SubjectPublicKeyInfo (as RSA does). Accept either, and
-        # never die on a malformed/oversized key: return undef so the verifier
-        # reports a clean fail/temperror instead of aborting the whole operation
+        # -08 §14.5: an Ed25519 key is exactly 32 octets (RFC 8032), the
+        # raw key; anything else -- a DER SubjectPublicKeyInfo included --
+        # is malformed. Never die on one: return undef so the verifier
+        # reports a clean permerror instead of aborting the whole operation
         # (the RSA branch below is likewise eval-wrapped).
         my $raw = decode_base64($p);
+        return unless length($raw) == 32;
         my $key = eval {
             my $pk = Crypt::PK::Ed25519->new();
-            if (length($raw) == 32) {
-                $pk->import_key_raw($raw, 'public');
-            } else {
-                $pk->import_key(\$raw);   # DER SubjectPublicKeyInfo
-            }
+            $pk->import_key_raw($raw, 'public');
             $pk;
         };
         die $@ if ref $@;
@@ -1000,10 +998,12 @@ sub _key_from_p {
     }
     # Any other key type is unrecognised, and ignored: never read as RSA.
     return unless $k eq 'rsa';
-    # RSA: p= is base64-encoded SubjectPublicKeyInfo DER
+    # RSA: p= is base64-encoded SubjectPublicKeyInfo DER. -08 §3.2: a
+    # Verifier MUST NOT validate with a key of less than 1024 bits.
     my $der = decode_base64($p);
     my $rsa = eval { Crypt::PK::RSA->new(\$der) };
     die $@ if ref $@;
+    return unless $rsa && $rsa->size * 8 >= 1024;
     return $rsa;
 }
 
@@ -1344,8 +1344,8 @@ can log and carry on.
 
 Validates a whole key record (draft-ietf-dkim-dkim2-dns sections 3.2 and
 3.4.1) and returns the public key object: a C<Crypt::PK::RSA> for C<k=rsa>
-(the default) or a C<Crypt::PK::Ed25519> for C<k=ed25519>, accepted as the
-raw 32 bytes of RFC 8463 or as DER. Otherwise returns C<(undef, $why)>,
+(the default) or a C<Crypt::PK::Ed25519> for C<k=ed25519>, the raw 32
+octets of RFC 8463 (-08 section 14.5). Otherwise returns C<(undef, $why)>,
 where C<$why> completes "public key E<lt>selectorE<gt> ...":
 
 =over
@@ -1353,7 +1353,13 @@ where C<$why> completes "public key E<lt>selectorE<gt> ...":
 =item C<has a syntax error>
 
 Not a tag-list; a tag given twice; C<v=> present but not the first tag or
-not exactly C<DKIM1>; no C<p=>; C<p=> not base64, or not a key of its type.
+not exactly C<DKIM1>; no C<p=>; C<p=> not base64.
+
+=item C<is malformed>
+
+C<p=> is base64 but not a usable key of its type (-08 section 14.5): an
+Ed25519 key that is not exactly 32 octets (DER included), an RSA key of
+fewer than 1024 bits (section 3.2), or one that does not load.
 
 =item C<has been revoked>
 

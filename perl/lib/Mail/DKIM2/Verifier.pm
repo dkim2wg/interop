@@ -866,14 +866,11 @@ sub _check_sig_item {
     return ('permerror', "PERMERROR: DKIM2-Signature i=$i public key $sel algorithm mismatch")
         unless $pubkey->isa($IMPLEMENTED_ALG{$alg});
 
-    # Section 3.2: RSA keys MUST be at least 1024 bits; a shorter key is a
-    # PERMERROR rather than a weak signature trusted.
-    if ($alg eq 'rsa-sha256') {
-        my $bits = $pubkey->size * 8;
-        return ('permerror',
-            "PERMERROR: DKIM2-Signature i=$i public key $sel is shorter than 1024 bits ($bits)")
-            if $bits < 1024;
-    }
+    # Section 3.2: a Verifier MUST NOT validate with an RSA key of less than
+    # 1024 bits. A PubkeyCallback's key has not been through
+    # parse_dkim_key_record, which refuses one, so it is checked here too.
+    return ('permerror', "PERMERROR: DKIM2-Signature i=$i public key $sel is malformed")
+        if $alg eq 'rsa-sha256' && $pubkey->size * 8 < 1024;
 
     my $signing_input = $dk2_entry->{signing_input};
     my $sig_raw = decode_base64($signature->signature_value($idx));

@@ -2,8 +2,8 @@ use strict;
 use warnings;
 use Test::More;
 use lib 'lib';
-use MIME::Base64 qw(encode_base64);
-use Mail::DKIM2::Common qw(should_skip parse_dkim_pubkey);
+use MIME::Base64 qw(encode_base64 decode_base64);
+use Mail::DKIM2::Common qw(should_skip parse_dkim_pubkey parse_dkim_key_record);
 
 is(should_skip('authentication-results'), 1, 'authentication-results is skipped');
 is(should_skip('Authentication-Results'), 1, 'Authentication-Results (mixed case) is skipped');
@@ -12,15 +12,18 @@ is(should_skip('from'), 0, 'from is NOT skipped');
 is(should_skip('received'), 1, 'received is still skipped');
 is(should_skip('Delivered-To'), 1, 'Delivered-To is skipped (draft-03 §4.1)');
 
-# parse_dkim_pubkey must accept both ed25519 key encodings and never die on a
-# malformed record (a real proteamail.com record publishes a DER SPKI rather
-# than the RFC 8463 raw 32-byte form; that previously crashed the reflector).
+# parse_dkim_pubkey takes an Ed25519 key only in its raw 32-octet form, and
+# never dies on a malformed record. A real proteamail.com record publishes a
+# DER SPKI instead (that once crashed the reflector); -08 section 14.5 makes
+# Ed25519 keys exactly 32 octets, so it is malformed (contract D7).
 my $ed_der = 'v=DKIM1; k=ed25519; p=MCowBQYDK2VwAyEAerTO1LqpFWfGB9m+GLIFypeIk6x7cjSrwestuDVoMvQ=';
-ok(parse_dkim_pubkey($ed_der), 'ed25519 key in DER SubjectPublicKeyInfo form parses');
+my $der_key;
+ok(eval { $der_key = parse_dkim_pubkey($ed_der); 1 }, 'ed25519 key as DER does not die');
+is($der_key, undef, '... and is not a usable key');
+is((parse_dkim_key_record($ed_der))[1], 'is malformed', '... it is malformed');
 
-# Raw 32-byte form (RFC 8463): derive it from the DER key above for a stable vector.
-my $pk_der = parse_dkim_pubkey($ed_der);
-my $raw_b64 = encode_base64($pk_der->export_key_raw('public'), '');
+# Raw 32-byte form (RFC 8463): the same key's last 32 octets of DER.
+my $raw_b64 = encode_base64(substr(decode_base64(($ed_der =~ /p=(\S+)/)[0]), -32), '');
 ok(parse_dkim_pubkey("v=DKIM1; k=ed25519; p=$raw_b64"), 'ed25519 key in raw 32-byte form parses');
 
 my $bad;

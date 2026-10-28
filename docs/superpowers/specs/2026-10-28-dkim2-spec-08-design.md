@@ -145,7 +145,11 @@ New string: `PERMERROR: DKIM2-Signature i=<x> public key <s> is malformed`, give
 - an Ed25519 `p=` that doesn't decode to exactly 32 octets;
 - an ML-DSA-44 `p=` that doesn't decode to exactly 1312 octets.
 
-`p=` that isn't base64 at all is still "has a syntax error".
+- any other `p=` that is base64 but doesn't load as a key of its type.
+
+`p=` that isn't base64 at all is still "has a syntax error". An Ed25519 key
+published as a DER SubjectPublicKeyInfo is malformed: a real one exists
+(proteamail.com), but -08 says Ed25519 keys are exactly 32 octets.
 
 ## D8. ML-DSA-44, verify-only (§3.4)
 
