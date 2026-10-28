@@ -123,6 +123,107 @@ func TestSpec08D6RecipePathIsInvalid(t *testing.T) {
 	}
 }
 
+// ---- D2, D4: "|" and "," groups of hash-sets in h= ----
+
+func TestSpec08D2HashGroupsParse(t *testing.T) {
+	got, err := parseHashSets("sha256:AAAA:BBBB \r\n | sha512:CCCC:DDDD ,\tx-hash:EEEE:FFFF")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Group != 0 || got[1].Group != 1 || got[2].Group != 1 || got[2].Alg != "x-hash" {
+		t.Fatalf("got %+v", got)
+	}
+	// Hash names are case sensitive (§9.3 %s"sha256"): SHA256 is unknown.
+	if got, err := parseHashSets("SHA256:AAAA:BBBB"); err != nil || got[0].Alg != "SHA256" {
+		t.Fatalf("SHA256: %+v %v", got, err)
+	}
+	for _, h := range []string{
+		"sha256:AAAA:BBBB|", "|sha256:AAAA:BBBB", "sha256:AAAA:BBBB||sha512:AAAA:BBBB",
+		"sha256:AAAA:BBBB,,sha512:AAAA:BBBB", "sha256:AAAA:BBBB, |sha512:AAAA:BBBB",
+		// Every hash, of every set, is a non-empty padded base64string.
+		"sha256:AAA:BBBB", "sha256:AAAA:", "x-hash:@@@@:AAAA", "sha256:AA=A:BBBB",
+	} {
+		if _, err := parseHashSets(h); err == nil {
+			t.Errorf("parseHashSets(%q) accepted", h)
+		}
+	}
+	// Duplicates count across the whole tag, compared exactly.
+	if _, err := parseMI("Message-Instance: m=1; h=sha256:AAAA:BBBB|sha256:AAAA:BBBB;"); err == nil ||
+		err.Error() != "PERMERROR: Message-Instance m=1 has a duplicate hash algorithm" {
+		t.Errorf("duplicate across groups: %v", err)
+	}
+	if _, err := parseMI("Message-Instance: m=1; h=sha256:AAAA:BBBB,SHA256:AAAA:BBBB;"); err != nil {
+		t.Errorf("sha256 and SHA256 are not duplicates: %v", err)
+	}
+	// The signer writes one "," group; String keeps the groups.
+	mi := &MessageInstance{Version: 1, Hashes: []HashSet{{Alg: "sha256", HeaderHash: "AAAA", BodyHash: "BBBB"},
+		{Alg: "sha512", HeaderHash: "CCCC", BodyHash: "DDDD", Group: 1}}}
+	if s := mi.String(); s != "Message-Instance: m=1; h=sha256:AAAA:BBBB|sha512:CCCC:DDDD;" {
+		t.Errorf("String() = %q", s)
+	}
+}
+
+func TestSpec08D4HashCombine(t *testing.T) {
+	headers := []Header{{Name: "From", Value: "a@b.com", Raw: "From: a@b.com\r\n"}}
+	body := []byte("x\r\n")
+	set := func(alg string, goodH, goodB bool, group int) HashSet {
+		hs := HashSet{Alg: alg, HeaderHash: "AAAA", BodyHash: "AAAA", Group: group}
+		if _, ok := HashAlg(alg); !ok {
+			return hs
+		}
+		if goodH {
+			h, _ := hashHeaders(headers, alg)
+			hs.HeaderHash = base64.StdEncoding.EncodeToString(h)
+		}
+		if goodB {
+			b, _ := hashBody(bytes.NewReader(body), alg)
+			hs.BodyHash = base64.StdEncoding.EncodeToString(b)
+		}
+		return hs
+	}
+	const pfx = "Message-Instance m=1 "
+	for _, tc := range []struct {
+		name string
+		sets []HashSet
+		want string
+	}{
+		{"one good", []HashSet{set("sha256", true, true, 0)}, ""},
+		{"unknown only", []HashSet{set("x-hash", true, true, 0)}, "PERMERROR: " + pfx + "algorithm x-hash unknown"},
+		{"good, unknown", []HashSet{set("sha256", true, true, 0), set("x-hash", true, true, 0)},
+			"PERMERROR: " + pfx + "algorithm x-hash unknown"},
+		{"good | unknown", []HashSet{set("sha256", true, true, 0), set("x-hash", true, true, 1)}, ""},
+		{"bad body | good", []HashSet{set("sha256", true, false, 0), set("sha512", true, true, 1)}, ""},
+		{"bad body | bad header", []HashSet{set("sha256", true, false, 0), set("sha512", false, true, 1)},
+			"FAIL: " + pfx + "no group of hashes passed"},
+		{"bad header, bad body: h= order", []HashSet{set("sha512", false, true, 0), set("sha256", true, false, 0)},
+			"FAIL: " + pfx + "header hash sha512 mismatch"},
+		{"bad body, bad header: h= order", []HashSet{set("sha256", true, false, 0), set("sha512", false, true, 0)},
+			"FAIL: " + pfx + "body hash sha256 mismatch"},
+		{"header before body in a set", []HashSet{set("sha256", false, false, 0)},
+			"FAIL: " + pfx + "header hash sha256 mismatch"},
+		{"unknown, bad: FAIL wins", []HashSet{set("x-hash", true, true, 0), set("sha256", true, false, 0)},
+			"FAIL: " + pfx + "body hash sha256 mismatch"},
+		{"unknown | bad", []HashSet{set("x-hash", true, true, 0), set("sha256", true, false, 1)},
+			"FAIL: " + pfx + "no group of hashes passed"},
+		{"unknown | unknown", []HashSet{set("x-hash", true, true, 0), set("y-hash", true, true, 1)},
+			"PERMERROR: " + pfx + "algorithm x-hash unknown"},
+	} {
+		mi := &MessageInstance{Version: 1, Hashes: tc.sets}
+		got := ""
+		if err := verifyMIHashes(mi, headers, body); err != nil {
+			got = err.Error()
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	// With no body (§16.4), a set passes when its header hash matches.
+	mi := &MessageInstance{Version: 1, Hashes: []HashSet{set("sha256", true, false, 0)}}
+	if err := verifyMIHeaderHashes(mi, headers); err != nil {
+		t.Errorf("headers only: %v", err)
+	}
+}
+
 // ---- D7: a p= that is base64 but not a key of its type is malformed ----
 
 func TestSpec08D7MalformedKeys(t *testing.T) {

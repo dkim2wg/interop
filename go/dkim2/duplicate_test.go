@@ -78,7 +78,7 @@ func TestDuplicateSelectorAndExcessSelectorAreIndependent(t *testing.T) {
 }
 
 func TestDuplicateHashAlgorithmIsPermerror(t *testing.T) {
-	_, err := parseMI("Message-Instance: m=4; h=sha256:AAA:BBB,sha256:CCC:DDD;")
+	_, err := parseMI("Message-Instance: m=4; h=sha256:AAAA:BBBB,sha256:CCCC:DDDD;")
 	if err == nil || !strings.Contains(err.Error(), "has a duplicate hash algorithm") {
 		t.Errorf("got %v, want a duplicate-hash-algorithm PERMERROR (§9.3)", err)
 	}

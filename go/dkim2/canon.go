@@ -18,10 +18,11 @@ var hashAlgs = map[string]func() hash.Hash{
 	"sha512": sha512.New,
 }
 
-// HashAlg resolves a §9.3 hash-name to its constructor. Matching is
-// case-insensitive: RFC 5234 makes ABNF quoted strings case-insensitive.
+// HashAlg resolves a §9.3 hash-name to its constructor. Matching is case
+// sensitive: -08 writes the names as %s"sha256" and %s"sha512" (RFC 7405),
+// so "SHA256" is an unknown algorithm.
 func HashAlg(name string) (func() hash.Hash, bool) {
-	f, ok := hashAlgs[strings.ToLower(name)]
+	f, ok := hashAlgs[name]
 	return f, ok
 }
 

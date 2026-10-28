@@ -121,7 +121,9 @@ func TestWholeFieldF3_HashSets(t *testing.T) {
 		{"FWS around name", " sha256 :" + hh + ":" + bh, ""},
 		{"fold beside colons", "sha256\r\n\t:\r\n\t" + hh + "\r\n\t:\r\n\t" + bh, ""},
 		{"fold inside digests", "sha256:" + hh[:10] + "\r\n\t" + hh[10:] + ":" + bh[:5] + " " + bh[5:], ""},
-		{"unknown second set", hval + ", x-hash:AAAA:AAAA", ""},
+		// -08 §14.7 (contract D4): an unknown set in a "," group is PERMERROR.
+		{"unknown second set", hval + ", x-hash:AAAA:AAAA", "PERMERROR: Message-Instance m=1 algorithm x-hash unknown"},
+		{"unknown alternative set", hval + " | x-hash:AAAA:AAAA", ""},
 		{"space in name", "sha 256:" + hh + ":" + bh, miErr},
 		{"fold in name", "sha\r\n\t256:" + hh + ":" + bh, miErr},
 		{"bad name char", "sha.256:" + hh + ":" + bh, miErr},

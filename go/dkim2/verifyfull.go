@@ -82,9 +82,9 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 // walk's own wording, as a PERMERROR.  The planned and undo walks both use
 // it, so they report the same.
 func chainLevelError(err error) error {
-	var hm *hashMismatchError
-	if errors.As(err, &hm) {
-		return hm
+	var hr *hashResultError
+	if errors.As(err, &hr) {
+		return hr
 	}
 	return fmt.Errorf("PERMERROR: MI chain validation failed: %w", err)
 }

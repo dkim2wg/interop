@@ -52,7 +52,7 @@ func TestAbsentHeaderRecipeAllowed(t *testing.T) {
 func TestMalformedRecipeJSONIsSpecificPermerror(t *testing.T) {
 	// §14.2: JSON errors are called out specifically, not as a
 	// generic syntax error.
-	_, err := parseMI(`Message-Instance: m=2; h=sha256:AAA:BBB; r=eyJoIjog;`)
+	_, err := parseMI(`Message-Instance: m=2; h=sha256:AAAA:BBBB; r=eyJoIjog;`)
 	if err == nil {
 		t.Fatal("expected an error for malformed recipe JSON")
 	}
@@ -65,7 +65,7 @@ func TestMalformedRecipeJSONIsSpecificPermerror(t *testing.T) {
 func TestNullHeaderRecipeIsInvalidJSON(t *testing.T) {
 	// -07: a breach of the §5 schema, such as "h": null, is reported as
 	// "contains invalid JSON" like a JSON syntax error.
-	_, err := parseMI(`Message-Instance: m=3; h=sha256:AAA:BBB; r=eyJoIjpudWxsfQ==;`)
+	_, err := parseMI(`Message-Instance: m=3; h=sha256:AAAA:BBBB; r=eyJoIjpudWxsfQ==;`)
 	if err == nil || err.Error() != "PERMERROR: Message-Instance m=3 contains invalid JSON" {
 		t.Fatalf("null header recipe: got %v", err)
 	}
@@ -82,7 +82,7 @@ func TestDuplicateRecipeKeyIsInvalidJSON(t *testing.T) {
 		`{"h":{"subject":[],"subj\u0065ct":[]}}`,
 	} {
 		r := base64.StdEncoding.EncodeToString([]byte(raw))
-		_, err := parseMI("Message-Instance: m=2; h=sha256:AAA:BBB; r=" + r + ";")
+		_, err := parseMI("Message-Instance: m=2; h=sha256:AAAA:BBBB; r=" + r + ";")
 		if err == nil || err.Error() != "PERMERROR: Message-Instance m=2 contains invalid JSON" {
 			t.Errorf("%s: err = %v", raw, err)
 		}
