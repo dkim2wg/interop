@@ -299,9 +299,10 @@ async function verifyOnce(raw, opts = {}) {
 
   // --- §14.7 the chain walk, top down ------------------------------------
   // A lower instance is rebuilt from the one above it, so the highest one
-  // that fails is primary. Within one instance: every header hash, in h=
-  // order, before any body hash; then its Recipe applied to the message (a
-  // "c" range past the end), which only the walk can find.
+  // that fails is primary. Within one instance: its hash-sets combined as
+  // -08 §14.7 says (contract D4), each set's header hash before its body
+  // hash; then its Recipe applied to the message (a "c" range past the
+  // end), which only the walk can find.
   const walkErrors = [];
   for (let m = maxM; m >= 1; m--) {
     const mi = instances[m];
@@ -315,29 +316,9 @@ async function verifyOnce(raw, opts = {}) {
     }
     level.result = 'pass';
     const noBody = chain.noBody(m);
-    // §3.5: ignore hash-sets naming algorithms we do not implement; all the
-    // ones we do implement must match (§14.7), and there must be one.
-    const usable = hashSets[m].filter((s) => Object.hasOwn(HASH_ALGS, s.alg));
-    let err = usable.length ? null : `PERMERROR: Message-Instance m=${m} no supported hash algorithm`;
+    let err;
     try {
-      for (const s of err ? [] : usable) {
-        if (await chain.headerHash(m, s.alg) !== s.headerHash) {
-          level.header_hash = 'mismatch';
-          err = `FAIL: Message-Instance m=${m} header hash ${s.alg} mismatch`;
-          break;
-        }
-      }
-      if (!err) level.header_hash = 'match';
-      if (!err && !noBody) {
-        level.body_hash = 'match';
-        for (const s of usable) {
-          if (await chain.bodyHash(m, s.alg) !== s.bodyHash) {
-            level.body_hash = 'mismatch';
-            err = `FAIL: Message-Instance m=${m} body hash ${s.alg} mismatch`;
-            break;
-          }
-        }
-      }
+      err = await checkHashes(chain, m, hashSets[m], noBody, level);
     } catch (e) {
       err = `PERMERROR: Message-Instance m=${m} hash computation error`;
     }
@@ -520,10 +501,10 @@ function structureError(fields, miNums, sigNums) {
 }
 
 // §14.2 for one Message-Instance on its own: its tag-list syntax (§8: a
-// fragment that is not a well-formed tag, a tag given twice -- h= and H=
-// included -- or an h= hash-set that is not name:digest:digest, §9.3),
-// then its missing tags, then a duplicate hash algorithm, then its Recipe
-// (base64, JSON, the §5 schema, "c" ranges ascending without overlap),
+// fragment that is not a well-formed tag, a tag given twice, an h= hash-set
+// that is not name:digest:digest with base64 digests, or an empty "|" or
+// "," member, §9.3), then its missing tags, then a duplicate hash algorithm
+// anywhere in h=, then its Recipe (the whole document, then each step),
 // whether or not the chain walk reaches it. Returns { sets } (the parsed
 // h= hash-sets) or { error } (the PERMERROR text; recipe: it is the
 // Recipe's).
@@ -642,6 +623,73 @@ export function c9Key(text) {
   if (/^TEMPERROR: | public key | has no signature with a supported algorithm/.test(text)) return [5, i];
   if (/^FAIL: DKIM2-Signature /.test(text)) return [6, i];
   return [9];
+}
+
+// -08 §14.6 steps 5-7 and §14.7 steps 3-5 (contract D3, D4): combine the
+// intermediate results of the items of an s= or h= tag, each { state, text,
+// group } in tag order, into the tag's result: { state, text } (text null
+// for a pass). A "," group (sig-all / hash-all) passes when every item
+// does; is TEMPERROR when every item that does not pass is; else FAIL if
+// any item fails; else PERMERROR. The "|" groups (sig-any / hash-any): any
+// PASS, else any TEMPERROR, else any FAIL, else PERMERROR. (Hashes have no
+// TEMPERROR, so the same rules serve both.) The text reported, so that every
+// verifier agrees: with one group, the first item whose own result is the
+// group's; with more, noGroup for a FAIL, else the first item with that
+// result.
+const STATE_ORDER = ['pass', 'temperror', 'fail', 'permerror'];
+function combineGroups(items, noGroup) {
+  const groups = [];
+  for (const it of items) (groups[it.group] ||= []).push(it);
+  const allState = (g) => {
+    if (g.every((it) => it.state === 'pass')) return 'pass';
+    const notPass = g.filter((it) => it.state !== 'pass');
+    if (notPass.every((it) => it.state === 'temperror')) return 'temperror';
+    return g.some((it) => it.state === 'fail') ? 'fail' : 'permerror';
+  };
+  const states = groups.map(allState);
+  const state = STATE_ORDER.find((s) => states.includes(s));
+  if (state === 'pass') return { state, text: null };
+  if (groups.length > 1 && state === 'fail') return { state, text: noGroup };
+  return { state, text: items.find((it) => it.state === state).text };
+}
+
+// -08 §14.7 for one Message-Instance m (contract D4): each hash-set in h=
+// order is PASS when its header and body hashes both match (the header
+// alone below a null body Recipe, where there is no body), FAIL naming the
+// header hash, else the body hash, when one does not, and PERMERROR when
+// its algorithm is not implemented. Every set is checked. Records what it
+// found in level, and returns the instance's error text, or null.
+async function checkHashes(chain, m, sets, noBody, level) {
+  const items = [];
+  const header = [], bodyRes = [];
+  for (const s of sets) {
+    let state = 'pass', text = null;
+    if (!Object.hasOwn(HASH_ALGS, s.alg)) {
+      state = 'permerror';
+      text = `PERMERROR: Message-Instance m=${m} algorithm ${s.alg} unknown`;
+      header.push([s.alg, 'unknown']);
+      bodyRes.push([s.alg, 'unknown']);
+    } else if (await chain.headerHash(m, s.alg) !== s.headerHash) {
+      state = 'fail';
+      text = `FAIL: Message-Instance m=${m} header hash ${s.alg} mismatch`;
+      header.push([s.alg, 'mismatch']);
+      bodyRes.push([s.alg, 'not-checked']);
+    } else {
+      header.push([s.alg, 'match']);
+      if (noBody) bodyRes.push([s.alg, 'not-checked']);
+      else if (await chain.bodyHash(m, s.alg) !== s.bodyHash) {
+        state = 'fail';
+        text = `FAIL: Message-Instance m=${m} body hash ${s.alg} mismatch`;
+        bodyRes.push([s.alg, 'mismatch']);
+      } else bodyRes.push([s.alg, 'match']);
+    }
+    items.push({ state, text, group: s.group });
+  }
+  // The report: one set's verdict as it is, several named by algorithm.
+  const show = (list) => (list.length === 1 ? list[0][1] : list.map(([a, r]) => `${a} ${r}`).join(', '));
+  level.header_hash = show(header);
+  level.body_hash = show(bodyRes);
+  return combineGroups(items, `FAIL: Message-Instance m=${m} no group of hashes passed`).text;
 }
 
 // errors sorted into C9 order (stable: ties keep the order found).

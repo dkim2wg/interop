@@ -157,23 +157,31 @@ export function parseTagList(value) {
   return { tags, map, syntaxError };
 }
 
-// §9.3: h= is hash-set *("," hash-set). Hash names are lowercased —
-// RFC 5234 makes ABNF quoted strings case-insensitive. h is the RAW value
-// (FWS intact): FWS is allowed around the hash name and colons and inside
-// the digests (removed), never inside the hash name. A set that is not
-// exactly name:digest:digest, with both digests present, throws
-// Error('h-syntax') -- never skipped.
+// A base64string: non-empty, padded with "=" to a multiple of four (§2.14).
+export const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/;
+
+// §9.3 (-08): h= is hash-any = hash-all *("|" hash-all), hash-all =
+// hash-set *("," hash-set). Returns the hash-sets in h= order, each with
+// the index of its "|" group. Hash names are lowercased — RFC 5234 makes
+// ABNF quoted strings case-insensitive. h is the RAW value (FWS intact):
+// FWS is allowed around "|" and "," and the hash name and colons, and
+// inside the digests (removed), never inside the hash name. A set that is
+// not exactly name:digest:digest, with both digests base64strings (contract
+// D3), or an empty member (a leading, trailing or doubled "|" or ","),
+// throws Error('h-syntax') -- never skipped.
 export function parseHashSets(h) {
   const out = [];
-  for (const item of (h || '').split(',')) {
-    const parts = item.split(':');
-    if (parts.length !== 3) throw new Error('h-syntax');
-    const alg = parts[0].replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
-    const headerHash = parts[1].replace(/[ \t\r\n]+/g, '');
-    const bodyHash = parts[2].replace(/[ \t\r\n]+/g, '');
-    if (!/^[A-Za-z0-9_-]+$/.test(alg) || !headerHash || !bodyHash) throw new Error('h-syntax');
-    out.push({ alg: alg.toLowerCase(), headerHash, bodyHash });
-  }
+  (h || '').split('|').forEach((group, g) => {
+    for (const item of group.split(',')) {
+      const parts = item.split(':');
+      if (parts.length !== 3) throw new Error('h-syntax');
+      const alg = parts[0].replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+      const headerHash = parts[1].replace(/[ \t\r\n]+/g, '');
+      const bodyHash = parts[2].replace(/[ \t\r\n]+/g, '');
+      if (!/^[A-Za-z0-9_-]+$/.test(alg) || !BASE64.test(headerHash) || !BASE64.test(bodyHash)) throw new Error('h-syntax');
+      out.push({ alg: alg.toLowerCase(), headerHash, bodyHash, group: g });
+    }
+  });
   return out;
 }
 

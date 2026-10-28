@@ -69,7 +69,7 @@ test('signature with only an unsupported algorithm is PERMERROR, never a pass (f
   // PERMERROR of its own; the signature's level is what is under test.)
   const raw =
     'From: a@example.com\r\n' +
-    'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+    'Message-Instance: m=1; h=blake:xxxx:yyyy\r\n' +
     `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${ENV}\r\n` +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
@@ -85,14 +85,14 @@ test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, ne
     'mf=c2VuZGVyQGV4YW1wbGUuY29t; rt=PHJjcHRAZXhhbXBsZS5jb20+']) {
     const raw =
       'From: a@example.com\r\n' +
-      'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+      'Message-Instance: m=1; h=blake:xxxx:yyyy\r\n' +
       `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${env}\r\n` +
       '\r\nhi\r\n';
     let rep;
     await assert.doesNotReject(async () => { rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey }); });
     assert.equal(rep.overall, 'permerror', env);
     // Listed after the primary error: the instance's (C9: instances first).
-    assert.deepEqual(rep.errors, ['PERMERROR: Message-Instance m=1 no supported hash algorithm',
+    assert.deepEqual(rep.errors, ['PERMERROR: Message-Instance m=1 algorithm blake unknown',
       'PERMERROR: DKIM2-Signature i=1 syntax error'], env);
   }
 });
@@ -128,19 +128,19 @@ test('a signature within 14 days is a clean pass (no age error)', async () => {
   assert.equal(sig.timestamp.ok, true);
 });
 
-// --- §14.7 MI hash fails closed when no supported hash algorithm ---------
+// --- §14.7 MI hash fails closed when no hash algorithm is implemented -----
 test('MI with no supported hash algorithm fails closed (§14.7)', async () => {
   // h= names only `blake` (no sha256). The instance MUST NOT stay at pass.
   const raw =
     'From: a@example.com\r\n' +
-    'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+    'Message-Instance: m=1; h=blake:xxxx:yyyy\r\n' +
     `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:rsa-sha256:AAA; ${ENV}\r\n` +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const mi = rep.levels.find((l) => l.kind === 'instance' && l.m === 1);
   assert.ok(mi, 'instance level present');
   assert.equal(mi.result, 'permerror');
-  assert.equal(mi.detail, 'PERMERROR: Message-Instance m=1 no supported hash algorithm');
+  assert.equal(mi.detail, 'PERMERROR: Message-Instance m=1 algorithm blake unknown');
 });
 
 // --- §12.3 a Forwarder's nd= bridge after a real hop --------------------
@@ -152,7 +152,7 @@ test('MI with no supported hash algorithm fails closed (§14.7)', async () => {
 // are on the per-level custody fields rather than the overall verdict.
 const bridgedRaw = (bridgeDomain) =>
   'From: a@example.com\r\n' +
-  'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+  'Message-Instance: m=1; h=blake:xxxx:yyyy\r\n' +
   'DKIM2-Signature: i=1; m=1; t=1000000; d=test1.dkim2.com; s=sel:rsa-sha256:AAAA; ' +
     'mf=PHNlbmRlckB0ZXN0MS5ka2ltMi5jb20+; rt=PHVzZXJAdGVzdDIuZGtpbTIuY29tPg==\r\n' +
   `DKIM2-Signature: i=2; m=1; t=1000000; d=${bridgeDomain}; s=sel:rsa-sha256:AAAA; ` +
@@ -250,7 +250,7 @@ test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary 
   // detail must be the one that reaches the summary.
   const raw =
     'From: a@example.com\r\n' +
-    'Message-Instance: m=1; h=blake:xxx:yyy\r\n' +
+    'Message-Instance: m=1; h=blake:xxxx:yyyy\r\n' +
     'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; ' +
     's=sel:banana:AAA; mf=PHNlbmRlckB3cm9uZy5leGFtcGxlPg==; rt=PHJjcHRAZXhhbXBsZS5jb20+\r\n' +
     '\r\nhi\r\n';

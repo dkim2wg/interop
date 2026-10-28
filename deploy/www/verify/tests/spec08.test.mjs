@@ -58,6 +58,55 @@ test('D10: a Message-Instance with only M= is "tag=m missing"', async () => {
   assertPrimary(await verify(msg), 'permerror', 'PERMERROR: Message-Instance m= tag=m missing');
 });
 
+// --- D2, D4: "|" groups of "," lists of hash-sets ------------------------------
+
+// A one-hop message whose h= is layout(sha256, sha512, bad): each a
+// "name:header:body" set; bad(set, 'h'|'b') corrupts one hash of it.
+const flip = (v) => (v[0] === 'A' ? 'B' : 'A') + v.slice(1);
+const hLayout = (layout) => oneHop({}, { h: (hh, bh, s512) => layout({
+  s256: `sha256:${hh}:${bh}`, s512: `sha512:${s512.hh}:${s512.bh}`,
+  bad256: (w) => `sha256:${w === 'h' ? flip(hh) : hh}:${w === 'b' ? flip(bh) : bh}`,
+  bad512: (w) => `sha512:${w === 'h' ? flip(s512.hh) : s512.hh}:${w === 'b' ? flip(s512.bh) : s512.bh}`,
+}) });
+const X_HASH = 'x-hash:AAAA:AAAA';
+
+for (const [what, layout] of [
+  ['"," of two good sets', (h) => `${h.s256},${h.s512}`],
+  ['a bad set "|" a good one', (h) => `${h.bad256('b')} | ${h.s512}`],
+  ['a good set "|" a bad one', (h) => `${h.s256}|${h.bad512('h')}`],
+  ['a good set "|" an unknown algorithm', (h) => `${h.s256} |\r\n ${X_HASH}`],
+  ['an unknown algorithm "|" a good set', (h) => `${X_HASH}|${h.s256}`],
+  ['"," groups either side of "|"', (h) => `${X_HASH},${h.s512}|${h.s256}`],
+]) {
+  test(`D4: h= ${what} passes`, async () => assertPass(await verify(await hLayout(layout))));
+}
+
+for (const [what, layout, state, text] of [
+  ['a bad body "|" a bad header', (h) => `${h.bad256('b')}|${h.bad512('h')}`, 'fail', 'FAIL: Message-Instance m=1 no group of hashes passed'],
+  ['an unknown algorithm alone', () => X_HASH, 'permerror', 'PERMERROR: Message-Instance m=1 algorithm x-hash unknown'],
+  ['a good set "," an unknown algorithm', (h) => `${h.s256},${X_HASH}`, 'permerror', 'PERMERROR: Message-Instance m=1 algorithm x-hash unknown'],
+  ['an unknown algorithm "|" a bad set', (h) => `${X_HASH}|${h.bad256('h')}`, 'fail', 'FAIL: Message-Instance m=1 no group of hashes passed'],
+  ['an unknown algorithm "," a bad set: FAIL wins', (h) => `${X_HASH},${h.bad256('b')}`, 'fail', 'FAIL: Message-Instance m=1 body hash sha256 mismatch'],
+  ['a bad sha512 header "," a bad sha256 body: h= order', (h) => `${h.bad512('h')},${h.bad256('b')}`, 'fail', 'FAIL: Message-Instance m=1 header hash sha512 mismatch'],
+  ['a bad sha256 body "," a bad sha512 header: h= order', (h) => `${h.bad256('b')},${h.bad512('h')}`, 'fail', 'FAIL: Message-Instance m=1 body hash sha256 mismatch'],
+  ['two unknown groups', () => `${X_HASH}|y-hash:AAAA:AAAA`, 'permerror', 'PERMERROR: Message-Instance m=1 algorithm x-hash unknown'],
+]) {
+  test(`D4: h= ${what}`, async () => assertPrimary(await verify(await hLayout(layout)), state, text));
+}
+
+for (const [what, layout, text] of [
+  ['a leading "|"', (h) => `|${h.s256}`, 'syntax error'],
+  ['a trailing ","', (h) => `${h.s256},`, 'syntax error'],
+  ['a doubled "|"', (h) => `${h.s256}||${h.s512}`, 'syntax error'],
+  ['",|"', (h) => `${h.s256},|${h.s512}`, 'syntax error'],
+  ['a hash that is not base64', (h) => `${h.s256}|x-hash:AAA:AAAA`, 'syntax error'],
+  ['the same algorithm in two groups', (h) => `${h.s256}|${h.s256}`, 'has a duplicate hash algorithm'],
+]) {
+  test(`D2: h= with ${what} is "${text}"`, async () => {
+    assertPrimary(await verify(await hLayout(layout)), 'permerror', `PERMERROR: Message-Instance m=1 ${text}`);
+  });
+}
+
 // --- D7: a key that is not one of its type is "is malformed" ----------------
 
 const { subtle } = globalThis.crypto;

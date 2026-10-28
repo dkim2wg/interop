@@ -480,7 +480,7 @@ for (const [name, mi] of [
 
 test('F3: FWS around the hash name and colons and inside the digests passes', async () => {
   const rep = await verify(await signed({ mi: (hh, bh) =>
-    ` m=1; h=\r\n sha256 :${hh.slice(0, 10)}\r\n\t${hh.slice(10)}\t:\r\n ${bh.slice(0, 5)} ${bh.slice(5)} , x-new\t: AAAA :AAAA` }));
+    ` m=1; h=\r\n sha256 :${hh.slice(0, 10)}\r\n\t${hh.slice(10)}\t:\r\n ${bh.slice(0, 5)} ${bh.slice(5)} |\r\n x-new\t: AAAA :AAAA` }));
   assert.equal(rep.overall, 'pass', rep.summary);
 });
 

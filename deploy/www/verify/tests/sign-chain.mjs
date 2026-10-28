@@ -20,7 +20,8 @@ const bin = (v) => (typeof v === 'string' ? textToBinary(v) : v.bin);
 // states[k - 1] is the message at Message-Instance m=k: { fields: [[name,
 // value]...], body, recipe, h }, where recipe is the r= of that instance (an
 // object, JSON.stringify'd, or a string of JSON text used as it is) and h,
-// if given, makes the h= value from the sha256 header and body hashes;
+// if given, makes the h= value from the sha256 header and body hashes (and
+// a third argument, the sha512 ones as { hh, bh });
 // extra is raw tag text appended after h=.
 // hops[n - 1] is DKIM2-Signature i=n: { d, m, mf, rt: [...], nd, f, t, extra,
 // sel, sets, kp }; nd= replaces mf=/rt=, extra is raw tag text appended, sel
@@ -34,7 +35,11 @@ export async function signChain(states, hops, kp) {
     const fields = st.fields.map(([n, v]) => ({ name: n, value: ' ' + bin(v) }));
     const hh = await hashB64(binaryToBytes(canonHeaderHash(fields.filter((f) => !/^x-/i.test(f.name)))), 'sha256');
     const bh = await hashB64(binaryToBytes(canonBody(bin(st.body))), 'sha256');
-    let v = ` m=${k}; h=${st.h ? st.h(hh, bh) : `sha256:${hh}:${bh}`}`;
+    const h512 = async () => ({
+      hh: await hashB64(binaryToBytes(canonHeaderHash(fields.filter((f) => !/^x-/i.test(f.name)))), 'sha512'),
+      bh: await hashB64(binaryToBytes(canonBody(bin(st.body))), 'sha512'),
+    });
+    let v = ` m=${k}; h=${st.h ? st.h(hh, bh, await h512()) : `sha256:${hh}:${bh}`}`;
     if (st.extra) v += st.extra;
     if (st.recipe !== undefined) {
       const json = typeof st.recipe === 'string' ? st.recipe : JSON.stringify(st.recipe);
