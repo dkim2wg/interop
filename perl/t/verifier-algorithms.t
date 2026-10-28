@@ -43,8 +43,9 @@ run('known algorithm, value not base64',
 run('known algorithm, base64 missing its padding',
     [['sel1', 'rsa-sha256', 'AAA']],
     qr/^permerror .*DKIM2-Signature i=1 syntax error/, 0);
-run('unknown algorithm, value not base64: never looked at',
-    'sel2:future-alg:!!x!!|sel1:rsa-sha256:SIG', qr/^pass/, 1);
+run('unknown algorithm, value not base64: a syntax error all the same',
+    'sel2:future-alg:!!x!!|sel1:rsa-sha256:SIG',
+    qr/^permerror \(PERMERROR: DKIM2-Signature i=1 syntax error\)$/, 0);
 
 # -08 §14.5, §14.6: an absent key is a PERMERROR item, overridden only by
 # a "|" alternative that passes.
@@ -100,14 +101,21 @@ run('unknown algorithm, value not base64: never looked at',
         'Ed25519 key for rsa-sha256: algorithm mismatch');
 }
 
-# Review R1: thousands of distinct unknown algorithms cost no key lookups.
+# Review R1: thousands of items cost no key lookups: past
+# MAX_SIGNATURE_ITEMS the field is refused before any is fetched.
 {
     my $s = join('|', map { "x$_:unknown$_:AAAA" } 1 .. 4000) . '|sel1:rsa-sha256:SIG';
     my $raw = DKIM2SignedFixture::signed(s => $s);
     $calls = 0;
     my $v = DKIM2SignedFixture::verify($raw, PubkeyCallback => $counting);
-    like($v->result_detail, qr/^pass/, '4000 unknown items + one good: pass');
-    is($calls, 1, '4000 unknown items: one key lookup');
+    is($v->result_detail, 'permerror (PERMERROR: DKIM2-Signature i=1 has more than 8 signatures)',
+        '4001 items: refused');
+    is($calls, 0, '4001 items: no key lookup');
+    $s = join('|', map { "x$_:unknown$_:AAAA" } 1 .. 7) . '|sel1:rsa-sha256:SIG';
+    $calls = 0;
+    $v = DKIM2SignedFixture::verify(DKIM2SignedFixture::signed(s => $s), PubkeyCallback => $counting);
+    like($v->result_detail, qr/^pass/, '7 unknown items + one good: pass');
+    is($calls, 1, '... with one key lookup');
 }
 
 done_testing;

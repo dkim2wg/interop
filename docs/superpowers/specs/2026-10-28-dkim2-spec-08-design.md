@@ -54,6 +54,15 @@ Each sig-set in `s=` order gives one intermediate result:
 | signature doesn't verify | FAIL | `DKIM2-Signature i=<x> selector <s> incorrect signature` |
 
 - Don't fetch a key for an unimplemented algorithm. Prefetch skips those selectors.
+- **Local limit (review of Perl 0.28):** -08 dropped "more selectors than
+  allowed", and every item can cost a DNS lookup and a verify. So an `s=`
+  with more than **8** items (any algorithms, any groups) gives
+  `PERMERROR: DKIM2-Signature i=<x> has more than 8 signatures`. It is a
+  §14.2 check, made after the duplicate-selector check and before any key
+  is fetched.
+- Every item's value must be a non-empty base64string, whatever its
+  algorithm, or the result is "syntax error". The same goes for both
+  hashes of every hash-set in `h=`.
 - sig-all: all PASS gives PASS. Otherwise, if every non-PASS is TEMPERROR, the
   result is TEMPERROR. Otherwise any FAIL gives FAIL. Otherwise PERMERROR.
 - sig-any: any PASS gives PASS. Otherwise any TEMPERROR gives TEMPERROR.
@@ -131,8 +140,10 @@ New string: `PERMERROR: Message-Instance m=<x> Recipe <path> is invalid`.
   - copy ranges that overlap or are out of order. This replaces today's
     recipe_order_error wording.
 - `<path>` is `b[<n>]` or `h.<name>[<n>]`. `<n>` is the step's 0-based index;
-  `<name>` is the JSON key exactly as given, with non-printable or non-ASCII
-  octets written as `\xHH`. Report the first invalid step: `b` first, then `h`
+  `<name>` is the JSON key exactly as given, with every octet outside
+  0x21-0x7E (space included) written as `\xHH` in uppercase hex.
+- Every whole-document check comes before any step check. For example,
+  `{"b":[{"x":1}],"h":[]}` is "contains invalid JSON". Report the first invalid step: `b` first, then `h`
   names in byte order, then steps in order.
 - A copy range past the end of the message is still found when the Recipe is
   applied, and reports as today.

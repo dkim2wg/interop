@@ -32,6 +32,13 @@ Revision history for Mail::DKIM2
         - DSN->may_generate takes Domain: a DSN's d= must match a
           recipient in the reported message's top rt= (section 16.2).
         - ML-DSA-44 ("mldsa44") is not implemented: algorithm unknown.
+        - Local policy, MAX_SIGNATURE_ITEMS: an s= of more than 8 items
+          is "has more than 8 signatures", before any key is fetched.
+        - Every s= and h= value must be a base64string, whatever its
+          algorithm. A Recipe's whole-document faults are reported before
+          any step's. provisionally_verified is false under InstancesOnly.
+          The validator reads i= and m= case-sensitively. fold_header no
+          longer folds between a header hash's padding and its ":".
 
 0.27    2026-10-21
         Fix a test failure on hosts without JSON::XS.

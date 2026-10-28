@@ -129,7 +129,7 @@ for my $c (@hash_cases) {
 # Headers only (no body to hand: -08 section 16.4, and below a null body
 # Recipe): a set passes on its header hash alone.
 {
-    my $mi = Mail::DKIM2::MessageInstance->parse("m=1; h=sha256:$H{sha256}:XXXX|foo:A:A;");
+    my $mi = Mail::DKIM2::MessageInstance->parse("m=1; h=sha256:$H{sha256}:XXXX|foo:AAAA:AAAA;");
     my ($ok) = $mi->_check_hashes(1, sub { Mail::DKIM2::MessageInstance::h_digest($msg, $_[0]) });
     ok($ok, 'headers only: the header hash decides');
 }

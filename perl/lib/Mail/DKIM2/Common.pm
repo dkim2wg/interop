@@ -53,6 +53,7 @@ our @EXPORT_OK = qw(
     DKIM2_DATE
     MAX_CHAIN_LENGTH
     MAX_CHAIN_NUMBER
+    MAX_SIGNATURE_ITEMS
     FUTURE_LIMIT
     EXPIRY
     chain_length_error
@@ -92,6 +93,13 @@ use constant MAX_CHAIN_LENGTH => 32;
 # malformed before it is ever compared with MAX_CHAIN_LENGTH, and is never
 # converted to a number big enough to be a loop bound.
 use constant MAX_CHAIN_NUMBER => 100;
+
+# Local policy, not -08: the most items one DKIM2-Signature's s= may carry.
+# -08 dropped its own limit, and every item may cost a key lookup and a
+# signature check, so a crafted s= of thousands of selectors would cost
+# thousands of each (the -08 contract, D3). The same limit as the key
+# prefetch's; refused before any key is fetched.
+use constant MAX_SIGNATURE_ITEMS => 8;
 
 # Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-08 Section 4.
 # spec-05 narrowed the old /^arc-/ prefix to the three RFC 8617 field names and
@@ -598,7 +606,10 @@ sub _dkim2_fold_ok {
     my $name = $st->{name};
     return 0 unless defined $name && length $name;
     # sig-set and hash-set allow FWS on either side of their ":"s, and the
-    # lists of them on either side of each "," and "|" (§10.9, §9.3).
+    # lists of them on either side of each "," and "|" (§10.9, §9.3) -- but
+    # not after a header hash, before the ":" ending it: its padding is
+    # the end of the base64string, and the grammar has no FWS there.
+    return 0 if $prev eq '=' && $next eq ':';
     return 1 if ($name eq 's' || $name eq 'h')
              && grep { $_ eq ':' || $_ eq ',' || $_ eq '|' } $prev, $next;
     return 1 if $prev eq ',';
@@ -1106,6 +1117,13 @@ found before any key is fetched. Local policy, not spec.
 
 100: the largest number an C<i=> or C<m=> may be written as (at most
 three digits). See L</chain_number_error($field, $tag, $n)>.
+
+=head2 MAX_SIGNATURE_ITEMS
+
+8: the most items one DKIM2-Signature's C<s=> may carry. Local policy:
+-08 sets no limit, and each item may cost a key lookup and a signature
+check. The Verifier refuses a field with more, before fetching any key,
+as "has more than 8 signatures". New in 0.28.
 
 =head1 CANONICALIZATION
 

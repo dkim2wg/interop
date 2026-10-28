@@ -14,6 +14,7 @@ use Scalar::Util ();
 
 use Mail::DKIM2::Common qw(
     MI_MISSING_M_ERROR
+    MAX_SIGNATURE_ITEMS
     combine_sets
     parse_mime
     dkim2_canonicalize_header
@@ -670,7 +671,7 @@ sub _check_sig_field {
     my $dk2_entry = $dk2_map{$i};
     my $signature = $dk2_entry->{sig};
 
-    # -08 section 8: a tag given twice, in any case, makes the whole list
+    # -08 section 8: a tag given twice makes the whole list
     # invalid; and a field that does not parse is a syntax error -- never
     # verified with its malformed parts dropped (follow-up review F3, F4).
     return $self->_error(permerror => "DKIM2-Signature i=$i syntax error")
@@ -768,16 +769,20 @@ sub _check_sig_field {
             unless defined $r && $r =~ /^<.*>$/s;
     }
 
-    # A known algorithm's value must be a padded base64string (section
-    # 2.14). An unknown one's is not looked at: -08 section 14.6 makes it
-    # a PERMERROR member of its group (_check_sig_items), never verified.
-    # Names match exactly: they are case-sensitive (section 2.14), and a
-    # name that is merely like a known one must never be verified as it.
+    # Every item's value must be a padded base64string (section 2.14),
+    # whether or not this verifier implements its algorithm: the grammar is
+    # the same for all. An unknown algorithm is a PERMERROR member of its
+    # group (-08 section 14.6, _check_sig_items), never verified. Names
+    # match exactly: they are case-sensitive (section 2.14), and a name
+    # that is merely like a known one must never be verified as it.
     for my $idx (0 .. $signature->sig_count - 1) {
-        next unless $IMPLEMENTED_ALG{ $signature->algorithm($idx) // '' };
         return $self->_error(permerror => "DKIM2-Signature i=$i syntax error")
             unless Mail::DKIM2::Common::_is_base64string($signature->signature_value($idx) // '');
     }
+    # Local policy (MAX_SIGNATURE_ITEMS): before any key is fetched.
+    return $self->_error(permerror => "DKIM2-Signature i=$i has more than "
+        . MAX_SIGNATURE_ITEMS . " signatures")
+        if $signature->sig_count > MAX_SIGNATURE_ITEMS;
     $dk2_entry->{signing_input} = $signing_input;
     return 1;
 }
@@ -1183,6 +1188,8 @@ sub provisionally_verified {
 
 sub _provisionally_verified {
     my ($self) = @_;
+    # An InstancesOnly pass has checked no signature (review of 0.28).
+    return 0 if $self->{InstancesOnly};
     return 1 if ($self->{result} // '') eq 'pass';
     return 0 if $self->{_stopped} && !$self->{result};
     my %dk2 = %{ $self->{_dk2_headers} || {} };

@@ -88,7 +88,9 @@ sub parse_hash_groups {
                 or return;
             $rest =~ s/[ \t\r\n]//g;
             my @hashes = split /:/, $rest, -1;
-            return unless @hashes == 2 && length $hashes[0] && length $hashes[1];
+            # Both are base64strings (§2.14), whatever the algorithm.
+            return unless @hashes == 2
+                && !grep { !Mail::DKIM2::Common::_is_base64string($_) } @hashes;
             push @sets, [$name, @hashes];
         }
         push @out, \@sets;
@@ -424,6 +426,10 @@ sub parse {
         # keys are ignored; at least one of h and b is required.
         my %top = %$recipe_data;
         die $invalid unless exists $top{h} || exists $top{b};
+        # The document's shape before any step (D6): "h" a non-empty object
+        # (minProperties 1; never null, section 5.1), "b" an array or null.
+        die $invalid if exists $top{h} && !(ref $top{h} eq 'HASH' && %{$top{h}});
+        die $invalid if exists $top{b} && defined $top{b} && ref $top{b} ne 'ARRAY';
         # A null "b" (section 5.2) means the previous body cannot be
         # recreated -- distinct from an absent one (no change).
         if (exists $top{b}) {

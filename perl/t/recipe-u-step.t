@@ -151,10 +151,10 @@ sub with_recipe {
 # --- parse accepts a hand-built "u" and gives back the octets ---
 {
     my $b64 = encode_base64('{"b":[{"u":["' . encode_base64("\xe9", '') . '"]}]}', '');
-    my $mi = Mail::DKIM2::MessageInstance->parse("m=2; h=sha256:x:y; r=$b64;");
+    my $mi = Mail::DKIM2::MessageInstance->parse("m=2; h=sha256:AAAA:AAAA; r=$b64;");
     is_deeply($mi->get_tag('rb'), ["\xe9"], '"u" item decodes to the raw octets');
     $b64 = encode_base64(qq({"b":[{"d":["na\xc3\xafve"]},{"d":["\\u00e9"]}]}), '');
-    $mi = Mail::DKIM2::MessageInstance->parse("m=2; h=sha256:x:y; r=$b64;");
+    $mi = Mail::DKIM2::MessageInstance->parse("m=2; h=sha256:AAAA:AAAA; r=$b64;");
     is_deeply($mi->get_tag('rb'), ["na\xc3\xafve", "\xc3\xa9"],
         '"d" text comes back as UTF-8 octets, escaped or not');
 }
