@@ -17,14 +17,23 @@
     <p class="caveat">A result reports only whether the message travelled here
        unmodified and unreplayed (§14.1). It says nothing about whether the
        message is wanted, or whether any declared modification was benign.</p>
-    <p class="caveat">Checks follow draft-ietf-dkim-dkim2-spec-07. New in -07:
-       the <code>From:</code> must be Authentic (its domain matches the
-       <code>d=</code> of the signature that vouches for it, including after a
-       list rewrites it); the Chain of Custody is checked hop by hop, with
-       <code>mf=&lt;&gt;</code> and <code>nd=</code> hops matched against the
-       previous <code>rt=</code>; Recipes carry lines that are not UTF-8 as
-       <code>"u"</code> steps; and errors use the -07 wording
-       (<code>PERMERROR: …</code>). A pasted message has no delivery time, so
+    <p class="caveat">Checks follow draft-ietf-dkim-dkim2-spec-08. New in -08:
+       <code>s=</code> and <code>h=</code> may offer alternatives
+       (<code>a,b|c</code> passes if both <code>a</code> and <code>b</code>
+       pass, or <code>c</code> does), and an algorithm this verifier does not
+       implement (including ML-DSA-44, <code>mldsa44</code>) is an error
+       unless an alternative passes; <code>Auto-Submitted</code> and
+       <code>VBR-Info</code> are now covered by the header hash; tag names and
+       Recipe JSON keys must be lowercase; an invalid Recipe step is named
+       (<code>Recipe b[1] is invalid</code>); a malformed public key (an RSA
+       key under 1024 bits, an Ed25519 key that is not 32 octets) is reported
+       as such; and a timestamp, Chain of Custody or From Authentic failure is
+       <code>FAIL</code>. A message whose history includes a null body Recipe
+       passes but is marked <strong>not fully verified</strong>: the earlier
+       body cannot be checked. Still checked as in -07: the
+       <code>From:</code> must be Authentic, the Chain of Custody hop by hop,
+       and Recipes carry lines that are not UTF-8 as <code>"u"</code> steps.
+       A pasted message has no delivery time, so
        timestamps are checked against now: a signature more than 14 days old
        shows as <code>signature expired</code>. When a message has more
        than one fault, the first error listed is the primary one and sets the
