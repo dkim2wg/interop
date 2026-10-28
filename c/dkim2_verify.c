@@ -901,9 +901,11 @@ static const dkim2_badfield_t *bad_field(const dkim2_ctx_t *ctx, int is_sig, int
 /* -07 §14.2 Message-Instance content, by ascending m= (after the structure
    checks: m= is 1..N, each once): a field that did not parse reports its
    own error; otherwise its r= on its own, whether or not the chain walk
-   reaches it -- base64 that does not decode is a syntax error, JSON that
-   does not parse or breaks the §5 schema (dkim2_recipe_parse: duplicate
-   keys, step shapes, "c" ranges ascending) is invalid JSON. A Recipe that
+   reaches it -- base64 that does not decode is a syntax error, a document
+   that does not parse or breaks the §5 schema as a whole (duplicate or
+   uppercase keys, "h"/"b" of the wrong type, ...) is invalid JSON, and
+   then the first step that breaks it is "Recipe <path> is invalid"
+   (dkim2_recipe_parse_ex; contract D6). A Recipe that
    does not fit the message (a copy past the end) is the walk's to find
    (§14.7). 0, or -1 with the error in msg. */
 static int mi_content_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) {
@@ -929,8 +931,13 @@ static int mi_content_error(const dkim2_ctx_t *ctx, char *msg, size_t msgsz) {
             return -1;
         }
         json[len] = '\0';
-        cJSON *r = dkim2_recipe_parse((const char *)json);
+        char path[160];
+        cJSON *r = dkim2_recipe_parse_ex((const char *)json, (size_t)len, path, sizeof path);
         free(json);
+        if (!r && path[0]) {
+            snprintf(msg, msgsz, "PERMERROR: Message-Instance m=%d Recipe %s is invalid", mi->m, path);
+            return -1;
+        }
         if (!r) {
             snprintf(msg, msgsz, "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
             return -1;

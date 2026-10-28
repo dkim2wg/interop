@@ -100,24 +100,25 @@ static void test_u_steps(void) {
         msg_free(&m);
         free(r);
     }
+    /* -08 (contract D6): one bad step is "Recipe <path> is invalid" */
     /* U3: non-zero pad bits */
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"QR==\"]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"QUJ=\"]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"QR==\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"QUJ=\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
     /* U4: the old "b" step key, two keys in a step, no key */
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"b\":[\"eA==\"]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,1],\"d\":[\"x\"]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"b\":[\"eA==\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,1],\"d\":[\"x\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[0] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
     /* U5: decoded CR; "h":{}; neither h nor b */
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"YQ1i\"]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"YQ1i\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
     { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{}}"); CHECK_MSG(r, INVALID_JSON_M2); }
     { dkim2_verify_result_t r = recipe_at_m2("{\"x\":1}"); CHECK_MSG(r, INVALID_JSON_M2); }
     /* and other schema violations: a non-UTF-8 "d" string, an empty array,
        a non-string literal, a non-array header Recipe, a non-object step */
     { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[\"caf\xe9\"]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[1]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{\"subject\":null}}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[[1,2]]}"); CHECK_MSG(r, INVALID_JSON_M2); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[1]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{\"subject\":null}}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe h.subject is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[[1,2]]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[0] is invalid"); }
     { dkim2_verify_result_t r = recipe_at_m2("[1]"); CHECK_MSG(r, INVALID_JSON_M2); }
     /* a valid "u" (canonical, zero pad bits) still applies: a no-op body
        change whose literal is the same line keeps the hash */

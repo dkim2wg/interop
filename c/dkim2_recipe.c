@@ -195,56 +195,177 @@ static int walk_literals(const cJSON *arr, int kind, int reject_nul,
     return 0;
 }
 
-/* Non-zero if any object in the tree names a key twice, or names a key
-   holding an ASCII capital (-08 §5, contract D10: keys are strictly
-   lowercase; a non-ASCII letter is not judged). Keys are compared exactly,
-   after cJSON's unescaping ("subj\u0065ct" is "subject", "\u0053" is
-   "S"). */
+/* Non-zero if a key holds an ASCII capital (-08 §5, contract D10: keys
+   are strictly lowercase; a non-ASCII letter is not judged), after cJSON's
+   unescaping ("S" is "S"). */
+static int key_not_lowercase(const char *k) {
+    for (; *k; k++)
+        if (*k >= 'A' && *k <= 'Z') return 1;
+    return 0;
+}
+
+static int cmp_key(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+/* Non-zero if any object in the tree names a key twice (compared exactly,
+   after unescaping: "subject" is "subject") or a key that is not
+   lowercase. An object's keys are sorted to find a repeat, so a Recipe
+   with thousands of keys costs n log n, not n squared. -1 on OOM. */
 static int bad_keys(const cJSON *node) {
+    int n = 0;
     for (const cJSON *c = node ? node->child : NULL; c; c = c->next) {
         if (cJSON_IsObject(node) && c->string) {
-            for (const char *p = c->string; *p; p++)
-                if (*p >= 'A' && *p <= 'Z') return 1;
-            for (const cJSON *d = c->next; d; d = d->next)
-                if (d->string && strcmp(c->string, d->string) == 0) return 1;
+            if (key_not_lowercase(c->string)) return 1;
+            n++;
         }
-        if (bad_keys(c)) return 1;
+        int r = bad_keys(c);
+        if (r) return r;
+    }
+    if (n < 2) return 0;
+    const char **keys = malloc((size_t)n * sizeof *keys);
+    if (!keys) return -1;
+    int k = 0;
+    for (const cJSON *c = node->child; c; c = c->next)
+        if (c->string) keys[k++] = c->string;
+    qsort(keys, (size_t)k, sizeof *keys, cmp_key);
+    int dup = 0;
+    for (int i = 1; i < k && !dup; i++)
+        dup = strcmp(keys[i - 1], keys[i]) == 0;
+    free(keys);
+    return dup;
+}
+
+/* The whole-document checks that are judged from the text (contract D6,
+   D10): the octets are UTF-8 (RFC 3629, so no encoded surrogate) with no
+   NUL; no JSON number has a fraction or an exponent, wherever it is (JSON
+   libraries disagree on whether 1e0 is an integer); and no "\u" escape is
+   an unpaired surrogate. Anything else wrong with the text is cJSON's to
+   find. 0, or -1. */
+static int text_ok(const char *s, size_t len) {
+    if (memchr(s, '\0', len) || !utf8_valid((const unsigned char *)s, len)) return -1;
+    for (size_t i = 0; i < len; ) {
+        char c = s[i];
+        if (c == '"') {
+            for (i++; i < len && s[i] != '"'; ) {
+                if (s[i] != '\\') { i++; continue; }
+                if (i + 1 < len && s[i + 1] == 'u' && i + 6 <= len) {
+                    unsigned v = 0;
+                    if (sscanf(s + i + 2, "%4x", &v) != 1) return -1;
+                    i += 6;
+                    if (v >= 0xDC00 && v <= 0xDFFF) return -1;     /* lone low */
+                    if (v >= 0xD800 && v <= 0xDBFF) {              /* needs a low */
+                        unsigned w = 0;
+                        if (i + 6 > len || s[i] != '\\' || s[i + 1] != 'u' ||
+                            sscanf(s + i + 2, "%4x", &w) != 1 || w < 0xDC00 || w > 0xDFFF)
+                            return -1;
+                        i += 6;
+                    }
+                } else {
+                    i += 2;
+                }
+            }
+            i++;
+        } else if (c == '-' || (c >= '0' && c <= '9')) {
+            for (; i < len && (s[i] == '-' || s[i] == '+' || s[i] == '.' ||
+                               s[i] == 'e' || s[i] == 'E' || (s[i] >= '0' && s[i] <= '9')); i++)
+                if (s[i] == '.' || s[i] == 'e' || s[i] == 'E') return -1;
+        } else {
+            i++;
+        }
     }
     return 0;
 }
 
-static int validate_list(const cJSON *list, int reject_nul);
+/* The index of the first step of a list (a "b" array or one header
+   field's array) that the -08 §5 schema or §5.1/§5.2 rejects, as the
+   appliers read it but with no bound against any message; -1 when every
+   step is good. reject_nul: a header value's "u" literal may not hold a
+   NUL. */
+static int first_bad_step(const cJSON *list, int reject_nul) {
+    int prev_end = 0, idx = 0;
+    const cJSON *step;
+    cJSON_ArrayForEach(step, list) {
+        const cJSON *arr;
+        int kind = step_kind(step, &arr);
+        if (kind == 'c') {
+            int st, en;
+            if (copy_range(arr, -1, prev_end, &st, &en) != 0) return idx;
+            prev_end = en;
+        } else if (kind < 0 || walk_literals(arr, kind, reject_nul, NULL, NULL) != 0) {
+            return idx;
+        }
+        idx++;
+    }
+    return -1;
+}
 
-/* The -07 §5 schema: an object with "h" and/or "b"; "h" an object with at
-   least one property, each a list of steps; "b" null or a list of steps.
-   Every step and literal is checked as the appliers read it (copy ranges
-   ascending, literals well-formed), without a bound against any message.
-   Unknown top-level keys are ignored. */
-static int validate_schema(const cJSON *root) {
-    if (!cJSON_IsObject(root)) return -1;
+/* path: "h.<name>" then, with idx >= 0, "[<idx>]"; every octet of the
+   name outside 0x21-0x7E written as \xHH (contract D6). */
+static void header_path(char *path, size_t pathsz, const char *name, int idx) {
+    size_t n = 0;
+#define PUT(...) do { if (n < pathsz) { int w_ = snprintf(path + n, pathsz - n, __VA_ARGS__); \
+                      if (w_ > 0) n += (size_t)w_; } } while (0)
+    PUT("h.");
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
+        if (*p >= 0x21 && *p <= 0x7E) PUT("%c", *p);
+        else PUT("\\x%02X", *p);
+    }
+    if (idx >= 0) PUT("[%d]", idx);
+#undef PUT
+}
+
+/* The -08 §5 schema (contract D6). Whole document: an object with "h"
+   and/or "b"; "h" an object with at least one property; "b" an array or
+   null (unknown top-level keys are ignored). Then each step: "b" first,
+   then the "h" fields in byte order of their names, each a list of steps.
+   0; 1 for a whole-document fault; 2 for a bad step, with its path. */
+static int validate_schema(const cJSON *root, char *path, size_t pathsz) {
+    if (!cJSON_IsObject(root)) return 1;
     const cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
     const cJSON *b = cJSON_GetObjectItemCaseSensitive(root, "b");
-    if (!h && !b) return -1;
-    if (h) {
-        if (!cJSON_IsObject(h) || !h->child) return -1;
-        for (const cJSON *f = h->child; f; f = f->next)
-            if (validate_list(f, 1) != 0) return -1;
+    if (!h && !b) return 1;
+    if (h && (!cJSON_IsObject(h) || !h->child)) return 1;
+    if (b && !cJSON_IsNull(b) && !cJSON_IsArray(b)) return 1;
+
+    int bad = b && cJSON_IsArray(b) ? first_bad_step(b, 0) : -1;
+    if (bad >= 0) {
+        if (path && pathsz) snprintf(path, pathsz, "b[%d]", bad);
+        return 2;
     }
-    if (b && !cJSON_IsNull(b) && validate_list(b, 0) != 0) return -1;
+    const cJSON *first = NULL;
+    int first_idx = -1;
+    for (const cJSON *f = h ? h->child : NULL; f; f = f->next) {
+        if (!f->string) return 1;
+        if (first && strcmp(f->string, first->string) > 0) continue;   /* a later name */
+        int idx = cJSON_IsArray(f) ? first_bad_step(f, 1) : -2;
+        if (idx == -1) continue;
+        first = f;
+        first_idx = idx;
+    }
+    if (first) {
+        if (path && pathsz) header_path(path, pathsz, first->string, first_idx >= 0 ? first_idx : -1);
+        return 2;
+    }
     return 0;
 }
 
-cJSON *dkim2_recipe_parse(const char *r_json) {
-    cJSON *root = cJSON_Parse(r_json);
-    if (root && bad_keys(root)) {
-        cJSON_Delete(root);
-        return NULL;
-    }
-    if (root && validate_schema(root) != 0) {
+cJSON *dkim2_recipe_parse_ex(const char *r_json, size_t len, char *path, size_t pathsz) {
+    if (path && pathsz) path[0] = '\0';
+    if (text_ok(r_json, len) != 0) return NULL;
+    /* len + 1: cJSON wants the terminating NUL inside the length to know
+       that nothing follows the value. */
+    cJSON *root = cJSON_ParseWithLengthOpts(r_json, len + 1, NULL, 1);
+    if (!root) return NULL;
+    if (bad_keys(root) || validate_schema(root, path, pathsz) != 0) {
         cJSON_Delete(root);
         return NULL;
     }
     return root;
+}
+
+cJSON *dkim2_recipe_parse(const char *r_json) {
+    return dkim2_recipe_parse_ex(r_json, strlen(r_json), NULL, 0);
 }
 
 void dkim2_recipe_free(cJSON *root) { cJSON_Delete(root); }
@@ -276,14 +397,6 @@ static int ops_literal(void *ctx, const unsigned char *s, size_t len) {
 void dkim2_recipe_ops_free(dkim2_recipe_op_t *ops, int n_ops) {
     for (int i = 0; i < n_ops; i++) free(ops[i].s);
     free(ops);
-}
-
-static int validate_list(const cJSON *list, int reject_nul) {
-    dkim2_recipe_op_t *ops;
-    int n_ops;
-    if (!cJSON_IsArray(list) || dkim2_recipe_ops(list, reject_nul, &ops, &n_ops) != 0) return -1;
-    dkim2_recipe_ops_free(ops, n_ops);
-    return 0;
 }
 
 int dkim2_recipe_ops(const cJSON *list, int reject_nul,

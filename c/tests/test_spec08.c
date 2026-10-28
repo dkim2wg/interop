@@ -121,11 +121,85 @@ static void test_strict_lowercase(void) {
     }
 }
 
+/* D6: one bad step is "Recipe <path> is invalid"; a fault in the whole
+   document is "contains invalid JSON", and is found first. */
+static void test_recipe_paths(void) {
+    static const struct { const char *json, *path; } steps[] = {
+        { "{\"b\":[{\"c\":[2,2]},{\"c\":[1,1]}]}",          "b[1]" },   /* out of order */
+        { "{\"b\":[{\"c\":[1,2]},{\"c\":[2,2]}]}",          "b[1]" },   /* overlap */
+        { "{\"b\":[{\"x\":[1]}]}",                          "b[0]" },
+        { "{\"b\":[{\"c\":[1,1],\"d\":[\"x\"]}]}",          "b[0]" },
+        { "{\"b\":[{}]}",                                   "b[0]" },
+        { "{\"b\":[\"x\"]}",                                "b[0]" },
+        { "{\"b\":[{\"d\":[]}]}",                           "b[0]" },
+        { "{\"b\":[{\"d\":[1]}]}",                          "b[0]" },
+        { "{\"b\":[{\"d\":\"x\"}]}",                        "b[0]" },
+        { "{\"b\":[{\"d\":[\"a\\nb\"]}]}",                  "b[0]" },
+        { "{\"b\":[{\"u\":[\"QR==\"]}]}",                   "b[0]" },
+        { "{\"b\":[{\"u\":[\"DQo=\"]}]}",                   "b[0]" },   /* decodes to CRLF */
+        { "{\"b\":[{\"c\":[0,1]}]}",                        "b[0]" },
+        { "{\"b\":[{\"c\":[2,1]}]}",                        "b[0]" },
+        { "{\"b\":[{\"c\":[1]}]}",                          "b[0]" },
+        { "{\"b\":[{\"c\":[\"1\",1]}]}",                    "b[0]" },
+        { "{\"b\":[{\"c\":[1,2]},{\"d\":[\"x\"]},{\"q\":1}]}", "b[2]" },
+        { "{\"h\":{\"subject\":{\"c\":[1,1]}}}",            "h.subject" },
+        { "{\"h\":{\"subject\":[{\"c\":[1,1]},{\"x\":1}]}}", "h.subject[1]" },
+        { "{\"h\":{\"x caf\\u00e9\":[{\"q\":1}]}}",         "h.x\\x20caf\\xC3\\xA9[0]" },
+        { "{\"h\":{\"x\\u0001\":[{\"q\":1}]}}",             "h.x\\x01[0]" },
+        /* b first, then h names in byte order, then steps in order */
+        { "{\"h\":{\"a\":[{\"q\":1}]},\"b\":[{\"c\":[1,1]},{\"q\":1}]}", "b[1]" },
+        { "{\"h\":{\"z\":[{\"q\":1}],\"a\":[{\"c\":[1,1]},{\"q\":1}]}}", "h.a[1]" },
+        { "{\"h\":{\"to\":[{\"q\":1}],\"subject\":7}}",     "h.subject" },
+    };
+    for (size_t k = 0; k < sizeof steps / sizeof steps[0]; k++) {
+        char want[256];
+        snprintf(want, sizeof want, "PERMERROR: Message-Instance m=2 Recipe %s is invalid", steps[k].path);
+        dkim2_verify_result_t r = recipe_at_m2(steps[k].json);
+        if (strcmp(r.message, want) != 0)
+            printf("  (Recipe %s)\n", steps[k].json);
+        CHECK_MSG(r, want);
+    }
+    static const char *whole[] = {
+        "{\"b\":[{\"x\":1}],\"h\":[]}",             /* whole-document fault first */
+        "{\"b\":[{\"c\":[1e0,1]}]}",                /* exponent */
+        "{\"b\":[{\"c\":[1,2E0]}]}",
+        "{\"b\":[{\"c\":[1.0,2]}]}",                /* fraction */
+        "{\"b\":[{\"c\":[1,2]}],\"x\":1.5}",        /* wherever it is */
+        "{\"b\":[{\"c\":[1,2]}],\"x\":[-0.5]}",
+        "{\"b\":[{\"d\":[\"\\udc80\"]}]}",          /* lone surrogates */
+        "{\"b\":[{\"d\":[\"\\ud800x\"]}]}",
+        "{\"b\":[{\"d\":[\"\\ud800\"]}]}",
+        "{\"b\":[{\"c\":[1,2]}],\"x\":\"\\udfff\"}",
+        "{\"b\":[{\"d\":[\"caf\xff\"]}]}",          /* not UTF-8 */
+        "{\"b\":[{\"c\":[1,2]}],\"x\":\"\xed\xa0\x80\"}",  /* encoded surrogate */
+        "{\"b\":{}}",
+        "{\"b\":7}",
+        "{\"h\":{}}",
+        "{\"h\":null}",
+        "{\"h\":[]}",
+        "{}",
+        "[]",
+        "{\"b\":null} x",                          /* trailing text */
+        "{\"b\":[{\"c\":[1,99]}]}",                 /* past the end: found by the walk */
+    };
+    for (size_t k = 0; k < sizeof whole / sizeof whole[0]; k++) {
+        dkim2_verify_result_t r = recipe_at_m2(whole[k]);
+        if (strcmp(r.message, INVALID_JSON_M2) != 0)
+            printf("  (Recipe %s)\n", whole[k]);
+        CHECK_MSG(r, INVALID_JSON_M2);
+    }
+    /* a string holding a number-like text, and a valid surrogate pair */
+    CHECK_PASS(recipe_at_m2("{\"b\":[{\"c\":[1,2]}],\"x\":\"1.5e3\"}"));
+    CHECK_PASS(recipe_at_m2("{\"b\":[{\"c\":[1,2]}],\"x\":\"\\ud83d\\ude00\"}"));
+    CHECK_PASS(recipe_at_m2("{\"b\":[{\"c\":[1,2]}],\"x\":[-5,0,10]}"));
+}
+
 int main(void) {
     harness_init();
 
     test_hashed_fields();
     test_strict_lowercase();
+    test_recipe_paths();
 
     harness_done();
     if (g_fail) { printf("test_spec08: %d failure(s)\n", g_fail); return 1; }

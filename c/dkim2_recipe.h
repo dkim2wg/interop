@@ -12,7 +12,8 @@
                           MUST NOT contain CR or LF
    Keys are strictly lowercase (-08, contract D10). A Recipe
    that breaks the schema is rejected by dkim2_recipe_parse() (the verifier's
-   "contains invalid JSON"); one that only fails against the message (a copy
+   "contains invalid JSON" for the document as a whole, "Recipe <path> is
+   invalid" for one step: dkim2_recipe_parse_ex); one that only fails against the message (a copy
    past the last item) makes the apply_* functions return NULL -- reported
    as "contains invalid JSON" as well. The gen_*
    functions emit "d" for every UTF-8 literal and "u" for the rest, and never
@@ -27,6 +28,15 @@
    without exactly one of "c"/"d"/"u", a malformed literal or copy range.
    Every Recipe parse here goes through it. Free with dkim2_recipe_free(). */
 struct cJSON *dkim2_recipe_parse(const char *r_json);
+/* As dkim2_recipe_parse, for len octets of JSON text (which may hold a
+   NUL, which makes it invalid; r_json[len] must be the terminating NUL).
+   On failure path (pathsz > 0) gets "" when
+   the document as a whole is at fault -- "contains invalid JSON" -- or the
+   first bad step's path, "b[<n>]", "h.<name>[<n>]" or "h.<name>" (a header
+   entry that is not an array), name octets outside 0x21-0x7E written as
+   \xHH: "Recipe <path> is invalid" (-08 §14.2, contract D6). Every
+   whole-document check is made before any step check. */
+struct cJSON *dkim2_recipe_parse_ex(const char *r_json, size_t len, char *path, size_t pathsz);
 void dkim2_recipe_free(struct cJSON *root);
 
 /* Structure-only validation of a body Recipe (same rules as apply, but no
