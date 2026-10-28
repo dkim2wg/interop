@@ -6,7 +6,7 @@
    (c/TODO-dsn.md).
 
    Messages are built in memory: every signature is made here over the
-   Message-Instance and DKIM2-Signature fields (-07 §12.8) with one Ed25519
+   Message-Instance and DKIM2-Signature fields (-08 §12.8) with one Ed25519
    key, which the fake DNS serves for selectors "sel" and "sel2" under any
    domain, so the test domains are the ones the shared table names
    (example.com, example.org, lists.example.org, other.net, ...). */
@@ -138,7 +138,7 @@ static void test_json_keys(void) {
     }
 }
 
-/* An instance with no r= (-07 §9: r= is optional; §12.1) records no
+/* An instance with no r= (-08 §9: r= is optional; §12.1) records no
    change: the state below it is the same message. */
 static void test_no_recipe(void) {
     {
@@ -177,7 +177,7 @@ static void test_sign_chain(void) {
     char err[512], sig[4096];
     /* A third hop signed over two instances and two signatures verifies:
        the signing input takes the existing fields in ascending m= and i=
-       order (-07 §12.8), which the signer once got backwards. */
+       order (-08 §12.8), which the signer once got backwards. */
     {
         char *r1[] = { "<list@lists.example.org>", NULL };
         char *r2[] = { "<b@example.net>", NULL };
@@ -653,7 +653,7 @@ static void add_sig_bad(msg_t *m, int i, int mi_m, unsigned long long t, const c
     add_sig_raw(m, tags, 1, bad);
 }
 
-/* Contract C9: the primary error is the first in -07 §14 section order,
+/* Contract C9: the primary error is the first in -08 §14 section order,
    the lowest i= first within a section. */
 static void test_check_order(void) {
     unsigned long long old = now() - 15 * 86400;

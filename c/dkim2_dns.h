@@ -15,7 +15,7 @@ extern char *(*dkim2_dns_override)(const char *qname, int *n_records);
    feed wire-format RRsets -- several RRs, one RR in several strings. */
 extern int (*dkim2_dns_query_hook)(const char *qname, unsigned char *answer, int anslen);
 
-/* *errp values (-07 §14.5 wording, to follow "public key <selector> ").
+/* *errp values (-08 §14.5 wording, to follow "public key <selector> ").
    The first five mean a record is present but unusable; ABSENT and FETCH
    are lookup outcomes. ("OOM" is the only other value, as TEMPERROR.) */
 extern const char DKIM2_KEYERR_MULTIPLE[];  /* "has multiple records" */

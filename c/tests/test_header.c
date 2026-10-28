@@ -33,7 +33,7 @@ int main(void) {
     assert(strcmp(mi->hsets[1].hdr_hash, "hh2A") == 0);
     dkim2_mi_free(mi);
 
-    /* -07 §9.3: an algorithm MUST NOT be present more than once */
+    /* -08 §9.3: an algorithm MUST NOT be present more than once */
     assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB,sha256:CCCC:DDDD;") == NULL);
     /* ...detected case-insensitively (RFC 5234) */
     assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB,SHA256:CCCC:DDDD;") == NULL);
@@ -67,7 +67,7 @@ int main(void) {
     assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
     dkim2_sig_free(sig);
 
-    /* Folding whitespace inside tag values (-07 §2.12): FWS may appear
+    /* Folding whitespace inside tag values (-08 §2.12): FWS may appear
        inside a base64 string and around the colons of an s= item, and MUST be
        ignored when the value is used.  A fold between the Selector colon and
        the algorithm token used to leave CRLF+TAB glued to the algorithm name. */
@@ -112,7 +112,7 @@ int main(void) {
     dkim2_sig_free(sig);
 
     /* i= must be a positive integer in ASCII digits; anything else is a
-       PERMERROR saying so; a missing required tag is "tag=<y> missing" (-07 §14.2). */
+       PERMERROR saying so; a missing required tag is "tag=<y> missing" (-08 §14.2). */
     {
         static const char *bad_i[] = {
             "m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example",
@@ -257,7 +257,7 @@ int main(void) {
         "s=sel1:rsa-sha256:AAAA");
     assert(sig == NULL);
 
-    /* -07 §10.10: f= flags parsed and round-tripped (incl. feedhere) */
+    /* -08 §10.10: f= flags parsed and round-tripped (incl. feedhere) */
     sig = dkim2_sig_parse(
         "i=1; m=1; t=1; d=ex.example; "
         "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "

@@ -1,5 +1,5 @@
 /* dkim2_domain.c: domain_of, A-labels (RFC 3492), the relaxed domain match
-   (-07 §7.2) and the From mailbox parser used for From Authentic (§11). */
+   (-08 §7.2) and the From mailbox parser used for From Authentic (§11). */
 #include <stdio.h>
 #include <string.h>
 #include "../dkim2_domain.h"

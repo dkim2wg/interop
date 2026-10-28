@@ -1,9 +1,9 @@
 /* Verifier strictness (docs/superpowers/specs/2026-10-09-verifier-strictness-
  * review-fixes.md), end to end through dkim2_verify_message():
- *   A. signature algorithms  (-07 §3.5, §10.9)
- *   B. key-record errors as reported by the verifier (-07 §14.5)
- *   C. Message-Instance tag case and repeats (-07 §9)
- *   D. t= syntax (-07 §10.4, §14.2)
+ *   A. signature algorithms  (-08 §3.5, §10.9)
+ *   B. key-record errors as reported by the verifier (-08 §14.5)
+ *   C. Message-Instance tag case and repeats (-08 §9)
+ *   D. t= syntax (-08 §10.4, §14.2)
  * Key-record parsing itself is covered in test_dns.c.
  */
 #include <stdio.h>
@@ -113,7 +113,7 @@ static char *good_mi(void) {
     return mi;
 }
 
-/* The verifier's -07 §12.8 canonicalization: lowercase name, value with all WSP
+/* The verifier's -08 §12.8 canonicalization: lowercase name, value with all WSP
    removed, CRLF. */
 static void canon_append(char *buf, size_t *pos, const char *name, const char *value) {
     for (const char *h = name; *h; h++) buf[(*pos)++] = (char)tolower((unsigned char)*h);
@@ -621,7 +621,7 @@ static void test_field_syntax(const char *mi) {
 }
 
 /* F.5: the C signer never folds, so a long Domain stays whole; it must sign
-   and verify with mf= (and From, -07 §11) in that domain. */
+   and verify with mf= (and From, -08 §11) in that domain. */
 static const char *LONG_HEADERS[] = {
     "From: sender@" LONG_DOMAIN "\r\n",
     "To: rcpt@example.org\r\n",

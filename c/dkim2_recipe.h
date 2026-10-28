@@ -1,7 +1,7 @@
 #pragma once
 #include <stddef.h>
 
-/* Recipe steps (-07 §5, §5.1, §5.2); each step is an object with exactly
+/* Recipe steps (-08 §5, §5.1, §5.2); each step is an object with exactly
    one key:
      {"c": [start, end]}  copy items start..end (1-based, inclusive); across
                           a list each start MUST exceed the previous end
@@ -19,7 +19,7 @@
    functions emit "d" for every UTF-8 literal and "u" for the rest, and never
    a "c" range that breaks the ascending rule. */
 
-/* cJSON_Parse() of a Recipe, refusing (NULL) one that is not valid -07 §5
+/* cJSON_Parse() of a Recipe, refusing (NULL) one that is not valid -08 §5
    JSON: a key holding an ASCII capital (contract D10), or a key named
    twice in one object, compared exactly after unescaping (cJSON keeps the first of two equal keys and the other implementations'
    parsers the last, so {"b":[...],"b":null} would be a null body Recipe to

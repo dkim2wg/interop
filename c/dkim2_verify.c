@@ -22,7 +22,7 @@
     snprintf(result->message, sizeof result->message, fmt, ##__VA_ARGS__); \
     return; } while(0)
 
-/* -07 §12.8 canonicalization — same as in dkim2_sign.c.
+/* -08 §12.8 canonicalization — same as in dkim2_sign.c.
    Forward-declare to avoid duplicating code; share via static inline or header.
    Here we duplicate for self-containment. */
 static char *canon_for_sig(const char *hdr) {
@@ -65,7 +65,7 @@ static void unbracket(const char *s, char *out, size_t outsz) {
     out[n] = '\0';
 }
 
-/* -07 §14.4 envelope comparison: local-part case-sensitive, domain
+/* -08 §14.4 envelope comparison: local-part case-sensitive, domain
    case-insensitive, angle brackets ignored; two null senders (<>) are equal. */
 static int env_addr_eq(const char *a, const char *b) {
     char ab[512], bb[512];
@@ -83,7 +83,7 @@ static int env_addr_eq(const char *a, const char *b) {
 static int is_null_path(const char *path) { return path && strcmp(path, "<>") == 0; }
 
 /* Some rt= address of p whose (A-label) domain relaxed-matches p2 as
-   Parameter1 (-07 §7.2: a domain literal never matches). */
+   Parameter1 (-08 §7.2: a domain literal never matches). */
 static int rt_matches(const dkim2_sig_t *p, const char *p2) {
     for (int j = 0; p->rt && p->rt[j]; j++) {
         char rd[512];
@@ -103,7 +103,7 @@ static int matches_rt(const char *p1, const dkim2_sig_t *p) {
     return 0;
 }
 
-/* -07 Chain of Custody (§7.1 items 1 and 2, §14.4; contract C4) over the
+/* -08 Chain of Custody (§7.1 items 1 and 2, §14.4; contract C4) over the
    signatures in ascending i= order. 0, or -1 with the error in msg: FAIL
    (-08 §14.4, contract D5), but PERMERROR for a missing mf=.
    Every signature after the first is checked against the one before it:
@@ -115,7 +115,7 @@ static int matches_rt(const char *p1, const dkim2_sig_t *p) {
    mf=/rt= domains are compared as A-labels (§18). */
 static int check_custody(dkim2_sig_t **sig_arr, int n_sigs, char *msg, size_t msgsz);
 
-/* ---- From Authentic (-07 §11, §14.8; contract C5) ---- */
+/* ---- From Authentic (-08 §11, §14.8; contract C5) ---- */
 
 /* The values of a message's From fields, bottom-up (v[0] is the last From
    field, as header Recipes number them). */
@@ -214,7 +214,7 @@ int dkim2_mi_changes_from(const dkim2_mi_t *mi) {
     return rc != 0;     /* a Recipe naming From, or one we cannot read */
 }
 
-/* The pairs of -07 §11 (contract C5 as corrected by Ruling 19): the From in
+/* The pairs of -08 §11 (contract C5 as corrected by Ruling 19): the From in
    effect when each signature was made. State k is the message as it was when
    m=k was the highest instance. The From fields of state m(i=1) are checked
    with i=1, and for each i >= 2 where some instance k with m(i-1) < k <= m(i)
@@ -401,7 +401,7 @@ static unsigned char *build_verify_input(
     size_t *out_len) {
     /* Build signing input for target_sig: include only MI headers with m <=
        target_sig->m, and only DKIM2-Signature headers with i <= target_sig->i.
-       The email stores them newest-first; -07 §12.8 requires ascending order. */
+       The email stores them newest-first; -08 §12.8 requires ascending order. */
     const int MAX = 64;
     dkim2_mi_t *mi_arr[MAX]; int n_mi = 0;
     dkim2_sig_t *sig_arr[MAX]; int n_sig = 0;
@@ -502,8 +502,8 @@ static int undo_walk(
     }
 
     int ret = 0;
-    /* -07 §5.2: a null body Recipe means the previous body cannot be
-       recreated -- but header Recipes are mandatory (-07 §5.1), so the header
+    /* -08 §5.2: a null body Recipe means the previous body cannot be
+       recreated -- but header Recipes are mandatory (-08 §5.1), so the header
        history can still be walked. Once set (sticky), every lower instance
        is checked on its header hashes only and body Recipes are not applied. */
     int body_gone = 0;
@@ -544,7 +544,7 @@ static int undo_walk(
             }
         }
 
-        /* -07 §12.1: even the bottom (m=1) instance MAY carry Recipes
+        /* -08 §12.1: even the bottom (m=1) instance MAY carry Recipes
            ("if it is wished to record any changes made to a message as it
            enters the DKIM2 ecosystem"), so a malformed r= there must be
            reported exactly like on any other instance -- this check is NOT
@@ -560,7 +560,7 @@ static int undo_walk(
             } else {
                 int r_json_len = (int)b64_decode(mi->r_raw, r_json_bytes, decoded_max);
                 if (r_json_len <= 0) {
-                    /* -07 §14.2: a malformed r= base64 payload is a
+                    /* -08 §14.2: a malformed r= base64 payload is a
                        syntax error -- distinct from, and reported before,
                        a post-decode JSON parse failure. This used to
                        silently `continue`, the same silent-drop shape as
@@ -576,7 +576,7 @@ static int undo_walk(
                 r_json_bytes[r_json_len] = '\0';
                 const char *rj = (const char *)r_json_bytes;
 
-                /* -07 §14.2: "errors in a JSON object specifying Recipes
+                /* -08 §14.2: "errors in a JSON object specifying Recipes
                    should be called out specifically". dkim2_apply_body_recipe()
                    and dkim2_apply_header_recipe() both return NULL on a
                    cJSON_Parse() failure with no way to distinguish that from
@@ -587,7 +587,7 @@ static int undo_walk(
                    JSON directly here, before either apply_*_recipe() call, so
                    that failure is reported specifically instead of vanishing. */
                 /* dkim2_recipe_parse(): a duplicate key (ignoring case) and
-                   anything the -07 §5 schema forbids are invalid JSON too. */
+                   anything the -08 §5 schema forbids are invalid JSON too. */
                 cJSON *probe = dkim2_recipe_parse(rj);
                 if (!probe) {
                     free(r_json_bytes);
@@ -610,9 +610,10 @@ static int undo_walk(
                     /* The JSON parsed and met the schema above, so a NULL
                        from either apply_* call now means the Recipe does not
                        fit the message (a copy past the last line or field).
-                       That is "contains invalid JSON" too (every Recipe error
-                       is, by the -07 ruling), not a fall-through to a hash
-                       mismatch on the un-undone content. */
+                       That is "contains invalid JSON" too (contract D6:
+                       only a step the schema rejects is "Recipe <path> is
+                       invalid"), not a fall-through to a hash mismatch on
+                       the un-undone content. */
                     if (null_body) {
                         /* Previous body is unrecoverable: stop checking
                            bodies from here down (headers still checked). */
@@ -675,7 +676,7 @@ done:
     return ret;
 }
 
-/* -07 §14.2 structure, contract C9 steps a..h: what the field names and
+/* -08 §14.2 structure, contract C9 steps a..h: what the field names and
    their m=/i= numbers alone decide, the first that applies being primary.
    0, or -1 with the PERMERROR in msg. */
 static int structure_error(const dkim2_ctx_t *ctx, int outbound, char *msg, size_t msgsz) {
@@ -772,7 +773,7 @@ static const dkim2_badfield_t *bad_field(const dkim2_ctx_t *ctx, int is_sig, int
     return NULL;
 }
 
-/* -07 §14.2 Message-Instance content, by ascending m= (after the structure
+/* -08 §14.2 Message-Instance content, by ascending m= (after the structure
    checks: m= is 1..N, each once): a field that did not parse reports its
    own error; otherwise its r= on its own, whether or not the chain walk
    reaches it -- base64 that does not decode is a syntax error, a document
@@ -862,7 +863,7 @@ int dkim2_undo_walk_trace(dkim2_mi_t **mi_arr, int n_mi, char **hdrs, int n_hdrs
                      errbuf, errbufsz, trace);
 }
 
-/* -07 §14.7 over ctx->mi_list, sorted by m=. The planned walk (dkim2_plan.c) by
+/* -08 §14.7 over ctx->mi_list, sorted by m=. The planned walk (dkim2_plan.c) by
    default: on the plan the caller fed (ctx->plan, e.g. the milter's
    streamed body), else on one made here from ctx->body. The undo walk when
    asked (ctx->undo_walk), when there are no body bytes at all (digest-only
@@ -1042,7 +1043,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
             SETSTATUS(rbuf[0] == 'T' ? DKIM2_TEMPERROR : DKIM2_PERMERROR, "%s", rbuf);
     }
 
-    /* -07 §14.7: every Message-Instance's hashes, undoing Recipes for the
+    /* -08 §14.7: every Message-Instance's hashes, undoing Recipes for the
        inner ones. A walk that fails is the primary error, whatever is
        wrong with the signatures. */
     if (ctx->mi_list) {
@@ -1070,7 +1071,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         return;
     }
 
-    /* -07 §14.3: not Validly Signed when made more than 14 days before
+    /* -08 §14.3: not Fully Verified when made more than 14 days before
        delivery (now), or from more than one day ahead of it. */
     if (!ctx->skip_timestamp_check) {
         uint64_t now = (uint64_t)time(NULL);
@@ -1085,7 +1086,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         }
     }
 
-    /* -07 §14.4: an nd= on the topmost (highest i=) DKIM2-Signature names a
+    /* -08 §14.4: an nd= on the topmost (highest i=) DKIM2-Signature names a
        next signature that is not there ("unexpected nd= tag"). Non-top nd=
        adjacency is checked with the Chain of Custody below. In outbound
        (signer gate) mode the signer has already required nd= to name its own
@@ -1094,7 +1095,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     if (!ctx->outbound && latest->nd && latest->nd[0])
         SETSTATUS(DKIM2_FAIL, "FAIL: DKIM2-Signature i=%d unexpected nd= tag", latest->i);
 
-    /* -07 §14.4: Envelope MAIL FROM must match top sig's mf= (domain
+    /* -08 §14.4: Envelope MAIL FROM must match top sig's mf= (domain
        case-insensitive, local-part case-sensitive, null sender aware). */
     if (!ctx->outbound && ctx->mail_from && latest->mf) {
         if (!env_addr_eq(ctx->mail_from, latest->mf))
@@ -1103,7 +1104,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
                 latest->i, ctx->mail_from);
     }
 
-    /* RCPT TO: every envelope recipient must appear in rt= (-07 §14.4: domains
+    /* RCPT TO: every envelope recipient must appear in rt= (-08 §14.4: domains
        match case-insensitively). */
     if (!ctx->outbound && ctx->rcpt_to && latest->rt) {
         for (int i = 0; ctx->rcpt_to[i]; i++) {
@@ -1117,7 +1118,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
         }
     }
 
-    /* -07 §14.4: the Chain of Custody, from the tags alone (before any DNS
+    /* -08 §14.4: the Chain of Custody, from the tags alone (before any DNS
        or crypto work). */
     {
         char cmsg[256];
@@ -1143,7 +1144,7 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result) {
     result->sig_i = latest->i;
     snprintf(result->domain, sizeof result->domain, "%s", latest->d ? latest->d : "");
 
-    /* -07 §14.8: every From the Recipes show, and the current one, is
+    /* -08 §14.8: every From the Recipes show, and the current one, is
        Authentic for its relevant signature. */
     {
         char fmsg[256];

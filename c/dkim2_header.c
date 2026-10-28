@@ -149,7 +149,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
         /* Malloc failure or syntax error inside tagparse() itself -- no
            tag, including m=, was ever read, so the instance number is
            genuinely unknowable. This is the surviving sibling of the
-           silent-drop bug already fixed for the -07 §9.3 duplicate-hash (-2)
+           silent-drop bug already fixed for the -08 §9.3 duplicate-hash (-2)
            case: before this, a -1 failure here vanished with no error at
            all. Report the same generic wording used below for the other
            unattributable case, without an m=N -- there is nothing more
@@ -212,7 +212,7 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
         if (hr < 0) {
             /* -1: either a malformed hash-set entry or a malloc/strdup
                failure inside parse_hsets(). Both are folded into the same
-               "syntax error" wording (the -07 §14.2 precedent used for a bad
+               "syntax error" wording (the -08 §14.2 precedent used for a bad
                r= payload elsewhere in this file/dkim2_verify.c) -- a
                permanent parse failure isn't usefully distinguished from an
                allocation failure to the remote party either way, and this
@@ -277,7 +277,7 @@ static char **parse_rt(const char *rt_val, int *n_out) {
     return out;
 }
 
-/* Parse f= value: comma-separated plain flag tokens (-07 §10.10).
+/* Parse f= value: comma-separated plain flag tokens (-08 §10.10).
    Flags are an open list; tokens are stored verbatim with WSP trimmed. */
 static char **parse_flags(const char *f_val, int *n_out) {
     int cnt = 1;
@@ -374,7 +374,7 @@ static int valid_i(const char *v) {
     return nonzero;
 }
 
-/* -07 §10.4: t= is 1*DIGIT (the value's surrounding WSP is already
+/* -08 §10.4: t= is 1*DIGIT (the value's surrounding WSP is already
    trimmed by tagparse()). Values beyond 2^64-1 saturate rather than wrap --
    they are far in the future either way. Returns 0, or -1 if not digits. */
 static int parse_t(const char *v, uint64_t *out) {
@@ -400,7 +400,7 @@ static int s_list_error(const char *v) {
 }
 
 /* An mf= or rt= value: comma-separated base64 items, each decoding to a
-   bracketed RFC 5321 path (-07 §10.5/§10.6: "The angle brackets MUST be
+   bracketed RFC 5321 path (-08 §10.5/§10.6: "The angle brackets MUST be
    included"). */
 static int paths_ok(const char *v) {
     char *copy = strdup(v), *save = NULL;
@@ -416,7 +416,7 @@ static int paths_ok(const char *v) {
     return ok && any;
 }
 
-/* -07 §14.2: a required tag that is absent ("tag=<y> missing"), or mf=/rt=
+/* -08 §14.2: a required tag that is absent ("tag=<y> missing"), or mf=/rt=
    together with nd= ("tag=<y> was unexpected", §10.7). 1 with errbuf set,
    or 0. */
 static int missing_tag(const taglist_t *tl, char *errbuf, size_t errbufsz, int i) {
@@ -479,7 +479,7 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
 dkim2_sig_t *dkim2_sig_parse(const char *value) {
     taglist_t *tl = tagparse(value, NULL);
     if (!tl) return NULL;
-    /* -07 §8: "Tags with duplicate names MUST NOT occur". */
+    /* -08 §8: "Tags with duplicate names MUST NOT occur". */
     if (tl->duplicate || tl->syntax_error) { taglist_free(tl); return NULL; }
     dkim2_sig_t *sig = calloc(1, sizeof *sig);
     if (!sig) { taglist_free(tl); return NULL; }
@@ -490,7 +490,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
     REQ("m"); if (dkim2_chain_number_error("DKIM2-Signature", "m", v, NULL, NULL, 0)) goto err; sig->m = atoi(v);
     REQ("t"); if (parse_t(v, &sig->t) < 0) goto err;
     REQ("d"); sig->d = strdup(v);
-    /* -07 §10.7: either nd= or both mf=+rt=, never both forms. */
+    /* -08 §10.7: either nd= or both mf=+rt=, never both forms. */
     {   const char *nd = tag_get(tl, "nd");
         const char *mf = tag_get(tl, "mf");
         const char *rt = tag_get(tl, "rt");
@@ -513,7 +513,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
 #undef REQ
     v = tag_get(tl, "n");
     if (v) {
-        if (strlen(v) > 64) goto err;  /* -07 §10.3: n= must not exceed 64 chars */
+        if (strlen(v) > 64) goto err;  /* -08 §10.3: n= must not exceed 64 chars */
         sig->n = strdup(v);
     }
     v = tag_get(tl, "f");
@@ -609,7 +609,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
     sb_printf(&b, "i=%d; m=%d; t=%llu; d=%s",
         sig->i, sig->m, (unsigned long long)sig->t, sig->d);
     if (sig->nd) {
-        /* -07 §12.3: imaginary hop carries nd= instead of mf=/rt= */
+        /* -08 §12.3: imaginary hop carries nd= instead of mf=/rt= */
         sb_printf(&b, "; nd=%s", sig->nd);
     } else {
         sb_printf(&b, "; mf=");
@@ -629,7 +629,7 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig) {
             empty_sig ? "" : (sig->ssets[i].sig_b64 ? sig->ssets[i].sig_b64 : ""));
     if (sig->n)
         sb_printf(&b, "; n=%s", sig->n);
-    /* f= flags (-07 §10.10), e.g. feedback, feedhere — preserved verbatim */
+    /* f= flags (-08 §10.10), e.g. feedback, feedhere — preserved verbatim */
     if (sig->flags && sig->flags[0]) {
         sb_printf(&b, "; f=");
         for (int i = 0; sig->flags[i]; i++)

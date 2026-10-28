@@ -15,7 +15,7 @@
 /* 0 when v is a chain number, or NULL (an absent tag is left to the
    callers). Otherwise non-zero, with the PERMERROR written to errbuf, the
    field named by its own number as written (ident: a DKIM2-Signature's i=,
-   a Message-Instance's m=; NULL means v), -07 C6 forms:
+   a Message-Instance's m=; NULL means v), contract C6 forms:
    not 1*DIGIT in ASCII, or zero: "PERMERROR: <field> i=<ident> syntax
    error" (m= for a Message-Instance); more than three digits or above
    DKIM2_MAX_CHAIN_NUMBER: "PERMERROR: DKIM2-Signature i=<ident>[ m=<v>]
@@ -32,7 +32,7 @@ int dkim2_chain_number_error(const char *field, const char *tag, const char *v,
 dkim2_mi_t *dkim2_mi_parse(const char *value);
 
 /* Same as dkim2_mi_parse, but on failure (NULL) writes a specific,
-   reportable reason to errbuf when one applies (currently: -07 §9.3
+   reportable reason to errbuf when one applies (currently: -08 §9.3
    duplicate hash algorithm in h=, formatted as the full PERMERROR string).
    errbuf is left as an empty string for any other failure (malloc/syntax) --
    those remain indistinguishable from "no Message-Instance present" to the
@@ -54,13 +54,13 @@ dkim2_sig_t *dkim2_sig_parse(const char *value);
    "PERMERROR: DKIM2-Signature i=<as written> syntax error" when it is not a
    positive integer; the dkim2_chain_number_error() text
    when i= or m= is not a chain number; "PERMERROR DKIM2-Signature i=<x>
-   syntax error" when t= is not 1*DIGIT (-07 §10.4); else "PERMERROR
+   syntax error" when t= is not 1*DIGIT (-08 §10.4); else "PERMERROR
    DKIM2-Signature is malformed". */
 dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufsz);
 void dkim2_sig_free(dkim2_sig_t *sig);
 
 /* Format a DKIM2-Signature header value.
-   If empty_sig is non-zero, s= signature values are set to "" (for the -07 §12.8 signing input).
+   If empty_sig is non-zero, s= signature values are set to "" (for the -08 §12.8 signing input).
    Caller frees. */
 char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig);
 

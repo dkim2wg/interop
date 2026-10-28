@@ -3,7 +3,7 @@
    functions below record what the milter asks for):
      - verify mode: no DKIM2 fields is A-R dkim2=none and accepted; a
        PERMERROR/FAIL is rejected 550 5.7.1 and a TEMPERROR 451 4.7.5, with
-       the -07 string as the reply text;
+       the -08 string as the reply text;
      - sign mode: a signer refusal is rejected 550 5.7.1 with the reason
        (it used to be accepted unsigned); X-DKIM2-Exploded asks for
        f=exploded, is left out of the signed header fields and deleted;
@@ -258,7 +258,7 @@ int main(void) {
         CHECK(c.n_chg == 1 && strcmp(c.chg[0], "Message-Instance[1]=(delete)") == 0);
 
         /* libmilter refusing a change: an unsigned Message-Instance that
-           cannot be removed must not go out (-07 §13), so tempfail */
+           cannot be removed must not go out (-08 §13), so tempfail */
         g_n_log = 0;
         g_fail_header = "Message-Instance";
         CHECK(run(&c, "<a@example.net>", one, mi_only, body) == SMFIS_TEMPFAIL);
@@ -294,7 +294,7 @@ int main(void) {
         set_mode('s', "example.net");
     }
 
-    /* verify: a PERMERROR is 550 5.7.1 with the -07 string */
+    /* verify: a PERMERROR is 550 5.7.1 with the -08 string */
     set_mode('v', NULL);
     hdr_t unsigned_mi[] = { { "Message-Instance", mi1 }, { "From", "a@example.com" },
                             { "To", "list@lists.example.org" }, { "Subject", "hi" }, { NULL, NULL } };

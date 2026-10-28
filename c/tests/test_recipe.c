@@ -7,7 +7,7 @@
 int main(void) {
     size_t out_len;
 
-    /* -07 §5 schema: "c" items are integers >= 1. A copy range given as
+    /* -08 §5 schema: "c" items are integers >= 1. A copy range given as
        JSON strings -- {"c":["1","1"]}, which one list manager emitted -- or
        with a zero/negative/non-integer bound is a malformed Recipe and must be
        rejected, not applied. cJSON reports valueint 0 for a string, so the
@@ -56,7 +56,7 @@ int main(void) {
     assert(memcmp(result, body, out_len) == 0);
     free(result);
 
-    /* Body Recipe: -07 §5 requires "h" or "b", so {} is not a Recipe */
+    /* Body Recipe: -08 §5 requires "h" or "b", so {} is not a Recipe */
     const char *r4 = "{}";
     result = dkim2_apply_body_recipe(r4, body, strlen(body), &out_len);
     assert(result == NULL);
@@ -157,7 +157,7 @@ int main(void) {
     for (int i = 0; i < n_multi; i++) free(red[i]);
     free(red);
 
-    /* ---- "c" range ordering (-07 §5.1, extended to body lists) and
+    /* ---- "c" range ordering (-08 §5.1, extended to body lists) and
        end-of-list bounds. Each start must exceed the previous end; an end
        past the last item is a rejection, not a clamp. ---- */
     {
@@ -243,7 +243,7 @@ int main(void) {
         assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"u\":[\"YQpi\"]}]}}", hdrs1, 1, &n_out) == NULL);
         assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":[{\"u\":[\"!!\"]}]}}", hdrs1, 1, &n_out) == NULL);
 
-        /* -07 §5: zero pad bits ("QR==", "QUJ=" are not canonical) */
+        /* -08 §5: zero pad bits ("QR==", "QUJ=" are not canonical) */
         assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QR==\"]}]}", b3, strlen(b3), &n) == NULL);
         assert(dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QUJ=\"]}]}", b3, strlen(b3), &n) == NULL);
         r = dkim2_apply_body_recipe("{\"b\":[{\"u\":[\"QQ==\",\"QUI=\"]}]}", b3, strlen(b3), &n);

@@ -7,18 +7,18 @@ typedef struct {
     char *privkey_path;     /* path to PEM private key file */
     char *alg;              /* "rsa-sha256" or "ed25519-sha256"; NULL = auto-detect from key */
     uint64_t timestamp;     /* t= unix timestamp; 0 = use current time */
-    const char *hash;       /* -07 §3.1: "sha256" (default when NULL), "sha512", or "both" */
+    const char *hash;       /* -08 §3.1: "sha256" (default when NULL), "sha512", or "both" */
     /* Signer gate: before extending an existing DKIM2 chain, dkim2_do_sign
        verifies it (outbound mode: the unsigned top Message-Instance is the one
        being signed) and refuses on any failure. An UNSIGNED
        Message-Instance (m= above every valid DKIM2-Signature's m=, the top
        or one under another unsigned instance) whose body Recipe is null
-       ("b": null, -07 §5.2) is refused too unless this is set; a null
+       ("b": null, -08 §5.2) is refused too unless this is set; a null
        an upstream signature already covers signs without it.
        Default off. A refusal returns -1 with ctx->errmsg starting
        "not signing: ". */
     int allow_null_body_recipe;
-    /* -07 §12.5: this hop sends copies to more than one address. Adds
+    /* -08 §12.5: this hop sends copies to more than one address. Adds
        "exploded" to f= when i > 1 (also added, requested or not, when rt=
        holds more than one address); ignored at i = 1. */
     int exploded;
