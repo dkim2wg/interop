@@ -14,7 +14,7 @@ from dkim2sign import (  # noqa: E402
 
 def _mi_with_r(raw_json: bytes) -> str:
     r = base64.b64encode(raw_json).decode()
-    return f"Message-Instance: m=2; h=sha256:AAA:BBB; r={r};"
+    return f"Message-Instance: m=2; h=sha256:AAAA:BBBB; r={r};"
 
 
 def test_malformed_recipe_json_is_reported_specifically():
@@ -54,7 +54,7 @@ def test_bad_base64_recipe_is_syntax_error_not_invalid_json():
     # DIFFERENT errors and must stay distinct. "!!!!" is not valid base64
     # (never even reaches JSON parsing), so this must be the "syntax error"
     # PERMERROR, never mislabelled as "contains invalid JSON".
-    mi_hdr = "Message-Instance: m=2; h=sha256:AAA:BBB; r=!!!!;"
+    mi_hdr = "Message-Instance: m=2; h=sha256:AAAA:BBBB; r=!!!!;"
     errs = verify_message_instance(mi_hdr, [b"From: a@b\r\n"], b"x\r\n")
     assert "PERMERROR: Message-Instance m=2 syntax error" in errs, errs
     assert not any("invalid JSON" in e for e in errs), errs

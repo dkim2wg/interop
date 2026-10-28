@@ -724,11 +724,6 @@ sub _check_sig_field {
             unless $present;
     }
 
-    # -08 section 10.9: reject a duplicate Selector within this signature's
-    # s= tag, in any group -- before any DNS lookup or crypto work.
-    if (my @dup_errors = $signature->check_duplicates) {
-        return $self->_outcome($dup_errors[0]);
-    }
 
     # -08 section 10: a signature carries either nd= or both mf= and rt=,
     # never both forms. nd= together with mf= or rt= makes the mf= (or rt=)
@@ -778,6 +773,12 @@ sub _check_sig_field {
     for my $idx (0 .. $signature->sig_count - 1) {
         return $self->_error(permerror => "DKIM2-Signature i=$i syntax error")
             unless Mail::DKIM2::Common::_is_base64string($signature->signature_value($idx) // '');
+    }
+    # -08 section 10.9: a duplicate Selector within this signature's s=
+    # tag, in any group -- after the values' syntax, before the item limit
+    # (contract D2/D3), and before any DNS lookup or crypto work.
+    if (my @dup_errors = $signature->check_duplicates) {
+        return $self->_outcome($dup_errors[0]);
     }
     # Local policy (MAX_SIGNATURE_ITEMS): before any key is fetched.
     return $self->_error(permerror => "DKIM2-Signature i=$i has more than "

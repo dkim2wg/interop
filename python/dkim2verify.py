@@ -645,8 +645,8 @@ def _mi_content_error(mi_hdr: str) -> str | None:
     """Contract C9 §14.2 content: the first thing wrong with one
     Message-Instance on its own, or None.  In order: its tag-list syntax
     (-08 §8, §9.3: whole-field syntax, a tag given twice in any case),
-    missing tags, a duplicate hash algorithm, no implemented algorithm, its
-    Recipe, then the hash values' base64.
+    missing tags, the hash values' base64, a duplicate hash algorithm, then
+    its Recipe.
     Checked for every instance, whether or not the chain walk reaches it."""
     value = _get_header_value(mi_hdr)
     m_val = _extract_tag(value, "m")
@@ -660,6 +660,11 @@ def _mi_content_error(mi_hdr: str) -> str | None:
         return f"PERMERROR: Message-Instance m={m_val} tag=h missing"
     sets = parse_hash_sets(h_tag)
     if not sets:
+        return syntax
+    # Every hash-set's values are padded base64, whatever its algorithm
+    # (§2.14, contract D3): syntax, before a duplicate or the Recipe (D2).
+    if any(_b64decode_strict(h) is None or _b64decode_strict(b) is None
+           for alg, h, b in sets):
         return syntax
     # -08 §9.3: an algorithm MUST NOT be present more than once, anywhere
     # in the tag (contract D2).  An algorithm we have not implemented is
@@ -676,12 +681,6 @@ def _mi_content_error(mi_hdr: str) -> str | None:
     if errors:
         return errors[0]
 
-    # §14.2: verifiers MUST meticulously validate format and values: every
-    # hash-set's values are padded base64, whatever its algorithm (§2.14,
-    # contract D3).
-    if any(_b64decode_strict(h) is None or _b64decode_strict(b) is None
-           for alg, h, b in sets):
-        return syntax
     return None
 
 

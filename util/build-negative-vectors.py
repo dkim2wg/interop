@@ -21,6 +21,12 @@ Usage: python3 util/build-negative-vectors.py <output-dir>
 Writes:
   dup-hash-algorithm.eml           -- h= repeats an algorithm (sha256 twice)
   dup-selector.eml                 -- s= repeats a Selector (sel1 twice)
+  order-sig-syntax-before-duplicate.eml  -- s= duplicate selector + a non-base64
+                                     value: syntax first (D2/D3 order)
+  order-hash-syntax-before-duplicate.eml -- h= duplicate sha256 + unpadded hash:
+                                     syntax first
+  order-duplicate-before-limit.eml -- 9 s= items, sel1 twice: duplicate before
+                                     the limit
   too-many-signatures.eml          -- s= has 9 items (-08 local limit of 8;
                                          contract D3)
   too-many-instance-fields.eml     -- 33 Message-Instance (and 33 DKIM2-Signature)
@@ -1709,6 +1715,24 @@ def build_hash_set_order():
     return _hash_layout_message("sha512:BAD:B,sha256:H:BAD")
 
 
+def build_order_sig_syntax_before_duplicate():
+    """D2/D3 within-field order: s= repeats sel1, and its second item's
+    value is not base64.  The value's syntax comes first: "syntax error"."""
+    return _layout_message(f"{S1}|sel1:rsa-sha256:@@@@")
+
+
+def build_order_hash_syntax_before_duplicate():
+    """D2 within-field order: h= repeats sha256, and the repeat's header
+    hash is unpadded base64.  The syntax comes first: "syntax error"."""
+    return _hash_layout_message("sha256:H:B,sha256:AAA:AAAA")
+
+
+def build_order_duplicate_before_limit():
+    """D3 within-field order: 9 items (over the limit of 8) with sel1 twice.
+    The duplicate comes before the limit: "has a duplicate selector"."""
+    return _layout_message(SIX + "|a:x-alg:AAAA,b:x-alg:AAAA,sel1:x-alg:AAAA")
+
+
 def build_key_ed25519_spki():
     """D7: selector ed25519spki publishes test1's Ed25519 key as a DER
     SubjectPublicKeyInfo (44 octets), not the raw 32 octets -08 §3.3/§14.5
@@ -1824,6 +1848,9 @@ FIXTURES = {
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
     "too-many-signatures.eml": build_too_many,
+    "order-sig-syntax-before-duplicate.eml": build_order_sig_syntax_before_duplicate,
+    "order-hash-syntax-before-duplicate.eml": build_order_hash_syntax_before_duplicate,
+    "order-duplicate-before-limit.eml": build_order_duplicate_before_limit,
     "positive-control-eight-signatures.eml": build_positive_eight_signatures,
     "positive-control-three-same-algorithm.eml": build_positive_three_same_algorithm,
     "malformed-json-r.eml": build_malformed_json,

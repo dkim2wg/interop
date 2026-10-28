@@ -624,3 +624,16 @@ def test_d11_propagated_dsn_d_must_match_top_rt():
     dkim2dsn.propagate(dsn, forwarder_domain="example.org",
                        keyfile=E.keyfile("lists.example.org"), selector="sel",
                        domain="lists.example.org", skip_authentication=True)
+
+
+def test_d2_hash_value_syntax_before_duplicate_and_recipe():
+    """Within one field: every hash value's syntax (padded base64) first,
+    then a duplicate algorithm, then the Recipe (contract D2/D3)."""
+    from dkim2verify import _mi_content_error
+    good = "sha256:" + "A" * 43 + "=:" + "B" * 43 + "="
+    dup_unpadded = f"Message-Instance: m=1; h={good},sha256:AAA:AAAA;"
+    assert _mi_content_error(dup_unpadded) == \
+        "PERMERROR: Message-Instance m=1 syntax error"
+    bad_recipe = f"Message-Instance: m=2; h=sha256:AAA:AAAA; r=e30=;"
+    assert _mi_content_error(bad_recipe) == \
+        "PERMERROR: Message-Instance m=2 syntax error"

@@ -51,7 +51,7 @@ def test_unknown_algorithm_alone_fails_closed(monkeypatch):
 
 
 def test_duplicate_algorithm_is_permerror():
-    errs = verify_message_instance(_mi("sha256:AAA:BBB,sha256:CCC:DDD"),
+    errs = verify_message_instance(_mi("sha256:AAAA:BBBB,sha256:CCCC:DDDD"),
                                    [b"From: a@b\r\n"], b"x\r\n")
     assert any("has a duplicate hash algorithm" in e for e in errs)
 

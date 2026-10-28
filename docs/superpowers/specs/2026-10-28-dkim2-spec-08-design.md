@@ -63,6 +63,11 @@ Each sig-set in `s=` order gives one intermediate result:
 - Every item's value must be a non-empty base64string, whatever its
   algorithm, or the result is "syntax error". The same goes for both
   hashes of every hash-set in `h=`.
+- **Order within one field** (found by the JS port, 2026-10-28): first the
+  syntax error (every value is padded base64), then the duplicate
+  (selector or hash algorithm), then the 8-item limit. A Message-Instance's
+  hash values are checked before its Recipe. Pinned by the `order-*`
+  vectors.
 - sig-all: all PASS gives PASS. Otherwise, if every non-PASS is TEMPERROR, the
   result is TEMPERROR. Otherwise any FAIL gives FAIL. Otherwise PERMERROR.
 - sig-any: any PASS gives PASS. Otherwise any TEMPERROR gives TEMPERROR.
