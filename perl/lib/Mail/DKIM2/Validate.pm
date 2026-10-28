@@ -187,6 +187,11 @@ sub _report_once {
     my $ov = $v->result // 'fail';
     $res{summary} = $v->result_detail // '';
     $res{overall} = $ov eq 'pass' ? 'pass' : ($ov eq 'none' ? 'none' : 'fail');
+    # -08 section 13 (contract D9): a pass over a null body Recipe is not a
+    # Fully Verified DKIM2 Message -- the body below it went unchecked.
+    $res{fully_verified} = $v->fully_verified;
+    $res{summary} .= '; not fully verified: a null body Recipe hides the body below it'
+        if $ov eq 'pass' && !$res{fully_verified};
 
     my %sig_by_i = map { _i($_) => $_ } @sig_hdrs;
 
@@ -451,6 +456,7 @@ Mail::DKIM2::Validate - structured per-level DKIM2 and Message-Instance report
         SkipTimestampCheck => 1,
     );
     # $report->{overall}, $report->{summary}, $report->{counts},
+    # $report->{fully_verified} (-08 section 13: false over a null body Recipe),
     # $report->{levels}: one hashref per DKIM2-Signature and Message-Instance
 
 =head1 DESCRIPTION

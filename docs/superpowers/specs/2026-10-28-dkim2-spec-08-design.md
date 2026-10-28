@@ -176,7 +176,9 @@ it. Revisit once DKIMKEYS defines its key type.
   - Go: `FullyVerified bool`;
   - C: `fully_verified`;
   - JS: `fullyVerified`.
-  It's false only for this reason; any other problem is already an error.
+  It's also false for any non-pass result, and for a verification that
+  skipped body hashes on purpose (Perl's HeadersOnly/InstancesOnly modes).
+  Any other problem is already an error.
 - Gaps or duplicates in m= or i= are errors already, as today.
 - The browser verifier page and the validator display it.
 - Not in A-R for now.

@@ -579,7 +579,7 @@ sub _verify_mi_chain {
         # history: from here down, undo header Recipes only and check each
         # instance's header hashes, down to m=1.
         my $mi_obj = Mail::DKIM2::MessageInstance->parse($by_v{$num});
-        $headers_only = 1 if $mi_obj->unrecoverable;
+        $headers_only = $self->{_body_unchecked} = 1 if $mi_obj->unrecoverable;
 
         my $prev = eval {
             if ($plan && (my $e = $plan->recipe_error($num))) {
@@ -623,7 +623,7 @@ sub _verify_mi_chain_planned {
 
         last if $num <= 1;
 
-        $headers_only = 1 if $mi->unrecoverable;
+        $headers_only = $self->{_body_unchecked} = 1 if $mi->unrecoverable;
         if (my $e = $plan->recipe_error($num) // $hplan->recipe_error($num)) {
             return $self->_mi_undo_failed($num, $e);
         }
@@ -1164,6 +1164,15 @@ sub details {
 # instance are checked on their own, whatever went wrong lower down. A top
 # signature with nd=, or one that does not cover the top instance, is not.
 # The verdict (result, details, diagnostic) is left as it was.
+# -08 section 13 (contract D9): a pass for which every instance's hashes
+# were checked -- not one below a null body Recipe, whose instances' body
+# hashes cannot be, nor a HeadersOnly or InstancesOnly verification.
+sub fully_verified {
+    my ($self) = @_;
+    return ($self->{result} // '') eq 'pass' && !$self->{_body_unchecked}
+        && !$self->{HeadersOnly} && !$self->{InstancesOnly} ? 1 : 0;
+}
+
 sub provisionally_verified {
     my ($self) = @_;
     return $self->{_provisional} //= $self->_provisionally_verified ? 1 : 0;
@@ -1445,6 +1454,15 @@ More about the reason, for a log, when there is more; undef otherwise:
 the resolver's error behind C<TEMPERROR: ... could not be fetched>, the
 copy range behind a Recipe that does not undo. Never part of C<details>.
 New in 0.23 (0.22 appended the resolver's error to the key-fetch reason).
+
+=head2 fully_verified()
+
+After C<CLOSE>: true when the result is C<pass> and every Message-Instance's
+hashes were checked (-08 section 13): the message is a Fully Verified DKIM2
+Message. False for any other result; for a pass whose chain has a null body
+Recipe, below which the body hashes cannot be checked (that pass is for
+local policy to weigh); and for a C<HeadersOnly> or C<InstancesOnly>
+verification. New in 0.28.
 
 =head2 provisionally_verified()
 

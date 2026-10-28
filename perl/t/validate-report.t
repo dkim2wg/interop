@@ -83,6 +83,7 @@ my %ropt = (PubkeyCallback=>$cb, SkipTimestampCheck=>1);
     my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'body', message=>$in);
     my $rep = Mail::DKIM2::Validate::report($r2->{message}, %ropt);
     is($rep->{overall}, 'pass', 'valid chain overall pass');
+    ok($rep->{fully_verified}, 'valid chain fully verified');
     is($rep->{counts}{signatures}, 2, 'two signatures');
     my @sig = grep { $_->{kind} eq 'signature' } @{$rep->{levels}};
     my @mi  = grep { $_->{kind} eq 'mi' } @{$rep->{levels}};
