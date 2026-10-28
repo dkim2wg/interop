@@ -162,8 +162,9 @@ export const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3
 
 // §9.3 (-08): h= is hash-any = hash-all *("|" hash-all), hash-all =
 // hash-set *("," hash-set). Returns the hash-sets in h= order, each with
-// the index of its "|" group. Hash names are lowercased — RFC 5234 makes
-// ABNF quoted strings case-insensitive. h is the RAW value (FWS intact):
+// the index of its "|" group. Hash names are kept as written: the ABNF
+// gives them as %s"sha256" / %s"sha512", case sensitive (RFC 7405), so
+// "SHA256" is an unknown algorithm. h is the RAW value (FWS intact):
 // FWS is allowed around "|" and "," and the hash name and colons, and
 // inside the digests (removed), never inside the hash name. A set that is
 // not exactly name:digest:digest, with both digests base64strings (contract
@@ -179,7 +180,7 @@ export function parseHashSets(h) {
       const headerHash = parts[1].replace(/[ \t\r\n]+/g, '');
       const bodyHash = parts[2].replace(/[ \t\r\n]+/g, '');
       if (!/^[A-Za-z0-9_-]+$/.test(alg) || !BASE64.test(headerHash) || !BASE64.test(bodyHash)) throw new Error('h-syntax');
-      out.push({ alg: alg.toLowerCase(), headerHash, bodyHash, group: g });
+      out.push({ alg, headerHash, bodyHash, group: g });
     }
   });
   return out;

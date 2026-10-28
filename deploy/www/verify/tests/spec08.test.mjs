@@ -199,6 +199,7 @@ for (const [what, layout, state, text] of [
   ['a bad sha512 header "," a bad sha256 body: h= order', (h) => `${h.bad512('h')},${h.bad256('b')}`, 'fail', 'FAIL: Message-Instance m=1 header hash sha512 mismatch'],
   ['a bad sha256 body "," a bad sha512 header: h= order', (h) => `${h.bad256('b')},${h.bad512('h')}`, 'fail', 'FAIL: Message-Instance m=1 body hash sha256 mismatch'],
   ['two unknown groups', () => `${X_HASH}|y-hash:AAAA:AAAA`, 'permerror', 'PERMERROR: Message-Instance m=1 algorithm x-hash unknown'],
+  ['SHA256 (hash names are case sensitive, §9.3 %s)', (h) => h.s256.replace('sha256', 'SHA256'), 'permerror', 'PERMERROR: Message-Instance m=1 algorithm SHA256 unknown'],
 ]) {
   test(`D4: h= ${what}`, async () => assertPrimary(await verify(await hLayout(layout)), state, text));
 }

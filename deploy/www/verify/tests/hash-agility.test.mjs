@@ -23,8 +23,10 @@ test('-08 §9.3: "|" separates groups of "," lists, FWS either side', () => {
   }
 });
 
-test('hash-name matching is case-insensitive (RFC 5234)', () => {
-  assert.equal(parseHashSets('SHA512:AAAA:BBBB')[0].alg, 'sha512');
+// §9.3: hash-name = %s"sha256" / %s"sha512" / x-hash-name -- case
+// sensitive (RFC 7405), so "SHA512" is some other, unknown, algorithm.
+test('hash names are kept as written', () => {
+  assert.equal(parseHashSets('SHA512:AAAA:BBBB')[0].alg, 'SHA512');
 });
 
 test('sha512 digest is 64 bytes (88 base64 chars)', async () => {
