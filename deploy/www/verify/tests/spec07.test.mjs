@@ -1,5 +1,5 @@
-// draft-ietf-dkim-dkim2-spec-07: the verifier-side shared behaviour tests
-// (U3-U5, K1-K2, F1, C1-C6, A1, A2, A4, T1) and the Review Focus extras,
+// The -07 contract (C1-C9) verifier-side shared behaviour tests, as -08 amends
+// them (spec08.test.mjs has the rest): U3-U5, K1-K2, F1, C1-C6, A1, A2, A4, T1 and the Review Focus extras,
 // through the REAL verifyMessage() entry point on genuinely Ed25519-signed
 // chains. The signer-side tests (U1, F2, A3, D1) do not apply: this is a
 // verify-only implementation.
@@ -438,7 +438,7 @@ test('a missing required tag: "tag=<y> missing"', async () => {
   assertPerm(await verify(text.replace(/; rt=[^;]+/, '')), 'PERMERROR: DKIM2-Signature i=1 tag=rt missing');
 });
 
-// --- C9: the primary error is the first in -07 §14 section order ------------
+// --- C9: the primary error is the first in -08 §14 section order ------------
 
 // msg with every `from` replaced by `to` (binary strings), after signing.
 const edit = (msg, from, to) => {

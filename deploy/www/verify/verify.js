@@ -1,4 +1,4 @@
-// DKIM2 verification orchestrator per draft-ietf-dkim-dkim2-spec-07 §13/§14. Built from spec.
+// DKIM2 verification orchestrator per draft-ietf-dkim-dkim2-spec-08 §13/§14. Built from spec.
 import { parseMessage, collectLevels, parseTagList, parseHashSets, MAX_CHAIN_LENGTH, BASE64 } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
@@ -234,7 +234,7 @@ async function verifyOnce(raw, opts = {}) {
   const miNums = Object.keys(instances).map(Number).sort((a, b) => a - b);
   const sigNums = Object.keys(signatures).map(Number).sort((a, b) => a - b);
 
-  // Contract C9: the checks run in -07 §14 order, the Message-Instances
+  // Contract C9: the checks run in -08 §14 order, the Message-Instances
   // (walk included) before the signatures, and the first error found is the
   // PRIMARY one: its state is the result. Later errors may be listed after
   // it, but no key is used unless the Message-Instances, walk included,
@@ -611,7 +611,7 @@ function recipeBreakdown(mi, m, chain, level) {
   }
 }
 
-// Contract C9, from §14.3 on: an error's place in -07 §14 order, as a key
+// Contract C9, from §14.3 on: an error's place in -08 §14 order, as a key
 // compared element by element. §14.3, §14.5/§14.6 (one step since -08,
 // contract D3) and §14.8 (checks made per signature) go lowest i= first.
 // §14.4 goes as C4 walks it: an unexpected top nd=, the envelope, then each

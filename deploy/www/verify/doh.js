@@ -1,5 +1,5 @@
 // Public-key retrieval over DNS-over-HTTPS (Cloudflare) + key-record parsing.
-// Built from draft-ietf-dkim-dkim2-spec-07 §3.7 / §14.5 and draft-ietf-dkim-dkim2-dns-00 §3.2,
+// Built from draft-ietf-dkim-dkim2-spec-08 §3.7 / §14.5 and draft-ietf-dkim-dkim2-dns-00 §3.2,
 // §3.4.1, §3.4.2.2.
 
 const DEFAULT_DOH = 'https://cloudflare-dns.com/dns-query';
