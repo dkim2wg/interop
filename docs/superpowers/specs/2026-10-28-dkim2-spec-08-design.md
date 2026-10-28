@@ -13,7 +13,8 @@ replaces it; in particular the C9 check order and "first error is the result".
 
 1. **Auto-Submitted / VBR-Info are hashed.** Every implementation flips in one
    deploy. No fallback to the -07 list. Bron refreshes the hm vendor straight after.
-2. **ML-DSA-44: verify-only**, with an assumed key format (D8). No signer emits it.
+2. **ML-DSA-44: DEFERRED** (revised 2026-10-28, see D8). Most of our languages have no
+   library that verifies pure ML-DSA-44 with a context string.
 3. **Null body Recipe: the result stays PASS**, plus a "not fully verified"
    property (D9).
 4. (2026-10-26, with Richard) **Tag names and JSON keys are strictly lowercase.**
@@ -151,19 +152,20 @@ New string: `PERMERROR: DKIM2-Signature i=<x> public key <s> is malformed`, give
 published as a DER SubjectPublicKeyInfo is malformed: a real one exists
 (proteamail.com), but -08 says Ed25519 keys are exactly 32 octets.
 
-## D8. ML-DSA-44, verify-only (§3.4)
+## D8. ML-DSA-44: deferred (§3.4)
 
-- sig-name `mldsa44`; key record `k=mldsa44`; `p=` is the raw 1312-octet FIPS 204
-  public key in base64. We assume this because DKIMKEYS -02 doesn't define it;
-  the gap goes upstream.
-- Verify with ML-DSA.Verify (pure, not HashML-DSA). The message is the exact
-  §12.8 signing-input octets, and ctx is the five octets `DKIM2`.
-- If the signature doesn't decode to 2420 octets, the result is FAIL
-  (incorrect signature).
-- A runtime without ML-DSA treats `mldsa44` as not implemented (D3, PERMERROR
-  algorithm unknown). Each language's library is chosen in the plan.
-- Test vectors come from a generator script that signs with OpenSSL 3.5+ and
-  lives under `vectors/`. Production signers don't change.
+Bron, 2026-10-28: not implemented for now, because no library is available
+in most of our languages:
+- C (OpenSSL 3.5+) and Node 25 have it natively;
+- Perl's Crypt::PQClean::Sign 0.04 verifies with an empty ctx only;
+- Python's cryptography 46 has none;
+- Go 1.26 keeps ML-DSA internal;
+- the browser has no WebCrypto ML-DSA.
+
+So `mldsa44` (and the old `mldsa44-ed25519-sha512`) is an unimplemented
+algorithm in every verifier: a PERMERROR item, "selector <s> algorithm
+unknown" (D3), which a `|` alternative can override. No key is fetched for
+it. Revisit once DKIMKEYS defines its key type.
 
 ## D9. Null body Recipe gives "not fully verified" (§13)
 
