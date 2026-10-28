@@ -21,7 +21,8 @@ Usage: python3 util/build-negative-vectors.py <output-dir>
 Writes:
   dup-hash-algorithm.eml           -- h= repeats an algorithm (sha256 twice)
   dup-selector.eml                 -- s= repeats a Selector (sel1 twice)
-  too-many-signatures.eml          -- s= has one algorithm 3+ times
+  too-many-signatures.eml          -- s= has 9 items (-08 local limit of 8;
+                                         contract D3)
   too-many-instance-fields.eml     -- 33 Message-Instance (and 33 DKIM2-Signature)
                                       fields: C9 step a, instances first
   too-many-signature-fields.eml    -- 33 DKIM2-Signature fields: C9 step a
@@ -109,7 +110,8 @@ draft -07 (shared tests in .superpowers/sdd/2026-10-18-dkim2-spec-07/common.md):
   recipe-u-nonzero-pad.eml         -- U3: {"u":["QR=="]}; REJECT
   recipe-b-step.eml, recipe-two-step-keys.eml, recipe-empty-step.eml
                                    -- U4: bad step objects; REJECT
-  positive-control-recipe-uppercase-keys.eml -- K1: "H"/"Subject"/"D" keys
+  recipe-uppercase-keys.eml        -- K1: "H"/"Subject"/"D" keys; accepted
+                                         under -07, invalid JSON under -08 (D10)
   recipe-case-duplicate-key.eml    -- K2: "Subject" and "subject"; REJECT
   from-display-no-brackets.eml     -- T3: "From: Bron brong@test1..." (display
                                          text, no <>) is not one mailbox; REJECT
@@ -157,7 +159,8 @@ contract C9 check order (perl/t/check-order.t, perl/t/spec07.t's C9 block):
                                          selector: m=1 (instances < signatures)
   multi-header-sha512-body-sha256.eml -- h=sha256,sha512 with the sha256 body
                                          hash and the sha512 header hash wrong:
-                                         the sha512 header hash (headers first)
+                                         -08 (D4) names the first failing set
+                                         in h= order, sha256's body hash
   multi-expired-nd.eml             -- expired (§14.3) + top nd= (§14.4): expired
   multi-expired-header-hash.eml    -- expired + Subject changed: the hash FAIL
                                          (§14.7 < §14.3)
@@ -165,6 +168,44 @@ contract C9 check order (perl/t/check-order.t, perl/t/spec07.t's C9 block):
                                          hash FAIL (§14.7 < §14.4)
   multi-body-hash-no-key.eml       -- selector with no key record + body
                                          changed: the body hash FAIL (§14.7 < §14.5)
+
+draft -08 (docs/superpowers/specs/2026-10-28-dkim2-spec-08-design.md):
+  positive-control-eight-signatures.eml -- 8 s= items: at the limit; ACCEPT
+  positive-control-three-same-algorithm.eml -- rsa-sha256 three times with
+                                         distinct selectors (D2); ACCEPT
+  positive-control-sig-group-pass.eml -- s= "bad | good" (D3); ACCEPT
+  sig-group-fail.eml               -- s= "bad | bad": no group of signatures passed
+  sig-group-bad-signature.eml      -- s= "good, bad": the bad selector is named
+  sig-unknown-algorithm-and.eml    -- s= "good, x:mldsa44" (D8): algorithm unknown
+  positive-control-sig-unknown-algorithm-or.eml -- s= "good | x:mldsa44"; ACCEPT
+  sig-unknown-algorithm-only.eml   -- only mldsa44-ed25519-sha512: algorithm unknown
+  sig-unknown-algorithm-not-base64.eml -- "good | x:future:@@@@": syntax error
+  sig-empty-group.eml              -- "good || good": syntax error (D2)
+  sig-duplicate-selector-across-groups.eml -- "sel1 | sel1": duplicate selector
+  hash-group-fail.eml              -- h= "sha256(bad body) | sha512(bad
+                                         header)": no group of hashes passed (D4)
+  positive-control-hash-group-pass.eml -- h= "sha256(bad body) | sha512"; ACCEPT
+  hash-unknown-algorithm.eml       -- h= "x-hash" only: algorithm x-hash unknown
+  hash-unknown-algorithm-and.eml   -- h= "sha256, x-hash": algorithm x-hash unknown
+  positive-control-hash-unknown-algorithm-or.eml -- h= "sha256 | x-hash"; ACCEPT
+  hash-set-order.eml               -- h= "sha512(bad header), sha256(bad
+                                         body)": sha512's header, h= order
+  key-ed25519-spki.eml             -- Ed25519 key published as DER SPKI (D7):
+                                         public key ed25519spki is malformed
+  recipe-h-step.eml                -- Recipe h.subject[1] is invalid (D6)
+  recipe-h-name-escaped.eml        -- Recipe h.x\x20caf\xC3\xA9[0] is invalid
+  recipe-b-before-h.eml            -- bad b and h steps: b[1] is named first
+  recipe-whole-before-step.eml     -- bad step + "h" not an object: invalid JSON
+  recipe-number-exponent.eml       -- an unused "n":1e0: invalid JSON
+  auto-submitted-modified.eml      -- Auto-Submitted changed after signing (D1):
+                                         header hash mismatch
+  positive-control-auto-submitted.eml -- Auto-Submitted and VBR-Info, signed
+                                         and unchanged; ACCEPT
+  uppercase-tag.eml                -- "D=" for d= (D10): tag=d missing
+  positive-control-uppercase-twin-tag.eml -- "M=2" beside m=1, "I=9" beside
+                                         i=1 (D10): unknown tags; ACCEPT
+  multi-key-error-above-bad-signature.eml -- i=1 bad signature + i=2 key
+                                         missing: i=1's FAIL (D3 amends C9)
 """
 import base64
 import json
@@ -258,10 +299,11 @@ def build_dup_selector():
     return assemble(sig_hdr, mi_hdr, headers, body)
 
 
-def build_too_many():
-    """s= has rsa-sha256 three times, across three DISTINCT selectors (so
-    this isn't also a duplicate-selector violation) -- all three signatures
-    genuinely valid."""
+def build_positive_three_same_algorithm():
+    """POSITIVE CONTROL: s= has rsa-sha256 three times, across three
+    DISTINCT selectors -- all three signatures genuinely valid.  -07 limited
+    an algorithm to two items ("has more selectors than allowed"); -08
+    §10.9 allows any number with distinct selectors (contract D2)."""
     headers, body = load_base()
     mi_hdr = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
     sig_hdr = build_multi_sig(
@@ -270,6 +312,27 @@ def build_too_many():
         entries=[("sel1", key("sel1")), ("sel2", key("sel2")), ("sel3", key("sel3"))],
     )
     return assemble(sig_hdr, mi_hdr, headers, body)
+
+
+# The six real test1 keys, every one of which verifies.
+SIX = ",".join(f"{sel}:{alg}:SIGN:{sel}" for sel, alg in (
+    ("sel1", "rsa-sha256"), ("sel2", "rsa-sha256"), ("sel3", "rsa-sha256"),
+    ("ed25519", "ed25519-sha256"), ("dkim2test", "rsa-sha256"),
+    ("rsa1024", "rsa-sha256")))
+
+
+def build_too_many():
+    """Contract D3 local limit: s= with 9 items -- the six real test1 keys
+    in one "," group (all verify), then "|" and three items of an
+    unimplemented algorithm.  Without the limit it would pass (the first
+    group does); with it, it is "has more than 8 signatures", before any
+    key is fetched."""
+    return _layout_message(SIX + "|a:x-alg:AAAA,b:x-alg:AAAA,c:x-alg:AAAA")
+
+
+def build_positive_eight_signatures():
+    """POSITIVE CONTROL: the same with 8 items (two unimplemented)."""
+    return _layout_message(SIX + "|a:x-alg:AAAA,b:x-alg:AAAA")
 
 
 def build_malformed_json():
@@ -313,7 +376,8 @@ def build_malformed_json():
 def _two_hop(prev_headers, prev_body, cur_headers, cur_body, recipe):
     """A genuine two-hop chain: m=1/i=1 (test1) over the PREVIOUS content,
     then m=2 carrying `recipe` (a dict, encoded here by hand so the vector
-    does not depend on any signer's own Recipe builder) and i=2 (test2)
+    does not depend on any signer's own Recipe builder, or the raw JSON
+    text as a str) and i=2 (test2)
     over the CURRENT content. Everything is cryptographically valid; only
     the Recipe's content is under test."""
     mi1 = ds.build_message_instance(prev_headers, prev_body, version=1, algs=["sha256"])
@@ -324,7 +388,8 @@ def _two_hop(prev_headers, prev_body, cur_headers, cur_body, recipe):
     )
     hh = ds.b64(ds.compute_header_hash(cur_headers, "sha256"))
     bh = ds.b64(ds.compute_body_hash(cur_body, "sha256"))
-    r = base64.b64encode(json.dumps(recipe, separators=(",", ":")).encode("ascii")).decode()
+    text = recipe if isinstance(recipe, str) else json.dumps(recipe, separators=(",", ":"))
+    r = base64.b64encode(text.encode("utf-8")).decode()
     mi2 = f"Message-Instance: m=2; h=sha256:{hh}:{bh}; r={r};"
     priv2, alg2 = ds.load_private_key(key("sel1", "test2.dkim2.com"))
     sig2 = ds.build_dkim2_signature(
@@ -1101,9 +1166,10 @@ def _subject_hop():
     return h1, b1, h2, ds.build_recipes(h1, b1, h2, b1)
 
 
-def build_positive_recipe_uppercase_keys():
+def build_recipe_uppercase_keys():
     """K1: the same Recipe with every key in upper/mixed case ("H",
-    "Subject", "D") verifies exactly like the lowercase form."""
+    "Subject", "D").  -07 (decision 2) accepted it; -08 (contract D10)
+    requires lowercase keys: "contains invalid JSON"."""
     h1, b1, h2, r = _subject_hop()
     up = {"H": {name.title(): [{k.upper(): v for k, v in step.items()} for step in steps]
                 for name, steps in r["h"].items()}}
@@ -1485,12 +1551,271 @@ def build_from_display_no_brackets():
     return _chain([(h, b, None)], [dict(d=DOM, m=1, mf=MF, rt=RT)])
 
 
+
+# ---------------------------------------------------------------------------
+# draft -08 (docs/superpowers/specs/2026-10-28-dkim2-spec-08-design.md)
+# ---------------------------------------------------------------------------
+
+_LAYOUT_ITEM = re.compile(r"([^\s:,|]+)(\s*:\s*)([^\s:,|]+)(\s*:)(SIGN:[\w-]+|[^,|;]*)")
+
+
+def _layout_sig(mis, below, s_layout, seq=1, m=1, d=DOM, mf=MF, rt=RT, ts=TS,
+                extra="", d_name="d"):
+    """DKIM2-Signature i=<seq> m=<m> whose s= is `s_layout` as written:
+    items "sel:alg:VALUE" joined by "," and "|" (any FWS kept).  VALUE
+    "SIGN:<keysel>" is a real signature with <keysel>'s key for `d` over
+    the signed form: every value blanked, everything else -- selectors,
+    names, ":" "," "|" -- byte for byte (-08 §12.8).  `extra` is more tags,
+    written before s=; `d_name` spells the d= tag's name."""
+    mf_b64 = ds.b64(ds.to_rfc5321_path(mf).encode("utf-8"))
+    rt_b64 = ",".join(ds.b64(ds.to_rfc5321_path(r).encode("utf-8")) for r in rt)
+    pre = (f"DKIM2-Signature: i={seq}; m={m}; t={ts}; {d_name}={d}; mf={mf_b64}; "
+           f"rt={rt_b64}; {extra}s=")
+    incomplete = pre + _LAYOUT_ITEM.sub(
+        lambda x: x.group(1) + x.group(2) + x.group(3) + x.group(4), s_layout) + ";"
+
+    def signed(x):
+        v = x.group(5)
+        if v.startswith("SIGN:"):
+            priv, alg = ds.load_private_key(key(v[5:], d))
+            v = ds.b64(ds.compute_signature(mis, below, incomplete, priv, alg))
+        return x.group(1) + x.group(2) + x.group(3) + x.group(4) + v
+    return pre + _LAYOUT_ITEM.sub(signed, s_layout) + ";"
+
+
+def _layout_message(s_layout, mi=None, headers=None, body=None, extra=""):
+    """A one-hop message: Message-Instance `mi` (default: the right sha256
+    hashes) and a signature whose s= is `s_layout` (_layout_sig)."""
+    if headers is None:
+        headers, body = load_base()
+    mi = mi or _mi_raw(headers, body, 1)
+    sig = _layout_sig([mi], [], s_layout, extra=extra)
+    return _order_message([sig, mi], headers, body)
+
+
+def _flip(b64v):
+    return ("B" if b64v[0] == "A" else "A") + b64v[1:]
+
+
+def _h_layout(h_layout, headers, body):
+    """A Message-Instance m=1 whose h= is `h_layout`: "<alg>:H:B" gives the
+    right hashes, "BAD" in either place a wrong (but base64) one; any other
+    algorithm's values are written as given."""
+    def one(x):
+        alg, hh, bh = x.group(1), x.group(2), x.group(3)
+        if alg in ("sha256", "sha512"):
+            good_h = ds.b64(ds.compute_header_hash(headers, alg))
+            good_b = ds.b64(ds.compute_body_hash(body, alg))
+            hh = good_h if hh == "H" else _flip(good_h) if hh == "BAD" else hh
+            bh = good_b if bh == "B" else _flip(good_b) if bh == "BAD" else bh
+        return f"{alg}:{hh}:{bh}"
+    return "Message-Instance: m=1; h=" + re.sub(
+        r"([^\s:,|]+):([^\s:,|]*):([^\s:,|;]*)", one, h_layout) + ";"
+
+
+def _hash_layout_message(h_layout):
+    headers, body = load_base()
+    return _layout_message("sel1:rsa-sha256:SIGN:sel1",
+                           _h_layout(h_layout, headers, body), headers, body)
+
+
+S1 = "sel1:rsa-sha256:SIGN:sel1"
+S2 = "sel2:rsa-sha256:SIGN:sel2"
+BAD2 = "sel2:rsa-sha256:SIGN:sel1"   # sel1's signature under sel2: FAIL
+BAD3 = "sel3:rsa-sha256:SIGN:sel1"   # sel1's signature under sel3: FAIL
+
+
+def build_positive_sig_group_pass():
+    """D2/D3: s= "sel2(bad) | sel1": the first group fails, the second
+    passes, so the signature passes (§14.6 step 7)."""
+    return _layout_message(f"{BAD2} |\r\n {S1}")
+
+
+def build_sig_group_fail():
+    """D3: s= "sel2(bad) | sel3(bad)": no group passes, and with more than
+    one group a FAIL is reported as "no group of signatures passed"."""
+    return _layout_message(f"{BAD2}|{BAD3}")
+
+
+def build_sig_group_bad_signature():
+    """D3: one "," group "sel1, sel2(bad)": the first FAIL item is named."""
+    return _layout_message(f"{S1},{BAD2}")
+
+
+def build_sig_unknown_algorithm_and():
+    """D3/D8: "sel1, x:mldsa44:..." -- ML-DSA-44 is not implemented, so its
+    item is a PERMERROR and the "," group with it is PERMERROR."""
+    return _layout_message(f"{S1},x:mldsa44:AAAA")
+
+
+def build_positive_sig_unknown_algorithm_or():
+    """D3/D8: the same joined by "|": sel1's group passes."""
+    return _layout_message(f"{S1}|x:mldsa44:AAAA")
+
+
+def build_sig_unknown_algorithm_only():
+    """D3/D8: only the old composite algorithm: PERMERROR, no key fetched
+    (there is no record for selector x)."""
+    return _layout_message("x:mldsa44-ed25519-sha512:AAAA")
+
+
+def build_sig_unknown_algorithm_not_base64():
+    """D3: an unimplemented algorithm's value must still be a base64string:
+    "sel1 | x:future:@@@@" is a syntax error."""
+    return _layout_message(f"{S1}|x:future:@@@@")
+
+
+def build_sig_empty_group():
+    """D2: "sel1 || sel2": an empty member is a syntax error."""
+    return _layout_message(f"{S1}||{S2}")
+
+
+def build_sig_duplicate_selector_across_groups():
+    """D2: the duplicate-selector rule spans the whole tag: "sel1 | sel1"."""
+    return _layout_message(f"{S1}|{S1}")
+
+
+def build_hash_group_fail():
+    """D4: h= "sha256 (body wrong) | sha512 (header wrong)": no group
+    passes, so "no group of hashes passed"."""
+    return _hash_layout_message("sha256:H:BAD|sha512:BAD:B")
+
+
+def build_positive_hash_group_pass():
+    """D4: h= "sha256 (body wrong) | sha512": the second group passes."""
+    return _hash_layout_message("sha256:H:BAD | sha512:H:B")
+
+
+def build_hash_unknown_algorithm():
+    """D4: h= with only an algorithm we have not implemented:
+    "algorithm x-hash unknown" (PERMERROR)."""
+    return _hash_layout_message("x-hash:AAAA:AAAA")
+
+
+def build_hash_unknown_algorithm_and():
+    """D4: "sha256, x-hash": the unknown set makes the "," group PERMERROR."""
+    return _hash_layout_message("sha256:H:B,x-hash:AAAA:AAAA")
+
+
+def build_positive_hash_unknown_algorithm_or():
+    """D4: "sha256 | x-hash": the sha256 group passes."""
+    return _hash_layout_message("sha256:H:B|x-hash:AAAA:AAAA")
+
+
+def build_hash_set_order():
+    """D4: one "," group "sha512 (header wrong), sha256 (body wrong)": the
+    first FAIL set in h= order is named, header before body within it."""
+    return _hash_layout_message("sha512:BAD:B,sha256:H:BAD")
+
+
+def build_key_ed25519_spki():
+    """D7: selector ed25519spki publishes test1's Ed25519 key as a DER
+    SubjectPublicKeyInfo (44 octets), not the raw 32 octets -08 §3.3/§14.5
+    require: "public key ed25519spki is malformed".  The signature is made
+    with the matching private key, so only the key's form is wrong."""
+    headers, body = load_base()
+    mi = _mi_raw(headers, body, 1)
+    sig = _layout_sig([mi], [], "ed25519spki:ed25519-sha256:SIGN:ed25519")
+    return _order_message([sig, mi], headers, body)
+
+
+def build_recipe_h_step():
+    """D6: the second step of the Subject header Recipe is not a step:
+    "Recipe h.subject[1] is invalid"."""
+    h1, b1, h2, r = _subject_hop()
+    steps = next(iter(r["h"].values()))
+    return _two_hop(h1, b1, h2, b1, {"h": {"subject": steps + [{"x": [1]}]}})
+
+
+def build_recipe_h_name_escaped():
+    """D6: a header name with a space and a UTF-8 octet pair, its one step
+    bad: "Recipe h.x\\x20caf\\xC3\\xA9[0] is invalid" (every octet outside
+    0x21-0x7E escaped, uppercase hex).  "x café" sorts after "subject" in
+    byte order, so the (valid) Subject Recipe is checked first."""
+    h1, b1, h2, r = _subject_hop()
+    text = json.dumps({"h": dict(r["h"], **{"x café": [{"z": 1}]})},
+                      separators=(",", ":"), ensure_ascii=False)
+    return _two_hop(h1, b1, h2, b1, text)
+
+
+def build_recipe_b_before_h():
+    """D6: a bad "b" step and a bad "h" step: "b" is reported first."""
+    h1, b1, h2, r = _subject_hop()
+    steps = next(iter(r["h"].values()))
+    return _two_hop(h1, b1, h2, b1,
+                    {"h": {"subject": [{"x": 1}] + steps}, "b": [{"c": [1, 1]}, {"y": 1}]})
+
+
+def build_recipe_whole_before_step():
+    """D6: a bad step AND a whole-document fault ("h" not an object): the
+    whole-document fault is reported, "contains invalid JSON"."""
+    headers, _ = load_base()
+    return _two_hop(headers, CUR_BODY, headers, CUR_BODY, '{"b":[{"x":1}],"h":[]}')
+
+
+def build_recipe_number_exponent():
+    """D6: a JSON number with an exponent anywhere ("1e0", unused key) makes
+    the whole Recipe invalid JSON, whatever a JSON library makes of it."""
+    headers, _ = load_base()
+    return _two_hop(headers, CUR_BODY, headers, CUR_BODY, '{"b":[{"c":[1,3]}],"n":1e0}')
+
+
+def build_auto_submitted_modified():
+    """D1: Auto-Submitted is hashed since -08.  A message signed with
+    "Auto-Submitted: auto-generated", which a later hop changed to
+    "auto-replied": the header hash fails (a -07 verifier ignored it)."""
+    headers, body = load_base()
+    headers = headers + [b"Auto-Submitted: auto-generated"]
+    msg = _chain([(headers, body, None)], [dict(d=DOM, m=1, mf=MF, rt=RT)])
+    return _replace_header(msg, b"Auto-Submitted", b"auto-replied")
+
+
+def build_positive_auto_submitted():
+    """D1: the same, unchanged: it verifies."""
+    headers, body = load_base()
+    headers = headers + [b"Auto-Submitted: auto-generated", b"VBR-Info: md=test1.dkim2.com; mc=all; mv=x.example"]
+    return _chain([(headers, body, None)], [dict(d=DOM, m=1, mf=MF, rt=RT)])
+
+
+def build_uppercase_tag():
+    """D10: "D=test1.dkim2.com" (and no d=) in a signature signed as it
+    stands: an uppercase tag is an unknown tag, so d= is missing."""
+    headers, body = load_base()
+    mi = _mi_raw(headers, body, 1)
+    sig = _layout_sig([mi], [], S1, d_name="D")
+    return _order_message([sig, mi], headers, body)
+
+
+def build_positive_uppercase_twin_tag():
+    """D10: "M=2" beside m=1 in a Message-Instance and "I=9" beside i=1 in
+    the signature, both signed in: unknown tags, ignored, not duplicates."""
+    headers, body = load_base()
+    mi = _mi_raw(headers, body, 1)[:-1] + "; M=2;"
+    sig = _layout_sig([mi], [], S1, extra="I=9; ")
+    return _order_message([sig, mi], headers, body)
+
+
+def build_multi_key_error_above_bad_signature():
+    """Amended C9 (contract D3): i=1's signature does not verify (§14.6) and
+    i=2 names a selector with no key record (§14.5).  Key and signature are
+    one step per signature now, so i=1's FAIL is primary (-07 put every
+    §14.5 key error before any §14.6 FAIL)."""
+    (sig2, sig1), (mi2, mi1), h2, b2 = _order_two_hop()
+    bad1 = _corrupt_signature(_order_message([sig1], [], b"")[:-4] + b"\r\n\r\n", 1)
+    bad1 = bad1.split(b"\r\n")[0].decode()
+    sig2 = _order_sign([mi1, mi2], [bad1], 2, 2, d="test2.dkim2.com",
+                       mf="relay@test2.dkim2.com", rt=["final@example.com"],
+                       sel="nokey")
+    return _order_message([sig2, bad1, mi2, mi1], h2, b2)
+
 FIXTURES = {
     "signature-gap.eml": build_signature_gap,
     "instance-gap.eml": build_instance_gap,
     "dup-hash-algorithm.eml": build_dup_hash,
     "dup-selector.eml": build_dup_selector,
     "too-many-signatures.eml": build_too_many,
+    "positive-control-eight-signatures.eml": build_positive_eight_signatures,
+    "positive-control-three-same-algorithm.eml": build_positive_three_same_algorithm,
     "malformed-json-r.eml": build_malformed_json,
     "unsigned-mi.eml": build_unsigned_mi,
     "nd-bridge-wrong-domain.eml": build_nd_bridge_wrong_domain,
@@ -1539,7 +1864,7 @@ FIXTURES = {
     "recipe-b-step.eml": build_recipe_b_step,
     "recipe-two-step-keys.eml": build_recipe_two_step_keys,
     "recipe-empty-step.eml": build_recipe_empty_step,
-    "positive-control-recipe-uppercase-keys.eml": build_positive_recipe_uppercase_keys,
+    "recipe-uppercase-keys.eml": build_recipe_uppercase_keys,
     "recipe-case-duplicate-key.eml": build_recipe_case_duplicate_key,
     "from-display-no-brackets.eml": build_from_display_no_brackets,
     "multi-from-tampered.eml": build_multi_from_tampered,
@@ -1570,6 +1895,33 @@ FIXTURES = {
     "multi-body-hash-no-key.eml": build_multi_body_hash_no_key,
     "too-many-instance-fields.eml": build_too_many_instance_fields,
     "too-many-signature-fields.eml": build_too_many_signature_fields,
+    # draft -08
+    "positive-control-sig-group-pass.eml": build_positive_sig_group_pass,
+    "sig-group-fail.eml": build_sig_group_fail,
+    "sig-group-bad-signature.eml": build_sig_group_bad_signature,
+    "sig-unknown-algorithm-and.eml": build_sig_unknown_algorithm_and,
+    "positive-control-sig-unknown-algorithm-or.eml": build_positive_sig_unknown_algorithm_or,
+    "sig-unknown-algorithm-only.eml": build_sig_unknown_algorithm_only,
+    "sig-unknown-algorithm-not-base64.eml": build_sig_unknown_algorithm_not_base64,
+    "sig-empty-group.eml": build_sig_empty_group,
+    "sig-duplicate-selector-across-groups.eml": build_sig_duplicate_selector_across_groups,
+    "hash-group-fail.eml": build_hash_group_fail,
+    "positive-control-hash-group-pass.eml": build_positive_hash_group_pass,
+    "hash-unknown-algorithm.eml": build_hash_unknown_algorithm,
+    "hash-unknown-algorithm-and.eml": build_hash_unknown_algorithm_and,
+    "positive-control-hash-unknown-algorithm-or.eml": build_positive_hash_unknown_algorithm_or,
+    "hash-set-order.eml": build_hash_set_order,
+    "key-ed25519-spki.eml": build_key_ed25519_spki,
+    "recipe-h-step.eml": build_recipe_h_step,
+    "recipe-h-name-escaped.eml": build_recipe_h_name_escaped,
+    "recipe-b-before-h.eml": build_recipe_b_before_h,
+    "recipe-whole-before-step.eml": build_recipe_whole_before_step,
+    "recipe-number-exponent.eml": build_recipe_number_exponent,
+    "auto-submitted-modified.eml": build_auto_submitted_modified,
+    "positive-control-auto-submitted.eml": build_positive_auto_submitted,
+    "uppercase-tag.eml": build_uppercase_tag,
+    "positive-control-uppercase-twin-tag.eml": build_positive_uppercase_twin_tag,
+    "multi-key-error-above-bad-signature.eml": build_multi_key_error_above_bad_signature,
 }
 
 

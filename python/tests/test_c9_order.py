@@ -71,6 +71,10 @@ EXPECT = {
     "multi-expired-header-hash": HDR1,
     "multi-custody-header-hash": HDR1,
     "multi-body-hash-no-key": "FAIL: Message-Instance m=1 body hash sha256 mismatch",
+    # -08 (contract D3 amends C9): a signature's key and its verdict are one
+    # step, lowest i= first, so i=1's FAIL beats i=2's missing key.
+    "multi-key-error-above-bad-signature":
+        "FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature",
 }
 
 
