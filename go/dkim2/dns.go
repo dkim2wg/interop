@@ -70,11 +70,15 @@ var (
 	ErrKeySyntax            = errors.New("has a syntax error")
 	ErrKeyRevoked           = errors.New("has been revoked")
 	ErrKeyAlgorithmMismatch = errors.New("algorithm mismatch")
+	// ErrKeyMalformed: p= is base64 but not a key of its type -- an RSA
+	// key shorter than 1024 bits, an Ed25519 key that is not exactly 32
+	// octets (-08 §3.2, §14.5; contract D7).
+	ErrKeyMalformed = errors.New("is malformed")
 )
 
 // keyRecordProblem returns the §14.5 wording for a key-record error, or "".
 func keyRecordProblem(err error) string {
-	for _, e := range []error{ErrKeyMultipleRecords, ErrKeySyntax, ErrKeyRevoked, ErrKeyAlgorithmMismatch} {
+	for _, e := range []error{ErrKeyMultipleRecords, ErrKeySyntax, ErrKeyRevoked, ErrKeyAlgorithmMismatch, ErrKeyMalformed} {
 		if errors.Is(err, e) {
 			return e.Error()
 		}
@@ -103,7 +107,10 @@ func isKeyWSP(r rune) bool { return r == ' ' || r == '\t' || r == '\r' || r == '
 // and returns its public key and the signature algorithm that key serves.
 // Tag names are case sensitive; a value outside the tag-value grammar, a
 // repeated tag, a v= that is not first or not exactly DKIM1, or a
-// missing/undecodable p= is a syntax error; an empty p= is revoked; a k= other than rsa or ed25519 is an algorithm mismatch.  Unknown
+// missing or non-base64 p= is a syntax error; an empty p= is revoked; a k=
+// other than rsa or ed25519 is an algorithm mismatch; a base64 p= that is
+// not a key of its type (RSA under 1024 bits, Ed25519 not 32 octets) is
+// malformed.  Unknown
 // and retired tags (h=, n=, s=, t=) are ignored.
 func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 	tags := make(map[string]string)
@@ -164,33 +171,34 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 		return nil, "", fmt.Errorf("%w: p= is not padded base64", ErrKeySyntax)
 	}
 
+	// From here p= is base64: anything that is not a key of its type is
+	// malformed (contract D7).
 	switch keyType {
 	case "ed25519":
-		if len(pubBytes) == ed25519.PublicKeySize {
-			return ed25519.PublicKey(pubBytes), "ed25519-sha256", nil
+		// -08 §3.2: exactly 32 octets.  A DER SubjectPublicKeyInfo (some
+		// publish one) is not that.
+		if len(pubBytes) != ed25519.PublicKeySize {
+			return nil, "", fmt.Errorf("%w: an Ed25519 key is 32 octets, p= has %d", ErrKeyMalformed, len(pubBytes))
 		}
-		key, err := x509.ParsePKIXPublicKey(pubBytes)
-		if err != nil {
-			return nil, "", fmt.Errorf("%w: parsing ed25519 public key: %v", ErrKeySyntax, err)
-		}
-		edKey, ok := key.(ed25519.PublicKey)
-		if !ok {
-			return nil, "", fmt.Errorf("%w: k=ed25519 but p= is a %T", ErrKeySyntax, key)
-		}
-		return edKey, "ed25519-sha256", nil
+		return ed25519.PublicKey(pubBytes), "ed25519-sha256", nil
 	default: // rsa
-		key, err := x509.ParsePKIXPublicKey(pubBytes)
-		if err != nil {
+		var rsaKey *rsa.PublicKey
+		if key, err := x509.ParsePKIXPublicKey(pubBytes); err == nil {
+			k, ok := key.(*rsa.PublicKey)
+			if !ok {
+				return nil, "", fmt.Errorf("%w: k=rsa but p= is a %T", ErrKeyMalformed, key)
+			}
+			rsaKey = k
+		} else if k1, e1 := x509.ParsePKCS1PublicKey(pubBytes); e1 == nil {
 			// Some DKIM keys are published as bare PKCS#1 (RSAPublicKey)
 			// rather than SubjectPublicKeyInfo; accept both.
-			if k1, e1 := x509.ParsePKCS1PublicKey(pubBytes); e1 == nil {
-				return k1, "rsa-sha256", nil
-			}
-			return nil, "", fmt.Errorf("%w: parsing RSA public key: %v", ErrKeySyntax, err)
+			rsaKey = k1
+		} else {
+			return nil, "", fmt.Errorf("%w: parsing RSA public key: %v", ErrKeyMalformed, err)
 		}
-		rsaKey, ok := key.(*rsa.PublicKey)
-		if !ok {
-			return nil, "", fmt.Errorf("%w: k=rsa but p= is a %T", ErrKeySyntax, key)
+		// §3.2: RSA keys MUST be at least 1024 bits.
+		if rsaKey.N.BitLen() < 1024 {
+			return nil, "", fmt.Errorf("%w: %d-bit RSA key, below 1024", ErrKeyMalformed, rsaKey.N.BitLen())
 		}
 		return rsaKey, "rsa-sha256", nil
 	}

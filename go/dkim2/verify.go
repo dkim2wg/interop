@@ -609,10 +609,11 @@ func verifySigItems(sig *DKIM2Signature, fetcher KeyFetcher, digest []byte) erro
 			return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d public key %s algorithm mismatch",
 				sig.Sequence, item.Selector)
 		}
-		// §3.2: RSA keys MUST be at least 1024 bits.
+		// §3.2: RSA keys MUST be at least 1024 bits; a KeyFetcher that
+		// hands over a shorter one has handed over a malformed key.
 		if rk, ok := pubKey.(*rsa.PublicKey); ok && rk.N.BitLen() < 1024 {
-			return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d public key %s is too short (%d bits < 1024, §3.2)",
-				sig.Sequence, item.Selector, rk.N.BitLen())
+			return fmt.Errorf("PERMERROR: DKIM2-Signature i=%d public key %s is malformed",
+				sig.Sequence, item.Selector)
 		}
 		usable = append(usable, keyed{item, pubKey})
 	}

@@ -258,7 +258,7 @@ func TestStrictB_KeyRecords(t *testing.T) {
 		{"v= not first", [][]string{{"k=rsa; v=DKIM1; p=" + p}}, pfx + "has a syntax error"},
 		{"no p=", [][]string{{"v=DKIM1; k=rsa"}}, pfx + "has a syntax error"},
 		{"p= not base64", [][]string{{"v=DKIM1; k=rsa; p=!!!!"}}, pfx + "has a syntax error"},
-		{"p= not a key", [][]string{{"v=DKIM1; k=rsa; p=AAAA"}}, pfx + "has a syntax error"},
+		{"p= not a key", [][]string{{"v=DKIM1; k=rsa; p=AAAA"}}, pfx + "is malformed"}, // -08 (contract D7)
 		{"not a tag-list", [][]string{{"v=DKIM1; garbage; p=" + p}}, pfx + "has a syntax error"},
 		{"bad tag name", [][]string{{"v=DKIM1; 1k=rsa; p=" + p}}, pfx + "has a syntax error"},
 		{"upper-case P=", [][]string{{"v=DKIM1; k=rsa; P=" + p}}, pfx + "has a syntax error"},

@@ -6,6 +6,12 @@ package dkim2
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"errors"
+	"math/big"
 	"testing"
 	"time"
 )
@@ -114,6 +120,50 @@ func TestSpec08D6RecipePathIsInvalid(t *testing.T) {
 	hop2 := must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, "")
 	if got := primary07(t, hop2, VerifyOptions{SkipTimestampCheck: true}); got != invalid {
 		t.Errorf("copy past the end: primary %q, want %q", got, invalid)
+	}
+}
+
+// ---- D7: a p= that is base64 but not a key of its type is malformed ----
+
+func TestSpec08D7MalformedKeys(t *testing.T) {
+	edPub := spec07Key(t).Public().(ed25519.PublicKey)
+	edSPKI, err := x509.MarshalPKIXPublicKey(edPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	small := new(big.Int).Lsh(big.NewInt(1), 511)
+	small.Add(small, big.NewInt(1))
+	smallSPKI, err := x509.MarshalPKIXPublicKey(&rsa.PublicKey{N: small, E: 65537})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b64 := base64.StdEncoding.EncodeToString
+	for _, tc := range []struct {
+		name, txt string
+		want      error
+	}{
+		{"ed25519 as SPKI DER", "v=DKIM1; k=ed25519; p=" + b64(edSPKI), ErrKeyMalformed},
+		{"ed25519 31 octets", "v=DKIM1; k=ed25519; p=" + b64(edPub[:31]), ErrKeyMalformed},
+		{"ed25519 33 octets", "v=DKIM1; k=ed25519; p=" + b64(append(append([]byte{}, edPub...), 0)), ErrKeyMalformed},
+		{"rsa not a key", "v=DKIM1; k=rsa; p=AAAA", ErrKeyMalformed},
+		{"rsa 512 bits", "v=DKIM1; k=rsa; p=" + b64(smallSPKI), ErrKeyMalformed},
+		{"p= not base64", "v=DKIM1; k=ed25519; p=!!!!", ErrKeySyntax},
+		{"ed25519 raw", "v=DKIM1; k=ed25519; p=" + b64(edPub), nil},
+	} {
+		_, _, err := parseDKIM1TXT(tc.txt)
+		if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
+			t.Errorf("%s: got %v, want %v", tc.name, err, tc.want)
+		}
+	}
+
+	// Verified: "public key <s> is malformed", PERMERROR.
+	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
+	results, err := VerifyFull(bytes.NewReader(hop1), &mapKeyFetcher{map[string]string{
+		"s07._domainkey.example.com": "v=DKIM1; k=ed25519; p=" + b64(edSPKI)}},
+		VerifyOptions{SkipTimestampCheck: true})
+	want := "PERMERROR: DKIM2-Signature i=1 public key s07 is malformed"
+	if p := PrimaryResult(results); err != nil || p == nil || p.Error.Error() != want {
+		t.Errorf("SPKI ed25519 key: %v %v, want %q", err, results, want)
 	}
 }
 
