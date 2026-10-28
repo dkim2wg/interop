@@ -42,14 +42,17 @@ const files = readdirSync(testsDir).filter((f) => f.endsWith('.toml'));
 // (None at present: dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf).)
 const BROKEN_VECTORS = new Set([]);
 
-// Vectors whose expected state this repo's -07 contract settles differently.
-// Both are a reject; only the state differs. algorithm_only_future: a
-// signature with no sig-set in an implemented algorithm has no -07 string,
-// so (contract C6) it keeps its wording and becomes a PERMERROR, where the
-// vector (written for -06) expects FAIL.
-// domain_below_mailfrom: a Chain of Custody failure, which -08 §14.4 (D5)
-// makes FAIL.
-const CONTRACT_STATE = { algorithm_only_future: 'permerror', domain_below_mailfrom: 'fail' };
+// Vectors whose expected state this repo's -08 contract settles
+// differently. algorithm_only_future: a signature whose only sig-set names
+// an algorithm not implemented is PERMERROR "algorithm unknown" (-08 §14.6
+// step 4), where the vector (written for -06) expects FAIL.
+// algorithm_with_future: an unimplemented algorithm beside a good one in a
+// "," group makes the group PERMERROR (contract D3), where the vector
+// expects it skipped and a pass. domain_below_mailfrom: a Chain of Custody
+// failure, which -08 §14.4 (D5) makes FAIL.
+const CONTRACT_STATE = {
+  algorithm_only_future: 'permerror', algorithm_with_future: 'permerror', domain_below_mailfrom: 'fail',
+};
 
 // Turscar's draft-02 vectors that the -08 contract reverses (as Python's
 // test_turscar.py KNOWN_DIVERGENCE): D10 makes an uppercase tag name an

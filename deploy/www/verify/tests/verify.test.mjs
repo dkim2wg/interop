@@ -70,14 +70,17 @@ test('signature with only an unsupported algorithm is PERMERROR, never a pass (f
   const raw =
     'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxxx:yyyy\r\n' +
-    `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${ENV}\r\n` +
+    `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAAA; ${ENV}\r\n` +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
   assert.ok(sig, 'signature level present');
-  assert.equal(sig.result, 'permerror');
-  assert.equal(sig.detail, 'PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm');
+  // -08: an unknown hash algorithm alone fails the walk first, so the
+  // signature is never checked (spec08.test.mjs pins "algorithm unknown"
+  // for a signature over instances that verify).
+  assert.notEqual(sig.result, 'pass');
   assert.equal(rep.overall, 'permerror');
+  assert.equal(rep.errors[0], 'PERMERROR: Message-Instance m=1 algorithm blake unknown');
 });
 
 test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, never an exception', async () => {
@@ -86,7 +89,7 @@ test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, ne
     const raw =
       'From: a@example.com\r\n' +
       'Message-Instance: m=1; h=blake:xxxx:yyyy\r\n' +
-      `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAA; ${env}\r\n` +
+      `DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; s=sel:banana:AAAA; ${env}\r\n` +
       '\r\nhi\r\n';
     let rep;
     await assert.doesNotReject(async () => { rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey }); });
@@ -252,7 +255,7 @@ test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary 
     'From: a@example.com\r\n' +
     'Message-Instance: m=1; h=blake:xxxx:yyyy\r\n' +
     'DKIM2-Signature: i=1; m=1; t=1000000; d=example.com; ' +
-    's=sel:banana:AAA; mf=PHNlbmRlckB3cm9uZy5leGFtcGxlPg==; rt=PHJjcHRAZXhhbXBsZS5jb20+\r\n' +
+    's=sel:banana:AAAA; mf=PHNlbmRlckB3cm9uZy5leGFtcGxlPg==; rt=PHJjcHRAZXhhbXBsZS5jb20+\r\n' +
     '\r\nhi\r\n';
   const rep = await verifyMessage(raw, { now: 1000000, fetchKey: stubKey });
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);

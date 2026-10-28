@@ -23,30 +23,24 @@ test('duplicate selector is case-insensitive', () => {
   assert.match(errs[0], /has a duplicate selector/);
 });
 
-test('same algorithm twice with distinct selectors is allowed', () => {
-  // §10.9: one additional signature using the same algorithm MAY be
-  // present provided a different Selector is used
-  const items = [{ selector: 'sel1', alg: 'rsa-sha256' }, { selector: 'sel2', alg: 'rsa-sha256' }];
+test('the same algorithm any number of times with distinct selectors is allowed', () => {
+  // -08 §10.9: more than one signature using the same algorithm MAY be
+  // present provided a different Selector is used for each
+  const items = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ selector: `sel${n}`, alg: 'rsa-sha256' }));
   assert.deepEqual(checkSignatureDuplicates(items, 1), []);
 });
 
-test('same algorithm three times has excess selectors', () => {
-  const items = [
-    { selector: 'sel1', alg: 'rsa-sha256' },
-    { selector: 'sel2', alg: 'rsa-sha256' },
-    { selector: 'sel3', alg: 'rsa-sha256' },
-  ];
+test('more than 8 items is the local limit (contract D3)', () => {
+  const items = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ selector: `sel${n}`, alg: `alg${n}` }));
   assert.deepEqual(checkSignatureDuplicates(items, 2),
-    ['PERMERROR: DKIM2-Signature i=2 has more selectors than allowed']);
+    ['PERMERROR: DKIM2-Signature i=2 has more than 8 signatures']);
 });
 
-test('duplicate selector and excess-selector are independent', () => {
-  // two sigs sharing an algorithm AND a selector is a duplicate-selector
-  // error but NOT an excess-selector error (the count is 2, not 3+)
-  const items = [{ selector: 'sel1', alg: 'rsa-sha256' }, { selector: 'sel1', alg: 'rsa-sha256' }];
-  const errs = checkSignatureDuplicates(items, 1);
-  assert.ok(errs.some((e) => e.includes('duplicate selector')));
-  assert.ok(!errs.some((e) => e.includes('more selectors than allowed')));
+test('a duplicate selector is reported before the limit', () => {
+  const items = [1, 2, 3, 4, 5, 6, 7, 8, 1].map((n) => ({ selector: `sel${n}`, alg: 'rsa-sha256' }));
+  assert.deepEqual(checkSignatureDuplicates(items, 1), [
+    'PERMERROR: DKIM2-Signature i=1 has a duplicate selector',
+    'PERMERROR: DKIM2-Signature i=1 has more than 8 signatures']);
 });
 
 test('parseHashSets keeps duplicate algorithms visible as a list', () => {

@@ -36,6 +36,11 @@ test('blankSignatureValues empties message-sig, keeps selector:alg:', () => {
   assert.match(blankSignatureValues(raw), /s=banana:banana:,ed25519:ed25519-sha256:/);
 });
 
+test('blankSignatureValues keeps every "|" and "," (-08 §12.8)', () => {
+  const raw = 'i=1; s=a:rsa-sha256:QUFB , b:x:Qg==\r\n | c:ed25519-sha256:Qw==; S=d:e:Rg==';
+  assert.equal(blankSignatureValues(raw), 'i=1; s=a:rsa-sha256:, b:x:| c:ed25519-sha256:; S=d:e:Rg==');
+});
+
 test('signingInput removes all WSP, keeps colon and CRLF, blanks target s=', () => {
   const mi = { name: 'Message-Instance', value: ' m=1; h=sha256:AA=:BB=' };
   const sig = { name: 'DKIM2-Signature', value: ' i=1; s=sel:ed25519-sha256:ZZ' };

@@ -8,8 +8,14 @@ import { verifyMessage } from '../verify.js';
 import { parseTagList } from '../parse.js';
 import { signChain as sign, newKeyPair, publicKeyB64, T } from './sign-chain.mjs';
 
+// Fake DNS: every "sel*" Selector at example.com publishes the one key;
+// "tmp" cannot be fetched; anything else does not exist. Every lookup is
+// recorded in `lookups`.
 const keyPair = newKeyPair();
+const lookups = [];
 async function fetchKey(selector, domain) {
+  lookups.push(selector);
+  if (selector === 'tmp') throw new Error('key-temperror');
   if (!/^sel/.test(selector) || domain.toLowerCase() !== 'example.com') throw new Error('key-notfound');
   return { k: 'ed25519', p: await publicKeyB64(keyPair) };
 }
@@ -56,6 +62,109 @@ test('D10: an uppercase twin of a tag is not a duplicate, and is ignored', async
 test('D10: a Message-Instance with only M= is "tag=m missing"', async () => {
   const msg = edit(await oneHop(), 'Message-Instance: m=1;', 'Message-Instance: M=1;');
   assertPrimary(await verify(msg), 'permerror', 'PERMERROR: Message-Instance m= tag=m missing');
+});
+
+// --- D2, D3, D8: "|" groups of "," lists of signatures ------------------------
+
+// s= from a compact layout: "sel1 | sel2!, x:mldsa44" -- "!" a corrupted
+// value, ":alg" another algorithm (with a valid-looking base64 value).
+const sLayout = (layout) => {
+  const sets = [];
+  for (const m of layout.matchAll(/([|,]?)\s*([\w.-]+)(!?)(?::([\w-]+))?\s*/g)) {
+    sets.push({ sep: m[1] || ',', sel: m[2], bad: m[3] === '!', ...(m[4] ? { alg: m[4], sig: 'AAAA' } : {}) });
+  }
+  return oneHop({ sets });
+};
+const SIG = 'DKIM2-Signature i=1';
+
+for (const layout of ['sel1! | sel2', 'sel1 | sel2!', 'sel1, sel2', 'sel1 | x:mldsa44', 'x:mldsa44 | sel1',
+  'x:mldsa44-ed25519-sha512 | sel1', 'nokey | sel1', 'tmp | sel1', 'sel1, sel2 | sel3!', 'sel1 , sel2, sel3',
+  'sel1,sel2,sel3,sel4,sel5,sel6,sel7,sel8']) {
+  test(`D3: s= ${layout} passes`, async () => assertPass(await verify(await sLayout(layout))));
+}
+
+for (const [layout, state, text] of [
+  ['sel1! | sel2!', 'fail', `FAIL: ${SIG} no group of signatures passed`],
+  ['sel1, sel2!', 'fail', `FAIL: ${SIG} selector sel2 incorrect signature`],
+  ['sel1!, sel2!', 'fail', `FAIL: ${SIG} selector sel1 incorrect signature`],
+  ['sel1, x:mldsa44', 'permerror', `PERMERROR: ${SIG} selector x algorithm unknown`],
+  ['x:mldsa44', 'permerror', `PERMERROR: ${SIG} selector x algorithm unknown`],
+  ['x:mldsa44-ed25519-sha512', 'permerror', `PERMERROR: ${SIG} selector x algorithm unknown`],
+  ['sel1:RSA-SHA256', 'permerror', `PERMERROR: ${SIG} selector sel1 algorithm unknown`],
+  ['nokey, sel1', 'permerror', `PERMERROR: ${SIG} public key nokey does not exist`],
+  ['nokey | x:mldsa44', 'permerror', `PERMERROR: ${SIG} public key nokey does not exist`],
+  ['x:mldsa44 | nokey', 'permerror', `PERMERROR: ${SIG} selector x algorithm unknown`],
+  ['x:mldsa44, sel1!', 'fail', `FAIL: ${SIG} selector sel1 incorrect signature`],
+  ['sel1, tmp', 'temperror', `TEMPERROR: ${SIG} public key tmp could not be fetched`],
+  ['sel1!, tmp', 'fail', `FAIL: ${SIG} selector sel1 incorrect signature`],
+  ['tmp | sel1!', 'temperror', `TEMPERROR: ${SIG} public key tmp could not be fetched`],
+  ['sel1! | tmp', 'temperror', `TEMPERROR: ${SIG} public key tmp could not be fetched`],
+  ['sel1! | nokey', 'fail', `FAIL: ${SIG} no group of signatures passed`],
+]) {
+  test(`D3: s= ${layout} is ${text}`, async () => assertPrimary(await verify(await sLayout(layout)), state, text));
+}
+
+test('D3, D8: no key is fetched for an algorithm that is not implemented', async () => {
+  lookups.length = 0;
+  assertPass(await verify(await sLayout('x:mldsa44 | sel1')));
+  assert.deepEqual(lookups, ['sel1']);
+});
+
+test('D3: every sig-set is verified, a "|" alternative that passes included', async () => {
+  lookups.length = 0;
+  assertPass(await verify(await sLayout('sel1 | sel2')));
+  assert.deepEqual(lookups.sort(), ['sel1', 'sel2']);
+});
+
+for (const [layout, text] of [
+  ['sel1 || sel2', 'syntax error'],
+  ['|sel1', 'syntax error'],
+  ['sel1 |', 'syntax error'],
+  ['sel1 ,', 'syntax error'],
+  ['sel1 ,| sel2', 'syntax error'],
+  ['sel1 | sel1', 'has a duplicate selector'],
+  ['sel1, sel2 | SEL1', 'has a duplicate selector'],
+  ['sel1,sel2,sel3,sel4,sel5,sel6,sel7,sel8 | sel9', 'has more than 8 signatures'],
+  ['sel1,x1:a,x2:b,x3:c,x4:d,x5:e,x6:f,x7:g,x8:h', 'has more than 8 signatures'],
+]) {
+  test(`D2, D3: s= ${layout} is "${text}", before any key is fetched`, async () => {
+    // The s= value written as given (each name as name:alg:AAAA), after
+    // signing: the error is found before the signature is checked.
+    const s = layout.replace(/([\w.-]+)(?::([\w-]+))?/g, (_m, sel, alg) => `${sel}:${alg || 'ed25519-sha256'}:AAAA`);
+    const text0 = Buffer.from(await oneHop()).toString('latin1');
+    const msg = new Uint8Array(Buffer.from(text0.replace(/; s=[^\r\n]*/, `; s=${s}`), 'latin1'));
+    lookups.length = 0;
+    assertPrimary(await verify(msg), 'permerror', `PERMERROR: ${SIG} ${text}`);
+    assert.deepEqual(lookups, []);
+  });
+}
+
+test('D3: a value that is not a base64string is a syntax error whatever its algorithm', async () => {
+  const msg = await oneHop({ sets: [{ sel: 'sel1' }, { sep: '|', sel: 'x', alg: 'future', sig: '@@@@' }] });
+  assertPrimary(await verify(msg), 'permerror', `PERMERROR: ${SIG} syntax error`);
+  const empty = await oneHop({ sets: [{ sel: 'sel1' }, { sep: '|', sel: 'x', alg: 'future', sig: '' }] });
+  assertPrimary(await verify(empty), 'permerror', `PERMERROR: ${SIG} syntax error`);
+});
+
+// The contract does not order these; syntax first (as h=, and C9's "tag-list
+// syntax, then ... duplicate selector") -- see the report.
+test('D3: a value that is not base64 is a syntax error before a duplicate selector or the limit', async () => {
+  const text0 = Buffer.from(await oneHop()).toString('latin1');
+  const withS = (s) => new Uint8Array(Buffer.from(text0.replace(/; s=[^\r\n]*/, `; s=${s}`), 'latin1'));
+  const nine = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `sel${n}:ed25519-sha256:${n === 9 ? '@@@@' : 'AAAA'}`).join(',');
+  for (const s of ['sel1:ed25519-sha256:AAAA|sel1:ed25519-sha256:@@@@', 'sel1:ed25519-sha256:|sel1:ed25519-sha256:AAAA', nine]) {
+    assertPrimary(await verify(withS(s)), 'permerror', `PERMERROR: ${SIG} syntax error`);
+  }
+});
+
+test('D3 amends C9: a bad signature at i=1 is primary over a key error at i=2', async () => {
+  const msg = await signChain([{ fields: FIELDS, body: BODY }], [
+    one({ rt: ['<list@example.com>'], sets: [{ sel: 'sel1', bad: true }] }),
+    { d: 'example.com', m: 1, mf: '<list@example.com>', rt: ['<c@example.net>'], sel: 'nokey' },
+  ]);
+  const rep = await verify(msg);
+  assertPrimary(rep, 'fail', `FAIL: ${SIG} selector sel1 incorrect signature`);
+  assert.ok(rep.errors.includes('PERMERROR: DKIM2-Signature i=2 public key nokey does not exist'), rep.summary);
 });
 
 // --- D2, D4: "|" groups of "," lists of hash-sets ------------------------------

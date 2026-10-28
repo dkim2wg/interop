@@ -402,12 +402,12 @@ test('a broken signature: "selector <s1> incorrect signature"', async () => {
   assert.match(rep.summary, /FAIL: DKIM2-Signature i=1 selector sel incorrect signature/);
 });
 
-test('one of two signatures fails: "signature <s1> signature <s2> failed"', async () => {
+test('one of two signatures fails: -08 names the one that failed', async () => {
   // a second Selector for the same key, carrying a corrupted value
   const msg = await signChain([{ fields: FIELDS, body: BODY }], [one({ sets: [{ sel: 'sel' }, { sel: 'sel2', bad: true }] })]);
   const rep = await verify(msg, { fetchKey: async (s, d) => fetchKey('sel', d) });
   assert.equal(rep.overall, 'fail');
-  assert.match(rep.summary, /FAIL: DKIM2-Signature i=1 signature sel signature sel2 failed/);
+  assert.equal(rep.summary, 'FAIL: DKIM2-Signature i=1 selector sel2 incorrect signature');
 });
 
 test('an absent key: "public key <s1> does not exist"', async () => {

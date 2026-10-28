@@ -55,21 +55,25 @@ export function canonHeaderHash(fields) {
   return withIdx.map((x) => x.line).join('');
 }
 
+// §12.8, §14.6 step 2: the s= tag with only its signature values blanked.
+// The selectors, algorithm names and every ":" "," "|" stay (-08, D2).
 export function blankSignatureValues(rawValue) {
   return rawValue
     .split(';')
     .map((seg) => {
       const eq = seg.indexOf('=');
       if (eq < 0) return seg;
-      const name = seg.slice(0, eq).trim().toLowerCase();
+      // Tag names are compared as written (-08 §8, D10): "S=" is not s=.
+      const name = seg.slice(0, eq).trim();
       if (name !== 's') return seg;
       const rest = seg.slice(eq + 1);
-      const sets = rest.split(',').map((s) => {
+      const sets = rest.split(/([,|])/).map((s, n) => {
+        if (n % 2) return s; // a separator
         const parts = s.split(':');
         // selector:sig-name:message-sig -> selector:sig-name:
         return (parts[0] || '') + ':' + (parts[1] || '') + ':';
       });
-      return seg.slice(0, eq + 1) + sets.join(',');
+      return seg.slice(0, eq + 1) + sets.join('');
     })
     .join(';');
 }

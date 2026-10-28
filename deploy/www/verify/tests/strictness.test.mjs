@@ -52,7 +52,8 @@ async function signed({ mi = (hh, bh) => ` m=1; h=sha256:${hh}:${bh}`, items = [
   const bh = await hashB64(binaryToBytes(canonBody(BODY)), 'sha256');
   const content = FIELDS.map((f) => `${f.name}:${f.value}\r\n`).join('') + '\r\n' + BODY;
   const miLine = `Message-Instance:${mi(hh, bh)}\r\n`;
-  const sigLine = (sigs) => `DKIM2-Signature:${sigTags}; s=${items.map((it, n) => `${it.sel}:${it.alg}:${sigs[n]}`).join(',')}\r\n`;
+  // it.sep ("," by default) is written before every item but the first.
+  const sigLine = (sigs) => `DKIM2-Signature:${sigTags}; s=${items.map((it, n) => `${n ? (it.sep || ',') : ''}${it.sel}:${it.alg}:${sigs[n]}`).join('')}\r\n`;
   const draft = sigLine(items.map(() => '')) + miLine + content;
   const { headers } = parseMessage(draft);
   const miField = headers.find((f) => f.name === 'Message-Instance');
@@ -106,25 +107,33 @@ test('A: ed25519-sha256x is unknown', async () => {
   assert.deepEqual(calls, []);
 });
 
-test('A: sel2:future-alg:AAAA,sel1:rsa-sha256:<good> passes with exactly one key lookup', async () => {
+test('A: sel2:future-alg:AAAA|sel1:rsa-sha256:<good> passes with exactly one key lookup', async () => {
   const calls = [];
   const rep = await verify(await signed({ items: [
-    { sel: 'sel2', alg: 'future-alg', sig: 'AAAA' }, { sel: 'rsa', alg: 'rsa-sha256', key: 'rsa' }] }), { calls });
+    { sel: 'sel2', alg: 'future-alg', sig: 'AAAA' }, { sep: '|', sel: 'rsa', alg: 'rsa-sha256', key: 'rsa' }] }), { calls });
   assert.equal(rep.overall, 'pass', rep.summary);
   assert.deepEqual(calls, ['rsa']);
 });
 
-test('A: 4000 distinct unknown items plus one good item pass quickly with one key lookup', async () => {
+test('A: sel2:future-alg:AAAA,sel1:rsa-sha256:<good> is "algorithm unknown" (-08 §14.6 step 4)', async () => {
+  const calls = [];
+  const rep = await verify(await signed({ items: [
+    { sel: 'sel2', alg: 'future-alg', sig: 'AAAA' }, { sel: 'rsa', alg: 'rsa-sha256', key: 'rsa' }] }), { calls });
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 selector sel2 algorithm unknown');
+  assert.deepEqual(calls, ['rsa']);
+});
+
+test('A: 4000 distinct unknown items plus one good item: more than 8, before any lookup', async () => {
   const items = [];
-  for (let n = 0; n < 4000; n++) items.push({ sel: `s${n}`, alg: `future-${n}`, sig: 'AAAA' });
-  items.push({ sel: 'rsa', alg: 'rsa-sha256', key: 'rsa' });
+  for (let n = 0; n < 4000; n++) items.push({ sel: `s${n}`, alg: `future-${n}`, sig: 'AAAA', sep: '|' });
+  items.push({ sel: 'rsa', alg: 'rsa-sha256', key: 'rsa', sep: '|' });
   const raw = await signed({ items });
   const calls = [];
-  const t0 = Date.now();
   const rep = await verify(raw, { calls });
-  assert.equal(rep.overall, 'pass', rep.summary);
-  assert.deepEqual(calls, ['rsa']);
-  assert.ok(Date.now() - t0 < 2000, `took ${Date.now() - t0}ms`);
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 has more than 8 signatures');
+  assert.deepEqual(calls, []);
 });
 
 for (const [name, sig] of [['empty', ''], ['not base64', '!!!!'], ['base64 with junk', 'AAAA*AAA']]) {
@@ -311,11 +320,11 @@ test('D: t=10^12 does not overflow (a future timestamp, not expired)', async () 
 
 // --- E. outcome of a signature's items --------------------------------------
 
-test('E1: no item with an implemented algorithm is PERMERROR with the §E wording', async () => {
+test('E1: no item with an implemented algorithm is PERMERROR "algorithm unknown" (-08)', async () => {
   const calls = [];
   const rep = await verify(await signed({ items: [{ sel: 'rsa', alg: 'future-alg', key: 'rsa' }] }), { calls });
   assert.equal(rep.overall, 'permerror', rep.summary);
-  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm');
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 selector rsa algorithm unknown');
   assert.deepEqual(calls, []);
 });
 
@@ -355,9 +364,17 @@ for (const [why, rec, wording] of [
   });
 }
 
-test('E3: an absent key on one item is skipped when another item verifies', async () => {
+test('E3: an absent key on one "," item is PERMERROR though the other verifies (-08 §14.6)', async () => {
   const records = { rsa: `v=DKIM1; k=rsa; p=${await RSA_P}` };
   const rep = await verify(await twoItems(), { records });
+  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 public key ed does not exist');
+});
+
+test('E3: an absent key on one "|" item is overridden by the other that verifies', async () => {
+  const records = { rsa: `v=DKIM1; k=rsa; p=${await RSA_P}` };
+  const raw = await signed({ items: [{ sel: 'rsa', alg: 'rsa-sha256', key: 'rsa' }, { sep: '|', sel: 'ed', alg: 'ed25519-sha256', key: 'ed' }] });
+  const rep = await verify(raw, { records });
   assert.equal(rep.overall, 'pass', rep.summary);
 });
 
@@ -454,10 +471,10 @@ for (const [name, items, mutate] of [
   });
 }
 
-test('F2: FWS around the s= comma and colons and inside the signature passes', async () => {
+test('F2: FWS around the s= "|" and colons and inside the signature passes', async () => {
   const raw = (await signed({ items: [
     { sel: 'sel2.sub ', alg: '\r\n\tfuture_alg ', sig: ' AA\r\n AA ' },
-    { sel: '\r\n rsa\t', alg: ' rsa-sha256\r\n ', key: 'rsa' }] }))
+    { sep: '|', sel: '\r\n rsa\t', alg: ' rsa-sha256\r\n ', key: 'rsa' }] }))
     .replace(/(s=.*?rsa-sha256\r\n :.{30})/s, '$1\r\n\t');
   const rep = await verify(raw);
   assert.equal(rep.overall, 'pass', rep.summary);
