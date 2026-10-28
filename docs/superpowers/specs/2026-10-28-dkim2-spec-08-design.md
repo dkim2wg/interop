@@ -200,7 +200,12 @@ it. Revisit once DKIMKEYS defines its key type.
   and is ignored. So `M=1` alone gives `tag=m missing`, and `m=1; M=2` is not a
   duplicate.
 - A JSON key at any level (top, `h` header names, step keys) that isn't
-  lowercase gives `contains invalid JSON`. Duplicate keys are compared exactly.
+  lowercase gives `contains invalid JSON`. "Not lowercase" means it holds an
+  ASCII capital A-Z; non-ASCII letters are not judged. Duplicate keys are
+  compared exactly, after unescaping.
+- An unpaired surrogate escape (`"\udc80"`) anywhere in a Recipe gives
+  `contains invalid JSON`, as do Recipe octets that aren't UTF-8 (settled by
+  Perl and Python, 2026-10-28).
 
 ## D11. DSN generation (§7.1 item 4, §16.2)
 
