@@ -91,8 +91,9 @@ def test_old_b_step_is_invalid_json():
     recipe = {"h": {"subject": [{"u": ["ILGk"]}]},
               "b": [{"b": ["Y2Fm6Q=="]}, {"c": [2, 2]}]}
     result = verify(two_hop(ORIGINAL, _list_rewrites, recipe=recipe))
+    # -08 (contract D6): the first bad step, b[0], is named.
     assert result.errors == [
-        "PERMERROR: Message-Instance m=2 contains invalid JSON"], result.errors
+        "PERMERROR: Message-Instance m=2 Recipe b[0] is invalid"], result.errors
 
 
 if __name__ == "__main__":

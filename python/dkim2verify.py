@@ -582,8 +582,12 @@ def _recipe_field_errors(value: str, m_val) -> list[str]:
                 # walk) and reported under the same text.
                 try:
                     validate_recipes(recipes)
-                except MalformedRecipe:
-                    errors.append(_malformed_recipe_error(m_val))
+                except MalformedRecipe as e:
+                    # Contract D6: one bad step is "Recipe <path> is
+                    # invalid"; a whole-document fault is invalid JSON.
+                    errors.append(_malformed_recipe_error(m_val) if e.path is None
+                                  else f"PERMERROR: Message-Instance m={m_val} "
+                                       f"Recipe {e.path} is invalid")
     return errors
 
 

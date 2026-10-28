@@ -39,7 +39,8 @@ EXPECT = {
     "multi-tamper-two-instances":
         "FAIL: Message-Instance m=2 header hash sha256 mismatch",
     "multi-expired-recipe-json": JSON2,
-    "multi-expired-recipe-order": JSON2,
+    # -08 (contract D6): the out-of-order step is named.
+    "multi-expired-recipe-order": "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid",
     "multi-expired-recipe-past-end": JSON2,
     "multi-tamper-recipe-past-end":
         "FAIL: Message-Instance m=2 body hash sha256 mismatch",

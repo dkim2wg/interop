@@ -86,22 +86,29 @@ def _invalid_json(recipe_json: bytes):
     _fails_with(_bad_recipe(recipe_json), INVALID_JSON_2)
 
 
+def _invalid_step(recipe_json: bytes, path="b[0]"):
+    """-07 called every one of these "contains invalid JSON"; -08 (contract
+    D6) names the one bad step instead."""
+    _fails_with(_bad_recipe(recipe_json),
+                f"PERMERROR: Message-Instance m=2 Recipe {path} is invalid")
+
+
 def test_u3_u_with_nonzero_pad_bits():
-    _invalid_json(b'{"b":[{"u":["QR=="]}]}')
+    _invalid_step(b'{"b":[{"u":["QR=="]}]}')
 
 
 def test_u3_u_not_canonical_base64():
     for item in (b'"QQ"', b'"Q Q=="', b'"QQ=\\n="', b'"QQ==="', b'"****"'):
-        _invalid_json(b'{"b":[{"u":[' + item + b']}]}')
+        _invalid_step(b'{"b":[{"u":[' + item + b']}]}')
 
 
 def test_u4_bad_step_shapes():
     for steps in (b'{"b":["eA=="]}', b'{"c":[1,1],"d":["x"]}', b'{}'):
-        _invalid_json(b'{"b":[' + steps + b']}')
+        _invalid_step(b'{"b":[' + steps + b']}')
 
 
 def test_u5_u_decoding_to_cr():
-    _invalid_json(b'{"b":[{"u":["YQ1i"]}]}')
+    _invalid_step(b'{"b":[{"u":["YQ1i"]}]}')
 
 
 def test_u5_empty_h_and_neither_h_nor_b():
@@ -110,11 +117,11 @@ def test_u5_empty_h_and_neither_h_nor_b():
 
 
 def test_d_with_lone_surrogate():
-    _invalid_json(b'{"b":[{"d":["\\udc80"]}]}')
+    _invalid_step(b'{"b":[{"d":["\\udc80"]}]}')
 
 
 def test_d_with_cr():
-    _invalid_json(b'{"b":[{"d":["a\\rb"]}]}')
+    _invalid_step(b'{"b":[{"d":["a\\rb"]}]}')
 
 
 # --- K: JSON keys -------------------------------------------------------------

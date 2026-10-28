@@ -109,6 +109,11 @@ def malformed(m):
     return f"PERMERROR: Message-Instance m={m} contains invalid JSON"
 
 
+def step_invalid(m, path):
+    """-08 (contract D6): one bad Recipe step, named by its path."""
+    return f"PERMERROR: Message-Instance m={m} Recipe {path} is invalid"
+
+
 # --- body -----------------------------------------------------------------
 
 def test_no_recipe():
@@ -180,14 +185,14 @@ def test_copy_past_end_of_rebuilt_body():
 
 
 def test_out_of_order_and_overlapping():
-    assert malformed(2) in errors(message(HDRS, BODY5, {2: {"b": [
+    assert step_invalid(2, "b[1]") in errors(message(HDRS, BODY5, {2: {"b": [
         {"c": [3, 4]}, {"c": [1, 2]}]}}))
-    assert malformed(2) in errors(message(HDRS, BODY5, {2: {"b": [
+    assert step_invalid(2, "b[1]") in errors(message(HDRS, BODY5, {2: {"b": [
         {"c": [1, 3]}, {"c": [3, 4]}]}}))
 
 
 def test_non_integer_range():
-    assert malformed(3) in errors(message(HDRS, BODY5, {
+    assert step_invalid(3, "b[0]") in errors(message(HDRS, BODY5, {
         3: {"b": [{"c": [1, "2"]}]}, 2: {"b": [{"c": [1, 2]}]}}))
 
 
@@ -311,11 +316,11 @@ def test_header_errors():
     assert malformed(2) in errors(message(HDRS, BODY5, {2: {"h": {
         "cc": [{"c": [1, 1]}]}}}))
     hs = _with(HDRS, b"Comments: a", b"Comments: b")
-    assert malformed(2) in errors(message(hs, BODY5, {2: {"h": {
+    assert step_invalid(2, "h.comments[1]") in errors(message(hs, BODY5, {2: {"h": {
         "comments": [{"c": [2, 2]}, {"c": [1, 1]}]}}}))
     assert malformed(2) in errors(message(HDRS, BODY5, {2: {"h": {
         "to": [{"c": [1, 9]}], "from": [{"c": [1, 9]}]}}}))
-    assert malformed(2) in errors(message(HDRS, BODY5, {2: {"h": {
+    assert step_invalid(2, "h.subject") in errors(message(HDRS, BODY5, {2: {"h": {
         "subject": "nope"}}}))
 
 
