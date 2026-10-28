@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Tests for the -07 §5 "u" (base64 octet) literal steps, and the verifier
+// Tests for the -08 §5 "u" (base64 octet) literal steps, and the verifier
 // actually enforcing the "c" range rules (two integers, 1 <= start <= end <=
 // item count, ascending and non-overlapping across the list) as
 // "PERMERROR: Message-Instance m=<N> contains invalid JSON".

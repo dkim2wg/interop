@@ -49,7 +49,7 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 // chainOf sorts headers into Message-Instances, DKIM2-Signatures and
 // content, and runs the §14.2 structure check (chainStructure) over them:
 // the first thing verified, before the body is read or any key looked up.
-// No DKIM2 header fields at all is ErrNone (-07 §14.2's "No DKIM2 header
+// No DKIM2 header fields at all is ErrNone (-08 §14.2's "No DKIM2 header
 // fields found" is reported as dkim2=none).
 func chainOf(headers []Header, opts ...VerifyOptions) (*chainShape, error) {
 	var mis, sigs []string // raw fields, CRLF included
@@ -162,7 +162,7 @@ func verifyFields(cs *chainShape, bodyHashes func(algs []string) (map[string][]b
 		}
 	}
 
-	// §16.3: with HeadersOnly there is no body to hash — the caller handed us
+	// §16.4: with HeadersOnly there is no body to hash — the caller handed us
 	// the header fields alone, as echoed back in a DSN's text/rfc822-headers
 	// part — so the body pass is skipped and only header hashes are checked.
 	headersOnly := opt.HeadersOnly
@@ -233,7 +233,7 @@ func verifyFields(cs *chainShape, bodyHashes func(algs []string) (map[string][]b
 	}
 	topSig := parsedSigs[len(parsedSigs)-1]
 
-	// §14.3: not Validly Signed if made more than 14 days before delivery,
+	// §14.3: not Fully Verified if made more than 14 days before delivery,
 	// or more than one day after it.  t=0 is valid syntax and simply very
 	// old.  Compared without adding to t=, which may be as large as
 	// math.MaxInt64.
@@ -300,7 +300,7 @@ type chainShape struct {
 	content   []Header
 }
 
-// chainStructure is -07 §14.2's structure check, contract C9 steps a..h:
+// chainStructure is -08 §14.2's structure check, contract C9 steps a..h:
 // what the field names and their m=/i= numbers alone decide, before any
 // field's content.  Each step is over every field, and the first that
 // applies is the result:
@@ -428,7 +428,7 @@ func lowestTwice(who string, raws []string, tags func(string) *tagValueList, tag
 	return nil // not reached: the caller found one
 }
 
-// sigFieldError is the -07 §14.2 check of one DKIM2-Signature field on its
+// sigFieldError is the -08 §14.2 check of one DKIM2-Signature field on its
 // own (contract C9 runs it for every signature, by ascending i=, after the
 // chain walk and before any §14.3 check): a
 // duplicated tag, an mf=/rt= without its angle brackets (§10.5/§10.6), the

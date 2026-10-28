@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// Domains as -07 compares them: the relaxed domain match (§7.2), address
+// Domains as -08 compares them: the relaxed domain match (§7.2), address
 // domains mapped to A-labels (§18), and the From mailbox §11 checks.
 
 // domainOf returns the domain of an email address or RFC 5321 path: the text

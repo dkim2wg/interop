@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// -07 §5: the JSON keys MUST be lower case; header field names
+// -08 §5: the JSON keys MUST be lower case; header field names
 // still match the message case-insensitively (§5.1).
 func TestRecipeKeysLowercased(t *testing.T) {
 	r := &Recipe{Headers: map[string][]RecipeStep{
@@ -63,7 +63,7 @@ func TestMalformedRecipeJSONIsSpecificPermerror(t *testing.T) {
 }
 
 func TestNullHeaderRecipeIsInvalidJSON(t *testing.T) {
-	// -07: a breach of the §5 schema, such as "h": null, is reported as
+	// -08: a breach of the §5 schema above step level, such as "h": null, is reported as
 	// "contains invalid JSON" like a JSON syntax error.
 	_, err := parseMI(`Message-Instance: m=3; h=sha256:AAAA:BBBB; r=eyJoIjpudWxsfQ==;`)
 	if err == nil || err.Error() != "PERMERROR: Message-Instance m=3 contains invalid JSON" {

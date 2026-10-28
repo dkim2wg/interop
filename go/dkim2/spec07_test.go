@@ -585,7 +585,7 @@ func TestSpec07T1FutureLimit(t *testing.T) {
 	wantErr07(t, old, "FAIL: DKIM2-Signature i=1 signature expired", VerifyOptions{})
 }
 
-// ---- -07 error strings ----
+// ---- -07 error strings (contract C6), as -08 states them ----
 
 func TestSpec07ErrorStrings(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
@@ -634,7 +634,7 @@ func TestSpec07ErrorStrings(t *testing.T) {
 	})
 }
 
-// ---- C9: the primary error is the first in -07 §14 section order ----
+// ---- C9: the primary error is the first in -08 §14 section order ----
 
 // primary07 is the primary error VerifyFull reports: its returned error's
 // first line, else PrimaryResult's; "" for a pass.

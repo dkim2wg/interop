@@ -37,7 +37,7 @@ func main() {
 	results, err := dkim2.VerifyFull(os.Stdin, fetcher, opt)
 	if errors.Is(err, dkim2.ErrNone) {
 		// No DKIM2 header fields at all: the result is "none", which is
-		// neither a pass nor an error (-07 §14.2).
+		// neither a pass nor an error (-08 §14.2).
 		fmt.Fprintln(os.Stdout, "dkim2=none")
 		os.Exit(1)
 	}

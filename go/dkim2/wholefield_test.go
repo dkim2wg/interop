@@ -25,7 +25,7 @@ func wantOutcome(t *testing.T, got, want string) {
 }
 
 // F.1: every tag-list fragment must be a well-formed tag=value; only the end
-// of the list may be empty (-07 §8: one optional trailing ";").
+// of the list may be empty (-08 §8: one optional trailing ";").
 func TestWholeFieldF1_TagLists(t *testing.T) {
 	sigLine, miLine, rest := strictSigned(t, 1740000000)
 	tmpl := withS(t, sigLine, "sel1:rsa-sha256:{SIG}")

@@ -113,7 +113,7 @@ type VerifyResult struct {
 	// unsigned top instance.  It is not reported in A-R.
 	FullyVerified bool
 
-	// section is the -07 §14 section Error ranks in (contract C9), when its
+	// section is the -08 §14 section Error ranks in (contract C9), when its
 	// text alone does not say: a Recipe that does not fit the message is
 	// found by the §14.7 chain walk and ranks there, though its string is
 	// §14.2's.  0: rank by the text (c9Section).
@@ -138,7 +138,7 @@ type VerifyOptions struct {
 	Signer string
 
 	// HeadersOnly says the message has no body, as with the returned original
-	// in a DSN's text/rfc822-headers part (§16.3). Signatures and the
+	// in a DSN's text/rfc822-headers part (§16.4). Signatures and the
 	// chain are checked as usual; of the Message-Instance content check, only
 	// the topmost instance's header hash can be, so only that is.
 	HeadersOnly bool
@@ -160,7 +160,7 @@ var ErrNone = errors.New("none")
 
 // MaxFutureSkew and MaxSignatureAge are the §14.3 timestamp limits: a
 // signature made more than one day after delivery, or more than 14 days
-// before it, is not Validly Signed.
+// before it, is not Fully Verified.
 const (
 	MaxFutureSkew   = 86400
 	MaxSignatureAge = 1209600
@@ -193,7 +193,7 @@ func allASCIIDigits(v string) bool {
 // "+1".  At most three digits and 1..MaxChainNumber, so "01" and "001" are 1
 // (and nothing is converted that could overflow), and no more than
 // MaxChainLength.  The field is named by its own number as written (a
-// DKIM2-Signature by i=, a Message-Instance by m=, -07 §14.2): ident.
+// DKIM2-Signature by i=, a Message-Instance by m=, -08 §14.2): ident.
 func chainNumberError(field, tag, v, ident string, present bool) error {
 	if !present {
 		return nil

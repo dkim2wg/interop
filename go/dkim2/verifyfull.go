@@ -128,7 +128,7 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 func verifyUndoFrom(buf []byte, br *bufio.Reader, headers []Header, cs *chainShape,
 	fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
 
-	// §16.3: with no body there is nothing to undo a lower instance into, so
+	// §16.4: with no body there is nothing to undo a lower instance into, so
 	// the top instance's header-hash check is as far as the chain walk goes.
 	var lower func() *VerifyResult
 	if !(len(opts) > 0 && opts[0].HeadersOnly) {

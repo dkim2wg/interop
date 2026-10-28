@@ -46,7 +46,7 @@ func ndTestRaw(t *testing.T) []byte {
 }
 
 // TestTopNdRejected builds a 2-hop chain whose HIGHEST (top) DKIM2-Signature
-// carries nd= instead of mf=/rt=: -07 §14.4 "unexpected nd= tag".
+// carries nd= instead of mf=/rt=: -08 §14.4 "unexpected nd= tag".
 // the only legitimate nd= producer emits the nd= signature together with the
 // matching higher-i= signature at the same time, so nd= must never appear on
 // the top signature. Verify must reject it.

@@ -7,7 +7,7 @@ import (
 )
 
 // TestVerifyCanonicalErrorStrings asserts that verify.go's custody/mismatch
-// messages fire in the exact byte-for-byte -07 §14 forms (see
+// messages fire in the exact byte-for-byte -08 §14 forms (see
 // docs/superpowers/plans/2026-07-05-dkim2-spec-04-upgrade.md, Task 3.3).
 func TestVerifyCanonicalErrorStrings(t *testing.T) {
 	t.Run("MAIL FROM mismatch", func(t *testing.T) {

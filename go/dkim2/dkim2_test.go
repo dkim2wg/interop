@@ -1117,7 +1117,7 @@ func TestVerifyChainCustodyBreak(t *testing.T) {
 	if tampered == string(doubleMsg) {
 		t.Skip("could not find mf= to tamper (base64 may differ)")
 	}
-	// -07 §14.4 custody break:
+	// -08 §14.4 custody break:
 	// "DKIM2-Signature i=<x> mf= does not match the rt= of i=<y>".
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	results, err := Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})
