@@ -268,7 +268,7 @@ int main(void) {
         reset(ANSWER, NULL, ANSWER);
         memset(&ctx, 0, sizeof ctx);
         free(v);
-        cap = 500 * 20 + 256;
+        cap = 500 * 32 + 256;
         v = malloc(cap);
         assert(v);
         len = (size_t)snprintf(v, cap, "i=1; m=1; t=1; d=one.example; mf=PGE+; rt=PGE+; s=");
