@@ -252,6 +252,9 @@ func TestSpec07UStepSchema(t *testing.T) {
 		"top key case dup":      `{"b":[],"B":null}`,
 		"step key case dup":     `{"b":[{"d":["x"],"D":["y"]}]}`,
 		"null h any case":       `{"H":null}`,
+		// -08 (contract D10): keys are strictly lowercase.
+		"upper keys":   `{"B":[{"U":["YWI="]},{"D":["x"]},{"C":[1,1]}]}`,
+		"null b upper": `{"B":null}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := parseMI(miWithRecipe(2, js))
@@ -264,10 +267,8 @@ func TestSpec07UStepSchema(t *testing.T) {
 		"u canonical":   `{"b":[{"u":["Y2Fm6Q=="]}]}`,
 		"u one pad":     `{"b":[{"u":["YWI="]}]}`,
 		"u empty":       `{"b":[{"u":[""]}]}`,
-		"upper keys":    `{"B":[{"U":["YWI="]},{"D":["x"]},{"C":[1,1]}]}`,
 		"pair escapes":  `{"b":[{"d":["\ud83d\ude00"]}]}`,
 		"unknown top":   `{"b":[],"x":1}`,
-		"null b upper":  `{"B":null}`,
 		"d valid utf-8": `{"b":[{"d":["naïve"]}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -276,20 +277,21 @@ func TestSpec07UStepSchema(t *testing.T) {
 			}
 		})
 	}
-	mi, err := parseMI(miWithRecipe(2, `{"B":null}`))
+	mi, err := parseMI(miWithRecipe(2, `{"b":null}`))
 	if err != nil || mi.Recipe == nil || !mi.Recipe.BodyNull {
-		t.Fatalf(`{"B":null} is not the null body Recipe: %v %+v`, err, mi)
+		t.Fatalf(`{"b":null} is not the null body Recipe: %v %+v`, err, mi)
 	}
 }
 
-// K1: keys match case-insensitively at every level.
+// K1: -07 matched keys case-insensitively; -08 (contract D10) does not: an
+// uppercase key anywhere makes the JSON invalid.
 func TestSpec07K1UppercaseKeysVerify(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
-	for _, js := range []string{`{"h":{"subject":[{"c":[1,1]}]}}`, `{"H":{"Subject":[{"C":[1,1]}]}}`} {
-		rev := revise07(t, hop1, nil, "", js)
-		hop2 := must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, "")
-		wantPass07(t, hop2)
-	}
+	rev := revise07(t, hop1, nil, "", `{"h":{"subject":[{"c":[1,1]}]}}`)
+	wantPass07(t, must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, ""))
+	rev = revise07(t, hop1, nil, "", `{"H":{"Subject":[{"C":[1,1]}]}}`)
+	wantErr07(t, rev, "PERMERROR: Message-Instance m=2 contains invalid JSON",
+		VerifyOptions{SkipTimestampCheck: true, Outbound: true})
 }
 
 // ---- F: flags (§10.10, §12.5) ----
@@ -608,7 +610,7 @@ func TestSpec07ErrorStrings(t *testing.T) {
 		wantErr07(t, bad, "PERMERROR: DKIM2-Signature i=1 public key nokey does not exist")
 	})
 	t.Run("duplicate tag", func(t *testing.T) {
-		bad := bytes.Replace(hop1, []byte("t=1740000000;"), []byte("t=1740000000; T=1740000000;"), 1)
+		bad := bytes.Replace(hop1, []byte("t=1740000000;"), []byte("t=1740000000; t=1740000000;"), 1)
 		wantErr07(t, bad, "PERMERROR: DKIM2-Signature i=1 syntax error")
 	})
 	t.Run("nd with mf", func(t *testing.T) {
@@ -678,7 +680,7 @@ func TestSpec07C9PrimaryError(t *testing.T) {
 		{"no key and body hash", append(must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
 			func(o *SignOptions) { o.Selector = "nokey" }), "more\r\n"...),
 			skip, "FAIL: Message-Instance m=1 body hash sha256 mismatch"},
-		{"signature syntax and header hash", bytes.Replace(bytes.Replace(hop1, []byte("t=1740000000;"), []byte("t=1740000000; T=1;"), 1),
+		{"signature syntax and header hash", bytes.Replace(bytes.Replace(hop1, []byte("t=1740000000;"), []byte("t=1740000000; t=1;"), 1),
 			[]byte("Subject: hello"), []byte("Subject: jello"), 1),
 			skip, "FAIL: Message-Instance m=1 header hash sha256 mismatch"},
 		// Every header hash before any body hash.

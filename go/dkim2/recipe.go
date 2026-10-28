@@ -83,8 +83,7 @@ func (e *malformedRecipeError) Error() string {
 }
 
 // UnmarshalJSON rejects every step shape the §5 schema does not allow:
-// anything but an object with exactly one key from {c, d, u} (matched
-// without regard to case); a "c" whose value is not an array of exactly two
+// anything but an object with exactly one key from {c, d, u}; a "c" whose value is not an array of exactly two
 // JSON integers (strings, 1.5 and the like are rejected here, not silently
 // coerced); an empty or non-string "d" or "u" list. Range and base64 checks
 // live in validateRecipeSteps so they also cover programmatically built
@@ -99,7 +98,7 @@ func (s *RecipeStep) UnmarshalJSON(data []byte) error {
 	}
 	*s = RecipeStep{}
 	for k, v := range obj {
-		switch strings.ToLower(k) {
+		switch k {
 		case "c":
 			var bounds []json.RawMessage
 			if err := json.Unmarshal(v, &bounds); err != nil || len(bounds) != 2 {
@@ -237,17 +236,21 @@ func validateRecipeSteps(steps []RecipeStep, count int) error {
 }
 
 // errDuplicateJSONKey is returned for Recipe JSON in which one object names
-// a key twice, without regard to case (§5: keys MUST be unique; verifiers
-// match them case-insensitively): parsers disagree on which value wins, so
-// {"b":[...],"B":null} would be a null body Recipe to some verifiers and
-// signers and a real one to others.
-var errDuplicateJSONKey = errors.New("duplicate JSON object key")
+// a key twice (§5: keys MUST be unique): parsers disagree on which value
+// wins, so {"b":[...],"b":null} would be a null body Recipe to some
+// verifiers and signers and a real one to others.  errUppercaseJSONKey is
+// returned for a key holding an ASCII capital, at any level: -08 keys are
+// strictly lowercase (contract D10).
+var (
+	errDuplicateJSONKey = errors.New("duplicate JSON object key")
+	errUppercaseJSONKey = errors.New("JSON object key is not lowercase")
+)
 
 // jsonDuplicateKey walks data's tokens and returns errDuplicateJSONKey for
-// the first object that names a key twice (compared after unescaping and
-// lowercasing). It
-// returns nil for valid JSON without duplicates; invalid JSON is left to
-// json.Unmarshal to report.
+// the first object that names a key twice (compared exactly, after
+// unescaping), or errUppercaseJSONKey for the first key holding an ASCII
+// capital A-Z (non-ASCII letters are not judged).  It returns nil for valid
+// JSON without either; invalid JSON is left to json.Unmarshal to report.
 func jsonDuplicateKey(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	type frame struct {
@@ -266,7 +269,9 @@ func jsonDuplicateKey(data []byte) error {
 		}
 		if top != nil && top.keys != nil && top.wantKey {
 			if k, ok := tok.(string); ok {
-				k = strings.ToLower(k)
+				if strings.ContainsAny(k, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+					return fmt.Errorf("%w %q", errUppercaseJSONKey, k)
+				}
 				if top.keys[k] {
 					return fmt.Errorf("%w %q", errDuplicateJSONKey, k)
 				}
@@ -352,9 +357,8 @@ func jsonLoneSurrogate(data []byte) bool {
 
 // parseRecipe parses and checks a Recipe JSON object (§5).  parseMI reports
 // every failure -- invalid JSON, a duplicate key, or a breach of the schema
-// or step rules -- as "contains invalid JSON".  Keys are matched without
-// regard to case at every level: they MUST be lowercase, but a verifier is
-// liberal in what it accepts.
+// or step rules -- as "contains invalid JSON".  Keys are lowercase at every
+// level, or the JSON is invalid (contract D10).
 func parseRecipe(data []byte) (*Recipe, error) {
 	if !utf8.Valid(data) || jsonLoneSurrogate(data) {
 		return nil, malformedRecipe("not UTF-8 JSON text")
@@ -372,7 +376,7 @@ func parseRecipe(data []byte) (*Recipe, error) {
 	var r Recipe
 	var hasH, hasB bool
 	for k, v := range probe {
-		switch strings.ToLower(k) {
+		switch k {
 		case "h":
 			hasH = true
 			// §5 schema: "h" is an object with at least one property, each

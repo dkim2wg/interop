@@ -22,7 +22,7 @@ type DKIM2Signature struct {
 	Nonce      string   // n= tag (optional); max 64 ASCII chars per §10.3
 	Flags      []string // f= tag (optional); comma-separated flags per §10.10
 	Sigs       []SigItem
-	Duplicate  string // lowercased tag name that appeared more than once (§8), if any
+	Duplicate  string // tag name that appeared more than once (§8), if any
 }
 
 // toRFC5321Path wraps an address as an RFC5321 path for mf=/rt= (§10.5,
@@ -474,10 +474,10 @@ func (sig *DKIM2Signature) String() string {
 }
 
 // reSTag matches the s= tag at a tag boundary — the start of the header value
-// or after a ";" — case-insensitively and tolerating FWS around "=". This is
-// independent of tag order (s= may be first) and case (S=), per §8.
+// or after a ";" — tolerating FWS around "=". This is independent of tag
+// order (s= may be first); "S=" is an unknown tag, not s= (§8, D10).
 // Base64 cannot contain ";" so the value runs to the next ";".
-var reSTag = regexp.MustCompile(`(?i)(^|;)\s*s\s*=`)
+var reSTag = regexp.MustCompile(`(^|;)\s*s\s*=`)
 
 // incompleteForm takes the original raw header value (after the field name)
 // and returns it with each s= item's signature value replaced by empty string

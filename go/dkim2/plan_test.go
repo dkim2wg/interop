@@ -347,7 +347,8 @@ func planCases() []planCase {
 		{name: "mixed-case names", levels: []planLevel{
 			{"FROM: a@example.com\r\nsubject: hello\r\nSUBJECT: two\r\n", "a\r\n", ""},
 			{"FROM: a@example.com\r\nSubject: [l] hello\r\nSUBJECT: two\r\n", "a\r\n", `{"h":{"subject":[{"c":[1,1]},{"d":["hello"]}]}}`}}},
-		{name: "mixed-case recipe keys", levels: []planLevel{
+		// -08 (contract D10): uppercase keys are invalid JSON.
+		{name: "mixed-case recipe keys", want: "PERMERROR: Message-Instance m=2 contains invalid JSON", noPlan: true, levels: []planLevel{
 			{h + "Keywords: k\r\n", "a\r\n", ""},
 			{strings.Replace(h, "hello", "[l] hello", 1), "a\r\n", `{"h":{"Subject":[{"d":["hello"]}],"KEYWORDS":[{"d":["k"]}]}}`}}},
 		{name: "skipped fields with recipes", levels: []planLevel{
