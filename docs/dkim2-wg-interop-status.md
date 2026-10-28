@@ -1,7 +1,7 @@
 # DKIM2 Interop Status Report
 
 **Spec:** draft-ietf-dkim-dkim2-spec-08  
-**Date:** 2026-10-18 (-08 upgrade; earlier sections of this report date from 2026-05-01)  
+**Date:** 2026-10-28 (-08 upgrade, deployed and accepted on dkim2.com; earlier sections of this report date from 2026-05-01)  
 **Audience:** DKIM2 Working Group participants, hackathon attendees
 
 ---
@@ -26,33 +26,44 @@ implementation.
 
 ## Spec sections implemented
 
-Section numbers are -07's. All five verifiers (the four below plus the
+Section numbers are -08's. All five verifiers (the four below plus the
 browser JS verifier) implement every verifier row.
 
 | Section | Topic | Py | Perl | Go | C |
 |---------|-------|----|------|----|---|
-| §5, §5.1, §5.2 | Recipes: `c`/`d`/`u` steps (`u` replaced -06's `b`), lowercase keys emitted, keys matched case-insensitively, case-insensitive duplicates rejected | ✅ | ✅ | ✅ | ✅ |
+| §5, §5.1, §5.2 | Recipes: `c`/`d`/`u` steps (`u` replaced -06's `b`); keys strictly lowercase, duplicates rejected; one bad step is `Recipe <path> is invalid` | ✅ | ✅ | ✅ | ✅ |
 | §6.1 | Body hash (SHA-256/SHA-512, simple canon) | ✅ | ✅ | ✅ | ✅ |
-| §6.2 | Header hash (sorted, canonicalized) | ✅ | ✅ | ✅ | ✅ |
+| §4, §6.2 | Header hash (sorted by name octets, canonicalized); Auto-Submitted and VBR-Info hashed since -08 | ✅ | ✅ | ✅ | ✅ |
 | §7 | Relaxed domain match (asymmetric; A-labels; domain literals never match) | ✅ | ✅ | ✅ | ✅ |
-| §8 | Tag=Value lists (any-case tag names, duplicates and `;;` rejected) | ✅ | ✅ | ✅ | ✅ |
-| §9 | Message-Instance header format, `r=` (absent `r=` = no change) | ✅ | ✅ | ✅ | ✅ |
+| §8 | Tag=Value lists (tag-names case-sensitive and lowercase: an upper-case tag is unknown; duplicates and `;;` rejected) | ✅ | ✅ | ✅ | ✅ |
+| §9 | Message-Instance header format, `h=` `\|` groups of `,` lists, `r=` (absent `r=` = no change) | ✅ | ✅ | ✅ | ✅ |
 | §10 | DKIM2-Signature header format, i=/m= contiguity, n= ≤ 64 | ✅ | ✅ | ✅ | ✅ |
 | §10.10, §12.5 | `f=` flags; `exploded` above i=1 (hint header `X-DKIM2-Exploded: yes`) | ✅ | ✅ | ✅ | ✅ |
 | §11, §12.4, §14.8 | From must be Authentic (verifier check and signer refusal) | ✅ | ✅ | ✅ | ✅ |
 | §12.3 | `nd=` imaginary hops | ✅ | ✅ | ✅ | ✅ |
 | §12.8 | Signing input construction | ✅ | ✅ | ✅ | ✅ |
 | §14.1–§14.8 | Exact -08 error strings (`STATE: text`) | ✅ | ✅ | ✅ | ✅ |
-| §14.3 | Timestamps: > 14 days old or > 1 day in the future is PERMERROR | ✅ | ✅ | ✅ | ✅ |
-| §14.4 | Chain of Custody (mf=/d=, mf=/rt=, bounce d=/rt=, nd= checks) and envelope exact match | ✅ | ✅ | ✅ | ✅ |
-| §14.6 | Verify all s= items (algorithm agility) | ✅ | ✅ | ✅ | ✅ |
+| §14.3 | Timestamps: > 14 days old or > 1 day in the future is FAIL | ✅ | ✅ | ✅ | ✅ |
+| §14.4 | Chain of Custody (mf=/d=, mf=/rt=, bounce d=/rt=, nd= checks; FAIL) and envelope exact match | ✅ | ✅ | ✅ | ✅ |
+| §14.5, §14.6 | `s=` `\|` groups of `,` lists combined per -08; unknown algorithm and malformed key are PERMERROR items; at most 8 items (local) | ✅ | ✅ | ✅ | ✅ |
 | §14 | Full chain walk with Recipe undo | ✅ | ✅ | ✅ | ✅ |
-| §16 | DSNs: none for a null top `mf=` or a message not Provisionally Verified | ✅ | ✅ | ✅ | ✅ |
-| §3.4 | MLDSA44-Ed25519-SHA512 | — | — | — | — |
+| §13 | Fully Verified: a pass over a null body Recipe is flagged not fully verified | ✅ | ✅ | ✅ | ✅ |
+| §16 | DSNs: none for a null top `mf=` or a message not Provisionally Verified; a DSN's `d=` matches the reported `rt=` | ✅ | ✅ | ✅ | ✅ |
+| §3.4 | ML-DSA-44 (`mldsa44`) | — | — | — | — |
 
-MLDSA44-Ed25519-SHA512 is not implemented anywhere here yet: DKIMKEYS
-defines no `k=`/`p=` for it, so an `s=` item using it is disregarded like
-any unknown algorithm.
+ML-DSA-44 is deferred: DKIMKEYS -02 still defines only the old composite's
+key type, and most of our languages lack a library that verifies pure
+ML-DSA-44 with a context string. An `s=` item using it is an unknown
+algorithm (PERMERROR), which a `|` alternative can override.
+
+**-08 acceptance on dkim2.com (2026-10-28):** shared negative vectors 580/580
+across all five verifiers; hash matrix, signer gate, Turscar (10 known -08
+divergences), fold interop and the charset corpus matrix all pass. On prod:
+list smoke 6/6 (Mailman, Sympa, stock route; unsigned and signed upstream),
+every captured copy verifies in all five verifiers against live DNS, a real
+signed message carrying Auto-Submitted and VBR-Info verifies everywhere and
+FAILs everywhere once either header is altered, the reflector's signed path
+adds i=2, and the validator API passes the good copy and FAILs the bad one.
 
 ---
 
