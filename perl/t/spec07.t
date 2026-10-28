@@ -103,12 +103,15 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     }
 }
 
-# --- K1: keys match without regard to case --------------------------------------
+# --- K1: keys are lowercase (-08 §5, contract D10) -------------------------------
 {
-    for my $json ('{"h":{"subject":[{"c":[1,1]}]}}', '{"H":{"Subject":[{"C":[1,1]}]}}',
-                  '{"B":[{"C":[1,1]}]}') {
+    my $t = add_sig(mi_with_recipe($HOP1_TEXT, '{"h":{"subject":[{"c":[1,1]}]}}'), %HOP2);
+    is_pass($t, 'K1: {"h":{"subject":[{"c":[1,1]}]}} verifies');
+    for my $json ('{"H":{"subject":[{"c":[1,1]}]}}', '{"h":{"Subject":[{"c":[1,1]}]}}',
+                  '{"b":[{"C":[1,1]}]}') {
         my $t = add_sig(mi_with_recipe($HOP1_TEXT, $json), %HOP2);
-        is_pass($t, "K1: $json verifies");
+        is_error($t, 'permerror', 'PERMERROR: Message-Instance m=2 contains invalid JSON',
+            "K1: $json is invalid");
     }
 }
 

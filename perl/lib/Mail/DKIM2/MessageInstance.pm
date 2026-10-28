@@ -324,18 +324,20 @@ sub parse {
     # Strip leading whitespace
     $header =~ s/^\s+//;
 
-    # Parse tag-value format: m=N; h=...; r=... Tag identifiers are case
-    # insignificant and there MUST be only one of each kind (-07 §9), so
-    # names are lowercased, and a repeat in any case is a syntax error --
-    # never a silent overwrite, which let a wrong h= ahead of the right one
-    # pass (review R5).
+    # Parse tag-value format: m=N; h=...; r=... Tag-names MUST be lowercase
+    # (-08 §9) and are case-sensitive (§8), so one that is not lowercase is
+    # an unknown tag and ignored (the -08 contract, D10): "M=1" alone is a
+    # missing m=. There MUST be only one of each kind, and a repeat is a
+    # syntax error -- never a silent overwrite, which let a wrong h= ahead
+    # of the right one pass (review R5).
     # The list must parse as a whole (TagValueList's grammar): a fragment
     # that is not a tag is a syntax error, not something to skip
     # (follow-up review F3).
     my ($pairs, $ok) = Mail::DKIM2::TagValueList::split_tag_list($header);
     my (%tags, $dup, $raw_h);
     for my $p (@$pairs) {
-        my ($name, $val) = (lc $p->[0], $p->[1]);
+        my ($name, $val) = @$p;
+        next if $name =~ /[A-Z]/;
         $raw_h = $val if $name eq 'h';
         $val =~ s/\s//gs;
         $dup = 1 if exists $tags{$name};
@@ -401,12 +403,10 @@ sub parse {
             die $invalid;
         }
         die $invalid unless ref $recipe_data eq 'HASH';
-        # Keys match without regard to case (decision 2 of the -07
-        # contract: lowercase on the wire, any case accepted), and
-        # decode_tag_json has already refused two that differ only in case.
-        # Other top-level keys are ignored; at least one of h and b is
-        # required.
-        my %top = map { lc($_) => $recipe_data->{$_} } keys %$recipe_data;
+        # Every key is lowercase (-08 §5): decode_tag_json has already
+        # refused one that is not, and a key given twice. Other top-level
+        # keys are ignored; at least one of h and b is required.
+        my %top = %$recipe_data;
         die $invalid unless exists $top{h} || exists $top{b};
         # A null "b" (section 5.2) means the previous body cannot be
         # recreated -- distinct from an absent one (no change).
@@ -424,7 +424,7 @@ sub parse {
             die $invalid unless ref $top{h} eq 'HASH' && %{$top{h}};
             my %rh;
             for my $h (keys %{$top{h}}) {
-                $rh{lc $h} = _decode_recipe_list($top{h}{$h}, $invalid);
+                $rh{$h} = _decode_recipe_list($top{h}{$h}, $invalid);
             }
             $self->{bits}{rh} = \%rh;
         }
@@ -435,7 +435,7 @@ sub parse {
 
 # Convert wire format Recipe list to internal format
 # Wire (-07 section 5): an array of steps, each an object with exactly one
-# key, "c", "d" or "u" (in any case): {"c": [from,to]} copies, {"d": [...]}
+# key, "c", "d" or "u" (lowercase): {"c": [from,to]} copies, {"d": [...]}
 # emits UTF-8 literals, {"u": [...]} emits base64 ones.
 # Internal: [from,to] arrays for copy ranges, strings for literal content
 #
@@ -458,7 +458,7 @@ sub _decode_recipe_list {
     for my $item (@$list) {
         die $invalid unless ref $item eq 'HASH' && keys %$item == 1;
         my ($key) = keys %$item;
-        my $kind = lc $key;
+        my $kind = $key;
         my $val  = $item->{$key};
         die $invalid unless ref $val eq 'ARRAY';
         if ($kind eq 'c') {

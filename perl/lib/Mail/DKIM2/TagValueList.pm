@@ -54,8 +54,9 @@ sub parse {
     # internal whitespace; as_string() writes "name=value" joined by "; ",
     # so the whitespace around "=" and ";" and a trailing ";" are not kept.
     # That is harmless for signing input: §12.8 deletes all WSP from these
-    # fields before hashing. get_tag() does the case-insensitive lookup
-    # required by -07 §8. A spec that is not a tag is never silently
+    # fields before hashing. Tag-names are case-sensitive (-08 §8, and the
+    # -08 contract D10): "M=" is a tag of its own, which DKIM2 does not
+    # know, never another spelling of "m=". A spec that is not a tag is never silently
     # dropped from what is verified: it makes the whole field a syntax
     # error (follow-up review F3).
     my ($pairs, $ok) = split_tag_list($string);
@@ -64,7 +65,7 @@ sub parse {
     for my $p (@$pairs) {
         my ($name, $val) = @$p;
         # §8: "there MUST be only one of each kind" — flag any repeat.
-        $self->{_duplicate} = lc($name) if $seen{lc $name}++;
+        $self->{_duplicate} = $name if $seen{$name}++;
         $self->{tags}{$name} = $val;
         push @order, $name;
     }
@@ -72,19 +73,13 @@ sub parse {
     return $self;
 }
 
-# §8: tag identifiers are case-insensitive.  Try an exact match first (the
-# common case), then fall back to a case-insensitive scan.
+# -08 §8: tag-names are case-sensitive, so the lookup is exact.
 sub get_tag {
     my ($self, $name) = @_;
-    return $self->{tags}{$name} if exists $self->{tags}{$name};
-    my $lc = lc $name;
-    for my $k (keys %{$self->{tags}}) {
-        return $self->{tags}{$k} if lc($k) eq $lc;
-    }
-    return undef;
+    return $self->{tags}{$name};
 }
 
-# The lowercased tag name that appeared more than once, if any (-07 §8).
+# The tag name that appeared more than once, if any (-08 §8).
 sub duplicate_tag { return $_[0]->{_duplicate} }
 
 # True if the parsed field did not match the tag-list grammar.
@@ -130,7 +125,8 @@ A semicolon-separated list of C<tag=value> pairs (-07 section 2.12 and
 internal whitespace; serialisation joins C<name=value> pairs with C<; >, so
 the whitespace around C<=> and C<;> and a trailing C<;> are normalised
 (harmless for signing input, which -07 section 12.8 strips of all whitespace).
-Lookups are case-insensitive. L<Mail::DKIM2::Signature> is a subclass.
+Tag-names are case-sensitive (-08 section 8), so lookups are exact.
+L<Mail::DKIM2::Signature> is a subclass.
 
 =head1 CONSTRUCTORS
 
@@ -141,15 +137,15 @@ An empty list.
 =head2 parse($string)
 
 Parses a list into a new object (also when called on an existing one),
-trimming whitespace around names and values. A tag given twice (in any
-case) is reported by C<duplicate_tag>, and a field that is not a valid tag
+trimming whitespace around names and values. A tag given twice (in the same
+spelling) is reported by C<duplicate_tag>, and a field that is not a valid tag
 list by C<syntax_error>; the verifier rejects either.
 
 =head1 METHODS
 
 =head2 get_tag($name)
 
-The value of the tag, matched case-insensitively, or undef.
+The value of the tag, matched exactly (tag-names are case-sensitive), or undef.
 
 =head2 set_tag($name, $value)
 
@@ -157,7 +153,7 @@ Sets a tag, appending it to the order if new.
 
 =head2 duplicate_tag()
 
-The lowercased name of a tag that appeared more than once in the parsed
+The name of a tag that appeared more than once in the parsed
 input, or undef. Section 8 allows one of each; the Verifier reports a
 repeat as a permerror.
 

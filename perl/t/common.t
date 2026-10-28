@@ -28,11 +28,16 @@ my $ok = eval { $bad = parse_dkim_pubkey('v=DKIM1; k=ed25519; p=bm90YWtleQ=='); 
 ok($ok, 'malformed ed25519 key does not die');
 is($bad, undef, 'malformed ed25519 key returns undef');
 
-# -07 §4: names added by the HDRMAINT survey
-for my $h (qw(Apparently-To Auto-Submitted DL-Expansion-History
-              Original-Recipient SIO-Label-History VBR-Info
+# -08 §4: names added by the HDRMAINT survey
+for my $h (qw(Apparently-To DL-Expansion-History
+              Original-Recipient SIO-Label-History
               X400-Received X400-Trace)) {
-    ok(Mail::DKIM2::Common::should_skip($h), "-07 §4: $h is unsigned");
+    ok(Mail::DKIM2::Common::should_skip($h), "-08 §4: $h is unsigned");
+}
+
+# -08 §4 took these two off the list: they are hashed now
+for my $h (qw(Auto-Submitted VBR-Info)) {
+    ok(!Mail::DKIM2::Common::should_skip($h), "-08 §4: $h is signed");
 }
 
 # -07 §4: any Received-* field is a trace field

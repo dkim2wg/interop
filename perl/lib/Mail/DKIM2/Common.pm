@@ -91,15 +91,15 @@ use constant MAX_CHAIN_LENGTH => 32;
 # converted to a number big enough to be a loop bound.
 use constant MAX_CHAIN_NUMBER => 100;
 
-# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-07 Section 4.
+# Headers excluded from hashing per draft-ietf-dkim-dkim2-spec-08 Section 4.
 # spec-05 narrowed the old /^arc-/ prefix to the three RFC 8617 field names and
 # added a /^received-/ prefix rule so future trace fields of that form need no
-# change here.
+# change here. spec-08 took auto-submitted and vbr-info off the list.
 my %SKIP_EXACT = map { $_ => 1 } qw(
     apparently-to arc-authentication-results arc-message-signature arc-seal
-    authentication-results auto-submitted delivered-to dkim-signature
+    authentication-results delivered-to dkim-signature
     dkim2-signature dl-expansion-history message-instance original-recipient
-    received return-path sio-label-history vbr-info x400-received x400-trace
+    received return-path sio-label-history x400-received x400-trace
 );
 
 # should_skip($name, \@prefixes)
@@ -302,8 +302,7 @@ sub decode_tag_json {
     # A key given twice in one object is invalid here: JSON parsers disagree
     # on which value wins (first or last), so {"b":[...],"b":null} would be a
     # null body Recipe to some verifiers and signers and a real one to others.
-    # Keys are matched without regard to case (the -07 contract, decision 2),
-    # so "Subject" and "subject" in one object are a duplicate too.
+    # A key that is not lowercase is invalid too (-08 §5).
     if (defined(my $error = _json_lexical_error($text))) {
         die $error;
     }
@@ -341,8 +340,9 @@ sub _is_utf8_octets {
 }
 
 # The first problem the decoded value cannot show in $text (already known to
-# be valid JSON), or undef: a key that appears twice in one object, compared
-# after unescaping and without regard to case, or a number with a fraction or
+# be valid JSON), or undef: a key that is not lowercase (has an ASCII
+# capital), a key that appears twice in one object, compared after
+# unescaping, or a number with a fraction or
 # an exponent. Every number in a Recipe is an integer (-07 section 5), and
 # whether 1e0 decodes as an integer depends on the JSON backend -- JSON::XS
 # gives an NV, JSON::PP an IV -- so it is refused here, from the text.
@@ -361,7 +361,9 @@ sub _json_lexical_error {
         if ($text =~ /\G:/gc) { next }
         if ($text =~ /\G("(?:[^"\\]|\\.)*")/gcs) {
             if ($want_key && ref $stack[-1]) {
-                my $k = lc $json->decode($1);
+                my $k = $json->decode($1);
+                # -08 §5: keys MUST be lowercase (the -08 contract, D10).
+                return "JSON object key is not lowercase\n" if $k =~ /[A-Z]/;
                 return "duplicate JSON object key\n" if $stack[-1]{$k}++;
                 $want_key = 0;
             }
@@ -582,7 +584,7 @@ sub mi_version_tag {
     $header = $$header if ref($header);
     return unless defined $header;
     for my $part (split /;/, $header) {
-        next unless $part =~ /\A\s*m\s*=(.*)\z/si;    # tag names are case insignificant (§9)
+        next unless $part =~ /\A\s*m\s*=(.*)\z/s;    # tag-names are case-sensitive (-08 §8)
         (my $v = $1) =~ s/\s//g;
         return $v;
     }

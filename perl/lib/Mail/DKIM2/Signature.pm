@@ -296,13 +296,12 @@ sub as_string_without_data {
     my ($self) = @_;
 
     # Rebuild from the parsed tags in their original order and case, blanking
-    # each s= item's signature value in place.  Done directly (not via
-    # set_tag/as_string) so a non-lowercase 's' tag name — e.g. "S=" in a
-    # mixed-case header — is not duplicated by a fresh lowercase 's' key.
+    # each s= item's signature value in place. Only "s=" itself: tag-names
+    # are case-sensitive (-08 §8), so an "S=" is an unknown tag, signed as is.
     my @parts;
     for my $t (@{$self->{order}}) {
         my $v = defined $self->{tags}{$t} ? $self->{tags}{$t} : '';
-        if (lc $t eq 's') {
+        if ($t eq 's') {
             # Replace each sel:alg:sig with sel:alg: (empty value per §10.5)
             $v =~ s/([^,:]+:[^,:]+):[^,]*/$1:/g;
         }
