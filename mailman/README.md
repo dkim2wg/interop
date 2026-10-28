@@ -96,6 +96,11 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
    sent, with a Recipe back to the post as received, so the list's i=1
    signs a From that is Authentic for its domain while the Recipe keeps
    the author's. Signed posts keep their chain and get `m=N+1`, as before.
+6. **DKIM2 draft -08.** `Auto-Submitted` and `VBR-Info` are hashed now
+   (section 4), so instances Mailman computes match -08 verifiers.
+   Tag-names and Recipe JSON keys are lowercase and case-sensitive (an
+   upper-case tag is an unknown tag, an upper-case key invalid JSON), and
+   the ingress check reads `h=` as `|` groups of `,` lists (section 9.3).
 
 ## What they apply to
 

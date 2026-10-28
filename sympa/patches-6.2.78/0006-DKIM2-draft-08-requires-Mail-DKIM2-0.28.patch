@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Wed, 28 Oct 2026 09:48:58 +0100
+Subject: [PATCH 6/6] DKIM2 draft -08: requires Mail::DKIM2 0.28
+
+Draft -08 hashes Auto-Submitted and VBR-Info, which Sympa's own notices
+carry, so an instance computed by an older Mail::DKIM2 would not verify
+under -08: 0.28 is the minimum. DKIM2_DRAFT spec-08, DKIM2_DATE
+2026-10-28, section pointers to -08.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/lib/Sympa/DKIM2.pm | 24 ++++++++++++------------
+ t/DKIM2.t              |  6 +++---
+ 2 files changed, 15 insertions(+), 15 deletions(-)
+
+diff --git a/src/lib/Sympa/DKIM2.pm b/src/lib/Sympa/DKIM2.pm
+index bbfb98c29..3c2850356 100644
+--- a/src/lib/Sympa/DKIM2.pm
++++ b/src/lib/Sympa/DKIM2.pm
+@@ -38,7 +38,7 @@ use Sympa::Log;
+ my $log = Sympa::Log->instance;
+ 
+ # True if $that is a list with dkim2_message_instance on and Mail::DKIM2
+-# 0.23 or later (draft -07) loadable.  Mail::DKIM2 is loaded on first use,
++# 0.28 or later (draft -08) loadable.  Mail::DKIM2 is loaded on first use,
+ # never at compile time.  An older one lacks what egress needs, so it counts as
+ # missing.  The failure is logged once per process.
+ my $load_error_logged;
+@@ -51,11 +51,11 @@ sub enabled {
+     return 1 if eval {
+         require Mail::DKIM2::MessageInstance;
+         require Mail::DKIM2::Common;
+-        Mail::DKIM2::MessageInstance->VERSION('0.23');
++        Mail::DKIM2::MessageInstance->VERSION('0.28');
+         1;
+     };
+     $log->syslog('err',
+-        'dkim2_message_instance is on for %s but Mail::DKIM2 0.23 or later cannot be loaded: %s',
++        'dkim2_message_instance is on for %s but Mail::DKIM2 0.28 or later cannot be loaded: %s',
+         $that, $EVAL_ERROR)
+         unless $load_error_logged++;
+     return 0;
+@@ -67,7 +67,7 @@ sub anonymous {
+ }
+ 
+ # True if From is to be rewritten to an address of the list (as
+-# dmarc_protect does) whatever dmarc_protection says.  DKIM2 (-07 section
++# dmarc_protect does) whatever dmarc_protection says.  DKIM2 (-08 section
+ # 11) requires From to be Authentic: in the list's signing domain when the
+ # list host signs i=1, or when its hop changes the message.  Sympa's hop
+ # always changes a list post (Sender, Precedence, List-Id ...), and a
+@@ -144,9 +144,9 @@ sub egress_context {
+         return undef;
+     }
+     # Arrived unsigned: the list host's signature will be i=1, and i=1 is
+-    # checked against the From of state 1 (-07 section 11), which Sympa
++    # checked against the From of state 1 (-08 section 11), which Sympa
+     # rewrites.  So the copy leaves with a single instance, m=1, describing
+-    # it as sent, with a Recipe back to the message as received (-07
++    # it as sent, with a Recipe back to the message as received (-08
+     # section 12.1: the first instance may record changes made as the
+     # message enters DKIM2); see egress_add.
+     my $unsigned = $message->{'dkim2_headers'} !~ /^DKIM2-Signature:/mi;
+@@ -345,9 +345,9 @@ sub _strip_chain {
+ }
+ 
+ # DKIM2 implementation metadata -- update DKIM2_DATE on each change.
+-use constant DKIM2_DRAFT    => 'ietf-dkim-dkim2-spec-07';
++use constant DKIM2_DRAFT    => 'ietf-dkim-dkim2-spec-08';
+ use constant DKIM2_REPO     => 'github.com/brong/sympa';
+-use constant DKIM2_DATE     => '2026-10-18';
++use constant DKIM2_DATE     => '2026-10-28';
+ use constant DKIM2_SOFTWARE => 'sympa';
+ 
+ # X-DKIM2-Info value per draft-gondwana-dkim2-debug-header-01: a tag-list in
+@@ -573,7 +573,7 @@ Sympa::DKIM2 - DKIM2 Message-Instance support
+ =head1 DESCRIPTION
+ 
+ Records what a list changed in each message as a DKIM2 Message-Instance
+-header field (draft-ietf-dkim-dkim2-spec-07), so DKIM2 verifiers downstream
++header field (draft-ietf-dkim-dkim2-spec-08), so DKIM2 verifiers downstream
+ can undo the list's changes and check the signatures of earlier hops.  The
+ DKIM2-Signature itself is added by the MTA.
+ 
+@@ -585,7 +585,7 @@ editing it, so the body Recipe is a copy range; a body rewritten for any
+ other reason gets a null body Recipe.  Each instance Sympa adds has an
+ C<X-DKIM2-Info> debug field directly above it.
+ 
+-DKIM2 requires the From header field to be Authentic (-07 section 11): in
++DKIM2 requires the From header field to be Authentic (-08 section 11): in
+ the domain of the signature of the hop that last set it.  Every post a
+ DKIM2 list sends out has its From rewritten to the list address (see
+ L<Sympa::Message/dmarc_protect>), whatever C<dmarc_protection> says; the
+@@ -596,7 +596,7 @@ logged when they are not.  Each copy also gets the hint field
+ C<X-DKIM2-Exploded: yes>, which tells the outbound signer to set the
+ C<exploded> flag.
+ 
+-Requires Mail::DKIM2 0.23 or later, loaded on first use.  See
++Requires Mail::DKIM2 0.28 or later, loaded on first use.  See
+ F<DKIM2-MESSAGE-INSTANCE.md> for the design.
+ 
+ =head2 Functions
+@@ -606,7 +606,7 @@ F<DKIM2-MESSAGE-INSTANCE.md> for the design.
+ =item enabled ( $that )
+ 
+ True if C<$that> is a L<Sympa::List> with C<dkim2_message_instance> set to
+-C<on> and Mail::DKIM2 0.23 or later can be loaded.  If the switch is on but
++C<on> and Mail::DKIM2 0.28 or later can be loaded.  If the switch is on but
+ the module cannot be loaded or is too old, returns false and logs at C<err>
+ (once per process).
+ 
+diff --git a/t/DKIM2.t b/t/DKIM2.t
+index 82d2777ef..1c6aa1530 100644
+--- a/t/DKIM2.t
++++ b/t/DKIM2.t
+@@ -53,11 +53,11 @@ subtest 'enabled' => sub {
+     ok !Sympa::DKIM2::enabled('mail.example.org'), 'robot context';
+ };
+ 
+-subtest 'enabled: Mail::DKIM2 older than 0.23 counts as missing' => sub {
++subtest 'enabled: Mail::DKIM2 older than 0.28 counts as missing (draft -08)' => sub {
+     my @err;
+     no warnings 'redefine';
+     local *Sympa::Log::syslog = sub { push @err, $_[2] if $_[1] eq 'err' };
+-    local $Mail::DKIM2::MessageInstance::VERSION = '0.22';
++    local $Mail::DKIM2::MessageInstance::VERSION = '0.27';
+     ok !Sympa::DKIM2::enabled(list()), 'not enabled';
+     my $m = Sympa::Message->new($plain, context => list());
+     Sympa::DKIM2::ingress($m);
+@@ -720,7 +720,7 @@ subtest 'X-DKIM2-Info above each instance Sympa adds' => sub {
+     my ($info) = $w =~ /\AX-DKIM2-Info: (.*?)\r\n(?![ \t])/s;
+     $info =~ s/\r\n[ \t]+/ /g;
+     like $info, qr/\A(?:[a-z0-9-]+=[^;]*; ?)+\z/, 'tag-list, every tag ends in ;';
+-    like $info, qr/draft=ietf-dkim-dkim2-spec-07;/, 'draft';
++    like $info, qr/draft=ietf-dkim-dkim2-spec-08;/, 'draft';
+     like $info, qr/hc=\d+; hn=[a-z0-9,-]+;/, 'hashed header count and names';
+ };
+ 

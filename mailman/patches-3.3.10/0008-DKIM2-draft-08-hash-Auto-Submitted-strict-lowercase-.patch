@@ -1,0 +1,804 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Wed, 28 Oct 2026 10:37:34 +0100
+Subject: [PATCH 8/8] DKIM2 draft -08: hash Auto-Submitted, strict-lowercase
+ tags, h= groups
+
+Draft -08 section 4 hashes Auto-Submitted and VBR-Info. Tag-names and
+Recipe JSON keys are case-sensitive and lowercase (section 8, 5): an
+uppercase tag is an unknown tag and an uppercase key invalid JSON. h= is
+"|" groups of "," lists (section 9.3): verify_mi_raw passes when every
+hash-set of some group is a matching sha256 set. DKIM2_DRAFT spec-08,
+DKIM2_DATE 2026-10-28, section pointers to -08.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/mailman/config/schema.cfg                 |   2 +-
+ src/mailman/handlers/dmarc.py                 |   2 +-
+ src/mailman/handlers/message_instance.py      | 161 +++++++++++-------
+ src/mailman/handlers/tests/mi_support.py      |  21 +--
+ .../handlers/tests/test_message_instance.py   | 123 ++++++++-----
+ .../handlers/tests/test_mi_null_recipe.py     |   2 +-
+ 6 files changed, 186 insertions(+), 125 deletions(-)
+
+diff --git a/src/mailman/config/schema.cfg b/src/mailman/config/schema.cfg
+index c4db7393f..0e9864a76 100644
+--- a/src/mailman/config/schema.cfg
++++ b/src/mailman/config/schema.cfg
+@@ -937,7 +937,7 @@ remove_dkim_headers: no
+ # record SHA-256 hashes of the message at each point in the delivery chain,
+ # along with Recipes that allow a verifier to undo the changes made by the
+ # mailing list and verify signatures from prior hops.  See
+-# draft-ietf-dkim-dkim2-spec-07 for details.
++# draft-ietf-dkim-dkim2-spec-08 for details.
+ message_instance: no
+ 
+ # The most previous-body lines a Message-Instance body Recipe may restore as
+diff --git a/src/mailman/handlers/dmarc.py b/src/mailman/handlers/dmarc.py
+index f7c3412a6..c1197db90 100644
+--- a/src/mailman/handlers/dmarc.py
++++ b/src/mailman/handlers/dmarc.py
+@@ -203,7 +203,7 @@ def _dkim2_rewrites_from(mlist, msg, msgdata):
+ 
+     A list that changes a message, or originates it in DKIM2 terms (it
+     arrived with no DKIM2-Signature, so the list's hop is i=1), signs with
+-    its own domain, and From must be Authentic for that domain (spec-07
++    its own domain, and From must be Authentic for that domain (spec-08
+     §11, §12.4).  A signed message the list passes on unchanged keeps its
+     From: the author's signature still covers it.
+ 
+diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
+index 1962b7f32..bd5440438 100644
+--- a/src/mailman/handlers/message_instance.py
++++ b/src/mailman/handlers/message_instance.py
+@@ -18,7 +18,7 @@
+ """Message-Instance header support for DKIM2.
+ 
+ Implements Message-Instance header computation as defined in
+-draft-ietf-dkim-dkim2-spec-07.  A Message-Instance header records cryptographic
++draft-ietf-dkim-dkim2-spec-08.  A Message-Instance header records cryptographic
+ hashes of the message headers and body at a point in the delivery chain, along
+ with optional diff recipes that allow undoing changes made at each hop.
+ """
+@@ -44,9 +44,9 @@ from zope.interface import implementer
+ log = logging.getLogger('mailman.dkim2')
+ 
+ # DKIM2 implementation metadata — update DKIM2_DATE on each change.
+-DKIM2_DRAFT = 'ietf-dkim-dkim2-spec-07'
++DKIM2_DRAFT = 'ietf-dkim-dkim2-spec-08'
+ DKIM2_REPO = 'github.com/brong/mailman'
+-DKIM2_DATE = '2026-10-18'
++DKIM2_DATE = '2026-10-28'
+ DKIM2_SOFTWARE = 'mailman'
+ 
+ 
+@@ -129,15 +129,16 @@ def _dkim2_info(action, **extras):
+ # Headers excluded from the header hash per DKIM2 spec Section 4
+ # ---------------------------------------------------------------------------
+ 
+-# Unsigned header fields per DKIM2 spec-07 §4, §4.1. spec-05 narrowed the old
++# Unsigned header fields per DKIM2 spec-08 §4, §4.1. spec-05 narrowed the old
+ # 'arc-' prefix to the three RFC 8617 field names and added a 'received-'
+-# prefix rule. x400-received / x400-trace match neither prefix.
++# prefix rule; spec-08 took auto-submitted and vbr-info off the list.
++# x400-received / x400-trace match neither prefix.
+ _EXCLUDED_NAMES = frozenset({
+     'apparently-to', 'arc-authentication-results', 'arc-message-signature',
+-    'arc-seal', 'authentication-results', 'auto-submitted', 'delivered-to',
++    'arc-seal', 'authentication-results', 'delivered-to',
+     'dkim-signature', 'dkim2-signature', 'dl-expansion-history',
+     'message-instance', 'original-recipient', 'received', 'return-path',
+-    'sio-label-history', 'vbr-info', 'x400-received', 'x400-trace',
++    'sio-label-history', 'x400-received', 'x400-trace',
+ })
+ 
+ _EXCLUDED_PREFIXES = ('x-', 'received-')
+@@ -179,11 +180,11 @@ def _b64json(obj):
+ 
+ 
+ # ---------------------------------------------------------------------------
+-# Header canonicalization (spec-07 §6.2)
++# Header canonicalization (spec-08 §6.2)
+ # ---------------------------------------------------------------------------
+ 
+ def _canonicalize_header_field(name, value):
+-    """Canonicalize a single header field per DKIM2 spec-07 §6.2.
++    """Canonicalize a single header field per DKIM2 spec-08 §6.2.
+ 
+     Takes the header name and value as separate strings.
+     Returns canonical form as bytes.
+@@ -245,7 +246,7 @@ def _wire_value(msg, name, value):
+     colon = text.find(':')
+     if colon != -1:
+         text = text[colon + 1:]
+-    # Unfold (spec-07 §5.1: Recipe strings MUST NOT contain CR or LF; the
++    # Unfold (spec-08 §5.1: Recipe strings MUST NOT contain CR or LF; the
+     # hash collapses WSP runs anyway, so a fold is one SP), then as the
+     # parser would hand it back: no leading WSP, no line ending.
+     text = re.sub(r'\r?\n[ \t]+', ' ', text.rstrip('\r\n'))
+@@ -253,7 +254,7 @@ def _wire_value(msg, name, value):
+ 
+ 
+ def _hash_header_pairs(pairs):
+-    """SHA-256 header hash (spec-07 §6.2) over (name, wire value) pairs in
++    """SHA-256 header hash (spec-08 §6.2) over (name, wire value) pairs in
+     document order; excluded names (§4) are the caller's business."""
+     canon_headers = []
+     for name, value in pairs:
+@@ -271,11 +272,11 @@ def _hash_header_pairs(pairs):
+ 
+ @public
+ def compute_header_hash(msg):
+-    """Compute SHA-256 header hash per DKIM2 spec-07 §6.2 of a message as
++    """Compute SHA-256 header hash per DKIM2 spec-08 §6.2 of a message as
+     the generator will emit it.
+ 
+     Excludes headers listed in the spec
+-    (see _EXCLUDED_NAMES / _EXCLUDED_PREFIXES — spec-07 §4).
++    (see _EXCLUDED_NAMES / _EXCLUDED_PREFIXES — spec-08 §4).
+     Returns raw SHA-256 digest bytes.
+     """
+     return _hash_header_pairs(_collect_headers(msg))
+@@ -343,7 +344,7 @@ def _serialize_msg(msg):
+ 
+ 
+ def _hash_body_bytes(body, start=0):
+-    """SHA-256 body hash (spec-07 §6.1) of body[start:]: trailing empty
++    """SHA-256 body hash (spec-08 §6.1) of body[start:]: trailing empty
+     lines ignored, one CRLF at the end.  Hashed in place, not sliced: the
+     body can be most of a large message."""
+     end = _body_end(body, start)
+@@ -445,7 +446,7 @@ def compute_body_hash_raw(raw):
+ 
+ def _body_lines_raw(raw):
+     """Body lines of the raw octets.  Trailing empty lines are not lines:
+-    the spec-07 §6.1 body canonicalization ignores them, so a Recipe must
++    the spec-08 §6.1 body canonicalization ignores them, so a Recipe must
+     never number or restore one."""
+     body = _split_raw(raw)[1].decode('utf-8', errors='surrogateescape')
+     body = body.rstrip('\r\n')
+@@ -483,15 +484,28 @@ def verify_mi_raw(raw):
+         return 0, str(error)
+     if hashes is None:
+         return 0, 'could not parse h= tag'
+-    computed_h = _b64(compute_header_hash_raw(raw))
+-    computed_b = _b64(compute_body_hash_raw(raw))
+-    if hashes['h'][1] != computed_h:
+-        return 0, 'header hash mismatch ({} != {})'.format(
+-            hashes['h'][1], computed_h)
+-    if hashes['b'][1] != computed_b:
+-        return 0, 'body hash mismatch ({} != {})'.format(
+-            hashes['b'][1], computed_b)
+-    return _get_mi_version(top), None
++    computed = (_b64(compute_header_hash_raw(raw)),
++                _b64(compute_body_hash_raw(raw)))
++    # spec-08 §9.3, §14.7: every hash-set of a "," list must pass, and one
++    # "|" group must.  Mailman computes sha256 only, so a set by any other
++    # algorithm is not a pass here.
++    why = None
++    for group in hashes['groups']:
++        for name, *digests in group:
++            if name != 'sha256':
++                why = why or 'hash algorithm {} not checked'.format(name)
++                break
++            if digests[0] != computed[0]:
++                why = why or 'header hash mismatch ({} != {})'.format(
++                    digests[0], computed[0])
++                break
++            if digests[1] != computed[1]:
++                why = why or 'body hash mismatch ({} != {})'.format(
++                    digests[1], computed[1])
++                break
++        else:
++            return _get_mi_version(top), None
++    return 0, why
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -503,7 +517,7 @@ def _literal_steps(values):
+ 
+     A literal that is valid UTF-8 (ASCII included) goes in a {"d": [...]}
+     step as the text it encodes; any other literal goes in a {"u": [...]}
+-    step, the base64 of its raw octets (spec-07 §5).  The str form here is
++    step, the base64 of its raw octets (spec-08 §5).  The str form here is
+     the surrogateescape decoding of the raw octets, so the octets are
+     recovered first and the UTF-8 test is on them: JSON text cannot carry
+     Latin-1, EUC-KR or any other non-UTF-8 octets, and the U+DCxx lone
+@@ -529,7 +543,7 @@ def _literal_steps(values):
+ # The body Recipe of an instance whose previous body cannot be rebuilt:
+ # Mailman rewrote it (content filtering, DMARC wrap) before decoration, or
+ # it differs from the current body by more than the body diff's limits.
+-# Emitted as "b": null (spec-07 §5.2).
++# Emitted as "b": null (spec-08 §5.2).
+ NULL_BODY_RECIPE = object()
+ 
+ # The body diff's limits, shared by the DKIM2 implementations: a body
+@@ -688,7 +702,7 @@ def compute_body_recipe(current_lines, previous_lines,
+     """Compute body recipe to undo current body back to previous.
+ 
+     Uses the capped line diff, _body_diff.  Returns a list of Recipe steps
+-    (spec-07 §5):
++    (spec-08 §5):
+     - {"c": [start, end]}: copy this range of lines from the current body
+       (1-based, inclusive)
+     - {"d": [line, ...]}: literal UTF-8 lines from the previous body
+@@ -727,7 +741,7 @@ def _wrapped_body_recipe(wire, snap_raw, boundary):
+     The wrap writes the original body, its final line break dropped,
+     straight before the line break and delimiter of its boundary.  If the
+     first occurrence of the original body's octets (trailing empty lines
+-    off, as spec-07 §6.1 has it) in the wire body starts a line and is
++    off, as spec-08 §6.1 has it) in the wire body starts a line and is
+     followed by that delimiter, it is the first run of current lines equal
+     to the previous lines, and k and n are counts of CRLFs.  (That is a
+     valid Recipe, though not always the one compute_body_recipe gives: when
+@@ -766,7 +780,7 @@ def compute_header_recipe(current_headers, previous_headers):
+     restore literal values -- see _literal_steps),
+     or None if no non-excluded headers changed.
+ 
+-    spec-07 §5.1 requires the "c" ranges of one header name to ascend
++    spec-08 §5.1 requires the "c" ranges of one header name to ascend
+     without overlapping, so a previous value can only be copied from a
+     current instance below every instance already copied; a value whose
+     instances were reordered (or one of two identical instances when the
+@@ -955,12 +969,14 @@ def get_max_mi_version(msg):
+ 
+ 
+ def _get_mi_version(mi_value):
+-    """Extract the m= revision number from an MI header value string."""
+-    match = re.search(r'm\s*=\s*(\d+)', str(mi_value))
++    """Extract the m= revision number from an MI header value string.
++    Tag-names are case-sensitive (spec-08 §8): M= is not m=."""
++    match = re.search(r'(?:^|;)[ \t\r\n]*m[ \t\r\n]*=[ \t\r\n]*(\d+)',
++                      str(mi_value))
+     return int(match.group(1)) if match else 0
+ 
+ 
+-# spec-07 §8: a tag is tag-name [FWS] "=" [FWS] tag-value, the
++# spec-08 §8: a tag is tag-name [FWS] "=" [FWS] tag-value, the
+ # value tval chars (%x21-3A / %x3C-7E) with FWS only between them.  After
+ # unfolding, FWS is a WSP run.
+ _MI_TAG = re.compile(r'[ \t]*([A-Za-z][A-Za-z0-9_]*)[ \t]*=[ \t]*'
+@@ -970,16 +986,17 @@ _MI_BASE64 = re.compile(r'(?:[A-Za-z0-9+/]{4})*'
+ 
+ 
+ def _unique_keys(pairs):
+-    """json object_pairs_hook: keys are matched without regard to case
+-    (decision 2 of our -07 contract, after spec-07 §5), so two keys of one
+-    object that are equal ignoring case are a duplicate, and invalid JSON.
++    """json object_pairs_hook: keys MUST be lowercase and unique in each
++    object (spec-08 §5).  A key with an ASCII capital, or one given twice,
++    is invalid JSON (contract D10).
+     """
+     seen = set()
+     for key, _ in pairs:
+-        folded = key.lower()
+-        if folded in seen:
++        if re.search(r'[A-Z]', key):
++            raise ValueError('key {!r} is not lowercase'.format(key))
++        if key in seen:
+             raise ValueError('duplicate key {!r}'.format(key))
+-        seen.add(folded)
++        seen.add(key)
+     return dict(pairs)
+ 
+ 
+@@ -994,9 +1011,9 @@ def _parse_mi(mi_value):
+     """
+     val = str(mi_value)
+     # Unfold: FWS is CRLF followed by one *or more* WSP (RFC 5322;
+-    # draft-ietf-dkim-dkim2-spec-07 §2.12).  Only the line ending goes; the
++    # draft-ietf-dkim-dkim2-spec-08 §2.12).  Only the line ending goes; the
+     # WSP stays, so a fold inside a token (a hash name) is still WSP there
+-    # and a syntax error.  spec-07 §2.14: FWS within a base64string is
++    # and a syntax error.  spec-08 §2.14: FWS within a base64string is
+     # ignored when the value is used, so the base64 values drop all WSP.
+     val = re.sub(r'\r?\n(?=[ \t])', '', val)
+     syntax_error = MalformedInstance(
+@@ -1008,37 +1025,49 @@ def _parse_mi(mi_value):
+         match = _MI_TAG.fullmatch(fragment)
+         if match is None:
+             raise syntax_error
+-        # Tag names are case insignificant and appear at most once (§8).
+-        name = match.group(1).lower()
++        # Tag-names are case-sensitive and appear at most once (spec-08
++        # §8): one that is not lowercase is an unknown tag (contract D10).
++        name = match.group(1)
+         if name in tags:
+             raise syntax_error
++        if re.search(r'[A-Z]', name):
++            continue
+         tags[name] = match.group(2).strip(' \t')
+     version = tags.get('m', '')
+     if not version.isascii() or not version.isdigit() or 'h' not in tags:
+         raise syntax_error
+     hashes = None
+     recipe = None
+-    # h= is one or more hash-sets (§9.3): FWS around the hash name and the
+-    # colons and inside the base64 digests, never inside the hash name; a
+-    # set needs both digests, and a hash name appears once.
++    # h= is "|" groups of "," lists of hash-sets (spec-08 §9.3): FWS around
++    # the "|", the ",", the hash name and the colons and inside the base64
++    # digests, never inside the hash name; a set needs both digests, a
++    # hash name appears once in the whole tag, and no member is empty.
++    # Hash names are case-sensitive (§2.14).
+     seen = set()
+-    for hash_set in tags['h'].split(','):
+-        parts = hash_set.split(':')
+-        if len(parts) != 3:
+-            raise syntax_error
+-        hash_name = parts[0].strip(' \t')
+-        digests = [re.sub(r'[ \t]', '', part) for part in parts[1:]]
+-        if (not hash_name or re.search(r'[ \t]', hash_name)
+-                or hash_name in seen
+-                or not all(digest and _MI_BASE64.fullmatch(digest)
+-                           for digest in digests)):
+-            raise syntax_error
+-        seen.add(hash_name)
+-        if hash_name == 'sha256':
+-            hashes = {
+-                'h': [hash_name, digests[0]],
+-                'b': [hash_name, digests[1]],
+-            }
++    groups = []
++    for group in tags['h'].split('|'):
++        sets = []
++        for hash_set in group.split(','):
++            parts = hash_set.split(':')
++            if len(parts) != 3:
++                raise syntax_error
++            hash_name = parts[0].strip(' \t')
++            digests = [re.sub(r'[ \t]', '', part) for part in parts[1:]]
++            if (not hash_name or re.search(r'[ \t]', hash_name)
++                    or hash_name in seen
++                    or not all(digest and _MI_BASE64.fullmatch(digest)
++                               for digest in digests)):
++                raise syntax_error
++            seen.add(hash_name)
++            sets.append((hash_name, *digests))
++            if hash_name == 'sha256':
++                hashes = {
++                    'h': [hash_name, digests[0]],
++                    'b': [hash_name, digests[1]],
++                }
++        groups.append(sets)
++    if hashes is not None:
++        hashes['groups'] = groups
+     # Parse r= tag: base64-encoded JSON, returned as decoded.
+     if 'r' in tags:
+         b64_clean = re.sub(r'[ \t]', '', tags['r'])
+@@ -1052,7 +1081,7 @@ def _parse_mi(mi_value):
+ 
+ @public
+ class MalformedInstance(ValueError):
+-    """A Message-Instance value that is not a valid tag-list (spec-07 §8).
++    """A Message-Instance value that is not a valid tag-list (spec-08 §8).
+ 
+     _parse_mi raises it; verify_mi_raw reports it as an instance that does
+     not verify.
+@@ -1061,7 +1090,7 @@ class MalformedInstance(ValueError):
+ 
+ @public
+ class MalformedRecipe(ValueError):
+-    """A Message-Instance Recipe that cannot be applied (spec-07 §5).
++    """A Message-Instance Recipe that cannot be applied (spec-08 §5).
+ 
+     _parse_mi raises it for an r= that is not base64 JSON; verify_mi_raw
+     reports that as an instance that does not verify.
+@@ -1175,7 +1204,7 @@ class MessageInstanceIngress:
+             # The post enters the DKIM2 ecosystem here: the list's MTA signs
+             # it as i=1.  It leaves with a single Message-Instance, m=1,
+             # added at egress over the message as sent, whose Recipe goes
+-            # back to this snapshot (spec-07 §12.1: the first instance MAY
++            # back to this snapshot (spec-08 §12.1: the first instance MAY
+             # record the changes made as the message enters).  An m=1 over
+             # the author's From here would put that From at state 1, where
+             # it is checked against the list's i=1 (§14.8) and fails.  So
+@@ -1234,7 +1263,7 @@ class MessageInstanceEgress:
+             # A copy of a message the list received, on its way to the
+             # members (or owners): the list sends copies to more than one
+             # address, so its signature carries the "exploded" flag
+-            # (spec-07 §12.5).  Mailman does not sign; this tells the
++            # (spec-08 §12.5).  Mailman does not sign; this tells the
+             # signing milter, which deletes the field.  It is X-, so not
+             # hashed, and is set once however often egress runs.
+             del msg[EXPLODED_HINT]
+diff --git a/src/mailman/handlers/tests/mi_support.py b/src/mailman/handlers/tests/mi_support.py
+index 244fcac16..4eb390dc3 100644
+--- a/src/mailman/handlers/tests/mi_support.py
++++ b/src/mailman/handlers/tests/mi_support.py
+@@ -36,7 +36,7 @@ from mailman.handlers.message_instance import (
+ 
+ log = logging.getLogger('mailman.dkim2')
+ 
+-# A "u" string (spec-07 §5 schema): base64 alphabet and padding, a whole
++# A "u" string (spec-08 §5 schema): base64 alphabet and padding, a whole
+ # number of quanta, and zero pad bits ("QR==" is not canonical).
+ _U_PATTERNS = (
+     re.compile(r'[A-Za-z0-9+/]*={0,2}'),
+@@ -56,7 +56,7 @@ def _get_raw_body(msg):
+ 
+ 
+ def compute_body_hash(msg):
+-    """Compute SHA-256 body hash per DKIM2 spec-07 §6.1.
++    """Compute SHA-256 body hash per DKIM2 spec-08 §6.1.
+ 
+     Uses simple body canonicalization: strip trailing empty lines,
+     ensure body ends with exactly one CRLF.
+@@ -94,15 +94,14 @@ def _raw_values(msg, name):
+ 
+ 
+ # ---------------------------------------------------------------------------
+-# Recipe validation and application (spec-07 §5)
++# Recipe validation and application (spec-08 §5)
+ # ---------------------------------------------------------------------------
+ 
+ def _compile_steps(steps, where):
+     """Check one step list and return it as ('c', start, end) / ('d', [str])
+     tuples, every literal as its octets in the surrogateescape str form
+-    the email parser uses for header values.  Step keys
+-    match without regard to case (the parsed JSON has no two keys equal
+-    ignoring case).  The upper bound of a "c" range is checked by
++    the email parser uses for header values.  Step keys are lowercase
++    (_parse_mi refuses any other).  The upper bound of a "c" range is checked by
+     _apply_steps, which knows the item count."""
+     if not isinstance(steps, list):
+         raise MalformedRecipe('{}: steps are not an array'.format(where))
+@@ -113,7 +112,6 @@ def _compile_steps(steps, where):
+             raise MalformedRecipe(
+                 '{}: step is not an object with one key'.format(where))
+         (kind, arg), = step.items()
+-        kind = kind.lower()
+         if not isinstance(arg, list):
+             raise MalformedRecipe(
+                 '{}: "{}" is not an array'.format(where, kind))
+@@ -174,13 +172,12 @@ def _compile_recipe(recipe):
+     header_steps maps each lower-cased header name under "h" to its
+     compiled steps; body_steps is the compiled "b" list, or None when the
+     body was not changed (no "b") or cannot be recreated ("b": null,
+-    spec-07 §5.2).  Keys match without regard to case.
++    spec-08 §5.2).  Keys are lowercase (_parse_mi refuses any other).
+     """
+     if recipe is None:
+         return {}, None
+     if not isinstance(recipe, dict):
+         raise MalformedRecipe('Recipe is not an object')
+-    recipe = {key.lower(): value for key, value in recipe.items()}
+     if 'h' not in recipe and 'b' not in recipe:
+         raise MalformedRecipe('Recipe has neither "h" nor "b"')
+     header_steps = {}
+@@ -190,7 +187,7 @@ def _compile_recipe(recipe):
+         if not recipe['h']:
+             raise MalformedRecipe('"h" has no properties')
+         for hname, steps in recipe['h'].items():
+-            header_steps[hname.lower()] = _compile_steps(steps, 'h ' + hname)
++            header_steps[hname] = _compile_steps(steps, 'h ' + hname)
+     body_steps = None
+     if recipe.get('b') is not None:
+         body_steps = _compile_steps(recipe['b'], 'b')
+@@ -271,7 +268,7 @@ def verify_message_instance(msg):
+     if stored_b != computed_b:
+         return 0, 'body hash mismatch ({} != {})'.format(
+             stored_b, computed_b)
+-    # An instance whose Recipe cannot be applied to this message (spec-07
++    # An instance whose Recipe cannot be applied to this message (spec-08
+     # §5) does not verify either: nothing downstream could undo it.
+     try:
+         _plan_undo(msg, recipe)
+@@ -286,7 +283,7 @@ def undo_message_instance(msg):
+     Removes the highest MI header from the message, applies body and header
+     recipes to reconstruct the previous version, and returns the version
+     number that was undone.  Returns 0 if there are no MI headers, or if
+-    the highest one carries a Recipe that cannot be applied (spec-07 §5,
++    the highest one carries a Recipe that cannot be applied (spec-08 §5,
+     see MalformedRecipe) -- the message is then left untouched.
+ 
+     After a successful undo, verify_message_instance(msg) should return
+diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
+index baf982bd2..014845f05 100644
+--- a/src/mailman/handlers/tests/test_message_instance.py
++++ b/src/mailman/handlers/tests/test_message_instance.py
+@@ -112,12 +112,12 @@ def _recipe_at(msg, version):
+ 
+ 
+ def _copy_steps(steps):
+-    """The {"c": [start, end]} copy steps of a recipe (spec-07 §5)."""
++    """The {"c": [start, end]} copy steps of a recipe (spec-08 §5)."""
+     return [s for s in steps if isinstance(s, dict) and 'c' in s]
+ 
+ 
+ def _data_steps(steps):
+-    """The {"d": [...]} literal-data steps of a recipe (spec-07 §5)."""
++    """The {"d": [...]} literal-data steps of a recipe (spec-08 §5)."""
+     return [s for s in steps if isinstance(s, dict) and 'd' in s]
+ 
+ 
+@@ -273,14 +273,19 @@ class TestHeaderExclusion(unittest.TestCase):
+             self.assertFalse(_should_exclude_header(name), name)
+ 
+     def test_spec05_excluded_names(self):
+-        # spec-07 §4: names added by the HDRMAINT survey
+-        for name in ('Apparently-To', 'Auto-Submitted', 'DL-Expansion-History',
+-                     'Original-Recipient', 'SIO-Label-History', 'VBR-Info',
++        # spec-08 §4: names added by the HDRMAINT survey
++        for name in ('Apparently-To', 'DL-Expansion-History',
++                     'Original-Recipient', 'SIO-Label-History',
+                      'X400-Received', 'X400-Trace'):
+             self.assertTrue(_should_exclude_header(name), name)
+ 
++    def test_spec08_hashes_auto_submitted_and_vbr_info(self):
++        # spec-08 §4 took these two off the list: they are hashed now.
++        for name in ('Auto-Submitted', 'VBR-Info'):
++            self.assertFalse(_should_exclude_header(name), name)
++
+     def test_spec05_received_prefix(self):
+-        # spec-07 §4: any Received-* field is a trace field
++        # spec-08 §4: any Received-* field is a trace field
+         self.assertTrue(_should_exclude_header('Received-SPF'))
+         self.assertTrue(_should_exclude_header('Received-Anything'))
+ 
+@@ -486,7 +491,7 @@ class TestBodyRecipe(unittest.TestCase):
+     def test_8bit_literal_is_a_u_step(self):
+         # A restored line that is not valid UTF-8 -- Latin-1 here, not
+         # representable as JSON text -- is emitted as a {"u": [...]} step
+-        # holding the base64 of its raw octets (spec-07 §5), never as a "d"
++        # holding the base64 of its raw octets (spec-08 §5), never as a "d"
+         # string of lone surrogates.
+         latin1 = b'caf\xe9 au lait'
+         recipe = compute_body_recipe(['New'], ['Old ascii', _octets(latin1)])
+@@ -501,7 +506,7 @@ class TestBodyRecipe(unittest.TestCase):
+         self.assertEqual(recipe, [{'u': ['Y2Fm6Q==']}])
+ 
+     def test_utf8_literal_is_a_d_step(self):
+-        # Valid UTF-8 above 0x7f is JSON text: spec-07 §5 has "u" only for
++        # Valid UTF-8 above 0x7f is JSON text: spec-08 §5 has "u" only for
+         # what "d" cannot carry, so it goes in a "d" step.
+         utf8 = 'caf\u00e9'.encode('utf-8')
+         recipe = compute_body_recipe(['New'], [_octets(utf8)])
+@@ -658,7 +663,7 @@ class TestHeaderRecipe(unittest.TestCase):
+         # Two instances swapped.  Bottom-up the current message is
+         # 1='two', 2='one'; the previous was 1='one', 2='two'.  'one' is
+         # copied from instance 2, after which 'two' at instance 1 cannot
+-        # be copied -- spec-07 §5.1 requires "c" starts to ascend past the
++        # be copied -- spec-08 §5.1 requires "c" starts to ascend past the
+         # previous end -- so it is restored literally.
+         recipe = compute_header_recipe(
+             [('Comments', 'one'), ('Comments', 'two')],
+@@ -713,7 +718,7 @@ class TestMIHeaderValue(unittest.TestCase):
+ 
+ 
+ class TestRecipeUndo(unittest.TestCase):
+-    """Recipe validation and application by undo / verify (spec-07 §5).
++    """Recipe validation and application by undo / verify (spec-08 §5).
+ 
+     Pure-function tests: the instance under test is built by hand on a
+     fixed message, with hashes that match it, so only the Recipe decides
+@@ -805,7 +810,7 @@ class TestRecipeUndo(unittest.TestCase):
+             'u non-string item': [{'u': [1]}],
+             'd empty': [{'d': []}],
+             'u empty': [{'u': []}],
+-            # spec-07 has no "b" step: it is an unknown key now.
++            # spec-08 has no "b" step: it is an unknown key now.
+             'old b step': [{'b': ['eA==']}],
+         }
+         for what, steps in cases.items():
+@@ -863,33 +868,27 @@ class TestRecipeUndo(unittest.TestCase):
+             with self.subTest(what):
+                 self._assert_rejected(self._with_raw_recipe(text), what)
+ 
+-    def test_mi_support_rejects_case_duplicate_keys(self):
+-        # Shared case K2 and decision 2: keys equal ignoring case, in one
+-        # object, are a duplicate at every level.
++    def test_mi_support_rejects_duplicate_keys(self):
++        # Shared case K2: a key twice in one object is invalid.
++        text = '{"b":[{"c":[1,1]}],"b":[{"c":[1,2]}]}'
++        self._assert_rejected(self._with_raw_recipe(text), 'exact duplicate')
++
++    def test_uppercase_keys_are_invalid(self):
++        # spec-08 §5, contract D10 (reverses the -07 contract's decision
++        # 2): a JSON key with a capital letter is invalid, at every level.
+         cases = {
+-            'header names': '{"h":{"Subject":[],"subject":[]}}',
+-            'top level': '{"h":{"subject":[]},"H":{"comments":[]}}',
+-            'step keys': '{"b":[{"c":[1,1],"C":[2,2]}]}',
+-            'exact duplicate': '{"b":[{"c":[1,1]}],"b":[{"c":[1,2]}]}',
++            'header names': '{"h":{"Subject":[{"c":[1,1]}]}}',
++            'top level': '{"H":{"subject":[{"c":[1,1]}]}}',
++            'step keys': '{"b":[{"C":[1,2]}]}',
+         }
+         for what, text in cases.items():
+             with self.subTest(what):
+                 self._assert_rejected(self._with_raw_recipe(text), what)
+-
+-    def test_keys_match_case_insensitively(self):
+-        # Shared case K1: an otherwise valid Recipe with upper-case keys
+-        # undoes exactly as the lower-case form does.
+-        upper = self._with_raw_recipe(
+-            '{"H":{"Subject":[{"C":[1,1]}],"COMMENTS":[{"D":["x"]}]},'
+-            '"B":[{"C":[1,2]},{"U":["Y2Fm6Q=="]}]}')
+         lower = self._with_raw_recipe(
+             '{"h":{"subject":[{"c":[1,1]}],"comments":[{"d":["x"]}]},'
+             '"b":[{"c":[1,2]},{"u":["Y2Fm6Q=="]}]}')
+-        self.assertEqual(verify_message_instance(upper)[0], 2)
+-        self.assertEqual(undo_message_instance(upper), 2)
+         self.assertEqual(undo_message_instance(lower), 2)
+-        self.assertEqual(upper.as_bytes(), lower.as_bytes())
+-        self.assertEqual(upper.get_all('Comments'), ['x'])
++        self.assertEqual(lower.get_all('Comments'), ['x'])
+ 
+     def test_unparseable_r_is_rejected(self):
+         msg = _msg_from_bytes(self.RAW)
+@@ -928,7 +927,7 @@ class TestRecipeUndo(unittest.TestCase):
+         self.assertEqual(msg.get_all('Comments'), ['two', 'one'])
+ 
+     def test_null_body_recipe_leaves_the_body_alone(self):
+-        # spec-07 §5.2: "b": null says the body cannot be recreated.
++        # spec-08 §5.2: "b": null says the body cannot be recreated.
+         msg = self._with_recipe(header_recipe={'comments': []},
+                                 body_recipe=None)
+         # build_mi_header_value omits a None body recipe; put the null in
+@@ -1056,7 +1055,7 @@ class TestRecipeUndo(unittest.TestCase):
+ 
+ 
+ class TestParseMIFolding(unittest.TestCase):
+-    """Folded Message-Instance values must parse (spec-07 §2.12, §2.14).
++    """Folded Message-Instance values must parse (spec-08 §2.12, §2.14).
+ 
+     RFC 5322 FWS is CRLF followed by one *or more* WSP.  Unfolding only a
+     single WSP used to leave one behind, which truncated the h= match at the
+@@ -1108,7 +1107,7 @@ class TestParseMIFolding(unittest.TestCase):
+ 
+ 
+ class TestParseMISyntax(unittest.TestCase):
+-    """The whole Message-Instance value is a tag-list (spec-07 §8, §9.3).
++    """The whole Message-Instance value is a tag-list (spec-08 §8, §9.3).
+ 
+     A fragment that is not a tag, a byte outside x-tag-char, a repeated
+     tag or a malformed hash-set makes the field a syntax error; it is
+@@ -1129,10 +1128,16 @@ class TestParseMISyntax(unittest.TestCase):
+         for value in ('m=1; h={};'.format(self.H),
+                       'm=1;; h={};;'.format(self.H),
+                       ' m = 1 ; h = {} ; x_ext9=a b'.format(self.H),
+-                      'M=1; H={}'.format(self.H),
++                      # spec-08 §8: tag-names are case-sensitive, so M= and
++                      # H= are unknown tags beside m= and h= (contract D10)
++                      'm=1; M=7; h={0}; H=x'.format(self.H),
+                       'm=1; h=sha256 :{}'.format(self.H[7:]),
+                       'm=1; h= sha256\r\n\t:{}'.format(self.H[7:]),
+-                      'm=1; h=sha512:AAAA:AAAA, {}'.format(self.H)):
++                      'm=1; h=sha512:AAAA:AAAA, {}'.format(self.H),
++                      # spec-08 §9.3: "|" groups of "," lists, FWS around both
++                      'm=1; h=sha512:AAAA:AAAA | {}'.format(self.H),
++                      'm=1; h=foo:AAAA:AAAA,{0}|sha512:CCCC:CCCC'.format(
++                          self.H)):
+             with self.subTest(value=value):
+                 version, hashes, _ = self._ok(value)
+                 self.assertEqual(version, 1)
+@@ -1148,17 +1153,28 @@ class TestParseMISyntax(unittest.TestCase):
+                     'Message-Instance m=1 syntax error')
+ 
+     def test_repeated_tag(self):
+-        for value in ('m=1; h={0}; h={0}', 'm=1; h={0}; H={0}',
+-                      'm=1; M=1; h={0}'):
++        for value in ('m=1; h={0}; h={0}', 'm=1; m=1; h={0}'):
+             with self.subTest(value=value):
+                 self._bad(value.format(self.H))
+ 
++    def test_uppercase_tag_is_unknown(self):
++        # spec-08 §8, contract D10: "M=1" alone is no m= at all.
++        self._bad('M=1; h={0}'.format(self.H))
++        self._bad('m=1; H={0}'.format(self.H))
++
+     def test_bad_hash_sets(self):
+         for hset in ('sha 256:{}', 'sha\r\n 256:{}', 'sha256:{}:'):
+             with self.subTest(hset=hset):
+                 self._bad('m=1; h=' + hset.format(self.H[7:]))
+         self._bad('m=1; h=sha256:' + 'A' * 43 + '=')
+         self._bad('m=1; h={0},{0}'.format(self.H))
++        # spec-08 §9.3: a hash name once in the whole tag, and no empty
++        # member (contract D2)
++        self._bad('m=1; h={0}|{0}'.format(self.H))
++        for value in ('{0}|', '|{0}', '{0}||sha512:AAAA:AAAA',
++                      '{0},|sha512:AAAA:AAAA', 'foo:@@:!!|{0}'):
++            with self.subTest(value=value):
++                self._bad('m=1; h=' + value.format(self.H))
+ 
+     def test_verify_mi_raw_reports_syntax_error(self):
+         # A correctly hashed instance with a junk fragment does not verify.
+@@ -1171,6 +1187,25 @@ class TestParseMISyntax(unittest.TestCase):
+         self.assertEqual(verify_mi_raw(bad),
+                          (0, 'Message-Instance m=1 syntax error'))
+ 
++    def test_verify_mi_raw_hash_groups(self):
++        # spec-08 §9.3, §14.7: "," lists must all pass, one "|" group must.
++        # Mailman checks sha256 only; any other hash-set is not a pass.
++        plain = b'From: a@example.com\r\nSubject: hi\r\n\r\nHello.\r\n'
++        hh = _b64(compute_header_hash_raw(plain))
++        bh = _b64(compute_body_hash_raw(plain))
++        good = 'sha256:{}:{}'.format(hh, bh)
++        wrong = 'sha256:{}:{}'.format(hh, 'B' * 43 + '=')
++        cases = {
++            'sha512 | good sha256': ('sha512:AAAA:AAAA|' + good, 1),
++            'bad sha256 | sha512': (wrong + '|sha512:AAAA:AAAA', 0),
++            'good sha256, sha512 (unchecked)': (good + ',sha512:AAAA:AAAA', 0),
++        }
++        for what, (h, want) in cases.items():
++            with self.subTest(what):
++                raw = ('Message-Instance: m=1; h={};\r\n'.format(h)
++                       .encode('ascii') + plain)
++                self.assertEqual(verify_mi_raw(raw)[0], want)
++
+ 
+ class TestGetMaxMIVersion(unittest.TestCase):
+ 
+@@ -1251,10 +1286,10 @@ class TestFoldMIValue(unittest.TestCase):
+ 
+ class TestDraftVersion(unittest.TestCase):
+ 
+-    def test_draft_version_is_07(self):
++    def test_draft_version_is_08(self):
+         from mailman.handlers.message_instance import DKIM2_DRAFT, DKIM2_DATE
+-        self.assertEqual(DKIM2_DRAFT, 'ietf-dkim-dkim2-spec-07')
+-        self.assertEqual(DKIM2_DATE, '2026-10-18')
++        self.assertEqual(DKIM2_DRAFT, 'ietf-dkim-dkim2-spec-08')
++        self.assertEqual(DKIM2_DATE, '2026-10-28')
+ 
+ 
+ # =====================================================================
+@@ -1303,7 +1338,7 @@ class TestHeaderWireForm(unittest.TestCase):
+     def test_collected_header_values_are_unfolded(self):
+         # A long encoded-word Subject arrives folded; the parser keeps the
+         # fold in the value.  Recipe "d" strings MUST NOT contain CR or LF
+-        # (spec-07 §5.1): a literal with a fold inside it verified in two
++        # (spec-08 §5.1): a literal with a fold inside it verified in two
+         # implementations and failed in three.
+         raw = (
+             b'To: ant@example.com\r\n'
+@@ -1433,7 +1468,7 @@ This is a test.
+         # Ruling 17: a post with no DKIM2-Signature enters the DKIM2
+         # ecosystem at the list, whose MTA signs it as i=1.  It leaves with
+         # one Message-Instance, m=1, over the message as sent, whose Recipe
+-        # goes back to the post as received (spec-07 §12.1).  An m=1 over
++        # goes back to the post as received (spec-08 §12.1).  An m=1 over
+         # the author's From would be checked against the list's i=1
+         # (§14.8) and fail.
+         msg = self._make_received_msg()
+@@ -2147,7 +2182,7 @@ class TestNullBodyRecipe(unittest.TestCase):
+         recipe = _recipe_at(msg, 1)
+         self.assertIn('b', recipe)
+         self.assertIsNone(recipe['b'])
+-        # spec-07 §5.2: only "b" may be null; the header Recipe is real.
++        # spec-08 §5.2: only "b" may be null; the header Recipe is real.
+         self.assertIn('h', recipe)
+         self.assertIsNotNone(recipe['h'])
+         v, err = verify_message_instance(msg)
+@@ -2535,7 +2570,7 @@ class TestDKIM2Wrap(unittest.TestCase):
+         _wrap_round_trip(self, raw, layout=False)
+ 
+     def test_body_with_trailing_empty_lines(self):
+-        # Trailing empty lines are not lines (spec-07 §6.1): the copy range
++        # Trailing empty lines are not lines (spec-08 §6.1): the copy range
+         # stops before them although the wrap carries them.
+         raw = self.HDRS + (b'Content-Type: text/plain\r\n\r\n'
+                            b'Hello.\r\n\r\n\r\n')
+@@ -2710,7 +2745,7 @@ class TestQueueCopiesWithoutReceivedOctets(unittest.TestCase):
+ 
+ 
+ class TestDKIM2DistributionCopies(unittest.TestCase):
+-    """What a DKIM2 list does to every copy it distributes (spec-07 §11,
++    """What a DKIM2 list does to every copy it distributes (spec-08 §11,
+     §12.5): each copy carries the exploded hint for the signing milter,
+     and a copy the list changed, or a post that arrived unsigned (the
+     list's hop becomes i=1), leaves From the list's posting address so
+diff --git a/src/mailman/handlers/tests/test_mi_null_recipe.py b/src/mailman/handlers/tests/test_mi_null_recipe.py
+index e05e3dfce..364ac344d 100644
+--- a/src/mailman/handlers/tests/test_mi_null_recipe.py
++++ b/src/mailman/handlers/tests/test_mi_null_recipe.py
+@@ -7,7 +7,7 @@
+ # Software Foundation, either version 3 of the License, or (at your option)
+ # any later version.
+ 
+-"""spec-07 §5.1: the DKIM2 handler must never emit a null header recipe.
++"""spec-08 §5.1: the DKIM2 handler must never emit a null header recipe.
+ 
+ These are pure-function tests over compute_header_recipe and therefore do not
+ need the Mailman config/database layer.
