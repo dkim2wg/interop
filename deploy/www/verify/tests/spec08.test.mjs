@@ -217,6 +217,34 @@ for (const [what, layout, text] of [
   });
 }
 
+// --- D9: fullyVerified --------------------------------------------------------
+
+test('D9: a pass is fully verified', async () => {
+  const rep = await verify(await oneHop());
+  assertPass(rep);
+  assert.equal(rep.fullyVerified, true);
+});
+
+test('D9: a null body Recipe above m=1 passes, but is not fully verified', async () => {
+  const msg = await signChain([
+    { fields: FIELDS, body: BODY },
+    { fields: FIELDS, body: 'a whole new body\r\n', recipe: { b: null } },
+  ], [one({ rt: ['<list@example.com>'] }), { d: 'example.com', m: 2, mf: '<list@example.com>', rt: ['<c@example.net>'] }]);
+  const rep = await verify(msg);
+  assertPass(rep);
+  assert.equal(rep.fullyVerified, false);
+  assert.match(rep.summary, /not fully verified: body not checked below m=2 \(null body Recipe\)/);
+});
+
+test('D9: a result that is not a pass is never fully verified', async () => {
+  const rep = await verify(edit(await oneHop(), 'Subject: hi', 'Subject: ho'));
+  assert.equal(rep.overall, 'fail');
+  assert.equal(rep.fullyVerified, false);
+  const none = await verify('From: a@example.com\r\n\r\nhi\r\n');
+  assert.equal(none.overall, 'none');
+  assert.equal(none.fullyVerified, false);
+});
+
 // --- D7: a key that is not one of its type is "is malformed" ----------------
 
 const { subtle } = globalThis.crypto;

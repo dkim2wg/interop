@@ -228,7 +228,7 @@ async function verifyOnce(raw, opts = {}) {
 
   // No DKIM2 header fields at all: nothing to verify, and no error.
   if (!fields.miFields.length && !fields.sigFields.length) {
-    return { overall: 'none', summary: 'No DKIM2 header fields present.', levels: [] };
+    return { overall: 'none', fullyVerified: false, summary: 'No DKIM2 header fields present.', levels: [] };
   }
 
   const miNums = Object.keys(instances).map(Number).sort((a, b) => a - b);
@@ -447,10 +447,13 @@ async function verifyOnce(raw, opts = {}) {
   for (const i of sigNums) found.push(...sigLevels[i].errors);
   const errors = [...walkErrors, ...primaryFirst([...new Set(found)])];
   if (errors.length) return failed(errors, levelList());
-  const nullNote = nullBodyAt !== null && nullBodyAt > 1
-    ? `; body not checked below m=${nullBodyAt} (null body Recipe), header history verified` : '';
+  // -08 §13 (contract D9): the body hashes below a null body Recipe cannot
+  // be checked, so the message passes but is not Fully Verified.
+  const fullyVerified = nullBodyAt === null;
+  const nullNote = fullyVerified ? ''
+    : `; not fully verified: body not checked below m=${nullBodyAt} (null body Recipe), header history verified`;
   return {
-    overall: 'pass',
+    overall: 'pass', fullyVerified,
     summary: `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact${nullNote}`,
     errors: [], levels: levelList(),
   };
@@ -459,7 +462,7 @@ async function verifyOnce(raw, opts = {}) {
 // The report for a message that did not verify: errors in C9 order (the
 // first is the primary error, and its state is the result).
 function failed(errors, levels) {
-  return { overall: stateOf(errors[0]), summary: errors.join('; '), errors, levels };
+  return { overall: stateOf(errors[0]), fullyVerified: false, summary: errors.join('; '), errors, levels };
 }
 
 // levels, each one never checked given why in its detail.

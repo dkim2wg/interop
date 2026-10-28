@@ -44,6 +44,12 @@ const stateClass = (s) => ({ pass: 'pass', none: 'none', temperror: 'warn', 'not
 export function renderReport(rep, out) {
   out.replaceChildren();
   out.appendChild(el('p', 'verdict ' + stateClass(rep.overall || 'none'), 'Overall: ' + (rep.overall || 'none')));
+  // -08 §13 (contract D9): a null body Recipe leaves the body hashes below
+  // it unchecked, so the message passes but is not a Fully Verified DKIM2
+  // Message; whether to accept it is local policy.
+  if (rep.overall === 'pass' && rep.fullyVerified === false) {
+    out.appendChild(el('p', 'verdict warn', 'Not fully verified: a null body Recipe means the earlier body cannot be checked (draft -08 §13)'));
+  }
   if (rep.summary) out.appendChild(el('p', 'muted', rep.summary));
   (rep.levels || []).forEach((lvl) => {
     const cls = stateClass(lvl.result);
