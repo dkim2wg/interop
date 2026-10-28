@@ -24,6 +24,12 @@
     out.replaceChildren();
     var verdict = el('p', 'verdict ' + (rep.overall || 'none'), 'Overall: ' + (rep.overall || 'none'));
     out.appendChild(verdict);
+    // Draft -08 §13: a pass over a null body Recipe is not a Fully Verified
+    // DKIM2 Message (the body below it went unchecked). Only when the back
+    // end reports fully_verified at all.
+    if (rep.overall === 'pass' && 'fully_verified' in rep && !rep.fully_verified) {
+      out.appendChild(el('p', 'verdict warn', 'Not fully verified: a null body Recipe means the earlier body cannot be checked (draft -08 §13)'));
+    }
     if (rep.summary) out.appendChild(el('p', 'muted', rep.summary));
     (rep.levels || []).forEach(function (lvl) {
       var cls = lvl.result === 'pass' ? 'pass'
