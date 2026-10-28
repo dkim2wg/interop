@@ -32,9 +32,9 @@ JSON2 = "PERMERROR: Message-Instance m=2 contains invalid JSON"
 EXPECT = {
     "multi-from-tampered": HDR1,
     "multi-header-and-body-tampered": HDR1,
-    "multi-expired-custody": "PERMERROR: DKIM2-Signature i=1 signature expired",
+    "multi-expired-custody": "FAIL: DKIM2-Signature i=1 signature expired",
     "multi-custody-bad-signature":
-        "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match",
+        "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match",
     "multi-bad-signature-header-hash": HDR1,
     "multi-tamper-two-instances":
         "FAIL: Message-Instance m=2 header hash sha256 mismatch",
@@ -64,7 +64,7 @@ EXPECT = {
         "PERMERROR: Message-Instance m=2 has a duplicate hash algorithm",
     "multi-header-sha512-body-sha256":
         "FAIL: Message-Instance m=1 header hash sha512 mismatch",
-    "multi-expired-nd": "PERMERROR: DKIM2-Signature i=1 signature expired",
+    "multi-expired-nd": "FAIL: DKIM2-Signature i=1 signature expired",
     "multi-expired-header-hash": HDR1,
     "multi-custody-header-hash": HDR1,
     "multi-body-hash-no-key": "FAIL: Message-Instance m=1 body hash sha256 mismatch",
@@ -169,10 +169,10 @@ def test_timestamp_of_5000_digits_is_from_the_future():
     t = re.search(rb"t=(\d+);", msg).group(1)
     msg = msg.replace(b"t=" + t + b";", b"t=" + b"9" * 5000 + b";", 1)
     r = dkim2verify.verify_message(msg, DNS, full_chain=True)
-    assert r.message == "PERMERROR: DKIM2-Signature i=1 signature is from the future"
+    assert r.message == "FAIL: DKIM2-Signature i=1 signature is from the future"
     msg = msg.replace(b"t=" + b"9" * 5000, b"t=" + b"0" * 5000 + b"1", 1)
     r = dkim2verify.verify_message(msg, DNS, full_chain=True)
-    assert r.message == "PERMERROR: DKIM2-Signature i=1 signature expired"
+    assert r.message == "FAIL: DKIM2-Signature i=1 signature expired"
 
 
 def test_deeply_nested_recipe_is_invalid_json():

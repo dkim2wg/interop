@@ -166,3 +166,38 @@ def test_d6_first_bad_step_b_then_h_in_byte_order():
 def test_d6_copy_past_the_end_is_still_invalid_json():
     # Found only when the Recipe is applied (the chain walk), as in -07.
     _fails_with(_bad_recipe(b'{"b":[{"c":[1,9]}]}'), INVALID_JSON_2)
+
+
+# --- D5: timestamps, Chain of Custody and From Authentic are FAIL ----------------
+
+def test_d5_expired_and_future_are_fail():
+    import time
+    old = _hop1(timestamp=int(time.time()) - 30 * 86400)
+    _fails_with(old, "FAIL: DKIM2-Signature i=1 signature expired", "fail",
+                skip_timestamp_check=False)
+    new = _hop1(timestamp=int(time.time()) + 3 * 86400)
+    _fails_with(new, "FAIL: DKIM2-Signature i=1 signature is from the future", "fail",
+                skip_timestamp_check=False)
+
+
+def test_d5_custody_is_fail():
+    # i=1 mf= not under d=
+    msg = sign(message(), "example.com", "a@example.org", ["r@example.net"],
+               skip_upstream_check=True)
+    _fails_with(msg, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match", "fail")
+    # the envelope against the top signature
+    good = _hop1()
+    _fails_with(good, "FAIL: DKIM2-Signature i=1 MAIL FROM <x@example.com> did not match",
+                "fail", mail_from="<x@example.com>")
+    _fails_with(good, "FAIL: DKIM2-Signature i=1 RCPT TO <x@example.net> did not match",
+                "fail", rcpt_to=["<x@example.net>"])
+    # i=2's mf= is not one of i=1's rt=
+    hop2 = sign(_hop1(), "example.org", "list@example.org", ["b@example.net"],
+                skip_upstream_check=True)
+    _fails_with(hop2, "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1", "fail")
+
+
+def test_d5_from_not_authentic_is_fail():
+    msg = sign(message("A <a@other.net>"), "example.com", "a@example.com",
+               ["r@example.net"], skip_upstream_check=True, skip_from_check=True)
+    _fails_with(msg, "FAIL: DKIM2-Signature i=1 matching From is not authentic", "fail")

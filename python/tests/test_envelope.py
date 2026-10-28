@@ -58,7 +58,7 @@ def test_mail_from_param_mismatch():
         mail_from="wrong@test1.dkim2.com")
     assert not res.ok
     assert any(
-        "PERMERROR: DKIM2-Signature i=1 MAIL FROM wrong@test1.dkim2.com did not match" == e
+        "FAIL: DKIM2-Signature i=1 MAIL FROM wrong@test1.dkim2.com did not match" == e
         for e in res.errors
     ), res.errors
 
@@ -73,7 +73,7 @@ def test_rcpt_to_param_mismatch():
         rcpt_to=["other@test2.dkim2.com"])
     assert not res.ok
     assert any(
-        "PERMERROR: DKIM2-Signature i=1 RCPT TO other@test2.dkim2.com did not match" == e
+        "FAIL: DKIM2-Signature i=1 RCPT TO other@test2.dkim2.com did not match" == e
         for e in res.errors
     ), res.errors
 

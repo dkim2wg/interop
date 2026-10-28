@@ -74,7 +74,8 @@ def test_top_nd_rejected_full_chain():
     raw = _build_nd_chain(top_has_nd=True)
     result = dkim2verify.verify_message(raw, DNS_DATA, full_chain=True,
                                         skip_timestamp_check=True)
-    assert result.status == 'permerror', result
+    # -08 §14.4: a Chain of Custody fault is FAIL (contract D5).
+    assert result.status == 'fail', result
     assert 'unexpected nd= tag' in result.message, result.message
 
 
@@ -82,7 +83,8 @@ def test_top_nd_rejected_simple_mode():
     raw = _build_nd_chain(top_has_nd=True)
     result = dkim2verify.verify_message(raw, DNS_DATA, full_chain=False,
                                         skip_timestamp_check=True)
-    assert result.status == 'permerror', result
+    # -08 §14.4: a Chain of Custody fault is FAIL (contract D5).
+    assert result.status == 'fail', result
     assert 'unexpected nd= tag' in result.message, result.message
 
 
@@ -133,8 +135,9 @@ def test_bridge_from_a_domain_the_mail_never_reached_fails():
     # Built over a deliberately broken bridge, so skip the signer gate.
     raw = _bridged_chain("test4.dkim2.com", skip_upstream_check=True)
     result = dkim2verify.verify_message(raw, DNS_DATA, skip_timestamp_check=True)
-    assert result.status == 'permerror', result
-    assert result.message == ('PERMERROR: DKIM2-Signature i=2 d= does not match '
+    # -08 §14.4: a Chain of Custody fault is FAIL (contract D5).
+    assert result.status == 'fail', result
+    assert result.message == ('FAIL: DKIM2-Signature i=2 d= does not match '
                               'the rt= of i=1'), result.message
 
 
@@ -153,8 +156,9 @@ def test_unbridged_forward_from_another_domain_fails_custody():
         mailfrom="srs0=x@bounce.test3.dkim2.com", rcptto=["dest@test5.dkim2.com"],
         timestamp=1740000000)
     result = dkim2verify.verify_message(raw, DNS_DATA, skip_timestamp_check=True)
-    assert result.status == 'permerror', result
-    assert result.message == ('PERMERROR: DKIM2-Signature i=2 mf= does not match '
+    # -08 §14.4: a Chain of Custody fault is FAIL (contract D5).
+    assert result.status == 'fail', result
+    assert result.message == ('FAIL: DKIM2-Signature i=2 mf= does not match '
                               'the rt= of i=1'), result.message
 
 

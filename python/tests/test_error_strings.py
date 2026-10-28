@@ -31,7 +31,7 @@ def test_nd_adjacency_mismatch_canonical():
              "rt=PA==; s=s:rsa-sha256:AAAA"),
     ]
     assert _chain_custody_errors(sigs) == [
-        "PERMERROR: DKIM2-Signature i=1 nd= does not match"]
+        "FAIL: DKIM2-Signature i=1 nd= does not match"]
 
 
 def test_custody_break_canonical():
@@ -42,7 +42,7 @@ def test_custody_break_canonical():
              f"rt={_b64('<x@y.example>')}; s=s:rsa-sha256:AAAA"),
     ]
     assert _chain_custody_errors(sigs) == [
-        "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1"]
+        "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1"]
 
 
 def test_null_mf_d_mismatch_canonical():
@@ -53,14 +53,14 @@ def test_null_mf_d_mismatch_canonical():
              f"rt={_b64('<x@y.example>')}; s=s:rsa-sha256:AAAA"),
     ]
     assert _chain_custody_errors(sigs) == [
-        "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1"]
+        "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1"]
 
 
 def test_mf_vs_d_canonical():
     sigs = [_sig(f"i=1; m=1; t=1; d=fwd.example; mf={_b64('<a@b.example>')}; "
                  f"rt={_b64('<rcpt@dest.example>')}; s=s:rsa-sha256:AAAA")]
     assert _chain_custody_errors(sigs) == [
-        "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match"]
+        "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"]
 
 
 def test_mf_vs_d_skipped_for_null_mf():
@@ -135,10 +135,11 @@ def test_duplicate_tag_is_syntax_error():
 
 # --- _classify_status: the state the first error names ---
 
-def test_custody_break_classifies_as_permerror():
+def test_custody_break_classifies_as_fail():
+    # -08 §14.4 (contract D5): a Chain of Custody fault is FAIL.
     assert _classify_status(
-        ["PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1"]
-    ) == 'permerror'
+        ["FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1"]
+    ) == 'fail'
 
 
 def test_fail_and_temperror_classify_by_prefix():

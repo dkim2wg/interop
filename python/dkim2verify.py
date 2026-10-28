@@ -256,7 +256,7 @@ def _rt_domains(sig_value: str) -> list[str]:
 
 def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
     """draft -07 §7.1 item 1, §14.4: the Chain of Custody, as the contract's
-    C4 steps.  Every failure is a PERMERROR.
+    C4 steps.  Every failure is a FAIL (-08 §14.4, contract D5).
 
     For every signature S with a non-null mf= and no nd=, the mf= domain
     must relaxed-match S's d=.  Then for each S above i=1, with P the
@@ -289,25 +289,25 @@ def _chain_custody_errors(sig_by_seq: list[str]) -> list[str]:
             if prev_nd:
                 if prev_nd.strip().lower() != raw_d.strip().lower():
                     errors.append(
-                        f"PERMERROR: DKIM2-Signature i={prev_i} nd= does not match")
+                        f"FAIL: DKIM2-Signature i={prev_i} nd= does not match")
             elif nd or null_mf:
                 if not any(relaxed_match(rt, d) for rt in _rt_domains(prev)):
                     errors.append(
-                        f"PERMERROR: DKIM2-Signature i={i_val} d= does not "
+                        f"FAIL: DKIM2-Signature i={i_val} d= does not "
                         f"match the rt= of i={prev_i}")
             elif mf is not None:
                 mf_d = addr_domain(mf)
                 if mf_d is None or not any(relaxed_match(mf_d, rt)
                                            for rt in _rt_domains(prev)):
                     errors.append(
-                        f"PERMERROR: DKIM2-Signature i={i_val} mf= does not "
+                        f"FAIL: DKIM2-Signature i={i_val} mf= does not "
                         f"match the rt= of i={prev_i}")
 
         if mf is not None and not null_mf and not nd:
             mf_d = addr_domain(mf)
             if mf_d is None or not relaxed_match(mf_d, d):
                 errors.append(
-                    f"PERMERROR: DKIM2-Signature i={i_val} MAIL FROM and d= "
+                    f"FAIL: DKIM2-Signature i={i_val} MAIL FROM and d= "
                     f"do not match")
     return errors
 
@@ -374,7 +374,7 @@ def _from_authentic_errors(content_headers: list[bytes],
         if not due or m_val not in states:
             continue
         if not from_is_authentic(_from_fields(states[m_val]), d):
-            msg = f"PERMERROR: DKIM2-Signature i={i_val} matching From is not authentic"
+            msg = f"FAIL: DKIM2-Signature i={i_val} matching From is not authentic"
             if msg not in errors:
                 errors.append(msg)
     return errors
@@ -819,9 +819,9 @@ def verify_dkim2_signature(sig_hdr: str, mi_headers: list[str],
         ts = int(digits) if len(digits) < 20 else 10 ** 20
         now = int(time.time())
         if ts > now + MAX_FUTURE:
-            return [f"PERMERROR: DKIM2-Signature i={i_val} signature is from the future"]
+            return [f"FAIL: DKIM2-Signature i={i_val} signature is from the future"]
         if now > ts + MAX_AGE:
-            return [f"PERMERROR: DKIM2-Signature i={i_val} signature expired"]
+            return [f"FAIL: DKIM2-Signature i={i_val} signature expired"]
 
     # A local check (contract C6), ranked with the §14.5 key errors.
     if not usable_items:
@@ -954,7 +954,7 @@ _C9_SECTIONS = (
     (4, re.compile(r" unexpected nd= tag| nd= does not match$| does not match the rt= of i="
                    r"| MAIL FROM and d= do not match$| (?:MAIL FROM|RCPT TO) .* did not match$")),
     (5, re.compile(r"^TEMPERROR: | public key | has no signature with a supported algorithm")),
-    (6, re.compile(r"^FAIL: DKIM2-Signature ")),
+    (6, re.compile(r" selector \S+ incorrect signature$| signature \S+ signature \S+ failed$")),
     (8, re.compile(r" matching From is not authentic$")),
 )
 _C9_BY_NUMBER = {3, 5, 6, 8}
@@ -1198,7 +1198,7 @@ def _envelope_errors(top_sig: str, o: _Options) -> list[str]:
     value = _get_header_value(top_sig)
     top_i = _extract_tag(value, "i")
     if _extract_tag(value, "nd") and not o.allow_unsigned_mi:
-        errors.append(f"PERMERROR: DKIM2-Signature i={top_i} unexpected nd= tag")
+        errors.append(f"FAIL: DKIM2-Signature i={top_i} unexpected nd= tag")
     mf_raw = _extract_tag(value, "mf")
     top_mf = _decode_path(mf_raw) if mf_raw else None
     rt_raw = _extract_tag(value, "rt")
@@ -1207,11 +1207,11 @@ def _envelope_errors(top_sig: str, o: _Options) -> list[str]:
     if o.mail_from is not None:
         if top_mf is None or not _envelope_addr_equal(o.mail_from, top_mf):
             errors.append(
-                f"PERMERROR: DKIM2-Signature i={top_i} MAIL FROM {o.mail_from} did not match")
+                f"FAIL: DKIM2-Signature i={top_i} MAIL FROM {o.mail_from} did not match")
     for rcpt in (o.rcpt_to or []):
         if not any(_envelope_addr_equal(rcpt, rt) for rt in top_rts):
             errors.append(
-                f"PERMERROR: DKIM2-Signature i={top_i} RCPT TO {rcpt} did not match")
+                f"FAIL: DKIM2-Signature i={top_i} RCPT TO {rcpt} did not match")
     return errors
 
 
