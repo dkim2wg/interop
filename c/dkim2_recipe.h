@@ -10,7 +10,7 @@
                           base64 (zero pad bits, no whitespace) -- used for a
                           literal that is not valid UTF-8; decoded octets
                           MUST NOT contain CR or LF
-   Keys are matched without regard to case (lowercase is emitted). A Recipe
+   Keys are strictly lowercase (-08, contract D10). A Recipe
    that breaks the schema is rejected by dkim2_recipe_parse() (the verifier's
    "contains invalid JSON"); one that only fails against the message (a copy
    past the last item) makes the apply_* functions return NULL -- reported
@@ -19,14 +19,13 @@
    a "c" range that breaks the ascending rule. */
 
 /* cJSON_Parse() of a Recipe, refusing (NULL) one that is not valid -07 §5
-   JSON: a key named twice in one object, compared without regard to case
-   (cJSON keeps the first of two equal keys and the other implementations'
+   JSON: a key holding an ASCII capital (contract D10), or a key named
+   twice in one object, compared exactly after unescaping (cJSON keeps the first of two equal keys and the other implementations'
    parsers the last, so {"b":[...],"b":null} would be a null body Recipe to
    some verifiers and signers and a real one to others), or anything the
    schema forbids -- not an object, neither "h" nor "b", an empty "h", a step
    without exactly one of "c"/"d"/"u", a malformed literal or copy range.
-   Every key of the result is lowercased. Every Recipe parse here goes
-   through it. Free with dkim2_recipe_free(). */
+   Every Recipe parse here goes through it. Free with dkim2_recipe_free(). */
 struct cJSON *dkim2_recipe_parse(const char *r_json);
 void dkim2_recipe_free(struct cJSON *root);
 

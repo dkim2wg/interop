@@ -154,9 +154,9 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
     if (dkim2_chain_number_error("Message-Instance", "m", v, v, errbuf, errbufsz))
         goto err;
     mi->m = atoi(v);   /* 1..DKIM2_MAX_CHAIN_LENGTH ASCII digits: exact */
-    /* -07 §9 wants lowercase tag names; any case is accepted (contract
-       decision 2: tagparse() folds them), and §8 forbids duplicates -- a
-       repeat in any case combination (h=..; H=.., m=1; M=1) is a syntax
+    /* -08 §8: tag names are lowercase; any other is an unknown tag and is
+       ignored (contract D10: "M=1" is not m=, and "m=1; M=2" is no
+       duplicate). §8 forbids duplicates -- a repeated name is a syntax
        error, never first- or last-one-wins. */
     if (tl->duplicate || tl->syntax_error) {
         if (errbuf && errbufsz)

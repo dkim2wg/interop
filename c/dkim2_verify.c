@@ -170,7 +170,7 @@ int dkim2_from_authentic(char **hdrs, int n_hdrs, const char *d) {
     return ok;
 }
 
-/* Undo MI's header Recipe for From (a "from" key, any case) on cur: 1 with
+/* Undo MI's header Recipe for From (a "from" key) on cur: 1 with
    *prev the From fields as they were before this instance, 0 when the
    Recipe does not name From, -1 when it cannot be read or does not fit. */
 static int from_undo(const dkim2_mi_t *mi, const fromlist_t *cur, fromlist_t *prev) {
@@ -186,7 +186,7 @@ static int from_undo(const dkim2_mi_t *mi, const fromlist_t *cur, fromlist_t *pr
     cJSON *root = dkim2_recipe_parse((const char *)rj);
     free(rj);
     if (!root) return -1;
-    const cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");   /* keys lowercased */
+    const cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");   /* keys are lowercase */
     const cJSON *list = h ? cJSON_GetObjectItemCaseSensitive(h, "from") : NULL;
     if (!list) { cJSON_Delete(root); return 0; }
     dkim2_recipe_op_t *ops;
@@ -397,7 +397,7 @@ static char *blank_sig_values(const char *raw_val) {
        tag name and '=' ("s = sel:alg:sig", Turscar tags_whitespace). */
     const char *s_tag = NULL, *s_eq = NULL;
     for (const char *p = raw_val; *p; p++) {
-        if ((p[0] == 's' || p[0] == 'S')
+        if (p[0] == 's'
             && (p == raw_val || p[-1] == ';' || p[-1] == ' ' || p[-1] == '\t'
                 || p[-1] == '\n')) {
             const char *q = p + 1;

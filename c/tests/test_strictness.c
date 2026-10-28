@@ -413,14 +413,17 @@ static void test_mi_tags(const char *mi) {
     printf("C. Message-Instance tags\n");
     char *m2, *s;
 
+    /* -08 §8 (contract D10): an uppercase tag name is an unknown tag. */
     m2 = subst(mi, "h=", "H=");
     s = sig1(m2, "sel1", "rsa-sha256", g_rsa, "rsa-sha256");
-    expect("signed instance written with H= passes", verify(m2, s, 0), DKIM2_OK, NULL, 1);
+    expect("signed instance written with H= has no h=", verify(m2, s, 0), DKIM2_PERMERROR,
+        "PERMERROR: Message-Instance m=1 tag=h missing", 0);
     free(s); free(m2);
 
     m2 = subst(mi, "m=", "M=");
     s = sig1(m2, "sel1", "rsa-sha256", g_rsa, "rsa-sha256");
-    expect("signed instance written with M= passes", verify(m2, s, 0), DKIM2_OK, NULL, 1);
+    expect("signed instance written with M= has no m=", verify(m2, s, 0), DKIM2_PERMERROR,
+        "PERMERROR: Message-Instance m= tag=m missing", 0);
     free(s); free(m2);
 
     const char *h = strstr(mi, "h=");
@@ -435,9 +438,14 @@ static void test_mi_tags(const char *mi) {
     for (int i = 0; i < 4; i++) {
         s = sig1(variants[i], "sel1", "rsa-sha256", g_rsa, "rsa-sha256");
         char what[128];
-        snprintf(what, sizeof what, "repeated tag (signed) '%.40s...' is a syntax error", variants[i]);
-        expect(what, verify(variants[i], s, 0), DKIM2_PERMERROR,
-            "PERMERROR: Message-Instance m=1 syntax error", -1);
+        /* H= beside h=, M= beside m=: another (unknown) tag, no repeat */
+        snprintf(what, sizeof what, "%s (signed) '%.40s...'",
+                 i < 2 ? "repeated tag is a syntax error" : "uppercase twin is ignored", variants[i]);
+        if (i < 2)
+            expect(what, verify(variants[i], s, 0), DKIM2_PERMERROR,
+                "PERMERROR: Message-Instance m=1 syntax error", -1);
+        else
+            expect(what, verify(variants[i], s, 0), DKIM2_OK, NULL, 1);
         free(s); free(variants[i]);
     }
 }

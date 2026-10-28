@@ -40,7 +40,7 @@ int dkim2_sig_check_duplicates(const dkim2_sig_t *sig, char *errbuf, size_t errb
    relaxed-matches d; else 0. */
 int dkim2_from_authentic(char **hdrs, int n_hdrs, const char *d);
 
-/* 1 when the Message-Instance's header Recipe names From (any case) -- or
+/* 1 when the Message-Instance's header Recipe names From ("from") -- or
    cannot be read -- else 0. */
 int dkim2_mi_changes_from(const dkim2_mi_t *mi);
 

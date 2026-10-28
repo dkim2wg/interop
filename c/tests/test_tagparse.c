@@ -13,11 +13,12 @@ int main(void) {
     assert(tag_get(tl, "s") == NULL);
     taglist_free(tl);
 
-    /* Case-insensitive tag names */
-    tl = tagparse("D=example.com;S=sel1", NULL);
-    assert(strcmp(tag_get(tl, "d"), "example.com") == 0);
+    /* Tag names are case sensitive (-08 §8, contract D10) */
+    tl = tagparse("D=example.com;S=sel1;d=x", NULL);
+    assert(tag_get(tl, "d") && strcmp(tag_get(tl, "d"), "x") == 0);
     assert(strcmp(tag_get(tl, "D"), "example.com") == 0);
-    assert(strcmp(tag_get(tl, "s"), "sel1") == 0);
+    assert(tag_get(tl, "s") == NULL);
+    assert(!tl->duplicate);
     taglist_free(tl);
 
     /* Multi-char tag names (mf=, rt=) */

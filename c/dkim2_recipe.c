@@ -150,13 +150,13 @@ static unsigned char *decode_u_item(const cJSON *item, size_t *len_out) {
 /* Classify one Recipe step (-07 §5.1/§5.2: "a JSON object with exactly one
    key"): 'c', 'd' or 'u', with *arr the "c" value or the literal array; -1
    for anything else -- not an object, no key, two keys, any other key, a
-   "d"/"u" that is not an array. The key is matched without regard to case
-   (dkim2_recipe_parse() has lowercased it anyway). */
+   "d"/"u" that is not an array. dkim2_recipe_parse() has already refused
+   any key that is not lowercase. */
 static int step_kind(const cJSON *step, const cJSON **arr) {
     if (!cJSON_IsObject(step)) return -1;
     const cJSON *only = step->child;
     if (!only || only->next || !only->string || strlen(only->string) != 1) return -1;
-    int k = tolower((unsigned char)only->string[0]);
+    int k = (unsigned char)only->string[0];
     if (k != 'c' && k != 'd' && k != 'u') return -1;
     if (k != 'c' && !cJSON_IsArray(only)) return -1;
     *arr = only;
@@ -195,29 +195,22 @@ static int walk_literals(const cJSON *arr, int kind, int reject_nul,
     return 0;
 }
 
-/* Non-zero if any object in the tree names a key twice. Keys are compared
-   without regard to case (decision 2 of the -07 contract: emit lowercase,
-   accept any case, so "Subject" and "subject" in one object are the same
-   key), after cJSON's unescaping ("subj\u0065ct" is "subject"). */
-static int has_duplicate_key(const cJSON *node) {
+/* Non-zero if any object in the tree names a key twice, or names a key
+   holding an ASCII capital (-08 §5, contract D10: keys are strictly
+   lowercase; a non-ASCII letter is not judged). Keys are compared exactly,
+   after cJSON's unescaping ("subj\u0065ct" is "subject", "\u0053" is
+   "S"). */
+static int bad_keys(const cJSON *node) {
     for (const cJSON *c = node ? node->child : NULL; c; c = c->next) {
-        if (cJSON_IsObject(node) && c->string)
+        if (cJSON_IsObject(node) && c->string) {
+            for (const char *p = c->string; *p; p++)
+                if (*p >= 'A' && *p <= 'Z') return 1;
             for (const cJSON *d = c->next; d; d = d->next)
-                if (d->string && strcasecmp(c->string, d->string) == 0) return 1;
-        if (has_duplicate_key(c)) return 1;
+                if (d->string && strcmp(c->string, d->string) == 0) return 1;
+        }
+        if (bad_keys(c)) return 1;
     }
     return 0;
-}
-
-/* Lowercase (ASCII) every object key, so every lookup below -- the
-   top-level "h"/"b", header names, step keys -- matches without regard to
-   case. */
-static void lowercase_keys(cJSON *node) {
-    for (cJSON *c = node ? node->child : NULL; c; c = c->next) {
-        if (cJSON_IsObject(node) && c->string && !(c->type & cJSON_StringIsConst))
-            for (char *p = c->string; *p; p++) *p = (char)tolower((unsigned char)*p);
-        lowercase_keys(c);
-    }
 }
 
 static int validate_list(const cJSON *list, int reject_nul);
@@ -243,11 +236,10 @@ static int validate_schema(const cJSON *root) {
 
 cJSON *dkim2_recipe_parse(const char *r_json) {
     cJSON *root = cJSON_Parse(r_json);
-    if (root && has_duplicate_key(root)) {
+    if (root && bad_keys(root)) {
         cJSON_Delete(root);
         return NULL;
     }
-    lowercase_keys(root);
     if (root && validate_schema(root) != 0) {
         cJSON_Delete(root);
         return NULL;

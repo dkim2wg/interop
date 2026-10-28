@@ -125,32 +125,8 @@ static void test_u_steps(void) {
 }
 
 static void test_json_keys(void) {
-    /* K1: uppercase keys at every level match case-insensitively */
-    { dkim2_verify_result_t r = recipe_at_m2("{\"H\":{\"Subject\":[{\"C\":[1,1]}]}}"); CHECK_PASS(r); }
-    {
-        msg_t m;
-        base_signed(&m, "a@example.com");
-        msg_set(&m, "Subject", "[list] test");
-        add_mi(&m, "{\"H\":{\"SUBJECT\":[{\"D\":[\"test\"]}]},\"B\":[{\"C\":[1,2]}]}");
-        add_sig(&m, 2, 2, "example.org", "<l@lists.example.org>", "<r@dest.example>", NULL);
-        dkim2_verify_result_t res = verify(&m);
-        CHECK_PASS(res);
-        msg_free(&m);
-    }
-    {   /* and the keys are honoured, not ignored: a wrong literal fails */
-        msg_t m;
-        base_signed(&m, "a@example.com");
-        msg_set(&m, "Subject", "[list] test");
-        add_mi(&m, "{\"H\":{\"Subject\":[{\"D\":[\"wrong\"]}]}}");
-        add_sig(&m, 2, 2, "example.org", "<l@lists.example.org>", "<r@dest.example>", NULL);
-        dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "FAIL: Message-Instance m=1 header hash sha256 mismatch");
-        msg_free(&m);
-    }
-    /* K2: keys equal ignoring case are duplicates, at every level */
-    { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{\"Subject\":[],\"subject\":[]}}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{\"subject\":[{\"c\":[1,1]}]},\"H\":{\"to\":[{\"c\":[1,1]}]}}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,1],\"C\":[2,2]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
+    /* K1/K2 (-07 decision 2, any case) are reversed by -08 (contract D10):
+       keys are strictly lowercase; see test_spec08.c. */
     /* the signer emits lowercase keys */
     {
         char *cur[] = { "Subject: x\r\n" };
@@ -505,7 +481,7 @@ static void test_from_authentic(void) {
         add_mi(&m, NULL);
         add_sig(&m, 1, 1, "example.com", "<a@example.com>", "<list@lists.example.org>", NULL);
         msg_set(&m, "From", "list@lists.example.org");
-        add_mi(&m, "{\"h\":{\"From\":[{\"d\":[\"a@elsewhere.net\"]}]}}");
+        add_mi(&m, "{\"h\":{\"from\":[{\"d\":[\"a@elsewhere.net\"]}]}}");
         add_sig(&m, 2, 2, "example.org", "<list-bounces@lists.example.org>", "<r@dest.example>", NULL);
         dkim2_verify_result_t res = verify(&m);
         CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic");
@@ -1014,12 +990,7 @@ static void test_tag_lists(void) {
     tl = tagparse("m=1; h=x;;", NULL);                 /* two trailing semicolons */
     CHECK(tl && tl->syntax_error);
     taglist_free(tl);
-    tl = tagparse("M=1; H=x", NULL);                   /* any case accepted */
-    CHECK(tl && !tl->syntax_error && !tl->duplicate && tag_get(tl, "m"));
-    taglist_free(tl);
-    tl = tagparse("m=1; M=2", NULL);                   /* duplicate ignoring case */
-    CHECK(tl && tl->duplicate);
-    taglist_free(tl);
+    /* tag-name case: -08 reverses -07 decision 2 (test_spec08.c) */
     CHECK(dkim2_mi_parse("m=1;; h=sha256:AAAA:AAAA") == NULL);
 }
 

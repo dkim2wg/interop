@@ -260,13 +260,10 @@ int main(void) {
         r = dkim2_apply_body_recipe("{\"b\":[{\"d\":[\"caf\xc3\xa9\"]}]}", b3, strlen(b3), &n);
         assert(r && n == 7 && memcmp(r, "caf\xc3\xa9\r\n", n) == 0);
         free(r);
-        /* keys in any case */
-        r = dkim2_apply_body_recipe("{\"B\":[{\"C\":[1,1]},{\"U\":[\"QQ==\"]},{\"D\":[\"z\"]}]}", b3, strlen(b3), &n);
-        assert(r && n == 10 && memcmp(r, "L1\r\nA\r\nz\r\n", n) == 0);
-        free(r);
-        hh = dkim2_apply_header_recipe("{\"H\":{\"SUBJECT\":[{\"D\":[\"new\"]}]}}", hdrs1, 1, &n_out);
-        assert(hh && n_out == 1 && strcmp(hh[0], "subject: new\r\n") == 0);
-        free(hh[0]); free(hh);
+        /* keys are strictly lowercase (-08, contract D10) */
+        assert(dkim2_apply_body_recipe("{\"b\":[{\"C\":[1,1]}]}", b3, strlen(b3), &n) == NULL);
+        assert(dkim2_apply_header_recipe("{\"H\":{\"subject\":[{\"d\":[\"new\"]}]}}", hdrs1, 1, &n_out) == NULL);
+        assert(dkim2_apply_header_recipe("{\"h\":{\"Subject\":[{\"d\":[\"new\"]}]}}", hdrs1, 1, &n_out) == NULL);
         /* "h" must name at least one field, and each must be a list */
         assert(dkim2_apply_header_recipe("{\"h\":{}}", hdrs1, 1, &n_out) == NULL);
         assert(dkim2_apply_header_recipe("{\"h\":{\"subject\":null}}", hdrs1, 1, &n_out) == NULL);
