@@ -240,25 +240,27 @@ def test_ed25519_bad_length_is_syntax_error():
 
 # --- C. Message-Instance tag case and duplicates -----------------------------
 
-def test_mi_uppercase_h_passes():
+# -07 decision 2 accepted tag names in any case; -08 (contract D10) makes
+# them strictly lower case, so "H=" and "M=" are unknown tags, ignored.
+
+def test_mi_uppercase_h_is_unknown_tag():
     mi = _good_mi_value().replace("h=", "H=")
-    assert verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi)).ok
-    assert verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=True).ok
+    for fc in (False, True):
+        r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=fc)
+        assert r.message == "PERMERROR: Message-Instance m=1 tag=h missing", r
 
 
-def test_mi_uppercase_m_passes():
+def test_mi_uppercase_m_is_unknown_tag():
     mi = _good_mi_value().replace("m=", "M=")
-    assert verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi)).ok
-    assert verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=True).ok
+    for fc in (False, True):
+        r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=fc)
+        assert r.message == "PERMERROR: Message-Instance m= tag=m missing", r
 
 
 @pytest.mark.parametrize("mk", [
     lambda good: "m=1; h=sha256:AAAA:AAAA; " + good[5:],      # h= ... h=<correct>
     lambda good: good[:-1] + "; h=sha256:AAAA:AAAA;",          # h=<correct> ... h=
-    lambda good: "m=1; H=sha256:AAAA:AAAA; " + good[5:],      # H= ... h=
-    lambda good: good + " M=1;",                               # m=1 ... M=1
     lambda good: good + " m=1;",                               # m=1 ... m=1
-    lambda good: good + " r=e30=; R=e30=;",                    # r= ... R=
 ])
 @pytest.mark.parametrize("full_chain", [False, True])
 def test_mi_duplicate_tag_is_syntax_error(mk, full_chain):
@@ -267,6 +269,19 @@ def test_mi_duplicate_tag_is_syntax_error(mk, full_chain):
     assert not r.ok, mi
     assert "PERMERROR: Message-Instance m=1 syntax error" in r.errors, (mi, r)
     assert r.status == "permerror"
+
+
+# These were duplicates under -07 (any case); under -08 the uppercase twin is
+# an unknown tag and is ignored (contract D10).
+@pytest.mark.parametrize("mk", [
+    lambda good: "m=1; H=sha256:AAAA:AAAA; " + good[5:],      # H= ... h=
+    lambda good: good + " M=1;",                               # m=1 ... M=1
+])
+@pytest.mark.parametrize("full_chain", [False, True])
+def test_mi_uppercase_twin_is_not_a_duplicate(mk, full_chain):
+    mi = mk(_good_mi_value())
+    r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=full_chain)
+    assert r.ok, (mi, r)
 
 
 # --- D. t= syntax --------------------------------------------------------------

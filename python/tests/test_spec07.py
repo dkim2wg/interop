@@ -117,18 +117,21 @@ def test_d_with_cr():
     _invalid_json(b'{"b":[{"d":["a\\rb"]}]}')
 
 
-# --- K: JSON keys match case-insensitively ----------------------------------
+# --- K: JSON keys -------------------------------------------------------------
+# -07 decision 2 matched keys case-insensitively; -08 (contract D10, Bron and
+# Richard 2026-10-26) reverses it: a key that is not lower case is invalid
+# JSON.  So K1's uppercase keys now fail, and K2's case-twins fail too (the
+# uppercase one is invalid on its own).
 
-def test_k1_uppercase_keys_verify_like_lowercase():
-    for rj in (b'{"H":{"Subject":[{"C":[1,1]}]}}',
-               b'{"h":{"subject":[{"c":[1,1]}]}}'):
-        _pass(_to_list(add_mi(_hop1(), recipe_json=rj)))
+def test_k1_uppercase_keys_are_invalid_json():
+    _pass(_to_list(add_mi(_hop1(), recipe_json=b'{"h":{"subject":[{"c":[1,1]}]}}')))
+    _invalid_json(b'{"H":{"Subject":[{"C":[1,1]}]}}')
 
 
-def test_k1_uppercase_literal_step():
+def test_k1_uppercase_literal_step_is_invalid_json():
     msg = add_mi(_hop1(), replace_header(b"Subject", b"Hi"),
-                 recipe_json=b'{"H":{"Subject":[{"D":[" hello"]}]}}')
-    _pass(_to_list(msg))
+                 recipe_json=b'{"h":{"subject":[{"D":[" hello"]}]}}')
+    _fails_with(_to_list(msg, skip_upstream_check=True), INVALID_JSON_2)
 
 
 def test_k2_duplicate_keys_ignoring_case():

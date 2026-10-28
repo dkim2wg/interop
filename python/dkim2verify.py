@@ -703,7 +703,7 @@ def _blank_signature_values(sig_hdr: str) -> str:
         if "=" not in part:
             continue
         name, val = part.split("=", 1)
-        if name.strip().lower() != "s":
+        if name.strip() != "s":
             continue
         inner = val.strip()
         lead = val[:len(val) - len(val.lstrip())]

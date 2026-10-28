@@ -125,8 +125,10 @@ def test_missing_rt_canonical():
 
 
 def test_duplicate_tag_is_syntax_error():
+    # -08 (contract D10): "D=" would be an unknown tag, not a twin of d=, so
+    # the duplicate is spelled the same way.
     errs = verify_dkim2_signature(
-        _sig("i=2; m=2; t=1; d=fwd.example; D=x; nd=x.example; "
+        _sig("i=2; m=2; t=1; d=fwd.example; d=x; nd=x.example; "
              "s=sel:rsa-sha256:AAAA"), [], [], {})
     assert errs == ["PERMERROR: DKIM2-Signature i=2 syntax error"], errs
 

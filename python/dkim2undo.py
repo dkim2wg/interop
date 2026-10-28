@@ -58,15 +58,19 @@ def decode_recipes(mi_hdr: str) -> dict | None:
     return loads_recipe(base64.b64decode(r_b64))
 
 
-def _lowercase_keys(pairs):
-    """object_pairs_hook for Recipe JSON: keys are matched without regard to
-    case (draft -07 §5 has signers write them in lower case; we accept any
-    case), so every key is lowercased, and two keys in one object that are
-    equal ignoring case are a duplicate (ValueError, as for any invalid
-    JSON)."""
+_UPPER = re.compile(r"[A-Z]")
+
+
+def _strict_keys(pairs):
+    """object_pairs_hook for Recipe JSON (-08 §5, contract D10): every key,
+    at any level, MUST be lower case, and a key given twice in one object
+    (compared exactly) is a duplicate.  Either is a ValueError, as for any
+    invalid JSON.  "Lower case" is judged on ASCII letters: header field
+    names are ASCII, and no other key is defined."""
     obj = {}
     for k, v in pairs:
-        k = k.lower()
+        if _UPPER.search(k):
+            raise ValueError(f"JSON object key {k!r} is not lower case")
         if k in obj:
             raise ValueError(f"duplicate JSON object key {k!r}")
         obj[k] = v
@@ -74,13 +78,13 @@ def _lowercase_keys(pairs):
 
 
 def loads_recipe(data):
-    """json.loads for Recipe JSON.  Every object key comes back lowercased,
-    and an object that gives a key twice (ignoring case) is a ValueError, as
-    for any invalid JSON: parsers disagree on which value wins, so
-    {"b":[...],"B":null} would be a null body Recipe to some verifiers and
-    signers and a real one to others."""
+    """json.loads for Recipe JSON.  A key that is not lower case, or an
+    object that gives a key twice, is a ValueError, as for any invalid JSON:
+    parsers disagree on which value wins, so {"b":[...],"b":null} would be a
+    null body Recipe to some verifiers and signers and a real one to
+    others."""
     try:
-        return json.loads(data, object_pairs_hook=_lowercase_keys)
+        return json.loads(data, object_pairs_hook=_strict_keys)
     except RecursionError:
         # JSON nested deeper than the interpreter's stack: invalid JSON,
         # like any other we cannot parse, never a crash.
