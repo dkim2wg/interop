@@ -11,7 +11,7 @@ use Mail::DKIM2::Verifier;
 use Crypt::PK::RSA;
 use MIME::Base64 qw(encode_base64);
 
-# Key records (-07 §14.5, draft-ietf-dkim-dkim2-dns §3.2, §3.4): the
+# Key records (-08 §14.5, draft-ietf-dkim-dkim2-dns §3.2, §3.4): the
 # whole record is a tag-list that must validate; v=, if present, is first
 # and exactly DKIM1; k= defaults to rsa and an unrecognised type is not a
 # usable key; p= is required and empty means revoked; a repeated tag makes

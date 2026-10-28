@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-# The draft -07 shared behaviour tests (U1..D1), the cases every
+# The draft -08 shared behaviour tests (U1..D1), the cases every
 # implementation in the interop repository runs with the same domains,
 # addresses and expected strings, plus the -07 review-focus cases.
 #
@@ -121,7 +121,7 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     }
 }
 
-# --- No r= at m=2: no change (-07 sections 9 and 12.1) ---------------------------
+# --- No r= at m=2: no change (-08 sections 9 and 12.1) ---------------------------
 {
     (my $no_r = mi_with_recipe($HOP1_TEXT, '{}')) =~ s/; r=[^;]*;/;/;
     unlike($no_r, qr/^Message-Instance: m=2;[^\r\n]*r=/m, 'no-change MI: no r= tag');
@@ -189,7 +189,7 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
 
     my $c2 = add_sig($HOP1_TEXT, d => 'other.net', mf => '<>', rt => ['<a@example.com>']);
     is_error($c2, 'fail', 'FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1', 'C2');
-    # -07 section 13.1: the top signature and top instance are fine, so it
+    # -08 section 13.2: the top signature and top instance are fine, so it
     # is Provisionally Verified all the same.
     my $pv = verify($c2);
     ok($pv->provisionally_verified, 'C2: still Provisionally Verified');

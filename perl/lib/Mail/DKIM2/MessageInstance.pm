@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.27';
+our $VERSION = '0.28';
 
 
 use Mail::DKIM2::Digest;
@@ -57,7 +57,7 @@ sub _chain_error_fields {
         // duplicate_number_error('Message-Instance', 'm', map { extract_mi_version($_) } @mi);
 }
 
-# -07 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# -08 §3.1: two hashing algorithms are defined. Verifiers MUST implement
 # both; Signers MAY implement either or both (we default to sha256). Each
 # is a function of the data to its raw digest, by Mail::DKIM2::Digest.
 my %HASH_ALGS = map {
@@ -156,7 +156,7 @@ sub get_tag {
 sub header_hash { return $_[0]->{bits}{h1} }
 sub body_hash { return $_[0]->{bits}{b1} }
 
-# The body hash (-07 section 6.1) of a raw body string with LF or CRLF
+# The body hash (-08 section 6.1) of a raw body string with LF or CRLF
 # line ends: no Email::MIME parse, for callers that hold the body alone.
 # Streams the body through the digest a megabyte at a time (each piece
 # ending at a LF, so a CRLF is never split): a large body is never copied
@@ -214,7 +214,7 @@ sub _body_digest_feed {
     return $end;
 }
 
-# Mark the body Recipe as null per -07 §5.2: the body changed but the
+# Mark the body Recipe as null per -08 §5.2: the body changed but the
 # previous state cannot be recreated. as_string() then emits "b": null.
 sub set_null_body_recipe {
     my ($self) = @_;
@@ -223,7 +223,7 @@ sub set_null_body_recipe {
 
 # True if this instance declares the previous state non-recreatable (a null
 # "b" Recipe). Such an instance cannot be undone to a prior version. Under
-# -07 §5.1 a header Recipe can no longer be null, so only the body
+# -08 §5.1 a header Recipe can no longer be null, so only the body
 # Recipe can render an instance unrecoverable.
 sub unrecoverable {
     my ($self) = @_;
@@ -245,7 +245,7 @@ sub as_string {
         $hashes = (defined $h1 || defined $b1) ? { sha256 => [ $h1 // '', $b1 // '' ] } : {};
     }
 
-    # -07 §9.3: h= is hash-set *("," hash-set) -- one hash-set per
+    # -08 §9.3: h= is hash-set *("," hash-set) -- one hash-set per
     # configured algorithm, emitted in the signer's chosen order (default:
     # sha256 only; the signer default MUST NOT change).
     my @algs = @{ $self->{algs} || ['sha256'] };
@@ -269,7 +269,7 @@ sub as_string {
     if (exists $data{rh}) {
         my $rh = delete $data{rh};
         my %encoded;
-        # -07 §5.1: header field names in the JSON Recipes MUST be lower
+        # -08 §5.1: header field names in the JSON Recipes MUST be lower
         # case (matching against the message stays case-insensitive).
         for my $h (sort keys %$rh) {
             $encoded{lc $h} = _encode_recipe_list($rh->{$h});
@@ -287,7 +287,7 @@ sub as_string {
 
 # Convert internal Recipe list to wire format
 # Internal: [from,to] arrays for copy ranges, strings for literal content
-# Wire (draft -07 section 5): {"c": [from,to]} for a copy, {"d": [...]} for
+# Wire (draft -08 section 5): {"c": [from,to]} for a copy, {"d": [...]} for
 # literals that are UTF-8, {"u": ["base64",...]} for literals that are not.
 #
 # A literal is the raw octets of a header value or body line. One that is
@@ -358,11 +358,11 @@ sub parse {
     die "missing m= tag in Message-Instance header"
         unless exists $tags{m};
     die "PERMERROR: Message-Instance m=$tags{m} syntax error\n" if $dup || !$ok;
-    # -07 section 9: h= is required.
+    # -08 section 9: h= is required.
     die "PERMERROR: Message-Instance m=$tags{m} tag=h missing\n" unless exists $tags{h};
     $self->{bits}{m} = $tags{m};
 
-    # -07 section 9.3: h= is a list of hash-sets
+    # -08 section 9.3: h= is a list of hash-sets
     if (exists $tags{h}) {
         my $groups = parse_hash_groups($raw_h)
             or die "PERMERROR: Message-Instance m=$tags{m} syntax error\n";
@@ -394,7 +394,7 @@ sub parse {
     }
 
     if (exists $tags{r}) {
-        # -07 §14.2: a bad base64 r= value and a post-decode JSON parse
+        # -08 §14.2: a bad base64 r= value and a post-decode JSON parse
         # failure are different errors and must stay distinct: base64
         # failure -> "syntax error" (§14.2 lists this explicitly for
         # malformed field content); JSON failure -> "contains invalid JSON".
@@ -549,7 +549,7 @@ sub b_digest {
     return _hash_data_b64($alg, $body);
 }
 
-# -07 §3.1/§3.5: hash $data with the named (implemented) algorithm and
+# -08 §3.1/§3.5: hash $data with the named (implemented) algorithm and
 # base64-encode the result. Equivalent to the historic digest64($digest)
 # path for sha256 (verified byte-identical), generalised to any algorithm
 # in %HASH_ALGS.
@@ -850,7 +850,7 @@ sub calculate {
     my $self = bless {}, $class;
     my $prefixes = check_ignore_prefixes($opts{IgnorePrefixes});
 
-    # -07 §3.1: the signer chooses one or more hash algorithms; default
+    # -08 §3.1: the signer chooses one or more hash algorithms; default
     # is sha256 only (the signer default MUST NOT change).
     $self->{algs} = ($opts{Algs} && @{$opts{Algs}}) ? [ @{$opts{Algs}} ] : ['sha256'];
 
@@ -922,7 +922,7 @@ sub calculate {
             die "$error\n";
         }
         # No instances on either side is a first instance with Recipes
-        # (-07 section 12.1: changes made as the message enters DKIM2).
+        # (-08 section 12.1: changes made as the message enters DKIM2).
         # Verify same message by checking MI headers match
         # header_raw returns values only, so prepend the name for canonicalization
         my $canon_cur  = join(',', map { dkim2_canonicalize_header("Message-Instance: $_") } @mi_cur);
@@ -999,7 +999,7 @@ sub calculate {
 
     # Hashes are always of the current (newest) version of the message,
     # computed after any epilogue modification, for every configured
-    # algorithm (-07 §9.3).
+    # algorithm (-08 §9.3).
     for my $alg (@{$self->{algs}}) {
         $self->{bits}{hashes}{$alg} = [ h_digest($current, $alg, $prefixes),
             $body_hash ? $body_hash->{$alg} : b_digest($current, $alg) ];
@@ -1029,7 +1029,7 @@ sub calculate {
         my %known;
         push @{ $known{dkim2_canonicalize_header($cur[$_])} }, $_ + 1 for 0..$#cur;
         # Recipe: reconstruct @prev from @cur. Copy ranges must ascend (each
-        # starts after the last one ends, -07 §5.1), so each field of
+        # starts after the last one ends, -08 §5.1), so each field of
         # @cur is copied at most once and never out of turn: a repeat, or a
         # field the hop moved above one it left alone, goes in literally.
         # $last_end only grows, so each value's ascending index list is
@@ -1198,13 +1198,13 @@ sub _check_hashes {
 # Rebuild the previous lines from @$old by a Recipe of [from, to] copy ranges
 # (1-based, inclusive) and literal lines. Each range must lie within @$old,
 # and the ranges must ascend: each must start after the one before it ends
-# (-07 §5.1, and the same rule for the body). The previous version is
+# (-08 §5.1, and the same rule for the body). The previous version is
 # rebuilt from this one, and a hop's change never needs a line of it twice
 # or in a different order -- a reordering is recorded literally. Without the
 # check a few bytes of header could name a copy of billions of lines.
 # Everything is checked before anything is copied.
 #
-# A bound must be a JSON integer (-07 §5 schema): {"c":["1","2"]} is
+# A bound must be a JSON integer (-08 §5 schema): {"c":["1","2"]} is
 # malformed, and every verifier in the interop set rejects it. The JSON
 # decoder gives a number an IV and a string a PV, so the distinction is
 # read off the scalar's flags -- before anything stringifies it, which
@@ -1412,7 +1412,7 @@ Mail::DKIM2::MessageInstance - Compute, verify and undo Message-Instance headers
 
 =head1 DESCRIPTION
 
-A Message-Instance header (-07 sections 4 to 9) records the message at
+A Message-Instance header (-08 sections 4 to 9) records the message at
 one point in its journey: a hash of its header fields and a hash of its
 body, and, from the second instance on, a Recipe for turning this instance
 back into the previous one. The wire format is
@@ -1438,7 +1438,7 @@ Messages are accepted as L<Email::MIME> objects or as strings, which are
 parsed. C<verify>, C<undo> and C<chain_verifies> look at the highest
 numbered Message-Instance the message carries.
 
-This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-08; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.
@@ -1508,7 +1508,7 @@ Returns a new instance describing C<$msg>. With no C<$previous>, C<$msg>
 must carry no Message-Instance and the result is C<m=1>. With
 C<$previous>, both messages must carry the same existing instances; the
 result is the next C<m=> (C<m=1> when neither carries any: a first instance
-with Recipes, -07 section 12.1), with hashes of C<$msg> and Recipes that rebuild
+with Recipes, -08 section 12.1), with hashes of C<$msg> and Recipes that rebuild
 C<$previous> from it. Dies if the message cannot be processed: it already
 has 32 instances, its instances do not form a chain, or C<$previous> is
 not an earlier form of the same message.
@@ -1531,7 +1531,7 @@ hashes cover the modified message.
 
 Returns an C<m=1> instance for a message none of whose instances is
 signed: the hashes of C<$msg> less its Message-Instance fields, and Recipes
-that rebuild C<$previous> as it was before its first instance (-07 section
+that rebuild C<$previous> as it was before its first instance (-08 section
 12.1 lets the first instance record the changes made as the message enters
 DKIM2). C<$previous> may carry instances, a stamped C<m=1> and local ones
 over it; their whole chain must verify (C<chain_verifies>), and every one
@@ -1546,7 +1546,7 @@ C<$previous> does not verify, with the reason C<chain_verifies> gives.
 
 Checks the top instance against the message. Returns its C<m=> on success.
 On failure, including an instance that does not parse, returns C<0> in
-scalar context and C<(0, $reason)> in list context, the reason in the -07
+scalar context and C<(0, $reason)> in list context, the reason in the -08
 words with its state, e.g. C<"FAIL: Message-Instance m=2 body hash sha256
 mismatch"> or C<"PERMERROR: Message-Instance m=2 contains invalid JSON">.
 Never dies.

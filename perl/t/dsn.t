@@ -395,7 +395,7 @@ sub dsn_around {
                               body => $embedded);
     return Email::MIME->create(
         attributes => { content_type => 'multipart/report', encoding => '7bit' },
-        # From the domain that signs it (-07 section 11).
+        # From the domain that signs it (-08 section 11).
         header_str => [ From => 'postmaster@' . ($o{domain} // 'test3.dkim2.com'),
                         To => 'user@test2.dkim2.com',
                         Subject => 'failure' ],

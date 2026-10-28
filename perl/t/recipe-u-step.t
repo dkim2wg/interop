@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 #
 # Recipe literals that are not UTF-8 travel as {"u": ["<base64>", ...]}
-# steps (draft -07 section 5); UTF-8 literals, ASCII included, stay
+# steps (draft -08 section 5); UTF-8 literals, ASCII included, stay
 # {"d": [...]}.
 #
 # A Recipe literal is the raw octets of a header value or body line, and
@@ -9,9 +9,9 @@
 # text is UTF-8, so those octets cannot be written into a "d" step
 # unchanged; base64 carries them exactly. Verifiers reject a "u" item that
 # is not canonical base64 or that decodes to something containing CR or LF,
-# and a "d" item containing CR or LF, as "contains invalid JSON" (-07
+# and a "d" item containing CR or LF, as "contains invalid JSON" (-08
 # sections 5, 5.1, 5.2). The "b" step of our 0.13 to 0.22 releases, which
-# -07 adopted as "u", is now an unknown step key: invalid as well.
+# -08 adopted as "u", is now an unknown step key: invalid as well.
 
 use 5.020;
 use strict;
@@ -175,7 +175,7 @@ my @bad = (
     [ { h => { comments => [ { u => [ encode_base64("x\ry", '') ] } ] } },
       'bare CR in a header literal' ],
     [ { b => [ { b => [ encode_base64("\xe9", '') ] } ] }, 'the old "b" step' ],
-    # -07 sections 5.1/5.2: "d" text MUST NOT contain CR or LF either
+    # -08 sections 5.1/5.2: "d" text MUST NOT contain CR or LF either
     [ { b => [ { d => [ "a\r\nb" ] } ] },                 'CRLF in a "d" body line' ],
     [ { b => [ { d => [ "a\nb" ] } ] },                   'bare LF in a "d" body line' ],
     [ { h => { comments => [ { d => [ "x\ry" ] } ] } },   'bare CR in a "d" header value' ],

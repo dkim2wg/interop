@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 #
 # Recipe copy ranges must ascend: across the "c" steps of one Recipe, each
-# start is greater than the previous end (-07 section 5.1 says so for
+# start is greater than the previous end (-08 section 5.1 says so for
 # header Recipes; the agreed extension applies the same rule to body
 # Recipes). Together with 1 <= start <= end <= count, that is the whole
 # well-formedness rule for "c". A Recipe that breaks it is malformed and

@@ -82,6 +82,7 @@ t/fold-info.t
 t/foreign-exception.t
 t/fraud-detection.t
 t/full-chain.t
+t/fully-verified.t
 t/gate-mime-warn.t
 t/gate-null-top.t
 t/gate-one-walk.t
@@ -133,6 +134,8 @@ t/signature-nd.t
 t/signature-nonce.t
 t/signer-result.t
 t/spec07.t
+t/spec08-algebra.t
+t/spec08-provisional.t
 t/split-lmtp.t
 t/split.t
 t/stream-from-handle.t

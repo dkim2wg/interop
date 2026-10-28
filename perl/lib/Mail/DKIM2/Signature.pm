@@ -2,7 +2,7 @@ package Mail::DKIM2::Signature;
 use strict;
 use warnings;
 
-our $VERSION = '0.27';
+our $VERSION = '0.28';
 
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
@@ -31,7 +31,7 @@ sub new {
     $self->set_tag('m', $args{Version})   if defined $args{Version};
     $self->set_tag('t', $args{Timestamp}) if defined $args{Timestamp};
     $self->set_tag('d', $args{Domain})    if defined $args{Domain};
-    # nd= (-07 §10.7) replaces mf=/rt= for an imaginary forwarding hop.
+    # nd= (-08 §10.7) replaces mf=/rt= for an imaginary forwarding hop.
     $self->set_tag('nd', $args{NextDomain}) if defined $args{NextDomain};
     $self->set_tag('n', $args{Nonce})     if defined $args{Nonce};
 
@@ -63,7 +63,7 @@ sub new {
 }
 
 # An address as mf= or rt= records it: an RFC 5321 path in angle brackets
-# (-07 sections 10.5, 10.6), its domain written as A-labels (section 18).
+# (-08 sections 10.5, 10.6), its domain written as A-labels (section 18).
 sub _path {
     my ($addr) = @_;
     my $path = to_rfc5321_path($addr);
@@ -108,7 +108,7 @@ sub domain {
     return $self->get_tag('d');
 }
 
-# nd= the domain that signs the next DKIM2-Signature (-07 §10.7). Present
+# nd= the domain that signs the next DKIM2-Signature (-08 §10.7). Present
 # only for an imaginary forwarding hop, where it replaces mf=/rt=.
 sub next_domain {
     my $self = shift;
@@ -224,7 +224,7 @@ sub syntax_error {
 # own. Setting either on an nd= signature is therefore a caller error.
 sub _croak_if_nd {
     my ($self, $tag) = @_;
-    croak "cannot set $tag= on a signature carrying nd= (-07 §10.7)"
+    croak "cannot set $tag= on a signature carrying nd= (-08 §10.7)"
         if defined $self->get_tag('nd');
 }
 
@@ -431,7 +431,7 @@ Mail::DKIM2::Signature - One DKIM2-Signature header, parsed or under constructio
 
 =head1 DESCRIPTION
 
-A DKIM2-Signature header as defined in -07 section 10, as a
+A DKIM2-Signature header as defined in -08 section 10, as a
 L<Mail::DKIM2::TagValueList>. The tags:
 
 =over 4
@@ -456,12 +456,12 @@ Signing domain.
 =item C<mf=>, C<rt=>
 
 The envelope of this hop: MAIL FROM, and a comma-separated list of RCPT TO,
-each a base64-encoded RFC 5321 path with angle brackets (-07 section 10.5 and
+each a base64-encoded RFC 5321 path with angle brackets (-08 section 10.5 and
 10.6). C<< <> >> is the null sender.
 
 =item C<nd=>
 
-For an imaginary forwarding hop (-07 section 12.3), the C<d=> of the hop that
+For an imaginary forwarding hop (-08 section 12.3), the C<d=> of the hop that
 signs next. Replaces C<mf=> and C<rt=>.
 
 =item C<n=>
@@ -470,7 +470,7 @@ A nonce of at most 64 characters.
 
 =item C<f=>
 
-Comma-separated flags (-07 section 10.10): C<exploded>, C<feedback>,
+Comma-separated flags (-08 section 10.10): C<exploded>, C<feedback>,
 C<feedhere>, or any other; an unknown flag has no effect.
 
 =item C<s=>
@@ -480,7 +480,7 @@ A selector may appear once; an algorithm at most twice.
 
 =back
 
-This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-08; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.

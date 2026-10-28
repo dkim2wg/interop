@@ -49,7 +49,7 @@ sub undo_error {
 
 # Trailing blank lines are lines a Recipe may copy, as every other
 # implementation in the interop set numbers them: they are not hashed
-# (-07 §6.1), but they are there. The body here is "line one",
+# (-08 §6.1), but they are there. The body here is "line one",
 # "line two", "footer" and two blank lines: five lines.
 {
     my $cur = Email::MIME->new($with1);
@@ -96,7 +96,7 @@ for my $case (@bogus) {
     ok(!$ok, "... and so does chain_verifies");
 }
 
-# Ranges must ascend (-07 §5.1): a Recipe that copies a later line before
+# Ranges must ascend (-08 §5.1): a Recipe that copies a later line before
 # an earlier one describes a reordering, which a hop records literally.
 {
     my $text = with_body_recipe([[3, 3], [1, 2]]);

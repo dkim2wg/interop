@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.27';
+our $VERSION = '0.28';
 
 use Carp ();
 use B ();
@@ -70,17 +70,17 @@ our @EXPORT_OK = qw(
 # the date this implementation's DKIM2 behaviour last changed (a software
 # version stamp, not the draft's date) -- bump it on any change to what we
 # emit, not only on a spec bump. See ../spec/draft-gondwana-dkim2-debug-header.
-use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-07';
+use constant DKIM2_DRAFT => 'ietf-dkim-dkim2-spec-08';
 use constant DKIM2_REPO  => 'github.com/dkim2wg/interop';
-use constant DKIM2_DATE  => '2026-10-18';
+use constant DKIM2_DATE  => '2026-10-28';
 
-# -07 section 14.3: a DKIM2-Signature whose t= is more than a day after
+# -08 section 14.3: a DKIM2-Signature whose t= is more than a day after
 # delivery is "from the future", and one made more than 14 days before it
 # has "expired". Seconds.
 use constant FUTURE_LIMIT => 86400;
 use constant EXPIRY       => 14 * 86400;
 
-# Local policy, not -07: a message carrying more Message-Instance or
+# Local policy, not -08: a message carrying more Message-Instance or
 # DKIM2-Signature fields than this is a PERMERROR, found before any key is
 # fetched, signature checked or recipe applied. Every hop costs a verifier a
 # DNS lookup, a signature check and an undo of the whole message, and the
@@ -280,7 +280,7 @@ sub combine_sets {
     return ($state, $first->[1]);
 }
 
-# DKIM2 header canonicalization for HEADER HASH per -07 Section 5.2:
+# DKIM2 header canonicalization for HEADER HASH per -08 Section 5.2:
 # 1. Lowercase header name
 # 2. Unfold continuation lines (remove CRLF before WSP)
 # 3. Collapse runs of WSP to single SP
@@ -303,7 +303,7 @@ sub dkim2_canonicalize_header {
     return "$name:$value\r\n";
 }
 
-# DKIM2 header canonicalization for SIGNATURE INPUT per -07 Section 12.8:
+# DKIM2 header canonicalization for SIGNATURE INPUT per -08 Section 12.8:
 # Same as header hash canonicalization except step 3 deletes ALL WSP
 # characters rather than collapsing to single SP.
 sub dkim2_canonicalize_sig_header {
@@ -335,7 +335,7 @@ sub encode_tag_json {
 }
 
 # Decode a base64 JSON tag value. The JSON text must be UTF-8 (RFC 8259
-# section 8.1; -07 section 5): anything else dies. Every string in the
+# section 8.1; -08 section 5): anything else dies. Every string in the
 # result, object keys included, is UTF-8 octets, as the message's own
 # header values and body lines are, so a literal compares and hashes
 # byte for byte; a string holding a lone surrogate (a "\ud800" escape) is
@@ -391,7 +391,7 @@ sub _is_utf8_octets {
 # be valid JSON), or undef: a key that is not lowercase (has an ASCII
 # capital), a key that appears twice in one object, compared after
 # unescaping, or a number with a fraction or
-# an exponent. Every number in a Recipe is an integer (-07 section 5), and
+# an exponent. Every number in a Recipe is an integer (-08 section 5), and
 # whether 1e0 decodes as an integer depends on the JSON backend -- JSON::XS
 # gives an NV, JSON::PP an IV -- so it is refused here, from the text.
 sub _json_lexical_error {
@@ -719,7 +719,7 @@ sub to_rfc5321_path {
 # The text between the last "@" and the closing ">" (or the end),
 # lowercased, with one trailing dot taken off: Postfix hands on
 # "<A@Example.COM.>" as it was given. A domain literal ("[192.0.2.1]") is
-# returned with $is_literal true; it never matches anything (-07 section
+# returned with $is_literal true; it never matches anything (-08 section
 # 7.2).
 sub domain_of {
     my ($addr) = @_;
@@ -737,7 +737,7 @@ sub domain_of {
 
 # to_alabel($domain): $domain with each label that is not ASCII lowercased
 # and written as its A-label, "xn--" and the RFC 3492 Punycode of the label
-# (-07 section 18). ASCII labels are left as they are. The input is UTF-8
+# (-08 section 18). ASCII labels are left as they are. The input is UTF-8
 # octets, as a header field or a decoded mf=/rt= carries it (a character
 # string is taken as it is); a label that is not valid UTF-8 is left alone.
 # This is the label mapping only, not UTS 46.
@@ -758,7 +758,7 @@ sub to_alabel {
 }
 
 # from_domain(@values): the domain a From header field is Authentic for
-# (-07 section 11), from the values of every From field in one version of
+# (-08 section 11), from the values of every From field in one version of
 # the header (each as header_raw gives it, folded or not): the lowercased
 # A-label domain of its one mailbox, or undef when there is none -- no From
 # field or more than one, a field that is not exactly one mailbox (a list
@@ -815,7 +815,7 @@ sub from_domain {
 
 # from_authentic($d, @values): true if the From field(s) of one version of
 # the header, as from_domain takes them, are Authentic for signing domain
-# $d: from_domain gives a domain and it relaxed-matches $d (-07 section 11).
+# $d: from_domain gives a domain and it relaxed-matches $d (-08 section 11).
 sub from_authentic {
     my ($d, @values) = @_;
     my $dom = from_domain(@values);
@@ -843,7 +843,7 @@ sub from_refusal_note {
          . "list's posting address must be in the domain this milter signs with";
 }
 
-# relaxed_domain_match($p1, $p2): the relaxed domain match of -07 section
+# relaxed_domain_match($p1, $p2): the relaxed domain match of -08 section
 # 7.2. Both are compared as A-labels, without regard to case, and without
 # one trailing dot. A domain literal on either side never matches. Otherwise
 # labels come off the LEFT of $p1 only, until it equals $p2 (a match) or
@@ -867,7 +867,7 @@ sub relaxed_domain_match {
 #   signature   => the Signature object for the entry being signed/verified
 #   signing_header => optional folded header string (signer path)
 #
-# Per draft-ietf-dkim-dkim2-spec-07 Section 10.5:
+# Per draft-ietf-dkim-dkim2-spec-08 Section 10.5:
 #   1. All Message-Instance headers in ascending v= order
 #   2. All prior DKIM2-Signature headers in ascending i= order
 #   3. The incomplete DKIM2-Signature (with empty s=) being signed/verified
@@ -906,7 +906,7 @@ sub build_signing_input {
 # its deadline. That includes Reflector, Split and Validate, so the promise
 # in Mail::DKIM2's CONVENTIONS holds without exceptions (review R16).
 
-# A base64string (-07 §2.13), FWS already removed: base64 characters,
+# A base64string (-08 §2.13), FWS already removed: base64 characters,
 # padded with "=" to a multiple of four ("MUST be padded"). Internal.
 sub _is_base64string {
     my ($s) = @_;
@@ -929,7 +929,7 @@ sub _check_options {
 }
 
 # Parse and validate a key record (draft-ietf-dkim-dkim2-dns §3.2, §3.4.1;
-# -07 §14.5 says a Verifier MUST NOT use a malformed one). Returns the
+# -08 §14.5 says a Verifier MUST NOT use a malformed one). Returns the
 # key object, or (undef, $why) where $why completes "public key <selector>
 # ...": "has a syntax error", "has been revoked" or "has an unsupported key
 # type". The whole record is checked, not searched: a repeated tag (an empty
@@ -1082,7 +1082,7 @@ Those under L</CANONICALIZATION> and L</SIGNING INPUT> define bytes the
 spec defines and are of interest to anyone checking this implementation
 against another; the rest are conveniences.
 
-This module implements draft-ietf-dkim-dkim2-spec-07; see L<Mail::DKIM2/STATUS>
+This module implements draft-ietf-dkim-dkim2-spec-08; see L<Mail::DKIM2/STATUS>
 for what that means for the wire format and the API, and
 L<Mail::DKIM2/CONVENTIONS> for the option, input and error conventions every
 module here follows.
@@ -1091,7 +1091,7 @@ module here follows.
 
 =head2 DKIM2_DRAFT, DKIM2_REPO, DKIM2_DATE
 
-The spec revision implemented (C<ietf-dkim-dkim2-spec-07>), where the
+The spec revision implemented (C<ietf-dkim-dkim2-spec-08>), where the
 code lives, and the date this implementation's DKIM2 behaviour last
 changed. Emitted in X-DKIM2-Info debug headers
 (draft-gondwana-dkim2-debug-header).
@@ -1111,7 +1111,7 @@ three digits). See L</chain_number_error($field, $tag, $n)>.
 
 =head2 should_skip($header_name, [\@prefixes])
 
-True if the field is excluded from the header hash: the -07 section 4
+True if the field is excluded from the header hash: the -08 section 4
 list (C<Received>, C<Return-Path>, C<Message-Instance>,
 C<DKIM2-Signature>, C<DKIM-Signature>, C<Authentication-Results>, the ARC
 fields and others), any C<X-*> or C<Received-*> field, or a field whose
@@ -1207,7 +1207,7 @@ caller). The field is named by its own number as written, C<$ident>
 (default C<$n>): a DKIM2-Signature by C<i=>, a Message-Instance by C<m=>.
 A value that is not 1*DIGIT in ASCII, or is zero, is
 C<"PERMERROR: $field i=$ident syntax error"> (C<m=> for a
-Message-Instance; -07 section 14.2). More than three digits or above
+Message-Instance; -08 section 14.2). More than three digits or above
 L</MAX_CHAIN_NUMBER> is C<"PERMERROR: DKIM2-Signature i=$ident exceeds the
 maximum chain number of 100">, with C<" m=$n"> after C<$ident> for a
 signature's C<m=>. Above L</MAX_CHAIN_LENGTH>, likewise C<"... exceeds the
@@ -1260,14 +1260,14 @@ empty list when there is no domain, as for C<< <> >>. New in 0.23.
 =head2 to_alabel($domain)
 
 The domain with each non-ASCII label lowercased and written as its A-label
-(C<xn--> and the RFC 3492 Punycode), as -07 section 18 has mf=, rt= and
+(C<xn--> and the RFC 3492 Punycode), as -08 section 18 has mf=, rt= and
 From domains compared: C<b\x{fc}cher.example>, as UTF-8 octets, gives
 C<xn--bcher-kva.example>. ASCII labels are unchanged; a label that is not
 valid UTF-8 is left as it is. No UTS 46 mapping. New in 0.23.
 
 =head2 from_domain(@values)
 
-The domain a From header field is Authentic for (-07 section 11), given the
+The domain a From header field is Authentic for (-08 section 11), given the
 values of every From field in one version of the header: the lowercased
 A-label domain of its one mailbox, or undef when there is no From field,
 more than one, a field holding other than exactly one mailbox (a list, a
@@ -1289,7 +1289,7 @@ in the domain the milter signs with. Both milters log it. New in 0.23.
 
 =head2 relaxed_domain_match($p1, $p2)
 
-The relaxed domain match of -07 section 7.2: true if C<$p1> is C<$p2> or a
+The relaxed domain match of -08 section 7.2: true if C<$p1> is C<$p2> or a
 subdomain of it. Labels come off the left of C<$p1> only. Both are compared
 as A-labels (C<to_alabel>), without regard to case and without a trailing
 dot. A domain literal on either side never matches (new in 0.23).

@@ -41,7 +41,7 @@ my @sig_cases = (
       qr/^fail \(FAIL: DKIM2-Signature i=1 no group of signatures passed\)$/ ],
     [ 'sel1:mldsa44-ed25519-sha512:AAAA',
       qr/^permerror \(PERMERROR: DKIM2-Signature i=1 selector sel1 algorithm unknown\)$/,
-      'the -07 composite is an unknown algorithm' ],
+      'the -08 composite is an unknown algorithm' ],
     [ 'sel1:mldsa44:AAAA',
       qr/^permerror \(PERMERROR: DKIM2-Signature i=1 selector sel1 algorithm unknown\)$/,
       'pure ML-DSA-44 is deferred (contract D8): unknown' ],

@@ -1,7 +1,7 @@
 package Mail::DKIM2::Reflector;
 use strict; use warnings;
 
-our $VERSION = '0.27';
+our $VERSION = '0.28';
 use 5.020;
 
 use Email::MIME;
@@ -282,7 +282,7 @@ sub generate_brand {
     my $i1_desc = $a{nd}
       ? "  i=1  d=$bd  (the brand hop; instead of mf=/rt= it carries\r\n"
       . "       nd=$a{domain}, naming the domain that signs the next hop --\r\n"
-      . "       the \"imaginary hop\" encoding from -07 Section 12.3)\r\n"
+      . "       the \"imaginary hop\" encoding from -08 Section 12.3)\r\n"
       : "  i=1  d=$bd  (signed with the key you delegated via the\r\n"
       . "       dkim2test._domainkey.$bd CNAME to dkim2test._domainkey.$a{domain})\r\n";
     my $body =
@@ -306,7 +306,7 @@ sub generate_brand {
 
     # i=1: sign AS the brand using the delegated key. With nd=>1 this hop uses
     # the nd= "imaginary hop" encoding (nd=<platform domain>) instead of mf=/rt=
-    # (-07 §12.3); the chain still validates because nd= must equal the d=
+    # (-08 §12.3); the chain still validates because nd= must equal the d=
     # of the next signature (i=2).
     my %b = (Domain => $bd, Selector => $a{brand_selector}, Timestamp => $now);
     if ($a{nd}) {
@@ -384,14 +384,14 @@ sub reflect {
     # 3. Transform (always, except damage which mutates after signing).
     #    Originating (no DKIM2 chain to continue, so our signature is i=1):
     #    with no DKIM2-Signature on it, the message starts again at m=1
-    #    (-07 section 13) -- the inbound milter's m=1 holds the sender's From,
+    #    (-08 section 13) -- the inbound milter's m=1 holds the sender's From,
     #    which can never be Authentic for us.
     my $originate = $basis ne 'dkim2';
     my $prev_text = ($originate && !_has_field($incoming, 'DKIM2-Signature'))
                   ? _without_field($incoming, 'Message-Instance') : $incoming;
     my $cur_text  = ($mode eq 'damage') ? $prev_text : _transform_text($prev_text, $mode);
 
-    # 3a. From (-07 section 11, the contract's decision 3): a reflector that
+    # 3a. From (-08 section 11, the -07 contract's decision 3): a reflector that
     #     originates the message or changes it sends it From its own domain,
     #     the sender's From kept as Reply-To. Only raw mode continuing a
     #     DKIM2 chain sends the message on as it came.
@@ -458,7 +458,7 @@ sub _verify {
     $v->skip_timestamp_check(1) if $skip_ts;
     # The inbound milter stamps a Message-Instance on non-DKIM2 mail, so a
     # message reaching us can legitimately carry an MI with no signature over
-    # it. Verified mail from outside would make that -07 §14's "is not
+    # it. Verified mail from outside would make that -08 §14's "is not
     # signed" PERMERROR, but here it is our own header on our own side of the
     # trust boundary, and the whole point of this path is to then bridge-sign
     # it -- which is what makes the instance legal on the wire again. Without
@@ -467,7 +467,7 @@ sub _verify {
     $v->allow_unsigned_mi(1);
     $v->set_pubkey_callback($cb) if $cb;
     $v->PRINT($text); $v->CLOSE;
-    # The -07 string, and for the sender the resolver's reason behind a key
+    # The -08 string, and for the sender the resolver's reason behind a key
     # that could not be fetched (Verifier::diagnostic).
     my $detail = $v->details;
     $detail .= " - " . $v->diagnostic if defined $detail && defined $v->diagnostic;
@@ -660,7 +660,7 @@ C<selector> with C<key> or C<keyfile>. When it originates the message (no
 DKIM2 chain to continue: the message starts again at C<m=1>) or changes it
 (any mode but C<raw>), the From becomes C<< "E<lt>sender's nameE<gt> via DKIM2
 reflector" E<lt>reflector-E<lt>modeE<gt>@E<lt>domainE<gt>E<gt> >>, with the sender's From kept as
-Reply-To if there is none (-07 section 11). Returns a hashref with C<message>,
+Reply-To if there is none (-08 section 11). Returns a hashref with C<message>,
 C<auth>, C<dkim1>, C<basis>, C<signed> and C<mode>.
 
 =head2 generate(%args)
@@ -671,7 +671,7 @@ A fresh signed message to C<sender>.
 
 A signed DSN returning C<message> to C<sender>, via L<Mail::DKIM2::DSN>:
 only for a Provisionally Verified message whose top C<mf=> is not C<< <> >>
-(-07 section 16); otherwise undef, or C<(undef, $why)> in list context.
+(-08 section 16); otherwise undef, or C<(undef, $why)> in list context.
 
 =head2 generate_brand(%args)
 

@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# -07 hash agility (draft-05 added sha512): sha512 alongside sha256, multi-hash-set h= parsing,
+# -08 hash agility (draft-05 added sha512): sha512 alongside sha256, multi-hash-set h= parsing,
 # and the --hash signer flag (sha256|sha512|both, default sha256).
 
 use 5.020;
@@ -21,11 +21,11 @@ use DKIM2TestKeys;
 # bin/dkim2sign verifies an upstream chain before extending it.
 $ENV{DKIM2_DNS_JSON} = DKIM2TestKeys::dns_json();
 
-# -07 §3: both hashing algorithms must be implemented
+# -08 §3: both hashing algorithms must be implemented
 my $algs = Mail::DKIM2::MessageInstance::hash_algs();
-is_deeply([sort keys %$algs], ['sha256', 'sha512'], '-07 §3: both hash algorithms present');
+is_deeply([sort keys %$algs], ['sha256', 'sha512'], '-08 §3: both hash algorithms present');
 
-# -07 §9.3: h= is a comma-separated list of hash-sets
+# -08 §9.3: h= is a comma-separated list of hash-sets
 my $sets = Mail::DKIM2::MessageInstance::parse_hash_sets('sha256:AAA:BBB,sha512:CCC:DDD');
 is(scalar @$sets, 2, 'two hash-sets parsed');
 is_deeply($sets->[0], ['sha256', 'AAA', 'BBB'], 'first hash-set');

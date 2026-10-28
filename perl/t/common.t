@@ -43,17 +43,17 @@ for my $h (qw(Auto-Submitted VBR-Info)) {
     ok(!Mail::DKIM2::Common::should_skip($h), "-08 §4: $h is signed");
 }
 
-# -07 §4: any Received-* field is a trace field
-ok(Mail::DKIM2::Common::should_skip('Received-SPF'), '-07 §4: Received-SPF is unsigned');
-ok(Mail::DKIM2::Common::should_skip('Received-Anything'), '-07 §4: Received-* is unsigned');
+# -08 §4: any Received-* field is a trace field
+ok(Mail::DKIM2::Common::should_skip('Received-SPF'), '-08 §4: Received-SPF is unsigned');
+ok(Mail::DKIM2::Common::should_skip('Received-Anything'), '-08 §4: Received-* is unsigned');
 
 # spec-05 §4: the ARC- prefix narrowed to exactly three names
-ok(Mail::DKIM2::Common::should_skip('ARC-Seal'), '-07 §4: ARC-Seal is unsigned');
-ok(Mail::DKIM2::Common::should_skip('ARC-Message-Signature'), '-07 §4: ARC-Message-Signature is unsigned');
-ok(Mail::DKIM2::Common::should_skip('ARC-Authentication-Results'), '-07 §4: ARC-Authentication-Results is unsigned');
-ok(!Mail::DKIM2::Common::should_skip('ARC-Something-Else'), '-07 §4: the ARC- prefix match is gone');
+ok(Mail::DKIM2::Common::should_skip('ARC-Seal'), '-08 §4: ARC-Seal is unsigned');
+ok(Mail::DKIM2::Common::should_skip('ARC-Message-Signature'), '-08 §4: ARC-Message-Signature is unsigned');
+ok(Mail::DKIM2::Common::should_skip('ARC-Authentication-Results'), '-08 §4: ARC-Authentication-Results is unsigned');
+ok(!Mail::DKIM2::Common::should_skip('ARC-Something-Else'), '-08 §4: the ARC- prefix match is gone');
 
-# -07 section 7.2 and 18: address domains, A-labels, the relaxed match.
+# -08 section 7.2 and 18: address domains, A-labels, the relaxed match.
 {
     use Mail::DKIM2::Common qw(domain_of to_alabel relaxed_domain_match);
     is_deeply([domain_of('<A@Example.COM.>')], ['example.com', 0], 'domain_of: lowercased, one trailing dot off');

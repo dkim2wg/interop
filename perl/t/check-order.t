@@ -12,7 +12,7 @@ use Spec07Fixture;
 # Contract C9 (interop docs/superpowers/specs/2026-10-18-dkim2-spec-07-design.md):
 # when a message has more than one fault, every verifier reports the same
 # primary error. Each case here has exactly two faults, and pins which one
-# is primary: within -07 section 14.2, structure (the fields' names and
+# is primary: within -08 section 14.2, structure (the fields' names and
 # m=/i= numbers) before content, in the contract's fixed sequence; within
 # section 14.7, every header hash before any body hash.
 

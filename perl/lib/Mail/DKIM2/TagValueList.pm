@@ -2,9 +2,9 @@ package Mail::DKIM2::TagValueList;
 use strict;
 use warnings;
 
-our $VERSION = '0.27';
+our $VERSION = '0.28';
 
-# Simple tag=value list as defined in draft-ietf-dkim-dkim2-spec-07 Section 8.
+# Simple tag=value list as defined in draft-ietf-dkim-dkim2-spec-08 Section 8.
 # Preserves insertion order for serialization.
 
 sub new {
@@ -12,7 +12,7 @@ sub new {
     return bless { tags => {}, order => [] }, $class;
 }
 
-# The tag-list grammar shared by every DKIM2 field (-07 §8): a tag
+# The tag-list grammar shared by every DKIM2 field (-08 §8): a tag
 # name is ALPHA *(ALPHA / DIGIT / "_"), and a value is printable ASCII other
 # than ";" with FWS only between characters (x-tag-value). The known tags'
 # own grammars are all narrower than that, so a field that fails it is
@@ -31,7 +31,7 @@ sub split_tag_list {
     my ($string) = @_;
     my (@pairs, $bad);
     my @specs = split /;/, $string, -1;
-    # -07 section 8: one ";" may end the list; an empty spec anywhere else
+    # -08 section 8: one ";" may end the list; an empty spec anywhere else
     # (";;", a leading ";") is a syntax error.
     pop @specs if @specs && $specs[-1] =~ /\A[ \t\r\n]*\z/;
     for my $spec (@specs) {
@@ -120,11 +120,11 @@ Mail::DKIM2::TagValueList - The tag=value list a DKIM2 header is made of
 
 =head1 DESCRIPTION
 
-A semicolon-separated list of C<tag=value> pairs (-07 section 2.12 and
+A semicolon-separated list of C<tag=value> pairs (-08 section 2.12 and
 8). Tag names keep their original case and order, and values their
 internal whitespace; serialisation joins C<name=value> pairs with C<; >, so
 the whitespace around C<=> and C<;> and a trailing C<;> are normalised
-(harmless for signing input, which -07 section 12.8 strips of all whitespace).
+(harmless for signing input, which -08 section 12.8 strips of all whitespace).
 Tag-names are case-sensitive (-08 section 8), so lookups are exact.
 L<Mail::DKIM2::Signature> is a subclass.
 
@@ -159,7 +159,7 @@ repeat as a permerror.
 
 =head2 syntax_error()
 
-True if the parsed input did not match the tag-list grammar (-07 section
+True if the parsed input did not match the tag-list grammar (-08 section
 8): an empty fragment before the end (C<;;>; one trailing C<;> is fine), a
 fragment that is not C<name=value>, a name not starting
 with a letter, or a value with a character outside printable ASCII or a

@@ -14,7 +14,7 @@ use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
 use DKIM2TestKeys;
 
-# -07 canonical error-string forms (contract C6). Each case below builds a
+# -08 canonical error-string forms (the -07 contract C6). Each case below builds a
 # purpose-built failing message and asserts the verifier's result_detail
 # matches the exact canonical wording, byte-for-byte (including the
 # deliberate "MAIL nd=" spec typo for the nd= adjacency case).
@@ -192,7 +192,7 @@ sub verify_text {
 }
 
 # ------------------------------------------------------------------
-# -07 sections 14.2 to 14.8: the exact strings, one message each (built
+# -08 sections 14.2 to 14.8: the exact strings, one message each (built
 # with t/lib/Spec07Fixture.pm, which signs whatever it is asked to).
 # ------------------------------------------------------------------
 {
@@ -253,25 +253,25 @@ sub verify_text {
     );
     for my $c (@cases) {
         my ($name, $text, $want) = @$c;
-        is_deeply($fresh->($text), $want, "-07 string: $name");
+        is_deeply($fresh->($text), $want, "-08 string: $name");
     }
 
     # The key strings, from what fetch_public_key dies with.
     for my $why ('has multiple records', 'has a syntax error', 'has been revoked', 'algorithm mismatch') {
         my $v = Spec07Fixture::verify($one, PubkeyCallback => $key_from->($why));
-        is($v->details, "PERMERROR: DKIM2-Signature i=1 public key sel1 $why", "-07 string: key $why");
+        is($v->details, "PERMERROR: DKIM2-Signature i=1 public key sel1 $why", "-08 string: key $why");
     }
     my $v = Spec07Fixture::verify($one, PubkeyCallback => sub { undef });
-    is($v->details, 'PERMERROR: DKIM2-Signature i=1 public key sel1 does not exist', '-07 string: no key');
+    is($v->details, 'PERMERROR: DKIM2-Signature i=1 public key sel1 does not exist', '-08 string: no key');
     $v = Spec07Fixture::verify($one, PubkeyCallback => sub { die "TEMPERROR: timed out\n" });
     is_deeply([$v->result, $v->details, $v->diagnostic],
         ['temperror', 'TEMPERROR: DKIM2-Signature i=1 public key sel1 could not be fetched', 'TEMPERROR: timed out'],
-        '-07 string: key not fetched, the reason in diagnostic()');
+        '-08 string: key not fetched, the reason in diagnostic()');
 
     # Selector rules (section 10.9).
     (my $dupsel = $one) =~ s/(s=sel1:rsa-sha256:[^;]*)/$1,sel1:ed25519-sha256:AAAA/;
     is(Spec07Fixture::verify($dupsel)->details, 'PERMERROR: DKIM2-Signature i=1 has a duplicate selector',
-        '-07 string: duplicate selector');
+        '-08 string: duplicate selector');
     # -08 §14.2 dropped "has more selectors than allowed": three items of
     # one algorithm are checked like any others.
     (my $three = $one) =~ s/(s=sel1:rsa-sha256:[^;]*)/$1,s2:rsa-sha256:AAAA,s3:rsa-sha256:AAAA/;
