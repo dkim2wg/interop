@@ -83,11 +83,15 @@ test('canonHeaderHash orders duplicates bottom-up by document index, not array a
 });
 
 test('§4: HDRMAINT-survey names are unsigned', () => {
-  for (const n of ['Apparently-To', 'Auto-Submitted', 'DL-Expansion-History',
-                   'Original-Recipient', 'SIO-Label-History', 'VBR-Info',
+  for (const n of ['Apparently-To', 'DL-Expansion-History',
+                   'Original-Recipient', 'SIO-Label-History',
                    'X400-Received', 'X400-Trace']) {
     assert.ok(isUnsignedHeader(n), `${n} must be unsigned`);
   }
+});
+
+test('-08 §4: Auto-Submitted and VBR-Info are hashed', () => {
+  for (const n of ['Auto-Submitted', 'VBR-Info']) assert.ok(!isUnsignedHeader(n), `${n} must be hashed`);
 });
 
 test('§4: any Received-* is unsigned', () => {

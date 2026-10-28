@@ -1,14 +1,15 @@
-// Canonicalization per draft-ietf-dkim-dkim2-spec-07 §6.1, §6.2, §12.8.
+// Canonicalization per draft-ietf-dkim-dkim2-spec-08 §6.1, §6.2, §12.8.
 
-// Unsigned header fields per §4, §4.1. message-instance and dkim2-signature
+// Unsigned header fields per §4, §4.1 (-08 took Auto-Submitted and VBR-Info
+// off the list: they are hashed). message-instance and dkim2-signature
 // are also filtered upstream in signedFields(); they are listed here so this
 // set matches the other five implementations.
 const UNSIGNED_EXACT = new Set([
   'apparently-to', 'arc-authentication-results', 'arc-message-signature',
-  'arc-seal', 'authentication-results', 'auto-submitted', 'delivered-to',
+  'arc-seal', 'authentication-results', 'delivered-to',
   'dkim-signature', 'dkim2-signature', 'dl-expansion-history',
   'message-instance', 'original-recipient', 'received', 'return-path',
-  'sio-label-history', 'vbr-info', 'x400-received', 'x400-trace',
+  'sio-label-history', 'x400-received', 'x400-trace',
 ]);
 
 export function isUnsignedHeader(name) {
