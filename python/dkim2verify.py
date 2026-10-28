@@ -990,6 +990,12 @@ class VerifyResult:
     domain: str | None            # d= of the failing/passing signature
     message: str                  # one-line human-readable summary
     errors: list[str] = field(default_factory=list)  # all error detail strings
+    # -08 §13 (contract D9): a pass that checked everything.  False for any
+    # result but pass, for a pass over a null body Recipe at some m=k >= 2
+    # (the body hashes below it cannot be checked), for headers_only (no
+    # body checked on purpose), and for an outbound pass over an instance
+    # no signature covers yet.
+    fully_verified: bool = False
 
 
 def _classify_status(errors: list[str]) -> str:
@@ -1056,7 +1062,7 @@ def _make_result(errors: list[str], top_sig_i: int,
         return VerifyResult(
             ok=True, status='pass', failing_i=None, domain=top_domain,
             message=f'pass: DKIM2-Signature i={top_sig_i} d={top_domain}',
-            errors=[],
+            errors=[], fully_verified=True,
         )
     status = _classify_status(errors)
     failing_i = _extract_failing_i(errors)
@@ -1309,11 +1315,18 @@ def _signature_errors(ctx: _Context, mi_by_version: dict[int, str],
     return _primary_first(errors)
 
 
-def _result(ctx: _Context, errors: list[str]) -> VerifyResult:
+def _result(ctx: _Context, errors: list[str], o: _Options) -> VerifyResult:
     top_sig = ctx.top_sig
     top_sig_i = _get_seq_from_sig(top_sig) if top_sig else 0
     top_domain = (_extract_tag(_get_header_value(top_sig), 'd') or '') if top_sig else ''
-    return _make_result(errors, top_sig_i, top_domain)
+    result = _make_result(errors, top_sig_i, top_domain)
+    if o.headers_only:
+        result.fully_verified = False
+    elif result.ok and o.allow_unsigned_mi:
+        signed = _get_mi_from_sig(top_sig) or 0 if top_sig else 0
+        if any(_get_version_from_mi(h) > signed for h in ctx.mi_headers):
+            result.fully_verified = False
+    return result
 
 
 def _verify_simple(ctx: _Context, body: bytes, o: _Options) -> VerifyResult:
@@ -1334,7 +1347,7 @@ def _verify_simple(ctx: _Context, body: bytes, o: _Options) -> VerifyResult:
                 lambda alg: compute_body_hash(body, alg)))
     if not errors:
         errors = _signature_errors(ctx, mi_by_version, o)
-    return _result(ctx, errors)
+    return _result(ctx, errors, o)
 
 
 class _UndoWalk:
@@ -1491,10 +1504,12 @@ def _verify_chain(ctx: _Context, walk, o: _Options) -> VerifyResult:
                                                 versions)
     if not errors:
         errors = _signature_errors(ctx, mi_by_version, o)
-    result = _result(ctx, errors)
+    result = _result(ctx, errors, o)
     if result.ok and body_unchecked_below is not None:
+        # -08 §13 (contract D9): the result stays PASS, but not Fully Verified.
+        result.fully_verified = False
         result.message += (f" (body not checked below m={body_unchecked_below}: "
-                           f"null body Recipe)")
+                           f"null body Recipe; not fully verified)")
     return result
 
 

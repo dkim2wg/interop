@@ -543,3 +543,52 @@ def test_d7_non_base64_p_is_still_syntax_error():
 
 def test_d7_rsa_1024_verifies():
     ok(make("rsa1024:rsa-sha256:SIGN:rsa1024"))
+
+
+# --- D9: fully_verified ----------------------------------------------------------
+
+from util_fixtures import bnv  # noqa: E402
+
+
+def _fv(raw, dns=None, **kw):
+    kw.setdefault("skip_timestamp_check", True)
+    out = set()
+    for walk in WALKS:
+        r = dkim2verify.verify_message(raw, T1DNS if dns is None else dns,
+                                       full_chain=True, walk=walk, **kw)
+        out.add((r.status, r.fully_verified))
+    assert len(out) == 1, out
+    return out.pop()
+
+
+def test_d9_plain_pass_is_fully_verified():
+    assert _fv(make(S1)) == ("pass", True)
+    assert _fv(bnv.build_positive_bottom_recipe()) == ("pass", True)
+
+
+def test_d9_null_body_recipe_is_pass_but_not_fully_verified():
+    assert _fv(bnv.build_positive_null_body()) == ("pass", False)
+    assert _fv(bnv.build_positive_null_below()) == ("pass", False)
+
+
+def test_d9_non_pass_is_not_fully_verified():
+    assert _fv(make(f"{S1},{BADSIG}"))[1] is False
+    assert _fv(make(UNK))[1] is False
+
+
+def test_d9_headers_only_is_not_fully_verified():
+    r = dkim2verify.verify_message(make(S1), T1DNS, headers_only=True,
+                                   skip_timestamp_check=True)
+    assert r.ok and r.fully_verified is False
+
+
+def test_d9_unsigned_top_instance_is_not_fully_verified():
+    raw = make(S1)
+    head, sep, body = raw.partition(b"\r\n\r\n")
+    r = dkim2verify.verify_message(raw, T1DNS, full_chain=True, allow_unsigned_mi=True,
+                                   skip_timestamp_check=True)
+    assert r.ok and r.fully_verified is True
+    # outbound mode over an instance no signature covers yet
+    msg = add_mi(_hop1(), replace_header(b"Subject", b"x"))
+    r = verify(msg, allow_unsigned_mi=True)
+    assert r.ok and r.fully_verified is False
