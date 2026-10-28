@@ -257,9 +257,16 @@ func TestSpec07UStepSchema(t *testing.T) {
 		"null b upper": `{"B":null}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			// -08 (contract D6): one bad step in b is "Recipe b[0] is
+			// invalid"; the whole document's faults stay invalid JSON.
+			want := invalid
+			if strings.HasPrefix(name, "U3") || strings.HasPrefix(name, "U4") ||
+				strings.HasPrefix(name, "u ") || name == "U5 u decodes to CR" || name == "U5 unknown step key" {
+				want = "PERMERROR: Message-Instance m=2 Recipe b[0] is invalid"
+			}
 			_, err := parseMI(miWithRecipe(2, js))
-			if err == nil || err.Error() != invalid {
-				t.Fatalf("parseMI(%s) = %v, want %q", js, err, invalid)
+			if err == nil || err.Error() != want {
+				t.Fatalf("parseMI(%s) = %v, want %q", js, err, want)
 			}
 		})
 	}

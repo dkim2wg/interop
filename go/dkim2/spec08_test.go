@@ -62,6 +62,61 @@ func TestSpec08D10JSONKeysStrictLowercase(t *testing.T) {
 	}
 }
 
+// ---- D6: "Recipe <path> is invalid" for one bad step ----
+
+func TestSpec08D6RecipePathIsInvalid(t *testing.T) {
+	const invalid = "PERMERROR: Message-Instance m=2 contains invalid JSON"
+	step := func(path string) string { return "PERMERROR: Message-Instance m=2 Recipe " + path + " is invalid" }
+	for _, tc := range []struct{ js, want string }{
+		// One step the schema or §5.1/§5.2 rejects.
+		{`{"b":[{"c":[3,4]},{"c":[1,2]}]}`, step("b[1]")},
+		{`{"b":[{"c":[1,2]},{"c":[2,3]}]}`, step("b[1]")},
+		{`{"b":[{"u":["QR=="]}]}`, step("b[0]")},
+		{`{"b":[{"u":["YQ1i"]}]}`, step("b[0]")},
+		{`{"b":[{"b":["eA=="]}]}`, step("b[0]")},
+		{`{"b":[{"c":[1,1],"d":["x"]}]}`, step("b[0]")},
+		{`{"b":[{}]}`, step("b[0]")},
+		{`{"b":[5]}`, step("b[0]")},
+		{`{"b":[null]}`, step("b[0]")},
+		{`{"b":[{"c":[0,1]}]}`, step("b[0]")},
+		{`{"b":[{"c":[2,1]}]}`, step("b[0]")},
+		{`{"b":[{"c":[1]}]}`, step("b[0]")},
+		{`{"b":[{"c":["1",2]}]}`, step("b[0]")},
+		{`{"b":[{"d":[]}]}`, step("b[0]")},
+		{`{"b":[{"d":"x"}]}`, step("b[0]")},
+		{`{"b":[{"d":[null]}]}`, step("b[0]")},
+		{`{"b":[{"d":["a\rb"]}]}`, step("b[0]")},
+		{`{"b":[{"u":[1]}]}`, step("b[0]")},
+		{`{"h":{"subject":[{"d":["x"]},{"c":[0,1]}]}}`, step("h.subject[1]")},
+		{`{"h":{"subject":{"c":[1,1]}}}`, step("h.subject")},
+		{`{"h":{"x café":[5]}}`, step(`h.x\x20caf\xC3\xA9[0]`)},
+		// b first, then h names in byte order, then steps in order.
+		{`{"h":{"a":[{"x":1}]},"b":[{"c":[1,1]},{"x":1}]}`, step("b[1]")},
+		{`{"h":{"b":[{"x":1}],"a":[{"d":["v"]},{"x":1}]}}`, step("h.a[1]")},
+		// Whole-document problems first.
+		{`{"b":[{"x":1}],"h":[]}`, invalid},
+		{`{"b":[{"x":1}],"h":{}}`, invalid},
+		{`{"b":"x"}`, invalid},
+		{`{"b":[{"c":[1e0,1]}]}`, invalid},
+		{`{"b":[{"c":[1,1]}],"x":1.5}`, invalid},
+		{`{"b":[{"x":1}],"B":null}`, invalid},
+		{`{"b":[{"d":["\udc80"]}]}`, invalid},
+		{`{"b":[{"x":1}],"x":"\udc80"}`, invalid},
+	} {
+		if _, err := parseMI(miWithRecipe(2, tc.js)); err == nil || err.Error() != tc.want {
+			t.Errorf("parseMI(%s) = %v, want %q", tc.js, err, tc.want)
+		}
+	}
+	// A copy past the end of the message is found when the Recipe is
+	// applied, and is still "contains invalid JSON".
+	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
+	rev := revise07(t, hop1, nil, "", `{"b":[{"c":[1,5]}]}`)
+	hop2 := must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, "")
+	if got := primary07(t, hop2, VerifyOptions{SkipTimestampCheck: true}); got != invalid {
+		t.Errorf("copy past the end: primary %q, want %q", got, invalid)
+	}
+}
+
 // ---- D5: timestamps, Chain of Custody and From Authentic are FAIL ----
 
 func TestSpec08D5FailNotPermerror(t *testing.T) {

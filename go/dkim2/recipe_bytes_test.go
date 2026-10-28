@@ -167,43 +167,47 @@ func TestVerifyRejectsMalformedRecipe(t *testing.T) {
 	cases := []struct {
 		name string
 		json string
+		path string // -08 (contract D6): the bad step; "" = the whole document
 	}{
-		{"descending c ranges", `{"b":[{"c":[3,3]},{"c":[1,1]}]}`},
-		{"overlapping c ranges", `{"b":[{"c":[1,2]},{"c":[2,3]}]}`},
-		{"adjacent equal start", `{"b":[{"c":[1,1]},{"c":[1,1]}]}`},
-		{"start 0", `{"b":[{"c":[0,1]}]}`},
-		{"negative start", `{"b":[{"c":[-1,1]}]}`},
-		{"start after end", `{"b":[{"c":[2,1]}]}`},
-		{"string bounds", `{"b":[{"c":["1","1"]}]}`},
-		{"fractional bound", `{"b":[{"c":[1.5,2]}]}`},
-		{"exponent bound", `{"b":[{"c":[1e0,2]}]}`},
-		{"one bound", `{"b":[{"c":[1]}]}`},
-		{"three bounds", `{"b":[{"c":[1,2,3]}]}`},
-		{"c not an array", `{"b":[{"c":1}]}`},
-		{"two keys in a step", `{"b":[{"c":[1,1],"d":["x"]}]}`},
-		{"unknown step key", `{"b":[{"x":["y"]}]}`},
-		{"empty step", `{"b":[{}]}`},
-		{"empty d", `{"b":[{"d":[]}]}`},
-		{"d not strings", `{"b":[{"d":[1]}]}`},
-		{"invalid base64 in u", `{"b":[{"u":["!!!!"]}]}`},
-		{"unpadded base64 in u", `{"b":[{"u":["YQ"]}]}`},
-		{"whitespace inside base64", `{"b":[{"u":["YQ ==" ]}]}`},
-		{"CR inside d", `{"b":[{"d":["a\rb"]}]}`},
-		{"LF inside d", `{"b":[{"d":["a\nb"]}]}`},
-		{"CRLF inside d, second item", `{"b":[{"d":["ok","a\r\nb"]}]}`},
-		{"CR inside header d", `{"h":{"subject":[{"d":["a\rb"]}]}}`},
-		{"LF inside header d", `{"h":{"subject":[{"d":["a\nb"]}]}}`},
-		{"CR inside decoded u", `{"b":[{"u":["` + base64.StdEncoding.EncodeToString([]byte("a\rb")) + `"]}]}`},
-		{"LF inside decoded u", `{"b":[{"u":["` + base64.StdEncoding.EncodeToString([]byte("a\nb")) + `"]}]}`},
-		{"descending header c ranges", `{"h":{"subject":[{"c":[2,2]},{"c":[1,1]}]}}`},
-		{"header start 0", `{"h":{"subject":[{"c":[0,0]}]}}`},
-		{"header invalid base64", `{"h":{"subject":[{"u":["*"]}]}}`},
+		{"descending c ranges", `{"b":[{"c":[3,3]},{"c":[1,1]}]}`, "b[1]"},
+		{"overlapping c ranges", `{"b":[{"c":[1,2]},{"c":[2,3]}]}`, "b[1]"},
+		{"adjacent equal start", `{"b":[{"c":[1,1]},{"c":[1,1]}]}`, "b[1]"},
+		{"start 0", `{"b":[{"c":[0,1]}]}`, "b[0]"},
+		{"negative start", `{"b":[{"c":[-1,1]}]}`, "b[0]"},
+		{"start after end", `{"b":[{"c":[2,1]}]}`, "b[0]"},
+		{"string bounds", `{"b":[{"c":["1","1"]}]}`, "b[0]"},
+		{"fractional bound", `{"b":[{"c":[1.5,2]}]}`, ""},
+		{"exponent bound", `{"b":[{"c":[1e0,2]}]}`, ""},
+		{"one bound", `{"b":[{"c":[1]}]}`, "b[0]"},
+		{"three bounds", `{"b":[{"c":[1,2,3]}]}`, "b[0]"},
+		{"c not an array", `{"b":[{"c":1}]}`, "b[0]"},
+		{"two keys in a step", `{"b":[{"c":[1,1],"d":["x"]}]}`, "b[0]"},
+		{"unknown step key", `{"b":[{"x":["y"]}]}`, "b[0]"},
+		{"empty step", `{"b":[{}]}`, "b[0]"},
+		{"empty d", `{"b":[{"d":[]}]}`, "b[0]"},
+		{"d not strings", `{"b":[{"d":[1]}]}`, "b[0]"},
+		{"invalid base64 in u", `{"b":[{"u":["!!!!"]}]}`, "b[0]"},
+		{"unpadded base64 in u", `{"b":[{"u":["YQ"]}]}`, "b[0]"},
+		{"whitespace inside base64", `{"b":[{"u":["YQ ==" ]}]}`, "b[0]"},
+		{"CR inside d", `{"b":[{"d":["a\rb"]}]}`, "b[0]"},
+		{"LF inside d", `{"b":[{"d":["a\nb"]}]}`, "b[0]"},
+		{"CRLF inside d, second item", `{"b":[{"d":["ok","a\r\nb"]}]}`, "b[0]"},
+		{"CR inside header d", `{"h":{"subject":[{"d":["a\rb"]}]}}`, "h.subject[0]"},
+		{"LF inside header d", `{"h":{"subject":[{"d":["a\nb"]}]}}`, "h.subject[0]"},
+		{"CR inside decoded u", `{"b":[{"u":["` + base64.StdEncoding.EncodeToString([]byte("a\rb")) + `"]}]}`, "b[0]"},
+		{"LF inside decoded u", `{"b":[{"u":["` + base64.StdEncoding.EncodeToString([]byte("a\nb")) + `"]}]}`, "b[0]"},
+		{"descending header c ranges", `{"h":{"subject":[{"c":[2,2]},{"c":[1,1]}]}}`, "h.subject[1]"},
+		{"header start 0", `{"h":{"subject":[{"c":[0,0]}]}}`, "h.subject[0]"},
+		{"header invalid base64", `{"h":{"subject":[{"u":["*"]}]}}`, "h.subject[0]"},
 	}
 
 	msg := string(buildSignedMsg(t))
-	want := "PERMERROR: Message-Instance m=1 contains invalid JSON"
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			want := "PERMERROR: Message-Instance m=1 contains invalid JSON"
+			if tc.path != "" {
+				want = "PERMERROR: Message-Instance m=1 Recipe " + tc.path + " is invalid"
+			}
 			r := base64.StdEncoding.EncodeToString([]byte(tc.json))
 			tampered := strings.Replace(msg, "Message-Instance: m=1; ",
 				"Message-Instance: m=1; r="+r+"; ", 1)

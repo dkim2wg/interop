@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -71,15 +72,49 @@ func malformedRecipe(format string, args ...any) error {
 }
 
 // malformedRecipeError is the PERMERROR a verifier reports for a Recipe on
-// Message-Instance m=M that is not valid JSON, or breaks the §5 schema or
-// step rules (whether that shows when it is parsed or only when it is
-// applied to the message): §14.2's "contains invalid JSON". The message is
-// not accepted. It is self-describing, so Verify/VerifyFull return it
-// verbatim rather than wrapping it.
-type malformedRecipeError struct{ m int }
+// Message-Instance m=M (§14.2, contract D6).  With no path it is "contains
+// invalid JSON": the document as a whole is not valid (not JSON, not an
+// object, a duplicate or uppercase key, a fraction or exponent, "h" or "b"
+// of the wrong type, neither present), or a step does not fit the message
+// it is applied to.  With a path it is "Recipe <path> is invalid": that one
+// step breaks the §5 schema or the §5.1/§5.2 rules.  The message is not
+// accepted.  It is self-describing, so Verify/VerifyFull return it verbatim
+// rather than wrapping it.
+type malformedRecipeError struct {
+	m    int
+	path string
+}
 
 func (e *malformedRecipeError) Error() string {
+	if e.path != "" {
+		return fmt.Sprintf("PERMERROR: Message-Instance m=%d Recipe %s is invalid", e.m, e.path)
+	}
 	return fmt.Sprintf("PERMERROR: Message-Instance m=%d contains invalid JSON", e.m)
+}
+
+// recipeStepError is parseRecipe's error for one step (or one header
+// entry) that the schema or §5.1/§5.2 rejects: path is "b[<n>]",
+// "h.<name>[<n>]" or "h.<name>", as D6 writes it.
+type recipeStepError struct {
+	path string
+	err  error
+}
+
+func (e *recipeStepError) Error() string { return "Recipe " + e.path + ": " + e.err.Error() }
+func (e *recipeStepError) Unwrap() error { return e.err }
+
+// recipePathName writes a header field name for a Recipe path: every octet
+// outside 0x21-0x7E (space included) as \xHH, uppercase hex.
+func recipePathName(name string) string {
+	var b strings.Builder
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; c >= 0x21 && c <= 0x7e {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, `\x%02X`, c)
+		}
+	}
+	return b.String()
 }
 
 // UnmarshalJSON rejects every step shape the §5 schema does not allow:
@@ -114,14 +149,14 @@ func (s *RecipeStep) UnmarshalJSON(data []byte) error {
 			}
 			s.Copy = &c
 		case "d":
-			var d []string
-			if err := json.Unmarshal(v, &d); err != nil || len(d) == 0 {
+			d, ok := jsonStrings(v)
+			if !ok {
 				return malformedRecipe(`"d" must be a non-empty array of strings`)
 			}
 			s.Data = d
 		case "u":
-			var b []string
-			if err := json.Unmarshal(v, &b); err != nil || len(b) == 0 {
+			b, ok := jsonStrings(v)
+			if !ok {
 				return malformedRecipe(`"u" must be a non-empty array of base64 strings`)
 			}
 			s.Bytes = b
@@ -130,6 +165,22 @@ func (s *RecipeStep) UnmarshalJSON(data []byte) error {
 		}
 	}
 	return nil
+}
+
+// jsonStrings decodes a non-empty JSON array whose every element is a
+// string.  encoding/json alone would turn a null element into "".
+func jsonStrings(v json.RawMessage) ([]string, bool) {
+	var raws []json.RawMessage
+	if err := json.Unmarshal(v, &raws); err != nil || len(raws) == 0 {
+		return nil, false
+	}
+	out := make([]string, len(raws))
+	for i, r := range raws {
+		if len(r) == 0 || r[0] != '"' || json.Unmarshal(r, &out[i]) != nil {
+			return nil, false
+		}
+	}
+	return out, true
 }
 
 // The three patterns the §5 schema's "base64-line" must match: alphabet and
@@ -202,37 +253,44 @@ func (s RecipeStep) literals() ([]string, error) {
 func validateRecipeSteps(steps []RecipeStep, count int) error {
 	lastEnd := 0
 	for i, s := range steps {
-		set := 0
-		if s.Copy != nil {
-			set++
-		}
-		if s.Data != nil {
-			set++
-		}
-		if s.Bytes != nil {
-			set++
-		}
-		if set != 1 {
-			return malformedRecipe("step %d must be exactly one of c/d/u", i)
-		}
-		if s.Copy != nil {
-			start, end := s.Copy[0], s.Copy[1]
-			if start < 1 || end < start {
-				return malformedRecipe(`"c" [%d,%d] needs 1 <= start <= end`, start, end)
-			}
-			if start <= lastEnd {
-				return malformedRecipe(`"c" [%d,%d] does not ascend past the previous end %d`, start, end, lastEnd)
-			}
-			if count >= 0 && end > count {
-				return malformedRecipe(`"c" [%d,%d] exceeds the %d current items`, start, end, count)
-			}
-			lastEnd = end
-		}
-		if _, err := s.literals(); err != nil {
-			return err
+		if err := validateRecipeStep(s, &lastEnd, count); err != nil {
+			return fmt.Errorf("step %d: %w", i, err)
 		}
 	}
 	return nil
+}
+
+// validateRecipeStep is validateRecipeSteps for one step; lastEnd is the
+// end of the last "c" before it, and is advanced past this one's.
+func validateRecipeStep(s RecipeStep, lastEnd *int, count int) error {
+	set := 0
+	if s.Copy != nil {
+		set++
+	}
+	if s.Data != nil {
+		set++
+	}
+	if s.Bytes != nil {
+		set++
+	}
+	if set != 1 {
+		return malformedRecipe("a step must be exactly one of c/d/u")
+	}
+	if s.Copy != nil {
+		start, end := s.Copy[0], s.Copy[1]
+		if start < 1 || end < start {
+			return malformedRecipe(`"c" [%d,%d] needs 1 <= start <= end`, start, end)
+		}
+		if start <= *lastEnd {
+			return malformedRecipe(`"c" [%d,%d] does not ascend past the previous end %d`, start, end, *lastEnd)
+		}
+		if count >= 0 && end > count {
+			return malformedRecipe(`"c" [%d,%d] exceeds the %d current items`, start, end, count)
+		}
+		*lastEnd = end
+	}
+	_, err := s.literals()
+	return err
 }
 
 // errDuplicateJSONKey is returned for Recipe JSON in which one object names
@@ -244,15 +302,20 @@ func validateRecipeSteps(steps []RecipeStep, count int) error {
 var (
 	errDuplicateJSONKey = errors.New("duplicate JSON object key")
 	errUppercaseJSONKey = errors.New("JSON object key is not lowercase")
+	errJSONNotInteger   = errors.New("JSON number with a fraction or exponent")
 )
 
 // jsonDuplicateKey walks data's tokens and returns errDuplicateJSONKey for
 // the first object that names a key twice (compared exactly, after
-// unescaping), or errUppercaseJSONKey for the first key holding an ASCII
-// capital A-Z (non-ASCII letters are not judged).  It returns nil for valid
-// JSON without either; invalid JSON is left to json.Unmarshal to report.
+// unescaping), errUppercaseJSONKey for the first key holding an ASCII
+// capital A-Z (non-ASCII letters are not judged), or errJSONNotInteger for
+// a number written with a fraction or an exponent anywhere (JSON libraries
+// disagree on whether 1e0 is an integer, so it is judged from the text:
+// contract D6).  It returns nil for valid JSON without any of these;
+// invalid JSON is left to json.Unmarshal to report.
 func jsonDuplicateKey(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 	type frame struct {
 		keys    map[string]bool // nil for an array
 		wantKey bool
@@ -279,6 +342,9 @@ func jsonDuplicateKey(data []byte) error {
 				top.wantKey = false
 				continue
 			}
+		}
+		if n, ok := tok.(json.Number); ok && strings.ContainsAny(string(n), ".eE") {
+			return fmt.Errorf("%w: %s", errJSONNotInteger, n)
 		}
 		switch tok {
 		case json.Delim('{'):
@@ -373,49 +439,81 @@ func parseRecipe(data []byte) (*Recipe, error) {
 	if probe == nil {
 		return nil, malformedRecipe("the Recipe is not a JSON object")
 	}
+	// The whole document first (contract D6): "h" an object with at least
+	// one property (absent means the header fields were unchanged; null or
+	// {} is invalid), "b" an array or null, and at least one of them.
 	var r Recipe
-	var hasH, hasB bool
-	for k, v := range probe {
-		switch k {
-		case "h":
-			hasH = true
-			// §5 schema: "h" is an object with at least one property, each
-			// an array of steps.  An absent "h" means the header fields
-			// were unchanged; null, {} or a non-array value is invalid.
-			var h map[string]json.RawMessage
-			if err := json.Unmarshal(v, &h); err != nil || h == nil {
-				return nil, malformedRecipe(`"h" is not an object`)
-			}
-			if len(h) == 0 {
-				return nil, malformedRecipe(`"h" names no header field`)
-			}
-			for name, steps := range h {
-				if t := bytes.TrimLeft(steps, " \t\r\n"); len(t) == 0 || t[0] != '[' {
-					return nil, malformedRecipe("header %q Recipe is not an array", name)
-				}
-			}
-		case "b":
-			hasB = true
-			if string(bytes.TrimSpace(v)) == "null" {
-				r.BodyNull = true
-			}
-		}
-	}
+	var h map[string]json.RawMessage
+	var b []json.RawMessage
+	hv, hasH := probe["h"]
+	bv, hasB := probe["b"]
 	if !hasH && !hasB {
 		return nil, malformedRecipe(`neither "h" nor "b" is present`)
 	}
-	if err := json.Unmarshal(data, &r); err != nil {
-		return nil, err
-	}
-	for name, steps := range r.Headers {
-		if err := validateRecipeSteps(steps, -1); err != nil {
-			return nil, fmt.Errorf("header %q: %w", name, err)
+	if hasH {
+		if err := json.Unmarshal(hv, &h); err != nil || h == nil {
+			return nil, malformedRecipe(`"h" is not an object`)
+		}
+		if len(h) == 0 {
+			return nil, malformedRecipe(`"h" names no header field`)
 		}
 	}
-	if err := validateRecipeSteps(r.Body, -1); err != nil {
-		return nil, fmt.Errorf("body: %w", err)
+	if hasB {
+		if string(bytes.TrimSpace(bv)) == "null" {
+			r.BodyNull = true
+		} else if err := json.Unmarshal(bv, &b); err != nil {
+			return nil, malformedRecipe(`"b" is neither an array nor null`)
+		}
+	}
+
+	// Then each step: "b" first, then the "h" names in byte order, each
+	// list's steps in order.  The first that fails is the error.
+	if hasB && !r.BodyNull {
+		steps, err := parseRecipeSteps(b, "b")
+		if err != nil {
+			return nil, err
+		}
+		r.Body = steps
+	}
+	if hasH {
+		names := make([]string, 0, len(h))
+		for name := range h {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		r.Headers = make(map[string][]RecipeStep, len(h))
+		for _, name := range names {
+			path := "h." + recipePathName(name)
+			var raws []json.RawMessage
+			if v := h[name]; len(v) == 0 || v[0] != '[' || json.Unmarshal(v, &raws) != nil {
+				return nil, &recipeStepError{path, malformedRecipe("header %q Recipe is not an array", name)}
+			}
+			steps, err := parseRecipeSteps(raws, path)
+			if err != nil {
+				return nil, err
+			}
+			r.Headers[name] = steps
+		}
 	}
 	return &r, nil
+}
+
+// parseRecipeSteps parses and checks one list of steps, at path; the error
+// names the first step that fails (a *recipeStepError).  The list is never
+// nil: an empty "b" is the empty previous body.
+func parseRecipeSteps(raws []json.RawMessage, path string) ([]RecipeStep, error) {
+	steps := make([]RecipeStep, len(raws))
+	lastEnd := 0
+	for i, raw := range raws {
+		err := steps[i].UnmarshalJSON(raw)
+		if err == nil {
+			err = validateRecipeStep(steps[i], &lastEnd, -1)
+		}
+		if err != nil {
+			return nil, &recipeStepError{fmt.Sprintf("%s[%d]", path, i), err}
+		}
+	}
+	return steps, nil
 }
 
 func encodeRecipe(r *Recipe) ([]byte, error) {

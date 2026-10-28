@@ -3,6 +3,7 @@ package dkim2
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -237,11 +238,15 @@ func parseMI(raw string) (*MessageInstance, error) {
 		if err != nil {
 			// §14.2: "errors in a JSON object specifying Recipes SHOULD be
 			// called out specifically" -- a bad r= payload is reported
-			// distinctly from a generic syntax error.  JSON syntax and type
-			// errors, duplicate keys, and breaches of the §5 schema and
-			// step rules are all "contains invalid JSON"; validateRecipeSteps
-			// at parse time catches everything but the item-count checks,
-			// which the chain walk applies (with the same error).
+			// distinctly from a generic syntax error.  A step the schema
+			// or §5.1/§5.2 rejects is "Recipe <path> is invalid"; anything
+			// wrong with the document as a whole is "contains invalid
+			// JSON" (contract D6), as is a step that does not fit the
+			// message, which only the chain walk can find.
+			var se *recipeStepError
+			if errors.As(err, &se) {
+				return nil, &malformedRecipeError{m: m, path: se.path}
+			}
 			return nil, &malformedRecipeError{m: m}
 		}
 		mi.Recipe = recipe
