@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe, applyRecipe, decodeRecipe, InvalidRecipe } from '../recipes.js';
+import { bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe, applyRecipe, decodeRecipe, validateRecipeSteps, InvalidRecipe, InvalidStep } from '../recipes.js';
 
 test('bodyToLines / linesToBody round-trip', () => {
   assert.deepEqual(bodyToLines('a\r\nb\r\n'), ['a', 'b']);
@@ -118,7 +118,8 @@ test('"d" and "u" steps for the same text agree once both are binary strings', (
 
 // --- bad Recipes: InvalidRecipe (the §5 schema, or a "c" range that does
 // not fit) -------------------------------------------------------------------
-const invalid = (fn) => assert.throws(fn, (e) => e instanceof InvalidRecipe && e.name === 'InvalidRecipe');
+// (InvalidStep, one step the schema refuses, is an InvalidRecipe too.)
+const invalid = (fn) => assert.throws(fn, (e) => e instanceof InvalidRecipe);
 
 test('"c" ranges: integers of at least 1 (schema), then bounds and ordering', () => {
   const cur = ['a', 'b', 'c'];
@@ -183,9 +184,8 @@ const r64 = (raw) => Buffer.from(raw).toString('base64');
 // A duplicate key anywhere in the Recipe JSON is invalid JSON: parsers
 // disagree on which value wins (C's took the first, JSON.parse the last), so
 // {"b":[...],"b":null} was a null body Recipe to some verifiers and a real
-// one to others. Keys are matched without regard to case, so two that differ
-// only in case are a duplicate too.
-test('decodeRecipe: a duplicate key, in any case, is a SyntaxError (invalid JSON)', () => {
+// one to others. (Two that differ only in case hold a capital: invalid too.)
+test('decodeRecipe: a duplicate key is a SyntaxError (invalid JSON)', () => {
   for (const raw of ['{"b":[{"c":[1,1]}],"b":null}', '{"b":null,"b":[{"c":[1,1]}]}',
     '{"h":{"subject":[],"subject":[]}}', '{"h":{"subject":[]},"h":{}}',
     '{"h":{"subject":[],"subj\\u0065ct":[]}}', '{"h":{"Subject":[],"subject":[]}}',
@@ -195,19 +195,43 @@ test('decodeRecipe: a duplicate key, in any case, is a SyntaxError (invalid JSON
   assert.deepEqual(decodeRecipe(r64('{"h":{"subject":[{"d":["b"]}],"to":[]},"b":[{"d":["b"]}]}')).b, [{ d: ['b'] }]);
 });
 
-test('decodeRecipe: keys in any case come out lowercased', () => {
-  assert.deepEqual(decodeRecipe(r64('{"H":{"Subject":[{"C":[1,1]}],"TO":[{"D":["x"]}]},"B":[{"U":["QQ=="]}]}')),
-    { h: { subject: [{ c: [1, 1] }], to: [{ d: ['x'] }] }, b: [{ u: ['QQ=='] }] });
+test('decodeRecipe: a key holding an ASCII capital, at any level, is a SyntaxError (-08 D10)', () => {
+  for (const raw of ['{"H":{"subject":[]}}', '{"h":{"Subject":[]}}', '{"b":[{"C":[1,1]}]}',
+    '{"b":null,"x":{"K":1}}', '{"h":{"subj\\u0045ct":[]}}']) {
+    assert.throws(() => decodeRecipe(r64(raw)), SyntaxError, raw);
+  }
   // a "__proto__" header name stays an ordinary key
-  assert.deepEqual(Object.keys(decodeRecipe(r64('{"h":{"__PROTO__":[]}}')).h), ['__proto__']);
+  assert.deepEqual(Object.keys(decodeRecipe(r64('{"h":{"__proto__":[]}}')).h), ['__proto__']);
 });
 
-test('decodeRecipe: what the §5 schema refuses is an InvalidRecipe', () => {
-  for (const raw of ['[]', 'null', '7', '{}', '{"x":1}', '{"h":{}}', '{"h":[]}', '{"b":5}',
-    '{"b":[{}]}', '{"b":[{"b":["eA=="]}]}', '{"b":[{"u":["QR=="]}]}', '{"b":[{"u":["YQ1i"]}]}',
-    '{"h":{"subject":null}}', '{"h":{"subject":[{"d":["x"]}]},"b":[{"c":[0,1]}]}']) {
+test('decodeRecipe: a number with a fraction or an exponent, or a lone surrogate, is a SyntaxError', () => {
+  for (const raw of ['{"b":[{"c":[1,1]}],"n":1e0}', '{"b":[{"c":[1.0,1]}]}', '{"b":null,"n":-2E3}',
+    '{"b":[{"d":["\\udc80"]}]}', '{"b":null,"\\ud800":1}']) {
+    assert.throws(() => decodeRecipe(r64(raw)), SyntaxError, raw);
+  }
+  assert.deepEqual(decodeRecipe(r64('{"b":[{"c":[1,10]}],"n":-0}')).b, [{ c: [1, 10] }]);
+});
+
+test('decodeRecipe: what the §5 schema refuses of the whole document is an InvalidRecipe', () => {
+  for (const raw of ['[]', 'null', '7', '{}', '{"x":1}', '{"h":{}}', '{"h":[]}', '{"b":5}', '{"b":{}}']) {
     invalid(() => decodeRecipe(r64(raw)));
   }
   // an unknown top-level key next to "h" or "b" is ignored
   assert.deepEqual(decodeRecipe(r64('{"b":null,"x":1}')), { b: null, x: 1 });
+});
+
+test('validateRecipeSteps: the first invalid step, "b" first, then "h" by name', () => {
+  const path = (raw) => {
+    try { validateRecipeSteps(decodeRecipe(r64(raw))); } catch (e) { assert.ok(e instanceof InvalidStep, raw); return e.path; }
+    return null;
+  };
+  assert.equal(path('{"b":[{}]}'), 'b[0]');
+  assert.equal(path('{"b":[{"c":[1,1]},{"b":["eA=="]}]}'), 'b[1]');
+  assert.equal(path('{"b":[{"u":["QR=="]}]}'), 'b[0]');
+  assert.equal(path('{"b":[{"u":["YQ1i"]}]}'), 'b[0]');
+  assert.equal(path('{"h":{"subject":null}}'), 'h.subject');
+  assert.equal(path('{"h":{"subject":[{"x":1}]},"b":[{"c":[0,1]}]}'), 'b[0]');
+  assert.equal(path('{"h":{"to":[{"x":1}],"subject":[{"c":[1,1]},{"x":1}]}}'), 'h.subject[1]');
+  assert.equal(path('{"h":{"x café":[1]}}'), 'h.x\\x20caf\\xC3\\xA9[0]');
+  assert.equal(path('{"h":{"subject":[{"c":[1,9]}]},"b":[{"c":[1,1]}]}'), null);
 });

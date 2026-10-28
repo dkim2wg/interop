@@ -32,14 +32,15 @@ JSON2 = "PERMERROR: Message-Instance m=2 contains invalid JSON"
 EXPECT = {
     "multi-from-tampered": HDR1,
     "multi-header-and-body-tampered": HDR1,
-    "multi-expired-custody": "PERMERROR: DKIM2-Signature i=1 signature expired",
+    "multi-expired-custody": "FAIL: DKIM2-Signature i=1 signature expired",
     "multi-custody-bad-signature":
-        "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match",
+        "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match",
     "multi-bad-signature-header-hash": HDR1,
     "multi-tamper-two-instances":
         "FAIL: Message-Instance m=2 header hash sha256 mismatch",
     "multi-expired-recipe-json": JSON2,
-    "multi-expired-recipe-order": JSON2,
+    # -08 (contract D6): the out-of-order step is named.
+    "multi-expired-recipe-order": "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid",
     "multi-expired-recipe-past-end": JSON2,
     "multi-tamper-recipe-past-end":
         "FAIL: Message-Instance m=2 body hash sha256 mismatch",
@@ -61,12 +62,19 @@ EXPECT = {
         "PERMERROR: Message-Instance m=1 syntax error",
     "multi-instance-dup-alg-recipe":
         "PERMERROR: Message-Instance m=2 has a duplicate hash algorithm",
+    # -08 (contract D4): one "," group reports its first failing hash-set
+    # in h= order (sha256, whose body hash is wrong); -07's C9 put every
+    # header hash before any body hash.
     "multi-header-sha512-body-sha256":
-        "FAIL: Message-Instance m=1 header hash sha512 mismatch",
-    "multi-expired-nd": "PERMERROR: DKIM2-Signature i=1 signature expired",
+        "FAIL: Message-Instance m=1 body hash sha256 mismatch",
+    "multi-expired-nd": "FAIL: DKIM2-Signature i=1 signature expired",
     "multi-expired-header-hash": HDR1,
     "multi-custody-header-hash": HDR1,
     "multi-body-hash-no-key": "FAIL: Message-Instance m=1 body hash sha256 mismatch",
+    # -08 (contract D3 amends C9): a signature's key and its verdict are one
+    # step, lowest i= first, so i=1's FAIL beats i=2's missing key.
+    "multi-key-error-above-bad-signature":
+        "FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature",
 }
 
 
@@ -124,7 +132,7 @@ def test_unsigned_instances_are_still_walked():
                         if not h.lower().startswith(b"dkim2-signature:"))
     r = dkim2verify.verify_message(unsigned + b"\r\n" + body, DNS,
                                    full_chain=True, allow_unsigned_mi=True)
-    assert r.message == "FAIL: Message-Instance m=1 header hash sha512 mismatch"
+    assert r.message == "FAIL: Message-Instance m=1 body hash sha256 mismatch"
 
 
 def test_more_fields_than_the_chain_length():
@@ -168,10 +176,10 @@ def test_timestamp_of_5000_digits_is_from_the_future():
     t = re.search(rb"t=(\d+);", msg).group(1)
     msg = msg.replace(b"t=" + t + b";", b"t=" + b"9" * 5000 + b";", 1)
     r = dkim2verify.verify_message(msg, DNS, full_chain=True)
-    assert r.message == "PERMERROR: DKIM2-Signature i=1 signature is from the future"
+    assert r.message == "FAIL: DKIM2-Signature i=1 signature is from the future"
     msg = msg.replace(b"t=" + b"9" * 5000, b"t=" + b"0" * 5000 + b"1", 1)
     r = dkim2verify.verify_message(msg, DNS, full_chain=True)
-    assert r.message == "PERMERROR: DKIM2-Signature i=1 signature expired"
+    assert r.message == "FAIL: DKIM2-Signature i=1 signature expired"
 
 
 def test_deeply_nested_recipe_is_invalid_json():

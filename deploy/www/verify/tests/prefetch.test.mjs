@@ -147,13 +147,13 @@ test('no prefetch for algorithms not implemented, or a message that fails §14.2
 });
 
 test('no prefetch for a signature whose s= fails §14.2, however many Selectors it names', async () => {
-  // 3000 distinct Selectors for one algorithm: "more selectors than allowed".
+  // 3000 distinct Selectors: "has more than 8 signatures" (contract D3).
   const many = Array.from({ length: 3000 }, (_, n) => `x${n}:ed25519-sha256:AAAA`).join(',');
   const bin = bytesToBinary(MSG).replace(/s=sel2:ed25519-sha256:/, `s=${many},sel2:ed25519-sha256:`);
   const doh = fakeDoh();
   const rep = await verifyMessage(Uint8Array.from(bin, (c) => c.charCodeAt(0)), { now: NOW, dohFetch: doh.fetch });
   assert.equal(rep.overall, 'permerror', rep.summary);
-  assert.match(rep.errors[0], /has more selectors than allowed$/);
+  assert.match(rep.errors[0], /has more than 8 signatures$/);
   assert.ok(doh.calls.length <= NAMES.length, `${doh.calls.length} DoH requests`);
   assert.ok(!doh.calls.some((n) => n.startsWith('x')), 'no lookup for the oversized s=');
 });

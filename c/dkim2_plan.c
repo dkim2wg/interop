@@ -23,7 +23,7 @@ typedef struct { seg_t *s; int n, cap; } seglist_t;
 /* All the fields with one lowercase name, as received. */
 typedef struct {
     char *name;         /* lowercase bytes before the first ':' */
-    int hashed;         /* not on the -07 §4 skip list */
+    int hashed;         /* not on the -08 §4 skip list */
     char **rv;          /* received fields, bottom-up (as Recipes number them) */
     char **rv_canon;    /* canonical lines, made on first use (hashed only) */
     int n_rv;
@@ -50,7 +50,7 @@ typedef struct {
     unsigned algs;
     EVP_MD_CTX *md[DKIM2_N_HASH_ALGS];
     int seg;                /* next segment of list to consume */
-    long long pending;      /* blank lines held back (-07 §6.1) */
+    long long pending;      /* blank lines held back (-08 §6.1) */
     int emitted, last_crlf;
     int active;             /* takes the current run of body lines */
     dkim2_digests_t out;
@@ -208,7 +208,7 @@ static long long hdr_lit_add(void *ctx, const dkim2_recipe_op_t *op) {
     return p->n_hlit++;
 }
 
-/* The undo walk matches a Recipe key (lowercased by dkim2_recipe_parse)
+/* The undo walk matches a Recipe key (lowercase: dkim2_recipe_parse)
    exactly against each field's lowercased name, and names of 128 bytes or
    more never match. Groups are named that way (lowercase, no ':'), so a key
    with a ':' finds no group; only the length needs checking here. */
@@ -362,7 +362,7 @@ static int cmp_group(const void *a, const void *b) {
     return strcmp(g_sort_groups[*(const int *)a].name, g_sort_groups[*(const int *)b].name);
 }
 
-/* Header hash (-07 §6.2) of one level: hashed names in byte order, each name's
+/* Header hash (-08 §6.2) of one level: hashed names in byte order, each name's
    fields bottom-up -- what dkim2_header_hash_raw_alg makes of the fields. */
 static int hdr_digest(dkim2_plan_t *p, const int *order, level_t *lv, unsigned algs) {
     static const EVP_MD *(*const mds[DKIM2_N_HASH_ALGS])(void) = { EVP_sha256, EVP_sha512 };
@@ -534,7 +534,7 @@ static void acc_blanks(acc_t *a) {
     }
 }
 
-/* One line (terminator included) into a body digest. -07 §6.1: a run of blank
+/* One line (terminator included) into a body digest. -08 §6.1: a run of blank
    lines is held back until a non-blank line follows; at the end it is
    dropped. The run carries across body lines and literals alike. */
 static void acc_emit(acc_t *a, const unsigned char *s, size_t len) {
@@ -781,63 +781,90 @@ int dkim2_plan_level(dkim2_plan_t *p, int vi, dkim2_plan_level_t *out) {
     return 0;
 }
 
+int dkim2_combine(const int *r, const int *g, int n, int n_groups, int *pick) {
+    int any_pass = 0, any_temp = 0, any_fail = 0, result;
+    for (int k = 0, i = 0; k < (n_groups > 0 ? n_groups : 1); k++) {
+        int all_pass = 1, all_temp = 1, fail = 0, gr;
+        for (; i < n && g[i] == k; i++) {
+            if (r[i] == DKIM2_R_PASS) continue;
+            all_pass = 0;
+            if (r[i] != DKIM2_R_TEMPERROR) all_temp = 0;
+            if (r[i] == DKIM2_R_FAIL) fail = 1;
+        }
+        gr = all_pass ? DKIM2_R_PASS : all_temp ? DKIM2_R_TEMPERROR :
+             fail ? DKIM2_R_FAIL : DKIM2_R_PERMERROR;
+        if (gr == DKIM2_R_PASS) any_pass = 1;
+        if (gr == DKIM2_R_TEMPERROR) any_temp = 1;
+        if (gr == DKIM2_R_FAIL) any_fail = 1;
+    }
+    result = any_pass ? DKIM2_R_PASS : any_temp ? DKIM2_R_TEMPERROR :
+             any_fail ? DKIM2_R_FAIL : DKIM2_R_PERMERROR;
+    *pick = -1;
+    if (result == DKIM2_R_PASS || (n_groups > 1 && result == DKIM2_R_FAIL)) return result;
+    for (int i = 0; i < n; i++)
+        if (r[i] == result) { *pick = i; break; }
+    return result;
+}
+
+int dkim2_mi_hash_verdict(const dkim2_mi_t *mi, const dkim2_digests_t *hdr,
+                          const dkim2_digests_t *body, char *errbuf, size_t errbufsz) {
+    int n = mi->n_hsets;
+    /* per set: its result, its group, and for a FAIL whether only the
+       body hash was wrong */
+    int *r = malloc((size_t)(n ? n : 1) * 3 * sizeof *r);
+    if (!r) { snprintf(errbuf, errbufsz, "TEMPERROR: out of memory"); return -1; }
+    int *g = r + n, *body_only = r + 2 * n;
+    for (int i = 0; i < n; i++) {
+        g[i] = mi->hsets[i].group;
+        body_only[i] = 0;
+        r[i] = DKIM2_R_PASS;
+        int alg = dkim2_hash_alg_index(mi->hsets[i].alg);
+        if (alg < 0) { r[i] = DKIM2_R_PERMERROR; continue; }
+        size_t alen = dkim2_hash_alg_len(alg);
+        unsigned char stored[DKIM2_MAX_HASH_LEN + 3];
+        int hl = b64_decode(mi->hsets[i].hdr_hash, stored, sizeof stored);
+        if (hl != (int)alen || memcmp(hdr->d[alg], stored, alen) != 0) {
+            r[i] = DKIM2_R_FAIL;
+            continue;
+        }
+        if (!body) continue;
+        int bl = b64_decode(mi->hsets[i].body_hash, stored, sizeof stored);
+        if (bl != (int)alen || memcmp(body->d[alg], stored, alen) != 0) {
+            r[i] = DKIM2_R_FAIL;
+            body_only[i] = 1;
+        }
+    }
+    int pick, res = dkim2_combine(r, g, n, mi->n_groups, &pick);
+    int pick_body = pick >= 0 && body_only[pick];
+    free(r);
+    if (res == DKIM2_R_PASS) return 0;
+    if (pick < 0)
+        snprintf(errbuf, errbufsz, "FAIL: Message-Instance m=%d no group of hashes passed", mi->m);
+    else if (res == DKIM2_R_PERMERROR)
+        snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance m=%d algorithm %s unknown",
+                 mi->m, mi->hsets[pick].alg);
+    else
+        snprintf(errbuf, errbufsz, "FAIL: Message-Instance m=%d %s hash %s mismatch", mi->m,
+                 pick_body ? "body" : "header",
+                 dkim2_hash_alg_name(dkim2_hash_alg_index(mi->hsets[pick].alg)));
+    return -1;
+}
+
 int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz) {
     if (p->fallback) return 1;
     for (int vi = p->n - 1; vi >= 0; vi--) {
         const level_t *lv = &p->lv[vi];
         const dkim2_mi_t *mi = lv->mi;
-        int n_checked = 0;
-        /* Every header hash, in h= order, before any body hash (contract
-           C9, as the undo walk). */
-        for (int hi = 0; hi < mi->n_hsets; hi++) {
-            int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
-            if (alg < 0) continue;
-            size_t alen = dkim2_hash_alg_len(alg);
-            n_checked++;
-            unsigned char stored_h[DKIM2_MAX_HASH_LEN];
-            int hl = (int)b64_decode(mi->hsets[hi].hdr_hash, stored_h, sizeof stored_h);
-            if (hl != (int)alen || memcmp(lv->hdr.d[alg], stored_h, alen) != 0) {
-                snprintf(errbuf, errbufsz,
-                    "FAIL: Message-Instance m=%d header hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
-                return -1;
-            }
-        }
-        for (int hi = 0; hi < mi->n_hsets && !lv->gone; hi++) {
-            int alg = dkim2_hash_alg_index(mi->hsets[hi].alg);
-            if (alg < 0) continue;
-            size_t alen = dkim2_hash_alg_len(alg);
-            unsigned char stored[DKIM2_MAX_HASH_LEN];
-            int bl = (int)b64_decode(mi->hsets[hi].body_hash, stored, sizeof stored);
-            if (bl != (int)alen) {
-                snprintf(errbuf, errbufsz, "PERMERROR: bad body hash in MI m=%d", mi->m);
-                return -1;
-            }
-            if (lv->acc >= 0 && memcmp(p->acc[lv->acc].out.d[alg], stored, alen) != 0) {
-                snprintf(errbuf, errbufsz,
-                    "FAIL: Message-Instance m=%d body hash %s mismatch", mi->m, dkim2_hash_alg_name(alg));
-                return -1;
-            }
-        }
-        if (n_checked == 0) {
-            snprintf(errbuf, errbufsz,
-                "PERMERROR: Message-Instance m=%d no supported hash algorithm", mi->m);
-            return -1;
-        }
+        /* -08 §14.7 (contract D4): the hash-sets in h= order, each its
+           header hash before its body hash, combined over the groups. */
+        const dkim2_digests_t *body =
+            !lv->gone && lv->acc >= 0 ? &p->acc[lv->acc].out : NULL;
+        if (dkim2_mi_hash_verdict(mi, &lv->hdr, body, errbuf, errbufsz) < 0) return -1;
         if (lv->r_err == 1) {
             snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance m=%d syntax error", mi->m);
             return -1;
         }
-        if (lv->r_err == 2) {
-            snprintf(errbuf, errbufsz,
-                "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
-            return -1;
-        }
-        if (lv->body_err) {
-            snprintf(errbuf, errbufsz,
-                "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
-            return -1;
-        }
-        if (lv->hdr_err) {
+        if (lv->r_err == 2 || lv->body_err || lv->hdr_err) {
             snprintf(errbuf, errbufsz,
                 "PERMERROR: Message-Instance m=%d contains invalid JSON", mi->m);
             return -1;

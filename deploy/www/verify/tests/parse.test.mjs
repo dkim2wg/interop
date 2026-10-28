@@ -65,10 +65,11 @@ test('crlfCount at every alignment', () => {
   }
 });
 
-test('parseTagList parses tags case-insensitively, values case-significant', () => {
+test('parseTagList keeps tag names and values as written', () => {
   const { map, tags } = parseTagList('i=1; M=1; d=Test.DKIM2.eu;');
   assert.equal(map.i, '1');
-  assert.equal(map.m, '1');       // tag name lowercased
+  assert.equal(map.M, '1');       // an unknown tag (-08 §8, D10)
+  assert.equal(map.m, undefined);
   assert.equal(map.d, 'Test.DKIM2.eu'); // value preserved
   assert.equal(tags.length, 3);   // trailing empty segment dropped
 });

@@ -19,7 +19,7 @@ int main(void) {
     dkim2_mi_free(mi);
 
     /* MI with Recipe */
-    mi = dkim2_mi_parse("m=2; h=sha256:aaa:bbb; r=e30=");
+    mi = dkim2_mi_parse("m=2; h=sha256:aaaa:bbbb; r=e30=");
     assert(mi != NULL);
     assert(mi->m == 2);
     assert(mi->r_raw != NULL);
@@ -27,18 +27,18 @@ int main(void) {
     dkim2_mi_free(mi);
 
     /* MI with multiple hash sets (distinct algorithms) */
-    mi = dkim2_mi_parse("m=1; h=sha256:hh1:bh1,sha512:hh2:bh2");
+    mi = dkim2_mi_parse("m=1; h=sha256:hh1A:bh1A,sha512:hh2A:bh2A");
     assert(mi != NULL);
     assert(mi->n_hsets == 2);
-    assert(strcmp(mi->hsets[1].hdr_hash, "hh2") == 0);
+    assert(strcmp(mi->hsets[1].hdr_hash, "hh2A") == 0);
     dkim2_mi_free(mi);
 
-    /* -07 §9.3: an algorithm MUST NOT be present more than once */
-    assert(dkim2_mi_parse("m=1; h=sha256:AAA:BBB,sha256:CCC:DDD;") == NULL);
+    /* -08 §9.3: an algorithm MUST NOT be present more than once */
+    assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB,sha256:CCCC:DDDD;") == NULL);
     /* ...detected case-insensitively (RFC 5234) */
-    assert(dkim2_mi_parse("m=1; h=sha256:AAA:BBB,SHA256:CCC:DDD;") == NULL);
+    assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB,SHA256:CCCC:DDDD;") == NULL);
     /* ...but two different algorithms are fine */
-    dkim2_mi_t *ok_mi = dkim2_mi_parse("m=1; h=sha256:AAA:BBB,sha512:CCC:DDD;");
+    dkim2_mi_t *ok_mi = dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB,sha512:CCCC:DDDD;");
     assert(ok_mi != NULL);
     assert(ok_mi->n_hsets == 2);
     dkim2_mi_free(ok_mi);
@@ -67,7 +67,7 @@ int main(void) {
     assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
     dkim2_sig_free(sig);
 
-    /* Folding whitespace inside tag values (-07 §2.12): FWS may appear
+    /* Folding whitespace inside tag values (-08 §2.12): FWS may appear
        inside a base64 string and around the colons of an s= item, and MUST be
        ignored when the value is used.  A fold between the Selector colon and
        the algorithm token used to leave CRLF+TAB glued to the algorithm name. */
@@ -112,16 +112,16 @@ int main(void) {
     dkim2_sig_free(sig);
 
     /* i= must be a positive integer in ASCII digits; anything else is a
-       PERMERROR saying so; a missing required tag is "tag=<y> missing" (-07 §14.2). */
+       PERMERROR saying so; a missing required tag is "tag=<y> missing" (-08 §14.2). */
     {
         static const char *bad_i[] = {
-            "m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
-            "i=; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
-            "i=0; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
-            "i=abc; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
-            "i=-1; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
-            "i=+1; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
-            "i=1x; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example",
+            "m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example",
+            "i=; m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example",
+            "i=0; m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example",
+            "i=abc; m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example",
+            "i=-1; m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example",
+            "i=+1; m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example",
+            "i=1x; m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example",
             NULL };
         /* C6: a missing i= is "i= tag=i missing"; one that is not a
            positive integer is "i=<as written> syntax error". */
@@ -143,7 +143,7 @@ int main(void) {
         assert(dkim2_sig_parse_err("i=1; m=1; t=1; d=e.example", eb, sizeof eb) == NULL);
         assert(strcmp(eb, "PERMERROR: DKIM2-Signature i=1 tag=s missing") == 0);
         dkim2_sig_t *ok = dkim2_sig_parse_err(
-            "i=3; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", eb, sizeof eb);
+            "i=3; m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example", eb, sizeof eb);
         assert(ok && ok->i == 3 && eb[0] == '\0');
         dkim2_sig_free(ok);
     }
@@ -177,7 +177,7 @@ int main(void) {
             snprintf(want, sizeof want, "PERMERROR: Message-Instance m=%s syntax error", mal_n[k]);
             assert(strcmp(eb, want) == 0);
 
-            snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", mal_n[k]);
+            snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example", mal_n[k]);
             assert(dkim2_sig_parse(v) == NULL);
             assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
             assert(strcmp(eb, "PERMERROR: DKIM2-Signature i=2 syntax error") == 0);
@@ -196,13 +196,13 @@ int main(void) {
         for (int b = 0; b < 2; b++) {
             const char *const *bad_n = bad_sets[b];
             for (int k = 0; bad_n[k]; k++) {
-                snprintf(v, sizeof v, "i=%s; m=2; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
+                snprintf(v, sizeof v, "i=%s; m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example", bad_n[k]);
                 assert(dkim2_sig_parse(v) == NULL);
                 assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
                 snprintf(want, sizeof want, "PERMERROR: DKIM2-Signature i=%s exceeds the maximum chain %s", bad_n[k], bad_why[b]);
                 assert(strcmp(eb, want) == 0);
 
-                snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", bad_n[k]);
+                snprintf(v, sizeof v, "i=2; m=%s; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example", bad_n[k]);
                 assert(dkim2_sig_parse(v) == NULL);
                 assert(dkim2_sig_parse_err(v, eb, sizeof eb) == NULL);
                 snprintf(want, sizeof want, "PERMERROR: DKIM2-Signature i=2 m=%s exceeds the maximum chain %s", bad_n[k], bad_why[b]);
@@ -216,11 +216,11 @@ int main(void) {
             }
         }
         dkim2_sig_t *s32 = dkim2_sig_parse_err(
-            "i=32; m=32; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", eb, sizeof eb);
+            "i=32; m=32; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example", eb, sizeof eb);
         assert(s32 && s32->i == 32 && s32->m == 32 && eb[0] == '\0');
         dkim2_sig_free(s32);
         dkim2_sig_t *s001 = dkim2_sig_parse_err(
-            "i=001; m=01; t=1; d=e.example; s=a:rsa-sha256:AA; nd=x.example", eb, sizeof eb);
+            "i=001; m=01; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example", eb, sizeof eb);
         assert(s001 && s001->i == 1 && s001->m == 1 && eb[0] == '\0');
         dkim2_sig_free(s001);
         dkim2_mi_t *m001 = dkim2_mi_parse_err("m=001; h=sha256:AAAA:BBBB", eb, sizeof eb);
@@ -257,7 +257,7 @@ int main(void) {
         "s=sel1:rsa-sha256:AAAA");
     assert(sig == NULL);
 
-    /* -07 §10.10: f= flags parsed and round-tripped (incl. feedhere) */
+    /* -08 §10.10: f= flags parsed and round-tripped (incl. feedhere) */
     sig = dkim2_sig_parse(
         "i=1; m=1; t=1; d=ex.example; "
         "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
@@ -275,69 +275,28 @@ int main(void) {
     }
     dkim2_sig_free(sig);
 
-    /* --- -07 §10.9: DKIM2-Signature s= duplicate/limit checks --- */
+    /* --- -08 §10.9: DKIM2-Signature s= duplicate/limit checks, made by
+       the parser (dkim2_sig_parse_err) --- */
     char errbuf[256];
-
-    /* clean signature list has no errors */
-    sig = dkim2_sig_parse(
-        "i=1; m=1; t=1; d=ex.example; "
-        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
-        "s=sel1:rsa-sha256:AAA,sel2:ed25519-sha256:BBB");
-    assert(sig != NULL);
-    assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == 0);
-    dkim2_sig_free(sig);
-
-    /* a Selector MUST NOT repeat */
-    sig = dkim2_sig_parse(
-        "i=3; m=1; t=1; d=ex.example; "
-        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
-        "s=sel1:rsa-sha256:AAA,sel1:ed25519-sha256:BBB");
-    assert(sig != NULL);
-    assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == -1);
-    assert(strcmp(errbuf, "PERMERROR: DKIM2-Signature i=3 has a duplicate selector") == 0);
-    dkim2_sig_free(sig);
-
-    /* ...detected case-insensitively (Selector is a Domain, -07 §3.6) */
-    sig = dkim2_sig_parse(
-        "i=1; m=1; t=1; d=ex.example; "
-        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
-        "s=Sel1:rsa-sha256:AAA,sel1:ed25519-sha256:BBB");
-    assert(sig != NULL);
-    assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == -1);
-    assert(strstr(errbuf, "has a duplicate selector") != NULL);
-    dkim2_sig_free(sig);
-
-    /* same algorithm twice with distinct Selectors is allowed */
-    sig = dkim2_sig_parse(
-        "i=1; m=1; t=1; d=ex.example; "
-        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
-        "s=sel1:rsa-sha256:AAA,sel2:rsa-sha256:BBB");
-    assert(sig != NULL);
-    assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == 0);
-    dkim2_sig_free(sig);
-
-    /* three same-algorithm signatures exceed the selector limit */
-    sig = dkim2_sig_parse(
-        "i=2; m=1; t=1; d=ex.example; "
-        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
-        "s=sel1:rsa-sha256:AAA,sel2:rsa-sha256:BBB,sel3:rsa-sha256:CCC");
-    assert(sig != NULL);
-    assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == -1);
-    assert(strcmp(errbuf, "PERMERROR: DKIM2-Signature i=2 has more selectors than allowed") == 0);
-    dkim2_sig_free(sig);
-
-    /* duplicate-selector and excess-selector are independent: two sigs
-       sharing algorithm AND selector is a duplicate-selector error, not
-       an excess-selector error (the count is 2, not 3+) */
-    sig = dkim2_sig_parse(
-        "i=1; m=1; t=1; d=ex.example; "
-        "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
-        "s=sel1:rsa-sha256:AAA,sel1:rsa-sha256:BBB");
-    assert(sig != NULL);
-    assert(dkim2_sig_check_duplicates(sig, errbuf, sizeof errbuf) == -1);
-    assert(strstr(errbuf, "duplicate selector") != NULL);
-    assert(strstr(errbuf, "more selectors than allowed") == NULL);
-    dkim2_sig_free(sig);
+    static const struct { const char *s, *err; } dup_cases[] = {
+        { "sel1:rsa-sha256:AAAA,sel2:ed25519-sha256:BBBB", "" },
+        /* a Selector MUST NOT repeat, detected case-insensitively (a
+           Selector is a Domain, -08 §3.6) */
+        { "sel1:rsa-sha256:AAAA,sel1:ed25519-sha256:BBBB", "PERMERROR: DKIM2-Signature i=3 has a duplicate selector" },
+        { "Sel1:rsa-sha256:AAAA,sel1:ed25519-sha256:BBBB", "PERMERROR: DKIM2-Signature i=3 has a duplicate selector" },
+        /* any number of one algorithm with distinct Selectors (-08) */
+        { "sel1:rsa-sha256:AAAA,sel2:rsa-sha256:BBBB,sel3:rsa-sha256:CCCC", "" },
+        { "sel1:rsa-sha256:AAAA,sel1:rsa-sha256:BBBB", "PERMERROR: DKIM2-Signature i=3 has a duplicate selector" },
+    };
+    for (size_t k = 0; k < sizeof dup_cases / sizeof dup_cases[0]; k++) {
+        char v[512];
+        snprintf(v, sizeof v, "i=3; m=1; t=1; d=ex.example; "
+            "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; s=%s", dup_cases[k].s);
+        sig = dkim2_sig_parse_err(v, errbuf, sizeof errbuf);
+        assert(dup_cases[k].err[0] ? sig == NULL : sig != NULL);
+        if (!sig) assert(strcmp(errbuf, dup_cases[k].err) == 0);
+        dkim2_sig_free(sig);
+    }
 
     /* dkim2_sig_format / dkim2_mi_format of fields of any size: they used
        fixed 8192/4096-byte buffers (and 512 bytes per base64 address), and

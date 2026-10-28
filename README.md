@@ -63,7 +63,7 @@ the verification keys. The Perl milters make the same decision with the same
 `perl/t/milter-sign-gate.t` runs these cases through the authentication_milter
 `DKIM2Sign` handler (`allow_null_body_recipe` in its config).
 
-Draft -07 §11 adds a signer-side From check: a signer that originates a
+Draft -07 added a signer-side From check (§11): a signer that originates a
 message (no DKIM2-Signature yet), or signs over an unsigned Message-Instance
 that changed From, refuses unless From is Authentic for its own `d=`, with
 `From header field is not Authentic for d=<D>`. `fresh-from-not-authentic`
@@ -75,8 +75,8 @@ signer's domain and must be signed.
 ## Negative vectors
 
 `util/negative-vectors.sh` hand-builds one cryptographically valid message
-per -07 PERMERROR — a duplicate hash algorithm, a duplicate
-Selector, more selectors than allowed, malformed Recipe JSON, an unsigned
+per -08 PERMERROR — a duplicate hash algorithm, a duplicate
+Selector, more than 8 signatures in one `s=` (local policy), malformed Recipe JSON, an unsigned
 top instance, a wrongly-keyed `nd=` bridge, and Recipe copy ranges that are
 out of order or overlap (§5.2), a duplicated Message-Instance `m=`, and a
 DKIM2-Signature with no usable `i=` (missing, or not a positive integer) on
@@ -94,23 +94,34 @@ not the `nd=` domain; domain-literal `rt=`/`mf=`; an `mf=` outside its `d=`),
 From not Authentic (at `i=1`, including when `i=1` signs a later state than
 `m=1`, and after a list rewrote From into a domain it does not sign for), a `"u"` step with non-zero pad bits, the -06 `"b"` step
 key, a step object with two keys or none, and two `"h"` keys that differ
-only in case. Positive controls: the same algorithm signed twice under
+only in case. Draft -08 added: `"|"` groups in `s=` and `h=` (no group of
+signatures or hashes passed, an unknown algorithm joined by `","`, a value
+that is not base64 for an unknown algorithm), malformed keys (an Ed25519 key
+published as DER), `Recipe <path> is invalid` for one bad step, a header
+hash that now covers Auto-Submitted, an upper-case tag or Recipe key, and a
+lone surrogate in a Recipe; and it moved the timestamp, Chain of Custody and
+From errors from PERMERROR to FAIL. Positive controls: the same algorithm signed twice under
 distinct Selectors, which §10.9 explicitly permits; a Recipe on the bottom
 instance; a correct bridge; an unsigned lower Message-Instance under a signed
 higher one; `"u"` steps restoring non-UTF-8 octets; a bounce back along the
 chain (with the `rt=` recorded as `<list@Lists.Test2.DKIM2.com.>`); an `nd=`
 hop under a subdomain `rt=`; a folded RFC 2047 From; a list that rewrote From
 into its own domain, with or without a signature under the rewrite (an
-author's From replaced before the first signature is never checked, -07 §11);
-and a Recipe with upper-case keys. Multi-fault vectors carry two faults
-each and pin which error comes first (contract C9, -07 §14 section order): a
+author's From replaced before the first signature is never checked, -08 §11);
+a `"|"` alternative that passes where the group before it does not (for
+signatures and for hashes, an unknown algorithm included), eight signatures
+in one `s=`, one algorithm three times, Auto-Submitted signed and unchanged,
+and an upper-case twin of a known tag. Multi-fault vectors carry two faults
+each and pin which error comes first (contract C9, -08 §14 section order): a
 From changed after signing is the §14.7 header hash FAIL, not the §14.8 From
-PERMERROR; an expired signature comes before a custody mismatch, custody
-before a bad signature, a bad signature before a hash mismatch; a malformed
+FAIL; an expired signature comes before a custody mismatch, custody
+before a bad signature, a bad signature before a hash mismatch; and a key
+error at a higher `i=` after a bad signature at a lower one (-08 checks each
+signature's keys and signature together); a malformed
 Recipe before an expired signature, but a Recipe that only fails against the
 message (a copy past the end) after it. The runner feeds them
 all through every verifier's real CLI entry point and asserts each negative
-vector is REJECTED with the exact -07 error string as the verifier's
+vector is REJECTED with the exact -08 error string as the verifier's
 PRIMARY error (its first `STATE: text` line, compared exactly) and the
 matching state, and each positive control is ACCEPTED (66 vectors, 330
 cells):
@@ -128,8 +139,8 @@ unrelated signature failure.
 <https://github.com/croessner/dkim2> is the other actively developed DKIM2
 implementation (Go, tracking `draft-ietf-dkim-dkim2-spec-06` when this runner
 was written; `util/croessner-process.py` pins that draft). The runner now
-checks that -06 peer against our -07 implementations, so disagreements are
-expected wherever -07 changed the rules (the "u" Recipe step, Chain of
+checks that -06 peer against our -08 implementations, so disagreements are
+expected wherever -07 and -08 changed the rules (the "u" Recipe step, Chain of
 Custody, From Authentic, the error strings); read its output as a diff
 between the drafts, not as a pass/fail gate. To feed his verifier everything
 this repo can produce:
@@ -181,7 +192,7 @@ corpus lists on mail.dkim2.com (members: the local capture address only; see
 the failing messages with verifier logs under `corpus/results/fail/`.
 
 The captures taken so far are -06 list mail (`"b"` Recipe steps, the author's
-From), which every -07 verifier rejects; recapture with `--stage lists` after
+From), which every -08 verifier rejects; recapture with `--stage lists` after
 the -07 deploy before reading the `captures` results.
 
 Pipermail's "Gzip'd Text" archives are scrubbed (no `Content-Type`, bodies

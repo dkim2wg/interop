@@ -22,7 +22,7 @@ type DKIM2Signature struct {
 	Nonce      string   // n= tag (optional); max 64 ASCII chars per §10.3
 	Flags      []string // f= tag (optional); comma-separated flags per §10.10
 	Sigs       []SigItem
-	Duplicate  string // lowercased tag name that appeared more than once (§8), if any
+	Duplicate  string // tag name that appeared more than once (§8), if any
 }
 
 // toRFC5321Path wraps an address as an RFC5321 path for mf=/rt= (§10.5,
@@ -45,12 +45,20 @@ func toRFC5321Path(a string) string {
 	return a
 }
 
-// SigItem is one sel:alg:value entry in the s= tag.
+// SigItem is one sel:alg:value entry (sig-set) in the s= tag.
 type SigItem struct {
 	Selector  string
 	Algorithm string
 	Value     []byte // nil means empty (signing input placeholder per §10.9)
+	// Group is the sig-all ("," list) the item belongs to, counting the
+	// "|"-separated groups of s= from 0 (-08 §10.9).  Signers write one.
+	Group int
 }
+
+// MaxSignatureItems is the most sig-sets one s= may hold (contract D3, a
+// local limit: -08 dropped "more selectors than allowed", and every item
+// can cost a key lookup and a verification).
+const MaxSignatureItems = 8
 
 // SignOptions carries per-message signing parameters.
 type SignOptions struct {
@@ -96,7 +104,16 @@ type VerifyResult struct {
 	Domain   string
 	Error    error // nil = pass
 
-	// section is the -07 §14 section Error ranks in (contract C9), when its
+	// FullyVerified (-08 §13, contract D9) is set, on every result, when the
+	// whole verification passed and checked everything §13 asks for.  A
+	// pass is not Fully Verified when a null body Recipe ("b": null) on some
+	// Message-Instance m=k (k >= 2) leaves the body hashes below it
+	// uncheckable, when HeadersOnly skipped the body, when Verify (unlike
+	// VerifyFull) left lower instances unchecked, or when Outbound left an
+	// unsigned top instance.  It is not reported in A-R.
+	FullyVerified bool
+
+	// section is the -08 §14 section Error ranks in (contract C9), when its
 	// text alone does not say: a Recipe that does not fit the message is
 	// found by the §14.7 chain walk and ranks there, though its string is
 	// §14.2's.  0: rank by the text (c9Section).
@@ -121,7 +138,7 @@ type VerifyOptions struct {
 	Signer string
 
 	// HeadersOnly says the message has no body, as with the returned original
-	// in a DSN's text/rfc822-headers part (§16.3). Signatures and the
+	// in a DSN's text/rfc822-headers part (§16.4). Signatures and the
 	// chain are checked as usual; of the Message-Instance content check, only
 	// the topmost instance's header hash can be, so only that is.
 	HeadersOnly bool
@@ -143,7 +160,7 @@ var ErrNone = errors.New("none")
 
 // MaxFutureSkew and MaxSignatureAge are the §14.3 timestamp limits: a
 // signature made more than one day after delivery, or more than 14 days
-// before it, is not Validly Signed.
+// before it, is not Fully Verified.
 const (
 	MaxFutureSkew   = 86400
 	MaxSignatureAge = 1209600
@@ -176,7 +193,7 @@ func allASCIIDigits(v string) bool {
 // "+1".  At most three digits and 1..MaxChainNumber, so "01" and "001" are 1
 // (and nothing is converted that could overflow), and no more than
 // MaxChainLength.  The field is named by its own number as written (a
-// DKIM2-Signature by i=, a Message-Instance by m=, -07 §14.2): ident.
+// DKIM2-Signature by i=, a Message-Instance by m=, -08 §14.2): ident.
 func chainNumberError(field, tag, v, ident string, present bool) error {
 	if !present {
 		return nil
@@ -261,7 +278,9 @@ func validSequenceTag(raw string) bool {
 
 // KnownSigAlg reports whether alg is a signature algorithm this verifier
 // implements (§3, §10.9).  Algorithm names are tag values, so they are
-// case significant: "RSA-SHA256" is not "rsa-sha256".
+// case significant: "RSA-SHA256" is not "rsa-sha256".  -08's mldsa44 (§3.4)
+// is deferred (contract D8: Go keeps ML-DSA internal), so it, like the old
+// mldsa44-ed25519-sha512 composite, is an unknown algorithm.
 func KnownSigAlg(alg string) bool {
 	return alg == "rsa-sha256" || alg == "ed25519-sha256"
 }
@@ -365,31 +384,37 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		}
 	}
 	if v := tvl.get("s"); v != "" {
-		for _, part := range strings.Split(v, ",") {
-			// §10.9 sig-set: exactly three parts.  FWS is allowed around the
-			// comma and each colon (trimmed) and inside the base64 value
-			// (removed), never inside the selector or algorithm name: "rsa-
-			// sha256" is a syntax error, not a fold to undo.
-			fields := strings.Split(part, ":")
-			if len(fields) != 3 {
-				return nil, sigSyntaxError(sig.Sequence)
-			}
-			item := SigItem{Selector: trimFWS(fields[0]), Algorithm: trimFWS(fields[1])}
-			if !validSelector(item.Selector) || !validToken(item.Algorithm) {
-				return nil, sigSyntaxError(sig.Sequence)
-			}
-			value := stripB64WSP(fields[2])
-			// §3.5: an item whose algorithm is not implemented is ignored
-			// entirely, value included.  An implemented one MUST carry a
-			// non-empty base64 signature.
-			if KnownSigAlg(item.Algorithm) {
+		// -08 §10.9: "|" groups of "," lists of sig-sets; an empty member
+		// is a syntax error (contract D2).
+		groups, ok := splitGroups(v)
+		if !ok {
+			return nil, sigSyntaxError(sig.Sequence)
+		}
+		for g, parts := range groups {
+			for _, part := range parts {
+				// §10.9 sig-set: exactly three parts.  FWS is allowed around
+				// the separators and each colon (trimmed) and inside the
+				// base64 value (removed), never inside the selector or
+				// algorithm name: "rsa- sha256" is a syntax error, not a
+				// fold to undo.
+				fields := strings.Split(part, ":")
+				if len(fields) != 3 {
+					return nil, sigSyntaxError(sig.Sequence)
+				}
+				item := SigItem{Selector: trimFWS(fields[0]), Algorithm: trimFWS(fields[1]), Group: g}
+				if !validSelector(item.Selector) || !validToken(item.Algorithm) {
+					return nil, sigSyntaxError(sig.Sequence)
+				}
+				// Every item, whatever its algorithm, carries a non-empty
+				// base64 signature (contract D3).
+				value := stripB64WSP(fields[2])
 				b, err := base64.StdEncoding.DecodeString(value)
 				if value == "" || err != nil {
 					return nil, sigSyntaxError(sig.Sequence)
 				}
 				item.Value = b
+				sig.Sigs = append(sig.Sigs, item)
 			}
-			sig.Sigs = append(sig.Sigs, item)
 		}
 	}
 	if v := tvl.get("n"); v != "" {
@@ -447,12 +472,18 @@ func (sig *DKIM2Signature) String() string {
 	}
 	rt := strings.Join(rtParts, ",")
 
-	var sParts []string
-	for _, item := range sig.Sigs {
-		val := base64.StdEncoding.EncodeToString(item.Value)
-		sParts = append(sParts, item.Selector+":"+item.Algorithm+":"+val)
+	var sb strings.Builder
+	for i, item := range sig.Sigs {
+		switch {
+		case i == 0:
+		case item.Group != sig.Sigs[i-1].Group:
+			sb.WriteByte('|')
+		default:
+			sb.WriteByte(',')
+		}
+		sb.WriteString(item.Selector + ":" + item.Algorithm + ":" + base64.StdEncoding.EncodeToString(item.Value))
 	}
-	s := strings.Join(sParts, ",")
+	s := sb.String()
 
 	// §10.7: an nd= signature carries nd= instead of mf=/rt=.
 	var chain string
@@ -474,10 +505,10 @@ func (sig *DKIM2Signature) String() string {
 }
 
 // reSTag matches the s= tag at a tag boundary — the start of the header value
-// or after a ";" — case-insensitively and tolerating FWS around "=". This is
-// independent of tag order (s= may be first) and case (S=), per §8.
+// or after a ";" — tolerating FWS around "=". This is independent of tag
+// order (s= may be first); "S=" is an unknown tag, not s= (§8, D10).
 // Base64 cannot contain ";" so the value runs to the next ";".
-var reSTag = regexp.MustCompile(`(?i)(^|;)\s*s\s*=`)
+var reSTag = regexp.MustCompile(`(^|;)\s*s\s*=`)
 
 // incompleteForm takes the original raw header value (after the field name)
 // and returns it with each s= item's signature value replaced by empty string
@@ -504,18 +535,26 @@ func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
 		sval, suffix = rest[:semi], rest[semi:]
 	}
 
-	// Blank the 3rd (signature) field of each comma-separated item, dropping
-	// any folding within it.
-	var stripped []string
-	for _, item := range strings.Split(sval, ",") {
-		f := strings.SplitN(item, ":", 3)
-		if len(f) == 3 {
-			stripped = append(stripped, f[0]+":"+f[1]+":")
-		} else {
-			stripped = append(stripped, item)
+	// Blank the 3rd (signature) field of each item, dropping any folding
+	// within it; every selector, algorithm name and ":" "," "|" stays
+	// (-08 §12.8, contract D2).
+	var out strings.Builder
+	for gi, group := range strings.Split(sval, "|") {
+		if gi > 0 {
+			out.WriteByte('|')
+		}
+		for ii, item := range strings.Split(group, ",") {
+			if ii > 0 {
+				out.WriteByte(',')
+			}
+			if f := strings.SplitN(item, ":", 3); len(f) == 3 {
+				out.WriteString(f[0] + ":" + f[1] + ":")
+			} else {
+				out.WriteString(item)
+			}
 		}
 	}
-	return head + prefix + strings.Join(stripped, ",") + suffix
+	return head + prefix + out.String() + suffix
 }
 
 // buildIncomplete builds a fresh incomplete DKIM2-Signature header (s= values

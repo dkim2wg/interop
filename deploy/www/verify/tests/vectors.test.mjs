@@ -42,12 +42,27 @@ const files = readdirSync(testsDir).filter((f) => f.endsWith('.toml'));
 // (None at present: dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf).)
 const BROKEN_VECTORS = new Set([]);
 
-// Vectors whose expected state this repo's -07 contract settles differently.
-// Both are a reject; only the state differs. algorithm_only_future: a
-// signature with no sig-set in an implemented algorithm has no -07 string,
-// so (contract C6) it keeps its wording and becomes a PERMERROR, where the
-// vector (written for -06) expects FAIL.
-const CONTRACT_STATE = { algorithm_only_future: 'permerror' };
+// Vectors whose expected state this repo's -08 contract settles
+// differently. algorithm_only_future: a signature whose only sig-set names
+// an algorithm not implemented is PERMERROR "algorithm unknown" (-08 §14.6
+// step 4), where the vector (written for -06) expects FAIL.
+// algorithm_with_future: an unimplemented algorithm beside a good one in a
+// "," group makes the group PERMERROR (contract D3), where the vector
+// expects it skipped and a pass. domain_below_mailfrom: a Chain of Custody
+// failure, which -08 §14.4 (D5) makes FAIL.
+const CONTRACT_STATE = {
+  algorithm_only_future: 'permerror', algorithm_with_future: 'permerror', domain_below_mailfrom: 'fail',
+};
+
+// Turscar's draft-02 vectors that the -08 contract reverses (as Python's
+// test_turscar.py KNOWN_DIVERGENCE): D10 makes an uppercase tag name an
+// unknown tag, so it is no duplicate of its lowercase twin and never
+// stands in for it.
+const D10 = '-08 contract D10: an uppercase tag name is an unknown tag';
+const KNOWN_DIVERGENCE = {
+  ...Object.fromEntries(['d', 'f', 'i', 'm', 'mf', 'n', 'rt', 's', 't'].map((t) => [`d2_duplicate_${t}_tag`, D10])),
+  tags_mixed_case: D10,
+};
 
 for (const file of files) {
   const toml = parseToml(readFileSync(join(testsDir, file), 'utf8'));
@@ -55,6 +70,7 @@ for (const file of files) {
   const expected = CONTRACT_STATE[name] || (toml.ExpectedState || '').toLowerCase();
   if (!expected) continue;
 
+  if (KNOWN_DIVERGENCE[name]) { test.skip(`vector ${name}: ${KNOWN_DIVERGENCE[name]}`); continue; }
   const run = BROKEN_VECTORS.has(name) ? test.skip : test;
   run(`vector ${name} -> ${expected}`, async () => {
     let msg = toml.SignedMessage;

@@ -831,6 +831,42 @@ needed; Go and C also start the prefetch only after the structure check.
 Python also raised on a 4301-digit i=/m= or t= and on deeply nested
 Recipe JSON (the other four already returned a clean result).
 
+## 26. Draft -08 port (2026-10-28)
+
+C follows docs/superpowers/specs/2026-10-28-dkim2-spec-08-design.md (D1-D10,
+D13); it has no DSN generation or Provisionally Verified check, so D11/D12
+do not apply (TODO-dsn.md updated). Tests: tests/test_spec08.c, sharing
+tests/spec_harness.h with test_spec07.c.
+
+- **D1:** Auto-Submitted and VBR-Info are hashed.
+- **D10:** tagparse() keeps tag names as written and matches exactly, so an
+  uppercase tag is unknown. A Recipe key with an ASCII capital is invalid
+  JSON; duplicate keys compare exactly, found by sorting.
+- **D6:** dkim2_recipe_parse_ex() runs every whole-document check first
+  (UTF-8 and no NUL, no fraction/exponent, no lone surrogate, nothing after
+  the value, keys), then reports the first bad step as
+  `Recipe b[n]` / `h.<name>[n]` / `h.<name>` (`\xHH` escaping). cJSON_Parse
+  used to accept trailing text after the value; it no longer does.
+- **D2:** one list parser for h= and s=: a single copy of the tag that the
+  items point into, plus one index array sorted for duplicates, so an s= of
+  thousands of "|" groups costs three allocations and n log n compares;
+  more than 8 items is refused before any prefetch or lookup. Every item
+  value (any algorithm) must be padded base64. The signing input blanks
+  only the values, by walking the `s` tag-spec (exact name), not by
+  searching for "s=".
+- **D3/D4/D8:** dkim2_combine() is shared by signatures and hashes. An
+  absent key is now the item's PERMERROR, not skipped. mldsa44 is unknown.
+  A body hash of the wrong length is a mismatch (was C's own "bad body
+  hash" PERMERROR).
+- **D5:** timestamp, custody and From Authentic errors are FAIL.
+- **D7:** "is malformed" comes from the key-record parser (Ed25519 not 32
+  octets, RSA that does not load or is under 1024 bits).
+- **D9:** dkim2_verify_result_t.fully_verified; the CLI prints "not fully
+  verified" on such a PASS.
+
+util/negative-vectors.sh with VERIFIERS="c python perl": 339/339. Unit tests
+pass under ASan+UBSan. Turscar: 32/32 gated, 10 known divergences.
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused

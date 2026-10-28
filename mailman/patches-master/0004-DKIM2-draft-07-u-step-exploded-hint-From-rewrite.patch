@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Sun, 18 Oct 2026 18:20:21 -0800
-Subject: [PATCH 4/5] DKIM2: draft -07 ("u" step, exploded hint, From rewrite)
+Subject: [PATCH 4/6] DKIM2: draft -07 ("u" step, exploded hint, From rewrite)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

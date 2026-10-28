@@ -36,7 +36,11 @@ def _pass(msg, **kw):
         assert r.ok and r.status == "pass", (walk, r.errors)
 
 
-def _fails_with(msg, error, status="permerror", first=True, **kw):
+def _fails_with(msg, error, status=None, first=True, **kw):
+    # The state is the error's own (-08 moved timestamps, custody and From
+    # Authentic from PERMERROR to FAIL, contract D5).
+    if status is None:
+        status = error.split(":", 1)[0].lower()
     for walk in WALKS:
         r = verify(msg, walk=walk, **kw)
         assert not r.ok, (walk, r.message)
@@ -86,22 +90,29 @@ def _invalid_json(recipe_json: bytes):
     _fails_with(_bad_recipe(recipe_json), INVALID_JSON_2)
 
 
+def _invalid_step(recipe_json: bytes, path="b[0]"):
+    """-07 called every one of these "contains invalid JSON"; -08 (contract
+    D6) names the one bad step instead."""
+    _fails_with(_bad_recipe(recipe_json),
+                f"PERMERROR: Message-Instance m=2 Recipe {path} is invalid")
+
+
 def test_u3_u_with_nonzero_pad_bits():
-    _invalid_json(b'{"b":[{"u":["QR=="]}]}')
+    _invalid_step(b'{"b":[{"u":["QR=="]}]}')
 
 
 def test_u3_u_not_canonical_base64():
     for item in (b'"QQ"', b'"Q Q=="', b'"QQ=\\n="', b'"QQ==="', b'"****"'):
-        _invalid_json(b'{"b":[{"u":[' + item + b']}]}')
+        _invalid_step(b'{"b":[{"u":[' + item + b']}]}')
 
 
 def test_u4_bad_step_shapes():
     for steps in (b'{"b":["eA=="]}', b'{"c":[1,1],"d":["x"]}', b'{}'):
-        _invalid_json(b'{"b":[' + steps + b']}')
+        _invalid_step(b'{"b":[' + steps + b']}')
 
 
 def test_u5_u_decoding_to_cr():
-    _invalid_json(b'{"b":[{"u":["YQ1i"]}]}')
+    _invalid_step(b'{"b":[{"u":["YQ1i"]}]}')
 
 
 def test_u5_empty_h_and_neither_h_nor_b():
@@ -110,25 +121,30 @@ def test_u5_empty_h_and_neither_h_nor_b():
 
 
 def test_d_with_lone_surrogate():
+    # -08: a lone surrogate makes the whole document invalid JSON (it is
+    # not a Unicode string, so the text does not parse), not one bad step.
     _invalid_json(b'{"b":[{"d":["\\udc80"]}]}')
 
 
 def test_d_with_cr():
-    _invalid_json(b'{"b":[{"d":["a\\rb"]}]}')
+    _invalid_step(b'{"b":[{"d":["a\\rb"]}]}')
 
 
-# --- K: JSON keys match case-insensitively ----------------------------------
+# --- K: JSON keys -------------------------------------------------------------
+# -07 decision 2 matched keys case-insensitively; -08 (contract D10, Bron and
+# Richard 2026-10-26) reverses it: a key that is not lower case is invalid
+# JSON.  So K1's uppercase keys now fail, and K2's case-twins fail too (the
+# uppercase one is invalid on its own).
 
-def test_k1_uppercase_keys_verify_like_lowercase():
-    for rj in (b'{"H":{"Subject":[{"C":[1,1]}]}}',
-               b'{"h":{"subject":[{"c":[1,1]}]}}'):
-        _pass(_to_list(add_mi(_hop1(), recipe_json=rj)))
+def test_k1_uppercase_keys_are_invalid_json():
+    _pass(_to_list(add_mi(_hop1(), recipe_json=b'{"h":{"subject":[{"c":[1,1]}]}}')))
+    _invalid_json(b'{"H":{"Subject":[{"C":[1,1]}]}}')
 
 
-def test_k1_uppercase_literal_step():
+def test_k1_uppercase_literal_step_is_invalid_json():
     msg = add_mi(_hop1(), replace_header(b"Subject", b"Hi"),
-                 recipe_json=b'{"H":{"Subject":[{"D":[" hello"]}]}}')
-    _pass(_to_list(msg))
+                 recipe_json=b'{"h":{"subject":[{"D":[" hello"]}]}}')
+    _fails_with(_to_list(msg, skip_upstream_check=True), INVALID_JSON_2)
 
 
 def test_k2_duplicate_keys_ignoring_case():
@@ -211,7 +227,7 @@ def test_c1_postfix_style_rt():
 
 def test_c2_null_mf_wrong_domain():
     hop2 = sign(_hop1(), "other.net", "<>", ["a@example.com"])
-    _fails_with(hop2, "PERMERROR: DKIM2-Signature i=2 d= does not match "
+    _fails_with(hop2, "FAIL: DKIM2-Signature i=2 d= does not match "
                       "the rt= of i=1")
 
 
@@ -225,33 +241,33 @@ def test_c3_nd_direction():
     _pass(_nd_chain("x@mail.example.org", "example.org", "fwd.example.net"))
     _fails_with(_nd_chain("x@example.org", "mail.example.org",
                           "fwd.example.net", skip_upstream_check=True),
-                "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1")
+                "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1")
 
 
 def test_c4_nd_mismatch():
     _fails_with(_nd_chain("x@mail.example.org", "example.org", "other.example",
                           skip_upstream_check=True),
-                "PERMERROR: DKIM2-Signature i=2 nd= does not match")
+                "FAIL: DKIM2-Signature i=2 nd= does not match")
 
 
 def test_c5_domain_literals_never_match():
     hop1 = _hop1(rt=("x@[192.0.2.1]",))
     hop2 = sign(hop1, "example.org", "y@[192.0.2.1]", ["r@example.net"])
-    _fails_with(hop2, "PERMERROR: DKIM2-Signature i=2 mf= does not match "
+    _fails_with(hop2, "FAIL: DKIM2-Signature i=2 mf= does not match "
                       "the rt= of i=1", first=False)
-    _fails_with(hop2, "PERMERROR: DKIM2-Signature i=2 MAIL FROM and d= do "
+    _fails_with(hop2, "FAIL: DKIM2-Signature i=2 MAIL FROM and d= do "
                       "not match", first=False)
 
 
 def test_c6_mf_vs_d():
     hop1 = _hop1(mailfrom="a@example.net")
-    _fails_with(hop1, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do "
+    _fails_with(hop1, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do "
                       "not match")
 
 
 def test_top_nd_inbound_and_gate():
     hop1 = _hop1(next_domain="fwd.example.net")
-    _fails_with(hop1, "PERMERROR: DKIM2-Signature i=1 unexpected nd= tag")
+    _fails_with(hop1, "FAIL: DKIM2-Signature i=1 unexpected nd= tag")
     # The gate (outbound) lets the domain nd= names sign over it.
     hop2 = sign(hop1, "fwd.example.net", "b@fwd.example.net", ["r@example.net"])
     _pass(hop2)
@@ -263,7 +279,7 @@ def test_a1_from_authentic():
     for frm in ("A <a@example.com>", "a@sub.example.com",
                 "=?utf-8?q?Caf=C3=A9?=\r\n <a@example.com>"):
         _pass(_hop1(frm))
-    not_auth = "PERMERROR: DKIM2-Signature i=1 matching From is not authentic"
+    not_auth = "FAIL: DKIM2-Signature i=1 matching From is not authentic"
     _fails_with(_hop1(d="example.net", mailfrom="a@example.net",
                       skip_from_check=True), not_auth)
     for frm in ("a@example.com, b@example.com", "a@[192.0.2.1]",
@@ -286,7 +302,7 @@ def test_a2_from_changed_by_list():
     _pass(_to_list(msg))
     bad = _to_list(_list_rewrites_from(b"x@elsewhere.net"),
                    skip_from_check=True)
-    _fails_with(bad, "PERMERROR: DKIM2-Signature i=2 matching From is not "
+    _fails_with(bad, "FAIL: DKIM2-Signature i=2 matching From is not "
                      "authentic")
 
 
@@ -323,7 +339,7 @@ def test_a5_from_at_state_m_of_i1_is_checked():
                  replace_header(b"Subject", b"[list] hello"))
     _fails_with(sign(msg, "example.org", "list@lists.example.org",
                      skip_from_check=True),
-                "PERMERROR: DKIM2-Signature i=1 matching From is not authentic")
+                "FAIL: DKIM2-Signature i=1 matching From is not authentic")
 
 
 def test_a3_signer_refuses_unauthentic_from():
@@ -349,10 +365,10 @@ def test_t1_future_limit():
     now = int(time.time())
     _pass(_hop1(timestamp=now + 7200), skip_timestamp_check=False)
     _fails_with(_hop1(timestamp=now + 172800),
-                "PERMERROR: DKIM2-Signature i=1 signature is from the future",
+                "FAIL: DKIM2-Signature i=1 signature is from the future",
                 skip_timestamp_check=False)
     _fails_with(_hop1(timestamp=now - 15 * 86400),
-                "PERMERROR: DKIM2-Signature i=1 signature expired",
+                "FAIL: DKIM2-Signature i=1 signature expired",
                 skip_timestamp_check=False)
 
 
@@ -399,20 +415,20 @@ def test_c9_tampered_from_is_the_hash_fail():
 
 def test_c9_expired_before_custody():
     msg = _hop1(mailfrom="a@example.net", timestamp=int(time.time()) - 15 * 86400)
-    _fails_with(msg, "PERMERROR: DKIM2-Signature i=1 signature expired",
+    _fails_with(msg, "FAIL: DKIM2-Signature i=1 signature expired",
                 skip_timestamp_check=False)
 
 
 def test_c9_expired_before_unexpected_nd():
     msg = _hop1(next_domain="fwd.example.net",
                 timestamp=int(time.time()) - 15 * 86400)
-    _fails_with(msg, "PERMERROR: DKIM2-Signature i=1 signature expired",
+    _fails_with(msg, "FAIL: DKIM2-Signature i=1 signature expired",
                 skip_timestamp_check=False)
 
 
 def test_c9_custody_before_signature():
     msg = _corrupt_sig(_hop1(mailfrom="a@example.net"))
-    _fails_with(msg, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match")
+    _fails_with(msg, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match")
 
 
 def test_c9_hash_before_signature():

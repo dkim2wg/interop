@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Sun, 18 Oct 2026 21:20:04 -0800
-Subject: [PATCH 5/5] DKIM2: an unsigned post leaves with one m=1, Recipe back
+Subject: [PATCH 5/6] DKIM2: an unsigned post leaves with one m=1, Recipe back
  to the original
 
 A post that arrived without a DKIM2-Signature is no longer stripped of

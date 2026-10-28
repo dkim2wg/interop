@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DKIM2 DSN handling (draft-ietf-dkim-dkim2-spec-07 §16, RFC 6522).
+"""DKIM2 DSN handling (draft-ietf-dkim-dkim2-spec-08 §16, RFC 6522).
 
 When a Forwarder receives a DKIM2-signed Delivery Status Notification for a
 message it forwarded, it may propagate that DSN back towards the original
@@ -7,11 +7,11 @@ sender. The propagated DSN is a *new* message: the Forwarder rebuilds the
 enclosed original to the state it was in when forwarded outward (undoing its
 own Message-Instance modification and removing the DKIM2-Signature and
 Message-Instance it added), then re-signs the whole DSN with MAIL FROM <> so
-that it carries exactly one Message-Instance and one DKIM2-Signature (§16.2).
+that it carries exactly one Message-Instance and one DKIM2-Signature (§16.3).
 
 Before propagating, a Forwarder should authenticate the DSN: the returned
 original must be one it sent and unaltered, checked from the header fields
-alone when that is all the DSN carries (§16.3).
+alone when that is all the DSN carries (§16.4).
 """
 
 import base64
@@ -82,7 +82,7 @@ def _strip_top_mi(raw: bytes) -> bytes:
     Used with _strip_top_sig when the Forwarder's whole hop comes off but undo
     could not run: the instance goes with the signature that covered it, or the
     returned message carries an instance above its own top signature, which is
-    the -07 §14.2 "is not signed" PERMERROR upstream.
+    the -08 §14.2 "is not signed" PERMERROR upstream.
     """
     headers, body = dkim2sign.parse_message(raw)
     mi_idx = [i for i, h in enumerate(headers)
@@ -145,7 +145,7 @@ def _top_sig_tags(raw: bytes) -> dict | None:
     """Return the decoded tags of the highest-i DKIM2-Signature in raw.
 
     {"i": int, "d": str, "mf": str|None, "rt": [str]} -- enough for a caller to
-    apply -07 §16.3 point 2 and decide whether the signature is one of
+    apply -08 §16.4 point 2 and decide whether the signature is one of
     its own. None when the message carries no DKIM2-Signature.
     """
     headers, _ = dkim2sign.parse_message(raw)
@@ -170,7 +170,7 @@ def _top_sig_tags(raw: bytes) -> dict | None:
 def _origin_sig_tags(raw: bytes) -> dict | None:
     """Like _top_sig_tags but for the LOWEST-i DKIM2-Signature.
 
-    For a DSN that is the signature of the system that generated it: §16.2
+    For a DSN that is the signature of the system that generated it: §16.3
     makes a DSN a new message with exactly one signature, and if that DSN is
     itself forwarded onwards, i=1 is still its originator.
     """
@@ -187,7 +187,7 @@ def _origin_sig_tags(raw: bytes) -> dict | None:
 
 
 def _check_alignment(dsn_sig: dict | None, orig_top: dict | None):
-    """-07 §16.3 point 1: "The DSN's DKIM2-Signature will have a signing
+    """-08 §16.4 point 1: "The DSN's DKIM2-Signature will have a signing
     domain that is aligned with the recipient of the message that is being
     returned. The recipient's address is located in the rt= tag of the last
     (highest i= tag) DKIM2-Signature in the returned message."
@@ -226,7 +226,7 @@ def _check_alignment(dsn_sig: dict | None, orig_top: dict | None):
 
 def authenticate(raw: bytes, dns_data: dict,
                  skip_timestamp_check: bool = False) -> dict:
-    """Authenticate an inbound DSN before propagating it (-07 §16.3).
+    """Authenticate an inbound DSN before propagating it (-08 §16.4).
 
       * the returned original's DKIM2 chain must verify, from its headers
         alone when the DSN carries only headers (point 3);
@@ -237,7 +237,7 @@ def authenticate(raw: bytes, dns_data: dict,
         mf=) is left to the caller (point 2), since only it knows its own
         domains; `top` is reported for exactly that.
 
-    A DSN that carries no DKIM2-Signature at all is not what §16.3 is about
+    A DSN that carries no DKIM2-Signature at all is not what §16.4 is about
     ("When a system receives a DKIM2 signed DSN"), so it is reported as
     dsn_status 'none' with alignment 'none' rather than failed.
 
@@ -294,7 +294,7 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
               skip_timestamp_check: bool = False) -> dict:
     """Propagate a received DSN upstream. Returns {raw, upstream_mailfrom}.
 
-    §16.3 is not optional here: "If the verification fails then the DSN MUST
+    §16.4 is not optional here: "If the verification fails then the DSN MUST
     NOT be propagated any further", so the DSN is authenticated first and a
     ValueError raised rather than re-signing one that could not be
     authenticated. That needs dns_data; a caller that has authenticated
@@ -304,7 +304,7 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
     if not skip_authentication:
         if dns_data is None:
             raise ValueError(
-                "propagate: need dns_data to authenticate the DSN (§16.3), or "
+                "propagate: need dns_data to authenticate the DSN (§16.4), or "
                 "skip_authentication if it has been authenticated already")
         auth = authenticate(raw, dns_data,
                             skip_timestamp_check=skip_timestamp_check)
@@ -312,14 +312,14 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
             why = (auth["alignment_detail"] if auth["alignment"] == "fail"
                    else auth["message"])
             raise ValueError(
-                f"propagate: DSN did not authenticate (§16.3), not propagating: {why}")
+                f"propagate: DSN did not authenticate (§16.4), not propagating: {why}")
 
     dsn, parts, orig_idx = _parse_report(raw)
 
     headers_only = parts[orig_idx].get_content_type() == "text/rfc822-headers"
     embedded = _embedded_bytes(parts[orig_idx])
 
-    # -07 §16: no DSN for a message whose MAIL FROM was null.  The returned
+    # -08 §16: no DSN for a message whose MAIL FROM was null.  The returned
     # original's top signature is the Forwarder's own hop: if that went out
     # with mf=<>, nobody asked for a DSN.
     top_mf, _ = _highest_sig_mailfrom(embedded)
@@ -333,7 +333,7 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
     #    the Forwarder added. Only when there is no MI to undo do we strip the
     #    Forwarder's signature by hand.
     #
-    #    Only a body the upstream declared unrecoverable (§16.2's null
+    #    Only a body the upstream declared unrecoverable (§16.3's null
     #    Recipe) falls back to headers-only. Any OTHER reconstruction failure
     #    means we cannot rebuild what we forwarded, so there is nothing
     #    truthful to return and the error propagates to the caller rather than
@@ -356,9 +356,21 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
     if not upstream:
         raise ValueError("no remaining DKIM2-Signature to derive upstream MAIL FROM")
     if upstream.strip() == "<>":
-        # -07 §16: the upstream hop sent with a null MAIL FROM.
+        # -08 §16: the upstream hop sent with a null MAIL FROM.
         raise ValueError("propagate: the upstream MAIL FROM is <>; no DSN is "
                          "sent for it (§16)")
+
+    # -08 §7.1 item 4, §16.2 (contract D11): the DSN's d= MUST relaxed-match
+    # a recipient in the rt= of the reported message's highest signature --
+    # the hop that delivered the message to us -- with the rt= domain as
+    # Parameter1.  If our signing domain cannot, send no DKIM2 DSN.
+    top = _top_sig_tags(embedded) or {}
+    rt_domains = [d for d in (addr_domain(r) for r in top.get("rt", []) if r)
+                  if d is not None]
+    if not any(relaxed_match(rd, signing_domain(domain)) for rd in rt_domains):
+        raise ValueError(
+            f"propagate: d={domain} does not relaxed-match any rt= of the "
+            f"returned message's top signature; no DSN is sent (§16.2)")
 
     # 4. Rebuild the embedded part (headers-only fallback strips the body).
     new_inner = email.message_from_bytes(embedded, policy=policy.compat32)
@@ -376,14 +388,14 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
     # 5/6. Re-sign the whole DSN as a NEW message: MAIL FROM <>, one MI, one
     #      sig. So the inbound DSN's OWN instance and signature go: they belong
     #      to the DSN we received, which has already been authenticated
-    #      (§16.3) and is not being continued. Leaving them makes the new
+    #      (§16.4) and is not being continued. Leaving them makes the new
     #      instance m=2 on a chain whose i=1 is somebody else's.
     del dsn["Message-Instance"]
     del dsn["DKIM2-Signature"]
 
     # The propagated DSN is a new message from the Forwarder (its signature
     # is i=1), so its From must be Authentic for the Forwarder's domain
-    # (-07 §11, §12.4).  The reporting system's From is not, unless it is
+    # (-08 §11, §12.4).  The reporting system's From is not, unless it is
     # in that domain: replace it with the Forwarder's own.
     from_fields = [f"From: {v}".encode("utf-8", "surrogateescape")
                    for v in dsn.get_all("From", [])]
@@ -411,10 +423,10 @@ def main():
     ap.add_argument("--selector")
     ap.add_argument("--key")
     ap.add_argument("--authenticate", action="store_true",
-                    help="§16.3: check the returned original instead of propagating")
+                    help="§16.4: check the returned original instead of propagating")
     ap.add_argument("--dns", help="path to dns.json key file (required to authenticate)")
     ap.add_argument("--skip-authentication", action="store_true",
-                    help="propagate without the §16.3 check (already done by the caller)")
+                    help="propagate without the §16.4 check (already done by the caller)")
     ap.add_argument("--ignore-timestamps", action="store_true",
                     help="disable the §14.3 timestamp (14-day/future) check")
     args = ap.parse_args()
@@ -423,7 +435,7 @@ def main():
         if not args.dns:
             ap.error("--authenticate requires --dns")
         # Report the top signature's d= and mf= so the caller can apply
-        # §16.3 point 2 -- deciding whether that signature is one of its own
+        # §16.4 point 2 -- deciding whether that signature is one of its own
         # -- which only the system receiving the DSN can do.
         auth = authenticate(sys.stdin.buffer.read(),
                             dkim2verify.load_dns_json(args.dns),
@@ -447,7 +459,7 @@ def main():
         if not getattr(args, req):
             ap.error(f"--{req.replace('_', '-')} is required when propagating")
     if not args.dns and not args.skip_authentication:
-        ap.error("propagating requires --dns to authenticate the DSN (§16.3), "
+        ap.error("propagating requires --dns to authenticate the DSN (§16.4), "
                  "or --skip-authentication")
     out = propagate(sys.stdin.buffer.read(), args.forwarder_domain,
                     args.key, args.selector, args.domain,

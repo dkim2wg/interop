@@ -52,7 +52,7 @@ static int buf_append(char **buf, size_t *pos, size_t *cap,
 
 /* A "c" step is exactly two integers with 1 <= start <= end <= n_items, and
    its start MUST be greater than the end of every preceding "c" step in the
-   same list (-07 §5.1; the same ascending/non-overlapping rule is applied
+   same list (-08 §5.1; the same ascending/non-overlapping rule is applied
    to body lists -- WG extension, 2026-10). `prev_end` is the end of the
    previous "c" step, 0 when there is none.
 
@@ -84,7 +84,7 @@ static int is_b64_char(char ch) {
 }
 
 /* Strict UTF-8 (RFC 3629): no overlong forms, no surrogates, nothing above
-   U+10FFFF. JSON strings are UTF-8, and -07 §5.1/§5.2 make "u" the step
+   U+10FFFF. JSON strings are UTF-8, and -08 §5.1/§5.2 make "u" the step
    for anything else. */
 static int utf8_valid(const unsigned char *s, size_t n) {
     for (size_t i = 0; i < n; ) {
@@ -108,7 +108,7 @@ static int utf8_valid(const unsigned char *s, size_t n) {
     return 1;
 }
 
-/* The -07 §5 "base64-line" patterns: ^[A-Za-z0-9+/]*={0,2}$, ^(.{4})*$
+/* The -08 §5 "base64-line" patterns: ^[A-Za-z0-9+/]*={0,2}$, ^(.{4})*$
    and ^([^=]*|.*[AQgw]==|.*[AEIMQUYcgkosw048]=)$ -- the standard alphabet,
    padded to a multiple of four, no whitespace, and zero pad bits ("QR==" is
    not canonical: its pad bits are not zero). */
@@ -123,7 +123,7 @@ static int b64_canonical(const char *s) {
     return 1;
 }
 
-/* A "u" item (-07 §5.1/§5.2) is a JSON string holding the literal's raw
+/* A "u" item (-08 §5.1/§5.2) is a JSON string holding the literal's raw
    octets as canonical base64 (b64_canonical). It is applied exactly like a
    "d" item once decoded. Returns the malloc'd octets and their length, or
    NULL for anything that is not canonical base64 or whose decoded octets
@@ -147,16 +147,16 @@ static unsigned char *decode_u_item(const cJSON *item, size_t *len_out) {
     return out;
 }
 
-/* Classify one Recipe step (-07 §5.1/§5.2: "a JSON object with exactly one
+/* Classify one Recipe step (-08 §5.1/§5.2: "a JSON object with exactly one
    key"): 'c', 'd' or 'u', with *arr the "c" value or the literal array; -1
    for anything else -- not an object, no key, two keys, any other key, a
-   "d"/"u" that is not an array. The key is matched without regard to case
-   (dkim2_recipe_parse() has lowercased it anyway). */
+   "d"/"u" that is not an array. dkim2_recipe_parse() has already refused
+   any key that is not lowercase. */
 static int step_kind(const cJSON *step, const cJSON **arr) {
     if (!cJSON_IsObject(step)) return -1;
     const cJSON *only = step->child;
     if (!only || only->next || !only->string || strlen(only->string) != 1) return -1;
-    int k = tolower((unsigned char)only->string[0]);
+    int k = (unsigned char)only->string[0];
     if (k != 'c' && k != 'd' && k != 'u') return -1;
     if (k != 'c' && !cJSON_IsArray(only)) return -1;
     *arr = only;
@@ -195,64 +195,177 @@ static int walk_literals(const cJSON *arr, int kind, int reject_nul,
     return 0;
 }
 
-/* Non-zero if any object in the tree names a key twice. Keys are compared
-   without regard to case (decision 2 of the -07 contract: emit lowercase,
-   accept any case, so "Subject" and "subject" in one object are the same
-   key), after cJSON's unescaping ("subj\u0065ct" is "subject"). */
-static int has_duplicate_key(const cJSON *node) {
+/* Non-zero if a key holds an ASCII capital (-08 §5, contract D10: keys
+   are strictly lowercase; a non-ASCII letter is not judged), after cJSON's
+   unescaping ("S" is "S"). */
+static int key_not_lowercase(const char *k) {
+    for (; *k; k++)
+        if (*k >= 'A' && *k <= 'Z') return 1;
+    return 0;
+}
+
+static int cmp_key(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+/* Non-zero if any object in the tree names a key twice (compared exactly,
+   after unescaping: "subject" is "subject") or a key that is not
+   lowercase. An object's keys are sorted to find a repeat, so a Recipe
+   with thousands of keys costs n log n, not n squared. -1 on OOM. */
+static int bad_keys(const cJSON *node) {
+    int n = 0;
     for (const cJSON *c = node ? node->child : NULL; c; c = c->next) {
-        if (cJSON_IsObject(node) && c->string)
-            for (const cJSON *d = c->next; d; d = d->next)
-                if (d->string && strcasecmp(c->string, d->string) == 0) return 1;
-        if (has_duplicate_key(c)) return 1;
+        if (cJSON_IsObject(node) && c->string) {
+            if (key_not_lowercase(c->string)) return 1;
+            n++;
+        }
+        int r = bad_keys(c);
+        if (r) return r;
+    }
+    if (n < 2) return 0;
+    const char **keys = malloc((size_t)n * sizeof *keys);
+    if (!keys) return -1;
+    int k = 0;
+    for (const cJSON *c = node->child; c; c = c->next)
+        if (c->string) keys[k++] = c->string;
+    qsort(keys, (size_t)k, sizeof *keys, cmp_key);
+    int dup = 0;
+    for (int i = 1; i < k && !dup; i++)
+        dup = strcmp(keys[i - 1], keys[i]) == 0;
+    free(keys);
+    return dup;
+}
+
+/* The whole-document checks that are judged from the text (contract D6,
+   D10): the octets are UTF-8 (RFC 3629, so no encoded surrogate) with no
+   NUL; no JSON number has a fraction or an exponent, wherever it is (JSON
+   libraries disagree on whether 1e0 is an integer); and no "\u" escape is
+   an unpaired surrogate. Anything else wrong with the text is cJSON's to
+   find. 0, or -1. */
+static int text_ok(const char *s, size_t len) {
+    if (memchr(s, '\0', len) || !utf8_valid((const unsigned char *)s, len)) return -1;
+    for (size_t i = 0; i < len; ) {
+        char c = s[i];
+        if (c == '"') {
+            for (i++; i < len && s[i] != '"'; ) {
+                if (s[i] != '\\') { i++; continue; }
+                if (i + 1 < len && s[i + 1] == 'u' && i + 6 <= len) {
+                    unsigned v = 0;
+                    if (sscanf(s + i + 2, "%4x", &v) != 1) return -1;
+                    i += 6;
+                    if (v >= 0xDC00 && v <= 0xDFFF) return -1;     /* lone low */
+                    if (v >= 0xD800 && v <= 0xDBFF) {              /* needs a low */
+                        unsigned w = 0;
+                        if (i + 6 > len || s[i] != '\\' || s[i + 1] != 'u' ||
+                            sscanf(s + i + 2, "%4x", &w) != 1 || w < 0xDC00 || w > 0xDFFF)
+                            return -1;
+                        i += 6;
+                    }
+                } else {
+                    i += 2;
+                }
+            }
+            i++;
+        } else if (c == '-' || (c >= '0' && c <= '9')) {
+            for (; i < len && (s[i] == '-' || s[i] == '+' || s[i] == '.' ||
+                               s[i] == 'e' || s[i] == 'E' || (s[i] >= '0' && s[i] <= '9')); i++)
+                if (s[i] == '.' || s[i] == 'e' || s[i] == 'E') return -1;
+        } else {
+            i++;
+        }
     }
     return 0;
 }
 
-/* Lowercase (ASCII) every object key, so every lookup below -- the
-   top-level "h"/"b", header names, step keys -- matches without regard to
-   case. */
-static void lowercase_keys(cJSON *node) {
-    for (cJSON *c = node ? node->child : NULL; c; c = c->next) {
-        if (cJSON_IsObject(node) && c->string && !(c->type & cJSON_StringIsConst))
-            for (char *p = c->string; *p; p++) *p = (char)tolower((unsigned char)*p);
-        lowercase_keys(c);
+/* The index of the first step of a list (a "b" array or one header
+   field's array) that the -08 §5 schema or §5.1/§5.2 rejects, as the
+   appliers read it but with no bound against any message; -1 when every
+   step is good. reject_nul: a header value's "u" literal may not hold a
+   NUL. */
+static int first_bad_step(const cJSON *list, int reject_nul) {
+    int prev_end = 0, idx = 0;
+    const cJSON *step;
+    cJSON_ArrayForEach(step, list) {
+        const cJSON *arr;
+        int kind = step_kind(step, &arr);
+        if (kind == 'c') {
+            int st, en;
+            if (copy_range(arr, -1, prev_end, &st, &en) != 0) return idx;
+            prev_end = en;
+        } else if (kind < 0 || walk_literals(arr, kind, reject_nul, NULL, NULL) != 0) {
+            return idx;
+        }
+        idx++;
     }
+    return -1;
 }
 
-static int validate_list(const cJSON *list, int reject_nul);
+/* path: "h.<name>" then, with idx >= 0, "[<idx>]"; every octet of the
+   name outside 0x21-0x7E written as \xHH (contract D6). */
+static void header_path(char *path, size_t pathsz, const char *name, int idx) {
+    size_t n = 0;
+#define PUT(...) do { if (n < pathsz) { int w_ = snprintf(path + n, pathsz - n, __VA_ARGS__); \
+                      if (w_ > 0) n += (size_t)w_; } } while (0)
+    PUT("h.");
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
+        if (*p >= 0x21 && *p <= 0x7E) PUT("%c", *p);
+        else PUT("\\x%02X", *p);
+    }
+    if (idx >= 0) PUT("[%d]", idx);
+#undef PUT
+}
 
-/* The -07 §5 schema: an object with "h" and/or "b"; "h" an object with at
-   least one property, each a list of steps; "b" null or a list of steps.
-   Every step and literal is checked as the appliers read it (copy ranges
-   ascending, literals well-formed), without a bound against any message.
-   Unknown top-level keys are ignored. */
-static int validate_schema(const cJSON *root) {
-    if (!cJSON_IsObject(root)) return -1;
+/* The -08 §5 schema (contract D6). Whole document: an object with "h"
+   and/or "b"; "h" an object with at least one property; "b" an array or
+   null (unknown top-level keys are ignored). Then each step: "b" first,
+   then the "h" fields in byte order of their names, each a list of steps.
+   0; 1 for a whole-document fault; 2 for a bad step, with its path. */
+static int validate_schema(const cJSON *root, char *path, size_t pathsz) {
+    if (!cJSON_IsObject(root)) return 1;
     const cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
     const cJSON *b = cJSON_GetObjectItemCaseSensitive(root, "b");
-    if (!h && !b) return -1;
-    if (h) {
-        if (!cJSON_IsObject(h) || !h->child) return -1;
-        for (const cJSON *f = h->child; f; f = f->next)
-            if (validate_list(f, 1) != 0) return -1;
+    if (!h && !b) return 1;
+    if (h && (!cJSON_IsObject(h) || !h->child)) return 1;
+    if (b && !cJSON_IsNull(b) && !cJSON_IsArray(b)) return 1;
+
+    int bad = b && cJSON_IsArray(b) ? first_bad_step(b, 0) : -1;
+    if (bad >= 0) {
+        if (path && pathsz) snprintf(path, pathsz, "b[%d]", bad);
+        return 2;
     }
-    if (b && !cJSON_IsNull(b) && validate_list(b, 0) != 0) return -1;
+    const cJSON *first = NULL;
+    int first_idx = -1;
+    for (const cJSON *f = h ? h->child : NULL; f; f = f->next) {
+        if (!f->string) return 1;
+        if (first && strcmp(f->string, first->string) > 0) continue;   /* a later name */
+        int idx = cJSON_IsArray(f) ? first_bad_step(f, 1) : -2;
+        if (idx == -1) continue;
+        first = f;
+        first_idx = idx;
+    }
+    if (first) {
+        if (path && pathsz) header_path(path, pathsz, first->string, first_idx >= 0 ? first_idx : -1);
+        return 2;
+    }
     return 0;
 }
 
-cJSON *dkim2_recipe_parse(const char *r_json) {
-    cJSON *root = cJSON_Parse(r_json);
-    if (root && has_duplicate_key(root)) {
-        cJSON_Delete(root);
-        return NULL;
-    }
-    lowercase_keys(root);
-    if (root && validate_schema(root) != 0) {
+cJSON *dkim2_recipe_parse_ex(const char *r_json, size_t len, char *path, size_t pathsz) {
+    if (path && pathsz) path[0] = '\0';
+    if (text_ok(r_json, len) != 0) return NULL;
+    /* len + 1: cJSON wants the terminating NUL inside the length to know
+       that nothing follows the value. */
+    cJSON *root = cJSON_ParseWithLengthOpts(r_json, len + 1, NULL, 1);
+    if (!root) return NULL;
+    if (bad_keys(root) || validate_schema(root, path, pathsz) != 0) {
         cJSON_Delete(root);
         return NULL;
     }
     return root;
+}
+
+cJSON *dkim2_recipe_parse(const char *r_json) {
+    return dkim2_recipe_parse_ex(r_json, strlen(r_json), NULL, 0);
 }
 
 void dkim2_recipe_free(cJSON *root) { cJSON_Delete(root); }
@@ -284,14 +397,6 @@ static int ops_literal(void *ctx, const unsigned char *s, size_t len) {
 void dkim2_recipe_ops_free(dkim2_recipe_op_t *ops, int n_ops) {
     for (int i = 0; i < n_ops; i++) free(ops[i].s);
     free(ops);
-}
-
-static int validate_list(const cJSON *list, int reject_nul) {
-    dkim2_recipe_op_t *ops;
-    int n_ops;
-    if (!cJSON_IsArray(list) || dkim2_recipe_ops(list, reject_nul, &ops, &n_ops) != 0) return -1;
-    dkim2_recipe_ops_free(ops, n_ops);
-    return 0;
 }
 
 int dkim2_recipe_ops(const cJSON *list, int reject_nul,
@@ -482,7 +587,7 @@ char **dkim2_apply_header_recipe(const char *r_json,
 
     cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
     if (h && cJSON_IsNull(h)) {
-        /* -07 §5.1: a null header Recipe is no longer permitted. */
+        /* -08 §5.1: a null header Recipe is no longer permitted. */
         cJSON_Delete(root);
         return NULL;
     }
@@ -589,7 +694,7 @@ fail:
 /* Append one literal (a body line or a header value, without its line
    terminator) to `steps`, coalescing with the previous step when that is a
    literal step of the same kind. A literal that is valid UTF-8 is a "d"
-   item (-07 §5: "u" SHOULD NOT be used when "d" would suffice); anything
+   item (-08 §5: "u" SHOULD NOT be used when "d" would suffice); anything
    else -- and a literal holding a NUL, which a cJSON string cannot carry --
    is a "u" item, the canonical base64 of the raw octets. `*cur` is the open
    literal array (NULL after a "c" step), `*cur_is_u` its kind. */
@@ -950,7 +1055,7 @@ char *dkim2_gen_header_recipe(const char *field_name,
                 val++;
                 while (*val == ' ') val++;
                 /* A literal is one unfolded value: drop every CR/LF (the
-                   -07 §6.2 header hash unfolds and collapses WSP, so this is
+                   -08 §6.2 header hash unfolds and collapses WSP, so this is
                    hash-neutral) and the terminator with them. */
                 size_t vl = strlen(val);
                 char *s = malloc(vl + 1);

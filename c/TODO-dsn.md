@@ -1,8 +1,8 @@
-# TODO: DSN handling (-07 §16) — not yet implemented in C
+# TODO: DSN handling (-08 §16) — not yet implemented in C
 
 The C reference implementation does **not** implement DSN propagation
 (`Mail::DKIM2::DSN->propagate` / `dkim2dsn.py` / `dkim2.Propagate` in the Perl,
-Python and Go trees) or the -07 §16.3 authentication of an inbound DSN
+Python and Go trees) or the -08 §16.4 authentication of an inbound DSN
 (`Mail::DKIM2::DSN->authenticate` / `dkim2dsn.authenticate` / `dkim2.Authenticate`).
 
 Reason: the C tree has no MIME multipart parser, so handling a
@@ -21,7 +21,7 @@ To implement later, build on the existing primitives:
 plus a minimal `multipart/report` boundary splitter to extract and replace the
 embedded `message/rfc822` part.
 
--07 §16.3 additionally needs:
+-08 §16.4 additionally needs:
 
 - a headers-only verify mode: with the returned original echoed back as
   `text/rfc822-headers` there is no body, so of the Message-Instance content
@@ -29,17 +29,19 @@ embedded `message/rfc822` part.
   spell this `headers_only` / `HeadersOnly` on the verifier;
 - a second verify pass over the DSN itself, since point 1 compares the DSN's
   own `d=` against the returned message's top `rt=` and an unverified `d=` is
-  whatever the sender typed. The comparison is the -07 §7 relaxed match with `rt=`
+  whatever the sender typed. The comparison is the -08 §7 relaxed match with `rt=`
   as the address domain (`d=` may be a parent of the delivery domain, never a
   child); see INTEROP-NOTES §19, as the spec says neither of those;
 - the propagation entry point must refuse to propagate a DSN that fails any of
-  this: §16.3 says such a DSN "MUST NOT be propagated any further";
-- -07 §16: never generate or propagate a DSN when the top signature's mf=
+  this: §16.4 says such a DSN "MUST NOT be propagated any further";
+- -08 §16: never generate or propagate a DSN when the top signature's mf=
   decodes to `<>`, nor for a message that was not Provisionally Verified
-  (§13.1: top signature valid and top Message-Instance hashes match).
+  (§13.2: top signature valid and top Message-Instance hashes match), and a
+  DSN's d= must relaxed-match the reported message's top rt= (§16.2,
+  contract D11).
 
 Propagation itself must distinguish the two ways an undo can fail (see
-INTEROP-NOTES §20): -07 §16.2's "null Recipe" (a present `"b"` that is JSON
+INTEROP-NOTES §20): -08 §16.3's "null Recipe" (a present `"b"` that is JSON
 null) is the upstream declaring the previous body unrecoverable, and gets
 `text/rfc822-headers` back with the Forwarder's Message-Instance stripped
 along with its signature; any other reconstruction failure means refusing to

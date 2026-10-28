@@ -20,8 +20,8 @@
 // holds, per name, the values bottom-up (as Recipes number them). Unchanged
 // names share their list and its canonical text, and a value is
 // canonicalized only if its name is in the header hash.
-import { walkRanges, walkSteps, decodeRecipe, classifyRecipeDecodeError,
-         validateBodyRecipe, validateRecipeSteps, isPlainObject } from './recipes.js';
+import { walkRanges, walkSteps, decodeRecipe, recipeErrorText,
+         validateBodyRecipe, validateRecipeSteps, isPlainObject, headerPath } from './recipes.js';
 import { hashLine, isUnsignedHeader } from './canon.js';
 import { hashB64 } from './crypto.js';
 import { binaryToBytes } from './b64.js';
@@ -103,7 +103,7 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
       const name = key.toLowerCase();
       const cur = fields.get(name) || NO_FIELDS;
       const emitted = [];
-      for (const item of walkSteps(hObj[key], cur.length, `header "${name}"`)) {
+      for (const item of walkSteps(hObj[key], cur.length, headerPath(key))) {
         emitted.push('copy' in item ? cur[item.copy - 1] : { name, value: item.literal });
       }
       out.set(name, emitted);
@@ -127,7 +127,7 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
     let count = 0;
     let pi = 0; // parent segment holding the next line
     let pBase = 0; // parent lines before segment pi
-    for (const item of walkRanges(steps, parent.count, 'body')) {
+    for (const item of walkRanges(steps, parent.count, 'b')) {
       if ('literal' in item) {
         literals.push(item.literal);
         pushSeg(segs, LIT, literals.length - 1, literals.length - 1);
@@ -170,7 +170,7 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
       validateRecipeSteps(recipe);
     } catch (e) {
       undoBroken = m;
-      undoBrokenReason = classifyRecipeDecodeError(e);
+      undoBrokenReason = recipeErrorText(e);
       undoBrokenStage = 'decode';
       break;
     }
@@ -202,7 +202,7 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
       states[m - 1] = next;
     } catch (e) {
       undoBroken = m;
-      undoBrokenReason = classifyRecipeDecodeError(e);
+      undoBrokenReason = recipeErrorText(e);
       undoBrokenStage = 'apply';
       break;
     }
@@ -328,7 +328,7 @@ export function planChain(headers, body, instances, maxM, nLines = countLines(bo
     checkBottom(recipe) {
       const st = states[1];
       if ('h' in recipe) applyHeaders(st.fields, recipe.h);
-      if (Array.isArray(recipe.b)) { for (const _ of walkRanges(recipe.b, st.body.count, 'body')) { /* validate only */ } }
+      if (Array.isArray(recipe.b)) { for (const _ of walkRanges(recipe.b, st.body.count, 'b')) { /* validate only */ } }
     },
   };
 }

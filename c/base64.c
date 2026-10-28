@@ -37,7 +37,7 @@ int b64_decode(const char *in, unsigned char *out, size_t outlen) {
     size_t j = 0;
     int buf[4], n = 0;
     for (; *in; in++) {
-        /* Skip whitespace per -07 §2.14 */
+        /* Skip whitespace per -08 §2.14 */
         if (*in == ' ' || *in == '\t' || *in == '\r' || *in == '\n') continue;
         if (*in == '=') break;
         int v = dec_char(*in);

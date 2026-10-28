@@ -10,6 +10,7 @@ per-instance hashes and the verdicts must be identical.
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -82,6 +83,18 @@ def compare(raw, dns, sizes=(997,)):
 
 
 _PRE07 = ("matching From is not authentic", "contains invalid JSON")
+# -08 (contract D6): a bad Recipe step is "Recipe <path> is invalid".
+_PRE07_RE = re.compile(r"Recipe \S+ is invalid$")
+# -08 §4 (contract D1) hashes Auto-Submitted and VBR-Info, which the capture
+# was signed without: a message carrying either now fails its header hash.
+_PRE08_UNHASHED = re.compile(rb"^(?:auto-submitted|vbr-info):", re.I | re.M)
+
+
+def _pre07_ok(raw, err):
+    if err.endswith(_PRE07) or _PRE07_RE.search(err):
+        return True
+    return (" header hash " in err and err.endswith(" mismatch")
+            and _PRE08_UNHASHED.search(raw[:raw.find(b"\r\n\r\n")]) is not None)
 
 
 def _run(paths, dns, sizes, pre07=False):
@@ -95,7 +108,7 @@ def _run(paths, dns, sizes, pre07=False):
             except AssertionError:
                 raise AssertionError(f"{path} variant {k}")
             if pre07 and k == 0:
-                assert all(e.endswith(_PRE07) for e in r.errors), (path, r.errors)
+                assert all(_pre07_ok(raw, e) for e in r.errors), (path, r.errors)
             statuses[(k, r.status)] = statuses.get((k, r.status), 0) + 1
             n += 1
     return n, statuses
@@ -118,9 +131,10 @@ def test_captured_corpus():
     print(f"compared {len(paths)} messages, {n} variants: {statuses}")
     # The capture is -06 list mail: under -07 its From is not Authentic (the
     # lists did not rewrite it) and a Latin-1/EUC-KR literal is a -06 "b"
-    # step, now an unknown step key.  So an original may be a PERMERROR for
-    # those reasons only -- never a hash or signature FAIL.
-    assert statuses.get((0, "fail"), 0) == 0, statuses
+    # step, now an unknown step key; under -08 Auto-Submitted is hashed.  So
+    # an original may be rejected for those reasons only (_pre07_ok).  -08
+    # made "From is not authentic" a FAIL (contract D5), so a FAIL status is
+    # no longer a sign of anything else: the error texts above are the check.
     assert statuses.get((0, "temperror"), 0) == 0, statuses
 
 

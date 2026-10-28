@@ -48,21 +48,22 @@ def _good_mi_value():
             f"{b64(compute_body_hash(body, 'sha256'))};")
 
 
-def make(items, mi_value=None, t="TS", extra=""):
-    """items: list of (selector, algorithm, value). value "SIGN:<keysel>" is
-    replaced by a real signature with that key over the incomplete header."""
+def make(items, mi_value=None, t="TS", extra="", sep=","):
+    """items: list of (selector, algorithm, value), joined by `sep`. value
+    "SIGN:<keysel>" is replaced by a real signature with that key over the
+    incomplete header."""
     if t == "TS":
         t = str(int(time.time()))
     mi = "Message-Instance: " + (mi_value or _good_mi_value())
     pre = f"DKIM2-Signature: i=1; m=1; t={t}; d={D}; mf={MF}; rt={RT}; {extra}s="
-    incomplete = pre + ",".join(f"{s}:{a}:" for s, a, _ in items) + ";"
+    incomplete = pre + sep.join(f"{s}:{a}:" for s, a, _ in items) + ";"
     vals = []
     for s, a, v in items:
         if v.startswith("SIGN:"):
             key, kalg = _key(v[5:])
             v = b64(compute_signature([mi], [], incomplete, key, kalg))
         vals.append(f"{s}:{a}:{v}")
-    sig = pre + ",".join(vals) + ";"
+    sig = pre + sep.join(vals) + ";"
     return (mi + "\r\n" + sig + "\r\n").encode() + BASE
 
 
@@ -95,25 +96,37 @@ def test_baseline_rsa_and_ed25519_pass():
 def test_unknown_algorithm_with_good_rsa_signature_does_not_pass(alg, lookups):
     r = verify(make([("sel1", alg, "SIGN:sel1")]))
     assert not r.ok
-    # E.1: no implemented algorithm at all is FAIL
-    assert r.message == "PERMERROR: DKIM2-Signature i=1 has no signature with a supported algorithm", r
+    # -08 §14.6 step 4 (contract D3): an algorithm we have not implemented is
+    # a PERMERROR item naming its selector (-07 had "has no signature with a
+    # supported algorithm").
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 selector sel1 algorithm unknown", r
     assert r.status == "permerror", r
-    assert lookups == [], "unknown algorithm must be ignored before key lookup"
+    assert lookups == [], "no key is fetched for an unknown algorithm"
 
 
-def test_unknown_item_skipped_good_item_passes_one_lookup(lookups):
-    r = verify(make([("sel2", "future-alg", "AAAA"), ("sel1", "rsa-sha256", "SIGN:sel1")]))
+def test_unknown_item_in_another_group_good_item_passes_one_lookup(lookups):
+    # -07 skipped an unknown item; -08 makes it a PERMERROR item, so it only
+    # stays out of the way in another "|" group (contract D3).
+    raw = make([("sel2", "future-alg", "AAAA"), ("sel1", "rsa-sha256", "SIGN:sel1")])
+    r = verify(raw)
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 selector sel2 algorithm unknown", r
+    r = verify(raw.replace(b"AAAA,sel1:", b"AAAA|sel1:"))
+    assert not r.ok  # the separator is signed: changing it breaks i=1
+    lookups.clear()
+    r = verify(make([("sel2", "future-alg", "AAAA"), ("sel1", "rsa-sha256", "SIGN:sel1")],
+                    sep="|"))
     assert r.ok, r
     assert lookups == ["sel1"]
 
 
-def test_many_unknown_items_cost_one_lookup(lookups):
+def test_many_unknown_items_are_over_the_limit(lookups):
+    # -07 let 4000 unknown items cost one lookup; -08 caps an s= tag at 8
+    # items (contract D3, local limit), before any key is fetched.
     items = [(f"x{n}", f"alg{n}", "AAAA") for n in range(4000)]
     items.append(("sel1", "rsa-sha256", "SIGN:sel1"))
-    raw = make(items)
-    r = verify(raw)
-    assert r.ok, r.message
-    assert lookups == ["sel1"]
+    r = verify(make(items))
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 has more than 8 signatures", r
+    assert lookups == []
 
 
 @pytest.mark.parametrize("val", ["", "!!!!", "AAA", "####"])
@@ -169,8 +182,6 @@ SYNTAX = "PERMERROR: DKIM2-Signature i=1 public key sel1 has a syntax error"
     f"k=rsa; v=DKIM1; p={RSA_P}",       # v= not first
     "v=DKIM1; k=rsa",                   # no p=
     "v=DKIM1; k=rsa; p=!!!!",           # p= not base64
-    "v=DKIM1; k=rsa; p=AAAA",           # p= not a key
-    f"v=DKIM1; k=rsa; p={ED_P}",        # p= not an RSA key
     f"v=DKIM1; 1k=rsa; p={RSA_P}",      # bad tag name
     f"v=DKIM1; k rsa; p={RSA_P}",       # spec without '='
     f"v=DKIM1; P={RSA_P}",              # tag names case sensitive: no p=
@@ -178,6 +189,18 @@ SYNTAX = "PERMERROR: DKIM2-Signature i=1 public key sel1 has a syntax error"
 def test_bad_key_record_is_syntax_error(rec):
     r = _rsa_with(rec)
     assert r.message == SYNTAX, (rec, r)
+    assert r.status == "permerror"
+
+
+# -08 §14.5 (contract D7): a p= that is base64 but not a key of its type is
+# "is malformed" (both were "has a syntax error" under -07).
+@pytest.mark.parametrize("rec", [
+    "v=DKIM1; k=rsa; p=AAAA",           # p= not a key
+    f"v=DKIM1; k=rsa; p={ED_P}",        # p= not an RSA key
+])
+def test_base64_p_that_is_not_a_key_is_malformed(rec):
+    r = _rsa_with(rec)
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel1 is malformed", (rec, r)
     assert r.status == "permerror"
 
 
@@ -231,34 +254,38 @@ def test_ed25519_record_split_and_good():
     assert r.ok, r
 
 
-def test_ed25519_bad_length_is_syntax_error():
+def test_ed25519_bad_length_is_malformed():
+    # -08 §3.2, §14.5 (contract D7): not exactly 32 octets is "is
+    # malformed" ("has a syntax error" under -07).
     bad = b64(b"\x00" * 40)
     r = verify(make([("ed25519", "ed25519-sha256", "SIGN:ed25519")]),
                _dns_with([["txt", f"v=DKIM1; k=ed25519; p={bad}"]], "ed25519"))
-    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key ed25519 has a syntax error", r
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key ed25519 is malformed", r
 
 
 # --- C. Message-Instance tag case and duplicates -----------------------------
 
-def test_mi_uppercase_h_passes():
+# -07 decision 2 accepted tag names in any case; -08 (contract D10) makes
+# them strictly lower case, so "H=" and "M=" are unknown tags, ignored.
+
+def test_mi_uppercase_h_is_unknown_tag():
     mi = _good_mi_value().replace("h=", "H=")
-    assert verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi)).ok
-    assert verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=True).ok
+    for fc in (False, True):
+        r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=fc)
+        assert r.message == "PERMERROR: Message-Instance m=1 tag=h missing", r
 
 
-def test_mi_uppercase_m_passes():
+def test_mi_uppercase_m_is_unknown_tag():
     mi = _good_mi_value().replace("m=", "M=")
-    assert verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi)).ok
-    assert verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=True).ok
+    for fc in (False, True):
+        r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=fc)
+        assert r.message == "PERMERROR: Message-Instance m= tag=m missing", r
 
 
 @pytest.mark.parametrize("mk", [
     lambda good: "m=1; h=sha256:AAAA:AAAA; " + good[5:],      # h= ... h=<correct>
     lambda good: good[:-1] + "; h=sha256:AAAA:AAAA;",          # h=<correct> ... h=
-    lambda good: "m=1; H=sha256:AAAA:AAAA; " + good[5:],      # H= ... h=
-    lambda good: good + " M=1;",                               # m=1 ... M=1
     lambda good: good + " m=1;",                               # m=1 ... m=1
-    lambda good: good + " r=e30=; R=e30=;",                    # r= ... R=
 ])
 @pytest.mark.parametrize("full_chain", [False, True])
 def test_mi_duplicate_tag_is_syntax_error(mk, full_chain):
@@ -267,6 +294,19 @@ def test_mi_duplicate_tag_is_syntax_error(mk, full_chain):
     assert not r.ok, mi
     assert "PERMERROR: Message-Instance m=1 syntax error" in r.errors, (mi, r)
     assert r.status == "permerror"
+
+
+# These were duplicates under -07 (any case); under -08 the uppercase twin is
+# an unknown tag and is ignored (contract D10).
+@pytest.mark.parametrize("mk", [
+    lambda good: "m=1; H=sha256:AAAA:AAAA; " + good[5:],      # H= ... h=
+    lambda good: good + " M=1;",                               # m=1 ... M=1
+])
+@pytest.mark.parametrize("full_chain", [False, True])
+def test_mi_uppercase_twin_is_not_a_duplicate(mk, full_chain):
+    mi = mk(_good_mi_value())
+    r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1")], mi), full_chain=full_chain)
+    assert r.ok, (mi, r)
 
 
 # --- D. t= syntax --------------------------------------------------------------
@@ -307,9 +347,10 @@ def test_t_with_surrounding_wsp_is_fine():
 # --- E. outcome of a signature's items ----------------------------------------
 
 def test_e_unusable_record_on_any_item_is_permerror_even_if_other_verifies():
-    # sel2's record is revoked; sel1 verifies. Whole signature is PERMERROR.
+    # sel2's record is revoked; sel1 verifies. In one "," group the whole
+    # signature is PERMERROR (-08 §14.6 step 6: sig-all with no FAIL).
     for rec, why in (("v=DKIM1; k=rsa; p=", "has been revoked"),
-                     ("v=DKIM1; k=rsa; p=AAAA", "has a syntax error"),
+                     ("v=DKIM1; k=rsa; p=AAAA", "is malformed"),
                      (f"v=DKIM1; k=ed25519; p={ED_P}", "algorithm mismatch")):
         for order in ((0, 1), (1, 0)):
             items = [("sel1", "rsa-sha256", "SIGN:sel1"), ("sel2", "rsa-sha256", "SIGN:sel2")]
@@ -323,12 +364,18 @@ def test_e_unusable_record_on_any_item_is_permerror_even_if_other_verifies():
     assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel2 has multiple records", r
 
 
-def test_e_absent_key_item_is_skipped():
-    r = verify(make([("nosuch", "rsa-sha256", "SIGN:sel2"), ("sel1", "rsa-sha256", "SIGN:sel1")]))
-    assert r.ok, r
+def test_e_absent_key_item_is_an_item_permerror():
+    # -07 skipped an item whose key did not exist; -08 makes every item's
+    # key error its own PERMERROR (contract D3), so in a "," group it is the
+    # result -- and in another "|" group it is not.
+    items = [("nosuch", "rsa-sha256", "SIGN:sel2"), ("sel1", "rsa-sha256", "SIGN:sel1")]
+    r = verify(make(items))
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key nosuch does not exist", r
+    assert verify(make(items, sep="|")).ok
 
 
 def test_e_all_keys_absent_is_does_not_exist():
+    # the first PERMERROR item, in s= order
     r = verify(make([("nosuch", "rsa-sha256", "SIGN:sel1"),
                      ("gone", "ed25519-sha256", "SIGN:ed25519"),
                      ("x", "future-alg", "AAAA")]))
@@ -340,8 +387,9 @@ def test_e_any_crypto_failure_is_fail_naming_selector():
     # sel2 item carries sel1's signature: verifies with neither key it names
     r = verify(make([("sel1", "rsa-sha256", "SIGN:sel1"), ("sel2", "rsa-sha256", "SIGN:sel1")]))
     assert r.status == "fail", r
-    # -07 §14.6: sel1 passed, sel2 failed.
-    assert r.message == "FAIL: DKIM2-Signature i=1 signature sel1 signature sel2 failed", r
+    # -08 removed "signature <s1> signature <s2> failed": one group reports
+    # its first FAIL item (contract D3).
+    assert r.message == "FAIL: DKIM2-Signature i=1 selector sel2 incorrect signature", r
     r = verify(make([("sel1", "rsa-sha256", "SIGN:sel2"), ("sel2", "rsa-sha256", "SIGN:sel1")]))
     assert r.message == "FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature", r
 
@@ -382,7 +430,8 @@ def test_e_short_rsa_key_is_permerror_even_if_other_verifies():
                   [("sel1", "rsa-sha256", "SIGN:sel1"), ("sel2", "rsa-sha256", "SIGN:sel2")],
                   [("sel2", "rsa-sha256", "SIGN:sel2"), ("sel1", "rsa-sha256", "SIGN:sel1")]):
         r = verify(make(items), dns)
-        assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel2 is shorter than 1024 bits", (items, r)
+        # -08 §3.2, §14.5 (contract D7): "is malformed".
+        assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel2 is malformed", (items, r)
         assert r.status == "permerror"
 
 # --- F. whole-field syntax (follow-up review) --------------------------------
@@ -486,7 +535,9 @@ def test_f3_bad_hash_set_is_syntax_error(fmt):
 @pytest.mark.parametrize("fmt", [
     " sha256 : {h} : {b}",
     "\r\n\tsha256\r\n\t:{h1}\r\n\t{h2}:{b}",
-    "sha256:{h}:{b}, x-future:AAAA:BBBB",
+    # -08: an unknown algorithm passes only in another "|" group (contract
+    # D4); with "," it would be a PERMERROR hash-set.
+    "sha256:{h}:{b}\r\n\t| x-future:AAAA:BBBB",
 ])
 def test_f3_fws_around_hash_name_and_inside_digests_passes(fmt):
     h, b = _hashes()

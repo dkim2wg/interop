@@ -1,4 +1,4 @@
-// WebCrypto wrappers for DKIM2. Built from draft-ietf-dkim-dkim2-spec-07 §3.
+// WebCrypto wrappers for DKIM2. Built from draft-ietf-dkim-dkim2-spec-08 §3.
 import { b64ToBytes, bytesToB64 } from './b64.js';
 
 const subtle = globalThis.crypto.subtle;
@@ -31,8 +31,8 @@ export async function verifyRsa(keyB64, sigBytes, msgBytes) {
   // (PKIX, RFC 5280) or as a bare PKCS#1 RSAPublicKey (RFC 8017). WebCrypto
   // only imports SPKI, so wrap a bare PKCS#1 key before importing (§3.2).
   const spki = isPkcs1RsaPublicKey(der) ? pkcs1ToSpki(der) : der;
-  // §14.5: a p= that does not import as an RSA key (garbage, or a key of
-  // another type) is a malformed key record: a syntax error, never a plain
+  // -08 §14.5 (contract D7): a p= that does not import as an RSA key
+  // (garbage, or a key of another type) is malformed, never a plain
   // signature failure.
   let key;
   try {
@@ -40,16 +40,11 @@ export async function verifyRsa(keyB64, sigBytes, msgBytes) {
       'spki', spki,
       { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
   } catch (e) {
-    throw new Error('key-syntax', { cause: e });
+    throw new Error('key-malformed', { cause: e });
   }
-  // §3.2: Signers MUST use RSA keys of at least 1024 bits; reject smaller keys
-  // (a key-record syntax error / permerror), even if the maths would verify.
-  const bits = key.algorithm.modulusLength;
-  if (bits < 1024) {
-    const e = new Error('key-tooshort');
-    e.bits = bits;
-    throw e;
-  }
+  // -08 §3.2: Verifiers MUST NOT validate signatures with keys shorter than
+  // 1024 bits, even if the maths would verify: such a key is malformed.
+  if (key.algorithm.modulusLength < 1024) throw new Error('key-malformed');
   return subtle.verify({ name: 'RSASSA-PKCS1-v1_5' }, key, sigBytes, msgBytes);
 }
 
@@ -88,13 +83,16 @@ function pkcs1ToSpki(pkcs1) {
 
 export async function verifyEd25519(rawPubB64, sigBytes, hashBytes) {
   const rawPub = b64ToBytes(rawPubB64);
+  // -08 §14.5: an Ed25519 key is exactly 32 octets (so a DER
+  // SubjectPublicKeyInfo is malformed too).
+  if (rawPub.length !== 32) throw new Error('key-malformed');
   let key;
   try {
     key = await subtle.importKey('raw', rawPub, { name: 'Ed25519' }, false, ['verify']);
   } catch (e) {
     if (e.name === 'NotSupportedError') throw new Error('ed25519-unsupported');
-    // §14.5: a p= that is not a raw Ed25519 key is a malformed key record.
-    throw new Error('key-syntax', { cause: e });
+    // §14.5: a p= that is not a raw Ed25519 key is malformed.
+    throw new Error('key-malformed', { cause: e });
   }
   // §3.3: Ed25519 signs the SHA-256 hash value as its message.
   return subtle.verify({ name: 'Ed25519' }, key, sigBytes, hashBytes);

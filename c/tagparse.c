@@ -17,7 +17,7 @@ static char *strdup_trim(const char *s, const char *end) {
 static int is_fws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 static int is_alpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
-/* -07 §8: split on ';'. The text after a final ';' may be empty (the
+/* -08 §8: split on ';'. The text after a final ';' may be empty (the
    optional trailing ";"); any other empty fragment (";;", a leading ';') is
    a syntax error. Every non-empty fragment must be
      [FWS] name [FWS] "=" [FWS] [value] [FWS]
@@ -40,7 +40,7 @@ taglist_t *tagparse(const char *input, const char **errp) {
         while (q < fend && is_fws(*q)) q++;
         if (q == fend) {
             /* Only the text after a final ';' may be empty (the optional
-               trailing ";" of -07 §8); ";;" or a leading ';' is not a
+               trailing ";" of -08 §8); ";;" or a leading ';' is not a
                tag-list. */
             if (*fend) tl->syntax_error = 1;
             continue;
@@ -65,9 +65,11 @@ taglist_t *tagparse(const char *input, const char **errp) {
         e->name  = strdup_trim(name_start, name_end);
         e->value = strdup_trim(val_start, val_end);
         if (!e->name || !e->value) { free(e->name); free(e->value); free(e); taglist_free(tl); return NULL; }
-        /* Lowercase name in-place */
-        for (char *c = e->name; *c; c++) *c = (char)tolower((unsigned char)*c);
-        /* -07 §8: "Tags with duplicate names MUST NOT occur" — flag any repeat. */
+        /* -08 §8: tag names are case sensitive and written in lowercase
+           (contract D10): the name is kept as written, and "M" is another
+           tag than "m" -- an unknown one, which callers ignore.
+           "Tags with duplicate names MUST NOT occur" -- flag any repeat,
+           compared exactly. */
         for (tag_entry_t *o = tl->head; o; o = o->next)
             if (strcmp(o->name, e->name) == 0) { tl->duplicate = 1; break; }
         *tail = e;
@@ -78,14 +80,8 @@ taglist_t *tagparse(const char *input, const char **errp) {
 }
 
 const char *tag_get(const taglist_t *tl, const char *name) {
-    /* Build lowercase version of name for comparison */
-    char lname[64];
-    size_t i;
-    for (i = 0; name[i] && i < sizeof lname - 1; i++)
-        lname[i] = (char)tolower((unsigned char)name[i]);
-    lname[i] = '\0';
     for (tag_entry_t *e = tl->head; e; e = e->next)
-        if (strcmp(e->name, lname) == 0) return e->value;
+        if (strcmp(e->name, name) == 0) return e->value;
     return NULL;
 }
 

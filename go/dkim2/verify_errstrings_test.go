@@ -7,7 +7,7 @@ import (
 )
 
 // TestVerifyCanonicalErrorStrings asserts that verify.go's custody/mismatch
-// messages fire in the exact byte-for-byte -07 §14 forms (see
+// messages fire in the exact byte-for-byte -08 §14 forms (see
 // docs/superpowers/plans/2026-07-05-dkim2-spec-04-upgrade.md, Task 3.3).
 func TestVerifyCanonicalErrorStrings(t *testing.T) {
 	t.Run("MAIL FROM mismatch", func(t *testing.T) {
@@ -42,7 +42,7 @@ func TestVerifyCanonicalErrorStrings(t *testing.T) {
 		tampered := strings.ReplaceAll(string(msg), "d=test1.dkim2.com", "d=evil.com")
 		f := &JSONKeyFetcher{Path: "../../dns.json"}
 		_, err := Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})
-		want := "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match"
+		want := "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"
 		if err == nil || err.Error() != want {
 			t.Fatalf("want error %q, got %v", want, err)
 		}
@@ -60,7 +60,7 @@ func TestVerifyCanonicalErrorStrings(t *testing.T) {
 			"test2.dkim2.com", "recipient@test2.dkim2.com", []string{"final@test2.dkim2.com"}, "")
 
 		_, err := Verify(bytes.NewReader(top), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
-		want := "PERMERROR: DKIM2-Signature i=1 nd= does not match"
+		want := "FAIL: DKIM2-Signature i=1 nd= does not match"
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("want error containing %q, got %v", want, err)
 		}

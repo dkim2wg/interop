@@ -59,7 +59,9 @@ func prefetchKeys(sigs []string, fetcher KeyFetcher, opts ...VerifyOptions) KeyF
 	res := nf.resolver()
 	for k := len(sigs) - 1; k >= 0 && len(pf.lookups) < PrefetchMax; k-- {
 		sig, err := parseSig(sigs[k])
-		if err != nil {
+		// More than MaxSignatureItems is a §14.2 error, made before any
+		// key is fetched (contract D3).
+		if err != nil || len(sig.Sigs) > MaxSignatureItems {
 			continue
 		}
 		for _, item := range sig.Sigs {

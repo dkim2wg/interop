@@ -5,9 +5,10 @@ package dkim2
 // message is verified and the accept/reject decision compared to the vector's
 // ExpectedState ("pass" == accept, else reject).
 //
-// The vectors target spec-02, but the tag rules (case-insensitive identifiers,
-// any order, single occurrence, FWS) and the >=1024-bit key requirement (§3.2)
-// are unchanged in -07, so they apply directly. A tiny hand-rolled reader
+// The vectors target spec-02.  Most of their rules (any tag order, single
+// occurrence, FWS, the >=1024-bit key requirement of §3.2) still hold in
+// -08 and apply directly; the vectors -08 reverses are listed in
+// turscarKnownDivergence below. A tiny hand-rolled reader
 // pulls the few fields we need so the test needs no external TOML dependency.
 
 import (
@@ -21,8 +22,22 @@ import (
 )
 
 // Upstream vectors we knowingly diverge from, with the reason (not gated).
-// (None at present: dkim2tests a382236 fixed tags_whitespace (it had an empty s= value at 9c48edf).)
-var turscarKnownDivergence = map[string]string{}
+// All of them are spec-02 readings that -08 reverses (contract D3, D10).
+// (dkim2tests a382236 fixed tags_whitespace: it had an empty s= value at 9c48edf.)
+var turscarKnownDivergence = func() map[string]string {
+	const dup = "-08 (contract D10): tag names are case sensitive, so the upper-case twin " +
+		"is an unknown tag, not a duplicate; the signature verifies"
+	m := map[string]string{
+		"tags_mixed_case": "-08 (contract D10): an upper-case tag name is an unknown tag, " +
+			"so I= is not i= and the signature has no i=",
+		"algorithm_with_future": "-08 §14.6 (contract D3): an unimplemented algorithm in a \",\" " +
+			"group is a PERMERROR item, not ignored; only a \"|\" alternative overrides it",
+	}
+	for _, tag := range []string{"d", "f", "i", "m", "mf", "n", "rt", "t"} {
+		m["d2_duplicate_"+tag+"_tag"] = dup
+	}
+	return m
+}()
 
 var reScalar = regexp.MustCompile(`(?m)^([A-Za-z]+)\s*=\s*'([^']*)'`)
 var reListItem = regexp.MustCompile(`'([^']*)'`)

@@ -9,7 +9,7 @@ import (
 // cannot be parsed, the verifier reports *that* failure rather than silently
 // dropping the header and inferring a bogus MI-numbering complaint.
 //
-// The MI here carries r={"h":null}, which parseRecipe rejects per the -07
+// The MI here carries r={"h":null}, which parseRecipe rejects per the -08
 // §5 schema. Skipping it while computing the topmost MI version leaves the top
 // signature (m=1) apparently covering "MI m=0", which is a misleading
 // diagnostic for a message whose real defect is its invalid Recipe JSON.

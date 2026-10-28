@@ -12,6 +12,12 @@
             "v=DKIM1; k=ed25519; p=hwjviTXyzUXSCWayBqE17s/4NSynQKxw58jayHudRAI="
          ]
       ],
+      "ed25519spki._domainkey" : [
+         [
+            "txt",
+            "v=DKIM1; k=ed25519; p=MCowBQYDK2VwAyEAhwjviTXyzUXSCWayBqE17s/4NSynQKxw58jayHudRAI="
+         ]
+      ],
       "rsa1024._domainkey" : [
          [
             "txt",

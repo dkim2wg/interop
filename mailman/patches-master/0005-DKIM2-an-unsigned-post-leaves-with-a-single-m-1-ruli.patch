@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Sun, 18 Oct 2026 21:38:32 -0800
-Subject: [PATCH 5/5] DKIM2: an unsigned post leaves with a single m=1 (ruling
+Subject: [PATCH 5/6] DKIM2: an unsigned post leaves with a single m=1 (ruling
  17)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

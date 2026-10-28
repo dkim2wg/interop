@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-07
+DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-08
 
 Takes a signed email with Message-Instance headers containing recipes
 and reconstructs the message as it was at a previous version.
@@ -36,7 +36,7 @@ from dkim2sign import (
 class Unrecoverable(ValueError):
     """The previous body cannot be reconstructed *by design*.
 
-    -07 §5.2/§16.2: a present "b" that is JSON null is the upstream
+    -08 §5.2/§16.3: a present "b" that is JSON null is the upstream
     saying the previous body cannot be put back (a "null Recipe") -- distinct
     from an absent "b", which means the body was not modified. That is not a
     defect in the message, so it gets its own type: DSN propagation answers it
@@ -58,29 +58,59 @@ def decode_recipes(mi_hdr: str) -> dict | None:
     return loads_recipe(base64.b64decode(r_b64))
 
 
-def _lowercase_keys(pairs):
-    """object_pairs_hook for Recipe JSON: keys are matched without regard to
-    case (draft -07 §5 has signers write them in lower case; we accept any
-    case), so every key is lowercased, and two keys in one object that are
-    equal ignoring case are a duplicate (ValueError, as for any invalid
-    JSON)."""
+_UPPER = re.compile(r"[A-Z]")
+
+
+def _strict_keys(pairs):
+    """object_pairs_hook for Recipe JSON (-08 §5, contract D10): every key,
+    at any level, MUST be lower case, and a key given twice in one object
+    (compared exactly) is a duplicate.  Either is a ValueError, as for any
+    invalid JSON.  "Lower case" is judged on ASCII letters: header field
+    names are ASCII, and no other key is defined."""
     obj = {}
     for k, v in pairs:
-        k = k.lower()
+        if _UPPER.search(k):
+            raise ValueError(f"JSON object key {k!r} is not lower case")
         if k in obj:
             raise ValueError(f"duplicate JSON object key {k!r}")
         obj[k] = v
     return obj
 
 
+def _no_float(text):
+    """Contract D6: a JSON number with a fraction or an exponent, wherever
+    it is ("1.5", "1e0", "1.0"), makes the whole Recipe invalid JSON.  JSON
+    libraries disagree on whether 1e0 is an integer, so it is judged from
+    the text: json calls this for exactly those numbers."""
+    raise ValueError(f"JSON number {text!r} is not an integer")
+
+
+def _no_constant(text):
+    # NaN, Infinity and -Infinity are not JSON (RFC 8259 §6).
+    raise ValueError(f"{text!r} is not JSON")
+
+
 def loads_recipe(data):
-    """json.loads for Recipe JSON.  Every object key comes back lowercased,
-    and an object that gives a key twice (ignoring case) is a ValueError, as
-    for any invalid JSON: parsers disagree on which value wins, so
-    {"b":[...],"B":null} would be a null body Recipe to some verifiers and
-    signers and a real one to others."""
+    """json.loads for Recipe JSON.  A key that is not lower case, or an
+    object that gives a key twice, is a ValueError, as for any invalid JSON:
+    parsers disagree on which value wins, so {"b":[...],"b":null} would be a
+    null body Recipe to some verifiers and signers and a real one to
+    others."""
+    if isinstance(data, (bytes, bytearray)):
+        # JSON text is UTF-8 (RFC 8259 §8.1); json.loads would otherwise
+        # guess UTF-16 or UTF-32 from the first bytes.
+        data = bytes(data).decode("utf-8")
     try:
-        return json.loads(data, object_pairs_hook=_lowercase_keys)
+        obj = json.loads(data, object_pairs_hook=_strict_keys,
+                         parse_float=_no_float, parse_constant=_no_constant)
+        # A JSON "\u" escape of a surrogate with no partner is not a Unicode string (RFC
+        # 8259 §8.2), so a document carrying one, anywhere, is not valid
+        # JSON text: the whole Recipe is invalid JSON, as UTF-8 that does
+        # not decode is.  Re-encoding finds it, keys and values alike.
+        json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        return obj
+    except UnicodeEncodeError:
+        raise ValueError("Recipe JSON has a lone surrogate") from None
     except RecursionError:
         # JSON nested deeper than the interpreter's stack: invalid JSON,
         # like any other we cannot parse, never a crash.
@@ -90,16 +120,25 @@ def loads_recipe(data):
 class MalformedRecipe(ValueError):
     """The r= payload is valid JSON but is not a well-formed set of Recipes.
 
-    draft -07 §5: each step is an object with exactly one key, "c", "d" or
+    draft -08 §5: each step is an object with exactly one key, "c", "d" or
     "u"; a "c" step is exactly two integers 1 <= start <= end <= the number
     of items present, and each "c" start is greater than every preceding "c"
     end in the same list; "d" items are text with no CR or LF; "u" items are
     canonical base64 of raw octets with no CR or LF.  Anything else cannot be
-    applied and the message MUST NOT be accepted.  The §14.2 schema covers
-    these, so the verifier reports one as "PERMERROR: Message-Instance m=<x>
-    contains invalid JSON".  A ValueError so that existing callers (the
-    dkim2undo CLI, DSN propagation) fail as before.
+    applied and the message MUST NOT be accepted.  A ValueError so that
+    existing callers (the dkim2undo CLI, DSN propagation) fail as before.
+
+    `path` says where (contract D6): None for a problem with the whole
+    document, which the verifier reports as "contains invalid JSON", or
+    the step's path ("b[1]", "h.subject[0]", or "h.subject" for a header
+    entry that is not an array), which it reports as "Recipe <path> is
+    invalid".  A copy range past the items present is found only when the
+    Recipe is applied, and is reported as invalid JSON, as in -07.
     """
+
+    def __init__(self, msg: str, path: str | None = None):
+        super().__init__(msg if path is None else f"{path}: {msg}")
+        self.path = path
 
 
 def _is_int(v) -> bool:
@@ -107,7 +146,7 @@ def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-# draft -07 §5 schema: a "u" string must match all three patterns -- the
+# draft -08 §5 schema: a "u" string must match all three patterns -- the
 # base64 alphabet with at most two '=' at the end, a whole number of 4-char
 # groups, and zero pad bits ("QR==" decodes, but is not canonical).
 _U_PATTERNS = tuple(re.compile(p) for p in (
@@ -117,77 +156,91 @@ _U_PATTERNS = tuple(re.compile(p) for p in (
 ))
 
 
-def _u_item(item: str) -> bytes:
+def _u_item(item: str, path) -> bytes:
     if not all(p.fullmatch(item) for p in _U_PATTERNS):
-        raise MalformedRecipe('"u" item is not canonical base64')
+        raise MalformedRecipe('"u" item is not canonical base64', path)
     return base64.b64decode(item, validate=True)
 
 
-def _d_item(item: str) -> bytes:
+def _d_item(item: str, path) -> bytes:
     try:
         return item.encode("utf-8")
     except UnicodeEncodeError:
         # A lone surrogate (\udcXX) is not a Unicode character.
-        raise MalformedRecipe('"d" item is not valid UTF-8 text')
+        raise MalformedRecipe('"d" item is not valid UTF-8 text', path)
 
 
-def compile_steps(steps, count: int | None) -> list[tuple]:
+def recipe_name_path(name: str) -> str:
+    """Contract D6: "h.<name>", the JSON key exactly as given, with every
+    octet of its UTF-8 form outside 0x21-0x7E written as \\xHH (uppercase
+    hex).  A lone surrogate from a JSON escape keeps its three octets."""
+    out = []
+    for o in name.encode("utf-8", errors="surrogatepass"):
+        out.append(chr(o) if 0x21 <= o <= 0x7E else f"\\x{o:02X}")
+    return "h." + "".join(out)
+
+
+def compile_steps(steps, count: int | None, where: str = "b") -> list[tuple]:
     """Validate one Recipe step list and return it in applied form.
 
     `count` is the number of items currently present (header field instances
     of the name, or body lines); None skips only the upper-bound check, for
-    callers that hold the JSON but not the message.
+    callers that hold the JSON but not the message.  `where` is the list's
+    path ("b" or "h.<name>", contract D6), for the errors.
 
     Returns a list of ("c", start, end) and ("lit", [bytes, ...]) items in
     step order.  Literal bytes are the exact octets to emit ("d" items
     UTF-8 encoded, "u" items base64-decoded), without the header name or
-    the trailing CRLF.  Raises MalformedRecipe on any violation.  Step keys
-    arrive lowercased from loads_recipe(); they are lowercased again here
-    for callers that built the steps themselves.
+    the trailing CRLF.  Raises MalformedRecipe on any violation, with the
+    path of the step (or of the list, if it is not an array).
     """
     if not isinstance(steps, list):
-        raise MalformedRecipe("Recipe steps are not a JSON array")
+        raise MalformedRecipe("Recipe steps are not a JSON array",
+                              where if where != "b" else None)
     out: list[tuple] = []
     prev_end = 0
-    for step in steps:
-        if not isinstance(step, dict) or len(step) != 1:
+    for n, step in enumerate(steps):
+        path = f"{where}[{n}]"
+        if (not isinstance(step, dict) or len(step) != 1
+                or next(iter(step)) not in ("c", "d", "u")):
             raise MalformedRecipe(
-                "Recipe step is not a JSON object with exactly one key")
+                'Recipe step is not an object with exactly one of "c", "d", "u"',
+                path)
         (kind, arg), = step.items()
-        kind = kind.lower()
         if kind == "c":
             if not (isinstance(arg, list) and len(arg) == 2
                     and all(_is_int(x) for x in arg)):
-                raise MalformedRecipe('"c" step is not a pair of integers')
+                raise MalformedRecipe('"c" step is not a pair of integers', path)
             start, end = arg
             if start < 1 or end < start:
                 raise MalformedRecipe(
-                    f'"c" range [{start}, {end}] is not 1 <= start <= end')
-            if count is not None and end > count:
-                raise MalformedRecipe(
-                    f'"c" range [{start}, {end}] exceeds the {count} item(s) present')
+                    f'"c" range [{start}, {end}] is not 1 <= start <= end', path)
             if start <= prev_end:
                 raise MalformedRecipe(
                     f'"c" range [{start}, {end}] does not ascend past the '
-                    f'previous range ending at {prev_end}')
+                    f'previous range ending at {prev_end}', path)
+            if count is not None and end > count:
+                # Past the items present: only applying finds this, and it
+                # is reported as invalid JSON (no path).
+                raise MalformedRecipe(
+                    f'{path}: "c" range [{start}, {end}] exceeds the {count} '
+                    f'item(s) present')
             prev_end = end
             out.append(("c", start, end))
-        elif kind in ("d", "u"):
+        else:
             if not isinstance(arg, list) or not all(isinstance(x, str) for x in arg):
-                raise MalformedRecipe(f'"{kind}" step is not an array of strings')
+                raise MalformedRecipe(f'"{kind}" step is not an array of strings', path)
             if not arg:
                 # Schema: minItems 1. An empty literal step emits nothing and
                 # a producer has no reason to write one.
-                raise MalformedRecipe(f'"{kind}" step is an empty array')
+                raise MalformedRecipe(f'"{kind}" step is an empty array', path)
             vals: list[bytes] = []
             for item in arg:
-                raw = _u_item(item) if kind == "u" else _d_item(item)
+                raw = _u_item(item, path) if kind == "u" else _d_item(item, path)
                 if b"\r" in raw or b"\n" in raw:
-                    raise MalformedRecipe(f'"{kind}" item contains CR or LF')
+                    raise MalformedRecipe(f'"{kind}" item contains CR or LF', path)
                 vals.append(raw)
             out.append(("lit", vals))
-        else:
-            raise MalformedRecipe(f"unknown Recipe step type {kind!r}")
     return out
 
 
@@ -197,26 +250,33 @@ def validate_recipes(recipes) -> None:
     Everything compile_steps can decide from the JSON alone is checked here
     (so a verifier that is not undoing Recipes still rejects a malformed
     one); the per-list upper bound needs the message and is checked when the
-    Recipe is applied.  draft -07 §5 schema: the object has "h" or "b" (or
-    both); "h", when present, is an object with at least one header field
-    name (a null "h" is the null header Recipe, which §5.1 does not allow);
-    "b" is an array of steps or null (the null body Recipe).
+    Recipe is applied.
+
+    Contract D6: every whole-document check comes first (MalformedRecipe
+    with no path): the object has "h" or "b" (or both); "h", when present,
+    is an object with at least one header field name (a null "h" is the
+    null header Recipe, which §5.1 does not allow); "b" is an array of
+    steps or null (the null body Recipe).  Only then the steps, so the first
+    bad one is reported: "b" first, then the "h" names in byte order, each
+    list's steps in order.
     """
     if not isinstance(recipes, dict):
         raise MalformedRecipe("Recipe is not a JSON object")
     if "h" not in recipes and "b" not in recipes:
         raise MalformedRecipe('Recipe has neither "h" nor "b"')
+    h = recipes.get("h")
     if "h" in recipes:
-        h = recipes["h"]
         if not isinstance(h, dict):
             raise MalformedRecipe('"h" is not a JSON object')
         if not h:
             raise MalformedRecipe('"h" names no header fields')
-        for steps in h.values():
-            compile_steps(steps, None)
     b = recipes.get("b")
+    if b is not None and not isinstance(b, list):
+        raise MalformedRecipe('"b" is not an array or null')
     if b is not None:
-        compile_steps(b, None)
+        compile_steps(b, None, "b")
+    for name in sorted(h or (), key=lambda k: k.encode("utf-8", "surrogatepass")):
+        compile_steps(h[name], None, recipe_name_path(name))
 
 
 # ---------------------------------------------------------------------------
@@ -466,7 +526,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
             print(f"  v={version}: applying recipes", file=sys.stderr)
 
         # Apply header Recipes
-        # -07 §5.1 disallows the null header Recipe: a present "h" that is
+        # -08 §5.1 disallows the null header Recipe: a present "h" that is
         # null is a syntax error (distinct from an absent "h", which means
         # the header fields were unchanged).
         if "h" in recipes and recipes["h"] is None:
@@ -590,7 +650,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-07)")
+        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-08)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--target-version", type=int, default=None,
                         help="MI version to reconstruct back to (default: highest - 1)")

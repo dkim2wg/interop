@@ -1,7 +1,7 @@
 # DKIM2 for stock Mailman on Postfix
 
-- **Spec:** draft-ietf-dkim-dkim2-spec-07 (the status line below describes
-  the -06 deployment until the -07 one is in)
+- **Spec:** draft-ietf-dkim-dkim2-spec-08 (the status line below describes
+  the -06 deployment until the -08 one is in)
 - **Audience:** a Postfix operator who runs Mailman 3 as released (3.3.8 or
   3.3.10, no patches, no plugins) and wants DKIM2 on some lists only
 - **Status (2026-10-14):** the dkim2.com host runs this route for two
@@ -58,7 +58,7 @@ domain. A receiver that verifies DKIM2 can undo each step back to what the
 sender signed. A post from a sender that does not sign DKIM2 has no
 signature for those instances to build on, so its copy leaves with a single
 `Message-Instance`, `m=1`, whose Recipes go straight back to the post as it
-arrived, wrap and From rewrite included (-07 §12.1 lets the first instance
+arrived, wrap and From rewrite included (-08 §12.1 lets the first instance
 record the changes made as a message enters DKIM2).
 
 A receiving verifier that gets `dkim2=pass` knows which hops handled the
@@ -102,7 +102,7 @@ changes into it (`X-DKIM2-Info: ... action=restarted-unsigned-mi=m=1,m=2;`).
 As in the list-host guide, [step 2 (prerequisites)](dkim2-postfix-list-host-guide.md#2-prerequisites),
 [step 3 (keys and DNS)](dkim2-postfix-list-host-guide.md#3-keys-and-dns) and
 [step 4 (install Mail::DKIM2)](dkim2-postfix-list-host-guide.md#4-install-maildkim2).
-You need Mail::DKIM2 0.23 or later (the first for -07, whose signing milter
+You need Mail::DKIM2 0.23 or later (the first for -08, whose signing milter
 sends a plain post's copy with a single `m=1`; 0.20 was the first with
 `--wrap-single-part`)
 and Sendmail::PMilter 1.28 or later:
@@ -291,8 +291,8 @@ systemctl restart mailman3
 ```
 
 Nothing else changes in Mailman's code. One per-list setting is needed on
-every DKIM2 list under -07: From must be Authentic for the list's signature
-(-07 §11), and stock Mailman cannot rewrite From in code, so have its DMARC
+every DKIM2 list under -08: From must be Authentic for the list's signature
+(-08 §11), and stock Mailman cannot rewrite From in code, so have its DMARC
 mitigation do it on every post:
 
 ```bash
@@ -399,8 +399,8 @@ Then post to a list that is not in the maps: its copies carry no
   receiver can verify the chain up to the list but not undo the body
   change. Turn content filtering off on a DKIM2 list if subscribers should
   be able to see what the sender wrote.
-- **Posts from senders that do not sign DKIM2 (-07).** The list's
-  signature is the first (`i=1`), so (-07 §11, contract C5) the From of the
+- **Posts from senders that do not sign DKIM2 (-08).** The list's
+  signature is the first (`i=1`), so (-08 §11, -07 contract C5) the From of the
   copy's `m=1` must be Authentic for the list domain. The copy carries a
   single `m=1` with the munged From (section 6), and the author's From is
   only in its Recipe, which C5 never checks. Without `munge_from` the

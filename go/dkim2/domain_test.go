@@ -2,7 +2,7 @@ package dkim2
 
 import "testing"
 
-// RFC 3492 Punycode, as -07 §18 needs it for U-label -> A-label.
+// RFC 3492 Punycode, as -08 §18 needs it for U-label -> A-label.
 func TestDomainToALabel(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"bücher", "xn--bcher-kva"},
@@ -43,7 +43,7 @@ func TestDomainOf(t *testing.T) {
 	}
 }
 
-// -07 §7.2: only Parameter1 is shortened; a domain literal never matches.
+// -08 §7.2: only Parameter1 is shortened; a domain literal never matches.
 func TestDomainRelaxedMatch(t *testing.T) {
 	for _, tc := range []struct {
 		p1, p2 string
@@ -66,7 +66,7 @@ func TestDomainRelaxedMatch(t *testing.T) {
 	}
 }
 
-// -07 §11: one mailbox, Name <a@b> or a@b; groups and lists fail.
+// -08 §11: one mailbox, Name <a@b> or a@b; groups and lists fail.
 func TestDomainFromMailbox(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

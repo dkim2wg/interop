@@ -1,13 +1,18 @@
 """A Recipe that is valid JSON but cannot be applied is a PERMERROR.
 
-draft -07 §5: each step is an object with exactly one key, "c", "d" or "u";
+draft -08 §5: each step is an object with exactly one key, "c", "d" or "u";
 a "c" is two integers 1 <= start <= end, each start past every preceding
 end; "d" is text and "u" canonical base64, neither giving CR or LF.  Any
-such fault breaks the §5 schema, and is reported as
+such fault breaks the §5 schema.  Since -08 (contract D6) a fault in one
+step is reported as
+
+    PERMERROR: Message-Instance m=<x> Recipe <path> is invalid
+
+and one in the whole document (or a copy past the end) as
 
     PERMERROR: Message-Instance m=<x> contains invalid JSON
 
-distinct from "syntax error" (bad base64 r=).  Each case here goes through
+both distinct from "syntax error" (bad base64 r=).  Each case here goes through
 dkim2verify.verify_message on a complete, validly-signed two-hop message,
 so the only thing wrong with it is the Recipe -- and the result must be a
 not-ok result, never an exception.
@@ -65,118 +70,129 @@ def _b(octets: bytes) -> str:
     return base64.b64encode(octets).decode()
 
 
-# (name, modify, recipe dict, detectable from the JSON alone?)
-# The last flag is False only for faults that need the message to see:
+# (name, modify, recipe dict, detectable from the JSON alone?, step path)
+# The flag is False only for faults that need the message to see:
 # simple (non-full-chain) verification cannot know how many lines exist.
+# The path (contract D6, -08) is the step "Recipe <path> is invalid" names;
+# None for a whole-document fault (a fraction like 1.5 is one, wherever it
+# is) and for a copy past the end, which stay "contains invalid JSON".
 CASES = [
     ("descending c ranges", _footer,
-     {"b": [{"c": [2, 2]}, {"c": [1, 1]}]}, True),
+     {"b": [{"c": [2, 2]}, {"c": [1, 1]}]}, True, 'b[1]'),
     ("overlapping c ranges", _footer,
-     {"b": [{"c": [1, 2]}, {"c": [2, 3]}]}, True),
+     {"b": [{"c": [1, 2]}, {"c": [2, 3]}]}, True, 'b[1]'),
     ("adjacent c ranges that touch", _footer,
-     {"b": [{"c": [1, 2]}, {"c": [2, 2]}]}, True),
+     {"b": [{"c": [1, 2]}, {"c": [2, 2]}]}, True, 'b[1]'),
     ("c start 0", _footer,
-     {"b": [{"c": [0, 1]}]}, True),
+     {"b": [{"c": [0, 1]}]}, True, 'b[0]'),
     ("c end before start", _footer,
-     {"b": [{"c": [3, 1]}]}, True),
+     {"b": [{"c": [3, 1]}]}, True, 'b[0]'),
     ("c end beyond the line count", _footer,
-     {"b": [{"c": [1, 6]}]}, False),
+     {"b": [{"c": [1, 6]}]}, False, None),
     ("c start beyond the line count", _footer,
-     {"b": [{"c": [6, 6]}]}, False),
+     {"b": [{"c": [6, 6]}]}, False, None),
     ("c bounds as strings", _footer,
-     {"b": [{"c": ["1", "3"]}]}, True),
+     {"b": [{"c": ["1", "3"]}]}, True, 'b[0]'),
     ("c bound 1.5", _footer,
-     {"b": [{"c": [1, 1.5]}]}, True),
+     {"b": [{"c": [1, 1.5]}]}, True, None),
     ("c bound true", _footer,
-     {"b": [{"c": [True, 3]}]}, True),
+     {"b": [{"c": [True, 3]}]}, True, 'b[0]'),
     ("c with three bounds", _footer,
-     {"b": [{"c": [1, 2, 3]}]}, True),
+     {"b": [{"c": [1, 2, 3]}]}, True, 'b[0]'),
     ("c with one bound", _footer,
-     {"b": [{"c": [1]}]}, True),
+     {"b": [{"c": [1]}]}, True, 'b[0]'),
     ("invalid base64 in u", _footer,
-     {"b": [{"u": ["!!!!"]}, {"c": [2, 3]}]}, True),
+     {"b": [{"u": ["!!!!"]}, {"c": [2, 3]}]}, True, 'b[0]'),
     ("unpadded base64 in u", _footer,
-     {"b": [{"u": ["bGluZSAx"[:-1]]}, {"c": [2, 3]}]}, True),
+     {"b": [{"u": ["bGluZSAx"[:-1]]}, {"c": [2, 3]}]}, True, 'b[0]'),
     ("non-zero pad bits in u", _footer,
-     {"b": [{"u": ["bGluZSAxQR=="]}, {"c": [2, 3]}]}, True),
+     {"b": [{"u": ["bGluZSAxQR=="]}, {"c": [2, 3]}]}, True, 'b[0]'),
     ("FWS inside a u item", _footer,
-     {"b": [{"u": ["bGlu ZSAx"]}, {"c": [2, 3]}]}, True),
+     {"b": [{"u": ["bGlu ZSAx"]}, {"c": [2, 3]}]}, True, 'b[0]'),
     ("CRLF inside a decoded u item", _footer,
-     {"b": [{"u": [_b(b"line 1\r\nline 2")]}, {"c": [3, 3]}]}, True),
+     {"b": [{"u": [_b(b"line 1\r\nline 2")]}, {"c": [3, 3]}]}, True, 'b[0]'),
     ("LF inside a decoded u item", _footer,
-     {"b": [{"u": [_b(b"line 1\nline 2")]}, {"c": [3, 3]}]}, True),
+     {"b": [{"u": [_b(b"line 1\nline 2")]}, {"c": [3, 3]}]}, True, 'b[0]'),
     ("CR inside a decoded u item", _footer,
-     {"b": [{"u": [_b(b"line 1\r")]}, {"c": [2, 3]}]}, True),
+     {"b": [{"u": [_b(b"line 1\r")]}, {"c": [2, 3]}]}, True, 'b[0]'),
     ("CRLF inside a d item", _footer,
-     {"b": [{"d": ["line 1\r\nline 2"]}, {"c": [3, 3]}]}, True),
+     {"b": [{"d": ["line 1\r\nline 2"]}, {"c": [3, 3]}]}, True, 'b[0]'),
     ("lone surrogate in a d item", _footer,
-     {"b": [{"d": ["line \udc31"]}, {"c": [2, 3]}]}, True),
+     {"b": [{"d": ["line \udc31"]}, {"c": [2, 3]}]}, True, None),
     ("u item that is not a string", _footer,
-     {"b": [{"u": [1]}, {"c": [2, 3]}]}, True),
+     {"b": [{"u": [1]}, {"c": [2, 3]}]}, True, 'b[0]'),
     ("empty d array", _footer,
-     {"b": [{"d": []}, {"c": [1, 3]}]}, True),
+     {"b": [{"d": []}, {"c": [1, 3]}]}, True, 'b[0]'),
     ("empty u array", _footer,
-     {"b": [{"u": []}, {"c": [1, 3]}]}, True),
+     {"b": [{"u": []}, {"c": [1, 3]}]}, True, 'b[0]'),
     ("the old b step key", _footer,
-     {"b": [{"b": [_b(b"line 1")]}, {"c": [2, 3]}]}, True),
+     {"b": [{"b": [_b(b"line 1")]}, {"c": [2, 3]}]}, True, 'b[0]'),
     ("empty d array in a header recipe", _dup_subjects,
-     {"h": {"subject": [{"c": [1, 1]}, {"d": []}]}}, True),
+     {"h": {"subject": [{"c": [1, 1]}, {"d": []}]}}, True, 'h.subject[1]'),
     ("step with two keys", _footer,
-     {"b": [{"c": [1, 3], "d": ["x"]}]}, True),
+     {"b": [{"c": [1, 3], "d": ["x"]}]}, True, 'b[0]'),
     ("unknown step type", _footer,
-     {"b": [{"z": True}, {"c": [1, 3]}]}, True),
+     {"b": [{"z": True}, {"c": [1, 3]}]}, True, 'b[0]'),
     ("bare array step", _footer,
-     {"b": [[1, 3]]}, True),
+     {"b": [[1, 3]]}, True, 'b[0]'),
     ("bare string step", _footer,
-     {"b": ["line 1", {"c": [2, 3]}]}, True),
+     {"b": ["line 1", {"c": [2, 3]}]}, True, 'b[0]'),
     ("header c ranges descending", _dup_subjects,
-     {"h": {"subject": [{"c": [2, 2]}, {"c": [1, 1]}]}}, True),
+     {"h": {"subject": [{"c": [2, 2]}, {"c": [1, 1]}]}}, True, 'h.subject[1]'),
     ("header c end beyond the instance count", _dup_subjects,
-     {"h": {"subject": [{"c": [1, 4]}]}}, False),
+     {"h": {"subject": [{"c": [1, 4]}]}}, False, None),
     ("header steps not an array", _dup_subjects,
-     {"h": {"subject": {"c": [1, 1]}}}, True),
+     {"h": {"subject": {"c": [1, 1]}}}, True, 'h.subject'),
     ("h not an object", _dup_subjects,
-     {"h": [{"c": [1, 1]}]}, True),
+     {"h": [{"c": [1, 1]}]}, True, None),
     ("neither h nor b", _footer,
-     {"x": []}, True),
+     {"x": []}, True, None),
     ("h with no header fields", _footer,
-     {"h": {}, "b": [{"c": [1, 3]}]}, True),
+     {"h": {}, "b": [{"c": [1, 3]}]}, True, None),
     ("null h", _footer,
-     {"h": None, "b": [{"c": [1, 3]}]}, True),
+     {"h": None, "b": [{"c": [1, 3]}]}, True, None),
 ]
 
 
-@pytest.mark.parametrize("name,modify,recipe,structural", CASES,
+def _want(path):
+    if path is None:
+        return WANT
+    return f"PERMERROR: Message-Instance m=2 Recipe {path} is invalid"
+
+
+@pytest.mark.parametrize("name,modify,recipe,structural,path", CASES,
                          ids=[c[0] for c in CASES])
-def test_malformed_recipe_rejected_full_chain(name, modify, recipe, structural):
+def test_malformed_recipe_rejected_full_chain(name, modify, recipe, structural, path):
     msg = two_hop(ORIGINAL, modify, recipe_json=json.dumps(recipe).encode())
     result = verify(msg, full_chain=True)
     assert not result.ok, name
-    assert WANT in result.errors, (name, result.errors)
+    assert result.errors[0] == _want(path), (name, result.errors)
     # Named once, however many code paths noticed it.
-    assert result.errors.count(WANT) == 1, (name, result.errors)
+    assert result.errors.count(_want(path)) == 1, (name, result.errors)
     # It is a format fault in a DKIM2 header field (§14.2), not a signature
     # or hash failure.
     assert result.status == "permerror", (name, result.status, result.errors)
 
 
-@pytest.mark.parametrize("name,modify,recipe,structural",
+@pytest.mark.parametrize("name,modify,recipe,structural,path",
                          [c for c in CASES if c[3]],
                          ids=[c[0] for c in CASES if c[3]])
-def test_malformed_recipe_rejected_without_full_chain(name, modify, recipe, structural):
+def test_malformed_recipe_rejected_without_full_chain(name, modify, recipe, structural, path):
     # Simple mode never applies the Recipe, but everything decidable from
     # the JSON alone is still checked on the top instance.
     msg = two_hop(ORIGINAL, modify, recipe_json=json.dumps(recipe).encode())
     result = verify(msg, full_chain=False)
     assert not result.ok, name
-    assert WANT in result.errors, (name, result.errors)
+    assert result.errors[0] == _want(path), (name, result.errors)
 
 
 def test_malformed_recipe_is_reported_once_and_not_as_syntax_error():
     msg = two_hop(ORIGINAL, _footer,
                   recipe_json=json.dumps({"b": [{"c": [2, 2]}, {"c": [1, 1]}]}).encode())
     result = verify(msg)
-    assert result.errors.count(WANT) == 1, result.errors
+    # -08 (contract D6): out-of-order ranges are a step error, b[1].
+    want = "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"
+    assert result.errors.count(want) == 1, result.errors
     assert not any("syntax error" in e for e in result.errors), result.errors
 
 

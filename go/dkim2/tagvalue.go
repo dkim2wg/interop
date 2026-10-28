@@ -16,7 +16,7 @@ func stripB64WSP(s string) string {
 type tagValueList struct {
 	order     []string
 	vals      map[string]string
-	duplicate string // lowercased tag name seen more than once (§8), if any
+	duplicate string // tag name seen more than once (§8), if any
 	// syntaxErr: a non-empty fragment that is not [FWS] name [FWS] "="
 	// [FWS] [value] [FWS] (§8 tag-spec).  The whole field is then
 	// a syntax error (§14.2); the fragment is never just skipped.
@@ -70,10 +70,9 @@ func validTagName(n string) bool {
 
 func parseTagValueList(s string) *tagValueList {
 	tvl := &tagValueList{vals: make(map[string]string)}
-	seen := make(map[string]bool)
-	// Tag names keep their ORIGINAL case and order so the header can be
-	// re-serialized byte-for-byte for signing-input reconstruction; get/has
-	// below do the case-insensitive lookup required by §8 and decision 2 of the -07 upgrade.
+	// Tag names are case sensitive (§8; contract D10, reversing -07's
+	// "liberal in receive"): "M=1" is an unknown tag, not m=, and "m=1;
+	// M=2" holds no duplicate.  Order is kept for re-serializing.
 	parts := strings.Split(s, ";")
 	for i, part := range parts {
 		part = trimFWS(part)
@@ -96,12 +95,9 @@ func parseTagValueList(s string) *tagValueList {
 		if !validTagName(k) || !validTagValue(v) {
 			tvl.syntaxErr = true
 		}
-		lk := strings.ToLower(k)
-		if seen[lk] {
-			tvl.duplicate = lk // §8: a duplicate makes the whole tag-list invalid
-		}
-		seen[lk] = true
-		if _, exists := tvl.vals[k]; !exists {
+		if _, exists := tvl.vals[k]; exists {
+			tvl.duplicate = k // §8: a duplicate makes the whole tag-list invalid
+		} else {
 			tvl.order = append(tvl.order, k)
 		}
 		tvl.vals[k] = v
@@ -109,32 +105,12 @@ func parseTagValueList(s string) *tagValueList {
 	return tvl
 }
 
-// get and has treat tag identifiers case-insensitively (§8): exact
-// match first (the common case), then a case-insensitive scan.
-func (t *tagValueList) get(key string) string {
-	if v, ok := t.vals[key]; ok {
-		return v
-	}
-	lk := strings.ToLower(key)
-	for k, v := range t.vals {
-		if strings.ToLower(k) == lk {
-			return v
-		}
-	}
-	return ""
-}
+// get and has look a tag up by its exact (lowercase) name (§8, D10).
+func (t *tagValueList) get(key string) string { return t.vals[key] }
 
 func (t *tagValueList) has(key string) bool {
-	if _, ok := t.vals[key]; ok {
-		return true
-	}
-	lk := strings.ToLower(key)
-	for k := range t.vals {
-		if strings.ToLower(k) == lk {
-			return true
-		}
-	}
-	return false
+	_, ok := t.vals[key]
+	return ok
 }
 
 func (t *tagValueList) set(key, val string) {

@@ -252,11 +252,21 @@ func TestSpec07UStepSchema(t *testing.T) {
 		"top key case dup":      `{"b":[],"B":null}`,
 		"step key case dup":     `{"b":[{"d":["x"],"D":["y"]}]}`,
 		"null h any case":       `{"H":null}`,
+		// -08 (contract D10): keys are strictly lowercase.
+		"upper keys":   `{"B":[{"U":["YWI="]},{"D":["x"]},{"C":[1,1]}]}`,
+		"null b upper": `{"B":null}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			// -08 (contract D6): one bad step in b is "Recipe b[0] is
+			// invalid"; the whole document's faults stay invalid JSON.
+			want := invalid
+			if strings.HasPrefix(name, "U3") || strings.HasPrefix(name, "U4") ||
+				strings.HasPrefix(name, "u ") || name == "U5 u decodes to CR" || name == "U5 unknown step key" {
+				want = "PERMERROR: Message-Instance m=2 Recipe b[0] is invalid"
+			}
 			_, err := parseMI(miWithRecipe(2, js))
-			if err == nil || err.Error() != invalid {
-				t.Fatalf("parseMI(%s) = %v, want %q", js, err, invalid)
+			if err == nil || err.Error() != want {
+				t.Fatalf("parseMI(%s) = %v, want %q", js, err, want)
 			}
 		})
 	}
@@ -264,10 +274,8 @@ func TestSpec07UStepSchema(t *testing.T) {
 		"u canonical":   `{"b":[{"u":["Y2Fm6Q=="]}]}`,
 		"u one pad":     `{"b":[{"u":["YWI="]}]}`,
 		"u empty":       `{"b":[{"u":[""]}]}`,
-		"upper keys":    `{"B":[{"U":["YWI="]},{"D":["x"]},{"C":[1,1]}]}`,
 		"pair escapes":  `{"b":[{"d":["\ud83d\ude00"]}]}`,
 		"unknown top":   `{"b":[],"x":1}`,
-		"null b upper":  `{"B":null}`,
 		"d valid utf-8": `{"b":[{"d":["naïve"]}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -276,20 +284,21 @@ func TestSpec07UStepSchema(t *testing.T) {
 			}
 		})
 	}
-	mi, err := parseMI(miWithRecipe(2, `{"B":null}`))
+	mi, err := parseMI(miWithRecipe(2, `{"b":null}`))
 	if err != nil || mi.Recipe == nil || !mi.Recipe.BodyNull {
-		t.Fatalf(`{"B":null} is not the null body Recipe: %v %+v`, err, mi)
+		t.Fatalf(`{"b":null} is not the null body Recipe: %v %+v`, err, mi)
 	}
 }
 
-// K1: keys match case-insensitively at every level.
+// K1: -07 matched keys case-insensitively; -08 (contract D10) does not: an
+// uppercase key anywhere makes the JSON invalid.
 func TestSpec07K1UppercaseKeysVerify(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
-	for _, js := range []string{`{"h":{"subject":[{"c":[1,1]}]}}`, `{"H":{"Subject":[{"C":[1,1]}]}}`} {
-		rev := revise07(t, hop1, nil, "", js)
-		hop2 := must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, "")
-		wantPass07(t, hop2)
-	}
+	rev := revise07(t, hop1, nil, "", `{"h":{"subject":[{"c":[1,1]}]}}`)
+	wantPass07(t, must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, ""))
+	rev = revise07(t, hop1, nil, "", `{"H":{"Subject":[{"C":[1,1]}]}}`)
+	wantErr07(t, rev, "PERMERROR: Message-Instance m=2 contains invalid JSON",
+		VerifyOptions{SkipTimestampCheck: true, Outbound: true})
 }
 
 // ---- F: flags (§10.10, §12.5) ----
@@ -370,7 +379,7 @@ func TestSpec07C1PostfixStyleDomains(t *testing.T) {
 func TestSpec07C2NullMailFromWrongDomain(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
 	hop2 := must07(t, hop1, "other.net", "<>", []string{"a@example.com"}, "")
-	wantErr07(t, hop2, "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1")
+	wantErr07(t, hop2, "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1")
 }
 
 func ndChain07(t *testing.T, rt1, d2, d3 string) []byte {
@@ -384,12 +393,12 @@ func TestSpec07C3NdHop(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"x@example.org"}, "")
 	hop2 := must07(t, hop1, "mail.example.org", "", nil, "fwd.example.net")
 	hop3 := must07(t, hop2, "fwd.example.net", "b@fwd.example.net", []string{"c@example.net"}, "")
-	wantErr07(t, hop3, "PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1")
+	wantErr07(t, hop3, "FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1")
 }
 
 func TestSpec07C4NdMismatch(t *testing.T) {
 	wantErr07(t, ndChain07(t, "x@mail.example.org", "example.org", "other.example"),
-		"PERMERROR: DKIM2-Signature i=2 nd= does not match")
+		"FAIL: DKIM2-Signature i=2 nd= does not match")
 }
 
 func TestSpec07C5DomainLiteral(t *testing.T) {
@@ -397,8 +406,8 @@ func TestSpec07C5DomainLiteral(t *testing.T) {
 	hop2 := must07(t, hop1, "example.org", "y@[192.0.2.1]", []string{"c@example.net"}, "")
 	got := verify07(t, hop2)
 	for _, want := range []string{
-		"PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1",
-		"PERMERROR: DKIM2-Signature i=2 MAIL FROM and d= do not match",
+		"FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1",
+		"FAIL: DKIM2-Signature i=2 MAIL FROM and d= do not match",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("want %q in %q", want, got)
@@ -409,7 +418,7 @@ func TestSpec07C5DomainLiteral(t *testing.T) {
 func TestSpec07C6MailFromAndD(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"list@lists.example.org"}, "")
 	_, err := VerifyFull(bytes.NewReader(hop1), spec07Fetcher(t), VerifyOptions{SkipTimestampCheck: true})
-	want := "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match"
+	want := "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"
 	if err == nil || !strings.HasPrefix(err.Error(), want) {
 		t.Fatalf("want top-level %q, got %v", want, err)
 	}
@@ -418,7 +427,7 @@ func TestSpec07C6MailFromAndD(t *testing.T) {
 // ---- A: From must be Authentic (§11, §14.8) ----
 
 func TestSpec07A1FromAuthentic(t *testing.T) {
-	const notAuth = "PERMERROR: DKIM2-Signature i=1 matching From is not authentic"
+	const notAuth = "FAIL: DKIM2-Signature i=1 matching From is not authentic"
 	for _, tc := range []struct {
 		from, d, want string
 	}{
@@ -455,13 +464,13 @@ func fromChangeChain07(t *testing.T, newFrom string) []byte {
 func TestSpec07A2ChangedFrom(t *testing.T) {
 	wantPass07(t, fromChangeChain07(t, "List <list@lists.example.org>"))
 	wantErr07(t, fromChangeChain07(t, "x@elsewhere.net"),
-		"PERMERROR: DKIM2-Signature i=2 matching From is not authentic")
+		"FAIL: DKIM2-Signature i=2 matching From is not authentic")
 	// The From at state 1 is still checked against i=1.
 	hop1 := must07(t, []byte(strings.Replace(spec07Base, "a@example.com", "a@elsewhere.net", 1)),
 		"example.com", "a@example.com", []string{"list@lists.example.org"}, "")
 	rev := revise07(t, hop1, setHeader("From", "list@lists.example.org"), "", "")
 	hop2 := must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, "")
-	wantErr07(t, hop2, "PERMERROR: DKIM2-Signature i=1 matching From is not authentic")
+	wantErr07(t, hop2, "FAIL: DKIM2-Signature i=1 matching From is not authentic")
 }
 
 // ingress07 adds an unsigned Message-Instance m=1 (no Recipe) over in, as a
@@ -498,7 +507,7 @@ func TestSpec07A5FromBeforeFirstSignature(t *testing.T) {
 	in = ingress07(t, []byte(spec07Base))
 	rev = revise07(t, in, setHeader("Subject", "[list] s"), "", "")
 	wantErr07(t, must07(t, rev, "example.org", "list@lists.example.org", []string{"sub@example.net"}, ""),
-		"PERMERROR: DKIM2-Signature i=1 matching From is not authentic")
+		"FAIL: DKIM2-Signature i=1 matching From is not authentic")
 }
 
 func TestSpec07A3SignerRefusesInauthenticFrom(t *testing.T) {
@@ -539,7 +548,7 @@ func TestSpec07A3GateUnsignedTopChangedFrom(t *testing.T) {
 func TestSpec07GateTopNd(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"x@mail.example.org"}, "")
 	hop2 := must07(t, hop1, "example.org", "", nil, "fwd.example.net")
-	wantErr07(t, hop2, "PERMERROR: DKIM2-Signature i=2 unexpected nd= tag")
+	wantErr07(t, hop2, "FAIL: DKIM2-Signature i=2 unexpected nd= tag")
 	out, err := sign07(t, hop2, "fwd.example.net", "b@fwd.example.net", []string{"c@example.net"}, "", true)
 	if err != nil {
 		t.Fatalf("gate refused d= == nd=: %v", err)
@@ -570,13 +579,13 @@ func TestSpec07T1FutureLimit(t *testing.T) {
 	wantPass07(t, ok, VerifyOptions{})
 	bad := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
 		func(o *SignOptions) { o.Timestamp = now + 172800 })
-	wantErr07(t, bad, "PERMERROR: DKIM2-Signature i=1 signature is from the future", VerifyOptions{})
+	wantErr07(t, bad, "FAIL: DKIM2-Signature i=1 signature is from the future", VerifyOptions{})
 	old := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
 		func(o *SignOptions) { o.Timestamp = now - 1209600 - 3600 })
-	wantErr07(t, old, "PERMERROR: DKIM2-Signature i=1 signature expired", VerifyOptions{})
+	wantErr07(t, old, "FAIL: DKIM2-Signature i=1 signature expired", VerifyOptions{})
 }
 
-// ---- -07 error strings ----
+// ---- -07 error strings (contract C6), as -08 states them ----
 
 func TestSpec07ErrorStrings(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"list@lists.example.org"}, "")
@@ -608,7 +617,7 @@ func TestSpec07ErrorStrings(t *testing.T) {
 		wantErr07(t, bad, "PERMERROR: DKIM2-Signature i=1 public key nokey does not exist")
 	})
 	t.Run("duplicate tag", func(t *testing.T) {
-		bad := bytes.Replace(hop1, []byte("t=1740000000;"), []byte("t=1740000000; T=1740000000;"), 1)
+		bad := bytes.Replace(hop1, []byte("t=1740000000;"), []byte("t=1740000000; t=1740000000;"), 1)
 		wantErr07(t, bad, "PERMERROR: DKIM2-Signature i=1 syntax error")
 	})
 	t.Run("nd with mf", func(t *testing.T) {
@@ -617,15 +626,15 @@ func TestSpec07ErrorStrings(t *testing.T) {
 	})
 	t.Run("custody", func(t *testing.T) {
 		hop2 := must07(t, hop1, "example.net", "x@example.net", []string{"y@example.org"}, "")
-		wantErr07(t, hop2, "PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1")
+		wantErr07(t, hop2, "FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1")
 	})
 	t.Run("envelope", func(t *testing.T) {
-		wantErr07(t, hop1, "PERMERROR: DKIM2-Signature i=1 MAIL FROM b@example.com did not match",
+		wantErr07(t, hop1, "FAIL: DKIM2-Signature i=1 MAIL FROM b@example.com did not match",
 			VerifyOptions{SkipTimestampCheck: true, MailFrom: "b@example.com"})
 	})
 }
 
-// ---- C9: the primary error is the first in -07 §14 section order ----
+// ---- C9: the primary error is the first in -08 §14 section order ----
 
 // primary07 is the primary error VerifyFull reports: its returned error's
 // first line, else PrimaryResult's; "" for a pass.
@@ -661,13 +670,13 @@ func TestSpec07C9PrimaryError(t *testing.T) {
 		// §14.3 before §14.4.
 		{"expired and custody", must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, "",
 			func(o *SignOptions) { o.Timestamp = now - 15*86400 }),
-			VerifyOptions{}, "PERMERROR: DKIM2-Signature i=1 signature expired"},
+			VerifyOptions{}, "FAIL: DKIM2-Signature i=1 signature expired"},
 		{"expired and top nd", must07(t, []byte(spec07Base), "example.com", "", nil, "fwd.example.net",
 			func(o *SignOptions) { o.Timestamp = now - 15*86400 }),
-			VerifyOptions{}, "PERMERROR: DKIM2-Signature i=1 signature expired"},
+			VerifyOptions{}, "FAIL: DKIM2-Signature i=1 signature expired"},
 		// §14.4 before §14.6.
 		{"custody and signature", badSig(must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, ""), 1),
-			skip, "PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match"},
+			skip, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"},
 		// The chain walk before every signature check: §14.6, §14.3, §14.5,
 		// and the signature's own §14.2 content.
 		{"signature and header hash", bytes.Replace(badSig(hop1, 1), []byte("Subject: hello"), []byte("Subject: jello"), 1),
@@ -678,7 +687,7 @@ func TestSpec07C9PrimaryError(t *testing.T) {
 		{"no key and body hash", append(must07(t, []byte(spec07Base), "example.com", "a@example.com", []string{"b@example.org"}, "",
 			func(o *SignOptions) { o.Selector = "nokey" }), "more\r\n"...),
 			skip, "FAIL: Message-Instance m=1 body hash sha256 mismatch"},
-		{"signature syntax and header hash", bytes.Replace(bytes.Replace(hop1, []byte("t=1740000000;"), []byte("t=1740000000; T=1;"), 1),
+		{"signature syntax and header hash", bytes.Replace(bytes.Replace(hop1, []byte("t=1740000000;"), []byte("t=1740000000; t=1;"), 1),
 			[]byte("Subject: hello"), []byte("Subject: jello"), 1),
 			skip, "FAIL: Message-Instance m=1 header hash sha256 mismatch"},
 		// Every header hash before any body hash.
