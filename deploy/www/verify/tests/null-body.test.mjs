@@ -94,7 +94,7 @@ test('empty body, ordinary header-only Recipe passes; hidden To: fails', async (
 
 for (const [f, want] of [
   ['bad-body-int-below-null.eml', /PERMERROR: Message-Instance m=2 contains invalid JSON/],
-  ['bad-body-steps-below-null.eml', /PERMERROR: Message-Instance m=2 contains invalid JSON/],
+  ['bad-body-steps-below-null.eml', /PERMERROR: Message-Instance m=2 Recipe b\[0\] is invalid/],
 ]) {
   test(`a bad body Recipe below a null is a PERMERROR (${f})`, async () => {
     const rep = await run(f);

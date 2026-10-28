@@ -3,7 +3,7 @@ import { parseMessage, collectLevels, parseTagList, parseHashSets, MAX_CHAIN_LEN
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
 import { fetchKey as dohFetchKey, keyName, DEFINITIVE_KEY_ERRORS } from './doh.js';
-import { decodeRecipe, classifyRecipeDecodeError, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe, validateRecipeSteps } from './recipes.js';
+import { decodeRecipe, recipeErrorText, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe, validateRecipeSteps } from './recipes.js';
 import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
 import { planChain } from './plan.js';
 import { domainOf, toALabel, relaxedMatch } from './domain.js';
@@ -94,14 +94,6 @@ export function checkSignatureDuplicates(items, i) {
     errors.push(`PERMERROR: DKIM2-Signature i=${i} has more selectors than allowed`);
   }
   return errors;
-}
-
-// The §14.2 error text for a classified Recipe failure ('broken': an
-// unexpected failure to undo, has no -07 string of its own).
-function recipeErrorSuffix(reason) {
-  if (reason === 'invalid-json') return 'contains invalid JSON';
-  if (reason === 'syntax-error') return 'syntax error';
-  return 'previous instance cannot be recreated';
 }
 
 // Precedence for one signature's own state in the report: fail > permerror >
@@ -318,7 +310,7 @@ async function verifyOnce(raw, opts = {}) {
       // No reconstructed state: the Recipe at m=undoBroken could not be
       // applied (the error is that instance's).
       level.undo = undoBroken === m + 1 ? 'failed' : 'not-checked';
-      level.detail = `PERMERROR: Message-Instance m=${undoBroken} ${recipeErrorSuffix(undoBrokenReason)}`;
+      level.detail = `PERMERROR: Message-Instance m=${undoBroken} ${undoBrokenReason}`;
       continue;
     }
     level.result = 'pass';
@@ -355,7 +347,7 @@ async function verifyOnce(raw, opts = {}) {
     if (m >= 2) {
       if (undoBroken === m) {
         level.undo = 'failed';
-        applyErr = `PERMERROR: Message-Instance m=${m} ${recipeErrorSuffix(undoBrokenReason)}`;
+        applyErr = `PERMERROR: Message-Instance m=${m} ${undoBrokenReason}`;
       } else {
         level.undo = nullBodyInstances.has(m) ? 'unrecoverable' : 'clean';
       }
@@ -367,7 +359,7 @@ async function verifyOnce(raw, opts = {}) {
       try {
         chain.checkBottom(decodeRecipe(mi.map.r));
       } catch (e) {
-        applyErr = `PERMERROR: Message-Instance m=1 ${recipeErrorSuffix(classifyRecipeDecodeError(e))}`;
+        applyErr = `PERMERROR: Message-Instance m=1 ${recipeErrorText(e)}`;
       }
     }
     for (const text of [err, applyErr]) {
@@ -550,7 +542,7 @@ function instanceContent(mi, m) {
     try {
       validateRecipeSteps(decodeRecipe(mi.map.r));
     } catch (e) {
-      return { error: `${who} ${recipeErrorSuffix(classifyRecipeDecodeError(e))}`, recipe: true };
+      return { error: `${who} ${recipeErrorText(e)}`, recipe: true };
     }
   }
   return { sets };
@@ -739,7 +731,7 @@ async function checkCrypto(sig, i, sigSets, instances, signatures, fetchKey, lev
 // opts.undoWalk selects it. body is the current body's octets (Uint8Array).
 // Returns the chain interface verifyOnce() reads:
 //  - undoBroken / undoBrokenReason: the m whose Recipe could not be undone
-//    ('invalid-json' | 'syntax-error' | 'broken'), or null; undoBrokenStage:
+//    and its error text (recipeErrorText), or null; undoBrokenStage:
 //    'decode' (the Recipe on its own is malformed) or 'apply' (it does not
 //    fit the message: a copy past the end);
 //  - nullBodyAt: the highest m with a null body Recipe; nullBodyInstances:
@@ -755,7 +747,7 @@ export function undoChain(headers, body, instances, maxM) {
   const nullBodyInstances = new Set(); // every m whose body Recipe is null
   let nullBodyAt = null; // highest m whose body Recipe is null (§5.2)
   let undoBroken = null; // m at which undo became impossible
-  let undoBrokenReason = null; // 'invalid-json' | 'syntax-error' | 'broken'
+  let undoBrokenReason = null; // its error text (recipeErrorText)
   let undoBrokenStage = null; // 'decode': the Recipe on its own; 'apply': against the message
   for (let m = maxM; m >= 2; m--) {
     const mi = instances[m];
@@ -768,7 +760,7 @@ export function undoChain(headers, body, instances, maxM) {
       validateRecipeSteps(recipe);
     } catch (e) {
       undoBroken = m;
-      undoBrokenReason = classifyRecipeDecodeError(e);
+      undoBrokenReason = recipeErrorText(e);
       undoBrokenStage = 'decode';
       break;
     }
@@ -792,7 +784,7 @@ export function undoChain(headers, body, instances, maxM) {
       }
     } catch (e) {
       undoBroken = m;
-      undoBrokenReason = classifyRecipeDecodeError(e);
+      undoBrokenReason = recipeErrorText(e);
       undoBrokenStage = 'apply';
       break;
     }

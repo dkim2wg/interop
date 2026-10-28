@@ -109,24 +109,27 @@ function rejects(name, recipe, want) {
   });
 }
 
-// A schema-valid Recipe whose "c" ranges do not fit the message is invalid too.
-rejects('descending "c" ranges', { b: [{ c: [2, 2] }, { c: [1, 1] }] }, INVALID);
-rejects('overlapping "c" ranges', { b: [{ c: [1, 2] }, { c: [2, 2] }] }, INVALID);
+// -08 (contract D6): one invalid step is "Recipe <path> is invalid".
+const step = (path) => `PERMERROR: Message-Instance m=2 Recipe ${path} is invalid`;
+// "c" ranges that are not ascending are an invalid step; ones that do not
+// fit the message are found by applying the Recipe: invalid JSON.
+rejects('descending "c" ranges', { b: [{ c: [2, 2] }, { c: [1, 1] }] }, step('b[1]'));
+rejects('overlapping "c" ranges', { b: [{ c: [1, 2] }, { c: [2, 2] }] }, step('b[1]'));
 rejects('"c" end beyond the line count', { b: [{ c: [1, 3] }] }, INVALID);
 rejects('"c" end beyond the header instance count', { h: { subject: [{ c: [1, 2] }] } }, INVALID);
 // What the §5 schema does not allow.
-rejects('"c" start of 0', { b: [{ c: [0, 1] }] }, INVALID);
-rejects('"c" bounds as strings', { b: [{ c: ['1', '2'] }] }, INVALID);
+rejects('"c" start of 0', { b: [{ c: [0, 1] }] }, step('b[0]'));
+rejects('"c" bounds as strings', { b: [{ c: ['1', '2'] }] }, step('b[0]'));
 rejects('"c" bound 1.5', { b: [{ c: [1, 1.5] }] }, INVALID);
-rejects('invalid base64 in "u"', { b: [{ u: ['!!!!'] }] }, INVALID);
-rejects('"u" item outside the base64 alphabet', { b: [{ u: ['QUJD-QUJD'] }] }, INVALID);
-rejects('unpadded "u" item', { b: [{ u: ['QUI'] }] }, INVALID);
-rejects('"u" item with non-zero pad bits', { b: [{ u: ['QUJ='] }] }, INVALID);
-rejects('empty "d" array', { b: [{ d: [] }] }, INVALID);
-rejects('CR LF inside a decoded "u" item', { b: [{ u: [b64bin('a\r\nb')] }] }, INVALID);
-rejects('LF inside a decoded header "u" item', { h: { subject: [{ u: [b64bin('x\ny')] }] } }, INVALID);
-rejects('unknown step kind', { b: [{ z: [1, 2] }] }, INVALID);
-rejects('the old "b" step', { b: [{ b: [b64bin('hello')] }, { c: [2, 2] }] }, INVALID);
+rejects('invalid base64 in "u"', { b: [{ u: ['!!!!'] }] }, step('b[0]'));
+rejects('"u" item outside the base64 alphabet', { b: [{ u: ['QUJD-QUJD'] }] }, step('b[0]'));
+rejects('unpadded "u" item', { b: [{ u: ['QUI'] }] }, step('b[0]'));
+rejects('"u" item with non-zero pad bits', { b: [{ u: ['QUJ='] }] }, step('b[0]'));
+rejects('empty "d" array', { b: [{ d: [] }] }, step('b[0]'));
+rejects('CR LF inside a decoded "u" item', { b: [{ u: [b64bin('a\r\nb')] }] }, step('b[0]'));
+rejects('LF inside a decoded header "u" item', { h: { subject: [{ u: [b64bin('x\ny')] }] } }, step('h.subject[0]'));
+rejects('unknown step kind', { b: [{ z: [1, 2] }] }, step('b[0]'));
+rejects('the old "b" step', { b: [{ b: [b64bin('hello')] }, { c: [2, 2] }] }, step('b[0]'));
 rejects('Recipe is a JSON array, not an object', [{ c: [1, 2] }], INVALID);
 
 test('a bad Recipe never escapes as an exception, whatever the JSON shape', async () => {

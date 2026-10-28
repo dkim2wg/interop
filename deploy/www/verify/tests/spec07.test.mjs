@@ -52,6 +52,7 @@ function assertFail(rep, text) {
   assert.ok(rep.summary.includes(text), `summary ${JSON.stringify(rep.summary)} lacks ${JSON.stringify(text)}`);
 }
 const INVALID_JSON = 'PERMERROR: Message-Instance m=2 contains invalid JSON';
+const STEP = (path) => `PERMERROR: Message-Instance m=2 Recipe ${path} is invalid`;
 
 // --- domain.js -----------------------------------------------------------
 
@@ -110,10 +111,15 @@ test('a Message-Instance with no r= over a changed message is a hash mismatch be
 });
 
 test('"c" ranges that do not fit the message are "contains invalid JSON" too', async () => {
-  for (const recipe of [{ b: [{ c: [1, 2] }] }, { b: [{ c: [1, 1] }, { c: [1, 1] }] }, { b: [{ c: [2, 1] }] },
-    { h: { subject: [{ c: [1, 2] }] } }]) {
+  for (const recipe of [{ b: [{ c: [1, 2] }] }, { h: { subject: [{ c: [1, 2] }] } }]) {
     assertPerm(await verify(await twoHop(recipe)), INVALID_JSON);
   }
+});
+
+// -08 (contract D6): "c" ranges out of order are one invalid step.
+test('"c" ranges out of order are "Recipe b[<n>] is invalid"', async () => {
+  assertPerm(await verify(await twoHop({ b: [{ c: [1, 1] }, { c: [1, 1] }] })), STEP('b[1]'));
+  assertPerm(await verify(await twoHop({ b: [{ c: [2, 1] }] })), STEP('b[0]'));
 });
 
 test('U2 (verify side): a "u" step restores a body line of octets 63 61 66 E9', async () => {
@@ -131,23 +137,32 @@ test('Review: a "d" step with valid UTF-8 non-ASCII restores a header and a body
   assertPass(await verify(msg));
 });
 
-test('U3: "u" with non-zero pad bits (QR==) is invalid JSON', async () => {
-  assertPerm(await verify(await twoHop({ b: [{ u: ['QR=='] }] })), INVALID_JSON);
+test('U3: "u" with non-zero pad bits (QR==) is an invalid step', async () => {
+  assertPerm(await verify(await twoHop({ b: [{ u: ['QR=='] }] })), STEP('b[0]'));
 });
 
+// -08 (contract D6): one bad step is "Recipe <path> is invalid".
 for (const [label, recipe] of [
   ['U4 old "b" step key', { b: [{ b: ['eA=='] }] }],
   ['U4 step with two keys', { b: [{ c: [1, 1], d: ['x'] }] }],
   ['U4 empty step', { b: [{}] }],
   ['U5 "u" decoding to a CR', { b: [{ u: ['YQ1i'] }] }],
-  ['U5 empty "h"', { h: {} }],
-  ['U5 neither "h" nor "b"', { x: 1 }],
   ['"u" not padded', { b: [{ u: ['YQ'] }] }],
   ['"u" outside the alphabet', { b: [{ u: ['YQ-='] }] }],
   ['"u" with whitespace', { b: [{ u: ['YW Jj'] }] }],
-  ['"d" with a lone surrogate', '{"b":[{"d":["caf\\udce9"]}]}'],
   ['"c" start of 0', { b: [{ c: [0, 1] }] }],
   ['"c" as strings', { b: [{ c: ['1', '1'] }] }],
+]) {
+  test(`${label} is "Recipe b[0] is invalid"`, async () => {
+    assertPerm(await verify(await twoHop(recipe)), STEP('b[0]'));
+  });
+}
+
+// ... and a fault of the whole document is still "contains invalid JSON".
+for (const [label, recipe] of [
+  ['U5 empty "h"', { h: {} }],
+  ['U5 neither "h" nor "b"', { x: 1 }],
+  ['"d" with a lone surrogate', '{"b":[{"d":["caf\\udce9"]}]}'],
   ['Recipe is an array', [{ c: [1, 1] }]],
 ]) {
   test(`${label} is "contains invalid JSON"`, async () => {
@@ -155,21 +170,15 @@ for (const [label, recipe] of [
   });
 }
 
-// --- K: JSON key case (decision 2) ------------------------------------------
-
-test('K1: upper-case keys verify the same as the lower-case form', async () => {
-  assertPass(await verify(await twoHop({ H: { Subject: [{ C: [1, 1] }] } })));
-  // and an upper-case "D" and "U" step that really restore something
-  const opts = { prev: { fields: [['From', 'a@example.com'], ['Subject', 'old']], body: { bin: 'caf\xe9\r\n' } }, cur: { body: 'x\r\n' } };
-  assertPass(await verify(await twoHop({ H: { SUBJECT: [{ D: ['old'] }] }, B: [{ U: ['Y2Fm6Q=='] }] }, opts)));
-});
+// --- K: JSON key case (-08 contract D10: strictly lowercase) -----------------
 
 for (const [label, json] of [
+  ['K1 upper-case keys', '{"H":{"Subject":[{"C":[1,1]}]}}'],
   ['K2 header names differing only in case', '{"h":{"Subject":[],"subject":[]}}'],
   ['top-level keys differing only in case', '{"b":[{"c":[1,1]}],"B":[{"c":[1,1]}]}'],
   ['step keys differing only in case', '{"b":[{"c":[1,1],"C":[1,1]}]}'],
 ]) {
-  test(`${label} are a duplicate: "contains invalid JSON"`, async () => {
+  test(`${label}: "contains invalid JSON"`, async () => {
     assertPerm(await verify(await twoHop(json)), INVALID_JSON);
   });
 }
@@ -295,7 +304,7 @@ test('A2: a list rewrites From to its own domain at m=2 and signs i=2 as example
 });
 
 test('A2: a From rewritten to a domain the m=2 signer does not hold is not authentic', async () => {
-  const msg = await twoHop({ h: { From: [{ d: ['a@example.com'] }] } }, {
+  const msg = await twoHop({ h: { from: [{ d: ['a@example.com'] }] } }, {
     cur: { fields: [['From', 'x@elsewhere.net'], ['Subject', 'hi']] },
   });
   assertFail(await verify(msg), 'FAIL: DKIM2-Signature i=2 matching From is not authentic');

@@ -52,7 +52,7 @@ const cases = {
   '"u" step and a UTF-8 "d"': {
     maxM: 2, body: 'a\r\n', recipes: { 2: { b: [{ u: [b64('caf\xe9')] }, { d: ['x\u00e9y'] }, { c: [1, 1] }] } } },
   'a lone surrogate in "d"': { maxM: 2, body: 'a\r\n', recipes: { 2: '{"b":[{"d":["x\\udce9y"]}]}' }, expect: 2 },
-  'upper-case step and top-level keys': { maxM: 2, body: 'a\r\nb\r\n', recipes: { 2: { B: [{ C: [1, 1] }, { U: [b64('caf\xe9')] }] } } },
+  'upper-case step and top-level keys': { maxM: 2, body: 'a\r\nb\r\n', recipes: { 2: { B: [{ C: [1, 1] }, { U: [b64('caf\xe9')] }] } }, expect: 2 },
   // headers
   'subject tag removed': { maxM: 2, headers: H, recipes: { 2: { h: { subject: [{ d: ['hi'] }] } } } },
   'fields removed': { maxM: 2, headers: [...H, ['List-Id', '<l.example.com>']], recipes: { 2: { h: { 'list-id': [] } } } },
@@ -69,7 +69,7 @@ const cases = {
   'mixed-case names': {
     maxM: 2, headers: [['From', 'a@example.com'], ['SUBJECT', 'one'], ['subject', 'two'], ['Subject', 'three']],
     recipes: { 2: { h: { subject: [{ c: [2, 3] }] } } } },
-  'mixed-case Recipe keys': { maxM: 2, headers: H, recipes: { 2: { h: { Subject: [{ d: ['hi'] }], TO: [{ c: [1, 1] }] } } } },
+  'mixed-case Recipe keys (invalid JSON, -08 D10)': { maxM: 2, headers: H, recipes: { 2: { h: { Subject: [{ d: ['hi'] }], TO: [{ c: [1, 1] }] } } }, expect: 2 },
   'Recipe keys differing only in case': { maxM: 2, headers: H, recipes: { 2: { h: { Subject: [{ d: ['x'] }], SUBJECT: [{ d: ['y'] }] } } }, expect: 2 },
   'skipped fields with Recipes': {
     maxM: 2, headers: [...H, ['Received', 'from a'], ['Received', 'from b'], ['X-Mailer', 'm']],
@@ -106,7 +106,7 @@ const cases = {
   '"h" not an object': { maxM: 2, recipes: { 2: { h: [] } }, expect: 2 },
   'broken at the top of 3 levels': { maxM: 3, recipes: { 3: { b: [{ c: [9, 9] }] }, 2: { b: [] } }, expect: 3 },
   'message-instance named in a header Recipe (falls back)': {
-    maxM: 2, headers: H, recipes: { 2: { h: { 'Message-Instance': [{ c: [1, 1] }], subject: [{ d: ['hi'] }] } } }, fallback: true },
+    maxM: 2, headers: H, recipes: { 2: { h: { 'message-instance': [{ c: [1, 1] }], subject: [{ d: ['hi'] }] } } }, fallback: true },
 };
 
 for (const [name, spec] of Object.entries(cases)) {
