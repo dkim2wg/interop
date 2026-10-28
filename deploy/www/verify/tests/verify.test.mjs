@@ -98,18 +98,18 @@ test('an mf= or rt= that is not base64 of a bracketed path is a syntax error, ne
 });
 
 
-// --- §14.3 an expired signature is PERMERROR --------------------------
-test('an old-but-otherwise-valid signature (>14 days) is PERMERROR, and the crypto still shows (§14.3)', async () => {
+// --- §14.3 an expired signature is FAIL (-08, D5) ----------------------
+test('an old-but-otherwise-valid signature (>14 days) is FAIL, and the crypto still shows (§14.3)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<sender@test.dkim2.eu>',
     rcptTo: ['<recipient@example.com>'],
     now: SAMPLE_T + 20 * 86400, // 20 days after the signature timestamp
   });
-  assert.equal(rep.overall, 'permerror');
-  assert.equal(rep.summary, 'PERMERROR: DKIM2-Signature i=1 signature expired');
+  assert.equal(rep.overall, 'fail');
+  assert.equal(rep.summary, 'FAIL: DKIM2-Signature i=1 signature expired');
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
-  assert.equal(sig.result, 'permerror');
+  assert.equal(sig.result, 'fail');
   assert.equal(sig.timestamp.ok, false);
   assert.equal(sig.timestamp.status, 'expired');
   assert.equal(sig.items[0].result, 'pass');
@@ -177,7 +177,7 @@ test('a §12.3 bridge from a domain the mail never reached fails custody', async
     { now: 1000000, fetchKey: stubKey });
   const sig2 = rep.levels.find((l) => l.kind === 'signature' && l.i === 2);
   assert.equal(sig2.custody.ok, false);
-  assert.equal(sig2.custody.detail, 'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1');
+  assert.equal(sig2.custody.detail, 'FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1');
 });
 
 // --- §14.4 top-hop envelope exact-match ---------------------------------
@@ -196,27 +196,27 @@ test('envelope match with differing domain case is not a permerror (§14.4)', as
   assert.equal(sig.custody.ok, true);
 });
 
-test('wrong MAIL FROM is PERMERROR with a MAIL FROM detail (§14.4)', async () => {
+test('wrong MAIL FROM is FAIL with a MAIL FROM detail (§14.4)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<attacker@evil.example>',
     rcptTo: ['<recipient@example.com>'],
     now: FRESH_NOW,
   });
-  assert.equal(rep.overall, 'permerror');
+  assert.equal(rep.overall, 'fail');
   assert.match(rep.summary, /MAIL FROM .*did not match/);
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
-  assert.equal(sig.result, 'permerror');
+  assert.equal(sig.result, 'fail');
 });
 
-test('a used RCPT TO absent from rt= is PERMERROR (§14.4)', async () => {
+test('a used RCPT TO absent from rt= is FAIL (§14.4)', async () => {
   const rep = await verifyMessage(SIGNED_SAMPLE, {
     fetchKey: realFetchKey,
     mailFrom: '<sender@test.dkim2.eu>',
     rcptTo: ['<nobody@example.com>'],
     now: FRESH_NOW,
   });
-  assert.equal(rep.overall, 'permerror');
+  assert.equal(rep.overall, 'fail');
   assert.match(rep.summary, /RCPT TO .*did not match/);
 });
 
@@ -229,7 +229,7 @@ test('local-part case is significant in the envelope match (§14.4)', async () =
     rcptTo: ['<RECIPIENT@example.com>'],
     now: FRESH_NOW,
   });
-  assert.equal(rep.overall, 'permerror');
+  assert.equal(rep.overall, 'fail');
   assert.match(rep.summary, /RCPT TO .*did not match/);
 });
 

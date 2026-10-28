@@ -45,6 +45,12 @@ function assertPerm(rep, text) {
   assert.equal(rep.overall, 'permerror', rep.summary);
   assert.ok(rep.summary.includes(text), `summary ${JSON.stringify(rep.summary)} lacks ${JSON.stringify(text)}`);
 }
+// -08 §14.3, §14.4, §14.8 (D5): timestamps, Chain of Custody and From
+// Authentic are FAIL.
+function assertFail(rep, text) {
+  assert.equal(rep.overall, 'fail', rep.summary);
+  assert.ok(rep.summary.includes(text), `summary ${JSON.stringify(rep.summary)} lacks ${JSON.stringify(text)}`);
+}
 const INVALID_JSON = 'PERMERROR: Message-Instance m=2 contains invalid JSON';
 
 // --- domain.js -----------------------------------------------------------
@@ -195,8 +201,8 @@ test('C1 (Review): an rt= in upper case with a trailing dot still matches', asyn
 });
 
 test('C2: an mf=<> hop whose d= is not in the previous rt= fails', async () => {
-  assertPerm(await verify(await signChain(twoStates, c1hops(undefined, 'other.net'))),
-    'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1');
+  assertFail(await verify(await signChain(twoStates, c1hops(undefined, 'other.net'))),
+    'FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1');
 });
 
 const c3 = (rt1, d2, d3) => signChain([{ fields: FIELDS, body: BODY }], [
@@ -210,35 +216,35 @@ test('C3: an nd= hop matches the previous rt=, and the next d= equals nd=', asyn
 });
 
 test('C3 swapped: the nd= hop d= is a subdomain of the previous rt=, which never matches', async () => {
-  assertPerm(await verify(await c3('<x@example.org>', 'mail.example.org', 'fwd.example.net')),
-    'PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1');
+  assertFail(await verify(await c3('<x@example.org>', 'mail.example.org', 'fwd.example.net')),
+    'FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1');
 });
 
 test('C4: the hop after nd= has a different d=', async () => {
-  assertPerm(await verify(await c3('<x@mail.example.org>', 'example.org', 'other.example')),
-    'PERMERROR: DKIM2-Signature i=2 nd= does not match');
+  assertFail(await verify(await c3('<x@mail.example.org>', 'example.org', 'other.example')),
+    'FAIL: DKIM2-Signature i=2 nd= does not match');
 });
 
 test('C5: a domain literal never matches', async () => {
   const rep = await verify(await signChain(twoStates, [
     one({ rt: ['<x@[192.0.2.1]>'] }), two({ mf: '<y@[192.0.2.1]>' })]));
-  assertPerm(rep, 'PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1');
-  assertPerm(rep, 'PERMERROR: DKIM2-Signature i=2 MAIL FROM and d= do not match');
+  assertFail(rep, 'FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1');
+  assertFail(rep, 'FAIL: DKIM2-Signature i=2 MAIL FROM and d= do not match');
 });
 
 test('C6: i=1 MAIL FROM and d= do not match', async () => {
   const rep = await verify(await signChain([{ fields: FIELDS, body: BODY }], [one({ mf: '<a@example.net>' })]));
-  assertPerm(rep, 'PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match');
+  assertFail(rep, 'FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match');
 });
 
 test('a non-null mf= that does not relaxed-match the previous rt= fails', async () => {
-  assertPerm(await verify(await twoHop({ h: { subject: [{ c: [1, 1] }] } }, { hop2: { d: 'example.net', mf: '<x@example.net>' } })),
-    'PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1');
+  assertFail(await verify(await twoHop({ h: { subject: [{ c: [1, 1] }] } }, { hop2: { d: 'example.net', mf: '<x@example.net>' } })),
+    'FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1');
 });
 
 test('Review: an nd= tag on the top signature, verified inbound, is "unexpected nd= tag"', async () => {
   const rep = await verify(await signChain([{ fields: FIELDS, body: BODY }], [{ d: 'example.com', m: 1, nd: 'example.net' }]));
-  assertPerm(rep, 'PERMERROR: DKIM2-Signature i=1 unexpected nd= tag');
+  assertFail(rep, 'FAIL: DKIM2-Signature i=1 unexpected nd= tag');
 });
 
 test('nd= together with mf= or rt= is "tag=mf was unexpected"', async () => {
@@ -249,14 +255,14 @@ test('nd= together with mf= or rt= is "tag=mf was unexpected"', async () => {
 // --- A: From is Authentic (C5) ---------------------------------------------
 
 const oneHopFrom = (from, hop = {}) => signChain([{ fields: [['From', from], ['Subject', 'hi']], body: BODY }], [one(hop)]);
-const NOT_AUTHENTIC_1 = 'PERMERROR: DKIM2-Signature i=1 matching From is not authentic';
+const NOT_AUTHENTIC_1 = 'FAIL: DKIM2-Signature i=1 matching From is not authentic';
 
 test('A1: From "A <a@example.com>" with d=example.com passes', async () => {
   assertPass(await verify(await oneHopFrom('A <a@example.com>')));
 });
 
 test('A1: the same From with d=example.net is not authentic', async () => {
-  assertPerm(await verify(await oneHopFrom('A <a@example.com>', { d: 'example.net', mf: '<a@example.net>' })), NOT_AUTHENTIC_1);
+  assertFail(await verify(await oneHopFrom('A <a@example.com>', { d: 'example.net', mf: '<a@example.net>' })), NOT_AUTHENTIC_1);
 });
 
 test('A1: From a@sub.example.com with d=example.com passes', async () => {
@@ -267,13 +273,13 @@ test('A1: From a@sub.example.com with d=example.com passes', async () => {
 // (final review T3); all five implementations agree.
 for (const from of ['a@example.com, b@example.com', 'a@[192.0.2.1]', 'group: a@example.com;', 'A a@example.com', 'not an address']) {
   test(`A1: From "${from}" is not authentic`, async () => {
-    assertPerm(await verify(await oneHopFrom(from)), NOT_AUTHENTIC_1);
+    assertFail(await verify(await oneHopFrom(from)), NOT_AUTHENTIC_1);
   });
 }
 
 test('A1: two From fields are not authentic', async () => {
   const msg = await signChain([{ fields: [['From', 'a@example.com'], ['From', 'b@example.com'], ['Subject', 'hi']], body: BODY }], [one()]);
-  assertPerm(await verify(msg), NOT_AUTHENTIC_1);
+  assertFail(await verify(msg), NOT_AUTHENTIC_1);
 });
 
 test('A1 (Review): a folded From with an RFC 2047 display name and angle-addr passes', async () => {
@@ -292,7 +298,7 @@ test('A2: a From rewritten to a domain the m=2 signer does not hold is not authe
   const msg = await twoHop({ h: { From: [{ d: ['a@example.com'] }] } }, {
     cur: { fields: [['From', 'x@elsewhere.net'], ['Subject', 'hi']] },
   });
-  assertPerm(await verify(msg), 'PERMERROR: DKIM2-Signature i=2 matching From is not authentic');
+  assertFail(await verify(msg), 'FAIL: DKIM2-Signature i=2 matching From is not authentic');
 });
 
 test('A2: the original From is still checked against i=1', async () => {
@@ -300,7 +306,7 @@ test('A2: the original From is still checked against i=1', async () => {
     prev: { fields: [['From', 'a@elsewhere.net'], ['Subject', 'hi']] },
     cur: { fields: [['From', 'list@lists.example.org'], ['Subject', 'hi']] },
   });
-  assertPerm(await verify(msg), NOT_AUTHENTIC_1);
+  assertFail(await verify(msg), NOT_AUTHENTIC_1);
 });
 
 // Ruling 19: i=1 is checked against the From at state m(i=1). An author's
@@ -319,7 +325,7 @@ test('Ruling 19: the From at state m(i=1) is checked against i=1', async () => {
     { fields: [['From', 'a@example.com'], ['Subject', 'hi']], body: BODY },
     { fields: [['From', 'a@example.com'], ['Subject', '[list] hi']], body: BODY, recipe: { h: { subject: [{ d: ['hi'] }] } } },
   ], [two({ m: 2 })]);
-  assertPerm(await verify(msg), NOT_AUTHENTIC_1);
+  assertFail(await verify(msg), NOT_AUTHENTIC_1);
 });
 
 test('A4: From u@bücher.example (UTF-8) with d=xn--bcher-kva.example passes', async () => {
@@ -332,14 +338,14 @@ test('A4: From u@bücher.example (UTF-8) with d=xn--bcher-kva.example passes', a
 test('T1: t two hours ahead passes; two days ahead is from the future', async () => {
   const msg = await signChain([{ fields: FIELDS, body: BODY }], [one()]);
   assertPass(await verify(msg, { now: T - 7200 }));
-  assertPerm(await verify(msg, { now: T - 172800 }), 'PERMERROR: DKIM2-Signature i=1 signature is from the future');
+  assertFail(await verify(msg, { now: T - 172800 }), 'FAIL: DKIM2-Signature i=1 signature is from the future');
 });
 
-test('T1: a signature more than 14 days old is expired (PERMERROR, not a warning)', async () => {
+test('T1: a signature more than 14 days old is expired (FAIL, not a warning)', async () => {
   const msg = await signChain([{ fields: FIELDS, body: BODY }], [one()]);
   assertPass(await verify(msg, { now: T + 1209600 }));
   const rep = await verify(msg, { now: T + 1209601 });
-  assertPerm(rep, 'PERMERROR: DKIM2-Signature i=1 signature expired');
+  assertFail(rep, 'FAIL: DKIM2-Signature i=1 signature expired');
   // the signature itself still verified, and the report says so
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
   assert.equal(sig.items[0].result, 'pass');
@@ -348,7 +354,7 @@ test('T1: a signature more than 14 days old is expired (PERMERROR, not a warning
 test('T1: with no clock given, the current time is used', async () => {
   const msg = await signChain([{ fields: FIELDS, body: BODY }], [one()]);
   const rep = await verifyMessage(msg, { fetchKey });
-  assertPerm(rep, 'PERMERROR: DKIM2-Signature i=1 signature expired');
+  assertFail(rep, 'FAIL: DKIM2-Signature i=1 signature expired');
 });
 
 // --- C6: error strings ------------------------------------------------------
@@ -443,17 +449,17 @@ test('C9: a From changed after signing is the header hash FAIL (§14.7 before §
 
 test('C9: expired before custody (§14.3 before §14.4)', async () => {
   const msg = await oneHopFrom('a@example.com', { mf: '<a@example.net>', t: T - 15 * 86400 });
-  assertPrimary(await verify(msg), 'permerror', 'PERMERROR: DKIM2-Signature i=1 signature expired');
+  assertPrimary(await verify(msg), 'fail', 'FAIL: DKIM2-Signature i=1 signature expired');
 });
 
 test('C9: expired before an unexpected top nd= (§14.3 before §14.4)', async () => {
   const msg = await oneHopFrom('a@example.com', { nd: 'fwd.example.net', t: T - 15 * 86400 });
-  assertPrimary(await verify(msg), 'permerror', 'PERMERROR: DKIM2-Signature i=1 signature expired');
+  assertPrimary(await verify(msg), 'fail', 'FAIL: DKIM2-Signature i=1 signature expired');
 });
 
 test('C9: custody before a bad signature (§14.4 before §14.6)', async () => {
   const msg = await oneHopFrom('a@example.com', { mf: '<a@example.net>', sets: [{ sel: 'sel', bad: true }] });
-  assertPrimary(await verify(msg), 'permerror', 'PERMERROR: DKIM2-Signature i=1 MAIL FROM and d= do not match');
+  assertPrimary(await verify(msg), 'fail', 'FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match');
 });
 
 test('C9: a header hash before a bad signature (§14.7 before §14.6), and no signature verified', async () => {
@@ -502,5 +508,5 @@ test('C9 step g: an instance covered by a lower signature\'s m= is signed', asyn
 test('C9: within §14.4, S against the one below it before its own mf= and d=', async () => {
   const msg = await signChain([{ fields: FIELDS, body: BODY }],
     [one(), { d: 'example.org', m: 1, mf: '<y@[192.0.2.1]>', rt: ['<b@example.net>'] }]);
-  assertPrimary(await verify(msg), 'permerror', 'PERMERROR: DKIM2-Signature i=2 mf= does not match the rt= of i=1');
+  assertPrimary(await verify(msg), 'fail', 'FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1');
 });

@@ -283,16 +283,16 @@ test('D: t= with surrounding WSP is fine', async () => {
 
 test('D: t=0 is valid syntax and expired by the age check', async () => {
   const rep = await verify(await withT('0'));
-  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.equal(rep.overall, 'fail', rep.summary);
   assert.equal(sigLevel(rep).timestamp.status, 'expired');
-  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 signature expired');
+  assert.equal(sigLevel(rep).detail, 'FAIL: DKIM2-Signature i=1 signature expired');
 });
 
 test('D: t=10^12 does not overflow (a future timestamp, not expired)', async () => {
   const rep = await verify(await withT('1000000000000'));
-  assert.equal(rep.overall, 'permerror', rep.summary);
+  assert.equal(rep.overall, 'fail', rep.summary);
   assert.equal(sigLevel(rep).timestamp.status, 'future');
-  assert.equal(sigLevel(rep).detail, 'PERMERROR: DKIM2-Signature i=1 signature is from the future');
+  assert.equal(sigLevel(rep).detail, 'FAIL: DKIM2-Signature i=1 signature is from the future');
 });
 
 // --- E. outcome of a signature's items --------------------------------------

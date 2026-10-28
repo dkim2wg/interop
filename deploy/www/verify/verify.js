@@ -418,14 +418,14 @@ async function verifyOnce(raw, opts = {}) {
     let notChecked = false;
     if (custody.length) {
       level.custody = { ok: false, detail: custody.join('; ') };
-      for (const text of custody) fail('permerror', text);
+      for (const text of custody) fail('fail', text);
     } else {
       level.custody = { ok: true, detail: i === 1 ? 'origin' : 'chain intact' };
     }
     // §14.8: recorded here, ranked last (C9): it never stops the crypto.
     if (badFrom.has(i)) {
       level.from = { ok: false };
-      fail('permerror', `PERMERROR: DKIM2-Signature i=${i} matching From is not authentic`);
+      fail('fail', `FAIL: DKIM2-Signature i=${i} matching From is not authentic`);
     }
     if (!custody.length) {
       if (!sig.sets.some((ss) => SUPPORTED_ALGS.has(ss.alg))) {
@@ -451,10 +451,10 @@ async function verifyOnce(raw, opts = {}) {
       level.timestamp = { ok: true, detail: '' };
       if (now - t > MAX_AGE) {
         level.timestamp = { ok: false, status: 'expired', detail: `t= is ${Math.floor((now - t) / 86400)} days before now` };
-        fail('permerror', `PERMERROR: DKIM2-Signature i=${i} signature expired`);
+        fail('fail', `FAIL: DKIM2-Signature i=${i} signature expired`);
       } else if (t - now > MAX_AHEAD) {
         level.timestamp = { ok: false, status: 'future', detail: `t= is ${Math.floor((t - now) / 3600)} hours after now` };
-        fail('permerror', `PERMERROR: DKIM2-Signature i=${i} signature is from the future`);
+        fail('fail', `FAIL: DKIM2-Signature i=${i} signature is from the future`);
       }
     }
 
@@ -647,9 +647,9 @@ export function c9Key(text) {
   if (/ nd= does not match$/.test(text)) return [4, 2, i + 1, 0];
   if (/ does not match the rt= of i=/.test(text)) return [4, 2, i, 0];
   if (/ MAIL FROM and d= do not match$/.test(text)) return [4, 2, i, 1];
+  if (/ matching From is not authentic$/.test(text)) return [8, i];
   if (/^TEMPERROR: | public key | has no signature with a supported algorithm/.test(text)) return [5, i];
   if (/^FAIL: DKIM2-Signature /.test(text)) return [6, i];
-  if (/ matching From is not authentic$/.test(text)) return [8, i];
   return [9];
 }
 
@@ -879,23 +879,23 @@ function custodyErrors(signatures, i, maxI) {
   const d = sigDomain(S);
   const errs = [];
   const hasNd = 'nd' in S.map;
-  if (hasNd && i === maxI) errs.push(`PERMERROR: DKIM2-Signature i=${i} unexpected nd= tag`);
+  if (hasNd && i === maxI) errs.push(`FAIL: DKIM2-Signature i=${i} unexpected nd= tag`);
   const nullMf = !hasNd && S.mf === '<>';
   if (i > 1) {
     const P = signatures[i - 1];
     if ('nd' in P.map) {
-      if (d !== P.map.nd.toLowerCase()) errs.push(`PERMERROR: DKIM2-Signature i=${i - 1} nd= does not match`);
+      if (d !== P.map.nd.toLowerCase()) errs.push(`FAIL: DKIM2-Signature i=${i - 1} nd= does not match`);
     } else if (hasNd || nullMf) {
       if (!P.rts.some((r) => relaxedMatch(addrDomain(r), d))) {
-        errs.push(`PERMERROR: DKIM2-Signature i=${i} d= does not match the rt= of i=${i - 1}`);
+        errs.push(`FAIL: DKIM2-Signature i=${i} d= does not match the rt= of i=${i - 1}`);
       }
     } else if (!P.rts.some((r) => relaxedMatch(addrDomain(S.mf), addrDomain(r)))) {
-      errs.push(`PERMERROR: DKIM2-Signature i=${i} mf= does not match the rt= of i=${i - 1}`);
+      errs.push(`FAIL: DKIM2-Signature i=${i} mf= does not match the rt= of i=${i - 1}`);
     }
   }
   // S's own mf= against its d=, after S against P (the order C4 walks).
   if (!hasNd && !nullMf && !relaxedMatch(addrDomain(S.mf), d)) {
-    errs.push(`PERMERROR: DKIM2-Signature i=${i} MAIL FROM and d= do not match`);
+    errs.push(`FAIL: DKIM2-Signature i=${i} MAIL FROM and d= do not match`);
   }
   return errs;
 }
@@ -926,12 +926,12 @@ function envelopeErrors(sig, i, opts) {
   if (typeof mailFrom !== 'string' || !Array.isArray(rcptTo) || rcptTo.length === 0) return [];
   if ('nd' in sig.map) return [];
   if (sig.mf !== '<>' && normalizeAddr(sig.mf) !== normalizeAddr(mailFrom)) {
-    return [`PERMERROR: DKIM2-Signature i=${i} MAIL FROM ${mailFrom} did not match`];
+    return [`FAIL: DKIM2-Signature i=${i} MAIL FROM ${mailFrom} did not match`];
   }
   const rtNorm = sig.rts.map(normalizeAddr);
   for (const rcpt of rcptTo) {
     if (!rtNorm.includes(normalizeAddr(rcpt))) {
-      return [`PERMERROR: DKIM2-Signature i=${i} RCPT TO ${rcpt} did not match`];
+      return [`FAIL: DKIM2-Signature i=${i} RCPT TO ${rcpt} did not match`];
     }
   }
   return [];
