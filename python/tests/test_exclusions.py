@@ -17,14 +17,21 @@ def test_received_still_excluded():
 import pytest
 
 
-# -07 §4: names added by the HDRMAINT survey
+# -07 §4: names added by the HDRMAINT survey (Auto-Submitted and VBR-Info
+# were on this list until -08 removed them: see the test below)
 @pytest.mark.parametrize("name", [
-    b"apparently-to", b"auto-submitted", b"dl-expansion-history",
-    b"original-recipient", b"sio-label-history", b"vbr-info",
+    b"apparently-to", b"dl-expansion-history",
+    b"original-recipient", b"sio-label-history",
     b"x400-received", b"x400-trace",
 ])
 def test_spec05_names_excluded(name):
     assert _should_exclude_header(name)
+
+
+# -08 §4 (contract D1): Auto-Submitted and VBR-Info are hashed now.
+@pytest.mark.parametrize("name", [b"auto-submitted", b"vbr-info"])
+def test_spec08_auto_submitted_and_vbr_info_hashed(name):
+    assert not _should_exclude_header(name)
 
 
 # -07 §4: any Received-* field is a trace field

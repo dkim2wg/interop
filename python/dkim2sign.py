@@ -110,15 +110,16 @@ def parse_message(source: "Source") -> tuple[list[bytes], bytes]:
 # Canonicalization for header hash (Section 6.2)
 # ---------------------------------------------------------------------------
 
-# Headers to exclude from the header hash (-07 §4, §4.1)
+# Headers to exclude from the header hash (-08 §4, §4.1).  -08 took
+# Auto-Submitted and VBR-Info off the list: they are hashed (contract D1).
 _EXCLUDED_PREFIXES = (b"x-", b"received-")
 _EXCLUDED_NAMES = {
     b"apparently-to", b"arc-authentication-results",
     b"arc-message-signature", b"arc-seal", b"authentication-results",
-    b"auto-submitted", b"delivered-to", b"dkim-signature",
+    b"delivered-to", b"dkim-signature",
     b"dkim2-signature", b"dl-expansion-history", b"message-instance",
     b"original-recipient", b"received", b"return-path",
-    b"sio-label-history", b"vbr-info", b"x400-received", b"x400-trace",
+    b"sio-label-history", b"x400-received", b"x400-trace",
 }
 
 
