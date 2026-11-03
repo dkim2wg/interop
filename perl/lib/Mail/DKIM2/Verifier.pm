@@ -2,7 +2,7 @@ package Mail::DKIM2::Verifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 
 use base 'Mail::DKIM2::HeaderParser';
 use Crypt::Digest::SHA256 qw(sha256);
@@ -257,6 +257,8 @@ sub finish_header {
         if %{$self->{_dk2_headers}} && !$self->{InstancesOnly};
 
     $self->_start_plans if $self->{StreamBody} && !$self->{HeadersOnly};
+    $self->_prefetch_policies
+        if %{$self->{_dk2_headers}} && !$self->{InstancesOnly};
 }
 
 # -09 section 14.2, structure: what the fields' names and m=/i= numbers
@@ -485,8 +487,22 @@ sub finish_body {
 sub _verify_from {
     my ($self) = @_;
     my %dk2_map = %{$self->{_dk2_headers}};
+    for my $pair ($self->_from_pairs) {
+        my ($i, $from) = @$pair;
+        my $d = $dk2_map{$i}{sig}->domain // '';
+        return 0 unless $self->_from_pair_authentic($i, $d, @$from);
+    }
+    return 1;
+}
+
+# The (i, From values) pairs section 14.8 checks, as [$i, \@from] in i
+# order: worked out from the header fields alone (the From at each state
+# comes from the Recipes), so the policy prefetch can use them too.
+sub _from_pairs {
+    my ($self) = @_;
+    my %dk2_map = %{$self->{_dk2_headers}};
     my @sigs = map { [$_, 0 + ($dk2_map{$_}{sig}->version // 0)] } sort { $a <=> $b } keys %dk2_map;
-    return 1 unless @sigs;
+    return unless @sigs;
 
     my ($hplan, @parsed);
     if ($self->{_planned} && $self->{_header_plan}) {
@@ -528,14 +544,9 @@ sub _verify_from {
         my $due = $i == 1
             || (defined $prev_m && grep { $_ > $prev_m && $_ <= $m } keys %changes_from);
         $prev_m = $m;
-        push @pairs, [$m, $i] if $due;
+        push @pairs, [$i, $from_at->($m)] if $due;
     }
-    for my $pair (@pairs) {
-        my ($k, $i) = @$pair;
-        my $d = $dk2_map{$i}{sig}->domain // '';
-        return 0 unless $self->_from_pair_authentic($i, $d, @{ $from_at->($k) });
-    }
-    return 1;
+    return @pairs;
 }
 
 # -09 section 14.8 for one signature and the From it is checked against
@@ -558,8 +569,11 @@ sub _from_pair_authentic {
 # since it is needed only when d= is below the From domain.
 sub _domain_policy {
     my ($self, $dom) = @_;
+    # Without a PolicyCallback, fetch_domain_policy: it reads the answer
+    # _prefetch_policies asked for, if any, before it queries.
     my ($p, $why) = Mail::DKIM2::Common::policy_from_source($dom,
-        $self->{PolicyCallback}, sub { $self->_resolver }, $self);
+        $self->{PolicyCallback} // sub { $self->fetch_domain_policy($_[0]) },
+        sub { $self->_resolver }, $self);
     $self->{diagnostic} = $why if defined $why;
     return $p;
 }
@@ -571,7 +585,16 @@ sub _domain_policy {
 # not handle itself.
 sub fetch_domain_policy {
     my ($self, $dom) = @_;
-    return Mail::DKIM2::Common::query_domain_policy($self->_resolver, $dom);
+    my $fqdn = "_domainkey.$dom";
+    # The prefetched answer when there is one (_prefetch_policies), else
+    # query(): the key fetch's path.
+    my ($reply, $err) = @{ $self->_key_reply($fqdn) };
+    unless ($reply) {
+        $err //= '';
+        return [] if $err =~ /^(?:NXDOMAIN|NOERROR|NODATA)\s*$/i;
+        croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
+    }
+    return [ map { join '', $_->txtdata } grep { $_->type eq 'TXT' } $reply->answer ];
 }
 
 # The headers-only half of _verify_mi_chain: the top instance's header hash
@@ -1146,6 +1169,39 @@ sub _prefetch_keys {
     }
 }
 
+# The Domain Policy Records section 14.8 may need, asked for in the
+# background at the end of the headers with the keys (0.30): for each
+# (signature, From) pair whose d= is below the From domain -- the only case
+# that looks one up -- _domainkey.<From domain>, at most $PREFETCH_MAX
+# domains. Under the same conditions as the key prefetch (_can_prefetch),
+# and not with a PolicyCallback. Never fatal: a record not asked for here
+# is asked for with query() when it is wanted.
+sub _prefetch_policies {
+    my ($self) = @_;
+    return if $self->{PolicyCallback};
+    my $resolver = $self->_resolver;
+    return unless _can_prefetch($resolver);
+    my %dk2_map = %{$self->{_dk2_headers}};
+    my $sent = 0;
+    my @pairs = eval { $self->_from_pairs };
+    die $@ if ref $@;
+    for my $pair (@pairs) {
+        last if $sent >= $PREFETCH_MAX;
+        my ($i, $from) = @$pair;
+        my $d = $dk2_map{$i}{sig}->domain // next;
+        my ($state, $dom) = Mail::DKIM2::Common::from_mailbox(@$from);
+        next unless $state eq 'ok' && length $d
+            && !relaxed_domain_match($dom, $d) && relaxed_domain_match($d, $dom);
+        my $fqdn = "_domainkey.$dom";
+        next if $self->{_key_queries}{lc $fqdn};
+        $sent++;
+        my $handle = eval { $resolver->bgsend($fqdn, 'TXT') };
+        die $@ if ref $@;
+        next unless $handle;
+        $self->{_key_queries}{lc $fqdn} = [$handle, Time::HiRes::time() + $PREFETCH_WAIT];
+    }
+}
+
 # The DNS answer for $fqdn as [$reply] or [undef, $error], query()'s
 # results: from the background query if it gave one that settles it (an
 # answer, NXDOMAIN, or NOERROR with none), else from query().
@@ -1395,6 +1451,11 @@ C<$Mail::DKIM2::Verifier::PREFETCH_MAX> keys (8) are prefetched per
 message, the top signature's first; any other key is asked for with
 C<query> when it is needed. Not with a C<PubkeyCallback>.
 
+The Domain Policy Records the From check will need (a C<d=> below the From
+domain it is checked against, worked out from the header fields and
+Recipes) are prefetched the same way, at most C<PREFETCH_MAX> domains, and
+not with a C<PolicyCallback> (new in 0.30).
+
 A subclass of L<Net::DNS::Resolver> that overrides C<send> (its own
 transport, caching or metrics) but not C<bgsend> gets no prefetch:
 Net::DNS's C<bgsend> would bypass that C<send>, and asks only the first
@@ -1615,8 +1676,9 @@ before they are counted (-09 section 3.7; new in 0.29).
 
 The default source of the Domain Policy Record (-09 section 3.8, new in
 0.29): the TXT records at C<< _domainkey.<domain> >>, each RR's strings
-joined, as an arrayref, through the C<Resolver> with C<query> (so a resolver
-that overrides only C<send> is used). An empty arrayref for NXDOMAIN,
+joined, as an arrayref: the answer to the background lookup sent at the
+end of the headers, if there was one, else through the C<Resolver> with
+C<query> (so a resolver that overrides only C<send> is used). An empty arrayref for NXDOMAIN,
 NOERROR or NODATA; dies with C<TEMPERROR:> for anything else. A
 C<PolicyCallback> may call it for domains it does not answer itself.
 
