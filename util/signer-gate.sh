@@ -68,7 +68,7 @@ cd "$root"
 # fixture:plain-want:flag-want
 FIXTURES="fresh:sign:sign fresh-from-not-authentic:refuse:refuse from-rewritten-us:sign:sign from-rewritten-other:refuse:refuse valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse null-top-signed:sign:sign null-below-unsigned-top:refuse:sign null-below-signed:sign:sign fake-cover-no-i:refuse:refuse fake-cover-i0:refuse:refuse fake-cover-i-abc:refuse:refuse fake-cover-m-rewritten:refuse:refuse fake-cover-unparseable:refuse:refuse mi-only:sign:sign mi-only-broken:refuse:refuse mi-only-null:refuse:sign nd-to-us:sign:sign nd-to-other:refuse:refuse signature-gap:refuse:refuse instance-gap:refuse:refuse recipe-duplicate-key:refuse:refuse"
 SIGNERS="${SIGNERS:-python go c perl}"
-SPEC09_SIGNERS="python perl go"   # signers on the draft -09 null-Recipe behaviour
+SPEC09_SIGNERS="python perl go c"   # signers on the draft -09 null-Recipe behaviour
 MODES="plain flag"
 n=0; for _f in $FIXTURES; do n=$((n + 1)); done
 n_signers=0; for _s in $SIGNERS; do n_signers=$((n_signers + 1)); done
