@@ -6,7 +6,7 @@
    (c/TODO-dsn.md).
 
    Messages are built in memory: every signature is made here over the
-   Message-Instance and DKIM2-Signature fields (-08 §12.8) with one Ed25519
+   Message-Instance and DKIM2-Signature fields (-09 §12.8) with one Ed25519
    key, which the fake DNS serves for selectors "sel" and "sel2" under any
    domain, so the test domains are the ones the shared table names
    (example.com, example.org, lists.example.org, other.net, ...). */
@@ -102,23 +102,23 @@ static void test_u_steps(void) {
     }
     /* -08 (contract D6): one bad step is "Recipe <path> is invalid" */
     /* U3: non-zero pad bits */
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"QR==\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"QUJ=\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"QR==\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"QUJ=\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe b[1] is invalid"); }
     /* U4: the old "b" step key, two keys in a step, no key */
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"b\":[\"eA==\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,1],\"d\":[\"x\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[0] is invalid"); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"b\":[\"eA==\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,1],\"d\":[\"x\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe b[0] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe b[1] is invalid"); }
     /* U5: decoded CR; "h":{}; neither h nor b */
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"YQ1i\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"u\":[\"YQ1i\"]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe b[1] is invalid"); }
     { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{}}"); CHECK_MSG(r, INVALID_JSON_M2); }
     { dkim2_verify_result_t r = recipe_at_m2("{\"x\":1}"); CHECK_MSG(r, INVALID_JSON_M2); }
     /* and other schema violations: a non-UTF-8 "d" string, an empty array,
        a non-string literal, a non-array header Recipe, a non-object step */
     { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[\"caf\xe9\"]}]}"); CHECK_MSG(r, INVALID_JSON_M2); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[1]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{\"subject\":null}}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe h.subject is invalid"); }
-    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[[1,2]]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 Recipe b[0] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[{\"c\":[1,2]},{\"d\":[1]}]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe b[1] is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"h\":{\"subject\":null}}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe h.subject is invalid"); }
+    { dkim2_verify_result_t r = recipe_at_m2("{\"b\":[[1,2]]}"); CHECK_MSG(r, "PERMERROR: Message-Instance m=2 recipe b[0] is invalid"); }
     { dkim2_verify_result_t r = recipe_at_m2("[1]"); CHECK_MSG(r, INVALID_JSON_M2); }
     /* a valid "u" (canonical, zero pad bits) still applies: a no-op body
        change whose literal is the same line keeps the hash */
@@ -138,7 +138,7 @@ static void test_json_keys(void) {
     }
 }
 
-/* An instance with no r= (-08 §9: r= is optional; §12.1) records no
+/* An instance with no r= (-09 §9: r= is optional; §12.1) records no
    change: the state below it is the same message. */
 static void test_no_recipe(void) {
     {
@@ -177,7 +177,7 @@ static void test_sign_chain(void) {
     char err[512], sig[4096];
     /* A third hop signed over two instances and two signatures verifies:
        the signing input takes the existing fields in ascending m= and i=
-       order (-08 §12.8), which the signer once got backwards. */
+       order (-09 §12.8), which the signer once got backwards. */
     {
         char *r1[] = { "<list@lists.example.org>", NULL };
         char *r2[] = { "<b@example.net>", NULL };
@@ -354,7 +354,7 @@ static void test_custody(void) {
         add_mi(&m, NULL);
         add_sig(&m, 1, 1, "example.com", "<a@example.net>", "<list@lists.example.org>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 mf= and d= do not match");
         CHECK(res.status == DKIM2_FAIL);
         msg_free(&m);
     }
@@ -419,15 +419,15 @@ static void test_from_authentic(void) {
     {
         msg_t m;
         base_signed(&m, "a@example.com, b@example.com");
-        dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
+        dkim2_verify_result_t res = verify(&m);   /* -09 wording (E3.1) */
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 From has more than one address");
         msg_free(&m);
     }
     {
         msg_t m;
         base_signed(&m, "a@[192.0.2.1]");
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 From uses a domain literal");
         msg_free(&m);
     }
     {   /* display text with no angle brackets is not one mailbox (final
@@ -452,7 +452,7 @@ static void test_from_authentic(void) {
         add_mi(&m, NULL);
         add_sig(&m, 1, 1, "example.com", "<a@example.com>", "<list@lists.example.org>", NULL);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 matching From is not authentic");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 From has more than one address");
         msg_free(&m);
     }
     /* A2: a list rewrites From into its own domain */
@@ -653,7 +653,7 @@ static void add_sig_bad(msg_t *m, int i, int mi_m, unsigned long long t, const c
     add_sig_raw(m, tags, 1, bad);
 }
 
-/* Contract C9: the primary error is the first in -08 §14 section order,
+/* Contract C9: the primary error is the first in -09 §14 section order,
    the lowest i= first within a section. */
 static void test_check_order(void) {
     unsigned long long old = now() - 15 * 86400;
@@ -700,7 +700,7 @@ static void test_check_order(void) {
         add_mi(&m, NULL);
         add_sig_bad(&m, 1, 1, now(), "example.com", "<a@example.net>", "<list@lists.example.org>", 1);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match");
+        CHECK_MSG(res, "FAIL: DKIM2-Signature i=1 mf= and d= do not match");
         msg_free(&m);
     }
     {   /* §14.7 before §14.6: Subject changed, and a bad signature (a
@@ -738,7 +738,7 @@ static void test_check_order(void) {
         msg_add_top(&m, "Message-Instance", MI1);
         msg_add_top(&m, "Message-Instance", MI1);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: Message-Instance m=1 appears more than once");
+        CHECK_MSG(res, "PERMERROR: Message-Instance m=1 is duplicated");
         /* b before c: an instance with no m= at all */
         msg_add_top(&m, "Message-Instance", "h=sha256:AAAA:AAAA");
         res = verify(&m);
@@ -753,14 +753,14 @@ static void test_check_order(void) {
         msg_add_top(&m, "DKIM2-Signature", SIG1);
         msg_add_top(&m, "DKIM2-Signature", SIG1);
         dkim2_verify_result_t res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 appears more than once");
+        CHECK_MSG(res, "PERMERROR: DKIM2-Signature i=1 is duplicated");
         msg_add_top(&m, "DKIM2-Signature", "m=1; t=1; d=example.com");
         res = verify(&m);
         CHECK_MSG(res, "PERMERROR: DKIM2-Signature i= tag=i missing");
         msg_add_top(&m, "Message-Instance", MI1);
         msg_add_top(&m, "Message-Instance", MI1);
         res = verify(&m);
-        CHECK_MSG(res, "PERMERROR: Message-Instance m=1 appears more than once");
+        CHECK_MSG(res, "PERMERROR: Message-Instance m=1 is duplicated");
         msg_free(&m);
     }
     {   /* f before g before h: m=1 missing under a signed m=2 with i= gaps;
@@ -838,13 +838,13 @@ static void test_check_order(void) {
 }
 
 static void test_error_strings(void) {
-    /* no DKIM2 header fields at all: "none", no error string */
+    /* no DKIM2 header fields at all: NONE (-09 wording, contract E1) */
     {
         msg_t m;
         msg_init(&m, "a@example.com", "test", "Hello\r\n");
         dkim2_verify_result_t res = verify(&m);
         CHECK(res.status == DKIM2_NONE);
-        CHECK(res.message[0] == '\0');
+        CHECK(strcmp(res.message, "NONE: No DKIM2 header fields found") == 0);
         msg_free(&m);
     }
     /* Message-Instance fields but no signature */

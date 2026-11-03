@@ -1,7 +1,7 @@
 #pragma once
 #include <stddef.h>
 
-/* Address domains, A-labels and the relaxed domain match (-08 §7.2, §18;
+/* Address domains, A-labels and the relaxed domain match (-09 §7.2, §18;
    contract C3). */
 
 /* The domain of an RFC 5321 path or address ("<a@Example.COM.>",
@@ -17,7 +17,7 @@ int dkim2_domain_of(const char *addr, char *out, size_t outlen, int *is_literal)
    for invalid UTF-8, a label Punycode cannot encode, or no room in out. */
 int dkim2_to_alabel(const char *in, char *out, size_t outlen);
 
-/* -08 §7.2: 1 when Parameter1 p1 equals p2 (caseless), or does after
+/* -09 §7.2: 1 when Parameter1 p1 equals p2 (caseless), or does after
    removing leftmost labels from p1 only; 0 otherwise, and always 0 when
    either is a domain literal (starts with '['). */
 int dkim2_relaxed_match(const char *p1, const char *p2);
@@ -30,5 +30,14 @@ int dkim2_addr_alabel(const char *addr, char *out, size_t outlen, int *is_litera
    or not): "Name <a@b>", "a@b", with comments and quoted strings allowed.
    Written to out as an A-label, lowercased, one trailing dot removed.
    Returns 0, or -1 when the value is not exactly one mailbox (a list, a
-   group, none at all) or its domain is a literal (-08 §11). */
+   group, none at all) or its domain is a literal (-09 §11). */
 int dkim2_from_domain(const char *value, char *out, size_t outlen);
+
+/* -09 §14.8 (contract E3.1) for one From value: DKIM2_FROM_MULTI when it
+   holds a ',' outside quoted strings and comments (a list, or a group of
+   more than one); DKIM2_FROM_NOT_MAILBOX when it is not one mailbox (a
+   group without a ',', no '@', not a mailbox at all); DKIM2_FROM_LITERAL
+   when the mailbox's domain is a literal; else DKIM2_FROM_OK with the
+   domain in out as dkim2_from_domain gives it. */
+enum { DKIM2_FROM_OK = 0, DKIM2_FROM_MULTI, DKIM2_FROM_NOT_MAILBOX, DKIM2_FROM_LITERAL };
+int dkim2_from_classify(const char *value, char *out, size_t outlen);

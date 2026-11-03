@@ -25,3 +25,4 @@ tests/test_domain
 tests/test_spec07
 tests/test_milter
 tests/test_spec08
+tests/test_spec09

@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include "dkim2_internal.h"
 
-/* Planned Message-Instance chain walk (-08 §14.7) -- the default verification
+/* Planned Message-Instance chain walk (-09 §14.7) -- the default verification
    path. Same verdicts and error texts as the undo walk in dkim2_verify.c
    (verify_mi_hashes, still reachable with ctx->undo_walk), without
    rebuilding any earlier message:
@@ -59,12 +59,12 @@ dkim2_plan_t *dkim2_plan_new_ctx(const dkim2_ctx_t *ctx, int normalise);
 int dkim2_plan_body_update(dkim2_plan_t *p, const char *data, size_t len);
 int dkim2_plan_body_final(dkim2_plan_t *p);
 
-/* The -08 §14.7 verdict (after body_final): 0 when every instance verifies,
+/* The -09 §14.7 verdict (after body_final): 0 when every instance verifies,
    -1 with errbuf set exactly as the undo walk would set it, or 1 when the
    message needs the undo walk (see above). */
 int dkim2_plan_check(dkim2_plan_t *p, char *errbuf, size_t errbufsz);
 
-/* -08 §14.6/§14.7 (contract D3/D4): an item's own result, and how a list
+/* -09 §14.6/§14.7 (contract D3/D4): an item's own result, and how a list
    of them combines. */
 enum { DKIM2_R_PASS = 0, DKIM2_R_FAIL, DKIM2_R_PERMERROR, DKIM2_R_TEMPERROR };
 
@@ -78,7 +78,7 @@ enum { DKIM2_R_PASS = 0, DKIM2_R_FAIL, DKIM2_R_PERMERROR, DKIM2_R_TEMPERROR };
    result -- or -1 for a FAIL across groups ("no group ... passed"). */
 int dkim2_combine(const int *r, const int *g, int n, int n_groups, int *pick);
 
-/* -08 §14.7 for one Message-Instance: each hash-set against the header
+/* -09 §14.7 for one Message-Instance: each hash-set against the header
    digests hdr and the body digests body (NULL: no body hash is checked --
    below a null body Recipe, or no body bytes -- so a set passes on its
    header hash), combined as dkim2_combine. 0, or -1 with errbuf set:

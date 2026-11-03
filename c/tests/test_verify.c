@@ -15,7 +15,7 @@
 #include "../dkim2_message.h"
 #include "../base64.h"
 
-/* Mirror of the production -08 §12.8 canonicalization used by both the signer
+/* Mirror of the production -09 §12.8 canonicalization used by both the signer
    (dkim2_sign.c: canon_for_sig) and the verifier (dkim2_verify.c:
    canon_for_sig / append_canon): lowercase header name, strip all
    whitespace from the value, terminate with CRLF. Used here only to
@@ -191,7 +191,7 @@ int main(void) {
         "TAMPERED body!\r\n", mi_val, sig_val);
     assert(st == DKIM2_FAIL);
 
-    /* --- Error: wrong MAIL FROM → FAIL (-08 §14.4) --- */
+    /* --- Error: wrong MAIL FROM → FAIL (-09 §14.4) --- */
     {
         dkim2_verify_result_t res;
         verify_test_message_full("<wrong@example.com>", rcpts,
@@ -202,7 +202,7 @@ int main(void) {
         st = res.status;
     }
 
-    /* --- Error: wrong RCPT TO → FAIL (-08 §14.4) --- */
+    /* --- Error: wrong RCPT TO → FAIL (-09 §14.4) --- */
     char *wrong_rcpts[] = { "<wrong@example.org>", NULL };
     {
         dkim2_verify_result_t res;
@@ -259,7 +259,7 @@ int main(void) {
         free(mi2); free(sig2);
     }
 
-    /* --- No DKIM2 header fields at all → "none", no error string --- */
+    /* --- No DKIM2 header fields at all → NONE (-09 §14.2, contract E1) --- */
     {
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
@@ -269,7 +269,8 @@ int main(void) {
         vctx.mi_list = NULL; vctx.sig_list = NULL;
         dkim2_verify_result_t res;
         dkim2_do_verify(&vctx, &res);
-        assert(res.status == DKIM2_NONE && res.message[0] == '\0');
+        assert(res.status == DKIM2_NONE &&
+               strcmp(res.message, "NONE: No DKIM2 header fields found") == 0);
     }
 
     /* --- Error: MI missing for signature's m= → PERMERROR --- */
@@ -327,7 +328,7 @@ int main(void) {
             mail_from, rcpts, raw_headers, 3, body, mi_val, tampered_mf_sig);
         assert(bad_mf_st == DKIM2_PERMERROR);
 
-        /* Through the real ingestion path it is a syntax error (-08 §10.5,
+        /* Through the real ingestion path it is a syntax error (-09 §10.5,
            §14.2). */
         dkim2_ctx_t vctx;
         memset(&vctx, 0, sizeof vctx);
@@ -354,7 +355,7 @@ int main(void) {
     }
 
     /* --- Error: d= does not relaxed-match mf= domain → FAIL,
-       canonical -08 message (the -08 §14.4 check fires before crypto, so
+       canonical -08 message (the -09 §14.4 check fires before crypto, so
        tampering d= post-signature doesn't need to preserve validity). --- */
     {
         char *d_tag = strstr(sig_val, "d=example.com");
@@ -369,10 +370,10 @@ int main(void) {
             mi_val, tampered_d_sig, &res);
         assert(res.status == DKIM2_FAIL);
         assert(strstr(res.message,
-            "DKIM2-Signature i=1 MAIL FROM and d= do not match") != NULL);
+            "DKIM2-Signature i=1 mf= and d= do not match") != NULL);
     }
 
-    /* --- Error: top-level nd= (-08 §14.4 "unexpected nd= tag") → FAIL ---
+    /* --- Error: top-level nd= (-09 §14.4 "unexpected nd= tag") → FAIL ---
        The only legitimate nd= producer emits an nd= hop together with a
        matching higher-i= signature, so nd= must never appear on the
        topmost (highest i=) DKIM2-Signature. */
@@ -413,7 +414,7 @@ int main(void) {
 
     /* --- Regression: non-top nd= (legitimate hand-off hop) must NOT be
        rejected by the new top-nd= check. The existing adjacency match
-       (prev->nd must equal cur->d, -08 §14.4) still governs it, and the sig
+       (prev->nd must equal cur->d, -09 §14.4) still governs it, and the sig
        chain proceeds to later checks instead of being killed here. --- */
     {
         dkim2_sig_t *s1 = dkim2_sig_parse(
@@ -439,7 +440,7 @@ int main(void) {
         dkim2_sig_free(vctx.sig_list);
     }
 
-    /* --- Error: Chain of Custody nd= adjacency mismatch (-08 §14.4) → FAIL,
+    /* --- Error: Chain of Custody nd= adjacency mismatch (-09 §14.4) → FAIL,
        canonical -08 message (§14.4).
        The C signer cannot emit nd= itself, so hop i=1 is hand-signed here:
        its own DKIM2-Signature header (with a genuine nd= tag) is covered by
@@ -532,7 +533,7 @@ int main(void) {
         free(sig2_out);
     }
 
-    /* --- Error: inter-signature Chain of Custody break (-08 §14.4) → FAIL,
+    /* --- Error: inter-signature Chain of Custody break (-09 §14.4) → FAIL,
        canonical -08 message "DKIM2-Signature i=2 mf= does not match the
        rt= of i=1". Both hops are produced by the normal signer (no nd=
        involved this time), chained via ctx2.sig_list so hop i=2 gets a
@@ -540,7 +541,7 @@ int main(void) {
        subdomain (sub.example.com) while hop2's mf= is the parent domain
        (example.com) — both fall under the same d=example.com (so the
        mf=/d= check succeeds for hop2 and crypto passes for both hops), but
-       the relaxed domain match (-08 §7.2) shortens only Parameter1, the mf=
+       the relaxed domain match (-09 §7.2) shortens only Parameter1, the mf=
        domain: "example.com" never becomes "sub.example.com" -- so the
        custody check is the one that fires. */
     {
@@ -603,7 +604,7 @@ int main(void) {
     }
 
     /* --- Regression (fix round 1): a duplicate hash algorithm in a
-       Message-Instance h= must be reported as the exact -08 §9.3
+       Message-Instance h= must be reported as the exact -09 §9.3
        PERMERROR through the REAL ingestion path, not just detected by
        dkim2_mi_parse() in isolation. Before this fix, dkim2_message.c's
        collect_dkim2_headers() (and dkim2_milter.c's cb_header(), same
@@ -675,7 +676,7 @@ int main(void) {
         remove(path);
     }
 
-    /* --- -08 §14.2 end-to-end: a malformed r= JSON payload on a real,
+    /* --- -09 §14.2 end-to-end: a malformed r= JSON payload on a real,
        fully verified two-hop message must be reported as the specific
        "contains invalid JSON" PERMERROR by dkim2_do_verify() -- the same
        function dkim2_verify_message() (the CLI/milter entry point) calls --
@@ -693,7 +694,7 @@ int main(void) {
        over both Message-Instance headers (m=1 unmodified, m=2 carrying the
        malformed r=) and both DKIM2-Signature headers, then signed directly
        with the test keypair already registered in the DNS override. This
-       drives the complete real -08 §14.6 crypto verification and §14.7 MI-hash/
+       drives the complete real -09 §14.6 crypto verification and §14.7 MI-hash/
        undo logic in dkim2_do_verify(), not just dkim2_apply_*_recipe() or
        cJSON_Parse() in isolation. */
     {
@@ -783,9 +784,9 @@ int main(void) {
         free(sig1_out);
     }
 
-    /* --- -08 §14.2 ruling: a bad-base64 r= value is a DIFFERENT error
+    /* --- -09 §14.2 ruling: a bad-base64 r= value is a DIFFERENT error
        from a post-decode JSON parse failure, and must stay distinct:
-       "PERMERROR ... syntax error" (-08 §14.2 lists this explicitly for
+       "PERMERROR ... syntax error" (-09 §14.2 lists this explicitly for
        malformed field content), never "contains invalid JSON" -- the
        payload here never even reaches JSON parsing. Same two-hop
        construction as the invalid-JSON test above, just with "!!!!"
@@ -874,7 +875,7 @@ int main(void) {
         free(sig1_out);
     }
 
-    /* --- -08 §12.1: the BOTTOM (m=1) instance MAY carry Recipes too
+    /* --- -09 §12.1: the BOTTOM (m=1) instance MAY carry Recipes too
        ("if it is wished to record any changes made to a message as it
        enters the DKIM2 ecosystem"). It never participates in the undo walk
        (there is no earlier state to reconstruct), so before this fix the
@@ -1201,7 +1202,7 @@ int main(void) {
         dkim2_verify_result_t dres;
         dkim2_do_verify(&dctx, &dres);
         assert(dres.status == DKIM2_PERMERROR);
-        assert(strstr(dres.message, "PERMERROR: Message-Instance m=1 appears more than once") != NULL);
+        assert(strstr(dres.message, "PERMERROR: Message-Instance m=1 is duplicated") != NULL);
         dkim2_mi_free(dctx.mi_list->next); dctx.mi_list->next = NULL;
         dkim2_mi_free(dctx.mi_list);
         dkim2_sig_free(dctx.sig_list);

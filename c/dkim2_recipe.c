@@ -52,7 +52,7 @@ static int buf_append(char **buf, size_t *pos, size_t *cap,
 
 /* A "c" step is exactly two integers with 1 <= start <= end <= n_items, and
    its start MUST be greater than the end of every preceding "c" step in the
-   same list (-08 §5.1; the same ascending/non-overlapping rule is applied
+   same list (-09 §5.1; the same ascending/non-overlapping rule is applied
    to body lists -- WG extension, 2026-10). `prev_end` is the end of the
    previous "c" step, 0 when there is none.
 
@@ -84,7 +84,7 @@ static int is_b64_char(char ch) {
 }
 
 /* Strict UTF-8 (RFC 3629): no overlong forms, no surrogates, nothing above
-   U+10FFFF. JSON strings are UTF-8, and -08 §5.1/§5.2 make "u" the step
+   U+10FFFF. JSON strings are UTF-8, and -09 §5.1/§5.2 make "u" the step
    for anything else. */
 static int utf8_valid(const unsigned char *s, size_t n) {
     for (size_t i = 0; i < n; ) {
@@ -108,7 +108,7 @@ static int utf8_valid(const unsigned char *s, size_t n) {
     return 1;
 }
 
-/* The -08 §5 "base64-line" patterns: ^[A-Za-z0-9+/]*={0,2}$, ^(.{4})*$
+/* The -09 §5 "base64-line" patterns: ^[A-Za-z0-9+/]*={0,2}$, ^(.{4})*$
    and ^([^=]*|.*[AQgw]==|.*[AEIMQUYcgkosw048]=)$ -- the standard alphabet,
    padded to a multiple of four, no whitespace, and zero pad bits ("QR==" is
    not canonical: its pad bits are not zero). */
@@ -123,7 +123,7 @@ static int b64_canonical(const char *s) {
     return 1;
 }
 
-/* A "u" item (-08 §5.1/§5.2) is a JSON string holding the literal's raw
+/* A "u" item (-09 §5.1/§5.2) is a JSON string holding the literal's raw
    octets as canonical base64 (b64_canonical). It is applied exactly like a
    "d" item once decoded. Returns the malloc'd octets and their length, or
    NULL for anything that is not canonical base64 or whose decoded octets
@@ -147,7 +147,7 @@ static unsigned char *decode_u_item(const cJSON *item, size_t *len_out) {
     return out;
 }
 
-/* Classify one Recipe step (-08 §5.1/§5.2: "a JSON object with exactly one
+/* Classify one Recipe step (-09 §5.1/§5.2: "a JSON object with exactly one
    key"): 'c', 'd' or 'u', with *arr the "c" value or the literal array; -1
    for anything else -- not an object, no key, two keys, any other key, a
    "d"/"u" that is not an array. dkim2_recipe_parse() has already refused
@@ -195,7 +195,7 @@ static int walk_literals(const cJSON *arr, int kind, int reject_nul,
     return 0;
 }
 
-/* Non-zero if a key holds an ASCII capital (-08 §5, contract D10: keys
+/* Non-zero if a key holds an ASCII capital (-09 §5, contract D10: keys
    are strictly lowercase; a non-ASCII letter is not judged), after cJSON's
    unescaping ("S" is "S"). */
 static int key_not_lowercase(const char *k) {
@@ -278,7 +278,7 @@ static int text_ok(const char *s, size_t len) {
 }
 
 /* The index of the first step of a list (a "b" array or one header
-   field's array) that the -08 §5 schema or §5.1/§5.2 rejects, as the
+   field's array) that the -09 §5 schema or §5.1/§5.2 rejects, as the
    appliers read it but with no bound against any message; -1 when every
    step is good. reject_nul: a header value's "u" literal may not hold a
    NUL. */
@@ -315,7 +315,7 @@ static void header_path(char *path, size_t pathsz, const char *name, int idx) {
 #undef PUT
 }
 
-/* The -08 §5 schema (contract D6). Whole document: an object with "h"
+/* The -09 §5 schema (contract D6). Whole document: an object with "h"
    and/or "b"; "h" an object with at least one property; "b" an array or
    null (unknown top-level keys are ignored). Then each step: "b" first,
    then the "h" fields in byte order of their names, each a list of steps.
@@ -587,7 +587,7 @@ char **dkim2_apply_header_recipe(const char *r_json,
 
     cJSON *h = cJSON_GetObjectItemCaseSensitive(root, "h");
     if (h && cJSON_IsNull(h)) {
-        /* -08 §5.1: a null header Recipe is no longer permitted. */
+        /* -09 §5.1: a null header Recipe is no longer permitted. */
         cJSON_Delete(root);
         return NULL;
     }
@@ -694,7 +694,7 @@ fail:
 /* Append one literal (a body line or a header value, without its line
    terminator) to `steps`, coalescing with the previous step when that is a
    literal step of the same kind. A literal that is valid UTF-8 is a "d"
-   item (-08 §5: "u" SHOULD NOT be used when "d" would suffice); anything
+   item (-09 §5: "u" SHOULD NOT be used when "d" would suffice); anything
    else -- and a literal holding a NUL, which a cJSON string cannot carry --
    is a "u" item, the canonical base64 of the raw octets. `*cur` is the open
    literal array (NULL after a "c" step), `*cur_is_u` its kind. */
@@ -1055,7 +1055,7 @@ char *dkim2_gen_header_recipe(const char *field_name,
                 val++;
                 while (*val == ' ') val++;
                 /* A literal is one unfolded value: drop every CR/LF (the
-                   -08 §6.2 header hash unfolds and collapses WSP, so this is
+                   -09 §6.2 header hash unfolds and collapses WSP, so this is
                    hash-neutral) and the terminator with them. */
                 size_t vl = strlen(val);
                 char *s = malloc(vl + 1);

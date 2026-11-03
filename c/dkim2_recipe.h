@@ -1,7 +1,7 @@
 #pragma once
 #include <stddef.h>
 
-/* Recipe steps (-08 §5, §5.1, §5.2); each step is an object with exactly
+/* Recipe steps (-09 §5, §5.1, §5.2); each step is an object with exactly
    one key:
      {"c": [start, end]}  copy items start..end (1-based, inclusive); across
                           a list each start MUST exceed the previous end
@@ -19,7 +19,7 @@
    functions emit "d" for every UTF-8 literal and "u" for the rest, and never
    a "c" range that breaks the ascending rule. */
 
-/* cJSON_Parse() of a Recipe, refusing (NULL) one that is not valid -08 §5
+/* cJSON_Parse() of a Recipe, refusing (NULL) one that is not valid -09 §5
    JSON: a key holding an ASCII capital (contract D10), or a key named
    twice in one object, compared exactly after unescaping (cJSON keeps the first of two equal keys and the other implementations'
    parsers the last, so {"b":[...],"b":null} would be a null body Recipe to
@@ -34,7 +34,7 @@ struct cJSON *dkim2_recipe_parse(const char *r_json);
    the document as a whole is at fault -- "contains invalid JSON" -- or the
    first bad step's path, "b[<n>]", "h.<name>[<n>]" or "h.<name>" (a header
    entry that is not an array), name octets outside 0x21-0x7E written as
-   \xHH: "Recipe <path> is invalid" (-08 §14.2, contract D6). Every
+   \xHH: "Recipe <path> is invalid" (-09 §14.2, contract D6). Every
    whole-document check is made before any step check. */
 struct cJSON *dkim2_recipe_parse_ex(const char *r_json, size_t len, char *path, size_t pathsz);
 void dkim2_recipe_free(struct cJSON *root);

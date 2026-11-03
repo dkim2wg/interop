@@ -13,7 +13,7 @@ int main(void) {
     assert(tag_get(tl, "s") == NULL);
     taglist_free(tl);
 
-    /* Tag names are case sensitive (-08 §8, contract D10) */
+    /* Tag names are case sensitive (-09 §8, contract D10) */
     tl = tagparse("D=example.com;S=sel1;d=x", NULL);
     assert(tag_get(tl, "d") && strcmp(tag_get(tl, "d"), "x") == 0);
     assert(strcmp(tag_get(tl, "D"), "example.com") == 0);

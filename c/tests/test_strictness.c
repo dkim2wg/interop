@@ -1,9 +1,9 @@
 /* Verifier strictness (docs/superpowers/specs/2026-10-09-verifier-strictness-
  * review-fixes.md), end to end through dkim2_verify_message():
- *   A. signature algorithms  (-08 §3.5, §10.9)
- *   B. key-record errors as reported by the verifier (-08 §14.5)
- *   C. Message-Instance tag case and repeats (-08 §9)
- *   D. t= syntax (-08 §10.4, §14.2)
+ *   A. signature algorithms  (-09 §3.5, §10.9)
+ *   B. key-record errors as reported by the verifier (-09 §14.5)
+ *   C. Message-Instance tag case and repeats (-09 §9)
+ *   D. t= syntax (-09 §10.4, §14.2)
  * Key-record parsing itself is covered in test_dns.c.
  */
 #include <stdio.h>
@@ -113,7 +113,7 @@ static char *good_mi(void) {
     return mi;
 }
 
-/* The verifier's -08 §12.8 canonicalization: lowercase name, value with all WSP
+/* The verifier's -09 §12.8 canonicalization: lowercase name, value with all WSP
    removed, CRLF. */
 static void canon_append(char *buf, size_t *pos, const char *name, const char *value) {
     for (const char *h = name; *h; h++) buf[(*pos)++] = (char)tolower((unsigned char)*h);
@@ -224,7 +224,7 @@ static void test_algorithms(const char *mi) {
 
     /* A message correctly RSA-signed but declaring future-alg. */
     s = sig1(mi, "sel1", "future-alg", g_rsa, "rsa-sha256");
-    /* -08 §14.6 step 4 (contract D3): an algorithm not implemented is a
+    /* -09 §14.6 step 4 (contract D3): an algorithm not implemented is a
        PERMERROR item, "algorithm unknown", with no key fetched. */
     expect("RSA signature declared future-alg is unknown, no lookup",
         verify(mi, s, 0), DKIM2_PERMERROR,
@@ -306,7 +306,7 @@ static void test_key_errors(const char *mi) {
     printf("B. key-record errors\n");
     struct { const char *fmt, *msg; } cases[] = {
         { "v=DKIM1; p=; p=%s",          "has a syntax error" },
-        { "v=garbage; p=%s",            "has a syntax error" },
+        { "v=garbage; p=%s",            "does not exist" },   /* -09 §3.7: ignored (E4) */
         { "k=rsa; v=DKIM1; p=%s",       "has a syntax error" },
         { "v=DKIM1; k=unknown; p=%s",   "algorithm mismatch" },
         { "v=DKIM1; k=rsa; p=%.0s",     "has been revoked" },
@@ -399,14 +399,14 @@ static void test_outcome(const char *mi) {
         set_key("weak", "v=DKIM1; k=rsa; p=%s", wb64);
         s = sig1(mi, "weak", "rsa-sha256", weak, "rsa-sha256");
         expect("only item has a 768-bit RSA key: PERMERROR", verify(mi, s, 0), DKIM2_PERMERROR,
-            "PERMERROR: DKIM2-Signature i=1 public key weak is malformed", 1);
+            "PERMERROR: DKIM2-Signature i=1 public key weak too short", 1);
         free(s);
         item_t wk[2] = { { "ed", "ed25519-sha256", g_ed, "ed25519-sha256", NULL },
                          { "weak", "rsa-sha256", weak, "rsa-sha256", NULL } };
         s = make_sig(mi, g_now, wk, 2);
         expect("good item + 768-bit RSA item: PERMERROR for the signature",
             verify(mi, s, 0), DKIM2_PERMERROR,
-            "PERMERROR: DKIM2-Signature i=1 public key weak is malformed", 2);
+            "PERMERROR: DKIM2-Signature i=1 public key weak too short", 2);
         free(s);
         EVP_PKEY_free(weak);
     }
@@ -421,7 +421,7 @@ static void test_mi_tags(const char *mi) {
     printf("C. Message-Instance tags\n");
     char *m2, *s;
 
-    /* -08 §8 (contract D10): an uppercase tag name is an unknown tag. */
+    /* -09 §8 (contract D10): an uppercase tag name is an unknown tag. */
     m2 = subst(mi, "h=", "H=");
     s = sig1(m2, "sel1", "rsa-sha256", g_rsa, "rsa-sha256");
     expect("signed instance written with H= has no h=", verify(m2, s, 0), DKIM2_PERMERROR,
@@ -574,7 +574,7 @@ static void test_field_syntax(const char *mi) {
         const char *v = strstr(s2, "rsa-sha256 : ") + 13;
         char *s3 = insert_at(s2, (size_t)(v - s2) + 20, "\r\n\t");
         char *s4 = insert_at(s3, strlen(s3) - 30, " ");   /* and a space */
-        /* both are required (-08 §14.6): the parse is fine, and the
+        /* both are required (-09 §14.6): the parse is fine, and the
            result is zz's "algorithm unknown" after sel1's one lookup */
         expect("FWS around , and : and inside base64 is fine", verify(mi, s4, 0), DKIM2_PERMERROR,
             "PERMERROR: DKIM2-Signature i=1 selector zz algorithm unknown", 1);
@@ -621,7 +621,7 @@ static void test_field_syntax(const char *mi) {
 }
 
 /* F.5: the C signer never folds, so a long Domain stays whole; it must sign
-   and verify with mf= (and From, -08 §11) in that domain. */
+   and verify with mf= (and From, -09 §11) in that domain. */
 static const char *LONG_HEADERS[] = {
     "From: sender@" LONG_DOMAIN "\r\n",
     "To: rcpt@example.org\r\n",

@@ -8,59 +8,63 @@
 
 static cJSON *g_dns_json = NULL;
 
-/* qname is selector._domainkey.domain. Each entry of the name's list is
-   one record, ["txt", "string", "string", ...]: its strings are concatenated
-   (dns-00 §3.4.2.2), and more than one TXT record is reported through
-   *n_records so the key lookup sees what DNS would give it. */
-static char *dns_json_lookup(const char *qname, int *n_records) {
-    if (!g_dns_json) return NULL;
-    const char *marker = strstr(qname, "._domainkey.");
-    if (!marker) return NULL;
-
-    size_t sel_len = (size_t)(marker - qname);
-    char selector[256];
-    if (sel_len >= sizeof selector) return NULL;
-    memcpy(selector, qname, sel_len);
-    selector[sel_len] = '\0';
-
-    const char *domain = marker + strlen("._domainkey.");
+/* qname is selector._domainkey.domain (a key) or _domainkey.domain (a
+   Domain Policy Record). Each entry of the name's list is one record,
+   ["txt", "string", "string", ...]: its strings are concatenated (dns-00
+   §3.4.2.2), and every TXT record is handed back, so the lookup sees what
+   DNS would give it. A key name the file does not hold falls through to
+   the next source (live DNS); for a policy name the file is the whole
+   zone: no entry is no record (contract E3.3). */
+static int dns_json_txt(const char *qname, dkim2_txt_t *out) {
+    if (!g_dns_json) return 1;
+    const char *domain, *key;
+    size_t key_len;
+    int policy = strncmp(qname, "_domainkey.", 11) == 0;
+    if (policy) {
+        domain = qname + 11;
+        key = "_domainkey";
+        key_len = 10;
+    } else {
+        const char *marker = strstr(qname, "._domainkey.");
+        if (!marker) return 1;
+        domain = marker + strlen("._domainkey.");
+        key = qname;
+        key_len = (size_t)(marker - qname) + strlen("._domainkey");
+    }
     cJSON *dom_obj = cJSON_GetObjectItemCaseSensitive(g_dns_json, domain);
-    if (!dom_obj) return NULL;
+    cJSON *records = NULL;
+    for (cJSON *c = dom_obj ? dom_obj->child : NULL; c && !records; c = c->next)
+        if (c->string && strlen(c->string) == key_len && memcmp(c->string, key, key_len) == 0)
+            records = c;
+    if (!records || !cJSON_IsArray(records)) return policy ? 0 : 1;
 
-    char key[512];
-    snprintf(key, sizeof key, "%s._domainkey", selector);
-    cJSON *records = cJSON_GetObjectItemCaseSensitive(dom_obj, key);
-    if (!records || !cJSON_IsArray(records)) return NULL;
-
-    char *txt = NULL;
-    int ntxt = 0;
     cJSON *rec;
     cJSON_ArrayForEach(rec, records) {
         if (!cJSON_IsArray(rec)) continue;
         cJSON *type = cJSON_GetArrayItem(rec, 0);
         if (!type || !cJSON_IsString(type) || strcasecmp(type->valuestring, "txt") != 0)
             continue;
-        if (++ntxt > 1) continue;
         size_t len = 0;
-        for (int i = 1; i < cJSON_GetArraySize(rec); i++) {
-            cJSON *str = cJSON_GetArrayItem(rec, i);
+        for (cJSON *str = type->next; str; str = str->next)
             if (cJSON_IsString(str)) len += strlen(str->valuestring);
-        }
-        txt = malloc(len + 1);
-        if (!txt) return NULL;
-        txt[0] = '\0';
-        for (int i = 1; i < cJSON_GetArraySize(rec); i++) {
-            cJSON *str = cJSON_GetArrayItem(rec, i);
-            if (cJSON_IsString(str)) strcat(txt, str->valuestring);
-        }
+        char *txt = malloc(len + 1);
+        if (!txt) { dkim2_txt_free(out); return -1; }
+        size_t pos = 0;
+        for (cJSON *str = type->next; str; str = str->next)
+            if (cJSON_IsString(str)) {
+                size_t l = strlen(str->valuestring);
+                memcpy(txt + pos, str->valuestring, l);
+                pos += l;
+            }
+        int rc = dkim2_txt_push(out, txt, pos);
+        free(txt);
+        if (rc < 0) { dkim2_txt_free(out); return -1; }
     }
-    if (ntxt == 0) return NULL;
-    *n_records = ntxt;
-    return txt;
+    return 0;
 }
 
 void dkim2_dns_json_free(void) {
-    if (dkim2_dns_override == dns_json_lookup) dkim2_dns_override = NULL;
+    if (dkim2_dns_txt_hook == dns_json_txt) dkim2_dns_txt_hook = NULL;
     cJSON_Delete(g_dns_json);
     g_dns_json = NULL;
 }
@@ -82,6 +86,6 @@ int dkim2_dns_json_load(const char *path, char *errbuf, size_t errbufsz) {
     if (!j) { snprintf(errbuf, errbufsz, "failed to parse %s", path); return -1; }
     dkim2_dns_json_free();
     g_dns_json = j;
-    dkim2_dns_override = dns_json_lookup;
+    dkim2_dns_txt_hook = dns_json_txt;
     return 0;
 }

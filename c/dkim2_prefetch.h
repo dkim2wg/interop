@@ -31,8 +31,10 @@ extern int (*dkim2_prefetch_query_hook)(const char *qname, unsigned char *answer
 extern int dkim2_prefetch_timeout_ms;   /* default 5000 */
 
 /* Start the lookups for ctx->sig_list (at most DKIM2_PREFETCH_MAX). NULL when there is nothing to look
-   up, on failure, or when keys do not come from DNS: dkim2_dns_override
-   (dns.json) is set, or dkim2_dns_query_hook is without a prefetch hook. */
+   up, on failure, or when keys do not come from DNS: dkim2_dns_txt_hook
+   (dns.json) or dkim2_dns_override is set, or dkim2_dns_query_hook is
+   without a prefetch hook. Domain Policy Records are never prefetched
+   (contract E3.2: looked up only when the From check needs one). */
 dkim2_prefetch_t *dkim2_prefetch_start(const dkim2_ctx_t *ctx);
 
 /* The names being looked up (tests). */

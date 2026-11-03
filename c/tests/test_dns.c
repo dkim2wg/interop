@@ -90,7 +90,7 @@ static void test_garbage_rejected(void) {
     printf("  ok: non-key p= rejected (%s)\n", err ? err : "(no message)");
 }
 
-/* ---- Key-record validation (-08 §14.5; dns-00 §3.2, §3.4.1) ---- */
+/* ---- Key-record validation (-09 §14.5; dns-00 §3.2, §3.4.1) ---- */
 
 static char g_rsa_b64[2048];
 
@@ -124,8 +124,10 @@ static void test_key_records(void) {
         DKIM2_OK, NULL, "FWS inside p= removed");
     expect_record(REC("v=DKIM1; p=; p=%s", g_rsa_b64), DKIM2_PERMERROR,
         "has a syntax error", "repeated p= is a syntax error");
+    /* -09 §3.7 (contract E4): a record whose first tag is v= other than
+       DKIM1 is ignored, so the only record here leaves none. */
     expect_record(REC("v=garbage; p=%s", g_rsa_b64), DKIM2_PERMERROR,
-        "has a syntax error", "bad v= is a syntax error");
+        "does not exist", "a v= other than DKIM1 is ignored");
     expect_record(REC("k=rsa; v=DKIM1; p=%s", g_rsa_b64), DKIM2_PERMERROR,
         "has a syntax error", "v= not first is a syntax error");
     expect_record(REC("v=DKIM1; k=rsa"), DKIM2_PERMERROR,

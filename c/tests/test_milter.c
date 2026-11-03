@@ -258,7 +258,7 @@ int main(void) {
         CHECK(c.n_chg == 1 && strcmp(c.chg[0], "Message-Instance[1]=(delete)") == 0);
 
         /* libmilter refusing a change: an unsigned Message-Instance that
-           cannot be removed must not go out (-08 §13), so tempfail */
+           cannot be removed must not go out (-09 §13), so tempfail */
         g_n_log = 0;
         g_fail_header = "Message-Instance";
         CHECK(run(&c, "<a@example.net>", one, mi_only, body) == SMFIS_TEMPFAIL);
