@@ -493,17 +493,21 @@ def test_e6_duplicates_and_mf():
 
 
 # ---------------------------------------------------------------------------
-# E3.4 Signers: the upward match needs the From domain's policy
+# E3.4 Signers (revised): the upward match asks the parent_from callable;
+# the signer looks no Domain Policy Record up
 # ---------------------------------------------------------------------------
 
 import json  # noqa: E402
+import subprocess  # noqa: E402
 
 import dkim2sign  # noqa: E402
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _KEY2 = os.path.join(_ROOT, "keys", "sel1._domainkey.test2.dkim2.com.pem")
-with open(os.path.join(_ROOT, "dns.json")) as _fh:
+_DNS_JSON = os.path.join(_ROOT, "dns.json")
+with open(_DNS_JSON) as _fh:
     _REPO_DNS = json.load(_fh)
+_REFUSAL = "From header field is not Authentic for d=mail.open.dkim2.com"
 
 
 def _plain(dom):
@@ -512,74 +516,115 @@ def _plain(dom):
             f"Message-ID: <x@{dom}>\r\n\r\nbody\r\n").encode()
 
 
-def _sign_sub(x, **kw):
-    kw.setdefault("dns_data", _REPO_DNS)
+class _CountingDNS(dict):
+    """A dns.json dict that records every name looked up in it."""
+
+    def __init__(self, data):
+        super().__init__(data)
+        self.lookups = []
+
+    def get(self, k, default=None):
+        self.lookups.append(k)
+        return super().get(k, default)
+
+    def __getitem__(self, k):
+        self.lookups.append(k)
+        return super().__getitem__(k)
+
+    def __contains__(self, k):
+        self.lookups.append(k)
+        return super().__contains__(k)
+
+
+class _Parent:
+    """A parent_from callable that records its calls."""
+
+    def __init__(self, answer):
+        self.answer = answer
+        self.calls = []
+
+    def __call__(self, dom):
+        self.calls.append(dom)
+        return self.answer
+
+
+def _sign_sub(**kw):
     return dkim2sign.sign_message(
-        _plain(f"{x}.dkim2.com"), "sel1", f"mail.{x}.dkim2.com", _KEY2,
-        mailfrom=f"<bounce@mail.{x}.dkim2.com>", rcptto=["<b@example.net>"], **kw)
+        _plain("open.dkim2.com"), "sel1", "mail.open.dkim2.com", _KEY2,
+        mailfrom="<bounce@mail.open.dkim2.com>", rcptto=["<b@example.net>"], **kw)
 
 
-@pytest.mark.parametrize("x", ["open", "noflag"])
-def test_e34_signer_upward_open_signs(x):
-    out = _sign_sub(x)
+def test_e34_signer_upward_no_hook_refuses_without_lookup(monkeypatch):
+    monkeypatch.delenv("DKIM2_DNS_JSON", raising=False)
+    import dkim2dns
+    monkeypatch.setattr(dkim2dns, "LiveDNS", None)   # any live lookup breaks
+    dns = _CountingDNS(_REPO_DNS)
+    with pytest.raises(dkim2sign.SigningRefused) as e:
+        _sign_sub(dns_data=dns)
+    assert str(e.value) == _REFUSAL
+    assert dns.lookups == []
+
+
+def test_e34_signer_upward_hook_true_signs():
+    hook = _Parent(True)
+    out = _sign_sub(dns_data=_REPO_DNS, parent_from=hook)
+    assert hook.calls == ["open.dkim2.com"]
     r = dkim2verify.verify_message(out, _REPO_DNS, full_chain=True,
                                    skip_timestamp_check=True)
     assert r.ok, r.errors
 
 
-@pytest.mark.parametrize("x,reason", [
-    ("strict", "From strict.dkim2.com forbids subdomain signing"),
-    ("strictlist", "From strictlist.dkim2.com forbids subdomain signing"),
-    ("broken", "From broken.dkim2.com forbids subdomain signing"),
-    ("multi", "multiple records for multi.dkim2.com policy"),
-])
-def test_e34_signer_upward_refused(x, reason):
+def test_e34_signer_upward_hook_false_refuses():
+    hook = _Parent(False)
     with pytest.raises(dkim2sign.SigningRefused) as e:
-        _sign_sub(x)
-    assert str(e.value) == (f"From header field is not Authentic for "
-                            f"d=mail.{x}.dkim2.com: {reason}")
+        _sign_sub(dns_data=_REPO_DNS, parent_from=hook)
+    assert str(e.value) == _REFUSAL
+    assert hook.calls == ["open.dkim2.com"]
 
 
-def test_e34_signer_policy_temperror_refuses():
-    src = _Policies({"open.dkim2.com": "TEMP"})
-    with pytest.raises(dkim2sign.SigningRefused) as e:
-        _sign_sub("open", policy_source=src)
-    assert str(e.value) == ("From header field is not Authentic for "
-                            "d=mail.open.dkim2.com: policy for open.dkim2.com "
-                            "unavailable")
-    assert src.calls == ["open.dkim2.com"]
-
-
-def test_e34_signer_policy_source_hook():
-    src = _Policies({"open.dkim2.com": ["v=DKIM1; f=strict"]})
-    with pytest.raises(dkim2sign.SigningRefused) as e:
-        _sign_sub("open", policy_source=src)
-    assert str(e.value).endswith(": From open.dkim2.com forbids subdomain signing")
-
-
-def test_e34_signer_downward_needs_no_lookup():
-    src = _Policies({})
-    # From below d=: d=strict.dkim2.com, From a@mail.strict.dkim2.com.
+def test_e34_signer_downward_never_calls_hook():
+    hook = _Parent(False)
     dkim2sign.sign_message(
-        _plain("mail.strict.dkim2.com"), "sel1", "strict.dkim2.com", _KEY2,
-        mailfrom="<a@mail.strict.dkim2.com>", rcptto=["<b@example.net>"],
-        dns_data=_REPO_DNS, policy_source=src)
-    assert src.calls == []
+        _plain("mail.open.dkim2.com"), "sel1", "open.dkim2.com", _KEY2,
+        mailfrom="<a@mail.open.dkim2.com>", rcptto=["<b@example.net>"],
+        dns_data=_REPO_DNS, parent_from=hook)
+    assert hook.calls == []
 
 
-def test_e34_signer_unrelated_is_plain_refusal():
-    src = _Policies({})
+def test_e34_signer_unrelated_never_calls_hook():
+    hook = _Parent(True)
     with pytest.raises(dkim2sign.SigningRefused) as e:
         dkim2sign.sign_message(
             _plain("open.dkim2.com"), "sel1", "test2.dkim2.com", _KEY2,
             mailfrom="<a@test2.dkim2.com>", rcptto=["<b@example.net>"],
-            dns_data=_REPO_DNS, policy_source=src)
+            dns_data=_REPO_DNS, parent_from=hook)
     assert str(e.value) == "From header field is not Authentic for d=test2.dkim2.com"
-    assert src.calls == []
+    assert hook.calls == []
 
 
-def test_e34_signer_dns_json_from_env(monkeypatch):
-    monkeypatch.setenv("DKIM2_DNS_JSON", os.path.join(_ROOT, "dns.json"))
-    with pytest.raises(dkim2sign.SigningRefused) as e:
-        _sign_sub("strict", dns_data=None)
-    assert str(e.value).endswith(": From strict.dkim2.com forbids subdomain signing")
+def test_e34_parent_from_set():
+    f = dkim2sign.parent_from_set(["Open.DKIM2.com."])
+    assert f("open.dkim2.com")
+    assert not f("dkim2.com")
+
+
+def _cli(*extra):
+    msg = _plain("open.dkim2.com")
+    return subprocess.run(
+        [sys.executable, os.path.join(_ROOT, "python", "dkim2sign.py"), "-",
+         "-s", "sel1", "-d", "mail.open.dkim2.com", "-k", _KEY2,
+         "--mailfrom", "<bounce@mail.open.dkim2.com>",
+         "--rcptto", "<b@example.net>", *extra],
+        input=msg, capture_output=True,
+        env={**os.environ, "DKIM2_DNS_JSON": _DNS_JSON})
+
+
+def test_e34_cli_parent_from():
+    p = _cli()
+    assert p.returncode == 1
+    assert p.stderr.decode().strip() == f"dkim2sign: {_REFUSAL}"
+    p = _cli("--parent-from", "example.org", "--parent-from", "OPEN.dkim2.com.")
+    assert p.returncode == 0, p.stderr
+    r = dkim2verify.verify_message(p.stdout, _REPO_DNS, full_chain=True,
+                                   skip_timestamp_check=True)
+    assert r.ok, r.errors
