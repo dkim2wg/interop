@@ -109,7 +109,8 @@ tests/test_spec07: tests/test_spec07.c tests/spec_harness.h eml_parse.o $(CORE_O
 tests/test_spec08: tests/test_spec08.c tests/spec_harness.h eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDFLAGS)
 
-tests/test_spec09: tests/test_spec09.c tests/spec_harness.h eml_parse.o $(CORE_OBJS)
+# E3.4 runs ./dkim2sign (order-only: the test need not relink when it changes).
+tests/test_spec09: tests/test_spec09.c tests/spec_harness.h eml_parse.o $(CORE_OBJS) | dkim2sign
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDFLAGS)
 
 # The milter's callbacks against a fake libmilter (tests/stub), so this

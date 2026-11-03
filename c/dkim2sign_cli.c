@@ -11,14 +11,16 @@ static void usage(const char *prog) {
         "       [--mailfrom ADDR] [--rcptto ADDR]... [--timestamp N]\n"
         "       [--hash sha256|sha512|both]\n"
         "       [--allow-null-body-recipe] [--dns-json PATH] [--ignore-timestamps]\n"
-        "       [--exploded]\n"
+        "       [--exploded] [--parent-from DOMAIN]...\n"
         "A message already carrying a DKIM2 chain is verified first (keys from\n"
         "--dns-json or $DKIM2_DNS_JSON, else DNS) and is not signed if it fails.\n"
         "A null body Recipe on an UNSIGNED Message-Instance (m= above every\n"
         "signature's m=) is signed over; one an upstream signature covers\n"
         "fails that check. --allow-null-body-recipe is deprecated and does nothing.\n"
         "--exploded: this hop sends copies to more than one address (f=exploded\n"
-        "when i > 1; set anyway when there is more than one --rcptto).\n",
+        "when i > 1; set anyway when there is more than one --rcptto).\n"
+        "--parent-from DOMAIN: -d may sign for a From in this parent domain\n"
+        "(repeatable); without it, a From above -d is refused.\n",
         prog);
     exit(1);
 }
@@ -37,6 +39,8 @@ int main(int argc, char *argv[]) {
     const char *hash = NULL;
     const char *dns_json = getenv("DKIM2_DNS_JSON");
     int ignore_ts = 0, exploded = 0;
+    char *parents[argc];
+    int n_parents = 0;
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc)
@@ -58,6 +62,8 @@ int main(int argc, char *argv[]) {
             ignore_ts = 1;
         else if (strcmp(argv[i], "--exploded") == 0)
             exploded = 1;
+        else if (strcmp(argv[i], "--parent-from") == 0 && i + 1 < argc)
+            parents[n_parents++] = argv[++i];
         else if (strcmp(argv[i], "--dns-json") == 0 && i + 1 < argc)
             dns_json = argv[++i];
         else if (strcmp(argv[i], "--hash") == 0 && i + 1 < argc) {
@@ -84,7 +90,10 @@ int main(int argc, char *argv[]) {
         .hash         = hash,
         .skip_timestamp_check   = ignore_ts,
         .exploded               = exploded,
+        .parent_from            = dkim2_parent_from_list,
+        .parent_from_arg        = parents,
     };
+    parents[n_parents] = NULL;
     if (dns_json && *dns_json) {
         char jerr[256];
         if (dkim2_dns_json_load(dns_json, jerr, sizeof jerr) < 0) {

@@ -22,6 +22,8 @@ static struct {
     char *privkey_path;
     char *alg;
     char *authservid;    /* for Authentication-Results */
+    char **parent_from;  /* parent_from= lines: NULL-terminated (contract E3.4) */
+    int n_parent_from;
 } g_cfg;
 
 /* -09 §12.5 hint: a list manager that sends each recipient its own copy
@@ -283,6 +285,8 @@ static sfsistat cb_eom(SMFICTX *ctx) {
             .privkey_path = g_cfg.privkey_path,
             .alg          = g_cfg.alg,
             .exploded     = s->n_exploded_hint > 0,
+            .parent_from     = dkim2_parent_from_list,
+            .parent_from_arg = g_cfg.parent_from,
         };
         char *mi_val = NULL, *sig_val = NULL;
         if (dkim2_do_sign(c, &cfg, &mi_val, &sig_val) != 0) {
@@ -306,8 +310,9 @@ static sfsistat cb_eom(SMFICTX *ctx) {
                     char from[256];
                     from_for_log(c, from, sizeof from);
                     syslog(LOG_WARNING,
-                        "dkim2-milter: From domain %s is not d=%s or below it: a DKIM2 list's "
-                        "posting address must be in the domain this milter signs with",
+                        "dkim2-milter: From domain %s is not d=%s or below it, nor a "
+                        "parent_from= domain: a DKIM2 list's posting address must be in "
+                        "the domain this milter signs with",
                         from, g_cfg.domain ? g_cfg.domain : "(none)");
                 }
                 if (s->n_sig_fields > 0) {
@@ -393,6 +398,13 @@ static void load_config(const char *path) {
         else if (strcmp(k, "privkey")    == 0) g_cfg.privkey_path = strdup(v);
         else if (strcmp(k, "alg")        == 0) g_cfg.alg        = strdup(v);
         else if (strcmp(k, "authservid") == 0) g_cfg.authservid = strdup(v);
+        else if (strcmp(k, "parent_from") == 0) {
+            /* Repeatable: a parent domain whose From domain= may sign for. */
+            char **p = realloc(g_cfg.parent_from, (g_cfg.n_parent_from + 2) * sizeof *p);
+            if (!p || !(p[g_cfg.n_parent_from] = strdup(v))) { perror("config"); exit(1); }
+            p[++g_cfg.n_parent_from] = NULL;
+            g_cfg.parent_from = p;
+        }
         else if (strcmp(k, "allow_null_body_recipe") == 0) {
             /* Deprecated (-09, contract E2): a null body Recipe on this
                hop's own unsigned instance is always signed over. Warn only

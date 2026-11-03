@@ -24,7 +24,19 @@ typedef struct {
     int skip_timestamp_check;   /* the chain gate ignores t= expiry (harness use) */
     int skip_chain_check;       /* DO NOT USE outside tests: sign without running the
                                    gate, to build deliberately broken chains */
+    /* -09 §12.4, contract E3.4: the upward From match (d= below the From
+       domain) is signed only when parent_from(from_domain, parent_from_arg)
+       returns non-zero; from_domain is the A-label, lowercased, no trailing
+       dot. NULL refuses it. A From at or below d= never calls it, and the
+       signer looks no Domain Policy Record up. */
+    int (*parent_from)(const char *from_domain, void *arg);
+    void *parent_from_arg;
 } dkim2_sign_config_t;
+
+/* A parent_from over a list of domains: arg is a NULL-terminated char **;
+   non-zero when from_domain is one of them (case-insensitive, one trailing
+   dot ignored, U-labels as A-labels). For --parent-from / parent_from=. */
+int dkim2_parent_from_list(const char *from_domain, void *arg);
 
 /* Sign the message in ctx.
    ctx must have: headers[], n_headers, body_buf, body_len, mail_from, rcpt_to set.

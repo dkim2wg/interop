@@ -1,6 +1,7 @@
 /* draft-ietf-dkim-dkim2-spec-09: the implementation contract's E1-E6 and
    E3.4 (docs/superpowers/specs/2026-11-03-dkim2-spec-09-design.md), on
-   messages built and signed in memory (spec_harness.h). Domain Policy
+   messages built and signed in memory (spec_harness.h); E3.4 signs files
+   with the repo's keys and dkim2sign. Domain Policy
    Records come from a dkim2_dns_txt_hook table here, which counts the
    lookups; keys still come from the harness override. */
 #include <stdio.h>
@@ -21,6 +22,7 @@
 #include "../dkim2_crypto.h"
 #include "../dkim2_hash.h"
 #include "../dkim2_message.h"
+#include "../dkim2_dnsjson.h"
 #include "../base64.h"
 
 #define HARNESS_KEY_PATH "/tmp/dkim2_test_spec09.pem"
@@ -368,57 +370,130 @@ static void test_first_tag(void) {
     CHECK(dkim2_txt_first_tag("", 0) == 0);
 }
 
-/* E3.4: the signer accepts the upward match the policy allows. */
-static void test_signer_policy(void) {
-    char err[512];
-    static char *rcpt[] = { "<r@dest.example>", NULL };
-    msg_t m;
+/* E3.4 (revised): the upward match asks cfg.parent_from; the signer looks
+   no Domain Policy Record up. From a@open.dkim2.com, d=mail.open.dkim2.com,
+   test2.dkim2.com's sel1 key; the output verifies against ../dns.json. */
+#define E34_KEY  "../keys/sel1._domainkey.test2.dkim2.com.pem"
+#define E34_DNS  "../dns.json"
+#define E34_MSG  "/tmp/dkim2_test_spec09_e34.eml"
+#define E34_OUT  "/tmp/dkim2_test_spec09_e34.out"
+#define E34_REFUSAL "not signing: From header field is not Authentic for d=mail.open.dkim2.com"
 
-    zone_clear();
-    msg_init(&m, "a@parent.example", "test", "Hello\r\n");
-    CHECK(lib_sign(&m, "mail.parent.example", "<a@mail.parent.example>", rcpt, 0,
-                   err, sizeof err, NULL, 0) == 0);
-    CHECK(g_policy_lookups == 1);
-    msg_free(&m);
+static int g_parent_calls;
+static char g_parent_dom[256];
 
-    zone_clear();
-    msg_init(&m, "a@sub.example.com", "test", "Hello\r\n");
-    CHECK(lib_sign(&m, "example.com", "<a@example.com>", rcpt, 0, err, sizeof err, NULL, 0) == 0);
-    CHECK(g_policy_lookups == 0);                       /* downward: no lookup */
-    msg_free(&m);
+static int parent_hook(const char *from_domain, void *arg) {
+    g_parent_calls++;
+    snprintf(g_parent_dom, sizeof g_parent_dom, "%s", from_domain);
+    return *(int *)arg;
+}
 
-    static const struct { const char *r0, *r1; int temp; const char *why; } refuse[] = {
-        { "v=DKIM1; f=strict", NULL, 0, ": From parent.example forbids subdomain signing" },
-        { "v=DKIM1; f=a::b", NULL, 0, ": From parent.example forbids subdomain signing" },
-        { "v=DKIM1", "v=DKIM1", 0, ": multiple records for parent.example policy" },
-        { NULL, NULL, 1, ": policy for parent.example unavailable" },
+static void e34_write_msg(const char *from) {
+    FILE *f = fopen(E34_MSG, "w");
+    fprintf(f, "From: A <a@%s>\r\nTo: b@example.net\r\nSubject: s\r\n"
+               "Date: Tue, 3 Nov 2026 00:00:00 +0000\r\nMessage-ID: <x@%s>\r\n\r\nbody\r\n",
+            from, from);
+    fclose(f);
+}
+
+/* Sign E34_MSG as d into E34_OUT; 0, or -1 with err set. */
+static int e34_sign(const char *d, const char *mf, int (*hook)(const char *, void *),
+                    void *arg, char *err, size_t errsz) {
+    static char *rcpt[] = { "<b@example.net>", NULL };
+    dkim2_sign_config_t cfg = {
+        .domain = (char *)d, .selector = "sel1", .privkey_path = E34_KEY,
+        .parent_from = hook, .parent_from_arg = arg,
     };
-    for (size_t k = 0; k < sizeof refuse / sizeof *refuse; k++) {
-        zone_clear();
-        zone_add("_domainkey.parent.example", refuse[k].temp, refuse[k].r0, refuse[k].r1);
-        msg_init(&m, "a@parent.example", "test", "Hello\r\n");
-        int rc = lib_sign(&m, "mail.parent.example", "<a@mail.parent.example>", rcpt, 0,
-                          err, sizeof err, NULL, 0);
-        char want[256];
-        snprintf(want, sizeof want,
-                 "not signing: From header field is not Authentic for d=mail.parent.example%s",
-                 refuse[k].why);
-        CHECK(rc != 0);
-        if (strcmp(err, want) != 0) {
-            printf("FAIL %s:%d: got \"%s\", want \"%s\"\n", __FILE__, __LINE__, err, want);
-            g_fail++;
-        }
-        msg_free(&m);
-    }
+    FILE *out = fopen(E34_OUT, "w");
+    int rc = dkim2_sign_message(E34_MSG, out, &cfg, mf, rcpt, err, errsz);
+    fclose(out);
+    return rc;
+}
 
-    /* anything else keeps the old text, with no reason after it */
+static int e34_verifies(void) {
+    char jerr[256];
+    if (dkim2_dns_json_load(E34_DNS, jerr, sizeof jerr) < 0) {
+        printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, jerr);
+        return 0;
+    }
+    static char *rcpt[] = { "<b@example.net>", NULL };
+    dkim2_verify_result_t r = dkim2_verify_message(E34_OUT, "<bounce@mail.open.dkim2.com>",
+                                                   rcpt, 1);
+    dkim2_dns_json_free();
+    dkim2_dns_txt_hook = zone_hook;
+    if (r.status != DKIM2_OK) printf("  verify: %s\n", r.message);
+    return r.status == DKIM2_OK;
+}
+
+static void check_err(const char *got, const char *want, int line) {
+    if (strcmp(got, want) != 0) {
+        printf("FAIL %s:%d: got \"%s\", want \"%s\"\n", __FILE__, line, got, want);
+        g_fail++;
+    }
+}
+
+static void test_signer_parent_from(void) {
+    char err[512];
+    int yes = 1, no = 0;
+    const char *mf = "<bounce@mail.open.dkim2.com>";
+    e34_write_msg("open.dkim2.com");
+
+    /* no hook: refused, with no policy lookup */
     zone_clear();
-    msg_init(&m, "a@other.example", "test", "Hello\r\n");
-    CHECK(lib_sign(&m, "mail.parent.example", "<a@mail.parent.example>", rcpt, 0,
-                   err, sizeof err, NULL, 0) != 0);
-    CHECK(strcmp(err, "not signing: From header field is not Authentic for d=mail.parent.example") == 0);
+    CHECK(e34_sign("mail.open.dkim2.com", mf, NULL, NULL, err, sizeof err) != 0);
+    check_err(err, E34_REFUSAL, __LINE__);
     CHECK(g_policy_lookups == 0);
-    msg_free(&m);
+
+    /* hook true: signed, the output verifies, no policy lookup */
+    zone_clear();
+    g_parent_calls = 0;
+    CHECK(e34_sign("mail.open.dkim2.com", mf, parent_hook, &yes, err, sizeof err) == 0);
+    CHECK(g_parent_calls == 1 && strcmp(g_parent_dom, "open.dkim2.com") == 0);
+    CHECK(g_policy_lookups == 0);
+    CHECK(e34_verifies());
+
+    /* hook false: refused */
+    zone_clear();
+    g_parent_calls = 0;
+    CHECK(e34_sign("mail.open.dkim2.com", mf, parent_hook, &no, err, sizeof err) != 0);
+    check_err(err, E34_REFUSAL, __LINE__);
+    CHECK(g_parent_calls == 1);
+    CHECK(g_policy_lookups == 0);
+
+    /* downward: signed, hook never asked */
+    g_parent_calls = 0;
+    e34_write_msg("mail.open.dkim2.com");
+    CHECK(e34_sign("open.dkim2.com", "<a@mail.open.dkim2.com>", parent_hook, &no,
+                   err, sizeof err) == 0);
+    CHECK(g_parent_calls == 0);
+
+    /* unrelated: the plain refusal, hook never asked */
+    e34_write_msg("open.dkim2.com");
+    CHECK(e34_sign("test2.dkim2.com", "<a@test2.dkim2.com>", parent_hook, &yes,
+                   err, sizeof err) != 0);
+    check_err(err, "not signing: From header field is not Authentic for d=test2.dkim2.com",
+              __LINE__);
+    CHECK(g_parent_calls == 0);
+
+    /* the list helper behind --parent-from and parent_from= */
+    char *list[] = { "example.org", "Open.DKIM2.com.", NULL };
+    CHECK(dkim2_parent_from_list("open.dkim2.com", list) == 1);
+    CHECK(dkim2_parent_from_list("dkim2.com", list) == 0);
+    CHECK(dkim2_parent_from_list("open.dkim2.com", NULL) == 0);
+
+    /* the CLI: refused without --parent-from, signed with it */
+    const char *cli = "./dkim2sign " E34_MSG " -s sel1 -d mail.open.dkim2.com -k " E34_KEY
+                      " --mailfrom '<bounce@mail.open.dkim2.com>' --rcptto '<b@example.net>'"
+                      " --dns-json " E34_DNS;
+    char cmd[1024];
+    snprintf(cmd, sizeof cmd, "%s > " E34_OUT " 2>/dev/null", cli);
+    CHECK(system(cmd) != 0);
+    snprintf(cmd, sizeof cmd, "%s --parent-from example.org --parent-from OPEN.dkim2.com. > "
+             E34_OUT, cli);
+    CHECK(system(cmd) == 0);
+    CHECK(e34_verifies());
+    remove(E34_MSG);
+    remove(E34_OUT);
 }
 
 /* ---- E4 ---- */
@@ -537,7 +612,7 @@ int main(void) {
     test_policy();
     test_big_records();
     test_first_tag();
-    test_signer_policy();
+    test_signer_parent_from();
     test_key_records();
     test_rsa_short();
     test_strings();

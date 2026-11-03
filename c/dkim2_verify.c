@@ -232,21 +232,17 @@ static int from_pair_error(const fromlist_t *f, const dkim2_sig_t *s, dpr_cache_
     return -1;
 }
 
-int dkim2_from_authentic(char **hdrs, int n_hdrs, const char *d, char *why, size_t whysz) {
-    if (why && whysz) why[0] = '\0';
+int dkim2_from_authentic(char **hdrs, int n_hdrs, const char *d,
+                         int (*parent)(const char *from_domain, void *arg), void *arg) {
     fromlist_t f;
     if (fromlist_of(hdrs, n_hdrs, &f) < 0) return 0;
-    dpr_cache_t cache;
-    cache.n = 0;
     char dom[512];
-    int v = from_pair(&f, d, &cache, dom, sizeof dom);
+    dom[0] = '\0';
+    int cls = f.n != 1 ? DKIM2_FROM_MULTI : dkim2_from_classify(f.v[0], dom, sizeof dom);
     fromlist_free(&f);
-    if (why && whysz) {
-        if (v == FP_TEMP) snprintf(why, whysz, "policy for %s unavailable", dom);
-        else if (v == FP_MULTIPLE) snprintf(why, whysz, "multiple records for %s policy", dom);
-        else if (v == FP_STRICT) snprintf(why, whysz, "From %s forbids subdomain signing", dom);
-    }
-    return v == FP_OK;
+    if (cls != DKIM2_FROM_OK || !d) return 0;
+    if (dkim2_relaxed_match(dom, d)) return 1;              /* downward */
+    return dkim2_relaxed_match(d, dom) && parent && parent(dom, arg);   /* upward */
 }
 
 /* Undo MI's header Recipe for From (a "from" key) on cur: 1 with

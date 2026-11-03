@@ -887,8 +887,12 @@ now the -09 text, and the "-08 §" pointers read "-09 §" (no section moved).
 - **E3:** dkim2_from_classify() (list / not a mailbox / literal), then
   downward, upward, and the Domain Policy Record, looked up lazily and
   cached per verification (at most one entry per signature). The signer's
-  dkim2_from_authentic() runs the same pair check (E3.4) and adds the policy
-  reason after "From header field is not Authentic for d=<d>: ".
+  dkim2_from_authentic() ran the same pair check (E3.4) and added the policy
+  reason after "From header field is not Authentic for d=<d>: ". Revised
+  E3.4 (2026-11-03): the signer looks no policy up; the upward match asks
+  dkim2_sign_config_t.parent_from (dkim2_parent_from_list for dkim2sign
+  --parent-from and the milter's repeatable parent_from=), NULL refuses,
+  and the refusal is the plain text again.
   dkim2_from_domain() now skips over a "[...]" literal, so an IPv6 literal's
   ':' no longer reads as a group.
 - **Record source:** a new multi-record hook, dkim2_dns_txt_hook, which

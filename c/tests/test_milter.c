@@ -181,6 +181,28 @@ int main(void) {
         g_n_log = 0;
     }
 
+    /* contract E3.4: parent_from= lines (repeatable) let d= sign for a From
+       in a parent domain; without them that From is refused */
+    {
+        const char *conf = "/tmp/dkim2_test_milter.conf";
+        FILE *cf = fopen(conf, "w");
+        fprintf(cf, "socket=inet:1@localhost\nmode=s\ndomain=mail.example.com\nselector=sel\n"
+                    "privkey=%s\nalg=ed25519-sha256\nparent_from=other.example\n"
+                    "parent_from=Example.COM.\n", KEY);
+        fclose(cf);
+        load_config(conf);
+        remove(conf);
+        CHECK(g_cfg.n_parent_from == 2);
+        CHECK(run(&c, "<a@mail.example.com>", one, plain, body) == SMFIS_ACCEPT);
+        CHECK(c.n_add == 2 && added_with(&c, "DKIM2-Signature", "d=mail.example.com;"));
+        g_cfg.parent_from = NULL;           /* leaks the two strings: a test */
+        g_cfg.n_parent_from = 0;
+        CHECK(run(&c, "<a@mail.example.com>", one, plain, body) == SMFIS_ACCEPT);
+        CHECK(c.n_add == 0);
+        CHECK(logged("not signing: From header field is not Authentic for d=mail.example.com"));
+        g_n_log = 0;
+    }
+
     /* sign mode, i=1 by example.com (the hint is ignored at i=1) */
     set_mode('s', "example.com");
     hdr_t hinted1[] = { { "From", "a@example.com" }, { "To", "list@lists.example.org" },

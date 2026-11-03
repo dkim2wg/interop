@@ -19,6 +19,11 @@ privkey=/etc/dkim2/private.pem
 # Signing algorithm: ed25519-sha256 (default) or rsa-sha256
 alg=ed25519-sha256
 
+# From domains above domain= that domain= may sign for (draft -09 §12.4,
+# a d= below the From domain). Repeat the line for each; with none, a From
+# in a parent domain is refused. The signer makes no DNS lookup for this.
+# parent_from=example.org
+
 # Authentication-Results authservid (verifier mode; defaults to "localhost")
 # authservid=mail.example.com
 
