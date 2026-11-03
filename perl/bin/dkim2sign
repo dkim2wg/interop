@@ -9,7 +9,7 @@
 #
 #   dkim2sign -s SELECTOR -d DOMAIN -k KEYFILE [--mailfrom '<a@b>']
 #                [--rcptto '<c@d>']... [--timestamp N] [--next-domain D]
-#                [--flag F]... [--exploded] [--allow-null-body-recipe]
+#                [--flag F]... [--exploded] [--parent-from D]... [--allow-null-body-recipe]
 #                [--ignore-timestamps] [--dns-json PATH] [MESSAGE|-]
 #
 # Before extending an existing DKIM2 chain it runs the same verify-before-sign
@@ -42,7 +42,7 @@ use Mail::DKIM2::Signer;
 my ($selector, $domain, $keyfile, $timestamp, $next_domain);
 my $mailfrom = '<>';
 my $hash_algs = 'sha256';
-my (@rcptto, @flags);
+my (@rcptto, @flags, @parent_from);
 my ($allow_null, $ignore_ts, $dns_json, $exploded);
 $dns_json = $ENV{DKIM2_DNS_JSON} if defined $ENV{DKIM2_DNS_JSON} && length $ENV{DKIM2_DNS_JSON};
 
@@ -56,6 +56,7 @@ GetOptions(
     'next-domain=s'   => \$next_domain,
     'flag=s'          => \@flags,
     'exploded'        => \$exploded,
+    'parent-from=s'   => \@parent_from,
     'hash=s'          => \$hash_algs,
     'allow-null-body-recipe' => \$allow_null,
     'ignore-timestamps'      => \$ignore_ts,
@@ -108,7 +109,7 @@ if ($dns_json) {
         return $verifier->fetch_public_key($sig, $idx);
     };
     # The Domain Policy Record (-09 section 3.8) from the same file, for the
-    # gate's Verifier and the Signer ($who is either).
+    # gate's upstream verification.
     $gate_opts{PolicyCallback} = sub {
         my ($dom, $who) = @_;
         my $entry = $dns->{$dom} && $dns->{$dom}{_domainkey};
@@ -145,8 +146,12 @@ my $signer = Mail::DKIM2::Signer->new(
     (defined $timestamp ? (Timestamp => $timestamp) : ()),
     (@flags ? (Flags => \@flags) : ()),
     ($exploded ? (Exploded => 1) : ()),
-    # The same Domain Policy Record source as the gate (contract E3.4).
-    ($gate_opts{PolicyCallback} ? (PolicyCallback => $gate_opts{PolicyCallback}) : ()),
+    # -09 contract E3.4: a d= below the From domain signs only for a
+    # --parent-from domain; no DNS lookup.
+    ParentFromCallback => sub {
+        my ($dom) = @_;
+        return scalar grep { lc(s/\.\z//r) eq $dom } @parent_from;
+    },
 );
 $signer->PRINT($msg->as_string);
 $signer->CLOSE;
@@ -178,6 +183,8 @@ usage: $0 -s SELECTOR -d DOMAIN -k KEYFILE [options] [MESSAGE|-]
       --flag F       f= flag; repeatable
       --exploded     this hop sends the message to more than one address: f=exploded
                      (-09 section 12.5; also set when --rcptto is given twice; never at i=1)
+      --parent-from D  a parent domain whose From this d= may make Authentic
+                     (-09 sections 7.1 item 4, 11.1); repeatable; no DNS lookup
       --allow-null-body-recipe  deprecated (0.29), does nothing: this hop's own
                      null body Recipe is always signed
       --ignore-timestamps  do not fail an upstream signature for its t= age

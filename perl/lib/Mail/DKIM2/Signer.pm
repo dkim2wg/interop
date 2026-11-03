@@ -29,7 +29,8 @@ use Mail::DKIM2::HeaderPlan;
 
 sub known_options {
     return qw(Domain Selector KeyFile Key Algorithm MailFrom RcptTo
-              Nonce Flags Exploded Timestamp NextDomain PolicyCallback Resolver);
+              Nonce Flags Exploded Timestamp NextDomain ParentFromCallback
+              PolicyCallback Resolver);
 }
 
 sub init {
@@ -114,20 +115,16 @@ sub finish_header {
     $error //= 'no Message-Instance field to sign over' unless @mi_headers;
     # -09 sections 11 and 12.4: a hop that originates the message, or whose
     # instances changed From, signs with a d= the From is Authentic for.
-    # -09 contract E3.4: d= may also be below the From domain, when that
-    # domain's Domain Policy Record allows it (looked up only then).
+    # -09 contract E3.4: d= may also be below the From domain when the
+    # caller says this d= may sign for it (ParentFromCallback), or, as an
+    # explicit opt-in, when that domain's Domain Policy Record allows it.
+    # Without either the upward case is refused: no live DNS by default.
     if (!$error && $self->_from_must_match(\@mi_headers, \@dk2_headers)) {
-        my $e = Mail::DKIM2::Common::from_pair_error($self->{Domain}, sub {
-                my ($dom) = @_;
-                my ($p) = Mail::DKIM2::Common::policy_from_source($dom,
-                    $self->{PolicyCallback}, sub { $self->_resolver }, $self);
-                return $p;
-            },
+        my $e = Mail::DKIM2::Common::from_pair_error($self->{Domain},
+            sub { $self->_parent_policy(@_) },
             map { $_->[1] } grep { lc $_->[0] eq 'from' }
             @{ Mail::DKIM2::HeaderPlan::fields($self->{headers}) });
-        $error = "From header field is not Authentic for d=$self->{Domain}"
-            . ($e->[1] eq 'matching From is not authentic' ? '' : ": $e->[1]")
-            if $e;
+        $error = "From header field is not Authentic for d=$self->{Domain}" if $e;
     }
     if ($error) {
         # A protocol outcome, not a programming error: reported through
@@ -193,6 +190,19 @@ sub _new_signature {
 # names From -- this hop, or a list manager on its host, changed it. One
 # that does not parse is left to the verifiers (and Mail::DKIM2::Gate),
 # which refuse it: the Signer checks only what it needs to sign.
+# For from_pair_error: whether this d= may make a From in parent domain
+# $dom Authentic ('open') or not ('strict').
+sub _parent_policy {
+    my ($self, $dom) = @_;
+    if (my $cb = $self->{ParentFromCallback}) {
+        return $cb->($dom, $self) ? 'open' : 'strict';
+    }
+    return 'strict' unless $self->{PolicyCallback} || $self->{Resolver};
+    my ($p) = Mail::DKIM2::Common::policy_from_source($dom,
+        $self->{PolicyCallback}, sub { $self->_resolver }, $self);
+    return $p;
+}
+
 # fetch_domain_policy($domain): the TXT records at _domainkey.$domain
 # through the Resolver, as Mail::DKIM2::Verifier's: for a PolicyCallback
 # to fall back to.
@@ -485,16 +495,25 @@ C<exploded> flag, which it also gets whenever C<rt=> holds more than one
 address. Never at C<i=1>: there the flag, requested this way or in
 C<Flags>, is dropped.
 
+=item ParentFromCallback
+
+Whether this C<Domain> may make a From in a parent domain Authentic (-09
+sections 7.1 item 4 and 11.1, contract E3.4; new in 0.29). Called as
+C<< ($from_domain, $signer) >>, with the From domain as a lowercased
+A-label, only when a hop that must make From Authentic signs with a C<d=>
+below the From domain; true signs, false refuses. Answer it from
+configuration or a database: the operator knows its own domains' policy, so
+the Signer makes no DNS lookup for this unless asked to (below). Without
+this option, C<PolicyCallback> or C<Resolver>, such a message is refused.
+
 =item PolicyCallback, Resolver
 
-The source of the Domain Policy Record (-09 section 3.8; new in 0.29), as
-for L<Mail::DKIM2::Verifier>: a hop that must make From Authentic may sign
-with a C<d=> below the From domain when that domain's record does not say
-C<f=strict> (contract E3.4). The record is looked up only then, from
+An explicit opt-in to the Domain Policy Record lookup (-09 section 3.8)
+instead of C<ParentFromCallback>, for a caller that wants it: the record of
+the From domain is looked up, as for L<Mail::DKIM2::Verifier>, from
 C<PolicyCallback> (C<< ($domain, $signer) >>, returning the TXT strings or
-dying with C<TEMPERROR:>) or through C<Resolver> (default: a
-L<Net::DNS::Resolver>). A strict, multiple or unavailable record refuses
-signing, the details naming why after the usual "not Authentic" text.
+dying with C<TEMPERROR:>) or through C<Resolver>, and anything but a record
+that allows subdomains refuses. Ignored when C<ParentFromCallback> is given.
 C<< $signer->fetch_domain_policy($domain) >> is the default lookup, for a
 callback to fall back to.
 
@@ -526,11 +545,8 @@ repeated C<i=> or C<m=>; or, when the message has no DKIM2-Signature yet or
 a Message-Instance no signature covers changed From, a From that is not
 Authentic for C<Domain> (-09 sections 11 and 12.4: exactly one From field
 holding one mailbox whose domain is C<Domain> or below it, or above it when
-the From domain's Domain Policy Record allows that), with details
-C<From header field is not Authentic for d=E<lt>DomainE<gt>>, followed by
-C<: E<lt>reasonE<gt>> when the record decided it (C<From E<lt>domE<gt>
-forbids subdomain signing>, C<multiple records for E<lt>domE<gt> policy>,
-C<policy for E<lt>domE<gt> unavailable>).
+C<ParentFromCallback> allows that), with details
+C<From header field is not Authentic for d=E<lt>DomainE<gt>>.
 L</"details()"> says which. A failure is a result, not
 an exception: C<PRINT> and C<CLOSE> return normally.
 

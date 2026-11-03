@@ -19,7 +19,8 @@ use constant DKIM2_SOFTWARE => 'authentication_milter-DKIM2Sign';
 
 sub default_config {
     return {
-        # Static domain config: domain => { selector, keyfile }
+        # Static domain config: domain => { selector, keyfile,
+        # parent_from_domains (optional, -09 contract E3.4) }
         'domains'              => {},
         # HTTP endpoint for dynamic key lookup: GET {url}?domain=X
         # Expected response: {"selector":"sel1","key":"base64_pem_data"}
@@ -261,11 +262,19 @@ sub addheader_callback {
         }
 
         # Build SMTP params
+        my @parents = map { lc s/\.\z//r }
+                      @{ $sign_config->{parent_from_domains} || [] };
         my %signer_args = (
             Domain   => $sign_domain,
             Selector => $selector,
             Key      => $key,
             ( $exploded ? ( Exploded => 1 ) : () ),
+            # -09 contract E3.4: a d= below the From domain signs only for
+            # a parent this domain's config lists; no DNS lookup.
+            ParentFromCallback => sub {
+                my ($dom) = @_;
+                return scalar grep { $_ eq $dom } @parents;
+            },
         );
 
         # Pin t= when configured.  Only the test suite sets this, so that the
@@ -331,8 +340,7 @@ sub addheader_callback {
         }
 
         # Create the signer and feed the message
-        my $signer = Mail::DKIM2::Signer->new(%signer_args,
-            $self->_policy_source($config));
+        my $signer = Mail::DKIM2::Signer->new(%signer_args);
         $signer->PRINT($message_data);
         $signer->CLOSE();
         $self->check_timeout();
@@ -670,9 +678,10 @@ sub _gate_key_source {
     return $resolver ? ( Resolver => $resolver ) : ();
 }
 
-# Where the Domain Policy Record (-09 section 3.8) comes from, for the
-# Signer (contract E3.4) and the gate: dns_overrides' records for the
-# domains it lists (testing), else the milter's own resolver.
+# Where the Domain Policy Record (-09 section 3.8) comes from for the gate's
+# upstream verification: dns_overrides' records for the domains it lists
+# (testing), else the milter's own resolver. (The Signer never looks it up:
+# parent_from_domains, contract E3.4.)
 sub _policy_source {
     my ( $self, $config ) = @_;
     if ( my $file = $config->{'dns_overrides'} ) {
@@ -864,8 +873,9 @@ directly does not have this problem; it is specific to the bolt-on-milter model.
         "domains" : {                              | Static domain configs
             "example.com" : {                      |
                 "selector" : "sel1",               |   DKIM2 selector
-                "keyfile"  : "/path/to/key.pem"    |   Private key file path
-            },                                     |
+                "keyfile"  : "/path/to/key.pem",   |   Private key file path
+                "parent_from_domains" : []         |   Parents whose From it may
+            },                                     |     sign for (optional)
             "other.com" : {                        |
                 "selector" : "default",            |
                 "key"      : "base64_pem_data"     |   Or inline key data
@@ -891,6 +901,14 @@ The values shown are the defaults.  authentication_milter does not fill in a
 handler's defaults itself, so the handler does: an option left out of the
 configuration (or set to C<null>) takes the value above, and an explicit
 value, C<0> included, is used as given.
+
+C<parent_from_domains> (per domain, from the static config or the key
+endpoint's answer; new in 0.29) lists the parent domains whose From this
+domain may make Authentic (draft -09 sections 7.1 item 4 and 11.1): with
+C<mail.example.org> listing C<example.org>, a post from C<a@example.org> is
+signed as C<d=mail.example.org>. A parent not listed is refused, and the
+handler makes no DNS lookup for it; list only parents that do not publish
+C<v=DKIM1; f=strict>, which verifiers enforce.
 
 C<allow_null_body_recipe> is deprecated (0.29) and does nothing but log an
 error once: this hop's own null body Recipe is always signed.  C<dns_overrides> and C<skip_timestamp_check>

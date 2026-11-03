@@ -473,4 +473,20 @@ expect_sign('mi-only-null', list_post(null => 1, unsigned => 1),
     is($flags->($mock), '', 'exploded hint at i=1: no f=');
 }
 
+# --- -09 contract E3.4: d= below the From domain, per parent_from_domains ---
+{
+    (my $msg = $PLAIN) =~ s/^From: .*$/From: Author <author\@open.dkim2.com>/m or die;
+    my %cfg = (env_from => '<bounces@mail.open.dkim2.com>');
+    my $conf = sub { +{ 'mail.open.dkim2.com' => { selector => 'sel1',
+        key => DKIM2TestKeys::private_key_pem('test2.dkim2.com', 'sel1'), @_ } } };
+    my (undef, $mock) = run_sign($msg, %cfg, domains => $conf->());
+    is(scalar(fields($mock, 'DKIM2-Signature')), 0,
+       'parent From not listed: not signed (no DNS lookup)');
+    (undef, $mock) = run_sign($msg, %cfg,
+        domains => $conf->(parent_from_domains => ['Open.dkim2.com.']));
+    my @sig = fields($mock, 'DKIM2-Signature');
+    is(scalar @sig, 1, 'parent From listed in parent_from_domains: signed');
+    like($sig[0]{value} // '', qr/\bd=mail\.open\.dkim2\.com;/, '... as the subdomain');
+}
+
 done_testing;
