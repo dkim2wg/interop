@@ -2,7 +2,7 @@ package Mail::DKIM2::HeaderPlan;
 use strict;
 use warnings;
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 
 use Carp;
 use Scalar::Util qw(refaddr);

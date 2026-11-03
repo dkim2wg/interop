@@ -149,26 +149,35 @@ This is also the name the lookup uses.
   the DPR lookup over the same DoH path.
 - Signers: see E3.4.
 
-### E3.4 Signers (Bron, 2026-11-03: "allow, with lookup")
+### E3.4 Signers (revised, Bron 2026-11-03: "config, not live DNS; make it a callback")
 
 A hop that must make From Authentic (it originates the message, or one of
-its instances changed From: §11, §12.4) checks the pair as E3.1 does,
-including the policy lookup, before it signs:
-- downward match: sign (no lookup);
-- upward match (d= below the From domain): look up the From domain's DPR
-  (E3.2). `open` → sign. `strict`, a malformed record (strict), `multiple`,
-  or a temporary failure → refuse, with the E3.1 reason as the refusal text:
-  `From <dom> forbids subdomain signing`, `multiple records for <dom>
-  policy`, `policy for <dom> unavailable`;
-- otherwise, refuse as today ("From header field is not Authentic ...").
-A refusal goes down the signer's existing not-Authentic path (the milters
-send it unsigned, or 550 when it carries an upstream DKIM2-Signature).
-The lookup goes through the signer's policy source: Perl Signer gains
-`PolicyCallback` and `Resolver` options (same contract as the Verifier's);
-the milters and the authentication_milter handler pass their resolver; the
-CLIs answer from `--dns-json` when given, else DNS. Python/Go/C signers
-reuse their verifier's policy source. Lazy as in the verifier: never looked
-up when the downward match holds.
+its instances changed From: §11, §12.4) checks the pair before it signs:
+- downward match (From domain at or below d=): sign;
+- upward match (d= below the From domain): ask the signer's **parent
+  callback** whether this d= may sign for that From domain. True → sign;
+  false, or no callback → refuse. **Signers make no live DNS lookup for this
+  by default**: the operator knows its own domains' policy, and a callback
+  lets a deployment answer from static config, a database, or anything else;
+- otherwise refuse, as today.
+Refusal text: "From header field is not Authentic for d=<d>" (plain, no
+suffix) for every refusal of this kind.
+
+Library and front ends:
+- Perl Signer: `ParentFromCallback => sub ($from_domain, $signer)`
+  returning true or false (`$from_domain` is the A-label, lowercased, no
+  trailing dot). `PolicyCallback`/`Resolver` remain as an explicit opt-in for
+  library callers who DO want the Domain Policy Record looked up; they are
+  used only when no ParentFromCallback is given. With none of the three the
+  upward case is refused.
+- Config (dkim2-milter `--keydir` domain config / the DKIM2Sign handler's
+  `domains` entries): a per-signing-domain list `parent_from_domains`
+  (e.g. `["example.org"]`); the front end turns it into the callback (the
+  From domain is listed → true). dkim2sign: `--parent-from DOMAIN`
+  (repeatable). No front end looks up the DPR for the signer.
+- Python/Go/C signers: the same — a library parent callback/hook, a
+  `--parent-from DOMAIN` CLI option (repeatable), no DNS or dns.json policy
+  lookup in the signer.
 
 ## E4. Key records (§3.7, §14.5)
 

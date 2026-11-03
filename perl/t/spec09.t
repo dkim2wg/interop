@@ -190,8 +190,9 @@ for my $c (
        '... ahead of a duplicate selector');
 }
 
-# E3.4: the Signer may sign with d= below the From domain, when the From
-# domain's Domain Policy Record allows it.
+# E3.4: the Signer may sign with d= below the From domain when its
+# ParentFromCallback says so; with no callback it refuses, making no DNS
+# lookup. PolicyCallback/Resolver are an explicit opt-in to the lookup.
 {
     require Mail::DKIM2::Signer;
     my $sign = sub {
@@ -200,27 +201,54 @@ for my $c (
         my $mi = Mail::DKIM2::MessageInstance->calculate(Mail::DKIM2::Common::parse_mime($body));
         my $s = Mail::DKIM2::Signer->new(Domain => "mail.$parent", Selector => 'sel1',
             Key => DKIM2TestKeys::private_key('test2.dkim2.com', 'sel1'),
-            MailFrom => "<a\@mail.$parent>", RcptTo => ['<b@test2.dkim2.com>'],
-            PolicyCallback => $counting, %o);
+            MailFrom => "<a\@mail.$parent>", RcptTo => ['<b@test2.dkim2.com>'], %o);
         @asked = ();
         $s->load("Message-Instance: " . $mi->as_string . "\r\n" . $body);
         return $s;
     };
+    my $plain = 'From header field is not Authentic for d=mail.open.dkim2.com';
     my $s = $sign->('open.dkim2.com');
-    is($s->result, 'signed', 'E3.4: subdomain d=, no policy record: signed') or diag $s->details;
+    is($s->result, 'fail', 'E3.4: no callback: refused');
+    is($s->details, $plain, '... with the plain text');
+    my @cb;
+    $s = $sign->('open.dkim2.com', ParentFromCallback => sub { push @cb, [@_]; 1 });
+    is($s->result, 'signed', 'E3.4: ParentFromCallback true: signed') or diag $s->details;
+    is($cb[0][0], 'open.dkim2.com', '... asked about the From domain');
+    is(ref $cb[0][1], 'Mail::DKIM2::Signer', '... and given the signer');
+    $s = $sign->('open.dkim2.com', ParentFromCallback => sub { 0 });
+    is($s->details, $plain, 'E3.4: ParentFromCallback false: refused');
+    $s = $sign->('open.dkim2.com', ParentFromCallback => sub { 0 }, PolicyCallback => $counting);
+    is($s->result, 'fail', '... and a PolicyCallback beside it is not consulted');
+    is_deeply(\@asked, [], '... no policy lookup');
+    @cb = ();
+    $s = Mail::DKIM2::Signer->new(Domain => 'test1.dkim2.com', Selector => 'sel1',
+        Key => DKIM2TestKeys::private_key('test1.dkim2.com', 'sel1'),
+        ParentFromCallback => sub { push @cb, 1; 0 });
+    $s->load("Message-Instance: " . DKIM2SignedFixture::mi_value() . "\r\n" . $DKIM2SignedFixture::BODY);
+    is($s->result, 'signed', 'E3.4: the downward match needs no callback');
+    is(scalar @cb, 0, '... and does not call it');
+
+    # Common::parent_from_matcher, as the milters and dkim2sign build theirs.
+    my $m = Mail::DKIM2::Common::parent_from_matcher('Open.DKIM2.com.', "b\xc3\xbccher.example");
+    ok($m->('open.dkim2.com'), 'parent_from_matcher: case and a trailing dot');
+    ok($m->('xn--bcher-kva.example'), '... an IDN entry as its A-label');
+    ok(!$m->('other.dkim2.com'), '... and nothing else');
+    $s = $sign->('open.dkim2.com', ParentFromCallback => $m);
+    is($s->result, 'signed', '... which the Signer takes');
+
+    # The explicit opt-in: the Domain Policy Record.
+    $s = $sign->('open.dkim2.com', PolicyCallback => $counting);
+    is($s->result, 'signed', 'E3.4 opt-in: no policy record: signed') or diag $s->details;
     is_deeply(\@asked, ['open.dkim2.com'], '... after one policy lookup');
-    $s = $sign->('strict.dkim2.com');
-    is($s->result, 'fail', 'E3.4: f=strict: refused');
-    is($s->details, 'From header field is not Authentic for d=mail.strict.dkim2.com: '
-        . 'From strict.dkim2.com forbids subdomain signing', '... saying why');
-    $s = $sign->('multi.dkim2.com');
-    like($s->details, qr/: multiple records for multi\.dkim2\.com policy\z/, 'E3.4: multiple records: refused');
+    $s = $sign->('strict.dkim2.com', PolicyCallback => $counting);
+    is($s->details, 'From header field is not Authentic for d=mail.strict.dkim2.com',
+       'E3.4 opt-in: f=strict: refused');
     $s = $sign->('open.dkim2.com', PolicyCallback => sub { die "TEMPERROR: x\n" });
-    like($s->details, qr/: policy for open\.dkim2\.com unavailable\z/, 'E3.4: temporary failure: refused');
-    $s = $sign->('open.dkim2.com', PolicyCallback => undef, Resolver => DKIM2TestKeys::resolver());
-    is($s->result, 'signed', 'E3.4: the Resolver answers when there is no PolicyCallback');
-    $s = $sign->('strict.dkim2.com', PolicyCallback => undef, Resolver => DKIM2TestKeys::resolver());
-    is($s->result, 'fail', '... strict through the Resolver too');
+    is($s->result, 'fail', 'E3.4 opt-in: temporary failure: refused');
+    $s = $sign->('strict.dkim2.com', Resolver => DKIM2TestKeys::resolver());
+    is($s->result, 'fail', 'E3.4 opt-in: strict through the Resolver');
+    $s = $sign->('open.dkim2.com', Resolver => DKIM2TestKeys::resolver());
+    is($s->result, 'signed', '... and open through it');
 }
 
 done_testing;

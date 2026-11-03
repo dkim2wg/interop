@@ -105,9 +105,11 @@ posting address's domain is equal to, or a subdomain of, the domain the
 outbound milter signs the list's mail with (the key directory it finds for
 the envelope sender, above). `list@lists.example.org` with
 `d=lists.example.org`, or with `d=example.org`, is fine. Since -09
-`list@example.org` with `d=lists.example.org` is fine too, unless
-example.org publishes a Domain Policy Record with `f=strict` (operator
-guide); the milter looks that record up before signing.
+`list@example.org` with `d=lists.example.org` is fine too if the milter
+lists example.org as a parent (`--parent-from example.org`, or a
+`parent-from` file in `/etc/dkim2/keys/lists.example.org/`) and example.org
+does not publish a Domain Policy Record with `f=strict` (operator
+guide). The milter does not look that record up; verifiers do.
 
 When it is not, the outbound signer refuses every rewritten post with
 `From header field is not Authentic for d=...`. A post that arrived with a

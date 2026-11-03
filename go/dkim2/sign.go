@@ -293,12 +293,9 @@ func checkSignerFrom(headers []Header, mis []*MessageInstance, covered int, opts
 	return signerFromError(fromFields(headers), opts)
 }
 
-// signerFromError is contract E3.4: a From at or below d= is Authentic with
-// no lookup; one above it (d= a subdomain of the From domain) needs the
-// From domain's Domain Policy Record, from the verifier's policy source
-// (SignOptions.Policy, else the Fetcher when it is a PolicyFetcher, else
-// real DNS).  An open record signs; strict (or malformed), multiple
-// records or a temporary failure refuse with the reason appended.
+// signerFromError is contract E3.4: a From at or below d= is Authentic;
+// one above it (d= a subdomain of the From domain) is Authentic only when
+// SignOptions.ParentFrom says so.  No Domain Policy Record is looked up.
 func signerFromError(froms []Header, opts SignOptions) error {
 	d := opts.Domain
 	refuse := fmt.Errorf("not signing: From header field is not Authentic for d=%s", d)
@@ -317,19 +314,21 @@ func signerFromError(froms []Header, opts SignOptions) error {
 	if relaxedMatch(dom, sd) {
 		return nil
 	}
-	if !relaxedMatch(sd, dom) {
-		return refuse
+	if relaxedMatch(sd, dom) && opts.ParentFrom != nil && opts.ParentFrom(dom) {
+		return nil
 	}
-	src := policySource(opts.Fetcher, VerifyOptions{Policy: opts.Policy})
-	switch newPolicyCache(src).get(dom) {
-	case policyTemp:
-		return fmt.Errorf("%w: policy for %s unavailable", refuse, dom)
-	case policyMultiple:
-		return fmt.Errorf("%w: multiple records for %s policy", refuse, dom)
-	case policyStrict:
-		return fmt.Errorf("%w: From %s forbids subdomain signing", refuse, dom)
+	return refuse
+}
+
+// ParentFromSet returns a SignOptions.ParentFrom that allows exactly the
+// listed From domains (case-insensitive, one trailing dot ignored), as
+// dkim2sign -parent-from does.
+func ParentFromSet(domains []string) func(fromDomain string) bool {
+	allowed := map[string]bool{}
+	for _, d := range domains {
+		allowed[toALabel(strings.TrimSuffix(strings.ToLower(d), "."))] = true
 	}
-	return nil
+	return func(fromDomain string) bool { return allowed[fromDomain] }
 }
 
 // checkUpstream is the signer gate.  A message with no DKIM2 headers must

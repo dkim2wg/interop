@@ -322,7 +322,8 @@ that address's domain is equal to, or a subdomain of, the domain the
 signing milter signs the list's mail with (the domain of the key it finds
 for the list's envelope sender): `list@lists.example.org` with
 `d=lists.example.org` or `d=example.org` works, and since -09 so does
-`list@example.org` with `d=lists.example.org`, unless example.org publishes
+`list@example.org` with `d=lists.example.org` when the milter lists
+example.org with `--parent-from` (or a keydir `parent-from` file), unless example.org publishes
 `v=DKIM1; f=strict` at `_domainkey.example.org` (operator guide, "Domain
 Policy Record"). Otherwise the milter refuses every munged
 copy; one whose post arrived DKIM2-signed is answered `550 5.7.1`, which

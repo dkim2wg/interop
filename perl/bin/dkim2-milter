@@ -73,6 +73,7 @@ GetOptions(\%opts,
     'selector=s',
     'keyfile|k=s',
     'keydir=s',
+    'parent-from=s@',
     'algorithm|a=s',
     'snapshot-dir=s',
     'dns-json=s',
@@ -194,6 +195,17 @@ elsif (defined $opts{'max-recipe-literals'}) {
 
 # --- Key directory lookup ---
 
+# The parent From domains a keydir domain may sign for (-09 contract E3.4):
+# <keydir>/<domain>/parent-from, one domain per line, "#" comments. None
+# when the file is absent.
+sub _read_parent_from {
+    my ($file) = @_;
+    open my $fh, '<', $file or return [];
+    my @d = map { s/#.*//r =~ s/\A\s+|\s+\z//gr } <$fh>;
+    close $fh;
+    return [ grep { length } @d ];
+}
+
 # Look up signing config for a domain from the keydir.
 # Tries exact domain first, then walks up parent domains.
 # Returns { domain, selector, key, algorithm } or undef.
@@ -231,6 +243,7 @@ sub _keydir_lookup {
                         selector  => $selector,
                         key       => $key,
                         algorithm => $alg,
+                        parent_from => _read_parent_from("$dir/parent-from"),
                     };
                     # Cache for both the looked-up domain and the matched domain
                     $keydir_cache{$domain} = $config;
@@ -734,6 +747,7 @@ sub _get_sign_config {
             selector  => $opts{selector},
             key       => $sign_key,
             algorithm => $opts{algorithm},
+            parent_from => [ @{ $opts{'parent-from'} || [] } ],
         };
     }
 
@@ -748,9 +762,10 @@ sub _get_sign_config {
 # --- Verification ---
 
 # _gate_pubkey_cb(): PubkeyCallback option answering from --dns-json, else real DNS.
-# The Domain Policy Record (-09 section 3.8) from --dns-json's records for the
-# domains it lists, else DNS; for the gate's Verifier and the Signer alike
-# (contract E3.4). Nothing without --dns-json: both then use DNS.
+# The Domain Policy Record (-09 section 3.8) for the gate's Verifier, from
+# --dns-json's records for the domains it lists, else DNS. Nothing without
+# --dns-json: the Verifier then uses DNS. (The Signer never looks it up:
+# --parent-from / the keydir parent-from file, contract E3.4.)
 sub _policy_cb {
     return unless $dns_data;
     return (PolicyCallback => sub {
@@ -1068,7 +1083,10 @@ sub _do_sign {
             MailFrom  => ( length($priv->{env_from} // '') ? $priv->{env_from} : '<>' ),
             RcptTo    => $priv->{env_rcpt},
             ($priv->{exploded} ? (Exploded => 1) : ()),
-            _policy_cb(),
+            # -09 contract E3.4: a d= below the From domain signs only for
+            # a parent the configuration lists; no DNS lookup.
+            ParentFromCallback => Mail::DKIM2::Common::parent_from_matcher(
+                @{ $config->{parent_from} || [] }),
         );
         $signer->PRINT($message);
         $signer->CLOSE();
@@ -1269,6 +1287,20 @@ Path to a PEM-encoded private key (single-domain mode).
 
 Directory of per-domain key subdirectories (multi-domain mode).
 Cannot be combined with C<--domain>/C<--selector>/C<--keyfile>.
+
+A domain's subdirectory may hold a file C<parent-from>: the parent domains
+(one per line, C<#> comments) whose From that domain may sign for, as
+C<--parent-from> does in single-domain mode.
+
+=item B<--parent-from> I<DOMAIN>
+
+Repeatable, single-domain mode. A parent of the signing domain whose From
+it may make Authentic (draft -09 sections 7.1 item 4 and 11.1, new in 0.29):
+with C<--domain mail.example.org --parent-from example.org> a post from
+C<a@example.org> is signed. Without it such a message is refused (From not
+Authentic), and the milter makes no DNS lookup for it: a parent that does
+not want this publishes C<v=DKIM1; f=strict>, which verifiers enforce, so
+list only parents that allow it.
 
 =item B<--algorithm>, B<-a> I<ALG>
 

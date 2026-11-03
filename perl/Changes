@@ -1,5 +1,24 @@
 Revision history for Mail::DKIM2
 
+0.30    2026-11-03
+        - Signers no longer look the Domain Policy Record up by default
+          (contract E3.4, revised). A d= below the From domain signs only
+          when the new Signer option ParentFromCallback ($from_domain,
+          $signer) says so; with no callback it is refused, with the
+          plain "From header field is not Authentic for d=..." (0.29's
+          ": <reason>" suffix is gone). PolicyCallback/Resolver on the
+          Signer remain as an explicit opt-in to the lookup.
+          dkim2-milter --parent-from (single domain) or a parent-from file
+          in a keydir domain's directory; DKIM2Sign per-domain
+          parent_from_domains; dkim2sign --parent-from. Each matches
+          its list through the new Common::parent_from_matcher (A-labels,
+          case, one trailing dot).
+        - The Verifier prefetches the Domain Policy Records its From check
+          will need (d= below the From domain), in the background with the
+          keys, under the same conditions (_can_prefetch, PREFETCH_MAX,
+          not with a PolicyCallback). fetch_domain_policy reads that
+          answer first.
+
 0.29    2026-11-03
         draft-ietf-dkim-dkim2-spec-09 and draft-ietf-dkim-dkim2-dns-03.
         Nothing changes on the wire: what is hashed and signed is as in

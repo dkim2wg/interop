@@ -28,6 +28,9 @@ func main() {
 		"this hop sends copies to more than one address: set the exploded flag (§12.5; implied by more than one -rcpt-to, never set at i=1)")
 	ignoreTS := flag.Bool("ignore-timestamps", false,
 		"skip the §14.3 timestamp check when verifying the upstream chain")
+	var parentFrom stringList
+	flag.Var(&parentFrom, "parent-from",
+		"allow -domain to sign for a From in this parent domain (repeatable)")
 	flag.Parse()
 
 	if *selector == "" || *domain == "" || *keyFile == "" {
@@ -88,6 +91,7 @@ func main() {
 
 		Exploded:           *exploded,
 		SkipTimestampCheck: *ignoreTS,
+		ParentFrom:         dkim2.ParentFromSet(parentFrom),
 	}
 	if *dnsJSON != "" {
 		opts.Fetcher = &dkim2.JSONKeyFetcher{Path: *dnsJSON}
@@ -98,3 +102,9 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// stringList is a repeatable string flag.
+type stringList []string
+
+func (l *stringList) String() string     { return strings.Join(*l, ",") }
+func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }

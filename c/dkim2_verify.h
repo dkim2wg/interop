@@ -30,14 +30,14 @@ void dkim2_do_verify(dkim2_ctx_t *ctx, dkim2_verify_result_t *result);
    nothing more is worth doing, key lookups included. */
 int dkim2_structure_check(const dkim2_ctx_t *ctx, int outbound);
 
-/* -09 §11, §12.4, §14.8 (contract E3.1, E3.4): 1 when the From is
-   Authentic for d: exactly one From field holding one mailbox whose
-   (A-label, not literal) domain relaxed-matches d, or that d is below and
-   whose Domain Policy Record (looked up only then) does not forbid it.
-   Else 0, with why (optional) set to the policy reason -- "From <dom>
-   forbids subdomain signing", "multiple records for <dom> policy",
-   "policy for <dom> unavailable" -- or "" for any other. */
-int dkim2_from_authentic(char **hdrs, int n_hdrs, const char *d, char *why, size_t whysz);
+/* -09 §11, §12.4 for a signer (contract E3.1, E3.4 revised): 1 when the
+   From is Authentic for d: exactly one From field holding one mailbox
+   whose (A-label, not literal) domain relaxed-matches d (downward), or that
+   d is below (upward) when parent(from_domain, arg) returns non-zero --
+   from_domain is the A-label, lowercased, no trailing dot. parent NULL
+   refuses the upward case. Else 0. No Domain Policy Record is looked up. */
+int dkim2_from_authentic(char **hdrs, int n_hdrs, const char *d,
+                         int (*parent)(const char *from_domain, void *arg), void *arg);
 
 /* 1 when the Message-Instance's header Recipe names From ("from") -- or
    cannot be read -- else 0. */

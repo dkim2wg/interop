@@ -80,11 +80,16 @@ type SignOptions struct {
 	// (nil = real DNS); SkipTimestampCheck relaxes the §14.3 timestamp check.
 	Fetcher            KeyFetcher
 	SkipTimestampCheck bool
-	// Policy, if set, supplies Domain Policy Records (§3.8) for the gate
-	// and for the signer's own From check when d= is below the From
-	// domain (contract E3.4), as VerifyOptions.Policy does for Verify.
-	// nil = the Fetcher when it is a PolicyFetcher (dns.json), else DNS.
+	// Policy, if set, supplies Domain Policy Records (§3.8) for the gate's
+	// verification of the upstream chain, as VerifyOptions.Policy does for
+	// Verify. nil = the Fetcher when it is a PolicyFetcher (dns.json), else
+	// DNS. The signer's own From check never looks a policy up.
 	Policy PolicyFetcher
+	// ParentFrom decides the upward From match (contract E3.4): when d= is
+	// below the From domain, Sign signs only if ParentFrom(fromDomain)
+	// returns true (fromDomain is a lowercase A-label, no trailing dot).
+	// nil refuses. A From at or below d= never calls it.
+	ParentFrom func(fromDomain string) bool
 	// AllowNullBodyRecipe does nothing.
 	//
 	// Deprecated: Sign always signs over this hop's own unsigned

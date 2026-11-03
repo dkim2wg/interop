@@ -1062,48 +1062,30 @@ def _from_needs_check(existing_mi: list[str], existing_sig: list[str]) -> bool:
     return False
 
 
-def _policy_keys(dns_data):
-    """The signer's Domain Policy Record source when no policy_source is
-    given: dns_data, else the dns.json named by $DKIM2_DNS_JSON, else live
-    DNS (no prefetch: one lookup)."""
-    if dns_data is not None:
-        return dns_data
-    import dkim2verify
-    path = os.environ.get("DKIM2_DNS_JSON")
-    if path:
-        try:
-            return dkim2verify.load_dns_json(path)
-        except (OSError, ValueError) as e:
-            raise SigningRefused(f"not signing: cannot read keys from "
-                                 f"{path}: {e}")
-    from dkim2dns import LiveDNS
-    return LiveDNS(prefetch=False)
-
-
-def _from_refusal(from_fields: list[bytes], domain: str, dns_data,
-                  policy_source) -> str | None:
+def _from_refusal(from_fields: list[bytes], domain: str,
+                  parent_from) -> str | None:
     """-09 §12.4, contract E3.4: None if the From is Authentic for d=domain,
-    else the refusal text.  The downward match signs with no lookup; the
-    upward match looks up the From domain's Domain Policy Record."""
-    import dkim2verify
-    base = f"From header field is not Authentic for d={domain}"
+    else the refusal text.  The downward match signs; the upward match (d=
+    below the From domain) signs only when parent_from(from_domain) says
+    so.  No Domain Policy Record is looked up."""
+    refusal = f"From header field is not Authentic for d={domain}"
     kind, dom = from_mailbox(from_fields)
     if kind != FROM_OK:
-        return base
+        return refusal
     sd = signing_domain(domain)
-    if relaxed_match(dom, sd):          # downward: no lookup
+    if relaxed_match(dom, sd):          # downward
         return None
-    if not relaxed_match(sd, dom):      # nor upward
-        return base
-    keys = None if policy_source is not None else _policy_keys(dns_data)
-    state = dkim2verify._PolicyCache(keys, policy_source)(dom)
-    if state == dkim2verify.POLICY_TEMPERROR:
-        return f"{base}: policy for {dom} unavailable"
-    if state == dkim2verify.POLICY_MULTIPLE:
-        return f"{base}: multiple records for {dom} policy"
-    if state == dkim2verify.POLICY_STRICT:
-        return f"{base}: From {dom} forbids subdomain signing"
-    return None
+    if relaxed_match(sd, dom) and parent_from is not None \
+            and parent_from(dom):       # upward, allowed by the caller
+        return None
+    return refusal
+
+
+def parent_from_set(domains) -> "callable":
+    """A parent_from callable answering from a list of domains (case-
+    insensitive, one trailing dot ignored), as dkim2sign --parent-from."""
+    allowed = {to_alabel(d[:-1] if d.endswith(".") else d) for d in domains}
+    return lambda from_domain: from_domain in allowed
 
 
 def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
@@ -1118,7 +1100,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  skip_upstream_check: bool = False,
                  exploded: bool = False,
                  skip_from_check: bool = False,
-                 policy_source=None) -> bytes:
+                 parent_from=None) -> bytes:
     """Sign a raw email message with DKIM2.
 
     A message that already carries a DKIM2 chain is verified first (outbound
@@ -1135,16 +1117,12 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     Message-Instance no signature covers yet changed From, the From header
     field must be Authentic for `domain`, or SigningRefused is raised with
     "From header field is not Authentic for d=<domain>".  A From domain at
-    or below `domain` is signed with no lookup; one above it (d= is a
-    subdomain of the From domain) needs the From domain's Domain Policy
-    Record (contract E3.4): open signs, and strict (or malformed),
-    multiple records or a temporary failure refuse with the reason
-    appended (": From <dom> forbids subdomain signing", ": multiple
-    records for <dom> policy", ": policy for <dom> unavailable").  The
-    record comes from the verifier's policy source: dns_data's (a dns.json
-    dict or a dkim2dns.LiveDNS), else the dns.json named by
-    $DKIM2_DNS_JSON, else live DNS; policy_source, if given, replaces it
-    exactly as for dkim2verify.verify_message.
+    or below `domain` is signed; one above it (d= is a subdomain of the
+    From domain) is signed only when parent_from, a callable
+    parent_from(from_domain) -> bool given the From domain as a lowercase
+    A-label with no trailing dot, returns true (contract E3.4).  With no
+    parent_from that case is refused.  The signer looks no Domain Policy
+    Record up.
 
     exploded=True asks for the "exploded" flag (-09 §12.5): it is set above
     i=1 when requested or when rt= holds more than one address.
@@ -1187,7 +1165,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
     if not skip_from_check and _from_needs_check(existing_mi, existing_sig):
         from_fields = [h for h in headers if _header_name(h) == b"from"]
-        refusal = _from_refusal(from_fields, domain, dns_data, policy_source)
+        refusal = _from_refusal(from_fields, domain, parent_from)
         if refusal:
             raise SigningRefused(refusal)
 
@@ -1270,6 +1248,10 @@ def main():
     parser.add_argument("--allow-null-body-recipe", action="store_true",
                         help="deprecated, does nothing: an unsigned null body "
                              "Recipe is always signed over (-09)")
+    parser.add_argument("--parent-from", action="append", default=[],
+                        metavar="DOMAIN", dest="parent_from",
+                        help="allow d= to sign for a From in this parent "
+                             "domain (repeatable)")
     parser.add_argument("--dns-json",
                         default=os.environ.get("DKIM2_DNS_JSON"),
                         help="dns.json with keys to verify an existing chain "
@@ -1302,7 +1284,8 @@ def main():
                               timestamp=args.timestamp,
                               next_domain=args.next_domain, flags=args.flags,
                               exploded=args.exploded, algs=algs,
-                              skip_timestamp_check=args.skip_timestamp_check)
+                              skip_timestamp_check=args.skip_timestamp_check,
+                              parent_from=parent_from_set(args.parent_from))
     except SigningRefused as e:
         print(f"dkim2sign: {e}", file=sys.stderr)
         sys.exit(1)

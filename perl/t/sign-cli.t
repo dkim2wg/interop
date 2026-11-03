@@ -291,4 +291,21 @@ isnt($rc4, 0, 'missing --selector is an error');
     like($top, qr/\bf=exploded\b/, 'exploded at i=2: f=exploded');
 }
 
+# -09 contract E3.4: --parent-from lets d= sign for a parent's From.
+{
+    my $msg = "From: a\@open.dkim2.com\r\nTo: b\@test2.dkim2.com\r\nSubject: x\r\n\r\nbody\r\n";
+    my $tmp = Path::Tiny->tempdir;
+    my $f = $tmp->child("parent.eml");
+    $f->spew_raw($msg);
+    my @cmd = ($^X, '-Ilib', 'bin/dkim2sign', '-s', 'sel1', '-d', 'mail.open.dkim2.com',
+        '-k', 't/data/keys/sel1._domainkey.test2.dkim2.com.pem',
+        '--mailfrom', '<a@mail.open.dkim2.com>', '--rcptto', '<b@test2.dkim2.com>');
+    my $out = `@{[map { quotemeta } @cmd, "$f"]} 2>&1`;
+    isnt($? >> 8, 0, 'dkim2sign: parent From without --parent-from: refused');
+    like($out, qr/From header field is not Authentic for d=mail\.open\.dkim2\.com/, '... saying why');
+    $out = `@{[map { quotemeta } @cmd, '--parent-from', 'open.dkim2.com', "$f"]} 2>&1`;
+    is($? >> 8, 0, 'dkim2sign --parent-from open.dkim2.com: signed') or diag $out;
+    like($out, qr/^DKIM2-Signature: i=1;.*\bd=mail\.open\.dkim2\.com;/ms, '... as the subdomain');
+}
+
 done_testing();
