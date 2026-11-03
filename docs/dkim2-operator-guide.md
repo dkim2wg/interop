@@ -1,6 +1,6 @@
 # DKIM2 Operator Guide
 
-- **Spec:** draft-ietf-dkim-dkim2-spec-08
+- **Spec:** draft-ietf-dkim-dkim2-spec-09, with draft-ietf-dkim-dkim2-dns-03
 - **Audience:** MTA operators and postmasters deploying DKIM2
 - **Installing it:** see the [Postfix mailing-list host guide](dkim2-postfix-list-host-guide.md),
   or [DKIM2 for stock Mailman](dkim2-postfix-stock-mailman-guide.md) for
@@ -72,6 +72,11 @@ Publish as:
 sel1-rsa._domainkey.yourdomain.com. IN TXT "v=DKIM1; k=rsa; p=<output>"
 ```
 
+RSA keys under 1024 bits are refused (`public key <s> too short`). A TXT
+record at the selector name that begins with a `v=` other than `DKIM1` (an
+SPF record, say) is ignored; two DKIM1 key records at one selector are a
+PERMERROR (`has multiple records`).
+
 ### Key rotation
 
 Add a new Selector with the new key.  Configure your MTA to sign with the new
@@ -140,12 +145,14 @@ The `d=` signing domain must be the same as or a parent of the MAIL FROM domain.
 It cannot sign for `sender@other.com`.
 
 For DSN messages (null sender `<>`) there is no MAIL FROM domain, so under
--08 the signing domain must instead match a RCPT TO domain of the hop
+-09 the signing domain must instead match a RCPT TO domain of the hop
 before: a bounce travels back along the chain.
 
-### The `d=` / From relationship (-08 §11)
+### The `d=` / From relationship (-09 §11, §14.8)
 
-From must also be Authentic: its domain must be `d=` or a subdomain of it.
+From must also be Authentic: its domain must be `d=` or a subdomain of it,
+or (since -09) a parent of `d=` whose Domain Policy Record does not say
+`f=strict` (below). From must hold one address, not a domain literal.
 A verifier checks the From each signature signed: the one i=1 signed, and
 again the one any later signature signed after a hop changed From. Your signer checks it whenever it
 originates a message (no DKIM2-Signature on it yet) or signs over an
@@ -158,6 +165,31 @@ From header field is not Authentic for d=yourdomain.example
 In practice: sign your own users' mail only with a domain that covers their
 From addresses, and see "From rewriting" below for lists and forwarders.
 
+### Domain Policy Record (-09 §3.8; dns-03 §6)
+
+A `d=` below the From domain (`d=mail.example.com` signing for
+`user@example.com`) makes From Authentic unless the From domain forbids it
+with a Domain Policy Record: a TXT record at `_domainkey.<From domain>`
+(no selector) holding
+
+```
+_domainkey.example.com. IN TXT "v=DKIM1; f=strict"
+```
+
+Verifiers and our signers look it up only for that upward case, once per
+domain per message. No record, or one without `strict` in `f=`, allows
+subdomain signing. A record that begins `v=DKIM1` but does not parse counts
+as strict. The failures are `FAIL: ... From <dom> forbids subdomain
+signing`, `PERMERROR: ... multiple records for <dom> policy` and, when the
+lookup fails, `TEMPERROR: ... policy for <dom> unavailable`; a signer
+refuses with the same text.
+
+**Publish `f=strict`** on any domain whose subdomains are controlled by
+someone else: a hosting provider, SaaS or university domain that hands
+`customer.example.com` to its tenants, so that a tenant's key cannot make
+mail From `@example.com` Authentic. A domain that runs all its own
+subdomains needs no record.
+
 ---
 
 ## Verification at delivery
@@ -166,7 +198,7 @@ When your MTA delivers an inbound message, the DKIM2 verifier needs:
 
 - The full message (headers + body)
 - The SMTP MAIL FROM and RCPT TO from the final delivery session (optional but
-  recommended — enables the -08 §14.4 envelope integrity check)
+  recommended — enables the -09 §14.4 envelope integrity check)
 - Access to DNS for public key lookup
 
 The verifier checks:
@@ -186,7 +218,7 @@ The verifier checks:
 7. If MAIL FROM / RCPT TO are available: the top signature's `mf=` and `rt=` exactly
    match the envelope values
 
-Every failure carries an exact -08 reason, e.g.
+Every failure carries an exact -09 reason, e.g.
 `FAIL: DKIM2-Signature i=1 matching From is not authentic` or
 `FAIL: Message-Instance m=1 header hash sha256 mismatch`, which the milters
 put in the Authentication-Results comment.
@@ -197,19 +229,18 @@ Possible verification outcomes:
 |--------|---------|
 | `pass` | All signatures verified, chain intact |
 | `fail` | Verification completed and the message is not a Fully Verified DKIM2 Message: a bad signature or hash, a broken Chain of Custody, a timestamp out of range, or a From that is not Authentic |
-| `none` | No DKIM2 header fields at all (no error) |
-| `permerror` | Structural problem (missing headers, bad format, no usable key, an algorithm the verifier does not implement) |
-| `temperror` | Transient failure (DNS lookup error) |
+| `none` | No DKIM2 header fields at all (`NONE: No DKIM2 header fields found`) |
+| `permerror` | Structural problem (missing headers, bad format, no usable key, an algorithm the verifier does not implement, a null body Recipe) |
+| `temperror` | Transient failure (key or policy DNS lookup error) |
 
 ### What a result does not tell you
 
-A `pass` over a list that rewrote the body without a Recipe for it (a null body
-Recipe) is not a Fully Verified DKIM2 Message (-08 §13): the body the earlier
-hops signed cannot be checked. The verifiers report it as `pass`, and the Perl
-and Python APIs, the validator and the browser verifier flag it as "not fully
-verified", for local policy to weigh.
+A list that rewrote the body without a Recipe for it records a null body
+Recipe (`"b": null`). Under -09 (§13, §14.2) every verifier reports that as
+`PERMERROR: Message-Instance m=<x> has a null recipe`. (Under -08 it was a
+`pass` flagged "not fully verified".)
 
-Per -08 §14.1, these states report only whether the message reached you without
+Per -09 §14.1, these states report only whether the message reached you without
 being modified or replayed in a way the specification disallows.  They say
 nothing about whether the message is wanted, whether it is spam, or whether
 any modification a relay declared in its Recipe was benign.
@@ -254,7 +285,7 @@ Forwarders that do not modify the message can forward as-is; the original chain 
 still verify at the final destination, provided the final SMTP MAIL FROM matches the
 forwarder's domain (which it will if SRS is used correctly).
 
-### From rewriting (-08 §11)
+### From rewriting (-09 §11)
 
 A list host or forwarder that **changes** a message, or **originates** one
 (its hop becomes i=1, e.g. because the post arrived without a DKIM2
@@ -277,8 +308,9 @@ forwarder that passes the message on unchanged leaves From alone.
 is only Authentic if the list's posting-address domain is equal to, or a
 subdomain of, the domain the outbound milter signs that list's mail with:
 `list@lists.example.org` signed with `d=lists.example.org` or
-`d=example.org` works, `list@example.org` signed with
-`d=lists.example.org` does not. Otherwise the signer refuses every rewritten
+`d=example.org` works. Under -09 `list@example.org` signed with
+`d=lists.example.org` works too, unless example.org publishes `f=strict`
+(see "Domain Policy Record"). Otherwise the signer refuses every rewritten
 post (`From header field is not Authentic for d=...`), and a post that
 arrived with a DKIM2-Signature is answered `550 5.7.1` (see "Milter
 integration"), which the list manager counts as a bounce. Check this for
@@ -288,24 +320,23 @@ below it`.
 
 A list manager that sends one copy per subscriber also marks each copy with
 `X-DKIM2-Exploded: yes`; the signing milter turns that into `f=exploded` on
-its signature (-08 §12.5) and removes the header.
+its signature (-09 §12.5) and removes the header.
 
 Every signer here verifies the incoming chain before adding its own signature
 and refuses if it does not check out (see "Milter integration" for what the
 milters do with a refused message).
-One more refusal concerns a **null body Recipe** (`"b": null`: the hop that
-made the instance rewrote the body and could not record how). A
-DKIM2-Signature with `m=k` covers instances 1..k. If a Message-Instance
-above the highest `m=` of the upstream signatures has one — the top instance,
-or one with another unsigned instance added over it — no DKIM2-Signature
-covers it, this host is the one introducing the null, and it signs only with
-`--allow-null-body-recipe` (`dkim2-milter`, `dkim2sign`) or
-`"allow_null_body_recipe": 1` (the authentication_milter `DKIM2Sign`
-handler). That is a list host whose list manager rewrites
-bodies (content filtering, DMARC wrap) and adds an unsigned instance for the
-outbound signer; the [list host guide](dkim2-postfix-list-host-guide.md)
-covers it. A forwarder relaying such a post after the list host signed it
-needs nothing: a signed null is extended like any other valid chain.
+A **null body Recipe** (`"b": null`: the hop that made the instance
+rewrote the body and could not record how) is not refused when this host
+introduced it: the signer signs over its own unsigned null, so the header
+changes are signed even though the message will PERMERROR downstream, and
+adds `X-DKIM2-Info: ... action=null-body-recipe;`. A null that arrived
+already signed fails upstream verification and is refused like any other
+broken chain. The old `--allow-null-body-recipe` (`dkim2-milter`,
+`dkim2sign`) and `allow_null_body_recipe` (`DKIM2Sign`) options are
+deprecated no-ops that warn when set true; remove them from your config.
+A list manager that rewrites bodies (content filtering, DMARC wrap) causes
+such nulls; the [list host guide](dkim2-postfix-list-host-guide.md) covers
+them.
 
 ---
 
@@ -315,15 +346,12 @@ Two Perl milters implement this for Postfix: the standalone `dkim2-milter`
 and the `DKIM2Sign`/`DKIM2Verify` handlers for Mail::Milter::Authentication.
 Both take MAIL FROM and RCPT TO from the MTA rather than from the message,
 and both decide whether to sign with the same `Mail::DKIM2::Gate`: a message
-whose upstream chain or Message-Instance chain does not check out, or whose
-unsigned top instance has a null body Recipe (without the option above), or
-whose From is not Authentic for the signing domain, is refused. What happens
+whose upstream chain (a signed null body Recipe included) or
+Message-Instance chain does not check out, or whose From is not Authentic for the signing domain, is refused. What happens
 next depends on whether it already carries an upstream DKIM2-Signature:
 
-- **With one**, the milter rejects it: `550 5.7.1 <reason>` (-08 §12 says it
-  MUST NOT be signed, and §13 that it MUST NOT be sent on as it is). This
-  covers local-policy refusals too, such as a null body Recipe without the
-  option. A list host's MTA reports such a reject to the list manager as a
+- **With one**, the milter rejects it: `550 5.7.1 <reason>` (-09 §12 says it
+  MUST NOT be signed, and §13 that it MUST NOT be sent on as it is). A list host's MTA reports such a reject to the list manager as a
   bounce for that recipient, so watch for refusals before they bounce-disable
   subscribers; with the patched list managers, which rewrite From, they
   should not happen for list traffic as long as each list's posting address
@@ -331,7 +359,7 @@ next depends on whether it already carries an upstream DKIM2-Signature:
 - **Without one**, it is delivered unsigned as before, with this host's own
   unsigned Message-Instances removed and
   `X-DKIM2-Info: ... action=not-signed=<reason>;` for the Message-Instance
-  and null-body refusals.
+  refusals.
 
 The C milter in this repo (`c/dkim2_milter.c`, not the one deployed on
 dkim2.com) behaves the same way: `550 5.7.1 <reason>` for a refused message

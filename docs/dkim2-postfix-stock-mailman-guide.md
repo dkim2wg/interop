@@ -1,7 +1,7 @@
 # DKIM2 for stock Mailman on Postfix
 
-- **Spec:** draft-ietf-dkim-dkim2-spec-08 (the status line below describes
-  the -06 deployment until the -08 one is in)
+- **Spec:** draft-ietf-dkim-dkim2-spec-09 (the status line below describes
+  the -06 deployment until the -09 one is in)
 - **Audience:** a Postfix operator who runs Mailman 3 as released (3.3.8 or
   3.3.10, no patches, no plugins) and wants DKIM2 on some lists only
 - **Status (2026-10-14):** the dkim2.com host runs this route for two
@@ -58,7 +58,7 @@ domain. A receiver that verifies DKIM2 can undo each step back to what the
 sender signed. A post from a sender that does not sign DKIM2 has no
 signature for those instances to build on, so its copy leaves with a single
 `Message-Instance`, `m=1`, whose Recipes go straight back to the post as it
-arrived, wrap and From rewrite included (-08 §12.1 lets the first instance
+arrived, wrap and From rewrite included (-09 §12.1 lets the first instance
 record the changes made as a message enters DKIM2).
 
 A receiving verifier that gets `dkim2=pass` knows which hops handled the
@@ -73,7 +73,8 @@ Mailman adds a list header or footer one of three ways:
 - to a **single-part `text/plain`** post, by pasting it into the text. It
   decodes the body, adds the footer and encodes it again, often as base64.
   Every line of the body changes, and the only honest record of that is a
-  "null" body Recipe: the original body cannot be recovered.
+  "null" body Recipe: the original body cannot be recovered, and under -09
+  that is a PERMERROR at every verifier.
 - to a **`multipart/mixed`** post, as an extra part. The original parts are
   untouched.
 - to anything else (a text and HTML post, say), by wrapping it in a
@@ -102,9 +103,9 @@ changes into it (`X-DKIM2-Info: ... action=restarted-unsigned-mi=m=1,m=2;`).
 As in the list-host guide, [step 2 (prerequisites)](dkim2-postfix-list-host-guide.md#2-prerequisites),
 [step 3 (keys and DNS)](dkim2-postfix-list-host-guide.md#3-keys-and-dns) and
 [step 4 (install Mail::DKIM2)](dkim2-postfix-list-host-guide.md#4-install-maildkim2).
-You need Mail::DKIM2 0.23 or later (the first for -08, whose signing milter
-sends a plain post's copy with a single `m=1`; 0.20 was the first with
-`--wrap-single-part`)
+You need Mail::DKIM2 0.29 or later (the first for -09; 0.23 was the first
+for -08, whose signing milter sends a plain post's copy with a single `m=1`;
+0.20 was the first with `--wrap-single-part`)
 and Sendmail::PMilter 1.28 or later:
 
 ```bash
@@ -139,8 +140,10 @@ finds the wrapped post. The sockets are
 `dkim2-milter-out.sock`, which Postfix (chrooted) sees as
 `unix:var/run/dkim2-milter-wrap.sock` and `unix:var/run/dkim2-milter-out.sock`.
 
-The outbound unit runs with `--allow-null-body-recipe`, for a list that
-rewrites bodies itself (section 9). The signing milter adds nothing at all
+A list that rewrites bodies itself gets a null body Recipe (section 9),
+which the signing milter signs and every verifier then gives PERMERROR.
+`--allow-null-body-recipe` is deprecated and does nothing; drop it from an
+older unit. The signing milter adds nothing at all
 to mail from a sender it has no key for, beyond removing instances no
 signature covers (section 7).
 
@@ -291,8 +294,8 @@ systemctl restart mailman3
 ```
 
 Nothing else changes in Mailman's code. One per-list setting is needed on
-every DKIM2 list under -08: From must be Authentic for the list's signature
-(-08 §11), and stock Mailman cannot rewrite From in code, so have its DMARC
+every DKIM2 list since -08: From must be Authentic for the list's signature
+(-09 §11), and stock Mailman cannot rewrite From in code, so have its DMARC
 mitigation do it on every post:
 
 ```bash
@@ -318,12 +321,13 @@ The munged From is the list's posting address, so it is Authentic only if
 that address's domain is equal to, or a subdomain of, the domain the
 signing milter signs the list's mail with (the domain of the key it finds
 for the list's envelope sender): `list@lists.example.org` with
-`d=lists.example.org` or `d=example.org` works, `list@example.org` with
-`d=lists.example.org` does not. Otherwise the milter refuses every munged
+`d=lists.example.org` or `d=example.org` works, and since -09 so does
+`list@example.org` with `d=lists.example.org`, unless example.org publishes
+`v=DKIM1; f=strict` at `_domainkey.example.org` (operator guide, "Domain
+Policy Record"). Otherwise the milter refuses every munged
 copy; one whose post arrived DKIM2-signed is answered `550 5.7.1`, which
 Mailman counts as a bounce against the subscriber. That `550` answers every
-other refusal of a signed post too, local-policy ones included (a null body
-Recipe without `--allow-null-body-recipe`). The milter logs both domains:
+other refusal of a signed post too (a broken upstream chain, say). The milter logs both domains:
 `From domain <posting domain> is not d=<signing domain> or below it`.
 Check each DKIM2 list's posting address against its signing domain when you
 add it to the maps.
@@ -395,12 +399,11 @@ Then post to a list that is not in the maps: its copies carry no
   (`mime_delete.recast_multipart`), before the footer is added, so the
   footer is pasted inline after all. Stripping attachments or converting
   HTML rewrites the body anyway. Either way the list's instance has a null
-  body Recipe. The outbound unit's `--allow-null-body-recipe` signs it; a
-  receiver can verify the chain up to the list but not undo the body
-  change. Turn content filtering off on a DKIM2 list if subscribers should
-  be able to see what the sender wrote.
-- **Posts from senders that do not sign DKIM2 (-08).** The list's
-  signature is the first (`i=1`), so (-08 §11, -07 contract C5) the From of the
+  body Recipe. The outbound milter signs it, but under -09 every verifier
+  gives it `PERMERROR: Message-Instance m=2 has a null recipe`. Turn
+  content filtering off on a DKIM2 list.
+- **Posts from senders that do not sign DKIM2 (-08 on).** The list's
+  signature is the first (`i=1`), so (-09 §11, -07 contract C5) the From of the
   copy's `m=1` must be Authentic for the list domain. The copy carries a
   single `m=1` with the munged From (section 6), and the author's From is
   only in its Recipe, which C5 never checks. Without `munge_from` the

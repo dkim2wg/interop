@@ -7,18 +7,17 @@ typedef struct {
     char *privkey_path;     /* path to PEM private key file */
     char *alg;              /* "rsa-sha256" or "ed25519-sha256"; NULL = auto-detect from key */
     uint64_t timestamp;     /* t= unix timestamp; 0 = use current time */
-    const char *hash;       /* -08 §3.1: "sha256" (default when NULL), "sha512", or "both" */
+    const char *hash;       /* -09 §3.1: "sha256" (default when NULL), "sha512", or "both" */
     /* Signer gate: before extending an existing DKIM2 chain, dkim2_do_sign
-       verifies it (outbound mode: the unsigned top Message-Instance is the one
-       being signed) and refuses on any failure. An UNSIGNED
-       Message-Instance (m= above every valid DKIM2-Signature's m=, the top
-       or one under another unsigned instance) whose body Recipe is null
-       ("b": null, -08 §5.2) is refused too unless this is set; a null
-       an upstream signature already covers signs without it.
-       Default off. A refusal returns -1 with ctx->errmsg starting
-       "not signing: ". */
+       verifies it (outbound mode: Message-Instances above every signature's
+       m= are the ones being signed) and refuses on any failure, with -1 and
+       ctx->errmsg starting "not signing: ". A null body Recipe ("b": null)
+       on such an unsigned instance is signed over; one an upstream
+       signature covers fails that verify (-09 §14.2, contract E2).
+       Deprecated and ignored: the -08 option that allowed signing over an
+       unsigned null, now the only behaviour. Kept so callers still build. */
     int allow_null_body_recipe;
-    /* -08 §12.5: this hop sends copies to more than one address. Adds
+    /* -09 §12.5: this hop sends copies to more than one address. Adds
        "exploded" to f= when i > 1 (also added, requested or not, when rt=
        holds more than one address); ignored at i = 1. */
     int exploded;

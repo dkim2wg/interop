@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 signer - draft-ietf-dkim-dkim2-spec-08
+DKIM2 signer - draft-ietf-dkim-dkim2-spec-09
 
 Takes a raw email, selector, domain, and keyfile and produces a signed
 message with Message-Instance and DKIM2-Signature headers on stdout.
@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import time
+import warnings
 from array import array
 from pathlib import Path
 from typing import IO, Union
@@ -22,7 +23,8 @@ from typing import IO, Union
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, utils
 
-from dkim2domain import from_is_authentic, to_alabel
+from dkim2domain import (FROM_OK, from_mailbox, relaxed_match,
+                         signing_domain, to_alabel)
 
 
 # Source can be raw bytes, a file path (str/Path), or any binary-mode file-like object.
@@ -53,7 +55,7 @@ def b64json(obj) -> str:
 
 
 def to_rfc5321_path(addr: str) -> str:
-    """Wrap an address as an RFC5321 path for mf=/rt= (-08 §10.5/§10.6):
+    """Wrap an address as an RFC5321 path for mf=/rt= (-09 §10.5/§10.6):
     angle brackets MUST be present. Empty -> '<>'.  A non-ASCII domain is
     recorded as its A-label (§18); the local part and an ASCII or literal
     domain are left exactly as given."""
@@ -110,7 +112,7 @@ def parse_message(source: "Source") -> tuple[list[bytes], bytes]:
 # Canonicalization for header hash (Section 6.2)
 # ---------------------------------------------------------------------------
 
-# Headers to exclude from the header hash (-08 §4, §4.1).  -08 took
+# Headers to exclude from the header hash (-09 §4, §4.1).  -08 took
 # Auto-Submitted and VBR-Info off the list: they are hashed (contract D1).
 _EXCLUDED_PREFIXES = (b"x-", b"received-")
 _EXCLUDED_NAMES = {
@@ -179,7 +181,7 @@ def canonicalize_header_field(raw_hdr: bytes) -> bytes:
     return (name + ":" + value).encode("utf-8", errors="surrogateescape")
 
 
-# -08 §3.1: two hashing algorithms are defined. Verifiers MUST implement
+# -09 §3.1: two hashing algorithms are defined. Verifiers MUST implement
 # both; Signers MAY implement either or both (we default to sha256).
 HASH_ALGS = {
     "sha256": lambda data: hashlib.sha256(data).digest(),
@@ -260,7 +262,7 @@ def build_message_instance(headers: list[bytes], body: bytes,
     """
     if algs is None:
         algs = ["sha256"]
-    # -08 §9.3: one hash-set per algorithm, comma separated. An algorithm
+    # -09 §9.3: one hash-set per algorithm, comma separated. An algorithm
     # MUST NOT appear more than once, so `algs` must be de-duplicated by the
     # caller (the CLI does this).
     sets = ",".join(
@@ -277,7 +279,7 @@ def build_message_instance(headers: list[bytes], body: bytes,
 def _lowercase_recipe_keys(recipe):
     """Every JSON object key in a Recipe, lowercased, for output.
 
-    draft -08 §5: keys MUST be lower case -- the top-level "h"/"b", the
+    draft -09 §5: keys MUST be lower case -- the top-level "h"/"b", the
     header field names inside "h" (matching against the message stays
     case-insensitive), and the step keys.  Values are left alone.
     """
@@ -294,7 +296,7 @@ def _lowercase_recipe_keys(recipe):
 # ---------------------------------------------------------------------------
 #
 # An intermediary that changes a message records how to get the previous
-# version back (draft -08 §5.1/§5.2).  A literal that is valid UTF-8 (ASCII
+# version back (draft -09 §5.1/§5.2).  A literal that is valid UTF-8 (ASCII
 # included) goes out as a "d" string; any other literal -- a Latin-1 or
 # EUC-KR line, say, which JSON text cannot carry -- as a "u" item, the
 # canonical base64 of its raw octets.
@@ -668,7 +670,7 @@ def canonicalize_sig_header(raw_hdr: str) -> bytes:
 def _extract_tag(header_value: str, tag: str) -> str | None:
     """Extract a tag value from a DKIM2-style tag-list header value.
 
-    -08 §8, §9, §10: tag names are case-sensitive and MUST be lower case,
+    -09 §8, §9, §10: tag names are case-sensitive and MUST be lower case,
     so a tag is matched exactly; "M=1" is an unknown tag, ignored (contract
     D10, reversing -07 decision 2).  FWS is permitted around the '=' and ';'
     separators.
@@ -684,7 +686,7 @@ def _extract_tag(header_value: str, tag: str) -> str | None:
 
 def _tag_names(header_value: str) -> list[str]:
     """Tag names in a tag-list value, in order, exactly as written (for
-    duplicate detection per -08 §8: 'Tags with duplicate names MUST NOT
+    duplicate detection per -09 §8: 'Tags with duplicate names MUST NOT
     occur'; "m" and "M" are different tags, contract D10)."""
     names = []
     for part in header_value.split(";"):
@@ -705,7 +707,7 @@ def _get_version_from_mi(hdr: str) -> int:
 def _mi_hashes(hdr: str) -> str | None:
     """Extract the h= hash set of a Message-Instance header, FWS removed.
 
-    Folding whitespace may appear inside the base64 hashes (-08 §2.12), so
+    Folding whitespace may appear inside the base64 hashes (-09 §2.12), so
     strip it before comparing two instances' hashes.
     """
     colon = hdr.find(":")
@@ -755,7 +757,7 @@ def chain_number_error(field: str, tag: str, v: str | None,
     1*DIGIT in ASCII, else a syntax error (also zero); at most three digits
     and 1..MAX_CHAIN_NUMBER, so "01" and "001" are 1; and no more than
     MAX_CHAIN_LENGTH, since each number names one hop.  The field is named by
-    its own number (a DKIM2-Signature by i=, a Message-Instance by m=, -08
+    its own number (a DKIM2-Signature by i=, a Message-Instance by m=, -09
     §14.2): `ident` is that value as written, defaulting to `v`."""
     if v is None:
         return None
@@ -826,7 +828,7 @@ def compute_signature(mi_headers: list[str], sig_headers: list[str],
     Returns:
         Raw signature bytes.
     """
-    # Per draft-ietf-dkim-dkim2-spec-08 Section 12.8:
+    # Per draft-ietf-dkim-dkim2-spec-09 Section 12.8:
     # 1. All MI headers in ascending v= order
     # 2. All prior DKIM2-Signature headers in ascending i= order
     # 3. The incomplete DKIM2-Signature being created
@@ -874,10 +876,10 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     """Build a complete DKIM2-Signature header.
 
     If next_domain is given, the signature carries an nd= tag for an imaginary
-    forwarding hop (-08 §12.3) and omits mf=/rt=. Otherwise it carries
-    mf=/rt= as usual. Any flags are emitted as an f= tag (-08 §10.10).
+    forwarding hop (-09 §12.3) and omits mf=/rt=. Otherwise it carries
+    mf=/rt= as usual. Any flags are emitted as an f= tag (-09 §10.10).
 
-    -08 §12.5: above i=1, "exploded" is added when it was requested
+    -09 §12.5: above i=1, "exploded" is added when it was requested
     (`exploded`) or rt= holds more than one address; at i=1 it MUST NOT be
     set, so a request -- or a caller-supplied "exploded" flag -- is dropped.
 
@@ -886,7 +888,7 @@ def build_dkim2_signature(mi_headers: list[str], sig_headers: list[str],
     if timestamp is None:
         timestamp = int(time.time())
 
-    # -08 §12.3: an nd= hop carries nd= instead of mf=/rt=.
+    # -09 §12.3: an nd= hop carries nd= instead of mf=/rt=.
     if next_domain:
         chain = f"nd={next_domain}"
     else:
@@ -958,15 +960,15 @@ class SigningRefused(Exception):
 
 def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
                    dns_data: dict | None, skip_timestamp_check: bool,
-                   allow_null_body_recipe: bool,
                    signing_domain: str | None = None) -> None:
     """Refuse (SigningRefused) unless the chain already on the message checks
     out.  Runs the verifier in outbound mode: an unsigned top Message-Instance
     is the one we are about to cover.  A signature with m=k covers instances
-    1..k; any Message-Instance with a null body Recipe above the highest m= of
-    a valid upstream signature (the top instance or one under it) needs
-    allow_null_body_recipe as well.  A null that an upstream signature
-    already covers does not."""
+    1..k; an instance above every valid signature's m= with a null body
+    Recipe is this hop's own and is signed over (-09, contract E2: it will
+    PERMERROR downstream regardless, but our header changes are signed).  A
+    null some upstream signature already covers fails verification and is
+    refused like any other broken upstream chain."""
     import os
     # dkim2verify imports this module, so import it lazily.
     import dkim2verify
@@ -1001,7 +1003,8 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
         skip_timestamp_check=skip_timestamp_check, allow_unsigned_mi=True)
     if not result.ok:
         detail = "; ".join(result.errors) or result.message
-        if any("v=" in e or "Recipe" in e or "Message-Instance" in e
+        if any(("v=" in e or "ecipe" in e or "Message-Instance" in e)
+               and not e.endswith(" has a null recipe")
                for e in result.errors) and result.status != "fail":
             raise SigningRefused(
                 f"not signing: Message-Instance chain does not undo cleanly: "
@@ -1010,29 +1013,25 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
             f"not signing: upstream DKIM2 chain result={result.status} "
             f"{detail}")
 
-    # A null body Recipe is refused unless some valid upstream signature
-    # covers it.  A DKIM2-Signature with m=k covers instances 1..k, so every
-    # instance above the highest such m= is one no upstream domain vouched
-    # for: a null there is one THIS hop would be the first to sign (whether
-    # it is the top instance or another unsigned instance was added over it),
-    # which needs the option.  A null some upstream domain already declared
-    # and signed is extended normally (e.g. a forwarder relaying a list post).
-    # Only a signature with a valid i= can cover anything: one the verifier
-    # cannot key is a PERMERROR above, and never counts as coverage here.
-    covered = max((_get_mi_from_sig(s) or 0
-                   for s in existing_sig if _sig_has_valid_i(s)), default=0)
-    top_m = max(_get_version_from_mi(h) for h in existing_mi)
-    for mi in sorted(existing_mi, key=_get_version_from_mi, reverse=True):
-        m = _get_version_from_mi(mi)
-        if m <= covered:
-            break
-        mi_json = _extract_mi_recipe(mi)
-        if mi_json is not None and "b" in mi_json and mi_json["b"] is None \
-                and not allow_null_body_recipe:
-            where = "top " if m == top_m else ""
-            raise SigningRefused(
-                f"not signing: unsigned {where}Message-Instance m={m} has a "
-                f"null body Recipe (--allow-null-body-recipe not set)")
+    # -09 (contract E2): an unsigned instance's null body Recipe -- this
+    # host's own, above every valid signature -- is signed over (the
+    # verifier skips the null check for it in outbound mode); a null that
+    # arrived already signed failed the verification above ("has a null
+    # recipe") and was refused as a broken upstream chain.
+
+
+_warned_allow_null = False
+
+
+def _warn_allow_null_body_recipe() -> None:
+    """The deprecated allow_null_body_recipe / --allow-null-body-recipe was
+    set: say so once per process (contract E2)."""
+    global _warned_allow_null
+    if not _warned_allow_null:
+        _warned_allow_null = True
+        warnings.warn("allow_null_body_recipe is deprecated and does nothing: "
+                      "an unsigned null body Recipe is always signed over",
+                      DeprecationWarning, stacklevel=3)
 
 
 def _extract_mi_recipe(mi_hdr: str):
@@ -1045,7 +1044,7 @@ def _extract_mi_recipe(mi_hdr: str):
 
 
 def _from_needs_check(existing_mi: list[str], existing_sig: list[str]) -> bool:
-    """-08 §12.4: the signer chooses d= so From is Authentic when it signs
+    """-09 §12.4: the signer chooses d= so From is Authentic when it signs
     the original message (no DKIM2-Signature yet), or when From was changed
     -- by a Message-Instance above the highest m= any signature covers,
     whose header Recipe has a "from" key."""
@@ -1063,6 +1062,50 @@ def _from_needs_check(existing_mi: list[str], existing_sig: list[str]) -> bool:
     return False
 
 
+def _policy_keys(dns_data):
+    """The signer's Domain Policy Record source when no policy_source is
+    given: dns_data, else the dns.json named by $DKIM2_DNS_JSON, else live
+    DNS (no prefetch: one lookup)."""
+    if dns_data is not None:
+        return dns_data
+    import dkim2verify
+    path = os.environ.get("DKIM2_DNS_JSON")
+    if path:
+        try:
+            return dkim2verify.load_dns_json(path)
+        except (OSError, ValueError) as e:
+            raise SigningRefused(f"not signing: cannot read keys from "
+                                 f"{path}: {e}")
+    from dkim2dns import LiveDNS
+    return LiveDNS(prefetch=False)
+
+
+def _from_refusal(from_fields: list[bytes], domain: str, dns_data,
+                  policy_source) -> str | None:
+    """-09 §12.4, contract E3.4: None if the From is Authentic for d=domain,
+    else the refusal text.  The downward match signs with no lookup; the
+    upward match looks up the From domain's Domain Policy Record."""
+    import dkim2verify
+    base = f"From header field is not Authentic for d={domain}"
+    kind, dom = from_mailbox(from_fields)
+    if kind != FROM_OK:
+        return base
+    sd = signing_domain(domain)
+    if relaxed_match(dom, sd):          # downward: no lookup
+        return None
+    if not relaxed_match(sd, dom):      # nor upward
+        return base
+    keys = None if policy_source is not None else _policy_keys(dns_data)
+    state = dkim2verify._PolicyCache(keys, policy_source)(dom)
+    if state == dkim2verify.POLICY_TEMPERROR:
+        return f"{base}: policy for {dom} unavailable"
+    if state == dkim2verify.POLICY_MULTIPLE:
+        return f"{base}: multiple records for {dom} policy"
+    if state == dkim2verify.POLICY_STRICT:
+        return f"{base}: From {dom} forbids subdomain signing"
+    return None
+
+
 def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  mailfrom: str = "<>", rcptto: list[str] | None = None,
                  timestamp: int | None = None,
@@ -1071,25 +1114,39 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  algs: list[str] | None = None,
                  dns_data: dict | None = None,
                  skip_timestamp_check: bool = False,
-                 allow_null_body_recipe: bool = False,
+                 allow_null_body_recipe: bool | None = None,
                  skip_upstream_check: bool = False,
                  exploded: bool = False,
-                 skip_from_check: bool = False) -> bytes:
+                 skip_from_check: bool = False,
+                 policy_source=None) -> bytes:
     """Sign a raw email message with DKIM2.
 
     A message that already carries a DKIM2 chain is verified first (outbound
     mode: an unsigned top Message-Instance is allowed); if the chain does not
-    check out, or a Message-Instance has a null body Recipe that no valid
-    upstream DKIM2-Signature covers (its m= is above every such signature's
-    m=) and allow_null_body_recipe is not set, SigningRefused is raised.  Keys come
-    from dns_data, else the dns.json named by $DKIM2_DNS_JSON.
+    check out, SigningRefused is raised.  An unsigned instance with a null
+    body Recipe is signed over (-09, contract E2); one an upstream
+    signature covers fails the verification.  Keys come from dns_data, else
+    the dns.json named by $DKIM2_DNS_JSON.
 
-    -08 §12.4: when the message is being signed for the first time, or a
+    allow_null_body_recipe is deprecated and does nothing (signing over our
+    own null is now the only behaviour); a true value warns once.
+
+    -09 §12.4: when the message is being signed for the first time, or a
     Message-Instance no signature covers yet changed From, the From header
     field must be Authentic for `domain`, or SigningRefused is raised with
-    "From header field is not Authentic for d=<domain>".
+    "From header field is not Authentic for d=<domain>".  A From domain at
+    or below `domain` is signed with no lookup; one above it (d= is a
+    subdomain of the From domain) needs the From domain's Domain Policy
+    Record (contract E3.4): open signs, and strict (or malformed),
+    multiple records or a temporary failure refuse with the reason
+    appended (": From <dom> forbids subdomain signing", ": multiple
+    records for <dom> policy", ": policy for <dom> unavailable").  The
+    record comes from the verifier's policy source: dns_data's (a dns.json
+    dict or a dkim2dns.LiveDNS), else the dns.json named by
+    $DKIM2_DNS_JSON, else live DNS; policy_source, if given, replaces it
+    exactly as for dkim2verify.verify_message.
 
-    exploded=True asks for the "exploded" flag (-08 §12.5): it is set above
+    exploded=True asks for the "exploded" flag (-09 §12.5): it is set above
     i=1 when requested or when rt= holds more than one address.
 
     skip_upstream_check=True bypasses the gate entirely, and
@@ -1121,16 +1178,18 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     if range_error:
         raise SigningRefused(f"not signing: {range_error}")
 
+    if allow_null_body_recipe:
+        _warn_allow_null_body_recipe()
+
     if (existing_mi or existing_sig) and not skip_upstream_check:
         _gate_upstream(raw, headers, existing_mi, existing_sig, dns_data,
-                       skip_timestamp_check, allow_null_body_recipe,
-                       signing_domain=domain)
+                       skip_timestamp_check, signing_domain=domain)
 
     if not skip_from_check and _from_needs_check(existing_mi, existing_sig):
         from_fields = [h for h in headers if _header_name(h) == b"from"]
-        if not from_is_authentic(from_fields, domain):
-            raise SigningRefused(
-                f"From header field is not Authentic for d={domain}")
+        refusal = _from_refusal(from_fields, domain, dns_data, policy_source)
+        if refusal:
+            raise SigningRefused(refusal)
 
     # Determine version numbers
     top_mi = None
@@ -1146,7 +1205,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     # Build Message-Instance header
     mi_hdr = build_message_instance(headers, body, version=mi_version, algs=algs)
 
-    # -08 §12.1: a hop that leaves both hashes unchanged adds no new
+    # -09 §12.1: a hop that leaves both hashes unchanged adds no new
     # Message-Instance at all — it signs against the existing top instance and
     # reuses its m=.  Emitting an instance with identical hashes and no Recipe
     # is not forbidden, but §12.1 still calls it "most likely to be pointless
@@ -1180,7 +1239,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-08)")
+        description="Sign an email with DKIM2 (draft-ietf-dkim-dkim2-spec-09)")
     parser.add_argument("message", help="Path to raw email file (- for stdin)")
     parser.add_argument("-s", "--selector", required=True,
                         help="DKIM2 selector name")
@@ -1201,18 +1260,16 @@ def main():
                         help="Signature flag (f=); repeatable")
     parser.add_argument("--exploded", action="store_true",
                         help="this hop sends copies to more than one address: "
-                             "set the exploded flag (-08 §12.5; never at i=1, "
+                             "set the exploded flag (-09 §12.5; never at i=1, "
                              "and set anyway when rt= has more than one "
                              "address)")
     parser.add_argument("--hash", dest="hash_algs", default="sha256",
                         choices=["sha256", "sha512", "both"],
                         help="hash algorithm(s) for the Message-Instance h= tag "
-                             "(-08 §3.1; default sha256)")
+                             "(-09 §3.1; default sha256)")
     parser.add_argument("--allow-null-body-recipe", action="store_true",
-                        help="sign even when a Message-Instance has a null "
-                             "body Recipe that no upstream signature covers "
-                             "(its m= is above every signature's m=; default: "
-                             "refuse; a signed null needs no option)")
+                        help="deprecated, does nothing: an unsigned null body "
+                             "Recipe is always signed over (-09)")
     parser.add_argument("--dns-json",
                         default=os.environ.get("DKIM2_DNS_JSON"),
                         help="dns.json with keys to verify an existing chain "
@@ -1228,6 +1285,11 @@ def main():
     else:
         raw = Path(args.message).read_bytes()
 
+    if args.allow_null_body_recipe:
+        print("dkim2sign: warning: --allow-null-body-recipe is deprecated and "
+              "does nothing: an unsigned null body Recipe is always signed "
+              "over", file=sys.stderr)
+
     rcptto = args.rcptto or ["unknown@example.com"]
     if args.dns_json:
         os.environ["DKIM2_DNS_JSON"] = args.dns_json
@@ -1240,8 +1302,7 @@ def main():
                               timestamp=args.timestamp,
                               next_domain=args.next_domain, flags=args.flags,
                               exploded=args.exploded, algs=algs,
-                              skip_timestamp_check=args.skip_timestamp_check,
-                              allow_null_body_recipe=args.allow_null_body_recipe)
+                              skip_timestamp_check=args.skip_timestamp_check)
     except SigningRefused as e:
         print(f"dkim2sign: {e}", file=sys.stderr)
         sys.exit(1)

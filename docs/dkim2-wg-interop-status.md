@@ -1,7 +1,7 @@
 # DKIM2 Interop Status Report
 
-**Spec:** draft-ietf-dkim-dkim2-spec-08  
-**Date:** 2026-10-28 (-08 upgrade, deployed and accepted on dkim2.com; earlier sections of this report date from 2026-05-01)  
+**Spec:** draft-ietf-dkim-dkim2-spec-09, with draft-ietf-dkim-dkim2-dns-03  
+**Date:** 2026-11-03 (-09 upgrade on the `spec-09` branch, prod deploy and acceptance pending; -08 deployed and accepted on dkim2.com 2026-10-28; earlier sections of this report date from 2026-05-01)  
 **Audience:** DKIM2 Working Group participants, hackathon attendees
 
 ---
@@ -26,12 +26,12 @@ implementation.
 
 ## Spec sections implemented
 
-Section numbers are -08's. All five verifiers (the four below plus the
+Section numbers are -09's (unchanged from -08). All five verifiers (the four below plus the
 browser JS verifier) implement every verifier row.
 
 | Section | Topic | Py | Perl | Go | C |
 |---------|-------|----|------|----|---|
-| §5, §5.1, §5.2 | Recipes: `c`/`d`/`u` steps (`u` replaced -06's `b`); keys strictly lowercase, duplicates rejected; one bad step is `Recipe <path> is invalid` | ✅ | ✅ | ✅ | ✅ |
+| §5, §5.1, §5.2 | Recipes: `c`/`d`/`u` steps (`u` replaced -06's `b`); keys strictly lowercase, duplicates rejected; one bad step is `recipe <path> is invalid` | ✅ | ✅ | ✅ | ✅ |
 | §6.1 | Body hash (SHA-256/SHA-512, simple canon) | ✅ | ✅ | ✅ | ✅ |
 | §4, §6.2 | Header hash (sorted by name octets, canonicalized); Auto-Submitted and VBR-Info hashed since -08 | ✅ | ✅ | ✅ | ✅ |
 | §7 | Relaxed domain match (asymmetric; A-labels; domain literals never match) | ✅ | ✅ | ✅ | ✅ |
@@ -39,22 +39,27 @@ browser JS verifier) implement every verifier row.
 | §9 | Message-Instance header format, `h=` `\|` groups of `,` lists, `r=` (absent `r=` = no change) | ✅ | ✅ | ✅ | ✅ |
 | §10 | DKIM2-Signature header format, i=/m= contiguity, n= ≤ 64 | ✅ | ✅ | ✅ | ✅ |
 | §10.10, §12.5 | `f=` flags; `exploded` above i=1 (hint header `X-DKIM2-Exploded: yes`) | ✅ | ✅ | ✅ | ✅ |
-| §11, §12.4, §14.8 | From must be Authentic (verifier check and signer refusal) | ✅ | ✅ | ✅ | ✅ |
+| §11, §12.4, §14.8 | From must be Authentic (verifier check and signer refusal); one address, no domain literal; `d=` below the From domain allowed unless its Domain Policy Record says `f=strict` | ✅ | ✅ | ✅ | ✅ |
+| §3.8 (dns-03 §6) | Domain Policy Record lookup (`_domainkey.<From domain>`), only for an upward match, in verifiers and signers | ✅ | ✅ | ✅ | ✅ |
+| §3.7 | Key records: TXT with a `v=` other than DKIM1 ignored before the multiple-records check; RSA < 1024 bits `too short` | ✅ | ✅ | ✅ | ✅ |
 | §12.3 | `nd=` imaginary hops | ✅ | ✅ | ✅ | ✅ |
 | §12.8 | Signing input construction | ✅ | ✅ | ✅ | ✅ |
-| §14.1–§14.8 | Exact -08 error strings (`STATE: text`) | ✅ | ✅ | ✅ | ✅ |
+| §14.1–§14.8 | Exact -09 error strings (`STATE: text`), `NONE: No DKIM2 header fields found`, `i=1 has an exploded flag` | ✅ | ✅ | ✅ | ✅ |
 | §14.3 | Timestamps: > 14 days old or > 1 day in the future is FAIL | ✅ | ✅ | ✅ | ✅ |
 | §14.4 | Chain of Custody (mf=/d=, mf=/rt=, bounce d=/rt=, nd= checks; FAIL) and envelope exact match | ✅ | ✅ | ✅ | ✅ |
-| §14.5, §14.6 | `s=` `\|` groups of `,` lists combined per -08; unknown algorithm and malformed key are PERMERROR items; at most 8 items (local) | ✅ | ✅ | ✅ | ✅ |
+| §14.5, §14.6 | `s=` `\|` groups of `,` lists combined per -09; unknown algorithm and malformed key are PERMERROR items; at most 8 items (local) | ✅ | ✅ | ✅ | ✅ |
 | §14 | Full chain walk with Recipe undo | ✅ | ✅ | ✅ | ✅ |
-| §13 | Fully Verified: a pass over a null body Recipe is flagged not fully verified | ✅ | ✅ | ✅ | ✅ |
+| §13, §14.2 | A null body Recipe is a PERMERROR (`has a null recipe`); signers sign over their own null and refuse a signed upstream one | ✅ | ✅ | ✅ | ✅ |
 | §16 | DSNs: none for a null top `mf=` or a message not Provisionally Verified; a DSN's `d=` matches the reported `rt=` | ✅ | ✅ | ✅ | ✅ |
 | §3.4 | ML-DSA-44 (`mldsa44`) | — | — | — | — |
 
-ML-DSA-44 is deferred: DKIMKEYS -02 still defines only the old composite's
-key type, and most of our languages lack a library that verifies pure
+ML-DSA-44 is deferred: most of our languages lack a library that verifies pure
 ML-DSA-44 with a context string. An `s=` item using it is an unknown
 algorithm (PERMERROR), which a `|` alternative can override.
+
+**-09 status (2026-11-03, `spec-09` branch):** all five verifiers implement
+-09; shared vectors now 132 (660 cells, all agree); signer gate 200/200.
+Deploying to dkim2.com and the prod acceptance tests are still to do.
 
 **-08 acceptance on dkim2.com (2026-10-28):** shared negative vectors 580/580
 across all five verifiers; hash matrix, signer gate, Turscar (10 known -08
@@ -100,13 +105,13 @@ The Perl `t/interop.t` test verifies all Python expected emails.  The Python
 `tests/run_tests.sh` verifies Python-generated emails with the Python verifier.
 The Go test suite includes verification of the shared test vectors.
 
-The cross-implementation runners in `util/` (see the README), all green on
-the -08 tree (2026-10-18):
+The cross-implementation runners in `util/` (see the README); counts as on
+the -08 tree (2026-10-18) unless marked -09:
 
 | Runner | Cells | What it checks |
 |--------|-------|----------------|
-| `util/negative-vectors.sh` | 330 | 51 negative vectors rejected with the exact -08 string, 15 positive controls accepted, by all five verifiers |
-| `util/signer-gate.sh` | 200 | 25 chain shapes through the four signers, plain and with `--allow-null-body-recipe` |
+| `util/negative-vectors.sh` | 660 (-09) | 132 vectors, negatives rejected with the exact -09 string and positive controls accepted, by all five verifiers |
+| `util/signer-gate.sh` | 200 (-09) | 25 chain shapes through the four signers, plain and with the deprecated (no-op) `--allow-null-body-recipe` |
 | `util/hash-matrix.sh` | 60 | 4 signers × sha256/sha512/both × 5 verifiers |
 | `util/interop-fold-mi.sh` | 57 | FWS in tag values, recipe-less instances |
 | `util/turscar-all.sh` | 42 × 5 | Steve Atkins' dkim2tests (a382236) |

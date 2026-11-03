@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DKIM2 DSN handling (draft-ietf-dkim-dkim2-spec-08 §16, RFC 6522).
+"""DKIM2 DSN handling (draft-ietf-dkim-dkim2-spec-09 §16, RFC 6522).
 
 When a Forwarder receives a DKIM2-signed Delivery Status Notification for a
 message it forwarded, it may propagate that DSN back towards the original
@@ -82,7 +82,7 @@ def _strip_top_mi(raw: bytes) -> bytes:
     Used with _strip_top_sig when the Forwarder's whole hop comes off but undo
     could not run: the instance goes with the signature that covered it, or the
     returned message carries an instance above its own top signature, which is
-    the -08 §14.2 "is not signed" PERMERROR upstream.
+    the -09 §14.2 "is not signed" PERMERROR upstream.
     """
     headers, body = dkim2sign.parse_message(raw)
     mi_idx = [i for i, h in enumerate(headers)
@@ -145,7 +145,7 @@ def _top_sig_tags(raw: bytes) -> dict | None:
     """Return the decoded tags of the highest-i DKIM2-Signature in raw.
 
     {"i": int, "d": str, "mf": str|None, "rt": [str]} -- enough for a caller to
-    apply -08 §16.4 point 2 and decide whether the signature is one of
+    apply -09 §16.4 point 2 and decide whether the signature is one of
     its own. None when the message carries no DKIM2-Signature.
     """
     headers, _ = dkim2sign.parse_message(raw)
@@ -187,7 +187,7 @@ def _origin_sig_tags(raw: bytes) -> dict | None:
 
 
 def _check_alignment(dsn_sig: dict | None, orig_top: dict | None):
-    """-08 §16.4 point 1: "The DSN's DKIM2-Signature will have a signing
+    """-09 §16.4 point 1: "The DSN's DKIM2-Signature will have a signing
     domain that is aligned with the recipient of the message that is being
     returned. The recipient's address is located in the rt= tag of the last
     (highest i= tag) DKIM2-Signature in the returned message."
@@ -226,7 +226,7 @@ def _check_alignment(dsn_sig: dict | None, orig_top: dict | None):
 
 def authenticate(raw: bytes, dns_data: dict,
                  skip_timestamp_check: bool = False) -> dict:
-    """Authenticate an inbound DSN before propagating it (-08 §16.4).
+    """Authenticate an inbound DSN before propagating it (-09 §16.4).
 
       * the returned original's DKIM2 chain must verify, from its headers
         alone when the DSN carries only headers (point 3);
@@ -319,7 +319,7 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
     headers_only = parts[orig_idx].get_content_type() == "text/rfc822-headers"
     embedded = _embedded_bytes(parts[orig_idx])
 
-    # -08 §16: no DSN for a message whose MAIL FROM was null.  The returned
+    # -09 §16: no DSN for a message whose MAIL FROM was null.  The returned
     # original's top signature is the Forwarder's own hop: if that went out
     # with mf=<>, nobody asked for a DSN.
     top_mf, _ = _highest_sig_mailfrom(embedded)
@@ -356,11 +356,11 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
     if not upstream:
         raise ValueError("no remaining DKIM2-Signature to derive upstream MAIL FROM")
     if upstream.strip() == "<>":
-        # -08 §16: the upstream hop sent with a null MAIL FROM.
+        # -09 §16: the upstream hop sent with a null MAIL FROM.
         raise ValueError("propagate: the upstream MAIL FROM is <>; no DSN is "
                          "sent for it (§16)")
 
-    # -08 §7.1 item 4, §16.2 (contract D11): the DSN's d= MUST relaxed-match
+    # -09 §7.1 item 4, §16.2 (contract D11): the DSN's d= MUST relaxed-match
     # a recipient in the rt= of the reported message's highest signature --
     # the hop that delivered the message to us -- with the rt= domain as
     # Parameter1.  If our signing domain cannot, send no DKIM2 DSN.
@@ -395,7 +395,7 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
 
     # The propagated DSN is a new message from the Forwarder (its signature
     # is i=1), so its From must be Authentic for the Forwarder's domain
-    # (-08 §11, §12.4).  The reporting system's From is not, unless it is
+    # (-09 §11, §12.4).  The reporting system's From is not, unless it is
     # in that domain: replace it with the Forwarder's own.
     from_fields = [f"From: {v}".encode("utf-8", "surrogateescape")
                    for v in dsn.get_all("From", [])]

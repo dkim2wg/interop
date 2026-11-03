@@ -64,7 +64,7 @@ test('duplicate Message-Instance m= is permerror', async () => {
     '\r\nhi\r\n';
   const r = await verifyMessage(raw);
   assert.equal(r.overall, 'permerror');
-  assert.match(r.summary, /Message-Instance m=1 appears more than once/);
+  assert.match(r.summary, /Message-Instance m=1 is duplicated/);
 });
 
 test('duplicate DKIM2-Signature i= is permerror', async () => {
@@ -72,5 +72,5 @@ test('duplicate DKIM2-Signature i= is permerror', async () => {
   const raw = 'From: a@example.com\r\nMessage-Instance: m=1; h=sha256:AAAA:BBBB\r\n' + sig + sig + '\r\nhi\r\n';
   const r = await verifyMessage(raw);
   assert.equal(r.overall, 'permerror');
-  assert.match(r.summary, /DKIM2-Signature i=1 appears more than once/);
+  assert.match(r.summary, /DKIM2-Signature i=1 is duplicated/);
 });

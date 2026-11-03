@@ -32,17 +32,17 @@ async function renderWith(report) {
   return els.out;
 }
 
-test('D9: a pass the back end reports not fully verified carries a warning under the verdict', async () => {
-  const out = await renderWith({ overall: 'pass', fully_verified: 0,
-    summary: 'ok; not fully verified: a null body Recipe hides the body below it', levels: [] });
-  assert.equal(out.children[0].textContent, 'Overall: pass');
-  assert.match(out.children[1].className, /warn/);
-  assert.match(out.children[1].textContent, /^Not fully verified/);
+test('-09 E2: a null recipe shows as the failure summary, with no "not fully verified" note', async () => {
+  const out = await renderWith({ overall: 'fail', fully_verified: 0,
+    summary: 'permerror (PERMERROR: Message-Instance m=2 has a null recipe)', levels: [] });
+  assert.equal(out.children[0].textContent, 'Overall: fail');
+  assert.match(out.text, /has a null recipe/);
+  assert.doesNotMatch(out.text, /Not fully verified/);
 });
 
-test('D9: no warning when fully verified, when not a pass, or from a back end without the field', async () => {
+test('-09 E2: no "not fully verified" note for any report, an old back end\'s included', async () => {
   for (const rep of [{ overall: 'pass', fully_verified: 1 }, { overall: 'pass' },
-    { overall: 'fail', fully_verified: 0, summary: 'FAIL: x' }]) {
+    { overall: 'pass', fully_verified: 0 }, { overall: 'fail', fully_verified: 0, summary: 'FAIL: x' }]) {
     assert.doesNotMatch((await renderWith({ levels: [], ...rep })).text, /Not fully verified/);
   }
 });

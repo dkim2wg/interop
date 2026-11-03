@@ -37,6 +37,15 @@
 #   recipe-duplicate-key REFUSE   REFUSE   (unsigned m=2 whose Recipe JSON has
 #                                           "b" twice, [...] then null)
 #
+# Draft -09 (contract E2) signers sign over their own unsigned null and
+# refuse a null that arrived signed, with or without the (now deprecated,
+# no-op) flag.  For the signers in SPEC09_SIGNERS the null rows become:
+#
+#   null-top, null-below-unsigned-top, mi-only-null   SIGN     SIGN
+#   null-top-signed, null-below-signed                REFUSE   REFUSE
+#
+# SIGNERS=python (say) runs one signer alone while iterating.
+#
 # The From refusals must also SAY why: stderr carries the -07 signer string
 # "From header field is not Authentic for d=test3.dkim2.com" (contract C5);
 # a refusal for any other reason is WRONG-REASON.
@@ -58,16 +67,29 @@ cd "$root"
 # so a silently dropped fixture/signer/mode shows up as a coverage shortfall.
 # fixture:plain-want:flag-want
 FIXTURES="fresh:sign:sign fresh-from-not-authentic:refuse:refuse from-rewritten-us:sign:sign from-rewritten-other:refuse:refuse valid-chain:sign:sign broken-signature:refuse:refuse broken-mi-chain:refuse:refuse null-top:refuse:sign null-top-forged:refuse:refuse null-top-signed:sign:sign null-below-unsigned-top:refuse:sign null-below-signed:sign:sign fake-cover-no-i:refuse:refuse fake-cover-i0:refuse:refuse fake-cover-i-abc:refuse:refuse fake-cover-m-rewritten:refuse:refuse fake-cover-unparseable:refuse:refuse mi-only:sign:sign mi-only-broken:refuse:refuse mi-only-null:refuse:sign nd-to-us:sign:sign nd-to-other:refuse:refuse signature-gap:refuse:refuse instance-gap:refuse:refuse recipe-duplicate-key:refuse:refuse"
-SIGNERS="python go c perl"
+SIGNERS="${SIGNERS:-python go c perl}"
+SPEC09_SIGNERS="python perl go c"   # signers on the draft -09 null-Recipe behaviour
 MODES="plain flag"
 n=0; for _f in $FIXTURES; do n=$((n + 1)); done
 n_signers=0; for _s in $SIGNERS; do n_signers=$((n_signers + 1)); done
 n_modes=0;   for _m in $MODES;   do n_modes=$((n_modes + 1));     done
 expected=$((n * n_signers * n_modes))
 
-for _b in c/dkim2sign go/dkim2sign; do
+for _s in $SIGNERS; do
+    case $_s in c|go) _b=$_s/dkim2sign ;; *) continue ;; esac
     [ -x "$_b" ] || { echo "missing $_b -- build it first (make -C c dkim2sign; cd go && go build -o dkim2sign ./cmd/dkim2sign)"; exit 1; }
 done
+
+# want_09 <impl> <fixture> <want>: the -09 expectation for a signer in
+# SPEC09_SIGNERS (see above), else <want> unchanged.
+want_09() {
+    case " $SPEC09_SIGNERS " in *" $1 "*) ;; *) echo "$3"; return ;; esac
+    case $2 in
+    null-top|null-below-unsigned-top|mi-only-null) echo sign ;;
+    null-top-signed|null-below-signed)             echo refuse ;;
+    *) echo "$3" ;;
+    esac
+}
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -132,8 +154,9 @@ for spec in $FIXTURES; do
     have=$(max_i "$in"); need=$((have + 1))
     printf '%s (chain i=%s; plain must %s, with flag must %s)\n' "$fx" "$have" "$want_plain" "$want_flag"
     for mode in $MODES; do
-        if [ "$mode" = flag ]; then want=$want_flag; else want=$want_plain; fi
+        if [ "$mode" = flag ]; then mode_want=$want_flag; else mode_want=$want_plain; fi
         for impl in $SIGNERS; do
+            want=$(want_09 "$impl" "$fx" "$mode_want")
             cells=$((cells + 1))
             flag=""
             if [ "$mode" = flag ]; then

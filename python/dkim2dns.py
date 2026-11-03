@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 public keys from DNS - draft-ietf-dkim-dkim2-spec-08 §14.5
+DKIM2 public keys from DNS - draft-ietf-dkim-dkim2-spec-09 §14.5
 
 A key source for dkim2verify.verify_message() in place of a dns.json dict:
 
@@ -20,6 +20,11 @@ NOERROR with no TXT) is used as it is; one that does not settle it (no reply
 within prefetch_wait seconds of sending, SERVFAIL, any error) is redone the
 ordinary synchronous way, so every verdict is what the synchronous lookup
 alone would give.  Each name is looked up once per message.
+
+The verifier also asks the same per-message source, through txt_records(),
+for the Domain Policy Record at `_domainkey.<From domain>` (-09 §3.8,
+contract E3.2): lazily, only when an upward Authentic From match needs it,
+never prefetched, with the same temporary-failure classification.
 
 DnspythonResolver asks the system's resolvers through dnspython, which is
 imported only when keys are looked up in DNS (dns.json needs nothing

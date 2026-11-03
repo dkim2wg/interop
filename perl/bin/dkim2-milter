@@ -104,6 +104,12 @@ if ($opts{'use-epilogue'} || defined $opts{'epilogue-threshold'}) {
       . "they produce mail that fails verification (Mail::DKIM2 0.23 Changes)\n";
 }
 
+# Retired in 0.29 (-09 contract E2): this hop's own null body Recipe is
+# always signed. Still accepted so an existing unit file starts.
+warn "dkim2-milter: --allow-null-body-recipe is deprecated and does nothing: "
+   . "an unsigned null body Recipe is always signed (Mail::DKIM2 0.29)\n"
+    if $opts{'allow-null-body-recipe'};
+
 $opts{socket}    //= 'unix:/var/run/dkim2-milter.sock';
 $opts{algorithm} //= 'rsa-sha256';
 $opts{mode}      //= 'both';
@@ -518,10 +524,10 @@ sub cb_eom {
         # upstream signatures (allowing our own unsigned instance on top), run
         # the full undo check on the Message-Instance chain (an upstream that
         # emitted a non-reversible Recipe would give a signature that fails at
-        # every recipient), and refuse a null body Recipe on an UNSIGNED top
-        # instance (no upstream signature has its m=: a null this hop is
-        # introducing) unless --allow-null-body-recipe. A null top that
-        # arrived signed (a list post forwarded unchanged) is extended.
+        # every recipient). A null body Recipe on an UNSIGNED instance (no
+        # upstream signature has its m=: a null this hop is introducing) is
+        # signed; one that arrived signed fails the upstream verification
+        # and is refused (-09 contract E2).
         # nd= bridge: when the top signature carries nd= we may extend it only
         # if nd= names the domain we sign as, so tell the gate which. (The
         # gate ignores this unless the top signature has nd=.)
@@ -571,7 +577,6 @@ sub cb_eom {
         my $gate = eval {
             Mail::DKIM2::Gate->check($sign_msg,
                 (defined $gate_sd ? (SigningDomain => $gate_sd) : ()),
-                AllowNullBodyRecipe => $opts{'allow-null-body-recipe'},
                 ($do_verify && $sign_msg eq $message ? (VerifyResult => $verify_result) : ()),
                 _gate_pubkey_cb());
         };
@@ -581,10 +586,8 @@ sub cb_eom {
                       message => "internal error checking the upstream chain: $err" };
         }
         $verify_result = $gate->{verify_result};
-        $gate->{message} =~ s/AllowNullBodyRecipe not set/--allow-null-body-recipe not set/
-            if defined $gate->{message};
 
-        # -08 section 13: a message that carries DKIM2 header fields but is
+        # -09 section 13: a message that carries DKIM2 header fields but is
         # not one this hop can sign MUST NOT be sent on -- so a refusal of a
         # message with an upstream DKIM2-Signature is a 550 5.7.1 with the
         # reason (section 13.3). One with no signature (only instances this
@@ -608,7 +611,7 @@ sub cb_eom {
         } elsif ($gate->{reason}) {
             warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
             $ctx->insheader('X-DKIM2-Info',
-                _milter_value(_dkim2_info("not-signed=null-body-recipe")), 0);
+                _milter_value(_dkim2_info("not-signed=$gate->{reason}")), 0);
             _remove_unsigned_instances($ctx, $priv, $msgid);
         } else {
             # Chain is valid (or there is no upstream chain) — proceed.
@@ -680,13 +683,13 @@ sub cb_eom {
                     _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
                 warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
                    . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
-                # Informational: we signed over a null body Recipe --
-                # a null top that arrived signed (no option needed), or an
-                # unsigned null, our own diff's included (the option was
-                # set: the gate sees this hop's instance as unsigned too).
+                # Informational: we signed over this hop's own null body
+                # Recipe (an unsigned one, our own diff's included: the gate
+                # sees this hop's instance as unsigned too). The message
+                # will PERMERROR downstream, but our header changes are signed.
                 $ctx->insheader('X-DKIM2-Info',
                     _milter_value(_dkim2_info("null-body-recipe")), 0)
-                    if $gate->{top_null} || $gate->{unsigned_null};
+                    if $gate->{unsigned_null};
             }
         }
     }
@@ -745,9 +748,22 @@ sub _get_sign_config {
 # --- Verification ---
 
 # _gate_pubkey_cb(): PubkeyCallback option answering from --dns-json, else real DNS.
+# The Domain Policy Record (-09 section 3.8) from --dns-json's records for the
+# domains it lists, else DNS; for the gate's Verifier and the Signer alike
+# (contract E3.4). Nothing without --dns-json: both then use DNS.
+sub _policy_cb {
+    return unless $dns_data;
+    return (PolicyCallback => sub {
+        my ($dom, $who) = @_;
+        return [ map { $_->[1] } @{ $dns_data->{$dom}{_domainkey} || [] } ]
+            if $dns_data->{$dom};
+        return $who->fetch_domain_policy($dom);
+    });
+}
+
 sub _gate_pubkey_cb {
     return unless $dns_data;
-    return (PubkeyCallback => sub {
+    return (_policy_cb(), PubkeyCallback => sub {
         my ($sig, $idx, $v) = @_;
         $idx //= 0;
         my $sel = $sig->selector($idx);
@@ -822,7 +838,7 @@ sub _error_text {
 #   Outbound => 1           the instance the signer is about to sign. On a
 #                           message with no DKIM2-Signature, every instance is
 #                           this host's own and unsigned, and the copy leaves
-#                           with ONE m=1 (-08 section 12.1): hashes of what is
+#                           with ONE m=1 (-09 section 12.1): hashes of what is
 #                           sent, Recipes back to the message as it arrived.
 #                           $info->{restart} then lists the instances that
 #                           go (in $info->{strip_mi_versions} too).
@@ -910,7 +926,7 @@ sub _compute_mi {
     return $mi ? _format_mi($mi) : undef;
 }
 
-# _restart_mi: the m=1 an unsigned outgoing copy leaves with (-08 section
+# _restart_mi: the m=1 an unsigned outgoing copy leaves with (-09 section
 # 12.1; see _compute_mi). The message as it arrived comes from the chain of
 # instances itself when its top matches the content (a list manager that
 # recorded its own change), else from this host's snapshot of this very
@@ -1052,6 +1068,7 @@ sub _do_sign {
             MailFrom  => ( length($priv->{env_from} // '') ? $priv->{env_from} : '<>' ),
             RcptTo    => $priv->{env_rcpt},
             ($priv->{exploded} ? (Exploded => 1) : ()),
+            _policy_cb(),
         );
         $signer->PRINT($message);
         $signer->CLOSE();
@@ -1136,21 +1153,21 @@ auto-detected from the key type (RSA or Ed25519).
 
 When signing, a message carrying an C<X-DKIM2-Exploded> header field (any
 value; Mailman and Sympa add C<X-DKIM2-Exploded: yes> to every
-distribution copy) is signed with the C<exploded> flag (-08 section 12.5),
+distribution copy) is signed with the C<exploded> flag (-09 section 12.5),
 which a signature also gets whenever the message has more than one
 recipient; never at C<i=1>. The field is removed from the message before
 it is signed and never leaves.
 
 When the signing gate (L<Mail::DKIM2::Gate>) refuses a message that carries
 an upstream DKIM2-Signature, the milter rejects it with C<550 5.7.1> and the
-reason (-08 sections 13.1 and 13.3: a message with DKIM2 header fields that
+reason (-09 sections 13.1 and 13.3: a message with DKIM2 header fields that
 is not Fully Verified must not be sent on). A refused message with no
 signature goes on unsigned, the Message-Instances this host added removed.
 The same goes for a message the Signer refuses, such as one whose From is
-not Authentic for the signing domain (-08 section 11). New in 0.23;
+not Authentic for the signing domain (-09 section 11). New in 0.23;
 before, every refused message went on.
 
-This program implements draft-ietf-dkim-dkim2-spec-08; see L<Mail::DKIM2/STATUS>.
+This program implements draft-ietf-dkim-dkim2-spec-09; see L<Mail::DKIM2/STATUS>.
 
 =head1 KEY DIRECTORY LAYOUT
 
@@ -1281,7 +1298,7 @@ with C<X-DKIM2-Info: action=restarted-unsigned-mi=m=1,...;>. The post as it
 arrived comes from those instances when the top one matches the content,
 else from the snapshot; a chain that does not undo cleanly gets no
 instance and the message is not signed. The From sent must still be
-Authentic for the signing domain (-08 section 11): without a From munge an
+Authentic for the signing domain (-09 section 11): without a From munge an
 outside author's post goes out unsigned. A post that arrived signed is
 extended with C<m=N+1> as before.
 
@@ -1295,22 +1312,14 @@ C<X-DKIM2-Info: action=removed-unsigned-mi=...;>.
 
 =item B<--allow-null-body-recipe>
 
-Sign a message with a Message-Instance that has a null body Recipe no upstream
-DKIM2-Signature covers (its C<m=> is above every valid signature's C<m=>; a
-signature with C<m=k> covers instances 1 to I<k>), whether it is the top
-instance or another unsigned instance was added over it: a null this host is
-introducing.  Default: off, and such a message is delivered unsigned with
-C<X-DKIM2-Info: not-signed=null-body-recipe>.  When set, the message is
-signed provided the upstream signatures verify and the header history below
-the null Recipe checks out.  For list hosts whose list manager rewrites
-bodies (content filtering, DMARC wrap) and adds an unsigned instance for the
-milter to sign.
-
-A null that arrived already signed (a list host's post, forwarded unchanged)
-needs no option: the domain that declared the null signed it, and the milter
-extends the chain as for any other valid one.  Whenever the milter signs over
-a null top, in either case, or over an unsigned null under the top (with the
-option), it adds the informational C<X-DKIM2-Info: action=null-body-recipe;>.
+Deprecated in 0.29 and does nothing beyond a warning at startup. A
+Message-Instance with a null body Recipe that no upstream DKIM2-Signature
+covers (a null this host is introducing) is always signed: the message will
+be a PERMERROR at every verifier (draft -09 sections 13 and 14.2), but the
+header changes this host made are signed.  The milter then adds the
+informational C<X-DKIM2-Info: action=null-body-recipe;>.  A null that
+arrived already signed fails the upstream verification and is refused like
+any broken upstream chain.
 
 =item B<--wrap-single-part>
 

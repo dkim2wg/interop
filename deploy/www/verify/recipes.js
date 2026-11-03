@@ -1,4 +1,4 @@
-// Recipe application (undo) per draft-ietf-dkim-dkim2-spec-08 §5 and §9.2.
+// Recipe application (undo) per draft-ietf-dkim-dkim2-spec-09 §5 and §9.2.
 import { b64ToBytes, bytesToBinary, textToBinary } from './b64.js';
 
 // A Recipe that is valid JSON but not one this message's previous state can
@@ -17,7 +17,7 @@ export class InvalidRecipe extends Error {
 }
 
 // One step that the §5 schema or §5.1/§5.2 refuses (contract D6), reported
-// as "Recipe <path> is invalid": path is b[<n>] or h.<name>[<n>] (the
+// as "recipe <path> is invalid" (-09 §14.2): path is b[<n>] or h.<name>[<n>] (the
 // step's 0-based index), or h.<name> for a header entry that is not an
 // array.
 export class InvalidStep extends InvalidRecipe {
@@ -339,13 +339,14 @@ export function applyRecipe(recipe, state) {
 //  - a bad base64 r= value (atob throws, typically DOMException) is a
 //    "syntax error" in the Message-Instance -- the payload never even
 //    reached JSON parsing;
-//  - one invalid step (InvalidStep): "Recipe <path> is invalid" (-08 D6);
+//  - one invalid step (InvalidStep): "recipe <path> is invalid" (-08 D6,
+//    lower case since -09 §14.2, contract E6);
 //  - a JSON.parse failure or any other whole-document fault (SyntaxError),
 //    a Recipe the §5 schema does not allow as a document, or whose "c"
 //    ranges do not fit the message (InvalidRecipe): "contains invalid JSON".
 // Anything else is a generic, non-specific failure to undo.
 export function recipeErrorText(e) {
-  if (e instanceof InvalidStep) return `Recipe ${e.path} is invalid`;
+  if (e instanceof InvalidStep) return `recipe ${e.path} is invalid`;
   if (e instanceof InvalidRecipe || e instanceof SyntaxError) return 'contains invalid JSON';
   if (e instanceof DOMException) return 'syntax error';
   return 'previous instance cannot be recreated';

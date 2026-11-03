@@ -34,13 +34,13 @@ EXPECT = {
     "multi-header-and-body-tampered": HDR1,
     "multi-expired-custody": "FAIL: DKIM2-Signature i=1 signature expired",
     "multi-custody-bad-signature":
-        "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match",
+        "FAIL: DKIM2-Signature i=1 mf= and d= do not match",
     "multi-bad-signature-header-hash": HDR1,
     "multi-tamper-two-instances":
         "FAIL: Message-Instance m=2 header hash sha256 mismatch",
     "multi-expired-recipe-json": JSON2,
     # -08 (contract D6): the out-of-order step is named.
-    "multi-expired-recipe-order": "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid",
+    "multi-expired-recipe-order": "PERMERROR: Message-Instance m=2 recipe b[1] is invalid",
     "multi-expired-recipe-past-end": JSON2,
     "multi-tamper-recipe-past-end":
         "FAIL: Message-Instance m=2 body hash sha256 mismatch",
@@ -50,13 +50,13 @@ EXPECT = {
     "multi-instance-no-m-signature-twice":
         "PERMERROR: Message-Instance m= tag=m missing",
     "multi-instance-twice-signature-no-i":
-        "PERMERROR: Message-Instance m=1 appears more than once",
+        "PERMERROR: Message-Instance m=1 is duplicated",
     "multi-instance-twice-junk-signature":
-        "PERMERROR: Message-Instance m=1 appears more than once",
+        "PERMERROR: Message-Instance m=1 is duplicated",
     "multi-instance-twice-lowest":
-        "PERMERROR: Message-Instance m=1 appears more than once",
+        "PERMERROR: Message-Instance m=1 is duplicated",
     "multi-signature-twice-lowest":
-        "PERMERROR: DKIM2-Signature i=1 appears more than once",
+        "PERMERROR: DKIM2-Signature i=1 is duplicated",
     "multi-instance-syntax-dup-alg": "PERMERROR: Message-Instance m=1 syntax error",
     "multi-instance-syntax-dup-selector":
         "PERMERROR: Message-Instance m=1 syntax error",
@@ -118,7 +118,7 @@ def test_primary_error(name, walk):
     # Instances that fail (structure, content or walk) are the verdict: no
     # public key is used, and no key error reported.
     if "Message-Instance" in want or "DKIM2-Signature i=1 missing" in want \
-            or "appears more than once" in want:
+            or "is duplicated" in want:
         assert keys.names == [], keys.names
         assert not any("public key" in e for e in r.errors), r.errors
 

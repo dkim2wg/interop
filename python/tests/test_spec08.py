@@ -98,7 +98,7 @@ INVALID_JSON_2 = "PERMERROR: Message-Instance m=2 contains invalid JSON"
 
 
 def _step_invalid(path):
-    return f"PERMERROR: Message-Instance m=2 Recipe {path} is invalid"
+    return f"PERMERROR: Message-Instance m=2 recipe {path} is invalid"
 
 
 @pytest.mark.parametrize("rj", [
@@ -188,7 +188,7 @@ def test_d5_custody_is_fail():
     # i=1 mf= not under d=
     msg = sign(message(), "example.com", "a@example.org", ["r@example.net"],
                skip_upstream_check=True)
-    _fails_with(msg, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match", "fail")
+    _fails_with(msg, "FAIL: DKIM2-Signature i=1 mf= and d= do not match", "fail")
     # the envelope against the top signature
     good = _hop1()
     _fails_with(good, "FAIL: DKIM2-Signature i=1 MAIL FROM <x@example.com> did not match",
@@ -528,7 +528,6 @@ ED_SPKI = b64(bytes.fromhex("302a300506032b6570032100") + __import__("base64").b
 
 
 @pytest.mark.parametrize("sel,item,rec", [
-    ("sel1", S1, f"v=DKIM1; k=rsa; p={_short_rsa_p()}"),        # 1023 bits
     ("sel1", S1, "v=DKIM1; k=rsa; p=AAAA"),                      # not a key
     ("sel1", S1, f"v=DKIM1; k=rsa; p={ED_SPKI}"),                # not RSA
     ("ed25519", ED, f"v=DKIM1; k=ed25519; p={b64(bytes(31))}"),  # 31 octets
@@ -540,6 +539,12 @@ def test_d7_malformed_key(sel, item, rec):
         dns=_dns_with([["txt", rec]], sel))
 
 
+def test_d7_1023_bit_rsa_is_too_short():
+    # -09 (contract E5) replaces "is malformed" for this one case.
+    err(make(S1), f"PERMERROR: {SIG1} public key sel1 too short",
+        dns=_dns_with([["txt", f"v=DKIM1; k=rsa; p={_short_rsa_p()}"]], "sel1"))
+
+
 def test_d7_non_base64_p_is_still_syntax_error():
     err(make(S1), f"PERMERROR: {SIG1} public key sel1 has a syntax error",
         dns=_dns_with([["txt", "v=DKIM1; k=rsa; p=!!!!"]], "sel1"))
@@ -549,7 +554,7 @@ def test_d7_rsa_1024_verifies():
     ok(make("rsa1024:rsa-sha256:SIGN:rsa1024"))
 
 
-# --- D9: fully_verified ----------------------------------------------------------
+# --- D9: fully_verified (deprecated by -09 E2: true exactly for a pass) -----------
 
 from util_fixtures import bnv  # noqa: E402
 
@@ -570,9 +575,10 @@ def test_d9_plain_pass_is_fully_verified():
     assert _fv(bnv.build_positive_bottom_recipe()) == ("pass", True)
 
 
-def test_d9_null_body_recipe_is_pass_but_not_fully_verified():
-    assert _fv(bnv.build_positive_null_body()) == ("pass", False)
-    assert _fv(bnv.build_positive_null_below()) == ("pass", False)
+def test_d9_null_body_recipe_is_now_permerror():
+    # -09 (contract E2): no longer a pass that is not fully verified.
+    assert _fv(bnv.build_positive_null_body()) == ("permerror", False)
+    assert _fv(bnv.build_positive_null_below()) == ("permerror", False)
 
 
 def test_d9_non_pass_is_not_fully_verified():
@@ -586,16 +592,17 @@ def test_d9_headers_only_is_not_fully_verified():
     assert r.ok and r.fully_verified is False
 
 
-def test_d9_unsigned_top_instance_is_not_fully_verified():
+def test_d9_unsigned_top_instance_pass_is_fully_verified():
     raw = make(S1)
     head, sep, body = raw.partition(b"\r\n\r\n")
     r = dkim2verify.verify_message(raw, T1DNS, full_chain=True, allow_unsigned_mi=True,
                                    skip_timestamp_check=True)
     assert r.ok and r.fully_verified is True
-    # outbound mode over an instance no signature covers yet
+    # outbound mode over an instance no signature covers yet: -09 (E2)
+    # makes fully_verified true exactly for a pass.
     msg = add_mi(_hop1(), replace_header(b"Subject", b"x"))
     r = verify(msg, allow_unsigned_mi=True)
-    assert r.ok and r.fully_verified is False
+    assert r.ok and r.fully_verified is True
 
 
 # --- D11: a DSN's d= relaxed-matches the reported message's top rt= -------------

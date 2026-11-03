@@ -44,12 +44,13 @@ Writes:
   positive-control-bottom-recipe.eml -- m=1 (bottom) Message-Instance
                                          carries a VALID r= Recipe; §12.1
                                          explicitly permits this
-  positive-control-null-body.eml   -- list hop with a null body Recipe ("b": null)
-                                         and a real header Recipe; ACCEPT
-  positive-control-null-body-over-recipe.eml -- same, over an ordinary m=2; ACCEPT
+  null-body.eml                    -- list hop with a null body Recipe ("b": null)
+                                         and a real header Recipe; -09: REJECT
+                                         "m=2 has a null recipe" (contract E2)
+  null-body-over-recipe.eml        -- same, over an ordinary m=2; REJECT, m=3
   null-body-forged-history.eml     -- null body Recipe whose header Recipe hides
                                          a To: change; REJECT at m=1
-  positive-control-null-below.eml  -- ordinary m=3 over a null-body m=2; ACCEPT
+  null-below.eml                   -- ordinary m=3 over a null-body m=2; REJECT, m=2
   positive-control-empty-body-chain.eml -- empty body, Subject change; ACCEPT
   empty-body-forged-history.eml    -- empty body, To: change hidden from Recipe; REJECT
   malformed-body-recipe-below-null.eml -- malformed body Recipe at m=2 below a
@@ -213,6 +214,20 @@ draft -08 (docs/superpowers/specs/2026-10-28-dkim2-spec-08-design.md):
                                          i=1 (D10): unknown tags; ACCEPT
   multi-key-error-above-bad-signature.eml -- i=1 bad signature + i=2 key
                                          missing: i=1's FAIL (D3 amends C9)
+  draft -09 (contract E3-E6):
+  positive-control-from-subdomain*.eml -- d=mail.<parent>, From @<parent>: no
+                                         policy record, one without "strict",
+                                         or only non-DKIM1 records; ACCEPT
+  from-subdomain-strict*.eml       -- the parent's record says f=strict
+  from-subdomain-broken-policy.eml -- a v=DKIM1 record that does not parse:
+                                         fails closed as strict
+  from-subdomain-multiple-policy.eml -- two v=DKIM1 policy records: PERMERROR
+  from-sibling.eml                 -- a sibling domain: not authentic
+  from-two-addresses.eml, from-two-fields.eml -- more than one address
+  from-domain-literal.eml          -- a domain literal
+  exploded-i1.eml                  -- f=exploded at i=1
+  key-rsa-too-short.eml            -- a 512-bit RSA key: too short
+  null-two.eml                     -- nulls at m=2 and m=3: m=2 is named
 """
 import base64
 import json
@@ -277,7 +292,8 @@ def assemble(sig_hdr, mi_hdr, content_headers, body):
 
 
 def load_base():
-    raw = open(SRC, "rb").read()
+    with open(SRC, "rb") as f:
+        raw = f.read()
     return ds.parse_message(raw)
 
 
@@ -533,7 +549,8 @@ def _bridged_chain(bridge_domain):
     RCPT TO the message arrived with, so `bridge_domain` is what decides
     whether the chain holds.
     """
-    raw = open(SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    with open(SRC, "rb") as f:
+        raw = f.read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
     msg = ds.sign_message(raw, "sel1", "test1.dkim2.com", key("sel1", "test1.dkim2.com"),
                           mailfrom="sender@test1.dkim2.com",
                           rcptto=["user@test2.dkim2.com"], timestamp=TS)
@@ -1842,6 +1859,134 @@ def build_multi_key_error_above_bad_signature():
                        sel="nokey")
     return _order_message([sig2, bad1, mi2, mi1], h2, b2)
 
+# ---------------------------------------------------------------------------
+# draft -09 (docs/superpowers/specs/2026-11-03-dkim2-spec-09-design.md)
+# ---------------------------------------------------------------------------
+
+def _from_is(headers, value):
+    return [b"From: " + value if h.lower().startswith(b"from:") else h for h in headers]
+
+
+def _from_chain(from_value, d=DOM, key_dom=None, mf=MF):
+    """One hop, d=<d> signed with <key_dom>'s sel1 key, From set to
+    <from_value>: only the section 14.8 check is under test (E3)."""
+    h, b = load_base()
+    return _chain([(_from_is(h, from_value), b, None)], [
+        dict(d=d, key=key_dom or d, m=1, mf=mf, rt=RT)])
+
+
+def _subdomain_from(parent):
+    """E3: From brong@<parent>, signed by mail.<parent> (dns.json gives it
+    test2's sel1 key); the From domain's Domain Policy Record decides."""
+    return _from_chain(b"brong@" + parent.encode(), d=f"mail.{parent}",
+                       key_dom="test2.dkim2.com", mf=f"brong@mail.{parent}")
+
+
+def build_positive_from_subdomain():
+    return _subdomain_from("open.dkim2.com")             # no record
+
+
+def build_positive_from_subdomain_noflag():
+    return _subdomain_from("noflag.dkim2.com")           # v=DKIM1; f=foo
+
+
+def build_positive_from_subdomain_foreign():
+    # Only non-v=DKIM1 records at _domainkey.foreign; a v=spf1 record beside
+    # mail.foreign's key, ignored before counting (E4).
+    return _subdomain_from("foreign.dkim2.com")
+
+
+def build_from_subdomain_strict():
+    return _subdomain_from("strict.dkim2.com")           # v=DKIM1; f=strict
+
+
+def build_from_subdomain_strict_list():
+    return _subdomain_from("strictlist.dkim2.com")       # f=foo : strict
+
+
+def build_from_subdomain_broken_policy():
+    return _subdomain_from("broken.dkim2.com")           # f= twice: fails closed
+
+
+def build_from_subdomain_multiple_policy():
+    return _subdomain_from("multi.dkim2.com")            # two v=DKIM1 records
+
+
+def build_from_sibling():
+    """E3: d=mail.open.dkim2.com, From other.open.dkim2.com: a sibling
+    never matches either way, and no policy is looked up."""
+    return _from_chain(b"brong@other.open.dkim2.com", d="mail.open.dkim2.com",
+                       key_dom="test2.dkim2.com", mf="brong@mail.open.dkim2.com")
+
+
+def build_from_two_addresses():
+    return _from_chain(b"brong@test1.dkim2.com, other@test1.dkim2.com")
+
+
+def build_from_two_fields():
+    h, b = load_base()
+    h = [x for f in h for x in ([f, b"From: other@test1.dkim2.com"]
+                                if f.lower().startswith(b"from:") else [f])]
+    return _chain([(h, b, None)], [dict(d=DOM, m=1, mf=MF, rt=RT)])
+
+
+def build_from_domain_literal():
+    return _from_chain(b"brong@[192.0.2.1]")
+
+
+def build_from_domain_literal_ipv6():
+    """E3.1: an IPv6 domain literal; its ":"s are inside the literal, not a
+    group, so it is a domain literal, not "not authentic"."""
+    return _from_chain(b"Bron <brong@[IPv6:2001:db8::1]>")
+
+
+def build_exploded_i1():
+    """E6: i=1 carrying f=exploded, otherwise valid. The signer API drops
+    the flag at i=1, so the field is signed here by hand."""
+    h, b = load_base()
+    mi = _mi_raw(h, b, 1)
+    priv, alg = ds.load_private_key(key("sel1"))
+    mf = ds.b64(ds.to_rfc5321_path(MF).encode())
+    rt = ds.b64(ds.to_rfc5321_path(RT[0]).encode())
+    head = f"DKIM2-Signature: i=1; m=1; t={TS}; d={DOM}; mf={mf}; rt={rt}; "
+    sig = ds.compute_signature([mi], [], head + "s=sel1:rsa-sha256:; f=exploded;", priv, alg)
+    sig_hdr = head + f"s=sel1:rsa-sha256:{ds.b64(sig)}; f=exploded;"
+    out = sig_hdr.encode() + b"\r\n" + mi.encode() + b"\r\n"
+    return out + b"".join(x + b"\r\n" for x in h) + b"\r\n" + b
+
+
+def build_positive_from_trailing_dot():
+    """-07 contract C3: domain_of lowercases and strips one trailing dot,
+    for a From as for mf=/rt=: From brong@Test1.DKIM2.com. is Authentic for
+    d=test1.dkim2.com."""
+    return _from_chain(b"Bron <brong@Test1.DKIM2.com.>")
+
+
+def build_null_two():
+    """E2: null body Recipes at m=2 and m=3: the lowest is named, as the
+    instances are checked in ascending m=."""
+    headers, body = load_base()
+    h2 = _subject_prefixed(headers, b"list")
+    b2 = body + b"rewritten by list\r\n"
+    return _null_body_chain([
+        (headers, body),
+        (h2, b2, _null_body_recipe),
+        (_subject_prefixed(h2, b"fwd"), b2 + b"rewritten again\r\n", _null_body_recipe),
+    ])
+
+
+def build_key_rsa_too_short():
+    """E5: signed with a 512-bit RSA key published as rsa512 (test zone)."""
+    h, b = load_base()
+    mi = _mi_raw(h, b, 1)
+    priv, alg = ds.load_private_key(key("rsa512"))
+    sig = ds.build_dkim2_signature([], [], mi, DOM, "rsa512", priv, alg,
+                                   mailfrom=MF, rcptto=RT, timestamp=TS)
+    return sig.encode() + b"\r\n" + mi.encode() + b"\r\n" + \
+        b"".join(x + b"\r\n" for x in h) + b"\r\n" + b
+
+
+
 FIXTURES = {
     "signature-gap.eml": build_signature_gap,
     "instance-gap.eml": build_instance_gap,
@@ -1864,10 +2009,10 @@ FIXTURES = {
     "recipe-overlapping-ranges.eml": build_recipe_overlapping,
     "positive-control-u-literal.eml": build_positive_u_literal,
     "positive-control-nd-bridge.eml": build_positive_nd_bridge,
-    "positive-control-null-body.eml": build_positive_null_body,
-    "positive-control-null-body-over-recipe.eml": build_positive_null_body_over_recipe,
+    "null-body.eml": build_positive_null_body,
+    "null-body-over-recipe.eml": build_positive_null_body_over_recipe,
     "null-body-forged-history.eml": build_null_body_forged_history,
-    "positive-control-null-below.eml": build_positive_null_below,
+    "null-below.eml": build_positive_null_below,
     "positive-control-empty-body-chain.eml": build_positive_empty_body,
     "empty-body-forged-history.eml": build_empty_body_forged_history,
     "malformed-body-recipe-below-null.eml": build_malformed_body_recipe_below_null,
@@ -1960,6 +2105,23 @@ FIXTURES = {
     "uppercase-tag.eml": build_uppercase_tag,
     "positive-control-uppercase-twin-tag.eml": build_positive_uppercase_twin_tag,
     "multi-key-error-above-bad-signature.eml": build_multi_key_error_above_bad_signature,
+    # draft -09
+    "positive-control-from-subdomain.eml": build_positive_from_subdomain,
+    "positive-control-from-subdomain-noflag.eml": build_positive_from_subdomain_noflag,
+    "positive-control-from-subdomain-foreign.eml": build_positive_from_subdomain_foreign,
+    "from-subdomain-strict.eml": build_from_subdomain_strict,
+    "from-subdomain-strict-list.eml": build_from_subdomain_strict_list,
+    "from-subdomain-broken-policy.eml": build_from_subdomain_broken_policy,
+    "from-subdomain-multiple-policy.eml": build_from_subdomain_multiple_policy,
+    "from-sibling.eml": build_from_sibling,
+    "from-two-addresses.eml": build_from_two_addresses,
+    "from-two-fields.eml": build_from_two_fields,
+    "from-domain-literal.eml": build_from_domain_literal,
+    "from-domain-literal-ipv6.eml": build_from_domain_literal_ipv6,
+    "exploded-i1.eml": build_exploded_i1,
+    "key-rsa-too-short.eml": build_key_rsa_too_short,
+    "null-two.eml": build_null_two,
+    "positive-control-from-trailing-dot.eml": build_positive_from_trailing_dot,
 }
 
 

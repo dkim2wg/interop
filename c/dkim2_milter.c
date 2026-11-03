@@ -22,10 +22,9 @@ static struct {
     char *privkey_path;
     char *alg;
     char *authservid;    /* for Authentication-Results */
-    int   allow_null_body_recipe; /* sign a chain with an UNSIGNED MI with a null body Recipe */
 } g_cfg;
 
-/* -08 §12.5 hint: a list manager that sends each recipient its own copy
+/* -09 §12.5 hint: a list manager that sends each recipient its own copy
    marks every copy with this header so the signer adds f=exploded. Its
    presence (any value; "yes" is what is sent) is the request; signing
    milters delete it before signing. */
@@ -223,7 +222,7 @@ static int add_field(SMFICTX *ctx, const char *name, char *value) {
 }
 
 /* The X-DKIM2-Exploded hints, last first (the indexes of the ones still to
-   go do not move). An X- field is outside every hash (-08 §4), so one that
+   go do not move). An X- field is outside every hash (-09 §4), so one that
    cannot be removed is only logged. */
 static void del_hints(SMFICTX *ctx, int n) {
     for (int k = n; k >= 1; k--) del_field(ctx, EXPLODED_HINT, k);
@@ -262,7 +261,7 @@ static sfsistat cb_eom(SMFICTX *ctx) {
 
         smfi_insheader(ctx, 0, "Authentication-Results", ar_value);
 
-        /* -08 §13.3: signatures missing or not verifying are 550 5.7.1, a
+        /* -09 §13.3: signatures missing or not verifying are 550 5.7.1, a
            key that could not be fetched (DNS) 451 4.7.5, with the -08
            string as the reply text. */
         if (result.status == DKIM2_FAIL || result.status == DKIM2_PERMERROR) {
@@ -283,17 +282,16 @@ static sfsistat cb_eom(SMFICTX *ctx) {
             .selector     = g_cfg.selector,
             .privkey_path = g_cfg.privkey_path,
             .alg          = g_cfg.alg,
-            .allow_null_body_recipe = g_cfg.allow_null_body_recipe,
             .exploded     = s->n_exploded_hint > 0,
         };
         char *mi_val = NULL, *sig_val = NULL;
         if (dkim2_do_sign(c, &cfg, &mi_val, &sig_val) != 0) {
             /* Signer refusal: an existing DKIM2 chain that does not verify
-               (or a null body Recipe on an unsigned instance, without
-               allow_null_body_recipe), or a From that is not Authentic for
+               (a null body Recipe an upstream signature covers included:
+               -09 contract E2), or a From that is not Authentic for
                our domain. Every Message-Instance's body and header hashes
                are checked, by the plan fed in cb_body.
-               With an upstream DKIM2-Signature, -08 §12/§13: the message is
+               With an upstream DKIM2-Signature, -09 §12/§13: the message is
                not to be signed or forwarded as it is, so it is rejected
                550 5.7.1 with the reason. Without one (as the Perl milters
                do) it is delivered unsigned: the hint and any unsigned
@@ -318,7 +316,7 @@ static sfsistat cb_eom(SMFICTX *ctx) {
                 }
                 del_hints(ctx, s->n_exploded_hint);
                 /* An unsigned Message-Instance left on the message would go
-                   out as an invalid DKIM2 field (-08 §13): tempfail, which
+                   out as an invalid DKIM2 field (-09 §13): tempfail, which
                    discards this transaction's changes, rather than send it. */
                 for (int k = s->n_mi_fields; k >= 1; k--)
                     if (del_field(ctx, "Message-Instance", k) < 0) return SMFIS_TEMPFAIL;
@@ -395,8 +393,13 @@ static void load_config(const char *path) {
         else if (strcmp(k, "privkey")    == 0) g_cfg.privkey_path = strdup(v);
         else if (strcmp(k, "alg")        == 0) g_cfg.alg        = strdup(v);
         else if (strcmp(k, "authservid") == 0) g_cfg.authservid = strdup(v);
-        else if (strcmp(k, "allow_null_body_recipe") == 0)
-            g_cfg.allow_null_body_recipe = (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
+        else if (strcmp(k, "allow_null_body_recipe") == 0) {
+            /* Deprecated (-09, contract E2): a null body Recipe on this
+               hop's own unsigned instance is always signed over. Warn only
+               when it is set to a true value. */
+            if (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T')
+                fprintf(stderr, "config: allow_null_body_recipe is deprecated and does nothing\n");
+        }
     }
     fclose(f);
 

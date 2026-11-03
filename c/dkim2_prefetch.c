@@ -151,7 +151,8 @@ static int add_name(dkim2_prefetch_t *pf, const char *qname) {
 
 dkim2_prefetch_t *dkim2_prefetch_start(const dkim2_ctx_t *ctx) {
     /* Keys from dns.json or a test seam are not DNS: nothing to overlap. */
-    if (dkim2_dns_override || (dkim2_dns_query_hook && !dkim2_prefetch_query_hook))
+    if (dkim2_dns_override || dkim2_dns_txt_hook ||
+        (dkim2_dns_query_hook && !dkim2_prefetch_query_hook))
         return NULL;
     /* The signatures by descending i= (top first): the top one's keys are
        the ones most surely needed. dkim2_ctx_add_field keeps at most

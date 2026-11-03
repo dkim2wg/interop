@@ -9,13 +9,13 @@ typedef struct tag_entry {
 typedef struct {
     tag_entry_t *head;
     int duplicate; /* nonzero if a tag name appeared more than once, compared
-                    exactly (-08 §8) */
+                    exactly (-09 §8) */
     int syntax_error; /* nonzero if a non-empty fragment is not a well-formed
-                         tag-spec (-08 §8) */
+                         tag-spec (-09 §8) */
 } taglist_t;
 
 /* Parse "name=value; name=value; ..." tag list.
-   Tag names are kept as written (-08 §8, contract D10). Values have leading/trailing whitespace stripped.
+   Tag names are kept as written (-09 §8, contract D10). Values have leading/trailing whitespace stripped.
    errp (if non-NULL) is set to a static error string on failure.
    Returns allocated taglist_t, or NULL on allocation failure. */
 taglist_t *tagparse(const char *input, const char **errp);

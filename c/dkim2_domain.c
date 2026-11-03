@@ -197,7 +197,10 @@ static int strip_cfws(const char *s, size_t n, char *out, size_t outlen) {
     return 0;
 }
 
-int dkim2_from_domain(const char *value, char *out, size_t outlen) {
+/* dkim2_from_domain, with *lit set when the one mailbox's domain is a
+   literal (the result is then -1). */
+static int from_domain_lit(const char *value, char *out, size_t outlen, int *lit_out) {
+    *lit_out = 0;
     if (!value) return -1;
     size_t n = strlen(value);
     const char *ang = NULL, *ang_end = NULL;
@@ -217,6 +220,12 @@ int dkim2_from_domain(const char *value, char *out, size_t outlen) {
         }
         if (c == '"') { quote = 1; continue; }
         if (c == '(') { depth = 1; continue; }
+        if (c == '[') {                 /* a domain literal: "[IPv6:...]" */
+            const char *e = memchr(value + i, ']', n - i);
+            if (!e) return -1;
+            i = (size_t)(e - value);
+            continue;
+        }
         if (in_angle) {
             if (c == '>') { in_angle = 0; ang_end = value + i; }
             else if (c == '<') return -1;
@@ -243,6 +252,34 @@ int dkim2_from_domain(const char *value, char *out, size_t outlen) {
     if (!at || at == addr || !at[1]) return -1;
     char d[512];
     int lit = 0;
-    if (dkim2_domain_of(addr, d, sizeof d, &lit) != 0 || lit) return -1;
+    if (dkim2_domain_of(addr, d, sizeof d, &lit) != 0) return -1;
+    if (lit) { *lit_out = 1; return -1; }
     return dkim2_to_alabel(d, out, outlen);
+}
+
+int dkim2_from_domain(const char *value, char *out, size_t outlen) {
+    int lit;
+    return from_domain_lit(value, out, outlen, &lit);
+}
+
+int dkim2_from_classify(const char *value, char *out, size_t outlen) {
+    if (!value) return DKIM2_FROM_NOT_MAILBOX;
+    /* A ',' outside quoted strings and comments: a list of addresses, or
+       a group of more than one. */
+    int depth = 0, quote = 0;
+    for (const char *p = value; *p; p++) {
+        if (quote) {
+            if (*p == '\\' && p[1]) p++;
+            else if (*p == '"') quote = 0;
+        } else if (depth) {
+            if (*p == '\\' && p[1]) p++;
+            else if (*p == '(') depth++;
+            else if (*p == ')') depth--;
+        } else if (*p == '"') quote = 1;
+        else if (*p == '(') depth = 1;
+        else if (*p == ',') return DKIM2_FROM_MULTI;
+    }
+    int lit;
+    if (from_domain_lit(value, out, outlen, &lit) == 0) return DKIM2_FROM_OK;
+    return lit ? DKIM2_FROM_LITERAL : DKIM2_FROM_NOT_MAILBOX;
 }

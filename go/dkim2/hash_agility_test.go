@@ -13,7 +13,7 @@ func TestHashAlgRegistry(t *testing.T) {
 			t.Errorf("HashAlg(%q) must be supported (§3.1)", n)
 		}
 	}
-	// -08 §9.3 writes the names %s"sha256": case sensitive.
+	// §9.3 writes the names %s"sha256": case sensitive.
 	for _, n := range []string{"x-whirlpool", "SHA256", "Sha512"} {
 		if _, ok := HashAlg(n); ok {
 			t.Errorf("HashAlg(%q): unknown algorithms must not resolve", n)
@@ -43,7 +43,7 @@ func TestParseHashSetsKeepsAlgCase(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got[0].Alg != "SHA512" {
-		t.Errorf("alg = %q, want SHA512 as written (-08 §9.3 %%s\"sha512\" is case sensitive)", got[0].Alg)
+		t.Errorf("alg = %q, want SHA512 as written (§9.3 %%s\"sha512\" is case sensitive)", got[0].Alg)
 	}
 }
 
@@ -75,7 +75,7 @@ func TestVerifyMIHashesFailsClosedOnUnimplementedAlgorithm(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a fail-closed error, got nil (pass)")
 	}
-	want := "PERMERROR: Message-Instance m=1 algorithm x-whirlpool unknown" // -08 §14.7 (contract D4)
+	want := "PERMERROR: Message-Instance m=1 algorithm x-whirlpool unknown" // §14.7 (contract D4)
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
 	}

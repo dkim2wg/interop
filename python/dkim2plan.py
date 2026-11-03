@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 planned chain walk - draft-ietf-dkim-dkim2-spec-08
+DKIM2 planned chain walk - draft-ietf-dkim-dkim2-spec-09
 
 The verifier checks every Message-Instance in the chain: the top one against
 the message, then each lower one against the message as the Recipes above it
@@ -54,7 +54,7 @@ def mi_hash_algs(mi_hdr: str) -> set[str]:
     colon = mi_hdr.find(":")
     h = _extract_tag(mi_hdr[colon + 1:], "h")
     algs = set()
-    # -08 §9.3: "|" groups of "," lists; names are case-sensitive.
+    # -09 §9.3: "|" groups of "," lists; names are case-sensitive.
     for item in re.split(r"[,|]", h or ""):
         parts = "".join(item.split()).split(":")
         if len(parts) == 3 and parts[0] in _HASHERS:
@@ -162,7 +162,7 @@ class HeaderPlan:
         return data
 
     def digest(self, state: dict, alg: str) -> bytes:
-        """Header hash of one instance (-08 §6.2): names in byte order,
+        """Header hash of one instance (-09 §6.2): names in byte order,
         each name's fields bottom-up; skip-listed names are not hashed."""
         key = (id(state), alg)
         hit = self._digests.get(key)

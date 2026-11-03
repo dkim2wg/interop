@@ -1,4 +1,4 @@
-// WebCrypto wrappers for DKIM2. Built from draft-ietf-dkim-dkim2-spec-08 §3.
+// WebCrypto wrappers for DKIM2. Built from draft-ietf-dkim-dkim2-spec-09 §3.
 import { b64ToBytes, bytesToB64 } from './b64.js';
 
 const subtle = globalThis.crypto.subtle;
@@ -42,9 +42,10 @@ export async function verifyRsa(keyB64, sigBytes, msgBytes) {
   } catch (e) {
     throw new Error('key-malformed', { cause: e });
   }
-  // -08 §3.2: Verifiers MUST NOT validate signatures with keys shorter than
-  // 1024 bits, even if the maths would verify: such a key is malformed.
-  if (key.algorithm.modulusLength < 1024) throw new Error('key-malformed');
+  // -09 §3.2, §14.6: Verifiers MUST NOT validate signatures with keys
+  // shorter than 1024 bits, even if the maths would verify: such a key is
+  // "too short" (contract E5).
+  if (key.algorithm.modulusLength < 1024) throw new Error('key-short');
   return subtle.verify({ name: 'RSASSA-PKCS1-v1_5' }, key, sigBytes, msgBytes);
 }
 
@@ -83,7 +84,7 @@ function pkcs1ToSpki(pkcs1) {
 
 export async function verifyEd25519(rawPubB64, sigBytes, hashBytes) {
   const rawPub = b64ToBytes(rawPubB64);
-  // -08 §14.5: an Ed25519 key is exactly 32 octets (so a DER
+  // -09 §14.5: an Ed25519 key is exactly 32 octets (so a DER
   // SubjectPublicKeyInfo is malformed too).
   if (rawPub.length !== 32) throw new Error('key-malformed');
   let key;

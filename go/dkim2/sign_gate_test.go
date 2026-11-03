@@ -92,29 +92,29 @@ func TestGateBrokenMIChainRefused(t *testing.T) {
 	wantRefused(t, dropTopSig(t, m), false, "")
 }
 
-// An unsigned null top (i=1 covers only m=1) is one this hop would
-// introduce: refused unless the option is set.
-func TestGateNullTopRefusedUnlessAllowed(t *testing.T) {
+// An unsigned null top (i=1 covers only m=1) is this hop's own: signed
+// over, with or without the deprecated option (contract E2).
+func TestGateNullTopSigns(t *testing.T) {
 	m := dropTopSig(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe))
-	wantRefused(t, m, false, "unsigned top Message-Instance m=2 has a null body Recipe")
-	wantSigned(t, m, true)
-}
-
-// A null top the upstream domain already signed (i=2, m=2) is extended
-// without the option: a forwarder relaying a list post unchanged.
-func TestGateSignedNullTopSigns(t *testing.T) {
-	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
 	wantSigned(t, m, false)
 	wantSigned(t, m, true)
 }
 
+// A null top the upstream domain already signed (i=2, m=2) fails upstream
+// verification, and is refused with or without the option.
+func TestGateSignedNullTopRefused(t *testing.T) {
+	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
+	wantRefused(t, m, false, "PERMERROR: Message-Instance m=2 has a null recipe")
+	wantRefused(t, m, true, "PERMERROR: Message-Instance m=2 has a null recipe")
+}
+
 // A signature with m=k covers instances 1..k.  An unsigned null m=2 under an
 // unsigned ordinary m=3 is not the top any more, but nothing covers it (the
-// highest valid m= is 1): refused without the option, like a null top.
-func TestGateNullBelowUnsignedTopRefusedUnlessAllowed(t *testing.T) {
+// highest valid m= is 1): this hop's own, signed over like a null top.
+func TestGateNullBelowUnsignedTopSigns(t *testing.T) {
 	m2 := dropTopSig(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe))
 	m := dropTopSig(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull))
-	wantRefused(t, m, false, "unsigned Message-Instance m=2 has a null body Recipe")
+	wantSigned(t, m, false)
 	wantSigned(t, m, true)
 
 	// The walk still checks the history under both unsigned instances.
@@ -124,12 +124,12 @@ func TestGateNullBelowUnsignedTopRefusedUnlessAllowed(t *testing.T) {
 }
 
 // The null m=2 is covered by a valid i=2/m=2; only an ordinary m=3 is
-// unsigned on top of it: no option needed.
-func TestGateNullBelowSignedSigns(t *testing.T) {
+// unsigned on top of it: the signed null fails upstream verification.
+func TestGateNullBelowSignedRefused(t *testing.T) {
 	m2 := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
 	m := dropTopSig(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull))
-	wantSigned(t, m, false)
-	wantSigned(t, m, true)
+	wantRefused(t, m, false, "PERMERROR: Message-Instance m=2 has a null recipe")
+	wantRefused(t, m, true, "PERMERROR: Message-Instance m=2 has a null recipe")
 }
 
 func TestGateForgedNullTopRefusedEvenWithOption(t *testing.T) {
@@ -172,7 +172,7 @@ func TestGateMIOnlyBrokenRefused(t *testing.T) {
 
 func TestGateMIOnlyNull(t *testing.T) {
 	m := miOnly(t, subjRecipe, "new body\r\n")
-	wantRefused(t, m, false, "null")
+	wantSigned(t, m, false)
 	wantSigned(t, m, true)
 }
 
@@ -221,8 +221,8 @@ func TestVerifyDuplicateMIVersion(t *testing.T) {
 	}
 	dup := append(append(append([]byte{}, hop1[:j]...), hop1[i:j]...), hop1[j:]...)
 	_, err := Verify(bytes.NewReader(dup), ndTestFetcher(t), VerifyOptions{SkipTimestampCheck: true})
-	if err == nil || !strings.Contains(err.Error(), "PERMERROR: Message-Instance m=1 appears more than once") {
-		t.Fatalf("want Message-Instance m=1 appears more than once, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "PERMERROR: Message-Instance m=1 is duplicated") {
+		t.Fatalf("want Message-Instance m=1 is duplicated, got %v", err)
 	}
 }
 

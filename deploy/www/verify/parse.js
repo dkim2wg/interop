@@ -1,4 +1,4 @@
-// RFC5322 message parsing and DKIM2 tag-value parsing. Built from draft-ietf-dkim-dkim2-spec-08.
+// RFC5322 message parsing and DKIM2 tag-value parsing. Built from draft-ietf-dkim-dkim2-spec-09.
 import { bytesToBinary } from './b64.js';
 
 function toCRLF(raw) {
@@ -202,7 +202,7 @@ export const MAX_CHAIN_NUMBER = 100;
 // error of the field (named by its own i=, or m= for a Message-Instance:
 // `id`, the raw value). Then at most three digits and 1..MAX_CHAIN_NUMBER
 // (so "01" and "001" are 1), and no more than MAX_CHAIN_LENGTH: local
-// limits, with no -08 string of their own, named in the C6 form (a
+// limits, with no -09 string of their own, named in the C6 form (a
 // signature's m= after its i=: "i=2 m=101 exceeds ..."). A missing value (undefined) is
 // left to the callers.
 export function chainNumberError(field, tag, v, id = v) {

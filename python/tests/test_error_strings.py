@@ -60,7 +60,7 @@ def test_mf_vs_d_canonical():
     sigs = [_sig(f"i=1; m=1; t=1; d=fwd.example; mf={_b64('<a@b.example>')}; "
                  f"rt={_b64('<rcpt@dest.example>')}; s=s:rsa-sha256:AAAA")]
     assert _chain_custody_errors(sigs) == [
-        "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"]
+        "FAIL: DKIM2-Signature i=1 mf= and d= do not match"]
 
 
 def test_mf_vs_d_skipped_for_null_mf():

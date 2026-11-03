@@ -33,7 +33,7 @@ int main(void) {
     assert(strcmp(mi->hsets[1].hdr_hash, "hh2A") == 0);
     dkim2_mi_free(mi);
 
-    /* -08 §9.3: an algorithm MUST NOT be present more than once */
+    /* -09 §9.3: an algorithm MUST NOT be present more than once */
     assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB,sha256:CCCC:DDDD;") == NULL);
     /* ...detected case-insensitively (RFC 5234) */
     assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB,SHA256:CCCC:DDDD;") == NULL);
@@ -67,7 +67,7 @@ int main(void) {
     assert(strcmp(sig->ssets[0].sig_b64, "AAAA") == 0);
     dkim2_sig_free(sig);
 
-    /* Folding whitespace inside tag values (-08 §2.12): FWS may appear
+    /* Folding whitespace inside tag values (-09 §2.12): FWS may appear
        inside a base64 string and around the colons of an s= item, and MUST be
        ignored when the value is used.  A fold between the Selector colon and
        the algorithm token used to leave CRLF+TAB glued to the algorithm name. */
@@ -112,7 +112,7 @@ int main(void) {
     dkim2_sig_free(sig);
 
     /* i= must be a positive integer in ASCII digits; anything else is a
-       PERMERROR saying so; a missing required tag is "tag=<y> missing" (-08 §14.2). */
+       PERMERROR saying so; a missing required tag is "tag=<y> missing" (-09 §14.2). */
     {
         static const char *bad_i[] = {
             "m=2; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example",
@@ -257,9 +257,10 @@ int main(void) {
         "s=sel1:rsa-sha256:AAAA");
     assert(sig == NULL);
 
-    /* -08 §10.10: f= flags parsed and round-tripped (incl. feedhere) */
+    /* -09 §10.10: f= flags parsed and round-tripped (incl. feedhere);
+       i=2, since i=1 MUST NOT carry "exploded" (§12.5, contract E6) */
     sig = dkim2_sig_parse(
-        "i=1; m=1; t=1; d=ex.example; "
+        "i=2; m=1; t=1; d=ex.example; "
         "mf=PHVzZXJAZXhhbXBsZS5jb20+; rt=PGFAZXhhbXBsZS5jb20+; "
         "f=exploded,feedhere; s=sel1:rsa-sha256:AAAA");
     assert(sig != NULL);
@@ -275,13 +276,13 @@ int main(void) {
     }
     dkim2_sig_free(sig);
 
-    /* --- -08 §10.9: DKIM2-Signature s= duplicate/limit checks, made by
+    /* --- -09 §10.9: DKIM2-Signature s= duplicate/limit checks, made by
        the parser (dkim2_sig_parse_err) --- */
     char errbuf[256];
     static const struct { const char *s, *err; } dup_cases[] = {
         { "sel1:rsa-sha256:AAAA,sel2:ed25519-sha256:BBBB", "" },
         /* a Selector MUST NOT repeat, detected case-insensitively (a
-           Selector is a Domain, -08 §3.6) */
+           Selector is a Domain, -09 §3.6) */
         { "sel1:rsa-sha256:AAAA,sel1:ed25519-sha256:BBBB", "PERMERROR: DKIM2-Signature i=3 has a duplicate selector" },
         { "Sel1:rsa-sha256:AAAA,sel1:ed25519-sha256:BBBB", "PERMERROR: DKIM2-Signature i=3 has a duplicate selector" },
         /* any number of one algorithm with distinct Selectors (-08) */

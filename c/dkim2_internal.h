@@ -17,10 +17,10 @@ typedef struct dkim2_hashset {
     char *alg;          /* "sha256" */
     char *hdr_hash;     /* base64 header hash */
     char *body_hash;    /* base64 body hash */
-    int group;          /* which "|" group (hash-all) it is in, from 0 (-08 §9.3) */
+    int group;          /* which "|" group (hash-all) it is in, from 0 (-09 §9.3) */
 } dkim2_hashset_t;
 
-/* Parsed Message-Instance header (-08 §9) */
+/* Parsed Message-Instance header (-09 §9) */
 typedef struct dkim2_mi {
     int m;                      /* m= revision number */
     char *r_raw;                /* r= base64 recipe (NULL if absent) */
@@ -37,10 +37,10 @@ typedef struct dkim2_sigset {
     char *selector;
     char *alg;          /* "rsa-sha256" or "ed25519-sha256" */
     char *sig_b64;      /* base64 signature value */
-    int group;          /* which "|" group (sig-all) it is in, from 0 (-08 §10.9) */
+    int group;          /* which "|" group (sig-all) it is in, from 0 (-09 §10.9) */
 } dkim2_sigset_t;
 
-/* Parsed DKIM2-Signature header (-08 §10) */
+/* Parsed DKIM2-Signature header (-09 §10) */
 typedef struct dkim2_sig {
     int i;                  /* i= sequence number */
     int m;                  /* m= highest MI signed */
@@ -49,7 +49,7 @@ typedef struct dkim2_sig {
     char *mf;               /* mf= decoded MAIL FROM e.g. "<user@example.com>" */
     char **rt;              /* rt= decoded RCPT TO values (NULL-terminated) */
     char *d;                /* d= signing domain */
-    char *nd;               /* nd= next-domain (-08 §10.7); NULL if absent */
+    char *nd;               /* nd= next-domain (-09 §10.7); NULL if absent */
     dkim2_sigset_t *ssets;  /* s= signature sets, in s= order */
     int n_ssets;            /* at most DKIM2_MAX_SIGNATURES */
     int n_groups;           /* "|" groups (sig-any of sig-alls; 0 or 1: one) */
@@ -99,7 +99,7 @@ typedef struct dkim2_ctx {
     int n_mi_fields, n_sig_fields;
 
     /* Body hash — computed incrementally, never buffered.
-       Holds every implemented algorithm's digest (-08 §3.1). */
+       Holds every implemented algorithm's digest (-09 §3.1). */
     dkim2_digests_t body_digests;               /* valid once body_hasher is NULL */
     dkim2_body_hasher_t *body_hasher;           /* non-NULL during body accumulation */
 

@@ -217,23 +217,22 @@ for (const [what, layout, text] of [
   });
 }
 
-// --- D9: fullyVerified --------------------------------------------------------
+// --- D9, as -09 (contract E2) replaces it: fullyVerified ---------------------
 
-test('D9: a pass is fully verified', async () => {
+test('D9/E2: a pass is fully verified', async () => {
   const rep = await verify(await oneHop());
   assertPass(rep);
   assert.equal(rep.fullyVerified, true);
 });
 
-test('D9: a null body Recipe above m=1 passes, but is not fully verified', async () => {
+test('D9/E2: a null body Recipe above m=1 is a PERMERROR now, never a pass', async () => {
   const msg = await signChain([
     { fields: FIELDS, body: BODY },
     { fields: FIELDS, body: 'a whole new body\r\n', recipe: { b: null } },
   ], [one({ rt: ['<list@example.com>'] }), { d: 'example.com', m: 2, mf: '<list@example.com>', rt: ['<c@example.net>'] }]);
   const rep = await verify(msg);
-  assertPass(rep);
+  assertPrimary(rep, 'permerror', 'PERMERROR: Message-Instance m=2 has a null recipe');
   assert.equal(rep.fullyVerified, false);
-  assert.match(rep.summary, /not fully verified: body not checked below m=2 \(null body Recipe\)/);
 });
 
 test('D9: a result that is not a pass is never fully verified', async () => {
@@ -260,14 +259,10 @@ test('D7: an Ed25519 p= that is not exactly 32 octets is malformed', async () =>
   }
 });
 
-test('D7: an RSA key shorter than 1024 bits, or base64 that is no RSA key, is malformed', async () => {
-  const rsa512 = subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 512,
-    publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+test('D7: base64 that is no RSA key is malformed (an RSA key under 1024 bits: spec09 E5)', async () => {
   const msg = edit(await oneHop(), ':ed25519-sha256:', ':rsa-sha256:');
-  for (const p of [await spki(rsa512), 'AAAAAAAA']) {
-    assertPrimary(await verify(msg, { fetchKey: withKey({ k: 'rsa', p }) }), 'permerror',
-      'PERMERROR: DKIM2-Signature i=1 public key sel is malformed');
-  }
+  assertPrimary(await verify(msg, { fetchKey: withKey({ k: 'rsa', p: 'AAAAAAAA' }) }), 'permerror',
+    'PERMERROR: DKIM2-Signature i=1 public key sel is malformed');
 });
 
 // --- D6, D10: Recipe errors ---------------------------------------------------
@@ -281,7 +276,7 @@ const twoHop = (recipe) => signChain([
   { fields: FIELDS, body: BODY, recipe },
 ], [oneTo(), two()]);
 const INVALID_JSON = 'PERMERROR: Message-Instance m=2 contains invalid JSON';
-const stepInvalid = (path) => `PERMERROR: Message-Instance m=2 Recipe ${path} is invalid`;
+const stepInvalid = (path) => `PERMERROR: Message-Instance m=2 recipe ${path} is invalid`;
 
 test('control: the two-hop canvas passes', async () => {
   assertPass(await verify(await twoHop({ h: { subject: [{ c: [1, 1] }] }, b: [{ c: [1, 1] }] })));
@@ -308,7 +303,7 @@ for (const [recipe, path] of [
   [{ h: { subject: [{ e: 1 }] }, b: [{ c: [1, 1] }, { d: [] }] }, 'b[1]'],
   [{ h: { to: [{ x: 1 }], subject: [{ x: 1 }] } }, 'h.subject[0]'],
 ]) {
-  test(`D6: ${JSON.stringify(recipe)} is "Recipe ${path} is invalid"`, async () => {
+  test(`D6: ${JSON.stringify(recipe)} is "recipe ${path} is invalid" (-09)`, async () => {
     assertPrimary(await verify(await twoHop(recipe)), 'permerror', stepInvalid(path));
   });
 }

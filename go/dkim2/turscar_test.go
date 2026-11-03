@@ -7,7 +7,7 @@ package dkim2
 //
 // The vectors target spec-02.  Most of their rules (any tag order, single
 // occurrence, FWS, the >=1024-bit key requirement of §3.2) still hold in
-// -08 and apply directly; the vectors -08 reverses are listed in
+// -09 and apply directly; the vectors -08 reversed are listed in
 // turscarKnownDivergence below. A tiny hand-rolled reader
 // pulls the few fields we need so the test needs no external TOML dependency.
 
@@ -30,7 +30,7 @@ var turscarKnownDivergence = func() map[string]string {
 	m := map[string]string{
 		"tags_mixed_case": "-08 (contract D10): an upper-case tag name is an unknown tag, " +
 			"so I= is not i= and the signature has no i=",
-		"algorithm_with_future": "-08 §14.6 (contract D3): an unimplemented algorithm in a \",\" " +
+		"algorithm_with_future": "§14.6 (contract D3): an unimplemented algorithm in a \",\" " +
 			"group is a PERMERROR item, not ignored; only a \"|\" alternative overrides it",
 	}
 	for _, tag := range []string{"d", "f", "i", "m", "mf", "n", "rt", "t"} {

@@ -1,9 +1,10 @@
 /* Signer gate: dkim2_sign_message / dkim2_do_sign must verify an existing
    DKIM2 chain (outbound mode: the unsigned top Message-Instance is the one
-   being signed) before extending it, and refuse a null body Recipe on any
-   UNSIGNED instance (m= above every valid DKIM2-Signature's m=, top or not)
-   unless allow_null_body_recipe is set; a null already signed upstream
-   signs.
+   being signed) before extending it. Draft -09 (contract E2): a null body
+   Recipe on an UNSIGNED instance (m= above every validly-numbered
+   DKIM2-Signature's m=, top or not) is signed over; a null already signed
+   upstream is "has a null recipe" and refused. allow_null_body_recipe is
+   deprecated and changes nothing, so every case runs with it 0 and 1.
 
    Usage: test_signer_gate <fixture-dir> <dns.json> <key.pem>
    Fixtures come from util/build-signer-gate-fixtures.py. */
@@ -278,43 +279,48 @@ int main(int argc, char **argv) {
     expect("broken-signature.eml", 1, 0, "not signing: upstream DKIM2 chain");
     expect("broken-mi-chain.eml",  0, 0, "not signing: Message-Instance chain");
     expect("broken-mi-chain.eml",  1, 0, "not signing: Message-Instance chain");
-    expect("null-top.eml",         0, 0, "unsigned top Message-Instance m=2 has a null body Recipe");
+    expect("null-top.eml",         0, 1, NULL);
     expect("null-top.eml",         1, 1, NULL);
     expect("null-top-forged.eml",  0, 0, "not signing");
     expect("null-top-forged.eml",  1, 0, "not signing");
-    /* the null m=2 is already signed i=2/m=2 upstream: no option needed */
-    expect("null-top-signed.eml",  0, 1, NULL);
-    expect("null-top-signed.eml",  1, 1, NULL);
+    /* the null m=2 is already signed i=2/m=2 upstream: that chain fails */
+    expect("null-top-signed.eml",  0, 0, "PERMERROR: Message-Instance m=2 has a null recipe");
+    expect("null-top-signed.eml",  1, 0, "PERMERROR: Message-Instance m=2 has a null recipe");
     /* A signature with m=k covers 1..k: an unsigned null m=2 under an
        unsigned ordinary m=3 is still uncovered (highest valid m= is 1). */
-    expect("null-below-unsigned-top.eml", 0, 0, "unsigned Message-Instance m=2 has a null body Recipe");
+    expect("null-below-unsigned-top.eml", 0, 1, NULL);
     expect("null-below-unsigned-top.eml", 1, 1, NULL);
-    expect("null-below-signed.eml", 0, 1, NULL);
-    expect("null-below-signed.eml", 1, 1, NULL);
+    expect("null-below-signed.eml", 0, 0, "PERMERROR: Message-Instance m=2 has a null recipe");
+    expect("null-below-signed.eml", 1, 0, "PERMERROR: Message-Instance m=2 has a null recipe");
 
-    /* A DKIM2-Signature naming m=2 that cannot be keyed is not coverage:
-       the verifier PERMERRORs on it, so these are refused with or without
-       the option. */
+    /* A DKIM2-Signature naming m=2 that cannot be keyed is a PERMERROR,
+       so these are refused with or without the option. One with a usable
+       i= and m= (fake-cover-unparseable: "m=2; i=2; garbage") counts as
+       covering m=2, whose null is then reported first (E2: Message-Instance
+       content before signature content). */
     {
         static const char *fake[] = {
             "fake-cover-no-i.eml", "fake-cover-i0.eml", "fake-cover-i-abc.eml",
-            "fake-cover-m-rewritten.eml", "fake-cover-unparseable.eml", NULL };
+            "fake-cover-m-rewritten.eml", NULL };
         for (int k = 0; fake[k]; k++) {
             expect(fake[k], 0, 0, "result=permerror (PERMERROR: DKIM2-Signature");
             expect(fake[k], 1, 0, "result=permerror (PERMERROR: DKIM2-Signature");
             expect_digest_only(fake[k], 1, 0);
         }
+        expect("fake-cover-unparseable.eml", 0, 0, "PERMERROR: Message-Instance m=2 has a null recipe");
+        expect("fake-cover-unparseable.eml", 1, 0, "PERMERROR: Message-Instance m=2 has a null recipe");
+        expect_digest_only("fake-cover-unparseable.eml", 1, 0);
     }
 
     expect_digest_only("valid-chain.eml", 0, 1);
     expect_digest_only("broken-mi-chain.eml", 0, 0);
-    expect_digest_only("null-top.eml", 0, 0);
+    expect_digest_only("null-top.eml", 0, 1);
     expect_digest_only("null-top.eml", 1, 1);
     expect_digest_only("null-top-forged.eml", 1, 0);
-    expect_digest_only("null-top-signed.eml", 0, 1);
-    expect_digest_only("null-below-unsigned-top.eml", 0, 0);
+    expect_digest_only("null-top-signed.eml", 0, 0);
+    expect_digest_only("null-below-unsigned-top.eml", 0, 1);
     expect_digest_only("null-below-unsigned-top.eml", 1, 1);
-    expect_digest_only("null-below-signed.eml", 0, 1);
+    expect_digest_only("null-below-signed.eml", 0, 0);
 
     for (int skip = 0; skip <= 1; skip++) {
         expect_range_refused("DKIM2-Signature: i=99999999999999999999; m=2; t=1; "

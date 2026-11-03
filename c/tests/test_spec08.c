@@ -29,7 +29,7 @@
 #define HARNESS_KEY_PATH "/tmp/dkim2_test_spec08.pem"
 #include "spec_harness.h"
 
-/* D1: Auto-Submitted and VBR-Info are hashed (-08 §4). */
+/* D1: Auto-Submitted and VBR-Info are hashed (-09 §4). */
 static void test_hashed_fields(void) {
     CHECK(!dkim2_hdr_ignored("auto-submitted", 14));
     CHECK(!dkim2_hdr_ignored("vbr-info", 8));
@@ -155,7 +155,7 @@ static void test_recipe_paths(void) {
     };
     for (size_t k = 0; k < sizeof steps / sizeof steps[0]; k++) {
         char want[256];
-        snprintf(want, sizeof want, "PERMERROR: Message-Instance m=2 Recipe %s is invalid", steps[k].path);
+        snprintf(want, sizeof want, "PERMERROR: Message-Instance m=2 recipe %s is invalid", steps[k].path);
         dkim2_verify_result_t r = recipe_at_m2(steps[k].json);
         if (strcmp(r.message, want) != 0)
             printf("  (Recipe %s)\n", steps[k].json);
@@ -245,7 +245,7 @@ static void test_fail_states(void) {
     msg_init(&m, "a@example.com", "test", "Hello\r\n");
     add_mi(&m, NULL);
     add_sig(&m, 1, 1, "example.com", "<a@example.net>", "<l@lists.example.org>", NULL);
-    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match");
+    CHECK_STATE(verify(&m), DKIM2_FAIL, "FAIL: DKIM2-Signature i=1 mf= and d= do not match");
     msg_free(&m);
 
     msg_init(&m, "a@example.com", "test", "Hello\r\n");
@@ -276,7 +276,7 @@ static void test_fail_states(void) {
     msg_free(&m);
 }
 
-/* D7: "public key <s> is malformed" (-08 §3.2, §14.5). */
+/* D7: "public key <s> is malformed" (-09 §3.2, §14.5). */
 static char g_key_txt[4096];
 static char *key_override(const char *qname, int *n_records) {
     (void)qname; (void)n_records;
@@ -312,7 +312,8 @@ static void test_malformed_keys(void) {
         CHECK(strcmp(key_error("v=DKIM1; k=ed25519; p=%s", der, (size_t)n), "is malformed") == 0);
         OPENSSL_free(der);
     }
-    /* RSA: base64 that is no key; a key under 1024 bits; 1024 is fine */
+    /* RSA: base64 that is no key; a key under 1024 bits ("too short"
+       since -09, contract E5); 1024 is fine */
     CHECK(strcmp(key_error("v=DKIM1; k=rsa; p=%s", raw, 48), "is malformed") == 0);
     static const int bits[] = { 512, 1023, 1024, 2048 };
     for (int k = 0; k < 4; k++) {
@@ -321,7 +322,7 @@ static void test_malformed_keys(void) {
         unsigned char *der = NULL;
         int n = i2d_PUBKEY(rsa, &der);
         const char *e = key_error("v=DKIM1; k=rsa; p=%s", der, (size_t)n);
-        if (bits[k] < 1024) CHECK(strcmp(e, "is malformed") == 0);
+        if (bits[k] < 1024) CHECK(strcmp(e, "too short") == 0);   /* -09: E5 */
         else CHECK(strcmp(e, "OK") == 0);
         OPENSSL_free(der);
         EVP_PKEY_free(rsa);
@@ -359,7 +360,7 @@ static void mi_err(const char *h, char *err, size_t errsz, dkim2_mi_t **mi) {
     if (mi) *mi = p; else dkim2_mi_free(p);
 }
 
-/* D2: "|" groups of "," lists in s= and h= (-08 §9.3, §10.9). */
+/* D2: "|" groups of "," lists in s= and h= (-09 §9.3, §10.9). */
 static void test_groups_parse(void) {
     char err[256];
     dkim2_sig_t *sig;
@@ -466,7 +467,7 @@ static void test_groups_parse(void) {
 /* Add a DKIM2-Signature whose s= is spec, written as it goes on the wire
    except that a value "G" is a good Ed25519 signature and "B" a bad one;
    any other value is kept. The signing input blanks every value and keeps
-   the rest of s= byte for byte (-08 §12.8). tags: everything before s=. */
+   the rest of s= byte for byte (-09 §12.8). tags: everything before s=. */
 static void add_sig_spec(msg_t *m, const char *tags, const char *spec) {
     char tmpl[4096], val[8192];
     size_t tl = (size_t)snprintf(tmpl, sizeof tmpl, "%s; s=", tags);
@@ -522,7 +523,7 @@ static void signed_with(msg_t *m, const char *spec) {
     add_sig_spec(m, tags, spec);
 }
 
-/* D2: the signing input keeps every "|" and "," (-08 §12.8). */
+/* D2: the signing input keeps every "|" and "," (-09 §12.8). */
 static void test_groups_signing_input(void) {
     static const char *ok[] = {
         "sel:ed25519-sha256:G",
@@ -557,7 +558,7 @@ static char *combine_dns(const char *qname, int *n_records) {
 }
 
 /* D3: each sig-set gives a result, the "," lists and "|" groups combine
-   them (-08 §14.6), and the reported string is fixed by the contract. */
+   them (-09 §14.6), and the reported string is fixed by the contract. */
 static void test_combine_signatures(void) {
     char *(*saved)(const char *, int *) = dkim2_dns_override;
     dkim2_dns_override = combine_dns;
@@ -690,7 +691,7 @@ static void add_mi_h(msg_t *m, const char *spec) {
     msg_add_top(m, "Message-Instance", val);
 }
 
-/* D4: hash-sets combine the same way (-08 §14.7). */
+/* D4: hash-sets combine the same way (-09 §14.7). */
 static void test_combine_hashes(void) {
     static const struct { const char *spec, *want; } cases[] = {
         { "S", NULL }, { "P", NULL }, { "S,P", NULL }, { "s|P", NULL }, { "X|S", NULL },
@@ -728,47 +729,8 @@ static void test_combine_hashes(void) {
     }
 }
 
-/* D9: a null body Recipe above m=1 leaves the result PASS, but not Fully
-   Verified (-08 §13). */
-static void test_fully_verified(void) {
-    msg_t m;
-    base_signed(&m, "a@example.com");
-    dkim2_verify_result_t r = verify(&m);
-    CHECK_PASS(r);
-    CHECK(r.fully_verified == 1);
-    msg_free(&m);
-
-    /* m=2 with "b": null: the body below cannot be checked */
-    base_signed(&m, "a@example.com");
-    snprintf(m.body, sizeof m.body, "Something else\r\n");
-    add_mi(&m, "{\"b\":null}");
-    add_sig(&m, 2, 2, "example.org", "<list-bounces@lists.example.org>", "<r@dest.example>", NULL);
-    r = verify(&m);
-    CHECK_PASS(r);
-    CHECK(r.fully_verified == 0);
-    /* ...and a third instance above it changes nothing */
-    add_mi(&m, NULL);
-    add_sig(&m, 3, 3, "dest.example", "<x@dest.example>", "<y@final.example>", NULL);
-    r = verify(&m);
-    CHECK_PASS(r);
-    CHECK(r.fully_verified == 0);
-    msg_free(&m);
-
-    /* a null body Recipe on m=1 hides nothing */
-    msg_init(&m, "a@example.com", "test", "Hello\r\n");
-    add_mi(&m, "{\"b\":null}");
-    add_sig(&m, 1, 1, "example.com", "<a@example.com>", "<list@lists.example.org>", NULL);
-    r = verify(&m);
-    CHECK_PASS(r);
-    CHECK(r.fully_verified == 1);
-    msg_free(&m);
-
-    /* any other result is not Fully Verified */
-    base_signed(&m, "a@elsewhere.net");
-    r = verify(&m);
-    CHECK(r.status == DKIM2_FAIL && r.fully_verified == 0);
-    msg_free(&m);
-}
+/* D9 (fully_verified, a null body Recipe that still PASSes) is replaced
+   by -09 contract E2: see test_spec09.c. */
 
 int main(void) {
     harness_init();
@@ -782,7 +744,6 @@ int main(void) {
     test_groups_signing_input();
     test_combine_signatures();
     test_combine_hashes();
-    test_fully_verified();
 
     harness_done();
     if (g_fail) { printf("test_spec08: %d failure(s)\n", g_fail); return 1; }

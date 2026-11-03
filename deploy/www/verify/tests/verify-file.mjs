@@ -18,7 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { parseKeyRecord } from '../doh.js';
+import { selectKeyRecord } from '../doh.js';
 import { bytesToBinary } from '../b64.js';
 import { verifyMessage } from '../verify.js';
 
@@ -35,14 +35,16 @@ if (!msgPath) {
 const dnsPath = dnsArg || join(repoRoot, 'dns.json');
 
 // Mock resolver over the nested dns.json shape:
-// { domain: { "selector._domainkey": [["txt", value], ...] } }
+// { domain: { "selector._domainkey": [["txt", value], ...],
+//             "_domainkey": [["txt", value], ...] } }
+// Every TXT record at a name is given, as DNS would, so a key next to a
+// foreign record (-09 §3.7) and the Domain Policy Record (§3.8, at
+// "_domainkey" itself) are judged exactly as the DoH path judges them.
 const dns = JSON.parse(readFileSync(dnsPath, 'utf8'));
-function fetchKey(selector, domain) {
-  const recs = dns[domain]?.[`${selector}._domainkey`];
-  const rec = recs?.[0]?.[1];
-  if (rec === undefined) throw new Error('key-notfound');
-  return parseKeyRecord(rec);
-}
+const txts = (domain, name) => (dns[domain.toLowerCase()]?.[name] || [])
+  .filter(([type]) => type.toLowerCase() === 'txt').map(([, value]) => value);
+const fetchKey = (selector, domain) => selectKeyRecord(txts(domain, `${selector}._domainkey`));
+const fetchPolicy = (domain) => txts(domain, '_domainkey');
 
 // Same "newest t= + 1h" deterministic clock as vectors.test.mjs, so a
 // well-formed sample never spuriously trips the §14.3 14-day-old rule.
@@ -54,7 +56,7 @@ function pickNow(msg) {
 
 // Bytes, not text: the message may carry octets that are not valid UTF-8.
 const msg = new Uint8Array(readFileSync(msgPath));
-const rep = await verifyMessage(msg, { fetchKey, now: realClock ? undefined : pickNow(msg) });
+const rep = await verifyMessage(msg, { fetchKey, fetchPolicy, now: realClock ? undefined : pickNow(msg) });
 
 if (rep.overall === 'pass' || !rep.errors || !rep.errors.length) {
   console.log(`${rep.overall}: ${rep.summary}`);

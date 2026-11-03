@@ -110,7 +110,7 @@ function rejects(name, recipe, want) {
 }
 
 // -08 (contract D6): one invalid step is "Recipe <path> is invalid".
-const step = (path) => `PERMERROR: Message-Instance m=2 Recipe ${path} is invalid`;
+const step = (path) => `PERMERROR: Message-Instance m=2 recipe ${path} is invalid`;
 // "c" ranges that are not ascending are an invalid step; ones that do not
 // fit the message are found by applying the Recipe: invalid JSON.
 rejects('descending "c" ranges', { b: [{ c: [2, 2] }, { c: [1, 1] }] }, step('b[1]'));

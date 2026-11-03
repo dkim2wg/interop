@@ -157,7 +157,7 @@ CASES = [
 def _want(path):
     if path is None:
         return WANT
-    return f"PERMERROR: Message-Instance m=2 Recipe {path} is invalid"
+    return f"PERMERROR: Message-Instance m=2 recipe {path} is invalid"
 
 
 @pytest.mark.parametrize("name,modify,recipe,structural,path", CASES,
@@ -191,7 +191,7 @@ def test_malformed_recipe_is_reported_once_and_not_as_syntax_error():
                   recipe_json=json.dumps({"b": [{"c": [2, 2]}, {"c": [1, 1]}]}).encode())
     result = verify(msg)
     # -08 (contract D6): out-of-order ranges are a step error, b[1].
-    want = "PERMERROR: Message-Instance m=2 Recipe b[1] is invalid"
+    want = "PERMERROR: Message-Instance m=2 recipe b[1] is invalid"
     assert result.errors.count(want) == 1, result.errors
     assert not any("syntax error" in e for e in result.errors), result.errors
 

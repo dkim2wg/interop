@@ -262,7 +262,7 @@ func TestSpec07UStepSchema(t *testing.T) {
 			want := invalid
 			if strings.HasPrefix(name, "U3") || strings.HasPrefix(name, "U4") ||
 				strings.HasPrefix(name, "u ") || name == "U5 u decodes to CR" || name == "U5 unknown step key" {
-				want = "PERMERROR: Message-Instance m=2 Recipe b[0] is invalid"
+				want = "PERMERROR: Message-Instance m=2 recipe b[0] is invalid"
 			}
 			_, err := parseMI(miWithRecipe(2, js))
 			if err == nil || err.Error() != want {
@@ -407,7 +407,7 @@ func TestSpec07C5DomainLiteral(t *testing.T) {
 	got := verify07(t, hop2)
 	for _, want := range []string{
 		"FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1",
-		"FAIL: DKIM2-Signature i=2 MAIL FROM and d= do not match",
+		"FAIL: DKIM2-Signature i=2 mf= and d= do not match",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("want %q in %q", want, got)
@@ -418,7 +418,7 @@ func TestSpec07C5DomainLiteral(t *testing.T) {
 func TestSpec07C6MailFromAndD(t *testing.T) {
 	hop1 := must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"list@lists.example.org"}, "")
 	_, err := VerifyFull(bytes.NewReader(hop1), spec07Fetcher(t), VerifyOptions{SkipTimestampCheck: true})
-	want := "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"
+	want := "FAIL: DKIM2-Signature i=1 mf= and d= do not match"
 	if err == nil || !strings.HasPrefix(err.Error(), want) {
 		t.Fatalf("want top-level %q, got %v", want, err)
 	}
@@ -434,8 +434,9 @@ func TestSpec07A1FromAuthentic(t *testing.T) {
 		{"A <a@example.com>", "example.com", ""},
 		{"A <a@example.com>", "example.net", notAuth},
 		{"a@sub.example.com", "example.com", ""},
-		{"a@example.com, b@example.com", "example.com", notAuth},
-		{"a@[192.0.2.1]", "example.com", notAuth},
+		// -09 (contract E3.1) names these two.
+		{"a@example.com, b@example.com", "example.com", "FAIL: DKIM2-Signature i=1 From has more than one address"},
+		{"a@[192.0.2.1]", "example.com", "FAIL: DKIM2-Signature i=1 From uses a domain literal"},
 		{"=?utf-8?q?Caf=C3=A9?=\r\n <a@example.com>", "example.com", ""},
 		{"=?utf-8?q?Caf=C3=A9?=\r\n <a@example.com>", "example.net", notAuth},
 		{"group: a@example.com;", "example.com", notAuth},
@@ -452,7 +453,8 @@ func TestSpec07A1FromAuthentic(t *testing.T) {
 	}
 	// Two From fields are never Authentic.
 	in := []byte("From: a@example.com\r\nFrom: a@example.com\r\nSubject: s\r\n\r\nbody\r\n")
-	wantErr07(t, must07(t, in, "example.com", "a@example.com", []string{"list@lists.example.org"}, ""), notAuth)
+	wantErr07(t, must07(t, in, "example.com", "a@example.com", []string{"list@lists.example.org"}, ""),
+		"FAIL: DKIM2-Signature i=1 From has more than one address")
 }
 
 func fromChangeChain07(t *testing.T, newFrom string) []byte {
@@ -634,7 +636,7 @@ func TestSpec07ErrorStrings(t *testing.T) {
 	})
 }
 
-// ---- C9: the primary error is the first in -08 §14 section order ----
+// ---- C9: the primary error is the first in §14 section order ----
 
 // primary07 is the primary error VerifyFull reports: its returned error's
 // first line, else PrimaryResult's; "" for a pass.
@@ -676,7 +678,7 @@ func TestSpec07C9PrimaryError(t *testing.T) {
 			VerifyOptions{}, "FAIL: DKIM2-Signature i=1 signature expired"},
 		// §14.4 before §14.6.
 		{"custody and signature", badSig(must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, ""), 1),
-			skip, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"},
+			skip, "FAIL: DKIM2-Signature i=1 mf= and d= do not match"},
 		// The chain walk before every signature check: §14.6, §14.3, §14.5,
 		// and the signature's own §14.2 content.
 		{"signature and header hash", bytes.Replace(badSig(hop1, 1), []byte("Subject: hello"), []byte("Subject: jello"), 1),
@@ -701,11 +703,11 @@ func TestSpec07C9PrimaryError(t *testing.T) {
 		{"b: no m= before e", pre("DKIM2-Signature: i=1; m=1\r\nMessage-Instance: h=x\r\n", hop1),
 			skip, "PERMERROR: Message-Instance m= tag=m missing"},
 		{"c: lowest m=", pre("Message-Instance: m=2\r\nMessage-Instance: m=2\r\nMessage-Instance: m=1\r\n", hop1),
-			skip, "PERMERROR: Message-Instance m=1 appears more than once"},
+			skip, "PERMERROR: Message-Instance m=1 is duplicated"},
 		{"c before d", pre("Message-Instance: m=1\r\nDKIM2-Signature: d=x\r\n", hop1),
-			skip, "PERMERROR: Message-Instance m=1 appears more than once"},
+			skip, "PERMERROR: Message-Instance m=1 is duplicated"},
 		{"e: lowest i=", pre("DKIM2-Signature: i=3\r\nDKIM2-Signature: i=3\r\nDKIM2-Signature: i=1\r\n", hop1),
-			skip, "PERMERROR: DKIM2-Signature i=1 appears more than once"},
+			skip, "PERMERROR: DKIM2-Signature i=1 is duplicated"},
 		{"f before g", pre("Message-Instance: m=3\r\n", hop1),
 			skip, "PERMERROR: Message-Instance m=2 missing"},
 		{"g before h", pre("Message-Instance: m=2\r\nDKIM2-Signature: i=3; m=1\r\n", hop1),

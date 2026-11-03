@@ -19,7 +19,7 @@ var hashAlgs = map[string]func() hash.Hash{
 }
 
 // HashAlg resolves a §9.3 hash-name to its constructor. Matching is case
-// sensitive: -08 writes the names as %s"sha256" and %s"sha512" (RFC 7405),
+// sensitive: the draft writes the names as %s"sha256" and %s"sha512" (RFC 7405),
 // so "SHA256" is an unknown algorithm.
 func HashAlg(name string) (func() hash.Hash, bool) {
 	f, ok := hashAlgs[name]

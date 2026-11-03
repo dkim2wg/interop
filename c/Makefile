@@ -43,7 +43,8 @@ TESTS = tests/test_base64 tests/test_tagparse tests/test_hash \
         tests/test_dns tests/test_verify tests/test_null_body \
         tests/test_body_diff tests/test_strictness \
         tests/test_plan tests/test_prefetch \
-        tests/test_domain tests/test_spec07 tests/test_spec08 tests/test_milter
+        tests/test_domain tests/test_spec07 tests/test_spec08 tests/test_spec09 \
+        tests/test_milter
 
 GATE_FIXTURES = tests/.gate-fixtures
 
@@ -106,6 +107,9 @@ tests/test_spec07: tests/test_spec07.c tests/spec_harness.h eml_parse.o $(CORE_O
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDFLAGS)
 
 tests/test_spec08: tests/test_spec08.c tests/spec_harness.h eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDFLAGS)
+
+tests/test_spec09: tests/test_spec09.c tests/spec_harness.h eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDFLAGS)
 
 # The milter's callbacks against a fake libmilter (tests/stub), so this

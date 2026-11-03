@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-08
+DKIM2 message-instance undo - draft-ietf-dkim-dkim2-spec-09
 
 Takes a signed email with Message-Instance headers containing recipes
 and reconstructs the message as it was at a previous version.
@@ -36,7 +36,7 @@ from dkim2sign import (
 class Unrecoverable(ValueError):
     """The previous body cannot be reconstructed *by design*.
 
-    -08 §5.2/§16.3: a present "b" that is JSON null is the upstream
+    -09 §5.2/§16.3: a present "b" that is JSON null is the upstream
     saying the previous body cannot be put back (a "null Recipe") -- distinct
     from an absent "b", which means the body was not modified. That is not a
     defect in the message, so it gets its own type: DSN propagation answers it
@@ -62,7 +62,7 @@ _UPPER = re.compile(r"[A-Z]")
 
 
 def _strict_keys(pairs):
-    """object_pairs_hook for Recipe JSON (-08 §5, contract D10): every key,
+    """object_pairs_hook for Recipe JSON (-09 §5, contract D10): every key,
     at any level, MUST be lower case, and a key given twice in one object
     (compared exactly) is a duplicate.  Either is a ValueError, as for any
     invalid JSON.  "Lower case" is judged on ASCII letters: header field
@@ -120,7 +120,7 @@ def loads_recipe(data):
 class MalformedRecipe(ValueError):
     """The r= payload is valid JSON but is not a well-formed set of Recipes.
 
-    draft -08 §5: each step is an object with exactly one key, "c", "d" or
+    draft -09 §5: each step is an object with exactly one key, "c", "d" or
     "u"; a "c" step is exactly two integers 1 <= start <= end <= the number
     of items present, and each "c" start is greater than every preceding "c"
     end in the same list; "d" items are text with no CR or LF; "u" items are
@@ -146,7 +146,7 @@ def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-# draft -08 §5 schema: a "u" string must match all three patterns -- the
+# draft -09 §5 schema: a "u" string must match all three patterns -- the
 # base64 alphabet with at most two '=' at the end, a whole number of 4-char
 # groups, and zero pad bits ("QR==" decodes, but is not canonical).
 _U_PATTERNS = tuple(re.compile(p) for p in (
@@ -526,7 +526,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
             print(f"  v={version}: applying recipes", file=sys.stderr)
 
         # Apply header Recipes
-        # -08 §5.1 disallows the null header Recipe: a present "h" that is
+        # -09 §5.1 disallows the null header Recipe: a present "h" that is
         # null is a syntax error (distinct from an absent "h", which means
         # the header fields were unchanged).
         if "h" in recipes and recipes["h"] is None:
@@ -650,7 +650,7 @@ def undo_message_instance(raw: bytes, target_version: int | None = None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-08)")
+        description="Undo DKIM2 message-instance changes (draft-ietf-dkim-dkim2-spec-09)")
     parser.add_argument("message", help="Path to signed email file (- for stdin)")
     parser.add_argument("--target-version", type=int, default=None,
                         help="MI version to reconstruct back to (default: highest - 1)")

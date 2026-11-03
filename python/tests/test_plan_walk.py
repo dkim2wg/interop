@@ -86,7 +86,10 @@ def same(raw, splits=True, planned=True):
     planned=False: a message the plan hands back to the undo walk.  An
     instance whose Recipe is malformed on its own is reported from the
     header fields (contract C9), before either walk is planned."""
-    if any(map(_mi_content_error, extract_mi_headers(parse_message(raw)[0]))):
+    # Outbound mode with no signature: every null is the signer's own, so
+    # not a content error (contract E2).
+    if any(_mi_content_error(h, null_ok=True)
+           for h in extract_mi_headers(parse_message(raw)[0])):
         planned = False
     ref, ref_trace = _run(raw, "undo")
     got, got_trace = _run(raw, "plan")
@@ -111,7 +114,7 @@ def malformed(m):
 
 def step_invalid(m, path):
     """-08 (contract D6): one bad Recipe step, named by its path."""
-    return f"PERMERROR: Message-Instance m={m} Recipe {path} is invalid"
+    return f"PERMERROR: Message-Instance m={m} recipe {path} is invalid"
 
 
 # --- body -----------------------------------------------------------------

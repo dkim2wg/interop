@@ -51,7 +51,7 @@ type SigItem struct {
 	Algorithm string
 	Value     []byte // nil means empty (signing input placeholder per §10.9)
 	// Group is the sig-all ("," list) the item belongs to, counting the
-	// "|"-separated groups of s= from 0 (-08 §10.9).  Signers write one.
+	// "|"-separated groups of s= from 0 (§10.9).  Signers write one.
 	Group int
 }
 
@@ -80,10 +80,17 @@ type SignOptions struct {
 	// (nil = real DNS); SkipTimestampCheck relaxes the §14.3 timestamp check.
 	Fetcher            KeyFetcher
 	SkipTimestampCheck bool
-	// AllowNullBodyRecipe lets Sign cover an UNSIGNED Message-Instance (its
-	// m= above every valid upstream DKIM2-Signature's m=, top or not) whose
-	// body Recipe is null ("b": null); by default that is refused.  A null
-	// that an upstream signature already covers is signed without it.
+	// Policy, if set, supplies Domain Policy Records (§3.8) for the gate
+	// and for the signer's own From check when d= is below the From
+	// domain (contract E3.4), as VerifyOptions.Policy does for Verify.
+	// nil = the Fetcher when it is a PolicyFetcher (dns.json), else DNS.
+	Policy PolicyFetcher
+	// AllowNullBodyRecipe does nothing.
+	//
+	// Deprecated: Sign always signs over this hop's own unsigned
+	// Message-Instances with a null body Recipe ("b": null), and always
+	// refuses a null that arrived already signed, which fails upstream
+	// verification (contract E2).  Setting it true logs a warning once.
 	AllowNullBodyRecipe bool
 	// SkipUpstreamCheck turns the gate off entirely (the caller built the
 	// chain itself).
@@ -104,16 +111,15 @@ type VerifyResult struct {
 	Domain   string
 	Error    error // nil = pass
 
-	// FullyVerified (-08 §13, contract D9) is set, on every result, when the
-	// whole verification passed and checked everything §13 asks for.  A
-	// pass is not Fully Verified when a null body Recipe ("b": null) on some
-	// Message-Instance m=k (k >= 2) leaves the body hashes below it
-	// uncheckable, when HeadersOnly skipped the body, when Verify (unlike
-	// VerifyFull) left lower instances unchecked, or when Outbound left an
-	// unsigned top instance.  It is not reported in A-R.
+	// FullyVerified is set, on every result, exactly when the whole
+	// verification passed, except with HeadersOnly.  It is not reported in
+	// A-R.
+	//
+	// Deprecated: a null body Recipe is now a PERMERROR (§13, contract E2),
+	// so a pass is Fully Verified; test for a pass instead.
 	FullyVerified bool
 
-	// section is the -08 §14 section Error ranks in (contract C9), when its
+	// section is the §14 section Error ranks in (contract C9), when its
 	// text alone does not say: a Recipe that does not fit the message is
 	// found by the §14.7 chain walk and ranks there, though its string is
 	// §14.2's.  0: rank by the text (c9Section).
@@ -151,12 +157,19 @@ type VerifyOptions struct {
 	// NoKeyPrefetch turns off the background key lookups Verify and
 	// VerifyFull start, with real DNS keys, once the header fields are read.
 	NoKeyPrefetch bool
+
+	// Policy is where the §14.8 check looks up a From domain's Domain
+	// Policy Record (§3.8) when d= is a subdomain of it.  nil: the
+	// KeyFetcher, when it is a PolicyFetcher too (JSONKeyFetcher,
+	// NetKeyFetcher), else real DNS.
+	Policy PolicyFetcher
 }
 
 // ErrNone is returned by Verify and VerifyFull for a message with no DKIM2
 // header fields at all: the result is "none" (Authentication-Results
-// dkim2=none), not a PERMERROR, and it carries no error string of its own.
-var ErrNone = errors.New("none")
+// dkim2=none), not a PERMERROR.  Its text is §14.2's details for it
+// (contract E1).
+var ErrNone = errors.New("No DKIM2 header fields found")
 
 // MaxFutureSkew and MaxSignatureAge are the §14.3 timestamp limits: a
 // signature made more than one day after delivery, or more than 14 days
@@ -193,7 +206,7 @@ func allASCIIDigits(v string) bool {
 // "+1".  At most three digits and 1..MaxChainNumber, so "01" and "001" are 1
 // (and nothing is converted that could overflow), and no more than
 // MaxChainLength.  The field is named by its own number as written (a
-// DKIM2-Signature by i=, a Message-Instance by m=, -08 §14.2): ident.
+// DKIM2-Signature by i=, a Message-Instance by m=, §14.2): ident.
 func chainNumberError(field, tag, v, ident string, present bool) error {
 	if !present {
 		return nil
@@ -278,7 +291,7 @@ func validSequenceTag(raw string) bool {
 
 // KnownSigAlg reports whether alg is a signature algorithm this verifier
 // implements (§3, §10.9).  Algorithm names are tag values, so they are
-// case significant: "RSA-SHA256" is not "rsa-sha256".  -08's mldsa44 (§3.4)
+// case significant: "RSA-SHA256" is not "rsa-sha256".  mldsa44 (§3.4)
 // is deferred (contract D8: Go keeps ML-DSA internal), so it, like the old
 // mldsa44-ed25519-sha512 composite, is an unknown algorithm.
 func KnownSigAlg(alg string) bool {
@@ -384,7 +397,7 @@ func parseSig(raw string) (*DKIM2Signature, error) {
 		}
 	}
 	if v := tvl.get("s"); v != "" {
-		// -08 §10.9: "|" groups of "," lists of sig-sets; an empty member
+		// §10.9: "|" groups of "," lists of sig-sets; an empty member
 		// is a syntax error (contract D2).
 		groups, ok := splitGroups(v)
 		if !ok {
@@ -537,7 +550,7 @@ func (sig *DKIM2Signature) incompleteForm(rawHeader string) string {
 
 	// Blank the 3rd (signature) field of each item, dropping any folding
 	// within it; every selector, algorithm name and ":" "," "|" stays
-	// (-08 §12.8, contract D2).
+	// (§12.8, contract D2).
 	var out strings.Builder
 	for gi, group := range strings.Split(sval, "|") {
 		if gi > 0 {

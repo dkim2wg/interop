@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Build re-signed null-body-Recipe fixtures for null-body.test.mjs.
+"""Build re-signed null-body-Recipe fixtures for null-body.test.mjs (since
+draft -09, contract E2, every null body Recipe is a PERMERROR; these pin
+which instance is named, and that a fault below a null still wins).
 Usage: build-null-fixtures.py <outdir>.  Reuses the chain builder in
 util/build-negative-vectors.py (imported, not modified), with the base
 message's From rewritten into the i=1 signing domain (test1.dkim2.com), so
@@ -82,8 +84,8 @@ def bad_header_below_null():
 
 
 FIX = {
-    "positive-control-null-body.eml": bnv.build_positive_null_body,
-    "positive-control-null-body-over-recipe.eml": bnv.build_positive_null_body_over_recipe,
+    "null-body.eml": bnv.build_positive_null_body,
+    "null-body-over-recipe.eml": bnv.build_positive_null_body_over_recipe,
     "null-body-forged-history.eml": bnv.build_null_body_forged_history,
     "null-below-ordinary.eml": lambda: null_below_ordinary(False),
     "null-below-ordinary-forged.eml": lambda: null_below_ordinary(True),

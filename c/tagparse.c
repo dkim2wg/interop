@@ -17,7 +17,7 @@ static char *strdup_trim(const char *s, const char *end) {
 static int is_fws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 static int is_alpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
-/* -08 §8: split on ';'. The text after a final ';' may be empty (the
+/* -09 §8: split on ';'. The text after a final ';' may be empty (the
    optional trailing ";"); any other empty fragment (";;", a leading ';') is
    a syntax error. Every non-empty fragment must be
      [FWS] name [FWS] "=" [FWS] [value] [FWS]
@@ -40,7 +40,7 @@ taglist_t *tagparse(const char *input, const char **errp) {
         while (q < fend && is_fws(*q)) q++;
         if (q == fend) {
             /* Only the text after a final ';' may be empty (the optional
-               trailing ";" of -08 §8); ";;" or a leading ';' is not a
+               trailing ";" of -09 §8); ";;" or a leading ';' is not a
                tag-list. */
             if (*fend) tl->syntax_error = 1;
             continue;
@@ -65,7 +65,7 @@ taglist_t *tagparse(const char *input, const char **errp) {
         e->name  = strdup_trim(name_start, name_end);
         e->value = strdup_trim(val_start, val_end);
         if (!e->name || !e->value) { free(e->name); free(e->value); free(e); taglist_free(tl); return NULL; }
-        /* -08 §8: tag names are case sensitive and written in lowercase
+        /* -09 §8: tag names are case sensitive and written in lowercase
            (contract D10): the name is kept as written, and "M" is another
            tag than "m" -- an unknown one, which callers ignore.
            "Tags with duplicate names MUST NOT occur" -- flag any repeat,

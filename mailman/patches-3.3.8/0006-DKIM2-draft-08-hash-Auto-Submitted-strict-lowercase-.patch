@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Wed, 28 Oct 2026 10:37:34 +0100
-Subject: [PATCH 6/6] DKIM2 draft -08: hash Auto-Submitted, strict-lowercase
+Subject: [PATCH 6/7] DKIM2 draft -08: hash Auto-Submitted, strict-lowercase
  tags, h= groups
 
 Draft -08 section 4 hashes Auto-Submitted and VBR-Info. Tag-names and

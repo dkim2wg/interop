@@ -258,7 +258,8 @@ func TestStrictB_KeyRecords(t *testing.T) {
 		{"FWS in p=", [][]string{{"v=DKIM1; k=rsa; p=" + p[:40] + " \t" + p[40:]}}, ""},
 		{"one RR in two strings", [][]string{{"v=DKIM1; k=rsa; p=" + p[:100], p[100:]}}, ""},
 		{"repeated p=", [][]string{{"v=DKIM1; p=; p=" + p}}, pfx + "has a syntax error"},
-		{"bad v=", [][]string{{"v=garbage; p=" + p}}, pfx + "has a syntax error"},
+		// Contract E4: a record whose v= is not DKIM1 is not a key record.
+		{"bad v=", [][]string{{"v=garbage; p=" + p}}, pfx + "does not exist"},
 		{"v= not first", [][]string{{"k=rsa; v=DKIM1; p=" + p}}, pfx + "has a syntax error"},
 		{"no p=", [][]string{{"v=DKIM1; k=rsa"}}, pfx + "has a syntax error"},
 		{"p= not base64", [][]string{{"v=DKIM1; k=rsa; p=!!!!"}}, pfx + "has a syntax error"},
@@ -271,7 +272,10 @@ func TestStrictB_KeyRecords(t *testing.T) {
 		{"k=ed25519 for rsa-sha256", [][]string{{"v=DKIM1; k=ed25519; p=" + ed}}, pfx + "algorithm mismatch"},
 		{"revoked", [][]string{{"v=DKIM1; k=rsa; p="}}, pfx + "has been revoked"},
 		{"two identical RRs", [][]string{{"v=DKIM1; k=rsa; p=" + p}, {"v=DKIM1; k=rsa; p=" + p}}, pfx + "has multiple records"},
-		{"two different RRs", [][]string{{"v=spf1 -all"}, {"v=DKIM1; k=rsa; p=" + p}}, pfx + "has multiple records"},
+		{"two different RRs", [][]string{{"v=DKIM1; k=ed25519; p=" + ed}, {"v=DKIM1; k=rsa; p=" + p}}, pfx + "has multiple records"},
+		// Contract E4: a foreign record beside the key is discarded first.
+		{"SPF beside the key", [][]string{{"v=spf1 -all"}, {"v=DKIM1; k=rsa; p=" + p}}, ""},
+		{"no v= beside the key", [][]string{{"k=rsa; p=" + p}, {"v=DKIM1; k=rsa; p=" + p}}, pfx + "has multiple records"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

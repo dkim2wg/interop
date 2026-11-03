@@ -867,6 +867,49 @@ tests/spec_harness.h with test_spec07.c.
 util/negative-vectors.sh with VERIFIERS="c python perl": 339/339. Unit tests
 pass under ASan+UBSan. Turscar: 32/32 gated, 10 known divergences.
 
+## 27. Draft -09 port (2026-11-03)
+
+C follows docs/superpowers/specs/2026-11-03-dkim2-spec-09-design.md (E1-E7,
+and E3.4 for the signer). Tests: tests/test_spec09.c; c/dkim2-spec.txt is
+now the -09 text, and the "-08 §" pointers read "-09 §" (no section moved).
+
+- **E1:** no DKIM2 fields is NONE with "NONE: No DKIM2 header fields found";
+  the CLI prints it like any other result.
+- **E2:** "has a null recipe" is checked in mi_content_error, right after
+  each instance's own Recipe checks. In outbound mode (signer gate, milter
+  sign modes) an instance above every validly-numbered signature's m= is
+  skipped; "validly numbered" includes a signature that did not parse but
+  has a usable i= and m= (fake-cover-unparseable now refuses with the null,
+  as Perl and Python do). The gate signs over this hop's own null;
+  allow_null_body_recipe (struct field, --allow-null-body-recipe, milter
+  config) is a no-op that warns when set true. fully_verified is 1 exactly
+  for a PASS; the CLI's "not fully verified" line is gone.
+- **E3:** dkim2_from_classify() (list / not a mailbox / literal), then
+  downward, upward, and the Domain Policy Record, looked up lazily and
+  cached per verification (at most one entry per signature). The signer's
+  dkim2_from_authentic() runs the same pair check (E3.4) and adds the policy
+  reason after "From header field is not Authentic for d=<d>: ".
+  dkim2_from_domain() now skips over a "[...]" literal, so an IPv6 literal's
+  ':' no longer reads as a group.
+- **Record source:** a new multi-record hook, dkim2_dns_txt_hook, which
+  dkim2_dns_json_load() installs (it used to set dkim2_dns_override). Key
+  names fall through to the old one-record override and live DNS as before;
+  policy names (_domainkey.<dom>) are answered from dns.json alone. Live
+  lookups use a 64 KB answer buffer (any DNS message), and key and policy
+  records go through one tag-list scanner with no fixed tag table: repeats
+  are found by sorting, trailing WSP is trimmed in one backward pass. (The
+  old key parser refused a record of more than 64 tags as a syntax error.)
+- **E4:** a key record whose first tag is v= other than DKIM1 is dropped
+  before counting; none left is "does not exist".
+- **E5:** RSA under 1024 bits is "too short" (was "is malformed").
+- **E6:** "is duplicated", lower-case "recipe <path> is invalid", "mf= and
+  d= do not match", and "i=1 has an exploded flag" (dkim2_sig_parse_err,
+  after the tag checks and before the duplicate Selector).
+
+util/negative-vectors.sh with VERIFIERS=c: 131/131. util/signer-gate.sh
+with c in SPEC09_SIGNERS: 50/50 (200/200 with all four signers). Unit tests
+pass, also under ASan+UBSan.
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
