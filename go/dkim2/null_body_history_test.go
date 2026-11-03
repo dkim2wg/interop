@@ -9,10 +9,11 @@ import (
 	"testing"
 )
 
-// Spec-06: a null "b" Recipe means the previous BODY cannot be recreated; the
-// header Recipe is mandatory, so the header history below it still can be, and
-// must still be checked. These tests build chains whose top instance carries a
-// null body Recipe over a genuinely signed lower chain.
+// A null "b" Recipe means the previous BODY cannot be recreated.  Signed, it
+// is a PERMERROR (contract E2); in a signer's own view of an unsigned null
+// the header history below it can still be checked, and is.  These tests
+// build chains whose top instance carries a null body Recipe over a
+// genuinely signed lower chain.
 
 // nullHop appends a new top Message-Instance (highest+1) carrying recipe JSON
 // to the signed message in, after mutate has rewritten the content headers,
@@ -132,15 +133,33 @@ func expectFail(t *testing.T, msg []byte, want string) {
 	}
 }
 
-func TestNullBodyAtM2OverSignedM1Passes(t *testing.T) {
-	expectPass(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe))
+// -09 (contract E2): a null body Recipe is a PERMERROR naming its instance,
+// ahead of anything the walk would find below it.
+func TestNullBodyAtM2OverSignedM1IsPermerror(t *testing.T) {
+	expectFail(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe),
+		"PERMERROR: Message-Instance m=2 has a null recipe")
 }
 
-func TestNullBodyAtM3OverNormalM2Passes(t *testing.T) {
+func TestNullBodyAtM3OverNormalM2IsPermerror(t *testing.T) {
 	m2 := nullHop(t, nullHopBase(t), subjectTag, "second body\r\n",
 		`{"h":{"subject":[{"d":["hello"]}]},"b":[{"d":["body line"]}]}`)
-	expectPass(t, nullHop(t, m2, func(h []Header) []Header { return h }, "third body\r\n",
-		`{"b":null}`))
+	expectFail(t, nullHop(t, m2, func(h []Header) []Header { return h }, "third body\r\n",
+		`{"b":null}`), "PERMERROR: Message-Instance m=3 has a null recipe")
+}
+
+// outboundErr verifies msg as its next signer does (Outbound): an unsigned
+// null top is the signer's own, so the walk below it still runs.
+func outboundErr(t *testing.T, msg []byte) string {
+	t.Helper()
+	res, err := VerifyFull(bytes.NewReader(msg), &JSONKeyFetcher{Path: "../../dns.json"},
+		VerifyOptions{SkipTimestampCheck: true, Outbound: true})
+	if err != nil {
+		return err.Error()
+	}
+	if p := PrimaryResult(res); p != nil {
+		return p.Error.Error()
+	}
+	return ""
 }
 
 func TestNullBodyForgedHistoryBelowNullFails(t *testing.T) {
@@ -154,13 +173,28 @@ func TestNullBodyForgedHistoryBelowNullFails(t *testing.T) {
 		}
 		return hs
 	}
-	expectFail(t, nullHop(t, nullHopBase(t), forge, "new body\r\n", subjRecipe),
-		"FAIL: Message-Instance m=1 header hash sha256 mismatch")
+	m := nullHop(t, nullHopBase(t), forge, "new body\r\n", subjRecipe)
+	// Signed, the null is the result; unsigned (the signer's view), the
+	// forged history below it is.
+	expectFail(t, m, "PERMERROR: Message-Instance m=2 has a null recipe")
+	if got := outboundErr(t, dropTopSig(t, m)); !strings.Contains(got, "FAIL: Message-Instance m=1 header hash sha256 mismatch") {
+		t.Fatalf("outbound: got %q", got)
+	}
 }
 
 func TestNullBodyHeaderRecipeNotApplyingFails(t *testing.T) {
-	expectFail(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n",
-		`{"h":{"subject":[{"c":[1,9]}]},"b":null}`), "contains invalid JSON")
+	m := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", `{"h":{"subject":[{"c":[1,9]}]},"b":null}`)
+	expectFail(t, m, "PERMERROR: Message-Instance m=2 has a null recipe")
+	if got := outboundErr(t, dropTopSig(t, m)); !strings.Contains(got, "contains invalid JSON") {
+		t.Fatalf("outbound: got %q", got)
+	}
+}
+
+func TestNullBodyUnsignedTopOutboundPasses(t *testing.T) {
+	m := dropTopSig(t, nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe))
+	if got := outboundErr(t, m); got != "" {
+		t.Fatalf("outbound: got %q, want pass", got)
+	}
 }
 
 func TestUndoStillRefusesNullBody(t *testing.T) {
@@ -193,15 +227,18 @@ func subjectTag2(hs []Header) []Header {
 
 const ordinaryOverNull = `{"h":{"subject":[{"d":["[list] hello"]}]}}`
 
-func TestNullBelowOrdinaryInstancePasses(t *testing.T) {
+func TestNullBelowOrdinaryInstanceIsPermerror(t *testing.T) {
 	m2 := nullHop(t, nullHopBase(t), subjectTag, "new body\r\n", subjRecipe)
-	expectPass(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull))
+	expectFail(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull),
+		"PERMERROR: Message-Instance m=2 has a null recipe")
 }
 
 func TestNullBelowOrdinaryInstanceForgedFails(t *testing.T) {
-	m2 := nullHop(t, nullHopBase(t), forgeTo, "new body\r\n", subjRecipe)
-	expectFail(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull),
-		"FAIL: Message-Instance m=1 header hash sha256 mismatch")
+	m2 := dropTopSig(t, nullHop(t, nullHopBase(t), forgeTo, "new body\r\n", subjRecipe))
+	m := dropTopSig(t, nullHop(t, m2, subjectTag2, "new body\r\n", ordinaryOverNull))
+	if got := outboundErr(t, m); !strings.Contains(got, "FAIL: Message-Instance m=1 header hash sha256 mismatch") {
+		t.Fatalf("outbound: got %q", got)
+	}
 }
 
 func emptyBodyBase(t *testing.T) []byte {

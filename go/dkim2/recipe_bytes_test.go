@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Tests for the -08 §5 "u" (base64 octet) literal steps, and the verifier
+// Tests for the §5 "u" (base64 octet) literal steps, and the verifier
 // actually enforcing the "c" range rules (two integers, 1 <= start <= end <=
 // item count, ascending and non-overlapping across the list) as
 // "PERMERROR: Message-Instance m=<N> contains invalid JSON".
@@ -206,7 +206,7 @@ func TestVerifyRejectsMalformedRecipe(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			want := "PERMERROR: Message-Instance m=1 contains invalid JSON"
 			if tc.path != "" {
-				want = "PERMERROR: Message-Instance m=1 Recipe " + tc.path + " is invalid"
+				want = "PERMERROR: Message-Instance m=1 recipe " + tc.path + " is invalid"
 			}
 			r := base64.StdEncoding.EncodeToString([]byte(tc.json))
 			tampered := strings.Replace(msg, "Message-Instance: m=1; ",

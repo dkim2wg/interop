@@ -22,7 +22,7 @@ type HashSet struct {
 	HeaderHash string // base64, FWS already stripped
 	BodyHash   string // base64, FWS already stripped
 	// Group is the hash-all ("," list) the set belongs to, counting the
-	// "|"-separated groups of h= from 0 (-08 §9.3).  Signers write one.
+	// "|"-separated groups of h= from 0 (§9.3).  Signers write one.
 	Group int
 }
 
@@ -37,7 +37,7 @@ func validBase64String(v string) bool {
 }
 
 // splitGroups splits an h= or s= value (FWS still present) into its "|"
-// groups of ","-separated members (-08 §9.3, §10.9).  FWS may surround
+// groups of ","-separated members (§9.3, §10.9).  FWS may surround
 // either separator; an empty member -- a leading, trailing or doubled "|"
 // or "," -- is a syntax error (contract D2).
 func splitGroups(v string) ([][]string, bool) {
@@ -119,7 +119,7 @@ func implementedAlgs(hashes []HashSet) []string {
 // algorithm is cheap) and the already-computed bodyHashes (one streaming
 // pass over the body — see hashBodyStream — must have produced an entry for
 // every algorithm implementedAlgs(mi.Hashes) names), combining the
-// hash-sets' results as -08 §14.7 says (checkMIHashes).
+// hash-sets' results as §14.7 says (checkMIHashes).
 func verifyMIHashesPrecomputed(mi *MessageInstance, headers []Header, bodyHashes map[string][]byte) error {
 	return checkMIHashes(mi, headerHasher(headers), bodyHashes)
 }
@@ -156,7 +156,7 @@ func checkMIHeaderHashes(mi *MessageInstance, headerHash func(string) ([]byte, e
 	return combineHashSets(mi, headerHash, nil, false)
 }
 
-// Intermediate results (-08 §14.6, §14.7), in the order the combining rules
+// Intermediate results (§14.6, §14.7), in the order the combining rules
 // test for them after PASS.
 const (
 	resPass = iota
@@ -165,7 +165,7 @@ const (
 	resPermerror
 )
 
-// combineHashSets is -08 §14.7 (contract D4).  Each hash-set, in h= order,
+// combineHashSets is §14.7 (contract D4).  Each hash-set, in h= order,
 // is PASS when its header hash and (withBody) its body hash match, FAIL
 // when either does not -- the header reported before the body -- and
 // PERMERROR "algorithm <alg> unknown" when this build does not implement
@@ -212,7 +212,7 @@ type itemResult struct {
 	group int
 }
 
-// combineResults combines intermediate results, in h= or s= order, as -08
+// combineResults combines intermediate results, in h= or s= order, as
 // §14.6/§14.7 do (contract D3/D4): an all-group passes when every item does;
 // else it is TEMPERROR when every item that did not pass is TEMPERROR; else
 // FAIL when any is; else PERMERROR.  The any-groups pass when any group
@@ -350,7 +350,7 @@ func parseMI(raw string) (*MessageInstance, error) {
 			// §14.2: "errors in a JSON object specifying Recipes SHOULD be
 			// called out specifically" -- a bad r= payload is reported
 			// distinctly from a generic syntax error.  A step the schema
-			// or §5.1/§5.2 rejects is "Recipe <path> is invalid"; anything
+			// or §5.1/§5.2 rejects is "recipe <path> is invalid"; anything
 			// wrong with the document as a whole is "contains invalid
 			// JSON" (contract D6), as is a step that does not fit the
 			// message, which only the chain walk can find.

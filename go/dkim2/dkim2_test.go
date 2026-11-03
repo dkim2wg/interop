@@ -855,7 +855,7 @@ func TestVerifyGap3DomainSuffix(t *testing.T) {
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	// Timestamps skipped: an expired t= would be the primary error (C9).
 	_, err = Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})
-	if err == nil || !strings.Contains(err.Error(), "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match") {
+	if err == nil || !strings.Contains(err.Error(), "FAIL: DKIM2-Signature i=1 mf= and d= do not match") {
 		t.Errorf("expected domain suffix mismatch error, got %v", err)
 	}
 }
@@ -1117,7 +1117,7 @@ func TestVerifyChainCustodyBreak(t *testing.T) {
 	if tampered == string(doubleMsg) {
 		t.Skip("could not find mf= to tamper (base64 may differ)")
 	}
-	// -08 §14.4 custody break:
+	// §14.4 custody break:
 	// "DKIM2-Signature i=<x> mf= does not match the rt= of i=<y>".
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	results, err := Verify(strings.NewReader(tampered), f, VerifyOptions{SkipTimestampCheck: true})

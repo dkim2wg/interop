@@ -76,7 +76,7 @@ func TestSpec08D10JSONKeysStrictLowercase(t *testing.T) {
 
 func TestSpec08D6RecipePathIsInvalid(t *testing.T) {
 	const invalid = "PERMERROR: Message-Instance m=2 contains invalid JSON"
-	step := func(path string) string { return "PERMERROR: Message-Instance m=2 Recipe " + path + " is invalid" }
+	step := func(path string) string { return "PERMERROR: Message-Instance m=2 recipe " + path + " is invalid" }
 	for _, tc := range []struct{ js, want string }{
 		// One step the schema or §5.1/§5.2 rejects.
 		{`{"b":[{"c":[3,4]},{"c":[1,2]}]}`, step("b[1]")},
@@ -404,7 +404,7 @@ func TestSpec08D7MalformedKeys(t *testing.T) {
 		{"ed25519 31 octets", "v=DKIM1; k=ed25519; p=" + b64(edPub[:31]), ErrKeyMalformed},
 		{"ed25519 33 octets", "v=DKIM1; k=ed25519; p=" + b64(append(append([]byte{}, edPub...), 0)), ErrKeyMalformed},
 		{"rsa not a key", "v=DKIM1; k=rsa; p=AAAA", ErrKeyMalformed},
-		{"rsa 512 bits", "v=DKIM1; k=rsa; p=" + b64(smallSPKI), ErrKeyMalformed},
+		{"rsa 512 bits", "v=DKIM1; k=rsa; p=" + b64(smallSPKI), ErrKeyTooShort}, // contract E5
 		{"p= not base64", "v=DKIM1; k=ed25519; p=!!!!", ErrKeySyntax},
 		{"ed25519 raw", "v=DKIM1; k=ed25519; p=" + b64(edPub), nil},
 	} {
@@ -450,7 +450,7 @@ func TestSpec08D11PropagateDomainMatchesTopRt(t *testing.T) {
 	}
 }
 
-// ---- D9: FullyVerified ----
+// ---- D9: FullyVerified (deprecated by -09, contract E2) ----
 
 func TestSpec08D9FullyVerified(t *testing.T) {
 	skip := VerifyOptions{SkipTimestampCheck: true}
@@ -458,8 +458,7 @@ func TestSpec08D9FullyVerified(t *testing.T) {
 	twoHop := must07(t, revise07(t, hop1, setHeader("Subject", "[list] hello"), "", ""),
 		"example.org", "list@lists.example.org", []string{"sub@example.net"}, "")
 	nullBody := must07(t, revise07(t, hop1, nil, "changed\r\n", `{"b":null}`),
-		"example.org", "list@lists.example.org", []string{"sub@example.net"}, "",
-		func(o *SignOptions) { o.AllowNullBodyRecipe = true })
+		"example.org", "list@lists.example.org", []string{"sub@example.net"}, "")
 	full := func(results []VerifyResult, err error) string {
 		if err != nil {
 			return "error: " + err.Error()
@@ -475,6 +474,7 @@ func TestSpec08D9FullyVerified(t *testing.T) {
 		}
 		return fmt.Sprint(fv)
 	}
+	const nullErr = "error: PERMERROR: Message-Instance m=2 has a null recipe"
 	for _, tc := range []struct {
 		name string
 		got  string
@@ -485,12 +485,13 @@ func TestSpec08D9FullyVerified(t *testing.T) {
 		{"two hops", full(VerifyFull(bytes.NewReader(twoHop), spec07Fetcher(t), skip)), "true"},
 		{"two hops, undo walk", full(VerifyFull(bytes.NewReader(twoHop), spec07Fetcher(t),
 			VerifyOptions{SkipTimestampCheck: true, UndoWalk: true})), "true"},
-		// Verify checks only the top instance: the lower ones are not checked.
-		{"two hops, Verify", full(Verify(bytes.NewReader(twoHop), spec07Fetcher(t), skip)), "false"},
-		// A null body Recipe at m=2: PASS, but m=1's body hash is never checked.
-		{"null body", full(VerifyFull(bytes.NewReader(nullBody), spec07Fetcher(t), skip)), "false"},
+		// -09: true exactly for a pass.
+		{"two hops, Verify", full(Verify(bytes.NewReader(twoHop), spec07Fetcher(t), skip)), "true"},
+		// A null body Recipe is no longer a pass at all.
+		{"null body", full(VerifyFull(bytes.NewReader(nullBody), spec07Fetcher(t), skip)), nullErr},
 		{"null body, undo walk", full(VerifyFull(bytes.NewReader(nullBody), spec07Fetcher(t),
-			VerifyOptions{SkipTimestampCheck: true, UndoWalk: true})), "false"},
+			VerifyOptions{SkipTimestampCheck: true, UndoWalk: true})), nullErr},
+		{"null body, Verify", full(Verify(bytes.NewReader(nullBody), spec07Fetcher(t), skip)), nullErr},
 		{"headers only", full(VerifyFull(bytes.NewReader(hop1), spec07Fetcher(t),
 			VerifyOptions{SkipTimestampCheck: true, HeadersOnly: true})), "false"},
 	} {
@@ -533,7 +534,7 @@ func TestSpec08D5FailNotPermerror(t *testing.T) {
 		{"envelope RCPT TO", hop1, VerifyOptions{SkipTimestampCheck: true, RcptTo: []string{"x@example.org"}},
 			"FAIL: DKIM2-Signature i=1 RCPT TO x@example.org did not match"},
 		{"mf and d", must07(t, []byte(spec07Base), "example.com", "a@example.net", []string{"b@example.org"}, ""),
-			skip, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match"},
+			skip, "FAIL: DKIM2-Signature i=1 mf= and d= do not match"},
 		{"nd mismatch", ndChain07(t, "x@mail.example.org", "example.org", "other.example"),
 			skip, "FAIL: DKIM2-Signature i=2 nd= does not match"},
 		{"d and rt", must07(t, hop1, "other.net", "<>", []string{"a@example.com"}, ""),

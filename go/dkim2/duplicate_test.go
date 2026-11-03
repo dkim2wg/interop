@@ -44,7 +44,7 @@ func TestSameAlgorithmTwiceAllowed(t *testing.T) {
 	}
 }
 
-// -08 §10.9 allows any number of one algorithm with distinct Selectors.
+// §10.9 allows any number of one algorithm with distinct Selectors.
 func TestThreeSameAlgorithmAllowed(t *testing.T) {
 	errs := checkSignatureDuplicates([]SigItem{
 		{Selector: "sel1", Algorithm: "rsa-sha256"},

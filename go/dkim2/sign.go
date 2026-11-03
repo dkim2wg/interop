@@ -12,10 +12,15 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
+
+// warnAllowNullOnce makes the deprecated AllowNullBodyRecipe warn once.
+var warnAllowNullOnce sync.Once
 
 // Sign reads r, prepends a new Message-Instance and DKIM2-Signature header,
 // and writes the complete signed message to w. Output uses CRLF line endings
@@ -56,6 +61,13 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		if err := chainRangeError(mis, sigs); err != nil {
 			return fmt.Errorf("not signing: %w", err)
 		}
+	}
+
+	if opts.AllowNullBodyRecipe {
+		warnAllowNullOnce.Do(func() {
+			log.Print("dkim2: SignOptions.AllowNullBodyRecipe is deprecated and does nothing: " +
+				"this hop's own null body Recipes are always signed over")
+		})
 	}
 
 	// Signer gate: never put our signature over a chain that does not check out.
@@ -283,14 +295,11 @@ func checkSignerFrom(headers []Header, mis []*MessageInstance, covered int, d st
 
 // checkUpstream is the signer gate.  A message with no DKIM2 headers must
 // have a From that is Authentic for the signing domain, and passes.
-// Otherwise the existing chain is verified in outbound mode (unsigned
-// Message-Instances above the top signature are allowed) and, unless
-// opts.AllowNullBodyRecipe, no UNSIGNED Message-Instance may carry a null
-// body Recipe.  A DKIM2-Signature with m=k covers instances 1..k, so an
-// instance is unsigned when its m= is above the highest m= of every valid
-// (valid i=) upstream signature -- whether it is the top or another unsigned
-// instance was added over it.  A null an upstream domain already signed is
-// extended normally: that is a forwarder relaying, not this hop discarding.
+// Otherwise the existing chain is verified in outbound mode: unsigned
+// Message-Instances above the top signature are allowed, and so is a null
+// body Recipe on one of them -- this hop's own, which it signs over
+// (contract E2).  A null an upstream signature covers fails that
+// verification ("has a null recipe") and is refused.
 func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 	var mis []*MessageInstance
 	covered := 0 // highest m= of a valid upstream signature
@@ -333,32 +342,5 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 		}
 		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail i=%d d=%s: %w", r.Sequence, r.Domain, r.Error)
 	}
-	if err := checkSignerFrom(headers, mis, covered, opts.Domain); err != nil {
-		return err
-	}
-	if opts.AllowNullBodyRecipe {
-		return nil
-	}
-	topM := 0
-	for _, mi := range mis {
-		if mi.Version > topM {
-			topM = mi.Version
-		}
-	}
-	// Report the highest unsigned null (the top's own, when it has one).
-	var null *MessageInstance
-	for _, mi := range mis {
-		if mi.Version > covered && mi.Recipe != nil && mi.Recipe.BodyNull &&
-			(null == nil || mi.Version > null.Version) {
-			null = mi
-		}
-	}
-	if null != nil {
-		where := ""
-		if null.Version == topM {
-			where = "top "
-		}
-		return fmt.Errorf("not signing: unsigned %sMessage-Instance m=%d has a null body Recipe (set allow-null-body-recipe to sign anyway)", where, null.Version)
-	}
-	return nil
+	return checkSignerFrom(headers, mis, covered, opts.Domain)
 }

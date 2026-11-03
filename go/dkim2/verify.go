@@ -39,18 +39,19 @@ func Verify(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyRes
 	if err != nil {
 		return nil, err
 	}
+	policies := newPolicyCache(policySource(fetcher, opts...))
 	fetcher = prefetchKeys(cs.sigs, fetcher, opts...)
 	results, err := verifyFields(cs, func(algs []string) (map[string][]byte, error) {
 		return hashBodyStream(br, algs)
 	}, nil, fetcher, opts...)
-	return fromLast(headers, results, err, false, opts...)
+	return fromLast(headers, results, err, policies, opts...)
 }
 
 // chainOf sorts headers into Message-Instances, DKIM2-Signatures and
 // content, and runs the §14.2 structure check (chainStructure) over them:
 // the first thing verified, before the body is read or any key looked up.
-// No DKIM2 header fields at all is ErrNone (-08 §14.2's "No DKIM2 header
-// fields found" is reported as dkim2=none).
+// No DKIM2 header fields at all is ErrNone (§14.2's "No DKIM2 header
+// fields found", reported as dkim2=none; contract E1).
 func chainOf(headers []Header, opts ...VerifyOptions) (*chainShape, error) {
 	var mis, sigs []string // raw fields, CRLF included
 	var content []Header
@@ -76,57 +77,23 @@ func chainOf(headers []Header, opts ...VerifyOptions) (*chainShape, error) {
 }
 
 // fromLast finishes a verification with the §14.8 From check, which comes
-// last in contract C9's order: only when nothing before it failed.
-// walked says whether the instances below the top were checked (the §14.7
-// chain walk ran); it and the chain decide FullyVerified on a pass.
-func fromLast(headers []Header, results []VerifyResult, err error, walked bool, opts ...VerifyOptions) ([]VerifyResult, error) {
+// last in contract C9's order: only when nothing before it failed, so the
+// Domain Policy Records (policies) are never looked up for a message that
+// already has an error.  FullyVerified (deprecated, contract E2) is then
+// set on a pass, except with HeadersOnly.
+func fromLast(headers []Header, results []VerifyResult, err error, policies *policyCache, opts ...VerifyOptions) ([]VerifyResult, error) {
 	if err != nil || PrimaryResult(results) != nil {
 		return results, err
 	}
-	if ferr := verifyFrom(headers, opts...); ferr != nil {
+	if ferr := verifyFrom(headers, policies, opts...); ferr != nil {
 		return nil, ferr
 	}
-	if fully := fullyVerified(headers, walked, opts...); fully {
+	if !(len(opts) > 0 && opts[0].HeadersOnly) {
 		for k := range results {
 			results[k].FullyVerified = true
 		}
 	}
 	return results, nil
-}
-
-// fullyVerified decides, for a verification that passed, whether it is
-// Fully Verified (-08 §13, contract D9): every instance's hashes checked
-// against the message its Recipes rebuild, which a null body Recipe on any
-// m=k (k >= 2) prevents for the bodies below it; with a body (not
-// HeadersOnly); walked, or with only one instance; and every instance
-// signed (Outbound may leave an unsigned top).
-func fullyVerified(headers []Header, walked bool, opts ...VerifyOptions) bool {
-	var opt VerifyOptions
-	if len(opts) > 0 {
-		opt = opts[0]
-	}
-	if opt.HeadersOnly {
-		return false
-	}
-	top, maxSigM := 0, 0
-	for _, h := range headers {
-		switch strings.ToLower(h.Name) {
-		case "message-instance":
-			mi, err := parseMI(h.Raw)
-			if err != nil {
-				return false
-			}
-			if mi.Version >= 2 && mi.Recipe != nil && mi.Recipe.BodyNull {
-				return false
-			}
-			top = max(top, mi.Version)
-		case "dkim2-signature":
-			if s, err := parseSig(h.Raw); err == nil {
-				maxSigM = max(maxSigM, s.MIVersion)
-			}
-		}
-	}
-	return top >= 1 && maxSigM >= top && (walked || top == 1)
 }
 
 // verifyFields is Verify once the chain's structure (cs) checks out.  bodyHashes
@@ -155,10 +122,17 @@ func verifyFields(cs *chainShape, bodyHashes func(algs []string) (map[string][]b
 	// §14.2 content: each Message-Instance on its own, by ascending m=,
 	// whether or not the walk reaches it.  Every parseMI error is a
 	// self-describing §14.2 string.
+	// A null body Recipe is a PERMERROR (§13, contract E2), checked right
+	// after that instance's own Recipe checks, so the lowest m= holding one
+	// is named.  A signer's own view (Outbound) skips the instances no
+	// signature covers yet: those are the signer's own to sign over.
 	var topMI *MessageInstance
 	for _, raw := range miHeaders {
 		if topMI, err = parseMI(raw); err != nil {
 			return nil, err
+		}
+		if topMI.Recipe != nil && topMI.Recipe.BodyNull && !(opt.Outbound && topMI.Version > cs.maxSigM) {
+			return nil, fmt.Errorf("PERMERROR: Message-Instance m=%d has a null recipe", topMI.Version)
 		}
 	}
 
@@ -300,7 +274,7 @@ type chainShape struct {
 	content   []Header
 }
 
-// chainStructure is -08 §14.2's structure check, contract C9 steps a..h:
+// chainStructure is §14.2's structure check, contract C9 steps a..h:
 // what the field names and their m=/i= numbers alone decide, before any
 // field's content.  Each step is over every field, and the first that
 // applies is the result:
@@ -411,7 +385,7 @@ func chainStructure(miHeaders, sigHeaders []string, outbound bool) (*chainShape,
 	return cs, nil
 }
 
-// lowestTwice is "<who>=<n> appears more than once" for the lowest number
+// lowestTwice is "<who>=<n> is duplicated" for the lowest number
 // tag gives more than one of raws (all chain numbers): steps c and e of
 // chainStructure.
 func lowestTwice(who string, raws []string, tags func(string) *tagValueList, tag string) error {
@@ -422,18 +396,19 @@ func lowestTwice(who string, raws []string, tags func(string) *tagValueList, tag
 	}
 	for n, c := range count {
 		if c > 1 {
-			return fmt.Errorf("PERMERROR: %s=%d appears more than once", who, n)
+			return fmt.Errorf("PERMERROR: %s=%d is duplicated", who, n)
 		}
 	}
 	return nil // not reached: the caller found one
 }
 
-// sigFieldError is the -08 §14.2 check of one DKIM2-Signature field on its
+// sigFieldError is the §14.2 check of one DKIM2-Signature field on its
 // own (contract C9 runs it for every signature, by ascending i=, after the
 // chain walk and before any §14.3 check): a
 // duplicated tag, an mf=/rt= without its angle brackets (§10.5/§10.6), the
-// §10.9 duplicate-selector rule and the 8-item limit (D3), and an m= naming a
-// Message-Instance that is not there.
+// exploded flag at i=1 (§14.2, contract E6), the §10.9 duplicate-selector
+// rule and the 8-item limit (D3), and an m= naming a Message-Instance that
+// is not there.
 func sigFieldError(sig *DKIM2Signature, top int) error {
 	// §8: a tag name that occurs more than once makes the whole tag-list
 	// invalid.
@@ -446,6 +421,13 @@ func sigFieldError(sig *DKIM2Signature, top int) error {
 	for _, r := range sig.RcptTo {
 		if !(strings.HasPrefix(r, "<") && strings.HasSuffix(r, ">")) {
 			return sigSyntaxError(sig.Sequence)
+		}
+	}
+	if sig.Sequence == 1 {
+		for _, f := range sig.Flags {
+			if f == "exploded" {
+				return errors.New("PERMERROR: DKIM2-Signature i=1 has an exploded flag")
+			}
 		}
 	}
 	if dupErrs := checkSignatureDuplicates(sig.Sigs, sig.Sequence); len(dupErrs) > 0 {
@@ -507,7 +489,7 @@ func topCustodyError(topSig *DKIM2Signature, opts ...VerifyOptions) error {
 // only once everything before it passed.  Outbound, the unsigned instances
 // above the top signature are the signer's own to answer for (Sign checks
 // them itself).
-func verifyFrom(headers []Header, opts ...VerifyOptions) error {
+func verifyFrom(headers []Header, policies *policyCache, opts ...VerifyOptions) error {
 	var content []Header
 	var sigs []*DKIM2Signature
 	mis := map[int]*MessageInstance{}
@@ -540,11 +522,11 @@ func verifyFrom(headers []Header, opts ...VerifyOptions) error {
 	if len(opts) > 0 && opts[0].Outbound && topSigM < top {
 		limit = topSigM
 	}
-	return checkFromAuthentic(content, mis, top, limit, sigs)
+	return checkFromAuthentic(content, mis, top, limit, sigs, policies)
 }
 
-// c9Section is where an error string ranks in contract C9's order, as -08
-// amends it: the §14.7 chain walk (3), §14.3 (5), §14.4 (6), §14.5 and
+// c9Section is where an error string ranks in contract C9's order, as
+// contract D3 amends it: the §14.7 chain walk (3), §14.3 (5), §14.4 (6), §14.5 and
 // §14.6 together (7), §14.8 (9).  Anything else (§14.2) is 2: those stop
 // verification before anything that could be ranked against them is
 // checked.
@@ -554,11 +536,11 @@ func c9Section(text string) int {
 		return 3
 	case strings.HasSuffix(text, " signature expired") || strings.HasSuffix(text, " signature is from the future"):
 		return 5
-	case strings.HasSuffix(text, " matching From is not authentic"):
+	case fromText(text):
 		return 9
 	case custodyText(text):
 		return 6
-	// -08 (contract D3, amending C9): §14.5 and §14.6 are one step per
+	// Contract D3, amending C9: §14.5 and §14.6 are one step per
 	// signature, so a key error and a signature verdict rank together, the
 	// lowest i= first.
 	case strings.HasPrefix(text, "TEMPERROR: ") || strings.Contains(text, " public key ") ||
@@ -569,15 +551,27 @@ func c9Section(text string) int {
 	return 2
 }
 
+// fromText reports whether an error text is one of §14.8's (contract E3.1).
+func fromText(text string) bool {
+	for _, s := range []string{" matching From is not authentic", " From has more than one address",
+		" From uses a domain literal", " forbids subdomain signing"} {
+		if strings.HasSuffix(text, s) && strings.HasPrefix(text, "FAIL: DKIM2-Signature ") {
+			return true
+		}
+	}
+	return strings.HasPrefix(text, "TEMPERROR: DKIM2-Signature ") && strings.Contains(text, " policy for ") ||
+		strings.HasPrefix(text, "PERMERROR: DKIM2-Signature ") && strings.HasSuffix(text, " policy")
+}
+
 // custodyText reports whether an error text is one of §14.4's: the top
-// signature's nd=, the envelope, or a Chain of Custody step (all FAIL in
-// -08, contract D5, like the §14.6 signature strings they rank before).
+// signature's nd=, the envelope, or a Chain of Custody step (all FAIL,
+// contract D5, like the §14.6 signature strings they rank before).
 func custodyText(text string) bool {
 	if !strings.HasPrefix(text, "FAIL: DKIM2-Signature ") {
 		return false
 	}
 	for _, s := range []string{" unexpected nd= tag", " did not match", " nd= does not match",
-		" d= does not match the rt= of i=", " mf= does not match the rt= of i=", " MAIL FROM and d= do not match"} {
+		" d= does not match the rt= of i=", " mf= does not match the rt= of i=", " mf= and d= do not match"} {
 		if strings.Contains(text, s) {
 			return true
 		}
@@ -611,13 +605,15 @@ func PrimaryResult(results []VerifyResult) *VerifyResult {
 }
 
 // verifySigItems decides one DKIM2-Signature's outcome from its s= items
-// (-08 §14.5, §14.6; contract D3): one step per item, in s= order --
+// (§14.5, §14.6; contract D3): one step per item, in s= order --
 //   - an algorithm this build does not implement (mldsa44 included, D8) is
 //     PERMERROR "selector <s> algorithm unknown", and no key is fetched;
 //   - the key: a DNS failure is TEMPERROR "could not be fetched", an absent
 //     record PERMERROR "does not exist", a record present but unusable the
-//     §14.5 PERMERROR (syntax error, revoked, algorithm mismatch, malformed);
+//     §14.5 PERMERROR (syntax error, revoked, algorithm mismatch, malformed,
+//     too short);
 //   - the signature: PASS, or FAIL "selector <s> incorrect signature".
+//
 // Every item is checked, then the "," and "|" groups combined
 // (combineResults): the result does not depend on evaluation order, and a
 // key error only counts when no "|" group passes.
@@ -652,10 +648,10 @@ func verifySigItem(sig *DKIM2Signature, item SigItem, fetcher KeyFetcher, digest
 	if keyAlg != item.Algorithm || !keyFitsAlg(pubKey, item.Algorithm) {
 		return resPermerror, fmt.Errorf("PERMERROR: %s public key %s algorithm mismatch", who, item.Selector)
 	}
-	// §3.2: RSA keys MUST be at least 1024 bits; a KeyFetcher that hands
-	// over a shorter one has handed over a malformed key.
+	// §3.2: RSA keys MUST be at least 1024 bits, whichever KeyFetcher
+	// handed the key over (contract E5).
 	if rk, ok := pubKey.(*rsa.PublicKey); ok && rk.N.BitLen() < 1024 {
-		return resPermerror, fmt.Errorf("PERMERROR: %s public key %s is malformed", who, item.Selector)
+		return resPermerror, fmt.Errorf("PERMERROR: %s public key %s too short", who, item.Selector)
 	}
 	if verifyDigest(pubKey, item.Algorithm, digest, item.Value) != nil {
 		return resFail, fmt.Errorf("FAIL: %s selector %s incorrect signature", who, item.Selector)
@@ -666,8 +662,8 @@ func verifySigItem(sig *DKIM2Signature, item SigItem, fetcher KeyFetcher, digest
 // checkSignatureDuplicates enforces the §10.9 rules for one DKIM2-Signature
 // s= tag, across all of its groups: a Selector MUST NOT appear more than
 // once (compared without regard to case: a Selector is a Domain, §3.6).
-// Then the local limit: at most MaxSignatureItems items (contract D3).  -08
-// allows any number of items of one algorithm.
+// Then the local limit: at most MaxSignatureItems items (contract D3).  Any
+// number of items of one algorithm is allowed.
 func checkSignatureDuplicates(items []SigItem, i int) []string {
 	seenSelectors := map[string]bool{}
 	for _, it := range items {
@@ -708,7 +704,7 @@ func isNullPath(mf string) bool {
 }
 
 // checkChainOfCustody is §14.4 over the signatures in ascending i= order
-// (§7.1 items 1 and 2).  Every failure is FAIL (-08, contract D5); all of
+// (§7.1 items 1 and 2).  Every failure is FAIL (contract D5); all of
 // them are reported, joined, in the order found.
 //
 //   - Every signature S with a non-null mf= and no nd=: the mf= domain
@@ -753,7 +749,7 @@ func checkChainOfCustody(sigs []*DKIM2Signature) error {
 		}
 		if s.NextDomain == "" && !isNullPath(s.MailFrom) {
 			if mf, lit := domainOf(s.MailFrom); lit || !relaxedMatch(mf, s.Domain) {
-				errs = append(errs, fmt.Errorf("FAIL: DKIM2-Signature i=%d MAIL FROM and d= do not match", s.Sequence))
+				errs = append(errs, fmt.Errorf("FAIL: DKIM2-Signature i=%d mf= and d= do not match", s.Sequence))
 			}
 		}
 	}
@@ -785,7 +781,9 @@ func fromRecipe(mi *MessageInstance) ([]RecipeStep, bool) {
 // limit (outbound, the unsigned top instances: the signer checks those).  A
 // From Recipe that cannot be applied stops the walk, and the states below it
 // are not checked: the chain walk reports it.  sigs are in ascending i= order.
-func checkFromAuthentic(content []Header, mis map[int]*MessageInstance, top, limit int, sigs []*DKIM2Signature) error {
+// The first failing pair is the result (contract E3.1): no Domain Policy
+// Record is looked up after it.
+func checkFromAuthentic(content []Header, mis map[int]*MessageInstance, top, limit int, sigs []*DKIM2Signature, policies *policyCache) error {
 	fromAt := map[int][]Header{}
 	changed := map[int]bool{}
 	from := fromFields(content)
@@ -802,7 +800,6 @@ func checkFromAuthentic(content []Header, mis map[int]*MessageInstance, top, lim
 		}
 		from = prev
 	}
-	var errs []error
 	prevM := 0
 	for idx, s := range sigs {
 		if s == nil {
@@ -822,11 +819,11 @@ func checkFromAuthentic(content []Header, mis map[int]*MessageInstance, top, lim
 		if !due || !ok || s.MIVersion > limit {
 			continue
 		}
-		if !fromAuthentic(state, s.Domain) {
-			errs = append(errs, fmt.Errorf("FAIL: DKIM2-Signature i=%d matching From is not authentic", s.Sequence))
+		if err := fromAuthenticError(state, s, policies); err != nil {
+			return err
 		}
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 // keyFitsAlg reports whether key is of the type alg signs with.

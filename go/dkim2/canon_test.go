@@ -135,12 +135,12 @@ func TestSpec05ExcludedNames(t *testing.T) {
 	}
 }
 
-// -08 §4 (contract D1) took Auto-Submitted and VBR-Info off the list: they
+// §4 (contract D1) took Auto-Submitted and VBR-Info off the list: they
 // are hashed.
 func TestSpec08AutoSubmittedVBRInfoHashed(t *testing.T) {
 	for _, n := range []string{"auto-submitted", "Auto-Submitted", "vbr-info", "VBR-Info"} {
 		if shouldExcludeHeader(n) {
-			t.Errorf("%s must be hashed (-08 §4)", n)
+			t.Errorf("%s must be hashed (§4)", n)
 		}
 	}
 }

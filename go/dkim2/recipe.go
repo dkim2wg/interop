@@ -76,7 +76,7 @@ func malformedRecipe(format string, args ...any) error {
 // invalid JSON": the document as a whole is not valid (not JSON, not an
 // object, a duplicate or uppercase key, a fraction or exponent, "h" or "b"
 // of the wrong type, neither present), or a step does not fit the message
-// it is applied to.  With a path it is "Recipe <path> is invalid": that one
+// it is applied to.  With a path it is "recipe <path> is invalid": that one
 // step breaks the §5 schema or the §5.1/§5.2 rules.  The message is not
 // accepted.  It is self-describing, so Verify/VerifyFull return it verbatim
 // rather than wrapping it.
@@ -87,7 +87,7 @@ type malformedRecipeError struct {
 
 func (e *malformedRecipeError) Error() string {
 	if e.path != "" {
-		return fmt.Sprintf("PERMERROR: Message-Instance m=%d Recipe %s is invalid", e.m, e.path)
+		return fmt.Sprintf("PERMERROR: Message-Instance m=%d recipe %s is invalid", e.m, e.path)
 	}
 	return fmt.Sprintf("PERMERROR: Message-Instance m=%d contains invalid JSON", e.m)
 }
@@ -297,7 +297,7 @@ func validateRecipeStep(s RecipeStep, lastEnd *int, count int) error {
 // a key twice (§5: keys MUST be unique): parsers disagree on which value
 // wins, so {"b":[...],"b":null} would be a null body Recipe to some
 // verifiers and signers and a real one to others.  errUppercaseJSONKey is
-// returned for a key holding an ASCII capital, at any level: -08 keys are
+// returned for a key holding an ASCII capital, at any level: keys are
 // strictly lowercase (contract D10).
 var (
 	errDuplicateJSONKey = errors.New("duplicate JSON object key")

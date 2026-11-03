@@ -45,6 +45,7 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	if err != nil {
 		return nil, err
 	}
+	policies := newPolicyCache(policySource(fetcher, opts...))
 	fetcher = prefetchKeys(cs.sigs, fetcher, opts...)
 	plan := newChainPlan(headers)
 	if plan == nil {
@@ -57,7 +58,7 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 		if _, err := readHeaderFields(br); err != nil {
 			return nil, err
 		}
-		return verifyUndoFrom(buf, br, headers, cs, fetcher, opts...)
+		return verifyUndoFrom(buf, br, headers, cs, fetcher, policies, opts...)
 	}
 	rec.buf, rec.off = nil, true
 
@@ -73,7 +74,7 @@ func VerifyFull(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]Verif
 	plan.close()
 
 	results, err := verifyFields(cs, plan.topHashes, plan.walk, fetcher, opts...)
-	return fromLast(headers, results, err, true, opts...)
+	return fromLast(headers, results, err, policies, opts...)
 }
 
 // chainLevelError is the VerifyResult error for a lower Message-Instance
@@ -120,13 +121,14 @@ func verifyFullUndo(r io.Reader, fetcher KeyFetcher, opts ...VerifyOptions) ([]V
 	if err != nil {
 		return nil, err
 	}
-	return verifyUndoFrom(buf, br, headers, cs, prefetchKeys(cs.sigs, fetcher, opts...), opts...)
+	return verifyUndoFrom(buf, br, headers, cs, prefetchKeys(cs.sigs, fetcher, opts...),
+		newPolicyCache(policySource(fetcher, opts...)), opts...)
 }
 
 // verifyUndoFrom is verifyFullUndo once the message (buf) is read, its
 // header fields parsed (br is at the body) and its structure (cs) checked.
 func verifyUndoFrom(buf []byte, br *bufio.Reader, headers []Header, cs *chainShape,
-	fetcher KeyFetcher, opts ...VerifyOptions) ([]VerifyResult, error) {
+	fetcher KeyFetcher, policies *policyCache, opts ...VerifyOptions) ([]VerifyResult, error) {
 
 	// §16.4: with no body there is nothing to undo a lower instance into, so
 	// the top instance's header-hash check is as far as the chain walk goes.
@@ -137,7 +139,7 @@ func verifyUndoFrom(buf []byte, br *bufio.Reader, headers []Header, cs *chainSha
 	results, err := verifyFields(cs, func(algs []string) (map[string][]byte, error) {
 		return hashBodyStream(br, algs)
 	}, lower, fetcher, opts...)
-	return fromLast(headers, results, err, lower != nil, opts...)
+	return fromLast(headers, results, err, policies, opts...)
 }
 
 // undoWalk checks each instance below the top of the message in buf: Undo

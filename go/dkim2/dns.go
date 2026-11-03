@@ -57,6 +57,27 @@ func (f *JSONKeyFetcher) FetchPublicKey(selector, domain string) (crypto.PublicK
 	return keyFromTXTRecords(rrs, key+"."+domain)
 }
 
+// FetchPolicy returns the TXT records dns.json holds at _domainkey.<domain>
+// (the "_domainkey" entry under domain): the Domain Policy Record source
+// (§3.8) for a dns.json key source.  No entry is no records.
+func (f *JSONKeyFetcher) FetchPolicy(domain string) ([]string, error) {
+	data, err := os.ReadFile(f.Path)
+	if err != nil {
+		return nil, fmt.Errorf("reading dns.json: %w", err)
+	}
+	var db map[string]map[string][][2]string
+	if err := json.Unmarshal(data, &db); err != nil {
+		return nil, fmt.Errorf("parsing dns.json: %w", err)
+	}
+	var txts []string
+	for _, rec := range db[domain]["_domainkey"] {
+		if strings.ToLower(rec[0]) == "txt" {
+			txts = append(txts, rec[1])
+		}
+	}
+	return txts, nil
+}
+
 // Key-record outcomes (§14.5).  A KeyFetcher wraps one of these
 // (errors.Is): ErrKeyNotFound for an absent record (the item is skipped), the
 // others for a record that is present but unusable ("PERMERROR
@@ -70,15 +91,17 @@ var (
 	ErrKeySyntax            = errors.New("has a syntax error")
 	ErrKeyRevoked           = errors.New("has been revoked")
 	ErrKeyAlgorithmMismatch = errors.New("algorithm mismatch")
-	// ErrKeyMalformed: p= is base64 but not a key of its type -- an RSA
-	// key shorter than 1024 bits, an Ed25519 key that is not exactly 32
-	// octets (-08 §3.2, §14.5; contract D7).
+	// ErrKeyMalformed: p= is base64 but not a key of its type -- an
+	// Ed25519 key that is not exactly 32 octets, an RSA p= that does not
+	// parse (§3.2, §14.5; contract D7).
 	ErrKeyMalformed = errors.New("is malformed")
+	// ErrKeyTooShort: an RSA key under 1024 bits (§3.2, §14.6; contract E5).
+	ErrKeyTooShort = errors.New("too short")
 )
 
 // keyRecordProblem returns the §14.5 wording for a key-record error, or "".
 func keyRecordProblem(err error) string {
-	for _, e := range []error{ErrKeyMultipleRecords, ErrKeySyntax, ErrKeyRevoked, ErrKeyAlgorithmMismatch, ErrKeyMalformed} {
+	for _, e := range []error{ErrKeyMultipleRecords, ErrKeySyntax, ErrKeyRevoked, ErrKeyAlgorithmMismatch, ErrKeyMalformed, ErrKeyTooShort} {
 		if errors.Is(err, e) {
 			return e.Error()
 		}
@@ -88,9 +111,19 @@ func keyRecordProblem(err error) string {
 
 // keyFromTXTRecords turns the TXT RRset at a key's name into a public key.
 // Each RR is its list of character-strings, concatenated with nothing between
-// them (dns-00 §3.4.2.2); more than one RR is an error.  An empty RRset keeps
-// the "no record" behaviour of an absent key.
-func keyFromTXTRecords(rrs [][]string, name string) (crypto.PublicKey, string, error) {
+// them (DKIMKEYS §3.4.2.2).  A record whose first tag is v= with a value
+// other than DKIM1 is someone else's (an SPF record, say) and is discarded
+// before counting (§3.7, contract E4); a record with no v=, or one that does
+// not parse, is kept.  More than one record left is an error.  An empty
+// RRset keeps the "no record" behaviour of an absent key.
+func keyFromTXTRecords(all [][]string, name string) (crypto.PublicKey, string, error) {
+	var rrs [][]string
+	for _, rr := range all {
+		if isV, v := firstTagV(strings.Join(rr, "")); isV && v != "DKIM1" {
+			continue
+		}
+		rrs = append(rrs, rr)
+	}
 	switch len(rrs) {
 	case 0:
 		return nil, "", fmt.Errorf("%w: no TXT record at %s", ErrKeyNotFound, name)
@@ -103,16 +136,12 @@ func keyFromTXTRecords(rrs [][]string, name string) (crypto.PublicKey, string, e
 
 func isKeyWSP(r rune) bool { return r == ' ' || r == '\t' || r == '\r' || r == '\n' }
 
-// parseDKIM1TXT validates a whole key record (dns-00 §3.2 tag-list, §3.4.1)
-// and returns its public key and the signature algorithm that key serves.
-// Tag names are case sensitive; a value outside the tag-value grammar, a
-// repeated tag, a v= that is not first or not exactly DKIM1, or a
-// missing or non-base64 p= is a syntax error; an empty p= is revoked; a k=
-// other than rsa or ed25519 is an algorithm mismatch; a base64 p= that is
-// not a key of its type (RSA under 1024 bits, Ed25519 not 32 octets) is
-// malformed.  Unknown
-// and retired tags (h=, n=, s=, t=) are ignored.
-func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
+// parseKeyTags parses a key record or Domain Policy Record as a tag=value
+// list (DKIMKEYS §3.2): tag names are case sensitive; a value outside the
+// tag-value grammar, a repeated tag, or a v= that is not first or not
+// exactly DKIM1 is ErrKeySyntax.  Every trim is linear in the record's
+// length (strings.TrimFunc), however much whitespace an attacker serves.
+func parseKeyTags(txt string) (map[string]string, error) {
 	tags := make(map[string]string)
 	idx := 0
 	for _, spec := range strings.Split(txt, ";") {
@@ -121,26 +150,63 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 		}
 		eq := strings.IndexByte(spec, '=')
 		if eq < 0 {
-			return nil, "", fmt.Errorf("%w: %q is not a tag=value", ErrKeySyntax, spec)
+			return nil, fmt.Errorf("%w: %q is not a tag=value", ErrKeySyntax, spec)
 		}
 		name := strings.TrimFunc(spec[:eq], isKeyWSP)
 		if !validTagName(name) {
-			return nil, "", fmt.Errorf("%w: bad tag name %q", ErrKeySyntax, name)
+			return nil, fmt.Errorf("%w: bad tag name %q", ErrKeySyntax, name)
 		}
 		if _, dup := tags[name]; dup {
-			return nil, "", fmt.Errorf("%w: repeated tag %s=", ErrKeySyntax, name)
+			return nil, fmt.Errorf("%w: repeated tag %s=", ErrKeySyntax, name)
 		}
 		val := strings.TrimFunc(spec[eq+1:], isKeyWSP)
 		// Every value, known or ignored, is a tag-value (RFC 6376 §3.2):
 		// VALCHARs with FWS only between them; no NUL, DEL or 8-bit byte.
 		if !validTagValue(val) {
-			return nil, "", fmt.Errorf("%w: bad value for %s=", ErrKeySyntax, name)
+			return nil, fmt.Errorf("%w: bad value for %s=", ErrKeySyntax, name)
 		}
 		if name == "v" && (idx != 0 || val != "DKIM1") {
-			return nil, "", fmt.Errorf("%w: v= must be the first tag and DKIM1", ErrKeySyntax)
+			return nil, fmt.Errorf("%w: v= must be the first tag and DKIM1", ErrKeySyntax)
 		}
 		tags[name] = val
 		idx++
+	}
+	return tags, nil
+}
+
+// firstTagV reports whether a TXT record's first tag is v= (WSP allowed
+// before it and around the "="; the name is case sensitive) and, if so, its
+// value with WSP trimmed: the test §3.7 and §3.8 (contract E3.2, E4) use to
+// tell DKIM records from the other TXT records at a name.  Linear time.
+func firstTagV(txt string) (bool, string) {
+	s := strings.TrimLeftFunc(txt, isKeyWSP)
+	if !strings.HasPrefix(s, "v") {
+		return false, ""
+	}
+	s = strings.TrimLeftFunc(s[1:], isKeyWSP)
+	if !strings.HasPrefix(s, "=") {
+		return false, ""
+	}
+	s = s[1:]
+	if semi := strings.IndexByte(s, ';'); semi >= 0 {
+		s = s[:semi]
+	}
+	return true, strings.TrimFunc(s, isKeyWSP)
+}
+
+// parseDKIM1TXT validates a whole key record (dns-00 §3.2 tag-list, §3.4.1)
+// and returns its public key and the signature algorithm that key serves.
+// Tag names are case sensitive; a value outside the tag-value grammar, a
+// repeated tag, a v= that is not first or not exactly DKIM1, or a
+// missing or non-base64 p= is a syntax error; an empty p= is revoked; a k=
+// other than rsa or ed25519 is an algorithm mismatch; a base64 p= that is
+// not a key of its type (Ed25519 not 32 octets) is malformed, and an RSA
+// key under 1024 bits is too short.  Unknown
+// and retired tags (h=, n=, s=, t=) are ignored.
+func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
+	tags, err := parseKeyTags(txt)
+	if err != nil {
+		return nil, "", err
 	}
 
 	pubB64, ok := tags["p"]
@@ -175,7 +241,7 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 	// malformed (contract D7).
 	switch keyType {
 	case "ed25519":
-		// -08 §3.2: exactly 32 octets.  A DER SubjectPublicKeyInfo (some
+		// §3.2: exactly 32 octets.  A DER SubjectPublicKeyInfo (some
 		// publish one) is not that.
 		if len(pubBytes) != ed25519.PublicKeySize {
 			return nil, "", fmt.Errorf("%w: an Ed25519 key is 32 octets, p= has %d", ErrKeyMalformed, len(pubBytes))
@@ -196,9 +262,9 @@ func parseDKIM1TXT(txt string) (crypto.PublicKey, string, error) {
 		} else {
 			return nil, "", fmt.Errorf("%w: parsing RSA public key: %v", ErrKeyMalformed, err)
 		}
-		// §3.2: RSA keys MUST be at least 1024 bits.
+		// §3.2: RSA keys MUST be at least 1024 bits (contract E5).
 		if rsaKey.N.BitLen() < 1024 {
-			return nil, "", fmt.Errorf("%w: %d-bit RSA key, below 1024", ErrKeyMalformed, rsaKey.N.BitLen())
+			return nil, "", fmt.Errorf("%w: %d-bit RSA key, below 1024", ErrKeyTooShort, rsaKey.N.BitLen())
 		}
 		return rsaKey, "rsa-sha256", nil
 	}
@@ -227,6 +293,22 @@ func (f *NetKeyFetcher) FetchPublicKey(selector, domain string) (crypto.PublicKe
 	fqdn := selector + "._domainkey." + domain
 	txts, err := f.resolver().LookupTXT(context.Background(), fqdn)
 	return keyFromLookup(fqdn, txts, err)
+}
+
+// FetchPolicy looks up the TXT records at _domainkey.<domain> (§3.8):
+// NXDOMAIN or no TXT record is no records; any other failure is an error,
+// a temporary failure (TEMPERROR).
+func (f *NetKeyFetcher) FetchPolicy(domain string) ([]string, error) {
+	fqdn := "_domainkey." + domain
+	txts, err := f.resolver().LookupTXT(context.Background(), fqdn)
+	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("DNS lookup for %s: %w", fqdn, err)
+	}
+	return txts, nil
 }
 
 // keyFromLookup turns the outcome of a TXT lookup of fqdn into a key.
