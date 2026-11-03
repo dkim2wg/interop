@@ -23,7 +23,8 @@ from typing import IO, Union
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, utils
 
-from dkim2domain import from_is_authentic, to_alabel
+from dkim2domain import (FROM_OK, from_mailbox, relaxed_match,
+                         signing_domain, to_alabel)
 
 
 # Source can be raw bytes, a file path (str/Path), or any binary-mode file-like object.
@@ -1061,6 +1062,50 @@ def _from_needs_check(existing_mi: list[str], existing_sig: list[str]) -> bool:
     return False
 
 
+def _policy_keys(dns_data):
+    """The signer's Domain Policy Record source when no policy_source is
+    given: dns_data, else the dns.json named by $DKIM2_DNS_JSON, else live
+    DNS (no prefetch: one lookup)."""
+    if dns_data is not None:
+        return dns_data
+    import dkim2verify
+    path = os.environ.get("DKIM2_DNS_JSON")
+    if path:
+        try:
+            return dkim2verify.load_dns_json(path)
+        except (OSError, ValueError) as e:
+            raise SigningRefused(f"not signing: cannot read keys from "
+                                 f"{path}: {e}")
+    from dkim2dns import LiveDNS
+    return LiveDNS(prefetch=False)
+
+
+def _from_refusal(from_fields: list[bytes], domain: str, dns_data,
+                  policy_source) -> str | None:
+    """-09 §12.4, contract E3.4: None if the From is Authentic for d=domain,
+    else the refusal text.  The downward match signs with no lookup; the
+    upward match looks up the From domain's Domain Policy Record."""
+    import dkim2verify
+    base = f"From header field is not Authentic for d={domain}"
+    kind, dom = from_mailbox(from_fields)
+    if kind != FROM_OK:
+        return base
+    sd = signing_domain(domain)
+    if relaxed_match(dom, sd):          # downward: no lookup
+        return None
+    if not relaxed_match(sd, dom):      # nor upward
+        return base
+    keys = None if policy_source is not None else _policy_keys(dns_data)
+    state = dkim2verify._PolicyCache(keys, policy_source)(dom)
+    if state == dkim2verify.POLICY_TEMPERROR:
+        return f"{base}: policy for {dom} unavailable"
+    if state == dkim2verify.POLICY_MULTIPLE:
+        return f"{base}: multiple records for {dom} policy"
+    if state == dkim2verify.POLICY_STRICT:
+        return f"{base}: From {dom} forbids subdomain signing"
+    return None
+
+
 def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  mailfrom: str = "<>", rcptto: list[str] | None = None,
                  timestamp: int | None = None,
@@ -1072,7 +1117,8 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
                  allow_null_body_recipe: bool | None = None,
                  skip_upstream_check: bool = False,
                  exploded: bool = False,
-                 skip_from_check: bool = False) -> bytes:
+                 skip_from_check: bool = False,
+                 policy_source=None) -> bytes:
     """Sign a raw email message with DKIM2.
 
     A message that already carries a DKIM2 chain is verified first (outbound
@@ -1088,7 +1134,17 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     -09 §12.4: when the message is being signed for the first time, or a
     Message-Instance no signature covers yet changed From, the From header
     field must be Authentic for `domain`, or SigningRefused is raised with
-    "From header field is not Authentic for d=<domain>".
+    "From header field is not Authentic for d=<domain>".  A From domain at
+    or below `domain` is signed with no lookup; one above it (d= is a
+    subdomain of the From domain) needs the From domain's Domain Policy
+    Record (contract E3.4): open signs, and strict (or malformed),
+    multiple records or a temporary failure refuse with the reason
+    appended (": From <dom> forbids subdomain signing", ": multiple
+    records for <dom> policy", ": policy for <dom> unavailable").  The
+    record comes from the verifier's policy source: dns_data's (a dns.json
+    dict or a dkim2dns.LiveDNS), else the dns.json named by
+    $DKIM2_DNS_JSON, else live DNS; policy_source, if given, replaces it
+    exactly as for dkim2verify.verify_message.
 
     exploded=True asks for the "exploded" flag (-09 §12.5): it is set above
     i=1 when requested or when rt= holds more than one address.
@@ -1131,9 +1187,9 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
 
     if not skip_from_check and _from_needs_check(existing_mi, existing_sig):
         from_fields = [h for h in headers if _header_name(h) == b"from"]
-        if not from_is_authentic(from_fields, domain):
-            raise SigningRefused(
-                f"From header field is not Authentic for d={domain}")
+        refusal = _from_refusal(from_fields, domain, dns_data, policy_source)
+        if refusal:
+            raise SigningRefused(refusal)
 
     # Determine version numbers
     top_mi = None
