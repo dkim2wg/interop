@@ -1,8 +1,8 @@
-// DKIM2 verification orchestrator per draft-ietf-dkim-dkim2-spec-08 §13/§14. Built from spec.
+// DKIM2 verification orchestrator per draft-ietf-dkim-dkim2-spec-09 §13/§14. Built from spec.
 import { parseMessage, collectLevels, parseTagList, parseHashSets, MAX_CHAIN_LENGTH, BASE64 } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
-import { fetchKey as dohFetchKey, keyName, DEFINITIVE_KEY_ERRORS } from './doh.js';
+import { fetchKey as dohFetchKey, fetchPolicy as dohFetchPolicy, evaluatePolicy, keyName, DEFINITIVE_KEY_ERRORS } from './doh.js';
 import { decodeRecipe, recipeErrorText, bodyToLines, linesToBody, applyRecipe, applyHeaderRecipe, validateBodyRecipe, validateRecipeSteps } from './recipes.js';
 import { b64ToBytes, b64ToString, bytesToBinary, binaryToBytes, textToBinary } from './b64.js';
 import { planChain } from './plan.js';
@@ -116,39 +116,73 @@ function displayText(bin) {
   return displayDecoder.decode(binaryToBytes(bin));
 }
 
-// The one addr-spec of a From field value (text), or null when the field is
-// not exactly one mailbox: a group, a list, or no address at all. Lenient
+// -09 §11, §14.8 (contract E3.1 steps 1-2): what the From fields of one
+// message state hold. 'many' for more than one From field, or a value with
+// a "," outside quoted strings and comments (a list of addresses, or a
+// group holding more than one); 'none' for no From field, a group without
+// a ",", or a value that is not one mailbox with an "@"; 'literal' for a
+// mailbox at a domain literal; else { domain }, the mailbox's domain as an
+// A-label, lowercased, with no trailing dot (domainOf, toALabel). Lenient
 // otherwise: "Name <a@b>" or "a@b", with comments and quoted strings (which
-// may hold any of , < : ; @) set aside first.
-function singleMailbox(text) {
-  let s = text.replace(/"(?:[^"\\]|\\[^])*"/g, '""');
+// may hold any of , < : ; @) set aside first, and the text of a domain
+// literal when looking for a list or a group.
+function fromMailbox(values) {
+  if (values.length > 1) return 'many';
+  if (values.length === 0) return 'none';
+  let s = displayText(values[0]).replace(/"(?:[^"\\]|\\[^])*"/g, '""');
   for (let prev = ''; prev !== s;) { prev = s; s = s.replace(/\((?:[^()\\]|\\[^])*\)/g, ' '); }
-  if (/[:;,]/.test(s)) return null;
+  // A domain literal may hold ":" (IPv6) without being a group.
+  const bare = s.replace(/\[[^[\]\\]*\]/g, '[]');
+  if (bare.includes(',')) return 'many';
+  if (/[:;]/.test(bare)) return 'none';
   const angle = /^[^<>]*<([^<>]*)>\s*$/.exec(s);
   const spec = (angle ? angle[1] : s).trim();
-  return /^[^\s@<>]+@[^\s@<>]+$/.test(spec) ? spec : null;
-}
-
-// §11: the From of one message state is Authentic for d= when the state has
-// exactly one From field, holding exactly one mailbox, whose domain is not a
-// literal and relaxed-matches d= (From domain Parameter1), as A-labels (§18).
-function fromIsAuthentic(values, d) {
-  if (values.length !== 1) return false;
-  const spec = singleMailbox(displayText(values[0]));
-  if (!spec) return false;
+  if (!/^[^\s@<>]+@[^\s@<>]+$/.test(spec)) return 'none';
   const { domain, literal } = domainOf(spec);
-  return !literal && relaxedMatch(toALabel(domain) || '', d);
+  if (literal) return 'literal';
+  const a = toALabel(domain);
+  return a ? { domain: a } : 'none';
 }
 
-// §11 / §14.8 (contract C5 as corrected by Ruling 19): the signatures whose
-// matching From is not Authentic. The From in effect when each signature was
-// made is checked: i=1 against the From of state m(i=1), and each i >= 2
-// against the From of state m(i) when some instance k with m(i-1) < k <= m(i)
-// has a header Recipe that replaces From. A From replaced before any
-// signature covered it is never checked. A state the Recipes could not reach
-// is not checked here: that is already an error of its own.
-function unauthenticFrom(chain, instances, signatures, sigNums, maxM) {
-  const bad = new Set();
+// -09 §14.8 (contract E3.1) for one (signature i, From values) pair,
+// without DNS: { text } for the FAIL that is the pair's result; null when
+// the From is Authentic by the downward match (From domain relaxed-matches
+// d=, From domain Parameter1); or { policy: dom } when only the upward
+// match holds (d= is below the From domain), so the From domain's Domain
+// Policy Record decides (policyError).
+function fromCheck(values, d, i) {
+  const who = `FAIL: DKIM2-Signature i=${i}`;
+  const mb = fromMailbox(values);
+  if (mb === 'many') return { text: `${who} From has more than one address` };
+  if (mb === 'none') return { text: `${who} matching From is not authentic` };
+  if (mb === 'literal') return { text: `${who} From uses a domain literal` };
+  if (relaxedMatch(mb.domain, d)) return null;
+  if (!relaxedMatch(d, mb.domain)) return { text: `${who} matching From is not authentic` };
+  return { policy: mb.domain };
+}
+
+// -09 §14.8 (contract E3.1 step 5): the error a Domain Policy Record
+// outcome ('open', 'strict', 'multiple', 'temperror') gives the pair of
+// signature i and the From domain dom, or null for 'open'.
+function policyError(outcome, i, dom) {
+  const who = `DKIM2-Signature i=${i}`;
+  if (outcome === 'strict') return `FAIL: ${who} From ${dom} forbids subdomain signing`;
+  if (outcome === 'multiple') return `PERMERROR: ${who} multiple records for ${dom} policy`;
+  if (outcome === 'temperror') return `TEMPERROR: ${who} policy for ${dom} unavailable`;
+  return null;
+}
+
+// §11 / §14.8 (contract C5 as corrected by Ruling 19): the (signature, From)
+// pairs to check, each with its fromCheck() result: a Map from i to that
+// result, for the pairs that are not Authentic without DNS. The From in
+// effect when each signature was made is checked: i=1 against the From of
+// state m(i=1), and each i >= 2 against the From of state m(i) when some
+// instance k with m(i-1) < k <= m(i) has a header Recipe that replaces
+// From. A From replaced before any signature covered it is never checked.
+// A state the Recipes could not reach is not checked here: that is already
+// an error of its own.
+function fromChecks(chain, instances, signatures, sigNums, maxM) {
+  const out = new Map();
   const changesFrom = new Set();
   for (let k = 2; k <= maxM; k++) {
     let rec;
@@ -163,9 +197,11 @@ function unauthenticFrom(chain, instances, signatures, sigNums, maxM) {
       for (const k of changesFrom) if (k > prevM && k <= m) due = true;
     }
     prevM = m;
-    if (due && chain.has(m) && !fromIsAuthentic(chain.headerValues(m, 'from'), sigDomain(signatures[i]))) bad.add(i);
+    if (!due || !chain.has(m)) continue;
+    const res = fromCheck(chain.headerValues(m, 'from'), sigDomain(signatures[i]), i);
+    if (res) out.set(i, res);
   }
-  return bad;
+  return out;
 }
 
 // All (unfolded, WSP-trimmed) values of a header field name, in document order.
@@ -226,15 +262,16 @@ async function verifyOnce(raw, opts = {}) {
   const fields = collectLevels(headers);
   const { instances, signatures } = fields;
 
-  // No DKIM2 header fields at all: nothing to verify, and no error.
+  // -09 §14.2 (contract E1): no DKIM2 header fields at all is NONE, and
+  // nothing else is. Not an error: there is nothing to verify.
   if (!fields.miFields.length && !fields.sigFields.length) {
-    return { overall: 'none', fullyVerified: false, summary: 'No DKIM2 header fields present.', levels: [] };
+    return { overall: 'none', fullyVerified: false, summary: 'No DKIM2 header fields found', errors: [], levels: [] };
   }
 
   const miNums = Object.keys(instances).map(Number).sort((a, b) => a - b);
   const sigNums = Object.keys(signatures).map(Number).sort((a, b) => a - b);
 
-  // Contract C9: the checks run in -08 §14 order, the Message-Instances
+  // Contract C9: the checks run in -09 §14 order, the Message-Instances
   // (walk included) before the signatures, and the first error found is the
   // PRIMARY one: its state is the result. Later errors may be listed after
   // it, but no key is used unless the Message-Instances, walk included,
@@ -271,12 +308,13 @@ async function verifyOnce(raw, opts = {}) {
       header_recipes: [], undo: m === 1 ? 'n/a' : 'not-checked',
       result: 'not-checked', detail: '',
     };
-    const { sets, error, recipe } = instanceContent(mi, m);
+    const { sets, error, recipe, nullRecipe } = instanceContent(mi, m);
     hashSets[m] = sets;
     if (error) {
       level.result = 'permerror';
       level.detail = error;
       miErrors.push(error);
+      if (nullRecipe && m >= 2) level.undo = 'unrecoverable';
       // A Recipe that cannot be undone: the state below it cannot be
       // recreated either.
       if (recipe && m >= 2) {
@@ -301,7 +339,9 @@ async function verifyOnce(raw, opts = {}) {
   // as the reference (opts.undoWalk). Both give the same answers.
   const chain = (!opts.undoWalk && planChain(headers, body, instances, maxM, lines))
     || undoChain(headers, body, instances, maxM);
-  const { undoBroken, undoBrokenReason, nullBodyAt, nullBodyInstances } = chain;
+  // A null body Recipe has already ended the verification (-09 §14.2,
+  // contract E2), so the walk never meets one.
+  const { undoBroken, undoBrokenReason } = chain;
 
   // --- §14.7 the chain walk, top down ------------------------------------
   // A lower instance is rebuilt from the one above it, so the highest one
@@ -321,14 +361,12 @@ async function verifyOnce(raw, opts = {}) {
       continue;
     }
     level.result = 'pass';
-    const noBody = chain.noBody(m);
     let err;
     try {
-      err = await checkHashes(chain, m, hashSets[m], noBody, level);
+      err = await checkHashes(chain, m, hashSets[m], level);
     } catch (e) {
       err = `PERMERROR: Message-Instance m=${m} hash computation error`;
     }
-    if (noBody) level.detail = `body not checked (null body Recipe at m=${nullBodyAt})`;
     // This instance's Recipe against the message, after its own hashes.
     let applyErr = null;
     if (m >= 2) {
@@ -336,7 +374,7 @@ async function verifyOnce(raw, opts = {}) {
         level.undo = 'failed';
         applyErr = `PERMERROR: Message-Instance m=${m} ${undoBrokenReason}`;
       } else {
-        level.undo = nullBodyInstances.has(m) ? 'unrecoverable' : 'clean';
+        level.undo = 'clean';
       }
     } else if ('r' in mi.map) {
       // §12.1: the bottom instance MAY carry Recipes too ("if it is wished
@@ -374,7 +412,7 @@ async function verifyOnce(raw, opts = {}) {
   }
 
   // --- §14.3–§14.6, §14.8 signature checks -------------------------------
-  const badFrom = unauthenticFrom(chain, instances, signatures, sigNums, maxM);
+  const froms = fromChecks(chain, instances, signatures, sigNums, maxM);
   for (let i = maxI; i >= 1; i--) {
     const sig = signatures[i];
     const level = sigLevels[i];
@@ -401,9 +439,12 @@ async function verifyOnce(raw, opts = {}) {
       level.custody = { ok: true, detail: i === 1 ? 'origin' : 'chain intact' };
     }
     // §14.8: recorded here, ranked last (C9): it never stops the crypto.
-    if (badFrom.has(i)) {
-      level.from = { ok: false };
-      fail('fail', `FAIL: DKIM2-Signature i=${i} matching From is not authentic`);
+    // A pair that needs the Domain Policy Record is looked up below, only
+    // if nothing else is wrong.
+    const from = froms.get(i);
+    if (from && from.text) {
+      level.from = { ok: false, detail: from.text };
+      fail('fail', from.text);
     }
     if (!custody.length) {
       if (!walkOk || !chain.has(level.m)) {
@@ -447,14 +488,39 @@ async function verifyOnce(raw, opts = {}) {
   for (const i of sigNums) found.push(...sigLevels[i].errors);
   const errors = [...walkErrors, ...primaryFirst([...new Set(found)])];
   if (errors.length) return failed(errors, levelList());
-  // -08 §13 (contract D9): the body hashes below a null body Recipe cannot
-  // be checked, so the message passes but is not Fully Verified.
-  const fullyVerified = nullBodyAt === null;
-  const nullNote = fullyVerified ? ''
-    : `; not fully verified: body not checked below m=${nullBodyAt} (null body Recipe), header history verified`;
+
+  // -09 §3.8, §14.8 (contract E3.1 step 5, E3.2): a From that only the
+  // upward match makes Authentic (d= below the From domain) is Authentic
+  // unless the From domain's Domain Policy Record says otherwise. Looked
+  // up only now, when everything else has passed (first error wins), never
+  // prefetched; pairs in i order, the first that fails is the result; one
+  // lookup per From domain per verification.
+  const policyFetch = opts.fetchPolicy
+    || ((dom) => dohFetchPolicy(dom, { fetch: opts.dohFetch, dohUrl: opts.dohUrl }));
+  const policies = new Map();
+  for (const i of sigNums) {
+    const from = froms.get(i);
+    if (!from || !from.policy) continue;
+    const dom = from.policy;
+    if (!policies.has(dom)) {
+      let outcome;
+      try { outcome = evaluatePolicy((await policyFetch(dom)) || []); } catch (e) { outcome = 'temperror'; }
+      policies.set(dom, outcome);
+    }
+    const text = policyError(policies.get(dom), i, dom);
+    const level = sigLevels[i];
+    level.from = { ok: !text, detail: text || `Authentic: d= is below ${dom}, and its policy allows that` };
+    if (text) {
+      Object.assign(level, { result: stateOf(text), detail: text, errors: [text] });
+      return failed([text], levelList());
+    }
+  }
+
+  // -09 §13 (contract E2): fullyVerified is deprecated; it is true exactly
+  // for a pass (a null body Recipe is a PERMERROR now).
   return {
-    overall: 'pass', fullyVerified,
-    summary: `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact${nullNote}`,
+    overall: 'pass', fullyVerified: true,
+    summary: `i=1..${maxI} verified; Message-Instance m=1..${maxM} intact`,
     errors: [], levels: levelList(),
   };
 }
@@ -488,11 +554,11 @@ function structureError(fields, miNums, sigNums) {
   // b. a Message-Instance with no usable m=, the first top down;
   if (instanceErrors.length) return instanceErrors[0];
   // c. an m= given twice, the lowest;
-  if (dupInstances.length) return `PERMERROR: Message-Instance m=${Math.min(...dupInstances)} appears more than once`;
+  if (dupInstances.length) return `PERMERROR: Message-Instance m=${Math.min(...dupInstances)} is duplicated`;
   // d. a DKIM2-Signature with no usable i= (or an i=/m= out of range);
   if (signatureErrors.length) return signatureErrors[0];
   // e. an i= given twice, the lowest;
-  if (dupSignatures.length) return `PERMERROR: DKIM2-Signature i=${Math.min(...dupSignatures)} appears more than once`;
+  if (dupSignatures.length) return `PERMERROR: DKIM2-Signature i=${Math.min(...dupSignatures)} is duplicated`;
   // f. a missing Message-Instance, from 1 up to the higher of the highest
   //    m= and the top signature's m= (a signed message has at least m=1);
   const sigM = (i) => (signatures[i].map.m === undefined ? 0 : parseInt(signatures[i].map.m, 10));
@@ -512,10 +578,11 @@ function structureError(fields, miNums, sigNums) {
 // fragment that is not a well-formed tag, a tag given twice, an h= hash-set
 // that is not name:digest:digest with base64 digests, or an empty "|" or
 // "," member, §9.3), then its missing tags, then a duplicate hash algorithm
-// anywhere in h=, then its Recipe (the whole document, then each step),
-// whether or not the chain walk reaches it. Returns { sets } (the parsed
-// h= hash-sets) or { error } (the PERMERROR text; recipe: it is the
-// Recipe's).
+// anywhere in h=, then its Recipe (the whole document, then each step,
+// then a null "b": -09 §14.2, contract E2), whether or not the chain walk
+// reaches it. Returns { sets } (the parsed h= hash-sets) or { error } (the
+// PERMERROR text; recipe: it is the Recipe's; nullRecipe: it is a null
+// body Recipe).
 function instanceContent(mi, m) {
   const who = `PERMERROR: Message-Instance m=${m}`;
   const hTag = mi.tags.find((t) => t.tag === 'h');
@@ -528,19 +595,25 @@ function instanceContent(mi, m) {
   const algs = sets.map((s) => s.alg);
   if (new Set(algs).size !== algs.length) return { error: `${who} has a duplicate hash algorithm` };
   if ('r' in mi.map) {
+    let rec;
     try {
-      validateRecipeSteps(decodeRecipe(mi.map.r));
+      rec = decodeRecipe(mi.map.r);
+      validateRecipeSteps(rec);
     } catch (e) {
       return { error: `${who} ${recipeErrorText(e)}`, recipe: true };
     }
+    // A null body Recipe: the body below cannot be checked, which -09
+    // makes a PERMERROR, whatever lies below it (none at m=1 included).
+    if (rec.b === null) return { error: `${who} has a null recipe`, nullRecipe: true };
   }
   return { sets };
 }
 
 // §14.2 for one DKIM2-Signature on its own: its tag-list syntax, then its
 // missing or unexpected tags, then its tag values, then its s= (§10.9: the
-// items parse, no Selector twice, no more than MAX_SIGNATURES items, every
-// item's value a base64string). Returns the PERMERROR text, or
+// items parse, every item's value a base64string), then an exploded flag
+// at i=1 (§12.5, contract E6), then no Selector twice and no more than
+// MAX_SIGNATURES items. Returns the PERMERROR text, or
 // null with the decoded mf=/rt= (s.mf, s.rts) and s= items (s.sets) kept
 // on the signature for the checks that follow.
 function signatureContentError(s, i) {
@@ -569,6 +642,10 @@ function signatureContentError(s, i) {
   // algorithm (contract D3). Syntax, so before the duplicates (C9), as for
   // the hashes of h=.
   if (!s.sets || s.sets.some((ss) => !BASE64.test(ss.sig))) return `${who} syntax error`;
+  // -09 §12.5, §14.2: the very first signature MUST NOT carry the exploded
+  // flag (f= is a "," list; parseTagList has removed its WSP). A header
+  // well-formedness check, so before any key is fetched.
+  if (i === 1 && 'f' in s.map && s.map.f.split(',').includes('exploded')) return `${who} has an exploded flag`;
   const dupErrors = checkSignatureDuplicates(s.sets, i);
   if (dupErrors.length) return dupErrors[0];
   return null;
@@ -611,7 +688,7 @@ function recipeBreakdown(mi, m, chain, level) {
   }
 }
 
-// Contract C9, from §14.3 on: an error's place in -08 §14 order, as a key
+// Contract C9, from §14.3 on: an error's place in -09 §14 order, as a key
 // compared element by element. §14.3, §14.5/§14.6 (one step since -08,
 // contract D3) and §14.8 (checks made per signature) go lowest i= first.
 // §14.4 goes as C4 walks it: an unexpected top nd=, the envelope, then each
@@ -626,8 +703,8 @@ export function c9Key(text) {
   if (/ (?:MAIL FROM|RCPT TO) .* did not match$/.test(text)) return [4, 1];
   if (/ nd= does not match$/.test(text)) return [4, 2, i + 1, 0];
   if (/ does not match the rt= of i=/.test(text)) return [4, 2, i, 0];
-  if (/ MAIL FROM and d= do not match$/.test(text)) return [4, 2, i, 1];
-  if (/ matching From is not authentic$/.test(text)) return [8, i];
+  if (/ mf= and d= do not match$/.test(text)) return [4, 2, i, 1];
+  if (/ (?:matching From is not authentic|From \S+ forbids subdomain signing|From has more than one address|From uses a domain literal|policy for \S+ unavailable|multiple records for \S+ policy)$/.test(text)) return [8, i];
   if (/ public key | selector \S+ (?:incorrect signature|algorithm unknown)$| no group of signatures passed$/.test(text)) return [5, i];
   return [9];
 }
@@ -661,12 +738,11 @@ function combineGroups(items, noGroup) {
 }
 
 // -08 §14.7 for one Message-Instance m (contract D4): each hash-set in h=
-// order is PASS when its header and body hashes both match (the header
-// alone below a null body Recipe, where there is no body), FAIL naming the
+// order is PASS when its header and body hashes both match, FAIL naming the
 // header hash, else the body hash, when one does not, and PERMERROR when
 // its algorithm is not implemented. Every set is checked. Records what it
 // found in level, and returns the instance's error text, or null.
-async function checkHashes(chain, m, sets, noBody, level) {
+async function checkHashes(chain, m, sets, level) {
   const items = [];
   const header = [], bodyRes = [];
   for (const s of sets) {
@@ -683,8 +759,7 @@ async function checkHashes(chain, m, sets, noBody, level) {
       bodyRes.push([s.alg, 'not-checked']);
     } else {
       header.push([s.alg, 'match']);
-      if (noBody) bodyRes.push([s.alg, 'not-checked']);
-      else if (await chain.bodyHash(m, s.alg) !== s.bodyHash) {
+      if (await chain.bodyHash(m, s.alg) !== s.bodyHash) {
         state = 'fail';
         text = `FAIL: Message-Instance m=${m} body hash ${s.alg} mismatch`;
         bodyRes.push([s.alg, 'mismatch']);
@@ -758,7 +833,7 @@ async function checkCrypto(sig, i, sigSets, instances, signatures, fetchKey, lev
           state = 'permerror';
           text = `PERMERROR: ${who} selector ${ss.selector} algorithm unknown`;
           shown = 'ed25519 unsupported in this browser';
-        } else if (DEFINITIVE_KEY_ERRORS.has(e.message) || ['key-mismatch', 'key-malformed'].includes(e.message)) {
+        } else if (DEFINITIVE_KEY_ERRORS.has(e.message) || ['key-mismatch', 'key-malformed', 'key-short'].includes(e.message)) {
           state = 'permerror';
           shown = keyErrorDetail(e, ss.selector);
           text = `PERMERROR: ${who} ${shown}`;
@@ -905,6 +980,7 @@ function keyErrorDetail(e, selector) {
     'key-revoked': 'has been revoked',
     'key-mismatch': 'algorithm mismatch',
     'key-malformed': 'is malformed',
+    'key-short': 'too short',
     'key-temperror': 'could not be fetched',
   };
   return e.message in map ? `public key ${selector} ${map[e.message]}` : String(e.message || e);
@@ -941,7 +1017,7 @@ function custodyErrors(signatures, i, maxI) {
   }
   // S's own mf= against its d=, after S against P (the order C4 walks).
   if (!hasNd && !nullMf && !relaxedMatch(addrDomain(S.mf), d)) {
-    errs.push(`FAIL: DKIM2-Signature i=${i} MAIL FROM and d= do not match`);
+    errs.push(`FAIL: DKIM2-Signature i=${i} mf= and d= do not match`);
   }
   return errs;
 }

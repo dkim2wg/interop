@@ -52,7 +52,7 @@ function assertFail(rep, text) {
   assert.ok(rep.summary.includes(text), `summary ${JSON.stringify(rep.summary)} lacks ${JSON.stringify(text)}`);
 }
 const INVALID_JSON = 'PERMERROR: Message-Instance m=2 contains invalid JSON';
-const STEP = (path) => `PERMERROR: Message-Instance m=2 Recipe ${path} is invalid`;
+const STEP = (path) => `PERMERROR: Message-Instance m=2 recipe ${path} is invalid`;
 
 // --- domain.js -----------------------------------------------------------
 
@@ -238,12 +238,12 @@ test('C5: a domain literal never matches', async () => {
   const rep = await verify(await signChain(twoStates, [
     one({ rt: ['<x@[192.0.2.1]>'] }), two({ mf: '<y@[192.0.2.1]>' })]));
   assertFail(rep, 'FAIL: DKIM2-Signature i=2 mf= does not match the rt= of i=1');
-  assertFail(rep, 'FAIL: DKIM2-Signature i=2 MAIL FROM and d= do not match');
+  assertFail(rep, 'FAIL: DKIM2-Signature i=2 mf= and d= do not match');
 });
 
-test('C6: i=1 MAIL FROM and d= do not match', async () => {
+test('C6: i=1 mf= and d= do not match', async () => {
   const rep = await verify(await signChain([{ fields: FIELDS, body: BODY }], [one({ mf: '<a@example.net>' })]));
-  assertFail(rep, 'FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match');
+  assertFail(rep, 'FAIL: DKIM2-Signature i=1 mf= and d= do not match');
 });
 
 test('a non-null mf= that does not relaxed-match the previous rt= fails', async () => {
@@ -279,16 +279,21 @@ test('A1: From a@sub.example.com with d=example.com passes', async () => {
 });
 
 // The last but one: display text with no angle brackets is not one mailbox
-// (final review T3); all five implementations agree.
-for (const from of ['a@example.com, b@example.com', 'a@[192.0.2.1]', 'group: a@example.com;', 'A a@example.com', 'not an address']) {
+// (final review T3); all five implementations agree. -09 §14.8 (contract
+// E3.1) names a list and a domain literal with strings of their own.
+for (const [from, want] of [
+  ['a@example.com, b@example.com', 'FAIL: DKIM2-Signature i=1 From has more than one address'],
+  ['a@[192.0.2.1]', 'FAIL: DKIM2-Signature i=1 From uses a domain literal'],
+  ['group: a@example.com;', NOT_AUTHENTIC_1], ['A a@example.com', NOT_AUTHENTIC_1], ['not an address', NOT_AUTHENTIC_1],
+]) {
   test(`A1: From "${from}" is not authentic`, async () => {
-    assertFail(await verify(await oneHopFrom(from)), NOT_AUTHENTIC_1);
+    assertFail(await verify(await oneHopFrom(from)), want);
   });
 }
 
-test('A1: two From fields are not authentic', async () => {
+test('A1: two From fields are "more than one address" (-09 E3.1)', async () => {
   const msg = await signChain([{ fields: [['From', 'a@example.com'], ['From', 'b@example.com'], ['Subject', 'hi']], body: BODY }], [one()]);
-  assertFail(await verify(msg), NOT_AUTHENTIC_1);
+  assertFail(await verify(msg), 'FAIL: DKIM2-Signature i=1 From has more than one address');
 });
 
 test('A1 (Review): a folded From with an RFC 2047 display name and angle-addr passes', async () => {
@@ -468,7 +473,7 @@ test('C9: expired before an unexpected top nd= (§14.3 before §14.4)', async ()
 
 test('C9: custody before a bad signature (§14.4 before §14.6)', async () => {
   const msg = await oneHopFrom('a@example.com', { mf: '<a@example.net>', sets: [{ sel: 'sel', bad: true }] });
-  assertPrimary(await verify(msg), 'fail', 'FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match');
+  assertPrimary(await verify(msg), 'fail', 'FAIL: DKIM2-Signature i=1 mf= and d= do not match');
 });
 
 test('C9: a header hash before a bad signature (§14.7 before §14.6), and no signature verified', async () => {

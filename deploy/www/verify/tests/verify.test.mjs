@@ -261,8 +261,8 @@ test('custody-only failure (mf=/d= mismatch) surfaces its reason in the summary 
   const sig = rep.levels.find((l) => l.kind === 'signature' && l.i === 1);
   assert.ok(sig, 'signature level present');
   assert.equal(sig.custody.ok, false);
-  assert.match(sig.detail, /MAIL FROM and d= do not match/);
-  assert.match(rep.summary, /MAIL FROM and d= do not match/);
+  assert.match(sig.detail, /mf= and d= do not match/);
+  assert.match(rep.summary, /mf= and d= do not match/);
 });
 
 // --- recipe breakdown display (§5/§9.2): per-header current<-previous + JSON ---
