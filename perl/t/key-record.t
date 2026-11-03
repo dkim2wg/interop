@@ -11,7 +11,7 @@ use Mail::DKIM2::Verifier;
 use Crypt::PK::RSA;
 use MIME::Base64 qw(encode_base64);
 
-# Key records (-08 §14.5, draft-ietf-dkim-dkim2-dns §3.2, §3.4): the
+# Key records (-09 §14.5, draft-ietf-dkim-dkim2-dns §3.2, §3.4): the
 # whole record is a tag-list that must validate; v=, if present, is first
 # and exactly DKIM1; k= defaults to rsa and an unrecognised type is not a
 # usable key; p= is required and empty means revoked; a repeated tag makes
@@ -47,7 +47,7 @@ is(rec("v=DKIM1; p=; p=$p"), 'has a syntax error', 'p= twice');
 is(rec("v=DKIM1; k=rsa; k=rsa; p=$p"), 'has a syntax error', 'k= twice');
 is(rec("v=DKIM1; k=rsa"), 'has a syntax error', 'no p=');
 is(rec("v=DKIM1; p=!!!"), 'has a syntax error', 'p= not base64');
-# -08 §14.5 (contract D7): base64 that is not a usable key of its type is
+# -09 §14.5 (contract D7): base64 that is not a usable key of its type is
 # "is malformed": an RSA key under 1024 bits, an Ed25519 key that is not 32
 # octets (a DER SubjectPublicKeyInfo included), anything that does not load.
 is(rec("v=DKIM1; p=QUJDRA=="), 'is malformed', 'p= not a key');

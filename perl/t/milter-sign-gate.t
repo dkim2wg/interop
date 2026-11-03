@@ -66,7 +66,7 @@ sub signed_m1 {
 }
 
 # m=1 alone, unsigned (a list manager that adds instances but never signs).
-# The signer that comes after it is i=1, so (-08 section 11) the From has
+# The signer that comes after it is i=1, so (-09 section 11) the From has
 # to be in its domain from m=1 on: the list rewrote it already.
 sub unsigned_m1 {
     (my $plain = $PLAIN) =~ s/^From: [^\r\n]*/From: List <list\@test2.dkim2.com>/m;
@@ -169,7 +169,7 @@ sub expect_refuse {
     my ($logged) = grep { /^Not signing for \Q$dom\E: / } map { $_->[1] // '' } @{$h->{_log}};
     ok($logged, "$name: refusal logged") or diag(explain($h->{_log}));
     diag($logged) if $ENV{GATE_DIAG};
-    # -08 section 13: with an upstream DKIM2-Signature on it, the message is
+    # -09 section 13: with an upstream DKIM2-Signature on it, the message is
     # not sent on: 550 5.7.1 with the reason, and nothing else done to it.
     if ($p->header_raw('DKIM2-Signature')) {
         like($h->{_reject} // '', qr/\A550 5\.7\.1 not signing: \S/, "$name: rejected 550 5.7.1");
@@ -292,7 +292,7 @@ expect_refuse('mi-only-broken (allow_null_body_recipe)',
     list_post(forge => 1, unsigned => 1), 'test2.dkim2.com', 'broken-mi-chain',
     allow_null_body_recipe => 1);
 {
-    # -08 section 12.1 (ruling 17): instances with no signature under them
+    # -09 section 12.1 (ruling 17): instances with no signature under them
     # leave as ONE m=1 -- here the matching top undoes to the list's m=1, so
     # no snapshot is needed.
     my $raw = list_post(unsigned => 1);
@@ -309,7 +309,7 @@ expect_refuse('mi-only-broken (allow_null_body_recipe)',
 # The inbound side stamped an unsigned m=1 over the author's post and kept a
 # snapshot under an X-DKIM2-Snapshot token; stock Mailman then munged the From
 # (rule R15). The copy leaves with ONE m=1 whose Recipes go back to the post as
-# it arrived, signed as i=1 by the list domain (-08 sections 11, 12.1).
+# it arrived, signed as i=1 by the list domain (-09 sections 11, 12.1).
 {
     my $mi1 = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($PLAIN));
     my $arrived = "Message-Instance: " . $mi1->as_string . $EOL . $PLAIN;

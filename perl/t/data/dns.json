@@ -148,6 +148,12 @@
             "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIubB7x1q3rNGDWgObuKSOyYVtVKmcJpIvtWdRzg71iGRGqMdEE18GAOk+6j+GAcHTppkh4qR1d9vOl4S1L8ClAvSFUz0azi31fLQcMpZbagyseSq9FnF4nHL/7MAA2brAXkVCQ1rZLKNHMwkXGggkA9kg+LloNfSML+utkhN3gQIDAQAB"
          ]
       ],
+      "rsa512._domainkey" : [
+         [
+            "txt",
+            "v=DKIM1; k=rsa; p=MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAMWNtG9jaKRAnj4S+mgiG+UzoogHAA/aBipKn/bKH7xEFUrHtAhTumVc2zKGRpPMrombKLGX0ukrDab7AhIw4pUCAwEAAQ=="
+         ]
+      ],
       "sel1._domainkey" : [
          [
             "txt",

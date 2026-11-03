@@ -192,7 +192,7 @@ sub verify_text {
 }
 
 # ------------------------------------------------------------------
-# -08 sections 14.2 to 14.8: the exact strings, one message each (built
+# -09 sections 14.2 to 14.8: the exact strings, one message each (built
 # with t/lib/Spec07Fixture.pm, which signs whatever it is asked to).
 # ------------------------------------------------------------------
 {

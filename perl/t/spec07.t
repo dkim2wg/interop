@@ -79,7 +79,7 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     is_pass(add_sig($n2, %HOP2), 'U2: the UTF-8 body line undoes byte-exactly');
 }
 
-# --- U3, U4, U5, K2: malformed Recipes (-08 §14.2, contract D6) ----------------
+# --- U3, U4, U5, K2: malformed Recipes (-09 §14.2, contract D6) ----------------
 # A bad step is "Recipe <path> is invalid"; a fault of the document as a
 # whole is "contains invalid JSON".
 {
@@ -109,7 +109,7 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     }
 }
 
-# --- K1: keys are lowercase (-08 §5, contract D10) -------------------------------
+# --- K1: keys are lowercase (-09 §5, contract D10) -------------------------------
 {
     my $t = add_sig(mi_with_recipe($HOP1_TEXT, '{"h":{"subject":[{"c":[1,1]}]}}'), %HOP2);
     is_pass($t, 'K1: {"h":{"subject":[{"c":[1,1]}]}} verifies');
@@ -121,7 +121,7 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     }
 }
 
-# --- No r= at m=2: no change (-08 sections 9 and 12.1) ---------------------------
+# --- No r= at m=2: no change (-09 sections 9 and 12.1) ---------------------------
 {
     (my $no_r = mi_with_recipe($HOP1_TEXT, '{}')) =~ s/; r=[^;]*;/;/;
     unlike($no_r, qr/^Message-Instance: m=2;[^\r\n]*r=/m, 'no-change MI: no r= tag');
@@ -189,7 +189,7 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
 
     my $c2 = add_sig($HOP1_TEXT, d => 'other.net', mf => '<>', rt => ['<a@example.com>']);
     is_error($c2, 'fail', 'FAIL: DKIM2-Signature i=2 d= does not match the rt= of i=1', 'C2');
-    # -08 section 13.2: the top signature and top instance are fine, so it
+    # -09 section 13.2: the top signature and top instance are fine, so it
     # is Provisionally Verified all the same.
     my $pv = verify($c2);
     ok($pv->provisionally_verified, 'C2: still Provisionally Verified');
@@ -315,7 +315,7 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
 
 # --- D1: no DSN for a null top mf= ----------------------------------------------------
 {
-    # The DSN's d= is a recipient domain of the reported hop (-08 section 16.2).
+    # The DSN's d= is a recipient domain of the reported hop (-09 section 16.2).
     my %dsn = (Signer => Mail::DKIM2::Signer->new(Domain => 'example.org', Selector => 'sel1',
                    Key => Spec07Fixture::key(), MailFrom => '<>'),
                ReportingMTA => 'lists.example.org', PubkeyCallback => Spec07Fixture::pubkey_cb());
