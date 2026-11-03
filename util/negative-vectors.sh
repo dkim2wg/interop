@@ -19,7 +19,8 @@
 # bytes -- and violates exactly one rule, so a verifier that silently never
 # reaches the corresponding check would ACCEPT it instead of rejecting it.
 # The positive controls (e.g. the same algorithm twice with distinct
-# Selectors, which -08 §10.9 explicitly permits; null body Recipes; empty bodies)
+# Selectors, which -09 §10.9 explicitly permits; empty bodies; From in a
+# subdomain-authorised parent)
 # must be ACCEPTED; a verifier that rejects one has a false positive that
 # would reject conformant mail.
 #
