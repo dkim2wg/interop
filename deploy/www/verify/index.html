@@ -17,22 +17,31 @@
     <p class="caveat">A result reports only whether the message travelled here
        unmodified and unreplayed (§14.1). It says nothing about whether the
        message is wanted, or whether any declared modification was benign.</p>
-    <p class="caveat">Checks follow draft-ietf-dkim-dkim2-spec-08. New in -08:
+    <p class="caveat">Checks follow draft-ietf-dkim-dkim2-spec-09. New in -09:
+       a message whose history includes a null body Recipe
+       (<code>"b": null</code>) is a <code>PERMERROR</code>
+       (<code>has a null recipe</code>), since its earlier body cannot be
+       checked; a message with no DKIM2 header fields at all is
+       <code>NONE</code>. A <code>From:</code> is Authentic when its domain
+       is at or below <code>d=</code>, as before, and now also when
+       <code>d=</code> is below the <code>From:</code> domain, unless that
+       domain's Domain Policy Record (a <code>v=DKIM1</code> TXT record at
+       <code>_domainkey.</code><em>domain</em>) carries
+       <code>f=strict</code>: then it <code>forbids subdomain signing</code>.
+       A <code>From:</code> with more than one address, or at a domain
+       literal, says so. A key record sitting next to another TXT record
+       (such as <code>v=spf1</code>) is found; an RSA key under 1024 bits is
+       <code>too short</code>; the first signature (<code>i=1</code>) may
+       not carry the <code>exploded</code> flag. Still checked as in -08:
        <code>s=</code> and <code>h=</code> may offer alternatives
        (<code>a,b|c</code> passes if both <code>a</code> and <code>b</code>
        pass, or <code>c</code> does), and an algorithm this verifier does not
        implement (including ML-DSA-44, <code>mldsa44</code>) is an error
-       unless an alternative passes; <code>Auto-Submitted</code> and
-       <code>VBR-Info</code> are now covered by the header hash; tag names and
-       Recipe JSON keys must be lowercase; an invalid Recipe step is named
-       (<code>Recipe b[1] is invalid</code>); a malformed public key (an RSA
-       key under 1024 bits, an Ed25519 key that is not 32 octets) is reported
-       as such; and a timestamp, Chain of Custody or From Authentic failure is
-       <code>FAIL</code>. A message whose history includes a null body Recipe
-       passes but is marked <strong>not fully verified</strong>: the earlier
-       body cannot be checked. Still checked as in -07: the
-       <code>From:</code> must be Authentic, the Chain of Custody hop by hop,
-       and Recipes carry lines that are not UTF-8 as <code>"u"</code> steps.
+       unless an alternative passes; tag names and Recipe JSON keys must be
+       lowercase; an invalid Recipe step is named
+       (<code>recipe b[1] is invalid</code>); the Chain of Custody is checked
+       hop by hop, and Recipes carry lines that are not UTF-8 as
+       <code>"u"</code> steps.
        A pasted message has no delivery time, so
        timestamps are checked against now: a signature more than 14 days old
        shows as <code>signature expired</code>. When a message has more
@@ -42,7 +51,9 @@
        until they all pass.</p>
     <p class="privacy">Public keys are fetched over DNS-over-HTTPS from Cloudflare
        (<code>cloudflare-dns.com</code>), so the signing domains and selectors in
-       your message are sent to Cloudflare. The message body never leaves your browser.</p>
+       your message are sent to Cloudflare, and so is the <code>From:</code>
+       domain when its Domain Policy Record has to be looked up. The message
+       body never leaves your browser.</p>
     <p id="caps" class="caps"></p>
   </header>
   <main class="cols">
