@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Tue, 3 Nov 2026 12:05:24 -0500
+Subject: [PATCH 7/7] DKIM2 draft -09: version and section pointers
+
+draft-ietf-dkim-dkim2-spec-09 changes nothing Sympa computes: its
+instances (a null body Recipe included, which the outbound signer now
+signs over) are as under -08, and section numbers are unchanged. Mail::DKIM2
+0.28 remains the minimum. DKIM2_DRAFT spec-09, DKIM2_DATE 2026-11-03.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/lib/Sympa/DKIM2.pm | 14 +++++++-------
+ t/DKIM2.t              |  2 +-
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/src/lib/Sympa/DKIM2.pm b/src/lib/Sympa/DKIM2.pm
+index 3c2850356..96cfeff19 100644
+--- a/src/lib/Sympa/DKIM2.pm
++++ b/src/lib/Sympa/DKIM2.pm
+@@ -67,7 +67,7 @@ sub anonymous {
+ }
+ 
+ # True if From is to be rewritten to an address of the list (as
+-# dmarc_protect does) whatever dmarc_protection says.  DKIM2 (-08 section
++# dmarc_protect does) whatever dmarc_protection says.  DKIM2 (-09 section
+ # 11) requires From to be Authentic: in the list's signing domain when the
+ # list host signs i=1, or when its hop changes the message.  Sympa's hop
+ # always changes a list post (Sender, Precedence, List-Id ...), and a
+@@ -144,9 +144,9 @@ sub egress_context {
+         return undef;
+     }
+     # Arrived unsigned: the list host's signature will be i=1, and i=1 is
+-    # checked against the From of state 1 (-08 section 11), which Sympa
++    # checked against the From of state 1 (-09 section 11), which Sympa
+     # rewrites.  So the copy leaves with a single instance, m=1, describing
+-    # it as sent, with a Recipe back to the message as received (-08
++    # it as sent, with a Recipe back to the message as received (-09
+     # section 12.1: the first instance may record changes made as the
+     # message enters DKIM2); see egress_add.
+     my $unsigned = $message->{'dkim2_headers'} !~ /^DKIM2-Signature:/mi;
+@@ -345,9 +345,9 @@ sub _strip_chain {
+ }
+ 
+ # DKIM2 implementation metadata -- update DKIM2_DATE on each change.
+-use constant DKIM2_DRAFT    => 'ietf-dkim-dkim2-spec-08';
++use constant DKIM2_DRAFT    => 'ietf-dkim-dkim2-spec-09';
+ use constant DKIM2_REPO     => 'github.com/brong/sympa';
+-use constant DKIM2_DATE     => '2026-10-28';
++use constant DKIM2_DATE     => '2026-11-03';
+ use constant DKIM2_SOFTWARE => 'sympa';
+ 
+ # X-DKIM2-Info value per draft-gondwana-dkim2-debug-header-01: a tag-list in
+@@ -573,7 +573,7 @@ Sympa::DKIM2 - DKIM2 Message-Instance support
+ =head1 DESCRIPTION
+ 
+ Records what a list changed in each message as a DKIM2 Message-Instance
+-header field (draft-ietf-dkim-dkim2-spec-08), so DKIM2 verifiers downstream
++header field (draft-ietf-dkim-dkim2-spec-09), so DKIM2 verifiers downstream
+ can undo the list's changes and check the signatures of earlier hops.  The
+ DKIM2-Signature itself is added by the MTA.
+ 
+@@ -585,7 +585,7 @@ editing it, so the body Recipe is a copy range; a body rewritten for any
+ other reason gets a null body Recipe.  Each instance Sympa adds has an
+ C<X-DKIM2-Info> debug field directly above it.
+ 
+-DKIM2 requires the From header field to be Authentic (-08 section 11): in
++DKIM2 requires the From header field to be Authentic (-09 section 11): in
+ the domain of the signature of the hop that last set it.  Every post a
+ DKIM2 list sends out has its From rewritten to the list address (see
+ L<Sympa::Message/dmarc_protect>), whatever C<dmarc_protection> says; the
+diff --git a/t/DKIM2.t b/t/DKIM2.t
+index 1c6aa1530..7add00581 100644
+--- a/t/DKIM2.t
++++ b/t/DKIM2.t
+@@ -720,7 +720,7 @@ subtest 'X-DKIM2-Info above each instance Sympa adds' => sub {
+     my ($info) = $w =~ /\AX-DKIM2-Info: (.*?)\r\n(?![ \t])/s;
+     $info =~ s/\r\n[ \t]+/ /g;
+     like $info, qr/\A(?:[a-z0-9-]+=[^;]*; ?)+\z/, 'tag-list, every tag ends in ;';
+-    like $info, qr/draft=ietf-dkim-dkim2-spec-08;/, 'draft';
++    like $info, qr/draft=ietf-dkim-dkim2-spec-09;/, 'draft';
+     like $info, qr/hc=\d+; hn=[a-z0-9,-]+;/, 'hashed header count and names';
+ };
+ 

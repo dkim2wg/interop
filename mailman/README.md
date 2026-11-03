@@ -29,7 +29,7 @@ revision the migration follows, and the upstream code around the few lines
 added to `decorate.py`, `mime_delete.py` and `dmarc.py`). The design is described in
 `DKIM2-MESSAGE-INSTANCE.md`, which the Message-Instance patch adds.
 
-`patches-3.3.10/` carries eight patches. The first two are upstream commits
+`patches-3.3.10/` carries nine patches. The first two are upstream commits
 that 3.3.10 needs to run on Python 3.13 at all (the default on Debian 13 and
 Ubuntu 25.04+) and that have not been in a release yet: the `nntplib`
 requirement becomes `standard-nntplib`, without which `pip install` cannot
@@ -37,7 +37,7 @@ resolve 3.3.10 on 3.13, and the template loader stops using a `pathlib`
 path as a context manager, without which every template lookup (and so
 every decoration) raises a TypeError on 3.13. On Python 3.12 and earlier
 they change nothing and can be skipped. The DKIM2 patches are the last
-six. `patches-3.3.8/` and `patches-master/` are these six patches alone: 3.3.8 is only
+seven. `patches-3.3.8/` and `patches-master/` are these seven patches alone: 3.3.8 is only
 shipped with Python 3.11 and 3.12, where it needs no such fixes.
 
 ## The patches
@@ -101,6 +101,10 @@ shipped with Python 3.11 and 3.12, where it needs no such fixes.
    Tag-names and Recipe JSON keys are lowercase and case-sensitive (an
    upper-case tag is an unknown tag, an upper-case key invalid JSON), and
    the ingress check reads `h=` as `|` groups of `,` lists (section 9.3).
+7. **DKIM2 draft -09: version and section pointers.** Nothing Mailman
+   emits changes under -09; `X-DKIM2-Info` names `ietf-dkim-dkim2-spec-09`.
+   A null body Recipe is a PERMERROR at -09 verifiers, and the outbound
+   signer (Mail::DKIM2 0.29) signs over the list's own null.
 
 ## What they apply to
 

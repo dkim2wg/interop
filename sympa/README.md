@@ -1,6 +1,6 @@
 # DKIM2 Message-Instance support for Sympa 6.2.78
 
-Five patches that make Sympa record, in a `Message-Instance` header, what
+Seven patches that make Sympa record, in a `Message-Instance` header, what
 it changed about each message it redistributes, so a DKIM2 verifier
 downstream can undo the list's changes and check the signatures of earlier
 hops. Sympa adds only `Message-Instance` (and `X-DKIM2-Info`); the
@@ -53,6 +53,10 @@ which patch 2 adds.
 6. **DKIM2 draft -08: requires Mail::DKIM2 0.28.** Draft -08 hashes
    `Auto-Submitted` and `VBR-Info`, which Sympa's own notices carry, so
    an instance computed by an older Mail::DKIM2 does not verify under -08.
+7. **DKIM2 draft -09: version and section pointers.** Nothing Sympa
+   computes changes under -09; `X-DKIM2-Info` names
+   `ietf-dkim-dkim2-spec-09`. Mail::DKIM2 0.28 is still the minimum for
+   Sympa itself; the outbound signer should be 0.29 (draft -09).
 
 The series before the always-wrap rework (encoding-preserving decoration,
 a `.mi_orig` spool file, Recipes by diff) is kept as the tag
@@ -69,7 +73,8 @@ there. Older packages are not supported.
 `Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution, version 0.28
 or later (`cpanm Mail::DKIM2`; source in [`../perl`](../perl)): 0.28
 implements draft -08 (`Auto-Submitted` and `VBR-Info` hashed, `|` groups,
-strict-lowercase tags). The outbound signer needs a -08 Mail::DKIM2 too.
+strict-lowercase tags). The outbound signer needs a -09 Mail::DKIM2
+(0.29).
 Mail::DKIM2 is loaded only for lists with the switch on; a list with the
 switch on and no Mail::DKIM2, or one older than 0.28, logs an error and
 runs as stock. Nothing else is needed beyond what 6.2.78 itself requires.

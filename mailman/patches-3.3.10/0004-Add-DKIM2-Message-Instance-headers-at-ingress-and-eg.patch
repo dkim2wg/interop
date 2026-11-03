@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Wed, 23 Sep 2026 13:34:30 -0400
-Subject: [PATCH 4/8] Add DKIM2 Message-Instance headers at ingress and egress
+Subject: [PATCH 4/9] Add DKIM2 Message-Instance headers at ingress and egress
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
