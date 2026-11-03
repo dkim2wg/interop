@@ -10,7 +10,9 @@ Revision history for Mail::DKIM2
           Signer remain as an explicit opt-in to the lookup.
           dkim2-milter --parent-from (single domain) or a parent-from file
           in a keydir domain's directory; DKIM2Sign per-domain
-          parent_from_domains; dkim2sign --parent-from.
+          parent_from_domains; dkim2sign --parent-from. Each matches
+          its list through the new Common::parent_from_matcher (A-labels,
+          case, one trailing dot).
         - The Verifier prefetches the Domain Policy Records its From check
           will need (d= below the From domain), in the background with the
           keys, under the same conditions (_can_prefetch, PREFETCH_MAX,
