@@ -153,3 +153,7 @@ guide on null Recipes and NONE, and the DPR in the key-publishing text).
 3. RSA < 1024 (E): keep refusing, with the new "public key <s1> too short" string.
 4. DPR fixtures (strict / non-strict / multiple / temp-fail) in the test zones
    (dns.json + vectors) only. Nothing on dkim2.com's live zone.
+5. (follow-up, 2026-11-03) The null-recipe error names the m= of the instance that
+   holds the null. The i=1 exploded check goes anywhere before the hashing and
+   signing work (a well-formedness check). Leave the diff cap at 1000, and don't
+   sign if we can't express the change (this supersedes "raise the cap" in 1).
