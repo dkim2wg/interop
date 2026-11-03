@@ -176,13 +176,28 @@ with a Domain Policy Record: a TXT record at `_domainkey.<From domain>`
 _domainkey.example.com. IN TXT "v=DKIM1; f=strict"
 ```
 
-Verifiers and our signers look it up only for that upward case, once per
-domain per message. No record, or one without `strict` in `f=`, allows
+Verifiers look it up only for that upward case, once per domain per
+message (Mail::DKIM2 0.30 sends it in the background with the keys). No record, or one without `strict` in `f=`, allows
 subdomain signing. A record that begins `v=DKIM1` but does not parse counts
 as strict. The failures are `FAIL: ... From <dom> forbids subdomain
 signing`, `PERMERROR: ... multiple records for <dom> policy` and, when the
-lookup fails, `TEMPERROR: ... policy for <dom> unavailable`; a signer
-refuses with the same text.
+lookup fails, `TEMPERROR: ... policy for <dom> unavailable`.
+
+**Signers do not look it up** (Mail::DKIM2 0.30, and the Python, Go and C
+signers): you know your own domains' policy, so you list, per signing
+domain, the parent domains whose From it may sign for. Anything else below
+the From domain is refused (`From header field is not Authentic for
+d=...`), with no DNS lookup:
+
+| Signer | Setting |
+|---|---|
+| `dkim2-milter` | `--parent-from example.com` (single domain, repeatable), or a `parent-from` file in the domain's keydir directory (one domain per line) |
+| authentication_milter `DKIM2Sign` | `"parent_from_domains": ["example.com"]` in the domain's entry |
+| `dkim2sign` (Perl, Python, Go, C) | `--parent-from example.com` (repeatable) |
+| library | Perl `Signer->new(ParentFromCallback => sub { ($dom, $signer) = @_; ... })`, Python `parent_from=`, Go `SignOptions.ParentFrom`, C `parent_from` hook |
+
+List a parent only if it does not publish `f=strict`: verifiers enforce it
+whatever the signer thinks.
 
 **Publish `f=strict`** on any domain whose subdomains are controlled by
 someone else: a hosting provider, SaaS or university domain that hands
@@ -309,8 +324,9 @@ is only Authentic if the list's posting-address domain is equal to, or a
 subdomain of, the domain the outbound milter signs that list's mail with:
 `list@lists.example.org` signed with `d=lists.example.org` or
 `d=example.org` works. Under -09 `list@example.org` signed with
-`d=lists.example.org` works too, unless example.org publishes `f=strict`
-(see "Domain Policy Record"). Otherwise the signer refuses every rewritten
+`d=lists.example.org` works too when the signer lists example.org as a
+parent (see "Domain Policy Record") and example.org does not publish
+`f=strict`. Otherwise the signer refuses every rewritten
 post (`From header field is not Authentic for d=...`), and a post that
 arrived with a DKIM2-Signature is answered `550 5.7.1` (see "Milter
 integration"), which the list manager counts as a bounce. Check this for

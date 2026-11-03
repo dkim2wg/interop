@@ -232,8 +232,10 @@ So a list or forwarder that changes a message, or originates one (its hop
 is i=1), rewrites From into its own signing domain. The signer checks
 this itself: before signing as D, if the message has no DKIM2-Signature yet,
 or an instance above the highest signed `m=` changed From, From must pass
-against D, with the same policy lookup for a D below the From domain, or
-the signer refuses with `From header field is not Authentic for d=<D>`
+against D. For a D below the From domain the signer asks its parent
+callback (configuration: is this From domain one D may sign for?) and makes
+no DNS lookup; with no callback it refuses. Otherwise the signer refuses
+with `From header field is not Authentic for d=<D>`
 (followed by the step-5 reason when the policy refused it).
 
 ### The `exploded` flag (-09 §12.5)
