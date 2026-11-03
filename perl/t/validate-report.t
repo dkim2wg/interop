@@ -280,7 +280,8 @@ sub signed_input_nd {
     my $in = signed_input("From: a\@test1.dkim2.com\r\nTo: reflector-redacted\@test2.dkim2.com\r\nSubject: hi\r\n\r\nsecret\r\n");
     my $r2 = Mail::DKIM2::Reflector::reflect(%common, mode=>'redacted', message=>$in);
     my $rep = Mail::DKIM2::Validate::report($r2->{message}, %ropt);
-    is($rep->{overall}, 'pass', 'redacted overall pass (current content valid)');
+    is($rep->{overall}, 'fail', 'redacted: overall fail (-09: a null recipe is a PERMERROR)');
+    like($rep->{summary}, qr/has a null recipe/, 'redacted: the summary says why');
     my ($top) = grep { $_->{kind} eq 'mi' && $_->{m}==2 } @{$rep->{levels}};
     is($top->{recipe}, 'null', 'redacted top MI recipe=null');
     is($top->{undo}, 'unrecoverable', 'redacted top MI undo=unrecoverable');

@@ -453,8 +453,9 @@ SKIP: {
 # --- 5. A list's unsigned m=2 with a null body Recipe ---
 #
 # Built like the case in 2, but the list rewrote the body and said so ("b":
-# null). Signing that is the host's choice: --allow-null-body-recipe, off by
-# default. Either way the header history below the null is still checked.
+# null). That null is this hop's own, so it is signed (0.29, -09 contract
+# E2): the message PERMERRORs downstream, but the header changes are signed.
+# The header history below the null is still checked.
 sub null_list_post {
     my (%o) = @_;
     my $signed = originator_signed();
@@ -482,18 +483,26 @@ sub info_values {
     my ($verdict, $mods) = run_milter(
         from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
         message => null_list_post());
-    is($verdict, 'y', 'null body: rejected (the upstream chain is signed)');
-    is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'option off: null body Recipe not signed');
-    like(reply_of($mods), qr/^550 5\.7\.1 not signing: unsigned top Message-Instance m=2 has a null body Recipe/,
-        'option off: the reply says why');
-    like(milter_log(), qr/not signing <post\@test1\.dkim2\.com>: unsigned top Message-Instance m=2 has a null body Recipe/,
-        'option off: the log says the null top is unsigned');
+    is($verdict, 'c', 'own null body: milter continues');
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 1, 'own null body: signed') or diag(milter_log());
+    like(join("\n", info_values($mods)), qr/action=null-body-recipe/,
+        'own null body: X-DKIM2-Info records null-body-recipe');
+    is(verify(assemble(null_list_post(), $mods))->result_detail,
+       'permerror (PERMERROR: Message-Instance m=2 has a null recipe)',
+       'own null body: a receiver gets the -09 PERMERROR');
+
+    # The list also changed To, and its header Recipe hides that: refused
+    # by the header-history walk.
+    ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
+        message => null_list_post(forge => 1));
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'forged header history not signed');
 }
 
 # --- 5b. The same null m=2, but the list domain signed it (i=2, m=2) ---
-# A forwarder (test3) relays the list post unchanged. The null was declared
-# and signed upstream, so the default milter (option off) extends the chain,
-# and X-DKIM2-Info still notes the null top it signed over.
+# A forwarder (test3) relays the list post unchanged. The null is upstream's
+# and fails verification (-09: "has a null recipe"), so the milter refuses:
+# 550, since the message carries a DKIM2-Signature.
 {
     my $post = null_list_post();
     my $s = Mail::DKIM2::Signer->new(
@@ -507,37 +516,22 @@ sub info_values {
     my ($verdict, $mods) = run_milter(
         from => 'fwd@test3.dkim2.com', rcpt => ['user@example.org'],
         message => $signed_post);
-    is($verdict, 'c', 'signed null top: milter continues');
-    my @sig = inserted($mods, 'DKIM2-Signature');
-    is(scalar @sig, 1, 'signed null top: signed with the option off') or diag(milter_log());
-    like($sig[0]{value} // '', qr/\bi=3;.*\bm=2;/s, 'signed null top: i=3 over the list\'s m=2');
-    like($sig[0]{value} // '', qr/\bd=test3\.dkim2\.com;/, 'signed null top: by the forwarder');
-    like(join("\n", info_values($mods)), qr/action=null-body-recipe/,
-        'signed null top: X-DKIM2-Info notes the null top (informational)');
-    unlike(join("\n", info_values($mods)), qr/not-signed=/,
-        'signed null top: no not-signed= tag');
-    my $v = verify(assemble($signed_post, $mods));
-    is($v->result, 'pass', 'signed null top: full chain verifies at a receiver')
-        or diag($v->result_detail);
+    is($verdict, 'y', 'signed null top: rejected');
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 0, 'signed null top: not signed');
+    like(reply_of($mods), qr/^550 5\.7\.1 not signing: .*has a null recipe/,
+        'signed null top: the reply says why');
 }
 
 {
     my ($pid2, $sock2) = spawn_milter(extra => ['--allow-null-body-recipe']);
-    ok(-S $sock2, 'option-on milter is listening') or BAIL_OUT("milter never came up");
+    ok(-S $sock2, 'deprecated --allow-null-body-recipe: the milter still starts')
+        or BAIL_OUT("milter never came up");
     my ($verdict, $mods) = run_milter(sock => $sock2,
         from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
         message => null_list_post());
-    is(scalar(inserted($mods, 'DKIM2-Signature')), 1, 'option on: signed') or diag(milter_log());
-    like(join("\n", info_values($mods)), qr/action=null-body-recipe/,
-        'option on: X-DKIM2-Info records null-body-recipe');
-
-    # The list also changed To, and its header Recipe hides that: refused
-    # even with the option on, by the header-history walk.
-    ($verdict, $mods) = run_milter(sock => $sock2,
-        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'],
-        message => null_list_post(forge => 1));
-    is(scalar(inserted($mods, 'DKIM2-Signature')), 0,
-        'option on: forged header history not signed');
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 1, 'deprecated option: signed as without it');
+    like(milter_log(), qr/--allow-null-body-recipe is deprecated and does nothing/,
+        'deprecated option: warned about at startup');
 }
 
 # --- 5. nd= bridge: sign when the top nd= names our d=, refuse otherwise ---

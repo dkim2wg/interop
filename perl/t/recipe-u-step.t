@@ -161,7 +161,7 @@ sub with_recipe {
 
 # --- reject: bad steps make the instance fail, never throw out of the Verifier ---
 # -08 §14.2, contract D6: one bad step is "Recipe <path> is invalid".
-sub invalid { my ($path) = @_; qr/\APERMERROR: Message-Instance m=2 Recipe \Q$path\E is invalid\z/ }
+sub invalid { my ($path) = @_; qr/\APERMERROR: Message-Instance m=2 recipe \Q$path\E is invalid\z/ }
 my @bad = (
     [ { b => [ { u => ['not base64!'] } ] },              'characters outside the alphabet' ],
     [ { b => [ { u => ['QUJD='] } ] },                    'wrong padding' ],

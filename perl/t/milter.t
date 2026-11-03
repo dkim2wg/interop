@@ -582,13 +582,11 @@ my $expected_dir = path("tests/expected");
 
 # Case 2b: the body changed too, and max_recipe_literals decides whether
 # the snapshot diff carries the old line or declares the body unrecoverable
-# (this handler only adds header fields, so there is no epilogue). Signing
-# over its own null is then the host's choice: allow_null_body_recipe.
+# (this handler only adds header fields, so there is no epilogue). Its own
+# null is signed (0.29, -09 contract E2).
 for my $c (
     ['default', 'diff'],
-    ['max_recipe_literals 0', 'refused', max_recipe_literals => 0],
-    ['max_recipe_literals 0, allow_null_body_recipe', 'null',
-        max_recipe_literals => 0, allow_null_body_recipe => 1],
+    ['max_recipe_literals 0', 'null', max_recipe_literals => 0],
 ) {
     my ($name, $want, %extra) = @$c;
     my $snapshot_dir = tempdir(CLEANUP => 1);

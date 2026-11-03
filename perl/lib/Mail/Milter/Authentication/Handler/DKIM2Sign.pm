@@ -39,9 +39,9 @@ sub default_config {
         # body Recipe is null (MessageInstance MaxRecipeLiterals)
         'max_recipe_literals'  => 1000,
         'ignore_header_prefixes' => [],   # our own fields, hashed by neither end (IgnorePrefixes)
-        # Sign over an UNSIGNED Message-Instance (above every upstream
-        # signature's m=) with a null body Recipe; see Mail::DKIM2::Gate
-        'allow_null_body_recipe' => 0,
+        # Deprecated (0.29): this hop's own null body Recipe is always
+        # signed; accepted, warned about, ignored
+        'allow_null_body_recipe' => undef,
         # Testing only: verify the upstream chain with keys from this dns.json
         # instead of DNS, and without the t=/expiry check
         'dns_overrides'        => undef,
@@ -292,22 +292,20 @@ sub addheader_callback {
         # allowed); the Message-Instance chain must match the content and undo
         # cleanly (an upstream that emitted a non-reversible Recipe would give
         # a signature that fails at every recipient); a top signature with nd=
-        # may be extended only by the domain it names; and an UNSIGNED
-        # instance with a null body Recipe -- the top, or one under our own
-        # new instance -- is refused unless allow_null_body_recipe.  A null
-        # that arrived signed is extended.  A message with no upstream chain
-        # is signed as before.
+        # may be extended only by the domain it names.  An UNSIGNED instance
+        # with a null body Recipe -- this hop's own -- is signed (0.29, -09
+        # contract E2); a null that arrived signed fails the upstream
+        # verification and is refused.  A message with no upstream chain is
+        # signed as before.
+        $self->_deprecated_allow_null($config);
         my $gate = Mail::DKIM2::Gate->check($message_data,
             SigningDomain       => $sign_domain,
-            AllowNullBodyRecipe => $config->{'allow_null_body_recipe'} ? 1 : 0,
             SkipTimestampCheck  => $config->{'skip_timestamp_check'} ? 1 : 0,
             IgnorePrefixes      => $config->{'ignore_header_prefixes'},
             $self->_gate_key_source($config));
         $self->check_timeout();
         unless ( $gate->{ok} ) {
             my $reason = $gate->{reason} // 'refused';
-            $gate->{message} =~ s/AllowNullBodyRecipe not set/allow_null_body_recipe not set/
-                if defined $gate->{message};
             $self->metric_count( 'dkim2_sign_total', { 'result' => $reason } );
             $self->dbgout( 'DKIM2Sign',
                 "Not signing for $sign_domain: $gate->{message}", LOG_INFO );
@@ -367,11 +365,9 @@ sub addheader_callback {
                 'value' => $sig_header,
             };
 
-            # Informational, as bin/dkim2-milter: we signed over a null body
-            # Recipe -- a null top, whether it arrived signed (no option
-            # needed) or is this hop's own, or an unsigned null under the top
-            # (allow_null_body_recipe).
-            my $over_null = $gate->{top_null} || $gate->{unsigned_null};
+            # Informational, as bin/dkim2-milter: we signed over this hop's
+            # own (unsigned) null body Recipe.
+            my $over_null = $gate->{unsigned_null};
             if ( $over_null ) {
                 push @{$handler->{pre_headers}}, {
                     'field' => 'X-DKIM2-Info',
@@ -642,6 +638,17 @@ sub _dkim2_info {
 # Where the gate's Verifier gets upstream public keys: dns_overrides (a
 # dns.json, for testing) when set, else the milter's own resolver (so its
 # timeouts and caching apply), as DKIM2Verify does.
+# allow_null_body_recipe is retired (0.29, -09 contract E2): warn once per
+# process when a configuration still sets it.
+our $WARNED_ALLOW_NULL;
+sub _deprecated_allow_null {
+    my ($self, $config) = @_;
+    return unless defined $config->{'allow_null_body_recipe'};
+    return if $WARNED_ALLOW_NULL++;
+    $self->log_error('DKIM2Sign: allow_null_body_recipe is deprecated and does nothing; '
+        . 'an unsigned null body Recipe is always signed (Mail::DKIM2 0.29)');
+}
+
 sub _gate_key_source {
     my ( $self, $config ) = @_;
     if ( my $file = $config->{'dns_overrides'} ) {
@@ -764,12 +771,14 @@ would sign it, its own new Message-Instance included: any upstream
 DKIM2-Signatures must verify (a Message-Instance above the top signature, the
 one being signed, is allowed), the Message-Instance chain must match the
 content and undo cleanly, a top signature with C<nd=> must name the signing
-domain, and an I<unsigned> Message-Instance with a null body Recipe (a null
-this hop introduces, typically a list manager's) is signed only with
-C<allow_null_body_recipe>.  A signature with C<m=k> covers instances 1 to
+domain.  An I<unsigned> Message-Instance with a null body Recipe (a null
+this hop introduces, typically a list manager's) is signed: the message will
+be a PERMERROR downstream (draft -09 sections 13 and 14.2), but this hop's
+header changes are signed.  A signature with C<m=k> covers instances 1 to
 I<k>, so this applies to the top instance and equally to one under the
-handler's own new instance.  A null that arrived signed is extended.  A
-message with no upstream chain is signed as it always was.
+handler's own new instance.  A null that arrived signed fails the upstream
+verification and is refused.  A message with no upstream chain is signed as
+it always was.
 
 When the handler recomputes its Message-Instance from a snapshot and drops
 broken intermediate Message-Instances on the way, it deletes those fields from
@@ -784,11 +793,11 @@ Message-Instance no DKIM2-Signature covers (an C<m=> above every signature's
 C<m=>) is removed, with C<X-DKIM2-Info: ... action=removed-unsigned-mi=...;>,
 as also when the domain has no signing configuration or the Signer fails.
 The reason is logged (C<dbgout>, C<LOG_INFO>) and counted in
-C<dkim2_sign_total> (C<result> C<upstream-chain>, C<broken-mi-chain> or
-C<null-body-recipe>), and for the last two, as with C<dkim2-milter>, an
+C<dkim2_sign_total> (C<result> C<upstream-chain> or C<broken-mi-chain>), and
+for the last, as with C<dkim2-milter>, an
 C<X-DKIM2-Info: ... action=not-signed=E<lt>reasonE<gt>;> field is prepended.
-When it signs over a null body Recipe (a null top, or an unsigned null under
-the top) it prepends C<X-DKIM2-Info: ... action=null-body-recipe;>.  If the Signer itself refuses
+When it signs over this hop's own null body Recipe it prepends
+C<X-DKIM2-Info: ... action=null-body-recipe;>.  If the Signer itself refuses
 (result C<fail>, e.g. over a DKIM2-Signature it cannot key, which the gate has
 already refused), nothing is added and the failure is logged as an error.
 That includes a From that is not Authentic for the signing domain when
@@ -853,9 +862,6 @@ directly does not have this problem; it is specific to the bolt-on-milter model.
         "snapshot_directory"   : null,             | Snapshot dir (shared with DKIM2Verify)
         "max_recipe_literals"  : 1000,             | Body Recipe literal-line cap
         "ignore_header_prefixes" : [],             | Own fields hashed by neither end
-        "allow_null_body_recipe" : 0,              | Sign over an unsigned
-                                                   |   Message-Instance with a null
-                                                   |   body Recipe (list hosts)
         "dns_overrides"        : null,             | Path to dns.json for testing
         "skip_timestamp_check" : 0                 | Testing: ignore upstream t=/expiry
     }
@@ -865,10 +871,8 @@ handler's defaults itself, so the handler does: an option left out of the
 configuration (or set to C<null>) takes the value above, and an explicit
 value, C<0> included, is used as given.
 
-C<allow_null_body_recipe> is C<dkim2-milter>'s C<--allow-null-body-recipe>:
-off by default, for a list host whose list manager rewrites bodies and adds an
-unsigned Message-Instance with a null body Recipe for this handler to sign.  It
-never excuses a broken chain.  C<dns_overrides> and C<skip_timestamp_check>
+C<allow_null_body_recipe> is deprecated (0.29) and does nothing but log an
+error once: this hop's own null body Recipe is always signed.  C<dns_overrides> and C<skip_timestamp_check>
 only affect the verification of the upstream chain, and are for tests.
 
 When C<snapshot_directory> is set, the handler looks up the stored message
@@ -887,8 +891,7 @@ C<X-DKIM2-Exploded: yes>) is signed with the C<exploded> flag (-08 section
 than C<max_recipe_literals> literal lines declares the body unrecoverable
 (a null body Recipe): this handler only adds header fields, so it cannot
 move the old body into the MIME epilogue.  Like any null this hop adds, it is
-signed only with C<allow_null_body_recipe>; without it the message goes out
-unsigned.
+signed.
 
 A message with no DKIM2-Signature whose Message-Instances (all unsigned:
 an C<m=1> stamped on arrival, a list manager's instance over it) are more

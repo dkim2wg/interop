@@ -85,22 +85,22 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
 {
     my $JSON = 'contains invalid JSON';
     my %bad = (
-        'U3 u not canonical (pad bits)' => ['{"b":[{"u":["QR=="]}]}', 'Recipe b[0] is invalid'],
-        'U4 the old b step'             => ['{"b":[{"b":["eA=="]}]}', 'Recipe b[0] is invalid'],
-        'U4 two keys in a step'         => ['{"b":[{"c":[1,1],"d":["x"]}]}', 'Recipe b[0] is invalid'],
-        'U4 an empty step'              => ['{"b":[{}]}', 'Recipe b[0] is invalid'],
-        'U5 u decodes to a CR'          => ['{"b":[{"u":["YQ1i"]}]}', 'Recipe b[0] is invalid'],
+        'U3 u not canonical (pad bits)' => ['{"b":[{"u":["QR=="]}]}', 'recipe b[0] is invalid'],
+        'U4 the old b step'             => ['{"b":[{"b":["eA=="]}]}', 'recipe b[0] is invalid'],
+        'U4 two keys in a step'         => ['{"b":[{"c":[1,1],"d":["x"]}]}', 'recipe b[0] is invalid'],
+        'U4 an empty step'              => ['{"b":[{}]}', 'recipe b[0] is invalid'],
+        'U5 u decodes to a CR'          => ['{"b":[{"u":["YQ1i"]}]}', 'recipe b[0] is invalid'],
         'U5 h with no properties'       => ['{"h":{}}', $JSON],
         'U5 neither h nor b'            => ['{"x":1}', $JSON],
         'K2 header name twice (case)'   => ['{"h":{"Subject":[],"subject":[]}}', $JSON],
         'K2 step key twice (case)'      => ['{"b":[{"c":[1,1],"C":[1,1]}]}', $JSON],
-        'c is not two integers'         => ['{"b":[{"c":["1",1]}]}', 'Recipe b[0] is invalid'],
-        'c starts at 0'                 => ['{"b":[{"c":[0,1]}]}', 'Recipe b[0] is invalid'],
-        'u not padded'                  => ['{"b":[{"u":["eA"]}]}', 'Recipe b[0] is invalid'],
+        'c is not two integers'         => ['{"b":[{"c":["1",1]}]}', 'recipe b[0] is invalid'],
+        'c starts at 0'                 => ['{"b":[{"c":[0,1]}]}', 'recipe b[0] is invalid'],
+        'u not padded'                  => ['{"b":[{"u":["eA"]}]}', 'recipe b[0] is invalid'],
         'd is not UTF-8'                => [qq({"b":[{"d":["caf\xE9"]}]}), $JSON],
-        'a header Recipe is not array'  => ['{"h":{"subject":{"c":[1,1]}}}', 'Recipe h.subject is invalid'],
+        'a header Recipe is not array'  => ['{"h":{"subject":{"c":[1,1]}}}', 'recipe h.subject is invalid'],
         'a step in the second header'   => ['{"h":{"subject":[{"c":[1,1]}],"to":[{"c":[1]}]}}',
-                                            'Recipe h.to[0] is invalid'],
+                                            'recipe h.to[0] is invalid'],
     );
     for my $name (sort keys %bad) {
         my ($json, $want) = @{ $bad{$name} };
@@ -220,12 +220,12 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
     my ($r5, $d5) = verdict(add_sig($lit, d => 'example.org', mf => '<y@[192.0.2.1]>',
                                     rt => ['<c@dest.example>']));
     is($r5, 'fail', 'C5: a domain literal never matches');
-    like($d5, qr/\AFAIL: DKIM2-Signature i=2 (?:mf= does not match the rt= of i=1|MAIL FROM and d= do not match)\z/,
+    like($d5, qr/\AFAIL: DKIM2-Signature i=2 (?:mf= does not match the rt= of i=1|mf= and d= do not match)\z/,
         'C5: details') or diag($d5);
 
     my $c6 = add_sig(add_mi(message()), d => 'example.com', mf => '<a@example.net>',
                      rt => ['<list@lists.example.org>']);
-    is_error($c6, 'fail', 'FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match', 'C6');
+    is_error($c6, 'fail', 'FAIL: DKIM2-Signature i=1 mf= and d= do not match', 'C6');
 }
 
 # --- A1..A4: From must be Authentic -----------------------------------------------
@@ -242,14 +242,19 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
         'A1: commas inside a quoted name and a comment');
     # The last: display text with no angle brackets is not one mailbox
     # (final review T3); all five implementations agree.
-    for my $from ('a@example.com, b@example.com', 'a@[192.0.2.1]', 'group: a@example.com;',
-                  '"A" <a@example.com>, <b@example.com>', 'A a@example.com') {
+    # -09 section 14.8 names two of the reasons (contract E3.1).
+    for my $c (['a@example.com, b@example.com', 'From has more than one address'],
+               ['a@[192.0.2.1]', 'From uses a domain literal'],
+               ['group: a@example.com;', 'matching From is not authentic'],
+               ['"A" <a@example.com>, <b@example.com>', 'From has more than one address'],
+               ['A a@example.com', 'matching From is not authentic']) {
+        my ($from, $why) = @$c;
         is_error(add_sig(add_mi(message(from => $from)), %HOP1), 'fail',
-            'FAIL: DKIM2-Signature i=1 matching From is not authentic', "A1: From: $from");
+            "FAIL: DKIM2-Signature i=1 $why", "A1: From: $from");
     }
     my $two = message(extra => "From: a\@example.com\r\n");
     is_error(add_sig(add_mi($two), %HOP1), 'fail',
-        'FAIL: DKIM2-Signature i=1 matching From is not authentic', 'A1: two From fields');
+        'FAIL: DKIM2-Signature i=1 From has more than one address', 'A1: two From fields');
     my $none = "To: b\@example.net\r\nSubject: no from\r\n\r\nbody\r\n";
     is_error(add_sig(add_mi($none), %HOP1), 'fail',
         'FAIL: DKIM2-Signature i=1 matching From is not authentic', 'A1: no From field');
@@ -422,7 +427,7 @@ my $HOP1_TEXT = add_sig(add_mi(message()), %HOP1);
         'fail', 'FAIL: DKIM2-Signature i=1 signature expired',
         'C9: expired and a top nd= (14.3 before 14.4)');
     is_error($corrupt->(add_sig(add_mi(message()), %HOP1, mf => '<a@example.net>'), 1),
-        'fail', 'FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match',
+        'fail', 'FAIL: DKIM2-Signature i=1 mf= and d= do not match',
         'C9: custody and a bad signature (14.4 before 14.6)');
 
     # The Message-Instances before the signatures: a header or body hash that

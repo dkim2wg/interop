@@ -68,7 +68,7 @@ our $PREFETCH_MAX = 8;
 
 sub known_options {
     return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
-              PubkeyCallback Resolver IgnorePrefixes NextDomainOK StreamBody
+              PubkeyCallback PolicyCallback Resolver IgnorePrefixes NextDomainOK StreamBody
               InstancesOnly);
 }
 
@@ -245,6 +245,9 @@ sub finish_header {
     # signature (AllowUnsignedMI, MidProcess, InstancesOnly: anything else
     # has stopped above) still have their chain walked.
     unless (%{$self->{_dk2_headers}} || %{$self->{_mi_headers}}) {
+        # -09 section 14.2 (contract E1): the fifth output state.
+        $self->{result}  = 'none';
+        $self->{details} = 'NONE: No DKIM2 header fields found';
         $self->finish_body;
         $self->stop;
         return;
@@ -356,11 +359,24 @@ sub finish_body {
     # copy-range order included (MessageInstance->parse checks in that
     # order). Only the bound a message gives a range is left for the chain
     # walk.
+    #
+    # -09 sections 13 and 14.2 (contract E2): a null body Recipe means the
+    # checks cannot all be completed, a PERMERROR naming the instance that
+    # holds it -- made right after that instance's own Recipe checks. Not
+    # for an instance no signature covers yet when this is a signer's own
+    # view of the chain (AllowUnsignedMI, MidProcess): that one is the
+    # signer's to sign or not.
+    my ($top_signed) = sort { $b <=> $a } grep { defined }
+                       map { $_->{sig}->version } values %dk2_map;
+    my $own_unsigned = ($self->{AllowUnsignedMI} || $self->{MidProcess}) ? 1 : 0;
     for my $v (sort { $a <=> $b } keys %mi_map) {
         (my $value = $mi_map{$v}) =~ s/\A[^:]*:[ \t]*//;
         my $obj = eval { Mail::DKIM2::MessageInstance->parse($value) };
         die $@ if ref $@;
         return $self->_outcome(Mail::DKIM2::MessageInstance::_parse_error($@)) unless $obj;
+        next unless $obj->unrecoverable;
+        next if $own_unsigned && (!defined $top_signed || $v > $top_signed);
+        return $self->_error(permerror => "Message-Instance m=$v has a null recipe");
     }
 
     # Section 14.7: walk the chain. Verify the top instance against the
@@ -394,7 +410,8 @@ sub finish_body {
     }
     unless (keys %dk2_map) {
         $self->{result} = 'none';
-        $self->{details} = 'no DKIM2-Signature headers found';
+        $self->{details} = keys %mi_map ? 'no DKIM2-Signature headers found'
+                                        : 'NONE: No DKIM2 header fields found';
         return;
     }
 
@@ -516,10 +533,73 @@ sub _verify_from {
     for my $pair (@pairs) {
         my ($k, $i) = @$pair;
         my $d = $dk2_map{$i}{sig}->domain // '';
-        next if Mail::DKIM2::Common::from_authentic($d, @{ $from_at->($k) });
-        return $self->_error(fail => "DKIM2-Signature i=$i matching From is not authentic");
+        return 0 unless $self->_from_pair_authentic($i, $d, @{ $from_at->($k) });
     }
     return 1;
+}
+
+# -09 section 14.8 for one signature and the From it is checked against
+# (contract E3.1): 1, or 0 with the outcome recorded. The From domain
+# relaxed-matches d= (d= is it or above it), or else d= is below the From
+# domain and that domain's Domain Policy Record does not forbid it.
+sub _from_pair_authentic {
+    my ($self, $i, $d, @from) = @_;
+    my ($state, $dom) = Mail::DKIM2::Common::from_mailbox(@from);
+    return $self->_error(fail => "DKIM2-Signature i=$i From has more than one address")
+        if $state eq 'multiple';
+    return $self->_error(fail => "DKIM2-Signature i=$i From uses a domain literal")
+        if $state eq 'literal';
+    return $self->_error(fail => "DKIM2-Signature i=$i matching From is not authentic")
+        unless $state eq 'ok' && length $d;
+    return 1 if relaxed_domain_match($dom, $d);
+    return $self->_error(fail => "DKIM2-Signature i=$i matching From is not authentic")
+        unless relaxed_domain_match($d, $dom);
+    my $policy = $self->{_policy}{$dom} //= $self->_domain_policy($dom);
+    return 1 if $policy eq 'open';
+    return $self->_error(fail => "DKIM2-Signature i=$i From $dom forbids subdomain signing")
+        if $policy eq 'strict';
+    return $self->_error(permerror => "DKIM2-Signature i=$i multiple records for $dom policy")
+        if $policy eq 'multiple';
+    return $self->_error(temperror => "DKIM2-Signature i=$i policy for $dom unavailable");
+}
+
+# The Domain Policy Record for $dom (an A-label, lowercased): 'open',
+# 'strict', 'multiple' (Common::domain_policy) or 'temperror'. From the
+# PolicyCallback when there is one, else a TXT query of _domainkey.$dom
+# through the Resolver, as the key fetch makes it: lazily, never prefetched,
+# since it is needed only when d= is below the From domain.
+sub _domain_policy {
+    my ($self, $dom) = @_;
+    my $txt = eval {
+        $self->{PolicyCallback}
+            ? $self->{PolicyCallback}->($dom, $self)
+            : $self->fetch_domain_policy($dom);
+    };
+    if (my $err = $@) {
+        die $err if ref $err;
+        (my $why = $err) =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*\z//;
+        $self->{diagnostic} = $why =~ s/\s+\z//r;
+        return 'temperror';
+    }
+    return Mail::DKIM2::Common::domain_policy(@{ $txt || [] });
+}
+
+# fetch_domain_policy($domain): the default Domain Policy Record source, the
+# TXT records at _domainkey.$domain (each RR's strings joined) as an
+# arrayref; [] for NXDOMAIN or no TXT. Dies with "TEMPERROR: ..." when the
+# lookup fails otherwise. A PolicyCallback may call it for domains it does
+# not handle itself.
+sub fetch_domain_policy {
+    my ($self, $dom) = @_;
+    my $fqdn = "_domainkey.$dom";
+    my $resolver = $self->_resolver;
+    my $reply = $resolver->query($fqdn, 'TXT');
+    unless ($reply) {
+        my $err = $resolver->errorstring // '';
+        return [] if $err =~ /^(?:NXDOMAIN|NOERROR|NODATA)\s*$/i;
+        croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
+    }
+    return [ map { join '', $_->txtdata } grep { $_->type eq 'TXT' } $reply->answer ];
 }
 
 # The headers-only half of _verify_mi_chain: the top instance's header hash
@@ -743,6 +823,11 @@ sub _check_sig_field {
             unless defined $rt_tag;
     }
 
+    # -09 section 14.2 (contract E6): i=1 MUST NOT carry the exploded flag.
+    # A well-formedness check, before the item checks and any key fetch.
+    return $self->_error(permerror => "DKIM2-Signature i=1 has an exploded flag")
+        if $i == 1 && grep { $_ eq 'exploded' } @{ $signature->flags || [] };
+
     # Local check: n= nonce must not exceed 64 characters (no -08 string).
     my $nonce = $signature->get_tag('n');
     return $self->_error(permerror => "n= nonce exceeds 64 characters at i=$i")
@@ -872,10 +957,10 @@ sub _check_sig_item {
     return ('permerror', "PERMERROR: DKIM2-Signature i=$i public key $sel algorithm mismatch")
         unless $pubkey->isa($IMPLEMENTED_ALG{$alg});
 
-    # Section 3.2: a Verifier MUST NOT validate with an RSA key of less than
-    # 1024 bits. A PubkeyCallback's key has not been through
+    # -09 sections 3.2 and 14.6: an RSA key under 1024 bits is too short
+    # (contract E5). A PubkeyCallback's key has not been through
     # parse_dkim_key_record, which refuses one, so it is checked here too.
-    return ('permerror', "PERMERROR: DKIM2-Signature i=$i public key $sel is malformed")
+    return ('permerror', "PERMERROR: DKIM2-Signature i=$i public key $sel too short")
         if $alg eq 'rsa-sha256' && $pubkey->size * 8 < 1024;
 
     my $signing_input = $dk2_entry->{signing_input};
@@ -948,7 +1033,7 @@ sub _verify_chain {
 
         if (defined $mf && !$null_mf && !$has_nd->($sig)) {
             my ($mfd, $lit) = domain_of($mf);
-            return $self->_error(fail => "DKIM2-Signature i=$i MAIL FROM and d= do not match")
+            return $self->_error(fail => "DKIM2-Signature i=$i mf= and d= do not match")
                 unless $mfd && !$lit && relaxed_domain_match($mfd, $d);
         }
     }
@@ -1012,7 +1097,10 @@ sub fetch_public_key {
     }
     # One TXT RR may hold several strings, joined with nothing between;
     # several RRs for one selector are an error (-08 §14.5).
-    my @txt = map { join '', $_->txtdata } grep { $_->type eq 'TXT' } $reply->answer;
+    # -09 section 3.7: records beginning v= other than DKIM1 are ignored
+    # before counting (contract E4).
+    my @txt = Mail::DKIM2::Common::key_records(
+        map { join '', $_->txtdata } grep { $_->type eq 'TXT' } $reply->answer);
     return unless @txt;
     croak "PERMERROR: has multiple records\n" if @txt > 1;
     my ($key, $why) = Mail::DKIM2::Common::parse_dkim_key_record($txt[0]);
@@ -1122,6 +1210,11 @@ sub resolver {
 sub set_pubkey_callback {
     my ($self, $cb) = @_;
     $self->{PubkeyCallback} = $cb;
+}
+
+sub set_policy_callback {
+    my ($self, $cb) = @_;
+    $self->{PolicyCallback} = $cb;
 }
 
 sub result {
@@ -1337,6 +1430,20 @@ nameserver. Every key is then asked for with C<query>, and so through the
 subclass's C<send>. A resolver that provides its own C<bgsend> is used for
 the prefetch.
 
+=item PolicyCallback
+
+A code reference that replaces the Domain Policy Record lookup (-09 section
+3.8; new in 0.29). Called as C<< ($domain, $verifier) >>, with the From
+domain as a lowercased A-label, only when a signature's C<d=> is below the
+From domain (the "upwards" relaxed match of section 7.1 item 4), once per
+domain per message. Returns an arrayref of the TXT strings at
+C<< _domainkey.<domain> >> (each RR's strings joined), an empty arrayref or
+undef for none, or dies with a C<TEMPERROR:> string for a transient failure.
+The library does the rest: records not beginning C<v=DKIM1> are ignored,
+more than one left is C<permerror>, and one that does not parse counts as
+C<f=strict>. Without it the lookup goes through C<Resolver>, as the key
+fetch does; see C<fetch_domain_policy>.
+
 =item PubkeyCallback
 
 A code reference that replaces the DNS lookup. Called as
@@ -1476,12 +1583,11 @@ New in 0.23 (0.22 appended the resolver's error to the key-fetch reason).
 
 =head2 fully_verified()
 
-After C<CLOSE>: true when the result is C<pass> and every Message-Instance's
-hashes were checked (-08 section 13): the message is a Fully Verified DKIM2
-Message. False for any other result; for a pass whose chain has a null body
-Recipe, below which the body hashes cannot be checked (that pass is for
-local policy to weigh); and for a C<HeadersOnly> or C<InstancesOnly>
-verification. New in 0.28.
+Deprecated (0.29). After C<CLOSE>: true when the result is C<pass>, except
+for a C<HeadersOnly> or C<InstancesOnly> verification. New in 0.28, when a
+pass could sit over a null body Recipe; since 0.29 a null body Recipe is a
+C<permerror> ("Message-Instance m=E<lt>xE<gt> has a null recipe", draft -09
+sections 13 and 14.2), so a pass is always Fully Verified.
 
 =head2 provisionally_verified()
 
@@ -1530,8 +1636,19 @@ section 14.5): C<has multiple records> (more than one TXT RR; several
 strings in one RR are joined), C<has a syntax error> and C<has been
 revoked> (see L<Mail::DKIM2::Common/parse_dkim_key_record>), or
 C<algorithm mismatch> (a C<k=> that is not the signature algorithm's).
+Records that begin with a C<v=> tag whose value is not C<DKIM1> are ignored
+before they are counted (-09 section 3.7; new in 0.29).
 
-=head2 resolver([$resolver]), set_pubkey_callback(\&cb), skip_timestamp_check([$bool]), allow_unsigned_mi([$bool]), next_domain_ok([$domain]), mid_process([$bool]), headers_only([$bool]), instances_only([$bool]), stream_body([$bool])
+=head2 fetch_domain_policy($domain)
+
+The default source of the Domain Policy Record (-09 section 3.8, new in
+0.29): the TXT records at C<< _domainkey.<domain> >>, each RR's strings
+joined, as an arrayref, through the C<Resolver> with C<query> (so a resolver
+that overrides only C<send> is used). An empty arrayref for NXDOMAIN,
+NOERROR or NODATA; dies with C<TEMPERROR:> for anything else. A
+C<PolicyCallback> may call it for domains it does not answer itself.
+
+=head2 resolver([$resolver]), set_pubkey_callback(\&cb), set_policy_callback(\&cb), skip_timestamp_check([$bool]), allow_unsigned_mi([$bool]), next_domain_ok([$domain]), mid_process([$bool]), headers_only([$bool]), instances_only([$bool]), stream_body([$bool])
 
 Get or set the constructor options of the same names.
 

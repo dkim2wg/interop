@@ -133,7 +133,7 @@ for my $case (
         if $case->{restores_body};
 }
 
-# --- redacted: footer added, MI body Recipe null, verifies, but undo can't recover ---
+# --- redacted: footer added, MI body Recipe null: a PERMERROR under -09, undo can't recover ---
 {
     my $in = signed_input(
         "From: a\@test1.dkim2.com\r\nTo: reflector-redacted\@test2.dkim2.com\r\nSubject: hi\r\n\r\nsecret body\r\n");
@@ -150,7 +150,8 @@ for my $case (
     ok($rtag, 'redacted: top MI has an r= tag');
     like(decode_base64($rtag), qr/"b"\s*:\s*null/, 'redacted: null body recipe');
 
-    is(reflected_verifies($r->{message}), 'pass', 'redacted: reflected verifies (current content)');
+    is(reflected_verifies($r->{message}), 'permerror',
+       'redacted: the reflected message is a PERMERROR (-09: has a null recipe)');
 
     my $undone = Mail::DKIM2::MessageInstance->undo(Email::MIME->new($r->{message}));
     like($undone->body_raw, qr/Reflected and signed/, 'redacted: body NOT recoverable (footer remains)');

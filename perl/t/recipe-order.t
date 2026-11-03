@@ -112,11 +112,11 @@ sub with_recipe {
 # {"b":[{"c":[1,3]}]}. Each case below replaces it with a malformed one.
 my $append_footer = sub { $_[0]->body_set($_[0]->body_raw . "-- \r\nfooter\r\n") };
 
-# -08 §14.2 (contract D6): a bad step is "Recipe <path> is invalid"; a
+# -08 §14.2 (contract D6): a bad step is "recipe <path> is invalid" (-09 lower case); a
 # fraction or exponent anywhere is the document's fault ("contains invalid
 # JSON"); a range past the end is found applying the Recipe, as before.
 my $JSON = 'PERMERROR: Message-Instance m=2 contains invalid JSON';
-sub step { "PERMERROR: Message-Instance m=2 Recipe $_[0] is invalid" }
+sub step { "PERMERROR: Message-Instance m=2 recipe $_[0] is invalid" }
 my @bad = (
     [ '{"b":[{"c":[3,3]},{"c":[1,2]}]}',   step('b[1]'), 'descending ranges' ],
     [ '{"b":[{"c":[1,2]},{"c":[2,3]}]}',   step('b[1]'), 'overlapping ranges' ],

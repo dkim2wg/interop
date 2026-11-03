@@ -40,12 +40,15 @@ our @EXPORT_OK = qw(
     domain_of
     to_alabel
     from_domain
+    from_mailbox
     from_authentic
     from_refusal_note
     to_rfc5321_path
     relaxed_domain_match
     parse_dkim_pubkey
     parse_dkim_key_record
+    key_records
+    domain_policy
     load_private_key
     load_private_key_data
     DKIM2_DRAFT
@@ -239,7 +242,7 @@ sub duplicate_number_error {
     $count{$_ + 0}++ for grep { defined } @numbers;
     # The lowest number given twice (interop contract C9), not the first met.
     my ($n) = sort { $a <=> $b } grep { $count{$_} > 1 } keys %count;
-    return defined $n ? "PERMERROR: $field $tag=$n appears more than once" : undef;
+    return defined $n ? "PERMERROR: $field $tag=$n is duplicated" : undef;
 }
 
 # The groups of an h= or s= value (-08 sections 9.3, 10.9): any-of groups
@@ -778,8 +781,19 @@ sub to_alabel {
 # mailbox is "Name <addr>" or a bare addr-spec ("Name addr", display text
 # with no angle brackets, is not one).
 sub from_domain {
+    my ($state, $dom) = from_mailbox(@_);
+    return $state eq 'ok' ? $dom : undef;
+}
+
+# from_mailbox(@values): from_domain's reading of the From field(s), with the
+# reason when there is no domain (-09 section 14.8 names them): ('ok',
+# $domain); ('multiple') for more than one mailbox -- two From fields, or a
+# list of addresses; ('literal') for a domain literal; ('none') for no From
+# field, or a value that is not one mailbox (a group, no "@", bad syntax).
+sub from_mailbox {
     my (@values) = @_;
-    return undef unless @values == 1 && defined $values[0];
+    return 'multiple' if @values > 1;
+    return 'none' unless @values == 1 && defined $values[0];
     (my $v = $values[0]) =~ s/\r?\n(?=[ \t])//g;
     # One pass: comments dropped, quoted strings kept whole, and the
     # structure outside them ($skel) and the angle brackets found.
@@ -805,23 +819,25 @@ sub from_domain {
         $skel .= $c;
         $out  .= $c;
     }
-    return undef if $inq || $depth;
+    return 'none' if $inq || $depth;
     # A "," is a second mailbox; a ":" or ";" a group (or an obsolete route).
-    return undef if $skel =~ /[,:;]/;
+    return 'multiple' if $skel =~ /,/;
+    return 'none' if $skel =~ /[:;]/;
     my $addr = $out;
     if (@lt || @gt) {
-        return undef unless @lt == 1 && @gt == 1 && $lt[0] < $gt[0]
-                         && substr($out, $gt[0] + 1) !~ /\S/;
+        return 'none' unless @lt == 1 && @gt == 1 && $lt[0] < $gt[0]
+                          && substr($out, $gt[0] + 1) !~ /\S/;
         $addr = substr($out, $lt[0] + 1, $gt[0] - $lt[0] - 1);
     }
     $addr =~ s/\A\s+|\s+\z//g;
     # White space (or a comment) between two parts of the address: "Name
     # a@b", display text with no angle brackets, is not one mailbox.
-    return undef if ($addr =~ s/"(?:[^"\\]|\\.)*"/""/gr) =~ /\s/;
-    return undef unless index($addr, '@') > 0;
+    return 'none' if ($addr =~ s/"(?:[^"\\]|\\.)*"/""/gr) =~ /\s/;
+    return 'none' unless index($addr, '@') > 0;
     my ($dom, $literal) = domain_of($addr);
-    return undef if !$dom || $literal || $dom =~ /\s/;
-    return to_alabel($dom) =~ tr/A-Z/a-z/r;
+    return 'none' if !$dom || $dom =~ /\s/;
+    return 'literal' if $literal;
+    return ('ok', to_alabel($dom) =~ tr/A-Z/a-z/r);
 }
 
 # from_authentic($d, @values): true if the From field(s) of one version of
@@ -951,24 +967,10 @@ sub _check_options {
 sub parse_dkim_key_record {
     my ($txt) = @_;
     my $syntax = 'has a syntax error';
-    return (undef, $syntax) unless defined $txt;
-    my (%tag, @order);
-    for my $spec (split /;/, $txt, -1) {
-        next if $spec =~ /\A[ \t\r\n]*\z/;    # empty spec, e.g. after a trailing ";"
-        my ($name, $value) = $spec =~ /\A[ \t\r\n]*([A-Za-z][A-Za-z0-9_]*)[ \t\r\n]*=(.*)\z/s
-            or return (undef, $syntax);
-        return (undef, $syntax) if exists $tag{$name};
-        $value =~ s/\A[ \t\r\n]+|[ \t\r\n]+\z//g;
-        # Every value, unknown tags' included, must fit the tag-list grammar
-        # (RFC 6376 §3.2 VALCHAR): ignoring a tag comes after parsing it
-        # (follow-up review F5).
-        return (undef, $syntax) unless $value =~ /\A$Mail::DKIM2::TagValueList::TAG_VALUE\z/;
-        $tag{$name} = $value;
-        push @order, $name;
-    }
-    return (undef, $syntax) unless @order;
+    my ($tag, $order) = _parse_dns_tag_list($txt) or return (undef, $syntax);
+    my %tag = %$tag;
     if (exists $tag{v}) {
-        return (undef, $syntax) unless $order[0] eq 'v' && $tag{v} eq 'DKIM1';
+        return (undef, $syntax) unless $order->[0] eq 'v' && $tag{v} eq 'DKIM1';
     }
     return (undef, $syntax) unless exists $tag{p};
     (my $p = $tag{p}) =~ s/[ \t\r\n]//g;
@@ -977,8 +979,74 @@ sub parse_dkim_key_record {
     my $k = $tag{k} // 'rsa';
     my $key = _key_from_p($k, $p);
     return $key if $key;
+    # -09 section 14.6 (contract E5): an RSA key this verifier regards as
+    # too short.
+    return (undef, 'too short') if $k eq 'rsa' && _rsa_bits($p);
     # -08 §14.5 (contract D7): base64 that is not a usable key of its type.
     return (undef, $k eq 'rsa' || $k eq 'ed25519' ? 'is malformed' : 'has an unsupported key type');
+}
+
+# A TXT record as a DNS tag=value list (DKIMKEYS -03 section 2.6: the
+# Tag=Value rules of the spec's section 8): (\%tags, \@names_in_order), or
+# the empty list for a syntax error -- a repeated tag, a spec that is not
+# name=value, a value outside the tag-list grammar, or no tag at all. Tag
+# names are case sensitive.
+sub _parse_dns_tag_list {
+    my ($txt) = @_;
+    return unless defined $txt;
+    my (%tag, @order);
+    for my $spec (split /;/, $txt, -1) {
+        next if $spec =~ /\A[ \t\r\n]*\z/;    # empty spec, e.g. after a trailing ";"
+        my ($name, $value) = $spec =~ /\A[ \t\r\n]*([A-Za-z][A-Za-z0-9_]*)[ \t\r\n]*=(.*)\z/s
+            or return;
+        return if exists $tag{$name};
+        $value =~ s/\A[ \t\r\n]+|[ \t\r\n]+\z//g;
+        # Every value, unknown tags' included, must fit the tag-list grammar
+        # (RFC 6376 §3.2 VALCHAR): ignoring a tag comes after parsing it
+        # (follow-up review F5).
+        return unless $value =~ /\A$Mail::DKIM2::TagValueList::TAG_VALUE\z/;
+        $tag{$name} = $value;
+        push @order, $name;
+    }
+    return unless @order;
+    return (\%tag, \@order);
+}
+
+# The value of a TXT record's first tag when that tag is "v", else undef:
+# read without parsing the rest, since -09 section 3.7 sorts records on it
+# before any is used.
+sub _leading_v {
+    my ($txt) = @_;
+    return unless defined $txt;
+    $txt =~ /\A[ \t\r\n]*v[ \t\r\n]*=[ \t\r\n]*([^;]*?)[ \t\r\n]*(?:;|\z)/ or return;
+    return $1;
+}
+
+# key_records(@txt): the TXT records at a selector that are candidate key
+# records (-09 section 3.7, DKIMKEYS -03 section 3): each one but those that
+# begin with a "v=" tag whose value is not DKIM1. More than one left is the
+# caller's "has multiple records".
+sub key_records {
+    return grep { my $v = _leading_v($_); !defined $v || $v eq 'DKIM1' } @_;
+}
+
+# domain_policy(@txt): the Domain Policy Record held by the TXT records at
+# _domainkey.<domain> (-09 section 3.8, DKIMKEYS -03 section 6): 'strict'
+# when subdomains are not authorized to make that domain's From Authentic,
+# 'open' when they are (no record, no f=, or no "strict" flag), or
+# 'multiple' for more than one record. Only records beginning with the tag
+# v=DKIM1 count. A record that does so but does not parse is 'strict': the
+# spec gives it no outcome, so it fails closed (contract E3.2).
+sub domain_policy {
+    my @dpr = grep { (_leading_v($_) // '') eq 'DKIM1' } @_;
+    return 'open' unless @dpr;
+    return 'multiple' if @dpr > 1;
+    my ($tag) = _parse_dns_tag_list($dpr[0]) or return 'strict';
+    my $f = $tag->{f};
+    return 'open' unless defined $f && length $f;
+    my @flags = map { s/\A[ \t\r\n]+|[ \t\r\n]+\z//gr } split /:/, $f, -1;
+    return 'strict' if grep { !/\A[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?\z/ } @flags;
+    return (grep { $_ eq 'strict' } @flags) ? 'strict' : 'open';
 }
 
 # A key object from a valid record: the key, or nothing (a key type this
@@ -1009,13 +1077,24 @@ sub _key_from_p {
     }
     # Any other key type is unrecognised, and ignored: never read as RSA.
     return unless $k eq 'rsa';
-    # RSA: p= is base64-encoded SubjectPublicKeyInfo DER. -08 §3.2: a
-    # Verifier MUST NOT validate with a key of less than 1024 bits.
+    # RSA: p= is base64-encoded SubjectPublicKeyInfo DER. A key under
+    # 1024 bits is too short: -09 section 3.2 leaves it to the Verifier, and
+    # we refuse it (contract E5).
     my $der = decode_base64($p);
     my $rsa = eval { Crypt::PK::RSA->new(\$der) };
     die $@ if ref $@;
     return unless $rsa && $rsa->size * 8 >= 1024;
     return $rsa;
+}
+
+# True when $p (base64) loads as an RSA key, of whatever size: tells a key
+# that is too short from one that is malformed.
+sub _rsa_bits {
+    my ($p) = @_;
+    my $der = decode_base64($p);
+    my $rsa = eval { Crypt::PK::RSA->new(\$der) };
+    die $@ if ref $@;
+    return $rsa ? $rsa->size * 8 : 0;
 }
 
 # Load a private key from a PEM file.
@@ -1293,10 +1372,21 @@ group), or a domain literal. Display names (quoted or RFC 2047) and
 comments are skipped; C<< Name <addr> >> and a bare C<addr> both work. New in
 0.23.
 
+=head2 from_mailbox(@values)
+
+C<from_domain>'s reading with the reason when there is no domain, as -09
+section 14.8 names them (new in 0.29): C<('ok', $domain)>; C<('multiple')>
+for more than one mailbox (two From fields, or a list of addresses);
+C<('literal')> for a domain literal; C<('none')> for no From field or a
+value that is not one mailbox (a group, no C<@>, bad syntax).
+
 =head2 from_authentic($d, @values)
 
 True if C<from_domain(@values)> gives a domain and it relaxed-matches the
-signing domain C<$d>. New in 0.23.
+signing domain C<$d>: the "downwards" match only, with no DNS lookup, which
+is what the signers use (-09 section 12.4 permits a subdomain C<d=> too,
+when the From domain's Domain Policy Record allows it; the Verifier checks
+that). New in 0.23.
 
 =head2 from_refusal_note($d, @values)
 
@@ -1376,8 +1466,13 @@ not exactly C<DKIM1>; no C<p=>; C<p=> not base64.
 =item C<is malformed>
 
 C<p=> is base64 but not a usable key of its type (-08 section 14.5): an
-Ed25519 key that is not exactly 32 octets (DER included), an RSA key of
-fewer than 1024 bits (section 3.2), or one that does not load.
+Ed25519 key that is not exactly 32 octets (DER included), or one that does
+not load.
+
+=item C<too short>
+
+An RSA key of fewer than 1024 bits: -09 sections 3.2 and 14.6 leave it to
+the Verifier, and this one refuses it (new in 0.29; it was C<is malformed>).
 
 =item C<has been revoked>
 
@@ -1391,6 +1486,23 @@ A C<k=> other than C<rsa> or C<ed25519>.
 
 Unknown tags and the retired C<h=>, C<n=>, C<s=> and C<t=> are ignored.
 Tag names are case sensitive, as in DKIM1.
+
+=head2 key_records(@txt)
+
+The TXT records at a selector that are candidate key records (-09 section
+3.7, draft-ietf-dkim-dkim2-dns-03 section 3): all but those that begin with
+a C<v=> tag whose value is not C<DKIM1>. More than one left is the caller's
+C<has multiple records>. New in 0.29.
+
+=head2 domain_policy(@txt)
+
+The Domain Policy Record held by the TXT records at
+C<< _domainkey.<domain> >> (-09 section 3.8, draft-ietf-dkim-dkim2-dns-03
+section 6): C<strict> when subdomains are not authorized to make that
+domain's From Authentic, C<open> when they are (no record, no C<f=>, or no
+C<strict> flag; unknown flags are ignored), C<multiple> for more than one
+record. Only records whose first tag is C<v=DKIM1> count; one that does but
+does not parse is C<strict> (it fails closed). New in 0.29.
 
 =head2 parse_dkim_pubkey($txt_record)
 

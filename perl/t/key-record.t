@@ -55,7 +55,7 @@ is(rec("v=DKIM1; p=QUJDRA=="), 'is malformed', 'p= not a key');
     my $short = Crypt::PK::RSA->new;
     $short->generate_key(64);    # 512 bits
     my $p512 = encode_base64($short->export_key_der('public'), '');
-    is(rec("v=DKIM1; k=rsa; p=$p512"), 'is malformed', 'a 512-bit RSA key');
+    is(rec("v=DKIM1; k=rsa; p=$p512"), 'too short', 'a 512-bit RSA key (-09, contract E5)');
     my $ok = Crypt::PK::RSA->new;
     $ok->generate_key(128);      # 1024 bits
     is(rec("v=DKIM1; k=rsa; p=" . encode_base64($ok->export_key_der('public'), '')),
@@ -115,7 +115,9 @@ like(fetch('rsa-sha256', StubRR->new($rsa), StubRR->new($rsa)),
     qr/^PERMERROR: has multiple records/, 'two identical records: error');
 like(fetch('rsa-sha256', StubRR->new('v=DKIM1; p=')),
     qr/^PERMERROR: has been revoked/, 'revoked');
-like(fetch('rsa-sha256', StubRR->new("v=garbage; p=$p")),
+is(fetch('rsa-sha256', StubRR->new("v=garbage; p=$p")), '',
+    'v= other than DKIM1: ignored, so no key (-09 section 3.7)');
+like(fetch('rsa-sha256', StubRR->new("v=DKIM1; v=DKIM1; p=$p")),
     qr/^PERMERROR: has a syntax error/, 'syntax error');
 like(fetch('rsa-sha256', StubRR->new("v=DKIM1; k=unknown; p=$p")),
     qr/^PERMERROR: algorithm mismatch/, 'k=unknown for rsa-sha256');

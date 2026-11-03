@@ -173,7 +173,7 @@ sub _report_once {
                  summary => "PERMERROR: Message-Instance m=$top_mi is not signed" };
     }
 
-    return { %res, overall => 'none', summary => 'no DKIM2-Signature headers found' }
+    return { %res, overall => 'none', summary => 'NONE: No DKIM2 header fields found' }
         unless @sig_hdrs;
 
     # Overall verdict from the full verifier (includes the §14.7 deep MI walk).
@@ -187,11 +187,9 @@ sub _report_once {
     my $ov = $v->result // 'fail';
     $res{summary} = $v->result_detail // '';
     $res{overall} = $ov eq 'pass' ? 'pass' : ($ov eq 'none' ? 'none' : 'fail');
-    # -08 section 13 (contract D9): a pass over a null body Recipe is not a
-    # Fully Verified DKIM2 Message -- the body below it went unchecked.
+    # Deprecated (0.29): a null body Recipe is now a PERMERROR (-09 contract
+    # E2), so this is true exactly for a pass.
     $res{fully_verified} = $v->fully_verified;
-    $res{summary} .= '; not fully verified: a null body Recipe hides the body below it'
-        if $ov eq 'pass' && !$res{fully_verified};
 
     my %sig_by_i = map { _i($_) => $_ } @sig_hdrs;
 
@@ -456,7 +454,7 @@ Mail::DKIM2::Validate - structured per-level DKIM2 and Message-Instance report
         SkipTimestampCheck => 1,
     );
     # $report->{overall}, $report->{summary}, $report->{counts},
-    # $report->{fully_verified} (-08 section 13: false over a null body Recipe),
+    # $report->{fully_verified} (deprecated: true exactly for a pass),
     # $report->{levels}: one hashref per DKIM2-Signature and Message-Instance
 
 =head1 DESCRIPTION

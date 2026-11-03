@@ -410,11 +410,11 @@ sub parse {
         }
         # Anything wrong with the JSON document as a whole -- its syntax,
         # its keys, the shape of "h" and "b" -- is "contains invalid JSON";
-        # one bad step is "Recipe <path> is invalid" (-08 §14.2, contract
+        # one bad step is "recipe <path> is invalid" (-09 §14.2, contract
         # D6), with the path b[<n>] or h.<name>[<n>]: the first bad one, b
         # before h, header names in byte order, steps in order.
         my $invalid = "PERMERROR: Message-Instance m=$tags{m} contains invalid JSON\n";
-        my $bad = sub { "PERMERROR: Message-Instance m=$tags{m} Recipe $_[0] is invalid\n" };
+        my $bad = sub { "PERMERROR: Message-Instance m=$tags{m} recipe $_[0] is invalid\n" };
         my $recipe_data = eval { decode_tag_json($tags{r}) };
         if ($@) {
             die $@ if ref $@;
