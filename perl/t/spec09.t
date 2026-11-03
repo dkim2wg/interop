@@ -188,4 +188,37 @@ for my $c (
        '... ahead of a duplicate selector');
 }
 
+# E3.4: the Signer may sign with d= below the From domain, when the From
+# domain's Domain Policy Record allows it.
+{
+    require Mail::DKIM2::Signer;
+    my $sign = sub {
+        my ($parent, %o) = @_;
+        my $body = "From: a\@$parent\r\nTo: b\@test2.dkim2.com\r\nSubject: x\r\n\r\nbody\r\n";
+        my $mi = Mail::DKIM2::MessageInstance->calculate(Mail::DKIM2::Common::parse_mime($body));
+        my $s = Mail::DKIM2::Signer->new(Domain => "mail.$parent", Selector => 'sel1',
+            Key => DKIM2TestKeys::private_key('test2.dkim2.com', 'sel1'),
+            MailFrom => "<a\@mail.$parent>", RcptTo => ['<b@test2.dkim2.com>'],
+            PolicyCallback => $counting, %o);
+        @asked = ();
+        $s->load("Message-Instance: " . $mi->as_string . "\r\n" . $body);
+        return $s;
+    };
+    my $s = $sign->('open.dkim2.com');
+    is($s->result, 'signed', 'E3.4: subdomain d=, no policy record: signed') or diag $s->details;
+    is_deeply(\@asked, ['open.dkim2.com'], '... after one policy lookup');
+    $s = $sign->('strict.dkim2.com');
+    is($s->result, 'fail', 'E3.4: f=strict: refused');
+    is($s->details, 'From header field is not Authentic for d=mail.strict.dkim2.com: '
+        . 'From strict.dkim2.com forbids subdomain signing', '... saying why');
+    $s = $sign->('multi.dkim2.com');
+    like($s->details, qr/: multiple records for multi\.dkim2\.com policy\z/, 'E3.4: multiple records: refused');
+    $s = $sign->('open.dkim2.com', PolicyCallback => sub { die "TEMPERROR: x\n" });
+    like($s->details, qr/: policy for open\.dkim2\.com unavailable\z/, 'E3.4: temporary failure: refused');
+    $s = $sign->('open.dkim2.com', PolicyCallback => undef, Resolver => DKIM2TestKeys::resolver());
+    is($s->result, 'signed', 'E3.4: the Resolver answers when there is no PolicyCallback');
+    $s = $sign->('strict.dkim2.com', PolicyCallback => undef, Resolver => DKIM2TestKeys::resolver());
+    is($s->result, 'fail', '... strict through the Resolver too');
+}
+
 done_testing;

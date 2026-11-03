@@ -147,8 +147,28 @@ This is also the name the lookup uses.
   `dns_resolver`, Go `Resolver`, C txt-lookup hook, JS DoH fetch) plus a
   policy hook where they already have a key hook. The browser verifier does
   the DPR lookup over the same DoH path.
-- Signers are unchanged: their "can I make From Authentic" gates stay
-  downward-only (§12.4 permits more, but downward is always valid).
+- Signers: see E3.4.
+
+### E3.4 Signers (Bron, 2026-11-03: "allow, with lookup")
+
+A hop that must make From Authentic (it originates the message, or one of
+its instances changed From: §11, §12.4) checks the pair as E3.1 does,
+including the policy lookup, before it signs:
+- downward match: sign (no lookup);
+- upward match (d= below the From domain): look up the From domain's DPR
+  (E3.2). `open` → sign. `strict`, a malformed record (strict), `multiple`,
+  or a temporary failure → refuse, with the E3.1 reason as the refusal text:
+  `From <dom> forbids subdomain signing`, `multiple records for <dom>
+  policy`, `policy for <dom> unavailable`;
+- otherwise, refuse as today ("From header field is not Authentic ...").
+A refusal goes down the signer's existing not-Authentic path (the milters
+send it unsigned, or 550 when it carries an upstream DKIM2-Signature).
+The lookup goes through the signer's policy source: Perl Signer gains
+`PolicyCallback` and `Resolver` options (same contract as the Verifier's);
+the milters and the authentication_milter handler pass their resolver; the
+CLIs answer from `--dns-json` when given, else DNS. Python/Go/C signers
+reuse their verifier's policy source. Lazy as in the verifier: never looked
+up when the downward match holds.
 
 ## E4. Key records (§3.7, §14.5)
 

@@ -30,6 +30,13 @@ Revision history for Mail::DKIM2
           PubkeyCallback-only caller should add a PolicyCallback, or the
           lookup uses a default resolver. A record beginning v=DKIM1 that
           does not parse counts as f=strict.
+        - The Signer may sign with a d= below the From domain too, after
+          the same policy lookup (Signer options PolicyCallback and
+          Resolver, fetch_domain_policy); strict, multiple or unavailable
+          refuses, with the reason after "From header field is not
+          Authentic for d=...: ". dkim2-milter, dkim2sign and DKIM2Sign
+          pass their dns.json or resolver. New Common::from_pair_error,
+          query_domain_policy, policy_from_source.
         - New section 14.8 strings: "From <dom> forbids subdomain signing",
           "From has more than one address", "From uses a domain literal",
           "policy for <dom> unavailable" (TEMPERROR), "multiple records

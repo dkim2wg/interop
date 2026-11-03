@@ -331,7 +331,8 @@ sub addheader_callback {
         }
 
         # Create the signer and feed the message
-        my $signer = Mail::DKIM2::Signer->new(%signer_args);
+        my $signer = Mail::DKIM2::Signer->new(%signer_args,
+            $self->_policy_source($config));
         $signer->PRINT($message_data);
         $signer->CLOSE();
         $self->check_timeout();
@@ -663,6 +664,26 @@ sub _gate_key_source {
                 ? $dns_data->{$dom}{"$sel._domainkey"} : undef;
             return unless $entry && $entry->[0];
             return parse_dkim_pubkey( $entry->[0][1] );
+        }, $self->_policy_source($config) );
+    }
+    my $resolver = $self->get_object('resolver');
+    return $resolver ? ( Resolver => $resolver ) : ();
+}
+
+# Where the Domain Policy Record (-09 section 3.8) comes from, for the
+# Signer (contract E3.4) and the gate: dns_overrides' records for the
+# domains it lists (testing), else the milter's own resolver.
+sub _policy_source {
+    my ( $self, $config ) = @_;
+    if ( my $file = $config->{'dns_overrides'} ) {
+        require JSON;
+        open my $fh, '<', $file or die "dns_overrides $file: $!\n";
+        my $dns_data = JSON::decode_json( do { local $/; <$fh> } );
+        return ( PolicyCallback => sub {
+            my ( $dom, $who ) = @_;
+            return [ map { $_->[1] } @{ $dns_data->{$dom}{_domainkey} || [] } ]
+                if $dns_data->{$dom};
+            return $who->fetch_domain_policy($dom);
         } );
     }
     my $resolver = $self->get_object('resolver');

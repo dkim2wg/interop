@@ -748,9 +748,22 @@ sub _get_sign_config {
 # --- Verification ---
 
 # _gate_pubkey_cb(): PubkeyCallback option answering from --dns-json, else real DNS.
+# The Domain Policy Record (-09 section 3.8) from --dns-json's records for the
+# domains it lists, else DNS; for the gate's Verifier and the Signer alike
+# (contract E3.4). Nothing without --dns-json: both then use DNS.
+sub _policy_cb {
+    return unless $dns_data;
+    return (PolicyCallback => sub {
+        my ($dom, $who) = @_;
+        return [ map { $_->[1] } @{ $dns_data->{$dom}{_domainkey} || [] } ]
+            if $dns_data->{$dom};
+        return $who->fetch_domain_policy($dom);
+    });
+}
+
 sub _gate_pubkey_cb {
     return unless $dns_data;
-    return (PubkeyCallback => sub {
+    return (_policy_cb(), PubkeyCallback => sub {
         my ($sig, $idx, $v) = @_;
         $idx //= 0;
         my $sel = $sig->selector($idx);
@@ -1055,6 +1068,7 @@ sub _do_sign {
             MailFrom  => ( length($priv->{env_from} // '') ? $priv->{env_from} : '<>' ),
             RcptTo    => $priv->{env_rcpt},
             ($priv->{exploded} ? (Exploded => 1) : ()),
+            _policy_cb(),
         );
         $signer->PRINT($message);
         $signer->CLOSE();

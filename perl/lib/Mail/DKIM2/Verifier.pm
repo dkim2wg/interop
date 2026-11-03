@@ -544,23 +544,11 @@ sub _verify_from {
 # domain and that domain's Domain Policy Record does not forbid it.
 sub _from_pair_authentic {
     my ($self, $i, $d, @from) = @_;
-    my ($state, $dom) = Mail::DKIM2::Common::from_mailbox(@from);
-    return $self->_error(fail => "DKIM2-Signature i=$i From has more than one address")
-        if $state eq 'multiple';
-    return $self->_error(fail => "DKIM2-Signature i=$i From uses a domain literal")
-        if $state eq 'literal';
-    return $self->_error(fail => "DKIM2-Signature i=$i matching From is not authentic")
-        unless $state eq 'ok' && length $d;
-    return 1 if relaxed_domain_match($dom, $d);
-    return $self->_error(fail => "DKIM2-Signature i=$i matching From is not authentic")
-        unless relaxed_domain_match($d, $dom);
-    my $policy = $self->{_policy}{$dom} //= $self->_domain_policy($dom);
-    return 1 if $policy eq 'open';
-    return $self->_error(fail => "DKIM2-Signature i=$i From $dom forbids subdomain signing")
-        if $policy eq 'strict';
-    return $self->_error(permerror => "DKIM2-Signature i=$i multiple records for $dom policy")
-        if $policy eq 'multiple';
-    return $self->_error(temperror => "DKIM2-Signature i=$i policy for $dom unavailable");
+    my $e = Mail::DKIM2::Common::from_pair_error($d, sub {
+        my ($dom) = @_;
+        return $self->{_policy}{$dom} //= $self->_domain_policy($dom);
+    }, @from) or return 1;
+    return $self->_error($e->[0] => "DKIM2-Signature i=$i $e->[1]");
 }
 
 # The Domain Policy Record for $dom (an A-label, lowercased): 'open',
@@ -570,18 +558,10 @@ sub _from_pair_authentic {
 # since it is needed only when d= is below the From domain.
 sub _domain_policy {
     my ($self, $dom) = @_;
-    my $txt = eval {
-        $self->{PolicyCallback}
-            ? $self->{PolicyCallback}->($dom, $self)
-            : $self->fetch_domain_policy($dom);
-    };
-    if (my $err = $@) {
-        die $err if ref $err;
-        (my $why = $err) =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*\z//;
-        $self->{diagnostic} = $why =~ s/\s+\z//r;
-        return 'temperror';
-    }
-    return Mail::DKIM2::Common::domain_policy(@{ $txt || [] });
+    my ($p, $why) = Mail::DKIM2::Common::policy_from_source($dom,
+        $self->{PolicyCallback}, sub { $self->_resolver }, $self);
+    $self->{diagnostic} = $why if defined $why;
+    return $p;
 }
 
 # fetch_domain_policy($domain): the default Domain Policy Record source, the
@@ -591,15 +571,7 @@ sub _domain_policy {
 # not handle itself.
 sub fetch_domain_policy {
     my ($self, $dom) = @_;
-    my $fqdn = "_domainkey.$dom";
-    my $resolver = $self->_resolver;
-    my $reply = $resolver->query($fqdn, 'TXT');
-    unless ($reply) {
-        my $err = $resolver->errorstring // '';
-        return [] if $err =~ /^(?:NXDOMAIN|NOERROR|NODATA)\s*$/i;
-        croak "TEMPERROR: DNS lookup for $fqdn failed: $err";
-    }
-    return [ map { join '', $_->txtdata } grep { $_->type eq 'TXT' } $reply->answer ];
+    return Mail::DKIM2::Common::query_domain_policy($self->_resolver, $dom);
 }
 
 # The headers-only half of _verify_mi_chain: the top instance's header hash

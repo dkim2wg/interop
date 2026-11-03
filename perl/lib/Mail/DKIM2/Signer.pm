@@ -29,7 +29,7 @@ use Mail::DKIM2::HeaderPlan;
 
 sub known_options {
     return qw(Domain Selector KeyFile Key Algorithm MailFrom RcptTo
-              Nonce Flags Exploded Timestamp NextDomain);
+              Nonce Flags Exploded Timestamp NextDomain PolicyCallback Resolver);
 }
 
 sub init {
@@ -114,11 +114,21 @@ sub finish_header {
     $error //= 'no Message-Instance field to sign over' unless @mi_headers;
     # -09 sections 11 and 12.4: a hop that originates the message, or whose
     # instances changed From, signs with a d= the From is Authentic for.
-    $error //= "From header field is not Authentic for d=$self->{Domain}"
-        if $self->_from_must_match(\@mi_headers, \@dk2_headers)
-        && !from_authentic($self->{Domain},
-               map { $_->[1] } grep { lc $_->[0] eq 'from' }
-               @{ Mail::DKIM2::HeaderPlan::fields($self->{headers}) });
+    # -09 contract E3.4: d= may also be below the From domain, when that
+    # domain's Domain Policy Record allows it (looked up only then).
+    if (!$error && $self->_from_must_match(\@mi_headers, \@dk2_headers)) {
+        my $e = Mail::DKIM2::Common::from_pair_error($self->{Domain}, sub {
+                my ($dom) = @_;
+                my ($p) = Mail::DKIM2::Common::policy_from_source($dom,
+                    $self->{PolicyCallback}, sub { $self->_resolver }, $self);
+                return $p;
+            },
+            map { $_->[1] } grep { lc $_->[0] eq 'from' }
+            @{ Mail::DKIM2::HeaderPlan::fields($self->{headers}) });
+        $error = "From header field is not Authentic for d=$self->{Domain}"
+            . ($e->[1] eq 'matching From is not authentic' ? '' : ": $e->[1]")
+            if $e;
+    }
     if ($error) {
         # A protocol outcome, not a programming error: reported through
         # result/details like the Verifier's, so a streaming host is not
@@ -183,6 +193,24 @@ sub _new_signature {
 # names From -- this hop, or a list manager on its host, changed it. One
 # that does not parse is left to the verifiers (and Mail::DKIM2::Gate),
 # which refuse it: the Signer checks only what it needs to sign.
+# fetch_domain_policy($domain): the TXT records at _domainkey.$domain
+# through the Resolver, as Mail::DKIM2::Verifier's: for a PolicyCallback
+# to fall back to.
+sub fetch_domain_policy {
+    my ($self, $dom) = @_;
+    return Mail::DKIM2::Common::query_domain_policy($self->_resolver, $dom);
+}
+
+# The Resolver for the Domain Policy Record lookup: the caller's, else a
+# default Net::DNS::Resolver, made only when a lookup is needed.
+sub _resolver {
+    my ($self) = @_;
+    return $self->{Resolver} //= do {
+        require Net::DNS::Resolver;
+        Net::DNS::Resolver->new;
+    };
+}
+
 sub _from_must_match {
     my ($self, $mi_headers, $dk2_headers) = @_;
     return 1 unless @$dk2_headers;
@@ -457,6 +485,19 @@ C<exploded> flag, which it also gets whenever C<rt=> holds more than one
 address. Never at C<i=1>: there the flag, requested this way or in
 C<Flags>, is dropped.
 
+=item PolicyCallback, Resolver
+
+The source of the Domain Policy Record (-09 section 3.8; new in 0.29), as
+for L<Mail::DKIM2::Verifier>: a hop that must make From Authentic may sign
+with a C<d=> below the From domain when that domain's record does not say
+C<f=strict> (contract E3.4). The record is looked up only then, from
+C<PolicyCallback> (C<< ($domain, $signer) >>, returning the TXT strings or
+dying with C<TEMPERROR:>) or through C<Resolver> (default: a
+L<Net::DNS::Resolver>). A strict, multiple or unavailable record refuses
+signing, the details naming why after the usual "not Authentic" text.
+C<< $signer->fetch_domain_policy($domain) >> is the default lookup, for a
+callback to fall back to.
+
 =back
 
 An option not listed here croaks.
@@ -466,6 +507,13 @@ An option not listed here croaks.
 =head2 PRINT($bytes), CLOSE(), load($input)
 
 Feed the message; see L<Mail::DKIM2::HeaderParser>.
+
+=head2 fetch_domain_policy($domain)
+
+The default Domain Policy Record lookup (the TXT records at
+C<< _domainkey.<domain> >> through C<Resolver>, an arrayref; dies with
+C<TEMPERROR:> on a failure), for a C<PolicyCallback> to fall back to. New in
+0.29.
 
 =head2 result()
 
@@ -477,8 +525,12 @@ L<Mail::DKIM2::Common/"chain_number_error($field, $tag, $n)">), or a
 repeated C<i=> or C<m=>; or, when the message has no DKIM2-Signature yet or
 a Message-Instance no signature covers changed From, a From that is not
 Authentic for C<Domain> (-09 sections 11 and 12.4: exactly one From field
-holding one mailbox whose domain is C<Domain> or below it), with details
-C<From header field is not Authentic for d=E<lt>DomainE<gt>>.
+holding one mailbox whose domain is C<Domain> or below it, or above it when
+the From domain's Domain Policy Record allows that), with details
+C<From header field is not Authentic for d=E<lt>DomainE<gt>>, followed by
+C<: E<lt>reasonE<gt>> when the record decided it (C<From E<lt>domE<gt>
+forbids subdomain signing>, C<multiple records for E<lt>domE<gt> policy>,
+C<policy for E<lt>domE<gt> unavailable>).
 L</"details()"> says which. A failure is a result, not
 an exception: C<PRINT> and C<CLOSE> return normally.
 

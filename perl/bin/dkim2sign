@@ -107,12 +107,13 @@ if ($dns_json) {
         return parse_dkim_pubkey($txt) if $txt;
         return $verifier->fetch_public_key($sig, $idx);
     };
-    # The Domain Policy Record (-09 section 3.8) from the same file.
+    # The Domain Policy Record (-09 section 3.8) from the same file, for the
+    # gate's Verifier and the Signer ($who is either).
     $gate_opts{PolicyCallback} = sub {
-        my ($dom, $verifier) = @_;
+        my ($dom, $who) = @_;
         my $entry = $dns->{$dom} && $dns->{$dom}{_domainkey};
         return [ map { $_->[1] } @$entry ] if $entry;
-        return $dns->{$dom} ? [] : $verifier->fetch_domain_policy($dom);
+        return $dns->{$dom} ? [] : $who->fetch_domain_policy($dom);
     };
 }
 my $gate = Mail::DKIM2::Gate->check($raw, %gate_opts);
@@ -144,6 +145,8 @@ my $signer = Mail::DKIM2::Signer->new(
     (defined $timestamp ? (Timestamp => $timestamp) : ()),
     (@flags ? (Flags => \@flags) : ()),
     ($exploded ? (Exploded => 1) : ()),
+    # The same Domain Policy Record source as the gate (contract E3.4).
+    ($gate_opts{PolicyCallback} ? (PolicyCallback => $gate_opts{PolicyCallback}) : ()),
 );
 $signer->PRINT($msg->as_string);
 $signer->CLOSE;

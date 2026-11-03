@@ -1012,6 +1012,63 @@ sub _parse_dns_tag_list {
     return (\%tag, \@order);
 }
 
+# from_pair_error($d, $policy, @from): -09 section 14.8 for one signing
+# domain $d and the From field values it must make Authentic (contract
+# E3.1), for the Verifier and the Signer alike: undef when Authentic, else
+# [$state, $text] -- 'fail', 'permerror' or 'temperror', and the text after
+# "DKIM2-Signature i=<x> ". $policy->($domain) gives that domain's Domain
+# Policy Record as domain_policy does, or 'temperror'; it is called only
+# when d= is below the From domain.
+sub from_pair_error {
+    my ($d, $policy, @from) = @_;
+    my ($state, $dom) = from_mailbox(@from);
+    return ['fail', 'From has more than one address'] if $state eq 'multiple';
+    return ['fail', 'From uses a domain literal']     if $state eq 'literal';
+    return ['fail', 'matching From is not authentic']
+        unless $state eq 'ok' && defined $d && length $d;
+    return undef if relaxed_domain_match($dom, $d);
+    return ['fail', 'matching From is not authentic'] unless relaxed_domain_match($d, $dom);
+    my $p = $policy->($dom);
+    return undef if $p eq 'open';
+    return ['fail', "From $dom forbids subdomain signing"] if $p eq 'strict';
+    return ['permerror', "multiple records for $dom policy"] if $p eq 'multiple';
+    return ['temperror', "policy for $dom unavailable"];
+}
+
+# query_domain_policy($resolver, $domain): the TXT records at
+# _domainkey.$domain (each RR's strings joined) through $resolver's query(),
+# as an arrayref; [] for NXDOMAIN or no TXT. Dies "TEMPERROR: ..." for any
+# other failure.
+sub query_domain_policy {
+    my ($resolver, $dom) = @_;
+    my $fqdn = "_domainkey.$dom";
+    my $reply = $resolver->query($fqdn, 'TXT');
+    unless ($reply) {
+        my $err = $resolver->errorstring // '';
+        return [] if $err =~ /^(?:NXDOMAIN|NOERROR|NODATA)\s*$/i;
+        die "TEMPERROR: DNS lookup for $fqdn failed: $err\n";
+    }
+    return [ map { join '', $_->txtdata } grep { $_->type eq 'TXT' } $reply->answer ];
+}
+
+# policy_from_source($dom, $callback, $resolver_sub, @cb_args): the Domain
+# Policy Record of $dom ('open', 'strict', 'multiple' or 'temperror') from
+# $callback->($dom, @cb_args) when given, else query_domain_policy through
+# $resolver_sub->(); a die (a TEMPERROR) is 'temperror', with the reason
+# returned second.
+sub policy_from_source {
+    my ($dom, $callback, $resolver_sub, @cb_args) = @_;
+    my $txt = eval {
+        $callback ? $callback->($dom, @cb_args) : query_domain_policy($resolver_sub->(), $dom);
+    };
+    if (my $err = $@) {
+        die $err if ref $err;
+        (my $why = $err) =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*\z//;
+        return ('temperror', $why =~ s/\s+\z//r);
+    }
+    return domain_policy(@{ $txt || [] });
+}
+
 # $s without leading or trailing WSP, in linear time: a TXT record is
 # whatever the signer's DNS serves (up to 64 KB), and a trailing-WSP match
 # tried at every position of a long inner run of spaces is quadratic. The
@@ -1497,6 +1554,29 @@ A C<k=> other than C<rsa> or C<ed25519>.
 
 Unknown tags and the retired C<h=>, C<n=>, C<s=> and C<t=> are ignored.
 Tag names are case sensitive, as in DKIM1.
+
+=head2 from_pair_error($d, $policy, @from_values)
+
+-09 section 14.8 for one signing domain and the From field values it must
+make Authentic (new in 0.29; the Verifier and the Signer share it): undef
+when Authentic, else C<[$state, $text]>, the state C<fail>, C<permerror> or
+C<temperror> and the text that follows C<< DKIM2-Signature i=<x> >>.
+C<< $policy->($domain) >> returns that domain's Domain Policy Record as
+L</domain_policy> does, or C<temperror>; it is called only when C<$d> is
+below the From domain.
+
+=head2 query_domain_policy($resolver, $domain)
+
+The TXT records at C<< _domainkey.<domain> >> through C<< $resolver->query >>,
+each RR's strings joined, as an arrayref: empty for NXDOMAIN, NOERROR or
+NODATA; dies with C<TEMPERROR:> otherwise. New in 0.29.
+
+=head2 policy_from_source($domain, $callback, $resolver_sub, @callback_args)
+
+The Domain Policy Record state of C<$domain> (C<open>, C<strict>,
+C<multiple> or C<temperror>, with the reason second for C<temperror>), from
+C<< $callback->($domain, @callback_args) >> when given, else
+L</query_domain_policy> through C<< $resolver_sub->() >>. New in 0.29.
 
 =head2 key_records(@txt)
 
