@@ -69,49 +69,54 @@ def test_broken_mi_chain_refused():
         _sign(fx.build_broken_mi_chain())
 
 
-def test_null_top_refused_by_default():
-    with pytest.raises(dkim2sign.SigningRefused, match="null body Recipe"):
-        _sign(fx.build_null_top())
+# -09 (contract E2): this hop's own unsigned null is signed over; a null an
+# upstream signature covers fails verification and is refused.
+
+def test_null_top_signs():
+    assert _top_i(_sign(fx.build_null_top())) == 2
 
 
-def test_null_top_signed_with_option():
-    assert _top_i(_sign(fx.build_null_top(), allow_null_body_recipe=True)) == 2
+def test_allow_null_body_recipe_is_a_deprecated_no_op(monkeypatch):
+    monkeypatch.setattr(dkim2sign, "_warned_allow_null", False)
+    with pytest.warns(DeprecationWarning, match="allow_null_body_recipe"):
+        assert _top_i(_sign(fx.build_null_top(),
+                            allow_null_body_recipe=True)) == 2
+    # Warned once per process.
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert _top_i(_sign(fx.build_null_top(),
+                            allow_null_body_recipe=True)) == 2
 
 
-def test_null_top_refusal_says_unsigned():
-    # i=1 covers only m=1; the null m=2 is unsigned, so it is refused.
-    with pytest.raises(dkim2sign.SigningRefused,
-                       match="unsigned top Message-Instance m=2 has a null body Recipe"):
-        _sign(fx.build_null_top())
+def test_allow_null_body_recipe_false_does_not_warn(monkeypatch):
+    monkeypatch.setattr(dkim2sign, "_warned_allow_null", False)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert _top_i(_sign(fx.build_null_top(),
+                            allow_null_body_recipe=False)) == 2
 
 
-def test_signed_null_top_signs_without_option():
-    # The list domain signed its null m=2 (i=2, m=2): a forwarder extends it.
-    out = _sign(fx.build_null_top_signed())
-    assert _top_i(out) == 3
-    first = out.split(b"\r\n", 1)[0].decode()
-    assert " m=2;" in first          # unchanged: no new Message-Instance
-    assert _top_i(_sign(fx.build_null_top_signed(),
-                        allow_null_body_recipe=True)) == 3
+@pytest.mark.parametrize("allow", [False, True])
+def test_signed_null_top_refused(allow):
+    # The list domain signed its null m=2 (i=2, m=2): it fails upstream
+    # verification, and is refused as a broken upstream chain.
+    with pytest.raises(dkim2sign.SigningRefused) as e:
+        _sign(fx.build_null_top_signed(), allow_null_body_recipe=allow)
+    assert str(e.value) == ("not signing: upstream DKIM2 chain result=permerror "
+                            "PERMERROR: Message-Instance m=2 has a null recipe")
 
 
-def test_null_below_unsigned_top_refused_then_signed_with_option():
+def test_null_below_unsigned_top_signs():
     # Unsigned null m=2 under an unsigned ordinary m=3; i=1 covers only m=1.
-    # The null is not the top, but nothing covers it: refused like null-top.
-    with pytest.raises(dkim2sign.SigningRefused,
-                       match="unsigned Message-Instance m=2 has a null body Recipe"):
-        _sign(fx.build_null_below_unsigned_top())
-    assert _top_i(_sign(fx.build_null_below_unsigned_top(),
-                        allow_null_body_recipe=True)) == 2
+    assert _top_i(_sign(fx.build_null_below_unsigned_top())) == 2
 
 
-def test_null_below_signed_signs_without_option():
-    # The null m=2 is covered by a valid i=2/m=2; only an ordinary m=3 is
-    # unsigned on top of it.
-    out = _sign(fx.build_null_below_signed())
-    assert _top_i(out) == 3
-    assert _top_i(_sign(fx.build_null_below_signed(),
-                        allow_null_body_recipe=True)) == 3
+def test_null_below_signed_refused():
+    # The null m=2 is covered by a valid i=2/m=2.
+    with pytest.raises(dkim2sign.SigningRefused, match="has a null recipe"):
+        _sign(fx.build_null_below_signed())
 
 
 @pytest.mark.parametrize("name", sorted(fx.FAKE_COVER))
@@ -120,7 +125,8 @@ def test_fake_coverage_signature_refused(name, allow):
     # null-top plus a DKIM2-Signature naming m=2 that cannot be keyed (no i=,
     # i=0, i=abc, the real i=1 signature with m rewritten, unparseable): it
     # is not coverage, and the chain itself is a PERMERROR, so the signer
-    # refuses with or without the option -- and never with a traceback.
+    # refuses (with or without the deprecated option) -- and never with a
+    # traceback.
     msg = fx._fake_cover(fx.FAKE_COVER[name])
     with pytest.raises(dkim2sign.SigningRefused, match="not signing"):
         _sign(msg, allow_null_body_recipe=allow)
@@ -194,13 +200,11 @@ def test_mi_only_broken_refused_for_the_chain_not_the_signature():
     assert "no DKIM2-Signature" not in str(e.value)
 
 
-def test_mi_only_null_refused_then_signed_with_option():
-    with pytest.raises(dkim2sign.SigningRefused, match="null body Recipe"):
-        _sign(fx.build_mi_only_null())
+def test_mi_only_null_signs():
     out = dkim2sign.sign_message(
         fx.build_mi_only_null(), "sel1", "test3.dkim2.com", KEY,
         mailfrom="<list@test3.dkim2.com>", rcptto=["<s@test4.dkim2.com>"],
-        dns_data=DNS, skip_timestamp_check=True, allow_null_body_recipe=True)
+        dns_data=DNS, skip_timestamp_check=True)
     assert _top_i(out) == 1
 
 
@@ -221,7 +225,7 @@ def _nd_top_chain(nd):
 
 
 def test_nd_naming_us_is_signed():
-    out = _sign(_nd_top_chain("TEST3.dkim2.com"), allow_null_body_recipe=True)
+    out = _sign(_nd_top_chain("TEST3.dkim2.com"))
     assert _top_i(out) == 2
 
 

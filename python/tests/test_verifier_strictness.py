@@ -177,8 +177,6 @@ SYNTAX = "PERMERROR: DKIM2-Signature i=1 public key sel1 has a syntax error"
 @pytest.mark.parametrize("rec", [
     f"v=DKIM1; p=; p={RSA_P}",          # repeated tag
     f"v=DKIM1; p={RSA_P}; p={RSA_P}",   # repeated tag, same value
-    f"v=garbage; p={RSA_P}",            # bad v=
-    f"v=dkim1; p={RSA_P}",              # v= value is case sensitive
     f"k=rsa; v=DKIM1; p={RSA_P}",       # v= not first
     "v=DKIM1; k=rsa",                   # no p=
     "v=DKIM1; k=rsa; p=!!!!",           # p= not base64
@@ -233,9 +231,30 @@ def test_empty_p_is_revoked():
     assert r.status == "permerror"
 
 
+# -09 §3.7 (contract E4): a record whose first tag is v= with a value other
+# than DKIM1 (case-sensitive) is not a key record at all: discarded before
+# counting, so on its own the key does not exist.
+@pytest.mark.parametrize("rec", [
+    f"v=garbage; p={RSA_P}",            # bad v=
+    f"v=dkim1; p={RSA_P}",              # v= value is case sensitive
+    f" v = spf1; p={RSA_P}",            # WSP around the first tag
+])
+def test_non_dkim1_v_record_is_discarded(rec):
+    r = _rsa_with(rec)
+    assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel1 does not exist", (rec, r)
+
+
+def test_non_dkim1_sibling_record_is_ignored():
+    rec = f"v=DKIM1; k=rsa; p={RSA_P}"
+    for pair in ([rec, "v=spf1 -all"], ["v=spf1 -all", rec], [f"p={RSA_P}", "v=x"]):
+        assert _rsa_with(*pair).ok, pair
+
+
 def test_two_txt_records_is_multiple_records():
     rec = f"v=DKIM1; k=rsa; p={RSA_P}"
-    for pair in ([rec, rec], [rec, "v=spf1 -all"]):
+    # A record with no v= is kept (v= is optional for keys), as is one that
+    # does not parse at all.
+    for pair in ([rec, rec], [rec, f"p={RSA_P}"], [rec, "garbage"]):
         r = _rsa_with(*pair)
         assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel1 has multiple records", r
         assert r.status == "permerror"
@@ -430,8 +449,8 @@ def test_e_short_rsa_key_is_permerror_even_if_other_verifies():
                   [("sel1", "rsa-sha256", "SIGN:sel1"), ("sel2", "rsa-sha256", "SIGN:sel2")],
                   [("sel2", "rsa-sha256", "SIGN:sel2"), ("sel1", "rsa-sha256", "SIGN:sel1")]):
         r = verify(make(items), dns)
-        # -08 §3.2, §14.5 (contract D7): "is malformed".
-        assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel2 is malformed", (items, r)
+        # -09 §3.2, §14.6 (contract E5): "too short".
+        assert r.message == "PERMERROR: DKIM2-Signature i=1 public key sel2 too short", (items, r)
         assert r.status == "permerror"
 
 # --- F. whole-field syntax (follow-up review) --------------------------------

@@ -94,7 +94,7 @@ def _invalid_step(recipe_json: bytes, path="b[0]"):
     """-07 called every one of these "contains invalid JSON"; -08 (contract
     D6) names the one bad step instead."""
     _fails_with(_bad_recipe(recipe_json),
-                f"PERMERROR: Message-Instance m=2 Recipe {path} is invalid")
+                f"PERMERROR: Message-Instance m=2 recipe {path} is invalid")
 
 
 def test_u3_u_with_nonzero_pad_bits():
@@ -255,13 +255,13 @@ def test_c5_domain_literals_never_match():
     hop2 = sign(hop1, "example.org", "y@[192.0.2.1]", ["r@example.net"])
     _fails_with(hop2, "FAIL: DKIM2-Signature i=2 mf= does not match "
                       "the rt= of i=1", first=False)
-    _fails_with(hop2, "FAIL: DKIM2-Signature i=2 MAIL FROM and d= do "
+    _fails_with(hop2, "FAIL: DKIM2-Signature i=2 mf= and d= do "
                       "not match", first=False)
 
 
 def test_c6_mf_vs_d():
     hop1 = _hop1(mailfrom="a@example.net")
-    _fails_with(hop1, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do "
+    _fails_with(hop1, "FAIL: DKIM2-Signature i=1 mf= and d= do "
                       "not match")
 
 
@@ -282,11 +282,17 @@ def test_a1_from_authentic():
     not_auth = "FAIL: DKIM2-Signature i=1 matching From is not authentic"
     _fails_with(_hop1(d="example.net", mailfrom="a@example.net",
                       skip_from_check=True), not_auth)
-    for frm in ("a@example.com, b@example.com", "a@[192.0.2.1]",
-                "group: a@example.com;", "undisclosed:;"):
-        _fails_with(_hop1(frm, skip_from_check=True), not_auth)
+    # -09 §14.8 (contract E3.1) names more than one address and a domain
+    # literal specifically.
+    many = "FAIL: DKIM2-Signature i=1 From has more than one address"
+    for frm, want in (("a@example.com, b@example.com", many),
+                      ("a@[192.0.2.1]",
+                       "FAIL: DKIM2-Signature i=1 From uses a domain literal"),
+                      ("group: a@example.com;", not_auth),
+                      ("undisclosed:;", not_auth)):
+        _fails_with(_hop1(frm, skip_from_check=True), want)
     two_froms = message(extra=b"From: a@example.com\r\n")
-    _fails_with(_hop1(raw=two_froms, skip_from_check=True), not_auth)
+    _fails_with(_hop1(raw=two_froms, skip_from_check=True), many)
     # Display text with no angle brackets is not one mailbox (final review
     # T3): all five implementations agree.
     _fails_with(_hop1("A a@example.com", skip_from_check=True), not_auth)
@@ -428,7 +434,7 @@ def test_c9_expired_before_unexpected_nd():
 
 def test_c9_custody_before_signature():
     msg = _corrupt_sig(_hop1(mailfrom="a@example.net"))
-    _fails_with(msg, "FAIL: DKIM2-Signature i=1 MAIL FROM and d= do not match")
+    _fails_with(msg, "FAIL: DKIM2-Signature i=1 mf= and d= do not match")
 
 
 def test_c9_hash_before_signature():

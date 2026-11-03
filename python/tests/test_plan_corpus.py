@@ -83,8 +83,8 @@ def compare(raw, dns, sizes=(997,)):
 
 
 _PRE07 = ("matching From is not authentic", "contains invalid JSON")
-# -08 (contract D6): a bad Recipe step is "Recipe <path> is invalid".
-_PRE07_RE = re.compile(r"Recipe \S+ is invalid$")
+# -08 (contract D6), -09 (E6): a bad Recipe step is "recipe <path> is invalid".
+_PRE07_RE = re.compile(r"recipe \S+ is invalid$")
 # -08 §4 (contract D1) hashes Auto-Submitted and VBR-Info, which the capture
 # was signed without: a message carrying either now fails its header hash.
 _PRE08_UNHASHED = re.compile(rb"^(?:auto-submitted|vbr-info):", re.I | re.M)

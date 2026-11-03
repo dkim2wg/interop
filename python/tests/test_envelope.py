@@ -45,7 +45,7 @@ def test_relaxed_mf_domain_mismatch_with_own_d():
         timestamp=1740000000)
     res = dkim2verify.verify_message(signed, DNS_DATA, skip_timestamp_check=True)
     assert not res.ok
-    assert any("MAIL FROM and d= do not match" in e for e in res.errors), res.errors
+    assert any("mf= and d= do not match" in e for e in res.errors), res.errors
 
 
 def test_mail_from_param_mismatch():
