@@ -292,7 +292,8 @@ def assemble(sig_hdr, mi_hdr, content_headers, body):
 
 
 def load_base():
-    raw = open(SRC, "rb").read()
+    with open(SRC, "rb") as f:
+        raw = f.read()
     return ds.parse_message(raw)
 
 
@@ -548,7 +549,8 @@ def _bridged_chain(bridge_domain):
     RCPT TO the message arrived with, so `bridge_domain` is what decides
     whether the chain holds.
     """
-    raw = open(SRC, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    with open(SRC, "rb") as f:
+        raw = f.read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
     msg = ds.sign_message(raw, "sel1", "test1.dkim2.com", key("sel1", "test1.dkim2.com"),
                           mailfrom="sender@test1.dkim2.com",
                           rcptto=["user@test2.dkim2.com"], timestamp=TS)
@@ -1947,6 +1949,13 @@ def build_exploded_i1():
     return out + b"".join(x + b"\r\n" for x in h) + b"\r\n" + b
 
 
+def build_positive_from_trailing_dot():
+    """-07 contract C3: domain_of lowercases and strips one trailing dot,
+    for a From as for mf=/rt=: From brong@Test1.DKIM2.com. is Authentic for
+    d=test1.dkim2.com."""
+    return _from_chain(b"Bron <brong@Test1.DKIM2.com.>")
+
+
 def build_null_two():
     """E2: null body Recipes at m=2 and m=3: the lowest is named, as the
     instances are checked in ascending m=."""
@@ -2105,6 +2114,7 @@ FIXTURES = {
     "exploded-i1.eml": build_exploded_i1,
     "key-rsa-too-short.eml": build_key_rsa_too_short,
     "null-two.eml": build_null_two,
+    "positive-control-from-trailing-dot.eml": build_positive_from_trailing_dot,
 }
 
 

@@ -7,6 +7,7 @@ header field must be Authentic for the signing domain) and the verifier
 """
 
 import email.policy
+import re
 import encodings.idna
 
 
@@ -142,6 +143,10 @@ def from_mailbox(from_fields: list[bytes]) -> tuple[str, str | None]:
         return FROM_MANY, None
     if "@" not in text:
         return FROM_NONE, None
+    # Contract C3 (2026-10-18 design): one trailing dot on the domain is dropped, as for
+    # mf=/rt=. The stdlib parser rejects "a@b.example." outright, so it is
+    # taken off first: the dot just before the closing ">" or the end.
+    text = re.sub(r"(@[^@\s<>]*[^.\s<>@])\.(?=\s*>?\s*\Z)", r"\1", text, count=1)
     try:
         header = email.policy.default.header_factory("from", text)
         groups = header.groups
