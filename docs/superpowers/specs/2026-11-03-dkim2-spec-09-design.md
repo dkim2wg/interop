@@ -45,21 +45,24 @@ it out in one go.
   exactly when the result is PASS, and in Perl's HeadersOnly/InstancesOnly
   modes false as before. Validate.pm drops its "not fully verified" summary
   suffix. The verify page and validator drop their display of the flag.
-- **Signers never sign over a null** (Bron, 2026-11-03: "leave the cap at
-  1000 but don't sign if we can't do it"):
+- **Signers sign over a null** (Bron, 2026-11-03, revised: "just sign it, it
+  will PERMERROR regardless but at least we've signed our header changes"):
   - The diff cap stays at 1000 literal lines (MAX_RECIPE_LITERALS). A
-    generator over the cap still writes a null body Recipe in the unsigned
-    instance it hands on, as today.
-  - Every signer refuses to sign over an instance with a null body Recipe.
-    In the milters that is the existing not-signed path (X-DKIM2-Info
-    `not-signed=null-body-recipe`, unsigned instances removed). A null that
-    arrived already signed now fails upstream verification, so it is refused
-    as `upstream-chain`.
-  - Retire `AllowNullBodyRecipe` (Gate), `--allow-null-body-recipe`
-    (dkim2-milter) and `allow_null_body_recipe` (DKIM2Sign). Each is still
-    accepted, so existing configs don't fail to start, but does nothing and
-    warns once that it is deprecated. Remove them from deploy/examples and
-    SERVER.md.
+    generator over the cap writes a null body Recipe, as today.
+  - The signer signs over an unsigned instance holding a null body Recipe, as
+    `AllowNullBodyRecipe` does today. That behaviour becomes the only one:
+    `AllowNullBodyRecipe` (Gate), `--allow-null-body-recipe` (dkim2-milter)
+    and `allow_null_body_recipe` (DKIM2Sign) are still accepted, so configs
+    don't break, but they do nothing and warn once that they are deprecated.
+    `not-signed=null-body-recipe` goes away. Remove the options from
+    deploy/examples and SERVER.md.
+  - Upstream: the signer's gate verifies the inbound chain, which now gives
+    `has a null recipe` for a null that arrived signed. The gate treats that
+    one PERMERROR as no refusal. It still runs the other checks the walk
+    can make (the signatures, header hashes, the body hashes above the
+    null, Chain of Custody and From) and refuses on any other error, as
+    today. *Reading: Bron's "sign it" applied to an upstream null as well as
+    our own.*
   - The DSN generator never carries a null-Recipe message, as already the case.
 
 ## E3. Authentic From: up/down match and the Domain Policy Record
@@ -109,8 +112,8 @@ This is also the name the lookup uses.
   of flags with [FWS] around each `:`. Strict means the flag `strict` (exact,
   case-sensitive) is in that list.
 - **A record that begins v=DKIM1 but fails to parse is treated as strict**
-  (fail closed; the spec gives no string for it). It reports the same FAIL,
-  `From <dom> forbids subdomain signing`. *Reading for Bron to confirm.*
+  (fail closed; the spec gives no string for it; Bron agreed 2026-11-03). It
+  reports the same FAIL, `From <dom> forbids subdomain signing`.
 - Temporary failure: SERVFAIL, timeout, a truncated answer that can't be
   retried, or the PolicyCallback dying with a TEMPERROR. This uses the same
   classification as the key fetch.

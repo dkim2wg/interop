@@ -157,3 +157,7 @@ guide on null Recipes and NONE, and the DPR in the key-publishing text).
    holds the null. The i=1 exploded check goes anywhere before the hashing and
    signing work (a well-formedness check). Leave the diff cap at 1000, and don't
    sign if we can't express the change (this supersedes "raise the cap" in 1).
+6. (revised, 2026-11-03) SIGN over a null body Recipe ("it will PERMERROR regardless
+   but at least we've signed our header changes"). The AllowNullBodyRecipe behaviour
+   becomes the default and the option a no-op. A malformed v=DKIM1 DPR fails closed
+   (treated as strict).
