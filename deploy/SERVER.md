@@ -202,14 +202,29 @@ operator gets; they run `/usr/local/bin/dkim2-milter`, so nothing under
 
 **Snapshots:** `/var/spool/dkim2/snapshots/`
 
-**-08 behaviour (Mail::DKIM2 0.23) — deployment notes:**
+**-09 behaviour (Mail::DKIM2 0.29) — deployment notes:**
+- **Null body Recipes.** Every verifier gives a `"b":null` instance
+  `PERMERROR: Message-Instance m=<x> has a null recipe`. The outbound milter
+  always signs over this host's own unsigned null (adding `X-DKIM2-Info: ...
+  action=null-body-recipe`), so `--allow-null-body-recipe` is gone from the
+  units (it is a deprecated no-op that warns if given). A null that arrived
+  already signed fails upstream verification and is refused like any broken
+  chain (`550 5.7.1` with an upstream DKIM2-Signature).
+- **From Authentic upwards.** A `d=` below the From domain now makes From
+  Authentic unless the From domain's Domain Policy Record
+  (`_domainkey.<domain>` TXT, `v=DKIM1; f=strict`) forbids it; the milters
+  look it up before signing such a message.
+
+**-08 behaviour (Mail::DKIM2 0.23) — deployment notes** (still true unless
+the -09 notes above say otherwise):
 - **Refusals with an upstream signature are rejected, not forwarded.** When the
   outbound milter (or the `DKIM2Sign` handler) refuses to sign a message that
   already carries an upstream DKIM2-Signature, it now answers
   `550 5.7.1 <reason>` instead of passing the message on unsigned (-08 §12
   "MUST NOT sign" + §13 "MUST NOT be sent"). That includes the local-policy
-  refusals (an unsigned null body Recipe without `--allow-null-body-recipe`)
-  as well as a broken chain and a From that is not Authentic
+  refusals (under -08, an unsigned null body Recipe without
+  `--allow-null-body-recipe`; gone in -09) as well as a broken chain and a
+  From that is not Authentic
   (`From header field is not Authentic for d=<D>`). On this box the list
   managers see these as bounces per recipient, which can bounce-disable
   subscribers: check `journalctl -u dkim2-milter-outbound` for `550` after a
@@ -229,8 +244,7 @@ operator gets; they run `/usr/local/bin/dkim2-milter`, so nothing under
   sender, walking up parent domains). Otherwise the signer refuses every
   rewritten post, and with an upstream DKIM2-Signature it answers
   `550 5.7.1` (above), so the list bounces signed posts back per recipient.
-  The same `550` covers every local-policy refusal of a signed post, such as
-  `null-body-recipe`. The milters log `From domain <X> is not d=<Y> or below
+  The same `550` covers every other refusal of a signed post. The milters log `From domain <X> is not d=<Y> or below
   it` on each such refusal.
 - **T9 deploy check: posting domains.** For every DKIM2 list (Mailman:
   `mailman lists`; Sympa: `/etc/sympa/*/` list configs; stock-Mailman:
@@ -488,9 +502,10 @@ preamble note, the original body spliced in byte-for-byte as the middle part
 between the list's header and footer parts, or the first part when the list has
 no header), so its `m=2` body Recipe is a copy range. When content filtering
 (`mime_delete`) or DMARC wrapping rewrites the body it records `"b":null`
-instead, and the outbound milter (`dkim2-milter-outbound.service`) runs with
-`--allow-null-body-recipe` so it still signs such an `m=2` (logging
-`X-DKIM2-Info: ... action=null-body-recipe`). There is **no `mi-cache`** any
+instead, and the outbound milter (`dkim2-milter-outbound.service`) still
+signs such an `m=2` (logging `X-DKIM2-Info: ... action=null-body-recipe`),
+which every -09 verifier then reports as a PERMERROR (`has a null
+recipe`). There is **no `mi-cache`** any
 more: the pre-pipeline snapshot is `msg.original_bytes` in the queue entry, and
 `/var/lib/mailman3/mi-cache` was removed at the 2026-10-07 deploy.
 
@@ -616,7 +631,8 @@ conceal`/`process_archive off` with members only the two `dkim2capture@`
 addresses:
 - `dkim2footer` -- `footer_type append` plus a UTF-8 `message_footer`;
   `dkim2capture@test1.dkim2.com` receives in `txt` mode (its copies carry
-  `"b":null`);
+  `"b":null`, so under -09 they verify as `permerror (... has a null
+  recipe)`);
 - `dkim2anon` -- `anonymous_sender anonymous@sympa.dkim2.com`;
 - `dkim2mod` -- `send editorkey`, editor `dkim2capture@dkim2.com`; approve with
   a `DISTRIBUTE dkim2mod <key>` mail from the editor to `sympa@sympa.dkim2.com`
@@ -788,12 +804,12 @@ incoming DKIM2 chain verified. For interop testing of chain behaviour.
 | `reflector-subject@dkim2.com` | `Subject:` prefixed `[DKIM2] `; new MI `rh` Recipe |
 | `reflector-body@dkim2.com` | footer appended; new MI `rb` Recipe |
 | `reflector-both@dkim2.com` | subject + footer |
-| `reflector-redacted@dkim2.com` | footer appended; MI body Recipe `"b":null` (not undoable) |
+| `reflector-redacted@dkim2.com` | footer appended; MI body Recipe `"b":null` (not undoable) — a PERMERROR under -09 (`Message-Instance m=<x> has a null recipe`) |
 | `reflector-damage@dkim2.com` | a line appended *after* signing — fails body-hash verification |
 | `reflector-dsn@dkim2.com` | returns a fresh DKIM2-signed DSN (`multipart/report`) for the message, regardless of whether it arrived signed (draft-03 §12.1) — verifies as a new one-hop message |
 | `reflector-brand-nd@dkim2.com` | like `reflector-brand`, but the i=1 brand hop uses the `nd=` "imaginary hop" encoding (draft-03 §9.3) instead of `mf=`/`rt=`; the chain still verifies (nd= matches i=2's d=) |
 
-**From (since 0.23, -08 §11):** whenever the reflector originates the message
+**From (since 0.23, -09 §11):** whenever the reflector originates the message
 (the incoming chain did not verify, or there was none, so its signature is
 `i=1`) or changes it (every mode except `raw`), it rewrites From to
 `"<sender name or address> via DKIM2 reflector" <reflector-<mode>@dkim2.com>`
@@ -802,7 +818,7 @@ From when the message has none. Originating without a DKIM2-Signature drops
 the inbound Message-Instances and starts again at `m=1`, since the inbound
 `m=1` carries the sender's From. `reflector-raw` on a verified chain keeps
 From. `reflector-dsn` and the DSN path send a DSN only for a message that is
-Provisionally Verified and whose top `mf=` is not `<>` (-08 §16); the DSN is
+Provisionally Verified and whose top `mf=` is not `<>` (-09 §16); the DSN is
 From `postmaster@dkim2.com`.
 
 > **Not part of this table:** `reflector-delayedbounce@dkim2.com` is a
@@ -1275,7 +1291,7 @@ The operator-facing version is in the list-host guide, section 6.
 ## DKIM2 list smoke test (Mailman + Sympa, no-spam local capture)
 
 Confirm both list managers stamp the current spec draft (`Mail::DKIM2::Common`'s
-`DKIM2_DRAFT`, currently `ietf-dkim-dkim2-spec-08`) end-to-end and produce
+`DKIM2_DRAFT`, currently `ietf-dkim-dkim2-spec-09`) end-to-end and produce
 chains that verify, **without emailing real subscribers**. Run on the box:
 
 ```bash
@@ -1459,10 +1475,17 @@ Each capture (found in `/var/spool/dkim2-capture/Maildir/new` by Message-ID)
 must carry `Message-Instance: m=2` whose Recipe is `{"h":{...},"b":null}`, a
 `DKIM2-Signature: i=2; m=2`, and `X-DKIM2-Info: ... action=null-body-recipe`
 from the outbound milter; the zip is gone and the body is the bare text part
-plus footer. After restoring CRLF, `Mail::DKIM2::Verifier` (0.14+, which walks
-the header history past the null body Recipe) and the browser JS verifier give
-`pass (i=1..2 verified)`, and so does `perl/bin/validate.pl` (Validate.pm checks
-the header history below the null and reports the lower body hashes as
-`not-checked`). The Python, Go and C verifiers reject it at 2026-10-07
-(Python/C: m=1 body hash mismatch; Go: "previous body declared unrecoverable"):
-they do not yet do the header-history walk.
+plus footer.
+
+Under -09 (§13, §14.2) a null body Recipe is a PERMERROR, so after restoring
+CRLF every verifier (`Mail::DKIM2::Verifier` 0.29+, `perl/bin/validate.pl`,
+the Python, Go and C verifiers and the browser JS verifier) must give
+`permerror (PERMERROR: Message-Instance m=2 has a null recipe)`, and a
+receiver's A-R says `dkim2=permerror`. The capture still shows the outbound
+milter signed the list's own null (`i=2; m=2` present).
+
+(History: from 0.14 to 0.28 the Perl verifier, the validator and the browser
+verifier walked the header history past the null and gave `pass (i=1..2
+verified)`, flagged "not fully verified"; at 2026-10-07 the Python, Go and C
+verifiers rejected it with a body hash mismatch or "previous body declared
+unrecoverable".)

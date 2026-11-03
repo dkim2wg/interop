@@ -36,22 +36,24 @@ before extending it (see "Verify before you sign" in
 chain-shaped fixtures (no chain, valid chain, broken signature, broken MI
 chain, null body Recipe, fake "coverage" signatures, Message-Instance-only
 chains, `nd=` bridges, a From that is or is not Authentic for the signer)
-through all four signer CLIs, plain and with `--allow-null-body-recipe`, and
-checks each signs or refuses as specified (25 fixtures, 200 cells):
+through all four signer CLIs, plain and with `--allow-null-body-recipe` (a
+deprecated no-op since -09, kept so the flag still parses), and checks each
+signs or refuses as specified (25 fixtures, 200 cells):
 
     ./util/signer-gate.sh
 
-A DKIM2-Signature with `m=k` covers Message-Instances 1..k. A null body
-Recipe on any instance above the highest `m=` of the valid upstream
-signatures is refused without `--allow-null-body-recipe`: a null this hop
-introduces, whether it is the top instance (`null-top`, `mi-only-null`) or
-another unsigned instance was added over it (`null-below-unsigned-top`). A
-null that arrived already signed (`null-top-signed`: a list post the list
-host signed, forwarded unchanged; `null-below-signed`: the same with an
-ordinary unsigned instance on top) is signed without the option. Only a
-host that introduces a null body Recipe and signs it itself — a list host whose
-list manager adds an unsigned instance — needs the option; a forwarder needs
-nothing. Only a signature with a valid `i=` counts as covering the top: the
+A DKIM2-Signature with `m=k` covers Message-Instances 1..k. Since -09 a
+null body Recipe is a PERMERROR at every verifier, and every signer signs
+over this hop's own null, on any instance above the highest `m=` of the
+valid upstream signatures, whether it is the top instance (`null-top`,
+`mi-only-null`) or another unsigned instance was added over it
+(`null-below-unsigned-top`): the message will PERMERROR downstream, but the
+hop's header changes are signed. A null that arrived already signed
+(`null-top-signed`: a list post the list host signed, forwarded unchanged;
+`null-below-signed`: the same with an ordinary unsigned instance on top)
+fails the upstream verification and is refused. (Under -08 it was the other
+way round: an unsigned null needed `--allow-null-body-recipe`, and a signed
+one was extended.) Only a signature with a valid `i=` counts as covering the top: the
 `fake-cover-*` fixtures put a DKIM2-Signature naming `m=2` with no `i=`,
 `i=0`, `i=abc`, a rewritten `m=` or no tag-list syntax on top of `null-top`,
 and every signer refuses them in both modes, because every verifier reports
@@ -61,7 +63,7 @@ It needs the built `c/dkim2sign` and `go/dkim2sign`, and uses `dns.json` for
 the verification keys. The Perl milters make the same decision with the same
 `Mail::DKIM2::Gate`: `perl/t/milter-script.t` covers `dkim2-milter`, and
 `perl/t/milter-sign-gate.t` runs these cases through the authentication_milter
-`DKIM2Sign` handler (`allow_null_body_recipe` in its config).
+`DKIM2Sign` handler (`allow_null_body_recipe`, deprecated, in its config).
 
 Draft -07 added a signer-side From check (§11): a signer that originates a
 message (no DKIM2-Signature yet), or signs over an unsigned Message-Instance
@@ -75,7 +77,7 @@ signer's domain and must be signed.
 ## Negative vectors
 
 `util/negative-vectors.sh` hand-builds one cryptographically valid message
-per -08 PERMERROR — a duplicate hash algorithm, a duplicate
+per PERMERROR — a duplicate hash algorithm, a duplicate
 Selector, more than 8 signatures in one `s=` (local policy), malformed Recipe JSON, an unsigned
 top instance, a wrongly-keyed `nd=` bridge, and Recipe copy ranges that are
 out of order or overlap (§5.2), a duplicated Message-Instance `m=`, and a
@@ -97,33 +99,42 @@ key, a step object with two keys or none, and two `"h"` keys that differ
 only in case. Draft -08 added: `"|"` groups in `s=` and `h=` (no group of
 signatures or hashes passed, an unknown algorithm joined by `","`, a value
 that is not base64 for an unknown algorithm), malformed keys (an Ed25519 key
-published as DER), `Recipe <path> is invalid` for one bad step, a header
+published as DER), `recipe <path> is invalid` for one bad step, a header
 hash that now covers Auto-Submitted, an upper-case tag or Recipe key, and a
 lone surrogate in a Recipe; and it moved the timestamp, Chain of Custody and
-From errors from PERMERROR to FAIL. Positive controls: the same algorithm signed twice under
+From errors from PERMERROR to FAIL. Draft -09 added: a null body Recipe
+(`has a null recipe`, the lowest null instance named, after a lower
+instance's own Recipe fault), a `d=` below a From domain whose Domain Policy
+Record says `f=strict` (or does not parse, or is given twice), a sibling
+domain, more than one From address, a domain literal From (IPv4 and IPv6),
+`f=exploded` at `i=1`, and a 512-bit RSA key (`too short`); it also renamed
+"appears more than once" to "is duplicated" and "MAIL FROM and d=" to "mf=
+and d=". Positive controls: the same algorithm signed twice under
 distinct Selectors, which §10.9 explicitly permits; a Recipe on the bottom
 instance; a correct bridge; an unsigned lower Message-Instance under a signed
 higher one; `"u"` steps restoring non-UTF-8 octets; a bounce back along the
 chain (with the `rt=` recorded as `<list@Lists.Test2.DKIM2.com.>`); an `nd=`
 hop under a subdomain `rt=`; a folded RFC 2047 From; a list that rewrote From
 into its own domain, with or without a signature under the rewrite (an
-author's From replaced before the first signature is never checked, -08 §11);
+author's From replaced before the first signature is never checked, -09 §11);
+a `d=` below the From domain with no policy record, one without `strict`, or
+only non-DKIM1 records; a key selector next to a non-DKIM1 TXT record;
 a `"|"` alternative that passes where the group before it does not (for
 signatures and for hashes, an unknown algorithm included), eight signatures
 in one `s=`, one algorithm three times, Auto-Submitted signed and unchanged,
 and an upper-case twin of a known tag. Multi-fault vectors carry two faults
-each and pin which error comes first (contract C9, -08 §14 section order): a
+each and pin which error comes first (contract C9, -09 §14 section order): a
 From changed after signing is the §14.7 header hash FAIL, not the §14.8 From
 FAIL; an expired signature comes before a custody mismatch, custody
 before a bad signature, a bad signature before a hash mismatch; and a key
-error at a higher `i=` after a bad signature at a lower one (-08 checks each
+error at a higher `i=` after a bad signature at a lower one (-09 checks each
 signature's keys and signature together); a malformed
 Recipe before an expired signature, but a Recipe that only fails against the
 message (a copy past the end) after it. The runner feeds them
 all through every verifier's real CLI entry point and asserts each negative
-vector is REJECTED with the exact -08 error string as the verifier's
+vector is REJECTED with the exact -09 error string as the verifier's
 PRIMARY error (its first `STATE: text` line, compared exactly) and the
-matching state, and each positive control is ACCEPTED (66 vectors, 330
+matching state, and each positive control is ACCEPTED (132 vectors, 660
 cells):
 
     ./util/negative-vectors.sh
@@ -139,9 +150,9 @@ unrelated signature failure.
 <https://github.com/croessner/dkim2> is the other actively developed DKIM2
 implementation (Go, tracking `draft-ietf-dkim-dkim2-spec-06` when this runner
 was written; `util/croessner-process.py` pins that draft). The runner now
-checks that -06 peer against our -08 implementations, so disagreements are
-expected wherever -07 and -08 changed the rules (the "u" Recipe step, Chain of
-Custody, From Authentic, the error strings); read its output as a diff
+checks that -06 peer against our -09 implementations, so disagreements are
+expected wherever -07 to -09 changed the rules (the "u" Recipe step, Chain of
+Custody, From Authentic, null body Recipes, the error strings); read its output as a diff
 between the drafts, not as a pass/fail gate. To feed his verifier everything
 this repo can produce:
 

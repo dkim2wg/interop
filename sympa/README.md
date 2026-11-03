@@ -135,10 +135,11 @@ nrcpt 1
 `sympa sympa-bulk sympa-archived sympa-bounced sympa-task_manager wwsympa`;
 all of them load `Message.pm`.
 
-The outbound signer must accept null body Recipes: Sympa adds the instance
-unsigned, and `dkim2-milter` signs an unsigned null instance only when started
-with `--allow-null-body-recipe` (the example outbound unit has it).
-Downstream forwarders need no option: by then the null is signed.
+Sympa adds a null body Recipe's instance unsigned, and `dkim2-milter`
+(Mail::DKIM2 0.29) always signs over it; `--allow-null-body-recipe` is a
+deprecated no-op. Under draft -09 every verifier gives such a copy
+`PERMERROR: Message-Instance m=<x> has a null recipe`, so avoid body
+rewrites on DKIM2 lists.
 
 ## Turning it on
 

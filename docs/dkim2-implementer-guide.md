@@ -1,6 +1,6 @@
 # DKIM2 Implementer Guide
 
-**Spec:** draft-ietf-dkim-dkim2-spec-08  
+**Spec:** draft-ietf-dkim-dkim2-spec-09, with draft-ietf-dkim-dkim2-dns-03  
 **Audience:** Authors writing a DKIM2 library or integrating DKIM2 into an MTA
 
 ---
@@ -33,7 +33,7 @@ Message-Instance: m=1; h=sha256:<hdr-hash>:<body-hash>;
 the message headers (`hdr-hash`) and body (`body-hash`), both base64url-encoded
 without padding.
 
-**Header hash**: sort all non-DKIM2 / non-MI headers, less the ones -08 §4 ignores
+**Header hash**: sort all non-DKIM2 / non-MI headers, less the ones -09 §4 ignores
 (Auto-Submitted and VBR-Info are hashed since -08), by the octets of their
 lower-cased names (stable, later instance first), canonicalize each as `lowercase-name:collapsed-value\r\n`, then SHA-256
 the concatenation.
@@ -56,15 +56,15 @@ Key tags:
 | `i=` | Hop sequence number (1-based, sequential across chain) |
 | `m=` | Highest MI revision this signature covers |
 | `t=` | Unix timestamp |
-| `d=` | Signing domain (the `mf=` domain must relaxed-match it, -08 §7) |
+| `d=` | Signing domain (the `mf=` domain must relaxed-match it, -09 §7) |
 | `mf=` | Base64-encoded MAIL FROM (with angle brackets, e.g. `<user@example.com>`) |
 | `rt=` | Comma-separated base64-encoded RCPT TO values |
 | `s=` | Comma-separated `selector:algorithm:base64-sig` triples (algorithm agility) |
 | `n=` | Optional nonce ≤ 64 characters |
-| `nd=` | Imaginary-hop bridge (-08 §12.3): the `d=` of the next signature; replaces `mf=`/`rt=` |
-| `f=` | Optional flag list (-08 §10.10). `exploded` is the only flag -08 defines |
+| `nd=` | Imaginary-hop bridge (-09 §12.3): the `d=` of the next signature; replaces `mf=`/`rt=` |
+| `f=` | Optional flag list (-09 §10.10). `exploded` is the only flag -09 defines |
 
-### Signing input (-08 §12.8)
+### Signing input (-09 §12.8)
 
 The data signed is the SHA-256 of all of the following concatenated,
 each header canonicalized as `lowercase-name:collapsed-value\r\n`:
@@ -86,9 +86,9 @@ consistently to both the signer and verifier or signatures will not match.
 1. Parse the incoming message into headers + body. If it already carries
    DKIM2 headers, verify that chain first ("Verify before you sign"). If it
    has no DKIM2-Signature yet, or an unsigned instance changed From, From
-   must be Authentic for <domain> (-08 §12.4), or refuse.
-2. Compute body hash (-08 §6.1).
-3. Compute header hash (-08 §6.2) using existing non-DKIM2/non-MI headers.
+   must be Authentic for <domain> (-09 §12.4), or refuse.
+2. Compute body hash (-09 §6.1).
+3. Compute header hash (-09 §6.2) using existing non-DKIM2/non-MI headers.
 4. Determine m= for the new MI:
      - If no existing MI headers: m=1
      - Otherwise: highest existing m= + 1
@@ -100,14 +100,14 @@ consistently to both the signer and verifier or signatures will not match.
      - Otherwise: highest existing i= + 1
 7. Build the incomplete signature (all s= values empty):
      i=<n>; m=<MI>; t=<ts>; d=<domain>; mf=<mf_b64>; rt=<rt_b64>; s=<sel>:<alg>:;
-8. Compute the signing input (-08 §12.8) using the incomplete signature.
+8. Compute the signing input (-09 §12.8) using the incomplete signature.
 9. SHA-256 the signing input; sign with the private key.
 10. Insert the signature value into the s= field.
 11. Prepend "DKIM2-Signature: <value>" to the message (after the MI header).
 ```
 
 Multi-algorithm signing (algorithm agility): create multiple `sel:alg:sig` triples in
-the `s=` tag, one per key. -08 §10.9 joins them with `,` (all must pass) and `|`
+the `s=` tag, one per key. -09 §10.9 joins them with `,` (all must pass) and `|`
 (any group may pass; `,` binds tighter): offer a new algorithm beside an old one
 as `new:...|old:...`. `h=` has the same syntax (§9.3). Our signers emit one `,`
 list, and our verifiers refuse an `s=` of more than 8 items (local policy).
@@ -123,36 +123,43 @@ list, and our verifiers refuse an `s=` of more than 8 items (local policy).
 3. Check top signature coverage: no Message-Instance may have an m= above
    every signature's m= ("Message-Instance m=<x> is not signed").
 4. Verify the top MI's hashes against the live message, then undo each
-   Recipe and check each lower instance's hashes (-08 §14.7). Each hash-set
+   Recipe and check each lower instance's hashes (-09 §14.7). Each hash-set
    passes if both hashes match; `,` lists and `|` groups combine as for
    signatures below, and an unimplemented hash algorithm is a PERMERROR
-   member. Below a null body Recipe only header hashes can be checked: the
-   result can still pass, but the message is not Fully Verified (§13).
+   member. A body Recipe of `"b": null` is a PERMERROR (-09 §13, §14.2):
+   `Message-Instance m=<x> has a null recipe`, checked right after that
+   instance's `recipe <path> is invalid` check, lowest m= first.
 5. For each signature i=1..N (verify all, not just the outermost):
-   a. -08 §14.3: FAIL if t= is more than 1 day (86400 s) in the
+   a. -09 §14.3: FAIL if t= is more than 1 day (86400 s) in the
       future or more than 14 days (1209600 s) in the past.
    b. n= nonce must not exceed 64 characters.
    c. Build the signing input using only MI headers with m ≤ this sig's m=,
       and only DKIM2-Signature headers with i ≤ this sig's i=.
-6. -08 §14.4: Chain of Custody (table below).
-7. -08 §14.5, §14.6, signature by signature: for each s= item, the key, then
+6. -09 §14.4: Chain of Custody (table below).
+7. -09 §14.5, §14.6, signature by signature: for each s= item, the key, then
    the signature. An unimplemented algorithm (ML-DSA-44 included, for now) is
    a PERMERROR item; an unfetchable key TEMPERROR; an absent, revoked or
-   malformed key PERMERROR (an Ed25519 `p=` must be exactly 32 octets, an RSA
-   key at least 1024 bits); a bad signature FAIL. A `,` list passes if all
+   malformed key PERMERROR (an Ed25519 `p=` must be exactly 32 octets; an RSA
+   key under 1024 bits is `public key <s> too short`). Before counting TXT
+   records at the selector, drop those whose first tag is a `v=` other than
+   `DKIM1`; more than one left is `has multiple records`. A bad signature FAIL. A `,` list passes if all
    items do (else TEMPERROR if every failure is one, else FAIL if any item
    fails, else PERMERROR); `|` groups pass if any does (else TEMPERROR, FAIL,
    PERMERROR, in that order).
-8. -08 §14.8: From must be Authentic (below).
+8. -09 §14.8: From must be Authentic (below).
 ```
 
-Every error has an exact -08 text of the form `STATE: text`, e.g.
+Every error has an exact -09 text of the form `STATE: text`, e.g.
 `PERMERROR: DKIM2-Signature i=2 d= does not match the rt= of i=1`. A message
-with no DKIM2 header fields at all is result `none` (A-R `dkim2=none`), not
-an error. `util/negative-vectors.sh` checks the strings across all five
+with no DKIM2 header fields at all is result `none`, details `No DKIM2
+header fields found` (A-R `dkim2=none`), not an error. -09 renamed some
+strings: `<field> m=/i=<n> is duplicated` (was "appears more than once"),
+`recipe <path> is invalid` (lower case), `mf= and d= do not match`; and
+added `DKIM2-Signature i=1 has an exploded flag`, a field check made before
+any key fetch. `util/negative-vectors.sh` checks the strings across all five
 verifiers.
 
-### Relaxed domain match (-08 §7.2)
+### Relaxed domain match (-09 §7.2)
 
 `relaxed_match(p1, p2)` is asymmetric: only `p1` is shortened. If either
 is a domain literal (`[192.0.2.1]`), no match. Otherwise loop: if `p1 == p2`,
@@ -163,13 +170,13 @@ round, and `notexample.com` never matches `example.com`.
 Take a domain from an address as the text between the last `@` and the
 closing `>`, lowercased, with one trailing dot stripped (Postfix may record
 `<A@Example.COM.>`). A non-ASCII label is compared as its A-label (`xn--`
-Punycode, -08 §18); signers record `mf=`/`rt=` domains as A-labels.
+Punycode, -09 §18); signers record `mf=`/`rt=` domains as A-labels.
 
-### Chain of Custody (-08 §7.1, §14.4)
+### Chain of Custody (-09 §7.1, §14.4)
 
 Every failure is a FAIL (-08; -07 had PERMERROR). For each signature S with `mf=` that is not
 `<>` and no `nd=`: `relaxed_match(domain(mf), S.d)`, else
-`DKIM2-Signature i=<S> MAIL FROM and d= do not match`. Then for i = 2..N,
+`DKIM2-Signature i=<S> mf= and d= do not match`. Then for i = 2..N,
 with P the signature below S:
 
 | Case | Test | Error |
@@ -183,7 +190,7 @@ A top signature carrying `nd=` gives `DKIM2-Signature i=<N> unexpected nd=
 tag` inbound (a signer whose own `d=` is the `nd=` may still extend it), and
 `nd=` with `mf=` or `rt=` gives `... tag=mf was unexpected`.
 
-### From must be Authentic (-08 §11, §14.8)
+### From must be Authentic (-09 §11, §14.8)
 
 Let state k be the message as it was when Message-Instance m=k was the
 highest (state N is the message as received; state k−1 is state k with MI
@@ -199,19 +206,37 @@ A From replaced before any signature covered it (a list's unsigned ingress
 `i=1` over `m=2`) is never checked; instances above the top signature's
 `m=` are left to the signer.
 
-A pair passes when that state has exactly one From field holding exactly one
-mailbox (`Name <a@b>` or `a@b`; a group or a list fails), the domain is not
-a literal, and `relaxed_match(A-label(domain), sig.d)`. Otherwise
-`FAIL: DKIM2-Signature i=<i> matching From is not authentic`.
+For each pair, the first failing step is the result (all `FAIL:
+DKIM2-Signature i=<i> ...` unless noted):
+
+1. More than one From field, or a `,` outside quotes and comments:
+   `From has more than one address`. No From, or not a mailbox:
+   `matching From is not authentic`.
+2. A domain literal: `From uses a domain literal`.
+3. `relaxed_match(A-label(domain), sig.d)` (From at or below `d=`): pass,
+   no DNS.
+4. `relaxed_match(sig.d, domain)` fails too: `matching From is not
+   authentic`.
+5. Otherwise (`d=` below the From domain) look up the From domain's Domain
+   Policy Record: TXT at `_domainkey.<dom>` (that exact name; `<dom>` is the
+   lowercased A-label). Keep records whose first tag is `v=DKIM1`
+   (case-sensitive); none (or NXDOMAIN) passes; more than one is
+   `PERMERROR: ... multiple records for <dom> policy`; a lookup failure is
+   `TEMPERROR: ... policy for <dom> unavailable`; `strict` in the
+   colon-separated `f=` list, or a record that does not parse, is `From
+   <dom> forbids subdomain signing`; anything else passes. One lookup per
+   domain per message, lazily (never in a key prefetch, never once another
+   error is found). Trim WSP in linear time: the record is attacker-served.
 
 So a list or forwarder that changes a message, or originates one (its hop
 is i=1), rewrites From into its own signing domain. The signer checks
 this itself: before signing as D, if the message has no DKIM2-Signature yet,
 or an instance above the highest signed `m=` changed From, From must pass
-against D, or the signer refuses with
-`From header field is not Authentic for d=<D>`.
+against D, with the same policy lookup for a D below the From domain, or
+the signer refuses with `From header field is not Authentic for d=<D>`
+(followed by the step-5 reason when the policy refused it).
 
-### The `exploded` flag (-08 §12.5)
+### The `exploded` flag (-09 §12.5)
 
 Above i=1 a signer adds `exploded` to `f=` when it was asked to, or when
 `rt=` holds more than one address; at i=1 it never does. A list manager
@@ -235,26 +260,22 @@ of one that does not check out. All four signers (Python, Go, C, Perl) do this;
   the instance below. Any failure means refuse ("not signing: upstream DKIM2
   chain ..."), exit non-zero and emit no new signature. A message with no
   DKIM2 headers is just signed.
-- **Null body Recipe.** An *unsigned* instance whose body Recipe is
-  `"b": null` (the previous body is not recoverable) is refused by default,
-  because the signer would be vouching for a change it cannot check. A
-  signature's `m=` is the highest instance at signing time (-08 §10.2), so
-  a DKIM2-Signature with `m=k` covers instances 1..k, and "unsigned" means an
-  instance whose `m=` is above the highest `m=` of every valid upstream
-  signature. Check every such instance, not only the top: a hop (or a list
-  manager in front of it) can add its own ordinary instance over an unsigned
-  null, and the null is still one nobody upstream vouched for
-  (`null-below-unsigned-top`). This hop is the one introducing the null. The
-  operator opts in with `--allow-null-body-recipe`
-  (Go: `-allow-null-body-recipe`). A null that arrived already signed —
-  a list host declared it and signed it, and this hop forwards the message,
-  unchanged or with its own ordinary instance on top (`null-below-signed`) —
-  is extended without the option: the domain that made the change
-  vouched for it. So only a host that introduces a null body Recipe and signs
-  it itself (a list host whose list manager adds an unsigned instance) needs
-  the option; a forwarder needs nothing. Either way the upstream signatures
-  must verify, and the flag does not excuse a forged history: the header
-  Recipe is still undone and checked.
+- **Null body Recipe.** A signature's `m=` is the highest instance at
+  signing time (-09 §10.2), so a DKIM2-Signature with `m=k` covers instances
+  1..k, and "unsigned" means an instance whose `m=` is above the highest
+  `m=` of every valid upstream signature. Since -09 every signer (Perl,
+  Python, Go, C) signs over this hop's own unsigned instances whose body
+  Recipe is `"b": null`, at the top or under another unsigned instance
+  (`null-top`, `null-below-unsigned-top`, `mi-only-null`): the message will
+  PERMERROR downstream, but this hop's header changes are signed. A null
+  that arrived already signed (`null-top-signed`, `null-below-signed`) fails
+  the upstream verification and is refused like any broken chain (the gate
+  reason is `upstream-chain`). `--allow-null-body-recipe` (Go:
+  `-allow-null-body-recipe`; Python `allow_null_body_recipe`, Go
+  `SignOptions.AllowNullBodyRecipe`, C `allow_null_body_recipe`) is a
+  deprecated no-op that warns when set. The upstream signatures must still
+  verify, and the header Recipe below the null is still undone and checked,
+  so a forged history (`null-top-forged`) is refused.
 - **Only a keyable signature is coverage.** Count a signature towards
   "the top is signed" only if its `i=` is a positive integer, and have the
   verifier report any DKIM2-Signature it cannot key — no `i=`, `i=0`,
@@ -279,11 +300,12 @@ of one that does not check out. All four signers (Python, Go, C, Perl) do this;
   Message-Instances but no DKIM2-Signature (Mailman does this for an unsigned
   post) gives a chain with m=1 and m=2 and no i=1. That is signable: verify
   the Recipes, then sign i=1 over the highest m=. An instance below the
-  highest signed m= need not be referenced by any signature; -08 §14 only
+  highest signed m= need not be referenced by any signature; -09 §14 only
   forbids an instance with an m= higher than every signature's.
 - **From Authentic.** A signer that originates (no DKIM2-Signature yet) or
   signs over an unsigned instance that changed From checks From against its
-  own `d=` and refuses with `From header field is not Authentic for d=<D>`.
+  own `d=` (with the policy lookup for a `d=` below the From domain) and
+  refuses with `From header field is not Authentic for d=<D>`.
   The gate's verification of the unsigned top instances does not apply the
   verifier's From check: the signer's own check covers them.
 - **The `nd=` bridge rule.** When the top DKIM2-Signature carries `nd=` (a §12.3
@@ -324,7 +346,7 @@ type SignOptions struct {
 }
 
 type VerifyOptions struct {
-    MailFrom           string   // optional -08 §14.4 envelope check
+    MailFrom           string   // optional -09 §14.4 envelope check
     RcptTo             []string
     SkipTimestampCheck bool     // for testing with old messages
 }
@@ -525,7 +547,7 @@ headers that MTA injects/rewrites at that hop, and keep transient ones out of th
 signed message. The reflector in this repo hit this with `Delivered-To`; see
 `deploy/postfix-dkim2-reflect.master.cf` for the `pipe(8)` transport that avoids it.
 
-### Signing an MTA's own bounces (-08 §16) — EXPERIMENTAL
+### Signing an MTA's own bounces (-09 §16) — EXPERIMENTAL
 
 DKIM2 §16 expects a bounce/DSN to be signed like any other outbound message,
 but most MTAs run no milters or content filters on the bounces they generate
@@ -547,9 +569,9 @@ different addresses:
   `From:` header instead (only signing if that domain resolves to a held key)
   and emits `mf=<>` on the resulting `DKIM2-Signature`.
 
-Under -08 no DSN may be generated or propagated for a message whose top
+Since -08 no DSN may be generated or propagated for a message whose top
 `mf=` is `<>`, nor for one that is not Provisionally Verified (top signature
-valid and top MI hashes match, -08 §13.2). The copy-pasteable Postfix recipe
+valid and top MI hashes match, -09 §13.2). The copy-pasteable Postfix recipe
 (`internal_mail_filter_classes = bounce` + an outbound-only
 `non_smtpd_milters`, plus the routing map) and the §16
 conformance notes/limits live in `deploy/SERVER.md`, under "Signing
@@ -557,7 +579,7 @@ Postfix-generated (delayed) DKIM2 bounces".
 
 ---
 
-## Recipe field (-08 §5 — undo support)
+## Recipe field (-09 §5 — undo support)
 
 The optional `r=` tag in the MI header carries a base64-encoded JSON structure
 describing how to reconstruct the previous message state from the current one.  This
@@ -578,7 +600,8 @@ Recipe structure:
 
 `h` maps a header field name to the steps that rebuild that field's previous
 instances (an empty list: the field did not exist); `b` rebuilds the previous
-body lines, or is `null` when the previous body is not recoverable. Each
+body lines, or is `null` when the previous body is not recoverable (a
+PERMERROR at verifiers since -09). Each
 step is an object with exactly one key:
 
 - `"c": [from, to]` copies current lines (or field instances) from..to,
@@ -589,13 +612,13 @@ step is an object with exactly one key:
   the raw octets (padded, zero pad bits, decoded value without CR or LF).
   `"u"` replaces the -06 `"b"` step, which is now an unknown key.
 
-Every key is lower case (-08 §5): a key with a capital letter, or one given
+Every key is lower case (-09 §5): a key with a capital letter, or one given
 twice, makes the whole document
 `PERMERROR: Message-Instance m=<x> contains invalid JSON`, as do JSON that
 does not parse, a number with a fraction or exponent, and an `h` or `b` of the
 wrong shape. One bad step (an unknown or missing step key, bad or unordered
 copy ranges, a bad literal) is
-`PERMERROR: Message-Instance m=<x> Recipe <path> is invalid`, the path `b[<n>]`
+`PERMERROR: Message-Instance m=<x> recipe <path> is invalid`, the path `b[<n>]`
 or `h.<name>[<n>]`.
 
 Implementations that only verify the final delivery state do not need to implement
