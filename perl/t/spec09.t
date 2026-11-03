@@ -228,6 +228,14 @@ for my $c (
     is($s->result, 'signed', 'E3.4: the downward match needs no callback');
     is(scalar @cb, 0, '... and does not call it');
 
+    # Common::parent_from_matcher, as the milters and dkim2sign build theirs.
+    my $m = Mail::DKIM2::Common::parent_from_matcher('Open.DKIM2.com.', "b\xc3\xbccher.example");
+    ok($m->('open.dkim2.com'), 'parent_from_matcher: case and a trailing dot');
+    ok($m->('xn--bcher-kva.example'), '... an IDN entry as its A-label');
+    ok(!$m->('other.dkim2.com'), '... and nothing else');
+    $s = $sign->('open.dkim2.com', ParentFromCallback => $m);
+    is($s->result, 'signed', '... which the Signer takes');
+
     # The explicit opt-in: the Domain Policy Record.
     $s = $sign->('open.dkim2.com', PolicyCallback => $counting);
     is($s->result, 'signed', 'E3.4 opt-in: no policy record: signed') or diag $s->details;

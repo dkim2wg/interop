@@ -1021,6 +1021,15 @@ sub _parse_dns_tag_list {
     return (\%tag, \@order);
 }
 
+# parent_from_matcher(@domains): a Signer ParentFromCallback (-09 contract
+# E3.4) that is true for a From domain in @domains, each compared as the
+# callback gets it: an A-label, lowercased, without one trailing dot.
+sub parent_from_matcher {
+    my %ok = map { (to_alabel($_) =~ tr/A-Z/a-z/r) =~ s/\.\z//r => 1 }
+             grep { defined && length } @_;
+    return sub { $ok{ $_[0] // '' } ? 1 : 0 };
+}
+
 # from_pair_error($d, $policy, @from): -09 section 14.8 for one signing
 # domain $d and the From field values it must make Authentic (contract
 # E3.1), for the Verifier and the Signer alike: undef when Authentic, else
@@ -1573,6 +1582,14 @@ C<temperror> and the text that follows C<< DKIM2-Signature i=<x> >>.
 C<< $policy->($domain) >> returns that domain's Domain Policy Record as
 L</domain_policy> does, or C<temperror>; it is called only when C<$d> is
 below the From domain.
+
+=head2 parent_from_matcher(@domains)
+
+A L<Mail::DKIM2::Signer> C<ParentFromCallback> that is true for a From
+domain in C<@domains>, each compared as the callback receives it: an
+A-label (so C<bücher.example> matches C<xn--bcher-kva.example>), lowercased,
+without one trailing dot. The milters and C<dkim2sign> build theirs with it.
+New in 0.30.
 
 =head2 query_domain_policy($resolver, $domain)
 

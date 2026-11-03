@@ -148,10 +148,7 @@ my $signer = Mail::DKIM2::Signer->new(
     ($exploded ? (Exploded => 1) : ()),
     # -09 contract E3.4: a d= below the From domain signs only for a
     # --parent-from domain; no DNS lookup.
-    ParentFromCallback => sub {
-        my ($dom) = @_;
-        return scalar grep { lc(s/\.\z//r) eq $dom } @parent_from;
-    },
+    ParentFromCallback => Mail::DKIM2::Common::parent_from_matcher(@parent_from),
 );
 $signer->PRINT($msg->as_string);
 $signer->CLOSE;

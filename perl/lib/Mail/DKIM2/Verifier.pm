@@ -565,8 +565,8 @@ sub _from_pair_authentic {
 # The Domain Policy Record for $dom (an A-label, lowercased): 'open',
 # 'strict', 'multiple' (Common::domain_policy) or 'temperror'. From the
 # PolicyCallback when there is one, else a TXT query of _domainkey.$dom
-# through the Resolver, as the key fetch makes it: lazily, never prefetched,
-# since it is needed only when d= is below the From domain.
+# through the Resolver, as the key fetch makes it: only when d= is below the
+# From domain, reading the answer _prefetch_policies asked for if any.
 sub _domain_policy {
     my ($self, $dom) = @_;
     # Without a PolicyCallback, fetch_domain_policy: it reads the answer

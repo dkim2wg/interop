@@ -184,12 +184,6 @@ sub _new_signature {
     );
 }
 
-# True when this signature answers for the From the message carries: there
-# is no signature yet (this hop is i=1), or a Message-Instance no existing
-# signature covers (m= above every signature's m=) has a header Recipe that
-# names From -- this hop, or a list manager on its host, changed it. One
-# that does not parse is left to the verifiers (and Mail::DKIM2::Gate),
-# which refuse it: the Signer checks only what it needs to sign.
 # For from_pair_error: whether this d= may make a From in parent domain
 # $dom Authentic ('open') or not ('strict').
 sub _parent_policy {
@@ -221,6 +215,12 @@ sub _resolver {
     };
 }
 
+# True when this signature answers for the From the message carries: there
+# is no signature yet (this hop is i=1), or a Message-Instance no existing
+# signature covers (m= above every signature's m=) has a header Recipe that
+# names From -- this hop, or a list manager on its host, changed it. One
+# that does not parse is left to the verifiers (and Mail::DKIM2::Gate),
+# which refuse it: the Signer checks only what it needs to sign.
 sub _from_must_match {
     my ($self, $mi_headers, $dk2_headers) = @_;
     return 1 unless @$dk2_headers;

@@ -203,7 +203,7 @@ sub _read_parent_from {
     open my $fh, '<', $file or return [];
     my @d = map { s/#.*//r =~ s/\A\s+|\s+\z//gr } <$fh>;
     close $fh;
-    return [ map { lc s/\.\z//r } grep { length } @d ];
+    return [ grep { length } @d ];
 }
 
 # Look up signing config for a domain from the keydir.
@@ -747,7 +747,7 @@ sub _get_sign_config {
             selector  => $opts{selector},
             key       => $sign_key,
             algorithm => $opts{algorithm},
-            parent_from => [ map { lc s/\.\z//r } @{ $opts{'parent-from'} || [] } ],
+            parent_from => [ @{ $opts{'parent-from'} || [] } ],
         };
     }
 
@@ -1085,10 +1085,8 @@ sub _do_sign {
             ($priv->{exploded} ? (Exploded => 1) : ()),
             # -09 contract E3.4: a d= below the From domain signs only for
             # a parent the configuration lists; no DNS lookup.
-            ParentFromCallback => sub {
-                my ($dom) = @_;
-                return scalar grep { $_ eq $dom } @{ $config->{parent_from} || [] };
-            },
+            ParentFromCallback => Mail::DKIM2::Common::parent_from_matcher(
+                @{ $config->{parent_from} || [] }),
         );
         $signer->PRINT($message);
         $signer->CLOSE();

@@ -262,8 +262,6 @@ sub addheader_callback {
         }
 
         # Build SMTP params
-        my @parents = map { lc s/\.\z//r }
-                      @{ $sign_config->{parent_from_domains} || [] };
         my %signer_args = (
             Domain   => $sign_domain,
             Selector => $selector,
@@ -271,10 +269,8 @@ sub addheader_callback {
             ( $exploded ? ( Exploded => 1 ) : () ),
             # -09 contract E3.4: a d= below the From domain signs only for
             # a parent this domain's config lists; no DNS lookup.
-            ParentFromCallback => sub {
-                my ($dom) = @_;
-                return scalar grep { $_ eq $dom } @parents;
-            },
+            ParentFromCallback => Mail::DKIM2::Common::parent_from_matcher(
+                @{ $sign_config->{parent_from_domains} || [] }),
         );
 
         # Pin t= when configured.  Only the test suite sets this, so that the
