@@ -106,6 +106,8 @@ is_deeply([Mail::DKIM2::Common::from_mailbox('a@x.com', 'b@y.com')], ['multiple'
 is_deeply([Mail::DKIM2::Common::from_mailbox('a@x.com, b@y.com')], ['multiple'], 'from_mailbox: a list');
 is_deeply([Mail::DKIM2::Common::from_mailbox('a@[192.0.2.1]')], ['literal'], 'from_mailbox: a literal');
 is_deeply([Mail::DKIM2::Common::from_mailbox('nobody')], ['none'], 'from_mailbox: no "@"');
+is_deeply([Mail::DKIM2::Common::from_mailbox('A <a@[IPv6:2001:db8::1]>')], ['literal'],
+          'from_mailbox: an IPv6 literal\'s ":"s are not a group');
 is_deeply([Mail::DKIM2::Common::from_mailbox()], ['none'], 'from_mailbox: no From field');
 
 # The Domain Policy Record parser (E3.2).

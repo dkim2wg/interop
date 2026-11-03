@@ -797,9 +797,17 @@ sub from_mailbox {
     (my $v = $values[0]) =~ s/\r?\n(?=[ \t])//g;
     # One pass: comments dropped, quoted strings kept whole, and the
     # structure outside them ($skel) and the angle brackets found.
-    my ($out, $skel, $depth, $inq, @lt, @gt) = ('', '', 0, 0);
+    my ($out, $skel, $depth, $inq, $inlit, @lt, @gt) = ('', '', 0, 0, 0);
     for (my $i = 0; $i < length $v; $i++) {
         my $c = substr($v, $i, 1);
+        # A domain literal's ":"s (IPv6) are not a group: "[...]" is kept
+        # whole, out of the structure.
+        if ($inlit) {
+            if ($c eq '\\') { $out .= substr($v, $i++, 2); next }
+            $inlit = 0 if $c eq ']';
+            $out .= $c;
+            next;
+        }
         if ($inq) {
             if ($c eq '\\') { $out .= substr($v, $i++, 2); next }
             $inq = 0 if $c eq '"';
@@ -814,12 +822,13 @@ sub from_mailbox {
         }
         if ($c eq '(') { $depth = 1; $out .= ' '; next }
         if ($c eq '"') { $inq = 1; $out .= $c; next }
+        if ($c eq '[') { $inlit = 1; $out .= $c; next }
         push @lt, length $out if $c eq '<';
         push @gt, length $out if $c eq '>';
         $skel .= $c;
         $out  .= $c;
     }
-    return 'none' if $inq || $depth;
+    return 'none' if $inq || $depth || $inlit;
     # A "," is a second mailbox; a ":" or ";" a group (or an obsolete route).
     return 'multiple' if $skel =~ /,/;
     return 'none' if $skel =~ /[:;]/;

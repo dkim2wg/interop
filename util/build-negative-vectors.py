@@ -1934,6 +1934,12 @@ def build_from_domain_literal():
     return _from_chain(b"brong@[192.0.2.1]")
 
 
+def build_from_domain_literal_ipv6():
+    """E3.1: an IPv6 domain literal; its ":"s are inside the literal, not a
+    group, so it is a domain literal, not "not authentic"."""
+    return _from_chain(b"Bron <brong@[IPv6:2001:db8::1]>")
+
+
 def build_exploded_i1():
     """E6: i=1 carrying f=exploded, otherwise valid. The signer API drops
     the flag at i=1, so the field is signed here by hand."""
@@ -2111,6 +2117,7 @@ FIXTURES = {
     "from-two-addresses.eml": build_from_two_addresses,
     "from-two-fields.eml": build_from_two_fields,
     "from-domain-literal.eml": build_from_domain_literal,
+    "from-domain-literal-ipv6.eml": build_from_domain_literal_ipv6,
     "exploded-i1.eml": build_exploded_i1,
     "key-rsa-too-short.eml": build_key_rsa_too_short,
     "null-two.eml": build_null_two,

@@ -161,8 +161,12 @@ func fromMailbox(v string) (string, bool) {
 			return "", false
 		}
 		addr = addr[lt+1 : gt]
-		if c := strings.LastIndexByte(addr, ':'); c >= 0 {
-			addr = addr[c+1:]
+		// An obsolete route ends in the ":" before the local part; one
+		// after the last "@" is inside a domain literal ([IPv6:...]).
+		if at := strings.LastIndexByte(addr, '@'); at >= 0 {
+			if c := strings.LastIndexByte(addr[:at], ':'); c >= 0 {
+				addr = addr[c+1:]
+			}
 		}
 	}
 	addr = strings.TrimSpace(addr)

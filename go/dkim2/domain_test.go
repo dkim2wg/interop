@@ -82,6 +82,8 @@ func TestDomainFromMailbox(t *testing.T) {
 		{"group: a@example.com;", ""},
 		{"undisclosed-recipients:;", ""},
 		{"no address here", ""},
+		{"B <b@[IPv6:2001:db8::1]>", "b@[IPv6:2001:db8::1]"},
+		{"<@route.example:c@example.com>", "c@example.com"},
 		{"", ""},
 	} {
 		got, ok := fromMailbox(tc.in)
