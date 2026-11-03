@@ -1,6 +1,6 @@
 # DKIM2 Message-Instance support for Sympa 6.2.78
 
-Seven patches that make Sympa record, in a `Message-Instance` header, what
+Eight patches that make Sympa record, in a `Message-Instance` header, what
 it changed about each message it redistributes, so a DKIM2 verifier
 downstream can undo the list's changes and check the signatures of earlier
 hops. Sympa adds only `Message-Instance` (and `X-DKIM2-Info`); the
@@ -57,6 +57,10 @@ which patch 2 adds.
    computes changes under -09; `X-DKIM2-Info` names
    `ietf-dkim-dkim2-spec-09`. Mail::DKIM2 0.28 is still the minimum for
    Sympa itself; the outbound signer should be 0.29 (draft -09).
+8. **DKIM2 draft -09: the From test follows the upward match.** Test only:
+   an unrewritten author From under a subdomain signer is refused with
+   `f=strict` and signed with no policy record; no test makes a live DNS
+   lookup.
 
 The series before the always-wrap rework (encoding-preserving decoration,
 a `.mi_orig` spool file, Recipes by diff) is kept as the tag

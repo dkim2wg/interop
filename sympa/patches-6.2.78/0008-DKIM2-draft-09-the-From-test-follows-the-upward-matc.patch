@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Tue, 3 Nov 2026 12:33:48 -0500
+Subject: [PATCH 8/8] DKIM2 draft -09: the From test follows the upward match
+
+Under draft -09 (and Mail::DKIM2 0.29's signer, contract E3.4) a d= below
+the From domain makes From Authentic unless the From domain's Domain
+Policy Record says f=strict. The unrewritten author From test now checks
+both: refused with f=strict, signed with no record. The helpers give an
+empty policy source, so no test makes a live DNS lookup.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ t/DKIM2.t | 20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/t/DKIM2.t b/t/DKIM2.t
+index 7add00581..f99f872d2 100644
+--- a/t/DKIM2.t
++++ b/t/DKIM2.t
+@@ -1009,14 +1009,17 @@ sub mta_sign { my ($w, $d, %o) = @_;
+         $w = Mail::DKIM2::Common::fold_header(
+             'Message-Instance: ' . $mi->as_string) . "\r\n" . $w;
+     }
++    # No Domain Policy Record anywhere unless a test gives one (draft -09
++    # section 3.8): never a live DNS lookup.
+     my $s = Mail::DKIM2::Signer->new(Domain => $d, Selector => 's',
+-        Key => key_for($d), Algorithm => 'ed25519-sha256', %o);
++        Key => key_for($d), Algorithm => 'ed25519-sha256',
++        PolicyCallback => sub { [] }, %o);
+     $s->load($w);
+     return (undef, $s->result_detail) unless ($s->result // '') eq 'signed';
+     return ($s->as_string . "\r\n" . $w);
+ }
+ sub mta_verify { my $w = shift;
+-    my $v = Mail::DKIM2::Verifier->new(PubkeyCallback => sub {
++    my $v = Mail::DKIM2::Verifier->new(PolicyCallback => sub { [] }, PubkeyCallback => sub {
+         my $k = $KEY{$_[0]->domain} or return undef;
+         Crypt::PK::Ed25519->new(\$k->export_key_der('public')) })->load($w);
+     return ($v->result, $v->result_detail) }
+@@ -1136,11 +1139,16 @@ subtest '-07: unsigned post: From rewritten, one m=1 with a Recipe back' => sub
+     my $b = Sympa::Message->new($m->to_string, context => $l);
+     ok Sympa::DKIM2::egress_context($b)->{unsigned}, 'context marked unsigned';
+ 
+-    # Unchanged From: the list host may not sign it (From not Authentic).
++    # Unchanged From a@example.org under d=mail.example.org: draft -09 makes
++    # it Authentic (d= below the From domain) unless example.org's Domain
++    # Policy Record says f=strict, so the list host may sign it only then.
+     my $w = through($unsigned, undef);
+-    my (undef, $why) = mta_sign($w, 'mail.example.org');
+-    like $why // '', qr/From header field is not Authentic for d=mail\.example\.org/,
+-        'author From: the MTA refuses';
++    my (undef, $why) = mta_sign($w, 'mail.example.org',
++        PolicyCallback => sub { ['v=DKIM1; f=strict'] });
++    like $why // '', qr/From header field is not Authentic for d=mail\.example\.org: From example\.org forbids subdomain signing/,
++        'author From, parent f=strict: the MTA refuses';
++    my ($ok) = mta_sign($w, 'mail.example.org');
++    ok $ok, 'author From, no policy record: the MTA may sign (-09)';
+ 
+     $w = through($unsigned, sub { $_[0]->dmarc_protect });
+     my @mi = $w =~ /^Message-Instance: (m=\d+);/mg;

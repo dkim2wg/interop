@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
 Date: Wed, 28 Oct 2026 09:48:58 +0100
-Subject: [PATCH 6/7] DKIM2 draft -08: requires Mail::DKIM2 0.28
+Subject: [PATCH 6/8] DKIM2 draft -08: requires Mail::DKIM2 0.28
 
 Draft -08 hashes Auto-Submitted and VBR-Info, which Sympa's own notices
 carry, so an instance computed by an older Mail::DKIM2 would not verify
