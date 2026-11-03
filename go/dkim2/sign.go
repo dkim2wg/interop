@@ -279,16 +279,55 @@ func LoadPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 // checkSignerFrom is §12.4 for a signer about to sign as d: when it is
 // signing the original message (no upstream signature covers anything) or
 // an unsigned Message-Instance (m= above covered) changed From, the current
-// From must be Authentic for d (§11).
-func checkSignerFrom(headers []Header, mis []*MessageInstance, covered int, d string) error {
+// From must be Authentic for d (§11), checked as contract E3.4 says.
+func checkSignerFrom(headers []Header, mis []*MessageInstance, covered int, opts SignOptions) error {
 	need := covered == 0
 	for _, mi := range mis {
 		if _, changed := fromRecipe(mi); changed && mi.Version > covered {
 			need = true
 		}
 	}
-	if need && !fromAuthentic(fromFields(headers), d) {
-		return fmt.Errorf("not signing: From header field is not Authentic for d=%s", d)
+	if !need {
+		return nil
+	}
+	return signerFromError(fromFields(headers), opts)
+}
+
+// signerFromError is contract E3.4: a From at or below d= is Authentic with
+// no lookup; one above it (d= a subdomain of the From domain) needs the
+// From domain's Domain Policy Record, from the verifier's policy source
+// (SignOptions.Policy, else the Fetcher when it is a PolicyFetcher, else
+// real DNS).  An open record signs; strict (or malformed), multiple
+// records or a temporary failure refuse with the reason appended.
+func signerFromError(froms []Header, opts SignOptions) error {
+	d := opts.Domain
+	refuse := fmt.Errorf("not signing: From header field is not Authentic for d=%s", d)
+	if len(froms) != 1 || commaOutsideQuotes(froms[0].Value) {
+		return refuse
+	}
+	addr, ok := fromMailbox(froms[0].Value)
+	if !ok {
+		return refuse
+	}
+	dom, lit := domainOf(addr)
+	if lit {
+		return refuse
+	}
+	sd := toALabel(strings.TrimSuffix(strings.ToLower(trimFWS(d)), "."))
+	if relaxedMatch(dom, sd) {
+		return nil
+	}
+	if !relaxedMatch(sd, dom) {
+		return refuse
+	}
+	src := policySource(opts.Fetcher, VerifyOptions{Policy: opts.Policy})
+	switch newPolicyCache(src).get(dom) {
+	case policyTemp:
+		return fmt.Errorf("%w: policy for %s unavailable", refuse, dom)
+	case policyMultiple:
+		return fmt.Errorf("%w: multiple records for %s policy", refuse, dom)
+	case policyStrict:
+		return fmt.Errorf("%w: From %s forbids subdomain signing", refuse, dom)
 	}
 	return nil
 }
@@ -321,14 +360,15 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 		}
 	}
 	if !chain {
-		return checkSignerFrom(headers, mis, covered, opts.Domain)
+		return checkSignerFrom(headers, mis, covered, opts)
 	}
 	fetcher := opts.Fetcher
 	if fetcher == nil {
 		fetcher = &NetKeyFetcher{}
 	}
 	results, err := VerifyFull(bytes.NewReader(raw), fetcher,
-		VerifyOptions{SkipTimestampCheck: opts.SkipTimestampCheck, Outbound: true, Signer: opts.Domain})
+		VerifyOptions{SkipTimestampCheck: opts.SkipTimestampCheck, Outbound: true, Signer: opts.Domain,
+			Policy: opts.Policy})
 	if err != nil {
 		status := "fail"
 		if strings.HasPrefix(err.Error(), "PERMERROR") {
@@ -342,5 +382,5 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 		}
 		return fmt.Errorf("not signing: upstream DKIM2 chain result=fail i=%d d=%s: %w", r.Sequence, r.Domain, r.Error)
 	}
-	return checkSignerFrom(headers, mis, covered, opts.Domain)
+	return checkSignerFrom(headers, mis, covered, opts)
 }
