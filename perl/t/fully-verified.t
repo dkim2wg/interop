@@ -83,6 +83,18 @@ sub verify {
        'structure before the null');
 }
 {
+    # Two nulls: the lowest m= is named, the instances being checked in
+    # ascending m= with their other Recipe faults (contract E2).
+    my $two = list_post(1);
+    my $mod = $two . "more$EOL";
+    my $mi3 = Mail::DKIM2::MessageInstance->calculate(Email::MIME->new($mod), Email::MIME->new($two));
+    $mi3->set_null_body_recipe;
+    my $three = sign_as("Message-Instance: " . $mi3->as_string . $EOL . $mod,
+        'test3.dkim2.com', 'user@test3.dkim2.com', 'user@test4.dkim2.com');
+    is(verify($three)->result_detail, 'permerror (PERMERROR: Message-Instance m=2 has a null recipe)',
+       'two nulls: the lowest is named');
+}
+{
     my $v = verify(list_post(0), HeadersOnly => 1);
     is($v->result, 'pass', 'HeadersOnly: pass') or diag $v->details;
     ok(!$v->fully_verified, '... no body hash was checked: not fully verified');

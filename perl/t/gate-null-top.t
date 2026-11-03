@@ -93,10 +93,12 @@ my %cb = (PubkeyCallback => DKIM2TestKeys::pubkey_callback());
     {
         local $SIG{__WARN__} = sub { push @warn, @_ };
         $g = Mail::DKIM2::Gate->check($msg, %cb, AllowNullBodyRecipe => 0);
+        is(scalar @warn, 0, 'AllowNullBodyRecipe => 0 (as hm passes it) does not warn');
+        Mail::DKIM2::Gate->check($msg, %cb, AllowNullBodyRecipe => 1);
         Mail::DKIM2::Gate->check($msg, %cb, AllowNullBodyRecipe => 1);
     }
     ok($g->{ok}, 'AllowNullBodyRecipe => 0 no longer refuses');
-    is(scalar @warn, 1, 'AllowNullBodyRecipe warns, once per process');
+    is(scalar @warn, 1, 'AllowNullBodyRecipe => 1 warns, once per process');
     like($warn[0] // '', qr/AllowNullBodyRecipe is deprecated and does nothing/, '... saying so');
 }
 

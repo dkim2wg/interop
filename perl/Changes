@@ -15,7 +15,9 @@ Revision history for Mail::DKIM2
           signed. Gate's AllowNullBodyRecipe, dkim2-milter's and
           dkim2sign's --allow-null-body-recipe and DKIM2Sign's
           allow_null_body_recipe are deprecated: still accepted, they
-          warn once and do nothing. The gate no longer gives reason
+          do nothing, and a true value warns once. A caller passing
+          AllowNullBodyRecipe => 0 now signs its own null where it used
+          to refuse it. The gate no longer gives reason
           "null-body-recipe". A null that arrived already signed fails the
           upstream verification and is refused (upstream-chain).
         - Authentic From, upwards (sections 3.8, 7.1 item 4, 11.1, 14.8):
@@ -45,6 +47,8 @@ Revision history for Mail::DKIM2
         - New check: "PERMERROR: DKIM2-Signature i=1 has an exploded flag",
           before any key is fetched.
         - X-DKIM2-Info: draft=ietf-dkim-dkim2-spec-09 (debug-header-03).
+        - Key and policy record parsing trims white space in linear time
+          (a TXT record is whatever the signer's DNS serves).
 
 0.28    2026-10-28
         draft-ietf-dkim-dkim2-spec-08. Changes what is hashed and what

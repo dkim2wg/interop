@@ -35,15 +35,20 @@ it out in one go.
 - **Order:** this is a per-instance Recipe check, made in the same slot as
   `recipe <path> is invalid` for that instance and immediately after it. So it
   comes after the whole-document JSON checks and the step checks of that same
-  instance, and every C9 structure error (a..h) still wins. If several
-  instances hold a null, the error names the first instance the walk reaches,
-  that is the highest m=, as with the other Recipe errors.
+  instance, and every C9 structure error (a..h) still wins. The §14.2 content
+  checks visit instances in ascending m=, so if several instances hold a null
+  the LOWEST m= is named, and a lower instance's own Recipe fault beats a
+  higher instance's null (vectors null-two, malformed-body-recipe-below-null).
+  A signer's own view of the chain (Perl AllowUnsignedMI/MidProcess) skips the
+  check for instances no signature covers yet.
 - The check doesn't depend on whether the body below could have been
   checked. A null at the top instance with nothing below it is still a
   PERMERROR (spec text: "a PERMERROR will result").
 - `fully_verified` (in every language) becomes a deprecated accessor: true
-  exactly when the result is PASS, and in Perl's HeadersOnly/InstancesOnly
-  modes false as before. Validate.pm drops its "not fully verified" summary
+  exactly when the result is PASS, except that it stays false in Perl's
+  HeadersOnly/InstancesOnly modes. A deprecated option that is still accepted
+  warns only when it is set to a true value (hm passes
+  `AllowNullBodyRecipe => 0` on every call). Validate.pm drops its "not fully verified" summary
   suffix. The verify page and validator drop their display of the flag.
 - **Signers sign over a null** (Bron, 2026-11-03, revised: "just sign it, it
   will PERMERROR regardless but at least we've signed our header changes"):
@@ -72,11 +77,12 @@ The pairs, and which From each signature is checked against, are unchanged
 from -08 (Ruling 19). For each pair, in i order, the first failing step is
 the result for the pair, and the first failing pair is the message's result:
 
-1. From values that don't give exactly one mailbox, counting every From
-   field (two fields, a group, or a list of two or more addresses) give
-   `FAIL: DKIM2-Signature i=<x> From has more than one address`. Zero
-   mailboxes, or one with no "@", give `FAIL: DKIM2-Signature i=<x> matching
-   From is not authentic`.
+1. More than one From field, or a value with a "," outside quotes and
+   comments (a list of addresses, or a group holding more than one), gives
+   `FAIL: DKIM2-Signature i=<x> From has more than one address`. No From
+   field, a group without a ",", a value with no "@", or one that is not a
+   mailbox at all give `FAIL: DKIM2-Signature i=<x> matching From is not
+   authentic`. (Perl Common::from_mailbox is the reference.)
 2. A domain literal gives `FAIL: DKIM2-Signature i=<x> From uses a domain
    literal`.
 3. The downward match: relaxed_domain_match(From-domain, d=) PASS means the
@@ -102,14 +108,18 @@ This is also the name the lookup uses.
 - Concatenate each RR's strings with nothing in between. Keep only the
   records whose first tag is `v` with the value exactly `DKIM1`. The check is
   case-sensitive and allows WSP around `=` and before the first tag. Discard
-  everything else.
+  everything else. Trim WSP in linear time: the record is attacker-served
+  (up to 64 KB), and a naive trailing-WSP regex is quadratic.
 - No record left, NXDOMAIN or NODATA: subdomains are authorized.
 - More than one record left: PERMERROR, as above.
 - One record left: parse it as a tag=value list using the same parser and
   rules as key records (duplicate tags are a syntax error, tag names are
   case-sensitive, unknown tags are ignored). `f=` is a colon-separated list
   of flags with [FWS] around each `:`. Strict means the flag `strict` (exact,
-  case-sensitive) is in that list.
+  case-sensitive) is in that list. An `f=` that breaks the ABNF (an empty
+  member such as `f=strict:` or `f=a::b`, or a member that is not a
+  hyphenated-word: `[A-Za-z]([A-Za-z0-9-]*[A-Za-z0-9])?`) is a malformed
+  record, and so strict. An empty `f=` is no flags.
 - **A record that begins v=DKIM1 but fails to parse is treated as strict**
   (fail closed; the spec gives no string for it; Bron agreed 2026-11-03). It
   reports the same FAIL, `From <dom> forbids subdomain signing`.
@@ -170,7 +180,8 @@ ones may.
 | (none) | `PERMERROR: DKIM2-Signature i=1 has an exploded flag` |
 
 - **Exploded at i=1:** a per-field validity check on the i=1 signature, made
-  in C9 step d (`_sig_unusable`), after the tag missing/unexpected checks and
+  in the §14.2 per-signature field checks (Perl `_check_sig_field`), after
+  the tag missing/unexpected checks and
   before the duplicate-selector check (the spec's listing order). It is a
   header well-formedness check, made before any key fetch, hashing or signing
   work. `f=` holding `exploded` anywhere in its list counts.

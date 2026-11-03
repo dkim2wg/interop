@@ -1260,7 +1260,7 @@ sub details {
 # hashes cannot be, nor a HeadersOnly or InstancesOnly verification.
 sub fully_verified {
     my ($self) = @_;
-    return ($self->{result} // '') eq 'pass' && !$self->{_body_unchecked}
+    return ($self->{result} // '') eq 'pass'
         && !$self->{HeadersOnly} && !$self->{InstancesOnly} ? 1 : 0;
 }
 

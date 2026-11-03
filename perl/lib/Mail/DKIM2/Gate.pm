@@ -128,7 +128,7 @@ sub _top_has_nd {
 
 # AllowNullBodyRecipe is retired (0.29, -09 contract E2): this hop's own
 # null is always signed. Still accepted, so an existing caller does not
-# croak, but warned about once per process.
+# croak; a true value is warned about once per process.
 my $warned_allow_null;
 sub _deprecated_allow_null {
     return if $warned_allow_null++;
@@ -141,7 +141,9 @@ sub check {
     Mail::DKIM2::Common::_check_options("$class->check", \%o,
         qw(SigningDomain AllowNullBodyRecipe SkipTimestampCheck IgnorePrefixes
            PubkeyCallback PolicyCallback Resolver VerifyResult));
-    _deprecated_allow_null() if exists $o{AllowNullBodyRecipe};
+    # Only a true value asks for the retired behaviour: hm's handler passes
+    # AllowNullBodyRecipe => 0 on every call.
+    _deprecated_allow_null() if $o{AllowNullBodyRecipe};
 
     # A filehandle is read a piece at a time: the header fields here, the body
     # straight into the Verifier below, so the message is never held whole.

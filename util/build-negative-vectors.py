@@ -227,6 +227,7 @@ draft -08 (docs/superpowers/specs/2026-10-28-dkim2-spec-08-design.md):
   from-domain-literal.eml          -- a domain literal
   exploded-i1.eml                  -- f=exploded at i=1
   key-rsa-too-short.eml            -- a 512-bit RSA key: too short
+  null-two.eml                     -- nulls at m=2 and m=3: m=2 is named
 """
 import base64
 import json
@@ -1946,6 +1947,19 @@ def build_exploded_i1():
     return out + b"".join(x + b"\r\n" for x in h) + b"\r\n" + b
 
 
+def build_null_two():
+    """E2: null body Recipes at m=2 and m=3: the lowest is named, as the
+    instances are checked in ascending m=."""
+    headers, body = load_base()
+    h2 = _subject_prefixed(headers, b"list")
+    b2 = body + b"rewritten by list\r\n"
+    return _null_body_chain([
+        (headers, body),
+        (h2, b2, _null_body_recipe),
+        (_subject_prefixed(h2, b"fwd"), b2 + b"rewritten again\r\n", _null_body_recipe),
+    ])
+
+
 def build_key_rsa_too_short():
     """E5: signed with a 512-bit RSA key published as rsa512 (test zone)."""
     h, b = load_base()
@@ -2090,6 +2104,7 @@ FIXTURES = {
     "from-domain-literal.eml": build_from_domain_literal,
     "exploded-i1.eml": build_exploded_i1,
     "key-rsa-too-short.eml": build_key_rsa_too_short,
+    "null-two.eml": build_null_two,
 }
 
 

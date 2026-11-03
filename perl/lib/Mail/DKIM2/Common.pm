@@ -1000,7 +1000,7 @@ sub _parse_dns_tag_list {
         my ($name, $value) = $spec =~ /\A[ \t\r\n]*([A-Za-z][A-Za-z0-9_]*)[ \t\r\n]*=(.*)\z/s
             or return;
         return if exists $tag{$name};
-        $value =~ s/\A[ \t\r\n]+|[ \t\r\n]+\z//g;
+        $value = _trim_wsp($value);
         # Every value, unknown tags' included, must fit the tag-list grammar
         # (RFC 6376 §3.2 VALCHAR): ignoring a tag comes after parsing it
         # (follow-up review F5).
@@ -1010,6 +1010,17 @@ sub _parse_dns_tag_list {
     }
     return unless @order;
     return (\%tag, \@order);
+}
+
+# $s without leading or trailing WSP, in linear time: a TXT record is
+# whatever the signer's DNS serves (up to 64 KB), and a trailing-WSP match
+# tried at every position of a long inner run of spaces is quadratic. The
+# lookbehind starts it only at the beginning of a run.
+sub _trim_wsp {
+    my ($s) = @_;
+    $s =~ s/\A[ \t\r\n]+//;
+    $s =~ s/(?<![ \t\r\n])[ \t\r\n]+\z//;
+    return $s;
 }
 
 # The value of a TXT record's first tag when that tag is "v", else undef:
@@ -1044,7 +1055,7 @@ sub domain_policy {
     my ($tag) = _parse_dns_tag_list($dpr[0]) or return 'strict';
     my $f = $tag->{f};
     return 'open' unless defined $f && length $f;
-    my @flags = map { s/\A[ \t\r\n]+|[ \t\r\n]+\z//gr } split /:/, $f, -1;
+    my @flags = map { _trim_wsp($_) } split /:/, $f, -1;
     return 'strict' if grep { !/\A[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?\z/ } @flags;
     return (grep { $_ eq 'strict' } @flags) ? 'strict' : 'open';
 }
