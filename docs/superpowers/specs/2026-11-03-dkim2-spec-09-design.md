@@ -56,13 +56,12 @@ it out in one go.
     don't break, but they do nothing and warn once that they are deprecated.
     `not-signed=null-body-recipe` goes away. Remove the options from
     deploy/examples and SERVER.md.
-  - Upstream: the signer's gate verifies the inbound chain, which now gives
-    `has a null recipe` for a null that arrived signed. The gate treats that
-    one PERMERROR as no refusal. It still runs the other checks the walk
-    can make (the signatures, header hashes, the body hashes above the
-    null, Chain of Custody and From) and refuses on any other error, as
-    today. *Reading: Bron's "sign it" applied to an upstream null as well as
-    our own.*
+  - Only OUR OWN nulls (Bron, 2026-11-03): this covers an unsigned instance
+    above every valid signature, which this host's list manager added. A null
+    that arrived already signed fails upstream verification (`has a null
+    recipe`), and the gate refuses it as `upstream-chain`, like any other
+    broken upstream chain. In dkim2-milter that is the existing path for a
+    message carrying a DKIM2-Signature: reject 550 5.7.1 "not signing: ...".
   - The DSN generator never carries a null-Recipe message, as already the case.
 
 ## E3. Authentic From: up/down match and the Domain Policy Record

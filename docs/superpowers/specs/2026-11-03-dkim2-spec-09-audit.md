@@ -161,3 +161,4 @@ guide on null Recipes and NONE, and the DPR in the key-publishing text).
    but at least we've signed our header changes"). The AllowNullBodyRecipe behaviour
    becomes the default and the option a no-op. A malformed v=DKIM1 DPR fails closed
    (treated as strict).
+7. (2026-11-03) Sign over our OWN nulls only. A signed null from upstream is refused as upstream-chain.
