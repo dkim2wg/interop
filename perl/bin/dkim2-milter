@@ -394,8 +394,8 @@ sub cb_eom {
         my $message_with_ar = $info_raw . $ar_raw . $message;
 
         # Insert the headers into the milter output
-        $ctx->insheader('Authentication-Results', $ar_value, 0);
-        $ctx->insheader('X-DKIM2-Info', _milter_value($info_value), 0);
+        $ctx->insheader('Authentication-Results', $ar_value, 1);
+        $ctx->insheader('X-DKIM2-Info', _milter_value($info_value), 1);
 
         # Compute MI from the message that includes A-R
         my $mi_header;
@@ -426,11 +426,11 @@ sub cb_eom {
         my $snapshot = $arrival;
 
         if ($mi_header) {
-            $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
+            $ctx->insheader('Message-Instance', _milter_value($mi_header), 1);
             my ($mi_ver) = $mi_header =~ /m=(\d+)/;
             $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$mi_ver",
                 hc => $mi_info{hc}, hn => $mi_info{hn},
-                snaps => $token && $snapshot_store->rel_path_for_mi(_snapshot_key($token))), 0);
+                snaps => $token && $snapshot_store->rel_path_for_mi(_snapshot_key($token))), 1);
             warn "dkim2-milter: added MI header for $msgid\n";
         }
 
@@ -477,12 +477,12 @@ sub cb_eom {
                 for (my $o = 0; $o < length $body; $o += 65535) {
                     $ctx->replacebody(substr($body, $o, 65535));
                 }
-                $ctx->insheader('Message-Instance', _milter_value($wrap_mi), 0);
+                $ctx->insheader('Message-Instance', _milter_value($wrap_mi), 1);
                 my ($wrap_ver) = $wrap_mi =~ /m=(\d+)/;
-                $ctx->insheader('X-DKIM2-Info', _milter_value(_dkim2_info("wrap-single-part")), 0);
+                $ctx->insheader('X-DKIM2-Info', _milter_value(_dkim2_info("wrap-single-part")), 1);
                 $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$wrap_ver",
                     hc => $wrap_info{hc}, hn => $wrap_info{hn},
-                    snaps => $snapshot_store->rel_path_for_mi(_snapshot_key($token))), 0);
+                    snaps => $snapshot_store->rel_path_for_mi(_snapshot_key($token))), 1);
                 warn "dkim2-milter: wrapped $msgid as m=$wrap_ver\n";
                 $snapshot = "Message-Instance: $wrap_mi$EOL" . $wrap->{message};
             }
@@ -492,7 +492,7 @@ sub cb_eom {
         # random token, and name it on the message for the outbound milter.
         if (defined $snapshot && $snapshot_store) {
             $snapshot_store->store(_snapshot_key($token), $snapshot);
-            $ctx->insheader('X-DKIM2-Snapshot', $token, 0);
+            $ctx->insheader('X-DKIM2-Snapshot', $token, 1);
         }
     }
 
@@ -619,12 +619,12 @@ sub cb_eom {
         } elsif ($gate->{reason} && $gate->{reason} eq 'broken-mi-chain') {
             warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
             $ctx->insheader('X-DKIM2-Info',
-                _milter_value(_dkim2_info("not-signed=broken-mi-chain")), 0);
+                _milter_value(_dkim2_info("not-signed=broken-mi-chain")), 1);
             _remove_unsigned_instances($ctx, $priv, $msgid);
         } elsif ($gate->{reason}) {
             warn "dkim2-milter: not signing $msgid: $gate->{message}\n";
             $ctx->insheader('X-DKIM2-Info',
-                _milter_value(_dkim2_info("not-signed=$gate->{reason}")), 0);
+                _milter_value(_dkim2_info("not-signed=$gate->{reason}")), 1);
             _remove_unsigned_instances($ctx, $priv, $msgid);
         } else {
             # Chain is valid (or there is no upstream chain) — proceed.
@@ -680,20 +680,20 @@ sub cb_eom {
                     my $recomp_from  = $mi_info{strip_mi_versions}[0] - 1;
                     $ctx->insheader('X-DKIM2-Info', $mi_info{restart}
                         ? _dkim2_info("restarted-unsigned-mi=$stripped_str")
-                        : _dkim2_info("stripped-broken-mi=$stripped_str,recomputed-from=m$recomp_from"), 0);
+                        : _dkim2_info("stripped-broken-mi=$stripped_str,recomputed-from=m$recomp_from"), 1);
                 }
                 if ($mi_header) {
-                    $ctx->insheader('Message-Instance', _milter_value($mi_header), 0);
+                    $ctx->insheader('Message-Instance', _milter_value($mi_header), 1);
                     my ($mi_ver) = $mi_header =~ /m=(\d+)/;
                     $ctx->insheader('X-DKIM2-Info', _dkim2_info("mi-m=$mi_ver",
                         hc => $mi_info{hc}, hn => $mi_info{hn},
-                        snapf => $mi_info{snapf}), 0);
+                        snapf => $mi_info{snapf}), 1);
                     warn "dkim2-milter: added MI header for $msgid\n";
                 }
 
-                $ctx->insheader('DKIM2-Signature', _milter_value($sig_header), 0);
+                $ctx->insheader('DKIM2-Signature', _milter_value($sig_header), 1);
                 $ctx->insheader('X-DKIM2-Info',
-                    _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 0);
+                    _dkim2_info("sign d=$sign_config->{domain} a=$sign_config->{algorithm}"), 1);
                 warn "dkim2-milter: signed $msgid d=$sign_config->{domain} "
                    . "a=$sign_config->{algorithm} sel=$sign_config->{selector}\n";
                 # Informational: we signed over this hop's own null body
@@ -701,7 +701,7 @@ sub cb_eom {
                 # sees this hop's instance as unsigned too). The message
                 # will PERMERROR downstream, but our header changes are signed.
                 $ctx->insheader('X-DKIM2-Info',
-                    _milter_value(_dkim2_info("null-body-recipe")), 0)
+                    _milter_value(_dkim2_info("null-body-recipe")), 1)
                     if $gate->{unsigned_null};
             }
         }
@@ -1012,7 +1012,7 @@ sub _remove_unsigned_instances {
     return unless @gone;
     $ctx->chgheader('Message-Instance', $_->[0], '') for reverse @gone;
     my $list = join(',', map { "m=$_->[1]" } sort { $a->[1] <=> $b->[1] } @gone);
-    $ctx->insheader('X-DKIM2-Info', _milter_value(_dkim2_info("removed-unsigned-mi=$list")), 0);
+    $ctx->insheader('X-DKIM2-Info', _milter_value(_dkim2_info("removed-unsigned-mi=$list")), 1);
     warn "dkim2-milter: not signing $msgid: removed unsigned $list\n";
 }
 
