@@ -46,6 +46,8 @@ for my $case (
         'body lie: innocent-looking truncating copy-range hides an edited line'],
     ['chain-fraud-mi-rewrite.eml',    qr/Message-Instance m=1 header hash sha256 mismatch/,
         'history lie: header Recipe rewrites the m=1 Message-Instance'],
+    ['chain-fraud-mi-rewrite-wsp.eml', qr/Message-Instance m=2 contains invalid JSON/,
+        'history lie under "message-instance ": not a field name'],
 ) {
     my ($file, $re, $desc) = @$case;
     my ($rc, $out) = validate($file);

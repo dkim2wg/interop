@@ -136,7 +136,7 @@ sub plan {
         next unless $lists;
         my %next = %$lists;
         for my $h (sort keys %$rh) {
-            my $lc = lc $h;
+            my $lc = Mail::DKIM2::Common::field_name($h);
             my $cur = $next{$lc} || [];
             my $count = 0;
             $count += $_->[2] - $_->[1] + 1 for @$cur;

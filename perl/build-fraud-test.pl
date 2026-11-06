@@ -14,6 +14,8 @@
 #                                  declares no content change but rewrites
 #                                  the m=1 Message-Instance to one hashed over
 #                                  the new content (a forged history).
+#   chain-fraud-mi-rewrite-wsp.eml the same under the key "message-instance "
+#                                  (not a field name: invalid JSON).
 #
 # All signed d=test1.dkim2.com s=sel1 (real DNS published) with NO
 # Authentication-Results / Delivered-To, so the only thing that can trip a
@@ -178,6 +180,15 @@ EOH3
     $mi2->{bits}{rh} = { 'message-instance' => [ " $forged" ] };
     say "fraud-mi-rewrite rh = { message-instance => [forged m=1] }";
     (my $s = "Message-Instance: " . $mi2->as_string()) =~ s/^Message-Instance: //;
+    my $c2 = Email::MIME->new($c->as_string);
     $c->header_raw_prepend('Message-Instance', $s);
     sign_and_write($c, 'chain-fraud-mi-rewrite.eml');
+
+    # The same under a key with WSP in it, "message-instance ": no field
+    # name, so invalid JSON -- where name matching that drops WSP before a
+    # colon would take it for Message-Instance.
+    $mi2->{bits}{rh} = { 'message-instance ' => [ " $forged" ] };
+    (my $s2 = "Message-Instance: " . $mi2->as_string()) =~ s/^Message-Instance: //;
+    $c2->header_raw_prepend('Message-Instance', $s2);
+    sign_and_write($c2, 'chain-fraud-mi-rewrite-wsp.eml');
 }

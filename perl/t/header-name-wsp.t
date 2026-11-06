@@ -75,4 +75,55 @@ for my $ws (' ', "\t") {
     is($r, 'pass', 'and is the same field without the WSP') or diag $d;
 }
 
+# A hop's own Recipe over such a field: the key is the field's name, as
+# hashing and undo group it ("comments", not "comments "), so the chain the
+# hop signs reverses -- through the undo walk and the plan alike.
+use Mail::DKIM2::Common qw(parse_mime);
+use Mail::DKIM2::HeaderPlan;
+sub hop {
+    my ($prev_raw, $edit) = @_;
+    my $prev = parse_mime($prev_raw);
+    $prev->header_raw_prepend('Message-Instance', Mail::DKIM2::MessageInstance->calculate($prev)->as_string);
+    my $cur = parse_mime($prev->as_string);
+    $edit->($cur);
+    my $mi2 = Mail::DKIM2::MessageInstance->calculate($cur, $prev);
+    $cur->header_raw_prepend('Message-Instance', $mi2->as_string);
+    my ($h) = split /\r\n\r\n/, $cur->as_string, 2;
+    my $hp = Mail::DKIM2::HeaderPlan->new("$h\r\n");
+    my @mis = map { Mail::DKIM2::MessageInstance->parse($_) }
+              sort { $b cmp $a } $hp->values('Message-Instance');
+    $hp->plan(@mis);
+    my ($plan_ok) = $mis[-1]->_check_hashes(1, sub { $hp->header_hash(1, $_[0]) // '' }, undef);
+    my ($undo_ok, $why) = Mail::DKIM2::MessageInstance->chain_verifies($cur->as_string);
+    return ([ sort keys %{ $mi2->{bits}{rh} || {} } ], $undo_ok, $plan_ok, $why);
+}
+{
+    my ($keys, $undo, $plan, $why) = hop("From: a\@x.example\r\nComments : one\r\nSubject: s\r\n\r\nbody\r\n",
+        sub { $_[0]->header_raw_prepend('Comments', 'two') });
+    is_deeply($keys, ['comments'], 'a field added beside "Comments :": key "comments"');
+    ok($undo, '  ... and the chain reverses on the undo walk') or diag $why;
+    ok($plan, '  ... and on the plan');
+}
+{
+    my ($keys, $undo, $plan, $why) = hop("From: a\@x.example\r\nSubject : old\r\n\r\nbody\r\n", sub {
+        my $hdrs = $_[0]->header_obj->{headers};
+        $hdrs->[$_ + 1] = ' new' for grep { $hdrs->[$_] eq 'Subject ' } map { 2 * $_ } 0 .. $#$hdrs / 2;
+    });
+    is_deeply($keys, ['subject'], '"Subject :" edited in place: key "subject"');
+    ok($undo, '  ... and the chain reverses on the undo walk') or diag $why;
+    ok($plan, '  ... and on the plan');
+}
+
+# A Recipe key is a header field name (-09 section 5): one with WSP in it
+# ("message-instance ") is not, and is invalid JSON -- it must not reach the
+# name matching, where it would be taken for Message-Instance and rewrite
+# the instances below (the forged history of t/fraud-detection.t).
+for my $key ("message-instance ", "message-instance\t", "subject ") {
+    my $r = MIME::Base64::encode_base64(JSON::PP->new->canonical->encode(
+        { h => { $key => [{ d => [' m=1; h=sha256:AAAA:AAAA'] }] } }), '');
+    my $mi = eval { Mail::DKIM2::MessageInstance->parse("m=2; h=sha256:AAAA:AAAA; r=$r") };
+    like($@, qr/m=2 contains invalid JSON/, "Recipe key \"\Q$key\E\" is invalid JSON");
+}
+use JSON::PP; use MIME::Base64 ();
+
 done_testing;

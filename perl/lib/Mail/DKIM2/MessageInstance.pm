@@ -447,6 +447,11 @@ sub parse {
             # A non-empty object (minProperties 1); never null (section 5.1).
             die $invalid unless ref $top{h} eq 'HASH' && %{$top{h}};
             my %rh;
+            # Each key is a header field name (-09 section 5): ftext, so no
+            # WSP. "message-instance " is not a name -- and, taken for one
+            # by name matching that drops WSP before a colon, would let a
+            # Recipe rewrite the instances below it.
+            die $invalid if grep { !/\A[\x21-\x39\x3B-\x7E]+\z/ } keys %{$top{h}};
             for my $h (sort keys %{$top{h}}) {
                 $rh{$h} = _decode_recipe_list($top{h}{$h}, $bad, 'h.' . _path_name($h));
             }
@@ -1027,12 +1032,15 @@ sub calculate {
 
     # calculate the header difference (always, even for UseEpilogue, since
     # wrapping changes Content-Type and we need rh to undo that)
-    my %all = map { lc($_) => 1 } ($current->header_names, $previous->header_names);
+    # Names as hashing and undo group them (field_name: "Subject :" is
+    # "subject"), so each Recipe key names the fields it is undone on.
+    my %all = map { Mail::DKIM2::Common::field_name($_) => 1 }
+              ($current->header_names, $previous->header_names);
     my %hdiff;
     for my $h (sort keys %all) {
         next if should_skip($h, $prefixes);
-        my @cur  = reverse $current->header_raw($h);
-        my @prev = reverse $previous->header_raw($h);
+        my @cur  = reverse Mail::DKIM2::Common::header_values($current, $h);
+        my @prev = reverse Mail::DKIM2::Common::header_values($previous, $h);
         # Same number of instances AND the same values: zero instances and
         # one empty instance both join to "", and removing an empty field
         # (a bare "Bcc:") is still a change the Recipe must record.
@@ -1338,7 +1346,7 @@ sub undo {
             # name, of which there are none, and what it rebuilds is not hashed.
             # Applying it to the received fields would let a hop rewrite the
             # instances below its own -- a forged history the walk then checks.
-            if ($h =~ /\A(?:message-instance|dkim2-signature)\z/i) {
+            if (Mail::DKIM2::Common::field_name($h) =~ /\A(?:message-instance|dkim2-signature)\z/) {
                 _apply_recipe("$h header", $v, []);
                 next;
             }
