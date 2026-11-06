@@ -44,6 +44,8 @@ for my $case (
         'body lie: body changed, recipe declares no body change'],
     ['chain-fraud-body-truncate.eml', qr/body hash sha256 mismatch/,
         'body lie: innocent-looking truncating copy-range hides an edited line'],
+    ['chain-fraud-mi-rewrite.eml',    qr/Message-Instance m=1 header hash sha256 mismatch/,
+        'history lie: header Recipe rewrites the m=1 Message-Instance'],
 ) {
     my ($file, $re, $desc) = @$case;
     my ($rc, $out) = validate($file);

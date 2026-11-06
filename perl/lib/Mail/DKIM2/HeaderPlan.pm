@@ -28,6 +28,9 @@ use Mail::DKIM2::BodyPlan;
 # $header: the header fields as received, as one string, or as a list of
 # fields, each with its folded lines and line break (HeaderParser's
 # {headers}).
+# Fields that are never content: header Recipes do not reach them.
+my %NOT_CONTENT = map { $_ => 1 } qw(message-instance dkim2-signature);
+
 sub new {
     my ($class, $header, %opts) = @_;
     Mail::DKIM2::Common::_check_options("$class->new", \%opts, qw(IgnorePrefixes));
@@ -105,7 +108,11 @@ sub plan {
     my ($self, @mis) = @_;
     my $impl = Mail::DKIM2::MessageInstance::hash_algs();
     my $raw = $self->{raw};
-    my $lists = { map { $_ => [[0, 1, scalar @{$raw->{$_}}]] } keys %$raw };
+    # Message-Instance and DKIM2-Signature fields are not content (-09 section
+    # 6.2): a header Recipe naming one acts on content fields of that name, of
+    # which there are none, and never on the instances this walk checks.
+    my $lists = { map { $_ => [[0, 1, scalar @{$raw->{$_}}]] }
+                  grep { !$NOT_CONTENT{$_} } keys %$raw };
     # refaddr of a list => [the list, its canonical text]. Holding the list
     # keeps its address from being reused by a later level's list.
     my %text;
@@ -128,7 +135,6 @@ sub plan {
         my %next = %$lists;
         for my $h (sort keys %$rh) {
             my $lc = lc $h;
-            $self->{rewrites_instances} = 1 if $lc eq 'message-instance';
             my $cur = $next{$lc} || [];
             my $count = 0;
             $count += $_->[2] - $_->[1] + 1 for @$cur;
@@ -199,9 +205,10 @@ sub values_at {
     } @{ $lists->{$lc} || [] } ];
 }
 
-# rewrites_instances(): a header Recipe names Message-Instance. Undoing it
-# changes the instances below it, which this plan does not follow.
-sub rewrites_instances { return $_[0]->{rewrites_instances} ? 1 : 0 }
+# rewrites_instances(): always false since 0.31. A header Recipe naming
+# Message-Instance acts on content fields of that name, of which there are
+# none, so undoing it never changes the instances below it.
+sub rewrites_instances { return 0 }
 
 1;
 
@@ -289,9 +296,11 @@ version's From fields from it (-09 section 11). New in 0.23.
 
 =head2 rewrites_instances()
 
-True if a header Recipe names Message-Instance. Undoing one changes the
-instances the levels below it see, which a HeaderPlan does not follow; a
-caller uses the undo walk for such a message.
+Always false (since 0.31). Before, true if a header Recipe named
+Message-Instance, whose undo changed the instances below it. Those fields
+are not content (-09 section 6.2): a Recipe naming one acts on content
+fields of that name, of which there are none, so the instances are always
+the ones received.
 
 =head1 AUTHOR
 

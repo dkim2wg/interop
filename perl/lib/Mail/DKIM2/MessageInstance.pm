@@ -1325,6 +1325,15 @@ sub undo {
         for my $h (sort keys %$rh) {
             my $v = $rh->{$h};
             next unless defined $v;
+            # Message-Instance and DKIM2-Signature fields are not content (-09
+            # section 6.2): a Recipe naming one acts on content fields of that
+            # name, of which there are none, and what it rebuilds is not hashed.
+            # Applying it to the received fields would let a hop rewrite the
+            # instances below its own -- a forged history the walk then checks.
+            if ($h =~ /\A(?:message-instance|dkim2-signature)\z/i) {
+                _apply_recipe("$h header", $v, []);
+                next;
+            }
             my @old = reverse $msg->header_raw($h);
             my @new = _apply_recipe("$h header", $v, \@old);
             $msg->header_obj->header_set_reverse($h, @new);
