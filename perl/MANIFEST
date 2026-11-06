@@ -76,6 +76,7 @@ t/digest.t
 t/dns-temperror.t
 t/dsn.t
 t/duplicate-checks.t
+t/envelope.t
 t/error-strings.t
 t/examples.t
 t/fold-fws.t
@@ -90,6 +91,7 @@ t/gate-one-walk.t
 t/guide-links.t
 t/handler-close-cleanup.t
 t/hash-agility.t
+t/header-name-wsp.t
 t/header-plan.t
 t/headerparser.t
 t/ignore-prefixes.t
@@ -178,6 +180,7 @@ tests/expected/chain-fraud-body-truncate.eml
 tests/expected/chain-fraud-body.eml
 tests/expected/chain-fraud-control.eml
 tests/expected/chain-fraud-header.eml
+tests/expected/chain-fraud-mi-rewrite.eml
 tests/expected/chain-hop1-originator.eml
 tests/expected/chain-hop2-mailing-list.eml
 tests/expected/chain-hop3-relay-adds-Extra-Header.eml

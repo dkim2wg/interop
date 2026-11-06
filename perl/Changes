@@ -10,6 +10,29 @@ Revision history for Mail::DKIM2
         - Split: plan_copies and disclosed_addresses fold the domain only,
           keeping the local-part's case, so a Bcc to user@ never shares a
           copy (and an rt=) with a To: User@ that may be another mailbox.
+        - Security: a header Recipe naming Message-Instance could rewrite
+          the instances below it. The undo walk applied it to the received
+          fields and checked the lower hashes against what it rebuilt, so a
+          hop could replace a message wholesale, swap in an m=1 hashed over
+          its own content, and have the chain pass with the original
+          reported unchanged. Message-Instance and DKIM2-Signature fields
+          are not content (-09 section 6.2): a Recipe naming one acts on
+          content fields of that name, of which there are none (copying is
+          a Recipe error), as in the other implementations.
+          HeaderPlan->rewrites_instances is now always false.
+        - Verifier: new MailFrom and RcptTo options, the SMTP envelope. Given,
+          the top signature must match it (-09 section 14.4): MAIL FROM
+          equal to mf=, every RCPT TO in rt=, else fail ("MAIL FROM <x> did
+          not match" / "RCPT TO <x> did not match"). The DKIM2Verify
+          handler passes both (check_envelope, default on), as does
+          dkim2-milter in --mode inbound (--no-envelope-check for an
+          internal hop). Before, neither checked, and a message signed for
+          one recipient verified when replayed to another.
+        - A header field written with white space before its colon
+          ("From : x", RFC 5322 obsolete syntax) is a field of that name,
+          as -09 section 6.2 has it. Perl kept the white space in the name,
+          so such a From was hashed but escaped the From check. New
+          Common::field_name and header_values.
 
 0.30    2026-11-03
         - Signers no longer look the Domain Policy Record up by default
