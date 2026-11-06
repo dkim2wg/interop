@@ -40,6 +40,11 @@ Revision history for Mail::DKIM2
           MessageInstance->calculate dies rather than record a change to a
           field whose name is not one (a malformed "Y Bad:" line), which
           no verifier would accept.
+        - dkim2-milter: the verdict's detail in Authentication-Results is
+          an RFC 5322 comment with its "\", "(" and ")" quoted, printable
+          ASCII, at most 200 characters. It quotes signature fields as
+          written, so a crafted i= could close the comment and add text
+          that read as properties.
 
 0.30    2026-11-03
         - Signers no longer look the Domain Policy Record up by default

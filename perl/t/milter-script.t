@@ -1099,4 +1099,19 @@ sub info_has { my ($mods, $re) = @_; scalar grep { $_->{value} =~ $re } inserted
     like($ar ? $ar->{value} : '', qr/dkim2=pass/, 'envelope: --no-envelope-check does not check');
 }
 
+# --- The verdict's detail quotes signature fields: a crafted i= value must
+# not close the Authentication-Results comment and add properties ---
+{
+    my (undef, $sock_a) = spawn_milter(mode => 'inbound');
+    my $msg = "DKIM2-Signature: i=x)header.d=paypal.com(policy.dkim2=\"pass\"; m=1; t=1;"
+            . " d=test1.dkim2.com; s=sel1:rsa-sha256:AAAA\r\n" . $PLAIN;
+    my ($verdict, $mods) = run_milter(sock => $sock_a,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $msg);
+    my ($ar) = inserted($mods, 'Authentication-Results');
+    my $v = $ar ? $ar->{value} : '';
+    like($v, qr/\Alocalhost; dkim2=permerror \(/, 'A-R: permerror');
+    like($v, qr/i=x\\\)header\.d=paypal\.com\\\(policy/, 'A-R: the ( and ) of a quoted field are escaped');
+    unlike($v, qr/[^\\]\)header\.d=/, '  ... so the comment does not end early');
+}
+
 done_testing;

@@ -390,8 +390,8 @@ sub cb_eom {
         # Authentication-Results is not in the spec exclusion list so it
         # is included in the header hash.  The MI must be computed over
         # a synthetic message that already contains these headers.
-        my $ar_value = "localhost; dkim2=$result";
-        my $info_value = _dkim2_info("verify=$result");
+        my $ar_value = "localhost; dkim2=" . _ar_result($result);
+        my $info_value = _dkim2_info("verify=" . _ar_result($result));
         my $ar_raw = "Authentication-Results: $ar_value$EOL";
         # _dkim2_info() folds with bare LF (the milter wire form); the
         # message we stamp, snapshot and may wrap is CRLF throughout.
@@ -803,6 +803,22 @@ sub _gate_pubkey_cb {
 #
 # Fail closed: a verifier exception, at any step, is reported as temperror
 # (never pass) and logged at the end, rather than killing the callback.
+# A verdict ("fail (FAIL: ...)") as Authentication-Results carries it: the
+# result word, then the detail as an RFC 5322 comment. The detail quotes
+# signature fields (a bad i= or m= value, as written), so it is cut to
+# printable ASCII, its "\", "(" and ")" quoted, and kept short: a crafted
+# i= must not close the comment and add properties of its own.
+sub _ar_result {
+    my ($verdict) = @_;
+    my ($word, $detail) = ($verdict // '') =~ /\A([a-z]+)(?: \((.*)\))?\z/s
+        or return 'temperror (unreadable verdict)';
+    return $word unless defined $detail && length $detail;
+    $detail =~ s/[^\x20-\x7e]//g;
+    $detail = substr($detail, 0, 200) . '...' if length $detail > 200;
+    $detail =~ s/([\\()])/\\$1/g;
+    return "$word ($detail)";
+}
+
 sub _start_verify {
     my ($priv) = @_;
     my $raw_hdrs = $priv->{raw_hdrs};
