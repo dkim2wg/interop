@@ -21,6 +21,26 @@ int main(void) {
     assert(!tl->duplicate);
     taglist_free(tl);
 
+    /* A repeated name is flagged wherever it falls, compared exactly */
+    tl = tagparse("a=1; b=2; c=3; a=4", NULL);
+    assert(tl->duplicate);
+    taglist_free(tl);
+    tl = tagparse("m=1; M=2; mm=3", NULL);
+    assert(!tl->duplicate);
+    taglist_free(tl);
+    {   /* ...among thousands of tags (sorted, not a scan per tag) */
+        static char big[200000];
+        size_t o = 0;
+        for (int i = 0; i < 10000; i++) o += (size_t)sprintf(big + o, "t%d=x;", i);
+        tl = tagparse(big, NULL);
+        assert(!tl->duplicate);
+        taglist_free(tl);
+        sprintf(big + o, "t5000=y");
+        tl = tagparse(big, NULL);
+        assert(tl->duplicate);
+        taglist_free(tl);
+    }
+
     /* Multi-char tag names (mf=, rt=) */
     tl = tagparse("mf=dXNlckBleGFtcGxlLmNvbQ==;rt=PGE+,PGI+", NULL);
     assert(strcmp(tag_get(tl, "mf"), "dXNlckBleGFtcGxlLmNvbQ==") == 0);

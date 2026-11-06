@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <stdlib.h>
 #include "../dkim2_hash.h"
 
 int main(void) {
@@ -213,6 +214,44 @@ int main(void) {
                         assert(memcmp(got.d[a], want.d[a], dkim2_hash_alg_len(a)) == 0);
                 }
         }
+    }
+
+    /* -09 §6.2: WSP before the colon is deleted -- the name is the name */
+    {
+        char *c = dkim2_header_canon("Subject \t: hi\r\n");
+        assert(c && strcmp(c, "subject:hi\r\n") == 0);
+        free(c);
+        assert(dkim2_header_canon("Received : from x\r\n") == NULL);  /* ignored, as Received */
+        const char *a[] = { "Subject : hi\r\n", "From: a@b\r\n" };
+        const char *b[] = { "Subject: hi\r\n", "From: a@b\r\n" };
+        char ha[64], hb[64];
+        assert(dkim2_header_hash(a, 2, ha, sizeof ha) == 0);
+        assert(dkim2_header_hash(b, 2, hb, sizeof hb) == 0);
+        assert(strcmp(ha, hb) == 0);
+    }
+    /* The sort is stable on many fields: same-name fields keep their
+       bottom-up order whatever the count. */
+    {
+        enum { N = 5000 };
+        static char buf[N][32];
+        const char *fwd[N], *mixed[N];
+        for (int i = 0; i < N; i++) {
+            snprintf(buf[i], sizeof buf[i], "%s: %d\r\n", i % 2 ? "B" : "A", i);
+            fwd[i] = buf[i];
+        }
+        /* The same fields, the A's and B's interleaved differently but each
+           name's fields in the same relative order: same hash. */
+        int k = 0;
+        for (int i = 0; i < N; i += 2) mixed[k++] = buf[i];
+        for (int i = 1; i < N; i += 2) mixed[k++] = buf[i];
+        char h1[64], h2[64];
+        assert(dkim2_header_hash(fwd, N, h1, sizeof h1) == 0);
+        assert(dkim2_header_hash(mixed, N, h2, sizeof h2) == 0);
+        assert(strcmp(h1, h2) == 0);
+        /* ...and a different order within a name changes it */
+        const char *t = mixed[0]; mixed[0] = mixed[1]; mixed[1] = t;
+        assert(dkim2_header_hash(mixed, N, h2, sizeof h2) == 0);
+        assert(strcmp(h1, h2) != 0);
     }
 
     puts("hash: all tests passed");

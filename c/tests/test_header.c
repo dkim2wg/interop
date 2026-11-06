@@ -344,6 +344,41 @@ int main(void) {
         dkim2_mi_free(bigmi);
     }
 
+    /* -09 §2.14: r=, mf= and rt= are base64, strictly: nothing after the
+       padding, no character outside the alphabet, no empty list item, and
+       mf= is one path. A lenient decoder would read a different value from
+       the same signed field than a strict one. */
+    {
+        const char *base = "i=1; m=1; t=123; d=example.com; s=sel:rsa-sha256:XXXX; ";
+        const char *good[] = { "mf=PGFAYj4=; rt=PGFAYj4=",
+                               "mf=PGFAYj4=; rt=PGFAYj4=,PGNAZD4=",
+                               "mf=PGFAYj4=; rt= PGFAYj4= , PGNAZD4=", NULL };
+        const char *bad[] = { "mf=PGFAYj4=@@@; rt=PGFAYj4=",
+                              "mf=PGFAYj4=; rt=PGFAYj4=,,PGNAZD4=",
+                              "mf=PGFAYj4=; rt=PGFAYj4=,",
+                              "mf=PGFAYj4=; rt=,PGFAYj4=",
+                              "mf=PGFs!YWI+; rt=PGFAYj4=",
+                              "mf=PGFAYj4=,PGNAZD4=; rt=PGFAYj4=", NULL };
+        char v[512];
+        for (int k = 0; good[k]; k++) {
+            snprintf(v, sizeof v, "%s%s", base, good[k]);
+            dkim2_sig_t *g = dkim2_sig_parse(v);
+            if (!g) printf("should parse: %s\n", good[k]);
+            assert(g);
+            dkim2_sig_free(g);
+        }
+        for (int k = 0; bad[k]; k++) {
+            snprintf(v, sizeof v, "%s%s", base, bad[k]);
+            dkim2_sig_t *b = dkim2_sig_parse(v);
+            if (b) printf("should not parse: %s\n", bad[k]);
+            assert(!b);
+        }
+        assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB; r=e30=") != NULL);
+        assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB; r=e30=!!junk!!") == NULL);
+        assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB; r=e30=eyJiIjpudWxsfQ==") == NULL);
+        assert(dkim2_mi_parse("m=1; h=sha256:AAAA:BBBB; r=e3") == NULL);
+    }
+
     puts("header: all tests passed");
     return 0;
 }

@@ -223,6 +223,13 @@ dkim2_mi_t *dkim2_mi_parse_err(const char *value, char *errbuf, size_t errbufsz)
         }
     }
     v = tag_get(tl, "r");
+    if (v && !b64_is_strict(v)) {
+        /* -09 §2.14: strict base64; a lenient decoder stops at the first
+           '=' and could read another Recipe from the same signed field. */
+        if (errbuf && errbufsz)
+            snprintf(errbuf, errbufsz, "PERMERROR: Message-Instance m=%d syntax error", mi->m);
+        goto err;
+    }
     if (v) mi->r_raw = strdup(v);
     mi->raw_value = strdup(value);
     taglist_free(tl);
@@ -398,21 +405,26 @@ static int s_list_error(const char *v) {
     return rc;
 }
 
-/* An mf= or rt= value: comma-separated base64 items, each decoding to a
-   bracketed RFC 5321 path (-09 §10.5/§10.6: "The angle brackets MUST be
-   included"). */
-static int paths_ok(const char *v) {
-    char *copy = strdup(v), *save = NULL;
-    int ok = copy != NULL, any = 0;
-    for (char *tok = copy ? strtok_r(copy, ",", &save) : NULL; tok && ok;
-         tok = strtok_r(NULL, ",", &save)) {
+/* An mf= (one: single) or rt= value: comma-separated base64 items, each
+   strict base64 (-09 §2.14: nothing after the padding, nothing outside the
+   alphabet) decoding to a bracketed RFC 5321 path (-09 §10.5/§10.6: "The
+   angle brackets MUST be included"). An empty item -- a leading, trailing
+   or doubled comma -- is a syntax error, not skipped. */
+static int paths_ok(const char *v, int single) {
+    char *copy = strdup(v);
+    if (!copy) return 0;
+    int ok = 1, items = 0;
+    for (char *tok = copy; tok && ok; ) {
+        char *comma = strchr(tok, ',');
+        if (comma) *comma = '\0';
         unsigned char dec[512];
-        int n = b64_decode(tok, dec, sizeof dec - 1);
+        int n = b64_is_strict(tok) ? b64_decode(tok, dec, sizeof dec - 1) : -1;
         ok = n >= 2 && dec[0] == '<' && dec[n - 1] == '>';
-        any = 1;
+        items++;
+        tok = comma ? comma + 1 : NULL;
     }
     free(copy);
-    return ok && any;
+    return ok && (!single || items == 1);
 }
 
 /* -09 §12.5, §14.2 (contract E6): 1 when an f= value holds the flag
@@ -473,8 +485,8 @@ dkim2_sig_t *dkim2_sig_parse_err(const char *value, char *errbuf, size_t errbufs
         ;
     else if (tl && (tl->syntax_error || tl->duplicate || s_list_error(tag_get(tl, "s")) == -1 ||
                     (tag_get(tl, "t") && parse_t(tag_get(tl, "t"), &(uint64_t){0}) < 0) ||
-                    (tag_get(tl, "mf") && !paths_ok(tag_get(tl, "mf"))) ||
-                    (tag_get(tl, "rt") && !paths_ok(tag_get(tl, "rt")))))
+                    (tag_get(tl, "mf") && !paths_ok(tag_get(tl, "mf"), 1)) ||
+                    (tag_get(tl, "rt") && !paths_ok(tag_get(tl, "rt"), 0))))
         snprintf(errbuf, errbufsz, "PERMERROR: DKIM2-Signature i=%d syntax error", atoi(iv));
     else if (tl && missing_tag(tl, errbuf, errbufsz, atoi(iv)))
         ;
@@ -516,7 +528,7 @@ dkim2_sig_t *dkim2_sig_parse(const char *value) {
         if (!nd && !(mf && rt)) goto err;    /* need nd= or both mf=+rt= */
         if (nd) sig->nd = strdup(nd);
         /* Bracketed paths only (a syntax error otherwise). */
-        if ((mf && !paths_ok(mf)) || (rt && !paths_ok(rt))) goto err;
+        if ((mf && !paths_ok(mf, 1)) || (rt && !paths_ok(rt, 0))) goto err;
         if (mf) {
             unsigned char dec[512]; int n = b64_decode(mf, dec, sizeof dec);
             if (n < 0) goto err;

@@ -16,6 +16,7 @@
 int (*dkim2_prefetch_query_hook)(const char *qname, unsigned char *answer,
                                  int anslen, int *herr) = NULL;
 int dkim2_prefetch_timeout_ms = 5000;
+int dkim2_prefetch_live_max = 256;
 
 /* One lookup. Shared by the verifier and the thread doing the query: the
    last of the two to let go frees it, so a lookup that is not answered in
@@ -131,12 +132,14 @@ static int add_name(dkim2_prefetch_t *pf, const char *qname) {
     int rc = pthread_attr_init(&at);
     if (rc == 0) {
         pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+        /* At the cap no thread: the lookup is synchronous, if it is needed. */
         pthread_mutex_lock(&live_mu);
-        live++;
+        int room = live < dkim2_prefetch_live_max;
+        if (room) live++;
         pthread_mutex_unlock(&live_mu);
-        rc = pthread_create(&tid, &at, lookup_thread, e);
+        rc = room ? pthread_create(&tid, &at, lookup_thread, e) : EAGAIN;
         pthread_attr_destroy(&at);
-        if (rc != 0) {
+        if (rc != 0 && room) {
             pthread_mutex_lock(&live_mu);
             live--;
             pthread_mutex_unlock(&live_mu);
@@ -147,6 +150,13 @@ static int add_name(dkim2_prefetch_t *pf, const char *qname) {
         e->refs = 1;
     }
     return 0;
+}
+
+int dkim2_prefetch_live(void) {
+    pthread_mutex_lock(&live_mu);
+    int n = live;
+    pthread_mutex_unlock(&live_mu);
+    return n;
 }
 
 dkim2_prefetch_t *dkim2_prefetch_start(const dkim2_ctx_t *ctx) {

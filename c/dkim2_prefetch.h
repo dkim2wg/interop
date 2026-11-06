@@ -27,6 +27,14 @@ typedef struct dkim2_prefetch dkim2_prefetch_t;
 extern int (*dkim2_prefetch_query_hook)(const char *qname, unsigned char *answer,
                                         int anslen, int *herr);
 
+/* The most lookup threads running at once, across every message: a lookup
+   not answered in time is left to finish, so slow DNS and a stream of
+   messages must not pile threads up. Past it a lookup is not started and is
+   made synchronously when (if) it is needed. */
+extern int dkim2_prefetch_live_max;     /* default 256 */
+/* Lookup threads running now (tests). */
+int dkim2_prefetch_live(void);
+
 /* How long a prefetched answer is waited for, from when it was sent. */
 extern int dkim2_prefetch_timeout_ms;   /* default 5000 */
 

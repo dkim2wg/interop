@@ -290,6 +290,36 @@ int main(void) {
         printf("  ok: prefetch bounded to %d keys, top signature first\n", DKIM2_PREFETCH_MAX);
     }
 
+    /* Lookup threads outlive their message (they are left to finish), so
+       a stream of messages against slow DNS must not pile them up: past
+       dkim2_prefetch_live_max running at once, no thread is started and
+       the lookup is synchronous when it is needed. */
+    {
+        reset(HOLD, NULL, ANSWER);
+        int saved = dkim2_prefetch_live_max;
+        dkim2_prefetch_live_max = 20;
+        dkim2_ctx_t ctx;
+        memset(&ctx, 0, sizeof ctx);
+        char v[1024];
+        size_t len = (size_t)snprintf(v, sizeof v, "i=1; m=1; t=1; d=one.example; mf=PGE+; rt=PGE+; s=");
+        for (int k = 0; k < DKIM2_PREFETCH_MAX; k++)
+            len += (size_t)snprintf(v + len, sizeof v - len, "%ss%d:rsa-sha256:AAAA", k ? "|" : "", k);
+        assert(dkim2_ctx_add_field(&ctx, 1, v) == 0);
+        for (int m = 0; m < 10; m++) {         /* 10 messages x 8 keys, all held */
+            dkim2_prefetch_t *pf = dkim2_prefetch_start(&ctx);
+            dkim2_prefetch_free(pf);
+        }
+        int started = dkim2_prefetch_live();
+        CHECK(started == 20, "10 messages x 8 held lookups: %d threads running, cap 20", started);
+        release();
+        dkim2_prefetch_drain();
+        CHECK(dkim2_prefetch_live() == 0, "all finished: %d", dkim2_prefetch_live());
+        dkim2_prefetch_live_max = saved;
+        dkim2_sig_free(ctx.sig_list);
+        dkim2_badfield_free(ctx.bad_list);
+        printf("  ok: lookup threads capped at %d running\n", 20);
+    }
+
     /* Good answers: no synchronous lookup at all. */
     reset(ANSWER, NULL, ANSWER);
     dkim2_verify_result_t r = run(1);

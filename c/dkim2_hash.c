@@ -229,6 +229,9 @@ char *dkim2_header_canon(const char *hdr) {
     if (!colon) return NULL;
 
     size_t namelen = (size_t)(colon - hdr);
+    /* -09 §6.2: delete WSP before the colon (RFC 5322's obsolete syntax
+       allows it): "Received : x" is a Received field, ignored as one. */
+    while (namelen && (hdr[namelen - 1] == ' ' || hdr[namelen - 1] == '\t')) namelen--;
     char *lname = malloc(namelen + 1);
     if (!lname) return NULL;
     for (size_t i = 0; i < namelen; i++)
@@ -280,6 +283,17 @@ char *dkim2_header_canon(const char *hdr) {
     return buf;
 }
 
+/* A canonical field, its name's length and its place, for a stable sort. */
+typedef struct { char *s; size_t namelen; int pos; } canon_key_t;
+static int cmp_canon_key(const void *a, const void *b) {
+    const canon_key_t *x = a, *y = b;
+    size_t n = x->namelen < y->namelen ? x->namelen : y->namelen;
+    int c = memcmp(x->s, y->s, n);
+    if (c) return c;
+    if (x->namelen != y->namelen) return x->namelen < y->namelen ? -1 : 1;
+    return (x->pos > y->pos) - (x->pos < y->pos);
+}
+
 /* -09 §6.2 header hash — raw digest */
 int dkim2_header_hash_raw_alg(const char **headers, int n_headers, int alg,
                               unsigned char *digest) {
@@ -296,27 +310,19 @@ int dkim2_header_hash_raw_alg(const char **headers, int n_headers, int alg,
         if (c) canon[nc++] = c;
     }
 
-    /* Stable insertion sort by header name only (up to the ':').
-       qsort is not used because it is not guaranteed stable; stability is required so
-       same-name headers keep their bottom-up order from the reverse pass above.
-       n is small (typically <20 after filtering) so O(n²) cost is negligible. */
-    for (int i = 1; i < nc; i++) {
-        char *key = canon[i];
-        const char *kcolon = strchr(key, ':');
-        size_t klen = kcolon ? (size_t)(kcolon - key) : strlen(key);
-        int j = i - 1;
-        while (j >= 0) {
-            const char *jcolon = strchr(canon[j], ':');
-            size_t jlen = jcolon ? (size_t)(jcolon - canon[j]) : strlen(canon[j]);
-            size_t cmplen = jlen < klen ? jlen : klen;
-            int cmp = strncmp(canon[j], key, cmplen);
-            if (cmp == 0) cmp = (jlen > klen) - (jlen < klen);
-            if (cmp <= 0) break;
-            canon[j + 1] = canon[j];
-            j--;
-        }
-        canon[j + 1] = key;
+    /* Sort by header name only (up to the ':'), ties by position, so
+       same-name headers keep their bottom-up order from the reverse pass
+       above: a stable sort in n log n, however many fields a message has. */
+    canon_key_t *keys = malloc((size_t)(nc ? nc : 1) * sizeof *keys);
+    if (!keys) { for (int i = 0; i < nc; i++) free(canon[i]); free(canon); return -1; }
+    for (int i = 0; i < nc; i++) {
+        const char *colon = strchr(canon[i], ':');
+        keys[i] = (canon_key_t){ canon[i],
+                                 colon ? (size_t)(colon - canon[i]) : strlen(canon[i]), i };
     }
+    qsort(keys, (size_t)nc, sizeof *keys, cmp_canon_key);
+    for (int i = 0; i < nc; i++) canon[i] = keys[i].s;
+    free(keys);
 
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (!mdctx) { for (int i = 0; i < nc; i++) free(canon[i]); free(canon); return -1; }

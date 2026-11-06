@@ -478,6 +478,8 @@ dkim2_plan_t *dkim2_plan_new(dkim2_mi_t **mi_arr, int n_mi,
         const char *colon = strchr(hdrs[i], ':');
         if (!colon) continue;
         size_t nl = (size_t)(colon - hdrs[i]);
+        /* -09 §6.2: the name without any WSP before its colon. */
+        while (nl && (hdrs[i][nl - 1] == ' ' || hdrs[i][nl - 1] == '\t')) nl--;
         if ((nl == 16 && strncasecmp(hdrs[i], "message-instance", 16) == 0) ||
             (nl == 15 && strncasecmp(hdrs[i], "dkim2-signature", 15) == 0)) continue;
         int gi = group_get(p, hdrs[i], nl);
