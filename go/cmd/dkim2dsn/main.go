@@ -113,5 +113,5 @@ func authenticate(dnsFile string, ignoreTS bool) {
 		fmt.Fprintf(os.Stderr, "FAIL: %v\n", res.Reason)
 		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stdout, "PASS: returned original verified")
+	fmt.Fprintln(os.Stdout, "PASS: DSN authenticated")
 }

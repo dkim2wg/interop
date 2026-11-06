@@ -2,7 +2,7 @@ package Mail::DKIM2::BodyPlan;
 use strict;
 use warnings;
 
-our $VERSION = '0.30';
+our $VERSION = '0.31';
 
 use Carp;
 use MIME::Base64 qw(encode_base64);

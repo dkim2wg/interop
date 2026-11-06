@@ -319,7 +319,9 @@ def _wrap_dsn_headers_only(embedded: bytes) -> bytes:
 def test_authenticate_intact_two_hop():
     auth = dkim2dsn.authenticate(_wrap_dsn(_verifiable_twohop()), DNS_DATA,
                                  skip_timestamp_check=True)
-    assert auth["ok"], auth["message"]
+    # _wrap_dsn's report is unsigned, so this is the returned message's half
+    # of authentication alone: status, not ok.
+    assert auth["status"] == "pass", auth["message"]
     assert auth["headers_only"] is False
     # The forwarder recognises i=2 as its own by d= (§16.4 point 2).
     assert auth["top"]["i"] == 2, auth["top"]
@@ -331,7 +333,7 @@ def test_authenticate_headers_only():
     auth = dkim2dsn.authenticate(
         _wrap_dsn_headers_only(_verifiable_twohop()), DNS_DATA,
         skip_timestamp_check=True)
-    assert auth["ok"], auth["message"]
+    assert auth["status"] == "pass", auth["message"]
     assert auth["headers_only"] is True
     assert auth["top"]["i"] == 2, auth["top"]
 
@@ -376,8 +378,11 @@ def _bridged_twohop() -> bytes:
 
 
 def test_authenticate_bridged_chain():
-    auth = dkim2dsn.authenticate(_wrap_dsn(_bridged_twohop()), DNS_DATA,
-                                 skip_timestamp_check=True)
+    # Signed, as only a signed report is propagated, by where the top hop
+    # delivered it.
+    auth = dkim2dsn.authenticate(
+        _signed_dsn_around(_bridged_twohop(), "test5.dkim2.com"), DNS_DATA,
+        skip_timestamp_check=True)
     assert auth["ok"], auth["message"]
     assert auth["top"]["i"] == 3, auth["top"]
 
@@ -386,7 +391,8 @@ def test_propagate_strips_the_bridge_with_its_hop():
     # This chain verifies, so propagate can do its own §16.4 authentication
     # rather than being told to skip it.
     out = dkim2dsn.propagate(
-        _wrap_dsn(_bridged_twohop()), forwarder_domain="test3.dkim2.com",
+        _signed_dsn_around(_bridged_twohop(), "test5.dkim2.com"),
+        forwarder_domain="test3.dkim2.com",
         keyfile=_key("sel1", "test2.dkim2.com"),
         selector="sel1", domain="test2.dkim2.com", timestamp=1740000000,
         dns_data=DNS_DATA, skip_timestamp_check=True)
@@ -493,15 +499,31 @@ def test_authenticate_broken_dsn_signature():
     assert not auth["ok"]
 
 
-def test_authenticate_unsigned_dsn_is_reported_not_failed():
+def test_authenticate_unsigned_dsn_is_reported_not_ok():
     # An unsigned DSN is not what §16.4 is about ("when a system receives a
-    # DKIM2 signed DSN"), so it is reported, not failed.
+    # DKIM2 signed DSN"), so it is reported as such, for a caller to relay as
+    # a legacy bounce. But nothing says who sent it -- anyone holding a copy
+    # of the returned message could have -- so it is not ok, and nothing
+    # re-signs it on the strength of authenticate.
     auth = dkim2dsn.authenticate(_wrap_dsn(_verifiable_twohop()), DNS_DATA,
                                  skip_timestamp_check=True)
     assert auth["dsn_status"] == "none", auth["dsn_message"]
     assert auth["alignment"] == "none"
     assert auth["dsn_sig"] is None
-    assert auth["ok"]
+    assert auth["status"] == "pass", auth["message"]
+    assert not auth["ok"]
+
+
+def test_propagate_refuses_an_unsigned_dsn():
+    try:
+        dkim2dsn.propagate(
+            _wrap_dsn(_verifiable_twohop()), forwarder_domain="test2.dkim2.com",
+            keyfile=_key("sel1", "test2.dkim2.com"),
+            selector="sel1", domain="test2.dkim2.com", timestamp=1740000000,
+            dns_data=DNS_DATA, skip_timestamp_check=True)
+        assert False, "propagate should refuse an unsigned DSN"
+    except ValueError as e:
+        assert "no DKIM2-Signature" in str(e), str(e)
 
 
 # --- §16.4: "If the verification fails then the DSN MUST NOT be propagated

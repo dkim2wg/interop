@@ -4,6 +4,8 @@
 #include "base64.h"
 #include <cjson/cJSON.h>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -64,6 +66,9 @@ struct dkim2_plan {
     int normalise, all_algs;
     hgroup_t *g;
     int n_g, cap_g;
+    int *gh;                /* open-addressed index of g by name: gi + 1, 0 empty */
+    int cap_gh;             /* a power of two, more than twice n_g */
+    uint64_t gh_seed;
     char **hlit;            /* header literal canonical lines (NULL: not hashed) */
     int n_hlit, cap_hlit;
     blit_t *blit;           /* body literal lines, CRLF appended */
@@ -164,10 +169,42 @@ static long long body_lit_add(void *ctx, const dkim2_recipe_op_t *op) {
 
 /* ---- header groups ---- */
 
+/* Names come from the message, so the index is hashed with a per-plan seed
+   (FNV-1a over seed and name): a lookup per field stays constant time
+   however many distinct names a message carries. */
+static uint64_t group_hash(const dkim2_plan_t *p, const char *name, size_t nl) {
+    uint64_t h = 0xcbf29ce484222325ULL ^ p->gh_seed;
+    for (size_t i = 0; i < nl; i++) { h ^= (unsigned char)name[i]; h *= 0x100000001b3ULL; }
+    return h ^ (h >> 29);
+}
+
 static int group_find(const dkim2_plan_t *p, const char *name, size_t nl) {
-    for (int i = 0; i < p->n_g; i++)
-        if (strlen(p->g[i].name) == nl && memcmp(p->g[i].name, name, nl) == 0) return i;
+    if (!p->cap_gh) return -1;
+    size_t mask = (size_t)p->cap_gh - 1;
+    for (size_t s = (size_t)group_hash(p, name, nl) & mask; p->gh[s]; s = (s + 1) & mask) {
+        const char *gn = p->g[p->gh[s] - 1].name;
+        if (strlen(gn) == nl && memcmp(gn, name, nl) == 0) return p->gh[s] - 1;
+    }
     return -1;
+}
+
+/* Index group gi, growing the table first when it would pass half full. */
+static int group_index(dkim2_plan_t *p, int gi) {
+    if ((size_t)(gi + 1) * 2 >= (size_t)p->cap_gh) {
+        int nc = p->cap_gh ? p->cap_gh * 2 : 64;
+        int *nt = calloc((size_t)nc, sizeof *nt);
+        if (!nt) return -1;
+        free(p->gh);
+        p->gh = nt;
+        p->cap_gh = nc;
+        for (int i = 0; i < gi; i++) group_index(p, i);
+    }
+    size_t mask = (size_t)p->cap_gh - 1;
+    const char *n = p->g[gi].name;
+    size_t s = (size_t)group_hash(p, n, strlen(n)) & mask;
+    while (p->gh[s]) s = (s + 1) & mask;
+    p->gh[s] = gi + 1;
+    return 0;
 }
 
 /* The group for the (any case) name of nl bytes, created empty if new. */
@@ -180,6 +217,7 @@ static int group_get(dkim2_plan_t *p, const char *name, size_t nl) {
     if (gi >= 0) { free(ln); return gi; }
     if (grow((void **)&p->g, &p->cap_g, p->n_g + 1, sizeof *p->g) < 0) { free(ln); return -1; }
     p->g[p->n_g] = (hgroup_t){ ln, !dkim2_hdr_ignored(ln, nl), NULL, NULL, 0 };
+    if (group_index(p, p->n_g) < 0) { free(ln); return -1; }
     return p->n_g++;
 }
 
@@ -357,14 +395,16 @@ static int plan_levels(dkim2_plan_t *p) {
     return 0;
 }
 
-static const hgroup_t *g_sort_groups;   /* qsort context (single-threaded use) */
+/* A group in hash order: the name travels with its index, so qsort needs
+   no context (the milter plans on many connection threads at once). */
+typedef struct { const char *name; int gi; } gorder_t;
 static int cmp_group(const void *a, const void *b) {
-    return strcmp(g_sort_groups[*(const int *)a].name, g_sort_groups[*(const int *)b].name);
+    return strcmp(((const gorder_t *)a)->name, ((const gorder_t *)b)->name);
 }
 
 /* Header hash (-09 §6.2) of one level: hashed names in byte order, each name's
    fields bottom-up -- what dkim2_header_hash_raw_alg makes of the fields. */
-static int hdr_digest(dkim2_plan_t *p, const int *order, level_t *lv, unsigned algs) {
+static int hdr_digest(dkim2_plan_t *p, const gorder_t *order, level_t *lv, unsigned algs) {
     static const EVP_MD *(*const mds[DKIM2_N_HASH_ALGS])(void) = { EVP_sha256, EVP_sha512 };
     EVP_MD_CTX *md[DKIM2_N_HASH_ALGS] = { 0 };
     int rc = -1;
@@ -374,7 +414,7 @@ static int hdr_digest(dkim2_plan_t *p, const int *order, level_t *lv, unsigned a
             if (!md[a] || EVP_DigestInit_ex(md[a], mds[a](), NULL) != 1) goto out;
         }
     for (int oi = 0; oi < p->n_g; oi++) {
-        int gi = order[oi];
+        int gi = order[oi].gi;
         hgroup_t *g = &p->g[gi];
         const seglist_t *l = gi < lv->n_hmap ? lv->hmap[gi] : NULL;
         if (!g->hashed || !l) continue;
@@ -417,6 +457,8 @@ dkim2_plan_t *dkim2_plan_new(dkim2_mi_t **mi_arr, int n_mi,
                              char **hdrs, int n_hdrs, int normalise, int all_algs) {
     dkim2_plan_t *p = calloc(1, sizeof *p);
     if (!p) return NULL;
+    if (RAND_bytes((unsigned char *)&p->gh_seed, sizeof p->gh_seed) != 1)
+        p->gh_seed = (uint64_t)(uintptr_t)p;
     p->normalise = normalise;
     p->all_algs = all_algs;
     p->n = n_mi;
@@ -463,12 +505,10 @@ dkim2_plan_t *dkim2_plan_new(dkim2_mi_t **mi_arr, int n_mi,
 
     if (plan_levels(p) < 0) goto fail;
 
-    int *order = malloc((size_t)(p->n_g ? p->n_g : 1) * sizeof *order);
+    gorder_t *order = malloc((size_t)(p->n_g ? p->n_g : 1) * sizeof *order);
     if (!order) goto fail;
-    for (int i = 0; i < p->n_g; i++) order[i] = i;
-    g_sort_groups = p->g;
+    for (int i = 0; i < p->n_g; i++) order[i] = (gorder_t){ p->g[i].name, i };
     qsort(order, (size_t)p->n_g, sizeof *order, cmp_group);
-    g_sort_groups = NULL;
     for (int vi = n_mi - 1; vi >= 0; vi--) {
         level_t *lv = &p->lv[vi];
         if (!lv->built) break;
@@ -887,6 +927,7 @@ void dkim2_plan_free(dkim2_plan_t *p) {
         free(g->name);
     }
     free(p->g);
+    free(p->gh);
     for (int i = 0; i < p->n_hlit; i++) free(p->hlit[i]);
     free(p->hlit);
     for (int i = 0; i < p->n_blit; i++) free(p->blit[i].s);

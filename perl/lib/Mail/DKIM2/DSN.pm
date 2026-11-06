@@ -2,7 +2,7 @@ package Mail::DKIM2::DSN;
 use strict;
 use warnings;
 
-our $VERSION = '0.30';
+our $VERSION = '0.31';
 
 use Email::MIME;
 use Carp;
@@ -379,8 +379,12 @@ sub authenticate {
       : ($dsn_result eq 'none') ? ('none', 'DSN carries no DKIM2-Signature of its own')
       :                           ('none', "DSN's own signature did not verify");
 
+    # A DSN with no signature of its own (dsn_result none) is reported as
+    # such, so a caller can relay it as the legacy bounce it is, but it is not
+    # ok: anyone holding a copy of the returned message could have written
+    # it, and point 1 has no d= to align.
     my $ok = (($v->result // '') eq 'pass')
-          && ($dsn_result eq 'pass' || $dsn_result eq 'none')
+          && $dsn_result eq 'pass'
           && ($alignment ne 'fail');
 
     return {
@@ -424,8 +428,9 @@ sub propagate {
         );
         unless ($auth->{ok}) {
             croak "propagate: DSN did not authenticate (§16.4), not propagating: "
-                . ($auth->{alignment} eq 'fail' ? $auth->{alignment_detail}
-                                                : ($auth->{details} // $auth->{result}));
+                . (($auth->{result} // '') ne 'pass'
+                     ? ($auth->{details} // $auth->{result} // 'unknown')
+                     : $auth->{alignment_detail});
         }
     }
 
@@ -614,14 +619,14 @@ C<headers_only>; and C<embedded>, the returned original as an
 L<Email::MIME>.
 
 What C<ok> covers: the returned original's chain verified, the DSN's own
-signature did not fail, and alignment did not fail. A DSN that carries no
-DKIM2-Signature of its own (C<dsn_result> C<none>, as from an MTA that
-does not sign its bounces) is still C<ok> when the returned original
-verifies -- so C<ok> alone shows the bounce is about a genuine message,
-not that the bounce itself is signed. A caller that requires a signed
-bounce checks C<< dsn_result eq 'pass' >> as well. Neither says the
-message was one I<this> host sent: compare C<top>'s C<d=> and C<mf=> with
-your own.
+signature verified, and its C<d=> is not misaligned with the returned
+original's C<rt=> (an C<nd=> top signature has no C<rt=> to align with). A DSN that carries no DKIM2-Signature of its own (C<dsn_result>
+C<none>, as from an MTA that does not sign its bounces) is not C<ok>,
+however genuine the returned original: anyone holding a copy of that
+message could have written the report. It is reported as such so that a
+caller can relay it unchanged, as the legacy bounce it is, rather than
+re-sign it. C<ok> does not say the message was one I<this> host sent:
+compare C<top>'s C<d=> and C<mf=> with your own.
 
 =head2 propagate(%args)
 
