@@ -186,7 +186,7 @@ func newChainPlan(headers []Header) *chainPlan {
 	mis := map[int]*MessageInstance{}
 	var content []Header
 	for _, h := range headers {
-		switch strings.ToLower(h.Name) {
+		switch lowerName(h.Name) {
 		case "message-instance":
 			mi, err := parseMI(h.Raw)
 			if err != nil || mis[mi.Version] != nil {
@@ -195,9 +195,8 @@ func newChainPlan(headers []Header) *chainPlan {
 			mis[mi.Version] = mi
 		case "dkim2-signature":
 		default:
-			if lowerName(h.Name) != strings.ToLower(h.Name) {
-				return nil
-			}
+			// Names are folded ASCII-only everywhere (lowerName), so a
+			// non-ASCII name groups here as it hashes.
 			content = append(content, h)
 		}
 	}

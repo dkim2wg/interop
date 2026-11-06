@@ -56,7 +56,7 @@ func chainOf(headers []Header, opts ...VerifyOptions) (*chainShape, error) {
 	var mis, sigs []string // raw fields, CRLF included
 	var content []Header
 	for _, h := range headers {
-		switch strings.ToLower(h.Name) {
+		switch lowerName(h.Name) {
 		case "message-instance":
 			mis = append(mis, h.Raw)
 		case "dkim2-signature":
@@ -495,7 +495,7 @@ func verifyFrom(headers []Header, policies *policyCache, opts ...VerifyOptions) 
 	mis := map[int]*MessageInstance{}
 	top, topSigM, topSigI := 0, 0, 0
 	for _, h := range headers {
-		switch strings.ToLower(h.Name) {
+		switch lowerName(h.Name) {
 		case "message-instance":
 			if mi, err := parseMI(h.Raw); err == nil {
 				mis[mi.Version] = mi
