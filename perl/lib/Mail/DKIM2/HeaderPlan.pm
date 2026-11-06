@@ -42,7 +42,7 @@ sub new {
         raw_literals => [],
     }, $class;
     for my $raw (reverse @{ _raw_fields($header) }) {
-        push @{$self->{raw}{lc substr($raw, 0, index($raw, ':'))}}, $raw;
+        push @{$self->{raw}{Mail::DKIM2::Common::field_name(substr($raw, 0, index($raw, ':')))}}, $raw;
     }
     return $self;
 }
@@ -93,7 +93,9 @@ sub _value {
 # fields($header): [name, value] for every field, in order.
 sub fields {
     my ($header) = @_;
-    return [ map { [ substr($_, 0, index($_, ':')), _value($_) ] } @{ _raw_fields($header) } ];
+    # The name without any WSP before its colon ("From :" is a From).
+    return [ map { [ substr($_, 0, index($_, ':')) =~ s/[ \t]+\z//r, _value($_) ] }
+             @{ _raw_fields($header) } ];
 }
 
 # values($name): the values of the fields named $name, top first.

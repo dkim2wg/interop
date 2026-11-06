@@ -82,6 +82,7 @@ GetOptions(\%opts,
     'epilogue-threshold=i',
     'max-recipe-literals=i',
     'wrap-single-part',
+    'no-envelope-check',
     'help|h',
 ) or pod2usage(2);
 
@@ -126,6 +127,10 @@ if ($opts{'wrap-single-part'}) {
 
 my $do_verify = $opts{mode} eq 'inbound' || $opts{mode} eq 'both';
 my $do_sign   = $opts{mode} eq 'outbound' || $opts{mode} eq 'both';
+# -09 section 14.4: the envelope must match the top signature. Only where the
+# transaction is the one the message arrived in: in --mode both it is the
+# outgoing one.
+my $check_envelope = $opts{mode} eq 'inbound' && !$opts{'no-envelope-check'};
 
 # Determine if signing is possible
 my $can_sign_single = $opts{domain} && $opts{selector} && $opts{keyfile};
@@ -322,7 +327,7 @@ sub cb_header {
 sub cb_eoh {
     my ($ctx) = @_;
     my $priv = $ctx->getpriv;
-    $priv->{verify} = _start_verify($priv->{raw_hdrs}) if $do_verify;
+    $priv->{verify} = _start_verify($priv) if $do_verify;
     return SMFIS_CONTINUE;
 }
 
@@ -374,7 +379,7 @@ sub cb_eom {
     if ($do_verify) {
         # Started at the end of the headers; should no eoh have come, here.
         $verify_result = _finish_verify($priv->{verify} // do {
-            my $state = _start_verify($priv->{raw_hdrs});
+            my $state = _start_verify($priv);
             _feed_verify($state, $priv->{body});
             $state;
         });
@@ -799,10 +804,14 @@ sub _gate_pubkey_cb {
 # Fail closed: a verifier exception, at any step, is reported as temperror
 # (never pass) and logged at the end, rather than killing the callback.
 sub _start_verify {
-    my ($raw_hdrs) = @_;
+    my ($priv) = @_;
+    my $raw_hdrs = $priv->{raw_hdrs};
     my $state = {};
     eval {
-        my $verifier = Mail::DKIM2::Verifier->new();
+        my $verifier = Mail::DKIM2::Verifier->new($check_envelope ? (
+            MailFrom => '<' . ($priv->{env_from} // '') . '>',
+            RcptTo   => [ map { "<$_>" } @{ $priv->{env_rcpt} || [] } ],
+        ) : ());
         my %cb = _gate_pubkey_cb();
         $verifier->set_pubkey_callback($cb{PubkeyCallback}) if $cb{PubkeyCallback};
         $state->{verifier} = $verifier;
@@ -1364,6 +1373,16 @@ For stock Mailman, whose footer then becomes an extra MIME part instead of
 re-encoding the body. A message whose arrival snapshot could not be kept (an
 upstream instance that does not match) is not wrapped. Adds
 C<X-DKIM2-Info: action=wrap-single-part;>.
+
+=item B<--no-envelope-check>
+
+Inbound mode checks the SMTP envelope against the top DKIM2-Signature (-09
+section 14.4): MAIL FROM must equal its C<mf=> and every RCPT TO must be in
+its C<rt=>, or the result is C<fail>. Turn that off for a milter on an
+internal hop, after an earlier one has checked the envelope the message
+arrived with and the MTA may have rewritten it since (the wrap milter behind
+port 25, say). The other modes never check: there the transaction is the
+outgoing one.
 
 =item B<--use-epilogue>
 

@@ -69,7 +69,7 @@ our $PREFETCH_MAX = 8;
 sub known_options {
     return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
               PubkeyCallback PolicyCallback Resolver IgnorePrefixes NextDomainOK StreamBody
-              InstancesOnly);
+              InstancesOnly MailFrom RcptTo);
 }
 
 sub init {
@@ -86,6 +86,41 @@ sub init {
                              InstancesOnly);
     $self->{StreamBody} //= 1;
     check_ignore_prefixes($self->{IgnorePrefixes});
+    croak "RcptTo must be an arrayref of addresses"
+        if defined $self->{RcptTo} && ref $self->{RcptTo} ne 'ARRAY';
+}
+
+# An envelope address as -09 section 14.4 compares it: angle brackets on,
+# the local-part exactly as written, the domain without regard to case.
+sub _envelope_key {
+    my ($addr) = @_;
+    (my $a = $addr // '') =~ s/\A\s+|\s+\z//g;
+    $a =~ s/\A<(.*)>\z/$1/s;
+    my $at = rindex($a, '@');
+    $a = substr($a, 0, $at) . lc substr($a, $at) if $at >= 0;
+    return "<$a>";
+}
+
+# -09 section 14.4, first paragraph: MAIL FROM exactly equal to the top
+# signature's mf=, every RCPT TO present in its rt=. Only with the envelope
+# (MailFrom, RcptTo) -- which only the caller has -- and only for the true top.
+sub _verify_envelope {
+    my ($self, $sig, $i) = @_;
+    if (defined $self->{MailFrom}) {
+        my $want = _envelope_key($self->{MailFrom});
+        my $mf = $sig->mail_from;
+        return $self->_error(fail => "DKIM2-Signature i=$i MAIL FROM $want did not match")
+            unless defined $mf && _envelope_key($mf) eq $want;
+    }
+    if ($self->{RcptTo}) {
+        my %rt = map { _envelope_key($_) => 1 } @{ $sig->rcpt_to || [] };
+        for my $r (@{ $self->{RcptTo} }) {
+            my $want = _envelope_key($r);
+            return $self->_error(fail => "DKIM2-Signature i=$i RCPT TO $want did not match")
+                unless $rt{$want};
+        }
+    }
+    return 1;
 }
 
 sub skip_timestamp_check {
@@ -462,6 +497,11 @@ sub finish_body {
             return $self->_error(fail => "DKIM2-Signature i=$max_i unexpected nd= tag");
         }
     }
+    # A top nd= that got this far is an outbound signer's own bridge: the
+    # envelope belongs to the signature it is about to add, not this one.
+    return unless $self->{MidProcess}
+        || (defined $signature->next_domain && length $signature->next_domain)
+        || $self->_verify_envelope($signature, $max_i);
     return unless $self->_verify_chain();
 
     # Sections 14.5 and 14.6 together, signature by signature: the s=
@@ -637,7 +677,7 @@ sub _verify_mi_chain {
         my $num = %by_v ? (sort { $b <=> $a } keys %by_v)[0] : 0;
         last unless $num;
         # This version's From fields, for the -09 section 11 check.
-        $self->{_from_at}{$num} = [ $msg->header_raw('From') ];
+        $self->{_from_at}{$num} = [ Mail::DKIM2::Common::header_values($msg, 'From') ];
 
         my %body = (HeadersOnly => $headers_only);
         if ($plan && !$headers_only) {
@@ -1503,6 +1543,22 @@ which -09 section 14.2 otherwise makes a permerror ("is not signed"). For an out
 that verifies the message it is about to sign, where the new instance
 legitimately exists before its signature does. Never set it on inbound
 mail.
+
+=item MailFrom
+
+=item RcptTo
+
+The SMTP envelope the message arrived with: C<MailFrom> the MAIL FROM
+address, C<RcptTo> an arrayref of the RCPT TO addresses (angle brackets
+optional on either). Given, the top signature must match it (-09 section
+14.4): MAIL FROM exactly equal to C<mf=>, and every RCPT TO present in
+C<rt=>, local-parts compared exactly and domains without regard to case;
+otherwise the result is C<fail>, "DKIM2-Signature i=N MAIL FROM <x> did not
+match" or "... RCPT TO <x> did not match". A receiving MTA passes both:
+without them nothing binds the message to the transaction it arrived in,
+and a message signed for one recipient verifies when replayed to another.
+Not checked under C<MidProcess>, or for a top signature carrying C<nd=>
+(an outbound signer's bridge). New in 0.31.
 
 =item NextDomainOK
 

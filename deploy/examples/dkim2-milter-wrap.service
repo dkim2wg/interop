@@ -16,6 +16,7 @@ ExecStart=/usr/local/bin/dkim2-milter \
     --mode inbound \
     --socket unix:/var/spool/postfix/var/run/dkim2-milter-wrap.sock \
     --wrap-single-part \
+    --no-envelope-check \
     --snapshot-dir /var/spool/dkim2/snapshots
 Restart=on-failure
 RestartSec=5

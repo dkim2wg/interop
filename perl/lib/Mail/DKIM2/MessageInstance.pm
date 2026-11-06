@@ -113,8 +113,10 @@ BEGIN {
             my @vals = @_;
             my $headers = $self->{headers};
             my $max = @$headers / 2 - 1;
+            # Names as DKIM2 compares them: "Subject :" is a Subject.
+            my $want = Mail::DKIM2::Common::field_name($h);
             for my $idx (map { $_ * 2 } reverse 0..$max) {
-                next unless lc($headers->[$idx]) eq lc($h);
+                next unless Mail::DKIM2::Common::field_name($headers->[$idx]) eq $want;
                 if (@vals) {
                     $headers->[$idx+1] = shift @vals;
                 } else {
@@ -529,10 +531,16 @@ sub h_digest {
     my ($msg, $alg, $prefixes) = @_;
     $alg = lc($alg // 'sha256');
 
+    # Fields grouped by name as DKIM2 compares names (field_name: "From :"
+    # is a From), names in order, each name's fields bottom-up.
+    my @pairs = $msg->header_obj->header_raw_pairs;
+    my %by;
+    push @{ $by{ Mail::DKIM2::Common::field_name($pairs[2 * $_]) } }, $pairs[2 * $_ + 1]
+        for 0 .. $#pairs / 2;
     my $data = '';
-    for my $header (sort { lc($a) cmp lc($b) } $msg->header_names) {
+    for my $header (sort keys %by) {
         next if should_skip($header, $prefixes);
-        for my $item (reverse $msg->header_raw($header)) {
+        for my $item (reverse @{ $by{$header} }) {
             my $chead = dkim2_canonicalize_header("$header: $item\r\n");
             warn "cdigest: $chead" if $DEBUG;
             $data .= $chead;
@@ -1334,7 +1342,7 @@ sub undo {
                 _apply_recipe("$h header", $v, []);
                 next;
             }
-            my @old = reverse $msg->header_raw($h);
+            my @old = reverse Mail::DKIM2::Common::header_values($msg, $h);
             my @new = _apply_recipe("$h header", $v, \@old);
             $msg->header_obj->header_set_reverse($h, @new);
         }
