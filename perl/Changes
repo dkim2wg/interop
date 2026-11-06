@@ -33,6 +33,10 @@ Revision history for Mail::DKIM2
           as -09 section 6.2 has it. Perl kept the white space in the name,
           so such a From was hashed but escaped the From check. New
           Common::field_name and header_values.
+        - A header Recipe key must be a header field name (ftext: no white
+          space, no colon, -09 section 5), or the Recipe is invalid JSON.
+          "message-instance " would otherwise be matched as
+          Message-Instance by the name matching above.
 
 0.30    2026-11-03
         - Signers no longer look the Domain Policy Record up by default
