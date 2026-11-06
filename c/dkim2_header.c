@@ -63,9 +63,10 @@ static int split3(char *item, char **p1, char **p2, char **p3, int strip2) {
 /* One item of an h= or s= list, pointing into the list's buffer. */
 typedef struct { char *p1, *p2, *p3; int group; } item3_t;
 
-static const item3_t *g_cmp_items;   /* qsort context (single-threaded use) */
-static int cmp_item_p1(const void *a, const void *b) {
-    return strcasecmp(g_cmp_items[*(const int *)a].p1, g_cmp_items[*(const int *)b].p1);
+/* Sorts the names themselves, so qsort needs no context: the library runs
+   on the milter's connection threads. */
+static int cmp_name(const void *a, const void *b) {
+    return strcasecmp(*(char *const *)a, *(char *const *)b);
 }
 
 /* Parse an h= (is_sig 0) or s= (is_sig 1) value (-09 §9.3, §10.9):
@@ -86,9 +87,9 @@ static int parse_list(const char *v, int is_sig, char **buf, item3_t **items,
     for (const char *p = v; *p; p++) if (*p == ',' || *p == '|') cnt++;
     char *copy = strdup(v);
     item3_t *it = calloc(cnt, sizeof *it);
-    int *idx = calloc(cnt, sizeof *idx);
+    char **names = calloc(cnt, sizeof *names);
     int rc = 0, k = 0, group = 0;
-    if (!copy || !it || !idx) { rc = -1; goto out; }
+    if (!copy || !it || !names) { rc = -1; goto out; }
     for (char *tok = copy, *next; tok; tok = next) {
         size_t span = strcspn(tok, ",|");
         char sep = tok[span];
@@ -99,15 +100,13 @@ static int parse_list(const char *v, int is_sig, char **buf, item3_t **items,
             !(is_sig ? name_ok(it[k].p2, 0) : b64_is_strict(it[k].p2)) ||
             !b64_is_strict(it[k].p3)) { rc = -1; goto out; }
         it[k].group = group;
-        idx[k] = k;
+        names[k] = it[k].p1;
         k++;
         if (sep == '|') group++;
     }
-    g_cmp_items = it;
-    qsort(idx, (size_t)k, sizeof *idx, cmp_item_p1);
-    g_cmp_items = NULL;
+    qsort(names, (size_t)k, sizeof *names, cmp_name);
     for (int i = 1; i < k; i++)
-        if (strcasecmp(it[idx[i - 1]].p1, it[idx[i]].p1) == 0) { rc = -2; goto out; }
+        if (strcasecmp(names[i - 1], names[i]) == 0) { rc = -2; goto out; }
     if (is_sig && k > DKIM2_MAX_SIGNATURES) { rc = -3; goto out; }
     *buf = copy; copy = NULL;
     *items = it; it = NULL;
@@ -116,7 +115,7 @@ static int parse_list(const char *v, int is_sig, char **buf, item3_t **items,
 out:
     free(copy);
     free(it);
-    free(idx);
+    free(names);
     return rc;
 }
 

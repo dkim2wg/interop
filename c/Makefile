@@ -42,7 +42,7 @@ TESTS = tests/test_base64 tests/test_tagparse tests/test_hash \
         tests/test_header tests/test_recipe tests/test_crypto \
         tests/test_dns tests/test_verify tests/test_null_body \
         tests/test_body_diff tests/test_strictness \
-        tests/test_plan tests/test_prefetch \
+        tests/test_plan tests/test_prefetch tests/test_threads \
         tests/test_domain tests/test_spec07 tests/test_spec08 tests/test_spec09 \
         tests/test_milter
 
@@ -122,6 +122,9 @@ tests/test_plan_corpus: tests/test_plan_corpus.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 tests/test_plan: tests/test_plan.c eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+tests/test_threads: tests/test_threads.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 tests/test_strictness: tests/test_strictness.c eml_parse.o $(CORE_OBJS)
