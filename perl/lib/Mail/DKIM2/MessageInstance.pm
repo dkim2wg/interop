@@ -1047,6 +1047,13 @@ sub calculate {
         next if @cur == @prev
              && join("\n", map { dkim2_canonicalize_header($_) } @cur)
              eq join("\n", map { dkim2_canonicalize_header($_) } @prev);
+        # A Recipe key is a header field name (-09 section 5): ftext. A
+        # field Email::Simple read under a name that is not one ("Y Bad:",
+        # a control character) cannot have its change recorded -- a verifier
+        # refuses the key -- so refuse to describe it rather than sign
+        # mail that no verifier accepts.
+        die "cannot record a change to the field \"$h\": not a header field name\n"
+            unless $h =~ /\A[\x21-\x39\x3B-\x7E]+\z/;
         # headers are indexed from 1 from the bottom up
         my %known;
         push @{ $known{dkim2_canonicalize_header($cur[$_])} }, $_ + 1 for 0..$#cur;

@@ -126,4 +126,17 @@ for my $key ("message-instance ", "message-instance\t", "subject ") {
 }
 use JSON::PP; use MIME::Base64 ();
 
+# Nor does a signer write one: a hop that changes a field Email::Simple read
+# under a name that is no field name ("Y Bad:") cannot record the change, and
+# says so, rather than sign a Recipe no verifier accepts.
+for my $name ("Y Bad", "Bad\x01", "Bad\x7f") {
+    my $prev = parse_mime("From: a\@x.example\r\n$name: one\r\nSubject: s\r\n\r\nbody\r\n");
+    $prev->header_raw_prepend('Message-Instance', Mail::DKIM2::MessageInstance->calculate($prev)->as_string);
+    my $cur = parse_mime($prev->as_string);
+    $cur->header_obj->header_raw_set($name);   # the hop drops it
+    eval { Mail::DKIM2::MessageInstance->calculate($cur, $prev) };
+    like($@, qr/cannot record a change to the field .*not a header field name/,
+         'a change to "' . ($name =~ s/([^\x20-\x7e])/sprintf '\\x%02x', ord $1/ger) . '" is refused');
+}
+
 done_testing;

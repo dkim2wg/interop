@@ -37,6 +37,9 @@ Revision history for Mail::DKIM2
           space, no colon, -09 section 5), or the Recipe is invalid JSON.
           "message-instance " would otherwise be matched as
           Message-Instance by the name matching above.
+          MessageInstance->calculate dies rather than record a change to a
+          field whose name is not one (a malformed "Y Bad:" line), which
+          no verifier would accept.
 
 0.30    2026-11-03
         - Signers no longer look the Domain Policy Record up by default
