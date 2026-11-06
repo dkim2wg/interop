@@ -117,7 +117,7 @@ func parseReport(raw []byte) (*dsnReport, error) {
 
 // AuthResult is what Authenticate found out about an inbound DSN.
 type AuthResult struct {
-	OK          bool            // every §16.4 check that could run did pass
+	OK          bool            // the DSN is signed and every §16.4 check that could run passed
 	Reason      error           // why it did not, when OK is false
 	Top         *DKIM2Signature // highest-i signature of the returned original, nil if unsigned
 	DSNSig      *DKIM2Signature // the DSN's own originating (i=1) signature, nil if unsigned
@@ -182,7 +182,9 @@ func checkAlignment(dsnSig, origTop *DKIM2Signature) (string, string) {
 //
 // A DSN carrying no DKIM2-Signature at all is not what §16.4 is about ("When
 // a system receives a DKIM2 signed DSN"), so it comes back with DSNSig nil and
-// Alignment "none" rather than failed.
+// Alignment "none", for a caller to relay as the legacy bounce it is. It is
+// not OK, however genuine the returned message: anyone holding a copy of that
+// message could have written the report.
 //
 // The returned error means this is not an RFC 6522 DSN at all (as for
 // Propagate); a DSN that simply fails to authenticate comes back with
@@ -245,6 +247,10 @@ func Authenticate(raw []byte, fetcher KeyFetcher, opts ...VerifyOptions) (*AuthR
 	}
 	if r := PrimaryResult(results); r != nil {
 		res.Reason = r.Error
+		return res, nil
+	}
+	if !dsnSigned {
+		res.Reason = fmt.Errorf("%s", res.AlignDetail)
 		return res, nil
 	}
 	if res.DSNError != nil {

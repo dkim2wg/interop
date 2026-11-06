@@ -270,7 +270,11 @@ def authenticate(raw: bytes, dns_data: dict,
         alignment = "none"
         alignment_detail = "DSN's own signature did not verify"
 
-    ok = (res.ok and dsn_res.status in ("pass", "none") and alignment != "fail")
+    # A DSN with no signature of its own (dsn_status "none") is reported as
+    # such, so a caller can relay it as the legacy bounce it is, but it is not
+    # ok: anyone holding a copy of the returned message could have written it,
+    # and point 1 has no d= to align.
+    ok = (res.ok and dsn_res.status == "pass" and alignment != "fail")
 
     return {
         "ok": ok,
@@ -309,8 +313,8 @@ def propagate(raw: bytes, forwarder_domain: str, keyfile: str,
         auth = authenticate(raw, dns_data,
                             skip_timestamp_check=skip_timestamp_check)
         if not auth["ok"]:
-            why = (auth["alignment_detail"] if auth["alignment"] == "fail"
-                   else auth["message"])
+            why = (auth["message"] if auth["status"] != "pass"
+                   else auth["alignment_detail"])
             raise ValueError(
                 f"propagate: DSN did not authenticate (§16.4), not propagating: {why}")
 
@@ -450,9 +454,9 @@ def main():
         sys.stderr.write(f"alignment: {auth['alignment']} - {auth['alignment_detail']}\n")
         if not auth["ok"]:
             sys.stderr.write("FAIL: {}\n".format(
-                auth["alignment_detail"] if auth["alignment"] == "fail" else auth["message"]))
+                auth["message"] if auth["status"] != "pass" else auth["alignment_detail"]))
             sys.exit(1)
-        print("PASS: returned original verified")
+        print("PASS: DSN authenticated")
         return
 
     for req in ("forwarder_domain", "domain", "selector", "key"):

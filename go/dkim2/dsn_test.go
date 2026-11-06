@@ -412,8 +412,10 @@ func TestAuthenticateIntactTwoHop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
-	if !res.OK {
-		t.Fatalf("intact two-hop DSN did not authenticate: %v", res.Reason)
+	// dsnAround's report is unsigned, so this is the returned message's half
+	// of authentication alone: its chain verifies, though the DSN is not OK.
+	if len(res.Results) == 0 || PrimaryResult(res.Results) != nil {
+		t.Fatalf("the intact two-hop message did not verify: %v", res.Reason)
 	}
 	if res.HeadersOnly {
 		t.Fatal("HeadersOnly set for a message/rfc822 DSN")
@@ -434,8 +436,8 @@ func TestAuthenticateHeadersOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
-	if !res.OK {
-		t.Fatalf("headers-only DSN did not authenticate from the headers alone: %v", res.Reason)
+	if len(res.Results) == 0 || PrimaryResult(res.Results) != nil {
+		t.Fatalf("headers-only DSN's returned message did not verify from the headers alone: %v", res.Reason)
 	}
 	if !res.HeadersOnly {
 		t.Fatal("HeadersOnly not set for a text/rfc822-headers DSN")
@@ -508,7 +510,9 @@ func bridgedChain(t *testing.T) []byte {
 
 func TestAuthenticateBridgedChain(t *testing.T) {
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
-	res, err := Authenticate(dsnAround(t, bridgedChain(t), false), f,
+	// Signed, as only a signed report is propagated, by where the top hop
+	// delivered it.
+	res, err := Authenticate(signedDSNAround(t, bridgedChain(t), "test5.dkim2.com"), f,
 		VerifyOptions{SkipTimestampCheck: true})
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
@@ -523,7 +527,7 @@ func TestAuthenticateBridgedChain(t *testing.T) {
 
 func TestPropagateStripsTheBridgeWithItsHop(t *testing.T) {
 	const keys = "../../keys/"
-	out, upstream, err := Propagate(dsnAround(t, bridgedChain(t), false), PropagateOptions{
+	out, upstream, err := Propagate(signedDSNAround(t, bridgedChain(t), "test5.dkim2.com"), PropagateOptions{
 		ForwarderDomain: "test3.dkim2.com",
 		Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
 		Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
@@ -686,10 +690,13 @@ func TestAuthenticateBrokenDSNSignature(t *testing.T) {
 	}
 }
 
-func TestAuthenticateUnsignedDSNIsReportedNotFailed(t *testing.T) {
+func TestAuthenticateUnsignedDSNIsReportedNotOK(t *testing.T) {
 	f := &JSONKeyFetcher{Path: "../../dns.json"}
 	// An unsigned DSN is not what §16.4 is about ("when a system receives a
-	// DKIM2 signed DSN"), so it is reported, not failed.
+	// DKIM2 signed DSN"), so it is reported as such (DSNSig nil, Alignment
+	// none) for a caller to relay as a legacy bounce. But nothing says who
+	// sent it -- anyone holding a copy of the returned message could have --
+	// so it is not OK, and nothing re-signs it on the strength of Authenticate.
 	res, err := Authenticate(dsnAround(t, verifiableTwoHop(t), false), f,
 		VerifyOptions{SkipTimestampCheck: true})
 	if err != nil {
@@ -701,8 +708,25 @@ func TestAuthenticateUnsignedDSNIsReportedNotFailed(t *testing.T) {
 	if res.Alignment != "none" {
 		t.Fatalf("Alignment = %q, want none", res.Alignment)
 	}
-	if !res.OK {
-		t.Fatalf("an unsigned DSN with an intact returned message did not authenticate: %v", res.Reason)
+	if res.OK {
+		t.Fatal("an unsigned DSN authenticated on its returned message alone")
+	}
+	if res.Reason == nil || !strings.Contains(res.Reason.Error(), "no DKIM2-Signature") {
+		t.Fatalf("Reason = %v, want the DSN's missing signature", res.Reason)
+	}
+}
+
+func TestPropagateRefusesAnUnsignedDSN(t *testing.T) {
+	const keys = "../../keys/"
+	_, _, err := Propagate(dsnAround(t, verifiableTwoHop(t), false), PropagateOptions{
+		ForwarderDomain: "test2.dkim2.com",
+		Key:             loadKey(t, keys+"sel1._domainkey.test2.dkim2.com.pem"),
+		Selector:        "sel1", Domain: "test2.dkim2.com", Timestamp: 1740000000,
+		Fetcher:            &JSONKeyFetcher{Path: "../../dns.json"},
+		SkipTimestampCheck: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "no DKIM2-Signature") {
+		t.Fatalf("err = %v, want a refusal to propagate an unsigned DSN", err)
 	}
 }
 

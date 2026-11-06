@@ -1,5 +1,16 @@
 Revision history for Mail::DKIM2
 
+0.31    2026-11-06
+        - DSN->authenticate no longer reports ok for a DSN that carries no
+          DKIM2-Signature of its own: dsn_result is still none, so a caller
+          can relay it as the legacy bounce it is, but anyone holding a
+          copy of the returned message could have written it, so
+          propagate refuses it rather than re-sign it. (An nd= top
+          signature, with no rt= to align with, is unchanged.)
+        - Split: plan_copies and disclosed_addresses fold the domain only,
+          keeping the local-part's case, so a Bcc to user@ never shares a
+          copy (and an rt=) with a To: User@ that may be another mailbox.
+
 0.30    2026-11-03
         - Signers no longer look the Domain Policy Record up by default
           (contract E3.4, revised). A d= below the From domain signs only
