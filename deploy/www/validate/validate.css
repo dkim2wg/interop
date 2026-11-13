@@ -37,3 +37,4 @@ button { background:var(--accent); color:#fff; border:0; border-radius:6px;
 @media (max-width:48rem){ .cols{ grid-template-columns:1fr; } textarea{height:40vh;} .out{min-height:auto;} }
 .switch { margin:.4rem 0 0; font-size:.95rem; }
 .switch strong { color:var(--fg); }
+.hint { font-size:.9rem; color:var(--muted); }

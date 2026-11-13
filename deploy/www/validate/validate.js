@@ -58,7 +58,7 @@
   }
 
   function validate() {
-    out.replaceChildren(el('p', 'muted', 'Validating…'));
+    out.replaceChildren(el('p', 'muted', 'Verifying…'));
     fetch('/validate/api', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: ta.value })
       .then(function (r) { return r.json(); })
       .then(render)
@@ -66,8 +66,4 @@
   }
 
   document.getElementById('go').addEventListener('click', validate);
-  document.getElementById('example').addEventListener('click', function (ev) {
-    ev.preventDefault();
-    ta.value = 'Paste a real DKIM2-signed message here.\n(Tip: send mail through one of the reflector addresses, then paste the reply.)\n';
-  });
 })();

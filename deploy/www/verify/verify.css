@@ -50,3 +50,4 @@ button { background:var(--accent); color:#fff; border:0; border-radius:6px;
 .checks { margin: .6rem 0; }
 .checks summary { cursor: pointer; color: var(--accent); }
 .checks p { margin: .5rem 0 0; }
+.hint { font-size:.9rem; color:var(--muted); }
