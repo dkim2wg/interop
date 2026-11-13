@@ -192,6 +192,9 @@ Initial software:
 - Stalwart mail server — mail server, signs + verifies (also validates
   inbound DKIM2 DSNs), 2026-07, source
   https://mailarchive.ietf.org/arch/msg/ietf-dkim/LKutLi03M6QvjgAxV0ktjqpdOzQ
+- Halon (Engage / Protect) — MTA, experimental signing + verification via the
+  open-source `halon-extras-dkim2` module, 2026-08, source
+  https://halon.io/blog/halon-introduces-experimental-dkim2-support
 - Momentum MTA (Bird) — MTA, experimental signing + verification in v5.3,
   2026-07, source
   https://mailarchive.ietf.org/arch/msg/ietf-dkim/iJjYkj3nsBlVW2F08tW-Ix2Jz90
