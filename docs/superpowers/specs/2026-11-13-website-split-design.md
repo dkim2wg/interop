@@ -215,6 +215,17 @@ contrast ≥ 4.5:1 for the labels. Accountability chain: a row of cards with
 two panels (subject/body box + header code block) side by side, stacking on
 narrow screens, the `[EXTERNAL]` highlighted.
 
+### Preview before switch-over
+
+Bron checks the whole new site at `https://dkim2.com/preview/` before it
+replaces the live pages. So every link between the new pages is relative
+(only the live tools `/validate/` and `/verify/` stay absolute), and a
+`deploy/bin/stage-www.sh DEST` script assembles the site (static pages +
+generated `/deployments/`) into any directory. The preview is built locally
+and copied to `/var/www/dkim2.com/preview/` over ssh — no push, live pages
+untouched. After his go-ahead: merge, deploy (which runs the same script
+into the web root), remove `/preview/`.
+
 ### Tool pages and deploy
 
 The validator and browser verifier keep their own layout; their header line

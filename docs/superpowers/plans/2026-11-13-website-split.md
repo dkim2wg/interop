@@ -12,9 +12,9 @@
 
 ## Global Constraints
 
-- Nav, exact order and hrefs, on every page:
-  `<nav class="site"><a href="/">Home</a> <a href="/how/">How it works</a> <a href="/get-ready/">Get ready</a> <a href="/try/">Try it</a> <a href="/implementations/">Implementations</a> <a href="/deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>` — current page's link has `aria-current="page"`.
-- Subpages link `/style.css` (absolute). Same footer everywhere.
+- **All links between the new pages are relative** (`how/`, `../try/#originate`, `../style.css`) so the whole site works unchanged from `/preview/` and from the web root. Only `/validate/` and `/verify/` (the live tools, not part of the preview) stay absolute.
+- Nav, exact order, on every page — on home: `<nav class="site"><a href="./">Home</a> <a href="how/">How it works</a> <a href="get-ready/">Get ready</a> <a href="try/">Try it</a> <a href="implementations/">Implementations</a> <a href="deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>`; on subpages the same with `../` prefixed to the six site links (`../`, `../how/`, …). Current page's link has `aria-current="page"`.
+- Subpages link `../style.css`. Same footer everywhere.
 - Definition of good, verbatim on Home: "**Good** means: from who it says it's from, with every change attributable to whoever made it."
 - From rule, verbatim in `/how/#changes`: "A hop that makes significant changes becomes the message's author, and must put its own From on it." followed by "(Proposed for the next draft; not yet in the specification.)"
 - No mention of `canmodify` / `draft-clayton-dkim-canmodify` anywhere on the site; no Topicbox example.
@@ -43,24 +43,25 @@
 - Modify: `deploy/www/style.css` — `nav.site`, compact subpage header.
 
 **Interfaces:**
-- Produces: `deploy/t/www-links.t` with a `@pages` list and a `%pending` set of page paths not built yet (`/how/`, `/get-ready/`, `/deployments/`). Links to a pending path are not resolved; links to any other path must resolve. Task 3 adds `how/` + `get-ready/` to `@pages` and removes them from `%pending`; Task 4 does the same for the deployments template, leaving `%pending` empty.
+- Produces: `deploy/t/www-links.t` with a `@pages` list and a `%pending` set of page paths not built yet (`/how/`, `/get-ready/`, `/deployments/`). Links to a pending path (resolved relative to the page) are not checked; links to any other path must resolve. Task 3 adds `how/` + `get-ready/` to `@pages` and removes them from `%pending`; Task 4 does the same for the deployments template, leaving `%pending` empty.
 - Produces: subpage shell (nav, `<header class="hero page">` with `<h1>`, `<main>`, footer) that Tasks 2–4 copy.
 
 - [ ] **Step 1: Write `deploy/t/www-links.t`** — for every existing page in `@pages`:
   - contains the exact nav string from Global Constraints (modulo the `aria-current` attribute) and exactly one `aria-current="page"`;
-  - every `href="/..."` other than `/validate/`, `/verify/`, `/style.css` and `%pending` paths resolves to a file (`/` → `index.html`, `/x/` → `x/index.html`, `/deployments/` → `deployments/index.html.in`), and its `#frag`, if any, is an `id` in that file;
+  - no `href`/`src` starts with `/` except `/validate/` and `/verify/` (an absolute link would escape `/preview/`);
+  - every relative `href` (not `http(s):`, `mailto:`, `#…`), resolved against the page's directory and outside `%pending`, maps to a file (`x/` → `x/index.html`, `./` or `../` → that dir's `index.html`, `deployments/` → `deployments/index.html.in`), and its `#frag`, if any, is an `id` in that file;
   - every `href="#frag"` is an `id` in the same file;
   - each preserved id appears on exactly its page (Global Constraints);
-  - `index.html` has a `<script>` mapping each preserved id to its page (`"originate": "/try/"` …);
+  - `index.html` has a `<script>` mapping each preserved id to its page (`"originate": "try/"` …);
   - no page contains `canmodify` (case-insensitive).
 - [ ] **Step 2: Run** `prove deploy/t/www-links.t` — Expected: FAIL (`try/index.html` missing).
 - [ ] **Step 3: Move the sections, add nav, CSS, redirect.** Redirect script (end of home `<body>`):
   ```html
   <script>
   (function () {
-    var m = { "originate": "/try/", "bounces": "/try/", "reflector-signing": "/try/",
-              "reflector-brand": "/try/", "reflector-brand-nd": "/try/",
-              "other-implementations": "/implementations/" };
+    var m = { "originate": "try/", "bounces": "try/", "reflector-signing": "try/",
+              "reflector-brand": "try/", "reflector-brand-nd": "try/",
+              "other-implementations": "implementations/" };
     var h = location.hash.slice(1);
     if (m[h]) location.replace(m[h] + "#" + h);
   })();
@@ -80,14 +81,14 @@
 **Interfaces:**
 - Consumes: Task 1 nav/shell, `www-links.t`.
 - Produces: `deploy/t/www-content.t` with one `subtest` per page; Task 3 adds its own.
-- Home's "DKIM2 fixes all four" items carry links to `/how/#envelope`, `/how/#changes`, `/how/#algorithms`; `/how/` is still in `%pending`, so `www-links.t` checks the fragments once Task 3 removes it.
+- Home's "DKIM2 fixes all four" items carry links to `how/#envelope`, `how/#changes`, `how/#algorithms`; `/how/` is still in `%pending`, so `www-links.t` checks the fragments once Task 3 removes it.
 
 - [ ] **Step 1: Write `www-content.t` subtest `home`** asserting `index.html`:
   - tagline contains `Shrink the grey area.`;
   - a `<figure class="greyarea">` with a `<figcaption>`, containing the text `TODAY`, `WITH DKIM2`, `Clearly good`, `Grey: can't tell` (or `Grey: can&rsquo;t tell`), `Clearly bad`, `forwarding · mailing lists · replayed signatures · forged bounces` (· may be `&middot;`), `The goal:`, `Proportions are illustrative`;
   - the definition-of-good sentence from Global Constraints (tags stripped);
   - links to `draft-ietf-dkim-replay-problem`, `draft-ietf-dkim-dkim2-motivation`, and datatracker pages for `draft-ietf-dkim-dkim2-spec`, `-bcp`, `-dns`, `draft-gondwana-dkim2-authres`, `draft-gondwana-dkim2-debug-header`, `draft-chuang-dkim2-sender-policy` (check exact names with `draft_status` at Step 3 and fix the test if any differ);
-  - an `href="/deployments/"` in the body (outside nav);
+  - an `href="deployments/"` in the body (outside nav);
   - links to both list-host guides (as `perl/t/guide-links.t`).
 - [ ] **Step 2: Run** `prove deploy/t/www-content.t` — Expected: FAIL.
 - [ ] **Step 3: Write the home page** per spec §Pages `/`, sections 1–7, prose adapted from slides 3–6, 8, 13, 28 and their speaker notes (slide text wins where notes are stale). Look up current revisions with `mcp__ietf-llm__draft_status` for the six drafts and show "-NN" for each. Grey-area bars: flex rows, segment `flex-basis` 28%/50%/22% (today) and 63%/11%/26% (with DKIM2), colours teal `#2f6f79` / `#cfd6e2` / brick `#a63a2c` with white or dark text at ≥ 4.5:1; under 30rem the labels shrink to 0.8rem and the long grey label shortens via a `<span class="long">` hidden on narrow screens.
@@ -144,15 +145,19 @@
 - [ ] **Step 4: Run** `prove deploy/t/` — Expected: PASS. Then build to the scratchpad and look at it in a browser at 1200px and 400px: 4 service rows (Fastmail first), 3 software rows, `1&amp;1` in the source.
 - [ ] **Step 5: Commit** `git commit -m "www: deployment status page from one JSON file per entry"`.
 
-### Task 5: Deploy wiring, tool-page links, docs, live deploy
+### Task 5: Staging script, deploy wiring, preview, then switch over
 
 **Files:**
+- Create: `deploy/bin/stage-www.sh`
 - Modify: `deploy/deploy.sh` (static web assets block, ~lines 84–100)
 - Modify: `deploy/www/validate/index.html:15`, `deploy/www/verify/index.html` header line
 - Modify: `deploy/SERVER.md`, `deploy/README.md` where the web root is described
 
-- [ ] **Step 1: `deploy.sh`.** At the top of the `/var/www/dkim2.com` block: `prove "$REPO"/deploy/t/` (set -e stops the deploy on failure). Install `index.html`, `style.css`, and `how/ get-ready/ try/ implementations/` (`install -d -m 755` each, `install -m 644` its `index.html`). Then `install -d -m 755 /var/www/dkim2.com/deployments` and `perl "$REPO"/deploy/bin/build-deployments.pl --data "$REPO"/deploy/www/deployments --template "$REPO"/deploy/www/deployments/index.html.in --out /var/www/dkim2.com/deployments/index.html`. Update the block comment.
-- [ ] **Step 2: Tool pages.** Validator header line → `<a href="/">About DKIM2</a> · <a href="/how/">How it works</a> · <a href="/deployments/">Deployments</a> · <a href="/verify/">browser verifier</a>`; verifier the same with `<a href="/validate/">server validator</a>` last.
-- [ ] **Step 3: Docs.** List the new web-root contents in `deploy/SERVER.md`/`deploy/README.md`; point to `deploy/www/deployments/README.md` for adding entries.
-- [ ] **Step 4: Verify + commit.** `bash -n deploy/deploy.sh && prove deploy/t/ perl/t/guide-links.t` — Expected: OK, PASS. `git commit -m "deploy: install the rebuilt site and build /deployments/"`.
-- [ ] **Step 5: Merge and deploy (Bron approves ssh).** Merge locally to master, push; `ssh dkim2 'cd /root/interop && git pull --ff-only && deploy/deploy.sh'`. Acceptance on prod: `curl -s -o /dev/null -w '%{http_code}\n'` → 200 for `/`, `/how/`, `/get-ready/`, `/try/`, `/implementations/`, `/deployments/`; `curl -s https://dkim2.com/deployments/ | grep -c 'reported to us'` → 3; `https://dkim2.com/#originate` in a browser lands on `/try/#originate`.
+**Interfaces:**
+- Produces: `deploy/bin/stage-www.sh DEST` — runs `prove deploy/t/` (fails → exit non-zero, DEST untouched), then writes the complete new site into DEST: `index.html`, `style.css`, `how/ get-ready/ try/ implementations/` (`index.html` each), and `deployments/index.html` built by `build-deployments.pl --data deploy/www/deployments --template deploy/www/deployments/index.html.in --out DEST/deployments/index.html`. Does not touch `validate/` or `verify/`. Works from any checkout (resolves the repo from its own path).
+
+- [ ] **Step 1: Write `stage-www.sh`; test it locally.** Run `deploy/bin/stage-www.sh "$SCRATCH/site"`; Expected: exit 0, `find "$SCRATCH/site" -name index.html | wc -l` → 6. Then break a site file (unknown key) in a throwaway copy of the repo data and confirm a non-zero exit with DEST unchanged; restore.
+- [ ] **Step 2: Tool pages.** Validator header line → `<a href="/">About DKIM2</a> · <a href="/how/">How it works</a> · <a href="/deployments/">Deployments</a> · <a href="/verify/">browser verifier</a>`; verifier the same with `<a href="/validate/">server validator</a>` last. (Absolute is right here: these pages live only at the root. They point at pages that exist only after switch-over, so this change ships with the switch-over, not the preview.)
+- [ ] **Step 3: `deploy.sh`.** Replace the `install` lines for `index.html`/`style.css` with `"$REPO"/deploy/bin/stage-www.sh /var/www/dkim2.com`; keep the validate/verify installs. Update the block comment. Docs: list the new web-root contents in `deploy/SERVER.md`/`deploy/README.md`, mention `stage-www.sh DEST` for previews, point to `deploy/www/deployments/README.md` for adding entries. `bash -n deploy/deploy.sh && prove deploy/t/ perl/t/guide-links.t` — Expected: OK, PASS. Commit `git commit -m "deploy: stage-www.sh builds the site; deploy.sh uses it"`.
+- [ ] **Step 4: Upload the preview (Bron approves ssh).** `deploy/bin/stage-www.sh "$SCRATCH/site"`, then `rsync -rv --delete "$SCRATCH/site/" dkim2:/var/www/dkim2.com/preview/` (`ssh -o ConnectTimeout=20`). No push, no change to the live pages. Check: `curl -s -o /dev/null -w '%{http_code}\n'` → 200 for `https://dkim2.com/preview/`, `…/preview/how/`, `…/preview/get-ready/`, `…/preview/try/`, `…/preview/implementations/`, `…/preview/deployments/`; `curl -s https://dkim2.com/preview/ | grep -c 'href="/'` → only the two tool links. **Stop: Bron reviews the preview.** Fix anything he raises (TDD where it is behaviour), re-stage and re-upload.
+- [ ] **Step 5: Switch over (after Bron's go-ahead).** Merge locally to master, push; `ssh dkim2 'cd /root/interop && git pull --ff-only && deploy/deploy.sh'`; then `ssh dkim2 rm -rf /var/www/dkim2.com/preview`. Acceptance on prod: 200 for `/`, `/how/`, `/get-ready/`, `/try/`, `/implementations/`, `/deployments/`; `curl -s https://dkim2.com/deployments/ | grep -c 'reported to us'` → 3; `https://dkim2.com/#originate` in a browser lands on `/try/#originate`; `/preview/` → 404.
