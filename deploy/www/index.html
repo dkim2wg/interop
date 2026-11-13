@@ -3,95 +3,167 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DKIM2 — verifiable email handling</title>
-  <meta name="description" content="DKIM2 makes every domain that handles a message accountable for it — binding each signature to the path the message actually took, so recipients can verify who it was for, where it came from, and what changed along the way. A work in progress in the IETF DKIM working group.">
+  <title>DKIM2 — shrink the grey area</title>
+  <meta name="description" content="DKIM2 gives legitimate email a verifiable way to show it is from who it says it's from, with every change attributable to whoever made it — so whatever is still in the grey area can be treated as bad. A work in progress in the IETF DKIM working group.">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <nav class="site"><a href="./" aria-current="page">Home</a> <a href="how/">How it works</a> <a href="get-ready/">Get ready</a> <a href="try/">Try it</a> <a href="implementations/">Implementations</a> <a href="deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>
   <header class="hero">
     <h1>DKIM2</h1>
-    <p class="tagline">DKIM2 makes every domain that handles a message
-      accountable for it — binding each signature to the path the message
-      actually took, so recipients can verify who it was for, where it came
-      from, and what changed along the way.</p>
+    <p class="tagline">Shrink the grey area.</p>
     <a class="badge" href="https://datatracker.ietf.org/wg/dkim/documents/">Work in progress · IETF Internet-Draft</a>
   </header>
 
   <main>
-    <section>
-      <h2>Status: a work in progress</h2>
-      <p>DKIM2 is being developed in the IETF
+    <section id="grey-area">
+      <figure class="greyarea">
+        <p class="greyarea-intro">Today, a lot of legitimate mail is impossible
+          to tell apart from abuse.</p>
+        <div class="bar-label">TODAY</div>
+        <div class="bar">
+          <span class="seg good" style="flex-basis: 28%">Clearly good</span>
+          <span class="seg grey" style="flex-basis: 50%">Grey<span class="long">: can&rsquo;t tell</span></span>
+          <span class="seg bad" style="flex-basis: 22%">Clearly bad</span>
+        </div>
+        <p class="bar-note">forwarding &middot; mailing lists &middot; replayed signatures &middot; forged bounces</p>
+        <div class="bar-label">WITH DKIM2</div>
+        <div class="bar">
+          <span class="seg good" style="flex-basis: 63%">Clearly good</span>
+          <span class="seg grey" style="flex-basis: 11%">Grey</span>
+          <span class="seg bad" style="flex-basis: 26%">Clearly bad</span>
+        </div>
+        <p class="goal"><strong>The goal:</strong> move legitimate mail out of
+          the grey area &mdash; so anything still there can be treated as
+          bad.</p>
+        <figcaption>Proportions are illustrative.</figcaption>
+      </figure>
+
+      <p class="definition"><strong>Good</strong> means: from who it says
+        it&rsquo;s from, with every change attributable to whoever made
+        it.</p>
+      <p>Forwarding, mailing lists and bounces are legitimate, but today they
+        look just like the tricks abusers use: replayed signatures, forged
+        bounces, spoofed <code>From</code> addresses. Receivers have to guess,
+        and both good and bad mail get caught. DKIM2 gives each legitimate use
+        a clear, verifiable way to do what it does &mdash; forwarders sign,
+        lists record their changes, bounces follow the chain &mdash; so it
+        leaves the grey area.</p>
+    </section>
+
+    <section id="problems">
+      <h2>Four things you can&rsquo;t verify today</h2>
+      <ol>
+        <li><strong>Who the message was for.</strong> You can receive
+          legitimate mail with no proof you were the intended recipient
+          &mdash; that&rsquo;s how Bcc works. So a validly signed message can
+          be captured and
+          <a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-replay-problem/">replayed</a>
+          to huge numbers of other people, riding on the signer&rsquo;s good
+          reputation.</li>
+        <li><strong>Whether a bounce is safe to send.</strong> Once the SMTP
+          connection has closed you can&rsquo;t tell a real sender from a
+          forged one, so bounces get scattered onto innocent parties
+          (&ldquo;backscatter&rdquo;).</li>
+        <li><strong>What changed in transit.</strong> When a forwarder or list
+          edits a message, the signature simply breaks; you can&rsquo;t tell
+          new content from the original. So mailing lists rewrite the
+          <code>From</code> into their own domain and start again.</li>
+        <li><strong>Whether you can move to new crypto.</strong> Nobody can
+          rely on a new signing algorithm until everyone verifies it, so
+          there&rsquo;s no safe path to stronger, or post-quantum,
+          algorithms.</li>
+      </ol>
+      <p>The first two share a root cause: the SMTP envelope (<code>MAIL
+        FROM</code> and <code>RCPT TO</code>) is never authenticated.</p>
+    </section>
+
+    <section id="fixes">
+      <h2>DKIM2 fixes all four</h2>
+      <ul>
+        <li><a href="how/#envelope"><strong>The envelope is signed into the
+          message</strong></a> &mdash; replay is detectable, and bounces can
+          safely come home.</li>
+        <li><a href="how/#changes"><strong>Every change is
+          recorded</strong></a> &mdash; each part of the message can be
+          reliably attributed to whoever wrote or changed it.</li>
+        <li><a href="how/#algorithms"><strong>Signatures carry several
+          algorithms at once</strong></a> &mdash; upgrade crypto with no flag
+          day.</li>
+      </ul>
+      <p><strong>Not trust &mdash; accountability.</strong> None of this makes
+        a message trustworthy. DKIM2 doesn&rsquo;t tell you who to trust; it
+        records who did what at every step, so reputation lands on whoever
+        actually did it. The rationale is set out in the
+        <a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-motivation/">DKIM2
+        motivation draft</a> (background; now expired).</p>
+    </section>
+
+    <section id="status">
+      <h2>Where the work is</h2>
+      <p>DKIM2 is being developed in the re-chartered IETF
         <a href="https://datatracker.ietf.org/wg/dkim/about/">DKIM working
         group</a>. It is an active Internet-Draft, not yet a finished
-        standard — details may still change.</p>
+        standard &mdash; details may still change. It is expected to become
+        what the large mailbox providers require.</p>
+      <table>
+        <thead>
+          <tr><th>Working-group draft</th><th>Revision</th><th>What it is</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-spec/">dkim2-spec</a></td><td>-09</td><td>The core specification</td></tr>
+          <tr><td><a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-bcp/">dkim2-bcp</a></td><td>-01</td><td>Best practices</td></tr>
+          <tr><td><a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-dns/">dkim2-dns</a></td><td>-03</td><td>Key records in the DNS</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <thead>
+          <tr><th>Related individual draft</th><th>Revision</th><th>What it is</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><a href="https://datatracker.ietf.org/doc/draft-gondwana-dkim2-authres/">dkim2-authres</a></td><td>-02</td><td>DKIM2 results in <code>Authentication-Results</code></td></tr>
+          <tr><td><a href="https://datatracker.ietf.org/doc/draft-gondwana-dkim2-debug-header/">dkim2-debug-header</a></td><td>-03</td><td><code>X-DKIM2-Info</code> diagnostics for interop</td></tr>
+          <tr><td><a href="https://datatracker.ietf.org/doc/draft-chuang-dkim2-sender-policy/">dkim2-sender-policy</a></td><td>-04</td><td>DMARC policy for DKIM2</td></tr>
+        </tbody>
+      </table>
+      <p>It is already running on real mail: see
+        <a href="deployments/">who has deployed DKIM2</a>, and the
+        <a href="implementations/">independent implementations</a> that
+        interoperate.</p>
     </section>
 
-    <section>
-      <h2>What DKIM can't tell you today</h2>
-      <p>A DKIM signature proves a domain signed <em>some</em> version of a
-        message. Even layered with DMARC and ARC, it still can't establish
-        three things:</p>
+    <section id="involved">
+      <h2>Get involved</h2>
       <ul>
-        <li><strong>Who the message was for.</strong> A valid signature carries
-          no proof you were an intended recipient — so a correctly signed
-          message can be captured and
-          <a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-replay-problem/">replayed
-          to millions of other addresses</a>, still passing authentication,
-          riding on the original signer's reputation.</li>
-        <li><strong>Where the bounces go.</strong> A message's return path can
-          name a domain that never handled it, so bounces, abuse reports, and
-          delivery notifications can't be trusted or traced back.</li>
-        <li><strong>What changed in transit.</strong> When a forwarder or
-          mailing list edits a message, the signature simply breaks — with no
-          way to tell an innocuous subject or footer tweak from wholesale
-          replacement by a bad actor.</li>
+        <li><a href="https://datatracker.ietf.org/wg/dkim/about/">Join the
+          IETF DKIM working group&rsquo;s mailing list</a> &mdash; this is
+          where it&rsquo;s decided.</li>
+        <li>The feedback-report format is still open: bring your use cases
+          and help shape it.</li>
+        <li><a href="https://github.com/dkim2wg/interop">Running code &amp;
+          interop</a> &mdash; signers, verifiers and shared test vectors.</li>
       </ul>
     </section>
 
-    <section>
-      <h2>How DKIM2 fixes it</h2>
-      <p>DKIM2 makes every hop on the delivery path accountable. Each hop:</p>
-      <ul>
-        <li><strong>Binds the message to where it's going</strong> — the next
-          hop and recipient are inside the hop's own signature, so a signed
-          message can't be replayed somewhere else. <em>(who it was for)</em></li>
-        <li><strong>Records what it changed</strong>, as a reversible recipe, so
-          the next hop can undo the change and re-check every earlier signature.
-          <em>(what changed)</em></li>
-        <li><strong>Promises to carry control messages back</strong> to the
-          previous hop for a reasonable time, giving bounces and abuse reports a
-          trustworthy return channel. <em>(where the bounces go)</em></li>
-      </ul>
-      <p>Two mechanisms make this work:
-        <strong>Message-Instance (MI) headers</strong> — a hash snapshot of the
-        message at each hop — and <strong>chained DKIM2-Signature headers</strong>,
-        where each hop signs the current snapshot <em>and</em> every prior
-        signature, forming a tamper-evident chain from author to recipient.</p>
-      <p>The rationale is set out in the
-        <a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-motivation/">DKIM2
-        motivation draft</a>.</p>
-    </section>
-
-    <section>
+    <section id="learn-more">
       <h2>Learn more</h2>
       <ul>
-        <li><a href="/validate/">Validate a DKIM2 message</a> — paste an email
-          for a per-level breakdown</li>
-        <li><a href="/verify/">Verify a DKIM2 message in your browser</a> — a
-          standalone client-side verifier (no server round-trip)</li>
+        <li><a href="how/">How DKIM2 works</a> &mdash; the chain, recorded
+          changes, the signed envelope</li>
+        <li><a href="get-ready/">Get ready</a> &mdash; what senders should do
+          now</li>
+        <li><a href="try/">Try it</a> &mdash; addresses that reflect,
+          originate and bounce DKIM2 mail</li>
+        <li><a href="/validate/">Validate a DKIM2 message</a> &mdash; paste an
+          email for a per-level breakdown</li>
+        <li><a href="/verify/">Verify a DKIM2 message in your browser</a>
+          &mdash; a standalone client-side verifier (no server round-trip)</li>
         <li><a href="https://github.com/dkim2wg/interop/blob/master/docs/dkim2-postfix-list-host-guide.md">Run
-          your own DKIM2 list host</a> — install guide for Postfix with
+          your own DKIM2 list host</a> &mdash; install guide for Postfix with
           Mailman 3 or Sympa</li>
         <li><a href="https://github.com/dkim2wg/interop/blob/master/docs/dkim2-postfix-stock-mailman-guide.md">DKIM2
-          for stock Mailman</a> — chosen lists of an unpatched Mailman 3,
+          for stock Mailman</a> &mdash; chosen lists of an unpatched Mailman 3,
           with the milters and Postfix routing only</li>
-        <li><a href="https://datatracker.ietf.org/wg/dkim/about/">IETF DKIM
-          working group</a></li>
-        <li><a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-spec/">DKIM2
-          specification (Internet-Draft)</a></li>
-        <li><a href="https://github.com/dkim2wg/interop">Source &amp;
-          reference implementations on GitHub</a></li>
       </ul>
     </section>
   </main>
@@ -99,7 +171,6 @@
   <footer>
     <p>DKIM2 · developed in the IETF DKIM working group · 2026</p>
   </footer>
-</body>
 
   <script>
   (function () {

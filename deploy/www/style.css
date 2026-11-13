@@ -152,3 +152,58 @@ footer {
   .hero h1 { font-size: 2.25rem; }
   .tagline { font-size: 1.1rem; }
 }
+
+/* ---- Grey-area diagram (home) ------------------------------------------ */
+.greyarea { margin: 1.5rem 0 1rem; }
+.greyarea-intro { font-size: 1.1rem; margin: 0 0 1rem; }
+.bar-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #2f6f79;
+  margin: 0.9rem 0 0.3rem;
+}
+.bar { display: flex; width: 100%; min-height: 2.6rem; }
+.bar .seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0.35rem 0.3rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.2;
+  min-width: 0;
+}
+.seg.good { background: #2f6f79; color: #fff; }
+.seg.grey { background: #cfd6e2; color: #1a2433; }
+.seg.bad  { background: #a63a2c; color: #fff; }
+.bar-note {
+  text-align: center;
+  font-style: italic;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0.35rem 0 0;
+}
+.greyarea .goal {
+  background: #172341;
+  color: #fff;
+  border-radius: 6px;
+  padding: 0.9rem 1.1rem;
+  margin: 1.2rem 0 0.4rem;
+  font-size: 1.05rem;
+}
+.greyarea .goal strong { color: #7fe0d0; }
+.greyarea figcaption { font-size: 0.8rem; font-style: italic; color: var(--muted); }
+.definition {
+  font-size: 1.15rem;
+  border-left: 4px solid #2f6f79;
+  padding: 0.2rem 0 0.2rem 0.9rem;
+  margin: 1.5rem 0 1rem;
+}
+
+@media (max-width: 30rem) {
+  .bar .seg { font-size: 0.8rem; padding: 0.3rem 0.15rem; }
+  .bar .seg .long { display: none; }
+  .greyarea .goal { font-size: 0.98rem; }
+}
