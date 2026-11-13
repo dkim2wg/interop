@@ -1,0 +1,10 @@
+{
+  "name": "Stalwart mail server",
+  "url": "https://stalw.art/",
+  "kind": "mail server",
+  "signs": true,
+  "verifies": true,
+  "since": "2026-07",
+  "notes": "Also validates inbound DKIM2 DSNs.",
+  "source": "https://mailarchive.ietf.org/arch/msg/ietf-dkim/LKutLi03M6QvjgAxV0ktjqpdOzQ"
+}

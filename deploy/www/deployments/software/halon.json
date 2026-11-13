@@ -1,0 +1,10 @@
+{
+  "name": "Halon",
+  "url": "https://halon.io/",
+  "kind": "MTA",
+  "signs": true,
+  "verifies": true,
+  "since": "2026-08",
+  "notes": "Experimental; open-source halon-extras-dkim2 module.",
+  "source": "https://halon.io/blog/halon-introduces-experimental-dkim2-support"
+}

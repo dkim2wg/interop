@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deployments — DKIM2</title>
+  <meta name="description" content="Who runs DKIM2 on real mail today, and the software that supports it.">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="site"><a href="../">Home</a> <a href="../how/">How it works</a> <a href="../get-ready/">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/" aria-current="page">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>
+  <header class="hero page">
+    <h1>Deployments</h1>
+    <p class="lede">Who runs DKIM2 on real mail today, and the software that
+      supports it.</p>
+  </header>
+
+  <main>
+    <section id="services">
+      <h2>Services running DKIM2</h2>
+      <p>A &#x2713; under <strong>Verifies</strong> means the service checks
+        DKIM2 on incoming mail and records the result; it need not act on it
+        yet. The date links to a public statement where there is one;
+        &ldquo;reported to us&rdquo; means the operator told us directly.</p>
+      <div class="table-scroll">
+  <!-- SITES -->
+      </div>
+    </section>
+
+    <section id="software">
+      <h2>Supporting software</h2>
+      <p>Mail servers and MTAs you can run yourself that sign or verify DKIM2.
+        For libraries, test tools and hosted checkers, see
+        <a href="../implementations/">Implementations</a>.</p>
+      <div class="table-scroll">
+  <!-- SOFTWARE -->
+      </div>
+    </section>
+
+    <section id="add">
+      <h2>Add yours</h2>
+      <p>Running DKIM2 in production, or shipping it? Open a pull request
+        adding a file under <code>deploy/www/deployments/sites/</code> or
+        <code>software/</code> (copy an existing one) at
+        <a href="https://github.com/dkim2wg/interop">github.com/dkim2wg/interop</a>,
+        or tell us there.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>DKIM2 · developed in the IETF DKIM working group · 2026</p>
+  </footer>
+</body>
+</html>

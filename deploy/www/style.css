@@ -301,3 +301,11 @@ figure figcaption { font-style: italic; color: var(--muted); margin-top: 0.6rem;
 .pair td:first-child { width: 1.5rem; font-weight: 700; }
 
 ol.steps li { margin: 0.5rem 0; }
+
+/* ---- Deployments tables ------------------------------------------------- */
+.table-scroll { overflow-x: auto; }
+table.deployments { min-width: 34rem; }
+table.deployments td.yes { color: #2f6f79; font-weight: 700; text-align: center; }
+table.deployments th:nth-child(3), table.deployments th:nth-child(4) { text-align: center; }
+table.deployments td.since { white-space: nowrap; }
+table.deployments td.since small { color: var(--muted); }

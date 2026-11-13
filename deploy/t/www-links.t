@@ -21,11 +21,12 @@ my @pages = (
     'implementations/index.html',
     'how/index.html',
     'get-ready/index.html',
+    'deployments/index.html.in',
 );
 
 # Site paths (relative to the web root, as directories) not built yet: links
 # to them are not resolved. Later tasks remove entries as the pages land.
-my %pending = map { $_ => 1 } qw(deployments/);
+my %pending = map { $_ => 1 } qw();
 
 # The live tools: the only links allowed to be absolute.
 my %tools = map { $_ => 1 } ('/validate/', '/verify/');
@@ -155,5 +156,7 @@ for my $id (sort keys %moved) {
     like($script // '', qr/"\Q$id\E"\s*:\s*"\Q$dest\E"/,
         "redirect maps #$id to $dest");
 }
+
+is_deeply([sort keys %pending], [], 'every page is built: nothing pending');
 
 done_testing();
