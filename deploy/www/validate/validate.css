@@ -1,16 +1,16 @@
-:root { --col:72rem; --fg:#1a1a1a; --muted:#5a5a5a; --accent:#1d6fb8; --rule:#e2e2e2;
+:root { --fg:#1a1a1a; --muted:#5a5a5a; --accent:#1d6fb8; --rule:#e2e2e2;
         --pass:#1a7f37; --fail:#c12; --warn:#b58100; --none:#777; --bg:#fff; }
 * { box-sizing: border-box; }
 body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
        color:var(--fg); background:var(--bg); line-height:1.5; }
-header { max-width:72rem; margin:0 auto; padding:1.5rem 1.25rem 0.5rem; }
+header { max-width:46rem; margin:0 auto; padding:1.5rem 1.25rem 0.5rem; }
 header h1 { margin:0 0 .25rem; }
 a { color:var(--accent); }
-.cols { max-width:72rem; margin:0 auto; padding:1rem 1.25rem 3rem;
-        display:grid; grid-template-columns:1fr 1fr; gap:1.25rem; }
+.cols { max-width:46rem; margin:0 auto; padding:1rem 1.25rem 3rem;
+        display:grid; grid-template-columns:1fr; gap:1.25rem; }
 .pane { min-width:0; }
 label, .colhead { display:block; font-weight:600; margin:0 0 .4rem; }
-textarea { width:100%; height:60vh; font-family:ui-monospace,Menlo,Consolas,monospace;
+textarea { width:100%; height:40vh; font-family:ui-monospace,Menlo,Consolas,monospace;
            font-size:.85rem; padding:.6rem; border:1px solid var(--rule); border-radius:6px; }
 .actions { margin-top:.6rem; display:flex; gap:1rem; align-items:center; }
 button { background:var(--accent); color:#fff; border:0; border-radius:6px;

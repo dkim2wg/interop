@@ -15,12 +15,14 @@
     <p>Paste a complete email below. Every DKIM2-Signature and Message-Instance
        level is verified <strong>entirely in your browser</strong> — parsing,
        hashing, and signature cryptography all run locally.
-       Nothing leaves your machine.</p>
+       The message itself never leaves your machine.</p>
     <p class="switch"><strong>In your browser</strong> · <a href="../validate/">On our server</a></p>
     <p class="caveat">A result reports only whether the message travelled here
        unmodified and unreplayed (§14.1). It says nothing about whether the
        message is wanted, or whether any declared modification was benign.</p>
-    <p class="caveat">Checks follow draft-ietf-dkim-dkim2-spec-09. New in -09:
+    <details class="checks">
+      <summary>What this verifier checks</summary>
+      <p>Checks follow draft-ietf-dkim-dkim2-spec-09. New in -09:
        a message whose history includes a null body Recipe
        (<code>"b": null</code>) is a <code>PERMERROR</code>
        (<code>has a null recipe</code>), since its earlier body cannot be
@@ -52,6 +54,7 @@
        result: the Message-Instances (structure, Recipes, then the hashes, top
        down) are checked before the signatures, and no public key is used
        until they all pass.</p>
+    </details>
     <p class="privacy">Public keys are fetched over DNS-over-HTTPS from Cloudflare
        (<code>cloudflare-dns.com</code>), so the signing domains and selectors in
        your message are sent to Cloudflare, and so is the <code>From:</code>
