@@ -342,7 +342,7 @@ table.deployments td.since small { color: var(--muted); }
   border-radius: 3px;
 }
 .seg-l   { background: #2f6f79; color: #fff; }
-.seg-lit { background: #e8a33d; color: #1a2433; }
+.seg-lit { background: #e8a33d; color: #1a2433; min-width: 3rem !important; }
 .seg-gap { background: repeating-linear-gradient(45deg, #dfe4ec 0 6px, #f3f5f9 6px 12px); }
 .plan-recipe { margin: 0.35rem 0 0.35rem 3.2rem; font-size: 0.8rem; color: var(--muted); }
 .plan-recipe code { white-space: normal; }

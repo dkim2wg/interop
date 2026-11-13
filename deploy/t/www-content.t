@@ -158,6 +158,9 @@ subtest developers => sub {
         for qw(PASS FAIL PERMERROR TEMPERROR NONE), '14 days', 'Domain Policy Record',
             'Authentication-Results';
 
+    like($val, qr/mf= domain must relaxed-match an rt= address/, '#validator: Chain of Custody compares mf= with rt=');
+    unlike($val, qr/d= must match the rt= of the hop before/, '#validator: not the wrong d=/rt= rule');
+    like($val, qr/Chain of Custody, then signatures/, '#validator: custody before signatures');
     my $op = section_by_id($h, 'one-pass') // '';
     like($op, qr/<figure class="plan"/, '#one-pass diagram');
     like($op, qr/<pre\b/, '#one-pass pseudo-code');
@@ -166,6 +169,10 @@ subtest developers => sub {
         for 'segment', 'trailing blank', 'ascend', 'share', 'prefetch', 'undo walk',
             'perl/lib/Mail/DKIM2/BodyPlan.pm', 'go/dkim2/plan.go', 'c/dkim2_plan.c',
             'python/dkim2plan.py', 'deploy/www/verify/plan.js';
+    like($ot, qr/up to 8/, '#one-pass: prefetch is capped');
+    like($ot, qr/1 s in Perl/, '#one-pass: Perl waits 1 s');
+    like($op, qr/hash one CRLF/, '#one-pass: empty body hashes one CRLF');
+    like($op, qr/null/, '#one-pass pseudo-code handles a null Recipe');
 };
 
 done_testing();
