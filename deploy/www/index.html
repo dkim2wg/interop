@@ -35,7 +35,7 @@
           <span class="seg grey" style="flex-basis: 50%">Grey<span class="long">: can&rsquo;t tell</span></span>
           <span class="seg bad" style="flex-basis: 22%">Clearly bad</span>
         </div>
-        <p class="bar-note">forwarding &middot; mailing lists &middot; replayed signatures &middot; forged bounces</p>
+        <p class="bar-note">forwarding &middot; mailing lists &middot; Bcc &middot; replayed signatures &middot; forged bounces</p>
         <div class="bar-label">WITH DKIM2</div>
         <div class="bar">
           <span class="seg good" style="flex-basis: 63%">Clearly good</span>
@@ -51,13 +51,14 @@
       <p class="definition"><strong>Good</strong> means: from who it says
         it&rsquo;s from, with every change attributable to whoever made
         it.</p>
-      <p>Forwarding, mailing lists and bounces are legitimate, but today they
-        look just like the tricks abusers use: replayed signatures, forged
+      <p>Forwarding, mailing lists, Bcc and bounces are legitimate, but today
+        they look just like the tricks abusers use: replayed signatures, forged
         bounces, spoofed <code>From</code> addresses. Receivers have to guess,
         and both good and bad mail get caught. DKIM2 gives each legitimate use
         a clear, verifiable way to do what it does &mdash; forwarders sign,
-        lists record their changes, bounces follow the chain &mdash; so it
-        leaves the grey area.</p>
+        lists record their changes, each Bcc copy is signed for the recipient
+        it was sent to, bounces follow the chain &mdash; so it leaves the grey
+        area.</p>
     </section>
 
     <section id="problems">

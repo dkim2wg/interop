@@ -60,7 +60,7 @@ subtest home => sub {
     my $ft = text($fig);
     for my $s ('TODAY', 'WITH DKIM2', 'Clearly good', "Grey: can\x{2019}t tell",
                'Clearly bad',
-               "forwarding \x{b7} mailing lists \x{b7} replayed signatures \x{b7} forged bounces",
+               "forwarding \x{b7} mailing lists \x{b7} Bcc \x{b7} replayed signatures \x{b7} forged bounces",
                'The goal:', 'Proportions are illustrative') {
         like($ft, qr/\Q$s\E/, "grey-area figure says '$s'");
     }
