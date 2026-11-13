@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Get ready — DKIM2</title>
+  <meta name="description" content="What senders should do now to be ready for DKIM2: aligned DKIM keys, an owner, a map of your modifications, a signing workflow, and questions for your vendors.">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="site"><a href="../">Home</a> <a href="../how/">How it works</a> <a href="../get-ready/" aria-current="page">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>
+  <header class="hero page">
+    <h1>Get ready</h1>
+    <p class="lede">If you already DKIM-sign, you&rsquo;re most of the way
+      there. DKIM2 reuses your keys &mdash; no new DNS to make it work.</p>
+  </header>
+
+  <main>
+    <section id="alignment">
+      <h2>Make alignment solid</h2>
+      <p>When you originate a message, DKIM2 requires three things to line
+        up:</p>
+      <ul>
+        <li>the envelope sender (<code>5321.MAIL FROM</code>),</li>
+        <li>the <code>From:</code> header (<code>5322.From</code>),</li>
+        <li>the signing domain (<code>d=</code>).</li>
+      </ul>
+      <p>That&rsquo;s the same alignment you already need for DMARC through
+        DKIM. <strong>Watch out:</strong> if you pass DMARC only through an
+        aligned SPF, that won&rsquo;t carry over &mdash; DKIM2 needs DKIM
+        alignment.</p>
+    </section>
+
+    <section id="esp">
+      <h2>ESPs, bounces and feedback</h2>
+      <ul>
+        <li><strong>Using an ESP?</strong> They sign on your behalf (you
+          publish a key, or a CNAME delegated to them), or they rewrite your
+          <code>From</code> into a domain they control. Most ESP customers
+          need do nothing.</li>
+        <li><strong>Expect more asynchronous bounces.</strong> DKIM2 makes
+          bounces safe to send after the connection closes, and the chain
+          routes them home &mdash; make sure your bounce processing can handle
+          them.</li>
+        <li><strong>Want handling feedback?</strong> Ask for it with the
+          <code>f=feedback</code> flag. The report format is still being
+          defined.</li>
+      </ul>
+    </section>
+
+    <section id="now">
+      <h2>What should your organization do now?</h2>
+      <ol class="steps">
+        <li><strong>Get DKIM keys first.</strong> Only SPF, or nothing at all?
+          Start DKIM-signing with aligned keys now &mdash; DKIM2 builds on
+          them.</li>
+        <li><strong>Pick an owner.</strong> Decide who in your organization
+          owns DKIM2.</li>
+        <li><strong>Map your modifications.</strong> Find where your pipeline
+          changes content, rewrites addresses, or expands one message to many
+          recipients &mdash; and cut changes you don&rsquo;t need. Every change
+          you make is one you&rsquo;ll be accountable for.</li>
+        <li><strong>Plan your signing workflow.</strong> Where you verify
+          incoming signatures, drop invalid ones, add your own, and extend
+          existing chains.</li>
+        <li><strong>Ask your vendors.</strong> MTA, ESP and gateway vendors:
+          what&rsquo;s their DKIM2 implementation and interop plan? See the
+          <a href="../deployments/#software">software that already supports
+          DKIM2</a>.</li>
+      </ol>
+      <p>To see how it all fits together, read <a href="../how/">how DKIM2
+        works</a>, or <a href="../try/">try it</a> against the addresses on
+        this host.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>DKIM2 · developed in the IETF DKIM working group · 2026</p>
+  </footer>
+</body>
+</html>

@@ -84,4 +84,52 @@ subtest home => sub {
     like($h, qr{docs/dkim2-postfix-stock-mailman-guide\.md}, 'stock-Mailman guide');
 };
 
+subtest how => sub {
+    my $h = slurp('how/index.html');
+    ok(defined $h, 'how/index.html exists') or return;
+
+    for my $id (qw(chain accountability changes envelope domains flags
+                   algorithms keys debugging)) {
+        ok(defined section_by_id($h, $id), "section #$id");
+    }
+
+    my ($chain) = $h =~ m{(<figure class="chain".*?</figure>)}s;
+    ok(defined $chain, 'accountability figure') or return;
+    my $ct = text($chain);
+    like($ct, qr/\Q$_\E/, "chain figure says '$_'")
+        for 'brand.example', 'lists.example', 'alumni.example', 'Inbox', 'exploded',
+            "Every hop is on the record \x{2014} so reputation lands on whoever actually did it.";
+
+    my ($mi) = $h =~ m{(<figure class="mi".*?</figure>)}s;
+    ok(defined $mi, 'Message-Instance figure') or return;
+    like(text($mi), qr/\Q$_\E/, "MI figure says '$_'") for '[EXTERNAL]', 'm=1', 'm=2', 'r=';
+
+    my $changes = text(section_by_id($h, 'changes') // '');
+    like($changes, qr/\QA hop that makes significant changes becomes the message\E\x{2019}\Qs author, and must put its own From on it.\E/,
+        'From rule in #changes');
+    like($changes, qr/\Q(Proposed for the next draft; not yet in the specification.)\E/,
+        'From rule marked as a proposal');
+
+    like(text(section_by_id($h, 'envelope') // ''), qr/previous hop/,
+        '#envelope: control messages go back to the previous hop');
+    my $alg = text(section_by_id($h, 'algorithms') // '');
+    like($alg, qr/\Q$_\E/, "#algorithms names $_") for qw(RSA-SHA256 Ed25519-SHA256 ML-DSA-44);
+    my $dbg = section_by_id($h, 'debugging') // '';
+    like($dbg, qr/X-DKIM2-Info:/, '#debugging shows an X-DKIM2-Info example');
+    unlike($dbg, qr/spec-06/, '#debugging example is not the stale spec-06 one');
+};
+
+subtest get_ready => sub {
+    my $h = slurp('get-ready/index.html');
+    ok(defined $h, 'get-ready/index.html exists') or return;
+    my $t = text($h);
+    like($t, qr/most of the way there/, 'reassuring headline');
+    like($t, qr/SPF/, 'warns about SPF-only alignment');
+    like($t, qr/f=feedback/, 'mentions f=feedback');
+    my ($ol) = $h =~ m{(<ol class="steps">.*?</ol>)}s;
+    ok(defined $ol, 'five steps list') or return;
+    my $n = () = $ol =~ /<li>/g;
+    is($n, 5, 'five steps');
+};
+
 done_testing();

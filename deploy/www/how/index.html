@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How it works — DKIM2</title>
+  <meta name="description" content="How DKIM2 works: a chain of signatures, every change recorded in a Message-Instance, the SMTP envelope signed into the message, required domain matches, flags, and crypto agility.">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="site"><a href="../">Home</a> <a href="../how/" aria-current="page">How it works</a> <a href="../get-ready/">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>
+  <header class="hero page">
+    <h1>How it works</h1>
+    <p class="lede">A chain of signatures, every change written down, and the
+      envelope signed into the message &mdash; so every part of a message can
+      be attributed to whoever wrote or changed it.</p>
+  </header>
+
+  <main>
+    <section id="chain">
+      <h2>It&rsquo;s a chain</h2>
+      <p>With DKIM there is one signature, from the origin. With DKIM2, every
+        system that handles a message adds a <code>DKIM2-Signature</code>, and
+        each new signature covers all the earlier ones: <code>i=1</code>,
+        <code>i=2</code>, <code>i=3</code>&hellip; A verifier can walk the
+        chain and see the whole path the message took.</p>
+      <p>If nobody changes the message, every signature covers the same
+        <code>Message-Instance</code> (<code>m=1</code>): a sender, a
+        forwarding service and a corporate gateway each add a signature, and
+        all three sign the same unchanged message.</p>
+    </section>
+
+    <section id="accountability">
+      <h2>Not trust &mdash; accountability</h2>
+      <p>DKIM2 doesn&rsquo;t tell you who to trust. A valid signature
+        doesn&rsquo;t mean a message is good; it means that domain put its name
+        to what it did with it. Each signature records who signed
+        (<code>d=</code>), where it sent the message (<code>mf=</code> and
+        <code>rt=</code>), when (<code>t=</code>), and whether it fanned the
+        message out to more than one recipient (<code>f=exploded</code>). Each
+        Message-Instance records exactly what that hop changed.</p>
+      <figure class="chain">
+        <ol class="hops">
+          <li class="hop">
+            <h3>brand.example</h3>
+            <p><b>sent to</b> list@lists.example</p>
+            <p><b>changed</b> &mdash; (original)</p>
+          </li>
+          <li class="arrow" aria-hidden="true"></li>
+          <li class="hop">
+            <h3>lists.example</h3>
+            <p><b>sent to</b> 1,200 members</p>
+            <p><b>flag</b> exploded</p>
+            <p><b>changed</b> tag + footer</p>
+          </li>
+          <li class="arrow" aria-hidden="true"></li>
+          <li class="hop">
+            <h3>alumni.example</h3>
+            <p><b>sent to</b> alice@isp.example</p>
+            <p><b>changed</b> nothing</p>
+          </li>
+          <li class="arrow" aria-hidden="true"></li>
+          <li class="hop inbox">
+            <h3>Inbox</h3>
+            <p><b>checks</b> every hop</p>
+            <p><b>judges</b> each on its own record</p>
+          </li>
+        </ol>
+        <figcaption>Every hop is on the record &mdash; so reputation lands on
+          whoever actually did it.</figcaption>
+      </figure>
+    </section>
+
+    <section id="changes">
+      <h2>Message-Instance: changes are written down</h2>
+      <p>When a hop changes a message it keeps the earlier
+        <code>Message-Instance</code> and adds a new one, with a fresh hash of
+        the message as it is now and a <em>recipe</em> (<code>r=</code>) that
+        rebuilds the previous version. Here a corporate gateway adds
+        <code>[EXTERNAL]</code> to the subject:</p>
+      <figure class="mi">
+        <div class="mi-panels">
+          <div class="mi-panel">
+            <p class="mi-title">Original send</p>
+            <div class="mi-msg">
+              <p><b>Subject:</b> Updated project timeline</p>
+              <p class="mi-body">Please review the updated timeline.</p>
+            </div>
+            <pre class="mi-hdr"><span class="hl">Message-Instance:</span> <b>m=1; h=&hellip;</b></pre>
+            <p class="mi-note">Header and body fingerprints.</p>
+          </div>
+          <div class="mi-arrow" aria-hidden="true"></div>
+          <div class="mi-panel">
+            <p class="mi-title">After the corporate gateway</p>
+            <div class="mi-msg">
+              <p><b>Subject:</b> <mark>[EXTERNAL]</mark> Updated project timeline</p>
+              <p class="mi-body">Please review the updated timeline.</p>
+            </div>
+            <pre class="mi-hdr"><span class="dim">Message-Instance: m=1; h=&hellip;</span>
+<span class="hl">Message-Instance:</span> <b>m=2; h=&hellip;; r=&hellip;</b></pre>
+            <p class="mi-note">New header hash &middot; same body hash &middot;
+              the recipe (<code>r=</code>) restores the original subject.</p>
+          </div>
+        </div>
+        <figcaption>Rebuild the original &rarr; earlier signatures verify
+          again, and every change is attributable.</figcaption>
+      </figure>
+      <p>Because the original can be rebuilt, the original sender&rsquo;s
+        signature can be checked again, and every change is pinned to the hop
+        that made it. A mailing list no longer has to pretend to be the
+        author: its subject tag and footer are on its own record.</p>
+      <p><strong>A hop that makes significant changes becomes the
+        message&rsquo;s author, and must put its own From on it.</strong>
+        <em>(Proposed for the next draft; not yet in the specification.)</em>
+        Either way the message says who is responsible for it: small changes
+        are recorded against whoever made them, and a message rewritten in
+        earnest is from whoever rewrote it.</p>
+    </section>
+
+    <section id="envelope">
+      <h2>The envelope travels signed</h2>
+      <p>Each <code>DKIM2-Signature</code> records the SMTP envelope &mdash;
+        <code>MAIL FROM</code> and <code>RCPT TO</code> &mdash; and signs it. A
+        verifier checks the envelope it actually received against what was
+        signed.</p>
+      <ul>
+        <li><strong>A captured message can&rsquo;t be re-aimed</strong>
+          &rarr; DKIM replay stops working. A hop that sends to more than one
+          recipient must say so with <code>f=exploded</code>, another replay
+          signal.</li>
+        <li><strong>Bounces know exactly where to go</strong> &rarr; no more
+          backscatter. Each hop promises to carry delivery notifications and
+          other control messages back to the previous hop for a reasonable
+          time, so a bounce travels back along the authenticated chain.</li>
+        <li><strong>Stripping signatures doesn&rsquo;t rewind the
+          clock</strong> &rarr; to resend an &ldquo;earlier copy&rdquo;
+          you&rsquo;d have to sign as the domain it was addressed to.</li>
+      </ul>
+    </section>
+
+    <section id="domains">
+      <h2>Required domain matches</h2>
+      <p>The core specification requires two matches, both with the same rule:
+        the domain must be the signing domain (<code>d=</code>) or a subdomain
+        of it.</p>
+      <div class="pair">
+        <table>
+          <caption>Envelope: <code>MAIL FROM</code> vs <code>d=example.com</code></caption>
+          <tbody>
+            <tr><td>&check;</td><td><code>mf=&hellip;@example.com</code></td><td>exact</td></tr>
+            <tr><td>&check;</td><td><code>mf=&hellip;@bounce.example.com</code></td><td>subdomain</td></tr>
+            <tr><td>&cross;</td><td><code>mf=&hellip;@notexample.com</code></td><td>different domain</td></tr>
+            <tr><td>&cross;</td><td><code>mf=&hellip;@example.com.evil.net</code></td><td>not a subdomain</td></tr>
+          </tbody>
+        </table>
+        <table>
+          <caption>Header: an Authentic <code>From</code> vs <code>d=example.com</code></caption>
+          <tbody>
+            <tr><td>&check;</td><td><code>From: news@example.com</code></td><td>exact</td></tr>
+            <tr><td>&check;</td><td><code>From: news@mail.example.com</code></td><td>subdomain</td></tr>
+            <tr><td>&cross;</td><td><code>From: news@other.example</code></td><td>different domain</td></tr>
+            <tr><td>&cross;</td><td><code>From: a@x.com, b@y.com</code></td><td>multiple addresses</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Which signature is the <code>From</code> checked against? The first
+        (<code>i=1</code>) &mdash; or, if a hop rewrote the <code>From</code>,
+        the first signature after that change.</p>
+    </section>
+
+    <section id="flags">
+      <h2>Signature flags</h2>
+      <p>Each hop can set flags in <code>f=</code>: what it&rsquo;s asking
+        for, or what it did.</p>
+      <ul>
+        <li><code>f=feedback</code> &mdash; the signer asks for feedback on how
+          its mail was handled. The report format is still being worked
+          out.</li>
+        <li><code>f=feedhere</code> &mdash; relay feedback through this hop,
+          rather than straight to the originator, protecting the identity of
+          systems further down the chain.</li>
+        <li><code>f=exploded</code> &mdash; this hop sent one message on to
+          more than one recipient; a key signal for spotting replay. Never set
+          on <code>i=1</code>.</li>
+      </ul>
+      <p>Flags a verifier doesn&rsquo;t recognise are ignored, so more can be
+        added later.</p>
+    </section>
+
+    <section id="algorithms">
+      <h2>Swap crypto without a flag day</h2>
+      <p>A <code>DKIM2-Signature</code> can carry several algorithms at once,
+        and verifiers ignore the ones they don&rsquo;t understand. Sign with
+        the old and the new algorithm together, let receivers verify whichever
+        they support, and retire the old one once adoption is there.</p>
+      <p>Defined today: <code>RSA-SHA256</code> &middot;
+        <code>Ed25519-SHA256</code> &middot; <code>ML-DSA-44</code>
+        (post-quantum).</p>
+    </section>
+
+    <section id="keys">
+      <h2>What it looks like &mdash; and your keys</h2>
+      <p>Two new header fields: <code>Message-Instance</code> documents the
+        message and any changes; <code>DKIM2-Signature</code> carries the
+        signature and the signed envelope.</p>
+      <p><strong>It reuses your existing DKIM keys.</strong> DKIM2 keys live
+        in the same <code>_domainkey</code> place in the DNS, in the same TXT
+        record format, so your RSA keys work as they are: no new DNS to make
+        DKIM2 work. Ed25519 or ML-DSA later means a new selector, and is
+        optional.</p>
+    </section>
+
+    <section id="debugging">
+      <h2>Debugging with <code>X-DKIM2-Info</code></h2>
+      <p>The biggest lesson from interop testing: when a signature
+        doesn&rsquo;t verify, the first questions are always &ldquo;what did
+        you sign?&rdquo; and &ldquo;which draft did you build?&rdquo;.
+        <code>X-DKIM2-Info</code> is an optional diagnostic header that
+        answers both up front. This one is from the Mailman integration on
+        this host:</p>
+      <pre class="cname">X-DKIM2-Info: draft=ietf-dkim-dkim2-spec-09; repo=github.com/brong/mailman;
+   date=2026-11-03; sw=mailman; action=mi-m=2; hc=16;
+   hn=content-transfer-encoding,content-type,date,from,list-help,list-id,
+      list-owner,list-post,list-subscribe,list-unsubscribe,message-id,
+      message-id-hash,mime-version,precedence,subject,to;</pre>
+      <ul>
+        <li><code>draft=</code> &mdash; the spec version the software was
+          built against</li>
+        <li><code>sw=</code> and <code>action=</code> &mdash; which software
+          touched it, and what it did</li>
+        <li><code>hc=</code> and <code>hn=</code> &mdash; exactly which header
+          fields went into the hash</li>
+      </ul>
+      <p>Optional and for diagnosis only; defined in
+        <a href="https://datatracker.ietf.org/doc/draft-gondwana-dkim2-debug-header/">draft-gondwana-dkim2-debug-header</a>.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>DKIM2 · developed in the IETF DKIM working group · 2026</p>
+  </footer>
+</body>
+</html>

@@ -207,3 +207,97 @@ footer {
   .bar .seg .long { display: none; }
   .greyarea .goal { font-size: 0.98rem; }
 }
+
+/* ---- Accountability chain (how/#accountability) ------------------------- */
+figure { margin: 1.25rem 0; }
+figure figcaption { font-style: italic; color: var(--muted); margin-top: 0.6rem; }
+.hops {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+.hops .hop {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  background: #f3f5f9;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 0.7rem 0.6rem;
+  text-align: center;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.hops .hop.inbox { background: #e6f2f3; }
+.hops h3 { font-size: 1rem; margin: 0 0 0.35rem; overflow-wrap: anywhere; }
+.hops p { margin: 0.1rem 0; overflow-wrap: anywhere; }
+.hops b { color: #2f6f79; }
+.hops .arrow { flex: 0 0 auto; align-self: center; margin: 0; color: #2f6f79; font-weight: 700; }
+.hops .arrow::before { content: "\2192"; }
+
+@media (max-width: 40rem) {
+  .hops { flex-direction: column; }
+  .hops .arrow::before { content: "\2193"; }
+}
+
+/* ---- Message-Instance before/after (how/#changes) ------------------------ */
+.mi-panels { display: flex; align-items: stretch; gap: 0.6rem; }
+.mi-panel {
+  flex: 1 1 0;
+  min-width: 0;
+  background: #f3f5f9;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+.mi-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2f6f79;
+  margin: 0 0 0.5rem;
+}
+.mi-msg {
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.9rem;
+}
+.mi-msg p { margin: 0; }
+.mi-msg .mi-body { color: var(--muted); font-size: 0.85rem; }
+.mi-msg mark { background: none; color: #b5651d; font-weight: 700; }
+.mi-hdr {
+  background: #172341;
+  color: #fff;
+  border-radius: 4px;
+  padding: 0.6rem 0.7rem;
+  margin: 0.5rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mi-hdr .hl { color: #7fe0d0; }
+.mi-hdr .dim { color: #9aa6bd; }
+.mi-note { font-size: 0.82rem; color: var(--muted); margin: 0; }
+.mi-arrow { flex: 0 0 auto; align-self: center; color: #2f6f79; font-size: 1.6rem; font-weight: 700; }
+.mi-arrow::before { content: "\2192"; }
+
+@media (max-width: 40rem) {
+  .mi-panels { flex-direction: column; align-items: stretch; }
+  .mi-arrow { text-align: center; }
+  .mi-arrow::before { content: "\2193"; }
+}
+
+/* ---- Paired tables (how/#domains) --------------------------------------- */
+.pair { display: flex; flex-wrap: wrap; gap: 0 1.5rem; }
+.pair table { flex: 1 1 18rem; width: auto; }
+.pair caption { text-align: left; font-weight: 600; padding-bottom: 0.3rem; }
+.pair td:first-child { width: 1.5rem; font-weight: 700; }
+
+ol.steps li { margin: 0.5rem 0; }
