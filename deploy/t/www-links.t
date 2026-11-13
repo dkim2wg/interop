@@ -22,22 +22,34 @@ my @pages = (
     'how/index.html',
     'get-ready/index.html',
     'deployments/index.html.in',
+    'verify/index.html',
+    'validate/index.html',
 );
 
 # Site paths (relative to the web root, as directories) not built yet: links
 # to them are not resolved. Later tasks remove entries as the pages land.
 my %pending = map { $_ => 1 } qw();
 
-# The live tools: the only links allowed to be absolute.
-my %tools = map { $_ => 1 } ('/validate/', '/verify/');
-
 my @SITE_LINKS = (
-    [''                 => 'Home'],
+    [''                 => 'DKIM2'],
     ['how/'             => 'How it works'],
     ['get-ready/'       => 'Get ready'],
     ['try/'             => 'Try it'],
     ['implementations/' => 'Implementations'],
     ['deployments/'     => 'Deployments'],
+    ['verify/'          => 'Verify'],
+);
+
+# Which nav item each page marks as current.
+my %CURRENT = (
+    'index.html'                 => '',
+    'how/index.html'             => 'how/',
+    'get-ready/index.html'       => 'get-ready/',
+    'try/index.html'             => 'try/',
+    'implementations/index.html' => 'implementations/',
+    'deployments/index.html.in'  => 'deployments/',
+    'verify/index.html'          => 'verify/',
+    'validate/index.html'        => 'verify/',
 );
 
 my %moved = (
@@ -72,10 +84,11 @@ sub expected_nav {
         my ($path, $label) = @$_;
         my $href = $up . $path;
         $href = './' if $href eq '';
-        qq{<a href="$href">$label</a>};
+        my $class = $path eq '' ? ' class="brand"' : '';
+        qq{<a$class href="$href">$label</a>};
     } @SITE_LINKS;
-    push @a, '<a href="/validate/">Validate</a>', '<a href="/verify/">Verify</a>';
-    return '<nav class="site">' . join(' ', @a) . '</nav>';
+    my $brand = shift @a;
+    return qq{<nav class="site">$brand <span class="links">} . join(' ', @a) . '</span></nav>';
 }
 
 # Resolve a relative path against a page's directory (web-root relative).
@@ -118,18 +131,27 @@ for my $p (@pages) {
     is($n, 1, "$p marks exactly one nav item current");
     (my $bare = $nav) =~ s/ aria-current="page"//g;
     is($bare, expected_nav($dir), "$p nav is the shared nav");
+    my $cur = $CURRENT{$p};
+    my $cur_href = ($dir eq '' ? '' : '../') . $cur;
+    $cur_href = './' if $cur_href eq '';
+    like($nav, qr/<a(?: class="brand")? href="\Q$cur_href\E" aria-current="page">/,
+        "$p marks $cur_href current");
+    my $up = $dir eq '' ? '' : '../';
+    like($h, qr/<link rel="stylesheet" href="\Q${up}nav.css\E">/, "$p loads the shared nav.css");
 
     unlike($h, qr/canmodify/i, "$p does not mention canmodify");
 
     while ($h =~ /\b(href|src)="([^"]*)"/g) {
         my $url = $2;
         next if $url =~ /^(?:https?:|mailto:)/;
+        next if $url eq '#';                 # script-driven link
+        $url =~ s/\?[^#]*//;                 # cache-busting query string
         if ($url =~ /^#(.+)$/) {
             ok(ids($h)->{$1}, "$p: #$1 resolves on the same page");
             next;
         }
         if ($url =~ m{^/}) {
-            ok($tools{$url}, "$p: absolute link $url is one of the live tools");
+            fail("$p: absolute link $url (would escape /preview/)");
             next;
         }
         my ($path, $frag) = split /#/, $url, 2;

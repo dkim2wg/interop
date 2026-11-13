@@ -1,4 +1,4 @@
-:root { --fg:#1a1a1a; --muted:#5a5a5a; --accent:#1d6fb8; --rule:#e2e2e2;
+:root { --col:72rem; --fg:#1a1a1a; --muted:#5a5a5a; --accent:#1d6fb8; --rule:#e2e2e2;
         --pass:#1a7f37; --fail:#c12; --warn:#b58100; --none:#777; --bg:#fff; }
 * { box-sizing: border-box; }
 body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -45,3 +45,5 @@ button { background:var(--accent); color:#fff; border:0; border-radius:6px;
 .caps { color: #a15c00; }
 .verdict.temperror { background: #fff4e5; color: #a15c00; }
 .verdict.permerror { background: #fdecea; color: #b71c1c; }
+.switch { margin:.4rem 0 0; font-size:.95rem; }
+.switch strong { color:var(--fg); }

@@ -3,17 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DKIM2 browser verifier</title>
+  <title>Verify in your browser — DKIM2</title>
   <meta name="description" content="Paste an email and verify its DKIM2 chain entirely in your browser — no server involved.">
   <link rel="stylesheet" href="verify.css">
+  <link rel="stylesheet" href="../nav.css">
 </head>
 <body>
+  <nav class="site"><a class="brand" href="../">DKIM2</a> <span class="links"><a href="../how/">How it works</a> <a href="../get-ready/">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/">Deployments</a> <a href="../verify/" aria-current="page">Verify</a></span></nav>
   <header>
-    <h1>DKIM2 browser verifier</h1>
+    <h1>Verify in your browser</h1>
     <p>Paste a complete email below. Every DKIM2-Signature and Message-Instance
        level is verified <strong>entirely in your browser</strong> — parsing,
        hashing, and signature cryptography all run locally.
-       <a href="/">About DKIM2</a> · <a href="/how/">How it works</a> · <a href="/deployments/">Deployments</a> · <a href="/validate/">server validator</a></p>
+       Nothing leaves your machine.</p>
+    <p class="switch"><strong>In your browser</strong> · <a href="../validate/">On our server</a></p>
     <p class="caveat">A result reports only whether the message travelled here
        unmodified and unreplayed (§14.1). It says nothing about whether the
        message is wanted, or whether any declared modification was benign.</p>

@@ -6,13 +6,22 @@
   <title>DKIM2 — shrink the grey area</title>
   <meta name="description" content="DKIM2 gives legitimate email a verifiable way to show it is from who it says it's from, with every change attributable to whoever made it — so whatever is still in the grey area can be treated as bad. A work in progress in the IETF DKIM working group.">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="nav.css">
 </head>
 <body>
-  <nav class="site"><a href="./" aria-current="page">Home</a> <a href="how/">How it works</a> <a href="get-ready/">Get ready</a> <a href="try/">Try it</a> <a href="implementations/">Implementations</a> <a href="deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>
-  <header class="hero">
-    <h1>DKIM2</h1>
-    <p class="tagline">Shrink the grey area.</p>
+  <nav class="site"><a class="brand" href="./" aria-current="page">DKIM2</a> <span class="links"><a href="how/">How it works</a> <a href="get-ready/">Get ready</a> <a href="try/">Try it</a> <a href="implementations/">Implementations</a> <a href="deployments/">Deployments</a> <a href="verify/">Verify</a></span></nav>
+  <header class="hero home">
     <a class="badge" href="https://datatracker.ietf.org/wg/dkim/documents/">Work in progress · IETF Internet-Draft</a>
+    <h1>Shrink the <span class="accent">grey area.</span></h1>
+    <p class="tagline">DKIM2 is the next version of DKIM. Every system that
+      handles an email signs for what it did, so legitimate mail can prove
+      it&rsquo;s from who it says it&rsquo;s from &mdash; and every change
+      along the way is on the record.</p>
+    <p class="cta">
+      <a class="button primary" href="how/">How it works &rarr;</a>
+      <a class="button" href="try/">Try it</a>
+      <a class="button" href="deployments/">Who&rsquo;s using it</a>
+    </p>
   </header>
 
   <main>
@@ -104,8 +113,8 @@
       <p>DKIM2 is being developed in the re-chartered IETF
         <a href="https://datatracker.ietf.org/wg/dkim/about/">DKIM working
         group</a>. It is an active Internet-Draft, not yet a finished
-        standard &mdash; details may still change. It is expected to become
-        what the large mailbox providers require.</p>
+        standard &mdash; details may still change. We expect it to become what
+        the large mailbox providers require.</p>
       <table>
         <thead>
           <tr><th>Working-group draft</th><th>Revision</th><th>What it is</th></tr>
@@ -154,10 +163,10 @@
           now</li>
         <li><a href="try/">Try it</a> &mdash; addresses that reflect,
           originate and bounce DKIM2 mail</li>
-        <li><a href="/validate/">Validate a DKIM2 message</a> &mdash; paste an
-          email for a per-level breakdown</li>
-        <li><a href="/verify/">Verify a DKIM2 message in your browser</a>
-          &mdash; a standalone client-side verifier (no server round-trip)</li>
+        <li><a href="verify/">Verify a message in your browser</a> &mdash;
+          paste an email; nothing leaves your machine</li>
+        <li><a href="validate/">Verify a message on our server</a> &mdash; the
+          same check, with a per-level breakdown</li>
         <li><a href="https://github.com/dkim2wg/interop/blob/master/docs/dkim2-postfix-list-host-guide.md">Run
           your own DKIM2 list host</a> &mdash; install guide for Postfix with
           Mailman 3 or Sympa</li>

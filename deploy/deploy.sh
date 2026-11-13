@@ -58,6 +58,8 @@ perl Makefile.PL >/dev/null
 make >/dev/null
 echo ">> Mail::DKIM2 test suite (deploy gate; aborts on failure) ..."
 make test
+echo ">> site tests (deploy gate; a bad deployments/*.json entry stops here) ..."
+prove "$REPO"/deploy/t/
 make install >/dev/null
 # Programs an older `make install` left behind under their previous names.
 rm -f /usr/local/bin/calculate-dkim2.pl /usr/local/bin/calculate-mailversion.pl \
@@ -81,25 +83,17 @@ install -m 755 bin/dkim2-delayedbounce-fail.pl /usr/local/bin/dkim2-delayedbounc
 install -m 755 bin/validate.cgi              /usr/local/bin/dkim2-validate.cgi
 
 # 2b. Static web assets: the site (built by deploy/bin/stage-www.sh -- the
-#     static pages plus /deployments/, generated from one JSON file per entry
-#     under deploy/www/deployments/; it runs deploy/t/ first and stops the
-#     deploy on a failure) + the validator UI + the standalone browser
-#     verifier. Kept here so a change to validate.js/.css/.html can't
+#     static pages, /deployments/ generated from one JSON file per entry
+#     under deploy/www/deployments/, the validator UI and the standalone
+#     browser verifier; its site tests already passed in the step-1 gate,
+#     before anything was installed). Kept here so a change to
+#     validate.js/.css/.html can't
 #     be left stale relative to the Mail::DKIM2::Validate report shape it
 #     renders. The browser verifier (deploy/www/verify/) is pure static
 #     files (HTML/CSS/JS, no CGI/backend) — same install-and-copy treatment,
 #     just no fastcgi wiring.
 if [ -d /var/www/dkim2.com ]; then
     "$REPO"/deploy/bin/stage-www.sh /var/www/dkim2.com
-    install -d -m 755 /var/www/dkim2.com/validate
-    install -m 644 "$REPO"/deploy/www/validate/* /var/www/dkim2.com/validate/
-    # Cache-bust the validator assets: stamp __VER__ with the current commit so
-    # browsers always fetch fresh JS/CSS after a deploy (no stale-asset confusion).
-    VER=$(git -C "$REPO" rev-parse --short HEAD)
-    sed -i "s/__VER__/$VER/g" /var/www/dkim2.com/validate/index.html
-    install -d -m 755 /var/www/dkim2.com/verify
-    install -m 644 "$REPO"/deploy/www/verify/*.html "$REPO"/deploy/www/verify/*.css \
-        "$REPO"/deploy/www/verify/*.js /var/www/dkim2.com/verify/
 fi
 
 # 3. Postfix reflector transport map (idempotent: picks up new addresses).

@@ -134,13 +134,23 @@ for my $case (sort keys %bad) {
 }
 
 subtest ignores_non_json => sub {
-    my ($code, $stderr) = run_build(
-        'sites/a.json'    => entry(),
-        'sites/notes.txt' => "hello\n",
-        'sites/a.json~'   => "{ junk\n",
-        'sites/.DS_Store' => "\0\1\2",
+    my ($code, $stderr, $html) = run_build(
+        'sites/a.json'     => entry(name => 'Kept'),
+        'sites/notes.txt'  => "hello\n",
+        'sites/a.json~'    => "{ junk\n",
+        'sites/.DS_Store'  => "\0\1\2",
+        'sites/._a.json'   => "\0\5\26\7 AppleDouble",
     );
     is($code, 0, 'exit 0') or diag $stderr;
+    like($html // '', qr/>Kept</, 'the real entry is rendered');
+};
+
+subtest non_ascii => sub {
+    my ($code, $stderr, $html) = run_build(
+        'software/r.json' => q({"name": "R\u00f6\u00dfner & Co", "url": "https://example.com/", "kind": "MTA", "signs": true, "verifies": true}) . "\n",
+    );
+    is($code, 0, 'exit 0') or diag $stderr;
+    like($html // '', qr/R\x{f6}\x{df}ner &amp; Co/, 'non-ASCII name survives as UTF-8, & escaped');
 };
 
 subtest repo_data_valid => sub {

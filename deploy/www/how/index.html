@@ -6,9 +6,10 @@
   <title>How it works — DKIM2</title>
   <meta name="description" content="How DKIM2 works: a chain of signatures, every change recorded in a Message-Instance, the SMTP envelope signed into the message, required domain matches, flags, and crypto agility.">
   <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../nav.css">
 </head>
 <body>
-  <nav class="site"><a href="../">Home</a> <a href="../how/" aria-current="page">How it works</a> <a href="../get-ready/">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>
+  <nav class="site"><a class="brand" href="../">DKIM2</a> <span class="links"><a href="../how/" aria-current="page">How it works</a> <a href="../get-ready/">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/">Deployments</a> <a href="../verify/">Verify</a></span></nav>
   <header class="hero page">
     <h1>How it works</h1>
     <p class="lede">A chain of signatures, every change written down, and the
@@ -35,8 +36,8 @@
       <p>DKIM2 doesn&rsquo;t tell you who to trust. A valid signature
         doesn&rsquo;t mean a message is good; it means that domain put its name
         to what it did with it. Each signature records who signed
-        (<code>d=</code>), where it sent the message (<code>mf=</code> and
-        <code>rt=</code>), when (<code>t=</code>), and whether it fanned the
+        (<code>d=</code>), the envelope it sent with (<code>mf=</code> sender,
+        <code>rt=</code> recipients), when (<code>t=</code>), and whether it fanned the
         message out to more than one recipient (<code>f=exploded</code>). Each
         Message-Instance records exactly what that hop changed.</p>
       <figure class="chain">
@@ -112,9 +113,9 @@
       <p><strong>A hop that makes significant changes becomes the
         message&rsquo;s author, and must put its own From on it.</strong>
         <em>(Proposed for the next draft; not yet in the specification.)</em>
-        Either way the message says who is responsible for it: small changes
-        are recorded against whoever made them, and a message rewritten in
-        earnest is from whoever rewrote it.</p>
+        Either way the message would say who is responsible for it: small
+        changes recorded against whoever made them, and a message rewritten in
+        earnest from whoever rewrote it.</p>
     </section>
 
     <section id="envelope">
@@ -140,9 +141,13 @@
 
     <section id="domains">
       <h2>Required domain matches</h2>
-      <p>The core specification requires two matches, both with the same rule:
-        the domain must be the signing domain (<code>d=</code>) or a subdomain
-        of it.</p>
+      <p>The core specification requires two domain matches. For the
+        envelope, the <code>MAIL FROM</code> domain must be the signing domain
+        (<code>d=</code>) or a subdomain of it. For the header, an Authentic
+        <code>From</code> also matches the other way: a signer at a subdomain
+        can vouch for its parent domain&rsquo;s <code>From</code>, unless the
+        parent publishes a Domain Policy Record (<code>f=strict</code>) that
+        forbids it.</p>
       <div class="pair">
         <table>
           <caption>Envelope: <code>MAIL FROM</code> vs <code>d=example.com</code></caption>
@@ -158,6 +163,7 @@
           <tbody>
             <tr><td>&check;</td><td><code>From: news@example.com</code></td><td>exact</td></tr>
             <tr><td>&check;</td><td><code>From: news@mail.example.com</code></td><td>subdomain</td></tr>
+            <tr><td>&check;</td><td><code>From: news@example.com</code> with <code>d=mail.example.com</code></td><td>parent domain, unless it forbids subdomain signing</td></tr>
             <tr><td>&cross;</td><td><code>From: news@other.example</code></td><td>different domain</td></tr>
             <tr><td>&cross;</td><td><code>From: a@x.com, b@y.com</code></td><td>multiple addresses</td></tr>
           </tbody>

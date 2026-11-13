@@ -6,9 +6,10 @@
   <title>Get ready — DKIM2</title>
   <meta name="description" content="What senders should do now to be ready for DKIM2: aligned DKIM keys, an owner, a map of your modifications, a signing workflow, and questions for your vendors.">
   <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../nav.css">
 </head>
 <body>
-  <nav class="site"><a href="../">Home</a> <a href="../how/">How it works</a> <a href="../get-ready/" aria-current="page">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>
+  <nav class="site"><a class="brand" href="../">DKIM2</a> <span class="links"><a href="../how/">How it works</a> <a href="../get-ready/" aria-current="page">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/">Deployments</a> <a href="../verify/">Verify</a></span></nav>
   <header class="hero page">
     <h1>Get ready</h1>
     <p class="lede">If you already DKIM-sign, you&rsquo;re most of the way
@@ -25,8 +26,9 @@
         <li>the <code>From:</code> header (<code>5322.From</code>),</li>
         <li>the signing domain (<code>d=</code>).</li>
       </ul>
-      <p>That&rsquo;s the same alignment you already need for DMARC through
-        DKIM. <strong>Watch out:</strong> if you pass DMARC only through an
+      <p>DMARC through DKIM already needs <code>From</code> and
+        <code>d=</code> aligned; DKIM2 adds the envelope sender.
+        <strong>Watch out:</strong> if you pass DMARC only through an
         aligned SPF, that won&rsquo;t carry over &mdash; DKIM2 needs DKIM
         alignment.</p>
     </section>

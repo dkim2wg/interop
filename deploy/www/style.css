@@ -17,7 +17,7 @@ body {
   line-height: 1.6;
 }
 
-nav.site, .hero, main, footer {
+.hero, main, footer {
   max-width: 46rem;
   margin: 0 auto;
   padding: 0 1.25rem;
@@ -65,21 +65,6 @@ a.badge:focus {
 }
 
 main { padding-top: 1rem; padding-bottom: 2rem; }
-
-/* Site navigation: one row at the top of every page, wrapping when narrow. */
-nav.site {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1.1rem;
-  padding-top: 1rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--rule);
-  font-size: 0.95rem;
-}
-
-nav.site a { text-decoration: none; color: var(--muted); }
-nav.site a:hover, nav.site a:focus { color: var(--accent); text-decoration: underline; }
-nav.site a[aria-current="page"] { color: var(--fg); font-weight: 600; }
 
 /* Subpage header: a page title and a one-line lede, no badge. */
 .hero.page { padding-top: 2rem; padding-bottom: 1.25rem; }
@@ -309,3 +294,31 @@ table.deployments td.yes { color: #2f6f79; font-weight: 700; text-align: center;
 table.deployments th:nth-child(3), table.deployments th:nth-child(4) { text-align: center; }
 table.deployments td.since { white-space: nowrap; }
 table.deployments td.since small { color: var(--muted); }
+
+/* ---- Home hero: a big two-tone headline and buttons (after jmap.io) ---- */
+.hero.home { padding-top: 2.5rem; padding-bottom: 2.25rem; }
+.hero.home .badge { margin-bottom: 1.25rem; }
+.hero.home h1 {
+  font-size: clamp(2.6rem, 9vw, 4.2rem);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+  color: #172341;
+  margin: 0 0 1rem;
+}
+.hero.home h1 .accent { color: #2f6f79; }
+.hero.home .tagline { font-size: 1.15rem; color: var(--fg); }
+.cta { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1.4rem 0 0; }
+.button {
+  display: inline-block;
+  padding: 0.55rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid #cfe1e3;
+  background: #fff;
+  color: #1f5f69;
+  text-decoration: none;
+  font-weight: 500;
+}
+.button:hover, .button:focus-visible { border-color: #2f6f79; }
+.button.primary { background: #2f6f79; border-color: #2f6f79; color: #fff; }
+.button.primary:hover, .button.primary:focus-visible { background: #255a62; }

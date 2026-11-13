@@ -114,6 +114,13 @@ subtest how => sub {
         '#envelope: control messages go back to the previous hop');
     my $alg = text(section_by_id($h, 'algorithms') // '');
     like($alg, qr/\Q$_\E/, "#algorithms names $_") for qw(RSA-SHA256 Ed25519-SHA256 ML-DSA-44);
+    my $dom = text(section_by_id($h, 'domains') // '');
+    unlike($dom, qr/same rule/, '#domains does not claim both matches use the same rule');
+    like($dom, qr/Domain Policy Record/, '#domains: From also matches upwards unless a DPR forbids it');
+    like($dom, qr/news\@example\.com\b.*d=mail\.example\.com|d=mail\.example\.com.*news\@example\.com/,
+        '#domains shows the subdomain-signer case');
+    like(text(section_by_id($h, 'accountability') // ''), qr/mf= sender/,
+        '#accountability: mf= is the envelope sender');
     my $dbg = section_by_id($h, 'debugging') // '';
     like($dbg, qr/X-DKIM2-Info:/, '#debugging shows an X-DKIM2-Info example');
     unlike($dbg, qr/spec-06/, '#debugging example is not the stale spec-06 one');

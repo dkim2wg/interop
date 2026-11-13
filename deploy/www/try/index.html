@@ -6,9 +6,10 @@
   <title>Try it — DKIM2</title>
   <meta name="description" content="Addresses on dkim2.com that reflect, originate or bounce DKIM2 mail, so you can watch DKIM2 behaviour end-to-end.">
   <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../nav.css">
 </head>
 <body>
-  <nav class="site"><a href="../">Home</a> <a href="../how/">How it works</a> <a href="../get-ready/">Get ready</a> <a href="../try/" aria-current="page">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>
+  <nav class="site"><a class="brand" href="../">DKIM2</a> <span class="links"><a href="../how/">How it works</a> <a href="../get-ready/">Get ready</a> <a href="../try/" aria-current="page">Try it</a> <a href="../implementations/">Implementations</a> <a href="../deployments/">Deployments</a> <a href="../verify/">Verify</a></span></nav>
   <header class="hero page">
     <h1>Try it</h1>
     <p class="lede">Send mail to these addresses on dkim2.com and watch DKIM2 at work: replies that record each change, freshly signed messages, and signed bounces.</p>
@@ -31,7 +32,7 @@
         <a href="#reflector-signing">When the reply is signed</a>); either way it
         includes <code>Authentication-Results</code> and
         <code>X-DKIM2-Reflector</code> headers explaining what happened. Paste the
-        reply into <a href="/validate/">the validator</a> to see the result.</p>
+        reply into <a href="../validate/">the verifier</a> to see the result.</p>
       <table>
         <thead>
           <tr><th>Address</th><th>What it does</th><th>What to expect</th></tr>
@@ -149,7 +150,7 @@
         <code>dkim2.com</code> DKIM2-Signature — no forwarding chain — plus a
         matching <code>dkim2.com</code> DKIM1 signature. From
         <code>&lt;fresh@dkim2.com&gt;</code> to you. Paste it into
-        <a href="/validate/">the validator</a> to see one clean signature and
+        <a href="../validate/">the verifier</a> to see one clean signature and
         one instance.</p>
 
       <h3 id="reflector-brand"><a href="mailto:reflector-brand@dkim2.com"><code>reflector-brand@dkim2.com</code></a> — brand delegation</h3>
@@ -181,7 +182,7 @@
         your domain authorises it to use. Then email
         <a href="mailto:reflector-brand@dkim2.com"><code>reflector-brand@dkim2.com</code></a>
         from an address at that domain and paste the reply into
-        <a href="/validate/">the validator</a> to watch both DKIM2 signatures
+        <a href="../validate/">the verifier</a> to watch both DKIM2 signatures
         verify.</p>
       <p><small>Until the CNAME is in place (and has propagated), the address
         replies with a plain <code>reflector-fresh</code>-style message
@@ -197,7 +198,7 @@
         the <code>nd=</code> of <code>i=1</code> matches the <code>d=</code> of
         <code>i=2</code> (<code>dkim2.com</code>). Same one-CNAME setup as
         <code>reflector-brand</code>; paste the reply into
-        <a href="/validate/">the validator</a> to see the <code>nd=</code> link
+        <a href="../validate/">the verifier</a> to see the <code>nd=</code> link
         verify.</p>
     </section>
 
@@ -218,7 +219,7 @@
         <code>DKIM2-Signature</code> of its own — a clean one-hop DKIM2 message
         (not a continuation of your chain). It bounces every message, whether or
         not it arrived DKIM2-signed. Paste the reply into
-        <a href="/validate/">the validator</a> to watch the DSN verify as a new
+        <a href="../validate/">the verifier</a> to watch the DSN verify as a new
         one-hop message.</p>
 
       <h3><a href="mailto:reflector-delayedbounce@dkim2.com"><code>reflector-delayedbounce@dkim2.com</code></a> — an MTA-originated bounce</h3>

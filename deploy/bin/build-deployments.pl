@@ -16,7 +16,7 @@
 # key, missing or mistyped field, a date that isn't YYYY-MM, a URL that isn't
 # https, a badly named file, invalid JSON -- is reported as "path: message" on
 # stderr, nothing is written, and the exit status is 1. Files that don't end
-# in .json are ignored. Output goes to FILE.tmp and is renamed into place, so
+# in .json, and dotfiles, are ignored. Output goes to FILE.tmp and is renamed into place, so
 # a failed run never leaves a half-written page. Core Perl only.
 use strict;
 use warnings;
@@ -89,7 +89,8 @@ sub write_atomically {
 sub load_dir {
     my ($dir, $sub) = @_;
     opendir my $dh, $dir or do { push @errors, "$sub/: $!"; return };
-    my @files = sort grep { /\.json\z/ } readdir $dh;
+    # Dotfiles (.DS_Store, macOS ._x.json AppleDouble) are OS junk, not entries.
+    my @files = sort grep { /\.json\z/ && !/\A\./ } readdir $dh;
     closedir $dh;
 
     my $json = JSON::PP->new->utf8;
