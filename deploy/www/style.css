@@ -17,7 +17,7 @@ body {
   line-height: 1.6;
 }
 
-.hero, main, footer {
+nav.site, .hero, main, footer {
   max-width: 46rem;
   margin: 0 auto;
   padding: 0 1.25rem;
@@ -65,6 +65,26 @@ a.badge:focus {
 }
 
 main { padding-top: 1rem; padding-bottom: 2rem; }
+
+/* Site navigation: one row at the top of every page, wrapping when narrow. */
+nav.site {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.1rem;
+  padding-top: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.95rem;
+}
+
+nav.site a { text-decoration: none; color: var(--muted); }
+nav.site a:hover, nav.site a:focus { color: var(--accent); text-decoration: underline; }
+nav.site a[aria-current="page"] { color: var(--fg); font-weight: 600; }
+
+/* Subpage header: a page title and a one-line lede, no badge. */
+.hero.page { padding-top: 2rem; padding-bottom: 1.25rem; }
+.hero.page h1 { font-size: 2.2rem; letter-spacing: 0.01em; }
+.lede { font-size: 1.1rem; color: var(--muted); margin: 0; }
 
 section { margin: 2rem 0; }
 

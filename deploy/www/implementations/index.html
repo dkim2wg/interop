@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Implementations — DKIM2</title>
+  <meta name="description" content="DKIM2 implementations: the interoperating reference code and demo lists on dkim2.com, and other independent implementations.">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="site"><a href="../">Home</a> <a href="../how/">How it works</a> <a href="../get-ready/">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/" aria-current="page">Implementations</a> <a href="../deployments/">Deployments</a> <a href="/validate/">Validate</a> <a href="/verify/">Verify</a></nav>
+  <header class="hero page">
+    <h1>Implementations</h1>
+    <p class="lede">Independent DKIM2 code that already interoperates, and demo lists you can subscribe to.</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>Implementations &amp; demo</h2>
+      <p>This host runs a live DKIM2 demonstration server. Four independent
+        implementations — in Python, Perl, Go, and C — interoperate in the
+        project repository. Two mailing-list managers on this host sign with
+        DKIM2 as they forward:</p>
+      <ul>
+        <li><a href="https://mailman.dkim2.com/">Mailman</a> (this host)</li>
+        <li><a href="https://sympa.dkim2.com/sympa">Sympa</a> (this host)</li>
+      </ul>
+      <p>Subscribe to any of these lists to receive DKIM2-signed list mail
+        and see how each kind of list change is recorded:</p>
+      <ul>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/test.mailman.dkim2.com/">test@mailman.dkim2.com</a>
+          — subject prefix and footer</li>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/test-subject-only.mailman.dkim2.com/">test-subject-only@mailman.dkim2.com</a>
+          — subject prefix only</li>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/test-body-only.mailman.dkim2.com/">test-body-only@mailman.dkim2.com</a>
+          — footer only</li>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/test-passthrough.mailman.dkim2.com/">test-passthrough@mailman.dkim2.com</a>
+          — no changes</li>
+        <li><a href="https://mailman.dkim2.com/mailman3/lists/dkim2stock.mailman.dkim2.com/">dkim2stock@mailman.dkim2.com</a>
+          — unpatched Mailman behaviour, signed by the Postfix milter route
+          (<a href="https://github.com/dkim2wg/interop/blob/master/docs/dkim2-postfix-stock-mailman-guide.md">guide</a>)</li>
+        <li><a href="https://sympa.dkim2.com/sympa/info/test">test@sympa.dkim2.com</a>
+          — Sympa</li>
+      </ul>
+    </section>
+
+    <section id="other-implementations">
+      <h2>Other DKIM2 implementations</h2>
+      <p>DKIM2 is being built independently in several places. These are the
+        efforts we know of beyond this host:</p>
+      <table>
+        <thead>
+          <tr><th>Implementation</th><th>By</th><th>Language</th><th>What it does</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/croessner/dkim2">croessner/dkim2</a></td>
+            <td>Christian R&ouml;&szlig;ner</td>
+            <td>Go</td>
+            <td>A <code>dkim2d</code> daemon, a milter, and an Exim
+              <code>local_scan</code>; signs and verifies. Apache-2.0</td>
+          </tr>
+          <tr>
+            <td><a href="https://forge.turscar.ie/turscar/dkim2">go.turscar.ie/dkim2</a></td>
+            <td>Steve Atkins</td>
+            <td>Go</td>
+            <td>A library, plus <code>dkim2sign</code>, <code>dkim2verify</code> and
+              <code>dkim2explain</code> command-line tools. BSD-2-Clause</td>
+          </tr>
+          <tr>
+            <td><a href="https://forge.turscar.ie/turscar/dkim2tests">turscar/dkim2tests</a></td>
+            <td>Steve Atkins</td>
+            <td>&mdash;</td>
+            <td>Conformance test vectors &mdash; the set every verifier in this
+              project is run against. BSD-2-Clause</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/stalwartlabs/mail-auth">mail-auth</a></td>
+            <td>Stalwart Labs</td>
+            <td>Rust</td>
+            <td>A library: Ed25519 and RSA signing with chain verification, and
+              several selectors in one signature. Also in the Stalwart mail
+              server; try it in the browser at
+              <a href="https://mail-auth.stalw.art/">mail-auth.stalw.art</a>.
+              Apache-2.0 or MIT</td>
+          </tr>
+          <tr>
+            <td><a href="https://tools.socketlabs.com/dkim2/verify">SocketLabs DKIM2 verify</a></td>
+            <td>SocketLabs (Brian Godiksen, now Infobip)</td>
+            <td>hosted</td>
+            <td>A verifier, in the browser and over a JSON API. Also reachable
+              as <code>dkim2.net</code></td>
+          </tr>
+          <tr>
+            <td><a href="https://dkim2.eu/">dkim2.eu</a></td>
+            <td>Steve Atkins</td>
+            <td>hosted</td>
+            <td>A validator and explainer, with its own list of
+              implementations</td>
+          </tr>
+          <tr>
+            <td><a href="https://dkim2.pub/">dkim2.pub</a></td>
+            <td>Christian R&ouml;&szlig;ner (mail.de)</td>
+            <td>hosted</td>
+            <td>A validator and SMTP reflectors</td>
+          </tr>
+          <tr>
+            <td><a href="https://halon.io/blog/halon-introduces-experimental-dkim2-support">halon-extras-dkim2</a></td>
+            <td>Halon</td>
+            <td>&mdash;</td>
+            <td>An open-source module for the Halon MTA; experimental DKIM2
+              signing and verification</td>
+          </tr>
+          <tr>
+            <td><a href="https://mailarchive.ietf.org/arch/msg/ietf-dkim/iJjYkj3nsBlVW2F08tW-Ix2Jz90">Momentum MTA</a></td>
+            <td>Bird</td>
+            <td>&mdash;</td>
+            <td>A commercial MTA; experimental DKIM2 signing and verification
+              in v5.3</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><small>As observed in November 2026. Working on a DKIM2 implementation
+        that belongs here, or spotted something wrong about yours? Please
+        <a href="https://github.com/dkim2wg/interop">let us know</a>.</small></p>
+    </section>
+  </main>
+
+  <footer>
+    <p>DKIM2 · developed in the IETF DKIM working group · 2026</p>
+  </footer>
+</body>
+</body>
+</html>
