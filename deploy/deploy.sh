@@ -80,14 +80,17 @@ install -m 755 bin/dkim2-reflector.pl        /usr/local/bin/dkim2-reflect
 install -m 755 bin/dkim2-delayedbounce-fail.pl /usr/local/bin/dkim2-delayedbounce-fail
 install -m 755 bin/validate.cgi              /usr/local/bin/dkim2-validate.cgi
 
-# 2b. Static web assets: apex landing page + the validator UI + the standalone
-#     browser verifier. Kept here so a change to validate.js/.css/.html can't
+# 2b. Static web assets: the site (built by deploy/bin/stage-www.sh -- the
+#     static pages plus /deployments/, generated from one JSON file per entry
+#     under deploy/www/deployments/; it runs deploy/t/ first and stops the
+#     deploy on a failure) + the validator UI + the standalone browser
+#     verifier. Kept here so a change to validate.js/.css/.html can't
 #     be left stale relative to the Mail::DKIM2::Validate report shape it
 #     renders. The browser verifier (deploy/www/verify/) is pure static
 #     files (HTML/CSS/JS, no CGI/backend) — same install-and-copy treatment,
 #     just no fastcgi wiring.
 if [ -d /var/www/dkim2.com ]; then
-    install -m 644 "$REPO/deploy/www/index.html" "$REPO/deploy/www/style.css" /var/www/dkim2.com/
+    "$REPO"/deploy/bin/stage-www.sh /var/www/dkim2.com
     install -d -m 755 /var/www/dkim2.com/validate
     install -m 644 "$REPO"/deploy/www/validate/* /var/www/dkim2.com/validate/
     # Cache-bust the validator assets: stamp __VER__ with the current commit so
