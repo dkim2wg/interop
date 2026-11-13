@@ -24,6 +24,7 @@ my @pages = (
     'deployments/index.html.in',
     'verify/index.html',
     'validate/index.html',
+    'developers/index.html',
 );
 
 # Site paths (relative to the web root, as directories) not built yet: links
@@ -36,6 +37,7 @@ my @SITE_LINKS = (
     ['get-ready/'       => 'Get ready'],
     ['try/'             => 'Try it'],
     ['implementations/' => 'Implementations'],
+    ['developers/'      => 'Developers'],
     ['deployments/'     => 'Deployments'],
     ['verify/'          => 'Verify'],
 );
@@ -50,6 +52,7 @@ my %CURRENT = (
     'deployments/index.html.in'  => 'deployments/',
     'verify/index.html'          => 'verify/',
     'validate/index.html'        => 'verify/',
+    'developers/index.html'      => 'developers/',
 );
 
 my %moved = (

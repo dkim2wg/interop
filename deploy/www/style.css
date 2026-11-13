@@ -322,3 +322,33 @@ table.deployments td.since small { color: var(--muted); }
 .button:hover, .button:focus-visible { border-color: #2f6f79; }
 .button.primary { background: #2f6f79; border-color: #2f6f79; color: #fff; }
 .button.primary:hover, .button.primary:focus-visible { background: #255a62; }
+
+/* ---- One-pass plan diagram (developers/#one-pass) ----------------------- */
+.plan { background: #f3f5f9; border: 1px solid var(--rule); border-radius: 8px; padding: 0.9rem; }
+.plan-story { margin: 0 0 0.8rem; font-size: 0.92rem; }
+.plan-row { display: flex; align-items: center; gap: 0.6rem; }
+.plan-m { flex: 0 0 2.6rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #172341; }
+.plan-segs { flex: 1 1 auto; display: flex; gap: 2px; min-width: 0; }
+.plan-segs span {
+  flex-basis: 0;
+  min-width: 0;
+  padding: 0.45rem 0.2rem;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 3px;
+}
+.seg-l   { background: #2f6f79; color: #fff; }
+.seg-lit { background: #e8a33d; color: #1a2433; }
+.seg-gap { background: repeating-linear-gradient(45deg, #dfe4ec 0 6px, #f3f5f9 6px 12px); }
+.plan-recipe { margin: 0.35rem 0 0.35rem 3.2rem; font-size: 0.8rem; color: var(--muted); }
+.plan-recipe code { white-space: normal; }
+@media (max-width: 30rem) {
+  .plan-recipe { margin-left: 0; }
+  .plan-segs span { font-size: 0.72rem; }
+}
+.plan-legend { font-size: 0.8rem; color: var(--muted); margin: 0.7rem 0 0; line-height: 2; }
+.plan-legend span { display: inline-block; padding: 0 0.35rem; border-radius: 3px; font-weight: 600; font-size: 0.75rem; }

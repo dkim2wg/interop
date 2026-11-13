@@ -139,4 +139,33 @@ subtest get_ready => sub {
     is($n, 5, 'five steps');
 };
 
+subtest developers => sub {
+    my $h = slurp('developers/index.html');
+    ok(defined $h, 'developers/index.html exists') or return;
+    ok(defined section_by_id($h, $_), "section #$_") for qw(start signer validator one-pass testing);
+    like($h, qr/href="\Q$_\E"/, "links $_")
+        for 'https://github.com/dkim2wg/interop/blob/master/docs/dkim2-implementer-guide.md',
+            'https://forge.turscar.ie/turscar/dkim2tests', '../verify/', '../try/';
+
+    my $signer = text(section_by_id($h, 'signer') // '');
+    like($signer, qr/\Q$_\E/, "#signer: $_")
+        for 'about 100', 'recommend', 'null Recipe', 'PERMERROR', 'From',
+            'more than one address', 'i=1';
+    unlike($signer, qr/\b1000\b/, '#signer does not recommend 1000 lines');
+
+    my $val = text(section_by_id($h, 'validator') // '');
+    like($val, qr/\Q$_\E/, "#validator: $_")
+        for qw(PASS FAIL PERMERROR TEMPERROR NONE), '14 days', 'Domain Policy Record',
+            'Authentication-Results';
+
+    my $op = section_by_id($h, 'one-pass') // '';
+    like($op, qr/<figure class="plan"/, '#one-pass diagram');
+    like($op, qr/<pre\b/, '#one-pass pseudo-code');
+    my $ot = text($op);
+    like($ot, qr/\Q$_\E/i, "#one-pass: $_")
+        for 'segment', 'trailing blank', 'ascend', 'share', 'prefetch', 'undo walk',
+            'perl/lib/Mail/DKIM2/BodyPlan.pm', 'go/dkim2/plan.go', 'c/dkim2_plan.c',
+            'python/dkim2plan.py', 'deploy/www/verify/plan.js';
+};
+
 done_testing();

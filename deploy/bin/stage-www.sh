@@ -4,7 +4,8 @@
 #
 #   deploy/bin/stage-www.sh DEST
 #
-# Writes the static pages (home, how/, get-ready/, try/, implementations/),
+# Writes the static pages (home, how/, get-ready/, try/, implementations/,
+# developers/),
 # the shared stylesheets, deployments/index.html built from
 # deploy/www/deployments/{sites,software}/*.json, and the two verifier tools
 # (verify/ in the browser, validate/ on the server).
@@ -30,7 +31,7 @@ prove "$REPO"/deploy/t/ >&2
 
 install -d -m 755 "$DEST"
 install -m 644 "$WWW/index.html" "$WWW/style.css" "$WWW/nav.css" "$DEST/"
-for page in how get-ready try implementations; do
+for page in how get-ready try implementations developers; do
     install -d -m 755 "$DEST/$page"
     install -m 644 "$WWW/$page/index.html" "$DEST/$page/"
 done

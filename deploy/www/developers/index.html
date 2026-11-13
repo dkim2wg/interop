@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Developers — DKIM2</title>
+  <meta name="description" content="A guide for developers building DKIM2: how to build a signer, how to build a validator, and how to verify every Message-Instance in one pass over the body.">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../nav.css">
+</head>
+<body>
+  <nav class="site"><a class="brand" href="../">DKIM2</a> <span class="links"><a href="../how/">How it works</a> <a href="../get-ready/">Get ready</a> <a href="../try/">Try it</a> <a href="../implementations/">Implementations</a> <a href="../developers/" aria-current="page">Developers</a> <a href="../deployments/">Deployments</a> <a href="../verify/">Verify</a></span></nav>
+  <header class="hero page">
+    <h1>Developers</h1>
+    <p class="lede">Building DKIM2 into your own software: how to build a
+      signer, how to build a validator, and how to check every
+      Message-Instance in one pass over the body.</p>
+  </header>
+
+  <main>
+    <section id="start">
+      <h2>Start here</h2>
+      <ul>
+        <li><a href="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-spec/">The
+          specification</a> (draft-ietf-dkim-dkim2-spec-09) is the reference.
+          Everything below follows -09; where this page goes further, it says
+          it is a recommendation or a proposal.</li>
+        <li>The <a href="https://github.com/dkim2wg/interop/blob/master/docs/dkim2-implementer-guide.md">implementer
+          guide</a> has the step-by-step detail: tag by tag, the exact error
+          strings, and the APIs of our Perl, Python, Go and C
+          implementations. This page is the overview; the guide is the
+          reference.</li>
+        <li>Conformance vectors: Steve Atkins&rsquo;
+          <a href="https://forge.turscar.ie/turscar/dkim2tests">dkim2tests</a>,
+          which every verifier in the
+          <a href="https://github.com/dkim2wg/interop">interop repository</a>
+          is run against, plus that repository&rsquo;s own fixtures and
+          cross-implementation tests.</li>
+        <li>Something to test against: the <a href="../try/">reflector
+          addresses</a> sign, change, re-sign and bounce mail for you, and
+          the verifiers check what you produce &mdash;
+          <a href="../verify/">in your browser</a> or
+          <a href="../validate/">on our server</a>, level by level. Other
+          independent code is on the <a href="../implementations/">implementations</a>
+          page.</li>
+        <li>Add an <code>X-DKIM2-Info</code> header while you interop
+          (<a href="https://datatracker.ietf.org/doc/draft-gondwana-dkim2-debug-header/">draft-gondwana-dkim2-debug-header</a>):
+          which draft you built, what you did, and which header fields you
+          hashed. It answers the first two questions anyone will ask when
+          your signature doesn&rsquo;t verify.</li>
+      </ul>
+    </section>
+
+    <section id="signer">
+      <h2>Building a signer</h2>
+      <p>A signer does one of two jobs. It <strong>originates</strong> a
+        message &mdash; the first Message-Instance (<code>m=1</code>) and the
+        first signature (<code>i=1</code>) &mdash; or it <strong>forwards</strong>
+        one, adding the next signature and, if it changed anything, the next
+        Message-Instance.</p>
+      <ol>
+        <li><strong>Verify before you sign.</strong> If the message already
+          carries DKIM2 header fields, you are extending a chain of custody:
+          verify it first, and refuse to sign on top of a chain that
+          doesn&rsquo;t check out. The top Message-Instance may be unsigned
+          (it is yours, about to be signed); everything below must verify.
+          When you originate, or sign over a change to the
+          <code>From</code>, the <code>From</code> must be Authentic for your
+          <code>d=</code>.</li>
+        <li><strong>Record what you changed.</strong> If you changed the
+          message, add a Message-Instance with the new hashes and a Recipe
+          that rebuilds the previous version: a line-based diff for the body,
+          per field name for the headers. Keep it small. We
+          <strong>recommend</strong> keeping a Recipe to <strong>about 100
+          literal lines</strong> &mdash; a change bigger than that is a
+          rewrite, not an edit (a recommendation, not part of the
+          specification).
+          <ul>
+            <li>A <strong>null Recipe</strong> (<code>"b": null</code>) says
+              the earlier body cannot be rebuilt. Under -09 that makes the
+              message a <code>PERMERROR</code> downstream. Being worked on:
+              allowing a null Recipe when the hop also changes the
+              <code>From</code> &mdash; together with the proposal that a hop
+              making significant changes becomes the message&rsquo;s author
+              and puts its own <code>From</code> on it (see
+              <a href="../how/#changes">How it works</a>). Neither is in the
+              specification yet.</li>
+          </ul></li>
+        <li><strong>Sign the envelope.</strong> <code>mf=</code> is the
+          <code>MAIL FROM</code> you send with and <code>rt=</code> the
+          recipients, base64 with their angle brackets; the
+          <code>MAIL FROM</code> domain must be your <code>d=</code> or a
+          subdomain of it.
+          Set <code>f=exploded</code> exactly as -09 &sect;12.5 says: when you
+          send copies of a message you received to more than one address,
+          even if the copies differ. Never set it on <code>i=1</code>.</li>
+        <li><strong>Fold only where the grammar allows.</strong> Folding the
+          two DKIM2 fields can&rsquo;t change any signature (their signing
+          form drops all whitespace), but the field must still parse: fold
+          after a tag&rsquo;s <code>;</code>, inside base64, after a list
+          comma &mdash; never inside a domain, selector or algorithm name.
+          Never re-fold an ordinary header field you received except at
+          whitespace that is already there.</li>
+        <li><strong>Offer several algorithms at once.</strong>
+          <code>s=</code> can carry more than one signature: sign with the
+          old and the new algorithm together (<code>new|old</code>) and
+          receivers use whichever they support.</li>
+      </ol>
+      <p><strong>Operational traps</strong> &mdash; every one of these has
+        broken real signatures:</p>
+      <ul>
+        <li>The MTA re-encoding the message <em>after</em> you sign
+          (8bit&nbsp;&rarr;&nbsp;7bit). Turn it off: in Postfix,
+          <code>disable_mime_output_conversion = yes</code>.</li>
+        <li>Hashing a header field that won&rsquo;t travel with the message:
+          a <code>Delivered-To</code> added for a pipe-to-command delivery, a
+          <code>Bcc</code> stripped on the way out. Sign only what leaves
+          unchanged.</li>
+        <li>Content filters or list software rewriting the MIME structure
+          after the Recipe was computed.</li>
+      </ul>
+    </section>
+
+    <section id="validator">
+      <h2>Building a validator</h2>
+      <p>Order matters, both for the result you report and for the work you
+        do. Check everything you can from the message itself before you
+        fetch a single key:</p>
+      <ol>
+        <li><strong>Structure.</strong> Parse every Message-Instance and
+          DKIM2-Signature; no gaps in <code>m=</code> or <code>i=</code>, no
+          duplicates, no instance above every signature&rsquo;s
+          <code>m=</code>, no <code>exploded</code> flag on <code>i=1</code>.
+          Bound the numbers before you loop over them.</li>
+        <li><strong>Recipes, then hashes, top down.</strong> Check the top
+          instance&rsquo;s hashes against the message as received, then each
+          instance below against the version its parent&rsquo;s Recipe
+          rebuilds. <a href="#one-pass">Below</a>: how to do all of them in
+          one read.</li>
+        <li><strong>Timestamps.</strong> A signature more than 14 days old,
+          or more than a day in the future, fails.</li>
+        <li><strong>Signatures and the Chain of Custody.</strong> Verify
+          every signature, not just the newest, each over the fields that
+          existed when it was made. Each hop&rsquo;s <code>d=</code> must
+          match the <code>rt=</code> of the hop before it.</li>
+        <li><strong>Authentic <code>From</code>.</strong> The
+          <code>From</code> domain matches <code>d=</code> at or below it,
+          and also when <code>d=</code> is below the <code>From</code>
+          domain &mdash; unless that domain&rsquo;s Domain Policy Record
+          (<code>f=strict</code>) forbids subdomain signing.</li>
+      </ol>
+      <p>The result is one of the five states of -09 &sect;14.1:
+        <code>NONE</code> (no DKIM2 header fields at all),
+        <code>PASS</code>, <code>FAIL</code>, <code>PERMERROR</code> and
+        <code>TEMPERROR</code> (a key lookup that may succeed later). When a
+        message has more than one fault, report the first one found in this
+        order, using the specification&rsquo;s exact text for it &mdash;
+        senders debugging their mail depend on it. Record the result in
+        <code>Authentication-Results</code> as <code>dkim2=</code>
+        (<a href="https://datatracker.ietf.org/doc/draft-gondwana-dkim2-authres/">draft-gondwana-dkim2-authres</a>).</p>
+    </section>
+
+    <section id="one-pass">
+      <h2>Verifying every instance in one pass</h2>
+      <p>A message that went through three hops carries three
+        Message-Instances, and each one&rsquo;s body hash covers a different
+        version of the body. The obvious way to check them &mdash; the
+        <strong>undo walk</strong> &mdash; rebuilds each earlier body in turn
+        by applying the Recipes, and hashes it. That holds whole copies of the
+        body and reads it once per instance.</p>
+      <p>All five of our verifiers instead check every instance in
+        <strong>one forward read</strong> of the body as received, without
+        rebuilding anything. The body can stream straight through: a milter
+        keeps nothing.</p>
+
+      <h3>The idea: each body is a list of segments</h3>
+      <p>Describe each instance&rsquo;s body not as text but as a list of
+        <strong>segments</strong>: runs of lines of the current body
+        (&ldquo;lines 11&ndash;35&rdquo;) and Recipe literals (a line the
+        Recipe supplies). The top instance is just &ldquo;every line&rdquo;.
+        Each instance below gets its list by applying its parent&rsquo;s
+        Recipe to the parent&rsquo;s list: a copy range picks a span of the
+        parent&rsquo;s segments, a literal adds a literal segment. Because
+        -09 requires copy ranges to <strong>ascend</strong>, every list comes
+        out in body order.</p>
+
+      <figure class="plan">
+        <p class="plan-story">An original 30-line message (m=1); a list adds a
+          4-line footer (m=2); a gateway adds a banner line at the top and
+          rewrites the link on line 9 (m=3).</p>
+        <div class="plan-row">
+          <span class="plan-m">m=3</span>
+          <div class="plan-segs">
+            <span class="seg-l" style="flex-grow: 35">lines 1&ndash;35</span>
+          </div>
+        </div>
+        <p class="plan-recipe">m=3&rsquo;s Recipe: <code>{"b":[{"c":[2,9]},{"d":["line 9 as it was"]},{"c":[11,35]}]}</code></p>
+        <div class="plan-row">
+          <span class="plan-m">m=2</span>
+          <div class="plan-segs">
+            <span class="seg-l" style="flex-grow: 8">2&ndash;9</span>
+            <span class="seg-lit" style="flex-grow: 3" title="Recipe literal: line 9 as it was">old 9</span>
+            <span class="seg-l" style="flex-grow: 25">11&ndash;35</span>
+          </div>
+        </div>
+        <p class="plan-recipe">m=2&rsquo;s Recipe: <code>{"b":[{"c":[1,30]}]}</code> (drop the footer)</p>
+        <div class="plan-row">
+          <span class="plan-m">m=1</span>
+          <div class="plan-segs">
+            <span class="seg-l" style="flex-grow: 8">2&ndash;9</span>
+            <span class="seg-lit" style="flex-grow: 3" title="Recipe literal: line 9 as it was">old 9</span>
+            <span class="seg-l" style="flex-grow: 21">11&ndash;31</span>
+            <span class="seg-gap" style="flex-grow: 4"></span>
+          </div>
+        </div>
+        <p class="plan-legend"><span class="seg-l">lines</span> current-body lines
+          &nbsp; <span class="seg-lit">old 9</span> a Recipe literal
+          &nbsp; <span class="seg-gap">&nbsp;&nbsp;&nbsp;</span> lines this instance doesn&rsquo;t have (the footer)</p>
+        <figcaption>Read lines 1&ndash;35 once: each line goes to every
+          instance whose list holds it, each literal when its place is
+          reached. No earlier body is ever built.</figcaption>
+      </figure>
+
+      <h3>The algorithm</h3>
+<pre class="cname"># Plan: one segment list per instance, top down.
+list[top] = [ current lines 1..end ]
+for each instance m from the top down:
+    if m has a body Recipe:  list[m-1] = compose(list[m], recipe(m))
+    else:                    list[m-1] = list[m]      # unchanged body
+group instances with equal lists: one digest per group
+
+compose(parent, recipe):
+    out = []
+    for step in recipe:
+        {"d": lines}   -> append LITERAL(lines)
+        {"c": [a, b]}  -> append the parts of parent covering
+                          its lines a..b (ranges ascend)
+    return out
+
+# Hash: one read of the current body.
+for each line n, in order:
+    for each group:
+        emit the literals before n in its list, then line n if it holds it
+at the end: emit remaining literals; drop pending blank lines
+
+emit(group, line):
+    blank     -> group.pending += 1      # may turn out to be trailing
+    otherwise -> hash pending blank lines, then the line; pending = 0</pre>
+
+      <p>The details a port has to get right:</p>
+      <ul>
+        <li><strong>Trailing blank lines.</strong> -09 &sect;6.1 does not hash
+          blank lines at the end of a body, and you can&rsquo;t know a blank
+          line is trailing until something follows it or the body ends.
+          Count them per group as pending; hash them when a non-blank line
+          or literal arrives; drop them at the end.</li>
+        <li><strong>Shared digests.</strong> Instances with no body Recipe
+          have the same body as their parent, so they share one list and one
+          set of digests. Most chains hash the body once or twice, however
+          many hops there were.</li>
+        <li><strong>Copy ranges past the end.</strong> A Recipe can name a
+          line the body doesn&rsquo;t have; you only find out at the end.
+          Report it then, against the real length.</li>
+        <li><strong>Line endings.</strong> A bare LF ends a line as CRLF
+          does, as the Recipes number lines, and lines are hashed as
+          CRLF.</li>
+        <li><strong>Headers work the same way,</strong> per field name: each
+          instance has, for each name, a list of that name&rsquo;s values as
+          received (numbered bottom-up, as Recipes number them) and of
+          literals. Split the fields once, canonicalize a value only if its
+          name is hashed, once; a name no Recipe touched is shared.</li>
+        <li><strong>Prefetch the keys.</strong> At the end of the headers
+          you know every <code>selector._domainkey.domain</code> you will
+          need: start those lookups in the background while the body
+          streams. Use the definitive answers; if a lookup hasn&rsquo;t
+          answered by the time you need it (we wait 5 seconds) or fails
+          temporarily, do it again then. Look each name up once per
+          message.</li>
+      </ul>
+      <p><strong>What it buys.</strong> A live five-domain chain verifies
+        about 4&times; faster in every implementation; a 10&nbsp;MB body
+        takes 7&ndash;20&nbsp;ms across C, Go, JavaScript, Python and Perl;
+        nothing but the current line and one digest per group is held in
+        memory.</p>
+      <p><strong>Our code.</strong> Each implementation keeps the undo walk
+        as its reference and is parity-tested against it on about 4,780
+        corpus messages:</p>
+      <ul>
+        <li>Perl: <code>perl/lib/Mail/DKIM2/BodyPlan.pm</code> and
+          <code>HeaderPlan.pm</code></li>
+        <li>Go: <code>go/dkim2/plan.go</code></li>
+        <li>C: <code>c/dkim2_plan.c</code></li>
+        <li>Python: <code>python/dkim2plan.py</code></li>
+        <li>JavaScript (the browser verifier):
+          <code>deploy/www/verify/plan.js</code></li>
+      </ul>
+    </section>
+
+    <section id="testing">
+      <h2>Testing</h2>
+      <ul>
+        <li>Run Steve Atkins&rsquo; <a href="https://forge.turscar.ie/turscar/dkim2tests">dkim2tests</a>
+          vectors against your verifier; every verifier in the interop
+          repository passes them.</li>
+        <li>Send mail from your signer through the <a href="../try/">reflector
+          addresses</a>: each one changes the message in a known way and
+          re-signs it, so you see your chain extended by someone else&rsquo;s
+          code.</li>
+        <li>Paste the results into the verifiers &mdash;
+          <a href="../verify/">in your browser</a> or
+          <a href="../validate/">on our server</a> &mdash; for a
+          level-by-level breakdown.</li>
+        <li>The <a href="https://github.com/dkim2wg/interop">interop
+          repository</a> cross-tests every signer against every verifier;
+          add yours and run the matrix.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <p>DKIM2 · developed in the IETF DKIM working group · 2026</p>
+  </footer>
+</body>
+</html>
