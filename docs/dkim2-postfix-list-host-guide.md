@@ -207,7 +207,8 @@ Sympa (steps 7 and 8) rewrite From to the list address on every copy they
 change or originate, keeping the author in Reply-To. Each copy they
 distribute also carries `X-DKIM2-Exploded: yes`; the outbound milter treats
 that header as a request to set `f=exploded` (from `i=2` up; never at
-`i=1`), deletes it, and signs. A message whose From is not Authentic for
+`i=1`), deletes it, and signs. It sets the flag on any copy with a
+`List-Id` too, asked or not. A message whose From is not Authentic for
 the signing domain is refused with
 `From header field is not Authentic for d=<domain>`.
 

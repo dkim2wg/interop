@@ -408,7 +408,28 @@ sub list_modified {
     ($verdict, $mods) = run_milter(
         from => 'list-bounces@test2.dkim2.com', rcpt => ['a@example.org'],
         message => $list);
-    is($f->($mods), '', 'one recipient, no hint: no f=');
+    is($f->($mods), 'exploded', 'one recipient, no hint, but a List-Id: f=exploded');
+    is(verify(apply_mods($list, $mods))->result, 'pass', 'List-Id: the copy verifies');
+
+    # No List-Id, no hint, one recipient: a plain forward is not exploded.
+    my $signed = originator_signed();
+    unlike($signed, qr/^List-Id/mi, 'the forwarded message has no List-Id');
+    ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['a@example.org'],
+        message => $signed);
+    my ($sig) = inserted($mods, 'DKIM2-Signature');
+    like($sig && $sig->{value}, qr/\bi=2\b/, 'no List-Id: signed as i=2');
+    is($f->($mods), '', 'one recipient, no hint, no List-Id: no f=');
+
+    # A first signature never carries the flag, List-Id or not.
+    (my $own = $LOCAL) =~ s/^(Subject: )/List-Id: <list.test2.dkim2.com>$EOL$1/m;
+    like($own, qr/^List-Id/m, 'the originated message has a List-Id');
+    ($verdict, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['a@example.org'],
+        message => $own);
+    ($sig) = inserted($mods, 'DKIM2-Signature');
+    like($sig && $sig->{value}, qr/\bi=1\b/, 'List-Id at i=1: signed');
+    is($f->($mods), '', 'List-Id at i=1: no f=');
 }
 
 # --- 3. The opt-out must not loosen the chain gate: broken upstream -> refuse ---

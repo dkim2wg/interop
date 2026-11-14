@@ -1,5 +1,13 @@
 Revision history for Mail::DKIM2
 
+0.32    2026-11-14
+        - dkim2-milter and the DKIM2Sign handler sign a message that has a
+          List-Id header field with the exploded flag (-09 section 12.5),
+          whether or not it carries the X-DKIM2-Exploded hint: a list sent
+          it, to more than one address. A stock Mailman list, which adds
+          no hint, went out without the flag. Never on a first signature,
+          as before.
+
 0.31    2026-11-14
         (0.31 was prepared on 2026-11-06 and never released; this is that
         work and the clean-up that followed it.)

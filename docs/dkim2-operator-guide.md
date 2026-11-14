@@ -336,7 +336,9 @@ below it`.
 
 A list manager that sends one copy per subscriber also marks each copy with
 `X-DKIM2-Exploded: yes`; the signing milter turns that into `f=exploded` on
-its signature (-09 §12.5) and removes the header.
+its signature (-09 §12.5) and removes the header. A message with a
+`List-Id` gets the flag without the hint (stock Mailman adds none); a
+first signature never carries it.
 
 Every signer here verifies the incoming chain before adding its own signature
 and refuses if it does not check out (see "Milter integration" for what the

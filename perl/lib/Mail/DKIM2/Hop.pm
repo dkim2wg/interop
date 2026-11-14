@@ -2,7 +2,7 @@ package Mail::DKIM2::Hop;
 use strict;
 use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use Carp ();
 use Mail::DKIM2::Util ();

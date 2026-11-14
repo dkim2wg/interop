@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Mail::Milter::Authentication::Pragmas;
 # ABSTRACT: Handler class for DKIM2 signing
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 use base 'Mail::Milter::Authentication::Handler';
 
 use Mail::DKIM2::Common qw(extract_mi_version parse_mime DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
@@ -158,6 +158,10 @@ sub addheader_callback {
     # leaves either.
     my $exploded = grep { /\AX-DKIM2-Exploded[ \t]*:/i } @{ $self->{'headers'} || [] };
     $self->change_header( 'X-DKIM2-Exploded', $_, q{} ) for reverse 1 .. $exploded;
+    # A List-Id says the same without being asked (a list manager that adds
+    # no hint, such as stock Mailman): a list sent this copy, to more than
+    # one address. The Signer drops the flag from a first signature.
+    $exploded ||= grep { /\AList-Id[ \t]*:/i } @{ $self->{'headers'} || [] };
 
     # Determine if we should sign this message
     my $should_sign = 0;

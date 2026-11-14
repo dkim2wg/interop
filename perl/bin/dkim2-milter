@@ -341,6 +341,13 @@ sub cb_eom {
     # distribution copy, asking the signer for the -08 "exploded" flag. Only
     # a signing milter acts on it, and it never leaves: removed before signing.
     $priv->{exploded} = _strip_exploded_header($ctx, $priv, \$message) if $do_sign;
+    # A List-Id says the same without being asked: a list sent this copy,
+    # and a list sends copies to more than one address. That covers a list
+    # manager that adds no hint (stock Mailman). The Signer drops the flag
+    # from a first signature (-09 section 12.5), so an unsigned post the
+    # list originates as i=1 is unaffected.
+    $priv->{exploded} ||= 1
+        if $do_sign && substr($message, 0, index($message, "\r\n\r\n") + 2) =~ /^List-Id[ \t]*:/mi;
 
     # Extract message-id for logging
     my $msgid = '';
@@ -1069,9 +1076,10 @@ auto-detected from the key type (RSA or Ed25519).
 When signing, a message carrying an C<X-DKIM2-Exploded> header field (any
 value; Mailman and Sympa add C<X-DKIM2-Exploded: yes> to every
 distribution copy) is signed with the C<exploded> flag (-09 section 12.5),
-which a signature also gets whenever the message has more than one
-recipient; never at C<i=1>. The field is removed from the message before
-it is signed and never leaves.
+which a signature also gets whenever the message has a C<List-Id> header
+field (a list sent it, whether or not the list manager added the hint) or
+more than one recipient; never at C<i=1>. The C<X-DKIM2-Exploded> field is
+removed from the message before it is signed and never leaves.
 
 When the signing gate (L<Mail::DKIM2::Gate>) refuses a message that carries
 an upstream DKIM2-Signature, the milter rejects it with C<550 5.7.1> and the
