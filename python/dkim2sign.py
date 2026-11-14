@@ -248,6 +248,51 @@ def compute_body_hash(body: bytes, alg: str = "sha256") -> bytes:
     return _digest(body, alg)
 
 
+class BodyHasher:
+    """compute_body_hash() for a body that arrives in pieces.
+
+    feed() the body's octets as they come, cut anywhere; digest(alg) is then
+    what compute_body_hash(body, alg) gives for the whole.  Nothing of the
+    body is kept beyond the hash state and a count of line breaks that may
+    yet turn out to be the trailing empty lines Section 6.1 drops.
+    """
+
+    def __init__(self, algs=("sha256",)):
+        self._hashes = {alg: hashlib.new(alg) for alg in algs}
+        self._carry = b""      # a CR that ended a piece: half of a CRLF?
+        self._held = 0         # line breaks seen since the last other octet
+
+    def feed(self, data: bytes) -> None:
+        data = self._carry + data
+        self._carry = b""
+        if data.endswith(b"\r"):
+            self._carry, data = b"\r", data[:-1]
+        if not data:
+            return
+        data = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n").replace(b"\n", b"\r\n")
+        kept = len(data)
+        while kept >= 2 and data[kept - 2:kept] == b"\r\n":
+            kept -= 2
+        trailing = (len(data) - kept) // 2
+        if kept == 0:
+            self._held += trailing
+            return
+        for h in self._hashes.values():
+            h.update(b"\r\n" * self._held)
+            h.update(data[:kept] if trailing else data)
+        self._held = trailing
+
+    def digest(self, alg: str = "sha256") -> bytes:
+        """The hash so far, as if the body ended here.  More may be fed."""
+        h = self._hashes[alg].copy()
+        # held line breaks (and a lone CR) are trailing empty lines: dropped
+        h.update(b"\r\n")
+        return h.digest()
+
+    def digests(self) -> dict:
+        return {alg: self.digest(alg) for alg in self._hashes}
+
+
 # ---------------------------------------------------------------------------
 # Build Message-Instance header
 # ---------------------------------------------------------------------------
@@ -262,12 +307,24 @@ def build_message_instance(headers: list[bytes], body: bytes,
     """
     if algs is None:
         algs = ["sha256"]
+    return build_message_instance_from_hashes(
+        headers, {alg: compute_body_hash(body, alg) for alg in algs},
+        version=version, recipe=recipe)
+
+
+def build_message_instance_from_hashes(headers: list[bytes],
+                                       body_hashes: dict,
+                                       version: int = 1,
+                                       recipe: dict | None = None) -> str:
+    """build_message_instance() for a caller that has hashed the body
+    already (BodyHasher): body_hashes maps each algorithm to the raw digest
+    compute_body_hash() gives, in the order they go into h=."""
     # -09 §9.3: one hash-set per algorithm, comma separated. An algorithm
-    # MUST NOT appear more than once, so `algs` must be de-duplicated by the
-    # caller (the CLI does this).
+    # MUST NOT appear more than once, so the algorithms must be
+    # de-duplicated by the caller (the CLI does this).
     sets = ",".join(
-        f"{alg}:{b64(compute_header_hash(headers, alg))}:{b64(compute_body_hash(body, alg))}"
-        for alg in algs
+        f"{alg}:{b64(compute_header_hash(headers, alg))}:{b64(body_hash)}"
+        for alg, body_hash in body_hashes.items()
     )
     value = f"m={version}; h={sets}"
     if recipe is not None:
@@ -958,17 +1015,11 @@ class SigningRefused(Exception):
     """The signer gate refused to extend an existing DKIM2 chain."""
 
 
-def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
-                   dns_data: dict | None, skip_timestamp_check: bool,
-                   signing_domain: str | None = None) -> None:
-    """Refuse (SigningRefused) unless the chain already on the message checks
-    out.  Runs the verifier in outbound mode: an unsigned top Message-Instance
-    is the one we are about to cover.  A signature with m=k covers instances
-    1..k; an instance above every valid signature's m= with a null body
-    Recipe is this hop's own and is signed over (-09, contract E2: it will
-    PERMERROR downstream regardless, but our header changes are signed).  A
-    null some upstream signature already covers fails verification and is
-    refused like any other broken upstream chain."""
+def _verify_upstream(raw: bytes, existing_sig, dns_data: dict | None,
+                     skip_timestamp_check: bool):
+    """The verdict on the chain already on a message, for the signer's gate:
+    the verifier in outbound mode (an unsigned top Message-Instance is the
+    one we are about to cover)."""
     import os
     # dkim2verify imports this module, so import it lazily.
     import dkim2verify
@@ -987,7 +1038,22 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
         except (OSError, ValueError) as e:
             raise SigningRefused(f"not signing: cannot read keys from "
                                  f"{path}: {e}")
+    return dkim2verify.verify_message(
+        raw, dns_data, full_chain=True,
+        skip_timestamp_check=skip_timestamp_check, allow_unsigned_mi=True)
 
+
+def _gate_upstream(result, existing_sig,
+                   signing_domain: str | None = None) -> None:
+    """Refuse (SigningRefused) unless the chain already on the message checks
+    out.  `result` is the verifier's verdict on it in outbound mode
+    (allow_unsigned_mi: an unsigned top Message-Instance is the one we are
+    about to cover), or None if nobody verified it.  A signature with m=k
+    covers instances 1..k; an instance above every valid signature's m= with
+    a null body Recipe is this hop's own and is signed over (-09, contract
+    E2: it will PERMERROR downstream regardless, but our header changes are
+    signed).  A null some upstream signature already covers fails
+    verification and is refused like any other broken upstream chain."""
     # A top signature with nd= may only be extended by the domain it names.
     if existing_sig:
         top_sig = max(existing_sig, key=_get_seq_from_sig)
@@ -998,9 +1064,9 @@ def _gate_upstream(raw: bytes, headers, existing_mi, existing_sig,
                 f"not signing: top signature nd={top_nd.strip()} names "
                 f"another domain")
 
-    result = dkim2verify.verify_message(
-        raw, dns_data, full_chain=True,
-        skip_timestamp_check=skip_timestamp_check, allow_unsigned_mi=True)
+    if result is None:
+        raise SigningRefused(
+            "not signing: the upstream DKIM2 chain has not been verified")
     if not result.ok:
         detail = "; ".join(result.errors) or result.message
         if any(("v=" in e or "ecipe" in e or "Message-Instance" in e)
@@ -1136,9 +1202,71 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
     headers prepended.
     """
     raw = _to_bytes(source)
-    private_key, algorithm = load_private_key(keyfile)
-
     headers, body = parse_message(raw)
+
+    existing_sig = [hdr.decode("utf-8", errors="surrogateescape")
+                    for hdr in headers if _header_name(hdr) == b"dkim2-signature"]
+    has_chain = existing_sig or any(
+        _header_name(hdr) == b"message-instance" for hdr in headers)
+
+    # The gate's verdict, when the numbers are sane enough to ask for one
+    # (sign_fields refuses the rest before it looks at this).
+    upstream = None
+    if has_chain and not skip_upstream_check and not chain_range_error(
+            [hdr.decode("utf-8", errors="surrogateescape") for hdr in headers
+             if _header_name(hdr) == b"message-instance"], existing_sig):
+        upstream = _verify_upstream(raw, existing_sig, dns_data,
+                                    skip_timestamp_check)
+
+    new_fields = sign_fields(
+        headers, {alg: compute_body_hash(body, alg) for alg in (algs or ["sha256"])},
+        selector, domain, keyfile,
+        mailfrom=mailfrom, rcptto=rcptto, timestamp=timestamp,
+        next_domain=next_domain, flags=flags, upstream=upstream,
+        allow_null_body_recipe=allow_null_body_recipe,
+        skip_upstream_check=skip_upstream_check, exploded=exploded,
+        skip_from_check=skip_from_check, parent_from=parent_from)
+
+    # Reassemble the message with new headers prepended
+    # Normalise line endings in original
+    raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").replace(b"\n", b"\r\n")
+
+    return b"".join(f.encode("utf-8") + b"\r\n" for f in new_fields) + raw
+
+
+def sign_fields(headers: list[bytes], body_hashes: dict,
+                selector: str, domain: str, keyfile: str, *,
+                mailfrom: str = "<>", rcptto: list[str] | None = None,
+                timestamp: int | None = None,
+                next_domain: str | None = None,
+                flags: list[str] | None = None,
+                upstream=None,
+                allow_null_body_recipe: bool | None = None,
+                skip_upstream_check: bool = False,
+                exploded: bool = False,
+                skip_from_check: bool = False,
+                parent_from=None) -> list[str]:
+    """sign_message() for a caller that never holds the whole message: a
+    milter, say, which is handed the header fields and then the body in
+    pieces.
+
+    headers are the message's header fields as parse_message() gives them.
+    body_hashes maps each hash algorithm for a new Message-Instance to the
+    body's digest (BodyHasher.digests(), or compute_body_hash()).
+
+    upstream is the gate's verdict: when the message already carries a
+    DKIM2 chain, the dkim2verify.VerifyResult of verifying the message as
+    received in outbound mode (MessageVerifier(..., full_chain=True,
+    allow_unsigned_mi=True), fed as the message arrives).  A chain with no
+    verdict, or a failing one, raises SigningRefused, as sign_message()
+    does.  The other arguments are sign_message()'s.
+
+    Returns the header fields to put at the top of the message, topmost
+    first, each a str with its field name and no line break: the
+    DKIM2-Signature, and after it the new Message-Instance if one was
+    needed.
+    """
+    private_key, algorithm = load_private_key(keyfile)
 
     # Find any existing Message-Instance and DKIM2-Signature headers
     existing_mi: list[str] = []
@@ -1160,8 +1288,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
         _warn_allow_null_body_recipe()
 
     if (existing_mi or existing_sig) and not skip_upstream_check:
-        _gate_upstream(raw, headers, existing_mi, existing_sig, dns_data,
-                       skip_timestamp_check, signing_domain=domain)
+        _gate_upstream(upstream, existing_sig, signing_domain=domain)
 
     if not skip_from_check and _from_needs_check(existing_mi, existing_sig):
         from_fields = [h for h in headers if _header_name(h) == b"from"]
@@ -1181,7 +1308,8 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
         sig_seq = max(_get_seq_from_sig(h) for h in existing_sig) + 1
 
     # Build Message-Instance header
-    mi_hdr = build_message_instance(headers, body, version=mi_version, algs=algs)
+    mi_hdr = build_message_instance_from_hashes(headers, body_hashes,
+                                                version=mi_version)
 
     # -09 §12.1: a hop that leaves both hashes unchanged adds no new
     # Message-Instance at all — it signs against the existing top instance and
@@ -1202,17 +1330,7 @@ def sign_message(source: "Source", selector: str, domain: str, keyfile: str,
         timestamp=timestamp,
         next_domain=next_domain, flags=flags, exploded=exploded,
     )
-
-    # Reassemble the message with new headers prepended
-    # Normalise line endings in original
-    raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").replace(b"\n", b"\r\n")
-
-    output = sig_hdr.encode("utf-8") + b"\r\n"
-    if mi_hdr is not None:
-        output += mi_hdr.encode("utf-8") + b"\r\n"
-    output += raw
-
-    return output
+    return [sig_hdr] if mi_hdr is None else [sig_hdr, mi_hdr]
 
 
 def main():
