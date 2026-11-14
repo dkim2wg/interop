@@ -140,7 +140,12 @@ for my $p (@pages) {
     like($nav, qr/<a(?: class="brand")? href="\Q$cur_href\E" aria-current="page">/,
         "$p marks $cur_href current");
     my $up = $dir eq '' ? '' : '../';
-    like($h, qr/<link rel="stylesheet" href="\Q${up}nav.css\E">/, "$p loads the shared nav.css");
+    like($h, qr/<link rel="stylesheet" href="\Q${up}nav.css?v=__VER__\E">/, "$p loads the shared nav.css");
+    # Every stylesheet is cache-busted: stage-www.sh stamps __VER__ with the
+    # commit, so a deploy never leaves a browser on an old stylesheet.
+    while ($h =~ /<link rel="stylesheet" href="([^"]+)"/g) {
+        like($1, qr/\?v=__VER__\z/, "$p: stylesheet $1 is cache-busted");
+    }
 
     unlike($h, qr/canmodify/i, "$p does not mention canmodify");
 

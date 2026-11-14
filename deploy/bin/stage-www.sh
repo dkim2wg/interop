@@ -47,8 +47,14 @@ chmod 644 "$DEST/deployments/index.html"
 # so a preview copy still talks to the live CGI.
 install -d -m 755 "$DEST/validate" "$DEST/verify"
 install -m 644 "$WWW"/validate/*.html "$WWW"/validate/*.css "$WWW"/validate/*.js "$DEST/validate/"
-VER=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || date +%s)
-sed -i.bak "s/__VER__/$VER/g" "$DEST/validate/index.html" && rm -f "$DEST/validate/index.html.bak"
 install -m 644 "$WWW"/verify/*.html "$WWW"/verify/*.css "$WWW"/verify/*.js "$DEST/verify/"
+
+# Cache-bust: every page's stylesheets (and the validator's script) carry
+# ?v=__VER__, stamped with the commit, so a deploy never leaves a browser
+# holding an old stylesheet (nginx sends no cache headers, so browsers guess).
+VER=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || date +%s)
+for page in "$DEST/index.html" "$DEST"/{how,get-ready,try,implementations,developers,deployments,verify,validate}/index.html; do
+    sed -i.bak "s/__VER__/$VER/g" "$page" && rm -f "$page.bak"
+done
 
 echo ">> site staged in $DEST"
