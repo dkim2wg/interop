@@ -243,7 +243,7 @@ header Recipes which values (as received, or Recipe literals) each
 instance's fields were, name by name. A name no Recipe touches costs
 nothing at the levels below. The hashes and the verdicts, in their
 wording, are those of L<Mail::DKIM2::MessageInstance/undo> and C<h_digest>;
-L<Mail::DKIM2::Verifier>'s C<StreamBody> option uses a HeaderPlan with a
+L<Mail::DKIM2::Verifier>'s chain walk uses a HeaderPlan with a
 L<Mail::DKIM2::BodyPlan>.
 
 =head1 METHODS

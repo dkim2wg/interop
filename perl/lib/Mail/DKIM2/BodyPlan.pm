@@ -353,7 +353,7 @@ set of digests.
 Below a null body Recipe, or a body Recipe that does not undo, no instance
 has a body hash. The verdicts and their wording are those of
 L<Mail::DKIM2::MessageInstance/undo>: L<Mail::DKIM2::Verifier>'s
-C<StreamBody> option uses a BodyPlan in place of the undo walk's bodies.
+chain walk uses a BodyPlan in place of the undo walk's bodies.
 
 =head1 METHODS
 
