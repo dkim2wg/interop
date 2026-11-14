@@ -15,6 +15,7 @@ use Mail::DKIM2::Common qw(dkim2_canonicalize_header);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::Verifier;
+use UndoWalkVerifier;
 
 is(dkim2_canonicalize_header("Subject : hi\r\n"), "subject:hi\r\n",
    'canonical form: WSP before the colon is deleted');
@@ -41,8 +42,8 @@ sub signed {
 
 sub verify {
     my ($msg, $stream) = @_;
-    my $v = Mail::DKIM2::Verifier->new(
-        PubkeyCallback => DKIM2TestKeys::pubkey_callback(), StreamBody => $stream);
+    my $v = ($stream ? "Mail::DKIM2::Verifier" : "UndoWalkVerifier")->new(
+        PubkeyCallback => DKIM2TestKeys::pubkey_callback());
     $v->skip_timestamp_check(1);
     $v->PRINT($msg); $v->CLOSE;
     return ($v->result, $v->result_detail);
@@ -54,8 +55,9 @@ for my $ws (' ', "\t") {
                    . "From: a\@test1.dkim2.com\r\nTo: b\@test2.dkim2.com\r\n"
                    . "Subject: pay\r\n\r\nbody\r\n");
     for my $stream (1, 0) {
+        my $walk = $stream ? "plans" : "undo walk";
         my ($r, $d) = verify($msg, $stream);
-        isnt($r, 'pass', "From${label}: is a second From (StreamBody=$stream)");
+        isnt($r, 'pass', "From${label}: is a second From ($walk)");
         like($d, qr/From/, '  ... and the From check says so') or diag $d;
     }
 }
@@ -67,8 +69,9 @@ for my $ws (' ', "\t") {
     my $msg = signed("From: a\@test1.dkim2.com\r\nTo: b\@test2.dkim2.com\r\n"
                    . "Subject : hello\r\n\r\nbody\r\n");
     for my $stream (1, 0) {
+        my $walk = $stream ? "plans" : "undo walk";
         my ($r, $d) = verify($msg, $stream);
-        is($r, 'pass', "Subject with WSP before the colon verifies (StreamBody=$stream)") or diag $d;
+        is($r, 'pass', "Subject with WSP before the colon verifies ($walk)") or diag $d;
     }
     (my $respelled = $msg) =~ s/^Subject : hello/Subject: hello/m;
     my ($r, $d) = verify($respelled, 1);

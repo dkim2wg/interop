@@ -2,7 +2,7 @@ package Mail::DKIM2::HeaderPlan;
 use strict;
 use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use Carp;
 use Scalar::Util qw(refaddr);
@@ -207,11 +207,6 @@ sub values_at {
     } @{ $lists->{$lc} || [] } ];
 }
 
-# rewrites_instances(): always false since 0.31. A header Recipe naming
-# Message-Instance acts on content fields of that name, of which there are
-# none, so undoing it never changes the instances below it.
-sub rewrites_instances { return 0 }
-
 1;
 
 __END__
@@ -248,7 +243,7 @@ header Recipes which values (as received, or Recipe literals) each
 instance's fields were, name by name. A name no Recipe touches costs
 nothing at the levels below. The hashes and the verdicts, in their
 wording, are those of L<Mail::DKIM2::MessageInstance/undo> and C<h_digest>;
-L<Mail::DKIM2::Verifier>'s C<StreamBody> option uses a HeaderPlan with a
+L<Mail::DKIM2::Verifier>'s chain walk uses a HeaderPlan with a
 L<Mail::DKIM2::BodyPlan>.
 
 =head1 METHODS
@@ -295,14 +290,6 @@ was when instance C<$m> was the highest -- the header Recipes above it
 applied -- each as Email::Simple's C<header_raw> gives it, bottom up; undef
 if a header Recipe on the way down does not undo. The Verifier reads each
 version's From fields from it (-09 section 11). New in 0.23.
-
-=head2 rewrites_instances()
-
-Always false (since 0.31). Before, true if a header Recipe named
-Message-Instance, whose undo changed the instances below it. Those fields
-are not content (-09 section 6.2): a Recipe naming one acts on content
-fields of that name, of which there are none, so the instances are always
-the ones received.
 
 =head1 AUTHOR
 

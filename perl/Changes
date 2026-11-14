@@ -1,5 +1,77 @@
 Revision history for Mail::DKIM2
 
+0.32    2026-11-14
+        A clean-up release: no change to the wire format, to what verifies,
+        or to any result string. What a caller may notice:
+
+        - Signer: the Algorithm defaults to the one the key signs with (it
+          was rsa-sha256 whatever the key, and an Ed25519 key then died
+          inside CLOSE). An Algorithm the library does not implement, or
+          one the key cannot sign with, croaks from new(): before, any name
+          not starting "ed25519" produced an RSA signature labelled with
+          that name.
+        - Signer: an RSA key under 1024 bits does not sign (-09 section
+          3.2): result 'fail', details "signing key is shorter than 1024
+          bits". Every verifier already called such a signature "too
+          short".
+        - Signer: a message carrying a Message-Instance with no m= is
+          refused, as every verifier refuses it.
+        - Verifier: new AcceptedAt option, the time the message was accepted
+          over SMTP, for a caller verifying later than that: t= is checked
+          against it instead of now (-09 section 14.3).
+        - Verifier: provisionally_verified() checks the envelope against the
+          top signature's mf= and rt= when the Verifier was given one
+          (MailFrom, RcptTo; -09 section 13.2 step 4). It was skipped.
+        - Verifier: the StreamBody option and stream_body() are gone. The
+          chain is always checked from the header and body plans; the undo
+          walk it could be switched back to is now only the tests'
+          reference (t/lib/UndoWalkVerifier.pm). HeadersOnly reads its one
+          hash from the plan too, and the Verifier no longer loads
+          Email::MIME.
+        - MessageInstance: a calculated null body Recipe is unrecoverable()
+          as a parsed one is (it was false until the field was re-parsed).
+        - MessageInstance: a parsed instance's as_string writes every hash
+          group it was given (it wrote only the sha256 set).
+        - MessageInstance: UseEpilogue and EpilogueThreshold, which croaked
+          since 0.23, are removed (unknown options now), with dkim2-milter's
+          --use-epilogue and --epilogue-threshold. calculate never changes
+          the message it is given.
+        - MessageInstance: the h1/b1 entries of get_tag are gone;
+          header_hash() and body_hash() remain, and take an algorithm.
+        - Common: build_signing_input takes the fields themselves
+          (instances, signatures, signing) and empties the s= values of the
+          one being signed or checked. The Signer and the Verifier now
+          build the input the same way; the Verifier no longer re-serialises
+          the parsed signature. Signature::as_string_without_data and
+          as_folded_string_without_data are gone with it.
+        - Common: a Message-Instance or DKIM2-Signature field written with
+          white space before its colon is canonicalized for the signing
+          input without it (-09 section 12.8).
+        - Common: digest64 and fold_value (unused) are gone.
+          HeaderPlan::rewrites_instances, always false since 0.31, too.
+        - Deprecated, still working, to be removed: Common::extract_domain
+          (use domain_of) and Gate's AllowNullBodyRecipe (a no-op since
+          0.29).
+
+        New:
+
+        - Mail::DKIM2::Chain: a message's Message-Instance and
+          DKIM2-Signature fields by number -- which there are, whether the
+          numbers form a chain, how far the signatures reach, each instance
+          parsed once. The Verifier, the Signer and the Gate read the chain
+          through it (each worked this out for itself); both have a chain()
+          accessor.
+        - Mail::DKIM2::Hop->next_instance: the Message-Instance a hop adds
+          before it signs -- none, m=1, a change from this host's snapshot,
+          or one m=1 replacing unsigned instances -- and the message to add
+          it to. dkim2-milter, the DKIM2Sign handler and dkim2sign each
+          made this decision in their own code.
+        - MessageInstance: as_header() and as_header_value(), the field
+          folded and ready to insert; changes() and changes_header(), what
+          the instance records its hop as changing.
+        - Common: signature_algorithm and signature_algorithm_for_key, the
+          one table of signing algorithms the Signer and Verifier share.
+
 0.31    2026-11-06
         - Signer: never folds an rt= list at a comma. -09 section 10.6 gives
           rt= no FWS around its commas (a base64string cannot start with

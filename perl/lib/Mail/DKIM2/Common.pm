@@ -3,16 +3,17 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use Carp ();
 use B ();
+use Scalar::Util ();
 use Encode ();
 use MIME::Base64 qw(encode_base64 decode_base64);
 use JSON;
 use Crypt::PK::RSA;
 use Crypt::PK::Ed25519;
-use Crypt::Digest::SHA256 qw(sha256 sha256_b64 sha256_hex);
+use Crypt::Digest::SHA256 qw(sha256);
 
 use Email::MIME;
 use Mail::DKIM2::TagValueList ();
@@ -29,11 +30,9 @@ our @EXPORT_OK = qw(
     dkim2_canonicalize_sig_header
     field_name
     header_values
-    digest64
     encode_tag_json
     decode_tag_json
     fold_header
-    fold_value
     build_signing_input
     extract_mi_version
     mi_version_tag
@@ -53,6 +52,8 @@ our @EXPORT_OK = qw(
     domain_policy
     load_private_key
     load_private_key_data
+    signature_algorithm
+    signature_algorithm_for_key
     DKIM2_DRAFT
     DKIM2_REPO
     DKIM2_DATE
@@ -86,7 +87,7 @@ use constant DKIM2_DATE  => '2026-11-03';
 use constant FUTURE_LIMIT => 86400;
 use constant EXPIRY       => 14 * 86400;
 
-# Local policy, not -08: a message carrying more Message-Instance or
+# Local policy, not the draft's: a message carrying more Message-Instance or
 # DKIM2-Signature fields than this is a PERMERROR, found before any key is
 # fetched, signature checked or recipe applied. Every hop costs a verifier a
 # DNS lookup, a signature check and an undo of the whole message, and the
@@ -99,8 +100,8 @@ use constant MAX_CHAIN_LENGTH => 32;
 # converted to a number big enough to be a loop bound.
 use constant MAX_CHAIN_NUMBER => 99;
 
-# Local policy, not -08: the most items one DKIM2-Signature's s= may carry.
-# -08 dropped its own limit, and every item may cost a key lookup and a
+# Local policy, not the draft's: the most items one DKIM2-Signature's s= may
+# carry. The draft sets no limit (-08 dropped it), and every item may cost a key lookup and a
 # signature check, so a crafted s= of thousands of selectors would cost
 # thousands of each (the -08 contract, D3). The same limit as the key
 # prefetch's; refused before any key is fetched.
@@ -117,6 +118,17 @@ my %SKIP_EXACT = map { $_ => 1 } qw(
     received return-path sio-label-history x400-received x400-trace
 );
 
+# The IgnorePrefixes option as every entry point validates it: undef, or an
+# array reference. A bare string is a configuration mistake and croaks, so it
+# does not surface later as a 'fail' on every message.
+sub check_ignore_prefixes {
+    my ($prefixes) = @_;
+    return unless defined $prefixes;
+    Carp::croak("IgnorePrefixes must be an array reference of header-name prefixes")
+        unless ref $prefixes eq 'ARRAY';
+    return $prefixes;
+}
+
 # should_skip($name, \@prefixes)
 #
 # True when the field is excluded from the header hash: by the spec's list
@@ -129,17 +141,6 @@ my %SKIP_EXACT = map { $_ => 1 } qw(
 # also has to make sure no field with one of these names ever leaves its
 # network. They are local policy, so they travel as an argument -- never as
 # state shared by every Signer and Verifier in the process.
-# The IgnorePrefixes option as every entry point validates it: undef, or an
-# array reference. A bare string is a configuration mistake and croaks, so it
-# does not surface later as a 'fail' on every message.
-sub check_ignore_prefixes {
-    my ($prefixes) = @_;
-    return unless defined $prefixes;
-    Carp::croak("IgnorePrefixes must be an array reference of header-name prefixes")
-        unless ref $prefixes eq 'ARRAY';
-    return $prefixes;
-}
-
 sub should_skip {
     my ($name, $prefixes) = @_;
     my $hname = lc $name;
@@ -293,12 +294,6 @@ sub combine_sets {
     return ($state, $first->[1]);
 }
 
-# DKIM2 header canonicalization for HEADER HASH per -08 Section 5.2:
-# 1. Lowercase header name
-# 2. Unfold continuation lines (remove CRLF before WSP)
-# 3. Collapse runs of WSP to single SP
-# 4. Strip trailing WSP before CRLF
-# 5. Remove WSP around the colon
 # field_name($name): a header field's name as DKIM2 compares it: lowercased,
 # without the WSP RFC 5322's obsolete syntax (obs-optional) allows between it
 # and the colon. "From :" is a From field (-09 section 6.2 deletes that WSP);
@@ -320,6 +315,12 @@ sub header_values {
            grep { field_name($pairs[2 * $_]) eq $want } 0 .. $#pairs / 2;
 }
 
+# DKIM2 header canonicalization for the header hash, -09 section 6.2:
+# 1. Lowercase the field name
+# 2. Unfold continuation lines (remove CRLF before WSP)
+# 3. Collapse each run of WSP to a single SP
+# 4. Strip trailing WSP before the CRLF
+# 5. Remove WSP around the colon
 sub dkim2_canonicalize_header {
     my ($line) = @_;
     # Unfold: remove CRLF followed by WSP
@@ -338,9 +339,10 @@ sub dkim2_canonicalize_header {
     return "$name:$value\r\n";
 }
 
-# DKIM2 header canonicalization for SIGNATURE INPUT per -08 Section 12.8:
-# Same as header hash canonicalization except step 3 deletes ALL WSP
-# characters rather than collapsing to single SP.
+# DKIM2 header canonicalization for the signing input, -09 section 12.8:
+# as for the header hash, except that ALL WSP is deleted rather than each
+# run collapsed to one SP -- so where a Message-Instance or DKIM2-Signature
+# field is folded never matters to a signature.
 sub dkim2_canonicalize_sig_header {
     my ($line) = @_;
     # Unfold: remove CRLF followed by WSP
@@ -348,19 +350,13 @@ sub dkim2_canonicalize_sig_header {
     # Split on colon
     my ($name, $value) = split(/:/, $line, 2);
     return $line unless defined $value;
-    # Lowercase name
-    $name = lc($name);
+    # Lowercase name, without any WSP before the colon
+    $name = field_name($name);
     # Delete ALL WSP characters
     $value =~ s/[ \t]+//g;
     # Strip trailing CRLF/LF
     $value =~ s/\r?\n?$//;
     return "$name:$value\r\n";
-}
-
-# Base64-encode a digest object (CryptX b64digest includes padding)
-sub digest64 {
-    my ($sha) = @_;
-    return $sha->b64digest;
 }
 
 # Encode data as base64 JSON for a tag value
@@ -458,17 +454,8 @@ sub _json_lexical_error {
     return;
 }
 
-# Fold a header line at 72 characters.
-# Fold a header line to $margin characters (default 72).
-# Only for headers we are creating — never for headers read from elsewhere.
-# First tries to fold at "; " tag boundaries, then breaks any remaining
-# long segments at character positions.
-# Input: a complete header line like "DKIM2-Signature: i=1; v=1; ..."
-# Output: folded with "\r\n\t" continuation lines
-# Tab = 8 chars visually, so continuation lines get 64 chars of content.
-# First line target: 72 chars.  Continuation: 64 content + 8 tab = 72.
-# Parse a message with Email::MIME for the verifier's and the Message-Instance
-# code's purposes: raw header fields and the raw body. DKIM2 never reads MIME
+# Parse a message with Email::MIME for the Message-Instance code's purposes:
+# raw header fields and the raw body. DKIM2 never reads MIME
 # parameters, so a sender's broken Content-Type -- `text/plain; Windows-1252`
 # and worse, as 2003 spam and some list software emit -- must not stop a
 # message from being verified. Email::MIME::ContentType croaks on such a
@@ -482,6 +469,13 @@ sub parse_mime {
     return Email::MIME->new($raw);
 }
 
+# fold_header($line, [$margin], %opts): fold a header field we are creating
+# -- never one read from elsewhere -- to $margin characters (default 72).
+# $line is the whole field, "DKIM2-Signature: i=1; ..."; the result has
+# "\r\n\t" between its lines. A tab shows as 8 columns, so continuation
+# lines take $margin - 8 characters. It folds after a tag's ";" where it
+# can, and otherwise only where the field's grammar allows FWS
+# (_dkim2_fold_ok); a token that cannot fold stays whole on a long line.
 sub fold_header {
     my ($line, $margin, %opts) = @_;
     _check_options('fold_header', \%opts, qw(delimiters_only));
@@ -649,22 +643,6 @@ sub _dkim2_fold_ok {
     return 0;
 }
 
-# Fold a string at arbitrary character positions.
-# Only safe for content that has NOT been signed — e.g. the s= tag value
-# after signature computation but before insertion into the message.
-sub fold_value {
-    my ($line, $margin) = @_;
-    $margin //= 64;  # 64 content + 8 tab = 72 visible
-
-    return $line if length($line) <= $margin;
-
-    my @parts;
-    while (length($line) > 0) {
-        push @parts, substr($line, 0, $margin, '');
-    }
-    return join("\r\n\t", @parts);
-}
-
 # The raw m= value of a Message-Instance header value (whitespace removed,
 # as MessageInstance->parse does), or undef if it has no m= tag.
 sub mi_version_tag {
@@ -734,7 +712,9 @@ sub strip_mi_versions {
     return join($EOL, @kept) . $rest;
 }
 
-# Extract the domain from an email address (handles <user@domain> and user@domain)
+# Extract the domain from an email address (handles <user@domain> and
+# user@domain). Deprecated: domain_of is the one the library uses -- it
+# lowercases, drops a trailing dot and knows a domain literal.
 sub extract_domain {
     my ($addr) = @_;
     return unless $addr;
@@ -744,8 +724,8 @@ sub extract_domain {
     return $1;
 }
 
-# Wrap an address as an RFC5321 reverse-/forward-path for mf=/rt= (spec
-# §9.5/§9.6): angle brackets MUST be present. Empty/undef -> "<>"; an
+# Wrap an address as an RFC5321 reverse-/forward-path for mf=/rt= (-09
+# sections 10.5, 10.6): angle brackets MUST be present. Empty/undef -> "<>"; an
 # already-bracketed value (incl. "<>") is returned unchanged.
 sub to_rfc5321_path {
     my ($addr) = @_;
@@ -921,45 +901,41 @@ sub relaxed_domain_match {
     }
 }
 
-# Build the signing input for DKIM2 signature signing/verification.
-# Args (hash):
-#   mi_headers  => arrayref of { v => N, raw => "..." } sorted by v ascending
-#   dk2_headers => arrayref of { i => N, raw => "...", sig => $sig_obj } sorted by i ascending
-#   signing_i   => the i= value being signed/verified (gets empty s= value)
-#   signature   => the Signature object for the entry being signed/verified
-#   signing_header => optional folded header string (signer path)
-#
-# Per draft-ietf-dkim-dkim2-spec-09 Section 10.5:
-#   1. All Message-Instance headers in ascending v= order
-#   2. All prior DKIM2-Signature headers in ascending i= order
-#   3. The incomplete DKIM2-Signature (with empty s=) being signed/verified
+# build_signing_input(%args): the octets a DKIM2-Signature signs (-09
+# section 12.8), for the Signer and the Verifier alike. Each field is given
+# whole, name and value, as it is in the message (or as it will be): folded
+# or not, with or without its line break.
+#   instances  => the Message-Instance fields the signature covers (m= up to
+#                 its own m=), in ascending m= order
+#   signatures => the DKIM2-Signature fields below it, in ascending i= order
+#   signing    => the DKIM2-Signature being made or checked; its s= values
+#                 are emptied here, so it may be given signed or unsigned
 sub build_signing_input {
     my (%args) = @_;
-    my @mi_headers  = @{$args{mi_headers}  || []};
-    my @dk2_headers = @{$args{dk2_headers} || []};
-    my $signing_i   = $args{signing_i};
-    my $signature   = $args{signature};
+    _check_options('build_signing_input', \%args, qw(instances signatures signing));
+    Carp::croak("build_signing_input needs the field being signed (signing)")
+        unless defined $args{signing};
+    return join '',
+        (map { dkim2_canonicalize_sig_header($_) }
+             @{ $args{instances} || [] }, @{ $args{signatures} || [] }),
+        _without_signature_values(dkim2_canonicalize_sig_header($args{signing}));
+}
 
-    my $signing_input = '';
-
-    # 1. All MI headers in ascending m= order
-    for my $mi (@mi_headers) {
-        $signing_input .= dkim2_canonicalize_sig_header($mi->{raw});
+# A canonicalized DKIM2-Signature field with each s= item's signature value
+# emptied (-09 section 12.8): the selectors, the algorithm names and the
+# ":" "," "|" all stay. Only the tag named exactly "s": tag-names are
+# case-sensitive (section 8), so an "S=" is an unknown tag, signed as it is.
+sub _without_signature_values {
+    my ($canon) = @_;
+    my ($name, $value) = split /:/, $canon, 2;
+    return $canon unless defined $value;
+    my $eol = $value =~ s/(\r\n)\z// ? $1 : '';
+    my @specs = split /;/, $value, -1;
+    for (@specs) {
+        next unless /\As=/;
+        s/([^,|:=]+:[^,|:]+):[^,|]*/$1:/g;
     }
-
-    # 2. Prior DKIM2-Signature headers (i < signing_i) in ascending i= order
-    for my $dk2 (@dk2_headers) {
-        next if $dk2->{i} == $signing_i;
-        $signing_input .= dkim2_canonicalize_sig_header($dk2->{raw});
-    }
-
-    # 3. The incomplete signature being signed/verified
-    # Signer passes signing_header (folded); verifier uses default (unfolded)
-    my $sig_header = $args{signing_header} // $signature->as_string_without_data();
-    $sig_header .= "\r\n" unless $sig_header =~ /\r\n$/;
-    $signing_input .= dkim2_canonicalize_sig_header($sig_header);
-
-    return $signing_input;
+    return "$name:" . join(';', @specs) . $eol;
 }
 
 # Every eval in the library rethrows a reference: the library only ever dies
@@ -1209,6 +1185,47 @@ sub _rsa_bits {
     return $rsa ? $rsa->size * 8 : 0;
 }
 
+# The signing algorithms this library implements (-09 sections 3.2, 3.3),
+# for the Signer and the Verifier alike: the key class each needs, how it
+# signs and verifies the signing input of section 12.8, and the smallest key
+# it accepts. Names are case-sensitive (section 2.14) and match exactly.
+my %SIGNATURE_ALGORITHM = (
+    'rsa-sha256' => {
+        name      => 'rsa-sha256',
+        key_class => 'Crypt::PK::RSA',
+        min_bits  => 1024,    # section 3.2: Signers MUST use at least this
+        sign      => sub { $_[0]->sign_message($_[1], 'SHA256', 'v1.5') },
+        verify    => sub { $_[0]->verify_message($_[2], $_[1], 'SHA256', 'v1.5') },
+    },
+    'ed25519-sha256' => {
+        name      => 'ed25519-sha256',
+        key_class => 'Crypt::PK::Ed25519',
+        # The SHA-256 of the input is what PureEdDSA signs (section 3.3).
+        sign      => sub { $_[0]->sign_message(sha256($_[1])) },
+        verify    => sub { $_[0]->verify_message($_[2], sha256($_[1])) },
+    },
+);
+
+# signature_algorithm($name): the entry above for an s= item's algorithm
+# name -- a hashref with name, key_class, sign->($key, $input) and
+# verify->($key, $input, $signature), and min_bits for RSA -- or undef for a
+# name this library does not implement.
+sub signature_algorithm {
+    my ($name) = @_;
+    return defined $name ? $SIGNATURE_ALGORITHM{$name} : undef;
+}
+
+# signature_algorithm_for_key($key): the name of the algorithm a key object
+# signs with, or undef for a key of no implemented type.
+sub signature_algorithm_for_key {
+    my ($key) = @_;
+    return unless Scalar::Util::blessed($key);
+    for my $name (sort keys %SIGNATURE_ALGORITHM) {
+        return $name if $key->isa($SIGNATURE_ALGORITHM{$name}{key_class});
+    }
+    return;
+}
+
 # Load a private key from a PEM file.
 # Returns a Crypt::PK::RSA or Crypt::PK::Ed25519 object depending on key type.
 sub load_private_key {
@@ -1336,7 +1353,7 @@ entry point that takes C<IgnorePrefixes> calls this.
 
 =head2 dkim2_canonicalize_header($line)
 
-Header-hash canonicalization (section 5.2) of one complete header line
+Header-hash canonicalization (-09 section 6.2) of one complete header line
 including its CRLF: unfold, lowercase the name, collapse whitespace runs to
 one space, trim whitespace around the colon and at the end. Returns
 C<name:value\r\n>.
@@ -1356,8 +1373,8 @@ files under a name that includes it. New in 0.31.
 
 =head2 dkim2_canonicalize_sig_header($line)
 
-Signing-input canonicalization (section 8.5): as above, but all whitespace
-in the value is removed rather than collapsed.
+Signing-input canonicalization (-09 section 12.8): as above, but all
+whitespace in the value is removed rather than collapsed.
 
 =head2 extract_mi_version($header_value)
 
@@ -1380,16 +1397,17 @@ CRLF message string and returns the result.
 
 =head2 build_signing_input(%args)
 
-The bytes a DKIM2-Signature signs (section 8.5): the canonicalized
-Message-Instance headers in ascending C<m=> order, the DKIM2-Signature
-headers below the one being signed in ascending C<i=> order, and that one
-with empty C<s=> values. Arguments: C<mi_headers>, an arrayref of C<< { v
-=> N, raw => $line } >> sorted by C<v>; C<dk2_headers>, an arrayref of C<<
-{ i => N, raw => $line, sig => $signature } >> sorted by C<i>;
-C<signing_i>, the C<i=> being signed or verified; C<signature>, its
-L<Mail::DKIM2::Signature>; and optionally C<signing_header>, the exact
-folded text to use for it, which the Signer passes so that the folds it
-chose are signed.
+The octets a DKIM2-Signature signs (-09 section 12.8): the canonicalized
+Message-Instance fields in ascending C<m=> order, the DKIM2-Signature
+fields below the one being signed in ascending C<i=> order, and that one
+with its C<s=> signature values emptied. Arguments, each field given whole
+(name and value) and folded or not: C<instances>, an arrayref of the
+Message-Instance fields the signature covers; C<signatures>, an arrayref
+of the DKIM2-Signature fields below it; C<signing>, the DKIM2-Signature
+being made or checked, signed or not. The Signer and the Verifier build
+the input the same way, from the fields themselves. (Before 0.32 the
+arguments were C<mi_headers>, C<dk2_headers>, C<signing_i>, C<signature>
+and C<signing_header>.)
 
 =head2 chain_length_error($msg_or_counts)
 
@@ -1464,7 +1482,10 @@ text.
 
 =head2 extract_domain($address)
 
-The domain of C<user@domain> or C<< <user@domain> >>, or undef.
+The domain of C<user@domain> or C<< <user@domain> >>, or undef, exactly as
+written. B<Deprecated> in 0.32 and to be removed: use
+L</domain_of($address)>, which lowercases the domain, drops a trailing dot
+and reports a domain literal.
 
 =head2 to_rfc5321_path($address)
 
@@ -1554,11 +1575,6 @@ longer line, and a line that would exceed RFC 5322's 998 characters croaks.
 With C<< delimiters_only => 1 >> it breaks
 only after C<;> or C<,>, never inside a token, leaving a value that fits
 nowhere whole on an over-long line (the rule for X-DKIM2-Info).
-
-=head2 fold_value($string, [$margin])
-
-Folds a string at arbitrary positions, C<$margin> content characters per
-line (default 64).
 
 =head1 KEYS
 
@@ -1665,6 +1681,23 @@ does not parse is C<strict> (it fails closed). New in 0.29.
 The key object from C<parse_dkim_key_record>, or undef for a record that
 gives no usable key.
 
+=head2 signature_algorithm($name)
+
+The signing algorithm named C<$name> in an C<s=> item (-09 sections 3.2,
+3.3), as a hashref, or undef for one this library does not implement:
+C<name>; C<key_class>, the class a key for it must be; C<sign>, called as
+C<< ->($key, $signing_input) >> and returning the raw signature; C<verify>,
+called as C<< ->($key, $signing_input, $signature) >>; and for
+C<rsa-sha256>, C<min_bits> (1024). The L<Mail::DKIM2::Signer> and the
+L<Mail::DKIM2::Verifier> both sign and verify through it. Names are
+case-sensitive. New in 0.32.
+
+=head2 signature_algorithm_for_key($key)
+
+The name of the algorithm a key object signs with (C<rsa-sha256> for a
+L<Crypt::PK::RSA>, C<ed25519-sha256> for a L<Crypt::PK::Ed25519>), or undef.
+New in 0.32.
+
 =head1 TAG ENCODING
 
 =head2 encode_tag_json($data), decode_tag_json($base64)
@@ -1673,10 +1706,6 @@ Canonical JSON in base64, the encoding of the C<r=> Recipe tag. C<decode_tag_jso
 UTF-8 and an object that gives the same key twice, compared without regard
 to case (parsers disagree on which value wins). Every string it returns,
 object keys included, is UTF-8 octets.
-
-=head2 digest64($digest_object)
-
-The base64 of a CryptX digest object's result.
 
 =head1 AUTHOR
 

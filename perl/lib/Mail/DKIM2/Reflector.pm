@@ -1,7 +1,7 @@
 package Mail::DKIM2::Reflector;
 use strict; use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 use 5.020;
 
 use Email::MIME;
@@ -97,7 +97,7 @@ sub _fresh_message_text {
       . "\r\n"
       . $a{body};
     my $mi = Mail::DKIM2::MessageInstance->calculate(parse_mime($text));
-    (my $miv = fold_header("Message-Instance: " . $mi->as_string)) =~ s/^Message-Instance:\s*//;
+    my $miv = $mi->as_header_value;
     my ($hc, $hn) = _header_list_for_hash(parse_mime($text));
     return _info_line('mi-m=1', hc => $hc, hn => $hn)
          . "Message-Instance: $miv\r\n" . $text;
@@ -402,8 +402,7 @@ sub reflect {
     #    continuing a chain reuses the top m=). Emitted whether or not we sign.
     my $mi = _build_mi($cur_text, $prev_text, $mode);
     if ($mi) {
-        my $val = fold_header("Message-Instance: " . $mi->as_string);
-        $val =~ s/^Message-Instance:\s*//;
+        my $val = $mi->as_header_value;
         my ($hc, $hn) = _header_list_for_hash(parse_mime($cur_text));
         $cur_text = _info_line("mi-m=" . $mi->get_tag('m'), hc => $hc, hn => $hn)
                   . "Message-Instance: $val\r\n" . $cur_text;

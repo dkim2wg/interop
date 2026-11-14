@@ -4,10 +4,10 @@ use strict;
 use warnings;
 use Mail::Milter::Authentication::Pragmas;
 # ABSTRACT: Handler class for DKIM2 signature verification
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 use base 'Mail::Milter::Authentication::Handler';
 
-use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey fold_header parse_mime);
+use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey parse_mime);
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;
@@ -274,7 +274,7 @@ sub _add_mi_and_store {
             # Compute MI m=1 and prepend it.
             my $mi = Mail::DKIM2::MessageInstance->calculate($msg, undef,
                 IgnorePrefixes => $config->{'ignore_header_prefixes'});
-            $mi_value = $self->_format_mi($mi);
+            $mi_value = $mi->as_header_value;
             $self->prepend_header( 'Message-Instance', $mi_value );
             $snapshot = "Message-Instance: $mi_value$EOL" . $message_data;
             $self->dbgout( 'DKIM2MI', "Added Message-Instance m=" . ($mi->get_tag('m') || '?'), LOG_DEBUG );
@@ -307,14 +307,6 @@ sub _strip_snapshot_header {
     my ($self) = @_;
     my $n = grep { /\AX-DKIM2-Snapshot[ \t]*:/i } @{ $self->{'headers'} || [] };
     $self->change_header( 'X-DKIM2-Snapshot', $_, q{} ) for reverse 1 .. $n;
-}
-
-# Format MI header value with folding for insertion into message
-sub _format_mi {
-    my ( $self, $mi ) = @_;
-    my $folded = fold_header("Message-Instance: " . $mi->as_string());
-    $folded =~ s/^Message-Instance: //;
-    return $folded;
 }
 
 sub close_callback {
