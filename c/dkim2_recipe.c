@@ -315,6 +315,14 @@ static void header_path(char *path, size_t pathsz, const char *name, int idx) {
 #undef PUT
 }
 
+/* A header field name: 1*ftext (RFC 5322), printable ASCII but ":". */
+static int is_field_name(const char *s) {
+    if (!s || !*s) return 0;
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++)
+        if (*p < 0x21 || *p > 0x7E || *p == ':') return 0;
+    return 1;
+}
+
 /* The -09 §5 schema (contract D6). Whole document: an object with "h"
    and/or "b"; "h" an object with at least one property; "b" an array or
    null (unknown top-level keys are ignored). Then each step: "b" first,
@@ -327,6 +335,12 @@ static int validate_schema(const cJSON *root, char *path, size_t pathsz) {
     if (!h && !b) return 1;
     if (h && (!cJSON_IsObject(h) || !h->child)) return 1;
     if (b && !cJSON_IsNull(b) && !cJSON_IsArray(b)) return 1;
+    /* Each "h" key is a header field name (-09 §5): ftext, so no WSP.
+       "message-instance " is not a name -- and, taken for one by name
+       matching that drops WSP before a colon, would let a Recipe rewrite
+       the instances below it. */
+    for (const cJSON *f = h ? h->child : NULL; f; f = f->next)
+        if (!is_field_name(f->string)) return 1;
 
     int bad = b && cJSON_IsArray(b) ? first_bad_step(b, 0) : -1;
     if (bad >= 0) {

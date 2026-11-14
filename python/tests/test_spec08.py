@@ -150,12 +150,23 @@ def test_d6_whole_document_is_invalid_json(rj):
     (b'{"b":[{"c":[1,2]},{"c":[2,3]}]}', "b[1]"),             # overlap
     (b'{"h":{"subject":"x"}}', "h.subject"),                  # not an array
     (b'{"h":{"subject":[{"c":[1,1]},{"x":1}]}}', "h.subject[1]"),
-    (b'{"h":{"x y":[{"z":1}]}}', "h.x\\x20y[0]"),             # escaped octets
-    (b'{"h":{"caf\xc3\xa9":[{"z":1}]}}', "h.caf\\xC3\\xA9[0]"),
     (b'{"h":{"a\\\\b":[{"z":1}]}}', "h.a\\b[0]"),             # backslash is 0x5C
 ])
 def test_d6_one_bad_step_names_its_path(rj, path):
     _fails_with(_bad_recipe(rj), _step_invalid(path))
+
+
+# A header Recipe key that is not a header field name (ftext, -09 §5) makes
+# the whole Recipe invalid, before its steps are looked at.
+@pytest.mark.parametrize("rj", [
+    b'{"h":{"x y":[{"z":1}]}}',
+    b'{"h":{"caf\xc3\xa9":[{"z":1}]}}',
+    b'{"h":{"subject ":[{"c":[1,1]}]}}',
+    b'{"h":{"message-instance\\t":[{"c":[1,1]}]}}',
+    b'{"h":{"a:b":[{"c":[1,1]}]}}',
+])
+def test_recipe_key_not_a_field_name(rj):
+    _fails_with(_bad_recipe(rj), INVALID_JSON_2)
 
 
 def test_d6_first_bad_step_b_then_h_in_byte_order():

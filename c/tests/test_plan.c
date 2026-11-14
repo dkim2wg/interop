@@ -320,9 +320,9 @@ static void body_cases(void) {
     CASE("hash mismatch above a bad Recipe", NULL, "m=2 header hash sha256 mismatch",
          { H1, B }, { H2, B, "{" RSUB ",\"b\":[{\"c\":[1,9]}]}", NULL, H1 });
     /* A Recipe key that is no field name ("message-instance ", WSP in
-       it): its literals canonicalise as an ignored field, in the plan as
-       in the undo walk, and change nothing hashed (not an OOM). */
-    CASE("a Recipe key with WSP in it", NULL, "PASS", { H1, B },
+       it): not a header field name (ftext, -09 §5), so the whole Recipe is
+       invalid -- in the plan as in the undo walk (once an OOM here). */
+    CASE("a Recipe key with WSP in it", NULL, "m=2 contains invalid JSON", { H1, B },
          { H2, B, "{\"h\":{\"subject\":[{\"d\":[\"hi\"]}],\"message-instance \":[{\"d\":[\"x\"]}]}}" });
     CASE("m=01", NULL, "PASS", { H1, B, NULL, NULL, NULL, "01" },
          { H2, B, "{" RSUB "}" });

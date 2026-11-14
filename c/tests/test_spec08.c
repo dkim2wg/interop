@@ -115,11 +115,12 @@ static void test_strict_lowercase(void) {
             "{\"h\":{\"subject\":[{\"c\":[1,1]}],\"subj\\u0065ct\":[{\"c\":[1,1]}]}}");
         CHECK_MSG(r, INVALID_JSON_M2);
     }
-    /* a non-ASCII letter is not judged */
+    /* a key with a non-ASCII letter is not a header field name (ftext,
+       -09 §5): the whole Recipe is invalid */
     {
         dkim2_verify_result_t r = recipe_at_m2(
             "{\"h\":{\"subject\":[{\"c\":[1,1]}],\"x-\xc3\x89\":[{\"d\":[\"v\"]}]}}");
-        CHECK(strcmp(r.message, INVALID_JSON_M2) != 0);
+        CHECK_MSG(r, INVALID_JSON_M2);
     }
 }
 
@@ -146,8 +147,6 @@ static void test_recipe_paths(void) {
         { "{\"b\":[{\"c\":[1,2]},{\"d\":[\"x\"]},{\"q\":1}]}", "b[2]" },
         { "{\"h\":{\"subject\":{\"c\":[1,1]}}}",            "h.subject" },
         { "{\"h\":{\"subject\":[{\"c\":[1,1]},{\"x\":1}]}}", "h.subject[1]" },
-        { "{\"h\":{\"x caf\\u00e9\":[{\"q\":1}]}}",         "h.x\\x20caf\\xC3\\xA9[0]" },
-        { "{\"h\":{\"x\\u0001\":[{\"q\":1}]}}",             "h.x\\x01[0]" },
         /* b first, then h names in byte order, then steps in order */
         { "{\"h\":{\"a\":[{\"q\":1}]},\"b\":[{\"c\":[1,1]},{\"q\":1}]}", "b[1]" },
         { "{\"h\":{\"z\":[{\"q\":1}],\"a\":[{\"c\":[1,1]},{\"q\":1}]}}", "h.a[1]" },
@@ -178,6 +177,9 @@ static void test_recipe_paths(void) {
         "{\"b\":7}",
         "{\"h\":{}}",
         "{\"h\":null}",
+        "{\"h\":{\"x caf\\u00e9\":[{\"q\":1}]}}",   /* keys are field names */
+        "{\"h\":{\"x\\u0001\":[{\"q\":1}]}}",
+        "{\"h\":{\"subject \":[{\"c\":[1,1]}]}}",
         "{\"h\":[]}",
         "{}",
         "[]",

@@ -457,6 +457,15 @@ func parseRecipe(data []byte) (*Recipe, error) {
 		if len(h) == 0 {
 			return nil, malformedRecipe(`"h" names no header field`)
 		}
+		// Each key is a header field name (-09 §5): ftext, so no WSP.
+		// "message-instance " is not a name -- and, taken for one by name
+		// matching that drops WSP before a colon, would let a Recipe
+		// rewrite the instances below it.
+		for name := range h {
+			if !isFieldName(name) {
+				return nil, malformedRecipe(`"h" has a key that is not a header field name`)
+			}
+		}
 	}
 	if hasB {
 		if string(bytes.TrimSpace(bv)) == "null" {
@@ -775,4 +784,18 @@ func headerRecipeSteps(before, after []Header) []RecipeStep {
 		beforeVal[len(before)-1-i] = h.Value
 	}
 	return recipeSteps(beforeRaw, beforeVal, afterRaw)
+}
+
+// isFieldName reports whether s is a header field name: 1*ftext (RFC 5322),
+// printable ASCII but ":".
+func isFieldName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x21 || c > 0x7E || c == ':' {
+			return false
+		}
+	}
+	return true
 }

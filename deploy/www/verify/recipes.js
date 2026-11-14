@@ -3,7 +3,8 @@ import { b64ToBytes, bytesToBinary, textToBinary } from './b64.js';
 
 // A Recipe that is valid JSON but not one this message's previous state can
 // be recreated from, as a whole document (-08 contract D6): not an object,
-// neither "h" nor "b", "h" not a non-empty object, "b" neither an array nor
+// neither "h" nor "b", "h" not a non-empty object or a key of it not a
+// header field name, "b" neither an array nor
 // null; and a "c" range that runs past the fields/lines there are, which
 // only applying the Recipe finds. verify.js reports it as "PERMERROR:
 // Message-Instance m=<N> contains invalid JSON", the same as a JSON syntax
@@ -95,6 +96,9 @@ export function decodeRecipe(rB64) {
   return rec;
 }
 
+// A header field name: 1*ftext (RFC 5322), printable ASCII but ":".
+const FIELD_NAME = /^[\x21-\x39\x3B-\x7E]+$/;
+
 // The §5 schema for a decoded Recipe as a whole document. Throws
 // InvalidRecipe.
 export function validateRecipe(rec) {
@@ -103,6 +107,13 @@ export function validateRecipe(rec) {
   if ('h' in rec) {
     if (!isPlainObject(rec.h)) throw new InvalidRecipe('"h" is not an object');
     if (Object.keys(rec.h).length === 0) throw new InvalidRecipe('"h" names no header field');
+    // Each key is a header field name (-09 §5): ftext, so no WSP.
+    // "message-instance " is not a name -- and, taken for one by name
+    // matching that drops WSP before a colon, would let a Recipe rewrite the
+    // instances below it.
+    for (const name of Object.keys(rec.h)) {
+      if (!FIELD_NAME.test(name)) throw new InvalidRecipe('"h" has a key that is not a header field name');
+    }
   }
   if ('b' in rec && rec.b !== null && !Array.isArray(rec.b)) throw new InvalidRecipe('"b" is neither steps nor null');
 }

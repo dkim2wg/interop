@@ -438,6 +438,28 @@ int main(void) {
         free(old_f); free(new_f);
     }
 
+    /* A header Recipe key is a header field name (ftext, -09 §5): any other
+       key makes the whole Recipe invalid ("contains invalid JSON", an empty
+       path) before its steps are looked at. A backslash is ftext. */
+    {
+        static const char *bad[] = {
+            "{\"h\":{\"subject \":[{\"c\":[1,1]}]}}",
+            "{\"h\":{\"message-instance\\t\":[{\"c\":[1,1]}]}}",
+            "{\"h\":{\"x caf\xc3\xa9\":[{\"z\":1}]}}",
+            "{\"h\":{\"a:b\":[{\"c\":[1,1]}]}}",
+            NULL };
+        char path[128];
+        for (int k = 0; bad[k]; k++) {
+            strcpy(path, "unset");
+            assert(dkim2_recipe_parse_ex(bad[k], strlen(bad[k]), path, sizeof path) == NULL);
+            assert(path[0] == '\0');
+        }
+        const char *ok = "{\"h\":{\"a\\\\b\":[{\"c\":[1,1]}]}}";
+        struct cJSON *root = dkim2_recipe_parse_ex(ok, strlen(ok), path, sizeof path);
+        assert(root);
+        dkim2_recipe_free(root);
+    }
+
     puts("recipe: all tests passed");
     return 0;
 }

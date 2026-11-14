@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe, applyRecipe, decodeRecipe, validateRecipeSteps, InvalidRecipe, InvalidStep } from '../recipes.js';
+import { bodyToLines, linesToBody, applyBodyRecipe, applyHeaderRecipe, applyRecipe, decodeRecipe, validateRecipeSteps, headerPath, InvalidRecipe, InvalidStep } from '../recipes.js';
 
 test('bodyToLines / linesToBody round-trip', () => {
   assert.deepEqual(bodyToLines('a\r\nb\r\n'), ['a', 'b']);
@@ -232,6 +232,9 @@ test('validateRecipeSteps: the first invalid step, "b" first, then "h" by name',
   assert.equal(path('{"h":{"subject":null}}'), 'h.subject');
   assert.equal(path('{"h":{"subject":[{"x":1}]},"b":[{"c":[0,1]}]}'), 'b[0]');
   assert.equal(path('{"h":{"to":[{"x":1}],"subject":[{"c":[1,1]},{"x":1}]}}'), 'h.subject[1]');
-  assert.equal(path('{"h":{"x café":[1]}}'), 'h.x\\x20caf\\xC3\\xA9[0]');
+  // A key that is not a field name is a whole-document fault now (decodeRecipe
+  // refuses it); headerPath still escapes octets outside 0x21-0x7E.
+  assert.throws(() => decodeRecipe(r64('{"h":{"x café":[1]}}')), InvalidRecipe);
+  assert.equal(headerPath('x café'), 'h.x\\x20caf\\xC3\\xA9');
   assert.equal(path('{"h":{"subject":[{"c":[1,9]}]},"b":[{"c":[1,1]}]}'), null);
 });

@@ -200,7 +200,8 @@ draft -08 (docs/superpowers/specs/2026-10-28-dkim2-spec-08-design.md):
   key-ed25519-spki.eml             -- Ed25519 key published as DER SPKI (D7):
                                          public key ed25519spki is malformed
   recipe-h-step.eml                -- Recipe h.subject[1] is invalid (D6)
-  recipe-h-name-escaped.eml        -- Recipe h.x\x20caf\xC3\xA9[0] is invalid
+  recipe-h-name-escaped.eml        -- header Recipe key "x café" is not a field name
+  recipe-h-key-wsp.eml             -- header Recipe key "subject " is not a field name
   recipe-b-before-h.eml            -- bad b and h steps: b[1] is named first
   recipe-whole-before-step.eml     -- bad step + "h" not an object: invalid JSON
   recipe-number-exponent.eml       -- an unused "n":1e0: invalid JSON
@@ -1770,14 +1771,25 @@ def build_recipe_h_step():
 
 
 def build_recipe_h_name_escaped():
-    """D6: a header name with a space and a UTF-8 octet pair, its one step
-    bad: "Recipe h.x\\x20caf\\xC3\\xA9[0] is invalid" (every octet outside
-    0x21-0x7E escaped, uppercase hex).  "x café" sorts after "subject" in
-    byte order, so the (valid) Subject Recipe is checked first."""
+    """A header Recipe key with a space and a UTF-8 octet pair. Keys are
+    header field names (ftext, -09 section 5), so the whole Recipe is
+    invalid -- "contains invalid JSON" -- before its (also bad) step is
+    looked at. (Under -08 this vector checked the escaping of the name in
+    "recipe h.x\\x20caf\\xC3\\xA9[0] is invalid".)"""
     h1, b1, h2, r = _subject_hop()
     text = json.dumps({"h": dict(r["h"], **{"x café": [{"z": 1}]})},
                       separators=(",", ":"), ensure_ascii=False)
     return _two_hop(h1, b1, h2, b1, text)
+
+
+def build_recipe_h_key_wsp():
+    """A header Recipe key with trailing whitespace, "subject ": not a field
+    name, so the whole Recipe is invalid. Matching names with WSP dropped,
+    such a key would reach the fields it was not allowed to name ("message-
+    instance " the instances below it), so every verifier refuses it."""
+    h1, b1, h2, r = _subject_hop()
+    steps = next(iter(r["h"].values()))
+    return _two_hop(h1, b1, h2, b1, {"h": {"subject ": steps}})
 
 
 def build_recipe_b_before_h():
@@ -2096,6 +2108,7 @@ FIXTURES = {
     "key-ed25519-spki.eml": build_key_ed25519_spki,
     "recipe-h-step.eml": build_recipe_h_step,
     "recipe-h-name-escaped.eml": build_recipe_h_name_escaped,
+    "recipe-h-key-wsp.eml": build_recipe_h_key_wsp,
     "recipe-b-before-h.eml": build_recipe_b_before_h,
     "recipe-whole-before-step.eml": build_recipe_whole_before_step,
     "recipe-number-exponent.eml": build_recipe_number_exponent,

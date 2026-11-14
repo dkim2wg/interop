@@ -66,9 +66,17 @@ func TestSpec08D10JSONKeysStrictLowercase(t *testing.T) {
 			t.Errorf("parseMI(%s) = %v, want %q", js, err, invalid)
 		}
 	}
-	// Non-ASCII letters are not judged.
-	if _, err := parseMI(miWithRecipe(2, `{"h":{"x-É":[{"d":["v"]}]}}`)); err != nil {
-		t.Errorf("a non-ASCII capital in a key: %v", err)
+	// A header Recipe key is a header field name (ftext, -09 §5): one with a
+	// non-ASCII letter, WSP or a colon makes the whole Recipe invalid.
+	for _, js := range []string{
+		`{"h":{"x-É":[{"d":["v"]}]}}`,
+		`{"h":{"subject ":[{"c":[1,1]}]}}`,
+		`{"h":{"message-instance\t":[{"c":[1,1]}]}}`,
+		`{"h":{"a:b":[{"c":[1,1]}]}}`,
+	} {
+		if _, err := parseMI(miWithRecipe(2, js)); err == nil || err.Error() != invalid {
+			t.Errorf("parseMI(%s) = %v, want %q", js, err, invalid)
+		}
 	}
 }
 
@@ -99,7 +107,7 @@ func TestSpec08D6RecipePathIsInvalid(t *testing.T) {
 		{`{"b":[{"u":[1]}]}`, step("b[0]")},
 		{`{"h":{"subject":[{"d":["x"]},{"c":[0,1]}]}}`, step("h.subject[1]")},
 		{`{"h":{"subject":{"c":[1,1]}}}`, step("h.subject")},
-		{`{"h":{"x café":[5]}}`, step(`h.x\x20caf\xC3\xA9[0]`)},
+		{`{"h":{"x café":[5]}}`, invalid}, // not a header field name
 		// b first, then h names in byte order, then steps in order.
 		{`{"h":{"a":[{"x":1}]},"b":[{"c":[1,1]},{"x":1}]}`, step("b[1]")},
 		{`{"h":{"b":[{"x":1}],"a":[{"d":["v"]},{"x":1}]}}`, step("h.a[1]")},

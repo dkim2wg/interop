@@ -299,7 +299,6 @@ for (const [recipe, path] of [
   [{ b: [{ u: ['DQo='] }] }, 'b[0]'],
   [{ h: { subject: [{ c: [1, 1] }, { x: 1 }] } }, 'h.subject[1]'],
   [{ h: { subject: 'x' } }, 'h.subject'],
-  [{ h: { 'x café': [{ q: 1 }] } }, 'h.x\\x20caf\\xC3\\xA9[0]'],
   [{ h: { subject: [{ e: 1 }] }, b: [{ c: [1, 1] }, { d: [] }] }, 'b[1]'],
   [{ h: { to: [{ x: 1 }], subject: [{ x: 1 }] } }, 'h.subject[0]'],
 ]) {
@@ -325,6 +324,9 @@ for (const [what, json] of [
   ['a lone surrogate in a "d" string', '{"b":[{"d":["\\udc80"]}]}'],
   ['a lone surrogate in an unused key', '{"b":[{"c":[1,1]}],"x\\ud800":1}'],
   ['a copy past the end', '{"b":[{"c":[1,2]}]}'],
+  ['a header key that is not a field name (WSP)', '{"h":{"subject ":[{"c":[1,1]}]}}'],
+  ['a header key that is not a field name (non-ASCII)', '{"h":{"x café":[{"q":1}]}}'],
+  ['a header key that is not a field name (colon)', '{"h":{"a:b":[{"c":[1,1]}]}}'],
 ]) {
   test(`D6/D10: ${what} is "contains invalid JSON"`, async () => {
     assertPrimary(await verify(await twoHop(json)), 'permerror', INVALID_JSON);
@@ -338,9 +340,9 @@ test('D10: Recipe octets that are not UTF-8 are "contains invalid JSON"', async 
   assertPrimary(await verify(msg), 'permerror', INVALID_JSON);
 });
 
-test('D10: non-ASCII letters in keys are not judged', async () => {
-  assertPass(await verify(await signChain([
+test('A header Recipe key with a non-ASCII letter is not a field name: "contains invalid JSON"', async () => {
+  assertPrimary(await verify(await signChain([
     { fields: FIELDS, body: BODY },
     { fields: [...FIELDS, ['X-Été', 'x']], body: BODY, recipe: { h: { 'x-été': [] } } },
-  ], [oneTo(), two()])));
+  ], [oneTo(), two()])), 'permerror', INVALID_JSON);
 });
