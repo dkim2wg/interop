@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Fri, 13 Nov 2026 18:11:47 -0800
+Subject: [PATCH 1/4] Add a setting to decorate text/plain by wrapping it
+
+Decorating a single-part text/plain message joins the header and footer
+to the text itself: the body is decoded, the decorations added, and the
+result re-encoded, in whichever of the list's, the message's or utf-8's
+charset works.  A utf-8 body usually comes out base64, so every line of
+the body changes, and the sender's encoding and octets are gone.  Other
+content types are already decorated by wrapping the message in a
+multipart/mixed with the header and footer as their own parts.
+
+The new [mailman] decorate_plain_text_in_place setting, 'yes' by default
+to keep current behavior, sends text/plain down that wrapping path too
+when set to 'no'.  The body then reaches recipients as the sender wrote
+it, which matters to anything that records or checks what a list changed,
+such as DKIM2 Message-Instance Recipes: the list's change becomes "added
+a part before and after" rather than "rewrote every line".  It costs no
+extra space or time; it skips the re-encode.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/mailman/config/schema.cfg               | 10 +++
+ src/mailman/docs/NEWS.rst                   |  6 ++
+ src/mailman/handlers/decorate.py            |  5 +-
+ src/mailman/handlers/tests/test_decorate.py | 78 +++++++++++++++++++++
+ src/mailman/rest/docs/systemconf.rst        |  1 +
+ src/mailman/rest/tests/test_systemconf.py   |  1 +
+ 6 files changed, 100 insertions(+), 1 deletion(-)
+
+diff --git a/src/mailman/config/schema.cfg b/src/mailman/config/schema.cfg
+index f38e0fe5e..0cb44c913 100644
+--- a/src/mailman/config/schema.cfg
++++ b/src/mailman/config/schema.cfg
+@@ -101,6 +101,16 @@ html_to_plain_text_command: /usr/bin/lynx -dump $filename
+ # the message?
+ filter_report: no
+ 
++# How should a list's header and footer be added to a single-part text/plain
++# message?  With 'yes', they are joined to the text itself, which is decoded
++# and re-encoded (a utf-8 body, say, usually comes out base64), so every line
++# of the body can change.  With 'no', the message is wrapped in a
++# multipart/mixed with the header and footer as their own text/plain parts,
++# as is already done for other content types, and the body is left as it
++# arrived.  That keeps the sender's body intact for mechanisms that record
++# or verify what a list changed, such as DKIM2 Message-Instance Recipes.
++decorate_plain_text_in_place: yes
++
+ # Specify what characters are allowed in list names.  Characters outside of
+ # the class [-_.+=!$*{}~0-9a-z] matched case insensitively are never allowed,
+ # but this specifies a subset as the only allowable characters.  This must be
+diff --git a/src/mailman/docs/NEWS.rst b/src/mailman/docs/NEWS.rst
+index 4ab2ceeb1..1cdd8f9ac 100644
+--- a/src/mailman/docs/NEWS.rst
++++ b/src/mailman/docs/NEWS.rst
+@@ -97,6 +97,12 @@ Bugs fixed
+ 
+ New Features
+ ------------
++* There is a new ``decorate_plain_text_in_place`` setting in the ``mailman``
++  section of mailman.cfg.  It defaults to ``yes`` to keep current behavior.
++  With ``no``, a single-part text/plain message is decorated by wrapping it in
++  a multipart/mixed with the header and footer as their own parts, as other
++  content types already are, instead of decoding and re-encoding its body, so
++  the sender's body reaches recipients unchanged.
+ * A member's delivery_status is now available via REST.  (:issue:`1184`)
+ * Subscribe and unsubscribe events are now logged.  (:issue:`1143`)
+ * There is a new ``probe_add_dsn`` setting in the ``mta`` section of
+diff --git a/src/mailman/handlers/decorate.py b/src/mailman/handlers/decorate.py
+index 4bf83475b..45881b6c0 100644
+--- a/src/mailman/handlers/decorate.py
++++ b/src/mailman/handlers/decorate.py
+@@ -23,6 +23,8 @@ import logging
+ 
+ from email.mime.text import MIMEText
+ from email.utils import formataddr
++from lazr.config import as_boolean
++from mailman.config import config
+ from mailman.core.i18n import _
+ from mailman.interfaces.handler import IHandler
+ from mailman.interfaces.mailinglist import IListArchiverSet
+@@ -109,7 +111,8 @@ def process(mlist, msg, msgdata):
+     # BAW: If the charsets don't match, should we add the header and footer by
+     # MIME multipart chroming the message?
+     wrap = True
+-    if not msg.is_multipart() and msgtype == 'text/plain':
++    if (not msg.is_multipart() and msgtype == 'text/plain'
++            and as_boolean(config.mailman.decorate_plain_text_in_place)):
+         # Save the RFC-3676 format parameters.
+         format_param = msg.get_param('format')
+         delsp = msg.get_param('delsp')
+diff --git a/src/mailman/handlers/tests/test_decorate.py b/src/mailman/handlers/tests/test_decorate.py
+index e1a25aebc..ba70450bf 100644
+--- a/src/mailman/handlers/tests/test_decorate.py
++++ b/src/mailman/handlers/tests/test_decorate.py
+@@ -450,6 +450,84 @@ Footer:
+                       self._msg.as_string())
+ 
+ 
++class TestDecoratePlainTextInPlace(unittest.TestCase):
++    """Test the decorate_plain_text_in_place setting."""
++
++    layer = ConfigLayer
++
++    def setUp(self):
++        self._mlist = create_list('ant@example.com')
++        self._mlist.preferred_language = 'en'
++        # A body in a charset and encoding that decorating in place changes.
++        self._msg = mfs("""\
++To: ant@example.com
++From: aperson@example.com
++Message-ID: <alpha>
++MIME-Version: 1.0
++Content-Type: text/plain; charset="utf-8"; format="flowed"
++Content-Transfer-Encoding: quoted-printable
++
++Caf=C3=A9 au lait.
++""")
++        temporary_dir = TemporaryDirectory()
++        self.addCleanup(temporary_dir.cleanup)
++        config.push('templates', """\
++        [paths.testing]
++        template_dir: {}
++        """.format(temporary_dir.name))
++        self.addCleanup(config.pop, 'templates')
++        site_dir = os.path.join(config.TEMPLATE_DIR, 'site', 'en')
++        os.makedirs(site_dir)
++        with open(os.path.join(site_dir, 'myfooter.txt'), 'w',
++                  encoding='utf-8') as fp:
++            print('The footer', file=fp)
++        getUtility(ITemplateManager).set(
++            'list:member:regular:footer', None, 'mailman:///myfooter.txt')
++
++    def test_in_place_by_default(self):
++        decorate.process(self._mlist, self._msg, {})
++        self.assertFalse(self._msg.is_multipart())
++        self.assertEqual(self._msg['content-transfer-encoding'], 'base64')
++        self.assertEqual(
++            self._msg.get_payload(decode=True).decode('utf-8'),
++            'Caf\xe9 au lait.\nThe footer\n')
++
++    def test_wrapped_when_not_in_place(self):
++        with configuration('mailman', decorate_plain_text_in_place='no'):
++            decorate.process(self._mlist, self._msg, {})
++        self.assertEqual(self._msg.get_content_type(), 'multipart/mixed')
++        body, footer = self._msg.get_payload()
++        # The post is untouched: same fields, same encoded octets.
++        self.assertEqual(body.items(), [
++            ('Content-Type', 'text/plain; charset="utf-8"; format="flowed"'),
++            ('Content-Transfer-Encoding', 'quoted-printable'),
++            ])
++        self.assertEqual(body.get_payload(), 'Caf=C3=A9 au lait.\n')
++        self.assertEqual(footer.get_payload(), 'The footer\n')
++        self.assertEqual(footer['content-disposition'], 'inline')
++
++    def test_multipart_mixed_unaffected(self):
++        msg = mfs("""\
++To: ant@example.com
++From: aperson@example.com
++Message-ID: <alpha>
++Content-Type: multipart/mixed; boundary="aaaaaa"
++
++--aaaaaa
++Content-Type: text/plain;
++
++This is a test message.
++--aaaaaa--
++""")
++        with configuration('mailman', decorate_plain_text_in_place='no'):
++            decorate.process(self._mlist, msg, {})
++        # The footer is appended as a part, as it always was.
++        parts = msg.get_payload()
++        self.assertEqual(len(parts), 2)
++        self.assertEqual(parts[0].get_payload(), 'This is a test message.')
++        self.assertEqual(parts[1].get_payload(), 'The footer\n')
++
++
+ class TestBrokenPermalink(unittest.TestCase):
+     layer = ConfigLayer
+ 
+diff --git a/src/mailman/rest/docs/systemconf.rst b/src/mailman/rest/docs/systemconf.rst
+index b71d5755b..4a8db92cc 100644
+--- a/src/mailman/rest/docs/systemconf.rst
++++ b/src/mailman/rest/docs/systemconf.rst
+@@ -19,6 +19,7 @@ You can also get all the values for a particular section, such as the
+     ^x-ack: ^x-beenthere: ^x-list-administrivia: ^x-spam-
+     cache_life: 7d
+     check_max_size_on_filtered_message: no
++    decorate_plain_text_in_place: yes
+     default_language: en
+     dsn_lifetime: 1d
+     email_commands_max_lines: 10
+diff --git a/src/mailman/rest/tests/test_systemconf.py b/src/mailman/rest/tests/test_systemconf.py
+index 97b370b25..1e1f16ca1 100644
+--- a/src/mailman/rest/tests/test_systemconf.py
++++ b/src/mailman/rest/tests/test_systemconf.py
+@@ -42,6 +42,7 @@ class TestSystemConfiguration(unittest.TestCase):
+                                         '^x-list-administrivia: ^x-spam-',
+             cache_life='7d',
+             check_max_size_on_filtered_message='no',
++            decorate_plain_text_in_place='yes',
+             default_language='en',
+             dsn_lifetime='1d',
+             email_commands_max_lines='10',

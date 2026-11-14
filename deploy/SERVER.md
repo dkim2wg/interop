@@ -497,17 +497,18 @@ then `systemctl stop mailman3; sudo -u mailman /opt/mailman/venv/bin/mailman -C 
 (any `mailman` command applies pending migrations).
 
 **DKIM2 behaviour (since 2026-10-07):** on a list with `dkim2_message_instance`
-on, Mailman always MIME-wraps the post (a `multipart/mixed` with a short
-preamble note, the original body spliced in byte-for-byte as the middle part
-between the list's header and footer parts, or the first part when the list has
-no header), so its `m=2` body Recipe is a copy range. When content filtering
-(`mime_delete`) or DMARC wrapping rewrites the body it records `"b":null`
-instead, and the outbound milter (`dkim2-milter-outbound.service`) still
-signs such an `m=2` (logging `X-DKIM2-Info: ... action=null-body-recipe`),
-which every -09 verifier then reports as a PERMERROR (`has a null
-recipe`). There is **no `mi-cache`** any
-more: the pre-pipeline snapshot is `msg.original_bytes` in the queue entry, and
-`/var/lib/mailman3/mi-cache` was removed at the 2026-10-07 deploy.
+on, Mailman always MIME-wraps the post (upstream's own wrap: a
+`multipart/mixed` with the post as a part between the list's header and footer
+parts), so its `m=2` body Recipe is a copy range found from where decoration
+put the post, checked against the digests the LMTP runner took on arrival.
+When content filtering (`mime_delete`) or DMARC wrapping rewrites the body the
+check fails and the Recipe is `"b":null`, and the outbound milter
+(`dkim2-milter-outbound.service`) still signs such an `m=2` (logging
+`X-DKIM2-Info: ... action=null-body-recipe`), which every -09 verifier then
+reports as a PERMERROR (`has a null recipe`). Since the light form (deployed
+from the series of 2026-11-13) nothing of a post as received is kept: the
+queue entry carries two digests and a log of the header fields Mailman
+changed. `/var/lib/mailman3/mi-cache` was removed at the 2026-10-07 deploy.
 
 **Config files:**
 - `/etc/mailman3/mailman.cfg` — main mailman config

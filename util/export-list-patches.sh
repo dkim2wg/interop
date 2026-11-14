@@ -17,7 +17,7 @@ MAILMAN=${MAILMAN_DIR:-$HOME/src/mailman}
 SYMPA=${SYMPA_DIR:-$HOME/src/sympa}
 MAILMAN_3310=v3.3.10            # branch dkim2-3.3.10: current release (Debian 13, Ubuntu 25.04+)
 MAILMAN_338=3.3.8               # branch dkim2-3.3.8: LTS release (Debian 12, Ubuntu 24.04)
-MAILMAN_MASTER=687b9e4dc        # branch dkim2: the same change on upstream master
+MAILMAN_MASTER=b84676666        # branch dkim2: the same change on upstream master
 SYMPA_BASE=6.2.78
 check=0
 while [ $# -gt 0 ]; do

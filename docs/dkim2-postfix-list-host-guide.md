@@ -512,11 +512,12 @@ curl -u restadmin:PASSWORD -X PATCH -H 'Content-Type: application/json' \
 ```
 
 The Message-Instance handlers log to the mailman3 journal
-(`journalctl -u mailman3`). The baseline for each Recipe is pickled with the queued
-message, only when Message-Instance support is enabled (and not for a list
-that opts out); there is no cache directory (a `mi-cache/` left by an earlier
-build can be deleted). Messages queued by this build cannot be unpickled
-by a build without the DKIM2 wrap, so drain the queues before downgrading.
+(`journalctl -u mailman3`). Nothing of a post as received is kept beyond
+two digests and a log of the header fields Mailman changed; there is no cache
+directory (a `mi-cache/` left by an earlier build can be deleted). Messages
+queued by the earlier series (which kept each post's octets) cannot be
+described by this one, and the other way round, so drain the queues before
+upgrading from it or rolling back to it.
 
 Check: post to a test list from an outside address and read the copy you
 get back (step 9).

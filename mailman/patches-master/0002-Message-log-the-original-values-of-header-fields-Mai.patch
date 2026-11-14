@@ -1,0 +1,246 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bron Gondwana <brong@fastmailteam.com>
+Date: Fri, 13 Nov 2026 22:23:00 -0800
+Subject: [PATCH 2/4] Message: log the original values of header fields Mailman
+ changes
+
+Anything that has to describe what Mailman did to a message's header
+fields -- a DKIM2 Message-Instance Recipe, which rebuilds the fields a
+post arrived with -- needs their values from before the change.  Rather
+than keep a copy of the message as received, Message can keep a log:
+once started, the first time a header field name is added, set,
+replaced or deleted, every value that name had is recorded, in order
+(none when it was absent).  Fields the log does not name are as they
+arrived.
+
+The compat32 email.message.Message edits its header list directly in
+six methods (__setitem__, __delitem__, add_header, replace_header,
+set_boundary, set_raw); the others that change headers (set_param,
+del_param, set_type, set_charset, set_payload with a charset) go through
+them, so overriding those six covers every change.  The log starts only
+when asked, after parsing (which adds fields through set_raw); it is an
+attribute, pickled and deep-copied with the message and never written
+into it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/mailman/email/message.py            |  59 +++++++++++
+ src/mailman/email/tests/test_message.py | 129 +++++++++++++++++++++++-
+ 2 files changed, 187 insertions(+), 1 deletion(-)
+
+diff --git a/src/mailman/email/message.py b/src/mailman/email/message.py
+index 34f83626a..95a0a02d6 100644
+--- a/src/mailman/email/message.py
++++ b/src/mailman/email/message.py
+@@ -47,6 +47,65 @@ class Message(email.message.Message):
+     def __setstate__(self, values):
+         self.__dict__ = values
+ 
++    # The header log: for each header field name (lower case) Mailman has
++    # changed, the values that name had before the first change, in
++    # document order ([] when it was absent).  A DKIM2 Message-Instance
++    # Recipe rebuilds the headers the message arrived with from it.  It
++    # runs only once started, after parsing (the parser adds fields through
++    # set_raw), and is pickled and deep-copied with the message.
++    #
++    # The compat32 email.message.Message edits its header list directly in
++    # exactly the six methods overridden below; every other method that
++    # changes a header (set_param, del_param, set_type, set_charset,
++    # set_payload with a charset) goes through them.
++
++    def start_header_log(self):
++        """Start logging header changes; a running log is kept as it is."""
++        if self.__dict__.get('_header_log') is None:
++            self._header_log = {}
++
++    @property
++    def header_log(self):
++        """The header log, or None when it has not been started."""
++        return self.__dict__.get('_header_log')
++
++    def _log_header(self, name):
++        log = self.__dict__.get('_header_log')
++        if log is None:
++            return
++        name = name.lower()
++        if name not in log:
++            log[name] = [value for key, value in self.raw_items()
++                         if key.lower() == name]
++
++    def _unlogged_prepend(self, name, value):
++        """Add a header field at the top, without logging it."""
++        self._headers.insert(0, (name, value))
++
++    def __setitem__(self, name, val):
++        self._log_header(name)
++        super().__setitem__(name, val)
++
++    def __delitem__(self, name):
++        self._log_header(name)
++        super().__delitem__(name)
++
++    def add_header(self, _name, _value, **_params):
++        self._log_header(_name)
++        super().add_header(_name, _value, **_params)
++
++    def replace_header(self, _name, _value):
++        self._log_header(_name)
++        super().replace_header(_name, _value)
++
++    def set_boundary(self, boundary):
++        self._log_header('content-type')
++        super().set_boundary(boundary)
++
++    def set_raw(self, name, value):
++        self._log_header(name)
++        super().set_raw(name, value)
++
+     def as_string(self):
+         # Work around for https://bugs.python.org/issue27321 and
+         # https://bugs.python.org/issue32330.
+diff --git a/src/mailman/email/tests/test_message.py b/src/mailman/email/tests/test_message.py
+index 674a8dcdd..548003f85 100644
+--- a/src/mailman/email/tests/test_message.py
++++ b/src/mailman/email/tests/test_message.py
+@@ -17,9 +17,11 @@
+ 
+ """Test the message API."""
+ 
++import copy
++import pickle
+ import unittest
+ 
+-from email import message_from_binary_file
++from email import message_from_binary_file, message_from_string
+ from email.header import Header
+ from email.parser import FeedParser
+ from email.utils import _has_surrogates
+@@ -229,3 +231,128 @@ Message with \u201cNon-ascii\u201d.
+             fp.seek(0)
+             text = fp.read().decode('ascii', 'replace')
+         self.assertEqual(msg.as_string(), text)
++
++
++class TestHeaderLog(unittest.TestCase):
++    """The log of original header field values, for DKIM2 Message-Instance
++    Recipes: the first change to a field name records every value that
++    name had before it."""
++
++    RAW = """\
++From: anne@example.com
++To: ant@example.com
++Cc: a@example.com
++Cc: b@example.com
++Subject: hello
++MIME-Version: 1.0
++Content-Type: text/plain; charset="us-ascii"
++Content-Transfer-Encoding: 7bit
++
++Hello.
++"""
++
++    def _msg(self):
++        msg = message_from_string(self.RAW, Message)
++        msg.start_header_log()
++        return msg
++
++    def test_parser_does_not_log(self):
++        msg = message_from_string(self.RAW, Message)
++        self.assertIsNone(msg.header_log)
++
++    def test_not_started_records_nothing(self):
++        msg = message_from_string(self.RAW, Message)
++        msg['Reply-To'] = 'list@example.com'
++        self.assertIsNone(msg.header_log)
++
++    def test_setitem_logs_absent(self):
++        msg = self._msg()
++        msg['Reply-To'] = 'list@example.com'
++        self.assertEqual(msg.header_log, {'reply-to': []})
++
++    def test_setitem_logs_existing(self):
++        msg = self._msg()
++        msg['Cc'] = 'c@example.com'
++        self.assertEqual(
++            msg.header_log, {'cc': ['a@example.com', 'b@example.com']})
++
++    def test_delitem_logs_all_values(self):
++        msg = self._msg()
++        del msg['cc']
++        self.assertEqual(
++            msg.header_log, {'cc': ['a@example.com', 'b@example.com']})
++
++    def test_first_touch_only(self):
++        msg = self._msg()
++        msg.replace_header('Subject', 'x')
++        msg.replace_header('Subject', 'y')
++        del msg['subject']
++        self.assertEqual(msg.header_log, {'subject': ['hello']})
++
++    def test_add_header(self):
++        msg = self._msg()
++        msg.add_header('Content-Disposition', 'inline')
++        self.assertEqual(msg.header_log, {'content-disposition': []})
++
++    def test_set_raw(self):
++        msg = self._msg()
++        msg.set_raw('List-Id', '<ant.example.com>')
++        self.assertEqual(msg.header_log, {'list-id': []})
++
++    def test_set_param_logs_content_type(self):
++        msg = self._msg()
++        msg.set_param('format', 'flowed')
++        self.assertEqual(msg.header_log,
++                         {'content-type': ['text/plain; charset="us-ascii"']})
++
++    def test_set_boundary_logs_content_type(self):
++        msg = message_from_string("""\
++From: anne@example.com
++Content-Type: multipart/mixed; boundary="aaa"
++
++--aaa
++
++x
++--aaa--
++""", Message)
++        msg.start_header_log()
++        msg.set_boundary('bbb')
++        self.assertEqual(msg.header_log,
++                         {'content-type': ['multipart/mixed; boundary="aaa"']})
++
++    def test_set_payload_charset_logs(self):
++        msg = message_from_string(
++            'From: anne@example.com\nSubject: hi\n\nHello.\n', Message)
++        msg.start_header_log()
++        msg.set_payload('caf\xe9', 'utf-8')
++        # set_charset adds all three, through add_header.
++        self.assertEqual(msg.header_log, {
++            'mime-version': [], 'content-type': [],
++            'content-transfer-encoding': []})
++
++    def test_start_is_idempotent(self):
++        msg = self._msg()
++        msg['Subject'] = 'changed'
++        msg.start_header_log()
++        self.assertEqual(msg.header_log, {'subject': ['hello']})
++
++    def test_pickle_and_deepcopy_carry_log(self):
++        msg = self._msg()
++        del msg['subject']
++        for other in (pickle.loads(pickle.dumps(msg)), copy.deepcopy(msg)):
++            self.assertEqual(other.header_log, {'subject': ['hello']})
++            other['To'] = 'bee@example.com'
++            self.assertEqual(other.header_log, {
++                'subject': ['hello'], 'to': ['ant@example.com']})
++
++    def test_unpickle_without_log(self):
++        # A message pickled before the log existed.
++        msg = message_from_string(self.RAW, Message)
++        state = pickle.dumps(msg)
++        self.assertIsNone(pickle.loads(state).header_log)
++
++    def test_unlogged_prepend(self):
++        msg = self._msg()
++        msg._unlogged_prepend('Message-Instance', 'm=1; h=x; b=y;')
++        self.assertEqual(msg.header_log, {})
++        self.assertEqual(msg.keys()[0], 'Message-Instance')

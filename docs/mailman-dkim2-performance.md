@@ -1,5 +1,13 @@
 # Mailman DKIM2 support: CPU, memory, queue and bandwidth cost
 
+> **Superseded design (2026-11-13).** These measurements are of the
+> always-wrap series, which kept each post's received octets in the queue
+> (`msg.original_bytes`) and diffed against them. The light form that
+> replaced it keeps two digests and a header log instead and finds the post
+> in the decoration layout without a diff, so the queue-size (1.8-2.0x) and
+> body-diff figures below no longer apply. Measurements of the light form
+> are to follow.
+
 Measurements made 2026-10-07/08 for the mailman-developers discussion of
 the DKIM2 Message-Instance series, which asked what DKIM2 support costs on a
 small host (1 vCPU, 2 GB RAM, small `/var`). This note says what was measured
