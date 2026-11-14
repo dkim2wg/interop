@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use Carp ();
 use B ();
@@ -87,7 +87,7 @@ use constant DKIM2_DATE  => '2026-11-03';
 use constant FUTURE_LIMIT => 86400;
 use constant EXPIRY       => 14 * 86400;
 
-# Local policy, not -08: a message carrying more Message-Instance or
+# Local policy, not the draft's: a message carrying more Message-Instance or
 # DKIM2-Signature fields than this is a PERMERROR, found before any key is
 # fetched, signature checked or recipe applied. Every hop costs a verifier a
 # DNS lookup, a signature check and an undo of the whole message, and the
@@ -100,8 +100,8 @@ use constant MAX_CHAIN_LENGTH => 32;
 # converted to a number big enough to be a loop bound.
 use constant MAX_CHAIN_NUMBER => 99;
 
-# Local policy, not -08: the most items one DKIM2-Signature's s= may carry.
-# -08 dropped its own limit, and every item may cost a key lookup and a
+# Local policy, not the draft's: the most items one DKIM2-Signature's s= may
+# carry. The draft sets no limit (-08 dropped it), and every item may cost a key lookup and a
 # signature check, so a crafted s= of thousands of selectors would cost
 # thousands of each (the -08 contract, D3). The same limit as the key
 # prefetch's; refused before any key is fetched.
@@ -118,6 +118,17 @@ my %SKIP_EXACT = map { $_ => 1 } qw(
     received return-path sio-label-history x400-received x400-trace
 );
 
+# The IgnorePrefixes option as every entry point validates it: undef, or an
+# array reference. A bare string is a configuration mistake and croaks, so it
+# does not surface later as a 'fail' on every message.
+sub check_ignore_prefixes {
+    my ($prefixes) = @_;
+    return unless defined $prefixes;
+    Carp::croak("IgnorePrefixes must be an array reference of header-name prefixes")
+        unless ref $prefixes eq 'ARRAY';
+    return $prefixes;
+}
+
 # should_skip($name, \@prefixes)
 #
 # True when the field is excluded from the header hash: by the spec's list
@@ -130,17 +141,6 @@ my %SKIP_EXACT = map { $_ => 1 } qw(
 # also has to make sure no field with one of these names ever leaves its
 # network. They are local policy, so they travel as an argument -- never as
 # state shared by every Signer and Verifier in the process.
-# The IgnorePrefixes option as every entry point validates it: undef, or an
-# array reference. A bare string is a configuration mistake and croaks, so it
-# does not surface later as a 'fail' on every message.
-sub check_ignore_prefixes {
-    my ($prefixes) = @_;
-    return unless defined $prefixes;
-    Carp::croak("IgnorePrefixes must be an array reference of header-name prefixes")
-        unless ref $prefixes eq 'ARRAY';
-    return $prefixes;
-}
-
 sub should_skip {
     my ($name, $prefixes) = @_;
     my $hname = lc $name;
@@ -294,12 +294,6 @@ sub combine_sets {
     return ($state, $first->[1]);
 }
 
-# DKIM2 header canonicalization for HEADER HASH per -08 Section 5.2:
-# 1. Lowercase header name
-# 2. Unfold continuation lines (remove CRLF before WSP)
-# 3. Collapse runs of WSP to single SP
-# 4. Strip trailing WSP before CRLF
-# 5. Remove WSP around the colon
 # field_name($name): a header field's name as DKIM2 compares it: lowercased,
 # without the WSP RFC 5322's obsolete syntax (obs-optional) allows between it
 # and the colon. "From :" is a From field (-09 section 6.2 deletes that WSP);
@@ -321,6 +315,12 @@ sub header_values {
            grep { field_name($pairs[2 * $_]) eq $want } 0 .. $#pairs / 2;
 }
 
+# DKIM2 header canonicalization for the header hash, -09 section 6.2:
+# 1. Lowercase the field name
+# 2. Unfold continuation lines (remove CRLF before WSP)
+# 3. Collapse each run of WSP to a single SP
+# 4. Strip trailing WSP before the CRLF
+# 5. Remove WSP around the colon
 sub dkim2_canonicalize_header {
     my ($line) = @_;
     # Unfold: remove CRLF followed by WSP
@@ -454,17 +454,8 @@ sub _json_lexical_error {
     return;
 }
 
-# Fold a header line at 72 characters.
-# Fold a header line to $margin characters (default 72).
-# Only for headers we are creating — never for headers read from elsewhere.
-# First tries to fold at "; " tag boundaries, then breaks any remaining
-# long segments at character positions.
-# Input: a complete header line like "DKIM2-Signature: i=1; v=1; ..."
-# Output: folded with "\r\n\t" continuation lines
-# Tab = 8 chars visually, so continuation lines get 64 chars of content.
-# First line target: 72 chars.  Continuation: 64 content + 8 tab = 72.
-# Parse a message with Email::MIME for the verifier's and the Message-Instance
-# code's purposes: raw header fields and the raw body. DKIM2 never reads MIME
+# Parse a message with Email::MIME for the Message-Instance code's purposes:
+# raw header fields and the raw body. DKIM2 never reads MIME
 # parameters, so a sender's broken Content-Type -- `text/plain; Windows-1252`
 # and worse, as 2003 spam and some list software emit -- must not stop a
 # message from being verified. Email::MIME::ContentType croaks on such a
@@ -478,6 +469,13 @@ sub parse_mime {
     return Email::MIME->new($raw);
 }
 
+# fold_header($line, [$margin], %opts): fold a header field we are creating
+# -- never one read from elsewhere -- to $margin characters (default 72).
+# $line is the whole field, "DKIM2-Signature: i=1; ..."; the result has
+# "\r\n\t" between its lines. A tab shows as 8 columns, so continuation
+# lines take $margin - 8 characters. It folds after a tag's ";" where it
+# can, and otherwise only where the field's grammar allows FWS
+# (_dkim2_fold_ok); a token that cannot fold stays whole on a long line.
 sub fold_header {
     my ($line, $margin, %opts) = @_;
     _check_options('fold_header', \%opts, qw(delimiters_only));
@@ -714,7 +712,9 @@ sub strip_mi_versions {
     return join($EOL, @kept) . $rest;
 }
 
-# Extract the domain from an email address (handles <user@domain> and user@domain)
+# Extract the domain from an email address (handles <user@domain> and
+# user@domain). Deprecated: domain_of is the one the library uses -- it
+# lowercases, drops a trailing dot and knows a domain literal.
 sub extract_domain {
     my ($addr) = @_;
     return unless $addr;
@@ -724,8 +724,8 @@ sub extract_domain {
     return $1;
 }
 
-# Wrap an address as an RFC5321 reverse-/forward-path for mf=/rt= (spec
-# §9.5/§9.6): angle brackets MUST be present. Empty/undef -> "<>"; an
+# Wrap an address as an RFC5321 reverse-/forward-path for mf=/rt= (-09
+# sections 10.5, 10.6): angle brackets MUST be present. Empty/undef -> "<>"; an
 # already-bracketed value (incl. "<>") is returned unchanged.
 sub to_rfc5321_path {
     my ($addr) = @_;
@@ -1353,7 +1353,7 @@ entry point that takes C<IgnorePrefixes> calls this.
 
 =head2 dkim2_canonicalize_header($line)
 
-Header-hash canonicalization (section 5.2) of one complete header line
+Header-hash canonicalization (-09 section 6.2) of one complete header line
 including its CRLF: unfold, lowercase the name, collapse whitespace runs to
 one space, trim whitespace around the colon and at the end. Returns
 C<name:value\r\n>.
@@ -1373,8 +1373,8 @@ files under a name that includes it. New in 0.31.
 
 =head2 dkim2_canonicalize_sig_header($line)
 
-Signing-input canonicalization (section 8.5): as above, but all whitespace
-in the value is removed rather than collapsed.
+Signing-input canonicalization (-09 section 12.8): as above, but all
+whitespace in the value is removed rather than collapsed.
 
 =head2 extract_mi_version($header_value)
 
@@ -1482,7 +1482,10 @@ text.
 
 =head2 extract_domain($address)
 
-The domain of C<user@domain> or C<< <user@domain> >>, or undef.
+The domain of C<user@domain> or C<< <user@domain> >>, or undef, exactly as
+written. B<Deprecated> in 0.32 and to be removed: use
+L</domain_of($address)>, which lowercases the domain, drops a trailing dot
+and reports a domain literal.
 
 =head2 to_rfc5321_path($address)
 

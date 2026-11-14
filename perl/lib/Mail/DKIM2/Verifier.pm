@@ -2,7 +2,7 @@ package Mail::DKIM2::Verifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use base 'Mail::DKIM2::HeaderParser';
 use MIME::Base64 qw(decode_base64);
@@ -351,10 +351,10 @@ sub finish_body {
     # (each signature against the one below it, and its own mf= against
     # its d=).
     #
-    # Local policy (-09 sections 13.2, 14.4: a top nd= needs an out-of-band arrangement): the
-    # highest-numbered DKIM2-Signature MUST NOT carry nd=. The only legitimate
-    # nd= producer is reflector-brand-nd, which always emits the matching
-    # higher-i= signature too, so nd= never appears on top.
+    # -09 sections 13.2 and 14.4: a message whose highest-numbered
+    # DKIM2-Signature carries nd= needs an out-of-band arrangement to be
+    # accepted, and this verifier has none: the signer that writes nd=
+    # normally writes the signature it promises too.
     #
     # Only valid for a FINAL, whole-message verification: $max_i here is the
     # top of whatever chain view this Verifier was fed. During a partial/
@@ -573,9 +573,8 @@ sub _check_sig_field {
     # Only include headers that existed when signature $i was created:
     # - DKIM2-Sig headers with i <= $i
     # - MI headers with m <= the version referenced by signature $i
+    # (A signature with no m= covers none, and is "tag=m missing" below.)
     my $max_v = $signature->version || 0;
-    # If signature has no m= (i=1 with no prior MI), include MI up to $i
-    $max_v = $i if !$max_v;
 
     my $signing_input = build_signing_input(
         instances  => [ map { $mi_map{$_} } sort { $a <=> $b } grep { $_ <= $max_v } keys %mi_map ],

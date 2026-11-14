@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use Mail::DKIM2::Common ();
 use Mail::DKIM2::MessageInstance;
@@ -88,6 +88,16 @@ Parses and builds one DKIM2-Signature header.
 
 Generates, authenticates and propagates DKIM2-signed Delivery Status
 Notifications (-09 section 16).
+
+=item L<Mail::DKIM2::Chain>
+
+A message's Message-Instance and DKIM2-Signature fields by number: which
+there are, whether the numbers form a chain, how far the signatures reach.
+
+=item L<Mail::DKIM2::Hop>
+
+The Message-Instance a hop adds before it signs: none, C<m=1>, or a change
+from the message as this host received it.
 
 =item L<Mail::DKIM2::Gate>
 

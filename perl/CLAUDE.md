@@ -5,7 +5,7 @@
 - `lib/Mail/DKIM2.pm` — top-level module: the conventions (CamelCase options,
   snake_case methods, PRINT/CLOSE vs load(), the result/croak error contract,
   string-only exceptions) every module follows. Read it before changing an API.
-- `lib/Mail/DKIM2/` — core library modules
+- `lib/Mail/DKIM2/` — core library modules (see Module map below)
 - `lib/Mail/Milter/Authentication/Handler/` — milter integration (DKIM2Sign, DKIM2Verify)
 - `t/` — tests (full-chain, interop, body-canon, milter; t/pod.t and
   t/pod-coverage.t require every public method to be documented)
@@ -63,33 +63,57 @@ whitespace differently. Keep them apart.
   that match what other implementations logged -- not a cryptographic
   requirement.
 
-### DKIM2-Signature signing order
+### Signing input
 
-The signer builds the field with empty `s=` values, folds it
-(`as_folded_string_without_data()`), canonicalizes that as the signing
-input (`build_signing_input()`'s `signing_header`), signs, then inserts the
-real `s=` values and folds the complete field (`as_folded_string()`). The
-verifier rebuilds the input from the unfolded form
-(`as_string_without_data()`); rule 2 makes the two identical.
+`Common::build_signing_input(instances => [...], signatures => [...],
+signing => $field)` builds the octets a signature covers from the fields
+themselves, whole and as they are in the message, and empties the `s=`
+values of the one being signed or checked. The Signer passes the field it
+is about to send (`Signature::as_folded_string`, values still empty); the
+Verifier passes the field it received. Rule 2 makes folding irrelevant, so
+there is one code path and no re-serialisation of a parsed signature.
 
 ### Implementation
 
-- `Signature::as_string()` and `MessageInstance::as_string()` return
-  **unfolded** output. Used for signing input construction by the verifier.
-- `Signature::as_string_without_data()` returns unfolded header with empty
-  `s=` values. Used by the verifier in `build_signing_input()`.
-- `Signature::as_folded_string_without_data()` returns folded header with
-  empty `s=` values. Used by the signer as the signing input.
-- `Signature::as_folded_string()` returns the header folded at 72 chars,
-  ready for insertion. Only called from `Signer::as_string()`.
-- `build_signing_input()` accepts an optional `signing_header` parameter.
-  The signer passes the folded form; the verifier omits it (uses unfolded).
+- `Signature::as_string()` is the unfolded field with its name;
+  `Signature::as_folded_string()` the same folded at 72, ready to insert.
+- `MessageInstance::as_string()` is the unfolded value WITHOUT the field
+  name; `as_header()` is the whole field folded, `as_header_value()` its
+  value alone (for a milter's addheader).
 - `fold_header()` — folds at `; ` tag boundaries first, then at the latest
   point before the margin that `_dkim2_fold_ok()` accepts (base64 interiors,
-  item colons, list commas), else the first one after it; never mid-token. Croaks rather
-  than emit a line over 998. Only for headers we are creating.
-- Milter handlers fold MI values at insertion time via `_format_mi()`.
+  item colons, list commas), else the first one after it; never mid-token.
+  Croaks rather than emit a line over 998. Only for headers we are creating.
 - Headers read from disk or the network are **never** refolded.
+
+## Module map
+
+- `Chain` — the Message-Instance and DKIM2-Signature fields by number;
+  structure errors in the interop contract's order. Verifier, Signer and
+  Gate all read the chain through it. Add chain bookkeeping here, not in a
+  caller.
+- `HeaderPlan` / `BodyPlan` — every instance's header and body hash from
+  the message as received, one pass, nothing rebuilt. The Verifier's only
+  chain-walk engine. `t/lib/UndoWalkVerifier.pm` is the slow reference the
+  tests hold them to (`MessageInstance->undo` and friends).
+- `Hop->next_instance` — which instance a hop adds before signing. The
+  milter, the DKIM2Sign handler and dkim2sign call it; do not re-derive the
+  decision in a front end.
+- `Common::signature_algorithm` — the one table of signing algorithms.
+- `MessageInstance->calculate/verify/undo/chain_verifies` still run on
+  Email::MIME (with two methods patched into Email::Simple::Header); they
+  are the signing side and the reference, not the Verifier's path.
+
+## Consumers
+
+hm vendors a copy of `lib/Mail/DKIM2/` and the two handlers, and can be
+patched in the same MR as a refresh. Topicbox-Backend installs from CPAN
+and must keep working unchanged: it calls `from_authentic`,
+`extract_domain` (deprecated), `Gate->check(AllowNullBodyRecipe => 1)`
+(deprecated no-op), `h_digest`/`b_digest`, `parse_mime`, `get_tag('rb')`,
+`verify`, `undo`, `chain_verifies` and `calculate`. Result and detail
+strings are consumer API: hm reads `$verifier->details` and Gate's
+`reason`/`message`.
 
 ## MessageInstance::calculate() API
 

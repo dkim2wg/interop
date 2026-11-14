@@ -12,12 +12,14 @@ contrib/strip.pl
 lib/Mail/DKIM2.pm
 lib/Mail/DKIM2/BodyHasher.pm
 lib/Mail/DKIM2/BodyPlan.pm
+lib/Mail/DKIM2/Chain.pm
 lib/Mail/DKIM2/Common.pm
 lib/Mail/DKIM2/Digest.pm
 lib/Mail/DKIM2/DSN.pm
 lib/Mail/DKIM2/Gate.pm
 lib/Mail/DKIM2/HeaderParser.pm
 lib/Mail/DKIM2/HeaderPlan.pm
+lib/Mail/DKIM2/Hop.pm
 lib/Mail/DKIM2/MessageInstance.pm
 lib/Mail/DKIM2/MessageStore.pm
 lib/Mail/DKIM2/Reflector.pm
@@ -43,6 +45,7 @@ t/body-plan-corpus.t
 t/body-plan.t
 t/chain-length.t
 t/chain-number-bound.t
+t/chain.t
 t/check-order.t
 t/common.t
 t/data-in-sync.t
@@ -94,6 +97,7 @@ t/hash-agility.t
 t/header-name-wsp.t
 t/header-plan.t
 t/headerparser.t
+t/hop.t
 t/ignore-prefixes.t
 t/interop.t
 t/invalid-json.t
@@ -104,6 +108,7 @@ t/lib/DKIM2SignedFixture.pm
 t/lib/DKIM2TestKeys.pm
 t/lib/MockAuthMilter.pm
 t/lib/Spec07Fixture.pm
+t/lib/UndoWalkVerifier.pm
 t/load-private-key-data.t
 t/malformed-content-type.t
 t/mf-rt-brackets.t
@@ -135,6 +140,7 @@ t/signature-accessors.t
 t/signature-flags.t
 t/signature-nd.t
 t/signature-nonce.t
+t/signer-key-checks.t
 t/signer-result.t
 t/spec07.t
 t/spec08-algebra.t

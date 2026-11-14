@@ -2,7 +2,7 @@ package Mail::DKIM2::Gate;
 use strict;
 use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use Carp ();
 use Scalar::Util qw(blessed);
@@ -44,7 +44,7 @@ C<PubkeyCallback>, C<Resolver> and C<SkipTimestampCheck> are passed to the
 Verifier, C<IgnorePrefixes> to both the Verifier and the Message-Instance
 chain check (the caller's own header fields, hashed by neither end),
 C<PolicyCallback> is passed to the Verifier too,
-C<AllowNullBodyRecipe> is deprecated and does nothing (see
+C<AllowNullBodyRecipe> is deprecated, does nothing and will be removed (see
 L</Null body Recipes>),
 C<SigningDomain> is the C<d=> the caller will sign with: when the top
 upstream signature carries C<nd=> the gate passes only if it equals that
