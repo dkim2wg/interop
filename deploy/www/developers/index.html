@@ -114,10 +114,13 @@
         <li>The MTA re-encoding the message <em>after</em> you sign
           (8bit&nbsp;&rarr;&nbsp;7bit). Turn it off: in Postfix,
           <code>disable_mime_output_conversion = yes</code>.</li>
-        <li>Hashing a header field that won&rsquo;t travel with the message:
-          a <code>Delivered-To</code> added for a pipe-to-command delivery, a
-          <code>Bcc</code> stripped on the way out. Sign only what leaves
-          unchanged.</li>
+        <li>Signing a message that isn&rsquo;t the one that goes out. Unlike
+          DKIM, you don&rsquo;t choose which header fields are signed: DKIM2
+          hashes them all, apart from trace fields and a few others. So sign
+          the message exactly as it will go out on the wire &mdash; if the
+          MTA adds a <code>Delivered-To</code> for a pipe-to-command delivery,
+          or strips a <code>Bcc</code>, after you sign, the hash no longer
+          matches.</li>
         <li>Content filters or list software rewriting the MIME structure
           after the Recipe was computed.</li>
       </ul>
