@@ -10,20 +10,13 @@ use Carp;
 use Scalar::Util ();
 
 use Mail::DKIM2::Common qw(
-    dkim2_canonicalize_header
     build_signing_input
-    extract_mi_version
     load_private_key
-    MAX_CHAIN_LENGTH
     chain_length_error
-    duplicate_number_error
-    valid_sequence
-    unkeyable_signature_error
-    chain_number_error
-    mi_version_tag
     signature_algorithm
     signature_algorithm_for_key
 );
+use Mail::DKIM2::Chain;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::HeaderPlan;
@@ -55,74 +48,34 @@ sub init {
     croak "Algorithm $self->{Algorithm} needs a $alg->{key_class} key"
         unless Scalar::Util::blessed($self->{Key}) && $self->{Key}->isa($alg->{key_class});
     $self->{_alg} = $alg;
+    $self->{_chain} = Mail::DKIM2::Chain->new;
 }
+
+sub handle_header {
+    my ($self, $field_name, $contents, $line) = @_;
+    $self->{_chain}->add_field($field_name, $contents, $line);
+}
+
+# The message's Message-Instance and DKIM2-Signature fields, numbered
+# (Mail::DKIM2::Chain). Complete once the header block has been read.
+sub chain { return $_[0]->{_chain} }
 
 sub finish_header {
     my $self = shift;
 
-    # Extract existing MI and DKIM2-Signature headers from the parsed headers
-    my @mi_headers;
-    my @dk2_headers;
-    my $unkeyable;
-    my $range;
+    my $chain  = $self->{_chain};
+    my $next_i = ($chain->top_signature_number // 0) + 1;
 
-    for my $header (@{$self->{headers}}) {
-        if ($header =~ /^Message-Instance:/i) {
-            my ($val) = $header =~ /^Message-Instance:\s*(.*)/is;
-            $val =~ s/\r\n$//;
-            my $v = extract_mi_version($val);
-            # Not a chain number: a PERMERROR to every verifier.
-            if (my $e = chain_number_error('Message-Instance', 'm', mi_version_tag($val))) {
-                $range //= $e;
-                next;
-            }
-            push @mi_headers, { v => $v, raw => $header } if $v;
-        }
-        elsif ($header =~ /^DKIM2-Signature:/i) {
-            my ($val) = $header =~ /^DKIM2-Signature:\s*(.*)/is;
-            $val =~ s/\r\n$//;
-            my $sig = eval { Mail::DKIM2::Signature->parse($val) };
-            die $@ if ref $@;
-            # One no verifier can key (no parse, no valid i=) makes the
-            # chain a PERMERROR, so do not sign over it.
-            my $e = $sig && valid_sequence($sig->sequence)
-                && (chain_number_error('DKIM2-Signature', 'i', $sig->sequence)
-                    // chain_number_error('DKIM2-Signature', 'm', $sig->version, $sig->sequence));
-            if ($e) {
-                $range //= $e;
-            }
-            elsif ($sig && valid_sequence($sig->sequence)) {
-                push @dk2_headers, { i => $sig->sequence, raw => $header, sig => $sig };
-            } else {
-                $unkeyable = unkeyable_signature_error($val);
-            }
-        }
-    }
-
-    # Sort by index
-    @mi_headers  = sort { $a->{v} <=> $b->{v} } @mi_headers;
-    @dk2_headers = sort { $a->{i} <=> $b->{i} } @dk2_headers;
-
-    # Determine next i= value
-    my $next_i = @dk2_headers ? $dk2_headers[-1]{i} + 1 : 1;
-
-    # A signature that would take the chain past the limit is one every
-    # verifier refuses, so do not make it.
-    my %counts = (
-        'message-instance' => scalar @mi_headers,
-        'dkim2-signature'  => $next_i,
-    );
-    my $error = chain_length_error(\%counts)
-        // $unkeyable
-        // $range
-        // duplicate_number_error('Message-Instance', 'm',
-               map { $_->{v} } @mi_headers)
-        // duplicate_number_error('DKIM2-Signature', 'i',
-               map { $_->{i} } @dk2_headers);
+    # A chain no verifier can number is a PERMERROR to all of them, and so
+    # is one a signature would take past the limit: do not sign over it.
+    # Whether the chain is otherwise worth extending -- its signatures, its
+    # instances against the content -- is Mail::DKIM2::Gate's to decide.
+    my $error = $chain->numbering_error
+        // chain_length_error({ 'dkim2-signature' => $next_i });
     # A signature names the Message-Instance it covers in m=, and a verifier
     # rejects one that names none (tag=m missing), so a message with no
     # instance cannot be signed: compute one first (dkim2sign does).
-    $error //= 'no Message-Instance field to sign over' unless @mi_headers;
+    $error //= 'no Message-Instance field to sign over' unless $chain->instance_numbers;
     # -09 section 3.2: a Signer MUST use an RSA key of at least 1024 bits,
     # and every verifier calls a shorter one "too short".
     if (my $min = $self->{_alg}{min_bits}) {
@@ -135,7 +88,7 @@ sub finish_header {
     # caller says this d= may sign for it (ParentFromCallback), or, as an
     # explicit opt-in, when that domain's Domain Policy Record allows it.
     # Without either the upward case is refused: no live DNS by default.
-    if (!$error && $self->_from_must_match(\@mi_headers, \@dk2_headers)) {
+    if (!$error && $self->_from_must_match) {
         my $e = Mail::DKIM2::Common::from_pair_error($self->{Domain},
             sub { $self->_parent_policy(@_) },
             map { $_->[1] } grep { lc $_->[0] eq 'from' }
@@ -151,13 +104,8 @@ sub finish_header {
         $self->stop;
         return;
     }
-    # Determine highest MI version
-    my $mi_version = @mi_headers ? $mi_headers[-1]{v} : 0;
-
-    $self->{_mi_version} = $mi_version;
+    $self->{_mi_version} = $chain->top_instance;
     $self->{_timestamp}  = $self->{Timestamp} || time();
-    $self->{_mi_headers} = \@mi_headers;
-    $self->{_dk2_headers} = \@dk2_headers;
     $self->{_next_i} = $next_i;
     $self->{_signature} = $self->_new_signature($self->{RcptTo});
     # Section 12.8 signs the Message-Instance and DKIM2-Signature fields
@@ -238,19 +186,12 @@ sub _resolver {
 # that does not parse is left to the verifiers (and Mail::DKIM2::Gate),
 # which refuse it: the Signer checks only what it needs to sign.
 sub _from_must_match {
-    my ($self, $mi_headers, $dk2_headers) = @_;
-    return 1 unless @$dk2_headers;
-    my $covered = 0;
-    for my $d (@$dk2_headers) {
-        my $m = $d->{sig}->version // 0;
-        $covered = 0 + $m if $m =~ /\A[0-9]+\z/ && $m > $covered;
-    }
-    for my $mi (grep { $_->{v} > $covered } @$mi_headers) {
-        (my $value = $mi->{raw}) =~ s/\A[^:]*:\s*//;
-        my $obj = eval { Mail::DKIM2::MessageInstance->parse($value) };
-        die $@ if ref $@;
-        next unless $obj;
-        my $rh = $obj->get_tag('rh');
+    my ($self) = @_;
+    my $chain = $self->{_chain};
+    return 1 unless $chain->signature_numbers;
+    for my $m ($chain->unsigned_instances) {
+        my $mi = $chain->instance($m) or next;
+        my $rh = $mi->get_tag('rh');
         return 1 if $rh && exists $rh->{from};
     }
     return 0;
@@ -298,9 +239,8 @@ sub sign_for_recipient {
 sub _compute_signature {
     my $self = shift;
 
-    my $signature    = $self->{_signature};
-    my @mi_headers   = @{$self->{_mi_headers}};
-    my @dk2_headers  = @{$self->{_dk2_headers}};
+    my $signature = $self->{_signature};
+    my $chain     = $self->{_chain};
 
     # Reset s= to the empty placeholder before building the signing input.
     # Without this a second call would sign an input containing the FIRST
@@ -309,8 +249,8 @@ sub _compute_signature {
     $signature->set_tag('s', join(':', $self->{Selector}, $self->{Algorithm}, ''));
 
     my $signing_input = build_signing_input(
-        instances  => [ map { $_->{raw} } @mi_headers ],
-        signatures => [ map { $_->{raw} } @dk2_headers ],
+        instances  => [ map { $chain->instance_field($_) } $chain->instance_numbers ],
+        signatures => [ map { $chain->signature_field($_) } $chain->signature_numbers ],
         signing    => $signature->as_folded_string,    # as it will be sent
     );
 
@@ -565,6 +505,11 @@ C<CLOSE>, or when C<result> is C<fail> (REASON is C<details>). Check
 C<result> first. (Before 0.24 it returned the empty string, which a caller
 that prepended it unchecked turned into a blank line ending the message's
 header block.)
+
+=head2 chain()
+
+The message's L<Mail::DKIM2::Chain>: the Message-Instance and
+DKIM2-Signature fields it arrived with, by number. New in 0.32.
 
 =head2 signature()
 
