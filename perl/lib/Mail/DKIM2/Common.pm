@@ -339,9 +339,10 @@ sub dkim2_canonicalize_header {
     return "$name:$value\r\n";
 }
 
-# DKIM2 header canonicalization for SIGNATURE INPUT per -08 Section 12.8:
-# Same as header hash canonicalization except step 3 deletes ALL WSP
-# characters rather than collapsing to single SP.
+# DKIM2 header canonicalization for the signing input, -09 section 12.8:
+# as for the header hash, except that ALL WSP is deleted rather than each
+# run collapsed to one SP -- so where a Message-Instance or DKIM2-Signature
+# field is folded never matters to a signature.
 sub dkim2_canonicalize_sig_header {
     my ($line) = @_;
     # Unfold: remove CRLF followed by WSP
@@ -349,8 +350,8 @@ sub dkim2_canonicalize_sig_header {
     # Split on colon
     my ($name, $value) = split(/:/, $line, 2);
     return $line unless defined $value;
-    # Lowercase name
-    $name = lc($name);
+    # Lowercase name, without any WSP before the colon
+    $name = field_name($name);
     # Delete ALL WSP characters
     $value =~ s/[ \t]+//g;
     # Strip trailing CRLF/LF
@@ -900,45 +901,41 @@ sub relaxed_domain_match {
     }
 }
 
-# Build the signing input for DKIM2 signature signing/verification.
-# Args (hash):
-#   mi_headers  => arrayref of { v => N, raw => "..." } sorted by v ascending
-#   dk2_headers => arrayref of { i => N, raw => "...", sig => $sig_obj } sorted by i ascending
-#   signing_i   => the i= value being signed/verified (gets empty s= value)
-#   signature   => the Signature object for the entry being signed/verified
-#   signing_header => optional folded header string (signer path)
-#
-# Per draft-ietf-dkim-dkim2-spec-09 Section 10.5:
-#   1. All Message-Instance headers in ascending v= order
-#   2. All prior DKIM2-Signature headers in ascending i= order
-#   3. The incomplete DKIM2-Signature (with empty s=) being signed/verified
+# build_signing_input(%args): the octets a DKIM2-Signature signs (-09
+# section 12.8), for the Signer and the Verifier alike. Each field is given
+# whole, name and value, as it is in the message (or as it will be): folded
+# or not, with or without its line break.
+#   instances  => the Message-Instance fields the signature covers (m= up to
+#                 its own m=), in ascending m= order
+#   signatures => the DKIM2-Signature fields below it, in ascending i= order
+#   signing    => the DKIM2-Signature being made or checked; its s= values
+#                 are emptied here, so it may be given signed or unsigned
 sub build_signing_input {
     my (%args) = @_;
-    my @mi_headers  = @{$args{mi_headers}  || []};
-    my @dk2_headers = @{$args{dk2_headers} || []};
-    my $signing_i   = $args{signing_i};
-    my $signature   = $args{signature};
+    _check_options('build_signing_input', \%args, qw(instances signatures signing));
+    Carp::croak("build_signing_input needs the field being signed (signing)")
+        unless defined $args{signing};
+    return join '',
+        (map { dkim2_canonicalize_sig_header($_) }
+             @{ $args{instances} || [] }, @{ $args{signatures} || [] }),
+        _without_signature_values(dkim2_canonicalize_sig_header($args{signing}));
+}
 
-    my $signing_input = '';
-
-    # 1. All MI headers in ascending m= order
-    for my $mi (@mi_headers) {
-        $signing_input .= dkim2_canonicalize_sig_header($mi->{raw});
+# A canonicalized DKIM2-Signature field with each s= item's signature value
+# emptied (-09 section 12.8): the selectors, the algorithm names and the
+# ":" "," "|" all stay. Only the tag named exactly "s": tag-names are
+# case-sensitive (section 8), so an "S=" is an unknown tag, signed as it is.
+sub _without_signature_values {
+    my ($canon) = @_;
+    my ($name, $value) = split /:/, $canon, 2;
+    return $canon unless defined $value;
+    my $eol = $value =~ s/(\r\n)\z// ? $1 : '';
+    my @specs = split /;/, $value, -1;
+    for (@specs) {
+        next unless /\As=/;
+        s/([^,|:=]+:[^,|:]+):[^,|]*/$1:/g;
     }
-
-    # 2. Prior DKIM2-Signature headers (i < signing_i) in ascending i= order
-    for my $dk2 (@dk2_headers) {
-        next if $dk2->{i} == $signing_i;
-        $signing_input .= dkim2_canonicalize_sig_header($dk2->{raw});
-    }
-
-    # 3. The incomplete signature being signed/verified
-    # Signer passes signing_header (folded); verifier uses default (unfolded)
-    my $sig_header = $args{signing_header} // $signature->as_string_without_data();
-    $sig_header .= "\r\n" unless $sig_header =~ /\r\n$/;
-    $signing_input .= dkim2_canonicalize_sig_header($sig_header);
-
-    return $signing_input;
+    return "$name:" . join(';', @specs) . $eol;
 }
 
 # Every eval in the library rethrows a reference: the library only ever dies
@@ -1400,16 +1397,17 @@ CRLF message string and returns the result.
 
 =head2 build_signing_input(%args)
 
-The bytes a DKIM2-Signature signs (section 8.5): the canonicalized
-Message-Instance headers in ascending C<m=> order, the DKIM2-Signature
-headers below the one being signed in ascending C<i=> order, and that one
-with empty C<s=> values. Arguments: C<mi_headers>, an arrayref of C<< { v
-=> N, raw => $line } >> sorted by C<v>; C<dk2_headers>, an arrayref of C<<
-{ i => N, raw => $line, sig => $signature } >> sorted by C<i>;
-C<signing_i>, the C<i=> being signed or verified; C<signature>, its
-L<Mail::DKIM2::Signature>; and optionally C<signing_header>, the exact
-folded text to use for it, which the Signer passes so that the folds it
-chose are signed.
+The octets a DKIM2-Signature signs (-09 section 12.8): the canonicalized
+Message-Instance fields in ascending C<m=> order, the DKIM2-Signature
+fields below the one being signed in ascending C<i=> order, and that one
+with its C<s=> signature values emptied. Arguments, each field given whole
+(name and value) and folded or not: C<instances>, an arrayref of the
+Message-Instance fields the signature covers; C<signatures>, an arrayref
+of the DKIM2-Signature fields below it; C<signing>, the DKIM2-Signature
+being made or checked, signed or not. The Signer and the Verifier build
+the input the same way, from the fields themselves. (Before 0.32 the
+arguments were C<mi_headers>, C<dk2_headers>, C<signing_i>, C<signature>
+and C<signing_header>.)
 
 =head2 chain_length_error($msg_or_counts)
 

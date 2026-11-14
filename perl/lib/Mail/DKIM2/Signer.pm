@@ -308,20 +308,10 @@ sub _compute_signature {
     # input must always carry an empty s= value (§12.8).
     $signature->set_tag('s', join(':', $self->{Selector}, $self->{Algorithm}, ''));
 
-    # Include the new signature as the signing_i entry
-    my $next_i = $self->{_next_i};
-    my @all_dk2 = (@dk2_headers, { i => $next_i, sig => $signature });
-
-    # Fold before signing: the fold positions become part of what gets
-    # canonicalized and signed.
-    my $folded_header = $signature->as_folded_string_without_data();
-
     my $signing_input = build_signing_input(
-        mi_headers     => \@mi_headers,
-        dk2_headers    => \@all_dk2,
-        signing_i      => $next_i,
-        signature      => $signature,
-        signing_header => $folded_header,
+        instances  => [ map { $_->{raw} } @mi_headers ],
+        signatures => [ map { $_->{raw} } @dk2_headers ],
+        signing    => $signature->as_folded_string,    # as it will be sent
     );
 
     my $sig_raw = $self->{_alg}{sign}->($self->{Key}, $signing_input);
@@ -417,7 +407,7 @@ the Message-Instance header this hop wants to sign over (see
 L<Mail::DKIM2::MessageInstance>; a message with none is a C<fail>); the
 Signer reads the existing
 Message-Instance and DKIM2-Signature headers, chooses the next C<i=>, builds
-the signing input of -09 section 10.5, and signs it. It does not alter
+the signing input of -09 section 12.8, and signs it. It does not alter
 the message: the caller prepends the header C<as_string> returns.
 
 Nothing it signs is in the body (section 12.8), so the body is discarded as
@@ -568,8 +558,7 @@ C<result> and C<details> together, e.g. C<"fail (PERMERROR ...)">.
 
 =head2 as_string()
 
-The complete C<DKIM2-Signature: ...> header, folded for insertion. The
-folding is part of what was signed and must not be changed.
+The complete C<DKIM2-Signature: ...> header, folded for insertion.
 
 Croaks C<no signature: REASON> when there is no signature: before
 C<CLOSE>, or when C<result> is C<fail> (REASON is C<details>). Check

@@ -798,27 +798,10 @@ sub _check_sig_field {
     # If signature has no m= (i=1 with no prior MI), include MI up to $i
     $max_v = $i if !$max_v;
 
-    my @mi_arr  = map { { v => $_, raw => $mi_map{$_} } }
-                  sort { $a <=> $b }
-                  grep { $_ <= $max_v } keys %mi_map;
-    my @dk2_arr = map { { i => $_, raw => $dk2_map{$_}{raw}, sig => $dk2_map{$_}{sig} } }
-                  sort { $a <=> $b }
-                  grep { $_ <= $i } keys %dk2_map;
-
-    # Build signing header: use as_string_without_data() then re-add trailing
-    # semicolon if the raw header from the message had one (spec ABNF requires
-    # trailing ';' on every tag; new signatures have it, old ones may not).
-    my $sig_hdr_for_input = $signature->as_string_without_data();
-    if ($dk2_entry->{raw} =~ /;\s*(?:\r\n)?$/ && $sig_hdr_for_input !~ /;\s*$/) {
-        $sig_hdr_for_input .= ';';
-    }
-
     my $signing_input = build_signing_input(
-        mi_headers     => \@mi_arr,
-        dk2_headers    => \@dk2_arr,
-        signing_i      => $i,
-        signature      => $signature,
-        signing_header => $sig_hdr_for_input,
+        instances  => [ map { $mi_map{$_} } sort { $a <=> $b } grep { $_ <= $max_v } keys %mi_map ],
+        signatures => [ map { $dk2_map{$_}{raw} } sort { $a <=> $b } grep { $_ < $i } keys %dk2_map ],
+        signing    => $dk2_entry->{raw},
     );
 
     # -09 section 10: every DKIM2-Signature MUST carry i=, m=, t=, d=, s=. Checked

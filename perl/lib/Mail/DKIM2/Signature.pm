@@ -303,62 +303,15 @@ sub signature_value {
 
 # --- Serialization ---
 
-# Raw unfolded header — used by the verifier to reconstruct signing input.
+# The field, unfolded.
 sub as_string {
     my ($self) = @_;
     return "DKIM2-Signature: " . $self->SUPER::as_string();
 }
 
-# Serialize with each s= item's signature value empty (§10.5, §12.8).
-# Returns unfolded output. Used by the verifier to reconstruct the
-# signing input from a header read from the message.
-# Format: sel:alg:,sel2:alg2:
-sub as_string_without_data {
-    my ($self) = @_;
-
-    # Rebuild from the parsed tags in their original order and case, blanking
-    # each s= item's signature value in place. Only "s=" itself: tag-names
-    # are case-sensitive (-09 §8), so an "S=" is an unknown tag, signed as is.
-    my @parts;
-    for my $t (@{$self->{order}}) {
-        my $v = defined $self->{tags}{$t} ? $self->{tags}{$t} : '';
-        if ($t eq 's') {
-            # Replace each sel:alg:sig with sel:alg: (empty value, -08
-            # §12.8); selectors, names and the ":" "," "|" all stay.
-            $v =~ s/([^,|:]+:[^,|:]+):[^,|]*/$1:/g;
-        }
-        push @parts, "$t=$v";
-    }
-    return "DKIM2-Signature: " . join('; ', @parts);
-}
-
-# Folded header with empty s= values, ready for signing.
-# Used by the Signer: fold first, then canonicalize and sign. §12.8 deletes
-# all WSP from the signing input, so the fold positions are not part of what
-# is signed; they need only be places the grammar allows FWS (fold_header).
-sub as_folded_string_without_data {
-    my ($self) = @_;
-
-    # Replace each sel:alg:sig with sel:alg: (null/empty string per spec §10.5)
-    my $saved = $self->get_tag('s');
-    my $stripped = $saved;
-    $stripped =~ s/([^,|:]+:[^,|:]+):[^,|]*/$1:/g;
-
-    my @parts;
-    for my $t (@{$self->{order}}) {
-        if ($t eq 's') {
-            push @parts, "s=$stripped";
-        } else {
-            push @parts, "$t=$self->{tags}{$t}";
-        }
-    }
-    my $line = "DKIM2-Signature: " . join('; ', @parts) . ";";
-    return fold_header($line);
-}
-
-# Folded header with real s= value, ready for insertion into a message.
-# The prefix (everything before s=) has the same fold positions as
-# as_folded_string_without_data(), with s= replaced by the real value.
+# The field folded for insertion into a message, s= last. Where it folds
+# is not part of what is signed (§12.8 deletes all WSP from the signing
+# input); fold_header only folds where the grammar allows FWS.
 sub as_folded_string {
     my ($self) = @_;
 
@@ -572,20 +525,12 @@ twice, in any group. Empty if clean.
 
 The complete header line, unfolded.
 
-=head2 as_string_without_data()
-
-The header with every C<s=> value emptied, unfolded: the last element of
-the signing input as the Verifier reconstructs it.
-
-=head2 as_folded_string_without_data()
-
-The same, folded at 72 characters: the last element of the signing input
-as the Signer produces it. Where the folds land is part of what is signed.
-
 =head2 as_folded_string()
 
 The complete header folded at 72 characters, ready to insert into the
-message. Never refold it afterwards.
+message. (C<as_string_without_data> and C<as_folded_string_without_data>
+were removed in 0.32: L<Mail::DKIM2::Common/build_signing_input(%args)>
+empties the C<s=> values itself.)
 
 =head1 AUTHOR
 
