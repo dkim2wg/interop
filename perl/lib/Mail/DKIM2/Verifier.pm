@@ -2,7 +2,7 @@ package Mail::DKIM2::Verifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use base 'Mail::DKIM2::HeaderParser';
 use MIME::Base64 qw(decode_base64);
@@ -1282,7 +1282,7 @@ mail.
 
 When the message was accepted over SMTP, in seconds since the epoch, for a
 caller that verifies later than that: the C<t=> of every signature is
-checked against it rather than against now (-09 section 14.3). New in 0.32.
+checked against it rather than against now (-09 section 14.3). New in 0.31.
 
 =item MailFrom
 
@@ -1417,7 +1417,7 @@ Message-Instance, its signatures pass, the instance's hashes match the
 message, and its C<d=> relaxed-matches its C<mf=> (unless that is null) --
 whatever else went wrong, timestamps included. The SMTP envelope is matched
 against C<mf=> and C<rt=> when the Verifier was given one (C<MailFrom>,
-C<RcptTo>; since 0.32), and is otherwise left to the caller. A receiver may
+C<RcptTo>; since 0.31), and is otherwise left to the caller. A receiver may
 accept such a message and decide later; a DSN may only be sent for one
 (section 16.2, L<Mail::DKIM2::DSN>). A C<pass> is always Provisionally
 Verified; a top signature with C<nd=> never is. Leaves C<result>,
@@ -1437,7 +1437,7 @@ L<Mail::DKIM2::Signature> objects in ascending C<i=> order.
 
 The message's L<Mail::DKIM2::Chain>: its Message-Instance and
 DKIM2-Signature fields by number, complete once the header block has been
-read. New in 0.32.
+read. New in 0.31.
 
 =head2 top_signature()
 

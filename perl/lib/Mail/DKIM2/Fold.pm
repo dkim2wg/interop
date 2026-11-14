@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use Carp ();
 use Mail::DKIM2::Util ();
@@ -211,7 +211,7 @@ canonical form and breaks every signature over it.
 L<Mail::DKIM2::MessageInstance/as_header()> and
 L<Mail::DKIM2::Signature/as_folded_string()> call this for you. Nothing is
 exported by default; L<Mail::DKIM2::Common> exports C<fold_header> too, as
-it did before it moved here in 0.32.
+it did before it moved here in 0.31.
 
 See L<Mail::DKIM2/CONVENTIONS> for the conventions every module follows.
 

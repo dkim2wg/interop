@@ -3,12 +3,12 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use Email::MIME;
 use Email::MIME::ContentType ();
 
-# Everything that lived here before 0.32 and now has a module of its own is
+# Everything that lived here before 0.31 and now has a module of its own is
 # imported, so Mail::DKIM2::Common::fold_header(...) and
 # "use Mail::DKIM2::Common qw(fold_header)" go on working.
 use Mail::DKIM2::Address qw(
@@ -391,7 +391,7 @@ Mail::DKIM2::Common - Constants, chain numbering and the any/all groups shared b
 
     use Mail::DKIM2::Common qw(DKIM2_DRAFT MAX_CHAIN_LENGTH chain_number_error);
 
-    # Everything that was here before 0.32 can still be imported from here:
+    # Everything that was here before 0.31 can still be imported from here:
     use Mail::DKIM2::Common qw(fold_header load_private_key relaxed_domain_match);
 
 =head1 DESCRIPTION
@@ -402,7 +402,7 @@ Message-Instance and DKIM2-Signature fields (and the PERMERROR strings for
 fields that cannot be numbered), and the "any of these groups, all of each"
 combination that C<h=> and C<s=> both use. Nothing is exported by default.
 
-Until 0.32 this module also held the functions that are now in
+Until 0.31 this module also held the functions that are now in
 
 =over 4
 

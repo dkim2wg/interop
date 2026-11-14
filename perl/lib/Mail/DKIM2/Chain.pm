@@ -2,7 +2,7 @@ package Mail::DKIM2::Chain;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use Carp ();
 use Mail::DKIM2::Util ();
@@ -315,7 +315,7 @@ DKIM2-Signature fields there are, by number, whether those numbers form a
 chain, and how far up the signatures reach. L<Mail::DKIM2::Verifier>,
 L<Mail::DKIM2::Signer> and L<Mail::DKIM2::Gate> all read a message's chain
 through one of these, so they agree on which fields count and name the same
-fault first. New in 0.32.
+fault first. New in 0.31.
 
 See L<Mail::DKIM2/CONVENTIONS> for the conventions every module follows.
 

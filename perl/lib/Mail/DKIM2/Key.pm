@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use Scalar::Util ();
 use MIME::Base64 qw(decode_base64);
@@ -322,7 +322,7 @@ Private keys as a Signer takes them, the public key records and Domain
 Policy Records a Verifier reads from the DNS (-09 sections 3.7, 3.8 and
 14.5), and the table of signing algorithms both use (sections 3.2, 3.3).
 Nothing is exported by default; L<Mail::DKIM2::Common> exports these too,
-as it did before they moved here in 0.32.
+as it did before they moved here in 0.31.
 
 See L<Mail::DKIM2/CONVENTIONS> for the conventions every module follows.
 
@@ -422,13 +422,13 @@ C<< ->($key, $signing_input) >> and returning the raw signature; C<verify>,
 called as C<< ->($key, $signing_input, $signature) >>; and for
 C<rsa-sha256>, C<min_bits> (1024). The L<Mail::DKIM2::Signer> and the
 L<Mail::DKIM2::Verifier> both sign and verify through it. Names are
-case-sensitive. New in 0.32.
+case-sensitive. New in 0.31.
 
 =head2 signature_algorithm_for_key($key)
 
 The name of the algorithm a key object signs with (C<rsa-sha256> for a
 L<Crypt::PK::RSA>, C<ed25519-sha256> for a L<Crypt::PK::Ed25519>), or undef.
-New in 0.32.
+New in 0.31.
 
 =head1 AUTHOR
 

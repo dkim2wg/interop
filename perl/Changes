@@ -1,8 +1,11 @@
 Revision history for Mail::DKIM2
 
-0.32    2026-11-14
-        A clean-up release: no change to the wire format, to what verifies,
-        or to any result string. What a caller may notice:
+0.31    2026-11-14
+        (0.31 was prepared on 2026-11-06 and never released; this is that
+        work and the clean-up that followed it.)
+
+        The clean-up: no change to the wire format, to what verifies, or to
+        any result string. What a caller may notice:
 
         - Signer: the Algorithm defaults to the one the key signs with (it
           was rsa-sha256 whatever the key, and an Ed25519 key then died
@@ -47,8 +50,9 @@ Revision history for Mail::DKIM2
         - Common: a Message-Instance or DKIM2-Signature field written with
           white space before its colon is canonicalized for the signing
           input without it (-09 section 12.8).
-        - Common: digest64 and fold_value (unused) are gone.
-          HeaderPlan::rewrites_instances, always false since 0.31, too.
+        - Common: digest64 and fold_value (unused) are gone, and so is
+          HeaderPlan::rewrites_instances (see the security fix below: it
+          could only ever be false).
         - Deprecated, still working, to be removed: Common::extract_domain
           (use domain_of) and Gate's AllowNullBodyRecipe (a no-op since
           0.29).
@@ -83,7 +87,8 @@ Revision history for Mail::DKIM2
           "use Mail::DKIM2::Common qw(fold_header)" and
           Mail::DKIM2::Common::relaxed_domain_match(...) work as before.
 
-0.31    2026-11-06
+        The changes of 2026-11-06:
+
         - Signer: never folds an rt= list at a comma. -09 section 10.6 gives
           rt= no FWS around its commas (a base64string cannot start with
           FWS), though the generic tag-value grammar would allow it; rt=
@@ -110,7 +115,6 @@ Revision history for Mail::DKIM2
           are not content (-09 section 6.2): a Recipe naming one acts on
           content fields of that name, of which there are none (copying is
           a Recipe error), as in the other implementations.
-          HeaderPlan->rewrites_instances is now always false.
         - Verifier: new MailFrom and RcptTo options, the SMTP envelope. Given,
           the top signature must match it (-09 section 14.4): MAIL FROM
           equal to mf=, every RCPT TO in rt=, else fail ("MAIL FROM <x> did

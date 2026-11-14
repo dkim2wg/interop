@@ -140,7 +140,7 @@ headers. Options (`IgnorePrefixes`, `Algs`, `MaxRecipeLiterals`,
 process-wide ignore list.
 
 `calculate` never changes the message it is given. (The epilogue options,
-which rewrote it and croaked from 0.23, were removed in 0.32.)
+which rewrote it and croaked from 0.23, were removed in 0.31.)
 
 ## Interop testing
 

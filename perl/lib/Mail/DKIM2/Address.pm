@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use Encode ();
 
@@ -267,7 +267,7 @@ Addresses as DKIM2 reads them: the domain of an RFC 5321 path, A-labels
 (-09 section 18), the relaxed domain match (section 7.2), and whether a
 From header field is Authentic for a signing domain (sections 11 and
 14.8). Nothing is exported by default; L<Mail::DKIM2::Common> exports
-these too, as it did before they moved here in 0.32.
+these too, as it did before they moved here in 0.31.
 
 See L<Mail::DKIM2/CONVENTIONS> for the conventions every module follows.
 
@@ -276,7 +276,7 @@ See L<Mail::DKIM2/CONVENTIONS> for the conventions every module follows.
 =head2 extract_domain($address)
 
 The domain of C<user@domain> or C<< <user@domain> >>, or undef, exactly as
-written. B<Deprecated> in 0.32 and to be removed: use
+written. B<Deprecated> in 0.31 and to be removed: use
 L</domain_of($address)>, which lowercases the domain, drops a trailing dot
 and reports a domain literal.
 

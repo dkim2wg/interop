@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use Carp ();
 use Mail::DKIM2::Util ();
@@ -188,7 +188,7 @@ The octets the spec defines: which header fields are hashed
 6.2) and for the signing input (section 12.8), and the signing input
 itself. Of interest to anyone checking this implementation against
 another. Nothing is exported by default; L<Mail::DKIM2::Common> exports
-all of these too, as it did before they moved here in 0.32.
+all of these too, as it did before they moved here in 0.31.
 
 See L<Mail::DKIM2/CONVENTIONS> for the conventions every module follows.
 
@@ -245,7 +245,7 @@ with its C<s=> signature values emptied. Arguments, each field given whole
 Message-Instance fields the signature covers; C<signatures>, an arrayref
 of the DKIM2-Signature fields below it; C<signing>, the DKIM2-Signature
 being made or checked, signed or not. The Signer and the Verifier build
-the input the same way, from the fields themselves. (Before 0.32 the
+the input the same way, from the fields themselves. (Before 0.31 the
 arguments were C<mi_headers>, C<dk2_headers>, C<signing_i>, C<signature>
 and C<signing_header>.)
 

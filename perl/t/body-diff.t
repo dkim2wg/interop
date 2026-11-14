@@ -142,7 +142,7 @@ is_deeply(diff([qw(a b)], [qw(b a)], 1000), [[2, 2], 'a'],
     ok(Mail::DKIM2::MessageInstance->parse($mi->as_string)->unrecoverable,
         '1200 literals, default: null body recipe');
 
-    # The epilogue options went in 0.32: unknown options, like any other.
+    # The epilogue options went in 0.31: unknown options, like any other.
     for my $opt ([UseEpilogue => 1], [EpilogueThreshold => 100]) {
         eval { Mail::DKIM2::MessageInstance->calculate($small, $prev, @$opt) };
         like($@, qr/\Aunknown option $opt->[0] /, "$opt->[0] is an unknown option");

@@ -2,7 +2,7 @@ package Mail::DKIM2::Signer;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use base 'Mail::DKIM2::HeaderParser';
 use MIME::Base64 qw(encode_base64);
@@ -384,7 +384,7 @@ Optional:
 =item Algorithm
 
 C<rsa-sha256> or C<ed25519-sha256>. Defaults to the one the key signs with
-(since 0.32; before, to C<rsa-sha256> whatever the key). Any other name, or
+(since 0.31; before, to C<rsa-sha256> whatever the key). Any other name, or
 one that is not the key's, croaks.
 
 =item MailFrom
@@ -466,7 +466,7 @@ C<TEMPERROR:> on a failure), for a C<PolicyCallback> to fall back to. New in
 
 Undef until C<CLOSE>; then C<'signed'>, or C<'fail'> when the message
 cannot be signed: no Message-Instance to sign over, an RSA key shorter than
-1024 bits (-09 section 3.2; since 0.32), a chain already at the
+1024 bits (-09 section 3.2; since 0.31), a chain already at the
 length limit, a DKIM2-Signature with a missing or malformed C<i=> (or one
 that does not parse), an C<i=> or C<m=> that is not a chain number (see
 L<Mail::DKIM2::Common/"chain_number_error($field, $tag, $n)">), or a
@@ -500,7 +500,7 @@ header block.)
 =head2 chain()
 
 The message's L<Mail::DKIM2::Chain>: the Message-Instance and
-DKIM2-Signature fields it arrived with, by number. New in 0.32.
+DKIM2-Signature fields it arrived with, by number. New in 0.31.
 
 =head2 signature()
 

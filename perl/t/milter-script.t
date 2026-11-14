@@ -741,7 +741,7 @@ sub info_values {
 
 like(`$^X -I$LIB $SCRIPT --max-recipe-literals -1 2>&1`,
     qr/--max-recipe-literals must not be negative/, 'negative cap refused');
-# The epilogue options went in 0.32: the milter does not know them.
+# The epilogue options went in 0.31: the milter does not know them.
 for my $c ([qw(--use-epilogue)], [qw(--epilogue-threshold 5)]) {
     my $err = `$^X -I$LIB $SCRIPT @$c 2>&1`;
     isnt($? >> 8, 0, "@$c: the milter does not start");

@@ -2,7 +2,7 @@ package Mail::DKIM2::Signature;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
@@ -532,7 +532,7 @@ The complete header line, unfolded.
 
 The complete header folded at 72 characters, ready to insert into the
 message. (C<as_string_without_data> and C<as_folded_string_without_data>
-were removed in 0.32: L<Mail::DKIM2::Canon/build_signing_input(%args)>
+were removed in 0.31: L<Mail::DKIM2::Canon/build_signing_input(%args)>
 empties the C<s=> values itself.)
 
 =head1 AUTHOR

@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use Mail::DKIM2::Common ();
 use Mail::DKIM2::MessageInstance;
@@ -133,7 +133,7 @@ The base64 JSON of a Message-Instance's C<r=> tag.
 =item L<Mail::DKIM2::Common>
 
 Constants, limits, and the numbering of Message-Instance and
-DKIM2-Signature fields. Until 0.32 it held everything in the five modules
+DKIM2-Signature fields. Until 0.31 it held everything in the five modules
 above, and still exports all of it.
 
 =item L<Mail::DKIM2::HeaderParser>, L<Mail::DKIM2::TagValueList>

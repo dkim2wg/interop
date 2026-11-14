@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use Carp ();
 
@@ -54,7 +54,7 @@ Mail::DKIM2::Util - Small helpers shared by the Mail::DKIM2 modules
 =head1 DESCRIPTION
 
 Internal to the distribution: what every module needs and none of the
-others owns. New in 0.32.
+others owns. New in 0.31.
 
 See L<Mail::DKIM2/CONVENTIONS> for the conventions every module follows.
 

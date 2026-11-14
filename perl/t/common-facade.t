@@ -4,7 +4,7 @@ use Test::More;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 
-# Until 0.32 Mail::DKIM2::Common held everything the modules shared. Most of
+# Until 0.31 Mail::DKIM2::Common held everything the modules shared. Most of
 # it now lives in Canon, Fold, Address, Key and RecipeJSON, but callers
 # outside this distribution (Topicbox, hm's lmtpprox) import these names
 # from Common and call them as Mail::DKIM2::Common::NAME. Both must go on

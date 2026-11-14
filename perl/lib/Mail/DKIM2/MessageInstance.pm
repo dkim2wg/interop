@@ -2,7 +2,7 @@ package Mail::DKIM2::MessageInstance;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 
 use Mail::DKIM2::Fold ();
@@ -1408,7 +1408,7 @@ body diff).
 =item MaxRecipeLiterals
 
 C<calculate> with a previous message only; see below. (C<UseEpilogue> and
-C<EpilogueThreshold>, which croaked from 0.23, were removed in 0.32.)
+C<EpilogueThreshold>, which croaked from 0.23, were removed in 0.31.)
 
 =back
 
@@ -1523,14 +1523,14 @@ The header value in wire format, unfolded, without the field name.
 
 The whole field, C<Message-Instance: ...>, folded where its grammar allows
 and ready to put at the top of a message; it has no line break at the end.
-New in 0.32.
+New in 0.31.
 
     $message = $mi->as_header . "\r\n" . $message;
 
 =head2 as_header_value()
 
 The value of C<as_header> without the field name, for an interface that
-takes the two apart (a milter's C<addheader>). New in 0.32.
+takes the two apart (a milter's C<addheader>). New in 0.31.
 
 =head2 changes()
 
@@ -1539,12 +1539,12 @@ C<body> is C<unchanged> (no body Recipe), C<changed> (a Recipe that
 rebuilds the previous body) or C<unrecoverable> (the null Recipe); C<headers>
 is an arrayref of the names of the header fields it has a Recipe for,
 lower-cased and sorted. An C<m=1> instance normally has neither. New in
-0.32.
+0.31.
 
 =head2 changes_header($name)
 
 True if the instance has a header Recipe for the field of that name
-(C<< $mi->changes_header('From') >>). New in 0.32.
+(C<< $mi->changes_header('From') >>). New in 0.31.
 
 =head2 header_hash()
 

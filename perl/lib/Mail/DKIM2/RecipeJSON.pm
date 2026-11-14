@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use B ();
 use Encode ();
@@ -135,7 +135,7 @@ Encoding and strict decoding of the JSON object a Message-Instance carries
 in its C<r=> tag (-09 section 5). L<Mail::DKIM2::MessageInstance> checks
 the Recipes themselves; this is the document they arrive in. Nothing is
 exported by default; L<Mail::DKIM2::Common> exports these too, as it did
-before they moved here in 0.32.
+before they moved here in 0.31.
 
 See L<Mail::DKIM2/CONVENTIONS> for the conventions every module follows.
 

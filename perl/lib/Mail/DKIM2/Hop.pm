@@ -2,7 +2,7 @@ package Mail::DKIM2::Hop;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.31';
 
 use Carp ();
 use Mail::DKIM2::Util ();
@@ -161,7 +161,7 @@ from depend on what the message already carries and on what this host
 remembers of it. This module makes that decision in one place, for
 C<bin/dkim2-milter>, L<Mail::Milter::Authentication::Handler::DKIM2Sign>
 and C<bin/dkim2sign>. It changes nothing: it returns the instance to add
-and the message to add it to. New in 0.32.
+and the message to add it to. New in 0.31.
 
 See L<Mail::DKIM2/CONVENTIONS> for the conventions every module follows.
 
