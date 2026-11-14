@@ -73,7 +73,38 @@ is($r, 'fail', 'RcptTo alone is checked');
 ($r, $d) = verify(MailFrom => 'Alice@test1.dkim2.com');
 is($r, 'pass', 'MailFrom alone is checked') or diag $d;
 
+# -09 section 13.2 step 4: a message whose envelope does not match its top
+# signature is not Provisionally Verified either, when the envelope is known.
+sub provisional {
+    my (%env) = @_;
+    my $v = Mail::DKIM2::Verifier->new(
+        PubkeyCallback => DKIM2TestKeys::pubkey_callback(), %env);
+    $v->PRINT($msg); $v->CLOSE;      # timestamps checked: t= is long expired
+    return ($v->result, $v->provisionally_verified);
+}
+is_deeply([provisional()], ['fail', 1], 'expired, no envelope: Provisionally Verified');
+is_deeply([provisional(MailFrom => 'Alice@test1.dkim2.com', RcptTo => ['Bob@test2.dkim2.com'])],
+    ['fail', 1], 'expired, the right envelope: Provisionally Verified');
+is_deeply([provisional(RcptTo => ['mallory@test2.dkim2.com'])],
+    ['fail', 0], 'expired, a recipient the signer did not name: not');
+is_deeply([provisional(MailFrom => '<>')],
+    ['fail', 0], 'expired, another MAIL FROM: not');
+
+# -09 section 14.3: t= is checked against when the message was accepted.
+sub at {
+    my $v = Mail::DKIM2::Verifier->new(
+        PubkeyCallback => DKIM2TestKeys::pubkey_callback(), AcceptedAt => $_[0]);
+    $v->PRINT($msg); $v->CLOSE;
+    return $v->result_detail;
+}
+is(at(1740000000 + 3600), 'pass (i=1..1 verified)', 'AcceptedAt an hour after t=: pass');
+like(at(1740000000 + 15 * 86400), qr/i=1 signature expired/, 'fifteen days after: expired');
+like(at(1740000000 - 2 * 86400), qr/i=1 signature is from the future/, 'two days before: from the future');
+eval { Mail::DKIM2::Verifier->new(AcceptedAt => 'yesterday') };
+like($@, qr/AcceptedAt/, 'AcceptedAt must be a number of seconds');
+
 eval { Mail::DKIM2::Verifier->new(RcptTo => 'bob@test2.dkim2.com') };
+
 like($@, qr/RcptTo/, 'RcptTo must be a list');
 
 done_testing;

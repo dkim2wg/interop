@@ -66,7 +66,7 @@ our $PREFETCH_MAX = 8;
 sub known_options {
     return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
               PubkeyCallback PolicyCallback Resolver IgnorePrefixes NextDomainOK StreamBody
-              InstancesOnly MailFrom RcptTo);
+              InstancesOnly MailFrom RcptTo AcceptedAt);
 }
 
 sub init {
@@ -85,6 +85,8 @@ sub init {
     check_ignore_prefixes($self->{IgnorePrefixes});
     croak "RcptTo must be an arrayref of addresses"
         if defined $self->{RcptTo} && ref $self->{RcptTo} ne 'ARRAY';
+    croak "AcceptedAt must be a time in seconds since the epoch"
+        if defined $self->{AcceptedAt} && $self->{AcceptedAt} !~ /\A[0-9]+\z/;
 }
 
 # An envelope address as -09 section 14.4 compares it: angle brackets on,
@@ -907,11 +909,13 @@ sub _check_sig_field {
 
 # Section 14.3: a signature made more than 14 days before delivery, or more
 # than a day after it, is not Fully Verified: a FAIL under -08 (D5).
+# "Delivery" is when the message was accepted over SMTP: AcceptedAt for a
+# caller verifying later than that, else now.
 sub _check_sig_time {
     my ($self, $i) = @_;
     return 1 if $self->{SkipTimestampCheck};
     my $ts  = $self->{_dk2_headers}{$i}{sig}->timestamp;
-    my $now = time();
+    my $now = $self->{AcceptedAt} // time();
     return $self->_error(fail => "DKIM2-Signature i=$i signature is from the future")
         if $ts > $now + FUTURE_LIMIT;
     return $self->_error(fail => "DKIM2-Signature i=$i signature expired")
@@ -1330,8 +1334,9 @@ sub fully_verified {
 # 16.2). A pass is; otherwise the top signature and the top instance are
 # checked on their own, whatever went wrong lower down: the signature
 # covers the top instance (step 1), its s= passes (2), the instance's h=
-# passes (3), and its d= relaxed-matches its mf= unless that is null (5).
-# Step 4, the envelope, is the SMTP layer's: the Verifier is not given it.
+# passes (3), the envelope matches its mf= and rt= when the Verifier was
+# given one (4: MailFrom, RcptTo), and its d= relaxed-matches its mf=
+# unless that is null (5).
 # A top signature with nd= is not (section 13.2's last paragraph). The
 # verdict (result, details, diagnostic) is left as it was.
 sub provisionally_verified {
@@ -1364,6 +1369,8 @@ sub _provisionally_verified {
     };
     die $@ if ref $@;
     return 0 unless $sig_ok;
+    # Step 4, for a caller that gave the envelope.
+    return 0 unless $self->_verify_envelope($sig, $max_i);
     my $mf = $sig->mail_from;
     if (defined $mf && $mf !~ /\A<\s*>\z/) {
         my ($mfd, $lit) = domain_of($mf);
@@ -1535,6 +1542,12 @@ that verifies the message it is about to sign, where the new instance
 legitimately exists before its signature does. Never set it on inbound
 mail.
 
+=item AcceptedAt
+
+When the message was accepted over SMTP, in seconds since the epoch, for a
+caller that verifies later than that: the C<t=> of every signature is
+checked against it rather than against now (-09 section 14.3). New in 0.32.
+
 =item MailFrom
 
 =item RcptTo
@@ -1675,8 +1688,9 @@ After C<CLOSE>: true when the message is Provisionally Verified (-08
 section 13.2) -- the highest C<i=> DKIM2-Signature covers the highest C<m=>
 Message-Instance, its signatures pass, the instance's hashes match the
 message, and its C<d=> relaxed-matches its C<mf=> (unless that is null) --
-whatever else went wrong, timestamps included. Matching C<mf=> and C<rt=>
-against the SMTP envelope is left to the caller, who has it. A receiver may
+whatever else went wrong, timestamps included. The SMTP envelope is matched
+against C<mf=> and C<rt=> when the Verifier was given one (C<MailFrom>,
+C<RcptTo>; since 0.32), and is otherwise left to the caller. A receiver may
 accept such a message and decide later; a DSN may only be sent for one
 (section 16.2, L<Mail::DKIM2::DSN>). A C<pass> is always Provisionally
 Verified; a top signature with C<nd=> never is. Leaves C<result>,
