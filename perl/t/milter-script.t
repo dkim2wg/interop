@@ -589,7 +589,7 @@ sub info_values {
     is($@, '', 'huge i=: the milter answers');
     is($verdict, 'y', 'huge i=: rejected');
     is(scalar(inserted($mods || [], 'DKIM2-Signature')), 0, 'huge i=: not signed');
-    like(milter_log(), qr/not signing <post\@test1\.dkim2\.com>: .*exceeds the maximum chain number of 100/,
+    like(milter_log(), qr/not signing <post\@test1\.dkim2\.com>: .*exceeds the maximum chain number of 99/,
         'huge i=: refusal is logged with the reason');
 }
 

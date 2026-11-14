@@ -1752,7 +1752,7 @@ B<Shape.> At most 32 Message-Instance and 32 DKIM2-Signature fields, every
 DKIM2-Signature parses with an C<i=> that is a positive integer (one that
 does not is never skipped: "PERMERROR: DKIM2-Signature has a missing or
 malformed i= tag"), every C<i=> and C<m=> a chain number (1*DIGIT, at
-most three digits naming 1 to 100, and no more than 32; C<01> is 1), no
+most two digits naming 1 to 99, and no more than 32; C<01> is 1), no
 C<i=> or C<m=> twice, and no Message-Instance above
 the highest signed C<m=>. Any of these is a C<permerror> decided from the headers alone,
 before any key is fetched. A tag repeated within one signature, in any

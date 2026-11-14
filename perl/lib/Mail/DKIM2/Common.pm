@@ -94,10 +94,10 @@ use constant EXPIRY       => 14 * 86400;
 use constant MAX_CHAIN_LENGTH => 32;
 
 # The largest number a DKIM2-Signature i= or m=, or a Message-Instance m=, may
-# be written as: at most three ASCII digits naming 1..100. Anything else is
+# be written as: at most two ASCII digits naming 1..99. Anything else is
 # malformed before it is ever compared with MAX_CHAIN_LENGTH, and is never
 # converted to a number big enough to be a loop bound.
-use constant MAX_CHAIN_NUMBER => 100;
+use constant MAX_CHAIN_NUMBER => 99;
 
 # Local policy, not -08: the most items one DKIM2-Signature's s= may carry.
 # -08 dropped its own limit, and every item may cost a key lookup and a
@@ -210,8 +210,8 @@ sub valid_sequence {
 # The PERMERROR for an i= or m= value that is not a chain number, or undef
 # (also undef for a missing value, which is left to the callers). A value must
 # be 1*DIGIT in ASCII -- "4294967297x" is malformed, never its digit prefix --
-# with at most three digits naming 1..MAX_CHAIN_NUMBER, so "01" and "001" are
-# 1; and since each number names one hop, no more than MAX_CHAIN_LENGTH.
+# with at most two digits naming 1..MAX_CHAIN_NUMBER, so "01" is 1; and since
+# each number names one hop, no more than MAX_CHAIN_LENGTH.
 # Checking this before anything walks 1..max keeps a value like
 # 99999999999999999999 from being used as a loop bound.
 #
@@ -228,7 +228,7 @@ sub chain_number_error {
         unless $n =~ /\A[0-9]+\z/ && $n =~ /[1-9]/;
     $who .= " $tag=$n" if $tag ne $id_tag;
     return "PERMERROR: $who exceeds the maximum chain number of "
-        . MAX_CHAIN_NUMBER if length($n) > 3 || $n > MAX_CHAIN_NUMBER;
+        . MAX_CHAIN_NUMBER if length($n) > 2 || $n > MAX_CHAIN_NUMBER;
     return "PERMERROR: $who exceeds the maximum chain length of "
         . MAX_CHAIN_LENGTH if $n > MAX_CHAIN_LENGTH;
     return;
@@ -624,10 +624,12 @@ sub _dkim2_fold_feed {
 #     the hash name's ":"), or of an s= signature value (after both ":"s);
 #   - on either side of a ":" in s= and h=, and of a "," or "|" joining
 #     their members (-09 §9.3, §10.9);
-#   - after a "," in any other list: f= allows FWS around commas, a
-#     base64string (rt=) may start with FWS, and an unknown tag's
-#     x-tag-value allows FWS between characters (X-DKIM2-Info's hn= list
-#     folds here too).
+#   - after a "," in any other list but rt=: f= allows FWS around commas,
+#     and an unknown tag's x-tag-value allows FWS between characters
+#     (X-DKIM2-Info's hn= list folds here too). rt= is
+#     base64string *("," base64string) (§10.6), and a base64string cannot
+#     start with FWS, so its commas take none -- though the generic
+#     tag-value grammar (§8) would allow it; rt= folds inside the base64.
 sub _dkim2_fold_ok {
     my ($st, $prev, $next) = @_;
     my $name = $st->{name};
@@ -639,7 +641,7 @@ sub _dkim2_fold_ok {
     return 0 if $prev eq '=' && $next eq ':';
     return 1 if ($name eq 's' || $name eq 'h')
              && grep { $_ eq ':' || $_ eq ',' || $_ eq '|' } $prev, $next;
-    return 1 if $prev eq ',';
+    return 1 if $prev eq ',' && $name ne 'rt';
     return 0 unless $prev =~ m{[A-Za-z0-9+/=]} && $next =~ m{[A-Za-z0-9+/=]};
     return 1 if $name eq 'mf' || $name eq 'rt' || $name eq 'r';
     return $st->{colons} >= 1 if $name eq 'h';
@@ -1304,8 +1306,8 @@ found before any key is fetched. Local policy, not spec.
 
 =head2 MAX_CHAIN_NUMBER
 
-100: the largest number an C<i=> or C<m=> may be written as (at most
-three digits). See L</chain_number_error($field, $tag, $n)>.
+99: the largest number an C<i=> or C<m=> may be written as (at most
+two digits). See L</chain_number_error($field, $tag, $n)>.
 
 =head2 MAX_SIGNATURE_ITEMS
 
@@ -1427,9 +1429,9 @@ caller). The field is named by its own number as written, C<$ident>
 (default C<$n>): a DKIM2-Signature by C<i=>, a Message-Instance by C<m=>.
 A value that is not 1*DIGIT in ASCII, or is zero, is
 C<"PERMERROR: $field i=$ident syntax error"> (C<m=> for a
-Message-Instance; -09 section 14.2). More than three digits or above
+Message-Instance; -09 section 14.2). More than two digits or above
 L</MAX_CHAIN_NUMBER> is C<"PERMERROR: DKIM2-Signature i=$ident exceeds the
-maximum chain number of 100">, with C<" m=$n"> after C<$ident> for a
+maximum chain number of 99">, with C<" m=$n"> after C<$ident> for a
 signature's C<m=>. Above L</MAX_CHAIN_LENGTH>, likewise C<"... exceeds the
 maximum chain length of 32">: every C<i=> and C<m=> names one hop, so none
 can be larger than the chain. C<01> and C<001> are 1.

@@ -1,6 +1,14 @@
 Revision history for Mail::DKIM2
 
 0.31    2026-11-06
+        - Signer: never folds an rt= list at a comma. -09 section 10.6 gives
+          rt= no FWS around its commas (a base64string cannot start with
+          FWS), though the generic tag-value grammar would allow it; rt=
+          still folds inside its base64.
+        - An i= or m= is at most two digits now (MAX_CHAIN_NUMBER 99, was
+          100 in three digits): with a chain length limit of 32, a third
+          digit only ever named a number that is refused anyway. "001" is
+          "exceeds the maximum chain number of 99".
         - DSN->authenticate no longer reports ok for a DSN that carries no
           DKIM2-Signature of its own: dsn_result is still none, so a caller
           can relay it as the legacy bounce it is, but anyone holding a

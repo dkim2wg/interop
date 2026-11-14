@@ -227,8 +227,11 @@ DKIM2-Signature i=<i> ...` unless noted):
    `TEMPERROR: ... policy for <dom> unavailable`; `strict` in the
    colon-separated `f=` list, or a record that does not parse, is `From
    <dom> forbids subdomain signing`; anything else passes. One lookup per
-   domain per message, lazily (never in a key prefetch, never once another
-   error is found). Trim WSP in linear time: the record is attacker-served.
+   domain per message, never once another error is found. It may start
+   early, in the background with the key prefetch, for each signature whose
+   `d=` is below the From domain (Perl does, since 0.30, within the same
+   cap; the others look it up when it is needed). Trim WSP in linear time:
+   the record is attacker-served.
 
 So a list or forwarder that changes a message, or originates one (its hop
 is i=1), rewrites From into its own signing domain. The signer checks
@@ -289,8 +292,9 @@ of one that does not check out. All four signers (Python, Go, C, Perl) do this;
 - **Bound `i=` and `m=` before you loop.** Every `i=` and `m=` must be
   1*DIGIT in ASCII — `int()`, `atoi()`, `parseInt` and `strconv.Atoi` all
   take something else (`"0_1"`, the digit prefix of `"4294967297x"`, `"+1"`)
-  — at most three digits naming 1..100 (`MAX_CHAIN_NUMBER`; `01` and `001`
-  are 1), and, since each names one hop, no more than the chain length limit
+  — at most two digits naming 1..99 (`MAX_CHAIN_NUMBER`; `01` is 1, `001`
+  is out of range), and, since each names one hop, no more than the chain
+  length limit
   (32 here, `MAX_CHAIN_LENGTH`). Anything else is a PERMERROR found while
   parsing, before any check walks 1..max looking for gaps. Do not convert
   first: `i=99999999999999999999` overflows an `int`, and a loop to
