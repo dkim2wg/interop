@@ -4,53 +4,42 @@ Date: Fri, 13 Nov 2026 18:11:47 -0800
 Subject: [PATCH 3/6] Add a setting to decorate text/plain by wrapping it
 
 Decorating a single-part text/plain message joins the header and footer
-to the text itself: the body is decoded, the decorations added, and the
-result re-encoded, in whichever of the list's, the message's or utf-8's
-charset works.  A utf-8 body usually comes out base64, so every line of
-the body changes, and the sender's encoding and octets are gone.  Other
-content types are already decorated by wrapping the message in a
-multipart/mixed with the header and footer as their own parts.
+to the text, which decodes and re-encodes the body, so a utf-8 body
+usually goes out as base64 with every line changed.  Other content types
+are decorated by wrapping the message in a multipart/mixed instead.
 
-The new [mailman] decorate_plain_text_in_place setting, 'yes' by default
-to keep current behavior, sends text/plain down that wrapping path too
-when set to 'no'.  The body then reaches recipients as the sender wrote
-it, which matters to anything that records or checks what a list changed,
-such as DKIM2 Message-Instance Recipes: the list's change becomes "added
-a part before and after" rather than "rewrote every line".  It costs no
-extra space or time; it skips the re-encode.
+The new [mailman] decorate_plain_text_in_place setting defaults to 'yes'
+to keep current behavior.  With 'no', text/plain is wrapped too and its
+body reaches recipients as the sender wrote it.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/mailman/config/schema.cfg               | 10 +++
+ src/mailman/config/schema.cfg               |  6 ++
  src/mailman/handlers/decorate.py            |  5 +-
  src/mailman/handlers/tests/test_decorate.py | 78 +++++++++++++++++++++
  src/mailman/rest/docs/systemconf.rst        |  1 +
  src/mailman/rest/tests/test_systemconf.py   |  1 +
- 5 files changed, 94 insertions(+), 1 deletion(-)
+ 5 files changed, 90 insertions(+), 1 deletion(-)
 
 diff --git a/src/mailman/config/schema.cfg b/src/mailman/config/schema.cfg
-index 9b3773b24..31515263e 100644
+index 9b3773b24..c6159384f 100644
 --- a/src/mailman/config/schema.cfg
 +++ b/src/mailman/config/schema.cfg
-@@ -95,6 +95,16 @@ html_to_plain_text_command: /usr/bin/lynx -dump $filename
+@@ -95,6 +95,12 @@ html_to_plain_text_command: /usr/bin/lynx -dump $filename
  # the message?
  filter_report: no
  
-+# How should a list's header and footer be added to a single-part text/plain
-+# message?  With 'yes', they are joined to the text itself, which is decoded
-+# and re-encoded (a utf-8 body, say, usually comes out base64), so every line
-+# of the body can change.  With 'no', the message is wrapped in a
-+# multipart/mixed with the header and footer as their own text/plain parts,
-+# as is already done for other content types, and the body is left as it
-+# arrived.  That keeps the sender's body intact for mechanisms that record
-+# or verify what a list changed, such as DKIM2 Message-Instance Recipes.
++# Should a list's header and footer be added to a single-part text/plain
++# message by joining them to its text, which re-encodes the body?  If 'no',
++# the message is wrapped in a multipart/mixed, as other content types are, and
++# the body is left as it arrived.
 +decorate_plain_text_in_place: yes
 +
  # Specify what characters are allowed in list names.  Characters outside of
  # the class [-_.+=!$*{}~0-9a-z] matched case insensitively are never allowed,
  # but this specifies a subset as the only allowable characters.  This must be
 diff --git a/src/mailman/handlers/decorate.py b/src/mailman/handlers/decorate.py
-index e34b1ffdb..58521548a 100644
+index e34b1ffdb..b48a820da 100644
 --- a/src/mailman/handlers/decorate.py
 +++ b/src/mailman/handlers/decorate.py
 @@ -23,7 +23,9 @@ import logging
@@ -68,8 +57,8 @@ index e34b1ffdb..58521548a 100644
      # MIME multipart chroming the message?
      wrap = True
 -    if not msg.is_multipart() and msgtype == 'text/plain':
-+    if (not msg.is_multipart() and msgtype == 'text/plain'
-+            and as_boolean(config.mailman.decorate_plain_text_in_place)):
++    in_place = as_boolean(config.mailman.decorate_plain_text_in_place)
++    if not msg.is_multipart() and msgtype == 'text/plain' and in_place:
          # Save the RFC-3676 format parameters.
          format_param = msg.get_param('format')
          delsp = msg.get_param('delsp')

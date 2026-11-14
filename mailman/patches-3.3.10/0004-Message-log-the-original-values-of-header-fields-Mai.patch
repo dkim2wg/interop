@@ -4,54 +4,42 @@ Date: Fri, 13 Nov 2026 22:23:00 -0800
 Subject: [PATCH 4/6] Message: log the original values of header fields Mailman
  changes
 
-Anything that has to describe what Mailman did to a message's header
-fields -- a DKIM2 Message-Instance Recipe, which rebuilds the fields a
-post arrived with -- needs their values from before the change.  Rather
-than keep a copy of the message as received, Message can keep a log:
-once started, the first time a header field name is added, set,
-replaced or deleted, every value that name had is recorded, in order
-(none when it was absent).  Fields the log does not name are as they
-arrived.
+A DKIM2 Message-Instance Recipe has to rebuild the header fields a post
+arrived with.  Rather than keep a copy of the message as received,
+Message can keep a log: once started, the first change to a header field
+name records every value that name had before it.
 
-The compat32 email.message.Message edits its header list directly in
-six methods (__setitem__, __delitem__, add_header, replace_header,
-set_boundary, set_raw); the others that change headers (set_param,
-del_param, set_type, set_charset, set_payload with a charset) go through
-them, so overriding those six covers every change.  The log starts only
-when asked, after parsing (which adds fields through set_raw); it is an
-attribute, pickled and deep-copied with the message and never written
-into it.
+compat32's email.message.Message edits its header list directly in six
+methods, and every other header change goes through them, so those six
+are overridden.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/mailman/email/message.py            |  59 +++++++++++
- src/mailman/email/tests/test_message.py | 129 +++++++++++++++++++++++-
- 2 files changed, 187 insertions(+), 1 deletion(-)
+ src/mailman/email/message.py            |  56 ++++++++++
+ src/mailman/email/tests/test_message.py | 139 ++++++++++++++++++++++++
+ 2 files changed, 195 insertions(+)
 
 diff --git a/src/mailman/email/message.py b/src/mailman/email/message.py
-index eba378f24..6caae7396 100644
+index eba378f24..1b47d90f1 100644
 --- a/src/mailman/email/message.py
 +++ b/src/mailman/email/message.py
-@@ -48,6 +48,65 @@ class Message(email.message.Message):
+@@ -48,6 +48,62 @@ class Message(email.message.Message):
      def __setstate__(self, values):
          self.__dict__ = values
  
-+    # The header log: for each header field name (lower case) Mailman has
-+    # changed, the values that name had before the first change, in
-+    # document order ([] when it was absent).  A DKIM2 Message-Instance
-+    # Recipe rebuilds the headers the message arrived with from it.  It
-+    # runs only once started, after parsing (the parser adds fields through
-+    # set_raw), and is pickled and deep-copied with the message.
-+    #
-+    # The compat32 email.message.Message edits its header list directly in
-+    # exactly the six methods overridden below; every other method that
-+    # changes a header (set_param, del_param, set_type, set_charset,
-+    # set_payload with a charset) goes through them.
++    # Once started, the header log maps each header field name (lower case)
++    # Mailman changes to the values it had before the first change ([] when
++    # it was absent).  The six methods below are the only ones that edit the
++    # header list directly; every other header change goes through them.
 +
 +    def start_header_log(self):
 +        """Start logging header changes; a running log is kept as it is."""
 +        if self.__dict__.get('_header_log') is None:
 +            self._header_log = {}
++
++    def stop_header_log(self):
++        """Stop logging header changes and discard the log."""
++        self.__dict__.pop('_header_log', None)
 +
 +    @property
 +    def header_log(self):
@@ -67,7 +55,7 @@ index eba378f24..6caae7396 100644
 +            log[name] = [value for key, value in self.raw_items()
 +                         if key.lower() == name]
 +
-+    def _unlogged_prepend(self, name, value):
++    def prepend_header(self, name, value):
 +        """Add a header field at the top, without logging it."""
 +        self._headers.insert(0, (name, value))
 +
@@ -99,10 +87,10 @@ index eba378f24..6caae7396 100644
          # Work around for https://bugs.python.org/issue27321 and
          # https://bugs.python.org/issue32330.
 diff --git a/src/mailman/email/tests/test_message.py b/src/mailman/email/tests/test_message.py
-index 5191300dc..0fafe6992 100644
+index 5191300dc..6e45c0af7 100644
 --- a/src/mailman/email/tests/test_message.py
 +++ b/src/mailman/email/tests/test_message.py
-@@ -17,10 +17,12 @@
+@@ -17,6 +17,8 @@
  
  """Test the message API."""
  
@@ -111,21 +99,16 @@ index 5191300dc..0fafe6992 100644
  import sys
  import unittest
  
--from email import message_from_binary_file
-+from email import message_from_binary_file, message_from_string
- from email.header import Header
- from email.parser import FeedParser
- from email.utils import _has_surrogates
-@@ -195,3 +197,128 @@ Message with \u201cNon-ascii\u201d.
+@@ -195,3 +197,140 @@ Message with \u201cNon-ascii\u201d.
                  fp.seek(0)
                  text = fp.read().decode('ascii', 'replace')
          self.assertEqual(msg.as_string(), text)
 +
 +
 +class TestHeaderLog(unittest.TestCase):
-+    """The log of original header field values, for DKIM2 Message-Instance
-+    Recipes: the first change to a field name records every value that
-+    name had before it."""
++    """Test the log of original header field values."""
++
++    layer = ConfigLayer
 +
 +    RAW = """\
 +From: anne@example.com
@@ -141,16 +124,16 @@ index 5191300dc..0fafe6992 100644
 +"""
 +
 +    def _msg(self):
-+        msg = message_from_string(self.RAW, Message)
++        msg = mfs(self.RAW)
 +        msg.start_header_log()
 +        return msg
 +
 +    def test_parser_does_not_log(self):
-+        msg = message_from_string(self.RAW, Message)
++        msg = mfs(self.RAW)
 +        self.assertIsNone(msg.header_log)
 +
 +    def test_not_started_records_nothing(self):
-+        msg = message_from_string(self.RAW, Message)
++        msg = mfs(self.RAW)
 +        msg['Reply-To'] = 'list@example.com'
 +        self.assertIsNone(msg.header_log)
 +
@@ -195,7 +178,7 @@ index 5191300dc..0fafe6992 100644
 +                         {'content-type': ['text/plain; charset="us-ascii"']})
 +
 +    def test_set_boundary_logs_content_type(self):
-+        msg = message_from_string("""\
++        msg = mfs("""\
 +From: anne@example.com
 +Content-Type: multipart/mixed; boundary="aaa"
 +
@@ -203,15 +186,19 @@ index 5191300dc..0fafe6992 100644
 +
 +x
 +--aaa--
-+""", Message)
++""")
 +        msg.start_header_log()
 +        msg.set_boundary('bbb')
 +        self.assertEqual(msg.header_log,
 +                         {'content-type': ['multipart/mixed; boundary="aaa"']})
 +
 +    def test_set_payload_charset_logs(self):
-+        msg = message_from_string(
-+            'From: anne@example.com\nSubject: hi\n\nHello.\n', Message)
++        msg = mfs("""\
++From: anne@example.com
++Subject: hi
++
++Hello.
++""")
 +        msg.start_header_log()
 +        msg.set_payload('caf\xe9', 'utf-8')
 +        # set_charset adds all three, through add_header.
@@ -234,14 +221,22 @@ index 5191300dc..0fafe6992 100644
 +            self.assertEqual(other.header_log, {
 +                'subject': ['hello'], 'to': ['ant@example.com']})
 +
++    def test_stop_header_log(self):
++        msg = self._msg()
++        del msg['subject']
++        msg.stop_header_log()
++        self.assertIsNone(msg.header_log)
++        msg['To'] = 'bee@example.com'
++        self.assertIsNone(msg.header_log)
++
 +    def test_unpickle_without_log(self):
 +        # A message pickled before the log existed.
-+        msg = message_from_string(self.RAW, Message)
++        msg = mfs(self.RAW)
 +        state = pickle.dumps(msg)
 +        self.assertIsNone(pickle.loads(state).header_log)
 +
-+    def test_unlogged_prepend(self):
++    def testprepend_header(self):
 +        msg = self._msg()
-+        msg._unlogged_prepend('Message-Instance', 'm=1; h=x; b=y;')
++        msg.prepend_header('Message-Instance', 'm=1; h=x; b=y;')
 +        self.assertEqual(msg.header_log, {})
 +        self.assertEqual(msg.keys()[0], 'Message-Instance')

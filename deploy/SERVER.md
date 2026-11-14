@@ -1127,14 +1127,25 @@ ssh dkim2 "/opt/mailman/venv/bin/pip install --force-reinstall --no-deps 'git+ht
 Any `mailman` command applies pending Alembic migrations, so the `info` run
 covers a model change.
 
+**14 November 2026: the series' migration was renamed** (`a1b2c3d4e5f6` →
+`1371b515fbeb`; see mailman/README.md "Upgrading"). The box's database was
+re-stamped that day (backup: `/var/lib/mailman3/mailman.db.pre-1371b515fbeb`).
+Restoring a database dump from before then needs the same one statement
+before any `mailman` command will run:
+```bash
+sudo -u mailman /opt/mailman/venv/bin/python -c "
+import sqlite3; c = sqlite3.connect('/var/lib/mailman3/mailman.db')
+c.execute(\"update alembic_version set version_num='1371b515fbeb' where version_num='a1b2c3d4e5f6'\"); c.commit()"
+```
+
 **Running Mailman's test suite on the box** (it cannot run on a dev Mac, and
 3.3.10's own suite needs Python 3.13 fixes the branch carries): a scratch
 clone and venv exist for it.
 ```bash
 ssh dkim2 'cd /opt/mailman/src-test && git fetch origin && git reset --hard origin/dkim2-3.3.10 \
-  && /opt/mailman/test-venv/bin/python -m nose2 mailman.handlers.tests.test_message_instance \
-       mailman.handlers.tests.test_mi_roundtrip mailman.handlers.tests.test_mi_null_recipe \
-       mailman.handlers.tests.test_decorate mailman.rest.tests.test_listconf'
+  && /opt/mailman/test-venv/bin/python -m nose2 mailman.handlers mailman.email \
+       mailman.runners.tests.test_lmtp mailman.rest.tests.test_listconf \
+       mailman.rest.tests.test_systemconf mailman.database mailman.mta'
 ```
 `/opt/mailman/test-venv` has the production venv's dependencies plus `nose2`
 and `flufl.testing`, and the clone installed with `pip install -e . --no-deps`.

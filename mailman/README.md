@@ -30,7 +30,8 @@ The DKIM2 code is identical on all three; they differ only where the
 releases differ around it (the owner pipeline's handler list, the Alembic
 revision the migration follows, and the upstream code around the lines
 added to `decorate.py`, `dmarc.py`, `lmtp.py` and `email/message.py`). The design is described in
-`DKIM2-MESSAGE-INSTANCE.md`, which the Message-Instance patch adds.
+`src/mailman/handlers/docs/message-instance.rst`, which the Message-Instance
+patch adds.
 
 `patches-3.3.10/` carries six patches. The first two are upstream commits
 that 3.3.10 needs to run on Python 3.13 at all (the default on Debian 13 and
@@ -77,7 +78,7 @@ fixes.
    becomes the list's address whenever the list changes or originates a
    post; every copy is marked `X-DKIM2-Exploded` for the signing milter;
    each instance comes with an `X-DKIM2-Info` debug header. Includes the
-   tests and `DKIM2-MESSAGE-INSTANCE.md`.
+   tests and `src/mailman/handlers/docs/message-instance.rst`.
 4. **Add a per-list `dkim2_message_instance` flag.** A boolean list
    attribute (default on) exposed through the REST list configuration
    resource, with its Alembic migration, so individual lists can opt out.
@@ -98,6 +99,34 @@ Tested: the `dkim2` branch passes Mailman's whole test suite (2,501 tests)
 on Python 3.14, and the `dkim2-3.3.10` branch passes it on Python 3.13 and
 runs the lists on dkim2.com. The `dkim2-3.3.8` branch carries the same
 DKIM2 code and is not tested separately.
+
+## Upgrading from a series installed before 14 November 2026
+
+The series was tidied for upstream review on 14 November 2026. Two things
+changed that an existing installation notices:
+
+- **The Alembic migration was renamed**, from the placeholder revision
+  `a1b2c3d4e5f6` to `1371b515fbeb`. A database migrated by an earlier series
+  is stamped with the old id, which the new code does not have, and every
+  `mailman` command then fails with `Can't locate revision identified by
+  'a1b2c3d4e5f6'`. The column the migration adds is already there, so only
+  the stamp needs changing. With Mailman stopped and the new branch
+  installed, run this against Mailman's database (with `sqlite3`, `psql` or
+  `mysql`, whichever it uses), then `mailman info` and start Mailman:
+
+  ```sql
+  UPDATE alembic_version SET version_num = '1371b515fbeb'
+   WHERE version_num = 'a1b2c3d4e5f6';
+  ```
+
+  The new id is the same on all three branches.
+- **The names Mailman keeps a post's DKIM2 state under changed** (the
+  `dkim2_snapshot` and `dkim2_arrival_status` queue metadata, the
+  `dkim2_arrival` attribute). A post that was already in a queue, or held
+  for moderation, when the old code was stopped has the old names, and
+  leaves without a Message-Instance when it is processed or released. Let
+  the queues drain before stopping the old version; nothing is lost but the
+  instance on those posts.
 
 ## Installing
 

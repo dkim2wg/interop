@@ -12,64 +12,112 @@ adds the column are treated as enabled.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .../a1b2c3d4e5f6_dkim2_message_instance.py    | 37 +++++++++++++++++++
- src/mailman/interfaces/mailinglist.py         | 10 +++++
+ .../1371b515fbeb_dkim2_message_instance.py    | 57 +++++++++++++++++++
+ src/mailman/docs/NEWS.rst                     |  2 +
+ src/mailman/handlers/message_instance.py      |  2 +-
+ src/mailman/interfaces/mailinglist.py         |  9 +++
  src/mailman/model/mailinglist.py              |  2 +
- src/mailman/rest/docs/listconf.rst            |  3 ++
+ src/mailman/rest/docs/listconf.rst            |  3 +
  src/mailman/rest/listconf.py                  |  1 +
  src/mailman/rest/tests/test_listconf.py       |  1 +
  src/mailman/styles/base.py                    |  2 +
- 7 files changed, 56 insertions(+)
- create mode 100644 src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
+ 9 files changed, 78 insertions(+), 1 deletion(-)
+ create mode 100644 src/mailman/database/alembic/versions/1371b515fbeb_dkim2_message_instance.py
 
-diff --git a/src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py b/src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
+diff --git a/src/mailman/database/alembic/versions/1371b515fbeb_dkim2_message_instance.py b/src/mailman/database/alembic/versions/1371b515fbeb_dkim2_message_instance.py
 new file mode 100644
-index 000000000..425a8e768
+index 000000000..bf7d613a5
 --- /dev/null
-+++ b/src/mailman/database/alembic/versions/a1b2c3d4e5f6_dkim2_message_instance.py
-@@ -0,0 +1,37 @@
-+"""dkim2_message_instance per-list flag
++++ b/src/mailman/database/alembic/versions/1371b515fbeb_dkim2_message_instance.py
+@@ -0,0 +1,57 @@
++# Copyright (C) 2026 by the Free Software Foundation, Inc.
++#
++# This file is part of GNU Mailman.
++#
++# GNU Mailman is free software: you can redistribute it and/or modify it under
++# the terms of the GNU General Public License as published by the Free
++# Software Foundation, either version 3 of the License, or (at your option)
++# any later version.
++#
++# GNU Mailman is distributed in the hope that it will be useful, but WITHOUT
++# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++# more details.
++#
++# You should have received a copy of the GNU General Public License along with
++# GNU Mailman.  If not, see <https://www.gnu.org/licenses/>.
 +
-+Revision ID: a1b2c3d4e5f6
++"""add_dkim2_message_instance
++
++Revision ID: 1371b515fbeb
 +Revises: bf4cf66cf589
-+Create Date: 2026-03-23 00:00:00.000000
++Create Date: 2026-11-13 22:46:19.000000
 +
 +"""
-+
 +import sqlalchemy as sa
 +
 +from alembic import op
-+from mailman.database.helpers import exists_in_db
++from mailman.database.helpers import exists_in_db, is_sqlite
 +
 +
 +# revision identifiers, used by Alembic.
-+revision = 'a1b2c3d4e5f6'
++revision = '1371b515fbeb'
 +down_revision = 'bf4cf66cf589'
 +
 +
 +def upgrade():
-+    if not exists_in_db(op.get_bind(), 'mailinglist',
-+                        'dkim2_message_instance'):
-+        op.add_column('mailinglist', sa.Column(
-+            'dkim2_message_instance',
-+            sa.Boolean,
-+            nullable=True))
-+    mlist = sa.sql.table(
-+        'mailinglist',
-+        sa.sql.column('dkim2_message_instance', sa.Boolean),
-+    )
-+    op.execute(mlist.update().values(
-+        dkim2_message_instance=op.inline_literal(True)))
++    if not exists_in_db(
++            op.get_bind(), 'mailinglist', 'dkim2_message_instance'):
++        op.add_column(                                        # pragma: nocover
++            'mailinglist',
++            sa.Column('dkim2_message_instance', sa.BOOLEAN(),
++                      nullable=True))
++        # Set the default data.
++        mlist = sa.sql.table(                                 # pragma: nocover
++            'mailinglist',
++            sa.sql.column('dkim2_message_instance', sa.BOOLEAN())
++            )
++        op.execute(mlist.update().values(                     # pragma: nocover
++            {'dkim2_message_instance': True}))
 +
 +
 +def downgrade():
-+    with op.batch_alter_table('mailinglist') as batch_op:
-+        batch_op.drop_column('dkim2_message_instance')
++    if not is_sqlite(op.get_bind()):
++        # SQLite does not support dropping columns.
++        op.drop_column(                                       # pragma: nocover
++            'mailinglist',
++            'dkim2_message_instance')
+diff --git a/src/mailman/docs/NEWS.rst b/src/mailman/docs/NEWS.rst
+index 328be6820..777ce55eb 100644
+--- a/src/mailman/docs/NEWS.rst
++++ b/src/mailman/docs/NEWS.rst
+@@ -141,6 +141,8 @@ New Features
+   a DKIM2 verifier can undo the list's changes.  This is enabled by the new
+   ``message_instance`` setting in the ``mta`` section of mailman.cfg, which
+   defaults to ``no``.
++* A new list attribute ``dkim2_message_instance`` lets a list opt out of
++  DKIM2 ``Message-Instance`` headers.
+ 
+ Other
+ -----
+diff --git a/src/mailman/handlers/message_instance.py b/src/mailman/handlers/message_instance.py
+index 466298267..ad2556b13 100644
+--- a/src/mailman/handlers/message_instance.py
++++ b/src/mailman/handlers/message_instance.py
+@@ -726,7 +726,7 @@ def instances_enabled(mlist=None):
+     """Is Message-Instance support enabled, for the site and the list?"""
+     if not as_boolean(config.mta.message_instance):
+         return False
+-    return mlist is None or getattr(mlist, 'dkim2_message_instance', True)
++    return mlist is None or mlist.dkim2_message_instance
+ 
+ 
+ @public
 diff --git a/src/mailman/interfaces/mailinglist.py b/src/mailman/interfaces/mailinglist.py
-index 96b2e8249..cd195b886 100644
+index 96b2e8249..b41b49ea2 100644
 --- a/src/mailman/interfaces/mailinglist.py
 +++ b/src/mailman/interfaces/mailinglist.py
-@@ -257,6 +257,16 @@ class IMailingList(Interface):
+@@ -257,6 +257,15 @@ class IMailingList(Interface):
      def confirm_address(cookie=''):
          """The address used for various forms of email confirmation."""
  
@@ -78,9 +126,8 @@ index 96b2e8249..cd195b886 100644
 +    dkim2_message_instance = Attribute(
 +        """Should DKIM2 Message-Instance headers be added to messages?
 +
-+        A per-list flag to enable or disable DKIM2 Message-Instance header
-+        processing.  When False, ingress and egress MI handlers skip this
-+        list entirely.  Defaults to True.
++        This only has an effect when the site enables them with the
++        message_instance setting in the [mta] section.
 +        """)
 +
      # DMARC attributes.
