@@ -207,11 +207,6 @@ sub values_at {
     } @{ $lists->{$lc} || [] } ];
 }
 
-# rewrites_instances(): always false since 0.31. A header Recipe naming
-# Message-Instance acts on content fields of that name, of which there are
-# none, so undoing it never changes the instances below it.
-sub rewrites_instances { return 0 }
-
 1;
 
 __END__
@@ -295,14 +290,6 @@ was when instance C<$m> was the highest -- the header Recipes above it
 applied -- each as Email::Simple's C<header_raw> gives it, bottom up; undef
 if a header Recipe on the way down does not undo. The Verifier reads each
 version's From fields from it (-09 section 11). New in 0.23.
-
-=head2 rewrites_instances()
-
-Always false (since 0.31). Before, true if a header Recipe named
-Message-Instance, whose undo changed the instances below it. Those fields
-are not content (-09 section 6.2): a Recipe naming one acts on content
-fields of that name, of which there are none, so the instances are always
-the ones received.
 
 =head1 AUTHOR
 

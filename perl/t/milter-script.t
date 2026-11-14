@@ -739,22 +739,13 @@ sub info_values {
     }
 }
 
-# --max-recipe-literals: the default path's cap, exclusive of the epilogue
-# options, which carry their own.
-for my $c ([qw(--use-epilogue)], [qw(--epilogue-threshold 5)]) {
-    my $err = `$^X -I$LIB $SCRIPT --max-recipe-literals 5 @$c 2>&1`;
-    like($err, qr/--max-recipe-literals cannot be combined/,
-        "--max-recipe-literals with @$c refused");
-}
 like(`$^X -I$LIB $SCRIPT --max-recipe-literals -1 2>&1`,
     qr/--max-recipe-literals must not be negative/, 'negative cap refused');
-# The epilogue options are disabled in this release (final review M5): the
-# milter refuses to start with either.
+# The epilogue options went in 0.32: the milter does not know them.
 for my $c ([qw(--use-epilogue)], [qw(--epilogue-threshold 5)]) {
     my $err = `$^X -I$LIB $SCRIPT @$c 2>&1`;
     isnt($? >> 8, 0, "@$c: the milter does not start");
-    like($err, qr/--use-epilogue and --epilogue-threshold are disabled in this release: they produce mail that fails verification/,
-        "@$c: refused, saying why");
+    like($err, qr/Unknown option/, "@$c: an unknown option");
 }
 
 # --- Outbound with no key for the sender: add nothing at all ---

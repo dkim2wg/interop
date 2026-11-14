@@ -30,11 +30,9 @@ our @EXPORT_OK = qw(
     dkim2_canonicalize_sig_header
     field_name
     header_values
-    digest64
     encode_tag_json
     decode_tag_json
     fold_header
-    fold_value
     build_signing_input
     extract_mi_version
     mi_version_tag
@@ -360,12 +358,6 @@ sub dkim2_canonicalize_sig_header {
     return "$name:$value\r\n";
 }
 
-# Base64-encode a digest object (CryptX b64digest includes padding)
-sub digest64 {
-    my ($sha) = @_;
-    return $sha->b64digest;
-}
-
 # Encode data as base64 JSON for a tag value
 sub encode_tag_json {
     my ($data) = @_;
@@ -650,22 +642,6 @@ sub _dkim2_fold_ok {
     return $st->{colons} >= 1 if $name eq 'h';
     return $st->{colons} >= 2 if $name eq 's';
     return 0;
-}
-
-# Fold a string at arbitrary character positions.
-# Only safe for content that has NOT been signed — e.g. the s= tag value
-# after signature computation but before insertion into the message.
-sub fold_value {
-    my ($line, $margin) = @_;
-    $margin //= 64;  # 64 content + 8 tab = 72 visible
-
-    return $line if length($line) <= $margin;
-
-    my @parts;
-    while (length($line) > 0) {
-        push @parts, substr($line, 0, $margin, '');
-    }
-    return join("\r\n\t", @parts);
 }
 
 # The raw m= value of a Message-Instance header value (whitespace removed,
@@ -1599,11 +1575,6 @@ With C<< delimiters_only => 1 >> it breaks
 only after C<;> or C<,>, never inside a token, leaving a value that fits
 nowhere whole on an over-long line (the rule for X-DKIM2-Info).
 
-=head2 fold_value($string, [$margin])
-
-Folds a string at arbitrary positions, C<$margin> content characters per
-line (default 64).
-
 =head1 KEYS
 
 =head2 load_private_key($pem_file)
@@ -1734,10 +1705,6 @@ Canonical JSON in base64, the encoding of the C<r=> Recipe tag. C<decode_tag_jso
 UTF-8 and an object that gives the same key twice, compared without regard
 to case (parsers disagree on which value wins). Every string it returns,
 object keys included, is UTF-8 octets.
-
-=head2 digest64($digest_object)
-
-The base64 of a CryptX digest object's result.
 
 =head1 AUTHOR
 

@@ -924,9 +924,7 @@ message that carried one (Mailman and Sympa mark each distribution copy
 C<X-DKIM2-Exploded: yes>) is signed with the C<exploded> flag (-09 section
 12.5), as is one with more than one recipient, never at C<i=1>.  A snapshot diff whose body Recipe would need more
 than C<max_recipe_literals> literal lines declares the body unrecoverable
-(a null body Recipe): this handler only adds header fields, so it cannot
-move the old body into the MIME epilogue.  Like any null this hop adds, it is
-signed.
+(a null body Recipe).  Like any null this hop adds, it is signed.
 
 A message with no DKIM2-Signature whose Message-Instances (all unsigned:
 an C<m=1> stamped on arrival, a list manager's instance over it) are more

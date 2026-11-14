@@ -78,8 +78,6 @@ GetOptions(\%opts,
     'snapshot-dir=s',
     'dns-json=s',
     'allow-null-body-recipe',
-    'use-epilogue',
-    'epilogue-threshold=i',
     'max-recipe-literals=i',
     'wrap-single-part',
     'no-envelope-check',
@@ -88,24 +86,9 @@ GetOptions(\%opts,
 
 pod2usage(-exitval => 0, -verbose => 2, -noperldoc => 1) if $opts{help};
 
-if ($opts{'use-epilogue'} && defined $opts{'epilogue-threshold'}) {
-    die "--use-epilogue and --epilogue-threshold are mutually exclusive\n";
-}
-if (defined $opts{'max-recipe-literals'}
-    && ($opts{'use-epilogue'} || defined $opts{'epilogue-threshold'})) {
-    die "--max-recipe-literals cannot be combined with --use-epilogue or --epilogue-threshold\n";
-}
 if (defined $opts{'max-recipe-literals'} && $opts{'max-recipe-literals'} < 0) {
     die "--max-recipe-literals must not be negative\n";
 }
-# Disabled (final review M5): the Message-Instance is computed over the
-# message rewritten with the epilogue, but the original bytes are signed,
-# and that mail fails verification.
-if ($opts{'use-epilogue'} || defined $opts{'epilogue-threshold'}) {
-    die "--use-epilogue and --epilogue-threshold are disabled in this release: "
-      . "they produce mail that fails verification (Mail::DKIM2 0.23 Changes)\n";
-}
-
 # Retired in 0.29 (-09 contract E2): this hop's own null body Recipe is
 # always signed. Still accepted so an existing unit file starts.
 warn "dkim2-milter: --allow-null-body-recipe is deprecated and does nothing: "
@@ -185,15 +168,7 @@ if ($opts{'snapshot-dir'}) {
 
 # Options passed to MessageInstance->calculate() for diff-based MI
 my %mi_opts;
-if ($opts{'use-epilogue'}) {
-    $mi_opts{UseEpilogue} = 1;
-    warn "dkim2-milter: MI strategy: UseEpilogue (always store body in MIME epilogue)\n";
-}
-elsif (defined $opts{'epilogue-threshold'}) {
-    $mi_opts{EpilogueThreshold} = $opts{'epilogue-threshold'};
-    warn "dkim2-milter: MI strategy: EpilogueThreshold=$opts{'epilogue-threshold'}\n";
-}
-elsif (defined $opts{'max-recipe-literals'}) {
+if (defined $opts{'max-recipe-literals'}) {
     $mi_opts{MaxRecipeLiterals} = $opts{'max-recipe-literals'};
     warn "dkim2-milter: MI strategy: MaxRecipeLiterals=$opts{'max-recipe-literals'}\n";
 }
@@ -1400,33 +1375,11 @@ arrived with and the MTA may have rewritten it since (the wrap milter behind
 port 25, say). The other modes never check: there the transaction is the
 outgoing one.
 
-=item B<--use-epilogue>
-
-B<Disabled in this release:> the milter refuses to start with it. The
-Message-Instance is computed over the message rewritten with the epilogue
-while the original bytes are signed, so the mail fails verification.
-
-When computing a diff-based MI, always store the previous message body in
-the MIME epilogue rather than as inline diff lines.  This keeps MI headers
-small regardless of how much the body changed, at the cost of increasing
-the transmitted message size.  Cannot be combined with C<--epilogue-threshold>.
-
-=item B<--epilogue-threshold> I<N>
-
-B<Disabled in this release,> as B<--use-epilogue>.
-
-When computing a diff-based MI, switch to epilogue storage only when the
-diff recipe would contain more than I<N> literal (non-range) lines.  Small
-changes (C<< <= N >> lines) stay as a compact inline diff; large changes
-fall back to epilogue.  C<5> is a reasonable starting value.
-Cannot be combined with C<--use-epilogue>.
-
 =item B<--max-recipe-literals> I<N>
 
-Without either epilogue option, a diff-based MI whose body recipe would
-need more than I<N> literal lines (default 1000) gets a null body recipe
-instead: the previous body is declared unrecoverable rather than carried
-in the header.  Cannot be combined with the epilogue options.
+A diff-based MI whose body recipe would need more than I<N> literal lines
+(default 1000) gets a null body recipe instead: the previous body is
+declared unrecoverable rather than carried in the header.
 
 =item B<--dns-json> I<PATH>
 

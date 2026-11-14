@@ -98,18 +98,13 @@ verifier rebuilds the input from the unfolded form
 `calculate($current, $previous, %opts)` — compute diff MI. Hashes are of
 `$current` (the newest message). Recipes describe how to reconstruct
 `$previous` from `$current`. The `$previous` message must have existing MI
-headers. Options (`IgnorePrefixes`, `Algs`, `UseEpilogue`,
-`EpilogueThreshold`, `MaxRecipeLiterals`) are CamelCase like every other option in the dist;
+headers. Options (`IgnorePrefixes`, `Algs`, `MaxRecipeLiterals`,
+`BodyHash`, `BodyRecipe`) are CamelCase like every other option in the dist;
 `verify` and `chain_verifies` take `IgnorePrefixes` too. There is no
 process-wide ignore list.
 
-`UseEpilogue` and `EpilogueThreshold` are **disabled since 0.23**: `calculate`
-and `calculate_first` croak if either is set (UseEpilogue true), and
-`bin/dkim2-milter` refuses to start with `--use-epilogue` or
-`--epilogue-threshold`. The instance was computed over the message rewritten
-with the epilogue while the caller signed the original bytes, so that mail
-failed verification. Re-enable only together with a fix that signs the bytes
-the instance describes.
+`calculate` never changes the message it is given. (The epilogue options,
+which rewrote it and croaked from 0.23, were removed in 0.32.)
 
 ## Interop testing
 

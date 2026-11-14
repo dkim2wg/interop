@@ -151,7 +151,6 @@ same('a Recipe naming DKIM2-Signature likewise',
     my $plan = Mail::DKIM2::HeaderPlan->new("Message-Instance: m=1; h=sha256:AAAA:AAAA\r\nFrom: a\r\n")->plan(@mi);
     like($plan->recipe_error(2), qr/message-instance header/i,
         'copying from Message-Instance is a Recipe error, however many there are');
-    ok(!$plan->rewrites_instances, 'rewrites_instances is always false');
 }
 
 done_testing;

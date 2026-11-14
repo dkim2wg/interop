@@ -664,7 +664,7 @@ sub _verify_mi_chain {
     $plan->finish if $plan;
     my $hplan = $self->{_header_plan};
     return $self->_verify_mi_chain_planned
-        if $hplan && !$hplan->rewrites_instances;
+        if $hplan;
 
     my $raw = join('', @{$self->{headers}}) . "\r\n" . ($self->{_buf} // '');
     my $msg = parse_mime($raw);
