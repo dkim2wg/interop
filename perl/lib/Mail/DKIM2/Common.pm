@@ -7,12 +7,13 @@ our $VERSION = '0.31';
 
 use Carp ();
 use B ();
+use Scalar::Util ();
 use Encode ();
 use MIME::Base64 qw(encode_base64 decode_base64);
 use JSON;
 use Crypt::PK::RSA;
 use Crypt::PK::Ed25519;
-use Crypt::Digest::SHA256 qw(sha256 sha256_b64 sha256_hex);
+use Crypt::Digest::SHA256 qw(sha256);
 
 use Email::MIME;
 use Mail::DKIM2::TagValueList ();
@@ -53,6 +54,8 @@ our @EXPORT_OK = qw(
     domain_policy
     load_private_key
     load_private_key_data
+    signature_algorithm
+    signature_algorithm_for_key
     DKIM2_DRAFT
     DKIM2_REPO
     DKIM2_DATE
@@ -1209,6 +1212,47 @@ sub _rsa_bits {
     return $rsa ? $rsa->size * 8 : 0;
 }
 
+# The signing algorithms this library implements (-09 sections 3.2, 3.3),
+# for the Signer and the Verifier alike: the key class each needs, how it
+# signs and verifies the signing input of section 12.8, and the smallest key
+# it accepts. Names are case-sensitive (section 2.14) and match exactly.
+my %SIGNATURE_ALGORITHM = (
+    'rsa-sha256' => {
+        name      => 'rsa-sha256',
+        key_class => 'Crypt::PK::RSA',
+        min_bits  => 1024,    # section 3.2: Signers MUST use at least this
+        sign      => sub { $_[0]->sign_message($_[1], 'SHA256', 'v1.5') },
+        verify    => sub { $_[0]->verify_message($_[2], $_[1], 'SHA256', 'v1.5') },
+    },
+    'ed25519-sha256' => {
+        name      => 'ed25519-sha256',
+        key_class => 'Crypt::PK::Ed25519',
+        # The SHA-256 of the input is what PureEdDSA signs (section 3.3).
+        sign      => sub { $_[0]->sign_message(sha256($_[1])) },
+        verify    => sub { $_[0]->verify_message($_[2], sha256($_[1])) },
+    },
+);
+
+# signature_algorithm($name): the entry above for an s= item's algorithm
+# name -- a hashref with name, key_class, sign->($key, $input) and
+# verify->($key, $input, $signature), and min_bits for RSA -- or undef for a
+# name this library does not implement.
+sub signature_algorithm {
+    my ($name) = @_;
+    return defined $name ? $SIGNATURE_ALGORITHM{$name} : undef;
+}
+
+# signature_algorithm_for_key($key): the name of the algorithm a key object
+# signs with, or undef for a key of no implemented type.
+sub signature_algorithm_for_key {
+    my ($key) = @_;
+    return unless Scalar::Util::blessed($key);
+    for my $name (sort keys %SIGNATURE_ALGORITHM) {
+        return $name if $key->isa($SIGNATURE_ALGORITHM{$name}{key_class});
+    }
+    return;
+}
+
 # Load a private key from a PEM file.
 # Returns a Crypt::PK::RSA or Crypt::PK::Ed25519 object depending on key type.
 sub load_private_key {
@@ -1664,6 +1708,23 @@ does not parse is C<strict> (it fails closed). New in 0.29.
 
 The key object from C<parse_dkim_key_record>, or undef for a record that
 gives no usable key.
+
+=head2 signature_algorithm($name)
+
+The signing algorithm named C<$name> in an C<s=> item (-09 sections 3.2,
+3.3), as a hashref, or undef for one this library does not implement:
+C<name>; C<key_class>, the class a key for it must be; C<sign>, called as
+C<< ->($key, $signing_input) >> and returning the raw signature; C<verify>,
+called as C<< ->($key, $signing_input, $signature) >>; and for
+C<rsa-sha256>, C<min_bits> (1024). The L<Mail::DKIM2::Signer> and the
+L<Mail::DKIM2::Verifier> both sign and verify through it. Names are
+case-sensitive. New in 0.32.
+
+=head2 signature_algorithm_for_key($key)
+
+The name of the algorithm a key object signs with (C<rsa-sha256> for a
+L<Crypt::PK::RSA>, C<ed25519-sha256> for a L<Crypt::PK::Ed25519>), or undef.
+New in 0.32.
 
 =head1 TAG ENCODING
 

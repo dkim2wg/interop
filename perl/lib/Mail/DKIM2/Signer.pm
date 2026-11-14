@@ -5,9 +5,9 @@ use warnings;
 our $VERSION = '0.31';
 
 use base 'Mail::DKIM2::HeaderParser';
-use Crypt::Digest::SHA256 qw(sha256);
-use MIME::Base64 qw(encode_base64 decode_base64);
+use MIME::Base64 qw(encode_base64);
 use Carp;
+use Scalar::Util ();
 
 use Mail::DKIM2::Common qw(
     dkim2_canonicalize_header
@@ -21,7 +21,8 @@ use Mail::DKIM2::Common qw(
     unkeyable_signature_error
     chain_number_error
     mi_version_tag
-    from_authentic
+    signature_algorithm
+    signature_algorithm_for_key
 );
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -40,11 +41,20 @@ sub init {
     croak "Selector required" unless $self->{Selector};
     croak "KeyFile or Key required" unless $self->{KeyFile} || $self->{Key};
 
-    $self->{Algorithm} ||= 'rsa-sha256';
-
     if ($self->{KeyFile} && !$self->{Key}) {
         $self->{Key} = load_private_key($self->{KeyFile});
     }
+
+    # The algorithm is the key's unless the caller names one; a name this
+    # library does not implement, or one the key cannot sign with, is a
+    # mistake in the call -- never a signature labelled as something it is
+    # not, or an exception from inside CLOSE.
+    $self->{Algorithm} ||= signature_algorithm_for_key($self->{Key}) || 'rsa-sha256';
+    my $alg = signature_algorithm($self->{Algorithm})
+        or croak "unsupported Algorithm $self->{Algorithm}";
+    croak "Algorithm $self->{Algorithm} needs a $alg->{key_class} key"
+        unless Scalar::Util::blessed($self->{Key}) && $self->{Key}->isa($alg->{key_class});
+    $self->{_alg} = $alg;
 }
 
 sub finish_header {
@@ -113,6 +123,12 @@ sub finish_header {
     # rejects one that names none (tag=m missing), so a message with no
     # instance cannot be signed: compute one first (dkim2sign does).
     $error //= 'no Message-Instance field to sign over' unless @mi_headers;
+    # -09 section 3.2: a Signer MUST use an RSA key of at least 1024 bits,
+    # and every verifier calls a shorter one "too short".
+    if (my $min = $self->{_alg}{min_bits}) {
+        $error //= "signing key is shorter than $min bits"
+            if $self->{Key}->size * 8 < $min;
+    }
     # -09 sections 11 and 12.4: a hop that originates the message, or whose
     # instances changed From, signs with a d= the From is Authentic for.
     # -09 contract E3.4: d= may also be below the From domain when the
@@ -308,18 +324,7 @@ sub _compute_signature {
         signing_header => $folded_header,
     );
 
-    # Sign the signing input
-    my $key = $self->{Key};
-    my $alg = $self->{Algorithm} || 'rsa-sha256';
-    my $sig_raw;
-    if ($alg =~ /^ed25519/) {
-        # Ed25519-SHA256: hash first, then sign the digest
-        my $digest = sha256($signing_input);
-        $sig_raw = $key->sign_message($digest);
-    } else {
-        # RSA-SHA256: sign_message handles hashing internally
-        $sig_raw = $key->sign_message($signing_input, 'SHA256', 'v1.5');
-    }
+    my $sig_raw = $self->{_alg}{sign}->($self->{Key}, $signing_input);
     my $signb64 = encode_base64($sig_raw, '');
 
     # Update the signature object with the actual signature
@@ -457,7 +462,9 @@ Optional:
 
 =item Algorithm
 
-C<rsa-sha256> (the default) or C<ed25519-sha256>.
+C<rsa-sha256> or C<ed25519-sha256>. Defaults to the one the key signs with
+(since 0.32; before, to C<rsa-sha256> whatever the key). Any other name, or
+one that is not the key's, croaks.
 
 =item MailFrom
 
@@ -537,7 +544,8 @@ C<TEMPERROR:> on a failure), for a C<PolicyCallback> to fall back to. New in
 =head2 result()
 
 Undef until C<CLOSE>; then C<'signed'>, or C<'fail'> when the message
-cannot be signed: no Message-Instance to sign over, a chain already at the
+cannot be signed: no Message-Instance to sign over, an RSA key shorter than
+1024 bits (-09 section 3.2; since 0.32), a chain already at the
 length limit, a DKIM2-Signature with a missing or malformed C<i=> (or one
 that does not parse), an C<i=> or C<m=> that is not a chain number (see
 L<Mail::DKIM2::Common/"chain_number_error($field, $tag, $n)">), or a

@@ -222,7 +222,8 @@ sub _body_digest_feed {
 # previous state cannot be recreated. as_string() then emits "b": null.
 sub set_null_body_recipe {
     my ($self) = @_;
-    $self->{bits}{rb} = \'null';   # scalar-ref sentinel
+    delete $self->{bits}{rb};
+    $self->{bits}{rb_null} = 1;    # as parse() records it
 }
 
 # True if this instance declares the previous state non-recreatable (a null
@@ -262,13 +263,11 @@ sub as_string {
 
     # Build r= tag JSON if there are Recipes
     my %recipe_json;
-    if (exists $data{rb}) {
-        if (ref $data{rb} eq 'SCALAR' && ${$data{rb}} eq 'null') {
-            $recipe_json{b} = undef;          # encodes as JSON null
-            delete $data{rb};
-        } else {
-            $recipe_json{b} = _encode_recipe_list(delete $data{rb});
-        }
+    if (delete $data{rb_null}) {
+        $recipe_json{b} = undef;              # encodes as JSON null
+        delete $data{rb};
+    } elsif (exists $data{rb}) {
+        $recipe_json{b} = _encode_recipe_list(delete $data{rb});
     }
     if (exists $data{rh}) {
         my $rh = delete $data{rh};

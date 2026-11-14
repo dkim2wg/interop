@@ -5,10 +5,8 @@ use warnings;
 our $VERSION = '0.31';
 
 use base 'Mail::DKIM2::HeaderParser';
-use Crypt::Digest::SHA256 qw(sha256);
-use MIME::Base64 qw(encode_base64 decode_base64);
+use MIME::Base64 qw(decode_base64);
 use Carp;
-use POSIX qw();
 use Time::HiRes ();
 use Scalar::Util ();
 
@@ -17,9 +15,6 @@ use Mail::DKIM2::Common qw(
     MAX_SIGNATURE_ITEMS
     combine_sets
     parse_mime
-    dkim2_canonicalize_header
-    decode_tag_json
-    encode_tag_json
     build_signing_input
     extract_mi_version
     domain_of
@@ -42,12 +37,14 @@ use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::BodyPlan;
 use Mail::DKIM2::HeaderPlan;
 
-# The signing algorithms this verifier implements (-09 §3.2, §3.3), and
-# the key class each needs. Every other s= item is ignored (§3.5).
-my %IMPLEMENTED_ALG = (
-    'rsa-sha256'     => 'Crypt::PK::RSA',
-    'ed25519-sha256' => 'Crypt::PK::Ed25519',
-);
+# The key class of a signing algorithm this verifier implements (-09 §3.2,
+# §3.3; Common::signature_algorithm), or undef: an s= item of any other
+# algorithm is a PERMERROR member of its group (§14.6).
+sub _key_class {
+    my ($alg) = @_;
+    my $entry = Mail::DKIM2::Common::signature_algorithm($alg) or return;
+    return $entry->{key_class};
+}
 
 # How long a key lookup sent in the background at the end of the headers is
 # waited for, from when it was sent, before it is asked again the ordinary
@@ -950,7 +947,7 @@ sub _check_sig_item {
     my $sel = $signature->selector($idx) // '?';
     my $alg = $signature->algorithm($idx) // '';
     return ('permerror', "PERMERROR: DKIM2-Signature i=$i selector $sel algorithm unknown")
-        unless $IMPLEMENTED_ALG{$alg};
+        unless _key_class($alg);
 
     # The fetch is eval'd whichever way the key is sourced: a pubkey
     # callback may end in fetch_public_key(), which dies on transient DNS.
@@ -990,7 +987,7 @@ sub _check_sig_item {
     # The key must be of the signature's algorithm. A PubkeyCallback
     # hands back any key object, so check what it is.
     return ('permerror', "PERMERROR: DKIM2-Signature i=$i public key $sel algorithm mismatch")
-        unless $pubkey->isa($IMPLEMENTED_ALG{$alg});
+        unless $pubkey->isa(_key_class($alg));
 
     # -09 sections 3.2 and 14.6: an RSA key under 1024 bits is too short
     # (contract E5). A PubkeyCallback's key has not been through
@@ -1001,13 +998,7 @@ sub _check_sig_item {
     my $signing_input = $dk2_entry->{signing_input};
     my $sig_raw = decode_base64($signature->signature_value($idx));
     my $verified = eval {
-        if ($alg eq 'ed25519-sha256') {
-            # Ed25519-SHA256: SHA-256 hash first, then verify with PureEdDSA
-            $pubkey->verify_message($sig_raw, sha256($signing_input));
-        } else {
-            # RSA-SHA256: verify_message handles SHA-256 internally
-            $pubkey->verify_message($sig_raw, $signing_input, 'SHA256', 'v1.5');
-        }
+        Mail::DKIM2::Common::signature_algorithm($alg)->{verify}->($pubkey, $signing_input, $sig_raw);
     };
     if ($@) {
         die $@ if ref $@;
@@ -1145,7 +1136,7 @@ sub fetch_public_key {
     # §10.9: the key's type must be the signature's algorithm's.
     my $alg = $signature->algorithm($idx) // '';
     croak "PERMERROR: algorithm mismatch\n"
-        if $IMPLEMENTED_ALG{$alg} && !$key->isa($IMPLEMENTED_ALG{$alg});
+        if _key_class($alg) && !$key->isa(_key_class($alg));
     return $key;
 }
 
@@ -1195,7 +1186,7 @@ sub _prefetch_keys {
             my $dom = $sig->domain or return;
             for my $idx (0 .. ($sig->sig_count || 0) - 1) {
                 return if $sent >= $PREFETCH_MAX;
-                next unless $IMPLEMENTED_ALG{$sig->algorithm($idx) // ''};
+                next unless _key_class($sig->algorithm($idx) // '');
                 my $sel = $sig->selector($idx) or next;
                 my $fqdn = "$sel._domainkey.$dom";
                 next if $self->{_key_queries}{lc $fqdn};
