@@ -241,16 +241,14 @@ sub as_string {
     my $m = delete $data{m};
     my $hashes = delete($data{hashes}) || {};
 
-    # -09 §9.3: h= is hash-set *("," hash-set) -- one hash-set per
-    # configured algorithm, emitted in the signer's chosen order (default:
-    # sha256 only; the signer default MUST NOT change).
-    my @algs = @{ $self->{algs} || ['sha256'] };
-    my @sets;
-    for my $alg (@algs) {
-        my $pair = $hashes->{$alg} or next;
-        push @sets, "$alg:$pair->[0]:$pair->[1]";
-    }
-    my $result = "m=$m; h=" . join(',', @sets);
+    # -09 §9.3: h= is "|" groups of "," lists of hash-sets. A parsed
+    # instance writes the groups it was given; a calculated one, one list
+    # with a hash-set per configured algorithm, in the signer's order
+    # (default: sha256 only).
+    my $groups = $self->{hash_groups} || [ $self->{algs} || ['sha256'] ];
+    my $result = "m=$m; h=" . join('|', map {
+        join ',', map { "$_:$hashes->{$_}[0]:$hashes->{$_}[1]" } grep { $hashes->{$_} } @$_
+    } @$groups);
 
     # Build r= tag JSON if there are Recipes
     my %recipe_json;
@@ -277,6 +275,41 @@ sub as_string {
     $result .= ";";
 
     return $result;
+}
+
+# The whole field, folded where its grammar allows, ready to go at the top
+# of a message (no line break at the end); and its value alone, folded the
+# same way, for a milter's addheader/insheader, which takes name and value
+# apart.
+sub as_header {
+    my ($self) = @_;
+    return Mail::DKIM2::Common::fold_header('Message-Instance: ' . $self->as_string);
+}
+
+sub as_header_value {
+    my ($self) = @_;
+    (my $value = $self->as_header) =~ s/\AMessage-Instance:[ \t]*//;
+    return $value;
+}
+
+# What this instance says its hop changed, read off its Recipes: the body
+# ('unchanged', no body Recipe; 'changed', one that rebuilds the previous
+# body; 'unrecoverable', the null Recipe) and the names of the header
+# fields with a Recipe, lower-cased and sorted.
+sub changes {
+    my ($self) = @_;
+    my $bits = $self->{bits};
+    return {
+        body    => $bits->{rb_null} ? 'unrecoverable' : $bits->{rb} ? 'changed' : 'unchanged',
+        headers => [ sort map { Mail::DKIM2::Common::field_name($_) } keys %{ $bits->{rh} || {} } ],
+    };
+}
+
+# True if this instance has a header Recipe for the field named $name.
+sub changes_header {
+    my ($self, $name) = @_;
+    my $want = Mail::DKIM2::Common::field_name($name);
+    return (grep { $_ eq $want } @{ $self->changes->{headers} }) ? 1 : 0;
 }
 
 # Convert internal Recipe list to wire format
@@ -1485,8 +1518,34 @@ groups: C<parse_hash_groups> flattened. Returns undef where it does.
 
 =head2 as_string()
 
-The header value in wire format, unfolded. Fold it with
-L<Mail::DKIM2::Common/fold_header> before inserting it.
+The header value in wire format, unfolded, without the field name.
+
+=head2 as_header()
+
+The whole field, C<Message-Instance: ...>, folded where its grammar allows
+and ready to put at the top of a message; it has no line break at the end.
+New in 0.32.
+
+    $message = $mi->as_header . "\r\n" . $message;
+
+=head2 as_header_value()
+
+The value of C<as_header> without the field name, for an interface that
+takes the two apart (a milter's C<addheader>). New in 0.32.
+
+=head2 changes()
+
+What the instance says its hop changed, read off its Recipes, as a hashref:
+C<body> is C<unchanged> (no body Recipe), C<changed> (a Recipe that
+rebuilds the previous body) or C<unrecoverable> (the null Recipe); C<headers>
+is an arrayref of the names of the header fields it has a Recipe for,
+lower-cased and sorted. An C<m=1> instance normally has neither. New in
+0.32.
+
+=head2 changes_header($name)
+
+True if the instance has a header Recipe for the field of that name
+(C<< $mi->changes_header('From') >>). New in 0.32.
 
 =head2 header_hash()
 

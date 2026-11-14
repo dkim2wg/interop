@@ -34,7 +34,7 @@ use Getopt::Long qw(GetOptions);
 use FindBin;
 use lib -d "$FindBin::Bin/../lib/Mail/DKIM2" ? "$FindBin::Bin/../lib" : ();   # running from a checkout
 
-use Mail::DKIM2::Common qw(fold_header parse_dkim_pubkey parse_mime);
+use Mail::DKIM2::Common qw(parse_dkim_pubkey parse_mime);
 use Mail::DKIM2::Gate;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signer;
@@ -131,9 +131,7 @@ my $msg = parse_mime($raw);
 my $mi_header;
 unless (Mail::DKIM2::MessageInstance->verify($msg)) {
     my $mi = Mail::DKIM2::MessageInstance->calculate($msg, undef, Algs => $algs);
-    ($mi_header = fold_header('Message-Instance: ' . $mi->as_string))
-        =~ s/^Message-Instance:\s*//;
-    $msg->header_raw_prepend('Message-Instance', $mi_header);
+    $msg->header_raw_prepend('Message-Instance', $mi_header = $mi->as_header_value);
 }
 
 my $signer = Mail::DKIM2::Signer->new(

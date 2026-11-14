@@ -424,9 +424,7 @@ sub _from_pairs {
     my @sigs = map { [$_, 0 + ($dk2_map{$_}{sig}->version // 0)] } sort { $a <=> $b } keys %dk2_map;
     return unless @sigs;
 
-    my $hplan  = $self->{_header_plan} or return;
-    my @parsed = values %{ $self->{_planned}{parsed} };
-    my $from_at = sub { $hplan->values_at($_[0], 'From') // [] };
+    my $hplan = $self->{_header_plan} or return;
 
     # -09 §11, the -07 contract C5 as corrected by Ruling 19: the From in effect when
     # each signature was made. i=1 against the From at state m(i=1); each
@@ -434,20 +432,14 @@ sub _from_pairs {
     # m(i-1) < k <= m(i) replaced From. A From replaced before any signature
     # covered it (an unsigned ingress m=1 a list rewrote in m=2 before
     # signing i=1) is never checked.
-    my %changes_from;
-    for my $mi (@parsed) {
-        my $k = 0 + $mi->get_tag('m');
-        $changes_from{$k} = 1
-            if $k >= 2 && $mi->get_tag('rh') && exists $mi->get_tag('rh')->{from};
-    }
     my @pairs;
     my $prev_m;
     for my $sig (@sigs) {
         my ($i, $m) = @$sig;
         my $due = $i == 1
-            || (defined $prev_m && grep { $_ > $prev_m && $_ <= $m } keys %changes_from);
+            || (defined $prev_m && $self->{_chain}->instances_changing('From', $prev_m, $m));
         $prev_m = $m;
-        push @pairs, [$i, $from_at->($m)] if $due;
+        push @pairs, [$i, $hplan->values_at($m, 'From') // []] if $due;
     }
     return @pairs;
 }

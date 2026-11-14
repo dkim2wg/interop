@@ -189,12 +189,7 @@ sub _from_must_match {
     my ($self) = @_;
     my $chain = $self->{_chain};
     return 1 unless $chain->signature_numbers;
-    for my $m ($chain->unsigned_instances) {
-        my $mi = $chain->instance($m) or next;
-        my $rh = $mi->get_tag('rh');
-        return 1 if $rh && exists $rh->{from};
-    }
-    return 0;
+    return $chain->instances_changing('From', $chain->covered_m) ? 1 : 0;
 }
 
 sub finish_body {
@@ -311,10 +306,9 @@ Mail::DKIM2::Signer - Sign a message with a DKIM2-Signature header
     # A signature covers a Message-Instance, so a message that has none yet
     # gets one first (an originating hop: m=1).
     use Mail::DKIM2::MessageInstance;
-    use Mail::DKIM2::Common qw(fold_header);
     unless ($message =~ /^Message-Instance:/mi) {
         my $mi = Mail::DKIM2::MessageInstance->calculate($message);
-        $message = fold_header('Message-Instance: ' . $mi->as_string) . "\r\n" . $message;
+        $message = $mi->as_header . "\r\n" . $message;
     }
 
     my $signer = Mail::DKIM2::Signer->new(

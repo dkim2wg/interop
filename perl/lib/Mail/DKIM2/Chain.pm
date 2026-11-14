@@ -215,6 +215,22 @@ sub unsigned_instances {
     return @above;
 }
 
+# instances_changing($name, $above, $upto): the m= of every instance with
+# $above < m <= $upto that has a header Recipe for the field named $name --
+# the hops, between two signatures, that say they changed that field. One
+# that does not parse says nothing. m=1 is never in it: its Recipes record
+# what happened to the message before DKIM2, which no signature answers for.
+sub instances_changing {
+    my ($self, $name, $above, $upto) = @_;
+    $above //= 0;
+    $upto  //= $self->top_instance // 0;
+    my @changing = grep {
+        my $mi = $_ >= 2 && $_ > $above && $_ <= $upto ? $self->instance($_) : undef;
+        $mi && $mi->changes_header($name);
+    } $self->instance_numbers;
+    return @changing;
+}
+
 # --- Whether it is a chain ---
 
 # numbering_error(%opts): the PERMERROR for a chain whose fields cannot be
@@ -380,6 +396,14 @@ The highest C<m=> any signature names, or 0: instances 1 to that are signed
 
 The C<m=> of every instance above C<covered_m>: those no signature covers
 yet, which the next signer answers for.
+
+=head2 instances_changing($name, [$above], [$upto])
+
+The C<m=> of every instance above C<$above> (default 0) and no higher than
+C<$upto> (default the top) that has a header Recipe for the field named
+C<$name>: the hops that say they changed it. C<m=1> never counts, and an
+instance that does not parse says nothing. The Signer and the Verifier use
+it to decide which signature answers for a From (-09 section 11).
 
 =head2 numbering_error(%options)
 

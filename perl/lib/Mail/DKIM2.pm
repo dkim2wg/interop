@@ -31,8 +31,7 @@ Mail::DKIM2 - DKIM2 signing and verification for email
     # message records the next m= with a Recipe; see
     # Mail::DKIM2::MessageInstance.)
     my $mi = Mail::DKIM2::MessageInstance->calculate($message);
-    $message = Mail::DKIM2::Common::fold_header('Message-Instance: ' . $mi->as_string)
-             . "\r\n" . $message;
+    $message = $mi->as_header . "\r\n" . $message;
     my $signer = Mail::DKIM2::Signer->new(
         Domain   => 'example.com',
         Selector => 'sel1',
