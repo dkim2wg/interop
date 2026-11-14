@@ -407,3 +407,30 @@ README. Results and the generated report (`bench/`) are not committed.
 
 `setup-builds.sh` builds `wrap` from the current head of
 `dkim2-3.3.10`. To reproduce these numbers exactly, pin it to `86bd7bee8`.
+
+## Light form (2026-11-13)
+
+The series that replaced the one measured above keeps no copy of a post as
+received: the LMTP runner keeps two SHA-256 digests and an arrival status,
+and `Message` keeps a log of the header fields Mailman changed. Measured once
+over a 54-message stratified sample of the charset corpus (one per
+charset/CTE combination), pickled as the queues store them, with the same
+header edits (subject prefix, List-* fields, Message-ID-Hash) on both sides:
+
+| | queue entry vs stock |
+|---|---|
+| always-wrap series (received octets kept) | median 1.94x, max 1.99x |
+| light form (digests + header log) | median +336 bytes (1.06x), max +342 bytes |
+
+CPU: no line diff; egress serialises each copy once (as smtplib will) and
+finds the post's lines in that, so delivery cost is linear in the message
+size. Decoration skips the re-encode it would otherwise do.
+
+Recipes: replaying that sample through the dkim2.com corpus lists after the
+deploy, every copy verified with all five verifiers on Sympa and the stock
+route, and 52 of 54 on Mailman. The other two (both from the SpamAssassin
+spam set) went out with `"b": null`, which -09 verifiers report as a
+PERMERROR: Python's generator does not write them back as they came (it
+refolds an over-long header inside a MIME part; it adds a blank line to a
+malformed multipart), and without the received octets the list's Recipe
+cannot rebuild what the sender signed. The always-wrap series rebuilt both.
