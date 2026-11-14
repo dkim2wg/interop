@@ -136,7 +136,12 @@
           DKIM2-Signature; no gaps in <code>m=</code> or <code>i=</code>, no
           duplicates, no instance above every signature&rsquo;s
           <code>m=</code>, no <code>exploded</code> flag on <code>i=1</code>.
-          Bound the numbers before you loop over them.</li>
+          Treat <code>i=</code> and <code>m=</code> as untrusted: -09 only
+          says they are digits, so before you convert them or walk 1&hellip;max
+          looking for gaps, check they are plain ASCII digits and small (ours
+          refuse more than three digits and chains longer than 32 hops &mdash;
+          local policy, not spec). A forged <code>i=99999999999</code>
+          shouldn&rsquo;t cost you a billion loop iterations.</li>
         <li><strong>Recipes, then hashes, top down.</strong> Check the top
           instance&rsquo;s hashes against the message as received, then each
           instance below against the version its parent&rsquo;s Recipe
