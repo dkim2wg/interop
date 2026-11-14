@@ -71,11 +71,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  DKIM2-MESSAGE-INSTANCE.md                     |  323 ++
  src/mailman/config/schema.cfg                 |    7 +
  src/mailman/handlers/decorate.py              |   16 +-
- src/mailman/handlers/dmarc.py                 |   54 +
+ src/mailman/handlers/dmarc.py                 |   56 +
  src/mailman/handlers/message_instance.py      | 1217 +++++++
  src/mailman/handlers/tests/mi_support.py      |  389 +++
  src/mailman/handlers/tests/test_decorate.py   |   90 +
- .../handlers/tests/test_message_instance.py   | 2900 +++++++++++++++++
+ .../handlers/tests/test_message_instance.py   | 2915 +++++++++++++++++
  .../handlers/tests/test_mi_null_recipe.py     |   34 +
  .../handlers/tests/test_mi_roundtrip.py       |  297 ++
  src/mailman/mta/bulk.py                       |    5 +-
@@ -84,7 +84,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/mailman/pipelines/builtin.py              |    2 +
  src/mailman/runners/lmtp.py                   |   11 +
  src/mailman/runners/tests/test_lmtp.py        |   85 +-
- 16 files changed, 5462 insertions(+), 4 deletions(-)
+ 16 files changed, 5479 insertions(+), 4 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/mailman/handlers/message_instance.py
  create mode 100644 src/mailman/handlers/tests/mi_support.py
@@ -496,7 +496,7 @@ index 58521548a..20dbad4d2 100644
  
  @public
 diff --git a/src/mailman/handlers/dmarc.py b/src/mailman/handlers/dmarc.py
-index 95b1c9a3d..3a08c5192 100644
+index 95b1c9a3d..275766ac5 100644
 --- a/src/mailman/handlers/dmarc.py
 +++ b/src/mailman/handlers/dmarc.py
 @@ -33,6 +33,14 @@ from email.mime.message import MIMEMessage
@@ -514,7 +514,7 @@ index 95b1c9a3d..3a08c5192 100644
  from mailman.interfaces.handler import IHandler
  from mailman.interfaces.mailinglist import DMARCMitigateAction, ReplyToMunging
  from mailman.utilities.string import wrap
-@@ -193,7 +201,53 @@ def wrap_message(mlist, msg, msgdata):
+@@ -193,7 +201,55 @@ def wrap_message(mlist, msg, msgdata):
      return
  
  
@@ -544,12 +544,14 @@ index 95b1c9a3d..3a08c5192 100644
 +        return True
 +    if compute_header_hash(msg) != snapshot['header_hash']:
 +        return True
-+    if compute_body_hash_raw(_wire_bytes(msg)) != snapshot['body_hash']:
++    if not (msgdata.get('isdigest') or msgdata.get('nodecorate')) and any(
++            decorate(name, mlist) for name in (
++                'list:member:regular:header', 'list:member:regular:footer')):
 +        return True
-+    if msgdata.get('isdigest') or msgdata.get('nodecorate'):
-+        return False
-+    return any(decorate(name, mlist) for name in (
-+        'list:member:regular:header', 'list:member:regular:footer'))
++    # Last, as it writes the whole body out: reached only when nothing
++    # cheaper has decided (in practice, a signed post on a list that adds
++    # no header field and no decoration).
++    return compute_body_hash_raw(_wire_bytes(msg)) != snapshot['body_hash']
 +
 +
  def process(mlist, msg, msgdata):
@@ -2286,10 +2288,10 @@ index 5a895ebf3..92d6f1f9c 100644
 +        self.assertNotIn('dkim2-decoration', msgdata)
 diff --git a/src/mailman/handlers/tests/test_message_instance.py b/src/mailman/handlers/tests/test_message_instance.py
 new file mode 100644
-index 000000000..4062c8dac
+index 000000000..d3afe060d
 --- /dev/null
 +++ b/src/mailman/handlers/tests/test_message_instance.py
-@@ -0,0 +1,2900 @@
+@@ -0,0 +1,2915 @@
 +# Copyright (C) 2025-2026 by the Free Software Foundation, Inc.
 +#
 +# This file is part of GNU Mailman.
@@ -4823,6 +4825,21 @@ index 000000000..4062c8dac
 +            self._mlist, msg, msgdata)
 +        config.handlers['dmarc'].process(self._mlist, msg, msgdata)
 +        self.assertEqual(msg['From'], 'Anne <anne@example.com>')
++
++    def test_decorated_list_decides_without_a_body_hash(self):
++        # A list that adds a header or footer changes every copy anyway:
++        # the From decision must not serialise the body to find that out.
++        msg = _msg_from_bytes(self._signed())
++        msgdata = {'original_sender': 'anne@example.com'}
++        config.handlers['message-instance-ingress'].process(
++            self._mlist, msg, msgdata)
++        with patch('mailman.handlers.dmarc.decorate',
++                   return_value='The footer'), \
++                patch('mailman.handlers.dmarc._wire_bytes',
++                      side_effect=AssertionError('body serialised')):
++            config.handlers['dmarc'].process(self._mlist, msg, msgdata)
++        self.assertEqual(parseaddr(msg['From'])[1],
++                         self._mlist.posting_address)
 +
 +    def test_from_rewritten_when_the_body_was_rewritten(self):
 +        # No header change and no decoration, but a handler rewrote the
