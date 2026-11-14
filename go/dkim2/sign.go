@@ -51,7 +51,7 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 	{
 		var mis, sigs []string
 		for _, h := range headers {
-			switch strings.ToLower(h.Name) {
+			switch lowerName(h.Name) {
 			case "message-instance":
 				mis = append(mis, h.Raw)
 			case "dkim2-signature":
@@ -88,7 +88,7 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 	var existingMI []string
 	var existingSigs []string
 	for _, h := range headers {
-		switch strings.ToLower(h.Name) {
+		switch lowerName(h.Name) {
 		case "message-instance":
 			existingMI = append(existingMI, h.Raw)
 		case "dkim2-signature":
@@ -343,7 +343,7 @@ func checkUpstream(raw []byte, headers []Header, opts SignOptions) error {
 	covered := 0 // highest m= of a valid upstream signature
 	chain := false
 	for _, h := range headers {
-		switch strings.ToLower(h.Name) {
+		switch lowerName(h.Name) {
 		case "dkim2-signature":
 			chain = true
 			// Only a signature with a valid i= can cover anything; the

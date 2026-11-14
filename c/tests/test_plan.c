@@ -319,10 +319,15 @@ static void body_cases(void) {
          { H1, B }, { H2, B, "{" RSUB "}", "other\r\n" });
     CASE("hash mismatch above a bad Recipe", NULL, "m=2 header hash sha256 mismatch",
          { H1, B }, { H2, B, "{" RSUB ",\"b\":[{\"c\":[1,9]}]}", NULL, H1 });
+    /* A Recipe key that is no field name ("message-instance ", WSP in
+       it): its literals canonicalise as an ignored field, in the plan as
+       in the undo walk, and change nothing hashed (not an OOM). */
+    CASE("a Recipe key with WSP in it", NULL, "PASS", { H1, B },
+         { H2, B, "{\"h\":{\"subject\":[{\"d\":[\"hi\"]}],\"message-instance \":[{\"d\":[\"x\"]}]}}" });
     CASE("m=01", NULL, "PASS", { H1, B, NULL, NULL, NULL, "01" },
          { H2, B, "{" RSUB "}" });
-    CASE("r= not base64", NULL, "m=2 syntax error", { H1, B },
-         { H2, B, NULL, NULL, NULL, NULL, "!!!!" });
+    /* r= not base64 never reaches a plan: dkim2_mi_parse refuses it
+       (strict base64, -09 §2.14; test_header, test_verify). */
     CASE("r= not JSON", NULL, "m=2 contains invalid JSON", { H1, B },
          { H2, B, "{\"b\":[" });
     CASE("r= duplicate key", NULL, "m=2 contains invalid JSON", { H1, B },

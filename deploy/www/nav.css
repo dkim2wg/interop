@@ -1,0 +1,82 @@
+/* Site bar shared by every dkim2.com page, the verify and validate tools
+ * included (they load this file alongside their own stylesheet). A tinted
+ * full-width bar that stays at the top while you scroll: the DKIM2 wordmark
+ * on the left, the page links beside it; on phones the links get their own
+ * row, which scrolls sideways rather than wrapping.
+ *
+ * The bar's contents line up with the page's column: --col is the column
+ * width (46rem for the site; the tools set their own wider one). */
+
+nav.site {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 0 1.25rem;
+  padding-top: calc(0.7rem + env(safe-area-inset-top, 0px));
+  padding-bottom: 0.7rem;
+  padding-inline: max(1.25rem, calc((100% - var(--col, 46rem)) / 2 + 1.25rem));
+  background: #eaf3f4;
+  border-bottom: 1px solid #cfe1e3;
+  box-shadow: 0 1px 6px rgba(23, 35, 65, 0.08);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+nav.site a { text-decoration: none; }
+
+nav.site .brand {
+  flex: 0 0 auto;
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #172341;
+}
+
+nav.site .links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.85rem;
+}
+
+nav.site .links a {
+  color: #1f5f69;
+  padding: 0.15rem 0;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+nav.site .links a:hover,
+nav.site .links a:focus-visible { border-bottom-color: #7fb6bd; }
+
+nav.site .links a[aria-current="page"] {
+  color: #172341;
+  font-weight: 650;
+  border-bottom-color: #2f6f79;
+}
+
+/* Jumping to an anchor lands below the bar, not under it. */
+[id] { scroll-margin-top: 5rem; }
+
+@media (max-width: 48rem) {
+  nav.site {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+    padding-bottom: 0.4rem;
+  }
+  nav.site .links {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 0.2rem;
+    /* fade the right edge so it is clear there is more to swipe to */
+    -webkit-mask-image: linear-gradient(to right, #000 85%, transparent);
+    mask-image: linear-gradient(to right, #000 85%, transparent);
+  }
+  nav.site .links::-webkit-scrollbar { display: none; }
+  [id] { scroll-margin-top: 6.5rem; }
+}

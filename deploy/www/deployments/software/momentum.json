@@ -1,0 +1,10 @@
+{
+  "name": "Momentum MTA (Bird)",
+  "url": "https://bird.com/",
+  "kind": "MTA",
+  "signs": true,
+  "verifies": true,
+  "since": "2026-07",
+  "notes": "Experimental, in v5.3.",
+  "source": "https://mailarchive.ietf.org/arch/msg/ietf-dkim/iJjYkj3nsBlVW2F08tW-Ix2Jz90"
+}

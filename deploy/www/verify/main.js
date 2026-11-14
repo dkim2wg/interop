@@ -15,10 +15,6 @@ async function run() {
 }
 
 document.getElementById('go').addEventListener('click', run);
-document.getElementById('example').addEventListener('click', (ev) => {
-  ev.preventDefault();
-  ta.value = 'Paste a real DKIM2-signed message here.\n(Tip: send mail through one of the reflector-*@dkim2.com addresses, then paste the reply.)\n';
-});
 
 // One-time capability note for browsers without WebCrypto Ed25519.
 (async () => {

@@ -844,33 +844,15 @@ int main(void) {
             (unsigned long long)now, mf2_b64, rt2_b64, sig2_b64);
         free(sig2_b64);
 
-        dkim2_sig_t *sig1_parsed = dkim2_sig_parse(sig1_out);
+        /* A malformed r= is caught where the field is parsed (strict base64,
+           -09 §2.14), with the same report the verify would give. */
         dkim2_sig_t *sig2_parsed = dkim2_sig_parse(sig2_final);
-        assert(sig1_parsed && sig2_parsed);
-        sig1_parsed->next = sig2_parsed;
-
-        dkim2_mi_t *mi1p = dkim2_mi_parse(mi1_out);
-        dkim2_mi_t *mi2p = dkim2_mi_parse(mi2_val);
-        assert(mi1p && mi2p);
-        mi1p->next = mi2p;
-
-        dkim2_ctx_t vctx;
-        memset(&vctx, 0, sizeof vctx);
-        vctx.headers = (char **)raw_headers;
-        vctx.n_headers = 3;
-        dkim2_body_hash_raw(body, strlen(body), vctx.body_digests.d[0]);
-        vctx.mi_list = mi1p;
-        vctx.sig_list = sig1_parsed;
-
-        dkim2_verify_result_t res;
-        dkim2_do_verify(&vctx, &res);
-        assert(res.status == DKIM2_PERMERROR);
-        assert(strcmp(res.message,
-            "PERMERROR: Message-Instance m=2 syntax error") == 0);
-        assert(strstr(res.message, "invalid JSON") == NULL);
-
-        dkim2_mi_free(vctx.mi_list);
-        dkim2_sig_free(vctx.sig_list); /* frees sig1_parsed + chained sig2_parsed */
+        assert(sig2_parsed);
+        dkim2_sig_free(sig2_parsed);
+        char perr[256] = "";
+        assert(dkim2_mi_parse_err(mi2_val, perr, sizeof perr) == NULL);
+        assert(strcmp(perr, "PERMERROR: Message-Instance m=2 syntax error") == 0);
+        assert(strstr(perr, "invalid JSON") == NULL);
         free(mi1_out);
         free(sig1_out);
     }

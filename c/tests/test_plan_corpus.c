@@ -105,6 +105,16 @@ static void check_file(const char *path, const char *label) {
     dkim2_undo_walk_trace(mis, n, h, nh, ctx.body, ctx.body_len, tr, terr, sizeof terr);
     size_t step = 1 + (ctx.body_len * 7 + (size_t)n_files) % 997;
     dkim2_plan_t *p = dkim2_plan_new(mis, n, h, nh, 0, 1);
+    dkim2_plan_t *q = p ? dkim2_plan_new(mis, n, h, nh, 1, 1) : NULL;
+    if (!p || !q) {
+        /* No plan is "PERMERROR: OOM" to a verifier: never right for a
+           message the undo walk can judge. */
+        fprintf(stderr, "  %s: no plan\n", label);
+        dkim2_plan_free(p);
+        free(tr);
+        n_fail++;
+        return;
+    }
     for (size_t at = 0; at < ctx.body_len; at += step)
         dkim2_plan_body_update(p, ctx.body + at,
                                ctx.body_len - at < step ? ctx.body_len - at : step);
@@ -125,7 +135,6 @@ static void check_file(const char *path, const char *label) {
     size_t rawlen;
     char *raw = slurp(path, &rawlen);
     size_t bs = raw_body_start(raw, rawlen);
-    dkim2_plan_t *q = dkim2_plan_new(mis, n, h, nh, 1, 1);
     for (size_t at = bs; at < rawlen; at += step)
         dkim2_plan_body_update(q, raw + at, rawlen - at < step ? rawlen - at : step);
     dkim2_plan_body_final(q);

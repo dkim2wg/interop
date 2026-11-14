@@ -111,6 +111,14 @@ cd /opt/dkim2/interop && git pull
 systemctl restart dkim2-milter
 ```
 
+## Website
+
+The dkim2.com site lives in `deploy/www/`; `deploy/bin/stage-www.sh DEST`
+tests it and assembles it into DEST (`deploy.sh` uses the web root). To add
+a service or a software product to <https://dkim2.com/deployments/>, see
+`deploy/www/deployments/README.md`. Previewing changes: SERVER.md, "Apex
+site".
+
 ## Testing
 
 From a remote machine:

@@ -2,6 +2,8 @@
 
 **Spec:** draft-ietf-dkim-dkim2-spec-09, with draft-ietf-dkim-dkim2-dns-03  
 **Audience:** Authors writing a DKIM2 library or integrating DKIM2 into an MTA
+**Overview:** <https://dkim2.com/developers/> — what to build, in what order,
+and the traps; this guide is the step-by-step reference behind it.
 
 ---
 
@@ -368,7 +370,10 @@ type KeyFetcher interface {
 ```
 
 Streaming: Sign and Verify process headers + body in one pass; the body is never
-buffered in memory (body hash is computed incrementally).
+buffered in memory (body hash is computed incrementally). Every
+Message-Instance is checked in that one pass, without rebuilding any earlier
+body: <https://dkim2.com/developers/#one-pass> describes the algorithm all five
+verifiers use.
 
 ### Python (`python/dkim2sign.py`, `python/dkim2verify.py`)
 

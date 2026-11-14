@@ -100,7 +100,7 @@ var excludedHeaderNames = map[string]bool{
 var excludedHeaderPrefixes = []string{"x-", "received-"}
 
 func shouldExcludeHeader(name string) bool {
-	lower := strings.ToLower(name)
+	lower := lowerName(name)
 	if excludedHeaderNames[lower] {
 		return true
 	}
@@ -152,7 +152,7 @@ func canonicalizeHeader(h Header) string {
 		name = raw
 	}
 
-	name = collapseWSP(strings.ToLower(name))
+	name = collapseWSP(lowerName(name))
 	name = strings.TrimSpace(name)
 
 	value = collapseWSP(value)
@@ -178,7 +178,7 @@ func hashHeaders(headers []Header, alg string) ([]byte, error) {
 			continue
 		}
 		canon := canonicalizeHeader(h)
-		pairs = append(pairs, canonPair{strings.ToLower(h.Name), canon})
+		pairs = append(pairs, canonPair{lowerName(h.Name), canon})
 	}
 
 	// Bottom-up ordering for duplicates: reverse slice before stable sort so
@@ -220,7 +220,7 @@ func canonicalizeSigHeader(raw string) []byte {
 		name = raw
 	}
 
-	name = strings.TrimSpace(strings.ToLower(name))
+	name = strings.TrimSpace(lowerName(name))
 
 	// Bytes, not runes -- see collapseWSP.
 	var b strings.Builder

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 )
 
 // VerifyFull is Verify with the whole §14.7 chain walk: after the top
@@ -148,7 +147,7 @@ func verifyUndoFrom(buf []byte, br *bufio.Reader, headers []Header, cs *chainSha
 func undoWalk(buf []byte, headers []Header) *VerifyResult {
 	highest := 0
 	for _, h := range headers {
-		if strings.ToLower(h.Name) == "message-instance" {
+		if lowerName(h.Name) == "message-instance" {
 			if mi, e := parseMI(h.Raw); e == nil && mi.Version > highest {
 				highest = mi.Version
 			}

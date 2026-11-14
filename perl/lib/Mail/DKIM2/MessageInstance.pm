@@ -113,8 +113,10 @@ BEGIN {
             my @vals = @_;
             my $headers = $self->{headers};
             my $max = @$headers / 2 - 1;
+            # Names as DKIM2 compares them: "Subject :" is a Subject.
+            my $want = Mail::DKIM2::Common::field_name($h);
             for my $idx (map { $_ * 2 } reverse 0..$max) {
-                next unless lc($headers->[$idx]) eq lc($h);
+                next unless Mail::DKIM2::Common::field_name($headers->[$idx]) eq $want;
                 if (@vals) {
                     $headers->[$idx+1] = shift @vals;
                 } else {
@@ -445,6 +447,11 @@ sub parse {
             # A non-empty object (minProperties 1); never null (section 5.1).
             die $invalid unless ref $top{h} eq 'HASH' && %{$top{h}};
             my %rh;
+            # Each key is a header field name (-09 section 5): ftext, so no
+            # WSP. "message-instance " is not a name -- and, taken for one
+            # by name matching that drops WSP before a colon, would let a
+            # Recipe rewrite the instances below it.
+            die $invalid if grep { !/\A[\x21-\x39\x3B-\x7E]+\z/ } keys %{$top{h}};
             for my $h (sort keys %{$top{h}}) {
                 $rh{$h} = _decode_recipe_list($top{h}{$h}, $bad, 'h.' . _path_name($h));
             }
@@ -529,10 +536,16 @@ sub h_digest {
     my ($msg, $alg, $prefixes) = @_;
     $alg = lc($alg // 'sha256');
 
+    # Fields grouped by name as DKIM2 compares names (field_name: "From :"
+    # is a From), names in order, each name's fields bottom-up.
+    my @pairs = $msg->header_obj->header_raw_pairs;
+    my %by;
+    push @{ $by{ Mail::DKIM2::Common::field_name($pairs[2 * $_]) } }, $pairs[2 * $_ + 1]
+        for 0 .. $#pairs / 2;
     my $data = '';
-    for my $header (sort { lc($a) cmp lc($b) } $msg->header_names) {
+    for my $header (sort keys %by) {
         next if should_skip($header, $prefixes);
-        for my $item (reverse $msg->header_raw($header)) {
+        for my $item (reverse @{ $by{$header} }) {
             my $chead = dkim2_canonicalize_header("$header: $item\r\n");
             warn "cdigest: $chead" if $DEBUG;
             $data .= $chead;
@@ -1019,18 +1032,28 @@ sub calculate {
 
     # calculate the header difference (always, even for UseEpilogue, since
     # wrapping changes Content-Type and we need rh to undo that)
-    my %all = map { lc($_) => 1 } ($current->header_names, $previous->header_names);
+    # Names as hashing and undo group them (field_name: "Subject :" is
+    # "subject"), so each Recipe key names the fields it is undone on.
+    my %all = map { Mail::DKIM2::Common::field_name($_) => 1 }
+              ($current->header_names, $previous->header_names);
     my %hdiff;
     for my $h (sort keys %all) {
         next if should_skip($h, $prefixes);
-        my @cur  = reverse $current->header_raw($h);
-        my @prev = reverse $previous->header_raw($h);
+        my @cur  = reverse Mail::DKIM2::Common::header_values($current, $h);
+        my @prev = reverse Mail::DKIM2::Common::header_values($previous, $h);
         # Same number of instances AND the same values: zero instances and
         # one empty instance both join to "", and removing an empty field
         # (a bare "Bcc:") is still a change the Recipe must record.
         next if @cur == @prev
              && join("\n", map { dkim2_canonicalize_header($_) } @cur)
              eq join("\n", map { dkim2_canonicalize_header($_) } @prev);
+        # A Recipe key is a header field name (-09 section 5): ftext. A
+        # field Email::Simple read under a name that is not one ("Y Bad:",
+        # a control character) cannot have its change recorded -- a verifier
+        # refuses the key -- so refuse to describe it rather than sign
+        # mail that no verifier accepts.
+        die "cannot record a change to the field \"$h\": not a header field name\n"
+            unless $h =~ /\A[\x21-\x39\x3B-\x7E]+\z/;
         # headers are indexed from 1 from the bottom up
         my %known;
         push @{ $known{dkim2_canonicalize_header($cur[$_])} }, $_ + 1 for 0..$#cur;
@@ -1325,7 +1348,16 @@ sub undo {
         for my $h (sort keys %$rh) {
             my $v = $rh->{$h};
             next unless defined $v;
-            my @old = reverse $msg->header_raw($h);
+            # Message-Instance and DKIM2-Signature fields are not content (-09
+            # section 6.2): a Recipe naming one acts on content fields of that
+            # name, of which there are none, and what it rebuilds is not hashed.
+            # Applying it to the received fields would let a hop rewrite the
+            # instances below its own -- a forged history the walk then checks.
+            if (Mail::DKIM2::Common::field_name($h) =~ /\A(?:message-instance|dkim2-signature)\z/) {
+                _apply_recipe("$h header", $v, []);
+                next;
+            }
+            my @old = reverse Mail::DKIM2::Common::header_values($msg, $h);
             my @new = _apply_recipe("$h header", $v, \@old);
             $msg->header_obj->header_set_reverse($h, @new);
         }

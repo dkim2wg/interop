@@ -66,6 +66,11 @@ a.badge:focus {
 
 main { padding-top: 1rem; padding-bottom: 2rem; }
 
+/* Subpage header: a page title and a one-line lede, no badge. */
+.hero.page { padding-top: 2rem; padding-bottom: 1.25rem; }
+.hero.page h1 { font-size: 2.2rem; letter-spacing: 0.01em; }
+.lede { font-size: 1.1rem; color: var(--muted); margin: 0; }
+
 section { margin: 2rem 0; }
 
 h2 { font-size: 1.35rem; margin: 0 0 0.5rem; }
@@ -132,3 +137,218 @@ footer {
   .hero h1 { font-size: 2.25rem; }
   .tagline { font-size: 1.1rem; }
 }
+
+/* ---- Grey-area diagram (home) ------------------------------------------ */
+.greyarea { margin: 1.5rem 0 1rem; }
+.greyarea-intro { font-size: 1.1rem; margin: 0 0 1rem; }
+.bar-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #2f6f79;
+  margin: 0.9rem 0 0.3rem;
+}
+.bar { display: flex; width: 100%; min-height: 2.6rem; }
+.bar .seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0.35rem 0.3rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.2;
+  min-width: 0;
+}
+.seg.good { background: #2f6f79; color: #fff; }
+.seg.grey { background: #cfd6e2; color: #1a2433; }
+.seg.bad  { background: #a63a2c; color: #fff; }
+.bar-note {
+  text-align: center;
+  font-style: italic;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0.35rem 0 0;
+}
+.greyarea .goal {
+  background: #172341;
+  color: #fff;
+  border-radius: 6px;
+  padding: 0.9rem 1.1rem;
+  margin: 1.2rem 0 0.4rem;
+  font-size: 1.05rem;
+}
+.greyarea .goal strong { color: #7fe0d0; }
+.greyarea figcaption { font-size: 0.8rem; font-style: italic; color: var(--muted); }
+.definition {
+  font-size: 1.15rem;
+  border-left: 4px solid #2f6f79;
+  padding: 0.2rem 0 0.2rem 0.9rem;
+  margin: 1.5rem 0 1rem;
+}
+
+@media (max-width: 30rem) {
+  .bar .seg { font-size: 0.8rem; padding: 0.3rem 0.15rem; }
+  .bar .seg .long { display: none; }
+  .greyarea .goal { font-size: 0.98rem; }
+}
+
+/* ---- Accountability chain (how/#accountability) ------------------------- */
+figure { margin: 1.25rem 0; }
+figure figcaption { font-style: italic; color: var(--muted); margin-top: 0.6rem; }
+.hops {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+.hops .hop {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  background: #f3f5f9;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 0.7rem 0.6rem;
+  text-align: center;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.hops .hop.inbox { background: #e6f2f3; }
+.hops h3 { font-size: 1rem; margin: 0 0 0.35rem; overflow-wrap: anywhere; }
+.hops p { margin: 0.1rem 0; overflow-wrap: anywhere; }
+.hops b { color: #2f6f79; }
+.hops .arrow { flex: 0 0 auto; align-self: center; margin: 0; color: #2f6f79; font-weight: 700; }
+.hops .arrow::before { content: "\2192"; }
+
+@media (max-width: 40rem) {
+  .hops { flex-direction: column; }
+  .hops .arrow::before { content: "\2193"; }
+}
+
+/* ---- Message-Instance before/after (how/#changes) ------------------------ */
+.mi-panels { display: flex; align-items: stretch; gap: 0.6rem; }
+.mi-panel {
+  flex: 1 1 0;
+  min-width: 0;
+  background: #f3f5f9;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+.mi-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2f6f79;
+  margin: 0 0 0.5rem;
+}
+.mi-msg {
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.9rem;
+}
+.mi-msg p { margin: 0; }
+.mi-msg .mi-body { color: var(--muted); font-size: 0.85rem; }
+.mi-msg mark { background: none; color: #b5651d; font-weight: 700; }
+.mi-hdr {
+  background: #172341;
+  color: #fff;
+  border-radius: 4px;
+  padding: 0.6rem 0.7rem;
+  margin: 0.5rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mi-hdr .hl { color: #7fe0d0; }
+.mi-hdr .dim { color: #9aa6bd; }
+.mi-note { font-size: 0.82rem; color: var(--muted); margin: 0; }
+.mi-arrow { flex: 0 0 auto; align-self: center; color: #2f6f79; font-size: 1.6rem; font-weight: 700; }
+.mi-arrow::before { content: "\2192"; }
+
+@media (max-width: 40rem) {
+  .mi-panels { flex-direction: column; align-items: stretch; }
+  .mi-arrow { text-align: center; }
+  .mi-arrow::before { content: "\2193"; }
+}
+
+/* ---- Paired tables (how/#domains) --------------------------------------- */
+.pair { display: flex; flex-wrap: wrap; gap: 0 1.5rem; }
+.pair table { flex: 1 1 18rem; width: auto; }
+.pair caption { text-align: left; font-weight: 600; padding-bottom: 0.3rem; }
+.pair td:first-child { width: 1.5rem; font-weight: 700; }
+
+ol.steps li { margin: 0.5rem 0; }
+
+/* ---- Deployments tables ------------------------------------------------- */
+.table-scroll { overflow-x: auto; }
+table.deployments { min-width: 34rem; }
+table.deployments td.yes { color: #2f6f79; font-weight: 700; text-align: center; }
+table.deployments th:nth-child(3), table.deployments th:nth-child(4) { text-align: center; }
+table.deployments td.since { white-space: nowrap; }
+table.deployments td.since small { color: var(--muted); }
+
+/* ---- Home hero: a big two-tone headline and buttons (after jmap.io) ---- */
+.hero.home { padding-top: 2.5rem; padding-bottom: 2.25rem; }
+.hero.home .badge { margin-bottom: 1.25rem; }
+.hero.home h1 {
+  font-size: clamp(2.6rem, 9vw, 4.2rem);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+  color: #172341;
+  margin: 0 0 1rem;
+}
+.hero.home h1 .accent { color: #2f6f79; }
+.hero.home .tagline { font-size: 1.15rem; color: var(--fg); }
+.cta { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1.4rem 0 0; }
+.button {
+  display: inline-block;
+  padding: 0.55rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid #cfe1e3;
+  background: #fff;
+  color: #1f5f69;
+  text-decoration: none;
+  font-weight: 500;
+}
+.button:hover, .button:focus-visible { border-color: #2f6f79; }
+.button.primary { background: #2f6f79; border-color: #2f6f79; color: #fff; }
+.button.primary:hover, .button.primary:focus-visible { background: #255a62; }
+
+/* ---- One-pass plan diagram (developers/#one-pass) ----------------------- */
+.plan { background: #f3f5f9; border: 1px solid var(--rule); border-radius: 8px; padding: 0.9rem; }
+.plan-story { margin: 0 0 0.8rem; font-size: 0.92rem; }
+.plan-row { display: flex; align-items: center; gap: 0.6rem; }
+.plan-m { flex: 0 0 2.6rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #172341; }
+.plan-segs { flex: 1 1 auto; display: flex; gap: 2px; min-width: 0; }
+.plan-segs span {
+  flex-basis: 0;
+  min-width: 0;
+  padding: 0.45rem 0.2rem;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 3px;
+}
+.seg-l   { background: #2f6f79; color: #fff; }
+.seg-lit { background: #e8a33d; color: #1a2433; min-width: 3rem !important; }
+.seg-gap { background: repeating-linear-gradient(45deg, #dfe4ec 0 6px, #f3f5f9 6px 12px); }
+.plan-recipe { margin: 0.35rem 0 0.35rem 3.2rem; font-size: 0.8rem; color: var(--muted); }
+.plan-recipe code { white-space: normal; }
+@media (max-width: 30rem) {
+  .plan-recipe { margin-left: 0; }
+  .plan-segs span { font-size: 0.72rem; }
+}
+.plan-legend { font-size: 0.8rem; color: var(--muted); margin: 0.7rem 0 0; line-height: 2; }
+.plan-legend span { display: inline-block; padding: 0 0.35rem; border-radius: 3px; font-weight: 600; font-size: 0.75rem; }

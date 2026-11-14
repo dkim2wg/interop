@@ -962,7 +962,8 @@ int dkim2_undo_walk_trace(dkim2_mi_t **mi_arr, int n_mi, char **hdrs, int n_hdrs
    streamed body), else on one made here from ctx->body. The undo walk when
    asked (ctx->undo_walk), when there are no body bytes at all (digest-only
    callers: the top body hash is checked, inner ones cannot be), and for the
-   one case the plan does not model. Returns 0, or -1 with errbuf set
+   one case the plan does not model -- which fails closed when the caller
+   streamed the body into its plan and kept no copy. Returns 0, or -1 with errbuf set
    ("FAIL..." / "PERMERROR..."). */
 static int verify_ctx_mi_chain(const dkim2_ctx_t *ctx, char *errbuf, size_t errbufsz) {
     const int MAX_MI = 64;
@@ -987,6 +988,15 @@ static int verify_ctx_mi_chain(const dkim2_ctx_t *ctx, char *errbuf, size_t errb
         int rc = dkim2_plan_check(plan, errbuf, errbufsz);
         if (plan != ctx->plan) dkim2_plan_free(plan);
         if (rc <= 0) return rc;
+        /* The plan hands this one to the undo walk, which needs the body
+           bytes: without them (a caller that streamed the body into the
+           plan, as the milter does) it would check only the top instance's
+           body hash, and a body rewritten below it would pass. */
+        if (!ctx->body) {
+            snprintf(errbuf, errbufsz,
+                     "PERMERROR: Message-Instance chain needs the message body to verify");
+            return -1;
+        }
     }
     return verify_mi_hashes(mi_sorted, n_mi, ctx->headers, ctx->n_headers,
                             ctx->body, ctx->body_len, ctx, errbuf, errbufsz);

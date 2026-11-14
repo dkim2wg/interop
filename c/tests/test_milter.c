@@ -339,6 +339,49 @@ int main(void) {
     set_reply(&c, "550", "5.7.1", "a%b\r\nc");
     CHECK(strcmp(c.reply, "a%%b  c") == 0);
 
+    /* A body whose last line has no line break, a Recipe that copies it and
+       adds a literal, and a further Recipe below: the one shape the planned
+       walk hands to the undo walk. The milter streams the body and keeps no
+       copy, so that walk used to run digest-only and check no body hash
+       below the top: a rewritten body went through the signer's gate (and
+       verified). Without the body bytes it must not pass. */
+    {
+        set_mode('s', "bank.example");
+        hdr_t h1[] = { { "From", "ceo@bank.example" }, { "To", "x@fwd.example" },
+                       { "Subject", "invoice" }, { NULL, NULL } };
+        char *fwd[] = { "<x@fwd.example>", NULL };
+        CHECK(run(&c, "<ceo@bank.example>", fwd, h1, "Pay Alice $10\r\n") == SMFIS_ACCEPT);
+        CHECK(c.n_add == 2);
+        char m1[4096], s1[4096];
+        snprintf(m1, sizeof m1, "%s", strchr(c.add[0], ':') + 2);
+        snprintf(s1, sizeof s1, "%s", strchr(c.add[1], ':') + 2);
+
+        const char *evil = "Pay Mallory $9999";            /* no final CRLF */
+        const char *hh[] = { "From: ceo@bank.example\r\n", "To: x@fwd.example\r\n",
+                             "Subject: invoice\r\n" };
+        char hb[64], bb[64];
+        dkim2_header_hash(hh, 3, hb, sizeof hb);
+        dkim2_body_hash(evil, strlen(evil), bb, sizeof bb);
+        const char *rj3 = "{\"b\":[{\"c\":[1,1]},{\"d\":[\"junk\"]}]}";
+        const char *rj2 = "{\"b\":[{\"c\":[1,1]}]}";
+        char r3[256], r2[128], m3[1024], m2[1024];
+        b64_encode((const unsigned char *)rj3, strlen(rj3), r3, sizeof r3);
+        b64_encode((const unsigned char *)rj2, strlen(rj2), r2, sizeof r2);
+        snprintf(m3, sizeof m3, "m=3; h=sha256:%s:%s; r=%s;", hb, bb, r3);
+        snprintf(m2, sizeof m2, "m=2; h=sha256:%s:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=; r=%s;", hb, r2);
+        hdr_t h2[] = { { "DKIM2-Signature", s1 }, { "Message-Instance", m3 },
+                       { "Message-Instance", m2 }, { "Message-Instance", m1 },
+                       { "From", "ceo@bank.example" }, { "To", "x@fwd.example" },
+                       { "Subject", "invoice" }, { NULL, NULL } };
+        char *victim[] = { "<victim@mx.example>", NULL };
+        set_mode('s', "fwd.example");
+        g_n_log = 0;
+        run(&c, "<x@fwd.example>", victim, h2, evil);
+        CHECK(!added_with(&c, "DKIM2-Signature", "d=fwd.example"));
+        CHECK(logged("needs the message body"));
+        set_mode('s', "example.net");
+    }
+
     remove(KEY);
     if (g_fail) { printf("test_milter: %d failure(s)\n", g_fail); return 1; }
     printf("test_milter: all passed\n");

@@ -1,0 +1,9 @@
+{
+  "name": "Fastmail",
+  "url": "https://www.fastmail.com/",
+  "kind": "mailbox provider",
+  "signs": true,
+  "verifies": true,
+  "since": "2026-09",
+  "source": "https://mailarchive.ietf.org/arch/msg/ietf-dkim/wH1OCtPwQdK5a6cmIRv0b64_6m4"
+}

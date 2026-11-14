@@ -733,16 +733,25 @@ bundle, rebuild, `make install`). Do not copy modules into
 - `mailman.dkim2.com` → proxy to gunicorn :8080
 - `sympa.dkim2.com` → FastCGI to wwsympa socket
 
-**Apex landing page:** Static `index.html` + `style.css` served from
-`/var/www/dkim2.com`. Source of truth is `deploy/www/` in this repo. The
-`dkim2.com` vhost is the 443 `default_server`, so the bare domain (and
-unknown-host hits) land on the explainer instead of falling through to
-Mailman. Deploy after editing `deploy/www/`:
+**Apex site:** static pages served from `/var/www/dkim2.com`: `index.html`
+(home), `how/`, `get-ready/`, `try/`, `implementations/`, `deployments/`,
+plus `style.css` and the `validate/` and `verify/` tools. Source of truth is
+`deploy/www/` in this repo. `deployments/index.html` is generated from one
+JSON file per entry (`deploy/www/deployments/README.md` says how to add
+one). The `dkim2.com` vhost is the 443 `default_server`, so the bare domain
+(and unknown-host hits) land on the site instead of falling through to
+Mailman.
+
+`deploy/bin/stage-www.sh DEST` runs the site tests and assembles the site
+into DEST; `deploy.sh` runs it into the web root. All links between the
+site's pages are relative, so the same output works from a subdirectory --
+to preview changes before they go live:
 ```bash
-ssh dkim2 'cd /root/interop && git pull && \
-    install -m 644 deploy/www/index.html deploy/www/style.css /var/www/dkim2.com/'
-# (no service restart needed — nginx serves the files directly)
+deploy/bin/stage-www.sh /tmp/site && \
+    rsync -r --delete /tmp/site/ dkim2:/var/www/dkim2.com/preview/
+# check https://dkim2.com/preview/, then deploy as usual and remove preview/
 ```
+(no service restart needed — nginx serves the files directly)
 
 **TLS certificates:** Let's Encrypt, stored at:
 - `/etc/letsencrypt/live/dkim2.com/` (covers `dkim2.com` + `www.dkim2.com`)

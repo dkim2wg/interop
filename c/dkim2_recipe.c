@@ -509,6 +509,15 @@ char *dkim2_apply_body_recipe(const char *r_json,
     return acc.out ? acc.out : calloc(1, 1);
 }
 
+/* The length of a field's name: up to its colon, less any WSP before the
+   colon (-09 §6.2 deletes it; "Subject :" is a Subject field). */
+static size_t field_name_len(const char *field, const char *colon) {
+    size_t nl = (size_t)(colon - field);
+    while (nl && (field[nl - 1] == ' ' || field[nl - 1] == '\t')) nl--;
+    return nl;
+}
+
+
 static char **headers_for_name(char **headers, int n, const char *lname,
                                 int *n_out) {
     /* `headers` is the caller's working array, which carries NULL holes where
@@ -519,7 +528,7 @@ static char **headers_for_name(char **headers, int n, const char *lname,
         if (!headers[i]) continue;
         const char *colon = strchr(headers[i], ':');
         if (!colon) continue;
-        size_t nl = (size_t)(colon - headers[i]);
+        size_t nl = field_name_len(headers[i], colon);
         char tmp[128];
         if (nl >= sizeof tmp) continue;
         for (size_t j = 0; j < nl; j++) tmp[j] = (char)tolower((unsigned char)headers[i][j]);
@@ -533,7 +542,7 @@ static char **headers_for_name(char **headers, int n, const char *lname,
         if (!headers[i]) continue;
         const char *colon = strchr(headers[i], ':');
         if (!colon) continue;
-        size_t nl = (size_t)(colon - headers[i]);
+        size_t nl = field_name_len(headers[i], colon);
         char tmp[128];
         if (nl >= sizeof tmp) continue;
         for (size_t j = 0; j < nl; j++) tmp[j] = (char)tolower((unsigned char)headers[i][j]);
@@ -650,7 +659,7 @@ char **dkim2_apply_header_recipe(const char *r_json,
             if (!working[i]) continue;
             const char *colon = strchr(working[i], ':');
             if (!colon) continue;
-            size_t nl = (size_t)(colon - working[i]);
+            size_t nl = field_name_len(working[i], colon);
             char tmp[128];
             if (nl >= sizeof tmp) continue;
             for (size_t j = 0; j < nl; j++) tmp[j] = (char)tolower((unsigned char)working[i][j]);
@@ -661,8 +670,15 @@ char **dkim2_apply_header_recipe(const char *r_json,
         /* Append new_vals in reverse (bottom-up → natural top-down order) */
         for (int i = n_new - 1; i >= 0; i--) {
             if (working_n >= working_cap) {
+                char **grown = realloc(working, (size_t)working_cap * 2 * sizeof(char *));
+                if (!grown) {
+                    /* new_vals[i+1..] are working's now; fail frees those. */
+                    for (int k = i; k >= 0; k--) free(new_vals[k]);
+                    n_new = 0;
+                    goto fail;
+                }
+                working = grown;
                 working_cap *= 2;
-                working = realloc(working, (size_t)working_cap * sizeof(char *));
             }
             working[working_n++] = new_vals[i];
         }

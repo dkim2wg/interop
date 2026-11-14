@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 )
 
 // ErrUnrecoverable reports that the previous body cannot be reconstructed *by
@@ -45,7 +44,7 @@ func undo(r io.Reader, w io.Writer, targetVersion int, walkPastNull bool) error 
 	var contentHeaders []Header
 
 	for _, h := range headers {
-		switch strings.ToLower(h.Name) {
+		switch lowerName(h.Name) {
 		case "message-instance":
 			mi, err := parseMI(h.Raw)
 			if err != nil {

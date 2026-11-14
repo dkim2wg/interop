@@ -60,7 +60,7 @@ func parseReport(raw []byte) (*dsnReport, error) {
 
 	var ct string
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "content-type") {
+		if lowerName(h.Name) == "content-type" {
 			ct = h.Raw
 		}
 	}
@@ -414,9 +414,9 @@ func Propagate(raw []byte, opts PropagateOptions) ([]byte, string, error) {
 		assembled.WriteString("From: MAILER-DAEMON@" + opts.Domain + "\r\n")
 	}
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "message-instance") ||
-			strings.EqualFold(h.Name, "dkim2-signature") ||
-			(rewriteFrom && strings.EqualFold(h.Name, "from")) {
+		if (lowerName(h.Name) == "message-instance") ||
+			(lowerName(h.Name) == "dkim2-signature") ||
+			(rewriteFrom && (lowerName(h.Name) == "from")) {
 			continue
 		}
 		assembled.WriteString(h.Raw)
@@ -457,7 +457,7 @@ func upstreamSigMIVersion(raw []byte) (int, bool) {
 	}
 	var sigs []*DKIM2Signature
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "dkim2-signature") {
+		if lowerName(h.Name) == "dkim2-signature" {
 			if sig, err := parseSig(h.Raw); err == nil {
 				sigs = append(sigs, sig)
 			}
@@ -478,7 +478,7 @@ func topMIVersion(raw []byte) (int, bool) {
 	}
 	top, found := 0, false
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "message-instance") {
+		if lowerName(h.Name) == "message-instance" {
 			if mi, err := parseMI(h.Raw); err == nil && mi.Version > top {
 				top, found = mi.Version, true
 			}
@@ -502,7 +502,7 @@ func stripTopMI(raw []byte) ([]byte, error) {
 
 	maxV, found := -1, false
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "message-instance") {
+		if lowerName(h.Name) == "message-instance" {
 			if mi, err := parseMI(h.Raw); err == nil && mi.Version > maxV {
 				maxV, found = mi.Version, true
 			}
@@ -513,7 +513,7 @@ func stripTopMI(raw []byte) ([]byte, error) {
 	}
 	var out bytes.Buffer
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "message-instance") {
+		if lowerName(h.Name) == "message-instance" {
 			if mi, err := parseMI(h.Raw); err == nil && mi.Version == maxV {
 				continue
 			}
@@ -540,7 +540,7 @@ func stripTopSig(raw []byte) ([]byte, error) {
 	bySeq := map[int]*DKIM2Signature{}
 	var seqs []int
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "dkim2-signature") {
+		if lowerName(h.Name) == "dkim2-signature" {
 			if sig, err := parseSig(h.Raw); err == nil {
 				bySeq[sig.Sequence] = sig
 				seqs = append(seqs, sig.Sequence)
@@ -561,7 +561,7 @@ func stripTopSig(raw []byte) ([]byte, error) {
 
 	var out bytes.Buffer
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "dkim2-signature") {
+		if lowerName(h.Name) == "dkim2-signature" {
 			if sig, err := parseSig(h.Raw); err == nil && drop[sig.Sequence] {
 				continue
 			}
@@ -581,7 +581,7 @@ func topSig(raw []byte) (*DKIM2Signature, error) {
 	}
 	var top *DKIM2Signature
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "dkim2-signature") {
+		if lowerName(h.Name) == "dkim2-signature" {
 			if sig, err := parseSig(h.Raw); err == nil {
 				if top == nil || sig.Sequence > top.Sequence {
 					top = sig
@@ -606,7 +606,7 @@ func originSig(raw []byte) (*DKIM2Signature, error) {
 	}
 	var bottom *DKIM2Signature
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "dkim2-signature") {
+		if lowerName(h.Name) == "dkim2-signature" {
 			if sig, err := parseSig(h.Raw); err == nil {
 				if bottom == nil || sig.Sequence < bottom.Sequence {
 					bottom = sig

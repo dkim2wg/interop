@@ -27,6 +27,8 @@ our @EXPORT_OK = qw(
     check_ignore_prefixes
     dkim2_canonicalize_header
     dkim2_canonicalize_sig_header
+    field_name
+    header_values
     digest64
     encode_tag_json
     decode_tag_json
@@ -297,6 +299,27 @@ sub combine_sets {
 # 3. Collapse runs of WSP to single SP
 # 4. Strip trailing WSP before CRLF
 # 5. Remove WSP around the colon
+# field_name($name): a header field's name as DKIM2 compares it: lowercased,
+# without the WSP RFC 5322's obsolete syntax (obs-optional) allows between it
+# and the colon. "From :" is a From field (-09 section 6.2 deletes that WSP);
+# taking the WSP as part of the name hid such a field from the From check.
+sub field_name {
+    my ($name) = @_;
+    ($name = lc($name // '')) =~ s/[ \t]+\z//;
+    return $name;
+}
+
+# header_values($msg, $name): the values of every field of an Email::MIME
+# message whose field_name is $name's, in order -- header_raw, but finding
+# "From :" (which Email::Simple files under "From ") as well.
+sub header_values {
+    my ($msg, $name) = @_;
+    my $want = field_name($name);
+    my @pairs = $msg->header_obj->header_raw_pairs;
+    return map { $pairs[2 * $_ + 1] }
+           grep { field_name($pairs[2 * $_]) eq $want } 0 .. $#pairs / 2;
+}
+
 sub dkim2_canonicalize_header {
     my ($line) = @_;
     # Unfold: remove CRLF followed by WSP
@@ -304,8 +327,9 @@ sub dkim2_canonicalize_header {
     # Split on colon
     my ($name, $value) = split(/:/, $line, 2);
     return $line unless defined $value;
-    # Lowercase name
-    $name = lc($name);
+    # Lowercase name, without the WSP RFC 5322's obsolete syntax allows
+    # before the colon (-09 section 6.2 deletes it)
+    $name = field_name($name);
     # Collapse WSP runs to single SP
     $value =~ s/[ \t]+/ /g;
     # Strip leading and trailing WSP from value
@@ -1314,6 +1338,19 @@ Header-hash canonicalization (section 5.2) of one complete header line
 including its CRLF: unfold, lowercase the name, collapse whitespace runs to
 one space, trim whitespace around the colon and at the end. Returns
 C<name:value\r\n>.
+
+=head2 field_name($name)
+
+A header field name as DKIM2 compares it: lowercased, without the white
+space RFC 5322's obsolete syntax allows between the name and its colon
+(-09 section 6.2 deletes it), so C<From :> names a From field. New in 0.31.
+
+=head2 header_values($msg, $name)
+
+The values of every field of an L<Email::MIME> message whose
+C<field_name> is C<$name>'s, in order: C<header_raw>, but also finding a
+field written with white space before its colon, which L<Email::Simple>
+files under a name that includes it. New in 0.31.
 
 =head2 dkim2_canonicalize_sig_header($line)
 

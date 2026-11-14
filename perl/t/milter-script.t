@@ -1064,4 +1064,54 @@ sub info_has { my ($mods, $re) = @_; scalar grep { $_->{value} =~ $re } inserted
     ok(!$back->header_raw('Message-Instance'), 'munge: nothing below m=1');
 }
 
+# --- -09 section 14.4: the envelope must match the top signature ---
+# Inbound, a message signed for rt=<list@test2> and replayed to someone else
+# fails: nothing else binds it to the transaction it arrived in. An internal
+# hop behind one that already checked turns that off.
+{
+    my (undef, $sock_e) = spawn_milter(mode => 'inbound');
+    my ($verdict, $mods) = run_milter(sock => $sock_e,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'],
+        message => originator_signed());
+    my ($ar) = inserted($mods, 'Authentication-Results');
+    like($ar ? $ar->{value} : '', qr/dkim2=pass/, 'envelope: the envelope signed for passes');
+
+    ($verdict, $mods) = run_milter(sock => $sock_e,
+        from => 'author@test1.dkim2.com', rcpt => ['someone@test2.dkim2.com'],
+        message => originator_signed());
+    ($ar) = inserted($mods, 'Authentication-Results');
+    like($ar ? $ar->{value} : '',
+        qr/dkim2=fail .*RCPT TO <someone\@test2\.dkim2\.com> did not match/,
+        'envelope: a replay to another recipient fails');
+
+    ($verdict, $mods) = run_milter(sock => $sock_e,
+        from => 'other@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'],
+        message => originator_signed());
+    ($ar) = inserted($mods, 'Authentication-Results');
+    like($ar ? $ar->{value} : '', qr/dkim2=fail .*MAIL FROM <other\@test1\.dkim2\.com> did not match/,
+        'envelope: another MAIL FROM fails');
+
+    my (undef, $sock_n) = spawn_milter(mode => 'inbound', extra => ['--no-envelope-check']);
+    ($verdict, $mods) = run_milter(sock => $sock_n,
+        from => 'author@test1.dkim2.com', rcpt => ['someone@test2.dkim2.com'],
+        message => originator_signed());
+    ($ar) = inserted($mods, 'Authentication-Results');
+    like($ar ? $ar->{value} : '', qr/dkim2=pass/, 'envelope: --no-envelope-check does not check');
+}
+
+# --- The verdict's detail quotes signature fields: a crafted i= value must
+# not close the Authentication-Results comment and add properties ---
+{
+    my (undef, $sock_a) = spawn_milter(mode => 'inbound');
+    my $msg = "DKIM2-Signature: i=x)header.d=paypal.com(policy.dkim2=\"pass\"; m=1; t=1;"
+            . " d=test1.dkim2.com; s=sel1:rsa-sha256:AAAA\r\n" . $PLAIN;
+    my ($verdict, $mods) = run_milter(sock => $sock_a,
+        from => 'author@test1.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $msg);
+    my ($ar) = inserted($mods, 'Authentication-Results');
+    my $v = $ar ? $ar->{value} : '';
+    like($v, qr/\Alocalhost; dkim2=permerror \(/, 'A-R: permerror');
+    like($v, qr/i=x\\\)header\.d=paypal\.com\\\(policy/, 'A-R: the ( and ) of a quoted field are escaped');
+    unlike($v, qr/[^\\]\)header\.d=/, '  ... so the comment does not end early');
+}
+
 done_testing;

@@ -1,0 +1,8 @@
+{
+  "name": "Squarespace",
+  "url": "https://www.squarespace.com/",
+  "kind": "sender platform",
+  "signs": true,
+  "verifies": false,
+  "since": "2026-11"
+}

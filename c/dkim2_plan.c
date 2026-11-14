@@ -216,7 +216,12 @@ static int group_get(dkim2_plan_t *p, const char *name, size_t nl) {
     int gi = group_find(p, ln, nl);
     if (gi >= 0) { free(ln); return gi; }
     if (grow((void **)&p->g, &p->cap_g, p->n_g + 1, sizeof *p->g) < 0) { free(ln); return -1; }
-    p->g[p->n_g] = (hgroup_t){ ln, !dkim2_hdr_ignored(ln, nl), NULL, NULL, 0 };
+    /* Hashed or not by the name as the canonicaliser takes it, WSP before
+       a colon dropped: a Recipe key such as "message-instance " is no field
+       name, but its literals are canonicalised (and ignored) as one. */
+    size_t hl = nl;
+    while (hl && (ln[hl - 1] == ' ' || ln[hl - 1] == '\t')) hl--;
+    p->g[p->n_g] = (hgroup_t){ ln, !dkim2_hdr_ignored(ln, hl), NULL, NULL, 0 };
     if (group_index(p, p->n_g) < 0) { free(ln); return -1; }
     return p->n_g++;
 }
@@ -478,6 +483,8 @@ dkim2_plan_t *dkim2_plan_new(dkim2_mi_t **mi_arr, int n_mi,
         const char *colon = strchr(hdrs[i], ':');
         if (!colon) continue;
         size_t nl = (size_t)(colon - hdrs[i]);
+        /* -09 §6.2: the name without any WSP before its colon. */
+        while (nl && (hdrs[i][nl - 1] == ' ' || hdrs[i][nl - 1] == '\t')) nl--;
         if ((nl == 16 && strncasecmp(hdrs[i], "message-instance", 16) == 0) ||
             (nl == 15 && strncasecmp(hdrs[i], "dkim2-signature", 15) == 0)) continue;
         int gi = group_get(p, hdrs[i], nl);

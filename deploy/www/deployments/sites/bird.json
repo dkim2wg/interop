@@ -1,0 +1,8 @@
+{
+  "name": "Bird",
+  "url": "https://bird.com/",
+  "kind": "sender platform",
+  "signs": true,
+  "verifies": false,
+  "since": "2026-10"
+}

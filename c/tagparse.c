@@ -14,6 +14,10 @@ static char *strdup_trim(const char *s, const char *end) {
     return r;
 }
 
+static int cmp_name(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
 static int is_fws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 static int is_alpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
@@ -29,6 +33,7 @@ taglist_t *tagparse(const char *input, const char **errp) {
     taglist_t *tl = calloc(1, sizeof *tl);
     if (!tl) return NULL;
     tag_entry_t **tail = &tl->head;
+    size_t n = 0;
     const char *p = input;
     while (*p) {
         const char *frag = p;
@@ -68,12 +73,22 @@ taglist_t *tagparse(const char *input, const char **errp) {
         /* -09 §8: tag names are case sensitive and written in lowercase
            (contract D10): the name is kept as written, and "M" is another
            tag than "m" -- an unknown one, which callers ignore.
-           "Tags with duplicate names MUST NOT occur" -- flag any repeat,
-           compared exactly. */
-        for (tag_entry_t *o = tl->head; o; o = o->next)
-            if (strcmp(o->name, e->name) == 0) { tl->duplicate = 1; break; }
+           "Tags with duplicate names MUST NOT occur": checked below. */
         *tail = e;
         tail = &e->next;
+        n++;
+    }
+    /* Any repeated name, compared exactly: sorted, so a field of many tags
+       costs n log n rather than a scan of the list per tag. */
+    if (n > 1) {
+        const char **names = malloc(n * sizeof *names);
+        if (!names) { taglist_free(tl); return NULL; }
+        size_t k = 0;
+        for (tag_entry_t *e = tl->head; e; e = e->next) names[k++] = e->name;
+        qsort(names, n, sizeof *names, cmp_name);
+        for (size_t i = 1; i < n; i++)
+            if (strcmp(names[i - 1], names[i]) == 0) { tl->duplicate = 1; break; }
+        free(names);
     }
     (void)errp;
     return tl;
