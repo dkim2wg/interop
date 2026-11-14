@@ -5,6 +5,8 @@ use warnings;
 our $VERSION = '0.32';
 
 
+use Mail::DKIM2::Fold ();
+use Mail::DKIM2::Util ();
 use Mail::DKIM2::Digest;
 use Email::MIME;
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -16,18 +18,15 @@ use Mail::DKIM2::TagValueList ();
 use Mail::DKIM2::Common qw(
     MI_MISSING_M_ERROR
     parse_mime
-    should_skip
-    dkim2_canonicalize_header
-    encode_tag_json
-    decode_tag_json
     extract_mi_version
-    check_ignore_prefixes
     MAX_CHAIN_LENGTH
     chain_length_error
     chain_number_error
     mi_version_tag
     duplicate_number_error
 );
+use Mail::DKIM2::Canon qw(should_skip dkim2_canonicalize_header check_ignore_prefixes);
+use Mail::DKIM2::RecipeJSON qw(encode_tag_json decode_tag_json);
 
 # The PERMERROR for a message whose Message-Instance fields cannot form a
 # chain, or undef.
@@ -87,7 +86,7 @@ sub parse_hash_groups {
             my @hashes = split /:/, $rest, -1;
             # Both are base64strings (§2.14), whatever the algorithm.
             return unless @hashes == 2
-                && !grep { !Mail::DKIM2::Common::_is_base64string($_) } @hashes;
+                && !grep { !Mail::DKIM2::Util::is_base64string($_) } @hashes;
             push @sets, [$name, @hashes];
         }
         push @out, \@sets;
@@ -111,9 +110,9 @@ BEGIN {
             my $headers = $self->{headers};
             my $max = @$headers / 2 - 1;
             # Names as DKIM2 compares them: "Subject :" is a Subject.
-            my $want = Mail::DKIM2::Common::field_name($h);
+            my $want = Mail::DKIM2::Canon::field_name($h);
             for my $idx (map { $_ * 2 } reverse 0..$max) {
-                next unless Mail::DKIM2::Common::field_name($headers->[$idx]) eq $want;
+                next unless Mail::DKIM2::Canon::field_name($headers->[$idx]) eq $want;
                 if (@vals) {
                     $headers->[$idx+1] = shift @vals;
                 } else {
@@ -283,7 +282,7 @@ sub as_string {
 # apart.
 sub as_header {
     my ($self) = @_;
-    return Mail::DKIM2::Common::fold_header('Message-Instance: ' . $self->as_string);
+    return Mail::DKIM2::Fold::fold_header('Message-Instance: ' . $self->as_string);
 }
 
 sub as_header_value {
@@ -301,14 +300,14 @@ sub changes {
     my $bits = $self->{bits};
     return {
         body    => $bits->{rb_null} ? 'unrecoverable' : $bits->{rb} ? 'changed' : 'unchanged',
-        headers => [ sort map { Mail::DKIM2::Common::field_name($_) } keys %{ $bits->{rh} || {} } ],
+        headers => [ sort map { Mail::DKIM2::Canon::field_name($_) } keys %{ $bits->{rh} || {} } ],
     };
 }
 
 # True if this instance has a header Recipe for the field named $name.
 sub changes_header {
     my ($self, $name) = @_;
-    my $want = Mail::DKIM2::Common::field_name($name);
+    my $want = Mail::DKIM2::Canon::field_name($name);
     return (grep { $_ eq $want } @{ $self->changes->{headers} }) ? 1 : 0;
 }
 
@@ -343,7 +342,7 @@ sub _encode_recipe_list {
             # section 5 schema forbids and Go rejects as invalid JSON.
             push @encoded, { c => [ map { 0 + $_ } @$item ] };
         } else {
-            my $kind = Mail::DKIM2::Common::_is_utf8_octets($item) ? 'd' : 'u';
+            my $kind = Mail::DKIM2::RecipeJSON::is_utf8_octets($item) ? 'd' : 'u';
             $flush->() if $kind ne $pending_kind;
             $pending_kind = $kind;
             push @pending, $kind eq 'u' ? encode_base64($item, '') : $item;
@@ -559,7 +558,7 @@ sub h_digest {
     # is a From), names in order, each name's fields bottom-up.
     my @pairs = $msg->header_obj->header_raw_pairs;
     my %by;
-    push @{ $by{ Mail::DKIM2::Common::field_name($pairs[2 * $_]) } }, $pairs[2 * $_ + 1]
+    push @{ $by{ Mail::DKIM2::Canon::field_name($pairs[2 * $_]) } }, $pairs[2 * $_ + 1]
         for 0 .. $#pairs / 2;
     my $data = '';
     for my $header (sort keys %by) {
@@ -770,7 +769,7 @@ sub _check_body_unchanged {
 
 sub calculate {
     my ($class, $current, $previous, %opts) = @_;
-    Mail::DKIM2::Common::_check_options("$class->calculate", \%opts,
+    Mail::DKIM2::Util::check_options("$class->calculate", \%opts,
         qw(Algs BodyHash BodyRecipe IgnorePrefixes MaxRecipeLiterals));
     croak "need a message" unless $current;
 
@@ -913,13 +912,13 @@ sub calculate {
     # The header difference.
     # Names as hashing and undo group them (field_name: "Subject :" is
     # "subject"), so each Recipe key names the fields it is undone on.
-    my %all = map { Mail::DKIM2::Common::field_name($_) => 1 }
+    my %all = map { Mail::DKIM2::Canon::field_name($_) => 1 }
               ($current->header_names, $previous->header_names);
     my %hdiff;
     for my $h (sort keys %all) {
         next if should_skip($h, $prefixes);
-        my @cur  = reverse Mail::DKIM2::Common::header_values($current, $h);
-        my @prev = reverse Mail::DKIM2::Common::header_values($previous, $h);
+        my @cur  = reverse Mail::DKIM2::Canon::header_values($current, $h);
+        my @prev = reverse Mail::DKIM2::Canon::header_values($previous, $h);
         # Same number of instances AND the same values: zero instances and
         # one empty instance both join to "", and removing an empty field
         # (a bare "Bcc:") is still a change the Recipe must record.
@@ -979,7 +978,7 @@ sub calculate {
 
 sub calculate_first {
     my ($class, $current, $previous, %opts) = @_;
-    Mail::DKIM2::Common::_check_options("$class->calculate_first", \%opts,
+    Mail::DKIM2::Util::check_options("$class->calculate_first", \%opts,
         qw(Algs IgnorePrefixes MaxRecipeLiterals));
     croak "need a message" unless $current;
     croak "need a previous message" unless $previous;
@@ -1014,7 +1013,7 @@ sub calculate_first {
 
 sub verify {
     my ($class, $msg, %opts) = @_;
-    Mail::DKIM2::Common::_check_options("$class->verify", \%opts,
+    Mail::DKIM2::Util::check_options("$class->verify", \%opts,
         qw(HeadersOnly IgnorePrefixes BodyHashes));
     croak "need a message" unless $msg;
     check_ignore_prefixes($opts{IgnorePrefixes});
@@ -1186,7 +1185,7 @@ sub _body_raw_set {
 
 sub undo {
     my ($class, $msg, %opts) = @_;
-    Mail::DKIM2::Common::_check_options("$class->undo", \%opts, qw(HeadersOnly));
+    Mail::DKIM2::Util::check_options("$class->undo", \%opts, qw(HeadersOnly));
     croak "need a message" unless $msg;
 
     unless (ref($msg) && $msg->isa('Email::MIME')) {
@@ -1231,11 +1230,11 @@ sub undo {
             # name, of which there are none, and what it rebuilds is not hashed.
             # Applying it to the received fields would let a hop rewrite the
             # instances below its own -- a forged history the walk then checks.
-            if (Mail::DKIM2::Common::field_name($h) =~ /\A(?:message-instance|dkim2-signature)\z/) {
+            if (Mail::DKIM2::Canon::field_name($h) =~ /\A(?:message-instance|dkim2-signature)\z/) {
                 _apply_recipe("$h header", $v, []);
                 next;
             }
-            my @old = reverse Mail::DKIM2::Common::header_values($msg, $h);
+            my @old = reverse Mail::DKIM2::Canon::header_values($msg, $h);
             my @new = _apply_recipe("$h header", $v, \@old);
             $msg->header_obj->header_set_reverse($h, @new);
         }
@@ -1253,7 +1252,7 @@ sub undo {
 # Returns (1, undef) on success or (0, reason) on the first failure.
 sub chain_verifies {
     my ($class, $msg, %opts) = @_;
-    Mail::DKIM2::Common::_check_options("$class->chain_verifies", \%opts,
+    Mail::DKIM2::Util::check_options("$class->chain_verifies", \%opts,
         qw(IgnorePrefixes));
     check_ignore_prefixes($opts{IgnorePrefixes});
     unless (ref($msg) && $msg->isa('Email::MIME')) {
@@ -1584,7 +1583,7 @@ Recipes in internal form), and C<rb_null>, true for a null body Recipe.
 =head2 h_digest($email_mime, [$alg], [\@prefixes])
 
 The base64 header hash of a message: every field not excluded by
-L<Mail::DKIM2::Common/should_skip>, canonicalized, sorted by name,
+L<Mail::DKIM2::Canon/should_skip>, canonicalized, sorted by name,
 repeated fields in bottom-up order.
 
 =head2 b_digest($email_mime, [$alg])

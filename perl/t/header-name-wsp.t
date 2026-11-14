@@ -28,7 +28,8 @@ sub signed {
     my $mi  = Mail::DKIM2::MessageInstance->calculate($raw);
     my $msg = "Message-Instance: " . $mi->as_string . "\r\n$raw";
     no warnings 'redefine';
-    local *Mail::DKIM2::Common::from_pair_error = sub { undef };
+    no warnings 'redefine';
+    local *Mail::DKIM2::Address::from_pair_error = sub { undef };
     my $s = Mail::DKIM2::Signer->new(
         Domain => 'test1.dkim2.com', Selector => 'sel1',
         Key => DKIM2TestKeys::private_key('test1.dkim2.com', 'sel1'),

@@ -5,6 +5,7 @@ use warnings;
 our $VERSION = '0.32';
 
 use Carp ();
+use Mail::DKIM2::Util ();
 use Mail::DKIM2::Common qw(
     MI_MISSING_M_ERROR
     MAX_CHAIN_LENGTH
@@ -258,7 +259,7 @@ sub numbering_error {
 # highest. Signatures => 0 checks the instances alone.
 sub structure_error {
     my ($self, %o) = @_;
-    Mail::DKIM2::Common::_check_options('structure_error', \%o, qw(Signatures AllowUnsigned));
+    Mail::DKIM2::Util::check_options('structure_error', \%o, qw(Signatures AllowUnsigned));
     my $sigs = $o{Signatures} // 1;
     if (my $error = $self->numbering_error(Signatures => $sigs)) {
         return $error;

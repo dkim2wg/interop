@@ -10,17 +10,11 @@ use Carp;
 use Time::HiRes ();
 use Scalar::Util ();
 
-use Mail::DKIM2::Common qw(
-    MAX_SIGNATURE_ITEMS
-    combine_sets
-    build_signing_input
-    domain_of
-    to_alabel
-    relaxed_domain_match
-    check_ignore_prefixes
-    FUTURE_LIMIT
-    EXPIRY
-);
+use Mail::DKIM2::Key ();
+use Mail::DKIM2::Util ();
+use Mail::DKIM2::Common qw(MAX_SIGNATURE_ITEMS combine_sets FUTURE_LIMIT EXPIRY);
+use Mail::DKIM2::Address qw(domain_of to_alabel relaxed_domain_match);
+use Mail::DKIM2::Canon qw(build_signing_input check_ignore_prefixes);
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::BodyPlan;
@@ -32,7 +26,7 @@ use Mail::DKIM2::HeaderPlan;
 # algorithm is a PERMERROR member of its group (§14.6).
 sub _key_class {
     my ($alg) = @_;
-    my $entry = Mail::DKIM2::Common::signature_algorithm($alg) or return;
+    my $entry = Mail::DKIM2::Key::signature_algorithm($alg) or return;
     return $entry->{key_class};
 }
 
@@ -450,7 +444,7 @@ sub _from_pairs {
 # domain and that domain's Domain Policy Record does not forbid it.
 sub _from_pair_authentic {
     my ($self, $i, $d, @from) = @_;
-    my $e = Mail::DKIM2::Common::from_pair_error($d, sub {
+    my $e = Mail::DKIM2::Address::from_pair_error($d, sub {
         my ($dom) = @_;
         return $self->{_policy}{$dom} //= $self->_domain_policy($dom);
     }, @from) or return 1;
@@ -466,7 +460,7 @@ sub _domain_policy {
     my ($self, $dom) = @_;
     # Without a PolicyCallback, fetch_domain_policy: it reads the answer
     # _prefetch_policies asked for, if any, before it queries.
-    my ($p, $why) = Mail::DKIM2::Common::policy_from_source($dom,
+    my ($p, $why) = Mail::DKIM2::Key::policy_from_source($dom,
         $self->{PolicyCallback} // sub { $self->fetch_domain_policy($_[0]) },
         sub { $self->_resolver }, $self);
     $self->{diagnostic} = $why if defined $why;
@@ -652,7 +646,7 @@ sub _check_sig_field {
     # that is merely like a known one must never be verified as it.
     for my $idx (0 .. $signature->sig_count - 1) {
         return $self->_error(permerror => "DKIM2-Signature i=$i syntax error")
-            unless Mail::DKIM2::Common::_is_base64string($signature->signature_value($idx) // '');
+            unless Mail::DKIM2::Util::is_base64string($signature->signature_value($idx) // '');
     }
     # -09 section 10.9: a duplicate Selector within this signature's s=
     # tag, in any group -- after the values' syntax, before the item limit
@@ -763,7 +757,7 @@ sub _check_sig_item {
     my $signing_input = $dk2_entry->{signing_input};
     my $sig_raw = decode_base64($signature->signature_value($idx));
     my $verified = eval {
-        Mail::DKIM2::Common::signature_algorithm($alg)->{verify}->($pubkey, $signing_input, $sig_raw);
+        Mail::DKIM2::Key::signature_algorithm($alg)->{verify}->($pubkey, $signing_input, $sig_raw);
     };
     if ($@) {
         die $@ if ref $@;
@@ -890,11 +884,11 @@ sub fetch_public_key {
     # several RRs for one selector are an error (-09 §14.5).
     # -09 section 3.7: records beginning v= other than DKIM1 are ignored
     # before counting (contract E4).
-    my @txt = Mail::DKIM2::Common::key_records(
+    my @txt = Mail::DKIM2::Key::key_records(
         map { join '', $_->txtdata } grep { $_->type eq 'TXT' } $reply->answer);
     return unless @txt;
     croak "PERMERROR: has multiple records\n" if @txt > 1;
-    my ($key, $why) = Mail::DKIM2::Common::parse_dkim_key_record($txt[0]);
+    my ($key, $why) = Mail::DKIM2::Key::parse_dkim_key_record($txt[0]);
     $why = 'algorithm mismatch'
         if $why && $why eq 'has an unsupported key type';
     croak "PERMERROR: $why\n" if $why;
@@ -985,7 +979,7 @@ sub _prefetch_policies {
         last if $sent >= $PREFETCH_MAX;
         my ($i, $from) = @$pair;
         my $d = $dk2_map{$i}{sig}->domain // next;
-        my ($state, $dom) = Mail::DKIM2::Common::from_mailbox(@$from);
+        my ($state, $dom) = Mail::DKIM2::Address::from_mailbox(@$from);
         next unless $state eq 'ok' && length $d
             && !relaxed_domain_match($dom, $d) && relaxed_domain_match($d, $dom);
         my $fqdn = "_domainkey.$dom";
@@ -1467,7 +1461,7 @@ A record that is present but unusable dies with C<PERMERROR: E<lt>whyE<gt>>,
 which the verifier reports as C<permerror> naming the selector (-08
 section 14.5): C<has multiple records> (more than one TXT RR; several
 strings in one RR are joined), C<has a syntax error> and C<has been
-revoked> (see L<Mail::DKIM2::Common/parse_dkim_key_record>), or
+revoked> (see L<Mail::DKIM2::Key/parse_dkim_key_record>), or
 C<algorithm mismatch> (a C<k=> that is not the signature algorithm's).
 Records that begin with a C<v=> tag whose value is not C<DKIM1> are ignored
 before they are counted (-09 section 3.7; new in 0.29).

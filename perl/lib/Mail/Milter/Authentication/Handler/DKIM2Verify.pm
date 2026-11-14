@@ -7,7 +7,8 @@ use Mail::Milter::Authentication::Pragmas;
 our $VERSION = '0.32';
 use base 'Mail::Milter::Authentication::Handler';
 
-use Mail::DKIM2::Common qw(extract_mi_version parse_dkim_pubkey parse_mime);
+use Mail::DKIM2::Common qw(extract_mi_version parse_mime);
+use Mail::DKIM2::Key qw(parse_dkim_pubkey);
 use Mail::DKIM2::Verifier;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::MessageStore;

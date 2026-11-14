@@ -8,7 +8,9 @@ use Email::MIME;
 use Carp;
 use List::Util qw(max);
 
-use Mail::DKIM2::Common qw(domain_of relaxed_domain_match parse_mime extract_mi_version);
+use Mail::DKIM2::Util ();
+use Mail::DKIM2::Common qw(parse_mime extract_mi_version);
+use Mail::DKIM2::Address qw(domain_of relaxed_domain_match);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::Signer;
@@ -111,7 +113,7 @@ sub _set_report_type {
 # matches). Returns ($ok, $why); $why says what is missing.
 sub may_generate {
     my ($class, %args) = @_;
-    Mail::DKIM2::Common::_check_options("$class->may_generate", \%args,
+    Mail::DKIM2::Util::check_options("$class->may_generate", \%args,
         qw(Domain Message PubkeyCallback Resolver SkipTimestampCheck));
     my $raw = $args{Message} // croak "may_generate: need Message";
     (my $text = $raw) =~ s/\r?\n/\r\n/g;
@@ -150,7 +152,7 @@ sub may_generate {
 # From: header field), ReportingMTA, Status, Reason.
 sub generate {
     my ($class, %args) = @_;
-    Mail::DKIM2::Common::_check_options("$class->generate", \%args,
+    Mail::DKIM2::Util::check_options("$class->generate", \%args,
         qw(Message Signer To ReportingMTA Status Reason FinalRecipient
            PubkeyCallback Resolver SkipTimestampCheck));
     my $raw    = $args{Message}    or croak "generate: need Message";
@@ -344,7 +346,7 @@ sub _check_alignment {
 # Croaks, as propagate does, when the message is not an RFC 6522 DSN.
 sub authenticate {
     my ($class, %args) = @_;
-    Mail::DKIM2::Common::_check_options("$class->authenticate", \%args,
+    Mail::DKIM2::Util::check_options("$class->authenticate", \%args,
         qw(Message PubkeyCallback Resolver SkipTimestampCheck));
     my $raw = $args{Message} or croak "authenticate: need Message";
     # The keys: PubkeyCallback, else the verifier's own DNS fetch through
@@ -412,7 +414,7 @@ sub authenticate {
 # SkipAuthentication => 1 to say so.
 sub propagate {
     my ($class, %args) = @_;
-    Mail::DKIM2::Common::_check_options("$class->propagate", \%args,
+    Mail::DKIM2::Util::check_options("$class->propagate", \%args,
         qw(Message ForwarderDomain Signer PubkeyCallback Resolver
            SkipAuthentication SkipTimestampCheck));
     my $raw = $args{Message}              or croak "propagate: need Message";

@@ -9,13 +9,10 @@ use MIME::Base64 qw(encode_base64);
 use Carp;
 use Scalar::Util ();
 
-use Mail::DKIM2::Common qw(
-    build_signing_input
-    load_private_key
-    chain_length_error
-    signature_algorithm
-    signature_algorithm_for_key
-);
+use Mail::DKIM2::Address ();
+use Mail::DKIM2::Common qw(chain_length_error);
+use Mail::DKIM2::Canon qw(build_signing_input);
+use Mail::DKIM2::Key qw(load_private_key signature_algorithm signature_algorithm_for_key);
 use Mail::DKIM2::Chain;
 use Mail::DKIM2::Signature;
 use Mail::DKIM2::MessageInstance;
@@ -89,7 +86,7 @@ sub finish_header {
     # explicit opt-in, when that domain's Domain Policy Record allows it.
     # Without either the upward case is refused: no live DNS by default.
     if (!$error && $self->_from_must_match) {
-        my $e = Mail::DKIM2::Common::from_pair_error($self->{Domain},
+        my $e = Mail::DKIM2::Address::from_pair_error($self->{Domain},
             sub { $self->_parent_policy(@_) },
             map { $_->[1] } grep { lc $_->[0] eq 'from' }
             @{ Mail::DKIM2::HeaderPlan::fields($self->{headers}) });
@@ -156,7 +153,7 @@ sub _parent_policy {
         return $cb->($dom, $self) ? 'open' : 'strict';
     }
     return 'strict' unless $self->{PolicyCallback} || $self->{Resolver};
-    my ($p) = Mail::DKIM2::Common::policy_from_source($dom,
+    my ($p) = Mail::DKIM2::Key::policy_from_source($dom,
         $self->{PolicyCallback}, sub { $self->_resolver }, $self);
     return $p;
 }
@@ -166,7 +163,7 @@ sub _parent_policy {
 # to fall back to.
 sub fetch_domain_policy {
     my ($self, $dom) = @_;
-    return Mail::DKIM2::Common::query_domain_policy($self->_resolver, $dom);
+    return Mail::DKIM2::Key::query_domain_policy($self->_resolver, $dom);
 }
 
 # The Resolver for the Domain Policy Record lookup: the caller's, else a
@@ -376,7 +373,7 @@ The selector of the key, published at C<< <Selector>._domainkey.<Domain> >>.
 
 The private key as a L<Crypt::PK::RSA> or L<Crypt::PK::Ed25519> object, or
 the path of a PEM file holding one (loaded with
-L<Mail::DKIM2::Common/load_private_key>).
+L<Mail::DKIM2::Key/load_private_key>).
 
 =back
 

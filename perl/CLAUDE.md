@@ -30,7 +30,7 @@ algorithm as the C, Python, Go and Mailman generators.
 Two different canonicalizations are involved, and they treat folding
 whitespace differently. Keep them apart.
 
-1. **Header hash** (the `h=` header hash in a Message-Instance; Common's
+1. **Header hash** (the `h=` header hash in a Message-Instance; Canon's
    `dkim2_canonicalize_header`): covers ordinary header fields --
    everything except Message-Instance, DKIM2-Signature, X-* and the other
    fields `should_skip` lists. It unfolds and collapses each WSP run to a
@@ -38,7 +38,7 @@ whitespace differently. Keep them apart.
    hash alone, but inserting a fold where there was no whitespace adds a
    space and breaks every Message-Instance that hashed that field.
 
-2. **Signing input** (-09 §12.8; Common's
+2. **Signing input** (-09 §12.8; Canon's
    `dkim2_canonicalize_sig_header`): covers only the Message-Instance and
    DKIM2-Signature fields. It unfolds and then deletes ALL WSP. Folding these
    two fields -- at creation or later -- cannot change any signature, and
@@ -65,7 +65,7 @@ whitespace differently. Keep them apart.
 
 ### Signing input
 
-`Common::build_signing_input(instances => [...], signatures => [...],
+`Canon::build_signing_input(instances => [...], signatures => [...],
 signing => $field)` builds the octets a signature covers from the fields
 themselves, whole and as they are in the message, and empties the `s=`
 values of the one being signed or checked. The Signer passes the field it
@@ -99,7 +99,19 @@ there is one code path and no re-serialisation of a parsed signature.
 - `Hop->next_instance` — which instance a hop adds before signing. The
   milter, the DKIM2Sign handler and dkim2sign call it; do not re-derive the
   decision in a front end.
-- `Common::signature_algorithm` — the one table of signing algorithms.
+- `Key::signature_algorithm` — the one table of signing algorithms.
+- What used to be `Common.pm` (1250 lines) is now five modules by subject:
+  `Canon` (what is hashed, canonicalization, signing input), `Fold`
+  (`fold_header`), `Address` (paths, domains, relaxed match, Authentic
+  From), `Key` (private keys, key records, Domain Policy Records,
+  algorithms), `RecipeJSON` (the `r=` JSON). `Common` keeps constants,
+  limits, chain numbering, the any/all group combiner and `parse_mime`, and
+  imports and re-exports everything that moved, so `Mail::DKIM2::Common::X`
+  and `use Mail::DKIM2::Common qw(X)` still work (`t/common-facade.t` pins
+  that). New code in `lib/` and `bin/` uses the owning module; a new
+  function goes in the module for its subject, not in `Common`.
+- `Util` — `check_options`, `is_base64string`. The leaf modules above must
+  not `use Mail::DKIM2::Common` (it uses them).
 - `MessageInstance->calculate/verify/undo/chain_verifies` still run on
   Email::MIME (with two methods patched into Email::Simple::Header); they
   are the signing side and the reference, not the Verifier's path.

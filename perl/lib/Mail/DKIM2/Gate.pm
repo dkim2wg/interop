@@ -6,6 +6,7 @@ our $VERSION = '0.32';
 
 use Carp ();
 use Scalar::Util qw(blessed);
+use Mail::DKIM2::Util ();
 use Mail::DKIM2::HeaderParser;
 use Mail::DKIM2::Chain;
 use Mail::DKIM2::Verifier;
@@ -117,7 +118,7 @@ sub _deprecated_allow_null {
 
 sub check {
     my ($class, $message, %o) = @_;
-    Mail::DKIM2::Common::_check_options("$class->check", \%o,
+    Mail::DKIM2::Util::check_options("$class->check", \%o,
         qw(SigningDomain AllowNullBodyRecipe SkipTimestampCheck IgnorePrefixes
            PubkeyCallback PolicyCallback Resolver VerifyResult));
     # Only a true value asks for the retired behaviour: hm's handler passes

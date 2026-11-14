@@ -5,7 +5,9 @@ use warnings;
 our $VERSION = '0.32';
 
 use Carp ();
-use Mail::DKIM2::Common qw(parse_mime strip_mi_versions check_ignore_prefixes);
+use Mail::DKIM2::Util ();
+use Mail::DKIM2::Common qw(parse_mime strip_mi_versions);
+use Mail::DKIM2::Canon qw(check_ignore_prefixes);
 use Mail::DKIM2::Chain;
 use Mail::DKIM2::MessageInstance;
 
@@ -15,7 +17,7 @@ use Mail::DKIM2::MessageInstance;
 
 sub next_instance {
     my ($class, $message, %o) = @_;
-    Mail::DKIM2::Common::_check_options("$class->next_instance", \%o,
+    Mail::DKIM2::Util::check_options("$class->next_instance", \%o,
         qw(Snapshot Outbound IgnorePrefixes MaxRecipeLiterals Algs));
     Carp::croak("next_instance needs a message") unless defined $message && length $message;
     check_ignore_prefixes($o{IgnorePrefixes});
