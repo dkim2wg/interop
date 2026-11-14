@@ -149,17 +149,17 @@ int main(void) {
     }
 
     /* Every i= and m= is a chain number: 1*DIGIT in ASCII (atoi() alone
-       would take "4294967297x" as 4294967297 and " 1x" as 1), at most three
-       digits naming 1..DKIM2_MAX_CHAIN_NUMBER (100), so "01" and "001" are
-       1; and no more than DKIM2_MAX_CHAIN_LENGTH (32). Anything else is a
+       would take "4294967297x" as 4294967297 and " 1x" as 1), at most two
+       digits naming 1..DKIM2_MAX_CHAIN_NUMBER (99), so "01" is 1; and no
+       more than DKIM2_MAX_CHAIN_LENGTH (32). Anything else is a
        PERMERROR saying so -- never atoi()'d into an overflowed or truncated
        number. */
     {
         assert(DKIM2_MAX_CHAIN_LENGTH == 32);
-        assert(DKIM2_MAX_CHAIN_NUMBER == 100);
-        static const char *ok_n[] = { "1", "9", "32", "01", "001", "032", NULL };
-        static const char *len_n[] = { "33", "99", "100", NULL };
-        static const char *num_n[] = { "101", "999", "0001", "4294967297",
+        assert(DKIM2_MAX_CHAIN_NUMBER == 99);
+        static const char *ok_n[] = { "1", "9", "32", "01", "09", NULL };
+        static const char *len_n[] = { "33", "99", NULL };
+        static const char *num_n[] = { "100", "001", "032", "099", "101", "999", "0001", "4294967297",
             "99999999999999999999", NULL };
         static const char *mal_n[] = { "", "0", "000", "abc", "1x", "4294967297x",
             "30000000x", "0_1", "+1", "-1", "\xef\xbc\x91", NULL };
@@ -192,7 +192,7 @@ int main(void) {
         assert(strcmp(eb, "PERMERROR: DKIM2-Signature i=abc syntax error") == 0);
 
         static const char *const *bad_sets[] = { len_n, num_n };
-        static const char *bad_why[] = { "length of 32", "number of 100" };
+        static const char *bad_why[] = { "length of 32", "number of 99" };
         for (int b = 0; b < 2; b++) {
             const char *const *bad_n = bad_sets[b];
             for (int k = 0; bad_n[k]; k++) {
@@ -219,13 +219,13 @@ int main(void) {
             "i=32; m=32; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example", eb, sizeof eb);
         assert(s32 && s32->i == 32 && s32->m == 32 && eb[0] == '\0');
         dkim2_sig_free(s32);
-        dkim2_sig_t *s001 = dkim2_sig_parse_err(
-            "i=001; m=01; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example", eb, sizeof eb);
-        assert(s001 && s001->i == 1 && s001->m == 1 && eb[0] == '\0');
-        dkim2_sig_free(s001);
-        dkim2_mi_t *m001 = dkim2_mi_parse_err("m=001; h=sha256:AAAA:BBBB", eb, sizeof eb);
-        assert(m001 && m001->m == 1);
-        dkim2_mi_free(m001);
+        dkim2_sig_t *s01 = dkim2_sig_parse_err(
+            "i=01; m=01; t=1; d=e.example; s=a:rsa-sha256:AAAA; nd=x.example", eb, sizeof eb);
+        assert(s01 && s01->i == 1 && s01->m == 1 && eb[0] == '\0');
+        dkim2_sig_free(s01);
+        dkim2_mi_t *m01 = dkim2_mi_parse_err("m=01; h=sha256:AAAA:BBBB", eb, sizeof eb);
+        assert(m01 && m01->m == 1);
+        dkim2_mi_free(m01);
     }
 
     /* Missing required tag → NULL */

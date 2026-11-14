@@ -731,8 +731,8 @@ def _get_seq_from_sig(hdr: str) -> int:
 
 # Every i= and m= names one hop, and a chain has at most this many.
 MAX_CHAIN_LENGTH = 32
-# The largest number an i= or m= may be written as (at most three digits).
-MAX_CHAIN_NUMBER = 100
+# The largest number an i= or m= may be written as (at most two digits).
+MAX_CHAIN_NUMBER = 99
 
 
 def _is_ascii_digits(v: str) -> bool:
@@ -744,7 +744,7 @@ def _chain_int(v: str | None) -> int:
     """An i=/m= value as a number, or 0 when it is missing or not 1*DIGIT
     within MAX_CHAIN_NUMBER (chain_number_error says why). Never raises and
     never returns a number big enough to be a loop bound."""
-    if v is None or not _is_ascii_digits(v) or len(v) > 3:
+    if v is None or not _is_ascii_digits(v) or len(v) > 2:
         return 0
     return int(v)
 
@@ -754,8 +754,8 @@ def chain_number_error(field: str, tag: str, v: str | None,
     """The PERMERROR for an i= or m= value that is not a chain number, or
     None (also for a missing value, which is left to the callers).
 
-    1*DIGIT in ASCII, else a syntax error (also zero); at most three digits
-    and 1..MAX_CHAIN_NUMBER, so "01" and "001" are 1; and no more than
+    1*DIGIT in ASCII, else a syntax error (also zero); at most two digits
+    and 1..MAX_CHAIN_NUMBER, so "01" is 1; and no more than
     MAX_CHAIN_LENGTH, since each number names one hop.  The field is named by
     its own number (a DKIM2-Signature by i=, a Message-Instance by m=, -09
     §14.2): `ident` is that value as written, defaulting to `v`."""
@@ -769,7 +769,7 @@ def chain_number_error(field: str, tag: str, v: str | None,
         return f"PERMERROR: {who} syntax error"
     if tag != ident_tag:
         who += f" {tag}={v}"
-    if len(v) > 3 or int(v) > MAX_CHAIN_NUMBER:
+    if len(v) > 2 or int(v) > MAX_CHAIN_NUMBER:
         return (f"PERMERROR: {who} exceeds the maximum chain "
                 f"number of {MAX_CHAIN_NUMBER}")
     if int(v) > MAX_CHAIN_LENGTH:

@@ -325,21 +325,21 @@ int main(int argc, char **argv) {
     for (int skip = 0; skip <= 1; skip++) {
         expect_range_refused("DKIM2-Signature: i=99999999999999999999; m=2; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR: DKIM2-Signature i=99999999999999999999 exceeds the maximum chain number of 100", skip);
+            "PERMERROR: DKIM2-Signature i=99999999999999999999 exceeds the maximum chain number of 99", skip);
         expect_range_refused("DKIM2-Signature: i=101; m=2; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR: DKIM2-Signature i=101 exceeds the maximum chain number of 100", skip);
+            "PERMERROR: DKIM2-Signature i=101 exceeds the maximum chain number of 99", skip);
         expect_range_refused("DKIM2-Signature: i=33; m=2; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
             "PERMERROR: DKIM2-Signature i=33 exceeds the maximum chain length of 32", skip);
         expect_range_refused("DKIM2-Signature: i=2; m=4294967297; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
-            "PERMERROR: DKIM2-Signature i=2 m=4294967297 exceeds the maximum chain number of 100", skip);
+            "PERMERROR: DKIM2-Signature i=2 m=4294967297 exceeds the maximum chain number of 99", skip);
         expect_range_refused("DKIM2-Signature: i=2; m=4294967297x; t=1; "
             "d=e.example; s=a:rsa-sha256:AA; nd=x.example\r\n",
             "PERMERROR: DKIM2-Signature i=2 syntax error", skip);
         expect_range_refused("Message-Instance: m=99999999999999999999; h=sha256:AAAA:BBBB\r\n",
-            "PERMERROR: Message-Instance m=99999999999999999999 exceeds the maximum chain number of 100", skip);
+            "PERMERROR: Message-Instance m=99999999999999999999 exceeds the maximum chain number of 99", skip);
         expect_range_refused("Message-Instance: m=4294967297x; h=sha256:AAAA:BBBB\r\n",
             "PERMERROR: Message-Instance m=4294967297x syntax error", skip);
     }

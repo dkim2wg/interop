@@ -135,10 +135,10 @@ want_text() {
                              echo "PERMERROR: DKIM2-Signature i= tag=i missing" ;;
     unkeyable-signature-i-abc.eml) echo "PERMERROR: DKIM2-Signature i=abc syntax error" ;;
     signature-i-33.eml)      echo "PERMERROR: DKIM2-Signature i=33 exceeds the maximum chain length of 32" ;;
-    signature-i-101.eml)     echo "PERMERROR: DKIM2-Signature i=101 exceeds the maximum chain number of 100" ;;
-    signature-i-huge.eml)    echo "PERMERROR: DKIM2-Signature i=99999999999999999999 exceeds the maximum chain number of 100" ;;
-    signature-m-huge.eml)    echo "PERMERROR: DKIM2-Signature i=2 m=4294967297 exceeds the maximum chain number of 100" ;;
-    instance-m-huge.eml)     echo "PERMERROR: Message-Instance m=99999999999999999999 exceeds the maximum chain number of 100" ;;
+    signature-i-101.eml)     echo "PERMERROR: DKIM2-Signature i=101 exceeds the maximum chain number of 99" ;;
+    signature-i-huge.eml)    echo "PERMERROR: DKIM2-Signature i=99999999999999999999 exceeds the maximum chain number of 99" ;;
+    signature-m-huge.eml)    echo "PERMERROR: DKIM2-Signature i=2 m=4294967297 exceeds the maximum chain number of 99" ;;
+    instance-m-huge.eml)     echo "PERMERROR: Message-Instance m=99999999999999999999 exceeds the maximum chain number of 99" ;;
     signature-m-malformed.eml) echo "PERMERROR: DKIM2-Signature i=2 syntax error" ;;
     instance-m-malformed.eml)  echo "PERMERROR: Message-Instance m=4294967297x syntax error" ;;
     # -08 (D5): Chain of Custody, timestamps and From Authentic are FAIL.

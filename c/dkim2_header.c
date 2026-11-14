@@ -351,7 +351,7 @@ int dkim2_chain_number_error(const char *field, const char *tag, const char *v,
         size_t wl = strlen(who);
         snprintf(who + wl, sizeof who - wl, " %s=%.40s", tag, v);
     }
-    if (strlen(v) > 3 || atoi(v) > DKIM2_MAX_CHAIN_NUMBER) {
+    if (strlen(v) > 2 || atoi(v) > DKIM2_MAX_CHAIN_NUMBER) {
         if (errbuf && errbufsz)
             snprintf(errbuf, errbufsz, "PERMERROR: %s exceeds the maximum chain number of %d",
                      who, DKIM2_MAX_CHAIN_NUMBER);

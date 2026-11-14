@@ -578,7 +578,7 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
 }
 
 // Every DKIM2-Signature i= and m=, and every Message-Instance m=, is 1*DIGIT:
-// anything else is a syntax error. At most 3 digits and 1..100
+// anything else is a syntax error. At most 2 digits and 1..99
 // (MAX_CHAIN_NUMBER), else out of range; and a chain has at most 32
 // (MAX_CHAIN_LENGTH) hops, so a number above that is a PERMERROR too. All of
 // it before the §14.2 contiguity loops walk 1..max: i=/m= of 4294967297 (or
@@ -586,7 +586,7 @@ for (const ival of [null, '', '0', 'abc', '-1', '+1', '1x', '١']) {
 // of memory.
 {
   const LEN = 'exceeds the maximum chain length of 32';
-  const NUM = 'exceeds the maximum chain number of 100';
+  const NUM = 'exceeds the maximum chain number of 99';
   const cases = [
     ['signature i=33', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=33;', `PERMERROR: DKIM2-Signature i=33 ${LEN}`],
     ['signature i=101', 'Dkim2-Signature: i=1;', 'Dkim2-Signature: i=101;', `PERMERROR: DKIM2-Signature i=101 ${NUM}`],

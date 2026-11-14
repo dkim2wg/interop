@@ -7,18 +7,19 @@ import (
 )
 
 // Every DKIM2-Signature i= and m=, and every Message-Instance m=, is a chain
-// number: 1*DIGIT in ASCII (Atoi alone would take "+1"), at most three digits
-// naming 1..MaxChainNumber (100), so "01" and "001" are 1; and no more than
+// number: 1*DIGIT in ASCII (Atoi alone would take "+1"), at most two digits
+// naming 1..MaxChainNumber (99), so "01" is 1; and no more than
 // MaxChainLength (32). Anything else is a PERMERROR found before any
 // contiguity check walks 1..max.
 
 func TestChainNumberError(t *testing.T) {
-	if MaxChainLength != 32 || MaxChainNumber != 100 {
+	if MaxChainLength != 32 || MaxChainNumber != 99 {
 		t.Fatalf("MaxChainLength = %d, MaxChainNumber = %d", MaxChainLength, MaxChainNumber)
 	}
 	for v, want := range map[string]string{
-		"1": "", "9": "", "32": "", "01": "", "001": "", "032": "",
-		"33": "ln", "99": "ln", "100": "ln",
+		"1": "", "9": "", "32": "", "01": "", "09": "",
+		"33": "ln", "99": "ln",
+		"100": "num", "001": "num", "032": "num", "099": "num",
 		"101": "num", "0001": "num", "4294967297": "num", "99999999999999999999": "num",
 		"": "mal", "0": "mal", "000": "mal", "abc": "mal", "1x": "mal", "4294967297x": "mal",
 		"0_1": "mal", "\uff11": "mal", "+1": "mal", "-1": "mal",
@@ -29,7 +30,7 @@ func TestChainNumberError(t *testing.T) {
 		case "ln":
 			want = "PERMERROR: Message-Instance m=" + v + " exceeds the maximum chain length of 32"
 		case "num":
-			want = "PERMERROR: Message-Instance m=" + v + " exceeds the maximum chain number of 100"
+			want = "PERMERROR: Message-Instance m=" + v + " exceeds the maximum chain number of 99"
 		}
 		got := ""
 		if err := chainNumberError("Message-Instance", "m", v, v, true); err != nil {
@@ -48,7 +49,7 @@ func TestChainNumberError(t *testing.T) {
 	}
 	// A signature's m= is named by its i=.
 	if err := chainNumberError("DKIM2-Signature", "m", "4294967297", "2", true); err == nil ||
-		err.Error() != "PERMERROR: DKIM2-Signature i=2 m=4294967297 exceeds the maximum chain number of 100" {
+		err.Error() != "PERMERROR: DKIM2-Signature i=2 m=4294967297 exceeds the maximum chain number of 99" {
 		t.Errorf("signature m=: %v", err)
 	}
 }
@@ -56,7 +57,7 @@ func TestChainNumberError(t *testing.T) {
 func TestChainNumberBound(t *testing.T) {
 	base := nullHopBase(t)
 	const rng = "exceeds the maximum chain length of 32"
-	const num = "exceeds the maximum chain number of 100"
+	const num = "exceeds the maximum chain number of 99"
 	cases := []struct {
 		name, from, to, want string
 		prepend              bool

@@ -1,7 +1,7 @@
 """Every DKIM2-Signature i= and m=, and every Message-Instance m=, is a chain
 number: 1*DIGIT in ASCII (int() alone would take "0_1", " 1" or full-width
-digits), at most three digits naming 1..MAX_CHAIN_NUMBER (100), so "01" and
-"001" are 1; and no more than MAX_CHAIN_LENGTH (32). Anything else is a
+digits), at most two digits naming 1..MAX_CHAIN_NUMBER (99), so "01" is 1;
+and no more than MAX_CHAIN_LENGTH (32). Anything else is a
 PERMERROR: found before any gap/contiguity check walks 1..max.
 
 Fixtures are the negative vectors from util/build-negative-vectors.py:
@@ -28,7 +28,7 @@ with open(os.path.join(ROOT, "dns.json")) as _fh:
 KEY = os.path.join(ROOT, "keys", "sel1._domainkey.test3.dkim2.com.pem")
 
 LEN = "exceeds the maximum chain length of 32"
-NUM = "exceeds the maximum chain number of 100"
+NUM = "exceeds the maximum chain number of 99"
 # Patterns (re.search) for the error each case gives.
 CASES = {
     "signature-i-33": (bnv.build_signature_i_33,
@@ -50,7 +50,7 @@ CASES = {
 
 def test_max_chain_length_is_32():
     assert dkim2sign.MAX_CHAIN_LENGTH == 32
-    assert dkim2sign.MAX_CHAIN_NUMBER == 100
+    assert dkim2sign.MAX_CHAIN_NUMBER == 99
 
 
 def _mal(v):
@@ -58,10 +58,12 @@ def _mal(v):
 
 
 @pytest.mark.parametrize("v,want", [
-    ("1", None), ("9", None), ("32", None), ("01", None), ("001", None),
-    ("032", None),
+    ("1", None), ("9", None), ("32", None), ("01", None), ("09", None),
     ("33", f"PERMERROR: Message-Instance m=33 {LEN}"),
-    ("100", f"PERMERROR: Message-Instance m=100 {LEN}"),
+    ("99", f"PERMERROR: Message-Instance m=99 {LEN}"),
+    ("100", f"PERMERROR: Message-Instance m=100 {NUM}"),
+    ("001", f"PERMERROR: Message-Instance m=001 {NUM}"),
+    ("099", f"PERMERROR: Message-Instance m=099 {NUM}"),
     ("101", f"PERMERROR: Message-Instance m=101 {NUM}"),
     ("0001", f"PERMERROR: Message-Instance m=0001 {NUM}"),
     ("4294967297", f"PERMERROR: Message-Instance m=4294967297 {NUM}"),

@@ -876,8 +876,8 @@ def build_lone_junk_signature():
     return b"DKIM2-Signature: m=1; d=evil.example\r\n" + open(SRC, "rb").read()
 
 
-# Every i= and m= is a chain number: 1*DIGIT, at most three digits naming
-# 1..MAX_CHAIN_NUMBER (100), and no more than MAX_CHAIN_LENGTH (32), in every
+# Every i= and m= is a chain number: 1*DIGIT, at most two digits naming
+# 1..MAX_CHAIN_NUMBER (99), and no more than MAX_CHAIN_LENGTH (32), in every
 # implementation here.  Anything else is a PERMERROR before any gap/contiguity check walks
 # 1..max -- which, for i=99999999999999999999, crashed Perl ("Range iterator
 # outside integer range"), ran the browser verifier out of memory, and was

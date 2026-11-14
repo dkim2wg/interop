@@ -189,9 +189,9 @@ const (
 const MaxChainLength = 32
 
 // MaxChainNumber is the largest number an i= or m= may be written as (at
-// most three digits).  Anything bigger is out of range before it is ever a
+// most two digits).  Anything bigger is out of range before it is ever a
 // chain number.
-const MaxChainNumber = 100
+const MaxChainNumber = 99
 
 func allASCIIDigits(v string) bool {
 	if v == "" {
@@ -208,7 +208,7 @@ func allASCIIDigits(v string) bool {
 // chainNumberError is the PERMERROR for an i= or m= value that is not a chain
 // number, or nil (also when the tag is absent, which is left to the callers).
 // 1*DIGIT in ASCII, else a syntax error (also zero): strconv.Atoi would take
-// "+1".  At most three digits and 1..MaxChainNumber, so "01" and "001" are 1
+// "+1".  At most two digits and 1..MaxChainNumber, so "01" is 1
 // (and nothing is converted that could overflow), and no more than
 // MaxChainLength.  The field is named by its own number as written (a
 // DKIM2-Signature by i=, a Message-Instance by m=, §14.2): ident.
@@ -229,7 +229,7 @@ func chainNumberError(field, tag, v, ident string, present bool) error {
 		who += " " + tag + "=" + v
 	}
 	n := MaxChainNumber + 1
-	if len(v) <= 3 {
+	if len(v) <= 2 {
 		n, _ = strconv.Atoi(v)
 	}
 	if n > MaxChainNumber {

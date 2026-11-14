@@ -9,18 +9,18 @@
    lookup and a verification. */
 #define DKIM2_MAX_SIGNATURES 8
 
-/* The largest number an i= or m= may be written as (at most three digits). */
-#define DKIM2_MAX_CHAIN_NUMBER 100
+/* The largest number an i= or m= may be written as (at most two digits). */
+#define DKIM2_MAX_CHAIN_NUMBER 99
 
 /* 0 when v is a chain number, or NULL (an absent tag is left to the
    callers). Otherwise non-zero, with the PERMERROR written to errbuf, the
    field named by its own number as written (ident: a DKIM2-Signature's i=,
    a Message-Instance's m=; NULL means v), contract C6 forms:
    not 1*DIGIT in ASCII, or zero: "PERMERROR: <field> i=<ident> syntax
-   error" (m= for a Message-Instance); more than three digits or above
+   error" (m= for a Message-Instance); more than two digits or above
    DKIM2_MAX_CHAIN_NUMBER: "PERMERROR: DKIM2-Signature i=<ident>[ m=<v>]
-   exceeds the maximum chain number of 100"; above DKIM2_MAX_CHAIN_LENGTH:
-   "... exceeds the maximum chain length of 32". "01" and "001" are 1;
+   exceeds the maximum chain number of 99"; above DKIM2_MAX_CHAIN_LENGTH:
+   "... exceeds the maximum chain length of 32". "01" is 1;
    nothing is converted that could overflow. errbuf/errbufsz may be NULL/0. */
 int dkim2_chain_number_error(const char *field, const char *tag, const char *v,
                              const char *ident, char *errbuf, size_t errbufsz);

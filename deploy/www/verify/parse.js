@@ -192,16 +192,16 @@ function isName(field, name) {
 
 // Every i= and m= names one hop, and a chain has at most this many.
 export const MAX_CHAIN_LENGTH = 32;
-// The largest number an i= or m= may be written as (at most three digits).
+// The largest number an i= or m= may be written as (at most two digits).
 // Anything bigger is out of range before it is ever a chain number.
-export const MAX_CHAIN_NUMBER = 100;
+export const MAX_CHAIN_NUMBER = 99;
 
 // The PERMERROR summary for an i= or m= value that is not a chain number, or
 // null. A value must be 1*DIGIT (ASCII): parseInt would take the digit prefix
 // of "4294967297x" and run the 1..max loops to it; anything else is a syntax
 // error of the field (named by its own i=, or m= for a Message-Instance:
-// `id`, the raw value). Then at most three digits and 1..MAX_CHAIN_NUMBER
-// (so "01" and "001" are 1), and no more than MAX_CHAIN_LENGTH: local
+// `id`, the raw value). Then at most two digits and 1..MAX_CHAIN_NUMBER
+// (so "01" is 1), and no more than MAX_CHAIN_LENGTH: local
 // limits, with no -09 string of their own, named in the C6 form (a
 // signature's m= after its i=: "i=2 m=101 exceeds ..."). A missing value (undefined) is
 // left to the callers.
@@ -212,7 +212,7 @@ export function chainNumberError(field, tag, v, id = v) {
   if (typeof v !== 'string' || !/^[0-9]+$/.test(v)) return `PERMERROR: ${who} syntax error`;
   if (/^0+$/.test(v)) return `PERMERROR: ${who} syntax error`;
   if (tag !== idTag) who += ` ${tag}=${v}`;
-  if (v.length > 3 || parseInt(v, 10) > MAX_CHAIN_NUMBER) {
+  if (v.length > 2 || parseInt(v, 10) > MAX_CHAIN_NUMBER) {
     return `PERMERROR: ${who} exceeds the maximum chain number of ${MAX_CHAIN_NUMBER}`;
   }
   if (parseInt(v, 10) > MAX_CHAIN_LENGTH) {

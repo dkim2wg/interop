@@ -168,7 +168,7 @@ def test_chain_number_of_5000_digits(field, old):
                                    skip_timestamp_check=True)
     assert r.status == "permerror"
     assert r.message.endswith(
-        f"={huge.decode()} exceeds the maximum chain number of 100"), r.message[-60:]
+        f"={huge.decode()} exceeds the maximum chain number of 99"), r.message[-60:]
 
 
 def test_timestamp_of_5000_digits_is_from_the_future():
