@@ -7,8 +7,10 @@ use Mail::Milter::Authentication::Pragmas;
 our $VERSION = '0.32';
 use base 'Mail::Milter::Authentication::Handler';
 
-use Mail::DKIM2::Common qw(extract_mi_version load_private_key fold_header parse_mime
-    parse_dkim_pubkey from_refusal_note DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
+use Mail::DKIM2::Common qw(extract_mi_version parse_mime DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
+use Mail::DKIM2::Address qw(from_refusal_note);
+use Mail::DKIM2::Fold qw(fold_header);
+use Mail::DKIM2::Key qw(load_private_key parse_dkim_pubkey);
 use Mail::DKIM2::Gate;
 use Mail::DKIM2::Hop;
 use Mail::DKIM2::MessageInstance;
@@ -270,7 +272,7 @@ sub addheader_callback {
             ( $exploded ? ( Exploded => 1 ) : () ),
             # -09 contract E3.4: a d= below the From domain signs only for
             # a parent this domain's config lists; no DNS lookup.
-            ParentFromCallback => Mail::DKIM2::Common::parent_from_matcher(
+            ParentFromCallback => Mail::DKIM2::Address::parent_from_matcher(
                 @{ $sign_config->{parent_from_domains} || [] }),
         );
 

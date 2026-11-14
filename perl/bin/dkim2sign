@@ -34,7 +34,9 @@ use Getopt::Long qw(GetOptions);
 use FindBin;
 use lib -d "$FindBin::Bin/../lib/Mail/DKIM2" ? "$FindBin::Bin/../lib" : ();   # running from a checkout
 
-use Mail::DKIM2::Common qw(parse_dkim_pubkey parse_mime);
+use Mail::DKIM2::Address ();
+use Mail::DKIM2::Common qw(parse_mime);
+use Mail::DKIM2::Key qw(parse_dkim_pubkey);
 use Mail::DKIM2::Gate;
 use Mail::DKIM2::Hop;
 use Mail::DKIM2::Signer;
@@ -145,7 +147,7 @@ my $signer = Mail::DKIM2::Signer->new(
     ($exploded ? (Exploded => 1) : ()),
     # -09 contract E3.4: a d= below the From domain signs only for a
     # --parent-from domain; no DNS lookup.
-    ParentFromCallback => Mail::DKIM2::Common::parent_from_matcher(@parent_from),
+    ParentFromCallback => Mail::DKIM2::Address::parent_from_matcher(@parent_from),
 );
 $signer->PRINT($msg->as_string);
 $signer->CLOSE;

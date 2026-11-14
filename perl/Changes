@@ -69,8 +69,19 @@ Revision history for Mail::DKIM2
         - MessageInstance: as_header() and as_header_value(), the field
           folded and ready to insert; changes() and changes_header(), what
           the instance records its hop as changing.
-        - Common: signature_algorithm and signature_algorithm_for_key, the
-          one table of signing algorithms the Signer and Verifier share.
+        - Key: signature_algorithm and signature_algorithm_for_key, the one
+          table of signing algorithms the Signer and Verifier share.
+        - Common.pm is split by subject. Mail::DKIM2::Canon (the fields that
+          are not hashed, canonicalization, build_signing_input),
+          Mail::DKIM2::Fold (fold_header), Mail::DKIM2::Address (paths,
+          domains, the relaxed domain match, the Authentic From check),
+          Mail::DKIM2::Key (private keys, key records, Domain Policy
+          Records, algorithms) and Mail::DKIM2::RecipeJSON (the r= JSON)
+          each hold what their name says; Mail::DKIM2::Util has the two
+          helpers they all need. Common keeps the constants, the limits and
+          the chain numbering, and still exports every name it ever did:
+          "use Mail::DKIM2::Common qw(fold_header)" and
+          Mail::DKIM2::Common::relaxed_domain_match(...) work as before.
 
 0.31    2026-11-06
         - Signer: never folds an rt= list at a comma. -09 section 10.6 gives

@@ -11,7 +11,9 @@ use Mail::DKIM2::Verifier;
 use Mail::DKIM2::Signer;
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::DSN;
-use Mail::DKIM2::Common qw(parse_mime fold_header should_skip DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
+use Mail::DKIM2::Common qw(parse_mime DKIM2_DRAFT DKIM2_REPO DKIM2_DATE);
+use Mail::DKIM2::Canon qw(should_skip);
+use Mail::DKIM2::Fold qw(fold_header);
 
 our $SUBJECT_PREFIX = '[DKIM2] ';
 our $FOOTER         = "-- \r\nReflected and signed by the DKIM2 reflector at dkim2.com\r\n";

@@ -110,10 +110,31 @@ whether a top C<nd=> names the domain about to sign.
 The body hash of a message streamed from a file, for a host that computes a
 Message-Instance from the header block alone.
 
+=item L<Mail::DKIM2::Canon>, L<Mail::DKIM2::Fold>
+
+The octets the spec defines -- which header fields are hashed, how a field
+is canonicalized, the signing input -- and where a field this code creates
+may be folded.
+
+=item L<Mail::DKIM2::Address>
+
+Envelope paths, domains, the relaxed domain match, and whether a From
+header field is Authentic for a signing domain.
+
+=item L<Mail::DKIM2::Key>
+
+Private keys, public key records, Domain Policy Records, and the signing
+algorithms.
+
+=item L<Mail::DKIM2::RecipeJSON>
+
+The base64 JSON of a Message-Instance's C<r=> tag.
+
 =item L<Mail::DKIM2::Common>
 
-Canonicalization, hashing, folding and key-loading functions shared by the
-above.
+Constants, limits, and the numbering of Message-Instance and
+DKIM2-Signature fields. Until 0.32 it held everything in the five modules
+above, and still exports all of it.
 
 =item L<Mail::DKIM2::HeaderParser>, L<Mail::DKIM2::TagValueList>
 

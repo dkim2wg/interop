@@ -6,7 +6,9 @@ our $VERSION = '0.32';
 
 use Carp;
 use Scalar::Util qw(refaddr);
-use Mail::DKIM2::Common qw(parse_mime should_skip dkim2_canonicalize_header);
+use Mail::DKIM2::Util ();
+use Mail::DKIM2::Common qw(parse_mime);
+use Mail::DKIM2::Canon qw(should_skip dkim2_canonicalize_header);
 use Mail::DKIM2::MessageInstance;
 use Mail::DKIM2::BodyPlan;
 
@@ -33,7 +35,7 @@ my %NOT_CONTENT = map { $_ => 1 } qw(message-instance dkim2-signature);
 
 sub new {
     my ($class, $header, %opts) = @_;
-    Mail::DKIM2::Common::_check_options("$class->new", \%opts, qw(IgnorePrefixes));
+    Mail::DKIM2::Util::check_options("$class->new", \%opts, qw(IgnorePrefixes));
     my $self = bless {
         prefixes => $opts{IgnorePrefixes},
         by_m     => {},
@@ -42,7 +44,7 @@ sub new {
         raw_literals => [],
     }, $class;
     for my $raw (reverse @{ _raw_fields($header) }) {
-        push @{$self->{raw}{Mail::DKIM2::Common::field_name(substr($raw, 0, index($raw, ':')))}}, $raw;
+        push @{$self->{raw}{Mail::DKIM2::Canon::field_name(substr($raw, 0, index($raw, ':')))}}, $raw;
     }
     return $self;
 }
@@ -136,7 +138,7 @@ sub plan {
         next unless $lists;
         my %next = %$lists;
         for my $h (sort keys %$rh) {
-            my $lc = Mail::DKIM2::Common::field_name($h);
+            my $lc = Mail::DKIM2::Canon::field_name($h);
             my $cur = $next{$lc} || [];
             my $count = 0;
             $count += $_->[2] - $_->[1] + 1 for @$cur;

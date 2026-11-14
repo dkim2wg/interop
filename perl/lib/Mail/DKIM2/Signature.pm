@@ -7,7 +7,10 @@ our $VERSION = '0.32';
 use MIME::Base64 qw(encode_base64 decode_base64);
 use Carp;
 
-use Mail::DKIM2::Common qw(encode_tag_json decode_tag_json fold_header to_rfc5321_path to_alabel);
+use Mail::DKIM2::Common ();
+use Mail::DKIM2::Util ();
+use Mail::DKIM2::Address qw(to_rfc5321_path to_alabel);
+use Mail::DKIM2::Fold qw(fold_header);
 
 use base 'Mail::DKIM2::TagValueList';
 
@@ -20,7 +23,7 @@ use constant SIG_VALUE     => 2;
 
 sub new {
     my ($class, %args) = @_;
-    Mail::DKIM2::Common::_check_options("$class->new", \%args,
+    Mail::DKIM2::Util::check_options("$class->new", \%args,
         qw(Domain Flags MailFrom NextDomain Nonce RcptTo Sequence Signatures
            Timestamp Version));
 
@@ -529,7 +532,7 @@ The complete header line, unfolded.
 
 The complete header folded at 72 characters, ready to insert into the
 message. (C<as_string_without_data> and C<as_folded_string_without_data>
-were removed in 0.32: L<Mail::DKIM2::Common/build_signing_input(%args)>
+were removed in 0.32: L<Mail::DKIM2::Canon/build_signing_input(%args)>
 empties the C<s=> values itself.)
 
 =head1 AUTHOR

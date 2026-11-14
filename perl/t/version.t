@@ -26,7 +26,7 @@ for my $m (qw(BodyHasher BodyPlan Common Digest DSN Gate HeaderParser HeaderPlan
         't/validate-report.t'        => ['spec-06 §4 added a "received-" prefix rule'],
         't/hash-agility.t'           => ['pre-spec-06 wire form'],
         't/check-order.t'            => ['2026-10-18-dkim2-spec-07-design.md'],
-        'lib/Mail/DKIM2/Common.pm'   => ['spec-08 took auto-submitted'],
+        'lib/Mail/DKIM2/Canon.pm'    => ['spec-08 took auto-submitted'],
         't/common.t'                 => ['-08 §4 took these two off'],
         't/error-strings.t'          => ['-08 §14.2 dropped'],
         't/turscar.t'                => ['unchanged in draft-08'],
