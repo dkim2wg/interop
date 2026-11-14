@@ -281,9 +281,10 @@ emit(group, line):
           have the same body as their parent, so they share one list and one
           set of digests. Most chains hash the body once or twice, however
           many hops there were.</li>
-        <li><strong>Copy ranges past the end.</strong> A Recipe can name a
-          line the body doesn&rsquo;t have; you only find out at the end.
-          Report it then, against the real length.</li>
+        <li><strong>Copy ranges past the end.</strong> A Recipe that names a
+          line the body doesn&rsquo;t have is invalid: an instant
+          <code>PERMERROR</code>. Streaming, you learn the body is short when
+          it ends.</li>
         <li><strong>Line endings.</strong> A bare LF ends a line as CRLF
           does, as the Recipes number lines, and lines are hashed as CRLF; a
           last line with no line ending is still a line.</li>
