@@ -413,6 +413,13 @@ Then post to a list that is not in the maps: its copies carry no
   over `m=2`, is also valid under the corrected C5, which checks the From
   as it was when each signature was made; the single `m=1` is simply
   shorter.)
+- **No `exploded` flag.** -09 §12.5 has a hop that sends copies of a message
+  to more than one address set `f=exploded` on its signature. The patched
+  Mailman and Sympa ask the signing milter for it by marking each copy
+  `X-DKIM2-Exploded: yes`; stock Mailman adds no such header, and the milter
+  sees one recipient per copy, so a stock list's signature does not carry
+  the flag. The chain still verifies; a receiver counting copies to detect
+  replay (§15) is not told to expect more than one.
 - **A post whose DKIM2 chain is already broken** when it arrives (damaged in
   transit, or someone's edit of a signed post) gets no snapshot and is not
   wrapped (`not wrapping ...: arrival result fail` in the wrap milter's

@@ -541,11 +541,13 @@ url: sqlite:////var/lib/mailman3/mailman.db
 **REST API:** `http://localhost:8001` (user: `restadmin`, pass: `dkim2demo`)
 
 **Logs:**
-- `/var/log/mailman3/mailman.log` — core mailman
-- `journalctl -u mailman3` — DKIM2 MI handlers, which log to the mailman3
-  journal (warnings such as "Existing Message-Instance m=1 does not match the
-  message as received"). There is no `dkim2.log`: `mailman.dkim2` is not one
-  of Mailman's schema loggers, so a `[logging.dkim2]` section would be ignored.
+- `/var/log/mailman3/mailman.log` — core mailman, and (since the 14 November
+  2026 series, which gave them a `[logging.dkim2]` schema logger) the DKIM2
+  Message-Instance handlers. The box sets `[logging.dkim2] level: debug`, so
+  every post logs `Accepted existing Message-Instance m=N` and `Added
+  Message-Instance m=N`; warnings are `Message-Instance m=N does not describe
+  the message as received` and `Header log does not rebuild the headers as
+  received`. Nothing DKIM2 goes to `journalctl -u mailman3` any more.
 - `/var/log/mailman3/mailman-web.log` — Django/gunicorn
 
 **Database:** `/var/lib/mailman3/mailman.db` (SQLite)

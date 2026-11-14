@@ -6,7 +6,7 @@
 - **Audience:** a Postfix operator who runs Mailman 3 or Sympa and wants list
   mail to verify as DKIM2 downstream
 - **Status (2026-10-08):** the dkim2.com host runs this configuration: Ubuntu
-  25.10, Postfix 3.10, Mailman from the `dkim2` fork branch, Sympa 6.2.78
+  25.10, Postfix 3.10, Mailman 3.3.10 from the `dkim2-3.3.10` fork branch, Sympa 6.2.78
   built from the patched source (the always-wrap series in step 8, with
   `dkim2_message_instance on` for the test lists), Mail::DKIM2 0.15, the
   standalone milter. The authentication_milter path
@@ -55,7 +55,7 @@ change was benign. DKIM2 is evidence of custody, not of content.
 - Perl 5.20 or later, `cpanminus`, and a compiler for CryptX:
   `apt-get install build-essential libssl-dev cpanminus`.
 - DNS control for the list domain, to publish the public key.
-- One of: Mailman 3 installed in a virtualenv from upstream master, or
+- One of: Mailman 3.3.10 or 3.3.8 installed in a virtualenv, or
   Sympa 6.2.78 (source build or distribution package of that version).
 - A clone of the interop repository, for the templates and patch series:
   `git clone https://github.com/dkim2wg/interop`.
@@ -415,7 +415,7 @@ listener.
 (Stock Mailman, no patches: see [DKIM2 for stock Mailman](dkim2-postfix-stock-mailman-guide.md) instead.)
 
 Mailman adds the `Message-Instance` headers; the milter signs. The
-changes are three patches, described in `mailman/README.md`, carried on
+changes are four patches, described in `mailman/README.md`, carried on
 three branches of <https://github.com/brong/mailman>: `dkim2-3.3.10` on
 the current 3.3.10 release, `dkim2-3.3.8` on the 3.3.8 release that Debian
 12 and Ubuntu 24.04 package, and `dkim2` on upstream master. Install the
@@ -476,7 +476,7 @@ sudo -u mailman /opt/mailman/venv/bin/mailman -C /etc/mailman3/mailman.cfg info
 systemctl start mailman3
 ```
 
-You stay on 3.3.10 plus these three changes, so Postorius and HyperKitty
+You stay on 3.3.10 plus these four changes, so Postorius and HyperKitty
 keep working.
 
 What happens: the `message-instance-ingress` handler runs first in the
@@ -511,13 +511,29 @@ curl -u restadmin:PASSWORD -X PATCH -H 'Content-Type: application/json' \
      -d '{"dkim2_message_instance": false}'
 ```
 
-The Message-Instance handlers log to the mailman3 journal
-(`journalctl -u mailman3`). Nothing of a post as received is kept beyond
+The Message-Instance handlers have a logger of their own, `mailman.dkim2`,
+which writes to Mailman's `mailman.log` (not the journal). At the default
+level it says nothing unless something is wrong: `Message-Instance m=N does
+not describe the message as received` (a post that arrived already
+damaged) and `Header log does not rebuild the headers as received` (a
+header change Mailman could not account for; that copy leaves without an
+instance). To see every post -- `Accepted existing Message-Instance m=1`,
+`Added Message-Instance m=2` -- add to `mailman.cfg`:
+
+```ini
+[logging.dkim2]
+level: debug
+```
+
+Nothing of a post as received is kept beyond
 two digests and a log of the header fields Mailman changed; there is no cache
 directory (a `mi-cache/` left by an earlier build can be deleted). Messages
 queued by the earlier series (which kept each post's octets) cannot be
 described by this one, and the other way round, so drain the queues before
-upgrading from it or rolling back to it.
+upgrading from it or rolling back to it. Upgrading from any series
+installed before 14 November 2026 also needs one statement run against
+Mailman's database, or Mailman will not start: see "Upgrading" in
+`mailman/README.md`.
 
 Check: post to a test list from an outside address and read the copy you
 get back (step 9).
@@ -650,7 +666,7 @@ stamped so the outbound milter can diff against it. Expire them:
 
 **Logs.** `journalctl -u dkim2-milter-inbound -u dkim2-milter-outbound`;
 each message logs `verify ... result=`, `signed ... d= a= sel=` or `no
-signing key for`. Mailman: the mailman3 journal (`journalctl -u mailman3`). Sympa logs through its usual `sympa.log`.
+signing key for`. Mailman: `mailman.log`, silent unless something is wrong (step 7 has the `[logging.dkim2]` setting for more). Sympa logs through its usual `sympa.log`.
 
 **Troubleshooting.**
 

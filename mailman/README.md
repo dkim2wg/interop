@@ -173,8 +173,23 @@ message_instance: yes
 max_recipients: 1
 ```
 
-Restart Mailman. The Message-Instance handlers log to the mailman3 journal
-(`journalctl -u mailman3`). Nothing of a received post is kept beyond two
+Restart Mailman.
+
+The Message-Instance handlers have a logger of their own, `mailman.dkim2`,
+which writes to Mailman's `mailman.log` (not the journal). At the default
+level it says nothing unless something is wrong: `Message-Instance m=N does
+not describe the message as received` (a post that arrived already
+damaged) and `Header log does not rebuild the headers as received` (a
+header change Mailman could not account for; that copy leaves without an
+instance). To see every post -- `Accepted existing Message-Instance m=1`,
+`Added Message-Instance m=2` -- add to `mailman.cfg`:
+
+```ini
+[logging.dkim2]
+level: debug
+```
+
+Nothing of a received post is kept beyond two
 digests and the header log, so the queues do not grow; there is no cache
 directory (earlier builds kept one in `$VAR_DIR/mi-cache/`, which can be
 deleted).
