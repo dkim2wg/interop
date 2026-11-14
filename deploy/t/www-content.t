@@ -169,7 +169,8 @@ subtest developers => sub {
         for 'segment', 'trailing blank', 'ascend', 'share', 'prefetch', 'undo walk',
             'perl/lib/Mail/DKIM2/BodyPlan.pm', 'go/dkim2/plan.go', 'c/dkim2_plan.c',
             'python/dkim2plan.py', 'deploy/www/verify/plan.js';
-    like($ot, qr/up to 8/, '#one-pass: prefetch is capped');
+    like($ot, qr/bound how many you start/, '#one-pass: prefetch is bounded');
+    like($ot, qr/we chose 8/, '#one-pass: 8 is our choice, not spec');
     like($ot, qr/1 s in Perl/, '#one-pass: Perl waits 1 s');
     like($op, qr/hash one CRLF/, '#one-pass: empty body hashes one CRLF');
     like($op, qr/null/, '#one-pass pseudo-code handles a null Recipe');

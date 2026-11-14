@@ -295,12 +295,12 @@ emit(group, line):
           name is hashed, once; a name no Recipe touched is shared.</li>
         <li><strong>Prefetch the keys.</strong> At the end of the headers
           you know every <code>selector._domainkey.domain</code> you will
-          need: start up to 8 of those lookups (top signature first) in the
-          background while the body streams &mdash; the names come from the
-          message, so cap them. Use the definitive answers; if one
-          hasn&rsquo;t answered within a few seconds when you need it (1 s in
-          Perl, 5 s in the others) or failed temporarily, do it again then.
-          Look each name up once per message.</li>
+          need: start those lookups in the background while the body streams,
+          top signature first. The names come from the message, so bound how
+          many you start, for DoS protection (we chose 8). Use the
+          definitive answers; if one hasn&rsquo;t answered when you need it
+          (we wait 1 s in Perl, 5 s elsewhere) or failed temporarily, do it
+          again then. Look each name up once per message.</li>
       </ul>
       <p><strong>What it buys.</strong> A live five-domain chain verifies
         about 4&times; faster in every implementation; a 10&nbsp;MB body
