@@ -3,7 +3,7 @@ use 5.20.0;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.33';
 
 use Encode ();
 
@@ -101,15 +101,32 @@ sub from_domain {
     return $state eq 'ok' ? $dom : undef;
 }
 
+# The longest From field value read for its mailbox, in octets with the
+# line breaks of folding and the white space around it left out; a longer
+# one is not one mailbox. Every implementation in the interop repository
+# has this limit.
+our $MAX_FROM_LENGTH = 2048;
+
+sub _from_length {
+    my ($v) = @_;
+    utf8::encode($v) if utf8::is_utf8($v);
+    $v =~ tr/\r\n//d;
+    $v =~ s/\A[ \t]+//;
+    $v =~ s/[ \t]+\z//;
+    return length $v;
+}
+
 # from_mailbox(@values): from_domain's reading of the From field(s), with the
 # reason when there is no domain (-09 section 14.8 names them): ('ok',
 # $domain); ('multiple') for more than one mailbox -- two From fields, or a
 # list of addresses; ('literal') for a domain literal; ('none') for no From
-# field, or a value that is not one mailbox (a group, no "@", bad syntax).
+# field, or a value that is not one mailbox (a group, no "@", bad syntax,
+# or longer than $MAX_FROM_LENGTH).
 sub from_mailbox {
     my (@values) = @_;
     return 'multiple' if @values > 1;
     return 'none' unless @values == 1 && defined $values[0];
+    return 'none' if _from_length($values[0]) > $MAX_FROM_LENGTH;
     (my $v = $values[0]) =~ s/\r?\n(?=[ \t])//g;
     # One pass: comments dropped, quoted strings kept whole, and the
     # structure outside them ($skel) and the angle brackets found.
@@ -317,7 +334,9 @@ C<from_domain>'s reading with the reason when there is no domain, as -09
 section 14.8 names them (new in 0.29): C<('ok', $domain)>; C<('multiple')>
 for more than one mailbox (two From fields, or a list of addresses);
 C<('literal')> for a domain literal; C<('none')> for no From field or a
-value that is not one mailbox (a group, no C<@>, bad syntax).
+value that is not one mailbox (a group, no C<@>, bad syntax, or, from
+0.33, longer than C<$Mail::DKIM2::Address::MAX_FROM_LENGTH>, 2048 octets
+without the line breaks of folding and the white space round the value).
 
 =head2 from_authentic($d, @values)
 

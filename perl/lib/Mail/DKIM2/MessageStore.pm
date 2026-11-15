@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Mail::DKIM2::Util ();
 
-our $VERSION = '0.32';
+our $VERSION = '0.33';
 
 use Crypt::Digest::SHA256 qw(sha256_hex);
 use File::Path qw(make_path);

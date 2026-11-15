@@ -76,12 +76,39 @@ func addrMatches(addrs []string, d string) bool {
 	return false
 }
 
+// MaxFromLength is the longest From field value read for its mailbox, in
+// octets with the line breaks of folding and the white space around it left
+// out; a longer one is not one mailbox.  Every implementation in the interop
+// repository has this limit.
+const MaxFromLength = 2048
+
+// fromTooLong reports whether a From value is over MaxFromLength.
+func fromTooLong(v string) bool {
+	n, end := 0, len(v)
+	for end > 0 && strings.IndexByte(" \t\r\n", v[end-1]) >= 0 {
+		end--
+	}
+	start := 0
+	for start < end && strings.IndexByte(" \t\r\n", v[start]) >= 0 {
+		start++
+	}
+	for i := start; i < end; i++ {
+		if v[i] != '\r' && v[i] != '\n' {
+			n++
+		}
+	}
+	return n > MaxFromLength
+}
+
 // fromMailbox returns the addr-spec of a From field value that holds exactly
 // one mailbox -- "Name <a@b>" or "a@b", comments allowed, folding already
 // undone or not -- and false for anything else: a list of mailboxes, a group,
 // or no address at all.  It is deliberately lenient about the display name
 // (RFC 2047 encoded words, odd characters): only the addr-spec matters.
 func fromMailbox(v string) (string, bool) {
+	if fromTooLong(v) {
+		return "", false
+	}
 	// Comments become a space; quoted strings and domain literals are kept,
 	// and nothing inside them counts as a special.
 	var clean []byte

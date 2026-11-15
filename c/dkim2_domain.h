@@ -39,5 +39,11 @@ int dkim2_from_domain(const char *value, char *out, size_t outlen);
    group without a ',', no '@', not a mailbox at all); DKIM2_FROM_LITERAL
    when the mailbox's domain is a literal; else DKIM2_FROM_OK with the
    domain in out as dkim2_from_domain gives it. */
+/* The longest From field value read for its mailbox, in octets with the
+   line breaks of folding and the white space around it left out; a longer
+   one is DKIM2_FROM_NOT_MAILBOX. Every implementation in the interop
+   repository has this limit. */
+#define DKIM2_MAX_FROM_LENGTH 2048
+
 enum { DKIM2_FROM_OK = 0, DKIM2_FROM_MULTI, DKIM2_FROM_NOT_MAILBOX, DKIM2_FROM_LITERAL };
 int dkim2_from_classify(const char *value, char *out, size_t outlen);

@@ -291,6 +291,18 @@ for (const [from, want] of [
   });
 }
 
+// 2048 octets is the longest From value read (every implementation); the
+// line breaks of folding and the white space round it are not counted.
+const longFrom = n => `"${'a'.repeat(n - 18)}" <a@example.com>`;
+test('A1: a From of 2048 octets passes, folded too', async () => {
+  assertPass(await verify(await oneHopFrom(longFrom(2048))));
+  assertPass(await verify(await oneHopFrom(longFrom(2048).replace(' <', '\r\n <'))));
+});
+test('A1: a From of 2049 octets is not authentic, list or not', async () => {
+  assertFail(await verify(await oneHopFrom(longFrom(2049))), NOT_AUTHENTIC_1);
+  assertFail(await verify(await oneHopFrom(longFrom(2040) + ', b@y.com')), NOT_AUTHENTIC_1);
+});
+
 test('A1: two From fields are "more than one address" (-09 E3.1)', async () => {
   const msg = await signChain([{ fields: [['From', 'a@example.com'], ['From', 'b@example.com'], ['Subject', 'hi']], body: BODY }], [one()]);
   assertFail(await verify(msg), 'FAIL: DKIM2-Signature i=1 From has more than one address');

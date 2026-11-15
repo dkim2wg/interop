@@ -151,6 +151,9 @@ func commaOutsideQuotes(v string) bool {
 func fromAuthenticError(froms []Header, s *DKIM2Signature, policies *policyCache) error {
 	who := fmt.Sprintf("DKIM2-Signature i=%d", s.Sequence)
 	notAuthentic := fmt.Errorf("FAIL: %s matching From is not authentic", who)
+	if len(froms) == 1 && fromTooLong(froms[0].Value) {
+		return notAuthentic
+	}
 	if len(froms) > 1 || len(froms) == 1 && commaOutsideQuotes(froms[0].Value) {
 		return fmt.Errorf("FAIL: %s From has more than one address", who)
 	}

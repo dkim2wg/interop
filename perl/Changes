@@ -1,5 +1,14 @@
 Revision history for Mail::DKIM2
 
+0.33    2026-11-14
+        - A From field value longer than 2048 octets (not counting the line
+          breaks of folding or the white space round it) is not read for a
+          mailbox: from_mailbox gives 'none', so the Verifier's result is
+          "matching From is not authentic" and the Signer does not sign.
+          $Mail::DKIM2::Address::MAX_FROM_LENGTH holds the limit. Every
+          implementation in the interop repository now has it; one of
+          them took tens of seconds to parse a hostile 100 KB From.
+
 0.32    2026-11-14
         - dkim2-milter and the DKIM2Sign handler sign a message that has a
           List-Id header field with the exploded flag (-09 section 12.5),

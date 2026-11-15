@@ -119,16 +119,22 @@ function displayText(bin) {
 // -09 §11, §14.8 (contract E3.1 steps 1-2): what the From fields of one
 // message state hold. 'many' for more than one From field, or a value with
 // a "," outside quoted strings and comments (a list of addresses, or a
-// group holding more than one); 'none' for no From field, a group without
-// a ",", or a value that is not one mailbox with an "@"; 'literal' for a
+// group holding more than one); 'none' for no From field, a value over
+// MAX_FROM_LENGTH, a group without a ",", or a value that is not one
+// mailbox with an "@"; 'literal' for a
 // mailbox at a domain literal; else { domain }, the mailbox's domain as an
 // A-label, lowercased, with no trailing dot (domainOf, toALabel). Lenient
 // otherwise: "Name <a@b>" or "a@b", with comments and quoted strings (which
 // may hold any of , < : ; @) set aside first, and the text of a domain
 // literal when looking for a list or a group.
+const MAX_FROM_LENGTH = 2048;
+
 function fromMailbox(values) {
   if (values.length > 1) return 'many';
   if (values.length === 0) return 'none';
+  // Octets (values are binary strings), without the line breaks of folding
+  // or the white space around the value. Every implementation has this limit.
+  if (values[0].replace(/[\r\n]/g, '').replace(/^[ \t]+|[ \t]+$/g, '').length > MAX_FROM_LENGTH) return 'none';
   let s = displayText(values[0]).replace(/"(?:[^"\\]|\\[^])*"/g, '""');
   for (let prev = ''; prev !== s;) { prev = s; s = s.replace(/\((?:[^()\\]|\\[^])*\)/g, ' '); }
   // A domain literal may hold ":" (IPv6) without being a group.

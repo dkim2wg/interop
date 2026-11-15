@@ -245,6 +245,27 @@ static void test_from_classes(void) {
     CHECK(dkim2_from_classify("a@b.example, c@d.example", dom, sizeof dom) == DKIM2_FROM_MULTI);
     CHECK(dkim2_from_classify("a@[IPv6:2001:db8::1]", dom, sizeof dom) == DKIM2_FROM_LITERAL);
     CHECK(dkim2_from_classify("g:;", dom, sizeof dom) == DKIM2_FROM_NOT_MAILBOX);
+    /* DKIM2_MAX_FROM_LENGTH octets is the longest value read; the line
+       breaks of folding and the white space round it are not counted. */
+    {
+        static char v[DKIM2_MAX_FROM_LENGTH + 64];
+        const char *tail = "\" <a@example.com>";
+        size_t pad = DKIM2_MAX_FROM_LENGTH - 18;
+        v[0] = '"';
+        memset(v + 1, 'a', pad + 1);
+        strcpy(v + 1 + pad, tail);                       /* 2048 octets */
+        CHECK(strlen(v) == DKIM2_MAX_FROM_LENGTH);
+        CHECK(dkim2_from_classify(v, dom, sizeof dom) == DKIM2_FROM_OK);
+        CHECK(dkim2_from_domain(v, dom, sizeof dom) == 0);
+        strcpy(v + 1 + pad, "\"\r\n <a@example.com> \r\n"); /* folded */
+        CHECK(dkim2_from_classify(v, dom, sizeof dom) == DKIM2_FROM_OK);
+        strcpy(v + 2 + pad, tail);                       /* 2049 octets */
+        CHECK(dkim2_from_classify(v, dom, sizeof dom) == DKIM2_FROM_NOT_MAILBOX);
+        CHECK(dkim2_from_domain(v, dom, sizeof dom) != 0);
+        strcpy(v + 1 + pad - 8, "\" <a@example.com>, b@y.com");  /* a long list */
+        CHECK(strlen(v) > DKIM2_MAX_FROM_LENGTH);
+        CHECK(dkim2_from_classify(v, dom, sizeof dom) == DKIM2_FROM_NOT_MAILBOX);
+    }
 }
 
 static void test_policy(void) {

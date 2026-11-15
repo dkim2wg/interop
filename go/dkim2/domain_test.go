@@ -1,6 +1,9 @@
 package dkim2
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // RFC 3492 Punycode, as §18 needs it for U-label -> A-label.
 func TestDomainToALabel(t *testing.T) {
@@ -93,5 +96,23 @@ func TestDomainFromMailbox(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("fromMailbox(%q) = %q,%v; want %q", tc.in, got, ok, tc.want)
 		}
+	}
+	// MaxFromLength octets is the longest value read; the line breaks of
+	// folding and the white space round the value are not counted.
+	long := func(n int) string { return "\"" + strings.Repeat("a", n-18) + "\" <a@example.com>" }
+	if got, ok := fromMailbox(long(MaxFromLength)); !ok || got != "a@example.com" {
+		t.Errorf("a From of %d octets: %q,%v", MaxFromLength, got, ok)
+	}
+	if _, ok := fromMailbox(long(MaxFromLength + 1)); ok {
+		t.Errorf("a From of %d octets was read", MaxFromLength+1)
+	}
+	folded := " " + strings.Replace(long(MaxFromLength), " <", "\r\n <", 1) + " \r\n"
+	if _, ok := fromMailbox(folded); !ok {
+		t.Errorf("folding was counted")
+	}
+	s := &DKIM2Signature{Sequence: 1, Domain: "example.com"}
+	err := fromAuthenticError([]Header{{Name: "From", Value: long(MaxFromLength-8) + ", b@y.com"}}, s, nil)
+	if err == nil || !strings.Contains(err.Error(), "matching From is not authentic") {
+		t.Errorf("too long should come before a list: %v", err)
 	}
 }

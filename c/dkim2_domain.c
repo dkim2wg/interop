@@ -257,13 +257,26 @@ static int from_domain_lit(const char *value, char *out, size_t outlen, int *lit
     return dkim2_to_alabel(d, out, outlen);
 }
 
+/* Over DKIM2_MAX_FROM_LENGTH octets, not counting the line breaks of
+   folding or the white space around the value. */
+static int from_too_long(const char *value) {
+    const char *s = value, *e = value + strlen(value);
+    while (s < e && strchr(" \t\r\n", *s)) s++;
+    while (e > s && strchr(" \t\r\n", e[-1])) e--;
+    size_t n = 0;
+    for (const char *p = s; p < e; p++)
+        if (*p != '\r' && *p != '\n') n++;
+    return n > DKIM2_MAX_FROM_LENGTH;
+}
+
 int dkim2_from_domain(const char *value, char *out, size_t outlen) {
     int lit;
+    if (value && from_too_long(value)) return -1;
     return from_domain_lit(value, out, outlen, &lit);
 }
 
 int dkim2_from_classify(const char *value, char *out, size_t outlen) {
-    if (!value) return DKIM2_FROM_NOT_MAILBOX;
+    if (!value || from_too_long(value)) return DKIM2_FROM_NOT_MAILBOX;
     /* A ',' outside quoted strings and comments: a list of addresses, or
        a group of more than one. */
     int depth = 0, quote = 0;

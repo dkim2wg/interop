@@ -99,6 +99,21 @@ def test_long_from_is_not_parsed(value):
     assert dkim2domain.from_mailbox([b"From: " + value]) == (dkim2domain.FROM_NONE, None)
 
 
+def test_from_length_limit_is_octets_without_folding():
+    """The same boundary in every implementation: 2048 octets, not counting
+    the line breaks of folding or the white space round the value; and too
+    long comes before 'a list'."""
+    def long(n):
+        return b'"' + b"a" * (n - 18) + b'" <a@example.com>'
+    assert len(long(2048)) == dkim2domain.MAX_FROM_LENGTH
+    ok = (dkim2domain.FROM_OK, "example.com")
+    none = (dkim2domain.FROM_NONE, None)
+    assert dkim2domain.from_mailbox([b"From:" + long(2048)]) == ok
+    assert dkim2domain.from_mailbox([b"From: " + long(2048).replace(b" <", b"\r\n <") + b" \r\n"]) == ok
+    assert dkim2domain.from_mailbox([b"From: " + long(2049)]) == none
+    assert dkim2domain.from_mailbox([b"From: " + long(2040) + b", b@y.com"]) == none
+
+
 def test_ordinary_from_is_still_parsed():
     value = b'"' + b"x" * 1500 + b'" <a@B.Example>'
     assert dkim2domain.from_mailbox([b"From: " + value]) == (dkim2domain.FROM_OK, "b.example")

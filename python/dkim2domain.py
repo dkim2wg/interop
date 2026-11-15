@@ -117,8 +117,10 @@ FROM_MANY = "many"              # more than one address (or From field)
 FROM_LITERAL = "literal"        # one mailbox at a domain literal
 FROM_NONE = "none"              # no From, or not a mailbox at all
 
-# The longest From field value that is parsed for its mailbox; a longer one
-# is not one mailbox (local policy: RFC 5322 has lines of at most 998).
+# The longest From field value that is parsed for its mailbox, in octets
+# with the line breaks of folding and the white space around it left out; a
+# longer one is not one mailbox.  Every implementation here has this limit
+# (RFC 5322 has lines of at most 998 octets).
 MAX_FROM_LENGTH = 2048
 
 
@@ -128,8 +130,8 @@ def from_mailbox(from_fields: list[bytes]) -> tuple[str, str | None]:
 
     - FROM_MANY: more than one From field, or a value with a "," outside
       quotes and comments (a list of addresses, or a group of several);
-    - FROM_NONE: no From field, a group without a ",", a value with no
-      "@", or one that is not a mailbox (the stdlib address parser, used
+    - FROM_NONE: no From field, a value over MAX_FROM_LENGTH, a group
+      without a ",", a value with no "@", or one that is not a mailbox (the stdlib address parser, used
       leniently, but display text with no angle brackets, "Name a@b", is
       not a mailbox);
     - FROM_LITERAL: one mailbox whose domain is a domain literal;
@@ -142,16 +144,15 @@ def from_mailbox(from_fields: list[bytes]) -> tuple[str, str | None]:
         return FROM_NONE, None
     raw = from_fields[0]
     value = raw[raw.find(b":") + 1:].replace(b"\r\n", b"")
+    if len(value.replace(b"\n", b"").replace(b"\r", b"").strip(b" \t")) > MAX_FROM_LENGTH:
+        return FROM_NONE, None
     text = value.decode("utf-8", errors="surrogateescape")
     if _comma_outside_quotes(text):
         return FROM_MANY, None
     if "@" not in text:
         return FROM_NONE, None
-    # The stdlib address parser takes time that grows with the square of
-    # what it is given: 100 KB of nested comments is tens of seconds.  A
-    # From with one mailbox in it is nowhere near this long.
-    if len(text) > MAX_FROM_LENGTH:
-        return FROM_NONE, None
+    # (MAX_FROM_LENGTH also keeps the stdlib address parser, whose time grows
+    # with the square of its input, away from anything long.)
     # Contract C3 (2026-10-18 design): one trailing dot on the domain is dropped, as for
     # mf=/rt=. The stdlib parser rejects "a@b.example." outright, so it is
     # taken off first: the dot just before the closing ">" or the end.
