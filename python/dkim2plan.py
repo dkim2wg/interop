@@ -29,6 +29,7 @@ name, an r= that is not a JSON object) plan_chain() returns None and the
 caller uses the undo walk.
 """
 
+import bisect
 import hashlib
 import re
 import sys
@@ -89,12 +90,18 @@ def recipe_actions(recipes):
 
 def _plain_key(name: str) -> bool:
     """True if a literal field written under this (lowercased) Recipe key is
-    grouped back under the same name -- no colon, no surrounding space -- and
-    it is not message-instance (undoing which would change the instances the
-    lower levels see)."""
+    grouped back under the same name -- no colon, no surrounding space.
+
+    message-instance and dkim2-signature are plain keys like any other.
+    The walk takes its instances and signatures from the message as
+    received, never from a rebuilt header, and the content fields it
+    rebuilds hold none of either name: a Recipe naming one can only add
+    fields that are not hashed, or fail to copy what is not there.  (They
+    used to send the whole message back to the undo walk, which keeps the
+    body: a few bytes of Recipe bought a sender tens of times the body's
+    size in the verifier's memory.)"""
     raw = name.encode("utf-8", errors="surrogateescape") + b":"
-    return (name != "message-instance"
-            and _header_name(raw).decode("utf-8", errors="surrogateescape") == name)
+    return _header_name(raw).decode("utf-8", errors="surrogateescape") == name
 
 
 class HeaderPlan:
@@ -234,6 +241,10 @@ class BodyPlan:
                     base += parent[k][2] - parent[k][1]
                     k += 1
                 while pos < end:
+                    if k >= len(parent):
+                        # past the last segment: a range no body could hold
+                        raise MalformedRecipe(
+                            f'"c" range ends at {end}, past any body')
                     kind, a, b = parent[k]
                     stop = min(end - base, b - a)
                     _push(out, (kind, a + pos - base, a + stop))
@@ -346,6 +357,7 @@ class BodyPass:
             n = buf.count(b"\n", lo, hi)
         first, past = self.line0, self.line0 + n
         offsets = {first: lo, past: hi}
+        known = [first, past]       # the keys of offsets, in order
         mv = memoryview(buf)
         shapes: dict[tuple, int] = {}
 
@@ -353,8 +365,9 @@ class BodyPass:
             pos = offsets.get(line)
             if pos is not None:
                 return pos
-            below = max(l for l in offsets if l < line)
-            above = min(l for l in offsets if l > line)
+            at = bisect.bisect_left(known, line)
+            below, above = known[at - 1], known[at]
+            known.insert(at, line)
             floor = offsets[below]
             back, need = above - line, line - below
             if back <= 16 and back < need:

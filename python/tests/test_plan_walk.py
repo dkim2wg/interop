@@ -351,12 +351,16 @@ def test_m01():
                  m_text={1: "01", 2: "02"}))
 
 
-def test_message_instance_and_odd_keys_fall_back():
+def test_dkim2_field_keys_are_planned_and_odd_keys_fall_back():
+    # message-instance and dkim2-signature are plain keys: a Recipe naming
+    # one must not send the message to the undo walk, which keeps the body
+    # (tests/test_hostile_input.py).  The odd keys are not field names at
+    # all, and the message is refused before anything is planned.
     for key in ("message-instance", "dkim2-signature", " subject", "a:b",
                 "subject "):
         same(message(HDRS, BODY5, {2: {"h": {key: [{"d": [" v"]}]},
                                        "b": [{"c": [1, 2]}]}}), splits=False,
-             planned=key == "dkim2-signature")
+             planned=key in ("message-instance", "dkim2-signature"))
 
 
 def test_non_object_recipes():

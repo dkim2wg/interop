@@ -117,6 +117,10 @@ FROM_MANY = "many"              # more than one address (or From field)
 FROM_LITERAL = "literal"        # one mailbox at a domain literal
 FROM_NONE = "none"              # no From, or not a mailbox at all
 
+# The longest From field value that is parsed for its mailbox; a longer one
+# is not one mailbox (local policy: RFC 5322 has lines of at most 998).
+MAX_FROM_LENGTH = 2048
+
 
 def from_mailbox(from_fields: list[bytes]) -> tuple[str, str | None]:
     """-09 §11, §14.8 (contract E3.1 steps 1-2): classify the From header
@@ -142,6 +146,11 @@ def from_mailbox(from_fields: list[bytes]) -> tuple[str, str | None]:
     if _comma_outside_quotes(text):
         return FROM_MANY, None
     if "@" not in text:
+        return FROM_NONE, None
+    # The stdlib address parser takes time that grows with the square of
+    # what it is given: 100 KB of nested comments is tens of seconds.  A
+    # From with one mailbox in it is nowhere near this long.
+    if len(text) > MAX_FROM_LENGTH:
         return FROM_NONE, None
     # Contract C3 (2026-10-18 design): one trailing dot on the domain is dropped, as for
     # mf=/rt=. The stdlib parser rejects "a@b.example." outright, so it is

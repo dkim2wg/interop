@@ -1780,6 +1780,13 @@ class MessageVerifier:
             if self._plan is not None:
                 self._pass = BodyPass(self._plan.body)
 
+    def abandon(self) -> None:
+        """The message will not be finished (the client went away): drop the
+        key lookups that have not started yet."""
+        keys = getattr(self._ctx, "keys", None)
+        if hasattr(keys, "cancel"):
+            keys.cancel()
+
     def close(self) -> VerifyResult:
         tail = b"\r\n" if self._held_cr else b""
         self._held_cr = False

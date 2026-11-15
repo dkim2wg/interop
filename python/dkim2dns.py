@@ -37,6 +37,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 PREFETCH_WAIT = 5.0     # seconds after sending before a prefetch is given up
+# Seconds one message may keep its verifier waiting on lookups in all.  The
+# sender chooses how many keys a message names (hundreds fit in a few KB)
+# and whose nameservers answer for them, or do not; without a limit one
+# message holds its verifier for as long as that sender likes.  Past it,
+# every further lookup for the message is a temporary error at once.
+LOOKUP_BUDGET = 20.0
 _executor: ThreadPoolExecutor | None = None
 
 
@@ -98,11 +104,13 @@ class LiveDNS:
     default), prefetched per message unless prefetch is False."""
 
     def __init__(self, resolver=None, prefetch: bool = True,
-                 prefetch_wait: float = PREFETCH_WAIT):
+                 prefetch_wait: float = PREFETCH_WAIT,
+                 budget: float = LOOKUP_BUDGET):
         self.resolver = (resolver if resolver is not None
                          else DnspythonResolver(lifetime=prefetch_wait))
         self.prefetch = prefetch
         self.prefetch_wait = prefetch_wait
+        self.budget = budget
 
     def txt_records(self, name: str) -> list[str]:
         """The ordinary synchronous lookup."""
@@ -126,6 +134,13 @@ class MessageKeys:
         self.live = live
         self._pending: dict[str, tuple] = {}
         self._outcome: dict[str, tuple] = {}
+        self._waited = 0.0      # seconds spent waiting on lookups so far
+
+    def cancel(self) -> None:
+        """Give up on this message: drop the prefetches not yet started."""
+        for _sent, fut in self._pending.values():
+            fut.cancel()
+        self._pending.clear()
 
     def prefetch(self, names) -> None:
         global _executor
@@ -158,6 +173,11 @@ class MessageKeys:
     def txt_records(self, name: str) -> list[str]:
         name = name.lower()
         if name not in self._outcome:
+            if self._waited >= self.live.budget:
+                self.cancel()
+                raise DNSTempError(
+                    f"this message's lookups have taken {self.live.budget:g} s")
+            started = time.monotonic()
             try:
                 answer = self._settled(name)
                 values = (_answer(*answer) if answer is not None
@@ -165,6 +185,7 @@ class MessageKeys:
                 self._outcome[name] = (values, None)
             except (KeyError, DNSTempError) as e:
                 self._outcome[name] = (None, e)
+            self._waited += time.monotonic() - started
         values, err = self._outcome[name]
         if err is not None:
             raise err
