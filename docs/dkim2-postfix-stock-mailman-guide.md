@@ -47,14 +47,19 @@ A post to a DKIM2 list arrives, and the **wrap milter**:
    instead;
 5. names that snapshot in an `X-DKIM2-Snapshot` header: a random token,
    meaningful only to this host. Any `X-DKIM2-Snapshot` a post arrives with
-   is removed first.
+   is removed first;
+6. says how the chain verified in an `X-DKIM2-Arrival` header (`pass`,
+   `none`, `fail`, `permerror` or `temperror`), which is likewise removed
+   from anything that arrives with one.
 
 Mailman then does what it always does: subject prefix, `List-*` headers,
 footer. Each copy goes back to Postfix, and the **signing milter**
-finds the snapshot by that token, removes the header, compares the copy
+finds the snapshot by that token, removes both headers, compares the copy
 with the snapshot, records Mailman's changes as one
 more `Message-Instance`, and adds a `DKIM2-Signature` for your list
-domain. A receiver that verifies DKIM2 can undo each step back to what the
+domain. The snapshot is its proof that the post's chain verified on
+arrival, so it does not verify the sender's signatures again; a copy whose
+`X-DKIM2-Arrival` is not `pass` or `none` is not signed at all. A receiver that verifies DKIM2 can undo each step back to what the
 sender signed. A post from a sender that does not sign DKIM2 has no
 signature for those instances to build on, so its copy leaves with a single
 `Message-Instance`, `m=1`, whose Recipes go straight back to the post as it

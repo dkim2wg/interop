@@ -1058,6 +1058,16 @@ normal inbound milter, so their posts carry two `Authentication-Results`;
 the second milter finds `m=1` already matching and only wraps. Outbound
 goes the 10572 → 10587 route above.
 
+A snapshot is taken only of a message whose arrival verdict was `pass` or
+`none`, so it is also the outbound milter's proof of that: a copy whose
+token names a snapshot of it is signed without its upstream signatures
+being verified again (no key lookups per copy). The inbound milters also
+add `X-DKIM2-Arrival: <verdict>`; the outbound milter does not sign a copy
+that arrived `fail`, `permerror` or `temperror` (log: `not signing ...:
+arrival result fail`), and refuses one whose token names another message's
+snapshot (`the snapshot is not of this message`), which should never
+happen. Both headers are stripped by every milter on sight.
+
 The milters find snapshots only through the `X-DKIM2-Snapshot` token the
 inbound milters add (port 25's and the 10571 wrap milter's); every milter
 strips that header on sight, so it never reaches a recipient of list mail.

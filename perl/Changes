@@ -1,5 +1,26 @@
 Revision history for Mail::DKIM2
 
+0.34    2026-11-15
+        - dkim2-milter: the inbound milter takes a snapshot (and stamps an
+          instance, and wraps) only when the chain verified or there was
+          none, and that snapshot is the outbound milter's proof of it. A
+          message whose X-DKIM2-Snapshot token names a snapshot of it is
+          signed without its upstream signatures being verified again:
+          only the Message-Instance fields are checked, with no key
+          lookups. The snapshot has to be of that message (the same
+          DKIM2-Signature fields and the instances they cover), or the
+          message is not signed. With no snapshot, everything is verified
+          before signing, as before.
+        - dkim2-milter: the inbound milter adds X-DKIM2-Arrival with its
+          verdict as one word. The outbound milter does not sign a message
+          that arrived fail, permerror or temperror (550 5.7.1 if it has a
+          DKIM2-Signature on it, as for any refusal). The field is removed
+          on sight by every mode, so it neither comes from outside nor
+          leaves the host; an inbound milter with --no-envelope-check
+          keeps a failing verdict the milter before it gave.
+        - Mail::DKIM2::Hop->snapshot_vouches($message, $snapshot): whether
+          a snapshot is of this very message.
+
 0.33    2026-11-14
         - A From field value longer than 2048 octets (not counting the line
           breaks of folding or the white space round it) is not read for a
