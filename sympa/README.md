@@ -1,13 +1,13 @@
 # DKIM2 Message-Instance support for Sympa 6.2.78
 
-Eight patches that make Sympa record, in a `Message-Instance` header, what
+Two patches that make Sympa record, in a `Message-Instance` header, what
 it changed about each message it redistributes, so a DKIM2 verifier
 downstream can undo the list's changes and check the signatures of earlier
 hops. Sympa adds only `Message-Instance` (and `X-DKIM2-Info`); the
 `DKIM2-Signature` is added by the MTA (see the [Postfix mailing-list host
 guide](../docs/dkim2-postfix-list-host-guide.md)).
 
-The same five commits are the `dkim2` branch of
+The same two commits are the `dkim2` branch of
 <https://github.com/brong/sympa>, which is what these patches are exported
 from. The design is described in that branch's `DKIM2-MESSAGE-INSTANCE.md`,
 which patch 2 adds.
@@ -17,54 +17,44 @@ which patch 2 adds.
 1. **Add the dkim2_message_instance list parameter.** An `on`/`off` list
    parameter (with robot and site defaults), off by default. With it off a
    list behaves exactly as stock 6.2.78.
-2. **Add DKIM2 Message-Instance support with always-wrap decoration.**
-   New module `Sympa::DKIM2`, with hooks in `Sympa::Message` and the
-   spindles. At ingress (`ProcessIncoming`, before S/MIME decryption) the
-   message is recorded as received, `m=1` added if it has no instance, and
-   the header block kept in the `X-Sympa-DKIM2-Headers` pseudo-header,
-   which travels through every spool with the message. Decoration wraps the
-   original body, byte for byte, as the middle part of a `multipart/mixed`
-   between the list's header and footer parts, so the body Recipe is one
-   copy range. At egress (`ProcessOutgoing`), after all transformations and
-   before DKIM signing, each copy gets the next `m=`, its header Recipe from
-   diffing the saved header block against the outgoing one. A body changed
-   any other way (txt, html, urlize and notice modes, full-body
-   personalisation, S/MIME, content filters) gets a null body Recipe.
-   Anonymous lists and resends from the archive strip the chain instead.
-   Includes `t/DKIM2.t` and `DKIM2-MESSAGE-INSTANCE.md`.
-3. **Add the X-DKIM2-Info debug header.** One above every Message-Instance
-   Sympa adds, naming the draft, implementation date, action and hashed
-   header fields, so an interop problem can be diagnosed from the message.
-4. **DKIM2 draft -07: From rewrite, exploded hint, unsigned posts start a
-   chain.** Draft -07 requires From to be Authentic (section 11), so on a
-   DKIM2 list `dmarc_protect` always rewrites From to the list address,
-   whatever `dmarc_protection.mode` says (`ToList` and `DoForward` shelve
-   it); the original From goes in the header Recipe. Every copy
-   carries `X-DKIM2-Exploded: yes`, asking the outbound signer for
-   `f=exploded`. `dmarc_protection.other_email` and `anonymous_sender`
-   must be in the list's domain (a notice is logged otherwise). Needs
-   Mail::DKIM2 0.23.
-5. **An unsigned post leaves with one m=1, Recipe back to the original.**
-   A post that arrived without a `DKIM2-Signature` leaves with a single
-   `m=1` (replacing the one it arrived with or ingress added) that hashes
-   the rewritten, decorated copy and carries a Recipe back to the message
-   as received, original From included; the list host signs it as `i=1`
-   (-07 section 12.1). Patch 4 removed the chain for such posts instead.
-6. **DKIM2 draft -08: requires Mail::DKIM2 0.28.** Draft -08 hashes
-   `Auto-Submitted` and `VBR-Info`, which Sympa's own notices carry, so
-   an instance computed by an older Mail::DKIM2 does not verify under -08.
-7. **DKIM2 draft -09: version and section pointers.** Nothing Sympa
-   computes changes under -09; `X-DKIM2-Info` names
-   `ietf-dkim-dkim2-spec-09`. Mail::DKIM2 0.28 is still the minimum for
-   Sympa itself; the outbound signer should be 0.29 (draft -09).
-8. **DKIM2 draft -09: the From test follows the upward match.** Test only:
-   an unrewritten author From under a subdomain signer is refused with
-   `f=strict` and signed with no policy record; no test makes a live DNS
-   lookup.
+2. **Add DKIM2 Message-Instance support.** New module `Sympa::DKIM2`, with
+   hooks in `Sympa::Message` and the spindles. Includes `t/DKIM2.t` and
+   `DKIM2-MESSAGE-INSTANCE.md`.
+   - At ingress (`ProcessIncoming`, before S/MIME decryption) the message
+     is recorded as received, `m=1` added if it has no instance, and the
+     header block kept in the `X-Sympa-DKIM2-Headers` pseudo-header, which
+     travels through every spool with the message.
+   - Decoration wraps the original body, byte for byte, as the middle part
+     of a `multipart/mixed` between the list's header and footer parts, so
+     the body Recipe is one copy range.
+   - At egress (`ProcessOutgoing`), after all transformations and before
+     DKIM signing, each copy gets the next `m=`, its header Recipe from
+     diffing the saved header block against the outgoing one. A body
+     changed any other way (txt, html, urlize and notice modes, full-body
+     personalisation, S/MIME, content filters) gets a null body Recipe.
+   - A post that arrived without a `DKIM2-Signature` leaves with a single
+     `m=1` (replacing the one it arrived with or ingress added) that hashes
+     the rewritten, decorated copy and carries a Recipe back to the message
+     as received, original From included; the list host signs it as `i=1`
+     (-09 section 12.1). Anonymous lists and resends from the archive strip
+     the chain instead.
+   - DKIM2 requires From to be Authentic (-09 section 11), so
+     `dmarc_protect` always rewrites From to the list address, whatever
+     `dmarc_protection.mode` says (`ToList` and `DoForward` shelve it); the
+     original From goes in the header Recipe.
+     `dmarc_protection.other_email` and `anonymous_sender` must be in the
+     list's domain (a notice is logged otherwise). Every copy carries
+     `X-DKIM2-Exploded: yes`, asking the outbound signer for `f=exploded`.
+   - Above every Message-Instance Sympa adds goes an `X-DKIM2-Info` header
+     naming the draft, implementation date, action and hashed header
+     fields, so an interop problem can be diagnosed from the message.
 
-The series before the always-wrap rework (encoding-preserving decoration,
-a `.mi_orig` spool file, Recipes by diff) is kept as the tag
-`dkim2-cte-preserve-6.2.78` in the fork. It is not maintained.
+Earlier series are kept as tags in the fork and are not maintained: the
+eight-commit history this series was squashed from, which follows drafts
+-07 to -09 and needed Mail::DKIM2 0.28, is `dkim2-history-2026-11-14`
+(replaced 14 November 2026), and the series before the always-wrap rework
+(encoding-preserving decoration, a `.mi_orig` spool file, Recipes by diff)
+is `dkim2-cte-preserve-6.2.78`.
 
 ## What they apply to
 
@@ -73,14 +63,14 @@ there. Older packages are not supported.
 
 ## Dependencies
 
-`Sympa::DKIM2` loads `Mail::DKIM2::MessageInstance` and
-`Mail::DKIM2::Common` from the Mail-DKIM2 Perl distribution, version 0.28
-or later (`cpanm Mail::DKIM2`; source in [`../perl`](../perl)): 0.28
-implements draft -08 (`Auto-Submitted` and `VBR-Info` hashed, `|` groups,
-strict-lowercase tags). The outbound signer needs a -09 Mail::DKIM2
-(0.29).
+`Sympa::DKIM2` needs the Mail-DKIM2 Perl distribution, version 0.31 or
+later (`cpanm Mail::DKIM2`; source in [`../perl`](../perl)), and carries no
+DKIM2 code of its own beyond the list's side of it: the hashes, Recipes,
+folding and From check are the module's. 0.31 is the first release with
+`Mail::DKIM2::Chain` and `as_header_value`, which Sympa uses; the outbound
+signer should be the same version.
 Mail::DKIM2 is loaded only for lists with the switch on; a list with the
-switch on and no Mail::DKIM2, or one older than 0.28, logs an error and
+switch on and no Mail::DKIM2, or one older than 0.31, logs an error and
 runs as stock. Nothing else is needed beyond what 6.2.78 itself requires.
 
 ## Installing
@@ -140,7 +130,7 @@ nrcpt 1
 all of them load `Message.pm`.
 
 Sympa adds a null body Recipe's instance unsigned, and `dkim2-milter`
-(Mail::DKIM2 0.29) always signs over it; `--allow-null-body-recipe` is a
+always signs over it; `--allow-null-body-recipe` is a
 deprecated no-op. Under draft -09 every verifier gives such a copy
 `PERMERROR: Message-Instance m=<x> has a null recipe`, so avoid body
 rewrites on DKIM2 lists.

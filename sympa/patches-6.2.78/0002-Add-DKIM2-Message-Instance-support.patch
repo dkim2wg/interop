@@ -1,71 +1,73 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bron Gondwana <brong@fastmailteam.com>
-Date: Thu, 8 Oct 2026 14:08:30 -0400
-Subject: [PATCH 2/8] Add DKIM2 Message-Instance support with always-wrap
- decoration
+Date: Sat, 14 Nov 2026 13:39:29 -0800
+Subject: [PATCH 2/2] Add DKIM2 Message-Instance support
 
-On lists with dkim2_message_instance on, record what Sympa changed in
-each copy it sends, per draft-ietf-dkim-dkim2-spec-06, so a DKIM2
-verifier downstream can undo the list's changes and check the signatures
-of earlier hops. The DKIM2-Signature itself is added by the MTA.
+Implement the Message-Instance header field of
+draft-ietf-dkim-dkim2-spec-09, so that a DKIM2 verifier can undo what a
+list changed and check the signatures of earlier hops.  Sympa adds the
+instances; the MTA signs.
 
-At ingress (ProcessIncoming), before S/MIME decryption or any other
-change: add m=1 describing the message as received unless it already
-carries a Message-Instance, and keep the header block. It travels with
-the message, base64, in the X-Sympa-DKIM2-Headers pseudo-header, so it
-survives the moderation, held, auth, topic, bulk and bad spools without
-spool-specific code; archive copies are stored without it.
+On a list with dkim2_message_instance on:
 
-Decoration on such a list does not edit the body: Sympa::DKIM2::wrap()
-makes the original body, byte for byte under its own Content-* fields,
-the middle part of a multipart/mixed between the header and footer parts.
-The body Recipe is then one copy range whatever the body's encoding.
-Signed and encrypted types are left alone. If wrapping fails the message
-is decorated the stock way and its body marked as rewritten.
+- At ingress (ProcessIncoming, before S/MIME decryption) the message is
+  described as received, with m=1 if it carries no instance, and its
+  header block kept in the X-Sympa-DKIM2-Headers pseudo-header, which
+  travels through every spool with the message.  No copy of the body is
+  kept.
 
-At egress (ProcessOutgoing), once per packet: check the saved header
-block's top instance (never build on a broken chain) and whether the body
-is still the one it hashed. Then for each copy, after every other change
-and before DKIM/ARC signing: drop Bcc and Resent-Bcc, and add the next
-m= with a header Recipe from diffing the saved header block against the
-outgoing one. The body Recipe is the wrap's copy range, or none if the
-body was not touched, but only if applying it really gives back the
-received body; a body changed for any other reason (reception modes,
-full-body personalisation, S/MIME signing or encryption, content
-filters) gets a null body Recipe, so the header stays small. On DKIM2
-lists the envelope/MDN tracking step moves ahead of this so it is
-covered. Anonymous lists and resends from the archive strip the chain
-instead, and the outbound signer starts a new one. Any failure is
-logged and the copy goes out without the new instance.
+- Decoration wraps the body, byte for byte, as the middle part of a
+  multipart/mixed between the list's header and footer parts, so the
+  body Recipe is one copy range.
 
-Requires Mail::DKIM2 0.15 or later, loaded on first use. Includes
-DKIM2-MESSAGE-INSTANCE.md (design) and t/DKIM2.t, which drives the real
-decorate() and ProcessOutgoing and checks the output with Mail::DKIM2's
-verifier and undo.
+- At egress (ProcessOutgoing), after every other transformation and
+  before DKIM and ARC signing, each copy gets the next m=: the header
+  Recipe from the saved header block, the body Recipe from where
+  decoration put the body, checked against the hash the top instance
+  recorded.  A body rewritten any other way gets the null body Recipe.
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- A post that arrived without a DKIM2-Signature leaves with a single
+  m=1, whose Recipes go back to the message as received.  Anonymous
+  lists and resends from the archive strip the chain instead.
+
+- From becomes the list's address whatever dmarc_protection says (DKIM2
+  requires From to be Authentic for the signing domain); the original
+  From is in the header Recipe.  Every copy is marked
+  X-DKIM2-Exploded: yes for the signing MTA.
+
+- Each instance comes with an X-DKIM2-Info debugging header.
+
+All hashing, Recipes, folding and the From check are Mail::DKIM2's
+(0.31 or later, the optional cpanfile feature "dkim2"), loaded on first
+use: without it, or with the switch off, Sympa runs as stock.
+
+DKIM2-MESSAGE-INSTANCE.md describes the design.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
 ---
- DKIM2-MESSAGE-INSTANCE.md                | 282 +++++++
- Makefile.am                              |   1 +
- cpanfile                                 |   4 +
- src/lib/Makefile.am                      |   1 +
- src/lib/Sympa/DKIM2.pm                   | 556 +++++++++++++
- src/lib/Sympa/Message.pm                 |  59 ++
- src/lib/Sympa/Spindle/ProcessArchive.pm  |  13 +-
- src/lib/Sympa/Spindle/ProcessIncoming.pm |   5 +
- src/lib/Sympa/Spindle/ProcessOutgoing.pm |  61 +-
- src/lib/Sympa/Spindle/ResendArchive.pm   |   7 +
- t/DKIM2.t                                | 969 ++++++++++++++++++++++-
- 11 files changed, 1940 insertions(+), 18 deletions(-)
+ DKIM2-MESSAGE-INSTANCE.md                |  355 +++++++
+ Makefile.am                              |    1 +
+ cpanfile                                 |    4 +
+ src/lib/Makefile.am                      |    1 +
+ src/lib/Sympa/DKIM2.pm                   |  675 ++++++++++++
+ src/lib/Sympa/Message.pm                 |   85 +-
+ src/lib/Sympa/Spindle/DoForward.pm       |    6 +-
+ src/lib/Sympa/Spindle/ProcessArchive.pm  |   13 +-
+ src/lib/Sympa/Spindle/ProcessIncoming.pm |    5 +
+ src/lib/Sympa/Spindle/ProcessOutgoing.pm |   67 +-
+ src/lib/Sympa/Spindle/ResendArchive.pm   |    7 +
+ src/lib/Sympa/Spindle/ToList.pm          |    9 +-
+ t/DKIM2.t                                | 1217 +++++++++++++++++++++-
+ 13 files changed, 2415 insertions(+), 30 deletions(-)
  create mode 100644 DKIM2-MESSAGE-INSTANCE.md
  create mode 100644 src/lib/Sympa/DKIM2.pm
 
 diff --git a/DKIM2-MESSAGE-INSTANCE.md b/DKIM2-MESSAGE-INSTANCE.md
 new file mode 100644
-index 000000000..2929eb4e3
+index 000000000..1aad04743
 --- /dev/null
 +++ b/DKIM2-MESSAGE-INSTANCE.md
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,355 @@
 +# DKIM2 Message-Instance support for Sympa
 +
 +Sympa changes the messages it redistributes: it adds list headers, a
@@ -79,9 +81,10 @@ index 000000000..2929eb4e3
 +Sympa adds only `Message-Instance`. The `DKIM2-Signature` is added by the
 +MTA's outbound signer after Sympa hands the message over.
 +
-+The wire format is the one in draft-ietf-dkim-dkim2-spec-06: `m=` numbers
++The wire format is the one in draft-ietf-dkim-dkim2-spec-07: `m=` numbers
 +the instance, `h=` carries `alg:header-hash:body-hash`, and `r=` the base64
-+JSON Recipe (`"h"` for the header fields, `"b"` for the body).
++JSON Recipe (`"h"` for the header fields, `"b"` for the body; a literal line
++or value that is not valid UTF-8 goes in a `"u"` step, base64).
 +
 +## The switch
 +
@@ -95,18 +98,21 @@ index 000000000..2929eb4e3
 +dkim2_message_instance on
 +```
 +
-+If the switch is on but Mail::DKIM2 0.15 or later cannot be loaded, Sympa
++If the switch is on but Mail::DKIM2 0.31 or later cannot be loaded, Sympa
 +logs at `err` (once per process) and treats the list as off.
 +
 +## Dependency
 +
-+Mail::DKIM2 0.15 or later (`Mail::DKIM2::MessageInstance` and
-+`Mail::DKIM2::Common`): `cpanm Mail::DKIM2` once 0.15 is on CPAN; until
-+then install it from `perl/` in the DKIM2 interop repository
-+(<https://github.com/dkim2wg/interop>). 0.15 adds the `BodyRecipe` option
-+that lets the caller give the body Recipe instead of having it computed by
-+diff, and the `BodyHash` option that lets it give the body hash, so the
-+instance is calculated from the header block alone. Mail::DKIM2 is loaded
++Mail::DKIM2 0.31 or later, from CPAN: `cpanm Mail::DKIM2` (its source is
++`perl/` in the DKIM2 interop repository,
++<https://github.com/dkim2wg/interop>). Sympa carries no DKIM2 code of its
++own beyond the list's side of it: every hash, Recipe, fold and From check
++is the module's, and `X-DKIM2-Info` names the draft the installed module
++implements. Sympa uses `Mail::DKIM2::MessageInstance` (with the
++`BodyRecipe` and `BodyHash` options, so an instance is calculated from the
++header block alone and no body is diffed or parsed), `Mail::DKIM2::Chain`
++(the instances and signatures a post arrived with; new in 0.31) and the
++From-Authentic check of `Mail::DKIM2::Address`. Mail::DKIM2 is loaded
 +on first use, not at compile time, so Sympa without it runs as stock; an
 +older version counts as missing. In `cpanfile` it is the optional feature
 +`dkim2`.
@@ -138,6 +144,10 @@ index 000000000..2929eb4e3
 +
 +Anonymous lists skip ingress entirely: nothing about the original sender is
 +kept (see the table below).
++
++A message that arrived without a `DKIM2-Signature` goes through ingress
++like any other; at egress its instance is replaced by a single `m=1` (see
++From rewriting).
 +
 +## Decoration: always-wrap
 +
@@ -237,7 +247,8 @@ index 000000000..2929eb4e3
 +   changed at all (no header change, body Recipe "none"), no instance is
 +   added.
 +5. Add it as the next `m=` (one more than the highest present) at the top of
-+   the header, folded with Mail::DKIM2's folder.
++   the header, folded with Mail::DKIM2's folder, with an `X-DKIM2-Info`
++   field directly above it (below).
 +
 +The whole step runs in an `eval`. On any failure it logs and the copy goes
 +out without the new instance: DKIM2 never blocks or loses list mail.
@@ -261,9 +272,23 @@ index 000000000..2929eb4e3
 +body change Sympa did not anticipate still gives a correct, if null,
 +Recipe rather than a wrong one.
 +
-+An outbound `dkim2-milter` refuses to sign a message whose top instance
-+has a null body Recipe unless it is started with `--allow-null-body-recipe`.
-+A list host running Sympa needs that option on its outbound signer.
++An outbound signer on Mail::DKIM2 0.29 or later signs over the list's own
++null body Recipe (its `--allow-null-body-recipe` is deprecated and does
++nothing), but under draft -09 such a copy is a PERMERROR at every verifier
++("has a null recipe"), so a DKIM2 list should avoid rewriting bodies.
++
++### X-DKIM2-Info
++
++Every `Message-Instance` Sympa adds (`m=1` at ingress, `m=N` at egress) has
++an `X-DKIM2-Info` field directly above it, in the
++draft-gondwana-dkim2-debug-header-01 form: a tag-list in the DKIM2 syntax,
++every tag followed by `;`, naming the draft implemented, the repository and
++date of the implementation, the software, the action (`mi-m=<N>`), and the
++count (`hc=`) and ordered names (`hn=`) of the header fields that went into
++the hash. It exists so an interop problem can be diagnosed from the message
++alone. It is folded only after a `;` or `,`, and as an `X-` field it is
++outside the header hash. `DKIM2_DRAFT` and `DKIM2_DATE` in `Sympa::DKIM2`
++name the draft and the date of the last change to what Sympa emits.
 +
 +### Ordering
 +
@@ -274,6 +299,55 @@ index 000000000..2929eb4e3
 +has it, after DKIM and ARC signing. DomainKey-Signature removal already
 +comes before the DKIM2 step.
 +
++## From rewriting (draft -07 section 11)
++
++DKIM2 requires the From header field to be Authentic: its domain must be
++the signing domain (or below it) of the signature of the hop that set it,
++`i=1` for the From the message started with. A verifier fails the message
++otherwise (`matching From is not authentic`), and the outbound signer
++refuses to sign it. Sympa's hop always changes a list post (`Sender`,
++`Precedence`, `List-Id`, and so on), and some posts leave the list host
++as `i=1`. So on a DKIM2 list Sympa rewrites From to the list address on
++every post it distributes, and on every message it forwards to the owners
++or moderators (where `dmarc_protect` knows the message is one of those, the
++`-request` or `-editor` address, as stock), whatever
++`dmarc_protection.mode` says: `dmarc_protect` runs as if the mode were
++`all`, with the list's `dmarc_protection.phrase` and `other_email`, adding
++`Reply-To` and `X-Original-From` as usual.
++
++- A signed post: the original From is in the header Recipe of the instance
++  Sympa adds, and the list host's signature (`i=2` or later) covers the new
++  one.
++- A post that arrived without a `DKIM2-Signature`: the list host's
++  signature will be `i=1`, and `i=1` is checked against the From of the
++  first instance. Keeping the `m=1` added at ingress (with the author's
++  From) and recording the rewrite in `m=2` would fail that check. So the
++  copy leaves with a single instance, `m=1`, carrying the hashes of the
++  rewritten, decorated copy and a Recipe back to the message as received:
++  the original From in the header Recipe, the wrap's copy range in the body
++  Recipe (-07 section 12.1 lets the first instance record changes made as
++  the message enters DKIM2). It replaces the instance(s) the message
++  arrived with. The list host signs it as `i=1`.
++- Resends from the archive: the chain is removed (as before) and From is
++  rewritten.
++- Anonymous lists: From is `anonymous_sender`, as stock, and the chain is
++  removed.
++
++`dmarc_protection.other_email` and `anonymous_sender` must therefore be
++addresses in the list's domain (the domain the list host signs as) or below
++it. When they are not, Sympa logs a `notice` (`... is not Authentic for the
++list domain ...`) and uses them anyway; the outbound signer will then
++refuse the message.
++
++### X-DKIM2-Exploded
++
++Every copy of a DKIM2 list's distribution carries `X-DKIM2-Exploded: yes`,
++added in `ProcessOutgoing` after the per-recipient changes, whether or not
++Sympa added an instance to it. It asks the
++outbound signer to set the `exploded` flag (`f=exploded`, draft -07
++section 12.5) in its `DKIM2-Signature`; the signer removes it. As an `X-`
++field it is outside the DKIM2 hashes. At `i=1` the flag is never set.
++
 +## Special cases
 +
 +| Case | Behaviour |
@@ -283,13 +357,14 @@ index 000000000..2929eb4e3
 +| txt, html, urlize, notice reception modes | null body Recipe, small header Recipe |
 +| Full-body personalisation (`personalization.mail_apply_on all`) | null body Recipe per recipient |
 +| Footer-only personalisation (`personalization.mail_apply_on footer`) | wrap; the copies differ only in the trailing part |
-+| Anonymous list | no pseudo-header at ingress, stock decoration; egress removes `DKIM2-Signature` and `Message-Instance`, and the outbound signer starts a new chain with `m=1` |
-+| Resend from archive | on a DKIM2 list, the chain is removed as for anonymous lists |
++| Anonymous list | no pseudo-header at ingress, stock decoration; egress removes `DKIM2-Signature`, `Message-Instance` and `X-DKIM2-Info`, and the outbound signer starts a new chain with `m=1`; `anonymous_sender` must be in the list's domain |
++| Resend from archive | on a DKIM2 list, From is rewritten and the chain is removed as for anonymous lists |
++| Post that arrived without a `DKIM2-Signature` | From is rewritten; the copy leaves with one `m=1` whose Recipe goes back to the message as received; the outbound signer's `i=1` signs it |
 +| Digests, notifications, auto-replies, direct sends, bounces | no saved header block; Sympa adds nothing (the outbound signer adds `m=1`) |
 +| Messages embedded in a digest | content, left alone |
 +| VERP, DSN tracking | envelope only; the instance is still computed per copy (below) |
 +| MDN tracking | `Disposition-Notification-To` is set before the DKIM2 step |
-+| DMARC From rewrite, subject tag, custom headers, topics, `remove_headers` | header changes, captured by the header diff at egress |
++| DMARC From rewrite (always on a DKIM2 list), subject tag, custom headers, topics, `remove_headers` | header changes, captured by the header diff at egress |
 +| Moderated, held, auth-confirmed messages | the pseudo-header is in the spooled text, so the chain survives |
 +| Requeued from `bad/` | likewise; ingress keeps the saved header block it finds |
 +| Archive and custom archiver copies | stored without the pseudo-header |
@@ -361,7 +436,7 @@ index 6c4aa2819..257088816 100644
  	NEWS.md \
  	ONEWS \
 diff --git a/cpanfile b/cpanfile
-index 3c2cb1cc6..0cec7c5f0 100644
+index 3c2cb1cc6..9fb8fa202 100644
 --- a/cpanfile
 +++ b/cpanfile
 @@ -206,6 +206,10 @@ feature 'cas', 'CAS Single Sign-On client libraries. Required if you configure S
@@ -369,7 +444,7 @@ index 3c2cb1cc6..0cec7c5f0 100644
  };
  
 +feature 'dkim2', 'DKIM2 Message-Instance support: required if you set the dkim2_message_instance list parameter to on.' => sub {
-+    requires 'Mail::DKIM2', '>= 0.15';
++    requires 'Mail::DKIM2', '>= 0.31';
 +};
 +
  feature 'Clone', 'Used to make copy of internal data structures.' => sub {
@@ -389,10 +464,10 @@ index 1e4b49c3d..d3d962453 100644
  	Sympa/HTML/URIFind.pm \
 diff --git a/src/lib/Sympa/DKIM2.pm b/src/lib/Sympa/DKIM2.pm
 new file mode 100644
-index 000000000..fc5024f37
+index 000000000..426995b2e
 --- /dev/null
 +++ b/src/lib/Sympa/DKIM2.pm
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,675 @@
 +# -*- indent-tabs-mode: nil; -*-
 +# vim:ft=perl:et:sw=4
 +
@@ -433,9 +508,10 @@ index 000000000..fc5024f37
 +my $log = Sympa::Log->instance;
 +
 +# True if $that is a list with dkim2_message_instance on and Mail::DKIM2
-+# 0.15 or later loadable.  Mail::DKIM2 is loaded on first use, never at
-+# compile time.  An older one lacks what egress needs, so it counts as
-+# missing.  The failure is logged once per process.
++# 0.31 or later loadable.  Mail::DKIM2 is loaded on first use, never at
++# compile time.  An older one lacks what egress needs (Mail::DKIM2::Chain,
++# as_header_value), so it counts as missing.  The failure is logged once
++# per process.
 +my $load_error_logged;
 +
 +sub enabled {
@@ -445,12 +521,13 @@ index 000000000..fc5024f37
 +        unless ($that->{'admin'}{'dkim2_message_instance'} || 'off') eq 'on';
 +    return 1 if eval {
 +        require Mail::DKIM2::MessageInstance;
++        require Mail::DKIM2::Chain;
 +        require Mail::DKIM2::Common;
-+        Mail::DKIM2::MessageInstance->VERSION('0.15');
++        Mail::DKIM2::MessageInstance->VERSION('0.31');
 +        1;
 +    };
 +    $log->syslog('err',
-+        'dkim2_message_instance is on for %s but Mail::DKIM2 0.15 or later cannot be loaded: %s',
++        'dkim2_message_instance is on for %s but Mail::DKIM2 0.31 or later cannot be loaded: %s',
 +        $that, $EVAL_ERROR)
 +        unless $load_error_logged++;
 +    return 0;
@@ -459,6 +536,32 @@ index 000000000..fc5024f37
 +sub anonymous {
 +    my $list = shift;
 +    return ($list->{'admin'}{'anonymous_sender'} // '') ne '' ? 1 : 0;
++}
++
++# True if From is to be rewritten to an address of the list (as
++# dmarc_protect does) whatever dmarc_protection says.  DKIM2 (-09 section
++# 11) requires From to be Authentic: in the list's signing domain when the
++# list host signs i=1, or when its hop changes the message.  Sympa's hop
++# always changes a list post (Sender, Precedence, List-Id ...), and a
++# post that arrived unsigned, a resend from the archive and an anonymous
++# list all leave the list host as i=1.  Anonymous lists set From to anonymous_sender
++# themselves, so they are left out here.
++sub rewrites_from {
++    my $list = shift;
++    return enabled($list) && !anonymous($list) ? 1 : 0;
++}
++
++# Logs a notice if $addr, the value of list parameter $param, would make a
++# From that is not Authentic for the list's domain: the list host could not
++# sign the message.  Returns true if it is Authentic.
++sub check_from_address {
++    my ($list, $addr, $param) = @_;
++    return 1
++        if Mail::DKIM2::Address::from_authentic($list->{'domain'}, $addr);
++    $log->syslog('notice',
++        'DKIM2: %s of %s (%s) is not Authentic for the list domain %s; the list host will not be able to sign',
++        $param, $list, $addr, $list->{'domain'});
++    return 0;
 +}
 +
 +# At ingress, before any change (including S/MIME decryption): describe the
@@ -496,8 +599,12 @@ index 000000000..fc5024f37
 +    my $message = shift;
 +    my $list    = $message->{context};
 +    return undef unless enabled($list);
-+    return {strip => 1}
-+        if anonymous($list) or $message->{shelved}{dkim2_strip};
++    if (anonymous($list)) {
++        check_from_address($list, $list->{'admin'}{'anonymous_sender'},
++            'anonymous_sender');
++        return {strip => 1};
++    }
++    return {strip => 1} if $message->{shelved}{dkim2_strip};
 +    unless (defined $message->{'dkim2_headers'}) {
 +        # Worth an info line only for a post that carries a DKIM2 chain
 +        # (relayed, but it missed ingress); otherwise it is routine.
@@ -508,17 +615,27 @@ index 000000000..fc5024f37
 +            $message);
 +        return undef;
 +    }
++    # Arrived unsigned: the list host's signature will be i=1, and i=1 is
++    # checked against the From of state 1 (-09 section 11), which Sympa
++    # rewrites.  So the copy leaves with a single instance, m=1, describing
++    # it as sent, with a Recipe back to the message as received (-09
++    # section 12.1: the first instance may record changes made as the
++    # message enters DKIM2); see egress_add.
 +    my $ctx = eval {
 +        (my $prev = $message->{'dkim2_headers'} . "\n") =~ s/\r?\n/\r\n/g;
 +        my ($ok, $why) =
 +            Mail::DKIM2::MessageInstance->verify($prev, HeadersOnly => 1);
 +        die "saved header block does not verify: " . ($why // '') . "\n"
 +            unless $ok;
-+        my $top = _top_instance($prev);
++        my $chain    = Mail::DKIM2::Chain->from_message($prev);
++        my $unsigned = !$chain->count('DKIM2-Signature');
++        my ($top, $err) = $chain->instance($chain->top_instance);
++        die "saved header block: $err\n" unless $top;
 +        my $unchanged =
 +            Mail::DKIM2::MessageInstance::body_digest_raw($message->{_body})
 +            eq $top->body_hash;
 +        {   prev      => $prev,
++            ($unsigned ? (unsigned => 1) : ()),
 +            unchanged => ($unchanged ? 1 : 0),
 +            body_hash => $top->body_hash,
 +            ($unchanged ? (orig_body => $message->{_body} // '') : ())
@@ -528,18 +645,6 @@ index 000000000..fc5024f37
 +        $message, $EVAL_ERROR)
 +        unless $ctx;
 +    return $ctx;
-+}
-+
-+# The highest-numbered Message-Instance in a header block.
-+sub _top_instance {
-+    my $prev = shift;
-+    my @mi =
-+        Mail::DKIM2::Common::parse_mime($prev)->header_raw('Message-Instance');
-+    my ($top) = sort {
-+        Mail::DKIM2::Common::extract_mi_version($b)
-+            <=> Mail::DKIM2::Common::extract_mi_version($a)
-+    } @mi;
-+    return Mail::DKIM2::MessageInstance->parse($top);
 +}
 +
 +# Last step before DKIM/ARC: describe this copy's changes since ingress.
@@ -593,11 +698,24 @@ index 000000000..fc5024f37
 +            and $br eq 'none'
 +            and !$mi->get_tag('rh')
 +            and !$mi->get_tag('rb');
++        if ($ctx->{unsigned}) {
++            # The one instance of a chain the list host's i=1 starts:
++            # m=1, replacing the one(s) the message arrived with.  Header
++            # and body hashes and Recipes do not cover Message-Instance
++            # fields, so only the number changes.
++            $mi->set_tag('m', 1);
++            _strip_chain($message);
++        }
 +        _prepend_instance($message, $mi);
 +        1;
-+    } or $log->syslog('err',
-+        'DKIM2: Message-Instance for %s failed: %s; sent without it',
-+        $message, $EVAL_ERROR);
++    } or do {
++        $log->syslog('err',
++            'DKIM2: Message-Instance for %s failed: %s; sent without it',
++            $message, $EVAL_ERROR);
++        # An instance describing the message as received would not match
++        # it: let the outbound signer start the chain.
++        eval { _strip_chain($message) } if $ctx->{unsigned};
++    };
 +}
 +
 +# True if the copy Recipe $br ([] or [[first, last]], from wrap()) applied
@@ -680,11 +798,40 @@ index 000000000..fc5024f37
 +}
 +
 +# Anonymous lists and resends from the archive start a new chain: the
-+# outbound signer then adds a fresh m=1.
++# outbound signer then adds a fresh m=1.  Posts that arrived unsigned get
++# their own m=1 in place of the chain (egress_add).
 +sub _strip_chain {
 +    my $message = shift;
 +    $message->delete_header($_)
-+        for 'DKIM2-Signature', 'Message-Instance';
++        for 'DKIM2-Signature', 'Message-Instance', 'X-DKIM2-Info';
++}
++
++# DKIM2 implementation metadata -- update DKIM2_DATE on each change.  The
++# draft is the one the Mail::DKIM2 in use implements: it computes every
++# hash and Recipe here.
++use constant DKIM2_REPO     => 'github.com/brong/sympa';
++use constant DKIM2_DATE     => '2026-11-14';
++use constant DKIM2_SOFTWARE => 'sympa';
++
++# X-DKIM2-Info value per draft-gondwana-dkim2-debug-header-01: a tag-list in
++# the DKIM2 syntax, every tag (the last included) followed by ";".  A ";" has
++# no escape and ends a tag, so one inside a value becomes ",".  Folded only
++# after a ";" or a "," (never inside a token, so the hn= list breaks between
++# names); X-* fields are excluded from the header hash, so folding it cannot
++# affect a signature.  Returns the value alone, folded with "\n\t".
++sub _dkim2_info {
++    my ($action, %extra) = @_;
++    my @tags = ("draft=" . Mail::DKIM2::Common::DKIM2_DRAFT(),
++                "repo=" . DKIM2_REPO,
++                "date=" . DKIM2_DATE, "sw=" . DKIM2_SOFTWARE, "action=$action");
++    push @tags, "$_=$extra{$_}" for grep { defined $extra{$_} } sort keys %extra;
++    my $val = join ' ', map { (my $t = $_) =~ s/;/,/g; "$t;" } @tags;
++    # fold_header() budgets for the field name, so fold with it attached.
++    my $folded = Mail::DKIM2::Fold::fold_header("X-DKIM2-Info: $val", undef,
++        delimiters_only => 1);
++    $folded =~ s/\AX-DKIM2-Info:\s*//;
++    $folded =~ s/\r\n/\n/g;
++    return $folded;
 +}
 +
 +# The header block of $message as calculate() takes it: the fields as
@@ -695,15 +842,32 @@ index 000000000..fc5024f37
 +    return $h;
 +}
 +
-+# fold_header returns the field folded with "\r\n\t" and no trailing newline;
-+# MIME::Head wants "\n\t" continuations and no trailing newline.
++# (count, comma-separated lower-cased names) of the header fields the
++# DKIM2 header hash covers, from an Email::MIME.
++sub _header_list_for_hash {
++    my $em = shift;
++    my @names;
++    for my $h (sort { lc($a) cmp lc($b) } $em->header_names) {
++        next if Mail::DKIM2::Canon::should_skip($h);
++        push @names, (lc $h) x scalar(my @v = $em->header_raw($h));
++    }
++    return (scalar(@names), join(',', @names));
++}
++
++# Add $mi as the top Message-Instance, with the X-DKIM2-Info describing it
++# directly above.  as_header_value gives the value folded with CRLF and no
++# trailing newline; MIME::Head wants "\n" line ends.  hc/hn come from the header block with the new instance in place;
++# the body is not parsed.
 +sub _prepend_instance {
 +    my ($message, $mi) = @_;
-+    my $folded = Mail::DKIM2::Common::fold_header(
-+        'Message-Instance: ' . $mi->as_string);
-+    $folded =~ s/\AMessage-Instance:\s*//;
-+    $folded =~ s/\r\n/\n/g;
++    (my $folded = $mi->as_header_value) =~ s/\r\n/\n/g;
 +    $message->{_head}->add('Message-Instance', $folded, 0);
++    delete $message->{_entity_cache};
++    my ($hc, $hn) = _header_list_for_hash(
++        Mail::DKIM2::Common::parse_mime(_header_block($message)));
++    my $m = $mi->get_tag('m');
++    $message->{_head}->add('X-DKIM2-Info',
++        _dkim2_info("mi-m=$m", hc => $hc, hn => $hn), 0);
 +    delete $message->{_entity_cache};
 +}
 +
@@ -869,7 +1033,7 @@ index 000000000..fc5024f37
 +=head1 DESCRIPTION
 +
 +Records what a list changed in each message as a DKIM2 Message-Instance
-+header field (draft-ietf-dkim-dkim2-spec-06), so DKIM2 verifiers downstream
++header field (draft-ietf-dkim-dkim2-spec-09), so DKIM2 verifiers downstream
 +can undo the list's changes and check the signatures of earlier hops.  The
 +DKIM2-Signature itself is added by the MTA.
 +
@@ -878,9 +1042,21 @@ index 000000000..fc5024f37
 +C<X-Sympa-DKIM2-Headers> pseudo-header (see L<Sympa::Message>).  Decoration
 +on a DKIM2 list wraps the original body in a C<multipart/mixed> instead of
 +editing it, so the body Recipe is a copy range; a body rewritten for any
-+other reason gets a null body Recipe.
++other reason gets a null body Recipe.  Each instance Sympa adds has an
++C<X-DKIM2-Info> debug field directly above it.
 +
-+Requires Mail::DKIM2 0.15 or later, loaded on first use.  See
++DKIM2 requires the From header field to be Authentic (-09 section 11): in
++the domain of the signature of the hop that last set it.  Every post a
++DKIM2 list sends out has its From rewritten to the list address (see
++L<Sympa::Message/dmarc_protect>), whatever C<dmarc_protection> says; the
++original From is in the header Recipe of the instance Sympa adds, or, where
++the chain starts afresh, nowhere.  C<dmarc_protection.other_email> and
++C<anonymous_sender> must be addresses in the list's domain; a warning is
++logged when they are not.  Each copy also gets the hint field
++C<X-DKIM2-Exploded: yes>, which tells the outbound signer to set the
++C<exploded> flag.
++
++Requires Mail::DKIM2 0.31 or later, loaded on first use.  See
 +F<DKIM2-MESSAGE-INSTANCE.md> for the design.
 +
 +=head2 Functions
@@ -890,7 +1066,7 @@ index 000000000..fc5024f37
 +=item enabled ( $that )
 +
 +True if C<$that> is a L<Sympa::List> with C<dkim2_message_instance> set to
-+C<on> and Mail::DKIM2 0.15 or later can be loaded.  If the switch is on but
++C<on> and Mail::DKIM2 0.31 or later can be loaded.  If the switch is on but
 +the module cannot be loaded or is too old, returns false and logs at C<err>
 +(once per process).
 +
@@ -898,6 +1074,18 @@ index 000000000..fc5024f37
 +
 +True if the list has C<anonymous_sender> set.  Such lists keep no record of
 +the original message and start a new chain at egress.
++
++=item rewrites_from ( $list )
++
++True if the list is a DKIM2 list that is not anonymous: its posts have
++From rewritten to the list address by L<Sympa::Message/dmarc_protect>
++whatever C<dmarc_protection> says.
++
++=item check_from_address ( $list, $address, $parameter )
++
++True if a From of C<$address> is Authentic for the list's domain.
++Otherwise logs a warning naming the list parameter C<$parameter> that gave
++it, and returns false.
 +
 +=item ingress ( $message )
 +
@@ -928,14 +1116,20 @@ index 000000000..fc5024f37
 +C<info> if the message carries a DKIM2 chain, else at C<debug>), C<< {strip =E<gt> 1} >> for
 +anonymous lists and resends from the archive, or a context for
 +L</egress_add>: the saved block, whether the body is still the one the top
-+instance hashed, and that hash.
++instance hashed, and that hash.  For a message that arrived without a
++DKIM2-Signature the context is marked C<unsigned>: the list host's
++signature will be i=1.
 +
 +=item egress_add ( $message, $context, [ body_rewritten =E<gt> 1 ] )
 +
 +Run for each copy, after every other transformation and before DKIM and
-+ARC signing.  With a C<strip> context removes C<DKIM2-Signature> and
-+C<Message-Instance>.  Otherwise removes C<Bcc> and C<Resent-Bcc> and adds
-+the next Message-Instance.  The body Recipe is null if the body changed before the packet,
++ARC signing.  With a C<strip> context removes C<DKIM2-Signature>,
++C<Message-Instance> and C<X-DKIM2-Info>.  Otherwise removes C<Bcc> and
++C<Resent-Bcc> and adds the next Message-Instance, with its C<X-DKIM2-Info>
++above it.  With an C<unsigned> context the instance is C<m=1> and replaces
++the instances the message arrived with: one instance whose Recipe goes back
++to the message as received (the original From included), for the list
++host's i=1 to sign.  The body Recipe is null if the body changed before the packet,
 +C<body_rewritten> is set, or decoration fell back to editing the body;
 +otherwise it is the copy range recorded by L</wrap>, or none, provided that
 +it really gives back the received body.  Adds nothing if nothing changed.
@@ -950,7 +1144,7 @@ index 000000000..fc5024f37
 +
 +=cut
 diff --git a/src/lib/Sympa/Message.pm b/src/lib/Sympa/Message.pm
-index f832e13c3..c69943034 100644
+index f832e13c3..5d17febb6 100644
 --- a/src/lib/Sympa/Message.pm
 +++ b/src/lib/Sympa/Message.pm
 @@ -34,6 +34,7 @@ use English;    # FIXME: drop $PREMATCH usage
@@ -1028,7 +1222,67 @@ index f832e13c3..c69943034 100644
      my $entity = $self->as_entity->dup;
      my $mode = $options{mode} || '';
  
-@@ -3898,6 +3931,15 @@ Gets header part of the message as string.
+@@ -3288,20 +3321,25 @@ sub dmarc_protect {
+     my $list = $self->{context};
+     return unless ref $list eq 'Sympa::List';
+ 
+-    return unless $list->{'admin'}{'dmarc_protection'};
+-    my @modes = @{$list->{'admin'}{'dmarc_protection'}{'mode'} || []};
+-    return unless grep { $_ and $_ ne 'none' } @modes;
++    # DKIM2 lists always rewrite From: it must be Authentic for the list
++    # host's signature (Sympa::DKIM2::rewrites_from).
++    my $dkim2 = Sympa::DKIM2::rewrites_from($list);
++    my $dp    = $list->{'admin'}{'dmarc_protection'} || {};
++    my @modes = @{$dp->{'mode'} || []};
++    return unless $dkim2 or grep { $_ and $_ ne 'none' } @modes;
+     $log->syslog('debug', 'DMARC protection on');
+ 
+     my $dkim_signature = $self->get_header('DKIM-Signature');
+-    my $domain_regex   = $list->{'admin'}{'dmarc_protection'}{'domain_regex'};
++    my $domain_regex   = $dp->{'domain_regex'};
+ 
+     my $original_from = $self->get_header('From');
+     my ($origName, $from_address) = _parse_nameaddr($original_from);
+     $log->syslog('debug', 'From address: <%s>', $from_address);
+ 
+     # Will this message be processed?
+-    if (grep { $_ eq 'all' } @modes) {
++    if ($dkim2) {
++        $log->syslog('debug', 'Munging From for a DKIM2 list');
++    } elsif (grep { $_ eq 'all' } @modes) {
+         $log->syslog('debug', 'Munging From for ALL messages');
+     } elsif (
+         $dkim_signature and grep {
+@@ -3339,8 +3377,7 @@ sub dmarc_protect {
+     }
+ 
+     # Identify default new From address
+-    my $phraseMode = $list->{'admin'}{'dmarc_protection'}{'phrase'}
+-        || 'name_via_list';
++    my $phraseMode = $dp->{'phrase'} || 'name_via_list';
+     my $newName;
+     my $newComment;
+     my $anonaddr;
+@@ -3349,7 +3386,7 @@ sub dmarc_protect {
+         # -request or -editor address
+         $anonaddr = Sympa::get_address($list, $listtype);
+     } else {
+-        $anonaddr = $list->{'admin'}{'dmarc_protection'}{'other_email'};
++        $anonaddr = $dp->{'other_email'};
+         $anonaddr = Sympa::get_address($list)
+             unless $anonaddr and $anonaddr =~ /\@/;
+         my @anonFrom = Mail::Address->parse($anonaddr);
+@@ -3357,6 +3394,9 @@ sub dmarc_protect {
+             $anonaddr   = $anonFrom[0]->address;
+             $anonphrase = $anonFrom[0]->phrase;
+         }
++        Sympa::DKIM2::check_from_address($list, $anonaddr,
++            'dmarc_protection.other_email')
++            if $dkim2 and $dp->{'other_email'};
+     }
+     $log->syslog('debug', 'Anonymous From: %s', $anonaddr);
+ 
+@@ -3898,6 +3938,15 @@ Gets header part of the message as string.
  
  Note that the result won't be decoded nor unfolded.
  
@@ -1044,7 +1298,17 @@ index f832e13c3..c69943034 100644
  =item get_header ( $field, [ $sep ] )
  
  I<Instance method>.
-@@ -4382,6 +4424,16 @@ These are accessible as hash elements of objects.
+@@ -4293,6 +4342,9 @@ String.
+ 
+ I<Instance method>.
+ Munges the C<From:> header field if we are using DMARC Protection mode.
++On a list with C<dkim2_message_instance> on (and no C<anonymous_sender>),
++always munges it, whatever C<dmarc_protection.mode> says: DKIM2 requires
++From to be Authentic for the list host's signature.  See L<Sympa::DKIM2>.
+ 
+ Parameters:
+ 
+@@ -4382,6 +4434,16 @@ These are accessible as hash elements of objects.
  No longer used.  It is kept for compatibility with Sympa 6.1.x or earlier.
  See also L<sympa upgrade incoming|sympa-upgrade-incoming(1)> command line.
  
@@ -1061,20 +1325,20 @@ index f832e13c3..c69943034 100644
  =item {envelope_sender}
  
  Envelope sender, a.k.a. "Unix From".
-@@ -4444,6 +4496,12 @@ with the messages stored into outgoing spool by earlier version of Sympa.
+@@ -4444,6 +4506,12 @@ with the messages stored into outgoing spool by earlier version of Sympa.
  
  Adding DKIM signature.
  
 +=item dkim2_strip =E<gt> 1
 +
-+Removing the DKIM2 chain (C<DKIM2-Signature:>, C<Message-Instance:>) at
-+egress.  Set when a message is resent from the
++Removing the DKIM2 chain (C<DKIM2-Signature:>, C<Message-Instance:>,
++C<X-DKIM2-Info:>) at egress.  Set when a message is resent from the
 +archive on a list with C<dkim2_message_instance> on.  See L<Sympa::DKIM2>.
 +
  =item dmarc_protect =E<gt> 1
  
  DMARC protection.  See also L</dmarc_protect>().
-@@ -4499,6 +4557,7 @@ Below is an example of serialized form.
+@@ -4499,6 +4567,7 @@ Below is an example of serialized form.
    X-Sympa-Display-Name: Infant                    : {gecos} attribute
    X-Sympa-Shelved: dkim_sign; tracking=mdn        : {shelved} attribute
    X-Sympa-Spam-Status: ham                        : {spam_status} attribute
@@ -1082,6 +1346,31 @@ index f832e13c3..c69943034 100644
    Return-Path: sympa-request@domain.name          : {envelope_sender} attribute
    Message-Id: <123456789.12345@domain.name>       :   ---
    From: Infant <user@other.host.dom>              :    |
+diff --git a/src/lib/Sympa/Spindle/DoForward.pm b/src/lib/Sympa/Spindle/DoForward.pm
+index 6a1bf641e..630738019 100644
+--- a/src/lib/Sympa/Spindle/DoForward.pm
++++ b/src/lib/Sympa/Spindle/DoForward.pm
+@@ -31,6 +31,7 @@ use warnings;
+ 
+ use Sympa;
+ use Conf;
++use Sympa::DKIM2;
+ use Sympa::Log;
+ use Sympa::Mailer;
+ use Sympa::Tools::DKIM;
+@@ -169,8 +170,11 @@ sub _twist {
+         or (grep { 'dkim_authenticated_messages' eq $_ } @apply_on
+         and $message->{'dkim_pass'});
+ 
++    # DKIM2 lists always rewrite From (Sympa::DKIM2::rewrites_from).
+     $message->{shelved}{dmarc_protect} = 1
+-        if grep { $_ and 'none' ne $_ } @protection;
++        if grep { $_ and 'none' ne $_ } @protection
++        or (ref $list eq 'Sympa::List'
++        and Sympa::DKIM2::rewrites_from($list));
+ 
+     # Add or remove several headers to forward message safely.
+     # - Add X-Loop: field to mitigate mail looping.
 diff --git a/src/lib/Sympa/Spindle/ProcessArchive.pm b/src/lib/Sympa/Spindle/ProcessArchive.pm
 index d1a4ca951..ad363bdab 100644
 --- a/src/lib/Sympa/Spindle/ProcessArchive.pm
@@ -1137,7 +1426,7 @@ index 9f9c75b92..b59f48833 100644
      if ($message->smime_decrypt and not $message->{'smime_signed'}) {
          $message->check_smime_signature;
 diff --git a/src/lib/Sympa/Spindle/ProcessOutgoing.pm b/src/lib/Sympa/Spindle/ProcessOutgoing.pm
-index 5f384a74e..2d7be7748 100644
+index 5f384a74e..db69e9d2b 100644
 --- a/src/lib/Sympa/Spindle/ProcessOutgoing.pm
 +++ b/src/lib/Sympa/Spindle/ProcessOutgoing.pm
 @@ -33,6 +33,7 @@ use English qw(-no_match_vars);
@@ -1164,7 +1453,7 @@ index 5f384a74e..2d7be7748 100644
      if ($personalize and $personalize ne 'footer') {
          unless ($message->personalize($that, $rcpt)) {
              $log->syslog('err', 'Erreur d appel personalize()');
-@@ -253,6 +256,20 @@ sub __twist_one {
+@@ -253,6 +256,26 @@ sub __twist_one {
          $message->delete_header('Domainkey-Signature');
      }
  
@@ -1181,11 +1470,17 @@ index 5f384a74e..2d7be7748 100644
 +    Sympa::DKIM2::egress_add($message, $dkim2,
 +        body_rewritten =>
 +            (($personalize_all or $smime_sign or $smime_encrypt) ? 1 : 0));
++    # The hint for the outbound signer: this copy is one of many, so its
++    # DKIM2-Signature gets the "exploded" flag (-07 section 12.5).  An X-
++    # field, so outside the DKIM2 hashes; the signer removes it.  Every
++    # copy from a DKIM2 list, with or without an instance added.
++    $message->replace_header('X-DKIM2-Exploded', 'yes')
++        if $dkim2 or Sympa::DKIM2::enabled($that);
 +
      if ($message->{shelved}{dkim_sign} or %arc) {
          # apply DKIM signature AFTER any other message transformation.
          # Note that when ARC seal was added, DKIM signature is forced.
-@@ -265,7 +282,28 @@ sub __twist_one {
+@@ -265,7 +288,28 @@ sub __twist_one {
          $message->delete_header('Authentication-Results');
      }
  
@@ -1215,7 +1510,7 @@ index 5f384a74e..2d7be7748 100644
      my $envid = undef;
      if ($tracking) {
          # If tracking (including VERP) is enabled, override envelope sender.
-@@ -293,19 +331,7 @@ sub __twist_one {
+@@ -293,19 +337,7 @@ sub __twist_one {
              ? Sympa::get_address($that, 'return_path')
              : Sympa::get_address($that, 'owner');
      }
@@ -1236,7 +1531,7 @@ index 5f384a74e..2d7be7748 100644
  }
  
  sub _twist {
-@@ -381,18 +407,21 @@ sub _twist {
+@@ -381,18 +413,21 @@ sub _twist {
          if %arc
          or $message->{shelved}{dkim_sign};
  
@@ -1285,8 +1580,36 @@ index a70320541..0f3cb1da7 100644
      # Assign privileges of resending user to the message.
      $message->{envelope_sender} = $self->{resent_by};
  
+diff --git a/src/lib/Sympa/Spindle/ToList.pm b/src/lib/Sympa/Spindle/ToList.pm
+index 17186bf45..3ca97d450 100644
+--- a/src/lib/Sympa/Spindle/ToList.pm
++++ b/src/lib/Sympa/Spindle/ToList.pm
+@@ -33,6 +33,7 @@ use Time::HiRes qw();
+ 
+ use Sympa;
+ use Conf;
++use Sympa::DKIM2;
+ use Sympa::Log;
+ use Sympa::Spool::Outgoing;
+ use Sympa::Spool::Topic;
+@@ -401,10 +402,12 @@ sub _mail_message {
+     my $list = $message->{context};
+ 
+     # Shelve DMARC protection, unless anonymization feature is enabled.
++    # DKIM2 lists always rewrite From (Sympa::DKIM2::rewrites_from).
+     $message->{shelved}{dmarc_protect} = 1
+-        if $list->{'admin'}{'dmarc_protection'}
+-        and $list->{'admin'}{'dmarc_protection'}{'mode'}
+-        and not $list->{'admin'}{'anonymous_sender'};
++        if (    $list->{'admin'}{'dmarc_protection'}
++            and $list->{'admin'}{'dmarc_protection'}{'mode'}
++            and not $list->{'admin'}{'anonymous_sender'})
++        or Sympa::DKIM2::rewrites_from($list);
+ 
+     # Shelve personalization if not yet shelved.
+     # Note that only 'footer' mode will be allowed unless otherwise requested.
 diff --git a/t/DKIM2.t b/t/DKIM2.t
-index f042f8ece..eda9b7bac 100644
+index f042f8ece..a0bfed3c9 100644
 --- a/t/DKIM2.t
 +++ b/t/DKIM2.t
 @@ -1,8 +1,36 @@
@@ -1327,11 +1650,16 @@ index f042f8ece..eda9b7bac 100644
  
  subtest 'switch parameter' => sub {
      my %p = %{ $Sympa::Config::Schema::pinfo{dkim2_message_instance} || {} };
-@@ -12,4 +40,943 @@ subtest 'switch parameter' => sub {
+@@ -12,4 +40,1191 @@ subtest 'switch parameter' => sub {
      is_deeply $p{context}, [qw(list domain site)], 'list/domain/site';
  };
  
-+my $plain = "From: a\@example.org\nTo: test\@mail.example.org\nSubject: hi\nMessage-ID: <1\@example.org>\n\nhello\n";
++# The fixtures model a post that arrived DKIM2-signed (the MTA verified it):
++# an unsigned post starts a new chain at egress instead (see the
++# "unsigned post" subtests).  Only the presence of the field matters here.
++my $sig = "DKIM2-Signature: i=1; d=example.org; fake\n";
++my $unsigned = "From: a\@example.org\nTo: test\@mail.example.org\nSubject: hi\nMessage-ID: <1\@example.org>\n\nhello\n";
++my $plain = $sig . $unsigned;
 +
 +subtest 'enabled' => sub {
 +    ok Sympa::DKIM2::enabled(list()), 'on';
@@ -1339,11 +1667,11 @@ index f042f8ece..eda9b7bac 100644
 +    ok !Sympa::DKIM2::enabled('mail.example.org'), 'robot context';
 +};
 +
-+subtest 'enabled: Mail::DKIM2 older than 0.15 counts as missing' => sub {
++subtest 'enabled: Mail::DKIM2 older than 0.31 counts as missing' => sub {
 +    my @err;
 +    no warnings 'redefine';
 +    local *Sympa::Log::syslog = sub { push @err, $_[2] if $_[1] eq 'err' };
-+    local $Mail::DKIM2::MessageInstance::VERSION = '0.14';
++    local $Mail::DKIM2::MessageInstance::VERSION = '0.30';
 +    ok !Sympa::DKIM2::enabled(list()), 'not enabled';
 +    my $m = Sympa::Message->new($plain, context => list());
 +    Sympa::DKIM2::ingress($m);
@@ -1488,7 +1816,7 @@ index f042f8ece..eda9b7bac 100644
 +    is $b->get_header('X-Other'), 'kept', 'other fields kept';
 +    is $h->count('Message-Instance'), 1, 'Message-Instance kept';
 +    my @tags = grep { !/^(content-|mime-version)/i } $h->as_string =~ /^([^\s:]+):/mg;
-+    is_deeply [@tags], [qw(Message-Instance From To Subject X-Other)], 'order of other fields kept';
++    is_deeply [@tags], [qw(X-DKIM2-Info Message-Instance From To Subject X-Other)], 'order of other fields kept';
 +    like $b->{_body}, qr/\n--\S+\nContent-Type:\ text\/plain;\n\tcharset="iso-8859-1";\n\tformat=flowed\n
 +        Content-Transfer-Encoding:\ quoted-printable\nContent-Language:\ fr\n\ncaf=E9\n\n--/x,
 +        'original part: fields in order, then the body verbatim';
@@ -1714,7 +2042,7 @@ index f042f8ece..eda9b7bac 100644
 +          "DKIM2-Signature: i=1; d=example.org; fake\n", 'info' ],
 +    ) {
 +        my ($name, $extra, $level) = @$c;
-+        my $b = Sympa::Message->new($extra . $plain, context => $l);
++        my $b = Sympa::Message->new($extra . $unsigned, context => $l);
 +        # Captured at the source: debug lines never reach STDERR here.
 +        my ($ctx, @logged) = (1);
 +        { no warnings 'redefine';
@@ -1876,20 +2204,20 @@ index f042f8ece..eda9b7bac 100644
 +};
 +
 +subtest 'anonymous list strips the chain, original From nowhere' => sub {
-+    my $signed_in = "DKIM2-Signature: i=1; d=example.org; fake\nMessage-Instance: m=1; h=sha256:x:y;\n"
++    my $signed_in = "DKIM2-Signature: i=1; d=example.org; fake\nMessage-Instance: m=1; h=sha256:x:y;\nX-DKIM2-Info: action=mi-m=1;\n"
 +                  . "From: Whistle Blower <whistle\@corp.example>\nOrganization: Corp Inc\nSubject: s\n\nbody\n";
 +    my $w = through($signed_in, sub {
 +        $_[0]->replace_header('From', 'anon@mail.example.org');
 +        $_[0]->delete_header('Organization');
 +    }, anonymous_sender => 'anon@mail.example.org');
-+    unlike $w, qr/^(DKIM2-Signature|Message-Instance):/mi, 'chain stripped';
++    unlike $w, qr/^(DKIM2-Signature|Message-Instance|X-DKIM2-Info):/mi, 'chain stripped';
 +    unlike $w, qr/whistle|Corp Inc/i, 'original sender nowhere';
 +};
 +
 +subtest 'resend from archive strips the chain' => sub {
-+    my $signed = "DKIM2-Signature: i=1; d=example.org; fake\n" . $plain;
++    my $signed = $plain;
 +    my $w = through($signed, undef, shelved => ['dkim2_strip']);
-+    unlike $w, qr/^(DKIM2-Signature|Message-Instance):/mi,
++    unlike $w, qr/^(DKIM2-Signature|Message-Instance|X-DKIM2-Info):/mi,
 +        'stripped';
 +    my $m = Sympa::Message->new($plain, context => list());
 +    $m->{shelved}{dkim2_strip} = 1;
@@ -1956,7 +2284,7 @@ index f042f8ece..eda9b7bac 100644
 +    local *Sympa::List::get_list_member =
 +        sub { +{email => $_[1], date => 0} };
 +    my $att = join '', map { encode_base64(pack('N*', $_ .. $_ + 40)) } 1 .. 2000;
-+    my $raw = "From: a\@example.org\nTo: test\@mail.example.org\nSubject: big\n"
++    my $raw = $sig . "From: a\@example.org\nTo: test\@mail.example.org\nSubject: big\n"
 +        . "Message-ID: <big\@example.org>\nMIME-Version: 1.0\n"
 +        . "Content-Type: multipart/mixed; boundary=\"b1\"\n\n"
 +        . "--b1\nContent-Type: text/plain\n\nsee attached\n"
@@ -1999,6 +2327,18 @@ index f042f8ece..eda9b7bac 100644
 +    like $m->to_string, qr/^X-Sympa-DKIM2-Headers:/m, 'still spooled';
 +};
 +
++subtest 'X-DKIM2-Info above each instance Sympa adds' => sub {
++    my $w = through($plain, sub { $_[0]->replace_header('Subject', '[test] hi') });
++    like $w, qr/\AX-DKIM2-Info: (?:[^\r\n]|\r\n[ \t])*?action=mi-m=2;.*?\r\nMessage-Instance: m=2;/s, 'above m=2';
++    like $w, qr/X-DKIM2-Info: (?:[^\r\n]|\r\n[ \t])*?action=mi-m=1;.*?\r\nMessage-Instance: m=1;/s, 'above m=1';
++    my ($info) = $w =~ /\AX-DKIM2-Info: (.*?)\r\n(?![ \t])/s;
++    $info =~ s/\r\n[ \t]+/ /g;
++    like $info, qr/\A(?:[a-z0-9-]+=[^;]*; ?)+\z/, 'tag-list, every tag ends in ;';
++    like $info, qr/draft=\Q${\ Mail::DKIM2::Common::DKIM2_DRAFT()}\E;/,
++        'draft, as Mail::DKIM2 names it';
++    like $info, qr/hc=\d+; hn=[a-z0-9,-]+;/, 'hashed header count and names';
++};
++
 +# ---- Regression cases from the adversarial review (scratchpad exp/) ----
 +
 +# The header block of a wire text, unfolded, plus every Recipe in it decoded:
@@ -2012,7 +2352,7 @@ index f042f8ece..eda9b7bac 100644
 +# The m=2 field of a wire text (folded, as sent).
 +sub top_field { ($_[0] =~ /^(Message-Instance: m=2;.*?)\r\n(?![ \t])/ms)[0] // '' }
 +
-+my $rhdr = "From: Alice <a\@example.com>\nTo: test\@mail.example.org\nSubject: hello\nMessage-ID: <%s\@example.com>\nDate: Mon, 5 Oct 2026 10:00:00 +0000\nMIME-Version: 1.0\n";
++my $rhdr = $sig . "From: Alice <a\@example.com>\nTo: test\@mail.example.org\nSubject: hello\nMessage-ID: <%s\@example.com>\nDate: Mon, 5 Oct 2026 10:00:00 +0000\nMIME-Version: 1.0\n";
 +sub rmsg { my ($id, $rest) = @_; sprintf($rhdr, $id) . $rest }
 +
 +subtest 'review: real decorate cases' => sub {
@@ -2066,7 +2406,7 @@ index f042f8ece..eda9b7bac 100644
 +# The review's QP and charset bugs were in append mode (stock in-place
 +# editing); with DKIM2 on, append and mime both wrap.
 +subtest 'review: QP post' => sub {
-+    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: qp\nMessage-ID: <qp1\@example.com>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: quoted-printable\n\n"
++    my $raw = $sig . "From: a\@example.com\nTo: test\@mail.example.org\nSubject: qp\nMessage-ID: <qp1\@example.com>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: quoted-printable\n\n"
 +        . "Caf=C3=A9 au lait, 1+1=3D2. This is a long line that goes past the soft br=\neak boundary so QP had to wrap it.\n";
 +    my $text = "Caf\xc3\xa9 au lait, 1+1=2. This is a long line that goes past the soft break boundary so QP had to wrap it.\n";
 +    local %FILES;
@@ -2096,7 +2436,7 @@ index f042f8ece..eda9b7bac 100644
 +};
 +
 +subtest 'review: non-ASCII footer on a us-ascii post' => sub {
-+    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: as\nMessage-ID: <as\@x>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=us-ascii\n\nplain ascii\n";
++    my $raw = $sig . "From: a\@example.com\nTo: test\@mail.example.org\nSubject: as\nMessage-ID: <as\@x>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=us-ascii\n\nplain ascii\n";
 +    my $footer = "Euro \xe2\x82\xac, \xe6\x97\xa5\xe6\x9c\xac\n";
 +    local %FILES;
 +    set_file('message_footer', $footer);
@@ -2115,7 +2455,7 @@ index f042f8ece..eda9b7bac 100644
 +};
 +
 +subtest 'review: S/MIME encryption after decorate -> null, no plaintext in headers' => sub {
-+    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: secret\nMessage-ID: <s\@x>\nMIME-Version: 1.0\nContent-Type: text/plain\n\nThe merger closes on Friday; password is hunter2.\n";
++    my $raw = $sig . "From: a\@example.com\nTo: test\@mail.example.org\nSubject: secret\nMessage-ID: <s\@x>\nMIME-Version: 1.0\nContent-Type: text/plain\n\nThe merger closes on Friday; password is hunter2.\n";
 +    my $l = list();
 +    my $m = Sympa::Message->new($raw, context => $l);
 +    Sympa::DKIM2::ingress($m);
@@ -2146,7 +2486,7 @@ index f042f8ece..eda9b7bac 100644
 +};
 +
 +subtest 'review: moderation round trip' => sub {
-+    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: mod\nMessage-ID: <mod\@x>\nMIME-Version: 1.0\nContent-Type: text/plain\n\nplease moderate\n";
++    my $raw = $sig . "From: a\@example.com\nTo: test\@mail.example.org\nSubject: mod\nMessage-ID: <mod\@x>\nMIME-Version: 1.0\nContent-Type: text/plain\n\nplease moderate\n";
 +    local %FILES;
 +    set_file('message_footer', "-- \nfooter\n");
 +    my $l = list();
@@ -2168,7 +2508,7 @@ index f042f8ece..eda9b7bac 100644
 +
 +subtest 'review: notice mode -> null, small instance' => sub {
 +    my $att = encode_base64(join '', map { chr(($_ * 7919) % 256) } 1 .. 300000);
-+    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: big\nMessage-ID: <big\@x>\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=B\n\n--B\nContent-Type: text/plain\n\nsee attached\n--B\nContent-Type: application/octet-stream; name=a.bin\nContent-Disposition: attachment; filename=a.bin\nContent-Transfer-Encoding: base64\n\n$att--B--\n";
++    my $raw = $sig . "From: a\@example.com\nTo: test\@mail.example.org\nSubject: big\nMessage-ID: <big\@x>\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=B\n\n--B\nContent-Type: text/plain\n\nsee attached\n--B\nContent-Type: application/octet-stream; name=a.bin\nContent-Disposition: attachment; filename=a.bin\nContent-Transfer-Encoding: base64\n\n$att--B--\n";
 +    my $w = through($raw, undef,
 +        pre => sub { $_[0]->prepare_message_according_to_mode('notice', $_[1]) },
 +        decorate => 0);
@@ -2180,7 +2520,7 @@ index f042f8ece..eda9b7bac 100644
 +subtest 'review: txt mode -> null, small instance' => sub {
 +    my $txt  = join '', map { "line $_ with caf\xc3\xa9 text\n" } 1 .. 40;
 +    my $html = "<html><body>" . join('', map { "<p>para $_ caf&eacute;</p>\n" } 1 .. 200) . "</body></html>\n";
-+    my $raw = "From: a\@example.com\nTo: test\@mail.example.org\nSubject: alt\nMessage-ID: <alt\@x>\nMIME-Version: 1.0\nContent-Type: multipart/alternative; boundary=ALT\n\n--ALT\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: base64\n\n"
++    my $raw = $sig . "From: a\@example.com\nTo: test\@mail.example.org\nSubject: alt\nMessage-ID: <alt\@x>\nMIME-Version: 1.0\nContent-Type: multipart/alternative; boundary=ALT\n\n--ALT\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: base64\n\n"
 +        . encode_base64($txt) . "--ALT\nContent-Type: text/html; charset=utf-8\n\n$html--ALT--\n";
 +    local %FILES;
 +    set_file('message_footer', "-- \nfooter\n");
@@ -2259,7 +2599,7 @@ index f042f8ece..eda9b7bac 100644
 +        my ($name, $raw) = @$c;
 +        (my $crlf = $raw) =~ s/\n/\r\n/g;
 +        my $up = Mail::DKIM2::MessageInstance->calculate($crlf)->as_string;
-+        my $w = through("Message-Instance: $up\n$raw");
++        my $w = through($sig . "Message-Instance: $up\n$raw");
 +        my @m1 = map { s/\r\n[ \t]+/ /gr } $w =~ /^Message-Instance: (m=1;.*?)\r\n(?![ \t])/msg;
 +        is scalar(@m1), 1, "$name: one m=1";
 +        is $m1[0] =~ s/\s+//gr, $up =~ s/\s+//gr, "$name: upstream m=1 kept";
@@ -2268,6 +2608,237 @@ index f042f8ece..eda9b7bac 100644
 +        ok $mi && !$mi->unrecoverable, "$name: m=2, body recoverable";
 +        chain_ok($w, "$name: verifies");
 +    }
++};
++
++# ---- draft -07 ----
++
++# The MTA's part, for real: Ed25519 keys per domain, the outbound milter's
++# signing (m=1 for a message with no instance) and a downstream verifier.
++# example.com is the author's domain, mail.example.org the list host's.
++use Mail::DKIM2::Signer; use Mail::DKIM2::Verifier; use Crypt::PK::Ed25519;
++my %KEY;
++sub key_for { $KEY{$_[0]} //= do { my $k = Crypt::PK::Ed25519->new; $k->generate_key; $k } }
++sub mta_sign { my ($w, $d, %o) = @_;
++    unless ($w =~ /^Message-Instance:/mi) {
++        my $mi = Mail::DKIM2::MessageInstance->calculate($w);
++        $w = Mail::DKIM2::Common::fold_header(
++            'Message-Instance: ' . $mi->as_string) . "\r\n" . $w;
++    }
++    # No Domain Policy Record anywhere unless a test gives one (draft -09
++    # section 3.8): never a live DNS lookup.
++    my $s = Mail::DKIM2::Signer->new(Domain => $d, Selector => 's',
++        Key => key_for($d), Algorithm => 'ed25519-sha256',
++        PolicyCallback => sub { [] }, %o);
++    $s->load($w);
++    return (undef, $s->result_detail) unless ($s->result // '') eq 'signed';
++    return ($s->as_string . "\r\n" . $w);
++}
++sub mta_verify { my $w = shift;
++    my $v = Mail::DKIM2::Verifier->new(PolicyCallback => sub { [] }, PubkeyCallback => sub {
++        my $k = $KEY{$_[0]->domain} or return undef;
++        Crypt::PK::Ed25519->new(\$k->export_key_der('public')) })->load($w);
++    return ($v->result, $v->result_detail) }
++# The m=2 Recipe as sent: the JSON in its r= tag.
++sub top_recipe_json { my ($r) = top_field(shift) =~ /\br=([^;]+)/ or return {};
++    require JSON::PP; JSON::PP->new->decode(decode_base64($r =~ s/\s+//gr)) }
++sub from_of { my $w = shift; (($w =~ /^From: ((?:[^\r\n]|\r\n[ \t])*)/m)[0] // '') =~ s/\r\n[ \t]+/ /gr }
++# A post signed by its author's domain, LF line ends as Sympa spools it.
++sub author_signed { my $id = shift;
++    my ($s, $why) = mta_sign("From: Alice <a\@example.com>\r\nTo: test\@mail.example.org\r\nSubject: hello\r\nMessage-ID: <$id\@example.com>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nhello\r\n",
++        'example.com', MailFrom => '<a@example.com>', RcptTo => ['<test@mail.example.org>']);
++    die "author signing failed: $why\n" unless $s;
++    return $s =~ s/\r\n/\n/gr }
++# The list host's MTA signs a copy and a downstream verifier checks it.
++sub list_hop_ok { my ($w, $name, %o) = @_;
++    my ($s, $why) = mta_sign($w, 'mail.example.org',
++        MailFrom => '<test-owner@mail.example.org>', RcptTo => ['<r1@example.net>'], %o);
++    ok $s, "$name: the list host signs" or return diag $why;
++    my ($res, $detail) = mta_verify($s);
++    is $res, 'pass', "$name: verifies downstream" or diag $detail;
++    return $s }
++
++subtest '-07: non-UTF-8 header change gives a "u" step' => sub {
++    local %FILES;
++    my $raw = $sig . "From: a\@example.org\nTo: test\@mail.example.org\nSubject: caf\xe9\nMessage-ID: <u1\@example.org>\n\nhello\n";
++    my $w = through($raw, sub { $_[0]->replace_header('Subject', '[test] x') });
++    my @steps = @{ top_recipe_json($w)->{h}{subject} || [] };
++    my ($u) = grep { exists $_->{u} } @steps;
++    ok $u, 'a "u" step' or diag explain \@steps;
++    like decode_base64($u->{u}[0] // ''), qr/caf\xe9\z/, 'holds the raw octets';
++    ok !(grep { exists $_->{b} } @steps), 'no "b" step';
++    chain_ok($w, 'verifies');
++};
++
++subtest '-07: every distribution copy carries X-DKIM2-Exploded: yes' => sub {
++    my $l = list();
++    my $m = Sympa::Message->new($plain, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l);
++    my ($stored) = twist_one($b, Sympa::DKIM2::egress_context($b));
++    my $w = $stored->[0]->as_rfc822_string;
++    is scalar(() = $w =~ /^X-DKIM2-Exploded: yes\r$/mg), 1, 'hint header, once';
++    chain_ok($w, 'outside the hashes: still verifies');
++
++    my $off = Sympa::Message->new($plain, context => list(dkim2_message_instance => 'off'));
++    ($stored) = twist_one($off, Sympa::DKIM2::egress_context($off));
++    unlike $stored->[0]->as_string, qr/^X-DKIM2-Exploded:/m, 'switch off: none';
++
++    # A DKIM2 list's copy with no egress context (no saved header block).
++    my $nb = Sympa::Message->new($plain, context => $l);
++    ($stored) = twist_one($nb, undef);
++    like $stored->[0]->as_string, qr/^X-DKIM2-Exploded: yes$/m,
++        'no context: hint all the same';
++};
++
++subtest '-07: DKIM2 lists rewrite From to the list address' => sub {
++    my $m = Sympa::Message->new($plain, context => list());
++    $m->dmarc_protect;
++    like $m->get_header('From'), qr/<test\@mail\.example\.org>\z/, 'list address';
++    is $m->get_header('X-Original-From'), 'a@example.org', 'X-Original-From';
++
++    my $o = Sympa::Message->new($plain, context => list());
++    $o->{listtype} = 'owner';
++    $o->dmarc_protect;
++    like $o->get_header('From'), qr/<test-request\@mail\.example\.org>\z/, 'owner: -request address';
++
++    for my $c ([off => list(dkim2_message_instance => 'off')],
++               [anonymous => list(anonymous_sender => 'anon@mail.example.org')]) {
++        my $n = Sympa::Message->new($plain, context => $c->[1]);
++        $n->dmarc_protect;
++        is $n->get_header('From'), 'a@example.org', "$c->[0]: unchanged";
++    }
++};
++
++subtest '-07: From rewrite is shelved on DKIM2 lists' => sub {
++    require Sympa::Spindle::ToList;
++    no warnings qw(redefine once);
++    local *Sympa::Spool::Outgoing::new = sub { bless {}, shift };
++    local *Sympa::Spool::Outgoing::store = sub { 1 };
++    for my $c ([on => list(), 1], [off => list(dkim2_message_instance => 'off'), 0],
++               [anonymous => list(anonymous_sender => 'anon@mail.example.org'), 0]) {
++        my ($name, $l, $want) = @$c;
++        my $m = Sympa::Message->new($plain, context => $l);
++        Sympa::Spindle::ToList::_mail_message($m, ['r@example.net']);
++        is !!$m->{shelved}{dmarc_protect}, !!$want, "ToList, $name";
++    }
++};
++
++subtest '-07: DoForward shelves the From rewrite on DKIM2 lists' => sub {
++    require Sympa::Spindle::DoForward;
++    no warnings qw(redefine once);
++    my @stored;
++    local *Sympa::Spindle::DoForward::_splicing_to = sub { 'Sympa::Spindle::DoForward' };
++    local *Sympa::List::get_admins_email = sub { ('owner@example.net') };
++    local *Sympa::Spool::Outgoing::new = sub { bless {}, shift };
++    local *Sympa::Spool::Outgoing::store = sub { push @stored, $_[1]; 1 };
++    for my $c ([on => list(), 1], [off => list(dkim2_message_instance => 'off'), 0]) {
++        my ($name, $l, $want) = @$c;
++        my $m = Sympa::Message->new($plain, context => $l);
++        @$m{qw(listtype spam_status sender)} = ('owner', 'ham', 'a@example.org');
++        my $spindle = bless {}, 'Sympa::Spindle::DoForward';
++        my $ok;
++        { local *STDERR; open STDERR, '>', \my $err or die; $ok = $spindle->_twist($m) }
++        ok $ok, "$name: forwarded";
++        is !!$m->{shelved}{dmarc_protect}, !!$want, "$name: From rewrite "
++            . ($want ? 'shelved' : 'not shelved');
++    }
++    is scalar(@stored), 2, 'both stored';
++};
++
++subtest '-07: unsigned post: From rewritten, one m=1 with a Recipe back' => sub {
++    local %FILES;
++    set_file('message_footer', "-- \nfooter\n");
++    my $l = list();
++    my $m = Sympa::Message->new($unsigned, context => $l);
++    Sympa::DKIM2::ingress($m);
++    my $b = Sympa::Message->new($m->to_string, context => $l);
++    ok Sympa::DKIM2::egress_context($b)->{unsigned}, 'context marked unsigned';
++
++    # Unchanged From a@example.org under d=mail.example.org: draft -09 makes
++    # it Authentic (d= below the From domain) unless example.org's Domain
++    # Policy Record says f=strict, so the list host may sign it only then.
++    my $w = through($unsigned, undef);
++    my (undef, $why) = mta_sign($w, 'mail.example.org',
++        PolicyCallback => sub { ['v=DKIM1; f=strict'] });
++    like $why // '', qr/From header field is not Authentic for d=mail\.example\.org/,
++        'author From, parent f=strict: the MTA refuses';
++    my ($ok) = mta_sign($w, 'mail.example.org');
++    ok $ok, 'author From, no policy record: the MTA may sign (-09)';
++
++    $w = through($unsigned, sub { $_[0]->dmarc_protect });
++    my @mi = $w =~ /^Message-Instance: (m=\d+);/mg;
++    is_deeply \@mi, ['m=1'], 'exactly one instance, m=1';
++    is scalar(() = $w =~ /^X-DKIM2-Info: /mg), 1, 'one X-DKIM2-Info';
++    like $w, qr/\AX-DKIM2-Info: (?:[^\r\n]|\r\n[ \t])*?action=mi-m=1;.*?\r\nMessage-Instance: m=1;/s,
++        'X-DKIM2-Info above it';
++    like from_of($w), qr/<test\@mail\.example\.org>$/, 'From is the list address';
++    my ($v) = $w =~ /^Message-Instance: (m=1;.*?)\r\n(?![ \t])/ms;
++    my $mi1 = Mail::DKIM2::MessageInstance->parse($v);
++    ok !$mi1->unrecoverable, 'body Recipe: the wrap copy range';
++    my $prev = Mail::DKIM2::MessageInstance->undo($w)->as_string;
++    like $prev, qr/^From: a\@example\.org\r$/m, 'Recipe restores the original From';
++    like $prev, qr/\r\n\r\nhello\r\n\z/, 'and the original body';
++    list_hop_ok($w, 'i=1');
++};
++
++subtest '-07: signed post changed by the list: From rewritten, original in the Recipe' => sub {
++    local %FILES;
++    set_file('message_footer', "-- \nfooter\n");
++    my $w = through(author_signed('s7'), sub {
++        $_[0]->dmarc_protect;
++        $_[0]->replace_header('Subject', '[test] hello') });
++    like from_of($w), qr/<test\@mail\.example\.org>$/, 'From is the list address';
++    my $from = top_recipe_json($w)->{h}{from};
++    ok $from, 'From in the header Recipe of m=2';
++    like join("\n", map { @{ $_->{d} || [] } } @{ $from || [] }),
++        qr/Alice <a\@example\.com>/, 'original From in the Recipe';
++    my $s = list_hop_ok($w, 'i=2', Exploded => 1);
++    like $s // '', qr/^DKIM2-Signature: [^\r\n]*(?:\r\n[ \t][^\r\n]*)*?f=[^;]*exploded/m,
++        'f=exploded at i=2';
++};
++
++subtest '-07: resend from the archive: From rewritten, new chain' => sub {
++    require Sympa::Spindle::ToList;
++    no warnings qw(redefine once);
++    local *Sympa::Spool::Outgoing::new = sub { bless {}, shift };
++    local *Sympa::Spool::Outgoing::store = sub { 1 };
++    local %FILES;
++    my $l = list();
++    my $a = Sympa::Message->new(author_signed('ra'), context => $l);
++    $a->{shelved}{dkim2_strip} = 1;        # as ResendArchive sets it
++    Sympa::Spindle::ToList::_mail_message($a, ['r@example.net']);
++    ok $a->{shelved}{dmarc_protect}, 'From rewrite shelved';
++    my $ctx = Sympa::DKIM2::egress_context($a);
++    $a->dmarc_protect;
++    my $one = $a->dup;
++    Sympa::DKIM2::egress_add($one, $ctx);
++    my $w = $one->as_rfc822_string;
++    unlike $w, qr/^(Message-Instance|DKIM2-Signature):/mi, 'chain stripped';
++    like from_of($w), qr/<test\@mail\.example\.org>$/, 'From is the list address';
++    list_hop_ok($w, 'i=1');
++};
++
++subtest '-07: From addresses outside the list domain are logged' => sub {
++    my @warn;
++    no warnings 'redefine';
++    local *Sympa::Log::syslog = sub { my (undef, $lv, $f, @a) = @_;
++        push @warn, sprintf($f, map { $_ // '' } @a) if $lv eq 'notice' };
++    my $m = Sympa::Message->new($plain,
++        context => list(dmarc_protection => {other_email => 'x@elsewhere.net'}));
++    $m->dmarc_protect;
++    like $m->get_header('From'), qr/x\@elsewhere\.net/, 'other_email used as configured';
++    is scalar(grep { /other_email.*not Authentic/ } @warn), 1, 'other_email warned';
++
++    @warn = ();
++    my $ok = Sympa::Message->new($plain,
++        context => list(dmarc_protection => {other_email => 'x@sub.mail.example.org'}));
++    $ok->dmarc_protect;
++    is scalar(@warn), 0, 'address below the list domain: no warning';
++
++    my $an = Sympa::Message->new($plain,
++        context => list(anonymous_sender => 'anon@elsewhere.net'));
++    Sympa::DKIM2::egress_context($an);
++    is scalar(grep { /anonymous_sender.*not Authentic/ } @warn), 1, 'anonymous_sender warned';
 +};
 +
  done_testing;
