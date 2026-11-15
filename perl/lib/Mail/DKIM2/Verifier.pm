@@ -46,6 +46,15 @@ our $PREFETCH_POLL = 0.005;
 # prefetched is asked for with query() if it is ever needed.
 our $PREFETCH_MAX = 8;
 
+# The longest one message's DNS lookups (keys and Domain Policy Records)
+# are waited for in all, in seconds. A message may name hundreds of keys
+# under nameservers that never answer, each of them worth the resolver's
+# whole timeout; once this much time has gone on waiting, the lookups not
+# yet made fail at once, as a DNS failure does (TEMPERROR).
+our $LOOKUP_BUDGET = 20;
+
+sub _now { Time::HiRes::time() }
+
 
 sub known_options {
     return qw(SkipTimestampCheck AllowUnsignedMI MidProcess HeadersOnly
@@ -997,6 +1006,18 @@ sub _prefetch_policies {
 # answer, NXDOMAIN, or NOERROR with none), else from query().
 sub _key_reply {
     my ($self, $fqdn) = @_;
+    if (($self->{_lookup_waited} // 0) >= $LOOKUP_BUDGET) {
+        delete $self->{_key_queries};       # nothing more is read from these
+        return [undef, "this message's lookups have taken $LOOKUP_BUDGET s"];
+    }
+    my $started = _now();
+    my $answer = $self->_key_reply_unbudgeted($fqdn);
+    $self->{_lookup_waited} += _now() - $started;
+    return $answer;
+}
+
+sub _key_reply_unbudgeted {
+    my ($self, $fqdn) = @_;
     my $resolver = $self->_resolver;
     if (my $q = delete $self->{_key_queries}{lc $fqdn}) {
         my $ready = 1;
@@ -1224,6 +1245,13 @@ are those of one C<query> at a time. At most
 C<$Mail::DKIM2::Verifier::PREFETCH_MAX> keys (8) are prefetched per
 message, the top signature's first; any other key is asked for with
 C<query> when it is needed. Not with a C<PubkeyCallback>.
+
+One message's lookups, keys and Domain Policy Records together, are waited
+for no longer than C<$Mail::DKIM2::Verifier::LOOKUP_BUDGET> seconds (20)
+in all (new in 0.33). A message can name hundreds of keys under
+nameservers that never answer; once that long has gone on waiting, the
+lookups not yet made fail at once as a DNS failure does, and the result is
+C<temperror>. Callbacks are not timed.
 
 The Domain Policy Records the From check will need (a C<d=> below the From
 domain it is checked against, worked out from the header fields and

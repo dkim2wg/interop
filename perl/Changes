@@ -8,6 +8,13 @@ Revision history for Mail::DKIM2
           $Mail::DKIM2::Address::MAX_FROM_LENGTH holds the limit. Every
           implementation in the interop repository now has it; one of
           them took tens of seconds to parse a hostile 100 KB From.
+        - The Verifier waits no longer than 20 seconds in all for one
+          message's DNS lookups ($Mail::DKIM2::Verifier::LOOKUP_BUDGET):
+          after that the lookups not yet made fail at once, and the result
+          is temperror, as for any DNS failure. A message can name 8 keys
+          per signature and 32 signatures, each lookup worth the
+          resolver's whole timeout. Lookups made by a PubkeyCallback or a
+          PolicyCallback are not counted.
 
 0.32    2026-11-14
         - dkim2-milter and the DKIM2Sign handler sign a message that has a
