@@ -17,7 +17,10 @@ Revision history for Mail::DKIM2
           DKIM2-Signature on it, as for any refusal). The field is removed
           on sight by every mode, so it neither comes from outside nor
           leaves the host; an inbound milter with --no-envelope-check
-          keeps a failing verdict the milter before it gave.
+          keeps a failing verdict the milter before it gave, and behind a
+          pass or none takes a Message-Instance nobody has signed for
+          this host's own (the m=1 the first milter stamped on an unsigned
+          post) instead of reporting permerror.
         - Mail::DKIM2::Hop->snapshot_vouches($message, $snapshot): whether
           a snapshot is of this very message.
 

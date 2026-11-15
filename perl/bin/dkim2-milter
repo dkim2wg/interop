@@ -879,6 +879,14 @@ sub _start_verify {
         ) : ());
         my %cb = _gate_pubkey_cb();
         $verifier->set_pubkey_callback($cb{PubkeyCallback}) if $cb{PubkeyCallback};
+        # Behind an inbound milter of ours that gave pass or none (an
+        # internal hop: --no-envelope-check), a Message-Instance nobody has
+        # signed is this host's own -- the m=1 that milter stamped -- and
+        # not a broken chain.
+        my @arrived = map { $_->[1] } grep { lc $_->[0] eq 'x-dkim2-arrival' } @{$priv->{headers}};
+        $verifier->allow_unsigned_mi(1)
+            if $opts{mode} eq 'inbound' && !$check_envelope
+            && @arrived && !grep { !/\A\s*(?:pass|none)\s*\z/ } @arrived;
         $state->{verifier} = $verifier;
         $verifier->PRINT(join('', grep { !/\AX-DKIM2-Snapshot[ \t]*:/i } @$raw_hdrs)
                          . "\015\012");
@@ -1304,7 +1312,10 @@ and otherwise it goes on without the instances this host added.  Like the
 token, the field is removed on sight by every mode and never leaves the
 host.  An inbound milter run with C<--no-envelope-check> (an internal hop)
 keeps a verdict other than C<pass> or C<none> that the milter before it
-gave, since that one saw the envelope the message arrived in.
+gave, since that one saw the envelope the message arrived in.  Behind a
+C<pass> or C<none> it takes a Message-Instance that no signature covers for
+this host's own (the C<m=1> the first milter stamped on an unsigned post),
+not for a broken chain.
 
 =item Unsigned posts leave with one m=1
 

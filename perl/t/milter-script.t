@@ -1243,4 +1243,29 @@ sub unsigned_arrival {
     return apply_mods($plain, $imods);
 }
 
+# --- Two inbound milters in a row, unsigned post (port 25, then the wrap) ---
+# The edge milter stamps m=1; the wrap milter behind it sees an instance
+# nobody has signed. That is this host's own, not a broken chain: the post
+# is wrapped, and the outbound milter signs it.
+{
+    my (undef, $edge) = spawn_milter(mode => 'inbound');
+    my (undef, $inner) = spawn_milter(mode => 'inbound',
+        extra => ['--no-envelope-check', '--wrap-single-part']);
+    (my $p = $LOCAL) =~ s/<post\@test1/<two-inbound\@test1/;
+    my ($iv, $imods) = run_milter(sock => $edge,
+        from => 'author@test2.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $p);
+    my $first = apply_mods($p, $imods);
+    ($iv, $imods) = run_milter(sock => $inner,
+        from => 'author@test2.dkim2.com', rcpt => ['list@test2.dkim2.com'], message => $first);
+    my $second = apply_mods($first, $imods);
+    is_deeply(arrival_of($second), ['none'], 'two inbound: still arrived none')
+        or diag(join "\n", (split /\n/, milter_log())[-8 .. -1]);
+    is_deeply([mi_numbers($second)], [1, 2], 'two inbound: wrapped as m=2');
+    my ($v, $mods) = run_milter(
+        from => 'list-bounces@test2.dkim2.com', rcpt => ['subscriber@example.org'], message => $second);
+    my $out = apply_mods($second, $mods);
+    is(scalar(inserted($mods, 'DKIM2-Signature')), 1, 'two inbound: signed');
+    is(verify($out)->result, 'pass', 'two inbound: the copy verifies');
+}
+
 done_testing;
