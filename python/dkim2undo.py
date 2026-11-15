@@ -275,9 +275,9 @@ def validate_recipes(recipes) -> None:
         if not h:
             raise MalformedRecipe('"h" names no header fields')
         # Each key is a header field name (-09 §5): ftext, so no WSP.
-        # "message-instance " is not a name -- and, taken for one by name
-        # matching that drops WSP before a colon, would let a Recipe rewrite
-        # the instances below it.
+        # "subject " is not a name, and name matching that drops WSP before
+        # a colon would take it for Subject where a stricter verifier does
+        # not: it is malformed, so that every verifier says the same.
         if any(not _FIELD_NAME.fullmatch(k) for k in h):
             raise MalformedRecipe('"h" has a key that is not a header field name')
     b = recipes.get("b")

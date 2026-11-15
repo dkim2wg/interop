@@ -336,9 +336,9 @@ static int validate_schema(const cJSON *root, char *path, size_t pathsz) {
     if (h && (!cJSON_IsObject(h) || !h->child)) return 1;
     if (b && !cJSON_IsNull(b) && !cJSON_IsArray(b)) return 1;
     /* Each "h" key is a header field name (-09 §5): ftext, so no WSP.
-       "message-instance " is not a name -- and, taken for one by name
-       matching that drops WSP before a colon, would let a Recipe rewrite
-       the instances below it. */
+       "subject " is not a name, and name matching that drops WSP before
+       a colon would take it for Subject where a stricter verifier does
+       not: it is malformed, so that every verifier says the same. */
     for (const cJSON *f = h ? h->child : NULL; f; f = f->next)
         if (!is_field_name(f->string)) return 1;
 
