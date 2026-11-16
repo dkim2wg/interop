@@ -72,6 +72,8 @@ Writes:
                                       colon, WSP in the name, empty name, a fold
                                       before the colon, a
                                       first line starting with WSP; PERMERROR
+  junk-signature-wsp-name.eml      -- "DKIM2-Signature : m=1; d=evil.example"
+                                      added to a signed message: i= missing
   multi-malformed-header-instance-gap.eml -- that, and m=2 missing: the
                                       malformed header is primary
   lone-junk-signature.eml          -- an unsigned message whose only DKIM2 field
@@ -929,6 +931,15 @@ def build_malformed_header_folded_colon():
 def build_malformed_header_leading_wsp():
     """NEGATIVE: the first line starts with WSP, a continuation of nothing."""
     return _with_header_line(build_positive_control(), b" Subject: evil\r\n", first=True)
+
+
+def build_junk_signature_wsp_name():
+    """NEGATIVE: a signed message with "DKIM2-Signature : m=1;
+    d=evil.example" added -- a field (WSP before the colon is allowed) that
+    is a DKIM2-Signature with no i=.  C left it out of the hash as a DKIM2
+    field but compared the untrimmed name when collecting the chain, so it
+    was ignored and the message passed."""
+    return b"DKIM2-Signature : m=1; d=evil.example\r\n" + build_positive_control()
 
 
 def build_multi_malformed_header_instance_gap():
@@ -2096,6 +2107,7 @@ FIXTURES = {
     "malformed-header-empty-name.eml": build_malformed_header_empty_name,
     "malformed-header-leading-wsp.eml": build_malformed_header_leading_wsp,
     "malformed-header-folded-colon.eml": build_malformed_header_folded_colon,
+    "junk-signature-wsp-name.eml": build_junk_signature_wsp_name,
     "multi-malformed-header-instance-gap.eml": build_multi_malformed_header_instance_gap,
     "signature-i-33.eml": build_signature_i_33,
     "signature-i-101.eml": build_signature_i_101,
