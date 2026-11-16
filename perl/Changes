@@ -23,6 +23,15 @@ Revision history for Mail::DKIM2
           post) instead of reporting permerror.
         - Mail::DKIM2::Hop->snapshot_vouches($message, $snapshot): whether
           a snapshot is of this very message.
+        - A message handed over as a string Perl holds as characters is
+          hashed as the octets those characters stand for. With the
+          OpenSSL digests (the default wherever Net::SSLeay is installed)
+          it was hashed as the string's UTF-8, so a Message-Instance
+          computed for such a message, if it had an octet above 0x7F in
+          it, did not match the octets sent. Email::MIME gives a character
+          string once any one header field of it has been upgraded. A
+          string with a character above 0xFF croaks ("Wide character"),
+          as it did with the CryptX digests.
 
 0.33    2026-11-14
         - A From field value longer than 2048 octets (not counting the line
