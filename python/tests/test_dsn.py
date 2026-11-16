@@ -606,7 +606,7 @@ if __name__ == "__main__":
     test_authenticate_misaligned_dsn()
     test_check_alignment_domain_relationships()
     test_authenticate_broken_dsn_signature()
-    test_authenticate_unsigned_dsn_is_reported_not_failed()
+    test_authenticate_unsigned_dsn_is_reported_not_ok()
     test_propagate_needs_the_means_to_authenticate()
     test_propagate_refuses_an_unverifiable_returned_message()
     test_propagate_refuses_a_misaligned_dsn()

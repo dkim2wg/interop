@@ -95,17 +95,50 @@ def parse_message(source: "Source") -> tuple[list[bytes], bytes]:
         header_block = raw[:idx]
         body = raw[idx + len(sep):]
 
-    # Split header block into individual header fields (handling continuations)
-    header_lines: list[bytes] = []
+    # Split header block into individual header fields (handling
+    # continuations).  A field's lines are gathered and joined once: adding
+    # each continuation line to the field's bytes copied the field so far
+    # every time, quadratic in its folds -- a few hundred KB of " \r\n"
+    # folding took seconds, before any check (the analogue here of
+    # CVE-2026-129848).  A first line that starts with WSP continues nothing
+    # and is kept as an entry of its own, so malformed_header() sees it.
+    fields: list[list[bytes]] = []
     for line in header_block.split(b"\r\n"):
-        if line and line[0:1] in (b" ", b"\t") and header_lines:
-            # Continuation line – append to previous header
-            header_lines[-1] += b"\r\n" + line
-        else:
-            if line:
-                header_lines.append(line)
+        if line and line[0:1] in (b" ", b"\t") and fields:
+            fields[-1].append(line)
+        elif line:
+            fields.append([line])
 
-    return header_lines, body
+    return [b"\r\n".join(f) for f in fields], body
+
+
+# A header field is a name (no WSP, no colon) and then its colon, with only
+# WSP between them (RFC 5322 obs-optional; never a fold, which no
+# implementation here accepts there).  parse_message() keeps every line of the
+# header section, so a line that is not a field -- no colon, WSP or nothing
+# before the colon, or a first line that starts with WSP (a continuation of
+# nothing) -- is one of the entries it returns, and fails this.  Such a line
+# was hashed here as a field of its own, but another parser drops it (as
+# Mail::DKIM2 0.34 did: lines could then be added to a signed message that no
+# Message-Instance covered, CVE-2026-129847) or ends the header section at
+# it, so a header section holding one is malformed: the verifier says so
+# first, and the signer refuses it.
+_FIELD_START = re.compile(rb"[^\s:]+[ \t]*:")
+
+
+def malformed_header_field(field: bytes) -> bool:
+    """True if `field`, one entry of parse_message()'s header list, is not
+    a header field (CVE-2026-129847)."""
+    return _FIELD_START.match(field) is None
+
+
+def malformed_header(headers: list[bytes]) -> bool:
+    """True if any of parse_message()'s header entries is not a header
+    field (CVE-2026-129847)."""
+    return any(malformed_header_field(h) for h in headers)
+
+
+MALFORMED_HEADER = "malformed header field"
 
 
 # ---------------------------------------------------------------------------
@@ -1266,6 +1299,11 @@ def sign_fields(headers: list[bytes], body_hashes: dict,
     DKIM2-Signature, and after it the new Message-Instance if one was
     needed.
     """
+    # A line that is not a field is in no header hash (CVE-2026-129847):
+    # refused first, chain or no chain, gate or no gate.
+    if malformed_header(headers):
+        raise SigningRefused(f"not signing: {MALFORMED_HEADER}")
+
     private_key, algorithm = load_private_key(keyfile)
 
     # Find any existing Message-Instance and DKIM2-Signature headers

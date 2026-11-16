@@ -40,6 +40,8 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, padding, rsa, uti
 
 from dkim2sign import (
     parse_message,
+    malformed_header,
+    MALFORMED_HEADER,
     _to_bytes,
     _header_name,
     _should_exclude_header,
@@ -1373,6 +1375,14 @@ def _check_headers(headers: list[bytes], o: _Options):
     verdict, else a _Context for the rest."""
     mi_headers = extract_mi_headers(headers)
     sig_headers = extract_sig_headers(headers)
+
+    # Before anything else, the chain's structure included: a header
+    # section holding a line that is not a field.  No instance hashed that
+    # line as other parsers read it, so no result about the message can
+    # stand (CVE-2026-129847).  A message with no DKIM2 field is still
+    # none: there is no DKIM2 result to give.
+    if (mi_headers or sig_headers) and malformed_header(headers):
+        return _permerror(f"PERMERROR: {MALFORMED_HEADER}")
 
     err = _structure_error(mi_headers, sig_headers, o)
     if err:

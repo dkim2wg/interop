@@ -75,6 +75,9 @@ EXPECT = {
     # step, lowest i= first, so i=1's FAIL beats i=2's missing key.
     "multi-key-error-above-bad-signature":
         "FAIL: DKIM2-Signature i=1 selector sel1 incorrect signature",
+    # CVE-2026-129847: a header line that is not a field is in no header
+    # hash, so it comes before everything, the chain's structure included.
+    "multi-malformed-header-instance-gap": "PERMERROR: malformed header field",
 }
 
 
