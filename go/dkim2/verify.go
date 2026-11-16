@@ -68,6 +68,13 @@ func chainOf(headers []Header, opts ...VerifyOptions) (*chainShape, error) {
 	if len(sigs) == 0 && len(mis) == 0 {
 		return nil, ErrNone
 	}
+	// Before every structure check: a line in the header section that is
+	// not a field.  No instance hashed it, so no result about the message
+	// can stand (CVE-2026-129847).  With no DKIM2 field it is still none,
+	// above: there is no DKIM2 result to give.
+	if malformedHeader(headers) {
+		return nil, ErrMalformedHeader
+	}
 	cs, err := chainStructure(mis, sigs, len(opts) > 0 && opts[0].Outbound)
 	if err != nil {
 		return nil, err

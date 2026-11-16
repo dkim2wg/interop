@@ -46,6 +46,12 @@ func Sign(r io.Reader, w io.Writer, key crypto.PrivateKey, opts SignOptions) err
 		return fmt.Errorf("reading body: %w", err)
 	}
 
+	// A line in the header section that is not a field would be covered
+	// by no header hash of ours (CVE-2026-129847): refused, gate or no gate.
+	if malformedHeader(headers) {
+		return fmt.Errorf("not signing: malformed header field")
+	}
+
 	// Out-of-range i=/m= are refused even with the gate bypassed: the next
 	// i= and m= are computed from them below.
 	{

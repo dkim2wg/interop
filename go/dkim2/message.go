@@ -12,6 +12,44 @@ type Header struct {
 	Name  string // original case
 	Value string // unfolded, leading WSP after colon stripped
 	Raw   string // original folded form: "Name: value\r\n"
+
+	// malformed: Raw is a line of the header section that is not a field
+	// (see fieldName), kept so it is neither dropped nor read as a field.
+	// Name and Value are empty.
+	malformed bool
+}
+
+// malformedHeader reports whether the header section holds a line that is
+// not a field.  No Message-Instance hashes such a line, so it can be
+// neither read as a field nor passed over: lines could be added to a signed
+// message unseen by every instance while other parsers read them
+// (CVE-2026-129847, reported against Perl 0.34).  The verifiers (chainOf)
+// make it "PERMERROR: malformed header field" before every other check;
+// Sign refuses.
+func malformedHeader(headers []Header) bool {
+	for _, h := range headers {
+		if h.malformed {
+			return true
+		}
+	}
+	return false
+}
+
+// fieldName returns the name of the field whose first line is first, and
+// the index of its colon: a name with no white space and no colon, optional
+// SP/HTAB, then the colon -- ^[^\s:]+[ \t]*: as the Perl reference has it.
+// ok is false for any other line: no colon, an empty name, or white space
+// inside the name.
+func fieldName(first string) (name string, colon int, ok bool) {
+	colon = strings.IndexByte(first, ':')
+	if colon <= 0 {
+		return "", -1, false
+	}
+	name = strings.TrimRight(first[:colon], " \t")
+	if name == "" || strings.ContainsAny(name, " \t\r\n\v\f") {
+		return "", -1, false
+	}
+	return name, colon, true
 }
 
 // parseHeaders reads headers from r up to the blank line separator.
@@ -67,27 +105,31 @@ func readHeaderFields(br *bufio.Reader) ([]Header, error) {
 		// Raw = original folded form with CRLF endings
 		raw := strings.Join(currentLines, "\r\n") + "\r\n"
 
-		// Name: from first line up to colon
+		// Name: from first line up to colon.  A line that is not a field
+		// is kept, marked malformed, not taken for a field it is not
+		// (CVE-2026-129847): "NoColonHere" was a field of that name, and
+		// " Subject: evil" opening the section was read as Subject.
 		first := currentLines[0]
-		colon := strings.IndexByte(first, ':')
-		var name, value string
-		if colon >= 0 {
-			name = strings.TrimSpace(first[:colon])
-			// Unfold value: first line after colon + continuation lines
-			value = strings.TrimLeft(first[colon+1:], " \t")
-			for _, cont := range currentLines[1:] {
-				value += " " + strings.TrimLeft(cont, " \t")
-			}
-			value = strings.TrimRight(value, " \t")
-		} else {
-			name = strings.TrimSpace(first)
+		name, colon, ok := fieldName(first)
+		if !ok {
+			headers = append(headers, Header{Raw: raw, malformed: true})
+			currentLines = currentLines[:0]
+			return
 		}
+		// Unfold value: first line after colon + continuation lines
+		value := strings.TrimLeft(first[colon+1:], " \t")
+		for _, cont := range currentLines[1:] {
+			value += " " + strings.TrimLeft(cont, " \t")
+		}
+		value = strings.TrimRight(value, " \t")
 		headers = append(headers, Header{Name: name, Value: value, Raw: raw})
 		currentLines = currentLines[:0]
 	}
 
 	for _, line := range rawLines {
-		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+		// A WSP line continues the field before it.  Opening the section,
+		// with no field to continue, it is a line of its own: malformed.
+		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') && len(currentLines) > 0 {
 			// Continuation line
 			currentLines = append(currentLines, line)
 		} else {

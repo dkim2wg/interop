@@ -176,6 +176,12 @@ type VerifyOptions struct {
 // (contract E1).
 var ErrNone = errors.New("No DKIM2 header fields found")
 
+// ErrMalformedHeader is returned by Verify and VerifyFull, before any other
+// check, for a message with a DKIM2 field whose header section holds a line
+// that is not a header field (CVE-2026-129847): a PERMERROR, as no
+// Message-Instance hashed that line.
+var ErrMalformedHeader = errors.New("PERMERROR: malformed header field")
+
 // MaxFutureSkew and MaxSignatureAge are the §14.3 timestamp limits: a
 // signature made more than one day after delivery, or more than 14 days
 // before it, is not Fully Verified.
