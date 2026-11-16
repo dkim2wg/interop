@@ -67,6 +67,12 @@ Writes:
                                          "DKIM2-Signature: m=2; d=evil.example"
                                          (no i=); REJECT (PERMERROR)
   unkeyable-signature-i-abc.eml    -- the same with i=abc; REJECT (PERMERROR)
+  malformed-header-*.eml           -- a signed message with a header-section
+                                      line that is not a field added: no
+                                      colon, WSP in the name, empty name, a
+                                      first line starting with WSP; PERMERROR
+  multi-malformed-header-instance-gap.eml -- that, and m=2 missing: the
+                                      malformed header is primary
   lone-junk-signature.eml          -- an unsigned message whose only DKIM2 field
                                          is "DKIM2-Signature: m=1; d=evil.example";
                                          REJECT (PERMERROR, not "none")
@@ -301,7 +307,13 @@ def load_base():
 def build_dup_hash():
     """h= repeats an algorithm: sha256 appears twice, BOTH tuples correct."""
     headers, body = load_base()
-    mi_hdr = ds.build_message_instance(headers, body, version=1, algs=["sha256", "sha256"])
+    # The signer keys its hashes by algorithm, so it writes sha256 once:
+    # repeat the set by hand (it was silently one set, a fixture every
+    # verifier accepted, from 88c18d5).
+    mi_hdr = ds.build_message_instance(headers, body, version=1, algs=["sha256"])
+    one = re.search(r"h=(sha256:[^;,]+)", mi_hdr).group(1)
+    mi_hdr = mi_hdr.replace(f"h={one}", f"h={one},{one}", 1)
+    assert mi_hdr.count("sha256:") == 2
     priv, alg = ds.load_private_key(key("sel1"))
     sig_hdr = ds.build_dkim2_signature(
         [], [], mi_hdr, DOM, "sel1", priv, alg,
@@ -875,6 +887,47 @@ def build_lone_junk_signature():
     not a pass: a checker whose walk is driven by the i= values it can read
     sees no chain at all and has nothing to fail."""
     return b"DKIM2-Signature: m=1; d=evil.example\r\n" + open(SRC, "rb").read()
+
+
+# A line in the header section that is not a header field (CVE-2026-129847,
+# reported against Mail::DKIM2 0.34): no colon, WSP or nothing before the
+# colon, or a first line that starts with WSP.  No header hash covers such a
+# line, so a verifier that drops it passes a message anyone can add lines
+# to, while other parsers read them (Python's email ends the header section
+# at the first one).  Each fixture is a genuinely signed message with one
+# such line added afterwards: PERMERROR, first of everything.
+def _with_header_line(msg, line, first=False):
+    if first:
+        return line + msg
+    i = msg.index(b"\r\nSubject:") + 2
+    j = msg.index(b"\r\n", i) + 2
+    return msg[:j] + line + msg[j:]
+
+
+def build_malformed_header_no_colon():
+    """NEGATIVE: "NoColonHere" after Subject."""
+    return _with_header_line(build_positive_control(), b"NoColonHere\r\n")
+
+
+def build_malformed_header_wsp_in_name():
+    """NEGATIVE: "Sub ject: x" -- a field name cannot hold WSP."""
+    return _with_header_line(build_positive_control(), b"Sub ject: x\r\n")
+
+
+def build_malformed_header_empty_name():
+    """NEGATIVE: ":Empty: x" -- nothing before the colon."""
+    return _with_header_line(build_positive_control(), b":Empty: x\r\n")
+
+
+def build_malformed_header_leading_wsp():
+    """NEGATIVE: the first line starts with WSP, a continuation of nothing."""
+    return _with_header_line(build_positive_control(), b" Subject: evil\r\n", first=True)
+
+
+def build_multi_malformed_header_instance_gap():
+    """NEGATIVE, two faults: m=2 missing (C9 step f) and a line with no
+    colon. The malformed header section is reported first."""
+    return _with_header_line(build_instance_gap(), b"NoColonHere\r\n")
 
 
 # Every i= and m= is a chain number: 1*DIGIT, at most two digits naming
@@ -2031,6 +2084,11 @@ FIXTURES = {
     "unkeyable-signature-no-i.eml": build_unkeyable_signature_no_i,
     "unkeyable-signature-i-abc.eml": build_unkeyable_signature_i_abc,
     "lone-junk-signature.eml": build_lone_junk_signature,
+    "malformed-header-no-colon.eml": build_malformed_header_no_colon,
+    "malformed-header-wsp-in-name.eml": build_malformed_header_wsp_in_name,
+    "malformed-header-empty-name.eml": build_malformed_header_empty_name,
+    "malformed-header-leading-wsp.eml": build_malformed_header_leading_wsp,
+    "multi-malformed-header-instance-gap.eml": build_multi_malformed_header_instance_gap,
     "signature-i-33.eml": build_signature_i_33,
     "signature-i-101.eml": build_signature_i_101,
     "signature-i-huge.eml": build_signature_i_huge,
