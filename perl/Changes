@@ -6,15 +6,15 @@ Revision history for Mail::DKIM2
           header field (no colon; white space or nothing before the
           colon; a fold before the colon, which RFC 5322 does not allow
           and 0.34 read as a field; a first line starting with white
-          space) was dropped
-          unread, so it was in no header hash: such lines could be added
-          to a signed message without breaking any Message-Instance,
-          while other parsers read them (Python's email ends the header
-          section at one). The Verifier now gives "PERMERROR: malformed
-          header field" for a message with any DKIM2 field, before every
-          other check, and the Signer refuses ("malformed header field").
-          A message with no DKIM2 field is still none. New
-          HeaderParser method malformed_header. Since 0.22.
+          space) was dropped unread, so it was in no header hash: such
+          lines could be added to a signed message without breaking any
+          Message-Instance, while other parsers read them (Python's email
+          ends the header section at one). The Verifier now gives
+          "PERMERROR: malformed header field" for a message with any
+          DKIM2 field, before every other check, and the Signer refuses
+          ("malformed header field"). A message with no DKIM2 field is
+          still none. New HeaderParser method malformed_header. Since
+          0.22.
         - CVE-2026-129848: the tag-list parser trimmed a value's trailing
           white space with a pattern quadratic in a run of white space
           inside the value: a DKIM2-Signature or Message-Instance field
