@@ -734,3 +734,23 @@ void dkim2_badfield_free(dkim2_badfield_t *b) {
         b = next;
     }
 }
+
+/* CVE-2026-129847: a header-section line that is not a field used to be
+   left out of every header hash, so it could be added to a signed message
+   unseen while other parsers read it. Only the name and what follows it up
+   to the colon are looked at, so the check is linear in the header size. */
+int dkim2_header_field_malformed(const char *field) {
+    const char *p = field;
+    while (*p && *p != ':' && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') p++;
+    if (p == field) return 1;
+    /* WSP before the colon: "Name : v" (RFC 5322 obs-optional). Never a
+       fold: "Name\r\n : v" is malformed, as in every implementation here. */
+    while (*p == ' ' || *p == '\t') p++;
+    return *p != ':';
+}
+
+int dkim2_headers_malformed(const char *const *fields, int n) {
+    for (int i = 0; i < n; i++)
+        if (dkim2_header_field_malformed(fields[i])) return 1;
+    return 0;
+}

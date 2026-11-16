@@ -103,8 +103,12 @@ static int eml_parse_internal(const char *path,
             while (i <= header_end && !(buf[i] == '\r' && buf[i+1] == '\n')) i++;
             if (buf[i] == '\r' && buf[i+1] == '\n') i += 2;
         }
+        /* Every line is kept, even one too short to be a field (an empty
+           first line, a last line of one or two octets with no CRLF): a
+           line that is not a field makes the header section malformed
+           (dkim2_header_field_malformed), and dropping it here put it in
+           no header hash (CVE-2026-129847). */
         size_t flen = i - start;
-        if (flen < 3) continue;
 
         if (nh >= hcap) {
             hcap *= 2;

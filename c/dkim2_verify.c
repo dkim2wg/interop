@@ -761,6 +761,17 @@ static int structure_error(const dkim2_ctx_t *ctx, int outbound, char *msg, size
     int max_m = 0, max_i = 0;
     const dkim2_badfield_t *b;
 
+    /* Before a: a header section with a line that is not a field
+       (dkim2_header_field_malformed). No instance hashed that line, so no
+       result about the message can stand (CVE-2026-129847). Only asked
+       when there is a DKIM2 field: without one the result stays none. */
+    if ((ctx->mi_list || ctx->sig_list || ctx->bad_list
+         || ctx->n_mi_fields || ctx->n_sig_fields)
+        && dkim2_headers_malformed((const char *const *)ctx->headers, ctx->n_headers)) {
+        snprintf(msg, msgsz, "PERMERROR: malformed header field");
+        return -1;
+    }
+
     /* a. Too many fields (the chain-length limit), parsed or not:
        Message-Instance first. */
     if (ctx->n_mi_fields > DKIM2_MAX_CHAIN_LENGTH) {

@@ -73,3 +73,17 @@ char *dkim2_sig_format(const dkim2_sig_t *sig, int empty_sig);
 int dkim2_ctx_add_field(dkim2_ctx_t *ctx, int is_sig, const char *value);
 
 void dkim2_badfield_free(dkim2_badfield_t *b);
+
+/* Non-zero when field -- one logical header field as the parsers keep it,
+   "Name: value\r\n" with its continuation lines -- is not a header field.
+   Its name (1*(any octet but WSP, CR, LF and ":")) must start the field
+   and be followed by ":", optionally after WSP (RFC 5322 obsolete syntax),
+   never after a fold. No colon, white space inside the name, an
+   empty name, or a field that starts with white space (a continuation of
+   nothing) is malformed: such a line is in no header hash, so the
+   verifier gives "PERMERROR: malformed header field" and the signer
+   refuses (CVE-2026-129847). */
+int dkim2_header_field_malformed(const char *field);
+
+/* Non-zero when any of the n fields is malformed (above). */
+int dkim2_headers_malformed(const char *const *fields, int n);

@@ -96,13 +96,24 @@ static sfsistat cb_envrcpt(SMFICTX *ctx, char **argv) {
     return SMFIS_CONTINUE;
 }
 
+/* name is want, ignoring any white space an MTA left before the colon
+   (RFC 5322 obsolete syntax): "DKIM2-Signature " is a DKIM2-Signature, in
+   no header hash, so it must be read as one rather than passed over (the
+   class of CVE-2026-129847). */
+static int name_is(const char *name, const char *want) {
+    size_t n = strlen(name), w = strlen(want);
+    while (n && (name[n - 1] == ' ' || name[n - 1] == '\t'
+                 || name[n - 1] == '\r' || name[n - 1] == '\n')) n--;
+    return n == w && strncasecmp(name, want, w) == 0;
+}
+
 static sfsistat cb_header(SMFICTX *ctx, char *name, char *value) {
     conn_state_t *s = smfi_getpriv(ctx);
     dkim2_ctx_t *c = &s->ctx;
 
     /* The exploded hint is not part of the message we sign: count it and
        leave it out of the header fields (it is deleted at end of message). */
-    if (g_cfg.mode != 'v' && strcasecmp(name, EXPLODED_HINT) == 0) {
+    if (g_cfg.mode != 'v' && name_is(name, EXPLODED_HINT)) {
         s->n_exploded_hint++;
         return SMFIS_CONTINUE;
     }
@@ -123,10 +134,10 @@ static sfsistat cb_header(SMFICTX *ctx, char *name, char *value) {
     c->headers[c->n_headers++] = hdr;
 
     /* Parse DKIM2 headers as they arrive */
-    if (strcasecmp(name, "Message-Instance") == 0) {
+    if (name_is(name, "Message-Instance")) {
         s->n_mi_fields++;
         if (dkim2_ctx_add_field(c, 0, value) < 0) return SMFIS_TEMPFAIL;
-    } else if (strcasecmp(name, "DKIM2-Signature") == 0) {
+    } else if (name_is(name, "DKIM2-Signature")) {
         s->n_sig_fields++;
         if (dkim2_ctx_add_field(c, 1, value) < 0) return SMFIS_TEMPFAIL;
     }

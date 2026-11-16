@@ -17,6 +17,13 @@ void dkim2_ctx_collect(dkim2_ctx_t *ctx) {
         const char *colon = strchr(hdr, ':');
         if (!colon) continue;
         size_t nl = (size_t)(colon - hdr);
+        /* The name without white space (folded or not) before its colon,
+           as hashing reads it (-09 §6.2): "DKIM2-Signature : x" is a
+           DKIM2-Signature, which no header hash covers, so it must not be
+           passed over as a field of some other name (the class of
+           CVE-2026-129847). */
+        while (nl && (hdr[nl - 1] == ' ' || hdr[nl - 1] == '\t'
+                      || hdr[nl - 1] == '\r' || hdr[nl - 1] == '\n')) nl--;
         char name[128] = {0};
         if (nl >= sizeof name) continue;
         for (size_t j = 0; j < nl; j++)

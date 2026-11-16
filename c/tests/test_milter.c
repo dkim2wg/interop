@@ -161,6 +161,16 @@ int main(void) {
     CHECK(c.n_ins == 1 && strcmp(c.ins[0], "Authentication-Results: mx.test; dkim2=none") == 0);
     CHECK(c.rcode[0] == '\0');
 
+    /* verify: a name with WSP before its colon, as an MTA may pass it, is
+       still a DKIM2 field (no header hash covers it): read, not passed over
+       (the class of CVE-2026-129847) */
+    {
+        hdr_t obs[] = { { "DKIM2-Signature ", "junk" }, { "From", "a@example.com" },
+                        { "Subject", "hi" }, { NULL, NULL } };
+        run(&c, "<a@example.com>", one, obs, body);
+        CHECK(c.n_ins == 1 && strstr(c.ins[0], "dkim2=permerror") != NULL);
+    }
+
     /* sign mode, i=1: From not Authentic for d=, and no upstream DKIM2
        header fields -> delivered unsigned (as the Perl milters do), the
        hint removed, no reply */

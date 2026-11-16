@@ -44,7 +44,7 @@ TESTS = tests/test_base64 tests/test_tagparse tests/test_hash \
         tests/test_body_diff tests/test_strictness \
         tests/test_plan tests/test_prefetch tests/test_threads \
         tests/test_domain tests/test_spec07 tests/test_spec08 tests/test_spec09 \
-        tests/test_milter
+        tests/test_milter tests/test_malformed_header
 
 GATE_FIXTURES = tests/.gate-fixtures
 
@@ -117,6 +117,9 @@ tests/test_spec09: tests/test_spec09.c tests/spec_harness.h eml_parse.o $(CORE_O
 # runs where sendmail's libmilter is not installed.
 tests/test_milter: tests/test_milter.c dkim2_milter.c tests/stub/libmilter/mfapi.h eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -Itests/stub -o $@ tests/test_milter.c eml_parse.o $(CORE_OBJS) $(LDFLAGS)
+
+tests/test_malformed_header: tests/test_malformed_header.c tests/spec_harness.h eml_parse.o $(CORE_OBJS)
+	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDFLAGS)
 
 tests/test_plan_corpus: tests/test_plan_corpus.c eml_parse.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)

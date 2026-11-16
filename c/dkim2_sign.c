@@ -302,6 +302,13 @@ static int chain_number_refusal(const char *e) {
 
 int dkim2_do_sign(dkim2_ctx_t *ctx, const dkim2_sign_config_t *cfg,
     char **mi_out, char **sig_out) {
+    /* A header section with a line that is not a field: that line would be
+       in no header hash we make, so it could be read by others yet changed
+       freely (CVE-2026-129847). Refused first, chain or not, gate or not. */
+    if (dkim2_headers_malformed((const char *const *)ctx->headers, ctx->n_headers)) {
+        snprintf(ctx->errmsg, sizeof ctx->errmsg, "not signing: malformed header field");
+        return -1;
+    }
     /* An i=/m= that is not a chain number (dkim2_chain_number_error; the
        parsers left the field out of the lists) is refused even with the
        gate skipped: the next i= and m= are computed from the existing ones

@@ -914,6 +914,46 @@ util/negative-vectors.sh with VERIFIERS=c: 131/131. util/signer-gate.sh
 with c in SPEC09_SIGNERS: 50/50 (200/200 with all four signers). Unit tests
 pass, also under ASan+UBSan.
 
+## 28. Lines that are not header fields (CVE-2026-129847, 2026-11-16)
+
+Reported against Perl 0.34 (fixed in 0.35, 9fe0b7d); C had the same hole.
+A header-section line that is not a field -- no colon ("NoColonHere"), WSP
+in the name ("Sub ject: x"), an empty name (":Empty: x"), or a first line
+starting with WSP (" Subject: evil", a continuation of nothing) -- was in
+no Message-Instance header hash: the planned walk skipped a line with no
+colon, so C ACCEPTED a signed message with "NoColonHere" added; the other
+forms failed as a header hash mismatch (the wrong primary error).
+
+- **Field test:** dkim2_header_field_malformed() (dkim2_header.c): a name
+  of 1+ octets that are not WSP, CR, LF or ':', then optional WSP (RFC
+  5322 obsolete syntax; never a fold), then ':'. Same rule as Perl's
+  `^[^\s:]+[ \t]*:` (malformed-header-folded-colon.eml).
+- **Parser:** eml_parse no longer drops a header-section line shorter than
+  three octets (an empty first line, a one- or two-octet last line with no
+  CRLF): every line is kept, so the check sees it.
+- **Verifier:** structure_error() checks it before C9 step a, when the
+  message has any DKIM2 field (parsed or not): "PERMERROR: malformed header
+  field". No DKIM2 field stays NONE. Every entry point (CLI, library,
+  milter, signer gate) goes through structure_error.
+- **Signer:** dkim2_do_sign() refuses first, chain or not, gate skipped or
+  not: "not signing: malformed header field".
+- **Same class, found here:** a DKIM2 field written with WSP before its
+  colon ("DKIM2-Signature : junk") was excluded from hashing as a DKIM2
+  field (-09 §6.2 strips the WSP) but not collected as one
+  (dkim2_ctx_collect and the milter's cb_header compared the untrimmed
+  name), so it was ignored entirely and the message PASSed. Both trim the
+  name now, as hashing does.
+
+Tests: tests/test_malformed_header.c, one case in tests/test_milter.c.
+util/negative-vectors.sh with VERIFIERS=c: 138/138, the five
+malformed-header vectors with the exact primary error.
+
+The two other reports against Perl 0.34 have no C analogue: tagparse()
+is a single forward pass with a linear trim (CVE-2026-129848: values with
+640000 internal " \r\n" runs, 9.6 MB of header, verify in 0.04s, scaling
+linearly), and every per-level loop is bounded by DKIM2_MAX_CHAIN_LENGTH
+because dkim2_ctx_add_field keeps no field past the cap (CVE-2026-129849).
+
 ## Spec Quality Issues
 
 These are ambiguities and gaps in draft-ietf-dkim-dkim2-spec-04 that caused
