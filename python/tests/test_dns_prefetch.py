@@ -245,10 +245,15 @@ def test_dns_json_mode_needs_no_dnspython():
     tmp.write(RAW)
     tmp.close()
     fixture = tmp.name
+    # run_path does not put the script's directory on sys.path as running
+    # the script does, so add it: from any other directory dkim2sign was
+    # not found.
     code = ("import sys, runpy; sys.modules['dns'] = None; "
+            "sys.path.insert(0, %r); "
             "sys.argv = ['dkim2verify.py'] + sys.argv[1:]; "
             "runpy.run_path(%r, run_name='__main__')"
-            % os.path.join(os.path.dirname(HERE), "dkim2verify.py"))
+            % (os.path.dirname(HERE),
+               os.path.join(os.path.dirname(HERE), "dkim2verify.py")))
     ok = subprocess.run([sys.executable, "-c", code, fixture, "--dns-json",
                          os.path.join(ROOT, "dns.json"), "--ignore-timestamps"],
                         capture_output=True, text=True)

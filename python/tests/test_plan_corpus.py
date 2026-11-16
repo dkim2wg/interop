@@ -82,7 +82,10 @@ def compare(raw, dns, sizes=(997,)):
     return ref
 
 
-_PRE07 = ("matching From is not authentic", "contains invalid JSON")
+_PRE07 = ("matching From is not authentic", "contains invalid JSON",
+          # -09 (contract E2): a null body Recipe is a PERMERROR; the -06
+          # capture has one (sa-spam2-001 ... mailman.1, "b": null).
+          "has a null recipe")
 # -08 (contract D6), -09 (E6): a bad Recipe step is "recipe <path> is invalid".
 _PRE07_RE = re.compile(r"recipe \S+ is invalid$")
 # -08 §4 (contract D1) hashes Auto-Submitted and VBR-Info, which the capture
@@ -131,7 +134,8 @@ def test_captured_corpus():
     print(f"compared {len(paths)} messages, {n} variants: {statuses}")
     # The capture is -06 list mail: under -07 its From is not Authentic (the
     # lists did not rewrite it) and a Latin-1/EUC-KR literal is a -06 "b"
-    # step, now an unknown step key; under -08 Auto-Submitted is hashed.  So
+    # step, now an unknown step key; under -08 Auto-Submitted is hashed;
+    # under -09 a null body Recipe is a PERMERROR.  So
     # an original may be rejected for those reasons only (_pre07_ok).  -08
     # made "From is not authentic" a FAIL (contract D5), so a FAIL status is
     # no longer a sign of anything else: the error texts above are the check.

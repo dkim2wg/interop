@@ -7,6 +7,9 @@
 #
 
 set -euo pipefail
+# The diagnostics printed for a failure (diff, verify -v, a unit test's
+# output) end in "|| true": under pipefail their non-zero status ended the
+# script at the first failure, before the summary.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON_DIR="$(dirname "$SCRIPT_DIR")"
@@ -86,7 +89,7 @@ run_test() {
         echo "  FAIL:      $name"
         FAIL=$((FAIL + 1))
         ERRORS="${ERRORS}  ${name}: output differs from expected\n"
-        diff <(echo "$expected") <(echo "$result") | head -20
+        diff <(echo "$expected") <(echo "$result") | head -20 || true
     fi
 }
 
@@ -227,7 +230,7 @@ for signed in "$EXPECTED_DIR"/*.eml; do
         echo "  FAIL:      verify $name"
         FAIL=$((FAIL + 1))
         ERRORS="${ERRORS}  verify ${name}: signature verification failed\n"
-        python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG --skip-timestamp-check -v 2>&1 | head -10
+        python3 "$VERIFIER" "$signed" --dns-json "$DNS_JSON" $CHAIN_FLAG --skip-timestamp-check -v 2>&1 | head -10 || true
     fi
 done
 
@@ -247,7 +250,7 @@ for unit in "$SCRIPT_DIR"/test_*.py; do
         echo "  FAIL:      $uname"
         FAIL=$((FAIL + 1))
         ERRORS="${ERRORS}  ${uname}: unit test failed\n"
-        python3 "$unit" 2>&1 | tail -10
+        python3 "$unit" 2>&1 | tail -10 || true
     fi
 done
 
