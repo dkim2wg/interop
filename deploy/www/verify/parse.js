@@ -69,7 +69,8 @@ function crlfOctets(u8) {
 // raw is a binary string (body: a binary string) or a Uint8Array of the
 // message octets (body: a Uint8Array, a view into them when their line ends
 // are already CRLF, and lines: the number of lines bodyToLines() would give
-// for it). Only the header block is ever made a string: the body goes from
+// for it). malformedHeader: a line in the header section is not a field
+// (see parseHeaderBlock). Only the header block is ever made a string: the body goes from
 // input to digest as octets.
 export function parseMessage(raw) {
   if (typeof raw !== 'string') {
@@ -78,37 +79,72 @@ export function parseMessage(raw) {
     for (let i = oct.indexOf(13); i >= 0; i = oct.indexOf(13, i + 1)) {
       if (oct[i + 1] === 10 && oct[i + 2] === 13 && oct[i + 3] === 10) { sep = i; break; }
     }
-    if (sep < 0) return { headers: parseHeaderBlock(bytesToBinary(oct)), body: oct.subarray(0, 0), lines: 0 };
+    if (sep < 0) {
+      const { headers, malformed } = parseHeaderBlock(bytesToBinary(oct));
+      return { headers, malformedHeader: malformed, body: oct.subarray(0, 0), lines: 0 };
+    }
     let bodyLfs = lfs;
     for (let i = 0; i < sep + 4; i++) if (oct[i] === 10) bodyLfs--;
     const body = oct.subarray(sep + 4);
     const lines = body.length === 0 || body[body.length - 1] === 10 ? bodyLfs : bodyLfs + 1;
-    return { headers: parseHeaderBlock(bytesToBinary(oct.subarray(0, sep + 2))), body, lines };
+    const { headers, malformed } = parseHeaderBlock(bytesToBinary(oct.subarray(0, sep + 2)));
+    return { headers, malformedHeader: malformed, body, lines };
   }
   const text = toCRLF(raw);
   const sep = text.indexOf('\r\n\r\n');
   const headerBlock = sep < 0 ? text : text.slice(0, sep + 2); // include final CRLF
   const body = sep < 0 ? '' : text.slice(sep + 4);
-  return { headers: parseHeaderBlock(headerBlock), body };
+  const { headers, malformed } = parseHeaderBlock(headerBlock);
+  return { headers, malformedHeader: malformed, body };
 }
 
+// A header field: its name (not empty, no colon, no white space), WSP, the
+// colon. White space is ASCII's, as Perl's \s on octets: these are binary
+// strings, where JS's \s would also take 0x85 and 0xA0.
+const FIELD = /^([^ \t\r\n\f\v:]+)[ \t]*:([\s\S]*)$/;
+
+// The fields of a header block, and whether any line in it is not one.
+// A line that is not a field -- no colon, WSP in or nothing before the
+// name, a first line that starts with WSP (a continuation of nothing) -- is
+// in no header hash. It used to be skipped here, so lines could be added to
+// a signed message that passed (CVE-2026-129847, reported against
+// Mail::DKIM2 0.34), while other parsers read them. It is never dropped
+// silently: `malformed` is set, and the verifier rejects the message. The
+// field is judged with its continuation lines joined, as one field.
 function parseHeaderBlock(headerBlock) {
-  // Split header block into physical lines (each ends with CRLF).
+  // Physical lines, each with its CRLF; a line starting with WSP continues
+  // the one before it, if there is one.
   const physical = headerBlock.match(/[^\r\n]*\r\n/g) || [];
-  const headers = [];
+  const groups = [];
   for (const line of physical) {
-    if (/^[ \t]/.test(line) && headers.length) {
-      // Continuation of the previous field.
-      const prev = headers[headers.length - 1];
-      prev.raw += line;
-      prev.value += line.replace(/\r\n$/, '');
-    } else {
-      const m = line.match(/^([^:]*):([\s\S]*)\r\n$/);
-      if (!m) continue; // not a valid header line; skip
-      headers.push({ name: m[1].trim(), value: m[2], raw: line });
-    }
+    if ((line[0] === ' ' || line[0] === '\t') && groups.length) groups[groups.length - 1].push(line);
+    else groups.push([line]);
   }
-  return headers;
+  const headers = [];
+  let malformed = false;
+  for (const lines of groups) {
+    const raw = lines.join('');
+    const m = raw.match(FIELD);
+    if (!m) { malformed = true; continue; }
+    // The unfolded value: each physical line's CRLF removed, the
+    // continuation lines' leading WSP kept.
+    headers.push({ name: m[1], value: m[2].replace(/\r\n/g, ''), raw });
+  }
+  return { headers, malformed };
+}
+
+// s without the WSP (SP, HTAB, CR, LF) at either end, in linear time.
+// Never /^[ \t\r\n]+|[ \t\r\n]+$/: an engine that backtracks (V8 does)
+// tries the "+$" arm from every position in a run of white space and
+// rescans the run to its end each time, quadratic in a long run inside a
+// value -- a pasted header of 80000 spaces held this page for seconds
+// (the analogue of CVE-2026-129848, reported against Mail::DKIM2 0.34).
+const isWsp = (c) => c === 32 || c === 9 || c === 13 || c === 10;
+export function trimWsp(s) {
+  let a = 0, b = s.length;
+  while (a < b && isWsp(s.charCodeAt(a))) a++;
+  while (b > a && isWsp(s.charCodeAt(b - 1))) b--;
+  return s.slice(a, b);
 }
 
 // §8 tag-spec: `[FWS] name [FWS] "=" [FWS] [value] [FWS]`, name
@@ -176,7 +212,7 @@ export function parseHashSets(h) {
     for (const item of group.split(',')) {
       const parts = item.split(':');
       if (parts.length !== 3) throw new Error('h-syntax');
-      const alg = parts[0].replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+      const alg = trimWsp(parts[0]);
       const headerHash = parts[1].replace(/[ \t\r\n]+/g, '');
       const bodyHash = parts[2].replace(/[ \t\r\n]+/g, '');
       if (!/^[A-Za-z0-9_-]+$/.test(alg) || !BASE64.test(headerHash) || !BASE64.test(bodyHash)) throw new Error('h-syntax');

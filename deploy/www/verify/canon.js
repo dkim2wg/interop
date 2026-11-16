@@ -25,7 +25,11 @@ export function isUnsignedHeader(name) {
 export function canonBody(body) {
   // §6.1: ignore all trailing empty lines; "*CRLF" at end becomes "CRLF";
   // if no body or no trailing CRLF, a CRLF is added.
-  return body.replace(/(\r\n)*$/, '') + '\r\n';
+  // Not /(\r\n)*$/: from every CRLF in a run that does not end the body
+  // the engine rescans the run, quadratic in it (as trimWsp in parse.js).
+  let end = body.length;
+  while (end >= 2 && body.charCodeAt(end - 1) === 10 && body.charCodeAt(end - 2) === 13) end -= 2;
+  return body.slice(0, end) + '\r\n';
 }
 
 function unfold(value) {

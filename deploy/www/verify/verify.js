@@ -1,5 +1,5 @@
 // DKIM2 verification orchestrator per draft-ietf-dkim-dkim2-spec-09 §13/§14. Built from spec.
-import { parseMessage, collectLevels, parseTagList, parseHashSets, MAX_CHAIN_LENGTH, BASE64 } from './parse.js';
+import { parseMessage, collectLevels, parseTagList, parseHashSets, MAX_CHAIN_LENGTH, BASE64, trimWsp } from './parse.js';
 import { canonBody, canonHeaderHash, isUnsignedHeader, signingInput } from './canon.js';
 import { sha256Bytes, sha256B64, verifyRsa, verifyEd25519, HASH_ALGS, hashB64 } from './crypto.js';
 import { fetchKey as dohFetchKey, fetchPolicy as dohFetchPolicy, evaluatePolicy, keyName, DEFINITIVE_KEY_ERRORS } from './doh.js';
@@ -52,15 +52,14 @@ function signedFields(fields) {
 const SELECTOR = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
 const SIG_NAME = /^[A-Za-z0-9_-]+$/;
 function parseSigSets(sValue) {
-  const trim = (x) => x.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
   const out = [];
   const groups = sValue.split('|');
   for (let g = 0; g < groups.length; g++) {
     for (const set of groups[g].split(',')) {
       const parts = set.split(':');
       if (parts.length !== 3) return null;
-      const selector = trim(parts[0]);
-      const alg = trim(parts[1]);
+      const selector = trimWsp(parts[0]);
+      const alg = trimWsp(parts[1]);
       if (!SELECTOR.test(selector) || !SIG_NAME.test(alg)) return null;
       out.push({ selector, alg, sig: parts[2].replace(/[ \t\r\n]+/g, ''), group: g });
     }
@@ -80,7 +79,7 @@ const MAX_SIGNATURES = 8;
 // The raw value of a parsed tag (parseTagList strips ALL whitespace from
 // .value; some rules need to see internal WSP), trimmed of surrounding WSP.
 function rawTagValue(tag) {
-  return tag.raw.slice(tag.raw.indexOf('=') + 1).replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+  return trimWsp(tag.raw.slice(tag.raw.indexOf('=') + 1));
 }
 
 // §10.9 duplicate/limit rules for one DKIM2-Signature s= tag: a Selector
@@ -134,7 +133,7 @@ function fromMailbox(values) {
   if (values.length === 0) return 'none';
   // Octets (values are binary strings), without the line breaks of folding
   // or the white space around the value. Every implementation has this limit.
-  if (values[0].replace(/[\r\n]/g, '').replace(/^[ \t]+|[ \t]+$/g, '').length > MAX_FROM_LENGTH) return 'none';
+  if (trimWsp(values[0].replace(/[\r\n]/g, '')).length > MAX_FROM_LENGTH) return 'none';
   let s = displayText(values[0]).replace(/"(?:[^"\\]|\\[^])*"/g, '""');
   for (let prev = ''; prev !== s;) { prev = s; s = s.replace(/\((?:[^()\\]|\\[^])*\)/g, ' '); }
   // A domain literal may hold ":" (IPv6) without being a group.
@@ -264,7 +263,7 @@ export async function verifyMessage(raw, opts = {}) {
 
 async function verifyOnce(raw, opts = {}) {
   const now = opts.now || Math.floor(Date.now() / 1000);
-  const { headers, body, lines } = parseMessage(raw);
+  const { headers, body, lines, malformedHeader } = parseMessage(raw);
   const fields = collectLevels(headers);
   const { instances, signatures } = fields;
 
@@ -273,6 +272,12 @@ async function verifyOnce(raw, opts = {}) {
   if (!fields.miFields.length && !fields.sigFields.length) {
     return { overall: 'none', fullyVerified: false, summary: 'No DKIM2 header fields found', errors: [], levels: [] };
   }
+
+  // A line in the header section that is not a field is in no header hash,
+  // so no result about this message can stand: PERMERROR, before every
+  // other check, the chain's structure included (CVE-2026-129847; as
+  // Mail::DKIM2's Verifier _structure_error).
+  if (malformedHeader) return failed(['PERMERROR: malformed header field'], []);
 
   const miNums = Object.keys(instances).map(Number).sort((a, b) => a - b);
   const sigNums = Object.keys(signatures).map(Number).sort((a, b) => a - b);
