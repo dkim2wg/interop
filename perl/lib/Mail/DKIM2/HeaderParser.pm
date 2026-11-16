@@ -249,7 +249,7 @@ sub _parse_headers {
 # 0.34, CVE-2026-129847).
 sub _emit_header {
     my ($self, $raw) = @_;
-    unless ($raw =~ /^([^\s:]+)\s*:\s*(.*)/s) {
+    unless ($raw =~ /^([^\s:]+)[ \t]*:\s*(.*)/s) {
         $self->{_malformed_header} = 1;
         return;
     }

@@ -69,7 +69,8 @@ Writes:
   unkeyable-signature-i-abc.eml    -- the same with i=abc; REJECT (PERMERROR)
   malformed-header-*.eml           -- a signed message with a header-section
                                       line that is not a field added: no
-                                      colon, WSP in the name, empty name, a
+                                      colon, WSP in the name, empty name, a fold
+                                      before the colon, a
                                       first line starting with WSP; PERMERROR
   multi-malformed-header-instance-gap.eml -- that, and m=2 missing: the
                                       malformed header is primary
@@ -917,6 +918,12 @@ def build_malformed_header_wsp_in_name():
 def build_malformed_header_empty_name():
     """NEGATIVE: ":Empty: x" -- nothing before the colon."""
     return _with_header_line(build_positive_control(), b":Empty: x\r\n")
+
+
+def build_malformed_header_folded_colon():
+    """NEGATIVE: "Keywords" CRLF " : x" -- RFC 5322 allows WSP before the
+    colon (obs-optional), never a fold."""
+    return _with_header_line(build_positive_control(), b"Keywords\r\n : x\r\n")
 
 
 def build_malformed_header_leading_wsp():
@@ -2088,6 +2095,7 @@ FIXTURES = {
     "malformed-header-wsp-in-name.eml": build_malformed_header_wsp_in_name,
     "malformed-header-empty-name.eml": build_malformed_header_empty_name,
     "malformed-header-leading-wsp.eml": build_malformed_header_leading_wsp,
+    "malformed-header-folded-colon.eml": build_malformed_header_folded_colon,
     "multi-malformed-header-instance-gap.eml": build_multi_malformed_header_instance_gap,
     "signature-i-33.eml": build_signature_i_33,
     "signature-i-101.eml": build_signature_i_101,

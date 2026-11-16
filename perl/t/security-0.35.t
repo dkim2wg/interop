@@ -58,6 +58,7 @@ my %junk = (
     'WSP inside the name'    => "Sub ject: x\r\n",
     'empty name'             => ":Empty: x\r\n",
     'no colon, continued'    => "Garbage\r\n Subject: evil\r\n",
+    "fold before the colon"  => "Keywords\r\n : x\r\n",
 );
 for my $what (sort keys %junk) {
     (my $msg = $good) =~ s/^(Subject: hi\r\n)/$1$junk{$what}/m or die;
