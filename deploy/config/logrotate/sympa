@@ -1,0 +1,13 @@
+/var/log/sympa.log {
+    missingok
+    notifempty
+    rotate 14
+    minsize 1M
+    maxsize 10M
+    compress
+    delaycompress
+    create 640 syslog adm
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate
+    endscript
+}

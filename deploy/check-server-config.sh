@@ -51,6 +51,9 @@ compare /etc/sympa/sympa/sympa.conf          sympa/sympa.conf
 compare /etc/sympa/sympa/aliases             sympa/aliases
 compare /etc/postfix/master.cf               postfix/master.cf.live
 compare /etc/aliases                         aliases
+compare /etc/systemd/system/postfix.service.d/chroot-files.conf \
+        systemd/postfix.service.d/chroot-files.conf
+compare /etc/logrotate.d/sympa               logrotate/sympa
 
 # main.cf is compared as `postconf -n` (normalised, defaults elided) rather than
 # the raw file, which is how it was captured.

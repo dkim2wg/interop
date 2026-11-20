@@ -1210,8 +1210,24 @@ deploy/config/mailman3/{mailman.cfg,mailman-hyperkitty.cfg,web-settings.py}
 deploy/config/sympa/{sympa.conf,aliases}
 deploy/config/postfix/{main.cf.live,master.cf.live}
 deploy/config/aliases
+deploy/config/systemd/postfix.service.d/chroot-files.conf
+deploy/config/logrotate/sympa
 deploy/examples/sympa-sendmail
 ```
+
+The last two are boot-time fixes (2026-11-20):
+
+- **`chroot-files.conf`** installs root-owned copies of `resolv.conf` and
+  `services` into `/var/spool/postfix/etc/` before `postfix check` runs.
+  Debian's own `cp -pLu` keeps the `systemd-resolve` owner of
+  `stub-resolv.conf`, which makes Postfix warn "not owned by root" on every boot.
+  Its `-u` also never refreshes a chroot `services` that is newer than
+  `/etc/services`, which makes Postfix warn that the two differ. The drop-in's
+  copies keep their mtimes, so Debian's copy then skips them.
+- **`logrotate/sympa`** creates the file as `640 syslog adm`. The packaged rule
+  uses `sympa sympa`, which rsyslog (running as `syslog`) can't write to, so
+  every Sympa log line was dropped. This rule is a dpkg conffile, so a Sympa
+  package upgrade will ask about it. Keep the local version.
 
 `postfix/main.cf.live` is `postconf -n` output, which records the real
 `transport_maps` and `local_recipient_maps` — both several maps deep, and both
@@ -1269,7 +1285,11 @@ the packages and one-time setup, then:
    `postalias /etc/sympa/sympa/aliases`.
 5. Restore `master.cf` from `deploy/config/postfix/master.cf.live`, apply
    `main.cf.live` with `postconf -e`, then `postfix check`.
-6. `install -m755 deploy/examples/sympa-sendmail /usr/local/bin/sympa-sendmail`.
+6. `install -m755 deploy/examples/sympa-sendmail /usr/local/bin/sympa-sendmail`;
+   `install -D -m644 deploy/config/systemd/postfix.service.d/chroot-files.conf
+   /etc/systemd/system/postfix.service.d/chroot-files.conf && systemctl
+   daemon-reload`; `install -m644 deploy/config/logrotate/sympa
+   /etc/logrotate.d/sympa` and `chown syslog:adm /var/log/sympa.log`.
 7. `deploy/deploy.sh` for the library, milters, reflector, validator and web
    assets, then `deploy/check-server-config.sh` to confirm no drift.
 

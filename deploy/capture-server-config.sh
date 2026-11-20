@@ -77,6 +77,15 @@ echo "   postfix/master.cf.live"
 
 fetch /etc/aliases aliases
 
+# Boot-time fixes. The Postfix drop-in installs root-owned resolv.conf/services
+# into the chroot before `postfix check` (Debian's cp -pLu copies the
+# systemd-resolve owner and never refreshes a newer stale services). The Sympa
+# logrotate rule must create the file as syslog:adm -- the packaged sympa:sympa
+# locks rsyslog out of /var/log/sympa.log. The rule is a dpkg conffile.
+fetch /etc/systemd/system/postfix.service.d/chroot-files.conf \
+      systemd/postfix.service.d/chroot-files.conf
+fetch /etc/logrotate.d/sympa                 logrotate/sympa
+
 # The one outbound script that exists nowhere but the box. Lives at deploy/ top
 # level, not under config/, because it is installed code rather than config.
 ssh "$HOST" 'cat /usr/local/bin/sympa-sendmail' > "$REPO/deploy/examples/sympa-sendmail"
